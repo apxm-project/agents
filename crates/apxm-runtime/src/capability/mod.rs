@@ -285,6 +285,14 @@ impl CapabilitySystem {
     pub fn get_metadata(&self, name: &str) -> Option<CapabilityMetadata> {
         self.registry.get(name).map(|cap| cap.metadata().clone())
     }
+
+    /// Returns `true` if the named capability is marked read-only.
+    pub fn is_read_only(&self, name: &str) -> bool {
+        self.registry
+            .get(name)
+            .map(|cap| cap.metadata().read_only)
+            .unwrap_or(false)
+    }
 }
 
 impl Default for CapabilitySystem {
