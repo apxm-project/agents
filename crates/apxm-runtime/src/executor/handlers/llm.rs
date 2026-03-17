@@ -294,6 +294,63 @@ async fn execute_tool_call(ctx: &ExecutionContext, tool_call: &ToolCall) -> Tool
     }
 }
 
+/// Per-tool-name write locks for concurrent tool dispatch.
+///
+/// Read-only tools run without locking. Write tools acquire a write lock
+/// keyed by tool name so concurrent writes to the same tool are serialized
+/// while independent tools execute in parallel.
+static TOOL_WRITE_LOCKS: once_cell::sync::Lazy<
+    dashmap::DashMap<String, std::sync::Arc<tokio::sync::RwLock<()>>>,
+> = once_cell::sync::Lazy::new(dashmap::DashMap::new);
+
+/// Execute multiple tool calls concurrently, preserving result order.
+///
+/// Read-only tools (according to `CapabilityMetadata::read_only`) run in full
+/// parallel. Write tools acquire a per-tool-name `RwLock` so that:
+/// - Multiple read-only calls execute simultaneously.
+/// - Write calls on the same tool name are serialized.
+/// - Write calls on different tool names run in parallel.
+async fn execute_tool_calls_parallel(
+    ctx: &ExecutionContext,
+    tool_calls: &[ToolCall],
+) -> Vec<ToolResult> {
+    if tool_calls.len() == 1 {
+        // Fast path: single tool call needs no concurrency overhead.
+        return vec![execute_tool_call(ctx, &tool_calls[0]).await];
+    }
+
+    apxm_llm!(info,
+        execution_id = %ctx.execution_id,
+        tool_count = tool_calls.len(),
+        "Dispatching tool calls in parallel"
+    );
+
+    let futures: Vec<_> = tool_calls
+        .iter()
+        .map(|tc| {
+            let is_read_only = ctx.capability_system.is_read_only(&tc.name);
+            async move {
+                if is_read_only {
+                    // Read-only: no lock needed.
+                    execute_tool_call(ctx, tc).await
+                } else {
+                    // Write tool: acquire per-tool-name write lock.
+                    let lock = TOOL_WRITE_LOCKS
+                        .entry(tc.name.clone())
+                        .or_insert_with(|| {
+                            std::sync::Arc::new(tokio::sync::RwLock::new(()))
+                        })
+                        .clone();
+                    let _guard = lock.write().await;
+                    execute_tool_call(ctx, tc).await
+                }
+            }
+        })
+        .collect();
+
+    futures::future::join_all(futures).await
+}
+
 /// Convert serde_json::Value to apxm_core Value
 fn json_to_value(json: &serde_json::Value) -> Value {
     match json {
@@ -821,12 +878,10 @@ async fn execute_ask_with_tools(
             return Ok(Value::String(response.content));
         }
 
-        // Execute each tool call
-        let mut tool_results = Vec::new();
-        for tool_call in &response.tool_calls {
-            let result = execute_tool_call(ctx, tool_call).await;
-            tool_results.push(result);
-        }
+        // Execute tool calls concurrently, preserving result order.
+        // Write tools acquire a per-tool-name lock to prevent data races;
+        // read-only tools run in full parallel.
+        let tool_results = execute_tool_calls_parallel(ctx, &response.tool_calls).await;
 
         // Store tool results in STM for later reference
         if !tool_results.is_empty() {

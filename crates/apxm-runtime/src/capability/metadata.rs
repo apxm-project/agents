@@ -36,6 +36,11 @@ pub struct CapabilityMetadata {
     #[serde(default)]
     pub tags: Vec<String>,
 
+    /// Whether this capability is read-only (safe for full parallel execution).
+    /// Write capabilities acquire per-resource locks during parallel dispatch.
+    #[serde(default)]
+    pub read_only: bool,
+
     /// Additional metadata
     #[serde(default)]
     pub metadata: HashMap<String, Value>,
@@ -61,6 +66,7 @@ impl CapabilityMetadata {
             latency_estimate_ms: default_latency(),
             requires_auth: false,
             tags: Vec::new(),
+            read_only: false,
             metadata: HashMap::new(),
         }
     }
@@ -92,6 +98,12 @@ impl CapabilityMetadata {
     /// Add tags
     pub fn with_tags(mut self, tags: Vec<String>) -> Self {
         self.tags = tags;
+        self
+    }
+
+    /// Mark this capability as read-only (safe for full parallel execution).
+    pub fn with_read_only(mut self) -> Self {
+        self.read_only = true;
         self
     }
 
@@ -134,6 +146,7 @@ mod tests {
         assert_eq!(metadata.description, "Echo a message");
         assert_eq!(metadata.latency_estimate_ms, 100);
         assert!(!metadata.requires_auth);
+        assert!(!metadata.read_only);
     }
 
     #[test]

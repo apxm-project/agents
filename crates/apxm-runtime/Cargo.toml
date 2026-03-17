@@ -12,6 +12,7 @@ apxm-artifact = { path = "../apxm-artifact" }
 # Async runtime
 tokio = { version = "1.0", features = ["rt-multi-thread", "macros", "sync", "time", "rt"] }
 async-trait = "0.1"
+futures = "0.3"
 
 # Concurrency
 crossbeam-deque = "0.8"
@@ -57,4 +58,3 @@ smallvec = ["dep:smallvec"]
 metrics = ["apxm-backends/metrics"]
 # Compile out all tracing for zero overhead (propagates to apxm-core)
 no-trace = ["apxm-core/no-trace"]
-
