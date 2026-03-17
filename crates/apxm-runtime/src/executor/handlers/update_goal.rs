@@ -109,6 +109,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
                 description,
                 priority,
                 status: GoalStatus::Active,
+                parent_id: None,
             };
 
             ctx.aam.add_goal(

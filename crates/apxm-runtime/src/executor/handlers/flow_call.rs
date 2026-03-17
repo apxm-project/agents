@@ -7,6 +7,7 @@ use super::{ExecutionContext, Node, Result, Value, get_string_attribute};
 use crate::aam::TransitionLabel;
 use crate::executor::ExecutorEngine;
 use apxm_core::constants::graph::attrs as graph_attrs;
+use apxm_core::constants::runtime::{belief_keys, metadata};
 use apxm_core::error::RuntimeError;
 
 /// Maximum recursion depth for flow calls to prevent stack overflow
@@ -52,7 +53,7 @@ async fn execute_impl(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -
     // Check recursion depth via metadata
     let current_depth: usize = ctx
         .metadata
-        .get("flow_call_depth")
+        .get(metadata::FLOW_CALL_DEPTH)
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
 
@@ -84,7 +85,7 @@ async fn execute_impl(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -
 
     let label = TransitionLabel::Custom(format!("flow_call:{}:{}", agent_name, flow_name));
     ctx.aam.set_belief(
-        format!("_pending_flow_call:{}:{}", agent_name, flow_name),
+        format!("{}{}:{}", belief_keys::PENDING_FLOW_CALL_PREFIX, agent_name, flow_name),
         call_request.clone(),
         label,
     );
@@ -137,13 +138,13 @@ async fn execute_impl(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -
     // Create a child context for the sub-flow execution
     let mut child_ctx = ctx
         .child()
-        .with_metadata("parent_execution_id".to_string(), ctx.execution_id.clone())
+        .with_metadata(metadata::PARENT_EXECUTION_ID.to_string(), ctx.execution_id.clone())
         .with_metadata(
-            "flow_call_depth".to_string(),
+            metadata::FLOW_CALL_DEPTH.to_string(),
             (current_depth + 1).to_string(),
         )
-        .with_metadata("target_agent".to_string(), agent_name.clone())
-        .with_metadata("target_flow".to_string(), flow_name.clone());
+        .with_metadata(metadata::TARGET_AGENT.to_string(), agent_name.clone())
+        .with_metadata(metadata::TARGET_FLOW.to_string(), flow_name.clone());
     if let Some(agent) = target_agent {
         child_ctx = child_ctx.with_agent(agent);
     }
@@ -156,7 +157,7 @@ async fn execute_impl(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -
             .memory
             .write(
                 crate::memory::MemorySpace::Stm,
-                format!("_flow_arg_{}", i),
+                format!("{}{}", belief_keys::FLOW_ARG_PREFIX, i),
                 input.clone(),
             )
             .await;
@@ -181,7 +182,7 @@ async fn execute_impl(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -
 
     // Clear the pending flow call belief
     ctx.aam.set_belief(
-        format!("_pending_flow_call:{}:{}", agent_name, flow_name),
+        format!("{}{}:{}", belief_keys::PENDING_FLOW_CALL_PREFIX, agent_name, flow_name),
         Value::Null,
         TransitionLabel::Custom(format!("flow_call_completed:{}:{}", agent_name, flow_name)),
     );
@@ -231,7 +232,7 @@ mod tests {
             metadata: NodeMetadata::default(),
         };
         const_node.attributes.insert(
-            "value".to_string(),
+            graph_attrs::VALUE.to_string(),
             Value::String("hello from sub-flow".to_string()),
         );
 
@@ -359,7 +360,7 @@ mod tests {
         };
         // Simulate being at max depth
         let ctx = ctx.with_metadata(
-            "flow_call_depth".to_string(),
+            metadata::FLOW_CALL_DEPTH.to_string(),
             MAX_FLOW_CALL_DEPTH.to_string(),
         );
 

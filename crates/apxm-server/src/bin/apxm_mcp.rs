@@ -698,6 +698,8 @@ fn tool_get_contract() -> Result<String, String> {
             OperationCategory::ErrorHandling => "error_handling",
             OperationCategory::Communication => "communication",
             OperationCategory::Internal => "internal",
+            OperationCategory::Coordination => "coordination",
+            OperationCategory::Identity => "identity",
         }
     }
 

@@ -17,6 +17,7 @@ use super::{ExecutionContext, Node, Result, Value, get_string_attribute};
 use crate::aam::TransitionLabel;
 use crate::executor::ExecutorEngine;
 use apxm_core::constants::graph::attrs as graph_attrs;
+use apxm_core::constants::runtime::{belief_keys, metadata};
 use apxm_core::error::RuntimeError;
 
 /// Well-known flow names tried in order when looking up a recipient agent.
@@ -56,11 +57,11 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     // Record the outgoing message in AAM beliefs for observability
     let label = TransitionLabel::Custom(format!("communicate:{}", recipient));
     ctx.aam.set_belief(
-        format!("_pending_communicate:{}", recipient),
+        format!("{}{}", belief_keys::PENDING_COMMUNICATE_PREFIX, recipient),
         Value::Object(
             vec![
-                ("recipient".to_string(), Value::String(recipient.clone())),
-                ("message".to_string(), message.clone()),
+                (graph_attrs::RECIPIENT.to_string(), Value::String(recipient.clone())),
+                (graph_attrs::MESSAGE.to_string(), message.clone()),
             ]
             .into_iter()
             .collect(),
@@ -122,16 +123,16 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     // Create a child context for the sub-flow execution
     let child_ctx = ctx
         .child()
-        .with_metadata("parent_execution_id".to_string(), ctx.execution_id.clone())
-        .with_metadata("communicate_sender".to_string(), ctx.execution_id.clone())
-        .with_metadata("communicate_recipient".to_string(), recipient.clone());
+        .with_metadata(metadata::PARENT_EXECUTION_ID.to_string(), ctx.execution_id.clone())
+        .with_metadata(metadata::COMMUNICATE_SENDER.to_string(), ctx.execution_id.clone())
+        .with_metadata(metadata::COMMUNICATE_RECIPIENT.to_string(), recipient.clone());
 
     // Inject the message into STM so the sub-flow can access it
     let _ = child_ctx
         .memory
         .write(
             crate::memory::MemorySpace::Stm,
-            "_communicate_message".to_string(),
+            belief_keys::COMMUNICATE_MESSAGE.to_string(),
             message.clone(),
         )
         .await;
@@ -154,7 +155,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
 
     // Clear the pending belief
     ctx.aam.set_belief(
-        format!("_pending_communicate:{}", recipient),
+        format!("{}{}", belief_keys::PENDING_COMMUNICATE_PREFIX, recipient),
         Value::Null,
         TransitionLabel::Custom(format!("communicate_completed:{}", recipient)),
     );
@@ -217,7 +218,6 @@ async fn execute_broadcast(ctx: &ExecutionContext, _node: &Node, message: Value)
         "COMMUNICATE BROADCAST fan-out starting"
     );
 
-    // Build a fake single-recipient node for re-use in the local path
     let mut handles = Vec::with_capacity(agent_names.len());
     for agent_name in &agent_names {
         // Find the sub-DAG
@@ -238,10 +238,10 @@ async fn execute_broadcast(ctx: &ExecutionContext, _node: &Node, message: Value)
         // Build a child context per recipient
         let child_ctx = ctx
             .child()
-            .with_metadata("parent_execution_id".to_string(), ctx.execution_id.clone())
-            .with_metadata("communicate_sender".to_string(), ctx.execution_id.clone())
-            .with_metadata("communicate_recipient".to_string(), agent_name.clone())
-            .with_metadata("communicate_mode".to_string(), "broadcast".to_string());
+            .with_metadata(metadata::PARENT_EXECUTION_ID.to_string(), ctx.execution_id.clone())
+            .with_metadata(metadata::COMMUNICATE_SENDER.to_string(), ctx.execution_id.clone())
+            .with_metadata(metadata::COMMUNICATE_RECIPIENT.to_string(), agent_name.clone())
+            .with_metadata(metadata::COMMUNICATE_MODE.to_string(), "broadcast".to_string());
 
         let msg = message.clone();
         let agent = agent_name.clone();
@@ -253,7 +253,7 @@ async fn execute_broadcast(ctx: &ExecutionContext, _node: &Node, message: Value)
                 .memory
                 .write(
                     crate::memory::MemorySpace::Stm,
-                    "_communicate_message".to_string(),
+                    belief_keys::COMMUNICATE_MESSAGE.to_string(),
                     msg,
                 )
                 .await;
@@ -424,7 +424,7 @@ mod tests {
             metadata: NodeMetadata::default(),
         };
         const_node.attributes.insert(
-            "value".to_string(),
+            graph_attrs::VALUE.to_string(),
             Value::String("ack from agent".to_string()),
         );
         ExecutionDag {
@@ -470,7 +470,7 @@ mod tests {
             metadata: NodeMetadata::default(),
         };
         node.attributes.insert(
-            "recipient".to_string(),
+            graph_attrs::RECIPIENT.to_string(),
             Value::String("PeerAgent".to_string()),
         );
 
@@ -506,7 +506,7 @@ mod tests {
             metadata: NodeMetadata::default(),
         };
         node.attributes.insert(
-            "recipient".to_string(),
+            graph_attrs::RECIPIENT.to_string(),
             Value::String("NonExistent".to_string()),
         );
 

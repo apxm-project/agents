@@ -1343,6 +1343,8 @@ fn explain_command(file: PathBuf, json_output: bool) -> Result<()> {
             OperationCategory::ErrorHandling => "error_handling",
             OperationCategory::Communication => "communication",
             OperationCategory::Internal => "internal",
+            OperationCategory::Coordination => "coordination",
+            OperationCategory::Identity => "identity",
         }
     }
 
@@ -1863,6 +1865,8 @@ fn ops_command(action: OpsAction, json_output: bool) -> Result<()> {
             OperationCategory::ErrorHandling => "error_handling",
             OperationCategory::Communication => "communication",
             OperationCategory::Internal => "internal",
+            OperationCategory::Coordination => "coordination",
+            OperationCategory::Identity => "identity",
         }
     }
 

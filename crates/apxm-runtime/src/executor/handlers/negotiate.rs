@@ -12,14 +12,20 @@
 use super::{ExecutionContext, Node, Result, Value, get_string_attribute};
 use crate::aam::TransitionLabel;
 use crate::executor::ExecutorEngine;
+use apxm_core::constants::defaults;
+use apxm_core::constants::graph::attrs as graph_attrs;
+use apxm_core::constants::runtime::{belief_keys, metadata, response_keys, transition_labels};
 use apxm_core::error::RuntimeError;
 use std::collections::HashMap;
 
+/// Well-known flow names tried when looking up a negotiation party.
+const NEGOTIATE_FLOW_NAMES: &[&str] = &["negotiate", "communicate", "main"];
+
 pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -> Result<Value> {
-    let proposal = get_string_attribute(node, "proposal")?;
+    let proposal = get_string_attribute(node, graph_attrs::PROPOSAL)?;
 
     // Parse parties from attribute
-    let parties_value = node.attributes.get("parties").cloned().ok_or_else(|| {
+    let parties_value = node.attributes.get(graph_attrs::PARTIES).cloned().ok_or_else(|| {
         RuntimeError::Operation {
             op_type: node.op_type,
             message: "Missing required attribute: parties".to_string(),
@@ -45,9 +51,9 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
 
     let max_rounds = node
         .attributes
-        .get("max_rounds")
+        .get(graph_attrs::MAX_ROUNDS)
         .and_then(|v| v.as_u64())
-        .unwrap_or(3) as usize;
+        .unwrap_or(defaults::DEFAULT_MAX_NEGOTIATE_ROUNDS as u64) as usize;
 
     tracing::info!(
         execution_id = %ctx.execution_id,
@@ -59,9 +65,9 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
 
     // Record negotiation in AAM
     ctx.aam.set_belief(
-        "_negotiate_active".to_string(),
+        belief_keys::NEGOTIATE_ACTIVE.to_string(),
         Value::String(proposal.clone()),
-        TransitionLabel::Custom("negotiate_start".to_string()),
+        TransitionLabel::Custom(transition_labels::NEGOTIATE_START.to_string()),
     );
 
     // Basic negotiation: send proposal to each party and collect responses
@@ -75,7 +81,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
             // Look up party's flow
             let sub_dag = {
                 let mut found = None;
-                for flow_name in &["negotiate", "communicate", "main"] {
+                for flow_name in NEGOTIATE_FLOW_NAMES {
                     if let Some(dag) = ctx.flow_registry.get_flow(party, flow_name) {
                         found = Some(dag);
                         break;
@@ -96,15 +102,15 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
 
             let child_ctx = ctx
                 .child()
-                .with_metadata("negotiate_proposal".to_string(), proposal.clone())
-                .with_metadata("negotiate_round".to_string(), round.to_string())
-                .with_metadata("negotiate_party".to_string(), party.clone());
+                .with_metadata(metadata::NEGOTIATE_PROPOSAL.to_string(), proposal.clone())
+                .with_metadata(metadata::NEGOTIATE_ROUND.to_string(), round.to_string())
+                .with_metadata(metadata::NEGOTIATE_PARTY.to_string(), party.clone());
 
             let _ = child_ctx
                 .memory
                 .write(
                     crate::memory::MemorySpace::Stm,
-                    "_negotiate_proposal".to_string(),
+                    belief_keys::NEGOTIATE_PROPOSAL.to_string(),
                     Value::String(proposal.clone()),
                 )
                 .await;
@@ -144,19 +150,19 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
 
     // Clear negotiation state
     ctx.aam.set_belief(
-        "_negotiate_active".to_string(),
+        belief_keys::NEGOTIATE_ACTIVE.to_string(),
         Value::Null,
-        TransitionLabel::Custom("negotiate_complete".to_string()),
+        TransitionLabel::Custom(transition_labels::NEGOTIATE_COMPLETE.to_string()),
     );
 
     // Build result
     let mut result = HashMap::new();
     result.insert(
-        "consensus".to_string(),
+        response_keys::CONSENSUS.to_string(),
         Value::Bool(consensus_reached),
     );
-    result.insert("proposal".to_string(), Value::String(proposal));
-    result.insert("responses".to_string(), Value::Object(responses));
+    result.insert(response_keys::PROPOSAL.to_string(), Value::String(proposal));
+    result.insert(response_keys::RESPONSES.to_string(), Value::Object(responses));
 
     tracing::info!(
         execution_id = %ctx.execution_id,

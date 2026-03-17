@@ -34,6 +34,7 @@ async fn main() -> anyhow::Result<()> {
         description: "Complete task".to_string(),
         priority: 1,
         status: GoalStatus::Active,
+        parent_id: None,
     };
     let goal_id = goal.id.clone();
     aam.add_goal(goal, TransitionLabel::custom("goal_created"));

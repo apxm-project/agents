@@ -266,6 +266,7 @@ async fn execute_plan_once(
                 .max()
                 .unwrap_or(50),
             status: GoalStatus::Active,
+            parent_id: None,
         };
         ctx.aam.add_goal(plan_goal, transition_label.clone());
 

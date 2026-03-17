@@ -101,6 +101,78 @@ pub mod graph {
         pub const HANDOFF_TO: &str = "handoff_to";
         pub const GUARDRAIL_KIND: &str = "guardrail_kind";
         pub const MAX_TOOL_ITERATIONS: &str = "max_tool_iterations";
+        // Phase 2 coordination/identity/self-organization attributes
+        pub const TASK_SPEC: &str = "task_spec";
+        pub const TARGET_AGENT: &str = "target_agent";
+        pub const PARTIES: &str = "parties";
+        pub const PROPOSAL: &str = "proposal";
+        pub const MAX_ROUNDS: &str = "max_rounds";
+        pub const CAPABILITY_NAME: &str = "capability_name";
+        pub const DESCRIPTION: &str = "description";
+        pub const REGION: &str = "region";
+        pub const PARAMETERS_SCHEMA: &str = "parameters_schema";
+    }
+}
+
+pub mod runtime {
+    pub mod metadata {
+        pub const PARENT_EXECUTION_ID: &str = "parent_execution_id";
+        pub const DELEGATE_TASK_SPEC: &str = "delegate_task_spec";
+        pub const DELEGATE_TARGET: &str = "delegate_target";
+        pub const NEGOTIATE_PROPOSAL: &str = "negotiate_proposal";
+        pub const NEGOTIATE_ROUND: &str = "negotiate_round";
+        pub const NEGOTIATE_PARTY: &str = "negotiate_party";
+        pub const COMMUNICATE_SENDER: &str = "communicate_sender";
+        pub const COMMUNICATE_RECIPIENT: &str = "communicate_recipient";
+        pub const COMMUNICATE_MODE: &str = "communicate_mode";
+        pub const FLOW_CALL_DEPTH: &str = "flow_call_depth";
+        pub const TARGET_AGENT: &str = "target_agent";
+        pub const TARGET_FLOW: &str = "target_flow";
+    }
+
+    pub mod belief_keys {
+        pub const DELEGATE_PREFIX: &str = "_delegate:";
+        pub const NEGOTIATE_ACTIVE: &str = "_negotiate_active";
+        pub const NEGOTIATE_PROPOSAL: &str = "_negotiate_proposal";
+        pub const AUTONOMOUS_NODE_PREFIX: &str = "_autonomous_node:";
+        pub const IDENTITY_NODE_PREFIX: &str = "_identity_node:";
+        pub const SPAWNED_AGENT_PREFIX: &str = "_spawned_agent:";
+        pub const AGENT_INFO_PREFIX: &str = "_agent_info:";
+        pub const REGISTERED_CAPABILITY_PREFIX: &str = "_registered_capability:";
+        pub const CAPABILITY_REGISTERED_PREFIX: &str = "_capability_registered:";
+        pub const DELEGATE_TASK_SPEC: &str = "_delegate_task_spec";
+        pub const DELEGATE_INPUT: &str = "_delegate_input";
+        pub const PENDING_COMMUNICATE_PREFIX: &str = "_pending_communicate:";
+        pub const COMMUNICATE_MESSAGE: &str = "_communicate_message";
+        pub const PENDING_FLOW_CALL_PREFIX: &str = "_pending_flow_call:";
+        pub const FLOW_ARG_PREFIX: &str = "_flow_arg_";
+    }
+
+    pub mod transition_labels {
+        pub const IDENTITY: &str = "identity";
+        pub const NEGOTIATE_START: &str = "negotiate_start";
+        pub const NEGOTIATE_COMPLETE: &str = "negotiate_complete";
+        pub const SCOPE_INHERIT_BELIEF: &str = "scope:inherit_belief";
+        pub const SCOPE_FILTER_BELIEF: &str = "scope:filter_belief";
+        pub const SCOPE_INHERIT_CAPABILITY: &str = "scope:inherit_capability";
+        pub const SCOPE_FILTER_CAPABILITY: &str = "scope:filter_capability";
+        pub const SCOPE_INHERIT_GOAL: &str = "scope:inherit_goal";
+        pub const SCOPE_FILTER_GOAL: &str = "scope:filter_goal";
+    }
+
+    pub mod response_keys {
+        pub const TASK_HANDLE: &str = "task_handle";
+        pub const RESULT: &str = "result";
+        pub const CONSENSUS: &str = "consensus";
+        pub const PROPOSAL: &str = "proposal";
+        pub const RESPONSES: &str = "responses";
+        pub const CAPABILITY_NAME: &str = "capability_name";
+        pub const DESCRIPTION: &str = "description";
+        pub const REGISTERED: &str = "registered";
+        pub const NAME: &str = "name";
+        pub const SPAWNED_BY: &str = "spawned_by";
+        pub const CAPABILITIES: &str = "capabilities";
+        pub const GOALS: &str = "goals";
     }
 }
 
@@ -112,4 +184,6 @@ pub mod defaults {
     pub const DEFAULT_MEMORY_LIMIT: u64 = 10;
     pub const DEFAULT_MAX_RETRIES: u32 = 3;
     pub const DEFAULT_MAX_CONTEXT_TOKENS: usize = 8192;
+    pub const DEFAULT_MAX_NEGOTIATE_ROUNDS: usize = 3;
+    pub const DEFAULT_DESCRIPTION: &str = "Dynamically registered capability";
 }

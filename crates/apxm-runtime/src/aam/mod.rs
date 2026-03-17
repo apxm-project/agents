@@ -332,6 +332,28 @@ pub struct Goal {
     pub description: String,
     pub priority: u32,
     pub status: GoalStatus,
+    /// Optional parent goal for hierarchical goal trees.
+    #[serde(default)]
+    pub parent_id: Option<GoalId>,
+}
+
+/// Controls which parts of an AAM dimension a child scope inherits.
+#[derive(Debug, Clone)]
+pub enum ScopePolicy {
+    /// Share all entries from the parent.
+    Inherit,
+    /// Start with empty state.
+    Isolate,
+    /// Inherit only the listed keys.
+    Filter(Vec<String>),
+}
+
+/// Per-dimension scope specification for `child_with_scope`.
+#[derive(Debug, Clone)]
+pub struct ScopeSpec {
+    pub beliefs: ScopePolicy,
+    pub capabilities: ScopePolicy,
+    pub goals: ScopePolicy,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -402,6 +424,16 @@ pub struct CapabilityRecord {
     pub cost_estimate: f64,
 }
 
+impl Default for ScopeSpec {
+    fn default() -> Self {
+        Self {
+            beliefs: ScopePolicy::Inherit,
+            capabilities: ScopePolicy::Inherit,
+            goals: ScopePolicy::Inherit,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -426,6 +458,7 @@ mod tests {
             description: "test".into(),
             priority: 90,
             status: GoalStatus::Active,
+            parent_id: None,
         };
         let record = aam.add_goal(goal.clone(), TransitionLabel::custom("goal"));
         assert!(

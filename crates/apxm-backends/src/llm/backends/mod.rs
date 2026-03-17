@@ -25,8 +25,8 @@ pub use request::{
     ContentPart, FunctionCall, GenerationConfig, LLMRequest, Message, RequestBuilder, Role,
     ToolChoice, ToolDefinition,
 };
-pub use response::{LLMResponse, StreamChunk, TokenUsage};
-pub use traits::{LLMBackend, StreamChunkStream};
+pub use response::{LLMResponse, TokenUsage};
+pub use traits::LLMBackend;
 
 use apxm_core::types::ProviderProtocol;
 use std::sync::Arc;

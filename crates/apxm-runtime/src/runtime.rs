@@ -155,6 +155,8 @@ impl Runtime {
             token_budget: self.config.token_budget,
             consumed_tokens: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             event_emitter,
+            token_accountant: Arc::new(crate::executor::TokenAccountant::new()),
+            response_cache: Arc::new(crate::executor::ResponseCache::new()),
         }
     }
 

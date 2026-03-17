@@ -11,6 +11,8 @@
 use super::{ExecutionContext, Node, Result, Value, get_string_attribute};
 use crate::aam::TransitionLabel;
 use crate::executor::ExecutorEngine;
+use apxm_core::constants::graph::attrs as graph_attrs;
+use apxm_core::constants::runtime::{belief_keys, metadata, response_keys};
 use apxm_core::error::RuntimeError;
 use std::collections::HashMap;
 
@@ -18,8 +20,8 @@ use std::collections::HashMap;
 const DELEGATE_FLOW_NAMES: &[&str] = &["delegate", "main"];
 
 pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -> Result<Value> {
-    let task_spec = get_string_attribute(node, "task_spec")?;
-    let target_agent = get_string_attribute(node, "target_agent")?;
+    let task_spec = get_string_attribute(node, graph_attrs::TASK_SPEC)?;
+    let target_agent = get_string_attribute(node, graph_attrs::TARGET_AGENT)?;
 
     tracing::info!(
         execution_id = %ctx.execution_id,
@@ -30,7 +32,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
 
     // Record delegation in AAM
     ctx.aam.set_belief(
-        format!("_delegate:{}", target_agent),
+        format!("{}{}", belief_keys::DELEGATE_PREFIX, target_agent),
         Value::String(task_spec.clone()),
         TransitionLabel::Custom(format!("delegate:{}", target_agent)),
     );
@@ -61,16 +63,16 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     // Create a child context for sub-flow execution
     let child_ctx = ctx
         .child()
-        .with_metadata("parent_execution_id".to_string(), ctx.execution_id.clone())
-        .with_metadata("delegate_task_spec".to_string(), task_spec.clone())
-        .with_metadata("delegate_target".to_string(), target_agent.clone());
+        .with_metadata(metadata::PARENT_EXECUTION_ID.to_string(), ctx.execution_id.clone())
+        .with_metadata(metadata::DELEGATE_TASK_SPEC.to_string(), task_spec.clone())
+        .with_metadata(metadata::DELEGATE_TARGET.to_string(), target_agent.clone());
 
     // Inject the task spec and any input into STM
     let _ = child_ctx
         .memory
         .write(
             crate::memory::MemorySpace::Stm,
-            "_delegate_task_spec".to_string(),
+            belief_keys::DELEGATE_TASK_SPEC.to_string(),
             Value::String(task_spec.clone()),
         )
         .await;
@@ -80,7 +82,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
             .memory
             .write(
                 crate::memory::MemorySpace::Stm,
-                "_delegate_input".to_string(),
+                belief_keys::DELEGATE_INPUT.to_string(),
                 input.clone(),
             )
             .await;
@@ -112,7 +114,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
 
     // Clear pending delegation belief
     ctx.aam.set_belief(
-        format!("_delegate:{}", target_agent),
+        format!("{}{}", belief_keys::DELEGATE_PREFIX, target_agent),
         Value::Null,
         TransitionLabel::Custom(format!("delegate_completed:{}", target_agent)),
     );
@@ -120,8 +122,8 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     // Return result with task handle metadata
     let task_handle = format!("delegate_{}_{}", target_agent, ctx.execution_id);
     let mut result_obj = HashMap::new();
-    result_obj.insert("task_handle".to_string(), Value::String(task_handle));
-    result_obj.insert("result".to_string(), response);
+    result_obj.insert(response_keys::TASK_HANDLE.to_string(), Value::String(task_handle));
+    result_obj.insert(response_keys::RESULT.to_string(), response);
 
     tracing::info!(
         execution_id = %ctx.execution_id,

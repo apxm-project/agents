@@ -212,6 +212,8 @@ impl ExecutionContext {
     /// - `ScopePolicy::Isolate` -- starts with empty state
     /// - `ScopePolicy::Filter(keys)` -- inherits only the listed keys
     pub fn child_with_scope(&self, scope: ScopeSpec) -> Self {
+        use apxm_core::constants::runtime::transition_labels as tl;
+
         let parent_aam = &self.aam;
         let child_aam = Aam::new();
 
@@ -223,7 +225,7 @@ impl ExecutionContext {
                     child_aam.set_belief(
                         k,
                         v,
-                        crate::aam::TransitionLabel::custom("scope:inherit_belief"),
+                        crate::aam::TransitionLabel::custom(tl::SCOPE_INHERIT_BELIEF),
                     );
                 }
             }
@@ -235,7 +237,7 @@ impl ExecutionContext {
                         child_aam.set_belief(
                             key.clone(),
                             v.clone(),
-                            crate::aam::TransitionLabel::custom("scope:filter_belief"),
+                            crate::aam::TransitionLabel::custom(tl::SCOPE_FILTER_BELIEF),
                         );
                     }
                 }
@@ -250,7 +252,7 @@ impl ExecutionContext {
                     child_aam.register_capability(
                         name,
                         record,
-                        crate::aam::TransitionLabel::custom("scope:inherit_capability"),
+                        crate::aam::TransitionLabel::custom(tl::SCOPE_INHERIT_CAPABILITY),
                     );
                 }
             }
@@ -262,7 +264,7 @@ impl ExecutionContext {
                         child_aam.register_capability(
                             key.clone(),
                             record.clone(),
-                            crate::aam::TransitionLabel::custom("scope:filter_capability"),
+                            crate::aam::TransitionLabel::custom(tl::SCOPE_FILTER_CAPABILITY),
                         );
                     }
                 }
@@ -276,7 +278,7 @@ impl ExecutionContext {
                 for goal in goals {
                     child_aam.add_goal(
                         goal,
-                        crate::aam::TransitionLabel::custom("scope:inherit_goal"),
+                        crate::aam::TransitionLabel::custom(tl::SCOPE_INHERIT_GOAL),
                     );
                 }
             }
@@ -287,7 +289,7 @@ impl ExecutionContext {
                     if keys.contains(&goal.description) {
                         child_aam.add_goal(
                             goal,
-                            crate::aam::TransitionLabel::custom("scope:filter_goal"),
+                            crate::aam::TransitionLabel::custom(tl::SCOPE_FILTER_GOAL),
                         );
                     }
                 }

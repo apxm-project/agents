@@ -2,9 +2,7 @@
 //!
 //! Implements the LLMBackend trait for Ollama's local model API.
 
-use crate::llm::backends::{
-    LLMBackend, LLMRequest, LLMResponse, Role, StreamChunk, StreamChunkStream,
-};
+use crate::llm::backends::{LLMBackend, LLMRequest, LLMResponse, Role};
 use anyhow::{Context, Result};
 use apxm_core::constants::graph::attrs::{BASE_URL, MODEL};
 use apxm_core::types::{FinishReason, ModelCapabilities, ModelInfo, TokenUsage};
@@ -228,101 +226,6 @@ impl LLMBackend for OllamaBackend {
         self.parse_response(api_response)
     }
 
-    async fn generate_stream(&self, request: LLMRequest) -> Result<StreamChunkStream> {
-        request.validate()?;
-
-        let mut body = self.build_request_body(&request);
-        body["stream"] = json!(true);
-
-        let url = format!("{}/api/generate", self.base_url);
-
-        tracing::debug!(
-            model = %self.model,
-            url = %url,
-            "Sending streaming request to Ollama"
-        );
-
-        let response = self
-            .client
-            .post(&url)
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
-            .await
-            .context("Failed to send streaming request to Ollama")?;
-
-        let status = response.status();
-        if !status.is_success() {
-            let error_text = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "Unknown error".to_string());
-            anyhow::bail!("Ollama API error (status {}): {}", status, error_text);
-        }
-
-        let model = self.model.clone();
-        let byte_stream = response.bytes_stream();
-
-        let stream = async_stream::try_stream! {
-            use tokio_stream::StreamExt;
-
-            let mut buf = String::new();
-            let mut total_prompt_eval = 0usize;
-            let mut total_eval = 0usize;
-
-            tokio::pin!(byte_stream);
-
-            while let Some(chunk_result) = byte_stream.next().await {
-                let chunk_bytes = chunk_result.context("Error reading Ollama stream")?;
-                buf.push_str(&String::from_utf8_lossy(&chunk_bytes));
-
-                while let Some(newline_pos) = buf.find('\n') {
-                    let line: String = buf.drain(..=newline_pos).collect();
-                    let line = line.trim();
-                    if line.is_empty() {
-                        continue;
-                    }
-
-                    let chunk: OllamaStreamChunk = match serde_json::from_str(line) {
-                        Ok(c) => c,
-                        Err(e) => {
-                            tracing::warn!(error = %e, "Failed to parse Ollama NDJSON chunk");
-                            continue;
-                        }
-                    };
-
-                    if !chunk.response.is_empty() {
-                        yield StreamChunk::Delta { content: chunk.response };
-                    }
-
-                    if let Some(n) = chunk.prompt_eval_count {
-                        total_prompt_eval = n;
-                    }
-                    if let Some(n) = chunk.eval_count {
-                        total_eval = n;
-                    }
-
-                    if chunk.done {
-                        yield StreamChunk::Done {
-                            usage: TokenUsage::new(total_prompt_eval, total_eval),
-                            finish_reason: FinishReason::Stop,
-                            model: model.clone(),
-                        };
-                        return;
-                    }
-                }
-            }
-
-            yield StreamChunk::Done {
-                usage: TokenUsage::new(total_prompt_eval, total_eval),
-                finish_reason: FinishReason::Stop,
-                model,
-            };
-        };
-
-        Ok(Box::pin(stream))
-    }
-
     fn name(&self) -> &str {
         "ollama"
     }
@@ -407,16 +310,4 @@ struct OllamaTags {
 #[derive(Debug, Deserialize)]
 struct OllamaModel {
     name: String,
-}
-
-/// Ollama streaming response chunk (NDJSON).
-#[derive(Debug, Deserialize)]
-struct OllamaStreamChunk {
-    #[serde(default)]
-    response: String,
-    done: bool,
-    #[serde(default)]
-    prompt_eval_count: Option<usize>,
-    #[serde(default)]
-    eval_count: Option<usize>,
 }

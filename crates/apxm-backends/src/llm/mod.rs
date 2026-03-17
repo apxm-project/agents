@@ -140,7 +140,7 @@ pub mod schema;
 pub use backends::{
     AnthropicModel, BackendFactory, ContentPart, FunctionCall, GenerationConfig, GoogleModel,
     LLMBackend, LLMRequest, LLMResponse, Message, OllamaModel, OpenAIModel, RequestBuilder, Role,
-    StreamChunk, StreamChunkStream, TokenUsage, ToolChoice, ToolDefinition,
+    TokenUsage, ToolChoice, ToolDefinition,
 };
 pub use observability::{AggregatedMetrics, MetricsTracker, RequestMetrics, RequestTracer};
 pub use provider::{Provider, ProviderId, RegisteredProvider};

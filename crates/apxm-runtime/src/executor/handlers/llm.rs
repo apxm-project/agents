@@ -18,7 +18,7 @@
 //! 5. Repeat until LLM returns text (no tool calls)
 
 use super::{
-    ExecutionContext, Node, Result, Value, execute_llm_request, execute_llm_request_stream,
+    ExecutionContext, Node, Result, Value, execute_llm_request,
     get_optional_string_attribute, get_optional_u64_attribute, get_string_attribute,
     inner_plan::{InnerPlanOptions, execute_inner_plan},
 };
@@ -635,14 +635,7 @@ async fn execute_llm_once(
     );
 
     // Execute LLM request through registry.
-    // Use streaming for Ask mode when an event emitter is present to emit
-    // tokens incrementally; otherwise fall back to batch generation.
-    let use_streaming = mode == LlmMode::Ask && ctx.event_emitter.is_some();
-    let response = if use_streaming {
-        execute_llm_request_stream(ctx, mode_name, request).await?
-    } else {
-        execute_llm_request(ctx, mode_name, request).await?
-    };
+    let response = execute_llm_request(ctx, mode_name, request).await?;
 
     charge_tokens(
         ctx,
@@ -671,11 +664,8 @@ async fn execute_llm_once(
     }
 
     let content = response.content;
-    // Only emit full content for non-streaming path (streaming already emitted tokens incrementally)
-    if !use_streaming {
-        if let Some(emitter) = &ctx.event_emitter {
-            emitter.emit_llm_token(&content);
-        }
+    if let Some(emitter) = &ctx.event_emitter {
+        emitter.emit_llm_token(&content);
     }
 
     // Store in memoization cache if deterministic
