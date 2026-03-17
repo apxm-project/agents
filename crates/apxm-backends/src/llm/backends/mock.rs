@@ -202,9 +202,21 @@ impl Default for MockLLMBackend {
 #[async_trait]
 impl LLMBackend for MockLLMBackend {
     async fn generate(&self, request: LLMRequest) -> anyhow::Result<LLMResponse> {
+        // Extract effective prompt: use structured messages if present, else prompt field
+        let effective_prompt = if request.has_messages() {
+            request
+                .resolved_messages()
+                .iter()
+                .map(|m| m.text_content())
+                .collect::<Vec<_>>()
+                .join(" ")
+        } else {
+            request.prompt.clone()
+        };
+
         // Record the call
         self.calls.lock().unwrap().push(RecordedCall {
-            prompt: request.prompt.clone(),
+            prompt: effective_prompt.clone(),
             system: request.system_prompt.clone(),
             model: self.model.clone(),
             temperature: request.temperature as f32,
@@ -215,7 +227,7 @@ impl LLMBackend for MockLLMBackend {
             return Err(anyhow::anyhow!("{}", err));
         }
 
-        let resp = self.select_response(&request.prompt);
+        let resp = self.select_response(&effective_prompt);
         Ok(LLMResponse::new(
             resp.content.clone(),
             self.model.clone(),

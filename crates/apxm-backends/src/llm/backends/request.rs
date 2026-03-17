@@ -43,11 +43,89 @@ pub enum ToolChoice {
     Specific(String),
 }
 
+/// Role of a message participant.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Role {
+    System,
+    User,
+    Assistant,
+    Tool,
+}
+
+/// A single content part within a message.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ContentPart {
+    Text { text: String },
+    Image { url: String, detail: Option<String> },
+    ToolCall { id: String, function: FunctionCall },
+}
+
+/// A function call reference inside a tool-call content part.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FunctionCall {
+    pub name: String,
+    pub arguments: serde_json::Value,
+}
+
+/// A structured message with role and content parts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Message {
+    pub role: Role,
+    pub content: Vec<ContentPart>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+impl Message {
+    /// Create a simple text message with the given role.
+    pub fn text(role: Role, text: impl Into<String>) -> Self {
+        Self {
+            role,
+            content: vec![ContentPart::Text { text: text.into() }],
+            tool_call_id: None,
+            name: None,
+        }
+    }
+
+    /// Create a tool-result message.
+    pub fn tool_result(tool_call_id: impl Into<String>, content: impl Into<String>) -> Self {
+        Self {
+            role: Role::Tool,
+            content: vec![ContentPart::Text {
+                text: content.into(),
+            }],
+            tool_call_id: Some(tool_call_id.into()),
+            name: None,
+        }
+    }
+
+    /// Return the concatenated text content of this message.
+    pub fn text_content(&self) -> String {
+        self.content
+            .iter()
+            .filter_map(|part| match part {
+                ContentPart::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("")
+    }
+}
+
 /// Request to send to an LLM backend.
 #[derive(Debug, Clone)]
 pub struct LLMRequest {
-    /// The main prompt/input text
+    /// The main prompt/input text (backward-compatible single-string field).
+    ///
+    /// When `messages` is empty, backends use this field as a single User message.
+    /// When `messages` is non-empty, backends prefer `messages` and ignore `prompt`.
     pub prompt: String,
+    /// Structured conversation messages (preferred over `prompt` when non-empty).
+    pub messages: Vec<Message>,
     /// Optional system prompt providing context
     pub system_prompt: Option<String>,
     /// Temperature controls randomness (0.0-2.0, typical: 0.7)
@@ -78,9 +156,13 @@ pub struct LLMRequest {
 
 impl LLMRequest {
     /// Create a new request with just a prompt.
+    ///
+    /// The prompt is stored in the `prompt` field for backward compatibility.
+    /// Backends auto-wrap it as a single User message when `messages` is empty.
     pub fn new(prompt: impl Into<String>) -> Self {
         LLMRequest {
             prompt: prompt.into(),
+            messages: Vec::new(),
             system_prompt: None,
             temperature: 0.7,
             max_tokens: None,
@@ -95,6 +177,65 @@ impl LLMRequest {
             tools: None,
             tool_choice: None,
         }
+    }
+
+    /// Create a new request from structured messages.
+    pub fn from_messages(messages: Vec<Message>) -> Self {
+        let prompt = messages
+            .iter()
+            .find(|m| m.role == Role::User)
+            .map(|m| m.text_content())
+            .unwrap_or_default();
+        LLMRequest {
+            prompt,
+            messages,
+            system_prompt: None,
+            temperature: 0.7,
+            max_tokens: None,
+            top_p: None,
+            frequency_penalty: None,
+            presence_penalty: None,
+            stop_sequences: Vec::new(),
+            metadata: HashMap::new(),
+            backend: None,
+            model: None,
+            operation_type: None,
+            tools: None,
+            tool_choice: None,
+        }
+    }
+
+    /// Set structured messages on this request.
+    pub fn with_messages(mut self, messages: Vec<Message>) -> Self {
+        self.messages = messages;
+        self
+    }
+
+    /// Add a single message to the conversation.
+    pub fn add_message(mut self, message: Message) -> Self {
+        self.messages.push(message);
+        self
+    }
+
+    /// Return true when this request carries structured messages.
+    pub fn has_messages(&self) -> bool {
+        !self.messages.is_empty()
+    }
+
+    /// Resolve messages for backend consumption.
+    ///
+    /// If `messages` is non-empty, returns a clone of it.
+    /// Otherwise, synthesizes messages from `prompt` (and optionally `system_prompt`).
+    pub fn resolved_messages(&self) -> Vec<Message> {
+        if !self.messages.is_empty() {
+            return self.messages.clone();
+        }
+        let mut msgs = Vec::new();
+        if let Some(system) = &self.system_prompt {
+            msgs.push(Message::text(Role::System, system.clone()));
+        }
+        msgs.push(Message::text(Role::User, &self.prompt));
+        msgs
     }
 
     /// Set the system prompt.
@@ -188,8 +329,10 @@ impl LLMRequest {
 
     /// Validate request parameters.
     pub fn validate(&self) -> anyhow::Result<()> {
-        if self.prompt.is_empty() {
-            return Err(anyhow::anyhow!("Prompt cannot be empty"));
+        if self.prompt.is_empty() && self.messages.is_empty() {
+            return Err(anyhow::anyhow!(
+                "Request must have a non-empty prompt or at least one message"
+            ));
         }
 
         if self.temperature < 0.0 || self.temperature > 2.0 {
@@ -267,6 +410,12 @@ impl RequestBuilder {
         self
     }
 
+    /// Set structured messages.
+    pub fn messages(mut self, messages: Vec<Message>) -> Self {
+        self.request = self.request.with_messages(messages);
+        self
+    }
+
     /// Build the final request.
     pub fn build(self) -> anyhow::Result<LLMRequest> {
         self.request.validate()?;
@@ -335,6 +484,7 @@ mod tests {
         let req = LLMRequest::new("Hello");
         assert_eq!(req.prompt, "Hello");
         assert_eq!(req.temperature, 0.7);
+        assert!(req.messages.is_empty());
     }
 
     #[test]
@@ -351,8 +501,13 @@ mod tests {
 
     #[test]
     fn test_request_validation() {
+        // Empty prompt with no messages should fail
         let req = LLMRequest::new("");
         assert!(req.validate().is_err());
+
+        // Empty prompt but with messages should pass
+        let req = LLMRequest::from_messages(vec![Message::text(Role::User, "Hello")]);
+        assert!(req.validate().is_ok());
 
         let req = LLMRequest {
             temperature: 3.0,
@@ -427,10 +582,72 @@ mod tests {
         let required = ToolChoice::Required;
         let specific = ToolChoice::Specific("bash".to_string());
 
-        // Test that they're different
         assert!(matches!(auto, ToolChoice::Auto));
         assert!(matches!(none, ToolChoice::None));
         assert!(matches!(required, ToolChoice::Required));
         assert!(matches!(specific, ToolChoice::Specific(_)));
+    }
+
+    #[test]
+    fn test_structured_messages() {
+        let messages = vec![
+            Message::text(Role::System, "You are helpful"),
+            Message::text(Role::User, "Hello"),
+        ];
+
+        let req = LLMRequest::from_messages(messages);
+        assert!(req.has_messages());
+        assert_eq!(req.messages.len(), 2);
+        assert_eq!(req.messages[0].role, Role::System);
+        assert_eq!(req.messages[1].role, Role::User);
+        assert_eq!(req.prompt, "Hello");
+    }
+
+    #[test]
+    fn test_resolved_messages_from_prompt() {
+        let req = LLMRequest::new("Hello").with_system_prompt("Be helpful");
+        let msgs = req.resolved_messages();
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].role, Role::System);
+        assert_eq!(msgs[0].text_content(), "Be helpful");
+        assert_eq!(msgs[1].role, Role::User);
+        assert_eq!(msgs[1].text_content(), "Hello");
+    }
+
+    #[test]
+    fn test_resolved_messages_from_messages() {
+        let messages = vec![
+            Message::text(Role::User, "First"),
+            Message::text(Role::Assistant, "Response"),
+            Message::text(Role::User, "Follow-up"),
+        ];
+        let req = LLMRequest::from_messages(messages);
+        let msgs = req.resolved_messages();
+        assert_eq!(msgs.len(), 3);
+    }
+
+    #[test]
+    fn test_message_text_content() {
+        let msg = Message::text(Role::User, "Hello world");
+        assert_eq!(msg.text_content(), "Hello world");
+    }
+
+    #[test]
+    fn test_tool_result_message() {
+        let msg = Message::tool_result("call_123", "output text");
+        assert_eq!(msg.role, Role::Tool);
+        assert_eq!(msg.tool_call_id, Some("call_123".to_string()));
+        assert_eq!(msg.text_content(), "output text");
+    }
+
+    #[test]
+    fn test_message_serialization() {
+        let msg = Message::text(Role::User, "Hello");
+        let json = serde_json::to_value(&msg).unwrap();
+        assert_eq!(json["role"], "user");
+
+        let deserialized: Message = serde_json::from_value(json).unwrap();
+        assert_eq!(deserialized.role, Role::User);
+        assert_eq!(deserialized.text_content(), "Hello");
     }
 }

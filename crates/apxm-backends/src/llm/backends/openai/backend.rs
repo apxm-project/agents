@@ -6,7 +6,10 @@
 //! This file updates the provider default model and the list of known models
 //! surfaced by `list_models()` to reflect more recent model names.
 
-use crate::llm::backends::{LLMBackend, LLMRequest, LLMResponse, ToolChoice};
+use crate::llm::backends::{
+    ContentPart, LLMBackend, LLMRequest, LLMResponse, Role, StreamChunk, StreamChunkStream,
+    ToolChoice,
+};
 use anyhow::{Context, Result};
 use apxm_core::constants::graph::attrs::{BASE_URL, MODEL};
 use apxm_core::types::{FinishReason, ModelCapabilities, ModelInfo, TokenUsage, ToolCall};
@@ -98,32 +101,91 @@ impl OpenAIBackend {
         })
     }
 
+    /// Convert a structured Message to OpenAI JSON format.
+    fn message_to_openai_json(msg: &crate::llm::backends::Message) -> serde_json::Value {
+        let role = match msg.role {
+            Role::System => "system",
+            Role::User => "user",
+            Role::Assistant => "assistant",
+            Role::Tool => "tool",
+        };
+        let mut obj = json!({ "role": role });
+
+        if let Some(ref tool_call_id) = msg.tool_call_id {
+            obj["tool_call_id"] = json!(tool_call_id);
+        }
+
+        let text_parts: Vec<&str> = msg
+            .content
+            .iter()
+            .filter_map(|p| match p {
+                ContentPart::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+
+        let tool_call_parts: Vec<serde_json::Value> = msg
+            .content
+            .iter()
+            .filter_map(|p| match p {
+                ContentPart::ToolCall { id, function } => Some(json!({
+                    "id": id,
+                    "type": "function",
+                    "function": {
+                        "name": function.name,
+                        "arguments": function.arguments.to_string()
+                    }
+                })),
+                _ => None,
+            })
+            .collect();
+
+        let image_parts: Vec<serde_json::Value> = msg
+            .content
+            .iter()
+            .filter_map(|p| match p {
+                ContentPart::Image { url, detail } => {
+                    let mut img = json!({ "type": "image_url", "image_url": { "url": url } });
+                    if let Some(d) = detail {
+                        img["image_url"]["detail"] = json!(d);
+                    }
+                    Some(img)
+                }
+                _ => None,
+            })
+            .collect();
+
+        if !tool_call_parts.is_empty() {
+            obj["tool_calls"] = json!(tool_call_parts);
+        }
+
+        if image_parts.is_empty() {
+            obj["content"] = json!(text_parts.join(""));
+        } else {
+            let mut content_arr: Vec<serde_json::Value> = text_parts
+                .iter()
+                .map(|t| json!({ "type": "text", "text": t }))
+                .collect();
+            content_arr.extend(image_parts);
+            obj["content"] = json!(content_arr);
+        }
+
+        obj
+    }
+
     /// Build request body for OpenAI API.
     fn build_request_body(&self, request: &LLMRequest) -> serde_json::Value {
+        let messages: Vec<serde_json::Value> = request
+            .resolved_messages()
+            .iter()
+            .map(Self::message_to_openai_json)
+            .collect();
+
         let mut body = json!({
             "model": self.model,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": request.prompt
-                }
-            ],
+            "messages": messages,
             "temperature": request.temperature,
         });
-
-        // Add system prompt if provided
-        if let Some(system) = &request.system_prompt {
-            body["messages"] = json!([
-                {
-                    "role": "system",
-                    "content": system
-                },
-                {
-                    "role": "user",
-                    "content": request.prompt
-                }
-            ]);
-        }
 
         // Add optional parameters
         if let Some(max_tokens) = request.max_tokens {
@@ -284,6 +346,84 @@ impl LLMBackend for OpenAIBackend {
         self.parse_response(api_response)
     }
 
+    async fn generate_stream(&self, request: LLMRequest) -> Result<StreamChunkStream> {
+        request.validate()?;
+        let mut body = self.build_request_body(&request);
+        body["stream"] = json!(true);
+        body["stream_options"] = json!({ "include_usage": true });
+        let url = format!("{}/chat/completions", self.base_url);
+
+        tracing::debug!(model = %self.model, url = %url, "Sending streaming request to OpenAI");
+
+        let mut req_builder = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json");
+        for (name, value) in &self.extra_headers {
+            req_builder = req_builder.header(name.as_str(), value.as_str());
+        }
+        let response = req_builder
+            .json(&body)
+            .send()
+            .await
+            .context("Failed to send streaming request to OpenAI")?;
+        let status = response.status();
+        if !status.is_success() {
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
+            anyhow::bail!("OpenAI API error (status {}): {}", status, error_text);
+        }
+        let model = self.model.clone();
+        let byte_stream = response.bytes_stream();
+
+        let stream = async_stream::try_stream! {
+            use tokio_stream::StreamExt;
+            let mut sse = SseLineStream::new(byte_stream);
+            let mut finish_reason = FinishReason::Unknown;
+            let mut usage: Option<TokenUsage> = None;
+
+            while let Some(maybe_data) = sse.next().await {
+                let Some(data) = maybe_data else { continue; };
+                if data == "[DONE]" {
+                    break;
+                }
+                let chunk: OpenAIStreamChunk = match serde_json::from_str(&data) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "Failed to parse SSE chunk");
+                        continue;
+                    }
+                };
+                if let Some(u) = chunk.usage {
+                    usage = Some(TokenUsage::new(u.prompt_tokens, u.completion_tokens));
+                }
+                if let Some(choice) = chunk.choices.first() {
+                    if let Some(ref fr) = choice.finish_reason {
+                        finish_reason = FinishReason::from_string(fr);
+                    }
+                    if let Some(ref delta) = choice.delta {
+                        if let Some(ref content) = delta.content {
+                            if !content.is_empty() {
+                                yield StreamChunk::Delta { content: content.clone() };
+                            }
+                        }
+                    }
+                }
+            }
+
+            yield StreamChunk::Done {
+                usage: usage.unwrap_or_else(|| TokenUsage::new(0, 0)),
+                finish_reason,
+                model,
+            };
+        };
+
+        Ok(Box::pin(stream))
+    }
+
     fn name(&self) -> &str {
         "openai"
     }
@@ -386,6 +526,98 @@ struct OpenAIFunction {
 struct Usage {
     prompt_tokens: usize,
     completion_tokens: usize,
+}
+
+// ── SSE streaming types ──────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct OpenAIStreamChunk {
+    #[serde(default)]
+    choices: Vec<StreamChoice>,
+    #[serde(default)]
+    usage: Option<Usage>,
+}
+
+#[derive(Debug, Deserialize)]
+struct StreamChoice {
+    #[serde(default)]
+    delta: Option<StreamDelta>,
+    #[serde(default)]
+    finish_reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct StreamDelta {
+    #[serde(default)]
+    content: Option<String>,
+}
+
+/// Adapter that reads a reqwest `bytes_stream()` and yields SSE `data:` payload strings.
+struct SseLineStream<S> {
+    inner: S,
+    buf: String,
+}
+
+impl<S> SseLineStream<S> {
+    fn new(inner: S) -> Self {
+        Self {
+            inner,
+            buf: String::new(),
+        }
+    }
+}
+
+impl<S> futures_core::Stream for SseLineStream<S>
+where
+    S: futures_core::Stream<Item = std::result::Result<bytes::Bytes, reqwest::Error>> + Unpin,
+{
+    type Item = Option<String>;
+
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        use std::task::Poll;
+
+        loop {
+            // Try to extract a complete line from buffer
+            if let Some(newline_pos) = self.buf.find('\n') {
+                let line: String = self.buf.drain(..=newline_pos).collect();
+                let line = line.trim().to_string();
+                if line.is_empty() {
+                    continue;
+                }
+                if let Some(data) = line.strip_prefix("data: ") {
+                    return Poll::Ready(Some(Some(data.trim().to_string())));
+                }
+                // Skip non-data SSE lines (event:, id:, retry:, comments)
+                continue;
+            }
+
+            // Need more data from the inner stream
+            match std::pin::Pin::new(&mut self.inner).poll_next(cx) {
+                Poll::Ready(Some(Ok(bytes))) => {
+                    self.buf.push_str(&String::from_utf8_lossy(&bytes));
+                }
+                Poll::Ready(Some(Err(e))) => {
+                    tracing::warn!(error = %e, "Error reading SSE stream");
+                    return Poll::Ready(None);
+                }
+                Poll::Ready(None) => {
+                    // Stream ended; process any remaining data
+                    if !self.buf.trim().is_empty() {
+                        let remaining = std::mem::take(&mut self.buf);
+                        let line = remaining.trim().to_string();
+                        if let Some(data) = line.strip_prefix("data: ") {
+                            return Poll::Ready(Some(Some(data.trim().to_string())));
+                        }
+                    }
+                    return Poll::Ready(None);
+                }
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+    }
 }
 
 #[cfg(test)]

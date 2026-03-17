@@ -2,7 +2,7 @@
 //!
 //! Implements the LLMBackend trait for Google's Gemini API.
 
-use crate::llm::backends::{LLMBackend, LLMRequest, LLMResponse};
+use crate::llm::backends::{LLMBackend, LLMRequest, LLMResponse, Role};
 use anyhow::{Context, Result};
 use apxm_core::constants::graph::attrs::{BASE_URL, MODEL};
 use apxm_core::types::{FinishReason, ModelCapabilities, ModelInfo, TokenUsage};
@@ -49,10 +49,43 @@ impl GoogleBackend {
 
     /// Build request body for Google AI API.
     fn build_request_body(&self, request: &LLMRequest) -> serde_json::Value {
-        let contents = vec![json!({
-            "role": "user",
-            "parts": [{ "text": request.prompt }]
-        })];
+        let all_messages = request.resolved_messages();
+
+        // Separate system messages for Google's systemInstruction field
+        let system_parts: Vec<serde_json::Value> = all_messages
+            .iter()
+            .filter(|m| m.role == Role::System)
+            .map(|m| json!({ "text": m.text_content() }))
+            .collect();
+
+        // Map conversation messages to Google's contents format
+        let contents: Vec<serde_json::Value> = all_messages
+            .iter()
+            .filter(|m| m.role != Role::System)
+            .map(|msg| {
+                let role = match msg.role {
+                    Role::User | Role::Tool => "user",
+                    Role::Assistant => "model",
+                    Role::System => unreachable!(),
+                };
+                let parts: Vec<serde_json::Value> = msg
+                    .content
+                    .iter()
+                    .map(|p| match p {
+                        crate::llm::backends::ContentPart::Text { text } => {
+                            json!({ "text": text })
+                        }
+                        crate::llm::backends::ContentPart::Image { url, .. } => {
+                            json!({ "text": format!("[image: {}]", url) })
+                        }
+                        crate::llm::backends::ContentPart::ToolCall { function, .. } => {
+                            json!({ "text": format!("[tool_call: {}]", function.name) })
+                        }
+                    })
+                    .collect();
+                json!({ "role": role, "parts": parts })
+            })
+            .collect();
 
         let mut body = json!({
             "contents": contents,
@@ -64,14 +97,12 @@ impl GoogleBackend {
             }
         });
 
-        if let Some(system) = &request.system_prompt {
+        if !system_parts.is_empty() {
             body.as_object_mut()
                 .expect("generation payload must be object")
                 .insert(
                     "systemInstruction".to_string(),
-                    json!({
-                        "parts": [{ "text": system }]
-                    }),
+                    json!({ "parts": system_parts }),
                 );
         }
 

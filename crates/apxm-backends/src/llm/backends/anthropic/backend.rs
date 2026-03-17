@@ -4,7 +4,7 @@
 //! This file updates the default model and the set of models returned by
 //! `list_models()` to include newer Claude model identifiers.
 
-use crate::llm::backends::{LLMBackend, LLMRequest, LLMResponse, ToolChoice};
+use crate::llm::backends::{ContentPart, LLMBackend, LLMRequest, LLMResponse, Role, ToolChoice};
 use anyhow::{Context, Result};
 use apxm_core::constants::graph::attrs::{BASE_URL, MODEL};
 use apxm_core::log_debug;
@@ -50,23 +50,85 @@ impl AnthropicBackend {
         })
     }
 
+    /// Convert content parts to Anthropic format.
+    fn content_parts_to_anthropic(parts: &[ContentPart]) -> serde_json::Value {
+        if parts.len() == 1 {
+            if let Some(ContentPart::Text { text }) = parts.first() {
+                return json!(text);
+            }
+        }
+        let anthropic_parts: Vec<serde_json::Value> = parts
+            .iter()
+            .filter_map(|p| match p {
+                ContentPart::Text { text } => Some(json!({ "type": "text", "text": text })),
+                ContentPart::Image { url, .. } => Some(json!({
+                    "type": "image",
+                    "source": { "type": "url", "url": url }
+                })),
+                ContentPart::ToolCall { id, function } => Some(json!({
+                    "type": "tool_use",
+                    "id": id,
+                    "name": function.name,
+                    "input": function.arguments
+                })),
+            })
+            .collect();
+        json!(anthropic_parts)
+    }
+
+    /// Convert a structured Message to Anthropic JSON format.
+    fn message_to_anthropic_json(msg: &crate::llm::backends::Message) -> serde_json::Value {
+        let role = match msg.role {
+            Role::User | Role::Tool => "user",
+            Role::Assistant => "assistant",
+            Role::System => "user",
+        };
+
+        if msg.role == Role::Tool {
+            if let Some(ref tool_call_id) = msg.tool_call_id {
+                return json!({
+                    "role": "user",
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": tool_call_id,
+                        "content": msg.text_content()
+                    }]
+                });
+            }
+        }
+
+        json!({
+            "role": role,
+            "content": Self::content_parts_to_anthropic(&msg.content)
+        })
+    }
+
     /// Build request body for Anthropic API.
     fn build_request_body(&self, request: &LLMRequest) -> serde_json::Value {
+        let all_messages = request.resolved_messages();
+
+        let system_text: String = all_messages
+            .iter()
+            .filter(|m| m.role == Role::System)
+            .map(|m| m.text_content())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let conversation_messages: Vec<serde_json::Value> = all_messages
+            .iter()
+            .filter(|m| m.role != Role::System)
+            .map(Self::message_to_anthropic_json)
+            .collect();
+
         let mut body = json!({
             "model": self.model,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": request.prompt
-                }
-            ],
+            "messages": conversation_messages,
             "max_tokens": request.max_tokens.unwrap_or(4096),
             "temperature": request.temperature,
         });
 
-        // Add system prompt if provided
-        if let Some(system) = &request.system_prompt {
-            body["system"] = json!(system);
+        if !system_text.is_empty() {
+            body["system"] = json!(system_text);
         }
 
         // Add optional parameters

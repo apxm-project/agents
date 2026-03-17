@@ -100,6 +100,7 @@ pub mod graph {
         pub const HANDOFF_FROM: &str = "handoff_from";
         pub const HANDOFF_TO: &str = "handoff_to";
         pub const GUARDRAIL_KIND: &str = "guardrail_kind";
+        pub const MAX_TOOL_ITERATIONS: &str = "max_tool_iterations";
     }
 }
 
