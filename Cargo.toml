@@ -1,0 +1,23 @@
+[workspace]
+members = [
+	"crates/apxm-ais",
+	"crates/apxm-cli",
+	"crates/apxm-compiler",
+	"crates/apxm-driver",
+	"crates/apxm-server",
+	"crates/apxm-graph",
+	"crates/apxm-tools",
+	"crates/apxm-credentials",
+	"crates/apxm-core",
+	"crates/apxm-runtime",
+	"crates/apxm-artifact",
+	"crates/apxm-backends"
+]
+
+resolver = "3"
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+
+[workspace.dependencies]

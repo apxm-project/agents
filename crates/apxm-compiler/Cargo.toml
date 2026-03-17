@@ -1,0 +1,40 @@
+[package]
+name = "apxm-compiler"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+# AIS (single source of truth for operations)
+apxm-ais = { version = "0.0.1", path = "../apxm-ais" }
+apxm-graph = { version = "0.0.1", path = "../apxm-graph" }
+
+# core (will be phased out)
+apxm-core = { version = "0.0.1", path = "../apxm-core" }
+apxm-artifact = { version = "0.1.0", path = "../apxm-artifact" }
+
+# FFI
+libc = "0.2"
+
+# serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "2.0"
+
+[dev-dependencies]
+insta = { version = "1.0", features = ["yaml"] }
+tempfile = "3.0"
+
+[features]
+# Enable tests that require a real MLIR/LLVM installation.
+# Without this feature, MLIR-dependent tests are automatically skipped.
+mlir = []
+
+[build-dependencies]
+anyhow = "1.0"
+apxm-core = { version = "0.0.1", path = "../apxm-core" }
+apxm-ais = { version = "0.0.1", path = "../apxm-ais" }
+bindgen = "0.72"
+tracing = "0.1"
