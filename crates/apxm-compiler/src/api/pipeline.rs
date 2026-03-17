@@ -63,7 +63,7 @@ impl<'ctx> Pipeline<'ctx> {
             module.verify()?;
         }
 
-        let pm = PassManager::from_opt_level(self.context, self.config.opt_level)?;
+        let pm = PassManager::from_config(self.context, &self.config)?;
         pm.run(&module)?;
 
         if self.config.verify {

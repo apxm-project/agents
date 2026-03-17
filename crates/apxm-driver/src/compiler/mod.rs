@@ -1,7 +1,7 @@
 //! Compiler wrapper used by the driver.
 
 use apxm_compiler::{Context, Module, Pipeline};
-use apxm_core::types::OptimizationLevel;
+use apxm_core::types::{OptimizationLevel, PipelineConfig};
 use apxm_core::utils::build::MlirEnvReport;
 use apxm_graph::ApxmGraph;
 use std::fs;
@@ -58,6 +58,16 @@ impl Compiler {
     /// Compile an in-memory graph by lowering to MLIR and running optimizer passes.
     pub fn compile_graph(&self, graph: &ApxmGraph) -> Result<Module, DriverError> {
         let pipeline = Pipeline::with_opt_level(&self.context, self.opt_level);
+        pipeline.compile_graph(graph).map_err(DriverError::Compiler)
+    }
+
+    /// Compile an in-memory graph with a custom pipeline configuration.
+    pub fn compile_graph_with_config(
+        &self,
+        graph: &ApxmGraph,
+        config: PipelineConfig,
+    ) -> Result<Module, DriverError> {
+        let pipeline = Pipeline::with_config(&self.context, config);
         pipeline.compile_graph(graph).map_err(DriverError::Compiler)
     }
 

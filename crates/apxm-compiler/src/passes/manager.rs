@@ -36,7 +36,7 @@ impl<'ctx> PassManager<'ctx> {
         config: &apxm_core::types::PipelineConfig,
     ) -> Result<Self> {
         let mut pm = Self::new(context)?;
-        super::pipeline::build_pipeline_with_config(&mut pm, config.opt_level, false)?;
+        super::pipeline::build_pipeline_with_config(&mut pm, config.opt_level, config.no_cse_llm)?;
         Ok(pm)
     }
 
