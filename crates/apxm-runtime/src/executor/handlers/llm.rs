@@ -652,7 +652,7 @@ async fn execute_llm_once(
 
     // Record token usage in accountant
     {
-        let flow_name = node.attributes.get("flow_name").and_then(|v| v.as_string());
+        let flow_name = node.attributes.get(graph_attrs::FLOW_NAME).and_then(|v| v.as_string());
         let agent_name = ctx.current_agent.as_ref().map(|a| a.name.as_str());
         ctx.token_accountant.record(
             node.id,
@@ -768,7 +768,7 @@ async fn execute_ask_with_tools(
 
         // Record token usage in accountant
         {
-            let flow_name = node.attributes.get("flow_name").and_then(|v| v.as_string());
+            let flow_name = node.attributes.get(graph_attrs::FLOW_NAME).and_then(|v| v.as_string());
             let agent_name = ctx.current_agent.as_ref().map(|a| a.name.as_str());
             ctx.token_accountant.record(
                 node.id,
