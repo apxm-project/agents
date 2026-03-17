@@ -1,0 +1,35 @@
+[package]
+name = "apxm-server"
+version = "0.1.0"
+edition = "2024"
+description = "HTTP API wrapper for APXM runtime"
+
+[dependencies]
+apxm-artifact = { path = "../apxm-artifact" }
+apxm-compiler = { path = "../apxm-compiler" }
+apxm-core = { path = "../apxm-core" }
+apxm-graph = { path = "../apxm-graph" }
+apxm-runtime = { path = "../apxm-runtime", features = ["metrics"] }
+
+anyhow = "1.0"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+async-trait = "0.1"
+dashmap = "6.0"
+uuid = { version = "1.0", features = ["v4"] }
+async-stream = "0.3"
+axum = { version = "0.7", features = ["json"] }
+futures = "0.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "sync", "signal"] }
+tower = { version = "0.4", features = ["util"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "request-id", "set-header"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+
+[[bin]]
+name = "apxm-mcp-server"
+path = "src/bin/apxm_mcp.rs"
+
+[dev-dependencies]
+http-body-util = "0.1"
