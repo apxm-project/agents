@@ -31,7 +31,7 @@ mod runtime;
 pub mod scheduler;
 
 pub use aam::{
-    Aam, CapabilityRecord, CompletionPolicy, Goal, GoalId, GoalNode, GoalStatus, GoalTree,
+    Aam, CapabilityRecord, Goal, GoalId, GoalStatus,
     ScopePolicy, ScopeSpec, STAGED_BELIEF_PREFIX, TransitionLabel,
     effects::{AamComponent, OperationEffects, operation_effects},
 };
