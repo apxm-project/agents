@@ -71,9 +71,14 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Initialize a new APXM project directory
+    Init {
+        /// Project name (creates a directory with this name)
+        name: String,
+    },
     /// Compile ApxmGraph JSON/binary to an artifact
     Compile {
-        /// Input graph file (.json or JSON-encoded binary)
+        /// Input graph file or directory (.json or JSON-encoded binary)
         input: PathBuf,
         /// Output artifact path
         #[arg(short, long)]
@@ -84,6 +89,17 @@ enum Commands {
         /// Optimization level (0 = no optimizations, 1-3 = increasing optimization)
         #[arg(short = 'O', long = "opt-level", default_value = "1")]
         opt_level: u8,
+        /// Skip CSE for LLM operations (useful with non-zero temperature)
+        #[arg(long)]
+        no_cse_llm: bool,
+    },
+    /// Decompile an artifact back to graph JSON
+    Decompile {
+        /// Input artifact file (.apxmobj)
+        artifact: PathBuf,
+        /// Output JSON file (defaults to stdout)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
     },
     /// Compile and execute an ApxmGraph file through the runtime
     #[command(trailing_var_arg = true)]
@@ -417,12 +433,15 @@ async fn run_cli() -> Result<()> {
     initialize_tracing(&cli.trace);
 
     match cli.command {
+        Commands::Init { name } => init_command(&name),
         Commands::Compile {
             input,
             output,
             emit_diagnostics,
             opt_level,
-        } => compile_command(input, output, emit_diagnostics, opt_level),
+            no_cse_llm,
+        } => compile_command(input, output, emit_diagnostics, opt_level, no_cse_llm),
+        Commands::Decompile { artifact, output } => decompile_command(artifact, output),
         Commands::Execute {
             input,
             args,
@@ -452,6 +471,7 @@ async fn run_cli() -> Result<()> {
 async fn run_cli_no_driver() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
+        Commands::Init { name } => init_command(&name),
         Commands::Doctor => doctor_command(cli.config, cli.json),
         Commands::Activate { shell } => activate_command(&shell),
         Commands::Install => install_command(),
@@ -562,25 +582,79 @@ fn command_available(cmd: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn init_command(name: &str) -> Result<()> {
+    let base = PathBuf::from(name);
+    if base.exists() {
+        return Err(anyhow::anyhow!("Directory '{}' already exists", name));
+    }
+
+    let dirs = ["agents", "flows", "nodes", "prompts", "tools"];
+    for d in &dirs {
+        std::fs::create_dir_all(base.join(d))
+            .map_err(|e| anyhow::anyhow!("Failed to create {}/{}: {}", name, d, e))?;
+    }
+
+    let toml_content = format!(
+        r#"[project]
+name = "{name}"
+version = "0.1.0"
+
+[build]
+opt_level = "O1"
+
+[runtime]
+max_parallel = 4
+"#
+    );
+    std::fs::write(base.join("apxm.toml"), toml_content)
+        .map_err(|e| anyhow::anyhow!("Failed to write {}/apxm.toml: {}", name, e))?;
+
+    println!("Initialized APXM project '{}'", name);
+    for d in &dirs {
+        println!("  {}/{}/", name, d);
+    }
+    println!("  {}/apxm.toml", name);
+    Ok(())
+}
+
 #[cfg(feature = "driver")]
 fn compile_command(
     input: PathBuf,
     output: Option<PathBuf>,
     emit_diagnostics: Option<PathBuf>,
     opt_level: u8,
+    no_cse_llm: bool,
 ) -> Result<()> {
     use apxm_core::constants::diagnostics;
+    use apxm_core::types::PipelineConfig;
 
     let opt = parse_opt_level(opt_level);
 
     let compile_start = std::time::Instant::now();
     let compiler = Compiler::with_opt_level(opt).context("Failed to initialize compiler")?;
-    let graph = compiler
-        .load_graph(&input)
-        .map_err(|e| anyhow::anyhow!("Failed to parse graph: {e}"))?;
-    let module = compiler
-        .compile_graph(&graph)
-        .map_err(|e| anyhow::anyhow!("Failed to compile graph: {e}"))?;
+
+    let graph = if input.is_dir() {
+        load_graph_from_directory(&input)?
+    } else {
+        compiler
+            .load_graph(&input)
+            .map_err(|e| anyhow::anyhow!("Failed to parse graph: {e}"))?
+    };
+
+    let module = if no_cse_llm {
+        let config = PipelineConfig {
+            opt_level: opt,
+            verify: true,
+            no_cse_llm: true,
+        };
+        compiler
+            .compile_graph_with_config(&graph, config)
+            .map_err(|e| anyhow::anyhow!("Failed to compile graph: {e}"))?
+    } else {
+        compiler
+            .compile_graph(&graph)
+            .map_err(|e| anyhow::anyhow!("Failed to compile graph: {e}"))?
+    };
     let compile_time = compile_start.elapsed();
 
     let artifact_start = std::time::Instant::now();
@@ -589,7 +663,13 @@ fn compile_command(
         .context("Failed to generate artifact")?;
     let artifact_time = artifact_start.elapsed();
 
-    let out_path = output.unwrap_or_else(|| input.with_extension("apxmobj"));
+    let out_path = output.unwrap_or_else(|| {
+        if input.is_dir() {
+            input.join(format!("{}.apxmobj", graph.name))
+        } else {
+            input.with_extension("apxmobj")
+        }
+    });
     std::fs::write(&out_path, &bytes)
         .with_context(|| format!("Failed to write {}", out_path.display()))?;
 
@@ -635,6 +715,125 @@ fn compile_command(
         artifact_time.as_secs_f64() * 1000.0
     );
     Ok(())
+}
+
+#[cfg(feature = "driver")]
+fn decompile_command(artifact_path: PathBuf, output: Option<PathBuf>) -> Result<()> {
+    let bytes = std::fs::read(&artifact_path)
+        .with_context(|| format!("Failed to read {}", artifact_path.display()))?;
+    let artifact = apxm_artifact::Artifact::from_bytes(&bytes)
+        .map_err(|e| anyhow::anyhow!("Failed to parse artifact: {}", e))?;
+    let dag = artifact
+        .dag()
+        .ok_or_else(|| anyhow::anyhow!("Artifact contains no DAGs"))?;
+
+    let graph = dag_to_graph(dag);
+    let json = serde_json::to_string_pretty(&graph)?;
+
+    if let Some(out_path) = output {
+        std::fs::write(&out_path, &json)
+            .with_context(|| format!("Failed to write {}", out_path.display()))?;
+        println!("Decompiled to {}", out_path.display());
+    } else {
+        println!("{}", json);
+    }
+    Ok(())
+}
+
+#[cfg(feature = "driver")]
+fn dag_to_graph(dag: &apxm_core::types::execution::ExecutionDag) -> apxm_graph::ApxmGraph {
+    use apxm_graph::{GraphEdge, GraphNode};
+
+    let nodes: Vec<GraphNode> = dag
+        .nodes
+        .iter()
+        .map(|n| GraphNode {
+            id: n.id,
+            name: format!("node_{}", n.id),
+            op: n.op_type,
+            attributes: n.attributes.clone(),
+        })
+        .collect();
+
+    let edges: Vec<GraphEdge> = dag
+        .edges
+        .iter()
+        .map(|e| GraphEdge {
+            from: e.from,
+            to: e.to,
+            dependency: e.dependency_type.clone(),
+        })
+        .collect();
+
+    let parameters: Vec<apxm_graph::Parameter> = dag
+        .metadata
+        .parameters
+        .iter()
+        .map(|p| apxm_graph::Parameter {
+            name: p.name.clone(),
+            type_name: p.type_name.clone(),
+        })
+        .collect();
+
+    apxm_graph::ApxmGraph {
+        name: dag
+            .metadata
+            .name
+            .clone()
+            .unwrap_or_else(|| "decompiled".to_string()),
+        nodes,
+        edges,
+        parameters,
+        metadata: std::collections::HashMap::new(),
+    }
+}
+
+#[cfg(feature = "driver")]
+fn load_graph_from_directory(dir: &std::path::Path) -> Result<apxm_graph::ApxmGraph> {
+    let mut graphs = Vec::new();
+    let subdirs = ["flows", "nodes", ""];
+
+    for subdir in &subdirs {
+        let search_dir = if subdir.is_empty() {
+            dir.to_path_buf()
+        } else {
+            dir.join(subdir)
+        };
+        if !search_dir.is_dir() {
+            continue;
+        }
+        for entry in std::fs::read_dir(&search_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("json") {
+                let text = std::fs::read_to_string(&path)
+                    .with_context(|| format!("Failed to read {}", path.display()))?;
+                if text.contains("\"nodes\"") {
+                    let graph = apxm_graph::ApxmGraph::from_json(&text)
+                        .map_err(|e| anyhow::anyhow!("Failed to parse {}: {}", path.display(), e))?;
+                    graphs.push(graph);
+                }
+            }
+        }
+    }
+
+    if graphs.is_empty() {
+        return Err(anyhow::anyhow!(
+            "No graph JSON files found in directory '{}'",
+            dir.display()
+        ));
+    }
+
+    if graphs.len() == 1 {
+        return Ok(graphs.into_iter().next().unwrap());
+    }
+
+    let name = dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("merged")
+        .to_string();
+    Ok(apxm_graph::ApxmGraph::merge(&name, &graphs))
 }
 
 #[cfg(feature = "driver")]
@@ -1343,6 +1542,7 @@ fn explain_command(file: PathBuf, json_output: bool) -> Result<()> {
             OperationCategory::ErrorHandling => "error_handling",
             OperationCategory::Communication => "communication",
             OperationCategory::Internal => "internal",
+            _ => "other",
         }
     }
 
@@ -1809,44 +2009,85 @@ fn template_command(action: TemplateAction, json_output: bool) -> Result<()> {
         },
     ];
 
+    let user_templates = load_user_templates();
+
     match action {
         TemplateAction::List => {
             if json_output {
-                let items: Vec<serde_json::Value> = templates.iter().map(|t| {
+                let mut items: Vec<serde_json::Value> = templates.iter().map(|t| {
                     serde_json::json!({"name": t.name, "description": t.description})
                 }).collect();
+                for ut in &user_templates {
+                    items.push(serde_json::json!({"name": ut.name, "description": ut.description, "source": "user"}));
+                }
                 println!("{}", serde_json::to_string_pretty(&items).unwrap());
             } else {
                 print_section_header("Graph Templates");
                 for t in templates {
                     println!("  {:<16} {}", t.name.bold(), t.description);
                 }
+                if !user_templates.is_empty() {
+                    println!();
+                    println!("  {} User templates (from ~/.apxm/templates.json):", "~".dimmed());
+                    for ut in &user_templates {
+                        println!("  {:<16} {}", ut.name.bold(), ut.description);
+                    }
+                }
                 println!();
                 println!("  Use {} for the full graph JSON", "apxm template show <name>".bold());
             }
         }
         TemplateAction::Show { name } => {
-            let tpl = templates.iter()
-                .find(|t| t.name.eq_ignore_ascii_case(&name))
-                .ok_or_else(|| anyhow::anyhow!(
-                    "Unknown template '{}'. Run 'apxm template list' to see available templates.", name
-                ))?;
-
-            if json_output {
-                // Output just the graph JSON (machine-readable)
-                println!("{}", tpl.graph_json);
+            if let Some(tpl) = templates.iter().find(|t| t.name.eq_ignore_ascii_case(&name)) {
+                if json_output {
+                    println!("{}", tpl.graph_json);
+                } else {
+                    print_section_header(&format!("Template: {}", tpl.name));
+                    println!("  {}", tpl.description);
+                    println!();
+                    println!("{}", tpl.graph_json);
+                    println!();
+                    println!("  {} pipe to validate: {} | apxm validate /dev/stdin", "\u{2139}".cyan(), format!("apxm template show {} --json", tpl.name).dimmed());
+                }
+            } else if let Some(ut) = user_templates.iter().find(|t| t.name.eq_ignore_ascii_case(&name)) {
+                if json_output {
+                    println!("{}", ut.graph_json);
+                } else {
+                    print_section_header(&format!("Template: {} (user)", ut.name));
+                    println!("  {}", ut.description);
+                    println!();
+                    println!("{}", ut.graph_json);
+                }
             } else {
-                print_section_header(&format!("Template: {}", tpl.name));
-                println!("  {}", tpl.description);
-                println!();
-                println!("{}", tpl.graph_json);
-                println!();
-                println!("  {} pipe to validate: {} | apxm validate /dev/stdin", "\u{2139}".cyan(), format!("apxm template show {} --json", tpl.name).dimmed());
+                return Err(anyhow::anyhow!(
+                    "Unknown template '{}'. Run 'apxm template list' to see available templates.", name
+                ));
             }
         }
     }
 
     Ok(())
+}
+
+#[derive(serde::Deserialize)]
+struct UserTemplateEntry {
+    name: String,
+    description: String,
+    graph_json: String,
+}
+
+fn load_user_templates() -> Vec<UserTemplateEntry> {
+    let Some(home) = dirs::home_dir() else {
+        return Vec::new();
+    };
+    let templates_path = home.join(".apxm").join("templates.json");
+    if !templates_path.exists() {
+        return Vec::new();
+    }
+    let Ok(content) = std::fs::read_to_string(&templates_path) else {
+        return Vec::new();
+    };
+    serde_json::from_str(&content).unwrap_or_default()
 }
 
 fn ops_command(action: OpsAction, json_output: bool) -> Result<()> {
@@ -1863,6 +2104,7 @@ fn ops_command(action: OpsAction, json_output: bool) -> Result<()> {
             OperationCategory::ErrorHandling => "error_handling",
             OperationCategory::Communication => "communication",
             OperationCategory::Internal => "internal",
+            _ => "other",
         }
     }
 

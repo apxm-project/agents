@@ -66,6 +66,10 @@ pub struct PipelineConfig {
 
     /// Verify module before and after passes
     pub verify: bool,
+
+    /// Skip CSE (Common Subexpression Elimination) for LLM operations.
+    #[serde(default)]
+    pub no_cse_llm: bool,
 }
 
 impl Default for PipelineConfig {
@@ -73,6 +77,7 @@ impl Default for PipelineConfig {
         Self {
             opt_level: OptimizationLevel::O2,
             verify: true,
+            no_cse_llm: false,
         }
     }
 }
@@ -83,6 +88,7 @@ impl PipelineConfig {
         Self {
             opt_level: OptimizationLevel::O0,
             verify: true,
+            no_cse_llm: false,
         }
     }
 
@@ -91,6 +97,7 @@ impl PipelineConfig {
         Self {
             opt_level: OptimizationLevel::O3,
             verify: false,
+            no_cse_llm: false,
         }
     }
 

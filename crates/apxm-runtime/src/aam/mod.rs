@@ -275,12 +275,14 @@ impl AamState {
         AamCheckpoint {
             beliefs: self.beliefs.clone(),
             goals: self.goal_details.values().cloned().collect(),
+            capabilities: self.capabilities.clone(),
             timestamp: Utc::now(),
         }
     }
 
     fn restore(&mut self, checkpoint: &AamCheckpoint) {
         self.beliefs = checkpoint.beliefs.clone();
+        self.capabilities = checkpoint.capabilities.clone();
         self.goals.clear();
         self.goal_details.clear();
         for goal in &checkpoint.goals {
@@ -391,6 +393,8 @@ pub struct CallFrame {
 pub struct AamCheckpoint {
     pub beliefs: HashMap<String, Value>,
     pub goals: Vec<Goal>,
+    #[serde(default)]
+    pub capabilities: HashMap<String, CapabilityRecord>,
     pub timestamp: DateTime<Utc>,
 }
 

@@ -31,6 +31,15 @@ impl<'ctx> PassManager<'ctx> {
         Ok(pm)
     }
 
+    pub fn from_config(
+        context: &'ctx Context,
+        config: &apxm_core::types::PipelineConfig,
+    ) -> Result<Self> {
+        let mut pm = Self::new(context)?;
+        super::pipeline::build_pipeline_with_config(&mut pm, config.opt_level, config.no_cse_llm)?;
+        Ok(pm)
+    }
+
     pub fn add_pass(&mut self, name: &str) -> Result<&mut Self> {
         let c_name = CString::new(name)
             .map_err(|e| invalid_input_error(format!("Invalid pass name: {}", e)))?;
