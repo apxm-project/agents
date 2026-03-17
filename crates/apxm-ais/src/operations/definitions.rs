@@ -246,42 +246,46 @@ impl AISOperationType {
     /// Must stay in sync with the C++ `OperationKind` enum in `ArtifactEmitter.cpp`:
     ///   Inv=0, Ask=1, QMem=2, ..., Print=22, Think=23, Reason=24
     pub fn from_wire_index(index: u32) -> Option<AISOperationType> {
-        /// Wire-format operation kind table. Index = OperationKind from ArtifactEmitter.cpp.
-        const WIRE_OP_KIND_MAP: [AISOperationType; 32] = [
-            AISOperationType::Inv,                // 0
-            AISOperationType::Ask,                // 1
-            AISOperationType::QMem,               // 2
-            AISOperationType::UMem,               // 3
-            AISOperationType::Plan,               // 4
-            AISOperationType::WaitAll,            // 5
-            AISOperationType::Merge,              // 6
-            AISOperationType::Fence,              // 7
-            AISOperationType::Exc,                // 8
-            AISOperationType::Communicate,        // 9
-            AISOperationType::Reflect,            // 10
-            AISOperationType::Verify,             // 11
-            AISOperationType::Err,                // 12
-            AISOperationType::Return,             // 13
-            AISOperationType::Jump,               // 14
-            AISOperationType::BranchOnValue,      // 15
-            AISOperationType::LoopStart,          // 16
-            AISOperationType::LoopEnd,            // 17
-            AISOperationType::TryCatch,           // 18
-            AISOperationType::ConstStr,           // 19
-            AISOperationType::Switch,             // 20
-            AISOperationType::FlowCall,           // 21
-            AISOperationType::Print,              // 22
-            AISOperationType::Think,              // 23
-            AISOperationType::Reason,             // 24
-            AISOperationType::Delegate,           // 25
-            AISOperationType::Negotiate,          // 26
-            AISOperationType::Nop,                // 27
-            AISOperationType::Identity,           // 28
-            AISOperationType::SpawnAgent,         // 29
-            AISOperationType::RegisterCapability, // 30
-            AISOperationType::Autonomous,         // 31
-        ];
-        WIRE_OP_KIND_MAP.get(index as usize).copied()
+        // Wire-format operation kind table. Index = OperationKind from ArtifactEmitter.cpp.
+        // Indices 0-24: original ops. 25-30: reserved for Phase 1 ISA (agent-05).
+        // Indices 31-37: Phase 2 coordination/identity/self-organization ops.
+        match index {
+            0 => Some(AISOperationType::Inv),
+            1 => Some(AISOperationType::Ask),
+            2 => Some(AISOperationType::QMem),
+            3 => Some(AISOperationType::UMem),
+            4 => Some(AISOperationType::Plan),
+            5 => Some(AISOperationType::WaitAll),
+            6 => Some(AISOperationType::Merge),
+            7 => Some(AISOperationType::Fence),
+            8 => Some(AISOperationType::Exc),
+            9 => Some(AISOperationType::Communicate),
+            10 => Some(AISOperationType::Reflect),
+            11 => Some(AISOperationType::Verify),
+            12 => Some(AISOperationType::Err),
+            13 => Some(AISOperationType::Return),
+            14 => Some(AISOperationType::Jump),
+            15 => Some(AISOperationType::BranchOnValue),
+            16 => Some(AISOperationType::LoopStart),
+            17 => Some(AISOperationType::LoopEnd),
+            18 => Some(AISOperationType::TryCatch),
+            19 => Some(AISOperationType::ConstStr),
+            20 => Some(AISOperationType::Switch),
+            21 => Some(AISOperationType::FlowCall),
+            22 => Some(AISOperationType::Print),
+            23 => Some(AISOperationType::Think),
+            24 => Some(AISOperationType::Reason),
+            // 25-30: reserved for Phase 1 ISA extensions (agent-05 owns these)
+            // 31-37: Phase 2 ISA extensions
+            31 => Some(AISOperationType::Delegate),
+            32 => Some(AISOperationType::Negotiate),
+            33 => Some(AISOperationType::Nop),
+            34 => Some(AISOperationType::Identity),
+            35 => Some(AISOperationType::SpawnAgent),
+            36 => Some(AISOperationType::RegisterCapability),
+            37 => Some(AISOperationType::Autonomous),
+            _ => None,
+        }
     }
 
     /// Get all operation types (39 total: 27 original + 5 phase-1 + 7 phase-2 extensions).
@@ -1292,24 +1296,46 @@ mod tests {
             AISOperationType::from_wire_index(24),
             Some(AISOperationType::Reason)
         );
-        // New Phase 2 wire indices
+        // 25-30 reserved for Phase 1 ISA (agent-05) — currently return None
+        for i in 25..=30 {
+            assert_eq!(
+                AISOperationType::from_wire_index(i),
+                None,
+                "Index {i} is reserved for Phase 1 ISA and should be None until assigned"
+            );
+        }
+        // Phase 2 wire indices (31-37)
         assert_eq!(
-            AISOperationType::from_wire_index(25),
+            AISOperationType::from_wire_index(31),
             Some(AISOperationType::Delegate)
         );
         assert_eq!(
-            AISOperationType::from_wire_index(31),
+            AISOperationType::from_wire_index(37),
             Some(AISOperationType::Autonomous)
         );
         // Out-of-range returns None
-        assert_eq!(AISOperationType::from_wire_index(32), None);
+        assert_eq!(AISOperationType::from_wire_index(38), None);
         assert_eq!(AISOperationType::from_wire_index(u32::MAX), None);
     }
 
     #[test]
     fn test_wire_index_round_trip_coverage() {
         let mut seen = std::collections::HashSet::new();
-        for i in 0u32..32 {
+        // Original ops: 0-24
+        for i in 0u32..25 {
+            let op = AISOperationType::from_wire_index(i);
+            assert!(
+                op.is_some(),
+                "from_wire_index({i}) returned None — gap in wire mapping"
+            );
+            let op = op.unwrap();
+            assert!(
+                seen.insert(op),
+                "from_wire_index({i}) returned duplicate {op:?}"
+            );
+        }
+        // Phase 2 ops: 31-37
+        for i in 31u32..38 {
             let op = AISOperationType::from_wire_index(i);
             assert!(
                 op.is_some(),
@@ -1324,12 +1350,12 @@ mod tests {
         assert_eq!(
             seen.len(),
             32,
-            "Expected 32 distinct wire-indexed operations"
+            "Expected 32 distinct wire-indexed operations (25 original + 7 phase-2)"
         );
         assert_eq!(
-            AISOperationType::from_wire_index(32),
+            AISOperationType::from_wire_index(38),
             None,
-            "Index 32 should be out of range"
+            "Index 38 should be out of range"
         );
     }
 
@@ -1337,7 +1363,16 @@ mod tests {
     fn test_wire_indexed_ops_subset_of_all_ops() {
         let all_ops: std::collections::HashSet<AISOperationType> =
             AISOperationType::all_operations().iter().copied().collect();
-        for i in 0u32..32 {
+        // Original ops: 0-24
+        for i in 0u32..25 {
+            let op = AISOperationType::from_wire_index(i).unwrap();
+            assert!(
+                all_ops.contains(&op),
+                "Wire-indexed op {op:?} (index {i}) is not in all_operations()"
+            );
+        }
+        // Phase 2 ops: 31-37
+        for i in 31u32..38 {
             let op = AISOperationType::from_wire_index(i).unwrap();
             assert!(
                 all_ops.contains(&op),
