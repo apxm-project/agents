@@ -511,6 +511,11 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     let mut last_error = None;
     let mut schema_retries_used = 0u32;
     for attempt in 0..=max_retries {
+        // Check cancellation before each LLM attempt
+        if ctx.cancellation_token.is_cancelled() {
+            return Err(RuntimeError::SchedulerCancelled);
+        }
+
         if attempt > 0 {
             apxm_llm!(warn,
                 execution_id = %ctx.execution_id,
@@ -698,7 +703,13 @@ async fn execute_llm_once(
     // Process response based on mode
     match mode {
         LlmMode::Ask | LlmMode::Think => {
-            // Plain text response for Ask and Think
+            // Record LLM result in AAM
+            let label = TransitionLabel::operation(node.id, format!("{:?}", node.op_type));
+            ctx.aam.set_belief(
+                format!("_llm_result:{}:{}", mode_name, node.id),
+                Value::String(content.chars().take(200).collect::<String>()),
+                label,
+            );
             Ok(Value::String(content))
         }
         LlmMode::Reason => {
@@ -740,6 +751,11 @@ async fn execute_ask_with_tools(
     let mut total_output_tokens = 0usize;
 
     for iteration in 0..max_iterations {
+        // Check cancellation before each tool-loop iteration
+        if ctx.cancellation_token.is_cancelled() {
+            return Err(RuntimeError::SchedulerCancelled);
+        }
+
         apxm_llm!(debug,
             execution_id = %ctx.execution_id,
             iteration = iteration,

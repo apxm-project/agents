@@ -2,13 +2,19 @@
 
 use super::{ExecutionContext, Node, Result, Value, get_input};
 
-pub async fn execute(_ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -> Result<Value> {
+pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -> Result<Value> {
     // Check if we should continue looping
     let counter = get_input(node, &inputs, 0)?;
 
-    if let Some(count) = counter.as_u64() {
-        Ok(Value::Bool(count > 0))
-    } else {
-        Ok(Value::Bool(false))
-    }
+    let should_continue = counter.as_u64().map_or(false, |count| count > 0);
+
+    // Record loop check in AAM
+    let label = crate::aam::TransitionLabel::operation(node.id, format!("{:?}", node.op_type));
+    ctx.aam.set_belief(
+        format!("_loop_end:{}:{}", ctx.execution_id, node.id),
+        Value::Bool(should_continue),
+        label,
+    );
+
+    Ok(Value::Bool(should_continue))
 }

@@ -133,6 +133,14 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
         "CLAIM succeeded"
     );
 
+    // Record claim in AAM
+    let label = crate::aam::TransitionLabel::operation(node.id, format!("{:?}", node.op_type));
+    ctx.aam.set_belief(
+        format!("_claim:{}:{}", queue, task_id),
+        Value::String(format!("claimed from queue:{}", queue)),
+        label,
+    );
+
     // Return as object with named fields
     let mut result = HashMap::new();
     result.insert("task_data".to_string(), task_data_value);

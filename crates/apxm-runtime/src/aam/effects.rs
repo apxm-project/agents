@@ -45,34 +45,101 @@ impl OperationEffects {
     }
 }
 
-/// Convenience helper mirroring the legacy runtime mapping.
+/// Effect declarations for every AIS operation.
+///
+/// Every variant is listed explicitly (no wildcard) so that adding a new
+/// `AISOperationType` forces a compilation error here, ensuring the
+/// declaration stays in sync with the enum.
 pub fn operation_effects(op: &AISOperationType) -> OperationEffects {
     use AamComponent::*;
 
     match op {
+        // Memory
         AISOperationType::QMem => OperationEffects::new().read(Beliefs).read(ShortTermMemory),
         AISOperationType::UMem => OperationEffects::new()
             .write(Beliefs)
             .write(ShortTermMemory),
-        // Ask: reads beliefs only (simple Q&A)
+
+        // LLM
         AISOperationType::Ask => OperationEffects::new().read(Beliefs),
-        // Think: reads beliefs only (extended thinking, no side effects)
         AISOperationType::Think => OperationEffects::new().read(Beliefs),
-        // Reason: reads AND writes beliefs + goals (structured reasoning)
         AISOperationType::Reason => OperationEffects::new()
             .read(Beliefs)
             .write(Beliefs)
             .write(Goals),
-        AISOperationType::Plan => OperationEffects::new().read(Goals).write(Goals),
-        AISOperationType::Reflect => OperationEffects::new().read(Episodic),
+
+        // Planning & Analysis
+        AISOperationType::Plan => OperationEffects::new()
+            .read(Goals)
+            .write(Goals)
+            .write(Beliefs),
+        AISOperationType::Reflect => OperationEffects::new().read(Episodic).write(Episodic),
         AISOperationType::Verify => OperationEffects::new().read(Beliefs),
+
+        // Tool / Invocation
         AISOperationType::Inv => OperationEffects::new().read(Capabilities),
-        AISOperationType::Fence => OperationEffects::new()
+        AISOperationType::Exc => OperationEffects::new(),
+        AISOperationType::Print => OperationEffects::new(),
+
+        // Control Flow
+        AISOperationType::Jump => OperationEffects::new(),
+        AISOperationType::BranchOnValue => OperationEffects::new(),
+        AISOperationType::LoopStart => OperationEffects::new(),
+        AISOperationType::LoopEnd => OperationEffects::new(),
+        AISOperationType::Return => OperationEffects::new(),
+        AISOperationType::Switch => OperationEffects::new(),
+        AISOperationType::FlowCall => OperationEffects::new()
+            .read(Beliefs)
+            .write(Beliefs),
+
+        // Synchronization -- Fence is a pure ordering barrier, no AAM mutation
+        AISOperationType::Fence => OperationEffects::new(),
+        AISOperationType::Merge => OperationEffects::new(),
+        AISOperationType::WaitAll => OperationEffects::new(),
+
+        // Error Handling
+        AISOperationType::TryCatch => OperationEffects::new(),
+        AISOperationType::Err => OperationEffects::new(),
+
+        // Communication
+        AISOperationType::Communicate => OperationEffects::new()
+            .read(Beliefs)
+            .write(Beliefs),
+
+        // Coordination (Phase 1)
+        AISOperationType::UpdateGoal => OperationEffects::new().read(Goals).write(Goals),
+        AISOperationType::Guard => OperationEffects::new().read(Beliefs),
+        AISOperationType::Claim => OperationEffects::new().write(ShortTermMemory),
+        AISOperationType::Pause => OperationEffects::new(),
+        AISOperationType::Resume => OperationEffects::new().write(ShortTermMemory),
+
+        // Coordination (Phase 2)
+        AISOperationType::Delegate => OperationEffects::new()
+            .read(Beliefs)
+            .write(Beliefs),
+        AISOperationType::Negotiate => OperationEffects::new()
+            .read(Beliefs)
+            .write(Beliefs),
+
+        // Identity Operations
+        AISOperationType::Nop => OperationEffects::new(),
+        AISOperationType::Identity => OperationEffects::new(),
+
+        // Self-Organization
+        AISOperationType::SpawnAgent => OperationEffects::new().write(Capabilities),
+        AISOperationType::RegisterCapability => OperationEffects::new().write(Capabilities),
+
+        // Autonomous Execution
+        AISOperationType::Autonomous => OperationEffects::new()
+            .read(Beliefs)
             .write(Beliefs)
-            .write(ShortTermMemory)
-            .write(LongTermMemory)
+            .read(Goals)
             .write(Goals),
-        _ => OperationEffects::new(),
+
+        // Literals / Metadata
+        AISOperationType::ConstStr => OperationEffects::new(),
+        AISOperationType::Agent => OperationEffects::new(),
+        AISOperationType::Yield => OperationEffects::new(),
     }
 }
 
@@ -86,5 +153,20 @@ mod tests {
         let reason = operation_effects(&AISOperationType::Reason);
         let qmem = operation_effects(&AISOperationType::QMem);
         assert!(!reason.can_reorder_with(&qmem));
+    }
+
+    #[test]
+    fn fence_is_pure_barrier() {
+        let fence = operation_effects(&AISOperationType::Fence);
+        assert!(fence.reads.is_empty());
+        assert!(fence.writes.is_empty());
+        assert!(!fence.has_side_effects);
+    }
+
+    #[test]
+    fn all_operations_have_effects() {
+        for op in AISOperationType::all_operations() {
+            let _ = operation_effects(&op);
+        }
     }
 }

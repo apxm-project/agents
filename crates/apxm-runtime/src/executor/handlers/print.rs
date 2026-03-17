@@ -19,7 +19,7 @@ fn format_value(v: &Value) -> String {
 
 /// Execute a print operation. This is a void operation (no output tokens).
 /// Output is rendered as markdown for terminal display.
-pub async fn execute(_ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -> Result<Value> {
+pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -> Result<Value> {
     let message = get_string_attribute(node, graph_attrs::MESSAGE).unwrap_or_default();
 
     // Build output: message followed by any input values
@@ -37,6 +37,14 @@ pub async fn execute(_ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -
     // Render markdown to terminal
     let skin = MadSkin::default();
     skin.print_text(&output);
+
+    // Record print in AAM
+    let label = crate::aam::TransitionLabel::operation(node.id, format!("{:?}", node.op_type));
+    ctx.aam.set_belief(
+        format!("_print:{}:{}", ctx.execution_id, node.id),
+        Value::String(output.chars().take(200).collect::<String>()),
+        label,
+    );
 
     // Void operation - return Null (no output tokens in artifact)
     Ok(Value::Null)

@@ -50,6 +50,14 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
 
     let passed = evaluate_condition(&condition, &input);
 
+    // Record guard evaluation result in AAM
+    let label = crate::aam::TransitionLabel::operation(node.id, format!("{:?}", node.op_type));
+    ctx.aam.set_belief(
+        format!("_guard:{}:{}", ctx.execution_id, node.id),
+        Value::Bool(passed),
+        label,
+    );
+
     if passed {
         tracing::debug!(
             execution_id = %ctx.execution_id,

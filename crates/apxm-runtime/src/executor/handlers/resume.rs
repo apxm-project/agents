@@ -133,6 +133,17 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
                 // Restore STM snapshot if one was stored by PAUSE.
                 restore_stm_snapshot(ctx, &checkpoint_id).await;
 
+                // Record resume in AAM
+                let label = crate::aam::TransitionLabel::operation(
+                    node.id,
+                    format!("{:?}", node.op_type),
+                );
+                ctx.aam.set_belief(
+                    format!("_resume:{}", checkpoint_id),
+                    Value::String("resumed".to_string()),
+                    label,
+                );
+
                 // Extract and return human_input.
                 let human_input = body
                     .get("human_input")

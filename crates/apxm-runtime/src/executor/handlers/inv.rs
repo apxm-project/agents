@@ -7,6 +7,7 @@ use super::{
     ExecutionContext, Node, Result, Value, get_optional_u64_attribute, get_string_attribute,
 };
 use apxm_core::constants::graph::attrs as graph_attrs;
+use apxm_core::error::RuntimeError;
 use std::collections::HashMap;
 
 /// Execute INV operation - Invoke a registered capability
@@ -103,6 +104,11 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         }
     }
 
+    // Check cancellation before expensive capability invocation
+    if ctx.cancellation_token.is_cancelled() {
+        return Err(RuntimeError::SchedulerCancelled);
+    }
+
     // Invoke capability with timeout
     let timeout = std::time::Duration::from_millis(timeout_ms);
     let result = ctx
@@ -121,6 +127,14 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     tracing::info!(
         capability = %capability_name,
         "Capability invocation successful"
+    );
+
+    // Record capability invocation in AAM
+    let label = crate::aam::TransitionLabel::operation(node.id, format!("{:?}", node.op_type));
+    ctx.aam.set_belief(
+        format!("_inv:{}:{}", capability_name, node.id),
+        Value::String(format!("invoked:{}", capability_name)),
+        label,
     );
 
     Ok(result)

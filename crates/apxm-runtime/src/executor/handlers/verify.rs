@@ -32,5 +32,14 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     let response = execute_llm_request(ctx, "VERIFY", &request).await?;
 
     let is_verified = response.content.to_lowercase().contains("true");
+
+    // Record verification result in AAM
+    let label = crate::aam::TransitionLabel::operation(node.id, format!("{:?}", node.op_type));
+    ctx.aam.set_belief(
+        format!("_verify:{}:{}", ctx.execution_id, node.id),
+        Value::Bool(is_verified),
+        label,
+    );
+
     Ok(Value::Bool(is_verified))
 }

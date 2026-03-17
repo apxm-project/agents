@@ -65,6 +65,14 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         "Executing PAUSE — creating checkpoint"
     );
 
+    // Record pause in AAM
+    let label = crate::aam::TransitionLabel::operation(node.id, format!("{:?}", node.op_type));
+    ctx.aam.set_belief(
+        format!("_pause:{}", checkpoint_id),
+        Value::String(message.clone()),
+        label,
+    );
+
     // 1. Create checkpoint at the server
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))

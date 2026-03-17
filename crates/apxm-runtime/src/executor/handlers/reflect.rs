@@ -155,6 +155,11 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     // Execute with retries
     let mut last_error = None;
     for attempt in 0..=max_retries {
+        // Check cancellation before each attempt
+        if ctx.cancellation_token.is_cancelled() {
+            return Err(RuntimeError::SchedulerCancelled);
+        }
+
         if attempt > 0 {
             tracing::warn!(
                 execution_id = %ctx.execution_id,
@@ -167,7 +172,20 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         }
 
         match execute_reflect_once(ctx, &request).await {
-            Ok(value) => return Ok(value),
+            Ok(value) => {
+                // Record reflection result in AAM
+                let label = crate::aam::TransitionLabel::operation(node.id, format!("{:?}", node.op_type));
+                let summary = match &value {
+                    Value::String(s) => s.chars().take(200).collect::<String>(),
+                    _ => format!("{:?}", value).chars().take(200).collect::<String>(),
+                };
+                ctx.aam.set_belief(
+                    format!("_reflect:{}:{}", ctx.execution_id, node.id),
+                    Value::String(summary),
+                    label,
+                );
+                return Ok(value);
+            }
             Err(e) => {
                 last_error = Some(e);
                 tracing::debug!(

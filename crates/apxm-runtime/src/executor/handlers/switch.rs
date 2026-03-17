@@ -60,6 +60,17 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         "Switch: found match"
     );
 
+    // Record switch decision in AAM
+    let label = crate::aam::TransitionLabel::operation(node.id, format!("{:?}", node.op_type));
+    let match_desc = matched_index
+        .map(|i| format!("case[{}]:{}", i, &discriminant_value))
+        .unwrap_or_else(|| "default".to_string());
+    ctx.aam.set_belief(
+        format!("_switch:{}:{}", ctx.execution_id, node.id),
+        Value::String(match_desc),
+        label,
+    );
+
     // Get the sub-DAG to execute
     let sub_dag_value = if let Some(idx) = matched_index {
         // Get case_regions array and select the matching one
