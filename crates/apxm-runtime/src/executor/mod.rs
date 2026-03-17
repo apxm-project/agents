@@ -5,6 +5,7 @@
 //! - Managing execution context
 //! - Coordinating subsystems (memory, models, etc.)
 
+mod cancellation;
 mod context;
 pub mod dag_splicer;
 mod dispatcher;
@@ -15,6 +16,7 @@ pub mod inner_plan_linker;
 pub mod memoization;
 pub mod token_accounting;
 
+pub use cancellation::CancellationToken;
 pub use context::ExecutionContext;
 pub use dag_splicer::{DagSplicer, NoOpSplicer};
 pub use dispatcher::OperationDispatcher;

@@ -123,6 +123,11 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     // Temperatures: 0.7 → 0.8 → 0.9 → 1.0 (increase variability on retries)
     let mut last_error = None;
     for attempt in 0..=3 {
+        // Check cancellation before each planning attempt
+        if ctx.cancellation_token.is_cancelled() {
+            return Err(RuntimeError::SchedulerCancelled);
+        }
+
         // Build request with progressive temperature
         let temperature = 0.7 + (attempt as f64 * 0.1);
         let mut request = LLMRequest::new(user_prompt.clone())

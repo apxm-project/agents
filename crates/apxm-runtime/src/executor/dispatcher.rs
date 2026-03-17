@@ -2,6 +2,7 @@
 
 use super::{Result, context::ExecutionContext, handlers::*};
 use apxm_core::apxm_op;
+use apxm_core::error::RuntimeError;
 use apxm_core::types::{execution::Node, operations::AISOperationType, values::Value};
 
 /// Operation dispatcher routes operations to their handlers
@@ -36,6 +37,19 @@ impl OperationDispatcher {
             inputs = inputs.len(),
             "Handler dispatch"
         );
+
+        // Check cancellation before starting any work.
+        if ctx.cancellation_token.is_cancelled() {
+            return Err(RuntimeError::SchedulerCancelled);
+        }
+
+        let op_type_str = format!("{:?}", node.op_type);
+
+        // Emit OperationStart event
+        if let Some(emitter) = &ctx.event_emitter {
+            emitter.emit_operation_start(node.id, &op_type_str);
+        }
+        let op_start = std::time::Instant::now();
 
         let result = match node.op_type {
             // Memory operations
@@ -105,6 +119,14 @@ impl OperationDispatcher {
             // Region terminators (handled within sub-DAG execution, no-op in main dispatcher)
             AISOperationType::Yield => Ok(Value::Null),
         };
+
+        let op_duration = op_start.elapsed();
+        let success = result.is_ok();
+
+        // Emit OperationEnd event
+        if let Some(emitter) = &ctx.event_emitter {
+            emitter.emit_operation_end(node.id, &op_type_str, op_duration, success);
+        }
 
         match &result {
             Ok(_value) => {

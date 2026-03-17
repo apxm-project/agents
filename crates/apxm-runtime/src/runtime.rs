@@ -157,6 +157,7 @@ impl Runtime {
             event_emitter,
             token_accountant: Arc::new(crate::executor::TokenAccountant::new()),
             response_cache: Arc::new(crate::executor::ResponseCache::new()),
+            cancellation_token: crate::executor::CancellationToken::new(),
         }
     }
 

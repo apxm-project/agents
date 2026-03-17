@@ -31,7 +31,8 @@ mod runtime;
 pub mod scheduler;
 
 pub use aam::{
-    Aam, CapabilityRecord, Goal, GoalId, GoalStatus, STAGED_BELIEF_PREFIX, TransitionLabel,
+    Aam, CapabilityRecord, CompletionPolicy, Goal, GoalId, GoalNode, GoalStatus, GoalTree,
+    ScopePolicy, ScopeSpec, STAGED_BELIEF_PREFIX, TransitionLabel,
     effects::{AamComponent, OperationEffects, operation_effects},
 };
 pub use capability::{
@@ -40,8 +41,8 @@ pub use capability::{
     interceptor::{CapabilityInterceptor, InterceptDecision},
 };
 pub use executor::{
-    ExecutionContext, ExecutionEvent, ExecutionEventEmitter, ExecutorEngine, InnerPlanLinker,
-    NoOpLinker,
+    CancellationToken, ExecutionContext, ExecutionEvent, ExecutionEventEmitter, ExecutorEngine,
+    InnerPlanLinker, NoOpLinker,
 };
 pub use memory::{Fact, FactFilter, FactResult, MemoryConfig, MemorySpace, MemorySystem};
 pub use observability::{MetricsCollector, SchedulerMetrics};

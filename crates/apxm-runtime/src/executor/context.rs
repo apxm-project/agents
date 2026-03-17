@@ -10,6 +10,7 @@ use apxm_core::InstructionConfig;
 use apxm_core::types::Agent;
 use std::sync::Arc;
 
+use super::cancellation::CancellationToken;
 use super::dag_splicer::{DagSplicer, NoOpSplicer};
 use super::events::ExecutionEventEmitter;
 use super::inner_plan_linker::{InnerPlanLinker, NoOpLinker};
@@ -65,6 +66,8 @@ pub struct ExecutionContext {
     pub token_accountant: Arc<TokenAccountant>,
     /// Response cache for deterministic LLM call memoization.
     pub response_cache: Arc<ResponseCache>,
+    /// Cancellation token for cooperative cancellation / timeouts.
+    pub cancellation_token: CancellationToken,
 }
 
 impl ExecutionContext {
@@ -94,6 +97,7 @@ impl ExecutionContext {
             event_emitter: None,
             token_accountant: Arc::new(TokenAccountant::new()),
             response_cache: Arc::new(ResponseCache::new()),
+            cancellation_token: CancellationToken::new(),
         }
     }
 
@@ -126,6 +130,7 @@ impl ExecutionContext {
             event_emitter: None,
             token_accountant: Arc::new(TokenAccountant::new()),
             response_cache: Arc::new(ResponseCache::new()),
+            cancellation_token: CancellationToken::new(),
         }
     }
 
@@ -176,6 +181,12 @@ impl ExecutionContext {
         self
     }
 
+    /// Set a cancellation token (replaces the default root token).
+    pub fn with_cancellation_token(mut self, token: CancellationToken) -> Self {
+        self.cancellation_token = token;
+        self
+    }
+
     /// Get elapsed time since execution started
     pub fn elapsed(&self) -> std::time::Duration {
         self.start_time.elapsed()
@@ -202,6 +213,7 @@ impl ExecutionContext {
             event_emitter: self.event_emitter.as_ref().map(Arc::clone),
             token_accountant: Arc::clone(&self.token_accountant),
             response_cache: Arc::clone(&self.response_cache),
+            cancellation_token: self.cancellation_token.child(),
         }
     }
 
@@ -315,6 +327,7 @@ impl ExecutionContext {
             event_emitter: self.event_emitter.as_ref().map(Arc::clone),
             token_accountant: Arc::clone(&self.token_accountant),
             response_cache: Arc::clone(&self.response_cache),
+            cancellation_token: self.cancellation_token.child(),
         }
     }
 
