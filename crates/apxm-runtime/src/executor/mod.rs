@@ -12,6 +12,8 @@ mod engine;
 mod events;
 mod handlers;
 pub mod inner_plan_linker;
+pub mod memoization;
+pub mod token_accounting;
 
 pub use context::ExecutionContext;
 pub use dag_splicer::{DagSplicer, NoOpSplicer};
@@ -19,6 +21,8 @@ pub use dispatcher::OperationDispatcher;
 pub use engine::{ExecutionResult, ExecutorEngine};
 pub use events::{ExecutionEvent, ExecutionEventEmitter};
 pub use inner_plan_linker::{InnerPlanLinker, NoOpLinker};
+pub use memoization::ResponseCache;
+pub use token_accounting::TokenAccountant;
 
 use apxm_core::error::RuntimeError;
 

@@ -1,7 +1,8 @@
 //! Execution context - Holds runtime state and provides access to subsystems
 
 use crate::{
-    aam::Aam, capability::CapabilitySystem, capability::flow_registry::FlowRegistry,
+    aam::{Aam, ScopePolicy, ScopeSpec},
+    capability::CapabilitySystem, capability::flow_registry::FlowRegistry,
     memory::MemorySystem,
 };
 use apxm_backends::LLMRegistry;
@@ -12,6 +13,8 @@ use std::sync::Arc;
 use super::dag_splicer::{DagSplicer, NoOpSplicer};
 use super::events::ExecutionEventEmitter;
 use super::inner_plan_linker::{InnerPlanLinker, NoOpLinker};
+use super::memoization::ResponseCache;
+use super::token_accounting::TokenAccountant;
 
 /// Execution context passed to all operation handlers
 ///
@@ -58,6 +61,10 @@ pub struct ExecutionContext {
     pub consumed_tokens: Arc<std::sync::atomic::AtomicU64>,
     /// Optional execution event emitter.
     pub event_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
+    /// Token accountant for per-node/flow/agent token tracking.
+    pub token_accountant: Arc<TokenAccountant>,
+    /// Response cache for deterministic LLM call memoization.
+    pub response_cache: Arc<ResponseCache>,
 }
 
 impl ExecutionContext {
@@ -85,6 +92,8 @@ impl ExecutionContext {
             token_budget: None,
             consumed_tokens: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             event_emitter: None,
+            token_accountant: Arc::new(TokenAccountant::new()),
+            response_cache: Arc::new(ResponseCache::new()),
         }
     }
 
@@ -115,6 +124,8 @@ impl ExecutionContext {
             token_budget: None,
             consumed_tokens: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             event_emitter: None,
+            token_accountant: Arc::new(TokenAccountant::new()),
+            response_cache: Arc::new(ResponseCache::new()),
         }
     }
 
@@ -189,6 +200,119 @@ impl ExecutionContext {
             token_budget: self.token_budget,
             consumed_tokens: Arc::clone(&self.consumed_tokens),
             event_emitter: self.event_emitter.as_ref().map(Arc::clone),
+            token_accountant: Arc::clone(&self.token_accountant),
+            response_cache: Arc::clone(&self.response_cache),
+        }
+    }
+
+    /// Create a child context with a scoped AAM.
+    ///
+    /// The `ScopeSpec` controls which parts of the parent AAM are inherited:
+    /// - `ScopePolicy::Inherit` -- shares the parent's data (default)
+    /// - `ScopePolicy::Isolate` -- starts with empty state
+    /// - `ScopePolicy::Filter(keys)` -- inherits only the listed keys
+    pub fn child_with_scope(&self, scope: ScopeSpec) -> Self {
+        let parent_aam = &self.aam;
+        let child_aam = Aam::new();
+
+        // Beliefs
+        match &scope.beliefs {
+            ScopePolicy::Inherit => {
+                let beliefs = parent_aam.beliefs();
+                for (k, v) in beliefs {
+                    child_aam.set_belief(
+                        k,
+                        v,
+                        crate::aam::TransitionLabel::custom("scope:inherit_belief"),
+                    );
+                }
+            }
+            ScopePolicy::Isolate => { /* empty */ }
+            ScopePolicy::Filter(keys) => {
+                let beliefs = parent_aam.beliefs();
+                for key in keys {
+                    if let Some(v) = beliefs.get(key) {
+                        child_aam.set_belief(
+                            key.clone(),
+                            v.clone(),
+                            crate::aam::TransitionLabel::custom("scope:filter_belief"),
+                        );
+                    }
+                }
+            }
+        }
+
+        // Capabilities
+        match &scope.capabilities {
+            ScopePolicy::Inherit => {
+                let caps = parent_aam.capabilities();
+                for (name, record) in caps {
+                    child_aam.register_capability(
+                        name,
+                        record,
+                        crate::aam::TransitionLabel::custom("scope:inherit_capability"),
+                    );
+                }
+            }
+            ScopePolicy::Isolate => { /* empty */ }
+            ScopePolicy::Filter(keys) => {
+                let caps = parent_aam.capabilities();
+                for key in keys {
+                    if let Some(record) = caps.get(key) {
+                        child_aam.register_capability(
+                            key.clone(),
+                            record.clone(),
+                            crate::aam::TransitionLabel::custom("scope:filter_capability"),
+                        );
+                    }
+                }
+            }
+        }
+
+        // Goals
+        match &scope.goals {
+            ScopePolicy::Inherit => {
+                let goals = parent_aam.goals();
+                for goal in goals {
+                    child_aam.add_goal(
+                        goal,
+                        crate::aam::TransitionLabel::custom("scope:inherit_goal"),
+                    );
+                }
+            }
+            ScopePolicy::Isolate => { /* empty */ }
+            ScopePolicy::Filter(keys) => {
+                let goals = parent_aam.goals();
+                for goal in goals {
+                    if keys.contains(&goal.description) {
+                        child_aam.add_goal(
+                            goal,
+                            crate::aam::TransitionLabel::custom("scope:filter_goal"),
+                        );
+                    }
+                }
+            }
+        }
+
+        Self {
+            execution_id: uuid::Uuid::now_v7().to_string(),
+            session_id: self.session_id.clone(),
+            memory: Arc::clone(&self.memory),
+            llm_registry: Arc::clone(&self.llm_registry),
+            capability_system: Arc::clone(&self.capability_system),
+            aam: child_aam,
+            inner_plan_linker: Arc::clone(&self.inner_plan_linker),
+            dag_splicer: Arc::clone(&self.dag_splicer),
+            flow_registry: Arc::clone(&self.flow_registry),
+            current_agent: self.current_agent.as_ref().map(Arc::clone),
+            instruction_config: self.instruction_config.clone(),
+            start_time: std::time::Instant::now(),
+            metadata: self.metadata.clone(),
+            token_budget: self.token_budget,
+            consumed_tokens: Arc::clone(&self.consumed_tokens),
+            event_emitter: self.event_emitter.as_ref().map(Arc::clone),
+            token_accountant: Arc::clone(&self.token_accountant),
+            response_cache: Arc::clone(&self.response_cache),
         }
     }
 

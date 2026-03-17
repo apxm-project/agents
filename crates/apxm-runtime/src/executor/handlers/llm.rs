@@ -23,6 +23,7 @@ use super::{
     inner_plan::{InnerPlanOptions, execute_inner_plan},
 };
 use crate::aam::{Goal as AamGoal, GoalId, GoalStatus, TransitionLabel};
+use crate::executor::memoization::ResponseCache;
 use apxm_backends::{LLMRequest, ToolChoice, ToolDefinition};
 use apxm_core::InnerPlanPayload;
 use apxm_core::apxm_llm;
@@ -69,8 +70,9 @@ impl From<&AISOperationType> for LlmMode {
     }
 }
 
-/// Maximum number of tool loop iterations to prevent infinite loops
-const MAX_TOOL_ITERATIONS: usize = 10;
+/// Default maximum number of tool loop iterations to prevent infinite loops.
+/// Can be overridden per-node via the `max_tool_iterations` attribute.
+const DEFAULT_MAX_TOOL_ITERATIONS: usize = 10;
 
 fn resolve_system_prompt(
     ctx: &ExecutionContext,
@@ -587,6 +589,44 @@ async fn execute_llm_once(
         return execute_ask_with_tools(ctx, node, request).await;
     }
 
+    // Check memoization cache for deterministic (temperature=0) calls
+    let memo_key = ResponseCache::compute_key(
+        &request.prompt,
+        request.system_prompt.as_deref(),
+        request.model.as_deref(),
+        request.temperature,
+    );
+    if let Some(key) = memo_key {
+        if let Some(cached) = ctx.response_cache.get(key) {
+            apxm_llm!(debug,
+                execution_id = %ctx.execution_id,
+                mode = mode_name,
+                "Memoization cache hit"
+            );
+            if let Some(emitter) = &ctx.event_emitter {
+                emitter.emit_memoization_hit(node.id);
+            }
+            charge_tokens(
+                ctx,
+                resolve_token_budget(ctx, node),
+                cached.input_tokens + cached.output_tokens,
+            )?;
+            return match mode {
+                LlmMode::Ask | LlmMode::Think => Ok(Value::String(cached.content)),
+                LlmMode::Reason => {
+                    if let Ok(structured) = parse_structured_output(&cached.content) {
+                        process_structured_output(
+                            ctx, node, structured, enable_inner_plan, bind_outputs,
+                        )
+                        .await
+                    } else {
+                        Ok(Value::String(cached.content))
+                    }
+                }
+            };
+        }
+    }
+
     apxm_llm!(debug,
         execution_id = %ctx.execution_id,
         mode = mode_name,
@@ -601,9 +641,41 @@ async fn execute_llm_once(
         resolve_token_budget(ctx, node),
         response.usage.total_tokens,
     )?;
+
+    // Record token usage in accountant
+    {
+        let flow_name = node.attributes.get("flow_name").and_then(|v| v.as_string());
+        let agent_name = ctx.current_agent.as_ref().map(|a| a.name.as_str());
+        ctx.token_accountant.record(
+            node.id,
+            response.usage.input_tokens,
+            response.usage.output_tokens,
+            flow_name.map(|s| s.as_str()),
+            agent_name,
+        );
+        if let Some(emitter) = &ctx.event_emitter {
+            emitter.emit_token_usage(
+                node.id,
+                response.usage.input_tokens,
+                response.usage.output_tokens,
+            );
+        }
+    }
+
     let content = response.content;
     if let Some(emitter) = &ctx.event_emitter {
         emitter.emit_llm_token(&content);
+    }
+
+    // Store in memoization cache if deterministic
+    if let Some(key) = memo_key {
+        ctx.response_cache.put(
+            key,
+            content.clone(),
+            response.usage.input_tokens,
+            response.usage.output_tokens,
+            response.model.clone(),
+        );
     }
 
     apxm_llm!(info,
@@ -654,12 +726,19 @@ async fn execute_ask_with_tools(
     node: &Node,
     initial_request: &LLMRequest,
 ) -> Result<Value> {
+    let max_iterations = node
+        .attributes
+        .get(graph_attrs::MAX_TOOL_ITERATIONS)
+        .and_then(|v| v.as_u64())
+        .map(|v| v as usize)
+        .unwrap_or(DEFAULT_MAX_TOOL_ITERATIONS);
+
     let mut current_request = initial_request.clone();
     let mut accumulated_tool_results: Vec<ToolResult> = Vec::new();
     let mut total_input_tokens = 0usize;
     let mut total_output_tokens = 0usize;
 
-    for iteration in 0..MAX_TOOL_ITERATIONS {
+    for iteration in 0..max_iterations {
         apxm_llm!(debug,
             execution_id = %ctx.execution_id,
             iteration = iteration,
@@ -675,6 +754,26 @@ async fn execute_ask_with_tools(
             resolve_token_budget(ctx, node),
             response.usage.total_tokens,
         )?;
+
+        // Record token usage in accountant
+        {
+            let flow_name = node.attributes.get("flow_name").and_then(|v| v.as_string());
+            let agent_name = ctx.current_agent.as_ref().map(|a| a.name.as_str());
+            ctx.token_accountant.record(
+                node.id,
+                response.usage.input_tokens,
+                response.usage.output_tokens,
+                flow_name.map(|s| s.as_str()),
+                agent_name,
+            );
+            if let Some(emitter) = &ctx.event_emitter {
+                emitter.emit_token_usage(
+                    node.id,
+                    response.usage.input_tokens,
+                    response.usage.output_tokens,
+                );
+            }
+        }
 
         total_input_tokens += response.usage.input_tokens;
         total_output_tokens += response.usage.output_tokens;
@@ -769,14 +868,14 @@ async fn execute_ask_with_tools(
     // Max iterations exceeded
     apxm_llm!(warn,
         execution_id = %ctx.execution_id,
-        max_iterations = MAX_TOOL_ITERATIONS,
+        max_iterations = max_iterations,
         "ASK tool loop exceeded max iterations"
     );
 
     Err(RuntimeError::LLM {
         message: format!(
             "Tool loop exceeded maximum iterations ({}). Last {} tool calls executed.",
-            MAX_TOOL_ITERATIONS,
+            max_iterations,
             accumulated_tool_results.len()
         ),
         backend: None,
@@ -839,6 +938,7 @@ async fn process_structured_output(
                 description: goal.description.clone(),
                 priority: goal.priority,
                 status: GoalStatus::Active,
+                parent_id: None,
             };
             ctx.aam.add_goal(aam_goal, label.clone());
         }

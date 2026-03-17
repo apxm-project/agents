@@ -31,6 +31,15 @@ impl<'ctx> PassManager<'ctx> {
         Ok(pm)
     }
 
+    pub fn from_config(
+        context: &'ctx Context,
+        config: &apxm_core::types::PipelineConfig,
+    ) -> Result<Self> {
+        let mut pm = Self::new(context)?;
+        super::pipeline::build_pipeline_with_config(&mut pm, config.opt_level, config.no_cse_llm)?;
+        Ok(pm)
+    }
+
     pub fn add_pass(&mut self, name: &str) -> Result<&mut Self> {
         let c_name = CString::new(name)
             .map_err(|e| invalid_input_error(format!("Invalid pass name: {}", e)))?;
@@ -73,6 +82,18 @@ impl<'ctx> PassManager<'ctx> {
 
     pub fn unconsumed_value_warning(&mut self) -> Result<&mut Self> {
         self.add_pass("unconsumed-value-warning")
+    }
+
+    pub fn template_specialization(&mut self) -> Result<&mut Self> {
+        self.add_pass("template-specialization")
+    }
+
+    pub fn dead_context_elimination(&mut self) -> Result<&mut Self> {
+        self.add_pass("dead-context-elimination")
+    }
+
+    pub fn schema_narrowing(&mut self) -> Result<&mut Self> {
+        self.add_pass("schema-narrowing")
     }
 
     pub fn run(&self, module: &Module) -> Result<()> {
