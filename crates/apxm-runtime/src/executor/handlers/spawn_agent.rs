@@ -10,11 +10,13 @@
 
 use super::{ExecutionContext, Node, Result, Value, get_string_attribute};
 use crate::aam::TransitionLabel;
+use apxm_core::constants::graph::attrs as graph_attrs;
+use apxm_core::constants::runtime::{belief_keys, response_keys};
 use apxm_core::error::RuntimeError;
 use std::collections::HashMap;
 
 pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -> Result<Value> {
-    let agent_name = get_string_attribute(node, "agent_name")?;
+    let agent_name = get_string_attribute(node, graph_attrs::AGENT_NAME)?;
 
     tracing::info!(
         execution_id = %ctx.execution_id,
@@ -33,31 +35,31 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
 
     // Record agent spawn in AAM
     ctx.aam.set_belief(
-        format!("_spawned_agent:{}", agent_name),
+        format!("{}{}", belief_keys::SPAWNED_AGENT_PREFIX, agent_name),
         Value::String(agent_name.clone()),
         TransitionLabel::Custom(format!("spawn_agent:{}", agent_name)),
     );
 
     // Store the new agent's metadata in STM for later reference
     let mut agent_info = HashMap::new();
-    agent_info.insert("name".to_string(), Value::String(agent_name.clone()));
+    agent_info.insert(response_keys::NAME.to_string(), Value::String(agent_name.clone()));
     agent_info.insert(
-        "spawned_by".to_string(),
+        response_keys::SPAWNED_BY.to_string(),
         Value::String(ctx.execution_id.clone()),
     );
 
-    if let Some(capabilities) = node.attributes.get("capabilities") {
-        agent_info.insert("capabilities".to_string(), capabilities.clone());
+    if let Some(capabilities) = node.attributes.get(response_keys::CAPABILITIES) {
+        agent_info.insert(response_keys::CAPABILITIES.to_string(), capabilities.clone());
     }
-    if let Some(goals) = node.attributes.get("goals") {
-        agent_info.insert("goals".to_string(), goals.clone());
+    if let Some(goals) = node.attributes.get(response_keys::GOALS) {
+        agent_info.insert(response_keys::GOALS.to_string(), goals.clone());
     }
 
     let _ = ctx
         .memory
         .write(
             crate::memory::MemorySpace::Stm,
-            format!("_agent_info:{}", agent_name),
+            format!("{}{}", belief_keys::AGENT_INFO_PREFIX, agent_name),
             Value::Object(agent_info.clone()),
         )
         .await;

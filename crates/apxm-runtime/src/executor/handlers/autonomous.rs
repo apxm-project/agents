@@ -5,6 +5,7 @@
 
 use super::{ExecutionContext, Node, Result, Value, get_input};
 use crate::aam::TransitionLabel;
+use apxm_core::constants::runtime::belief_keys;
 
 pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -> Result<Value> {
     let value = if !inputs.is_empty() {
@@ -15,9 +16,9 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
 
     // Record autonomous transition in AAM
     ctx.aam.set_belief(
-        format!("_autonomous_node:{}", node.id),
+        format!("{}{}", belief_keys::AUTONOMOUS_NODE_PREFIX, node.id),
         value.clone(),
-        TransitionLabel::operation(node.op_type),
+        TransitionLabel::operation(node.id, node.op_type.to_string()),
     );
 
     tracing::info!(

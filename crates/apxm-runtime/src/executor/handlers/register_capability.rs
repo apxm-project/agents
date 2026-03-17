@@ -10,16 +10,19 @@
 
 use super::{ExecutionContext, Node, Result, Value, get_string_attribute};
 use crate::aam::TransitionLabel;
+use apxm_core::constants::defaults;
+use apxm_core::constants::graph::attrs as graph_attrs;
+use apxm_core::constants::runtime::{belief_keys, response_keys};
 use std::collections::HashMap;
 
 pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -> Result<Value> {
-    let capability_name = get_string_attribute(node, "capability_name")?;
+    let capability_name = get_string_attribute(node, graph_attrs::CAPABILITY_NAME)?;
     let description = node
         .attributes
-        .get("description")
+        .get(graph_attrs::DESCRIPTION)
         .and_then(|v| v.as_string())
         .cloned()
-        .unwrap_or_else(|| "Dynamically registered capability".to_string());
+        .unwrap_or_else(|| defaults::DEFAULT_DESCRIPTION.to_string());
 
     tracing::info!(
         execution_id = %ctx.execution_id,
@@ -30,7 +33,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
 
     // Record capability registration in AAM
     ctx.aam.set_belief(
-        format!("_registered_capability:{}", capability_name),
+        format!("{}{}", belief_keys::REGISTERED_CAPABILITY_PREFIX, capability_name),
         Value::String(description.clone()),
         TransitionLabel::Custom(format!("register_capability:{}", capability_name)),
     );
@@ -40,16 +43,16 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
         .memory
         .write(
             crate::memory::MemorySpace::Stm,
-            format!("_capability_registered:{}", capability_name),
+            format!("{}{}", belief_keys::CAPABILITY_REGISTERED_PREFIX, capability_name),
             Value::String(description.clone()),
         )
         .await;
 
     // Build result
     let mut result = HashMap::new();
-    result.insert("capability_name".to_string(), Value::String(capability_name.clone()));
-    result.insert("description".to_string(), Value::String(description));
-    result.insert("registered".to_string(), Value::Bool(true));
+    result.insert(response_keys::CAPABILITY_NAME.to_string(), Value::String(capability_name.clone()));
+    result.insert(response_keys::DESCRIPTION.to_string(), Value::String(description));
+    result.insert(response_keys::REGISTERED.to_string(), Value::Bool(true));
 
     tracing::info!(
         execution_id = %ctx.execution_id,
