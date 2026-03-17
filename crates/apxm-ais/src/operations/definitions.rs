@@ -1,7 +1,7 @@
 //! AIS Operation Definitions - Single Source of Truth
 //!
-//! This module contains the complete specification for all 32 AIS operations
-//! (29 public + 1 metadata + 2 internal). Both the compiler and runtime use
+//! This module contains the complete specification for all 39 AIS operations
+//! (36 public + 1 metadata + 2 internal). Both the compiler and runtime use
 //! these definitions to ensure consistent semantics.
 
 use super::category::OperationCategory;
@@ -14,9 +14,9 @@ use std::fmt;
 
 /// Represents all AIS operation types.
 ///
-/// This enum is the canonical list of operations (32 total):
+/// This enum is the canonical list of operations (39 total):
 /// - 1 metadata operation (AgentOp)
-/// - 29 public operations
+/// - 36 public operations
 /// - 2 internal operations (ConstStr, Yield)
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -103,6 +103,28 @@ pub enum AISOperationType {
     /// Resume a suspended execution from a PAUSE checkpoint.
     Resume,
 
+    // Coordination Operations (Phase 2 ISA Extensions)
+    /// Delegate a task to a sub-agent.
+    Delegate,
+    /// Multi-agent negotiation protocol.
+    Negotiate,
+
+    // Identity Operations
+    /// No-op passthrough (no AAM transition).
+    Nop,
+    /// Identity passthrough (AAM identity transition recorded).
+    Identity,
+
+    // Self-Organization Operations
+    /// Spawn a new agent instance at runtime.
+    SpawnAgent,
+    /// Register a new capability in the runtime registry.
+    RegisterCapability,
+
+    // Autonomous Execution (stub)
+    /// Switch a sub-graph region to model-driven execution.
+    Autonomous,
+
     // Internal Operations (not part of public AIS)
     /// String constant (compiler internal).
     ConstStr,
@@ -153,6 +175,17 @@ impl fmt::Display for AISOperationType {
             AISOperationType::Claim => write!(f, "CLAIM"),
             AISOperationType::Pause => write!(f, "PAUSE"),
             AISOperationType::Resume => write!(f, "RESUME"),
+            // Coordination (Phase 2)
+            AISOperationType::Delegate => write!(f, "DELEGATE"),
+            AISOperationType::Negotiate => write!(f, "NEGOTIATE"),
+            // Identity
+            AISOperationType::Nop => write!(f, "NOP"),
+            AISOperationType::Identity => write!(f, "IDENTITY"),
+            // Self-Organization
+            AISOperationType::SpawnAgent => write!(f, "SPAWN_AGENT"),
+            AISOperationType::RegisterCapability => write!(f, "REGISTER_CAPABILITY"),
+            // Autonomous
+            AISOperationType::Autonomous => write!(f, "AUTONOMOUS"),
             // Internal
             AISOperationType::ConstStr => write!(f, "CONST_STR"),
             AISOperationType::Yield => write!(f, "YIELD"),
@@ -194,6 +227,13 @@ impl AISOperationType {
             AISOperationType::Claim => "claim",
             AISOperationType::Pause => "pause",
             AISOperationType::Resume => "resume",
+            AISOperationType::Delegate => "delegate",
+            AISOperationType::Negotiate => "negotiate",
+            AISOperationType::Nop => "nop",
+            AISOperationType::Identity => "identity",
+            AISOperationType::SpawnAgent => "spawn_agent",
+            AISOperationType::RegisterCapability => "register_capability",
+            AISOperationType::Autonomous => "autonomous",
             AISOperationType::ConstStr => "const_str",
             AISOperationType::Yield => "yield",
         }
@@ -207,37 +247,44 @@ impl AISOperationType {
     ///   Inv=0, Ask=1, QMem=2, ..., Print=22, Think=23, Reason=24
     pub fn from_wire_index(index: u32) -> Option<AISOperationType> {
         /// Wire-format operation kind table. Index = OperationKind from ArtifactEmitter.cpp.
-        const WIRE_OP_KIND_MAP: [AISOperationType; 25] = [
-            AISOperationType::Inv,           // 0
-            AISOperationType::Ask,           // 1
-            AISOperationType::QMem,          // 2
-            AISOperationType::UMem,          // 3
-            AISOperationType::Plan,          // 4
-            AISOperationType::WaitAll,       // 5
-            AISOperationType::Merge,         // 6
-            AISOperationType::Fence,         // 7
-            AISOperationType::Exc,           // 8
-            AISOperationType::Communicate,   // 9
-            AISOperationType::Reflect,       // 10
-            AISOperationType::Verify,        // 11
-            AISOperationType::Err,           // 12
-            AISOperationType::Return,        // 13
-            AISOperationType::Jump,          // 14
-            AISOperationType::BranchOnValue, // 15
-            AISOperationType::LoopStart,     // 16
-            AISOperationType::LoopEnd,       // 17
-            AISOperationType::TryCatch,      // 18
-            AISOperationType::ConstStr,      // 19
-            AISOperationType::Switch,        // 20
-            AISOperationType::FlowCall,      // 21
-            AISOperationType::Print,         // 22
-            AISOperationType::Think,         // 23
-            AISOperationType::Reason,        // 24
+        const WIRE_OP_KIND_MAP: [AISOperationType; 32] = [
+            AISOperationType::Inv,                // 0
+            AISOperationType::Ask,                // 1
+            AISOperationType::QMem,               // 2
+            AISOperationType::UMem,               // 3
+            AISOperationType::Plan,               // 4
+            AISOperationType::WaitAll,            // 5
+            AISOperationType::Merge,              // 6
+            AISOperationType::Fence,              // 7
+            AISOperationType::Exc,                // 8
+            AISOperationType::Communicate,        // 9
+            AISOperationType::Reflect,            // 10
+            AISOperationType::Verify,             // 11
+            AISOperationType::Err,                // 12
+            AISOperationType::Return,             // 13
+            AISOperationType::Jump,               // 14
+            AISOperationType::BranchOnValue,      // 15
+            AISOperationType::LoopStart,          // 16
+            AISOperationType::LoopEnd,            // 17
+            AISOperationType::TryCatch,           // 18
+            AISOperationType::ConstStr,           // 19
+            AISOperationType::Switch,             // 20
+            AISOperationType::FlowCall,           // 21
+            AISOperationType::Print,              // 22
+            AISOperationType::Think,              // 23
+            AISOperationType::Reason,             // 24
+            AISOperationType::Delegate,           // 25
+            AISOperationType::Negotiate,          // 26
+            AISOperationType::Nop,                // 27
+            AISOperationType::Identity,           // 28
+            AISOperationType::SpawnAgent,         // 29
+            AISOperationType::RegisterCapability, // 30
+            AISOperationType::Autonomous,         // 31
         ];
         WIRE_OP_KIND_MAP.get(index as usize).copied()
     }
 
-    /// Get all operation types (32 total: 27 original + 5 phase-1 extensions).
+    /// Get all operation types (39 total: 27 original + 5 phase-1 + 7 phase-2 extensions).
     pub fn all_operations() -> &'static [AISOperationType] {
         &[
             AISOperationType::Agent,
@@ -270,6 +317,13 @@ impl AISOperationType {
             AISOperationType::Claim,
             AISOperationType::Pause,
             AISOperationType::Resume,
+            AISOperationType::Delegate,
+            AISOperationType::Negotiate,
+            AISOperationType::Nop,
+            AISOperationType::Identity,
+            AISOperationType::SpawnAgent,
+            AISOperationType::RegisterCapability,
+            AISOperationType::Autonomous,
             AISOperationType::ConstStr,
             AISOperationType::Yield,
         ]
@@ -989,6 +1043,132 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         min_inputs: 0,
         produces_output: true,
     },
+    // ========== Coordination Operations (Phase 2) ==========
+    OperationSpec {
+        op_type: AISOperationType::Delegate,
+        name: "Delegate",
+        category: OperationCategory::Coordination,
+        description: "Delegate a task to a sub-agent for execution",
+        long_description: "Creates a sub-task from a task specification and assigns it to a \
+            target agent. Returns a task handle that can be used to track the delegated work. \
+            The target agent executes the task independently and reports results back.",
+        latency: OperationLatency::Medium,
+        example_json: Some(r#"{\"id\": 3, \"op\": \"DELEGATE\", \"attributes\": {\"task_spec\": \"Analyze the dataset\", \"target_agent\": \"analyst\"}}"#),
+        fields: &[
+            OperationField::required("task_spec", "Description of the task to delegate"),
+            OperationField::required("target_agent", "Name of the agent to delegate to"),
+        ],
+        needs_submission: true,
+        min_inputs: 0,
+        produces_output: true,
+    },
+    OperationSpec {
+        op_type: AISOperationType::Negotiate,
+        name: "Negotiate",
+        category: OperationCategory::Coordination,
+        description: "Multi-agent negotiation protocol for consensus building",
+        long_description: "Initiates a multi-party negotiation protocol among a set of agents. \
+            A proposal is circulated to all parties for a configurable number of rounds. \
+            Returns the consensus result or a timeout if no agreement is reached.",
+        latency: OperationLatency::High,
+        example_json: Some(r#"{\"id\": 4, \"op\": \"NEGOTIATE\", \"attributes\": {\"parties\": [\"agent_a\", \"agent_b\"], \"proposal\": \"Choose the best approach\", \"max_rounds\": 3}}"#),
+        fields: &[
+            OperationField::required("parties", "List of agent names participating in negotiation"),
+            OperationField::required("proposal", "The proposal to negotiate on"),
+            OperationField::optional("max_rounds", "Maximum negotiation rounds (default: 3)"),
+        ],
+        needs_submission: true,
+        min_inputs: 0,
+        produces_output: true,
+    },
+    // ========== Identity Operations (2) ==========
+    OperationSpec {
+        op_type: AISOperationType::Nop,
+        name: "Nop",
+        category: OperationCategory::Identity,
+        description: "No-op passthrough with no side effects or AAM transition",
+        long_description: "Pure passthrough operation with no side effects and no AAM state \
+            transition. Passes through its first input unchanged, or returns Null if no inputs. \
+            Useful as a placeholder, sync point, or structural node in graph composition.",
+        latency: OperationLatency::None,
+        example_json: Some(r#"{\"id\": 2, \"op\": \"NOP\"}"#),
+        fields: &[],
+        needs_submission: false,
+        min_inputs: 0,
+        produces_output: true,
+    },
+    OperationSpec {
+        op_type: AISOperationType::Identity,
+        name: "Identity",
+        category: OperationCategory::Identity,
+        description: "Identity passthrough that records an AAM identity transition",
+        long_description: "Like NOP but produces an AAM identity transition (state unchanged \
+            but recorded in the execution trace). Useful for observability when you want to \
+            mark a point in the graph without changing state.",
+        latency: OperationLatency::None,
+        example_json: Some(r#"{\"id\": 2, \"op\": \"IDENTITY\"}"#),
+        fields: &[],
+        needs_submission: false,
+        min_inputs: 0,
+        produces_output: true,
+    },
+    // ========== Self-Organization Operations (2) ==========
+    OperationSpec {
+        op_type: AISOperationType::SpawnAgent,
+        name: "SpawnAgent",
+        category: OperationCategory::Coordination,
+        description: "Create a new agent instance at runtime with given capabilities",
+        long_description: "Spawns a new agent instance with specified capabilities and goals. \
+            The new agent is registered in the flow registry and can receive COMMUNICATE or \
+            DELEGATE messages. Returns the new agent's identifier.",
+        latency: OperationLatency::Medium,
+        example_json: Some(r#"{\"id\": 3, \"op\": \"SPAWN_AGENT\", \"attributes\": {\"agent_name\": \"worker_1\", \"capabilities\": [\"search\", \"summarize\"], \"goals\": [\"process tasks\"]}}"#),
+        fields: &[
+            OperationField::required("agent_name", "Name for the new agent"),
+            OperationField::optional("capabilities", "List of capabilities for the new agent"),
+            OperationField::optional("goals", "Initial goals for the new agent"),
+        ],
+        needs_submission: true,
+        min_inputs: 0,
+        produces_output: true,
+    },
+    OperationSpec {
+        op_type: AISOperationType::RegisterCapability,
+        name: "RegisterCapability",
+        category: OperationCategory::Coordination,
+        description: "Register a new capability (tool) in the runtime registry",
+        long_description: "Dynamically registers a new capability in the runtime's capability \
+            registry. The capability becomes available for INV operations after registration. \
+            Returns a confirmation with the registered capability name.",
+        latency: OperationLatency::Low,
+        example_json: Some(r#"{\"id\": 3, \"op\": \"REGISTER_CAPABILITY\", \"attributes\": {\"capability_name\": \"custom_tool\", \"description\": \"A custom analysis tool\"}}"#),
+        fields: &[
+            OperationField::required("capability_name", "Name for the capability to register"),
+            OperationField::optional("description", "Human-readable description of the capability"),
+            OperationField::optional("parameters_schema", "JSON schema for capability parameters"),
+        ],
+        needs_submission: true,
+        min_inputs: 0,
+        produces_output: true,
+    },
+    // ========== Autonomous Execution (stub) ==========
+    OperationSpec {
+        op_type: AISOperationType::Autonomous,
+        name: "Autonomous",
+        category: OperationCategory::Coordination,
+        description: "Switch a sub-graph region to model-driven execution (stub)",
+        long_description: "Switches a sub-graph region to model-driven (unstructured) execution, \
+            returning to structured DAG after the region exits. This is a stub implementation \
+            that passes through its input unchanged.",
+        latency: OperationLatency::High,
+        example_json: Some(r#"{\"id\": 3, \"op\": \"AUTONOMOUS\", \"attributes\": {\"region\": \"exploration\"}}"#),
+        fields: &[
+            OperationField::optional("region", "Name of the autonomous execution region"),
+        ],
+        needs_submission: true,
+        min_inputs: 0,
+        produces_output: true,
+    },
     // ========== Internal Operations (2) ==========
     OperationSpec {
         op_type: AISOperationType::ConstStr,
@@ -1069,13 +1249,13 @@ mod tests {
     fn test_operation_counts() {
         assert_eq!(
             AIS_OPERATIONS.len(),
-            32,
-            "Expected 32 total operations (1 metadata + 29 public + 2 internal)"
+            39,
+            "Expected 39 total operations (1 metadata + 36 public + 2 internal)"
         );
         assert_eq!(
             AISOperationType::all_operations().len(),
-            32,
-            "Expected 32 total operation types"
+            39,
+            "Expected 39 total operation types"
         );
     }
 
@@ -1112,15 +1292,24 @@ mod tests {
             AISOperationType::from_wire_index(24),
             Some(AISOperationType::Reason)
         );
+        // New Phase 2 wire indices
+        assert_eq!(
+            AISOperationType::from_wire_index(25),
+            Some(AISOperationType::Delegate)
+        );
+        assert_eq!(
+            AISOperationType::from_wire_index(31),
+            Some(AISOperationType::Autonomous)
+        );
         // Out-of-range returns None
-        assert_eq!(AISOperationType::from_wire_index(25), None);
+        assert_eq!(AISOperationType::from_wire_index(32), None);
         assert_eq!(AISOperationType::from_wire_index(u32::MAX), None);
     }
 
     #[test]
     fn test_wire_index_round_trip_coverage() {
         let mut seen = std::collections::HashSet::new();
-        for i in 0u32..25 {
+        for i in 0u32..32 {
             let op = AISOperationType::from_wire_index(i);
             assert!(
                 op.is_some(),
@@ -1134,13 +1323,13 @@ mod tests {
         }
         assert_eq!(
             seen.len(),
-            25,
-            "Expected 25 distinct wire-indexed operations"
+            32,
+            "Expected 32 distinct wire-indexed operations"
         );
         assert_eq!(
-            AISOperationType::from_wire_index(25),
+            AISOperationType::from_wire_index(32),
             None,
-            "Index 25 should be out of range"
+            "Index 32 should be out of range"
         );
     }
 
@@ -1148,7 +1337,7 @@ mod tests {
     fn test_wire_indexed_ops_subset_of_all_ops() {
         let all_ops: std::collections::HashSet<AISOperationType> =
             AISOperationType::all_operations().iter().copied().collect();
-        for i in 0u32..25 {
+        for i in 0u32..32 {
             let op = AISOperationType::from_wire_index(i).unwrap();
             assert!(
                 all_ops.contains(&op),

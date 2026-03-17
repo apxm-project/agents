@@ -19,7 +19,7 @@
 //!       └───────────────┘    │    └───────────────┘
 //! ```
 //!
-//! ## Operations (32 total)
+//! ## Operations (39 total)
 //!
 //! | Category | Operations |
 //! |----------|------------|
@@ -32,6 +32,8 @@
 //! | Error Handling | TRY_CATCH, ERR |
 //! | Communication | COMMUNICATE |
 //! | Goal/State | UPDATE_GOAL, GUARD, CLAIM, PAUSE, RESUME |
+//! | Coordination | DELEGATE, NEGOTIATE, SPAWN_AGENT, REGISTER_CAPABILITY, AUTONOMOUS |
+//! | Identity | NOP, IDENTITY |
 //! | Internal | CONST_STR, YIELD |
 
 pub mod aam;

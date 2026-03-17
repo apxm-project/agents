@@ -422,6 +422,13 @@ fn to_tablegen_name(op_type: AISOperationType) -> String {
         AISOperationType::Claim => "Claim",
         AISOperationType::Pause => "Pause",
         AISOperationType::Resume => "Resume",
+        AISOperationType::Delegate => "Delegate",
+        AISOperationType::Negotiate => "Negotiate",
+        AISOperationType::Nop => "Nop",
+        AISOperationType::Identity => "Identity",
+        AISOperationType::SpawnAgent => "SpawnAgent",
+        AISOperationType::RegisterCapability => "RegisterCapability",
+        AISOperationType::Autonomous => "Autonomous",
         AISOperationType::ConstStr => "ConstStr",
         AISOperationType::Yield => "Yield",
     };
@@ -439,6 +446,8 @@ fn get_category_comment(category: OperationCategory) -> &'static str {
         OperationCategory::Synchronization => "Synchronization Operations",
         OperationCategory::ErrorHandling => "Error Handling Operations",
         OperationCategory::Communication => "Communication Operations",
+        OperationCategory::Coordination => "Coordination Operations",
+        OperationCategory::Identity => "Identity Operations",
         OperationCategory::Internal => "Internal Operations",
     }
 }

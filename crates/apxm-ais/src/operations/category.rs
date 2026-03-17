@@ -19,6 +19,10 @@ pub enum OperationCategory {
     ErrorHandling,
     /// Communication operations: COMMUNICATE, CLAIM, PAUSE
     Communication,
+    /// Coordination operations: DELEGATE, NEGOTIATE, SPAWN_AGENT, REGISTER_CAPABILITY, AUTONOMOUS
+    Coordination,
+    /// Identity operations: NOP, IDENTITY
+    Identity,
     /// Internal operations: CONST_STR, YIELD
     Internal,
 }
@@ -37,6 +41,7 @@ impl OperationCategory {
                 | OperationCategory::Reasoning
                 | OperationCategory::Tools
                 | OperationCategory::Communication
+                | OperationCategory::Coordination
         )
     }
 

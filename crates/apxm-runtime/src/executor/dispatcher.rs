@@ -87,6 +87,15 @@ impl OperationDispatcher {
             AISOperationType::Pause => pause::execute(ctx, node, inputs).await,
             AISOperationType::Resume => resume::execute(ctx, node, inputs).await,
 
+            // Phase 2 ISA extensions (Coordination, Identity, Self-Organization)
+            AISOperationType::Delegate => delegate::execute(ctx, node, inputs).await,
+            AISOperationType::Negotiate => negotiate::execute(ctx, node, inputs).await,
+            AISOperationType::Nop => nop::execute(ctx, node, inputs).await,
+            AISOperationType::Identity => identity::execute(ctx, node, inputs).await,
+            AISOperationType::SpawnAgent => spawn_agent::execute(ctx, node, inputs).await,
+            AISOperationType::RegisterCapability => register_capability::execute(ctx, node, inputs).await,
+            AISOperationType::Autonomous => autonomous::execute(ctx, node, inputs).await,
+
             // Literal operations
             AISOperationType::ConstStr => const_str::execute(ctx, node, inputs).await,
 
@@ -148,7 +157,7 @@ mod tests {
         // match and CONTRACTS.md accordingly.
         assert_eq!(
             AISOperationType::all_operations().len(),
-            32,
+            39,
             "AISOperationType variant count changed — update dispatcher and CONTRACTS.md"
         );
     }
