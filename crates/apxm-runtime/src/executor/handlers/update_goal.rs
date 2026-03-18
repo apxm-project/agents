@@ -128,3 +128,161 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::capability::CapabilitySystem;
+    use crate::memory::MemoryConfig;
+    use apxm_core::types::operations::AISOperationType;
+    use std::sync::Arc;
+
+    async fn make_ctx_and_aam() -> (ExecutionContext, crate::aam::Aam) {
+        let memory = Arc::new(
+            crate::memory::MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(apxm_backends::LLMRegistry::new());
+        let capability_system = Arc::new(CapabilitySystem::new());
+        let aam = crate::aam::Aam::new();
+        let ctx = ExecutionContext::new(memory, llm_registry, capability_system, aam.clone());
+        (ctx, aam)
+    }
+
+    fn make_set_node(goal_id: &str, priority: Option<u64>) -> Node {
+        let mut node = Node {
+            id: 1,
+            op_type: AISOperationType::UpdateGoal,
+            attributes: std::collections::HashMap::new(),
+            input_tokens: vec![],
+            output_tokens: vec![],
+            metadata: apxm_core::types::execution::NodeMetadata::default(),
+        };
+        node.attributes.insert(
+            graph_attrs::ACTION.to_string(),
+            Value::String("set".to_string()),
+        );
+        node.attributes.insert(
+            graph_attrs::GOAL_ID.to_string(),
+            Value::String(goal_id.to_string()),
+        );
+        if let Some(p) = priority {
+            node.attributes.insert(
+                graph_attrs::PRIORITY.to_string(),
+                Value::Number(apxm_core::types::values::Number::Integer(p as i64)),
+            );
+        }
+        node
+    }
+
+    #[tokio::test]
+    async fn test_set_goal() {
+        let (ctx, aam) = make_ctx_and_aam().await;
+
+        let node = make_set_node("research_topic", Some(2));
+        let result = execute(&ctx, &node, vec![Value::String("Investigate GPU".to_string())])
+            .await
+            .unwrap();
+        assert_eq!(result, Value::String("set".to_string()));
+
+        let goals = aam.goals();
+        assert_eq!(goals.len(), 1);
+        assert_eq!(goals[0].description, "Investigate GPU");
+        assert_eq!(goals[0].priority, 2);
+    }
+
+    #[tokio::test]
+    async fn test_remove_goal() {
+        let (ctx, aam) = make_ctx_and_aam().await;
+
+        // First add a goal
+        let set_node = make_set_node("old_task", None);
+        execute(&ctx, &set_node, vec![Value::String("old_task".to_string())])
+            .await
+            .unwrap();
+        assert_eq!(aam.goals().len(), 1);
+
+        // Now remove it
+        let mut remove_node = Node {
+            id: 2,
+            op_type: AISOperationType::UpdateGoal,
+            attributes: std::collections::HashMap::new(),
+            input_tokens: vec![],
+            output_tokens: vec![],
+            metadata: apxm_core::types::execution::NodeMetadata::default(),
+        };
+        remove_node.attributes.insert(
+            graph_attrs::ACTION.to_string(),
+            Value::String("remove".to_string()),
+        );
+        remove_node.attributes.insert(
+            graph_attrs::GOAL_ID.to_string(),
+            Value::String("old_task".to_string()),
+        );
+
+        let result = execute(&ctx, &remove_node, vec![]).await.unwrap();
+        assert_eq!(result, Value::String("removed".to_string()));
+        assert_eq!(aam.goals().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_remove_goal_not_found() {
+        let (ctx, _aam) = make_ctx_and_aam().await;
+
+        let mut node = Node {
+            id: 1,
+            op_type: AISOperationType::UpdateGoal,
+            attributes: std::collections::HashMap::new(),
+            input_tokens: vec![],
+            output_tokens: vec![],
+            metadata: apxm_core::types::execution::NodeMetadata::default(),
+        };
+        node.attributes.insert(
+            graph_attrs::ACTION.to_string(),
+            Value::String("remove".to_string()),
+        );
+        node.attributes.insert(
+            graph_attrs::GOAL_ID.to_string(),
+            Value::String("nonexistent".to_string()),
+        );
+
+        let result = execute(&ctx, &node, vec![]).await.unwrap();
+        assert_eq!(result, Value::String("not_found".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_clear_goals() {
+        let (ctx, aam) = make_ctx_and_aam().await;
+
+        // Add two goals
+        let node1 = make_set_node("goal_a", None);
+        execute(&ctx, &node1, vec![Value::String("goal_a".to_string())])
+            .await
+            .unwrap();
+        let mut node2 = make_set_node("goal_b", None);
+        node2.id = 2;
+        execute(&ctx, &node2, vec![Value::String("goal_b".to_string())])
+            .await
+            .unwrap();
+        assert_eq!(aam.goals().len(), 2);
+
+        // Clear all goals
+        let mut clear_node = Node {
+            id: 3,
+            op_type: AISOperationType::UpdateGoal,
+            attributes: std::collections::HashMap::new(),
+            input_tokens: vec![],
+            output_tokens: vec![],
+            metadata: apxm_core::types::execution::NodeMetadata::default(),
+        };
+        clear_node.attributes.insert(
+            graph_attrs::ACTION.to_string(),
+            Value::String("clear".to_string()),
+        );
+
+        let result = execute(&ctx, &clear_node, vec![]).await.unwrap();
+        assert_eq!(result, Value::String("cleared".to_string()));
+        assert_eq!(aam.goals().len(), 0);
+    }
+}

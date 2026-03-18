@@ -6,8 +6,9 @@
 use apxm_core::{error::RuntimeError, types::execution::ExecutionDag};
 use async_trait::async_trait;
 use std::collections::HashMap;
+use std::sync::Arc;
 
-use apxm_core::types::TokenId;
+use apxm_core::types::{Node, NodeId, TokenId};
 
 /// Result type for DAG splicing operations
 pub type SpliceResult = Result<HashMap<TokenId, TokenId>, RuntimeError>;
@@ -49,6 +50,38 @@ pub trait DagSplicer: Send + Sync {
     /// * `delegator_node_id` - The node that is delegating (e.g., the Switch node)
     /// * `token_ids` - The tokens to mark as delegated
     fn mark_tokens_delegated(&self, delegator_node_id: u64, token_ids: &[TokenId]);
+
+    /// Condense a sub-DAG into a single replacement node.
+    ///
+    /// This is the reverse of `splice_dag`: it takes a set of node IDs that form
+    /// a connected sub-graph, removes them, and inserts a single replacement node.
+    /// External edges (edges crossing the boundary of the sub-graph) are reconnected
+    /// to the replacement node.
+    ///
+    /// # Arguments
+    ///
+    /// * `node_ids` - The set of nodes to condense (must all exist in the DAG)
+    /// * `replacement` - The single node that replaces the sub-graph
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` on success, or a `RuntimeError` if condensation fails.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if:
+    /// - Any node in `node_ids` does not exist
+    /// - The operation is not supported in this context
+    async fn condense_subdag(
+        &self,
+        node_ids: &[NodeId],
+        replacement: Arc<Node>,
+    ) -> Result<(), RuntimeError> {
+        let _ = (node_ids, replacement);
+        Err(RuntimeError::State(
+            "DAG condensation not supported in this context".to_string(),
+        ))
+    }
 }
 
 /// No-op splicer for contexts that don't support dynamic splicing
@@ -74,6 +107,7 @@ impl DagSplicer for NoOpSplicer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use apxm_core::types::operations::AISOperationType;
 
     #[tokio::test]
     async fn test_noop_splicer() {
@@ -82,6 +116,14 @@ mod tests {
         let connections = HashMap::new();
 
         let result = splicer.splice_dag(dag, connections).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_noop_splicer_condense_returns_error() {
+        let splicer = NoOpSplicer;
+        let replacement = Arc::new(Node::new(99, AISOperationType::Return));
+        let result = splicer.condense_subdag(&[1, 2], replacement).await;
         assert!(result.is_err());
     }
 }

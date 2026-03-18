@@ -2287,4 +2287,298 @@ mod tests {
             "expected 400 on double-resume: {body}"
         );
     }
+
+    // ── TaskQueueManager unit tests ─────────────────────────────────────────
+
+    fn make_task(id: &str, queue: &str) -> QueuedTask {
+        QueuedTask {
+            id: id.to_string(),
+            queue: queue.to_string(),
+            data: serde_json::json!({"work": id}),
+            status: TaskStatus::Pending,
+            claimed_by: None,
+            claim_token: None,
+            lease_expires_ms: None,
+            result: None,
+            created_at_ms: now_ms(),
+            completed_at_ms: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn task_manager_enqueue_and_get() {
+        let mgr = TaskQueueManager::new();
+        let task = make_task("t1", "q1");
+        mgr.enqueue(task).await;
+
+        // Verify task exists in all_tasks index
+        assert!(mgr.all_tasks.get("t1").is_some());
+        let stored = mgr.all_tasks.get("t1").unwrap();
+        assert_eq!(stored.queue, "q1");
+        assert_eq!(stored.status, TaskStatus::Pending);
+    }
+
+    #[tokio::test]
+    async fn task_manager_list_queue() {
+        let mgr = TaskQueueManager::new();
+        mgr.enqueue(make_task("a", "q")).await;
+        mgr.enqueue(make_task("b", "q")).await;
+        mgr.enqueue(make_task("c", "other")).await;
+
+        let q_tasks = mgr.list_queue("q");
+        assert_eq!(q_tasks.len(), 2);
+        assert!(q_tasks.iter().any(|t| t.id == "a"));
+        assert!(q_tasks.iter().any(|t| t.id == "b"));
+
+        let other_tasks = mgr.list_queue("other");
+        assert_eq!(other_tasks.len(), 1);
+        assert_eq!(other_tasks[0].id, "c");
+
+        // Non-existent queue returns empty
+        assert!(mgr.list_queue("nope").is_empty());
+    }
+
+    #[tokio::test]
+    async fn task_manager_claim_returns_first_pending() {
+        let mgr = TaskQueueManager::new();
+        mgr.enqueue(make_task("t1", "q")).await;
+        mgr.enqueue(make_task("t2", "q")).await;
+
+        let claimed = mgr.claim("q", "agent-a", 60_000).await;
+        assert!(claimed.is_some());
+        let claimed = claimed.unwrap();
+        assert_eq!(claimed.id, "t1");
+        assert_eq!(claimed.status, TaskStatus::Claimed);
+        assert_eq!(claimed.claimed_by.as_deref(), Some("agent-a"));
+        assert!(claimed.claim_token.is_some());
+        assert!(claimed.lease_expires_ms.is_some());
+    }
+
+    #[tokio::test]
+    async fn task_manager_claim_empty_queue_returns_none() {
+        let mgr = TaskQueueManager::new();
+        assert!(mgr.claim("nonexistent", "a", 1000).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn task_manager_claim_skips_already_claimed() {
+        let mgr = TaskQueueManager::new();
+        mgr.enqueue(make_task("t1", "q")).await;
+        mgr.enqueue(make_task("t2", "q")).await;
+
+        // Claim first task
+        let first = mgr.claim("q", "agent-a", 60_000).await.unwrap();
+        assert_eq!(first.id, "t1");
+
+        // Next claim should get the second task
+        let second = mgr.claim("q", "agent-b", 60_000).await.unwrap();
+        assert_eq!(second.id, "t2");
+
+        // No more pending tasks
+        assert!(mgr.claim("q", "agent-c", 60_000).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn task_manager_complete_success() {
+        let mgr = TaskQueueManager::new();
+        mgr.enqueue(make_task("t1", "q")).await;
+
+        let claimed = mgr.claim("q", "agent", 60_000).await.unwrap();
+        let token = claimed.claim_token.unwrap();
+
+        let result = mgr
+            .complete("t1", &token, serde_json::json!({"output": "done"}))
+            .await;
+        assert!(result.is_ok());
+
+        // Verify completed state in all_tasks
+        let stored = mgr.all_tasks.get("t1").unwrap();
+        assert_eq!(stored.status, TaskStatus::Completed);
+        assert!(stored.result.is_some());
+        assert!(stored.completed_at_ms.is_some());
+    }
+
+    #[tokio::test]
+    async fn task_manager_complete_wrong_token_fails() {
+        let mgr = TaskQueueManager::new();
+        mgr.enqueue(make_task("t1", "q")).await;
+        mgr.claim("q", "agent", 60_000).await;
+
+        let result = mgr
+            .complete("t1", "wrong-token", serde_json::json!({}))
+            .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid claim token"));
+    }
+
+    #[tokio::test]
+    async fn task_manager_complete_missing_task_fails() {
+        let mgr = TaskQueueManager::new();
+        let result = mgr
+            .complete("nonexistent", "tok", serde_json::json!({}))
+            .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not found"));
+    }
+
+    // ── CheckpointStore unit tests ──────────────────────────────────────────
+
+    #[test]
+    fn checkpoint_store_create_and_get() {
+        let store = CheckpointStore::new();
+        let cp = Checkpoint {
+            id: "cp1".to_string(),
+            message: "Review this".to_string(),
+            display_data: serde_json::json!({"plan": "step 1"}),
+            status: CheckpointStatus::Pending,
+            human_input: None,
+            notification_url: None,
+            created_at_ms: now_ms(),
+            resumed_at_ms: None,
+        };
+        store.create(cp);
+
+        let loaded = store.get("cp1");
+        assert!(loaded.is_some());
+        let loaded = loaded.unwrap();
+        assert_eq!(loaded.id, "cp1");
+        assert_eq!(loaded.message, "Review this");
+        assert_eq!(loaded.status, CheckpointStatus::Pending);
+    }
+
+    #[test]
+    fn checkpoint_store_get_missing_returns_none() {
+        let store = CheckpointStore::new();
+        assert!(store.get("nope").is_none());
+    }
+
+    #[test]
+    fn checkpoint_store_resume_success() {
+        let store = CheckpointStore::new();
+        store.create(Checkpoint {
+            id: "cp2".to_string(),
+            message: "Approve?".to_string(),
+            display_data: serde_json::json!(null),
+            status: CheckpointStatus::Pending,
+            human_input: None,
+            notification_url: None,
+            created_at_ms: now_ms(),
+            resumed_at_ms: None,
+        });
+
+        let result = store.resume("cp2", serde_json::json!({"decision": "yes"}));
+        assert!(result.is_ok());
+        let resumed = result.unwrap();
+        assert_eq!(resumed.status, CheckpointStatus::Resumed);
+        assert_eq!(resumed.human_input, Some(serde_json::json!({"decision": "yes"})));
+        assert!(resumed.resumed_at_ms.is_some());
+    }
+
+    #[test]
+    fn checkpoint_store_resume_missing_returns_error() {
+        let store = CheckpointStore::new();
+        let result = store.resume("nope", serde_json::json!({}));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not found"));
+    }
+
+    #[test]
+    fn checkpoint_store_resume_already_resumed_returns_error() {
+        let store = CheckpointStore::new();
+        store.create(Checkpoint {
+            id: "cp3".to_string(),
+            message: "once".to_string(),
+            display_data: serde_json::json!(null),
+            status: CheckpointStatus::Pending,
+            human_input: None,
+            notification_url: None,
+            created_at_ms: now_ms(),
+            resumed_at_ms: None,
+        });
+
+        // First resume succeeds
+        assert!(store.resume("cp3", serde_json::json!({"ok": true})).is_ok());
+
+        // Second resume fails
+        let result = store.resume("cp3", serde_json::json!({"ok": false}));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not in pending state"));
+    }
+
+    // ── JSON-RPC helper unit tests ──────────────────────────────────────────
+
+    #[test]
+    fn jsonrpc_ok_format() {
+        let resp = jsonrpc_ok(
+            serde_json::json!(42),
+            serde_json::json!({"answer": "hello"}),
+        );
+        let body = resp.0;
+        assert_eq!(body["jsonrpc"], "2.0");
+        assert_eq!(body["id"], 42);
+        assert_eq!(body["result"]["answer"], "hello");
+        assert!(body.get("error").is_none());
+    }
+
+    #[test]
+    fn jsonrpc_ok_with_null_id() {
+        let resp = jsonrpc_ok(serde_json::json!(null), serde_json::json!("ok"));
+        let body = resp.0;
+        assert_eq!(body["jsonrpc"], "2.0");
+        assert!(body["id"].is_null());
+        assert_eq!(body["result"], "ok");
+    }
+
+    #[test]
+    fn jsonrpc_err_format() {
+        let resp = jsonrpc_err(serde_json::json!(7), -32601, "Method not found");
+        let body = resp.0;
+        assert_eq!(body["jsonrpc"], "2.0");
+        assert_eq!(body["id"], 7);
+        assert!(body.get("result").is_none());
+        assert_eq!(body["error"]["code"], -32601);
+        assert_eq!(body["error"]["message"], "Method not found");
+    }
+
+    #[test]
+    fn jsonrpc_err_with_string_id() {
+        let resp = jsonrpc_err(serde_json::json!("req-abc"), -32600, "Invalid request");
+        let body = resp.0;
+        assert_eq!(body["id"], "req-abc");
+        assert_eq!(body["error"]["code"], -32600);
+    }
+
+    // ── mcp_tool_result helper tests ────────────────────────────────────────
+
+    #[test]
+    fn mcp_tool_result_success() {
+        let resp = mcp_tool_result(
+            serde_json::json!(1),
+            "tool output text".to_string(),
+            false,
+        );
+        let body = resp.0;
+        assert_eq!(body["jsonrpc"], "2.0");
+        assert_eq!(body["id"], 1);
+
+        let content = &body["result"]["content"];
+        assert!(content.is_array());
+        let items = content.as_array().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["type"], "text");
+        assert_eq!(items[0]["text"], "tool output text");
+        assert_eq!(body["result"]["isError"], false);
+    }
+
+    #[test]
+    fn mcp_tool_result_error() {
+        let resp = mcp_tool_result(
+            serde_json::json!(2),
+            "something went wrong".to_string(),
+            true,
+        );
+        let body = resp.0;
+        assert_eq!(body["result"]["isError"], true);
+        assert_eq!(body["result"]["content"][0]["text"], "something went wrong");
+    }
 }

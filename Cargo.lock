@@ -296,7 +296,6 @@ dependencies = [
  "apxm-artifact",
  "apxm-backends",
  "apxm-core",
- "apxm-driver",
  "async-trait",
  "chrono",
  "crossbeam-deque",

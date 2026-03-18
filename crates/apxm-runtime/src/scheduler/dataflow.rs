@@ -80,6 +80,11 @@ impl DataflowScheduler {
             start,
             inputs,
         )?;
+        // Project AAM goal priorities onto scheduler node priorities.
+        // This bridges the two priority systems: compile-time node.metadata.priority
+        // and runtime Goal.priority in the AAM.
+        state.apply_goal_priorities(&ctx.aam);
+
         let state = Arc::new(state);
 
         ctx.dag_splicer = Arc::new(super::splicing::SchedulerDagSplicer::new(Arc::clone(
@@ -241,4 +246,151 @@ fn spawn_workers(
             })
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use apxm_core::types::execution::NodeMetadata;
+    use apxm_core::types::operations::AISOperationType;
+    use apxm_core::types::Node;
+    use std::collections::HashMap;
+
+    /// Helper: create a node with an estimated latency (used as cost).
+    fn make_costed_node(id: u64, cost: u64) -> Node {
+        Node {
+            id,
+            op_type: AISOperationType::Nop,
+            attributes: HashMap::new(),
+            input_tokens: vec![],
+            output_tokens: vec![],
+            metadata: NodeMetadata {
+                priority: 0,
+                estimated_latency: Some(cost),
+                task_source_id: None,
+            },
+        }
+    }
+
+    fn make_node(id: u64) -> Node {
+        Node {
+            id,
+            op_type: AISOperationType::Nop,
+            attributes: HashMap::new(),
+            input_tokens: vec![],
+            output_tokens: vec![],
+            metadata: NodeMetadata::default(),
+        }
+    }
+
+    // ── enforce_cost_budget tests ──────────────────────────────────────
+
+    #[test]
+    fn test_enforce_cost_budget_no_limit() {
+        let scheduler = DataflowScheduler::new(SchedulerConfig::new().with_max_cost(0));
+
+        let mut dag = ExecutionDag::new();
+        dag.add_node(make_costed_node(1, 999_999)).unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+
+        // max_cost == 0 means unlimited
+        assert!(scheduler.enforce_cost_budget(&dag).is_ok());
+    }
+
+    #[test]
+    fn test_enforce_cost_budget_within_limit() {
+        let scheduler = DataflowScheduler::new(SchedulerConfig::new().with_max_cost(100));
+
+        let mut dag = ExecutionDag::new();
+        dag.add_node(make_costed_node(1, 30)).unwrap();
+        dag.add_node(make_costed_node(2, 40)).unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+
+        // Total cost = 70, limit = 100 -> OK
+        assert!(scheduler.enforce_cost_budget(&dag).is_ok());
+    }
+
+    #[test]
+    fn test_enforce_cost_budget_exceeds_limit() {
+        let scheduler = DataflowScheduler::new(SchedulerConfig::new().with_max_cost(50));
+
+        let mut dag = ExecutionDag::new();
+        dag.add_node(make_costed_node(1, 30)).unwrap();
+        dag.add_node(make_costed_node(2, 40)).unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+
+        // Total cost = 70, limit = 50 -> error
+        let result = scheduler.enforce_cost_budget(&dag);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            RuntimeError::Scheduler { message } => {
+                assert!(message.contains("70"));
+                assert!(message.contains("50"));
+            }
+            e => panic!("Expected Scheduler error, got: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_enforce_cost_budget_at_exact_limit() {
+        let scheduler = DataflowScheduler::new(SchedulerConfig::new().with_max_cost(70));
+
+        let mut dag = ExecutionDag::new();
+        dag.add_node(make_costed_node(1, 30)).unwrap();
+        dag.add_node(make_costed_node(2, 40)).unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+
+        // Total cost = 70, limit = 70 -> OK (not strictly greater)
+        assert!(scheduler.enforce_cost_budget(&dag).is_ok());
+    }
+
+    #[test]
+    fn test_enforce_cost_budget_nodes_without_latency() {
+        let scheduler = DataflowScheduler::new(SchedulerConfig::new().with_max_cost(10));
+
+        let mut dag = ExecutionDag::new();
+        // Nodes without estimated_latency contribute 0 cost
+        dag.add_node(make_node(1)).unwrap();
+        dag.add_node(make_node(2)).unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+
+        assert!(scheduler.enforce_cost_budget(&dag).is_ok());
+    }
+
+    #[test]
+    fn test_enforce_cost_budget_mixed_latency() {
+        let scheduler = DataflowScheduler::new(SchedulerConfig::new().with_max_cost(100));
+
+        let mut dag = ExecutionDag::new();
+        dag.add_node(make_costed_node(1, 60)).unwrap();
+        dag.add_node(make_node(2)).unwrap(); // 0 cost
+        dag.add_node(make_costed_node(3, 50)).unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+
+        // Total = 60 + 0 + 50 = 110, limit = 100 -> error
+        let result = scheduler.enforce_cost_budget(&dag);
+        assert!(result.is_err());
+    }
+
+    // ── DataflowScheduler construction tests ───────────────────────────
+
+    #[test]
+    fn test_dataflow_scheduler_creation() {
+        let config = SchedulerConfig::new().with_max_concurrency(4);
+        let scheduler = DataflowScheduler::new(config);
+        assert_eq!(scheduler.config.max_concurrency, 4);
+    }
+
+    #[test]
+    fn test_dataflow_scheduler_default_config() {
+        let scheduler = DataflowScheduler::new(SchedulerConfig::default());
+        assert!(scheduler.config.max_concurrency > 0);
+        assert!(scheduler.config.validate().is_ok());
+    }
 }

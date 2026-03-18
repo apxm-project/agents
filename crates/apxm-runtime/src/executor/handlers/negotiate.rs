@@ -172,3 +172,306 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
 
     Ok(Value::Object(result))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::capability::CapabilitySystem;
+    use crate::capability::flow_registry::FlowRegistry;
+    use crate::memory::{MemoryConfig, MemorySystem};
+    use apxm_backends::LLMRegistry;
+    use apxm_core::constants::graph::attrs as graph_attrs;
+    use apxm_core::constants::runtime::response_keys;
+    use apxm_core::types::{
+        execution::{ExecutionDag, NodeMetadata},
+        operations::AISOperationType,
+    };
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    /// Create a simple flow DAG that returns a constant response.
+    fn create_negotiate_flow_dag(response_text: &str) -> ExecutionDag {
+        let mut const_node = apxm_core::types::execution::Node {
+            id: 1,
+            op_type: AISOperationType::ConstStr,
+            attributes: HashMap::new(),
+            input_tokens: vec![],
+            output_tokens: vec![100],
+            metadata: NodeMetadata::default(),
+        };
+        const_node.attributes.insert(
+            graph_attrs::VALUE.to_string(),
+            Value::String(response_text.to_string()),
+        );
+
+        ExecutionDag {
+            nodes: vec![const_node],
+            edges: vec![],
+            entry_nodes: vec![1],
+            exit_nodes: vec![1],
+            metadata: Default::default(),
+        }
+    }
+
+    fn make_negotiate_node(parties: Vec<&str>, proposal: &str) -> apxm_core::types::execution::Node {
+        let mut node = apxm_core::types::execution::Node {
+            id: 1,
+            op_type: AISOperationType::Negotiate,
+            attributes: HashMap::new(),
+            input_tokens: vec![],
+            output_tokens: vec![100],
+            metadata: NodeMetadata::default(),
+        };
+        node.attributes.insert(
+            graph_attrs::PROPOSAL.to_string(),
+            Value::String(proposal.to_string()),
+        );
+        node.attributes.insert(
+            graph_attrs::PARTIES.to_string(),
+            Value::Array(
+                parties
+                    .iter()
+                    .map(|p| Value::String(p.to_string()))
+                    .collect(),
+            ),
+        );
+        node
+    }
+
+    #[tokio::test]
+    async fn test_negotiate_basic_round_with_consensus() {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(LLMRegistry::new());
+        let capability_system = Arc::new(CapabilitySystem::new());
+        let flow_registry = Arc::new(FlowRegistry::new());
+
+        // Register negotiate flows for two parties
+        flow_registry.register_flow("alice", "negotiate", create_negotiate_flow_dag("I agree"));
+        flow_registry.register_flow("bob", "negotiate", create_negotiate_flow_dag("Accepted"));
+
+        let ctx = ExecutionContext::new(
+            memory,
+            llm_registry,
+            capability_system,
+            crate::aam::Aam::new(),
+        );
+        let ctx = ExecutionContext {
+            flow_registry,
+            ..ctx
+        };
+
+        let node = make_negotiate_node(vec!["alice", "bob"], "Let's collaborate");
+        let result = execute(&ctx, &node, vec![]).await.unwrap();
+
+        match &result {
+            Value::Object(obj) => {
+                // Should have consensus
+                assert_eq!(
+                    obj.get(response_keys::CONSENSUS),
+                    Some(&Value::Bool(true)),
+                    "Both parties responded successfully => consensus"
+                );
+                // Should contain the proposal
+                assert_eq!(
+                    obj.get(response_keys::PROPOSAL),
+                    Some(&Value::String("Let's collaborate".to_string()))
+                );
+                // Should have responses from both parties
+                let responses = obj.get(response_keys::RESPONSES).unwrap();
+                match responses {
+                    Value::Object(resp_obj) => {
+                        assert!(resp_obj.contains_key("alice"));
+                        assert!(resp_obj.contains_key("bob"));
+                    }
+                    _ => panic!("Expected responses to be an Object"),
+                }
+            }
+            _ => panic!("Expected Value::Object, got {:?}", result),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_negotiate_party_not_found() {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(LLMRegistry::new());
+        let capability_system = Arc::new(CapabilitySystem::new());
+        let flow_registry = Arc::new(FlowRegistry::new());
+
+        // Register only alice, not bob
+        flow_registry.register_flow("alice", "negotiate", create_negotiate_flow_dag("OK"));
+
+        let ctx = ExecutionContext::new(
+            memory,
+            llm_registry,
+            capability_system,
+            crate::aam::Aam::new(),
+        );
+        let ctx = ExecutionContext {
+            flow_registry,
+            ..ctx
+        };
+
+        let node = make_negotiate_node(vec!["alice", "bob"], "some proposal");
+        let result = execute(&ctx, &node, vec![]).await.unwrap();
+
+        match &result {
+            Value::Object(obj) => {
+                // Consensus should be false because bob's response starts with "Agent"
+                // (it's a not-available string, not an error, so consensus check looks at it)
+                let responses = obj.get(response_keys::RESPONSES).unwrap();
+                match responses {
+                    Value::Object(resp_obj) => {
+                        let bob_response = resp_obj.get("bob").unwrap();
+                        assert!(
+                            bob_response.as_string().unwrap().contains("not available"),
+                            "Bob should be reported as not available"
+                        );
+                    }
+                    _ => panic!("Expected responses to be Object"),
+                }
+            }
+            _ => panic!("Expected Value::Object"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_negotiate_missing_proposal() {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(LLMRegistry::new());
+        let capability_system = Arc::new(CapabilitySystem::new());
+
+        let ctx = ExecutionContext::new(
+            memory,
+            llm_registry,
+            capability_system,
+            crate::aam::Aam::new(),
+        );
+
+        // Node without proposal attribute
+        let mut node = apxm_core::types::execution::Node {
+            id: 1,
+            op_type: AISOperationType::Negotiate,
+            attributes: HashMap::new(),
+            input_tokens: vec![],
+            output_tokens: vec![100],
+            metadata: NodeMetadata::default(),
+        };
+        node.attributes.insert(
+            graph_attrs::PARTIES.to_string(),
+            Value::Array(vec![Value::String("alice".to_string())]),
+        );
+
+        let result = execute(&ctx, &node, vec![]).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("proposal"));
+    }
+
+    #[tokio::test]
+    async fn test_negotiate_missing_parties() {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(LLMRegistry::new());
+        let capability_system = Arc::new(CapabilitySystem::new());
+
+        let ctx = ExecutionContext::new(
+            memory,
+            llm_registry,
+            capability_system,
+            crate::aam::Aam::new(),
+        );
+
+        let mut node = apxm_core::types::execution::Node {
+            id: 1,
+            op_type: AISOperationType::Negotiate,
+            attributes: HashMap::new(),
+            input_tokens: vec![],
+            output_tokens: vec![100],
+            metadata: NodeMetadata::default(),
+        };
+        node.attributes.insert(
+            graph_attrs::PROPOSAL.to_string(),
+            Value::String("a proposal".to_string()),
+        );
+
+        let result = execute(&ctx, &node, vec![]).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("parties"));
+    }
+
+    #[tokio::test]
+    async fn test_negotiate_clears_aam_belief_after_completion() {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(LLMRegistry::new());
+        let capability_system = Arc::new(CapabilitySystem::new());
+        let flow_registry = Arc::new(FlowRegistry::new());
+
+        flow_registry.register_flow("alice", "negotiate", create_negotiate_flow_dag("yes"));
+
+        let aam = crate::aam::Aam::new();
+        let ctx = ExecutionContext::new(memory, llm_registry, capability_system, aam.clone());
+        let ctx = ExecutionContext {
+            flow_registry,
+            ..ctx
+        };
+
+        let node = make_negotiate_node(vec!["alice"], "test proposal");
+        let _ = execute(&ctx, &node, vec![]).await.unwrap();
+
+        // Negotiate active belief should be cleared
+        let beliefs = ctx.aam.beliefs();
+        let negotiate_belief = beliefs.get(belief_keys::NEGOTIATE_ACTIVE);
+        assert!(
+            negotiate_belief.is_none() || matches!(negotiate_belief, Some(Value::Null)),
+            "Negotiate active belief should be cleared after completion"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_negotiate_uses_communicate_flow_fallback() {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(LLMRegistry::new());
+        let capability_system = Arc::new(CapabilitySystem::new());
+        let flow_registry = Arc::new(FlowRegistry::new());
+
+        // Register as "communicate" flow (second priority in NEGOTIATE_FLOW_NAMES)
+        flow_registry.register_flow("alice", "communicate", create_negotiate_flow_dag("agreed"));
+
+        let ctx = ExecutionContext::new(
+            memory,
+            llm_registry,
+            capability_system,
+            crate::aam::Aam::new(),
+        );
+        let ctx = ExecutionContext {
+            flow_registry,
+            ..ctx
+        };
+
+        let node = make_negotiate_node(vec!["alice"], "test");
+        let result = execute(&ctx, &node, vec![]).await;
+        assert!(result.is_ok(), "Should succeed with 'communicate' flow fallback");
+    }
+}

@@ -326,6 +326,60 @@ impl SchedulerState {
         stack.len()
     }
 
+    /// Project AAM goal priorities onto scheduler node priorities.
+    ///
+    /// For each node that has a `goal_id` attribute, look up the matching goal
+    /// in the AAM (by description) and boost the node's scheduler priority to
+    /// `max(compile_time_priority, goal_priority)`.
+    ///
+    /// This closes the gap between the AAM goal system (runtime) and the
+    /// scheduler priority system (compile-time), ensuring that nodes associated
+    /// with high-priority goals are scheduled first.
+    pub fn apply_goal_priorities(&self, aam: &crate::aam::Aam) {
+        use apxm_core::constants::graph::attrs;
+
+        let mut updated = 0usize;
+        for entry in self.nodes.iter() {
+            let node = entry.value();
+            let goal_desc = node
+                .attributes
+                .get(attrs::GOAL_ID)
+                .and_then(|v| v.as_string().map(|s| s.to_string()));
+
+            let goal_priority = if let Some(desc) = goal_desc {
+                aam.goal_priority_by_description(&desc)
+            } else {
+                // If node has no explicit goal_id, use the top active goal's priority
+                // only when the node has zero compile-time priority (i.e., default).
+                if node.metadata.priority == 0 {
+                    aam.active_goal_priority()
+                } else {
+                    None
+                }
+            };
+
+            if let Some(gp) = goal_priority {
+                let compile_prio = node.metadata.priority;
+                let effective = compile_prio.max(gp);
+                let new_level = Priority::from_u8(effective.min(255) as u8);
+
+                if let Some(mut current) = self.priorities.get_mut(entry.key()) {
+                    if new_level > *current {
+                        *current = new_level;
+                        updated += 1;
+                    }
+                }
+            }
+        }
+
+        if updated > 0 {
+            tracing::info!(
+                updated_nodes = updated,
+                "Applied AAM goal priorities to scheduler node priorities"
+            );
+        }
+    }
+
     pub fn build_stats(&self) -> ExecutionStats {
         let duration_ms = self.elapsed_ms();
 
@@ -407,4 +461,745 @@ fn materialize_graph_state(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use apxm_core::types::execution::NodeMetadata;
+    use apxm_core::types::operations::AISOperationType;
+    use apxm_core::types::{DependencyType, Edge, ExecutionDag, Node, Value};
+    use std::sync::atomic::Ordering;
+
+    /// Helper: build a SchedulerConfig suitable for tests.
+    fn test_config() -> SchedulerConfig {
+        SchedulerConfig::new()
+            .with_max_concurrency(2)
+            .with_max_inflight(4)
+    }
+
+    /// Helper: create a simple node with explicit input/output tokens.
+    fn make_node(
+        id: NodeId,
+        input_tokens: Vec<TokenId>,
+        output_tokens: Vec<TokenId>,
+    ) -> Node {
+        Node {
+            id,
+            op_type: AISOperationType::Nop,
+            attributes: HashMap::new(),
+            input_tokens,
+            output_tokens,
+            metadata: NodeMetadata::default(),
+        }
+    }
+
+    /// Helper: build a linear 2-node DAG.
+    ///
+    ///   [Node 1] --token 10--> [Node 2]
+    ///
+    /// Node 1 has no inputs (entry); Node 2 has no outgoing edges (exit).
+    fn two_node_dag() -> ExecutionDag {
+        let n1 = make_node(1, vec![], vec![10]);
+        let n2 = make_node(2, vec![10], vec![20]);
+
+        let mut dag = ExecutionDag::new();
+        dag.add_node(n1).unwrap();
+        dag.add_node(n2).unwrap();
+        dag.add_edge(Edge::new(1, 2, 10, DependencyType::Data)).unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+        dag
+    }
+
+    /// Helper: build a fan-out 3-node DAG.
+    ///
+    ///   [Node 1] --token 10--> [Node 2]
+    ///            \--token 11--> [Node 3]
+    ///
+    fn fan_out_dag() -> ExecutionDag {
+        let n1 = make_node(1, vec![], vec![10, 11]);
+        let n2 = make_node(2, vec![10], vec![20]);
+        let n3 = make_node(3, vec![11], vec![30]);
+
+        let mut dag = ExecutionDag::new();
+        dag.add_node(n1).unwrap();
+        dag.add_node(n2).unwrap();
+        dag.add_node(n3).unwrap();
+        dag.add_edge(Edge::new(1, 2, 10, DependencyType::Data)).unwrap();
+        dag.add_edge(Edge::new(1, 3, 11, DependencyType::Data)).unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+        dag
+    }
+
+    // ── SchedulerState::new() tests ────────────────────────────────────
+
+    #[test]
+    fn test_new_two_node_dag_creates_tokens() {
+        let dag = two_node_dag();
+        let metrics = Arc::new(MetricsCollector::new());
+        let (state, workers) =
+            SchedulerState::new(dag, test_config(), metrics, Instant::now(), vec![]).unwrap();
+
+        // Token 10 (produced by node 1, consumed by node 2) should exist
+        assert!(state.tokens.contains_key(&10));
+        // Token 20 (produced by node 2, no consumer) should exist
+        assert!(state.tokens.contains_key(&20));
+        // Workers should be created
+        assert_eq!(workers.len(), 2);
+    }
+
+    #[test]
+    fn test_new_two_node_dag_nodes_stored() {
+        let dag = two_node_dag();
+        let metrics = Arc::new(MetricsCollector::new());
+        let (state, _) =
+            SchedulerState::new(dag, test_config(), metrics, Instant::now(), vec![]).unwrap();
+
+        assert_eq!(state.nodes.len(), 2);
+        assert!(state.nodes.contains_key(&1));
+        assert!(state.nodes.contains_key(&2));
+    }
+
+    #[test]
+    fn test_new_two_node_dag_exit_nodes() {
+        let dag = two_node_dag();
+        let metrics = Arc::new(MetricsCollector::new());
+        let (state, _) =
+            SchedulerState::new(dag, test_config(), metrics, Instant::now(), vec![]).unwrap();
+
+        assert_eq!(state.exit_nodes, vec![2]);
+    }
+
+    #[test]
+    fn test_new_two_node_dag_op_states() {
+        let dag = two_node_dag();
+        let metrics = Arc::new(MetricsCollector::new());
+        let (state, _) =
+            SchedulerState::new(dag, test_config(), metrics, Instant::now(), vec![]).unwrap();
+
+        // Both nodes should have OpState entries
+        assert!(state.op_states.contains_key(&1));
+        assert!(state.op_states.contains_key(&2));
+
+        // Node 1 (entry, no inputs) should be Ready
+        let n1_status = state.op_states.get(&1).unwrap().status;
+        assert_eq!(n1_status, OpStatus::Ready);
+
+        // Node 2 (waiting for token 10) should still be Pending
+        let n2_status = state.op_states.get(&2).unwrap().status;
+        assert_eq!(n2_status, OpStatus::Pending);
+    }
+
+    #[test]
+    fn test_new_two_node_dag_remaining_count() {
+        let dag = two_node_dag();
+        let metrics = Arc::new(MetricsCollector::new());
+        let (state, _) =
+            SchedulerState::new(dag, test_config(), metrics, Instant::now(), vec![]).unwrap();
+
+        assert_eq!(state.remaining.load(Ordering::SeqCst), 2);
+        assert_eq!(state.executed.load(Ordering::Relaxed), 0);
+        assert_eq!(state.failed.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn test_new_fan_out_dag_tokens_and_consumers() {
+        let dag = fan_out_dag();
+        let metrics = Arc::new(MetricsCollector::new());
+        let (state, _) =
+            SchedulerState::new(dag, test_config(), metrics, Instant::now(), vec![]).unwrap();
+
+        // Token 10 should have node 2 as consumer
+        let t10 = state.tokens.get(&10).unwrap();
+        assert!(t10.consumers.contains(&2));
+
+        // Token 11 should have node 3 as consumer
+        let t11 = state.tokens.get(&11).unwrap();
+        assert!(t11.consumers.contains(&3));
+    }
+
+    #[test]
+    fn test_new_fan_out_dag_entry_ready() {
+        let dag = fan_out_dag();
+        let metrics = Arc::new(MetricsCollector::new());
+        let (state, _) =
+            SchedulerState::new(dag, test_config(), metrics, Instant::now(), vec![]).unwrap();
+
+        // Node 1 (entry) should be enqueued in the priority queue
+        let n1_status = state.op_states.get(&1).unwrap().status;
+        assert_eq!(n1_status, OpStatus::Ready);
+
+        // Nodes 2 and 3 should be pending (waiting for tokens from node 1)
+        let n2_status = state.op_states.get(&2).unwrap().status;
+        assert_eq!(n2_status, OpStatus::Pending);
+        let n3_status = state.op_states.get(&3).unwrap().status;
+        assert_eq!(n3_status, OpStatus::Pending);
+    }
+
+    #[test]
+    fn test_new_fan_out_dag_remaining() {
+        let dag = fan_out_dag();
+        let metrics = Arc::new(MetricsCollector::new());
+        let (state, _) =
+            SchedulerState::new(dag, test_config(), metrics, Instant::now(), vec![]).unwrap();
+
+        assert_eq!(state.remaining.load(Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn test_new_with_inputs() {
+        // Build a node that has an external input (token 50 not produced by any node)
+        let n1 = make_node(1, vec![50], vec![10]);
+        let n2 = make_node(2, vec![10], vec![20]);
+
+        let mut dag = ExecutionDag::new();
+        dag.add_node(n1).unwrap();
+        dag.add_node(n2).unwrap();
+        dag.add_edge(Edge::new(1, 2, 10, DependencyType::Data)).unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+
+        let input_val = Value::String("hello".to_string());
+        let metrics = Arc::new(MetricsCollector::new());
+        let (state, _) = SchedulerState::new(
+            dag,
+            test_config(),
+            metrics,
+            Instant::now(),
+            vec![input_val.clone()],
+        )
+        .unwrap();
+
+        // Token 50 should be ready with the injected value
+        let t50 = state.tokens.get(&50).unwrap();
+        assert!(t50.ready);
+        assert_eq!(t50.value, Some(input_val));
+    }
+
+    #[test]
+    fn test_new_invalid_config_errors() {
+        let dag = two_node_dag();
+        let bad_cfg = SchedulerConfig {
+            max_concurrency: 0,
+            ..SchedulerConfig::default()
+        };
+        let metrics = Arc::new(MetricsCollector::new());
+        let result = SchedulerState::new(dag, bad_cfg, metrics, Instant::now(), vec![]);
+        assert!(result.is_err());
+    }
+
+    // ── materialize_graph_state tests ──────────────────────────────────
+
+    #[test]
+    fn test_materialize_duplicate_producer_errors() {
+        // Two nodes both claiming to produce token 10
+        let n1 = make_node(1, vec![], vec![10]);
+        let n2 = make_node(2, vec![], vec![10]);
+
+        let mut dag = ExecutionDag::new();
+        dag.add_node(n1).unwrap();
+        dag.add_node(n2).unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+
+        let tokens = DashMap::new();
+        let op_states = DashMap::new();
+        let result = materialize_graph_state(&dag, &tokens, &op_states, None);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            RuntimeError::SchedulerDuplicateProducer { token_id: 10 }
+        ));
+    }
+
+    #[test]
+    fn test_materialize_unproduced_input_is_pre_ready_null() {
+        // Node 1 consumes token 50 which nobody produces
+        let n1 = make_node(1, vec![50], vec![10]);
+
+        let mut dag = ExecutionDag::new();
+        dag.add_node(n1).unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+
+        let tokens = DashMap::new();
+        let op_states = DashMap::new();
+        materialize_graph_state(&dag, &tokens, &op_states, None).unwrap();
+
+        let t50 = tokens.get(&50).unwrap();
+        assert!(t50.ready);
+        assert_eq!(t50.value, Some(Value::Null));
+        assert!(t50.consumers.contains(&1));
+    }
+
+    #[test]
+    fn test_materialize_with_input_values() {
+        let n1 = make_node(1, vec![50, 51], vec![10]);
+
+        let mut dag = ExecutionDag::new();
+        dag.add_node(n1).unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+
+        let tokens = DashMap::new();
+        let op_states = DashMap::new();
+
+        let mut input_map = HashMap::new();
+        input_map.insert(50, Value::String("val_a".to_string()));
+        // token 51 is not in the input map -- should get Null
+
+        materialize_graph_state(&dag, &tokens, &op_states, Some(&input_map)).unwrap();
+
+        let t50 = tokens.get(&50).unwrap();
+        assert!(t50.ready);
+        assert_eq!(t50.value, Some(Value::String("val_a".to_string())));
+
+        let t51 = tokens.get(&51).unwrap();
+        assert!(t51.ready);
+        assert_eq!(t51.value, Some(Value::Null));
+    }
+
+    // ── Helper method tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_mark_done() {
+        let dag = two_node_dag();
+        let metrics = Arc::new(MetricsCollector::new());
+        let (state, _) =
+            SchedulerState::new(dag, test_config(), metrics, Instant::now(), vec![]).unwrap();
+
+        assert_eq!(state.remaining.load(Ordering::SeqCst), 2);
+        assert!(!state.is_cancelled());
+
+        state.mark_done();
+
+        assert_eq!(state.remaining.load(Ordering::SeqCst), 0);
+        assert!(state.is_cancelled());
+    }
+
+    #[test]
+    fn test_set_first_error_only_once() {
+        let dag = two_node_dag();
+        let metrics = Arc::new(MetricsCollector::new());
+        let (state, _) =
+            SchedulerState::new(dag, test_config(), metrics, Instant::now(), vec![]).unwrap();
+
+        let error1 = RuntimeError::Scheduler {
+            message: "first".to_string(),
+        };
+        let error2 = RuntimeError::Scheduler {
+            message: "second".to_string(),
+        };
+
+        state.set_first_error(error1);
+        state.set_first_error(error2);
+
+        let guard = state.first_error.lock();
+        match guard.as_ref().unwrap() {
+            RuntimeError::Scheduler { message } => assert_eq!(message, "first"),
+            _ => panic!("Expected Scheduler error"),
+        }
+    }
+
+    #[test]
+    fn test_has_running_ops() {
+        let dag = two_node_dag();
+        let metrics = Arc::new(MetricsCollector::new());
+        let (state, _) =
+            SchedulerState::new(dag, test_config(), metrics, Instant::now(), vec![]).unwrap();
+
+        // Initially no running ops
+        assert!(!state.has_running_ops());
+
+        // Set node 1 to Running
+        if let Some(mut op) = state.op_states.get_mut(&1) {
+            op.status = OpStatus::Running;
+        }
+        assert!(state.has_running_ops());
+    }
+
+    #[test]
+    fn test_collect_exit_values_empty_before_execution() {
+        let dag = two_node_dag();
+        let metrics = Arc::new(MetricsCollector::new());
+        let (state, _) =
+            SchedulerState::new(dag, test_config(), metrics, Instant::now(), vec![]).unwrap();
+
+        // Exit node is node 2, its output token is 20.
+        // Token 20 has no value set yet.
+        let results = state.collect_exit_values().unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_collect_exit_values_after_publish() {
+        let dag = two_node_dag();
+        let metrics = Arc::new(MetricsCollector::new());
+        let (state, _) =
+            SchedulerState::new(dag, test_config(), metrics, Instant::now(), vec![]).unwrap();
+
+        // Simulate publishing a value on exit token 20
+        if let Some(mut tok) = state.tokens.get_mut(&20) {
+            tok.ready = true;
+            tok.value = Some(Value::String("output".to_string()));
+        }
+
+        let results = state.collect_exit_values().unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            results.get(&20),
+            Some(&Value::String("output".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_execution_stack() {
+        let dag = two_node_dag();
+        let metrics = Arc::new(MetricsCollector::new());
+        let (state, _) =
+            SchedulerState::new(dag, test_config(), metrics, Instant::now(), vec![]).unwrap();
+
+        assert_eq!(state.execution_stack_depth(), 0);
+
+        state.push_execution_frame(ExecutionFrame {
+            execution_id: "exec-1".to_string(),
+            flow_name: "main".to_string(),
+            parent_promise: None,
+        });
+        assert_eq!(state.execution_stack_depth(), 1);
+
+        state.push_execution_frame(ExecutionFrame {
+            execution_id: "exec-2".to_string(),
+            flow_name: "sub".to_string(),
+            parent_promise: Some(100),
+        });
+        assert_eq!(state.execution_stack_depth(), 2);
+
+        let popped = state.pop_execution_frame().unwrap();
+        assert_eq!(popped.flow_name, "sub");
+        assert_eq!(state.execution_stack_depth(), 1);
+
+        let popped = state.pop_execution_frame().unwrap();
+        assert_eq!(popped.flow_name, "main");
+        assert_eq!(state.execution_stack_depth(), 0);
+
+        assert!(state.pop_execution_frame().is_none());
+    }
+
+    #[test]
+    fn test_create_promise_token() {
+        let dag = two_node_dag();
+        let metrics = Arc::new(MetricsCollector::new());
+        let (state, _) =
+            SchedulerState::new(dag, test_config(), metrics, Instant::now(), vec![]).unwrap();
+
+        let token_id = state.create_promise_token("agent_x".to_string(), "flow_y".to_string());
+
+        // Token should exist in tokens map, not ready
+        let tok = state.tokens.get(&token_id).unwrap();
+        assert!(!tok.ready);
+        assert!(tok.value.is_none());
+
+        // Promise should exist in pending_promises
+        let promise = state.pending_promises.get(&token_id).unwrap();
+        assert_eq!(promise.target_agent, "agent_x");
+        assert_eq!(promise.target_flow, "flow_y");
+        assert!(!promise.resolved);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_promise_token() {
+        let dag = two_node_dag();
+        let metrics = Arc::new(MetricsCollector::new());
+        let (state, _) =
+            SchedulerState::new(dag, test_config(), metrics, Instant::now(), vec![]).unwrap();
+
+        let token_id = state.create_promise_token("a".to_string(), "f".to_string());
+        let val = Value::String("resolved_value".to_string());
+
+        state.resolve_promise(token_id, val.clone()).unwrap();
+
+        // Token should be ready with value
+        let tok = state.tokens.get(&token_id).unwrap();
+        assert!(tok.ready);
+        assert_eq!(tok.value, Some(val.clone()));
+
+        // Promise should be resolved
+        let promise = state.pending_promises.get(&token_id).unwrap();
+        assert!(promise.resolved);
+        assert_eq!(promise.value, Some(val));
+    }
+
+    #[test]
+    fn test_build_stats() {
+        let dag = two_node_dag();
+        let metrics = Arc::new(MetricsCollector::new());
+        let (state, _) =
+            SchedulerState::new(dag, test_config(), metrics, Instant::now(), vec![]).unwrap();
+
+        state.executed.store(1, Ordering::Relaxed);
+        state.failed.store(1, Ordering::Relaxed);
+
+        let stats = state.build_stats();
+        assert_eq!(stats.executed_nodes, 1);
+        assert_eq!(stats.failed_nodes, 1);
+        assert_eq!(stats.node_statuses.len(), 2);
+    }
+
+    #[test]
+    fn test_priorities_are_tracked() {
+        // Build a node with non-default priority
+        let mut n1 = make_node(1, vec![], vec![10]);
+        n1.metadata.priority = 90; // Critical
+
+        let mut dag = ExecutionDag::new();
+        dag.add_node(n1).unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+
+        let metrics = Arc::new(MetricsCollector::new());
+        let (state, _) =
+            SchedulerState::new(dag, test_config(), metrics, Instant::now(), vec![]).unwrap();
+
+        use crate::scheduler::queue::Priority;
+        let prio = state.priorities.get(&1).unwrap();
+        assert_eq!(*prio, Priority::Critical);
+    }
+
+    // ── Goal-aware scheduling tests ──────────────────────────────────
+
+    #[test]
+    fn test_apply_goal_priorities_boosts_node_with_goal_id() {
+        use crate::aam::{Aam, GoalStatus, TransitionLabel};
+        use apxm_core::types::goal::{Goal, GoalId};
+
+        // Create a node with goal_id attribute and low compile-time priority
+        let mut n1 = make_node(1, vec![], vec![10]);
+        n1.attributes.insert(
+            "goal_id".to_string(),
+            Value::String("high_priority_goal".to_string()),
+        );
+        n1.metadata.priority = 10; // Low compile-time priority
+
+        let mut dag = ExecutionDag::new();
+        dag.add_node(n1).unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+
+        let metrics = Arc::new(MetricsCollector::new());
+        let (state, _) =
+            SchedulerState::new(dag, test_config(), metrics, Instant::now(), vec![]).unwrap();
+
+        // Before: priority should be Low (10 -> Low)
+        let prio_before = *state.priorities.get(&1).unwrap();
+        assert_eq!(prio_before, Priority::Low);
+
+        // Create AAM with a high-priority active goal matching the description
+        let aam = Aam::new();
+        let goal = Goal {
+            id: GoalId::new(),
+            description: "high_priority_goal".into(),
+            priority: 95, // Critical
+            status: GoalStatus::Active,
+            parent_id: None,
+        };
+        aam.add_goal(goal, TransitionLabel::custom("test"));
+
+        // Apply goal priorities
+        state.apply_goal_priorities(&aam);
+
+        // After: priority should be boosted to Critical (max(10, 95) = 95 -> Critical)
+        let prio_after = *state.priorities.get(&1).unwrap();
+        assert_eq!(prio_after, Priority::Critical);
+    }
+
+    #[test]
+    fn test_apply_goal_priorities_no_downgrade() {
+        use crate::aam::{Aam, GoalStatus, TransitionLabel};
+        use apxm_core::types::goal::{Goal, GoalId};
+
+        // Node with high compile-time priority
+        let mut n1 = make_node(1, vec![], vec![10]);
+        n1.attributes.insert(
+            "goal_id".to_string(),
+            Value::String("low_goal".to_string()),
+        );
+        n1.metadata.priority = 95; // Critical compile-time priority
+
+        let mut dag = ExecutionDag::new();
+        dag.add_node(n1).unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+
+        let metrics = Arc::new(MetricsCollector::new());
+        let (state, _) =
+            SchedulerState::new(dag, test_config(), metrics, Instant::now(), vec![]).unwrap();
+
+        // Before: Critical
+        assert_eq!(*state.priorities.get(&1).unwrap(), Priority::Critical);
+
+        // AAM goal with low priority
+        let aam = Aam::new();
+        let goal = Goal {
+            id: GoalId::new(),
+            description: "low_goal".into(),
+            priority: 10, // Low
+            status: GoalStatus::Active,
+            parent_id: None,
+        };
+        aam.add_goal(goal, TransitionLabel::custom("test"));
+
+        state.apply_goal_priorities(&aam);
+
+        // Should still be Critical (not downgraded)
+        assert_eq!(*state.priorities.get(&1).unwrap(), Priority::Critical);
+    }
+
+    #[test]
+    fn test_apply_goal_priorities_default_nodes_get_active_goal_boost() {
+        use crate::aam::{Aam, GoalStatus, TransitionLabel};
+        use apxm_core::types::goal::{Goal, GoalId};
+
+        // Node with no goal_id attribute and zero compile-time priority
+        let n1 = make_node(1, vec![], vec![10]);
+        // metadata.priority is 0 by default
+
+        let mut dag = ExecutionDag::new();
+        dag.add_node(n1).unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+
+        let metrics = Arc::new(MetricsCollector::new());
+        let (state, _) =
+            SchedulerState::new(dag, test_config(), metrics, Instant::now(), vec![]).unwrap();
+
+        // Before: Low (priority 0)
+        assert_eq!(*state.priorities.get(&1).unwrap(), Priority::Low);
+
+        // AAM with high-priority active goal (no goal_id on node, but active goal exists)
+        let aam = Aam::new();
+        let goal = Goal {
+            id: GoalId::new(),
+            description: "important task".into(),
+            priority: 70, // High
+            status: GoalStatus::Active,
+            parent_id: None,
+        };
+        aam.add_goal(goal, TransitionLabel::custom("test"));
+
+        state.apply_goal_priorities(&aam);
+
+        // Should be boosted to High (from active goal)
+        assert_eq!(*state.priorities.get(&1).unwrap(), Priority::High);
+    }
+
+    #[test]
+    fn test_apply_goal_priorities_inactive_goals_ignored() {
+        use crate::aam::{Aam, GoalStatus, TransitionLabel};
+        use apxm_core::types::goal::{Goal, GoalId};
+
+        let n1 = make_node(1, vec![], vec![10]);
+
+        let mut dag = ExecutionDag::new();
+        dag.add_node(n1).unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+
+        let metrics = Arc::new(MetricsCollector::new());
+        let (state, _) =
+            SchedulerState::new(dag, test_config(), metrics, Instant::now(), vec![]).unwrap();
+
+        // AAM with a completed (not active) goal
+        let aam = Aam::new();
+        let goal = Goal {
+            id: GoalId::new(),
+            description: "completed task".into(),
+            priority: 95,
+            status: GoalStatus::Completed,
+            parent_id: None,
+        };
+        aam.add_goal(goal, TransitionLabel::custom("test"));
+
+        state.apply_goal_priorities(&aam);
+
+        // Should remain Low (completed goals are not active)
+        assert_eq!(*state.priorities.get(&1).unwrap(), Priority::Low);
+    }
+
+    #[test]
+    fn test_apply_goal_priorities_no_goals_no_change() {
+        let n1 = make_node(1, vec![], vec![10]);
+
+        let mut dag = ExecutionDag::new();
+        dag.add_node(n1).unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+
+        let metrics = Arc::new(MetricsCollector::new());
+        let (state, _) =
+            SchedulerState::new(dag, test_config(), metrics, Instant::now(), vec![]).unwrap();
+
+        let aam = crate::aam::Aam::new(); // empty AAM
+
+        state.apply_goal_priorities(&aam);
+
+        // Should remain Low
+        assert_eq!(*state.priorities.get(&1).unwrap(), Priority::Low);
+    }
+
+    #[test]
+    fn test_apply_goal_priorities_nonzero_compile_priority_not_boosted_without_goal_id() {
+        use crate::aam::{Aam, GoalStatus, TransitionLabel};
+        use apxm_core::types::goal::{Goal, GoalId};
+
+        // Node with explicit compile-time priority but no goal_id
+        let mut n1 = make_node(1, vec![], vec![10]);
+        n1.metadata.priority = 35; // Normal
+
+        let mut dag = ExecutionDag::new();
+        dag.add_node(n1).unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+
+        let metrics = Arc::new(MetricsCollector::new());
+        let (state, _) =
+            SchedulerState::new(dag, test_config(), metrics, Instant::now(), vec![]).unwrap();
+
+        assert_eq!(*state.priorities.get(&1).unwrap(), Priority::Normal);
+
+        // AAM with high-priority active goal
+        let aam = Aam::new();
+        let goal = Goal {
+            id: GoalId::new(),
+            description: "important".into(),
+            priority: 95,
+            status: GoalStatus::Active,
+            parent_id: None,
+        };
+        aam.add_goal(goal, TransitionLabel::custom("test"));
+
+        state.apply_goal_priorities(&aam);
+
+        // Should NOT be boosted because node has nonzero compile-time priority
+        // and no goal_id attribute -- the active goal boost only applies to
+        // zero-priority nodes without an explicit goal_id.
+        assert_eq!(*state.priorities.get(&1).unwrap(), Priority::Normal);
+    }
+
+    #[test]
+    fn test_record_progress_updates_timestamp() {
+        let dag = two_node_dag();
+        let metrics = Arc::new(MetricsCollector::new());
+        let (state, _) =
+            SchedulerState::new(dag, test_config(), metrics, Instant::now(), vec![]).unwrap();
+
+        let before = state.last_progress_ms.load(Ordering::Relaxed);
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        state.record_progress();
+        let after = state.last_progress_ms.load(Ordering::Relaxed);
+
+        assert!(after >= before);
+    }
 }

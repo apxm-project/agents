@@ -44,3 +44,133 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
 
     Ok(Value::Bool(is_verified))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::capability::CapabilitySystem;
+    use crate::memory::{MemoryConfig, MemorySystem};
+    use apxm_backends::llm::backends::mock::MockLLMBackend;
+    use apxm_core::types::operations::AISOperationType;
+    use std::sync::Arc;
+
+    fn make_verify_node(condition: &str) -> Node {
+        let mut node = Node {
+            id: 1,
+            op_type: AISOperationType::Verify,
+            attributes: std::collections::HashMap::new(),
+            input_tokens: vec![],
+            output_tokens: vec![],
+            metadata: apxm_core::types::execution::NodeMetadata::default(),
+        };
+        node.attributes.insert(
+            graph_attrs::CONDITION.to_string(),
+            Value::String(condition.to_string()),
+        );
+        node
+    }
+
+    #[tokio::test]
+    async fn test_verify_passing() {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(apxm_backends::LLMRegistry::new());
+        // Register mock backend that always returns "true"
+        let mock = MockLLMBackend::static_response("true");
+        llm_registry.register("mock", mock).unwrap();
+        llm_registry.set_default("mock").unwrap();
+
+        let capability_system = Arc::new(CapabilitySystem::new());
+        let aam = crate::aam::Aam::new();
+        let ctx = ExecutionContext::new(
+            memory,
+            llm_registry,
+            capability_system,
+            aam.clone(),
+        );
+
+        let node = make_verify_node("value > 0");
+        let result = execute(
+            &ctx,
+            &node,
+            vec![Value::String("42".to_string())],
+        )
+        .await
+        .unwrap();
+        assert_eq!(result, Value::Bool(true));
+
+        // Verify AAM recorded the result
+        let beliefs = aam.beliefs();
+        let key = format!(
+            "{}{}:{}",
+            belief_keys::VERIFY_PREFIX,
+            ctx.execution_id,
+            node.id
+        );
+        assert_eq!(beliefs.get(&key), Some(&Value::Bool(true)));
+    }
+
+    #[tokio::test]
+    async fn test_verify_failing() {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(apxm_backends::LLMRegistry::new());
+        // Register mock backend that always returns "false"
+        let mock = MockLLMBackend::static_response("false");
+        llm_registry.register("mock", mock).unwrap();
+        llm_registry.set_default("mock").unwrap();
+
+        let capability_system = Arc::new(CapabilitySystem::new());
+        let aam = crate::aam::Aam::new();
+        let ctx = ExecutionContext::new(
+            memory,
+            llm_registry,
+            capability_system,
+            aam.clone(),
+        );
+
+        let node = make_verify_node("value is negative");
+        let result = execute(
+            &ctx,
+            &node,
+            vec![Value::String("42".to_string())],
+        )
+        .await
+        .unwrap();
+        assert_eq!(result, Value::Bool(false));
+    }
+
+    #[tokio::test]
+    async fn test_verify_missing_condition() {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(apxm_backends::LLMRegistry::new());
+        let capability_system = Arc::new(CapabilitySystem::new());
+        let ctx = ExecutionContext::new(
+            memory,
+            llm_registry,
+            capability_system,
+            crate::aam::Aam::new(),
+        );
+
+        let node = Node {
+            id: 1,
+            op_type: AISOperationType::Verify,
+            attributes: std::collections::HashMap::new(),
+            input_tokens: vec![],
+            output_tokens: vec![],
+            metadata: apxm_core::types::execution::NodeMetadata::default(),
+        };
+        let result = execute(&ctx, &node, vec![]).await;
+        assert!(result.is_err());
+    }
+}

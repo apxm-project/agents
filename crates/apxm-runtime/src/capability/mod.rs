@@ -30,6 +30,7 @@
 //! # }
 //! ```
 
+pub mod approval;
 pub mod executor;
 pub mod flow_registry;
 pub mod interceptor;
@@ -38,6 +39,7 @@ pub mod registry;
 
 use crate::aam::{Aam, TransitionLabel};
 use apxm_core::{error::RuntimeError, types::values::Value};
+use approval::{ApprovalChannel, ApprovalStore};
 use executor::CapabilityExecutor;
 use interceptor::{CapabilityInterceptor, InterceptDecision};
 use metadata::CapabilityMetadata;
@@ -59,6 +61,8 @@ pub struct CapabilitySystem {
     default_timeout: Duration,
     aam: Option<Aam>,
     interceptors: Arc<RwLock<Vec<Arc<dyn CapabilityInterceptor>>>>,
+    approval_store: Arc<ApprovalStore>,
+    approval_channel: Option<Arc<dyn ApprovalChannel>>,
 }
 
 impl CapabilitySystem {
@@ -69,6 +73,8 @@ impl CapabilitySystem {
             default_timeout: Duration::from_secs(30),
             aam: None,
             interceptors: Arc::new(RwLock::new(Vec::new())),
+            approval_store: Arc::new(ApprovalStore::new()),
+            approval_channel: None,
         }
     }
 
@@ -84,6 +90,25 @@ impl CapabilitySystem {
         let mut sys = Self::new();
         sys.aam = Some(aam);
         sys
+    }
+
+    /// Set an approval channel for interactive user permission requests.
+    ///
+    /// When set, denied capabilities are routed through this channel
+    /// instead of being immediately rejected.
+    pub fn set_approval_channel(&mut self, channel: Arc<dyn ApprovalChannel>) {
+        self.approval_channel = Some(channel);
+    }
+
+    /// Create with an approval channel attached (builder-style).
+    pub fn with_approval_channel(mut self, channel: Arc<dyn ApprovalChannel>) -> Self {
+        self.approval_channel = Some(channel);
+        self
+    }
+
+    /// Get a reference to the approval store.
+    pub fn approval_store(&self) -> &ApprovalStore {
+        &self.approval_store
     }
 
     /// Register a capability interceptor.
@@ -193,17 +218,56 @@ impl CapabilitySystem {
                 ),
             })?;
 
-        // Apply pre-invoke interceptors
+        // Check approval store for a cached decision first.
         let mut args = args;
-        let interceptors = self.interceptors.read().clone();
-        for interceptor in &interceptors {
-            match interceptor.pre_invoke(name, &args).await {
-                InterceptDecision::Allow => {}
+        if let Some(cached) = self.approval_store.check(name) {
+            match cached {
+                InterceptDecision::Allow => { /* proceed */ }
                 InterceptDecision::Deny { reason } => {
                     return Err(RuntimeError::Capability {
                         capability: name.to_string(),
                         message: reason,
                     });
+                }
+                InterceptDecision::EditArgs { args: edited } => {
+                    args = edited;
+                }
+            }
+        }
+
+        // Apply pre-invoke interceptors.
+        let interceptors = self.interceptors.read().clone();
+        for interceptor in &interceptors {
+            match interceptor.pre_invoke(name, &args).await {
+                InterceptDecision::Allow => {}
+                InterceptDecision::Deny { reason } => {
+                    // If an approval channel exists, ask the user instead
+                    // of immediately rejecting.
+                    if let Some(channel) = &self.approval_channel {
+                        let args_json =
+                            serde_json::to_value(&args).unwrap_or(serde_json::Value::Null);
+                        let (decision, scope) =
+                            channel.request_approval(name, &args_json, &reason).await;
+                        self.approval_store
+                            .record(name.to_string(), decision.clone(), scope);
+                        match decision {
+                            InterceptDecision::Allow => { /* user overrode the deny */ }
+                            InterceptDecision::Deny { reason: user_reason } => {
+                                return Err(RuntimeError::Capability {
+                                    capability: name.to_string(),
+                                    message: user_reason,
+                                });
+                            }
+                            InterceptDecision::EditArgs { args: edited } => {
+                                args = edited;
+                            }
+                        }
+                    } else {
+                        return Err(RuntimeError::Capability {
+                            capability: name.to_string(),
+                            message: reason,
+                        });
+                    }
                 }
                 InterceptDecision::EditArgs { args: edited } => {
                     args = edited;

@@ -2576,3 +2576,325 @@ fn load_config(config: Option<PathBuf>) -> Result<ApXmConfig> {
         Err(err) => Err(anyhow::anyhow!(err)),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── category_str tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn category_str_reasoning() {
+        use apxm_core::types::OperationCategory;
+        assert_eq!(category_str(OperationCategory::Reasoning), "reasoning");
+    }
+
+    #[test]
+    fn category_str_memory() {
+        use apxm_core::types::OperationCategory;
+        assert_eq!(category_str(OperationCategory::Memory), "memory");
+    }
+
+    #[test]
+    fn category_str_tools() {
+        use apxm_core::types::OperationCategory;
+        assert_eq!(category_str(OperationCategory::Tools), "tools");
+    }
+
+    #[test]
+    fn category_str_control_flow() {
+        use apxm_core::types::OperationCategory;
+        assert_eq!(category_str(OperationCategory::ControlFlow), "control_flow");
+    }
+
+    #[test]
+    fn category_str_all_variants() {
+        use apxm_core::types::OperationCategory;
+        // Ensure every variant maps to a non-empty string
+        let variants = [
+            OperationCategory::Metadata,
+            OperationCategory::Memory,
+            OperationCategory::Reasoning,
+            OperationCategory::Tools,
+            OperationCategory::ControlFlow,
+            OperationCategory::Synchronization,
+            OperationCategory::ErrorHandling,
+            OperationCategory::Communication,
+            OperationCategory::Internal,
+            OperationCategory::Coordination,
+            OperationCategory::Identity,
+        ];
+        for cat in variants {
+            let s = category_str(cat);
+            assert!(!s.is_empty(), "category_str returned empty for {:?}", cat);
+        }
+    }
+
+    // ── find_op_spec tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn find_op_spec_ask() {
+        let spec = find_op_spec("ASK");
+        assert!(spec.is_some(), "ASK should be a valid operation");
+        let spec = spec.unwrap();
+        assert_eq!(spec.op_type.to_string(), "ASK");
+    }
+
+    #[test]
+    fn find_op_spec_think() {
+        let spec = find_op_spec("THINK");
+        assert!(spec.is_some(), "THINK should be a valid operation");
+    }
+
+    #[test]
+    fn find_op_spec_inv() {
+        let spec = find_op_spec("INV");
+        assert!(spec.is_some(), "INV should be a valid operation");
+    }
+
+    #[test]
+    fn find_op_spec_nonexistent() {
+        assert!(find_op_spec("DOES_NOT_EXIST").is_none());
+        assert!(find_op_spec("").is_none());
+        assert!(find_op_spec("ask").is_none()); // case-sensitive
+    }
+
+    #[test]
+    fn find_op_spec_returns_correct_category() {
+        use apxm_core::types::OperationCategory;
+        let ask = find_op_spec("ASK").unwrap();
+        assert_eq!(ask.category, OperationCategory::Reasoning);
+
+        let inv = find_op_spec("INV").unwrap();
+        assert_eq!(inv.category, OperationCategory::Tools);
+    }
+
+    // ── GraphAnalysis tests ─────────────────────────────────────────────────
+
+    /// Build a simple test graph JSON: A -> B -> C (sequential pipeline)
+    fn pipeline_graph() -> serde_json::Value {
+        serde_json::json!({
+            "name": "test-pipeline",
+            "nodes": [
+                {"id": 1, "name": "step-a", "op": "ASK", "attributes": {"template_str": "a"}},
+                {"id": 2, "name": "step-b", "op": "ASK", "attributes": {"template_str": "b"}},
+                {"id": 3, "name": "step-c", "op": "ASK", "attributes": {"template_str": "c"}}
+            ],
+            "edges": [
+                {"from": 1, "to": 2, "dependency": "Data"},
+                {"from": 2, "to": 3, "dependency": "Data"}
+            ],
+            "parameters": [],
+            "metadata": {}
+        })
+    }
+
+    /// Build a fan-out graph: 1,2,3 (parallel) -> 4 (sync)
+    fn fanout_graph() -> serde_json::Value {
+        serde_json::json!({
+            "name": "test-fanout",
+            "nodes": [
+                {"id": 1, "name": "a", "op": "ASK", "attributes": {"template_str": "a"}},
+                {"id": 2, "name": "b", "op": "ASK", "attributes": {"template_str": "b"}},
+                {"id": 3, "name": "c", "op": "ASK", "attributes": {"template_str": "c"}},
+                {"id": 4, "name": "sync", "op": "WAIT_ALL", "attributes": {"tokens": []}}
+            ],
+            "edges": [
+                {"from": 1, "to": 4, "dependency": "Data"},
+                {"from": 2, "to": 4, "dependency": "Data"},
+                {"from": 3, "to": 4, "dependency": "Data"}
+            ],
+            "parameters": [],
+            "metadata": {}
+        })
+    }
+
+    /// Single-node graph (no edges)
+    fn single_node_graph() -> serde_json::Value {
+        serde_json::json!({
+            "name": "single",
+            "nodes": [
+                {"id": 1, "name": "only", "op": "ASK", "attributes": {"template_str": "hi"}}
+            ],
+            "edges": [],
+            "parameters": [],
+            "metadata": {}
+        })
+    }
+
+    #[test]
+    fn graph_analysis_pipeline_basic_properties() {
+        let raw = pipeline_graph();
+        let ga = GraphAnalysis::from_raw(&raw).unwrap();
+
+        assert_eq!(ga.graph_name, "test-pipeline");
+        assert_eq!(ga.nodes.len(), 3);
+        assert_eq!(ga.edge_count, 2);
+        assert_eq!(ga.node_ids.len(), 3);
+    }
+
+    #[test]
+    fn graph_analysis_pipeline_entry_exit_nodes() {
+        let raw = pipeline_graph();
+        let ga = GraphAnalysis::from_raw(&raw).unwrap();
+
+        // In a pipeline A->B->C, entry is [1] and exit is [3]
+        assert_eq!(ga.entry_nodes, vec![1]);
+        assert_eq!(ga.exit_nodes, vec![3]);
+    }
+
+    #[test]
+    fn graph_analysis_pipeline_phases() {
+        let raw = pipeline_graph();
+        let ga = GraphAnalysis::from_raw(&raw).unwrap();
+
+        // Sequential pipeline should have 3 phases, each with 1 node
+        assert_eq!(ga.phases.len(), 3);
+        assert_eq!(ga.phases[0], vec![1]);
+        assert_eq!(ga.phases[1], vec![2]);
+        assert_eq!(ga.phases[2], vec![3]);
+    }
+
+    #[test]
+    fn graph_analysis_pipeline_max_parallelism() {
+        let raw = pipeline_graph();
+        let ga = GraphAnalysis::from_raw(&raw).unwrap();
+
+        // Sequential => max parallelism = 1
+        assert_eq!(ga.max_parallelism(), 1);
+    }
+
+    #[test]
+    fn graph_analysis_pipeline_speedup() {
+        let raw = pipeline_graph();
+        let ga = GraphAnalysis::from_raw(&raw).unwrap();
+
+        // Sequential => speedup ~1.0
+        let speedup = ga.speedup();
+        assert!(
+            (speedup - 1.0).abs() < 0.01,
+            "sequential pipeline speedup should be ~1.0, got {}",
+            speedup,
+        );
+    }
+
+    #[test]
+    fn graph_analysis_pipeline_critical_path() {
+        let raw = pipeline_graph();
+        let ga = GraphAnalysis::from_raw(&raw).unwrap();
+
+        let (path, ms) = ga.critical_path();
+        // Critical path includes all 3 nodes in sequence
+        assert_eq!(path.len(), 3);
+        assert_eq!(path, vec![1, 2, 3]);
+        assert!(ms > 0, "critical path ms should be positive");
+    }
+
+    #[test]
+    fn graph_analysis_fanout_max_parallelism() {
+        let raw = fanout_graph();
+        let ga = GraphAnalysis::from_raw(&raw).unwrap();
+
+        // Nodes 1,2,3 are all entry nodes with no predecessors => phase 1 has 3 nodes
+        assert_eq!(ga.max_parallelism(), 3);
+    }
+
+    #[test]
+    fn graph_analysis_fanout_phases() {
+        let raw = fanout_graph();
+        let ga = GraphAnalysis::from_raw(&raw).unwrap();
+
+        // Phase 1: [1,2,3] parallel, Phase 2: [4] sync
+        assert_eq!(ga.phases.len(), 2);
+        assert_eq!(ga.phases[0].len(), 3);
+        assert_eq!(ga.phases[1], vec![4]);
+    }
+
+    #[test]
+    fn graph_analysis_fanout_speedup_greater_than_one() {
+        let raw = fanout_graph();
+        let ga = GraphAnalysis::from_raw(&raw).unwrap();
+
+        let speedup = ga.speedup();
+        assert!(
+            speedup > 1.0,
+            "fan-out graph should have speedup > 1.0, got {}",
+            speedup,
+        );
+    }
+
+    #[test]
+    fn graph_analysis_fanout_entry_exit() {
+        let raw = fanout_graph();
+        let ga = GraphAnalysis::from_raw(&raw).unwrap();
+
+        // Entry: 1,2,3 (sorted)
+        let mut entries = ga.entry_nodes.clone();
+        entries.sort();
+        assert_eq!(entries, vec![1, 2, 3]);
+
+        // Exit: 4
+        assert_eq!(ga.exit_nodes, vec![4]);
+    }
+
+    #[test]
+    fn graph_analysis_single_node() {
+        let raw = single_node_graph();
+        let ga = GraphAnalysis::from_raw(&raw).unwrap();
+
+        assert_eq!(ga.graph_name, "single");
+        assert_eq!(ga.nodes.len(), 1);
+        assert_eq!(ga.edge_count, 0);
+        assert_eq!(ga.entry_nodes, vec![1]);
+        assert_eq!(ga.exit_nodes, vec![1]);
+        assert_eq!(ga.phases.len(), 1);
+        assert_eq!(ga.max_parallelism(), 1);
+        assert!((ga.speedup() - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn graph_analysis_node_accessors() {
+        let raw = pipeline_graph();
+        let ga = GraphAnalysis::from_raw(&raw).unwrap();
+
+        assert_eq!(ga.node_op(1), "ASK");
+        assert_eq!(ga.node_name(1), "step-a");
+        assert_eq!(ga.node_name(2), "step-b");
+        assert_eq!(ga.node_name(3), "step-c");
+
+        // Non-existent node returns "?"
+        assert_eq!(ga.node_op(999), "?");
+        assert_eq!(ga.node_name(999), "?");
+    }
+
+    #[test]
+    fn graph_analysis_critical_path_fanout() {
+        let raw = fanout_graph();
+        let ga = GraphAnalysis::from_raw(&raw).unwrap();
+
+        let (path, ms) = ga.critical_path();
+        // Critical path goes through one of the parallel nodes + sync
+        assert_eq!(path.len(), 2);
+        // The last node on the critical path should be the sync node
+        assert_eq!(*path.last().unwrap(), 4);
+        assert!(ms > 0);
+    }
+
+    #[test]
+    fn graph_analysis_sequential_vs_parallel_ms() {
+        let raw = fanout_graph();
+        let ga = GraphAnalysis::from_raw(&raw).unwrap();
+
+        let seq = ga.sequential_ms();
+        let par = ga.parallel_ms();
+        // Sequential sum should be >= parallel sum
+        assert!(seq >= par, "sequential {}ms should be >= parallel {}ms", seq, par);
+    }
+
+    #[test]
+    fn graph_analysis_no_nodes_errors() {
+        let raw = serde_json::json!({"name": "empty"});
+        let result = GraphAnalysis::from_raw(&raw);
+        assert!(result.is_err());
+    }
+}

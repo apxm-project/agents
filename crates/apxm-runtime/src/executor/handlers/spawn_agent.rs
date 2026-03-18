@@ -72,3 +72,212 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
 
     Ok(Value::Object(agent_info))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::capability::CapabilitySystem;
+    use crate::capability::flow_registry::FlowRegistry;
+    use crate::memory::{MemoryConfig, MemorySystem};
+    use apxm_backends::LLMRegistry;
+    use apxm_core::constants::graph::attrs as graph_attrs;
+    use apxm_core::constants::runtime::{belief_keys, response_keys};
+    use apxm_core::types::execution::NodeMetadata;
+    use apxm_core::types::operations::AISOperationType;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    fn make_spawn_node(agent_name: &str) -> apxm_core::types::execution::Node {
+        let mut node = apxm_core::types::execution::Node {
+            id: 1,
+            op_type: AISOperationType::SpawnAgent,
+            attributes: HashMap::new(),
+            input_tokens: vec![],
+            output_tokens: vec![100],
+            metadata: NodeMetadata::default(),
+        };
+        node.attributes.insert(
+            graph_attrs::AGENT_NAME.to_string(),
+            Value::String(agent_name.to_string()),
+        );
+        node
+    }
+
+    #[tokio::test]
+    async fn test_spawn_agent_registers_in_aam() {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(LLMRegistry::new());
+        let capability_system = Arc::new(CapabilitySystem::new());
+
+        let aam = crate::aam::Aam::new();
+        let ctx = ExecutionContext::new(memory, llm_registry, capability_system, aam.clone());
+
+        let node = make_spawn_node("research_agent");
+        let result = execute(&ctx, &node, vec![]).await.unwrap();
+
+        // Check returned object has the agent name
+        match &result {
+            Value::Object(obj) => {
+                assert_eq!(
+                    obj.get(response_keys::NAME),
+                    Some(&Value::String("research_agent".to_string()))
+                );
+                // Should contain spawned_by with execution_id
+                assert!(obj.contains_key(response_keys::SPAWNED_BY));
+            }
+            _ => panic!("Expected Value::Object, got {:?}", result),
+        }
+
+        // Check AAM has the spawned agent belief
+        let beliefs = ctx.aam.beliefs();
+        let key = format!("{}research_agent", belief_keys::SPAWNED_AGENT_PREFIX);
+        assert_eq!(
+            beliefs.get(&key),
+            Some(&Value::String("research_agent".to_string())),
+            "AAM should record the spawned agent"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_spawn_agent_stores_in_memory() {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(LLMRegistry::new());
+        let capability_system = Arc::new(CapabilitySystem::new());
+
+        let ctx = ExecutionContext::new(
+            memory.clone(),
+            llm_registry,
+            capability_system,
+            crate::aam::Aam::new(),
+        );
+
+        let node = make_spawn_node("worker_agent");
+        let _ = execute(&ctx, &node, vec![]).await.unwrap();
+
+        // Check STM for agent info
+        let key = format!("{}worker_agent", belief_keys::AGENT_INFO_PREFIX);
+        let stored = memory
+            .read(crate::memory::MemorySpace::Stm, &key)
+            .await
+            .unwrap();
+        assert!(stored.is_some(), "Agent info should be stored in STM");
+    }
+
+    #[tokio::test]
+    async fn test_spawn_agent_duplicate_rejected() {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(LLMRegistry::new());
+        let capability_system = Arc::new(CapabilitySystem::new());
+        let flow_registry = Arc::new(FlowRegistry::new());
+
+        // Pre-register a flow for "existing_agent" so it already "exists"
+        let dag = apxm_core::types::execution::ExecutionDag {
+            nodes: vec![],
+            edges: vec![],
+            entry_nodes: vec![],
+            exit_nodes: vec![],
+            metadata: Default::default(),
+        };
+        flow_registry.register_flow("existing_agent", "main", dag);
+
+        let ctx = ExecutionContext::new(
+            memory,
+            llm_registry,
+            capability_system,
+            crate::aam::Aam::new(),
+        );
+        let ctx = ExecutionContext {
+            flow_registry,
+            ..ctx
+        };
+
+        let node = make_spawn_node("existing_agent");
+        let result = execute(&ctx, &node, vec![]).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("already exists"));
+    }
+
+    #[tokio::test]
+    async fn test_spawn_agent_missing_name() {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(LLMRegistry::new());
+        let capability_system = Arc::new(CapabilitySystem::new());
+
+        let ctx = ExecutionContext::new(
+            memory,
+            llm_registry,
+            capability_system,
+            crate::aam::Aam::new(),
+        );
+
+        let node = apxm_core::types::execution::Node {
+            id: 1,
+            op_type: AISOperationType::SpawnAgent,
+            attributes: HashMap::new(),
+            input_tokens: vec![],
+            output_tokens: vec![100],
+            metadata: NodeMetadata::default(),
+        };
+
+        let result = execute(&ctx, &node, vec![]).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("agent_name"));
+    }
+
+    #[tokio::test]
+    async fn test_spawn_agent_with_capabilities_and_goals() {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(LLMRegistry::new());
+        let capability_system = Arc::new(CapabilitySystem::new());
+
+        let ctx = ExecutionContext::new(
+            memory,
+            llm_registry,
+            capability_system,
+            crate::aam::Aam::new(),
+        );
+
+        let mut node = make_spawn_node("skilled_agent");
+        node.attributes.insert(
+            response_keys::CAPABILITIES.to_string(),
+            Value::Array(vec![
+                Value::String("web_search".to_string()),
+                Value::String("code_gen".to_string()),
+            ]),
+        );
+        node.attributes.insert(
+            response_keys::GOALS.to_string(),
+            Value::Array(vec![Value::String("find information".to_string())]),
+        );
+
+        let result = execute(&ctx, &node, vec![]).await.unwrap();
+
+        match &result {
+            Value::Object(obj) => {
+                assert!(obj.contains_key(response_keys::CAPABILITIES));
+                assert!(obj.contains_key(response_keys::GOALS));
+            }
+            _ => panic!("Expected Value::Object"),
+        }
+    }
+}

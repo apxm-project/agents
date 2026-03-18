@@ -47,6 +47,13 @@ impl ReadySet {
         self.pending_inputs.insert(node_id, count);
     }
 
+    /// Remove a node from pending tracking.
+    ///
+    /// Used during DAG condensation to clean up nodes that are being removed.
+    pub(crate) fn remove_pending(&self, node_id: NodeId) {
+        self.pending_inputs.remove(&node_id);
+    }
+
     /// Initialize readiness tracking for all nodes in the graph.
     ///
     /// Returns the set of immediately ready nodes (those with no pending inputs).

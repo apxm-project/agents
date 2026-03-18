@@ -49,8 +49,6 @@ tempfile = "3"
 # Terminal output
 termimad = "0.30"
 
-[dev-dependencies]
-apxm-driver = { path = "../apxm-driver" }
 
 [features]
 default = ["dashmap"]

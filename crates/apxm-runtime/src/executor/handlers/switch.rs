@@ -370,3 +370,145 @@ fn build_token_connections(
 
     connections
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::capability::CapabilitySystem;
+    use crate::memory::{MemoryConfig, MemorySystem};
+    use apxm_core::types::operations::AISOperationType;
+    use std::sync::Arc;
+
+    async fn test_ctx() -> ExecutionContext {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        ExecutionContext::new(
+            memory,
+            Arc::new(apxm_backends::LLMRegistry::new()),
+            Arc::new(CapabilitySystem::new()),
+            crate::aam::Aam::new(),
+        )
+    }
+
+    fn switch_node(case_labels: Vec<&str>) -> Node {
+        let mut node = Node::new(1, AISOperationType::Switch);
+        node.attributes.insert(
+            graph_attrs::CASE_LABELS.to_string(),
+            Value::Array(
+                case_labels
+                    .into_iter()
+                    .map(|s| Value::String(s.to_string()))
+                    .collect(),
+            ),
+        );
+        node
+    }
+
+    #[tokio::test]
+    async fn test_switch_no_match_no_default_returns_null() {
+        let ctx = test_ctx().await;
+        let node = switch_node(vec!["a", "b"]);
+        // Discriminant "c" matches neither "a" nor "b", no default_region
+        let result = execute(&ctx, &node, vec![Value::String("c".to_string())])
+            .await
+            .unwrap();
+        assert_eq!(result, Value::Null);
+    }
+
+    #[tokio::test]
+    async fn test_switch_empty_inputs_returns_null() {
+        let ctx = test_ctx().await;
+        let node = switch_node(vec!["x"]);
+        // Empty inputs => discriminant is ""
+        let result = execute(&ctx, &node, vec![]).await.unwrap();
+        assert_eq!(result, Value::Null);
+    }
+
+    #[tokio::test]
+    async fn test_switch_matching_case_no_region_returns_null() {
+        let ctx = test_ctx().await;
+        let node = switch_node(vec!["alpha", "beta"]);
+        // Discriminant matches "alpha" (index 0) but no case_regions defined
+        let result = execute(&ctx, &node, vec![Value::String("alpha".to_string())])
+            .await
+            .unwrap();
+        assert_eq!(result, Value::Null);
+    }
+
+    #[tokio::test]
+    async fn test_switch_default_region_empty_dag_returns_null() {
+        let ctx = test_ctx().await;
+        let mut node = switch_node(vec!["a"]);
+        // Set a default region with an empty sub-DAG (no nodes)
+        let empty_dag = Value::Object(
+            vec![
+                (
+                    "nodes".to_string(),
+                    Value::Array(vec![]),
+                ),
+                (
+                    "edges".to_string(),
+                    Value::Array(vec![]),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        );
+        node.attributes.insert(
+            graph_attrs::DEFAULT_REGION.to_string(),
+            empty_dag,
+        );
+        // Discriminant "z" doesn't match "a", uses default region
+        let result = execute(&ctx, &node, vec![Value::String("z".to_string())])
+            .await
+            .unwrap();
+        assert_eq!(result, Value::Null);
+    }
+
+    #[test]
+    fn test_parse_sub_dag_not_object_errors() {
+        let val = Value::String("not an object".to_string());
+        let result = parse_sub_dag(&val);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_sub_dag_empty() {
+        let val = Value::Object(
+            vec![
+                ("nodes".to_string(), Value::Array(vec![])),
+                ("edges".to_string(), Value::Array(vec![])),
+            ]
+            .into_iter()
+            .collect(),
+        );
+        let dag = parse_sub_dag(&val).unwrap();
+        assert!(dag.nodes.is_empty());
+        assert!(dag.edges.is_empty());
+    }
+
+    #[test]
+    fn test_build_token_connections_maps_dangling_inputs() {
+        // Sub-DAG node consumes token 100 (not produced by anyone in sub-DAG)
+        let mut sub_node = apxm_core::types::execution::Node::new(10, AISOperationType::Nop);
+        sub_node.input_tokens = vec![100];
+        sub_node.output_tokens = vec![200];
+
+        let mut sub_dag = ExecutionDag::new();
+        sub_dag.nodes.push(sub_node);
+
+        // Switch node has input token 50 and output token 60
+        let mut sw = Node::new(1, AISOperationType::Switch);
+        sw.input_tokens = vec![50];
+        sw.output_tokens = vec![60];
+
+        let connections = build_token_connections(&sub_dag, &sw);
+        // Dangling input 100 should map to switch's input 50
+        assert_eq!(connections.get(&100), Some(&50));
+        // Exit token 200 (not consumed) should map to switch's output 60
+        assert_eq!(connections.get(&200), Some(&60));
+    }
+}

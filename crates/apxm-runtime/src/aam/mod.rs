@@ -227,12 +227,115 @@ impl Aam {
         self.inner.read().goal_tree.children_of(goal_id).to_vec()
     }
 
+    /// Return the priority of the highest-priority *active* goal, if any.
+    ///
+    /// This bridges the AAM goal system to the scheduler: callers can project
+    /// this value onto node scheduling priorities so that nodes associated with
+    /// high-priority goals are executed first.
+    pub fn active_goal_priority(&self) -> Option<u32> {
+        let state = self.inner.read();
+        state
+            .goal_details
+            .values()
+            .filter(|g| g.status == GoalStatus::Active)
+            .map(|g| g.priority)
+            .max()
+    }
+
+    /// Look up the priority of a specific goal by its description key.
+    ///
+    /// This is used by the scheduler to resolve the `goal_id` attribute
+    /// (which stores the goal description) to its AAM priority.
+    pub fn goal_priority_by_description(&self, description: &str) -> Option<u32> {
+        let state = self.inner.read();
+        state
+            .goal_details
+            .values()
+            .find(|g| g.description == description)
+            .map(|g| g.priority)
+    }
+
     pub fn has_capability(&self, name: &str) -> bool {
         self.inner.read().capabilities.contains_key(name)
     }
 
     pub fn capabilities(&self) -> HashMap<String, CapabilityRecord> {
         self.inner.read().capabilities.clone()
+    }
+
+    /// Create a child AAM governed by the given [`ScopeSpec`].
+    ///
+    /// * **Inherit** on *all* dimensions → the child shares the parent's
+    ///   `Arc<RwLock<AamState>>` (writes in either direction are visible).
+    /// * Any non-Inherit dimension → a new `AamState` is created.
+    ///   - `Isolate` → that dimension starts empty.
+    ///   - `Snapshot` → that dimension gets a point-in-time copy.
+    ///   - `Filter(keys)` → that dimension gets only the listed keys (snapshot
+    ///     semantics for the selected subset).
+    pub fn child_scope(&self, spec: &ScopeSpec) -> Aam {
+        // Fast path: if everything is Inherit, share the same Arc.
+        if matches!(
+            (&spec.beliefs, &spec.capabilities, &spec.goals),
+            (ScopePolicy::Inherit, ScopePolicy::Inherit, ScopePolicy::Inherit)
+        ) {
+            return Aam {
+                inner: Arc::clone(&self.inner),
+            };
+        }
+
+        let parent = self.inner.read();
+
+        let beliefs = match &spec.beliefs {
+            ScopePolicy::Inherit | ScopePolicy::Snapshot => parent.beliefs.clone(),
+            ScopePolicy::Isolate => HashMap::new(),
+            ScopePolicy::Filter(keys) => keys
+                .iter()
+                .filter_map(|k| parent.beliefs.get(k).map(|v| (k.clone(), v.clone())))
+                .collect(),
+        };
+
+        let capabilities = match &spec.capabilities {
+            ScopePolicy::Inherit | ScopePolicy::Snapshot => parent.capabilities.clone(),
+            ScopePolicy::Isolate => HashMap::new(),
+            ScopePolicy::Filter(keys) => keys
+                .iter()
+                .filter_map(|k| parent.capabilities.get(k).map(|v| (k.clone(), v.clone())))
+                .collect(),
+        };
+
+        let (goals, goal_details) = match &spec.goals {
+            ScopePolicy::Inherit | ScopePolicy::Snapshot => {
+                (parent.goals.clone(), parent.goal_details.clone())
+            }
+            ScopePolicy::Isolate => (PriorityQueue::new(), HashMap::new()),
+            ScopePolicy::Filter(keys) => {
+                let mut gq = PriorityQueue::new();
+                let mut gd = HashMap::new();
+                for goal in parent.goal_details.values() {
+                    if keys.contains(&goal.description) {
+                        gq.push(goal.id, goal.priority);
+                        gd.insert(goal.id, goal.clone());
+                    }
+                }
+                (gq, gd)
+            }
+        };
+
+        let new_state = AamState {
+            beliefs,
+            goals,
+            goal_details,
+            capabilities,
+            // Child starts with an empty episodic log, call stack, and exception table.
+            transitions: Vec::new(),
+            call_stack: Vec::new(),
+            exception_handlers: HashMap::new(),
+            goal_tree: parent.goal_tree.clone(),
+        };
+
+        Aam {
+            inner: Arc::new(RwLock::new(new_state)),
+        }
     }
 }
 
@@ -459,11 +562,13 @@ impl GoalTree {
 /// Controls which parts of an AAM dimension a child scope inherits.
 #[derive(Debug, Clone)]
 pub enum ScopePolicy {
-    /// Share all entries from the parent.
+    /// Share all entries from the parent (child writes are visible to parent).
     Inherit,
     /// Start with empty state.
     Isolate,
-    /// Inherit only the listed keys.
+    /// Child gets a point-in-time copy; writes do not affect the parent.
+    Snapshot,
+    /// Inherit only the listed keys (snapshot semantics for the selected keys).
     Filter(Vec<String>),
 }
 
@@ -675,5 +780,218 @@ mod tests {
         aam.update_goal_status(child1_id, GoalStatus::Completed, TransitionLabel::custom("test"));
         let result = aam.propagate_completion(parent_id, TransitionLabel::custom("test"));
         assert!(result.is_some());
+    }
+
+    // ── Goal priority query tests ────────────────────────────────────
+
+    #[test]
+    fn test_active_goal_priority_returns_highest_active() {
+        let aam = Aam::new();
+
+        // No goals => None
+        assert_eq!(aam.active_goal_priority(), None);
+
+        // Add a low-priority active goal
+        let low = Goal {
+            id: GoalId::new(),
+            description: "low".into(),
+            priority: 10,
+            status: GoalStatus::Active,
+            parent_id: None,
+        };
+        aam.add_goal(low, TransitionLabel::custom("test"));
+        assert_eq!(aam.active_goal_priority(), Some(10));
+
+        // Add a high-priority active goal
+        let high = Goal {
+            id: GoalId::new(),
+            description: "high".into(),
+            priority: 95,
+            status: GoalStatus::Active,
+            parent_id: None,
+        };
+        aam.add_goal(high, TransitionLabel::custom("test"));
+        assert_eq!(aam.active_goal_priority(), Some(95));
+    }
+
+    #[test]
+    fn test_active_goal_priority_ignores_completed() {
+        let aam = Aam::new();
+
+        let goal = Goal {
+            id: GoalId::new(),
+            description: "done".into(),
+            priority: 95,
+            status: GoalStatus::Completed,
+            parent_id: None,
+        };
+        aam.add_goal(goal, TransitionLabel::custom("test"));
+
+        // Completed goal should not appear
+        assert_eq!(aam.active_goal_priority(), None);
+    }
+
+    #[test]
+    fn test_goal_priority_by_description() {
+        let aam = Aam::new();
+
+        let goal = Goal {
+            id: GoalId::new(),
+            description: "optimize_latency".into(),
+            priority: 80,
+            status: GoalStatus::Active,
+            parent_id: None,
+        };
+        aam.add_goal(goal, TransitionLabel::custom("test"));
+
+        assert_eq!(aam.goal_priority_by_description("optimize_latency"), Some(80));
+        assert_eq!(aam.goal_priority_by_description("nonexistent"), None);
+    }
+
+    // ── Per-task AAM scoping tests ──────────────────────────────────────
+
+    #[test]
+    fn scope_inherit_shares_state() {
+        let parent = Aam::new();
+        parent.set_belief("x".into(), Value::String("1".into()), TransitionLabel::custom("t"));
+
+        let spec = ScopeSpec::default(); // all Inherit
+        let child = parent.child_scope(&spec);
+
+        // Child sees parent's belief
+        assert_eq!(child.get_belief("x"), Some(Value::String("1".into())));
+
+        // Write in child is visible to parent (same Arc)
+        child.set_belief("y".into(), Value::String("2".into()), TransitionLabel::custom("t"));
+        assert_eq!(parent.get_belief("y"), Some(Value::String("2".into())));
+
+        // Write in parent is visible to child
+        parent.set_belief("z".into(), Value::String("3".into()), TransitionLabel::custom("t"));
+        assert_eq!(child.get_belief("z"), Some(Value::String("3".into())));
+    }
+
+    #[test]
+    fn scope_isolate_starts_empty() {
+        let parent = Aam::new();
+        parent.set_belief("x".into(), Value::String("1".into()), TransitionLabel::custom("t"));
+        parent.register_capability(
+            "cap1".into(),
+            CapabilityRecord {
+                name: "cap1".into(),
+                description: "test".into(),
+                schema: serde_json::Value::Null,
+                cost_estimate: 0.0,
+            },
+            TransitionLabel::custom("t"),
+        );
+
+        let spec = ScopeSpec {
+            beliefs: ScopePolicy::Isolate,
+            capabilities: ScopePolicy::Isolate,
+            goals: ScopePolicy::Isolate,
+        };
+        let child = parent.child_scope(&spec);
+
+        // Child starts empty
+        assert!(child.beliefs().is_empty());
+        assert!(child.capabilities().is_empty());
+        assert!(child.goals().is_empty());
+
+        // Parent is unaffected
+        assert_eq!(parent.get_belief("x"), Some(Value::String("1".into())));
+        assert!(parent.has_capability("cap1"));
+
+        // Child writes don't leak to parent
+        child.set_belief("y".into(), Value::String("2".into()), TransitionLabel::custom("t"));
+        assert!(parent.get_belief("y").is_none());
+    }
+
+    #[test]
+    fn scope_snapshot_copies_then_diverges() {
+        let parent = Aam::new();
+        parent.set_belief("x".into(), Value::String("1".into()), TransitionLabel::custom("t"));
+        parent.register_capability(
+            "cap1".into(),
+            CapabilityRecord {
+                name: "cap1".into(),
+                description: "test".into(),
+                schema: serde_json::Value::Null,
+                cost_estimate: 0.0,
+            },
+            TransitionLabel::custom("t"),
+        );
+
+        let spec = ScopeSpec {
+            beliefs: ScopePolicy::Snapshot,
+            capabilities: ScopePolicy::Snapshot,
+            goals: ScopePolicy::Snapshot,
+        };
+        let child = parent.child_scope(&spec);
+
+        // Child starts with parent's data
+        assert_eq!(child.get_belief("x"), Some(Value::String("1".into())));
+        assert!(child.has_capability("cap1"));
+
+        // Child writes do NOT affect parent
+        child.set_belief("x".into(), Value::String("changed".into()), TransitionLabel::custom("t"));
+        assert_eq!(parent.get_belief("x"), Some(Value::String("1".into())));
+        assert_eq!(child.get_belief("x"), Some(Value::String("changed".into())));
+
+        // Parent writes do NOT affect child (separate Arcs)
+        parent.set_belief("new_key".into(), Value::String("parent_only".into()), TransitionLabel::custom("t"));
+        assert!(child.get_belief("new_key").is_none());
+    }
+
+    #[test]
+    fn scope_filter_inherits_subset() {
+        let parent = Aam::new();
+        parent.set_belief("keep".into(), Value::String("yes".into()), TransitionLabel::custom("t"));
+        parent.set_belief("drop".into(), Value::String("no".into()), TransitionLabel::custom("t"));
+
+        let spec = ScopeSpec {
+            beliefs: ScopePolicy::Filter(vec!["keep".into()]),
+            capabilities: ScopePolicy::Isolate,
+            goals: ScopePolicy::Isolate,
+        };
+        let child = parent.child_scope(&spec);
+
+        assert_eq!(child.get_belief("keep"), Some(Value::String("yes".into())));
+        assert!(child.get_belief("drop").is_none());
+
+        // Filter uses snapshot semantics — child writes don't affect parent
+        child.set_belief("keep".into(), Value::String("modified".into()), TransitionLabel::custom("t"));
+        assert_eq!(parent.get_belief("keep"), Some(Value::String("yes".into())));
+    }
+
+    #[test]
+    fn scope_mixed_policies() {
+        let parent = Aam::new();
+        parent.set_belief("b".into(), Value::String("belief".into()), TransitionLabel::custom("t"));
+        parent.register_capability(
+            "cap".into(),
+            CapabilityRecord {
+                name: "cap".into(),
+                description: "test".into(),
+                schema: serde_json::Value::Null,
+                cost_estimate: 0.0,
+            },
+            TransitionLabel::custom("t"),
+        );
+
+        // Snapshot beliefs, isolate capabilities, snapshot goals
+        let spec = ScopeSpec {
+            beliefs: ScopePolicy::Snapshot,
+            capabilities: ScopePolicy::Isolate,
+            goals: ScopePolicy::Snapshot,
+        };
+        let child = parent.child_scope(&spec);
+
+        // Beliefs were copied
+        assert_eq!(child.get_belief("b"), Some(Value::String("belief".into())));
+        // Capabilities were isolated
+        assert!(!child.has_capability("cap"));
+        // Separate Arc — writes don't cross
+        child.set_belief("b".into(), Value::String("modified".into()), TransitionLabel::custom("t"));
+        assert_eq!(parent.get_belief("b"), Some(Value::String("belief".into())));
     }
 }

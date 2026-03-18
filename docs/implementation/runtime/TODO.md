@@ -17,19 +17,16 @@ against current source code as of 2026-03-17.
   Resolved: `GoalTree` struct added to `AamState` with parent-child index (`HashMap<GoalId, Vec<GoalId>>`). `CompletionPolicy` enum (AllChildren, AnyChild, Manual) with `propagate_completion()`. `Aam::add_child_goal()` and `Aam::children_of()` methods. GoalTree included in checkpoint snapshot/restore. 3 unit tests.
   Files: `crates/apxm-runtime/src/aam/mod.rs`
 
-- [ ] **Gap 3 — No per-task AAM scoping.**
-  `ExecutionContext::child()` clones the same `Arc<RwLock<AamState>>` — parent and child share identical flat state. A UMEM in flow A is immediately visible to flow B. No `ScopeId`, `ScopeSpec`, or belief namespacing exists anywhere in the runtime.
-  Current: global shared AAM. Needed: `ScopeSpec { beliefs: ScopePolicy, capabilities: ScopePolicy, goal: Option<GoalSpec> }` with Inherit/Isolate/Filter policies, and scoped child AAM creation.
-  Files: `crates/apxm-runtime/src/executor/context.rs` (line 174-193), `crates/apxm-runtime/src/aam/mod.rs`
+- [x] **Gap 3 — No per-task AAM scoping.**
+  Resolved: `ScopePolicy` enum extended with `Snapshot` variant (Inherit/Isolate/Snapshot/Filter). `Aam::child_scope(&ScopeSpec)` creates child AAMs with correct semantics: Inherit shares the parent `Arc` (bidirectional writes), Isolate starts empty, Snapshot copies then diverges, Filter copies a subset. `ExecutionContext::child()` now delegates through `child_with_scope(ScopeSpec::default())` which preserves backward-compatible Inherit semantics. 5 unit tests (inherit shares state, isolate starts empty, snapshot copies then diverges, filter inherits subset, mixed policies).
+  Files: `crates/apxm-runtime/src/aam/mod.rs`, `crates/apxm-runtime/src/executor/context.rs`
 
 ---
 
 ## P1: Important (needed for production-quality hierarchical execution)
 
-- [ ] **Gap 9 — Goal priority not connected to scheduler priority.**
-  Scheduler uses `node.metadata.priority` (set at compile time in `Priority::from_u8`). AAM `Goal.priority` is a separate system never consulted by the scheduler. No mechanism for PLAN to link a spawned sub-DAG back to a goal.
-  Current: two disconnected priority systems. Needed: goal-aware scheduling that projects `Goal.priority` onto node scheduling priority.
-  Files: `crates/apxm-runtime/src/scheduler/state.rs` (line 121), `crates/apxm-runtime/src/scheduler/queue.rs`, `crates/apxm-runtime/src/aam/mod.rs`
+- [x] **Gap 9 — Goal priority not connected to scheduler priority.**
+  Resolved: `Aam::active_goal_priority()` and `Aam::goal_priority_by_description()` bridge the AAM goal system to the scheduler. `SchedulerState::apply_goal_priorities(&Aam)` projects goal priorities onto node scheduler priorities using `max(compile_time, goal_priority)`. Called from `DataflowScheduler::execute()` after state construction. Nodes with `goal_id` attribute get the matching goal's priority; default-priority nodes without `goal_id` get the top active goal's priority. 9 tests cover boost, no-downgrade, inactive-goal filtering, and empty-AAM cases.
 
 - [x] **Gap 7 — Tool discovery pipeline partially connected.**
   Resolved: `UserToolCapability::execute()` now dispatches via `ProcessSandbox`. Tools in `~/.apxm/tools.json` include `command`, `args`, `timeout_ms` fields. Subprocess receives JSON args on stdin, stdout parsed as JSON Value. Timeout and error handling included.

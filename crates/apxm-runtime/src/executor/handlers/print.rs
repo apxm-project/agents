@@ -50,3 +50,108 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     // Void operation - return Null (no output tokens in artifact)
     Ok(Value::Null)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::capability::CapabilitySystem;
+    use crate::memory::{MemoryConfig, MemorySystem};
+    use apxm_core::types::operations::AISOperationType;
+    use std::sync::Arc;
+
+    fn make_node(message: &str) -> Node {
+        let mut node = Node {
+            id: 1,
+            op_type: AISOperationType::Print,
+            attributes: std::collections::HashMap::new(),
+            input_tokens: vec![],
+            output_tokens: vec![],
+            metadata: apxm_core::types::execution::NodeMetadata::default(),
+        };
+        node.attributes.insert(
+            graph_attrs::MESSAGE.to_string(),
+            Value::String(message.to_string()),
+        );
+        node
+    }
+
+    #[tokio::test]
+    async fn test_print_returns_null() {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(apxm_backends::LLMRegistry::new());
+        let capability_system = Arc::new(CapabilitySystem::new());
+        let ctx = ExecutionContext::new(
+            memory,
+            llm_registry,
+            capability_system,
+            crate::aam::Aam::new(),
+        );
+
+        let node = make_node("Hello");
+        let result = execute(&ctx, &node, vec![Value::String("World".to_string())])
+            .await
+            .unwrap();
+        // Print is a void operation, always returns Null
+        assert_eq!(result, Value::Null);
+    }
+
+    #[tokio::test]
+    async fn test_print_records_aam_belief() {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(apxm_backends::LLMRegistry::new());
+        let capability_system = Arc::new(CapabilitySystem::new());
+        let aam = crate::aam::Aam::new();
+        let ctx = ExecutionContext::new(
+            memory,
+            llm_registry,
+            capability_system,
+            aam.clone(),
+        );
+
+        let node = make_node("Status:");
+        let _result = execute(&ctx, &node, vec![Value::String("OK".to_string())])
+            .await
+            .unwrap();
+
+        let beliefs = aam.beliefs();
+        let key = format!(
+            "{}{}:{}",
+            belief_keys::PRINT_PREFIX,
+            ctx.execution_id,
+            node.id
+        );
+        assert!(beliefs.contains_key(&key));
+    }
+
+    #[test]
+    fn test_format_value_string() {
+        assert_eq!(format_value(&Value::String("hello".into())), "hello");
+    }
+
+    #[test]
+    fn test_format_value_null() {
+        assert_eq!(format_value(&Value::Null), "null");
+    }
+
+    #[test]
+    fn test_format_value_bool() {
+        assert_eq!(format_value(&Value::Bool(true)), "true");
+    }
+
+    #[test]
+    fn test_format_value_array() {
+        let arr = Value::Array(vec![
+            Value::String("a".into()),
+            Value::String("b".into()),
+        ]);
+        assert_eq!(format_value(&arr), "ab");
+    }
+}

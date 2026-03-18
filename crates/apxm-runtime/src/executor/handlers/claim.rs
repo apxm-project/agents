@@ -152,3 +152,93 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
     Ok(Value::Object(result))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::capability::CapabilitySystem;
+    use crate::memory::{MemoryConfig, MemorySystem};
+    use apxm_core::types::operations::AISOperationType;
+    use apxm_core::types::values::Number;
+    use std::sync::Arc;
+
+    fn make_claim_node(queue: &str, server_url: &str, max_wait_ms: u64) -> Node {
+        let mut node = Node {
+            id: 1,
+            op_type: AISOperationType::Claim,
+            attributes: std::collections::HashMap::new(),
+            input_tokens: vec![],
+            output_tokens: vec![],
+            metadata: apxm_core::types::execution::NodeMetadata::default(),
+        };
+        node.attributes.insert(
+            graph_attrs::QUEUE.to_string(),
+            Value::String(queue.to_string()),
+        );
+        node.attributes.insert(
+            graph_attrs::SERVER_URL.to_string(),
+            Value::String(server_url.to_string()),
+        );
+        node.attributes.insert(
+            graph_attrs::MAX_WAIT_MS.to_string(),
+            Value::Number(Number::Integer(max_wait_ms as i64)),
+        );
+        node
+    }
+
+    #[tokio::test]
+    async fn test_claim_connection_refused() {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(apxm_backends::LLMRegistry::new());
+        let capability_system = Arc::new(CapabilitySystem::new());
+        let ctx = ExecutionContext::new(
+            memory,
+            llm_registry,
+            capability_system,
+            crate::aam::Aam::new(),
+        );
+
+        // Point to an unreachable server with a short timeout
+        let node = make_claim_node("test_queue", "http://127.0.0.1:1", 100);
+        let result = execute(&ctx, &node, vec![]).await;
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("CLAIM"),
+            "Expected CLAIM-related error, got: {}",
+            err_msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_claim_missing_queue_attribute() {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(apxm_backends::LLMRegistry::new());
+        let capability_system = Arc::new(CapabilitySystem::new());
+        let ctx = ExecutionContext::new(
+            memory,
+            llm_registry,
+            capability_system,
+            crate::aam::Aam::new(),
+        );
+
+        let node = Node {
+            id: 1,
+            op_type: AISOperationType::Claim,
+            attributes: std::collections::HashMap::new(),
+            input_tokens: vec![],
+            output_tokens: vec![],
+            metadata: apxm_core::types::execution::NodeMetadata::default(),
+        };
+        let result = execute(&ctx, &node, vec![]).await;
+        assert!(result.is_err());
+    }
+}
+

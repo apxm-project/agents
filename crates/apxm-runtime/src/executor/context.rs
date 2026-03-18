@@ -1,7 +1,7 @@
 //! Execution context - Holds runtime state and provides access to subsystems
 
 use crate::{
-    aam::{Aam, ScopePolicy, ScopeSpec},
+    aam::{Aam, ScopeSpec},
     capability::CapabilitySystem, capability::flow_registry::FlowRegistry,
     memory::MemorySystem,
 };
@@ -176,102 +176,20 @@ impl ExecutionContext {
         self.start_time.elapsed()
     }
 
-    /// Create a child context with new execution ID
+    /// Create a child context that shares the parent's AAM (Inherit on all dimensions).
     pub fn child(&self) -> Self {
-        self.child_with_aam(self.aam.clone())
+        self.child_with_scope(ScopeSpec::default())
     }
 
     /// Create a child context with a scoped AAM.
     ///
-    /// The `ScopeSpec` controls which parts of the parent AAM are inherited:
-    /// - `ScopePolicy::Inherit` -- shares the parent's data (default)
-    /// - `ScopePolicy::Isolate` -- starts with empty state
-    /// - `ScopePolicy::Filter(keys)` -- inherits only the listed keys
+    /// The [`ScopeSpec`] controls which parts of the parent AAM are inherited:
+    /// - [`ScopePolicy::Inherit`]  -- child shares the parent's `Arc` (writes propagate both ways)
+    /// - [`ScopePolicy::Isolate`]  -- child starts with empty state
+    /// - [`ScopePolicy::Snapshot`] -- child gets a point-in-time copy (writes are private)
+    /// - [`ScopePolicy::Filter(keys)`] -- child gets only the listed keys (snapshot semantics)
     pub fn child_with_scope(&self, scope: ScopeSpec) -> Self {
-        use apxm_core::constants::runtime::transition_labels as tl;
-
-        let parent_aam = &self.aam;
-        let child_aam = Aam::new();
-
-        // Beliefs
-        match &scope.beliefs {
-            ScopePolicy::Inherit => {
-                let beliefs = parent_aam.beliefs();
-                for (k, v) in beliefs {
-                    child_aam.set_belief(
-                        k,
-                        v,
-                        crate::aam::TransitionLabel::custom(tl::SCOPE_INHERIT_BELIEF),
-                    );
-                }
-            }
-            ScopePolicy::Isolate => { /* empty */ }
-            ScopePolicy::Filter(keys) => {
-                let beliefs = parent_aam.beliefs();
-                for key in keys {
-                    if let Some(v) = beliefs.get(key) {
-                        child_aam.set_belief(
-                            key.clone(),
-                            v.clone(),
-                            crate::aam::TransitionLabel::custom(tl::SCOPE_FILTER_BELIEF),
-                        );
-                    }
-                }
-            }
-        }
-
-        // Capabilities
-        match &scope.capabilities {
-            ScopePolicy::Inherit => {
-                let caps = parent_aam.capabilities();
-                for (name, record) in caps {
-                    child_aam.register_capability(
-                        name,
-                        record,
-                        crate::aam::TransitionLabel::custom(tl::SCOPE_INHERIT_CAPABILITY),
-                    );
-                }
-            }
-            ScopePolicy::Isolate => { /* empty */ }
-            ScopePolicy::Filter(keys) => {
-                let caps = parent_aam.capabilities();
-                for key in keys {
-                    if let Some(record) = caps.get(key) {
-                        child_aam.register_capability(
-                            key.clone(),
-                            record.clone(),
-                            crate::aam::TransitionLabel::custom(tl::SCOPE_FILTER_CAPABILITY),
-                        );
-                    }
-                }
-            }
-        }
-
-        // Goals
-        match &scope.goals {
-            ScopePolicy::Inherit => {
-                let goals = parent_aam.goals();
-                for goal in goals {
-                    child_aam.add_goal(
-                        goal,
-                        crate::aam::TransitionLabel::custom(tl::SCOPE_INHERIT_GOAL),
-                    );
-                }
-            }
-            ScopePolicy::Isolate => { /* empty */ }
-            ScopePolicy::Filter(keys) => {
-                let goals = parent_aam.goals();
-                for goal in goals {
-                    if keys.contains(&goal.description) {
-                        child_aam.add_goal(
-                            goal,
-                            crate::aam::TransitionLabel::custom(tl::SCOPE_FILTER_GOAL),
-                        );
-                    }
-                }
-            }
-        }
-
+        let child_aam = self.aam.child_scope(&scope);
         self.child_with_aam(child_aam)
     }
 
