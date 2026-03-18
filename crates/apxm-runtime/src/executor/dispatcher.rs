@@ -51,6 +51,10 @@ impl OperationDispatcher {
         }
         let op_start = std::time::Instant::now();
 
+        // Push this operation onto the AAM call stack so that
+        // `current_exception_handler()` can resolve TryCatch scopes.
+        ctx.aam.enter_operation(node.id);
+
         let result = match node.op_type {
             // Memory operations
             AISOperationType::QMem => qmem::execute(ctx, node, inputs).await,
@@ -117,6 +121,9 @@ impl OperationDispatcher {
             AISOperationType::Agent
             | AISOperationType::Yield => Ok(Value::Null),
         };
+
+        // Pop the call stack frame (must happen regardless of success/failure).
+        ctx.aam.exit_operation();
 
         let op_duration = op_start.elapsed();
         let success = result.is_ok();

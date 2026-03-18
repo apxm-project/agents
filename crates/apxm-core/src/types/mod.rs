@@ -25,8 +25,8 @@ pub use compiler::{
 };
 pub use execution::{
     Agent, AgentFlow, AgentId, AgentMetadata, CapabilityDeclaration, DagMetadata, DependencyType,
-    Edge, ExecutionDag, ExecutionStats, MemoryDeclaration, Node, NodeId, NodeMetadata, NodeStatus,
-    OpStatus, Task, TaskDag, TaskId, TaskMetadata,
+    Edge, ExecutionDag, ExecutionStats, LatencyTierConfig, MemoryDeclaration, Node, NodeId,
+    NodeMetadata, NodeStatus, OpStatus, Task, TaskDag, TaskId, TaskMetadata, WorkflowNode,
 };
 pub use goal::{Goal, GoalId, GoalStatus};
 pub use identifiers::{

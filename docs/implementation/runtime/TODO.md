@@ -32,14 +32,12 @@ against current source code as of 2026-03-17.
   Resolved: `UserToolCapability::execute()` now dispatches via `ProcessSandbox`. Tools in `~/.apxm/tools.json` include `command`, `args`, `timeout_ms` fields. Subprocess receives JSON args on stdin, stdout parsed as JSON Value. Timeout and error handling included.
   Files: `crates/apxm-driver/src/runtime/capabilities.rs`
 
-- [ ] **Gap 1 — Fixed 4-level hierarchy, no recursive composition.**
-  The hierarchy is Agent -> Flow -> Task -> Node, exactly four levels. `PlanStep` is a flat list with string dependencies. `ApxmGraph::merge()` flattens into a single DAG. Flows cannot structurally contain sub-flows.
-  Current: flat 4-level hierarchy. Needed: recursive `WorkflowNode` that can contain sub-workflows (unifying INV, FLOW_CALL, and PLAN inner-plan behind one abstraction).
-  Files: `crates/apxm-core/src/plan.rs`, `crates/apxm-core/src/types/execution/agent.rs`
+- [x] **Gap 1 — Fixed 4-level hierarchy, no recursive composition.**
+  Resolved: `WorkflowNode` enum added to `apxm-core::types::execution` with four variants: `Operation(Node)` (leaf), `FlowCall` (named flow reference), `Invocation` (external tool/capability), and `SubWorkflow` (recursive inline sub-workflow containing `Vec<WorkflowNode>` + `Vec<Edge>`). Methods: `flatten()` recursively collects leaf `Node`s, `depth()` computes max nesting depth, `is_leaf()`, `is_sub_workflow()`, `kind()`, `node_count()`. Serde roundtrip tested. 16 unit tests including 50-level deep nesting stress test. Existing handlers untouched; they can adopt `WorkflowNode` incrementally.
+  Files: `crates/apxm-core/src/types/execution/workflow.rs`, `crates/apxm-core/src/types/execution/mod.rs`, `crates/apxm-core/src/types/mod.rs`
 
-- [ ] **Gap 2 — DAG modification is expand-only (no condensation).**
-  `DagSplicer` supports expanding a node into a sub-DAG. No `replace_subdag()` or `condense_subdag()` exists. `SchedulerState` uses `Arc<Node>` (immutable) with no node removal API.
-  Current: append-only DAG modification. Needed: bidirectional graph modification (condense a sub-DAG into a single capability node).
+- [x] **Gap 2 — DAG modification is expand-only (no condensation).**
+  Resolved: `condense_subdag()` added to `DagSplicer` trait with full `SchedulerState` implementation. `ReadySet::remove_pending()` added for node removal. 8 unit tests covering condensation, edge rewiring, and scheduler state consistency.
   _(Compiler-side counterpart: `CondenseOps` pass tracked in `docs/implementation/compiler/TODO.md`)_
   Files: `crates/apxm-runtime/src/scheduler/splicing.rs`, `crates/apxm-runtime/src/scheduler/state.rs`
 
@@ -49,20 +47,19 @@ against current source code as of 2026-03-17.
 
 ## P2: Nice to Have (future-proofing, polish)
 
-- [ ] **Gap 10 — Latency tiers are compile-time constants.**
-  `estimated_latency` is set by the compiler and baked into the artifact. Not configurable per model backend at runtime. No model capability probing to determine if a multi-step workflow can be condensed into a single call.
-  Current: compile-time constants. Needed: runtime-configurable latency tiers per model backend, profile-guided adaptation.
-  Files: `crates/apxm-compiler/src/codegen/artifact.rs` (line 148), `crates/apxm-core/src/types/execution/node.rs` (line 29)
+- [x] **Gap 10 — Latency tiers are compile-time constants.**
+  Resolved: `LatencyTierConfig` added to `apxm-core::types::execution::node` with per-backend tier map and default fallback. Wired into `SchedulerConfig.latency_tiers` (with builder method `with_latency_tiers()`). `DataflowScheduler::apply_latency_overrides()` mutates the DAG before cost-budget enforcement and state construction, overriding `estimated_latency` for nodes whose `"backend"` attribute matches a configured tier. Backward compatible: empty config (default) is a no-op. 14 unit tests (6 for `LatencyTierConfig` in apxm-core, 8 for `apply_latency_overrides` in apxm-runtime).
+  Remaining sub-gap: model capability probing / profile-guided adaptation (future work).
+  Files: `crates/apxm-core/src/types/execution/node.rs`, `crates/apxm-runtime/src/scheduler/config.rs`, `crates/apxm-runtime/src/scheduler/dataflow.rs`
 
 - [ ] **Gap 6 — No exploded workflow format (runtime impact).**
   Workflows are monolithic JSON blobs. The scheduler and executor have no concept of directory-based workflow state. Runtime would need per-sub-task directories for prompts, tools, and data.
   _(CLI and compiler implementation tracked in `docs/implementation/compiler/TODO.md`: `apxm init`, `apxm decompile`, directory compilation)_
   Files: `crates/apxm-runtime/src/executor/engine.rs`, `crates/apxm-graph/src/`
 
-- [ ] **Gap 8c — `enter_operation`/`exit_operation` call stack is dead code.**
-  `Aam::enter_operation()` and `Aam::exit_operation()` maintain a `call_stack: Vec<CallFrame>`, but no handler ever calls them. The exception handler lookup (`current_exception_handler`) depends on this stack but is also unused.
-  Current: dead code. Needed: either wire into the dispatcher (call enter/exit around each handler dispatch) or remove.
-  Files: `crates/apxm-runtime/src/aam/mod.rs` (lines 101-127)
+- [x] **Gap 8c — `enter_operation`/`exit_operation` call stack is dead code.**
+  Resolved: `OperationDispatcher::dispatch_inner()` now calls `ctx.aam.enter_operation(node.id)` before handler dispatch and `ctx.aam.exit_operation()` after (regardless of success/failure). The AAM call stack now reflects actual execution flow, enabling `current_exception_handler()` to resolve TryCatch scopes. Also added manual `Debug` impl for `Aam` (required by concurrent workspace changes).
+  Files: `crates/apxm-runtime/src/executor/dispatcher.rs`, `crates/apxm-runtime/src/aam/mod.rs`
 
 - [x] **Gap 8d — `effects.rs` aligned with handler behavior.**
   Fixed in `61d408f`: Fence effect corrected to empty (pure barrier), Reflect corrected to read+write Episodic, all ops have explicit entries (no wildcard catch-all). Handlers now match their declared effects.

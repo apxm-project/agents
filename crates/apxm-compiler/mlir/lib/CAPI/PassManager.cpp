@@ -117,8 +117,8 @@ bool apxm_pass_manager_has_pass(ApxmPassManager* pm, const char* pass_name) {
 
   // Simple implementation - in real system would use pass registry
   static const char* known_passes[] = {
-    "normalize", "build-prompt", "fuse-ask-ops", "scheduling",
-    "canonicalizer", "cse", "symbol-dce", "inline",
+    "normalize", "build-prompt", "fuse-ask-ops", "condense-ops",
+    "scheduling", "canonicalizer", "cse", "symbol-dce", "inline",
     "unconsumed-value-warning"
   };
 
@@ -156,6 +156,10 @@ void apxm_pass_manager_add_build_prompt(ApxmPassManager* pm) {
 
 void apxm_pass_manager_add_fuse_ask_ops(ApxmPassManager* pm) {
   if (pm) pm->pass_manager->addPass(mlir::ais::createFuseAskOpsPass());
+}
+
+void apxm_pass_manager_add_condense_ops(ApxmPassManager* pm) {
+  if (pm) pm->pass_manager->addPass(mlir::ais::createCondenseOpsPass());
 }
 
 void apxm_pass_manager_add_scheduling(ApxmPassManager* pm) {

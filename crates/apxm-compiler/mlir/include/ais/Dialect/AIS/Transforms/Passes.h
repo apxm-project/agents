@@ -12,7 +12,8 @@
  *   2. build-prompt              – generate {0} placeholder for empty templates
  *   3. scheduling                – annotate with tier/cost/parallel-safe flags
  *   4. fuse-ask-ops              – batch ask LLM calls (highest ROI)
- *   5. unconsumed-value-warning  – warn about unused results (DCE)
+ *   5. condense-ops              – batch consecutive memory operations
+ *   6. unconsumed-value-warning  – warn about unused results (DCE)
  */
 
 #ifndef APXM_AIS_PASSES_H
@@ -46,6 +47,9 @@ std::unique_ptr<Pass> createCapabilitySchedulingPass();
 
 /// Create FuseAskOps pass - merge ask chains (highest ROI)
 std::unique_ptr<Pass> createFuseAskOpsPass();
+
+/// Create CondenseOps pass - batch consecutive memory operations
+std::unique_ptr<Pass> createCondenseOpsPass();
 
 /// Create UnconsumedValueWarning pass - warn about unused operation results
 std::unique_ptr<Pass> createUnconsumedValueWarningPass();

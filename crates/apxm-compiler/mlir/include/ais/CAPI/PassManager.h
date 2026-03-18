@@ -29,6 +29,7 @@ void apxm_pass_manager_add_unconsumed_value_warning(ApxmPassManager *pm);
 void apxm_pass_manager_add_normalize(ApxmPassManager *pm);
 void apxm_pass_manager_add_build_prompt(ApxmPassManager *pm);
 void apxm_pass_manager_add_fuse_ask_ops(ApxmPassManager *pm);
+void apxm_pass_manager_add_condense_ops(ApxmPassManager *pm);
 void apxm_pass_manager_add_scheduling(ApxmPassManager *pm);
 
 // Optimization passes

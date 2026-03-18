@@ -1,6 +1,6 @@
 //! Compiler wrapper used by the driver.
 
-use apxm_compiler::{Context, Module, Pipeline};
+use apxm_compiler::{Context, Module, Pipeline, PipelineDiagnostics};
 use apxm_core::types::{OptimizationLevel, PipelineConfig};
 use apxm_core::utils::build::MlirEnvReport;
 use apxm_graph::ApxmGraph;
@@ -68,6 +68,29 @@ impl Compiler {
     ) -> Result<Module, DriverError> {
         let pipeline = Pipeline::with_config(&self.context, config);
         pipeline.compile_graph(graph).map_err(DriverError::Compiler)
+    }
+
+    /// Compile an in-memory graph and collect per-pass diagnostics.
+    pub fn compile_graph_with_diagnostics(
+        &self,
+        graph: &ApxmGraph,
+    ) -> Result<(Module, PipelineDiagnostics), DriverError> {
+        let pipeline = Pipeline::with_opt_level(&self.context, self.opt_level);
+        pipeline
+            .compile_graph_with_diagnostics(graph)
+            .map_err(DriverError::Compiler)
+    }
+
+    /// Compile an in-memory graph with a custom config and collect per-pass diagnostics.
+    pub fn compile_graph_with_config_and_diagnostics(
+        &self,
+        graph: &ApxmGraph,
+        config: PipelineConfig,
+    ) -> Result<(Module, PipelineDiagnostics), DriverError> {
+        let pipeline = Pipeline::with_config(&self.context, config);
+        pipeline
+            .compile_graph_with_diagnostics(graph)
+            .map_err(DriverError::Compiler)
     }
 
     /// Load graph input (JSON or bincode) from disk.

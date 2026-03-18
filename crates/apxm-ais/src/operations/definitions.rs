@@ -288,6 +288,52 @@ impl AISOperationType {
         }
     }
 
+    /// Convert an `AISOperationType` to its wire-format index.
+    ///
+    /// Returns `None` for operation types that do not have a wire-format index
+    /// (e.g., `Agent`, `UpdateGoal`, `Guard`, `Claim`, `Pause`, `Resume`, `Yield`).
+    ///
+    /// This is the inverse of [`from_wire_index`].
+    pub fn to_wire_index(self) -> Option<u32> {
+        match self {
+            AISOperationType::Inv => Some(0),
+            AISOperationType::Ask => Some(1),
+            AISOperationType::QMem => Some(2),
+            AISOperationType::UMem => Some(3),
+            AISOperationType::Plan => Some(4),
+            AISOperationType::WaitAll => Some(5),
+            AISOperationType::Merge => Some(6),
+            AISOperationType::Fence => Some(7),
+            AISOperationType::Exc => Some(8),
+            AISOperationType::Communicate => Some(9),
+            AISOperationType::Reflect => Some(10),
+            AISOperationType::Verify => Some(11),
+            AISOperationType::Err => Some(12),
+            AISOperationType::Return => Some(13),
+            AISOperationType::Jump => Some(14),
+            AISOperationType::BranchOnValue => Some(15),
+            AISOperationType::LoopStart => Some(16),
+            AISOperationType::LoopEnd => Some(17),
+            AISOperationType::TryCatch => Some(18),
+            AISOperationType::ConstStr => Some(19),
+            AISOperationType::Switch => Some(20),
+            AISOperationType::FlowCall => Some(21),
+            AISOperationType::Print => Some(22),
+            AISOperationType::Think => Some(23),
+            AISOperationType::Reason => Some(24),
+            // 25-30: reserved for Phase 1 ISA extensions
+            AISOperationType::Delegate => Some(31),
+            AISOperationType::Negotiate => Some(32),
+            AISOperationType::Nop => Some(33),
+            AISOperationType::Identity => Some(34),
+            AISOperationType::SpawnAgent => Some(35),
+            AISOperationType::RegisterCapability => Some(36),
+            AISOperationType::Autonomous => Some(37),
+            // Ops without wire indices
+            _ => None,
+        }
+    }
+
     /// Get all operation types (39 total: 27 original + 5 phase-1 + 7 phase-2 extensions).
     pub fn all_operations() -> &'static [AISOperationType] {
         &[

@@ -69,6 +69,9 @@ impl DataflowScheduler {
             "DAG structure loaded"
         );
 
+        // Apply runtime latency tier overrides before cost enforcement
+        let dag = self.apply_latency_overrides(dag);
+
         // Validate DAG cost budget early
         self.enforce_cost_budget(&dag)?;
 
@@ -138,6 +141,46 @@ impl DataflowScheduler {
         );
 
         Ok((results, stats, scheduler_metrics))
+    }
+
+    /// Apply runtime latency tier overrides to DAG nodes.
+    ///
+    /// For each node that has a `"backend"` attribute matching a key in the
+    /// configured `latency_tiers`, its `estimated_latency` is replaced with
+    /// the runtime-configured value.  This runs before cost-budget
+    /// enforcement so that budgets reflect real-world backend latencies.
+    ///
+    /// When the latency tier config is empty (default), this is a no-op.
+    fn apply_latency_overrides(&self, mut dag: ExecutionDag) -> ExecutionDag {
+        if self.config.latency_tiers.is_empty() {
+            return dag;
+        }
+
+        let tiers = &self.config.latency_tiers;
+        let mut overridden = 0usize;
+
+        for node in dag.nodes.iter_mut() {
+            let backend = node
+                .attributes
+                .get(apxm_core::constants::graph::attrs::BACKEND)
+                .and_then(|v| v.as_string().map(|s| s.to_string()));
+
+            if let Some(ref backend_name) = backend {
+                if let Some(latency) = tiers.resolve(backend_name) {
+                    node.metadata.estimated_latency = Some(latency);
+                    overridden += 1;
+                }
+            }
+        }
+
+        if overridden > 0 {
+            tracing::info!(
+                overridden_nodes = overridden,
+                "Applied runtime latency tier overrides"
+            );
+        }
+
+        dag
     }
 
     /// Enforce the cost budget for the DAG.
@@ -251,7 +294,7 @@ fn spawn_workers(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use apxm_core::types::execution::NodeMetadata;
+    use apxm_core::types::execution::{LatencyTierConfig, NodeMetadata};
     use apxm_core::types::operations::AISOperationType;
     use apxm_core::types::Node;
     use std::collections::HashMap;
@@ -262,6 +305,24 @@ mod tests {
             id,
             op_type: AISOperationType::Nop,
             attributes: HashMap::new(),
+            input_tokens: vec![],
+            output_tokens: vec![],
+            metadata: NodeMetadata {
+                priority: 0,
+                estimated_latency: Some(cost),
+                task_source_id: None,
+            },
+        }
+    }
+
+    /// Helper: create a node with an estimated latency and a backend attribute.
+    fn make_backend_node(id: u64, cost: u64, backend: &str) -> Node {
+        let mut attrs = HashMap::new();
+        attrs.insert("backend".to_string(), Value::String(backend.to_string()));
+        Node {
+            id,
+            op_type: AISOperationType::Nop,
+            attributes: attrs,
             input_tokens: vec![],
             output_tokens: vec![],
             metadata: NodeMetadata {
@@ -392,5 +453,150 @@ mod tests {
         let scheduler = DataflowScheduler::new(SchedulerConfig::default());
         assert!(scheduler.config.max_concurrency > 0);
         assert!(scheduler.config.validate().is_ok());
+    }
+
+    // ── apply_latency_overrides tests ────────────────────────────────
+
+    #[test]
+    fn test_latency_override_empty_config_is_noop() {
+        let scheduler = DataflowScheduler::new(SchedulerConfig::new());
+
+        let mut dag = ExecutionDag::new();
+        dag.add_node(make_costed_node(1, 100)).unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+
+        let dag = scheduler.apply_latency_overrides(dag);
+        assert_eq!(dag.nodes[0].metadata.estimated_latency, Some(100));
+    }
+
+    #[test]
+    fn test_latency_override_matching_backend() {
+        let mut tiers = HashMap::new();
+        tiers.insert("gpt-4".to_string(), 2000);
+        let tier_config = LatencyTierConfig {
+            tiers,
+            default_latency_ns: 0,
+        };
+
+        let scheduler = DataflowScheduler::new(
+            SchedulerConfig::new().with_latency_tiers(tier_config),
+        );
+
+        let mut dag = ExecutionDag::new();
+        dag.add_node(make_backend_node(1, 100, "gpt-4")).unwrap();
+        dag.add_node(make_backend_node(2, 200, "claude")).unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+
+        let dag = scheduler.apply_latency_overrides(dag);
+
+        // Node 1: backend "gpt-4" matches tier -> overridden to 2000
+        assert_eq!(dag.nodes[0].metadata.estimated_latency, Some(2000));
+        // Node 2: backend "claude" not in tiers, no default -> unchanged
+        assert_eq!(dag.nodes[1].metadata.estimated_latency, Some(200));
+    }
+
+    #[test]
+    fn test_latency_override_default_fallback() {
+        let tier_config = LatencyTierConfig {
+            tiers: HashMap::new(),
+            default_latency_ns: 5000,
+        };
+
+        let scheduler = DataflowScheduler::new(
+            SchedulerConfig::new().with_latency_tiers(tier_config),
+        );
+
+        let mut dag = ExecutionDag::new();
+        dag.add_node(make_backend_node(1, 100, "unknown-backend")).unwrap();
+        dag.add_node(make_costed_node(2, 300)).unwrap(); // no backend attr
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+
+        let dag = scheduler.apply_latency_overrides(dag);
+
+        // Node 1: has backend but no tier match -> uses default_latency_ns
+        assert_eq!(dag.nodes[0].metadata.estimated_latency, Some(5000));
+        // Node 2: no backend attribute at all -> unchanged
+        assert_eq!(dag.nodes[1].metadata.estimated_latency, Some(300));
+    }
+
+    #[test]
+    fn test_latency_override_affects_cost_budget() {
+        let mut tiers = HashMap::new();
+        tiers.insert("expensive".to_string(), 1000);
+        let tier_config = LatencyTierConfig {
+            tiers,
+            default_latency_ns: 0,
+        };
+
+        // Budget of 500 with a node that compiles to cost 100 but has
+        // runtime override to 1000 -> should exceed budget.
+        let scheduler = DataflowScheduler::new(
+            SchedulerConfig::new()
+                .with_max_cost(500)
+                .with_latency_tiers(tier_config),
+        );
+
+        let mut dag = ExecutionDag::new();
+        dag.add_node(make_backend_node(1, 100, "expensive")).unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+
+        // Without override, cost would be 100 (within budget).
+        // After override, cost is 1000 (exceeds 500 budget).
+        let dag = scheduler.apply_latency_overrides(dag);
+        let result = scheduler.enforce_cost_budget(&dag);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_latency_override_no_backend_attr_unchanged() {
+        let mut tiers = HashMap::new();
+        tiers.insert("fast".to_string(), 10);
+        let tier_config = LatencyTierConfig {
+            tiers,
+            default_latency_ns: 0,
+        };
+
+        let scheduler = DataflowScheduler::new(
+            SchedulerConfig::new().with_latency_tiers(tier_config),
+        );
+
+        let mut dag = ExecutionDag::new();
+        dag.add_node(make_costed_node(1, 5000)).unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+
+        let dag = scheduler.apply_latency_overrides(dag);
+        // No backend attribute -> compile-time latency preserved
+        assert_eq!(dag.nodes[0].metadata.estimated_latency, Some(5000));
+    }
+
+    #[test]
+    fn test_latency_override_tier_takes_precedence_over_default() {
+        let mut tiers = HashMap::new();
+        tiers.insert("special".to_string(), 42);
+        let tier_config = LatencyTierConfig {
+            tiers,
+            default_latency_ns: 9999,
+        };
+
+        let scheduler = DataflowScheduler::new(
+            SchedulerConfig::new().with_latency_tiers(tier_config),
+        );
+
+        let mut dag = ExecutionDag::new();
+        dag.add_node(make_backend_node(1, 100, "special")).unwrap();
+        dag.add_node(make_backend_node(2, 200, "other")).unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+
+        let dag = scheduler.apply_latency_overrides(dag);
+        // "special" has a specific tier -> 42
+        assert_eq!(dag.nodes[0].metadata.estimated_latency, Some(42));
+        // "other" not in tiers but default_latency_ns > 0 -> 9999
+        assert_eq!(dag.nodes[1].metadata.estimated_latency, Some(9999));
     }
 }

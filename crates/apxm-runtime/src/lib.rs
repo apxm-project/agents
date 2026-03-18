@@ -30,11 +30,13 @@ pub mod observability;
 mod runtime;
 pub mod sandbox;
 pub mod scheduler;
+pub mod workspace;
 
 pub use aam::{
-    Aam, CapabilityRecord, Goal, GoalId, GoalStatus,
+    Aam, AamCheckpoint, CapabilityRecord, Goal, GoalId, GoalStatus,
     ScopePolicy, ScopeSpec, STAGED_BELIEF_PREFIX, TransitionLabel,
     effects::{AamComponent, OperationEffects, operation_effects},
+    session::SessionManager,
 };
 pub use capability::{
     CapabilitySystem,

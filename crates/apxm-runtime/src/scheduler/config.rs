@@ -3,6 +3,7 @@
 //! This module defines configuration options for the dataflow scheduler,
 //! including parallelism settings, retry behavior, and resource limits.
 
+use apxm_core::types::LatencyTierConfig;
 use serde::{Deserialize, Serialize};
 
 /// Configuration for the dataflow scheduler.
@@ -83,6 +84,16 @@ pub struct SchedulerConfig {
     /// Default: 10000
     #[serde(default = "default_queue_capacity")]
     pub queue_capacity: usize,
+
+    /// Runtime-configurable latency tiers for model backends.
+    ///
+    /// When a node carries a `"backend"` attribute that matches a key in this
+    /// config, the node's `estimated_latency` is overridden at runtime before
+    /// cost-budget enforcement and scheduling.
+    ///
+    /// Default: empty (compile-time latencies are used as-is)
+    #[serde(default)]
+    pub latency_tiers: LatencyTierConfig,
 }
 
 impl Default for SchedulerConfig {
@@ -97,6 +108,7 @@ impl Default for SchedulerConfig {
             deadlock_timeout_ms: default_deadlock_timeout_ms(),
             max_cost: 0,
             queue_capacity: default_queue_capacity(),
+            latency_tiers: LatencyTierConfig::default(),
         }
     }
 }
@@ -141,6 +153,12 @@ impl SchedulerConfig {
     /// Set the maximum cost budget.
     pub fn with_max_cost(mut self, max_cost: usize) -> Self {
         self.max_cost = max_cost;
+        self
+    }
+
+    /// Set runtime-configurable latency tiers.
+    pub fn with_latency_tiers(mut self, latency_tiers: LatencyTierConfig) -> Self {
+        self.latency_tiers = latency_tiers;
         self
     }
 

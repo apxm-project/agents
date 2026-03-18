@@ -6,14 +6,17 @@
 //! can evolve it alongside the rest of the runtime.
 
 pub mod effects;
+pub mod session;
 
 pub use apxm_core::types::goal::{Goal, GoalId, GoalStatus};
+use apxm_core::error::RuntimeError;
 use apxm_core::types::values::Value;
 use chrono::{DateTime, Utc};
 use parking_lot::RwLock;
 use priority_queue::PriorityQueue;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 
 /// Prefix for staged belief keys (used by QMEM).
@@ -23,6 +26,12 @@ pub const STAGED_BELIEF_PREFIX: &str = apxm_core::constants::runtime::belief_key
 #[derive(Clone, Default)]
 pub struct Aam {
     inner: Arc<RwLock<AamState>>,
+}
+
+impl std::fmt::Debug for Aam {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Aam").finish_non_exhaustive()
+    }
 }
 
 impl Aam {
@@ -614,6 +623,24 @@ pub struct AamCheckpoint {
     #[serde(default)]
     pub goal_tree: GoalTree,
     pub timestamp: DateTime<Utc>,
+}
+
+impl AamCheckpoint {
+    /// Save checkpoint to a file (JSON serialized).
+    pub fn save_to_file(&self, path: &Path) -> Result<(), RuntimeError> {
+        let json = serde_json::to_string_pretty(self)
+            .map_err(|e| RuntimeError::Serialization(e.to_string()))?;
+        std::fs::write(path, json)
+            .map_err(|e| RuntimeError::State(format!("Failed to write checkpoint: {}", e)))?;
+        Ok(())
+    }
+
+    /// Load checkpoint from a file.
+    pub fn load_from_file(path: &Path) -> Result<Self, RuntimeError> {
+        let json = std::fs::read_to_string(path)
+            .map_err(|e| RuntimeError::State(format!("Failed to read checkpoint: {}", e)))?;
+        serde_json::from_str(&json).map_err(|e| RuntimeError::Serialization(e.to_string()))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

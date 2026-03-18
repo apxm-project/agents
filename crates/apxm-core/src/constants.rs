@@ -107,6 +107,12 @@ pub mod graph {
         pub const DESCRIPTION: &str = "description";
         pub const REGION: &str = "region";
         pub const PARAMETERS_SCHEMA: &str = "parameters_schema";
+
+        // Optimization hint attributes (set by graph-level passes)
+        /// Prompt caching hint: system prompt already sent by an earlier node.
+        pub const CACHED_SYSTEM_PROMPT: &str = "cached_system_prompt";
+        /// Memoization hint: this pure operation duplicates an earlier one.
+        pub const MEMOIZABLE: &str = "memoizable";
     }
 }
 

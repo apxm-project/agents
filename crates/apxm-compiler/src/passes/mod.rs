@@ -7,12 +7,17 @@
 //!
 //! - [`PassManager`]: Runs optimization passes
 //! - [`build_pipeline`]: Creates compilation pipelines
+//! - [`PassMetrics`] / [`PipelineDiagnostics`]: Per-pass timing and change tracking
 //! - Registry functions: Pass management
 
 mod manager;
+pub mod metrics;
 mod pipeline;
+pub mod profile;
 mod registry;
 
 pub use manager::PassManager;
-pub use pipeline::build_pipeline;
+pub use metrics::{PassMetrics, PipelineDiagnostics};
+pub use pipeline::{build_pipeline, build_pass_list};
+pub use profile::{ExecutionProfile, NodeProfile, ProfileError};
 pub use registry::{find_pass, get_pass_count, get_pass_info, list_passes};

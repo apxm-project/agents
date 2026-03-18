@@ -1,5 +1,7 @@
 //! Optimization related types.
 
+use std::path::PathBuf;
+
 use crate::error::runtime::RuntimeError;
 use serde::{Deserialize, Serialize};
 
@@ -70,6 +72,21 @@ pub struct PipelineConfig {
     /// Skip CSE (Common Subexpression Elimination) for LLM operations.
     #[serde(default)]
     pub no_cse_llm: bool,
+
+    /// Optional path to a profile JSON file for profile-guided optimization.
+    ///
+    /// When set, the compiler loads the [`ExecutionProfile`] and annotates graph
+    /// nodes with observed latency, error-rate, and token-usage data before MLIR
+    /// lowering.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_path: Option<PathBuf>,
+
+    /// Optional token budget for profile-guided warnings.
+    ///
+    /// When profile data is loaded, nodes whose average token consumption
+    /// exceeds this budget receive a `__profile_token_warning` attribute.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_budget: Option<u64>,
 }
 
 impl Default for PipelineConfig {
@@ -78,6 +95,8 @@ impl Default for PipelineConfig {
             opt_level: OptimizationLevel::O2,
             verify: true,
             no_cse_llm: false,
+            profile_path: None,
+            token_budget: None,
         }
     }
 }
@@ -89,6 +108,8 @@ impl PipelineConfig {
             opt_level: OptimizationLevel::O0,
             verify: true,
             no_cse_llm: false,
+            profile_path: None,
+            token_budget: None,
         }
     }
 
@@ -98,6 +119,8 @@ impl PipelineConfig {
             opt_level: OptimizationLevel::O3,
             verify: false,
             no_cse_llm: false,
+            profile_path: None,
+            token_budget: None,
         }
     }
 
@@ -110,6 +133,18 @@ impl PipelineConfig {
     /// Builder: Enable/disable verification
     pub fn with_verify(mut self, enable: bool) -> Self {
         self.verify = enable;
+        self
+    }
+
+    /// Builder: Set profile path for profile-guided optimization
+    pub fn with_profile(mut self, path: PathBuf) -> Self {
+        self.profile_path = Some(path);
+        self
+    }
+
+    /// Builder: Set token budget for profile-guided warnings
+    pub fn with_token_budget(mut self, budget: u64) -> Self {
+        self.token_budget = Some(budget);
         self
     }
 }

@@ -267,6 +267,29 @@ Only fuses when producer has single use."#,
     "mlir::ais::createFuseAskOpsPass()",
 );
 
+/// CondenseOps pass - condenses consecutive memory operations.
+pub const CONDENSE_OPS: PassSpec = PassSpec::new(
+    "condense-ops",
+    "CondenseOps",
+    "Condense consecutive memory operations into batched calls",
+    r#"Identifies linear chains of QMEM or UMEM operations that target the same
+memory space and condenses them into a single batched operation.
+
+For QMEM chains, queries are concatenated (newline-separated) into a single
+query, reducing memory round-trips.  For UMEM chains, redundant intermediate
+writes to the same space are eliminated (last-write-wins).
+
+Condensation fires when:
+1. Two or more consecutive QMEM/UMEM ops target the same memory space
+2. They share the same stage (sid) for QMEM
+3. No intervening side-effectful operations exist between them
+4. Intermediate results are not consumed by other operations
+
+This pass is the memory-tier analogue of FuseAskOps for LLM calls."#,
+    PassCategory::Transform,
+    "mlir::ais::createCondenseOpsPass()",
+);
+
 /// Unconsumed value warning pass - analysis pass for detecting unused results.
 pub const UNCONSUMED_VALUE_WARNING: PassSpec = PassSpec::new(
     "unconsumed-value-warning",
@@ -335,6 +358,7 @@ pub const AIS_PASSES: &[&PassSpec] = &[
     &BUILD_PROMPT,
     &SCHEDULING,
     &FUSE_ASK_OPS,
+    &CONDENSE_OPS,
     &UNCONSUMED_VALUE_WARNING,
 ];
 
@@ -345,6 +369,7 @@ pub const ALL_PASSES: &[&PassSpec] = &[
     &BUILD_PROMPT,
     &SCHEDULING,
     &FUSE_ASK_OPS,
+    &CONDENSE_OPS,
     &UNCONSUMED_VALUE_WARNING,
     // Built-in MLIR
     &CANONICALIZER,
@@ -389,6 +414,7 @@ mod tests {
         assert!(find_pass_by_name("normalize").is_some());
         assert!(find_pass_by_name("build-prompt").is_some());
         assert!(find_pass_by_name("fuse-ask-ops").is_some());
+        assert!(find_pass_by_name("condense-ops").is_some());
         assert!(find_pass_by_name("canonicalizer").is_some());
         assert!(find_pass_by_name("nonexistent").is_none());
     }
@@ -421,5 +447,14 @@ mod tests {
     fn test_build_prompt_has_options() {
         assert!(!BUILD_PROMPT.options.is_empty());
         assert_eq!(BUILD_PROMPT.options.len(), 2);
+    }
+
+    #[test]
+    fn test_condense_ops_spec() {
+        assert_eq!(CONDENSE_OPS.name, "condense-ops");
+        assert_eq!(CONDENSE_OPS.class_name, "CondenseOps");
+        assert_eq!(CONDENSE_OPS.category, PassCategory::Transform);
+        assert!(!CONDENSE_OPS.is_builtin);
+        assert!(CONDENSE_OPS.constructor.contains("createCondenseOpsPass"));
     }
 }

@@ -23,7 +23,10 @@ mod ffi;
 pub mod passes;
 
 pub use api::{Context, Module, Pipeline};
-pub use passes::{PassManager, find_pass, get_pass_count, get_pass_info, list_passes};
+pub use passes::{
+    ExecutionProfile, NodeProfile, PassManager, PassMetrics, PipelineDiagnostics, ProfileError,
+    find_pass, get_pass_count, get_pass_info, list_passes,
+};
 
 pub use apxm_core::error::compiler::{CompilerError, Result};
 pub use apxm_core::types::compiler::{PassCategory, PassInfo};

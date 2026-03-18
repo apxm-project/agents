@@ -2,14 +2,15 @@
 
 use crate::api::{Context, Module, module::invalid_input_error};
 use crate::ffi;
+use super::metrics::{PassMetrics, PipelineDiagnostics};
 use apxm_core::error::compiler::Result;
 use apxm_core::types::OptimizationLevel;
 use std::ffi::CString;
-use std::marker::PhantomData;
+use std::time::Instant;
 
 pub struct PassManager<'ctx> {
     raw: *mut ffi::ApxmPassManager,
-    _context: PhantomData<&'ctx Context>,
+    context: &'ctx Context,
 }
 
 impl<'ctx> PassManager<'ctx> {
@@ -21,7 +22,7 @@ impl<'ctx> PassManager<'ctx> {
 
         Ok(Self {
             raw,
-            _context: PhantomData,
+            context,
         })
     }
 
@@ -68,6 +69,10 @@ impl<'ctx> PassManager<'ctx> {
         self.add_pass("fuse-ask-ops")
     }
 
+    pub fn condense_ops(&mut self) -> Result<&mut Self> {
+        self.add_pass("condense-ops")
+    }
+
     pub fn canonicalizer(&mut self) -> Result<&mut Self> {
         self.add_pass("canonicalizer")
     }
@@ -103,11 +108,93 @@ impl<'ctx> PassManager<'ctx> {
         )
     }
 
+    /// Run a sequence of passes individually, collecting per-pass metrics.
+    ///
+    /// Each pass is added to a fresh pass manager, executed, and then cleared
+    /// so that timing and op-count deltas are isolated per pass.
+    pub fn run_with_metrics(
+        &self,
+        module: &Module,
+        pass_names: &[String],
+    ) -> Result<PipelineDiagnostics> {
+        let mut diag = PipelineDiagnostics::new();
+        let pipeline_start = Instant::now();
+
+        let initial_ops = count_module_ops(module)?;
+        diag.initial_ops = initial_ops;
+
+        let mut current_ops = initial_ops;
+
+        // Create a temporary pass manager for individual pass execution.
+        let mut tmp_pm = PassManager::new(self.context)?;
+
+        for name in pass_names {
+            tmp_pm.add_pass(name)?;
+
+            let start = Instant::now();
+            tmp_pm.run(module)?;
+            let elapsed = start.elapsed();
+
+            let ops_after = count_module_ops(module)?;
+
+            diag.passes.push(PassMetrics {
+                pass_name: name.clone(),
+                duration_ms: elapsed.as_secs_f64() * 1000.0,
+                ops_before: current_ops,
+                ops_after,
+                ops_delta: ops_after as isize - current_ops as isize,
+            });
+
+            current_ops = ops_after;
+            tmp_pm.clear();
+        }
+
+        diag.final_ops = current_ops;
+        diag.total_duration_ms = pipeline_start.elapsed().as_secs_f64() * 1000.0;
+
+        Ok(diag)
+    }
+
     pub fn clear(&mut self) {
         unsafe {
             ffi::apxm_pass_manager_clear(self.raw);
         }
     }
+}
+
+/// Count the number of MLIR operations in a module by scanning its textual
+/// representation for lines that contain an operation mnemonic (lines with `=`
+/// or that start with a known dialect prefix like `ais.`).
+///
+/// This is an approximation: it counts non-empty, non-brace, non-comment
+/// lines within function bodies, which closely tracks the actual op count
+/// for the AIS dialect.
+fn count_module_ops(module: &Module) -> Result<usize> {
+    let text = module.to_string()?;
+    let count = text
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| {
+            !l.is_empty()
+                && !l.starts_with("//")
+                && !l.starts_with("module")
+                && !l.starts_with("func.")
+                && *l != "}"
+                && *l != "{"
+                && *l != "})"
+                && *l != "}) {"
+                && !l.starts_with("#")
+        })
+        .filter(|l| {
+            // Count lines that look like MLIR operations
+            l.contains("ais.")
+                || l.contains("arith.")
+                || l.contains("cf.")
+                || l.contains("scf.")
+                || l.contains("return")
+        })
+        .count();
+    Ok(count)
 }
 
 impl Drop for PassManager<'_> {

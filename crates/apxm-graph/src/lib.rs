@@ -31,6 +31,7 @@ use thiserror::Error;
 
 mod lower_dag;
 mod lower_mlir;
+mod optimize;
 mod validate;
 
 #[derive(Debug, Error)]

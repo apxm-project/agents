@@ -677,19 +677,42 @@ fn compile_command(
             .map_err(|e| anyhow::anyhow!("Failed to parse graph: {e}"))?
     };
 
-    let module = if no_cse_llm {
+    // When diagnostics are requested, use the per-pass metrics path.
+    // Otherwise use the fast bulk-run path.
+    let (module, pass_diagnostics) = if emit_diagnostics.is_some() {
+        if no_cse_llm {
+            let config = PipelineConfig {
+                opt_level: opt,
+                verify: true,
+                no_cse_llm: true,
+                ..Default::default()
+            };
+            let (m, d) = compiler
+                .compile_graph_with_config_and_diagnostics(&graph, config)
+                .map_err(|e| anyhow::anyhow!("Failed to compile graph: {e}"))?;
+            (m, Some(d))
+        } else {
+            let (m, d) = compiler
+                .compile_graph_with_diagnostics(&graph)
+                .map_err(|e| anyhow::anyhow!("Failed to compile graph: {e}"))?;
+            (m, Some(d))
+        }
+    } else if no_cse_llm {
         let config = PipelineConfig {
             opt_level: opt,
             verify: true,
             no_cse_llm: true,
+            ..Default::default()
         };
-        compiler
+        let m = compiler
             .compile_graph_with_config(&graph, config)
-            .map_err(|e| anyhow::anyhow!("Failed to compile graph: {e}"))?
+            .map_err(|e| anyhow::anyhow!("Failed to compile graph: {e}"))?;
+        (m, None)
     } else {
-        compiler
+        let m = compiler
             .compile_graph(&graph)
-            .map_err(|e| anyhow::anyhow!("Failed to compile graph: {e}"))?
+            .map_err(|e| anyhow::anyhow!("Failed to compile graph: {e}"))?;
+        (m, None)
     };
     let compile_time = compile_start.elapsed();
 
@@ -717,14 +740,34 @@ fn compile_command(
             .dag()
             .ok_or_else(|| anyhow::anyhow!("Artifact contains no DAGs"))?;
 
-        let diagnostics = serde_json::json!({
+        // Build per-pass metrics array from diagnostics
+        let per_pass_metrics: Vec<serde_json::Value> = pass_diagnostics
+            .as_ref()
+            .map(|d| {
+                d.passes
+                    .iter()
+                    .map(|p| {
+                        serde_json::json!({
+                            "pass_name": p.pass_name,
+                            "duration_ms": p.duration_ms,
+                            "ops_before": p.ops_before,
+                            "ops_after": p.ops_after,
+                            "ops_delta": p.ops_delta
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let diagnostics_json = serde_json::json!({
             "input": input.display().to_string(),
             "mode": diagnostics::MODE_GRAPH,
             "graph_name": graph.name,
             "optimization_level": format!("O{}", opt_level),
             "compilation_phases": {
                 "total_ms": compile_time.as_secs_f64() * 1000.0,
-                "artifact_gen_ms": artifact_time.as_secs_f64() * 1000.0
+                "artifact_gen_ms": artifact_time.as_secs_f64() * 1000.0,
+                "passes_ms": pass_diagnostics.as_ref().map(|d| d.total_duration_ms).unwrap_or(0.0)
             },
             "dag_statistics": {
                 "total_nodes": dag.nodes.len(),
@@ -732,13 +775,17 @@ fn compile_command(
                 "exit_nodes": dag.exit_nodes.len(),
                 "total_edges": dag.edges.len()
             },
-            "passes_applied": match opt_level {
-                0 => Vec::<&str>::new(),
-                _ => vec!["normalize", "build-prompt", "unconsumed-value-warning", "scheduling", "fuse-ask-ops", "canonicalizer", "cse", "symbol-dce"]
+            "pass_metrics": per_pass_metrics,
+            "pass_summary": {
+                "total_passes": pass_diagnostics.as_ref().map(|d| d.pass_count()).unwrap_or(0),
+                "initial_ops": pass_diagnostics.as_ref().map(|d| d.initial_ops).unwrap_or(0),
+                "final_ops": pass_diagnostics.as_ref().map(|d| d.final_ops).unwrap_or(0),
+                "total_ops_eliminated": pass_diagnostics.as_ref().map(|d| d.total_ops_eliminated()).unwrap_or(0),
+                "active_passes": pass_diagnostics.as_ref().map(|d| d.active_passes().iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap_or_default()
             }
         });
 
-        std::fs::write(&diag_path, serde_json::to_string_pretty(&diagnostics)?)
+        std::fs::write(&diag_path, serde_json::to_string_pretty(&diagnostics_json)?)
             .with_context(|| format!("Failed to write diagnostics to {}", diag_path.display()))?;
 
         println!("Wrote diagnostics to {}", diag_path.display());

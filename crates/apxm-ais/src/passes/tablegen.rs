@@ -222,6 +222,7 @@ mod tests {
         // Check AIS passes are present
         assert!(output.contains("def NormalizeAgentGraph"));
         assert!(output.contains("def FuseAskOps"));
+        assert!(output.contains("def CondenseOps"));
         assert!(output.contains("def CapabilityScheduling"));
         assert!(output.contains("def UnconsumedValueWarning"));
 
@@ -239,12 +240,14 @@ mod tests {
         // Check all passes are present
         assert!(output.contains("\"normalize\""));
         assert!(output.contains("\"fuse-ask-ops\""));
+        assert!(output.contains("\"condense-ops\""));
         assert!(output.contains("\"canonicalizer\""));
         assert!(output.contains("\"cse\""));
 
         // Check constructors
         assert!(output.contains("createNormalizeAgentGraphPass"));
         assert!(output.contains("createFuseAskOpsPass"));
+        assert!(output.contains("createCondenseOpsPass"));
     }
 
     #[test]
@@ -254,6 +257,7 @@ mod tests {
         // Check all passes are present
         assert!(output.contains("\"normalize\""));
         assert!(output.contains("\"fuse-ask-ops\""));
+        assert!(output.contains("\"condense-ops\""));
         assert!(output.contains("\"canonicalizer\""));
 
         // Check categories (only Transform, Optimization, Analysis are used currently)

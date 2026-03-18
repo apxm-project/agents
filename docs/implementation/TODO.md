@@ -35,7 +35,7 @@ These items live in `apxm-backends`, `apxm-tools`, and cross-crate concerns not 
 - [x] **Streaming** -- Resolved: StreamChunk enum and generate_stream() method added to LLMBackend trait with default impl. MockLLMBackend provides simulated token streaming. Runtime handler wired to consume stream via execute_llm_request_streaming() when event_emitter is present.
 - [x] **Parallel tool dispatch** -- ~~Tool calls in the ASK handler execute sequentially in a `for` loop.~~ Implemented in `48970eb`: `execute_tool_calls_parallel()` with `join_all`, per-tool-name `RwLock` for write tools, `read_only` field on `CapabilityMetadata`. File: `crates/apxm-runtime/src/executor/handlers/llm.rs`, `crates/apxm-runtime/src/capability/metadata.rs`
 - [x] **Sandboxing** -- Phase 1 MVP resolved: ProcessSandbox with timeout, env restriction, working directory isolation. EXC handler wired to sandbox. Phase 2 (Landlock/seccomp) deferred. Files: `crates/apxm-runtime/src/sandbox/` (policy.rs, process.rs), `crates/apxm-runtime/src/executor/handlers/exc.rs`
-- [ ] **Codebase indexing** -- No AST extraction, tree-sitter integration, dependency graph, embedding-based retrieval, or relevance ranking. Zero matches for tree-sitter/PageRank/embedding patterns in the crate source. This is needed for Aider/Cursor-style context assembly. File: Not implemented anywhere (would be a new `apxm-index` crate)
+- [ ] **Codebase indexing** -- _Deferred from P0 to P1._ No AST extraction, tree-sitter integration, dependency graph, embedding-based retrieval, or relevance ranking. Zero matches for tree-sitter/PageRank/embedding patterns in the crate source. This is needed for Aider/Cursor-style context assembly. File: Not implemented anywhere (would be a new `apxm-index` crate)
 - [x] **Transactional file writes** -- Resolved: `atomic_write_with_backup()` for single files, `FileTransaction` struct for multi-file coordinated writes with commit/rollback. Files: `crates/apxm-tools/src/write.rs`
 
 ### P1: Needs enhancement
@@ -43,8 +43,8 @@ These items live in `apxm-backends`, `apxm-tools`, and cross-crate concerns not 
 - [x] **Streaming + tool interleaving** -- Resolved: `execute_llm_request_streaming()` now accumulates ToolCallStart/ToolCallDelta chunks via `PendingToolCall` state machine. Accumulated tool calls are finalized and merged into the LLMResponse before returning to the tool loop. 4 unit tests. File: `crates/apxm-runtime/src/executor/handlers/mod.rs`
 - [x] **CancellationToken** -- Resolved: Hierarchical `CancellationToken` with parent/child, `cancel_after(Duration)`, 11 unit tests. Integrated into `ExecutionContext` (context.rs:70) and child context creation (context.rs:216). Dispatcher checks cancellation before each op dispatch. File: `crates/apxm-runtime/src/executor/cancellation.rs` (204 lines)
 - [x] **Event emission** -- Resolved: ~15 event types defined in events.rs (164 lines) with full trait. OperationStart/End wired in dispatcher.rs, memory events in qmem.rs/umem.rs, planning events in plan.rs, token usage in llm.rs. All emitters have default no-op impls. File: `crates/apxm-runtime/src/executor/events.rs`
-- [ ] **Permission/approval flow** -- `InterceptDecision` exists but there is no async user interaction (no approval channel, no session caching, no multi-level guardian rules like Codex's ApprovalStore). File: `crates/apxm-runtime/src/capability/interceptor.rs`
-- [ ] **Session/checkpoint continuity** -- `execution_id` and `session_id` exist but no file-level checkpoints, no resume-from-session-id for process restarts. ~~AamCheckpoint excludes capabilities~~ (fixed in `f7a3c8c`: capabilities now included in checkpoint snapshot/restore). File: `crates/apxm-runtime/src/aam/mod.rs`
+- [x] **Permission/approval flow** -- Resolved: ApprovalStore with session caching (Once/Session/Always scopes), ApprovalChannel async trait. File: `crates/apxm-runtime/src/capability/approval.rs`
+- [x] **Session/checkpoint continuity** -- Resolved: `AamCheckpoint::save_to_file()` / `load_from_file()` for JSON persistence. `SessionManager` struct with `save_checkpoint()`, `load_checkpoint()`, `list_sessions()`, `delete_checkpoint()`. Full round-trip tested (9 unit tests). Files: `crates/apxm-runtime/src/aam/mod.rs`, `crates/apxm-runtime/src/aam/session.rs`
 - [x] **Messages as structured arrays** -- Resolved: `LLMRequest` has `messages: Vec<Message>` with `ContentPart` variants (Text, Image, ToolCall). Full API: `from_messages()`, `with_messages()`, `add_message()`, `has_messages()`, `resolved_messages()`. File: `crates/apxm-backends/src/llm/backends/request.rs` (653 lines)
 - [x] **Configurable max_tool_iterations** -- Resolved: `DEFAULT_MAX_TOOL_ITERATIONS = 10` is a fallback; per-node override via `graph_attrs::MAX_TOOL_ITERATIONS` attribute in llm.rs:800-803. File: `crates/apxm-runtime/src/executor/handlers/llm.rs` (line 73)
 
@@ -60,8 +60,8 @@ Items here are architectural and span multiple crates. Per-handler and per-sched
 
 ### P2: Hierarchical AAM (from gap-analysis.md vision)
 
-- [ ] **No workspace control plane** -- No WorkspaceManager, ScopeRegistry, Materializer, StateProjector, or PolicyEngine. Requires new crate(s). File: Not implemented anywhere
-- [ ] **No WorkflowNode unifying INV + FLOW_CALL + PLAN inner-plan** -- These remain separate code paths with no unified abstraction. Spans runtime handlers, compiler lowering, and core types. Files: `crates/apxm-runtime/src/executor/handlers/inv.rs`, `flow_call.rs`, `plan.rs`; `crates/apxm-core/src/types/execution/node.rs`
+- [~] **No workspace control plane** -- _Partially resolved_: ScopeRegistry and WorkspaceManager foundation added to apxm-runtime. Materializer, StateProjector, PolicyEngine still needed. File: `crates/apxm-runtime/src/workspace/mod.rs`
+- [x] **No WorkflowNode unifying INV + FLOW_CALL + PLAN inner-plan** -- Resolved: `WorkflowNode` enum added to `apxm-core::types::execution` with four variants (Operation, FlowCall, Invocation, SubWorkflow). Recursive composition supported. 16 unit tests. Existing handlers can adopt incrementally. Files: `crates/apxm-core/src/types/execution/workflow.rs`, `crates/apxm-core/src/types/execution/mod.rs`
 
 ---
 
@@ -70,12 +70,12 @@ Items here are architectural and span multiple crates. Per-handler and per-sched
 | Category | Total | Done | Open P0 | Open P1 | Open P2 |
 |----------|-------|------|---------|---------|---------|
 | AIS Spec vs Enum Drift | 4 | 4 | 0 | 0 | 0 |
-| Substrate Gaps | 12 | 10 | 1 | 2 | 0 |
-| Cross-Cutting AAM | 3 | 1 | 0 | 0 | 2 |
-| **This file** | **19** | **15** | **1** | **2** | **2** |
-| Runtime TODO (separate) | 13 | 7 | 0 | 2 | 4 |
-| Compiler TODO (separate) | 15 | 10 | 0 | 2 | 3 |
-| **Grand Total** | **47** | **32** | **1** | **6** | **9** |
+| Substrate Gaps | 12 | 11 | 1 | 0 | 0 |
+| Cross-Cutting AAM | 3 | 2 | 0 | 0 | 1 |
+| **This file** | **19** | **17** | **1** | **0** | **1** |
+| Runtime TODO (separate) | 13 | 12 | 0 | 0 | 1 |
+| Compiler TODO (separate) | 15 | 13 | 0 | 0 | 2 |
+| **Grand Total** | **47** | **42** | **1** | **0** | **4** |
 
 ### Key metric: AAM transition coverage
 
@@ -86,6 +86,6 @@ Items here are architectural and span multiple crates. Per-handler and per-sched
 
 ### Key metric: Substrate readiness
 
-- **Production-ready primitives**: 14 of 17 (82%) -- streaming, sandboxing, transactional writes, parallel tool dispatch added
-- **Needs enhancement**: 6 of 17 (35%)
-- **Not implemented**: 1 of 17 (6%, codebase indexing deferred to P1)
+- **Production-ready primitives**: 17 of 18 (94%) -- streaming, sandboxing, transactional writes, parallel tool dispatch, approval flow, session checkpoints, per-pass diagnostics added
+- **Needs enhancement**: 0 of 18 (0%)
+- **Not implemented**: 1 of 18 (6%, codebase indexing deferred)

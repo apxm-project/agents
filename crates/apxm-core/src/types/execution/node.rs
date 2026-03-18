@@ -10,6 +10,64 @@ use serde::{Deserialize, Serialize};
 use super::task::TaskId;
 use crate::types::{AISOperationType, TokenId, Value, validate_operation};
 
+/// Runtime-configurable latency tiers for model backends.
+///
+/// Maps backend names to estimated latency values (in nanoseconds) that
+/// override the compile-time `estimated_latency` baked into the artifact.
+/// This allows tuning cost budgets and scheduling weights without
+/// recompilation.
+///
+/// When a node has a `"backend"` attribute matching a key in `tiers`,
+/// its `estimated_latency` is overridden with the configured value.
+/// Nodes without a matching backend keep their compile-time latency.
+/// Nodes with no compile-time latency and no matching tier use
+/// `default_latency_ns`.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LatencyTierConfig {
+    /// Backend name -> latency in nanoseconds.
+    #[serde(default)]
+    pub tiers: HashMap<String, u64>,
+    /// Fallback latency (ns) for nodes that have a `backend` attribute
+    /// but no matching tier entry.  Zero means "no override".
+    #[serde(default = "default_latency_ns")]
+    pub default_latency_ns: u64,
+}
+
+fn default_latency_ns() -> u64 {
+    0
+}
+
+impl Default for LatencyTierConfig {
+    fn default() -> Self {
+        Self {
+            tiers: HashMap::new(),
+            default_latency_ns: 0,
+        }
+    }
+}
+
+impl LatencyTierConfig {
+    /// Look up the runtime latency override for a given backend name.
+    ///
+    /// Returns `Some(latency_ns)` if the backend has a configured tier,
+    /// or `Some(default_latency_ns)` when a non-zero default is set.
+    /// Returns `None` when there is no override (preserving compile-time value).
+    pub fn resolve(&self, backend: &str) -> Option<u64> {
+        if let Some(&latency) = self.tiers.get(backend) {
+            Some(latency)
+        } else if self.default_latency_ns > 0 {
+            Some(self.default_latency_ns)
+        } else {
+            None
+        }
+    }
+
+    /// Returns `true` when no overrides are configured (the config is inert).
+    pub fn is_empty(&self) -> bool {
+        self.tiers.is_empty() && self.default_latency_ns == 0
+    }
+}
+
 /// Type alias for node identifiers.
 pub type NodeId = u64;
 
@@ -184,5 +242,81 @@ mod tests {
 
         let node_invalid = Node::new(2, AISOperationType::QMem);
         assert!(node_invalid.validate().is_err());
+    }
+
+    // ── LatencyTierConfig tests ──────────────────────────────────────
+
+    #[test]
+    fn test_latency_tier_config_default_is_empty() {
+        let cfg = LatencyTierConfig::default();
+        assert!(cfg.is_empty());
+        assert!(cfg.tiers.is_empty());
+        assert_eq!(cfg.default_latency_ns, 0);
+    }
+
+    #[test]
+    fn test_latency_tier_config_resolve_matching_tier() {
+        let mut tiers = HashMap::new();
+        tiers.insert("gpt-4".to_string(), 3000);
+        tiers.insert("claude".to_string(), 2000);
+        let cfg = LatencyTierConfig {
+            tiers,
+            default_latency_ns: 0,
+        };
+
+        assert_eq!(cfg.resolve("gpt-4"), Some(3000));
+        assert_eq!(cfg.resolve("claude"), Some(2000));
+        assert_eq!(cfg.resolve("unknown"), None);
+    }
+
+    #[test]
+    fn test_latency_tier_config_resolve_default_fallback() {
+        let cfg = LatencyTierConfig {
+            tiers: HashMap::new(),
+            default_latency_ns: 5000,
+        };
+
+        // No specific tier but default is set
+        assert_eq!(cfg.resolve("any-backend"), Some(5000));
+        assert!(!cfg.is_empty());
+    }
+
+    #[test]
+    fn test_latency_tier_config_resolve_tier_over_default() {
+        let mut tiers = HashMap::new();
+        tiers.insert("fast".to_string(), 100);
+        let cfg = LatencyTierConfig {
+            tiers,
+            default_latency_ns: 9999,
+        };
+
+        // Specific tier takes precedence
+        assert_eq!(cfg.resolve("fast"), Some(100));
+        // Unknown falls back to default
+        assert_eq!(cfg.resolve("slow"), Some(9999));
+    }
+
+    #[test]
+    fn test_latency_tier_config_serde_roundtrip() {
+        let mut tiers = HashMap::new();
+        tiers.insert("backend-a".to_string(), 1000);
+        let cfg = LatencyTierConfig {
+            tiers,
+            default_latency_ns: 500,
+        };
+
+        let json = serde_json::to_string(&cfg).expect("serialize");
+        let restored: LatencyTierConfig =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(cfg, restored);
+    }
+
+    #[test]
+    fn test_latency_tier_config_deserialize_empty() {
+        // Empty JSON object should deserialize to defaults
+        let json = "{}";
+        let cfg: LatencyTierConfig =
+            serde_json::from_str(json).expect("deserialize");
+        assert!(cfg.is_empty());
     }
 }

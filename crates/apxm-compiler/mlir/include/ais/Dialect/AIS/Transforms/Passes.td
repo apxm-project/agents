@@ -119,6 +119,27 @@ def FuseAskOps : Pass<"fuse-ask-ops", "mlir::ModuleOp"> {
   ];
 }
 
+def CondenseOps : Pass<"condense-ops", "mlir::ModuleOp"> {
+  let summary = "Condense consecutive memory operations into batched calls";
+  let description = [{
+    Identifies linear chains of QMEM or UMEM operations that target the same
+    memory space and condenses them into a single batched operation.
+
+    For QMEM chains, queries are concatenated (newline-separated) into a single
+    query, reducing memory round-trips.  For UMEM chains, redundant intermediate
+    writes to the same space are eliminated (last-write-wins).
+
+    Condensation fires when:
+    1. Two or more consecutive QMEM/UMEM ops target the same memory space
+    2. They share the same stage (sid) for QMEM
+    3. No intervening side-effectful operations exist between them
+    4. Intermediate results are not consumed by other operations
+
+    This pass is the memory-tier analogue of FuseAskOps for LLM calls.
+  }];
+  let constructor = "mlir::ais::createCondenseOpsPass()";
+}
+
 //===----------------------------------------------------------------------===//
 // Analysis/Warning Passes
 //===----------------------------------------------------------------------===//
