@@ -53,7 +53,7 @@ against current source code as of 2026-03-17.
   Files: `crates/apxm-core/src/types/execution/node.rs`, `crates/apxm-runtime/src/scheduler/config.rs`, `crates/apxm-runtime/src/scheduler/dataflow.rs`
 
 - [ ] **Gap 6 — No exploded workflow format (runtime impact).**
-  Workflows are monolithic JSON blobs. The scheduler and executor have no concept of directory-based workflow state. Runtime would need per-sub-task directories for prompts, tools, and data.
+  CLI side done (`apxm init`, `apxm decompile`, directory compilation), but the runtime scheduler and executor have no concept of directory-based workflow state. Workflows are monolithic JSON blobs. Runtime would need: per-sub-task directories for prompts, tools, and data; a loader that resolves `$ref` pointers from node attributes to files on disk; a watcher or cache-invalidation mechanism so hot-reloading works during development; integration with the `WorkflowNode::SubWorkflow` variant so nested workflows can reference sub-directories.
   _(CLI and compiler implementation tracked in `docs/implementation/compiler/TODO.md`: `apxm init`, `apxm decompile`, directory compilation)_
   Files: `crates/apxm-runtime/src/executor/engine.rs`, `crates/apxm-graph/src/`
 

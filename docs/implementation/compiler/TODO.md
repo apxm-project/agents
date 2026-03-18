@@ -27,9 +27,18 @@ Generated 2026-03-17.
 
 ## P2: Nice to Have
 
-- [ ] **Future optimization passes not started** -- Docs list 5 future passes: prompt caching, memoization, quality-aware fusion, speculative execution, token compression. None have any implementation. Files: `docs/implementation/compiler/optimization-passes.md`
+- [ ] **Future optimization passes not started** -- Docs list 5 future passes, none have any implementation:
+  - **Prompt caching**: reuse identical prompt prefixes across ASK/THINK nodes to reduce redundant token processing (requires prefix hash + cache key in LLMRequest).
+  - **Memoization**: cache deterministic op results keyed by (op_type, inputs_hash); skip re-execution when cache hits (requires purity analysis to identify side-effect-free ops).
+  - **Quality-aware fusion**: merge adjacent ASK ops only when quality metrics (coherence, accuracy) are preserved; needs a quality estimator or A/B test harness.
+  - **Speculative execution**: pre-execute likely branches in BRANCH/SWITCH nodes before the condition resolves; discard wrong-path results (requires rollback support via AAM snapshots).
+  - **Token compression**: reduce token count in prompts by summarizing context, eliding redundant instructions, or using shorthand encodings (requires a compression pass that preserves semantic fidelity).
+  Files: `docs/implementation/compiler/optimization-passes.md`
 
-- [~] **No profile-guided optimization** -- Partially resolved: `ExecutionProfile` / `NodeProfile` data structures with JSON persistence and merge support added to `profile.rs`. `apply_to_graph()` annotates nodes with observed latency, error-rate, token-usage, and injects `retry_count` for high-error-rate nodes and token-budget warnings. `PipelineConfig` gains `profile_path` and `token_budget` fields; `Pipeline::compile_graph` loads and applies the profile before MLIR lowering. Remaining: runtime profile *collection*, JIT-style adaptation, latency-tier configuration. Files: `crates/apxm-compiler/src/passes/profile.rs`, `crates/apxm-core/src/types/compiler/optimization.rs`, `crates/apxm-compiler/src/api/pipeline.rs`
+- [~] **No profile-guided optimization** -- Partially resolved: compiler-side infra exists (`ExecutionProfile` / `NodeProfile` data structures with JSON persistence and merge support in `profile.rs`; `apply_to_graph()` annotates nodes with observed latency, error-rate, token-usage, and injects `retry_count` for high-error-rate nodes and token-budget warnings; `PipelineConfig` gains `profile_path` and `token_budget` fields; `Pipeline::compile_graph` loads and applies the profile before MLIR lowering). Remaining:
+  - **Runtime profile collection**: no code records actual latency/error-rate/token-usage during execution. Would need instrumentation in the dispatcher or event emitter to populate `NodeProfile` entries and persist them via `ExecutionProfile::save_to_file()`.
+  - **JIT-style adaptation**: no mechanism to re-compile or re-optimize a running workflow based on observed profile data (e.g., switching backends for slow nodes, adjusting parallelism).
+  Files: `crates/apxm-compiler/src/passes/profile.rs`, `crates/apxm-core/src/types/compiler/optimization.rs`, `crates/apxm-compiler/src/api/pipeline.rs`
 
 - [x] **`--no-cse-llm` flag** -- Implemented in `f7a3c8c`: CLI flag, `PipelineConfig.no_cse_llm`, `build_pipeline_with_config()` conditionally skips CSE pass. Files: `crates/apxm-cli/src/main.rs`, `crates/apxm-compiler/src/passes/pipeline.rs`, `crates/apxm-core/src/types/compiler/optimization.rs`
 
