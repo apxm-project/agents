@@ -31,6 +31,7 @@ use super::{
     ExecutionContext, Node, Result, Value, get_optional_string_attribute, get_string_attribute,
 };
 use apxm_core::constants::graph::attrs as graph_attrs;
+use apxm_core::constants::runtime::belief_keys;
 use apxm_core::error::RuntimeError;
 
 pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -> Result<Value> {
@@ -53,7 +54,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     // Record guard evaluation result in AAM
     let label = crate::aam::TransitionLabel::operation(node.id, format!("{:?}", node.op_type));
     ctx.aam.set_belief(
-        format!("_guard:{}:{}", ctx.execution_id, node.id),
+        format!("{}{}:{}", belief_keys::GUARD_PREFIX, ctx.execution_id, node.id),
         Value::Bool(passed),
         label,
     );

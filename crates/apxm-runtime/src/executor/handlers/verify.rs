@@ -6,6 +6,7 @@ use super::{
 };
 use apxm_backends::LLMRequest;
 use apxm_core::constants::graph::attrs as graph_attrs;
+use apxm_core::constants::runtime::belief_keys;
 
 pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -> Result<Value> {
     let condition = get_string_attribute(node, graph_attrs::CONDITION)?;
@@ -36,7 +37,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     // Record verification result in AAM
     let label = crate::aam::TransitionLabel::operation(node.id, format!("{:?}", node.op_type));
     ctx.aam.set_belief(
-        format!("_verify:{}:{}", ctx.execution_id, node.id),
+        format!("{}{}:{}", belief_keys::VERIFY_PREFIX, ctx.execution_id, node.id),
         Value::Bool(is_verified),
         label,
     );

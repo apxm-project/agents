@@ -5,7 +5,7 @@
 
 use super::config::{LtmBackend, LtmConfig};
 use apxm_backends::{InMemoryBackend, RedbBackend, SearchResult, SqliteBackend, StorageBackend};
-use apxm_core::{error::RuntimeError, types::values::Value};
+use apxm_core::{constants::memory as mem_const, error::RuntimeError, types::values::Value};
 use std::sync::Arc;
 
 type Result<T> = std::result::Result<T, RuntimeError>;
@@ -23,14 +23,14 @@ impl LongTermMemory {
             LtmBackend::Sqlite => {
                 let path = config.path.ok_or_else(|| RuntimeError::Memory {
                     message: "SQLite backend requires a path".to_string(),
-                    space: Some("ltm".to_string()),
+                    space: Some(mem_const::LTM.to_string()),
                 })?;
                 Arc::new(SqliteBackend::new(path, config.max_connections).await?)
             }
             LtmBackend::Redb => {
                 let path = config.path.ok_or_else(|| RuntimeError::Memory {
                     message: "Redb backend requires a path".to_string(),
-                    space: Some("ltm".to_string()),
+                    space: Some(mem_const::LTM.to_string()),
                 })?;
                 Arc::new(RedbBackend::new(path).await?)
             }

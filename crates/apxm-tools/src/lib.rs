@@ -13,10 +13,35 @@ pub use read::{ReadCapability, ReadConfig};
 pub use web_search::{SearchDepth, SearchWebCapability, SearchWebConfig};
 pub use write::{WriteCapability, WriteConfig};
 
-use apxm_core::error::RuntimeError;
+use apxm_core::{error::RuntimeError, types::Value};
 use apxm_runtime::CapabilitySystem;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
+
+/// Serde default helper for boolean fields that should default to `true`.
+pub(crate) fn default_true() -> bool {
+    true
+}
+
+/// Extract a required string argument from a capability argument map.
+///
+/// Looks up `primary_key`, then `alt_key`, then `"arg0"`.
+pub(crate) fn require_string_arg<'a>(
+    args: &'a HashMap<String, Value>,
+    primary_key: &str,
+    alt_key: &str,
+    capability_name: &str,
+) -> Result<&'a str, RuntimeError> {
+    args.get(primary_key)
+        .or_else(|| args.get(alt_key))
+        .or_else(|| args.get("arg0"))
+        .and_then(|v| v.as_string())
+        .map(|s| s.as_str())
+        .ok_or_else(|| RuntimeError::Capability {
+            capability: capability_name.to_string(),
+            message: format!("Missing required '{primary_key}' argument"),
+        })
+}
 
 /// Configuration for APxM standard tools.
 #[derive(Clone, Debug, Serialize, Deserialize)]

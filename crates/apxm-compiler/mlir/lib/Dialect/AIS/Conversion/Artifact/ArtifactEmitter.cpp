@@ -54,6 +54,11 @@ enum class OperationKind : uint32_t {
   Print = 22,
   Think = 23,  // HIGH latency LLM op
   Reason = 24, // MEDIUM latency LLM op
+  UpdateGoal = 25,
+  Guard = 26,
+  Claim = 27,
+  Pause = 28,
+  Resume = 29,
 };
 
 enum class DependencyKind : uint8_t {
@@ -362,6 +367,11 @@ std::optional<OperationKind> mapOperation(Operation *op) {
       .Case<SwitchOp>([](auto) { return OperationKind::Switch; })
       .Case<FlowCallOp>([](auto) { return OperationKind::FlowCall; })
       .Case<TryCatchOp>([](auto) { return OperationKind::TryCatch; })
+      .Case<UpdateGoalOp>([](auto) { return OperationKind::UpdateGoal; })
+      .Case<GuardOp>([](auto) { return OperationKind::Guard; })
+      .Case<ClaimOp>([](auto) { return OperationKind::Claim; })
+      .Case<PauseOp>([](auto) { return OperationKind::Pause; })
+      .Case<ResumeOp>([](auto) { return OperationKind::Resume; })
       .Case<YieldOp>([](auto) {
         return std::nullopt;
       }) // Skip yield - it's a region terminator

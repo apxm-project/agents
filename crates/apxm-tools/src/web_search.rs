@@ -1,3 +1,4 @@
+use crate::require_string_arg;
 use apxm_core::{error::RuntimeError, types::Value};
 use apxm_runtime::capability::{
     executor::{CapabilityExecutor, CapabilityResult},
@@ -28,7 +29,7 @@ impl SearchDepth {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SearchWebConfig {
-    #[serde(default = "default_true")]
+    #[serde(default = "crate::default_true")]
     pub enabled: bool,
     #[serde(default)]
     pub allowed_domains: Option<Vec<String>>,
@@ -44,12 +45,8 @@ pub struct SearchWebConfig {
     pub search_depth: SearchDepth,
     #[serde(default = "default_tavily_endpoint")]
     pub endpoint: String,
-    #[serde(default = "default_true")]
+    #[serde(default = "crate::default_true")]
     pub include_answer: bool,
-}
-
-fn default_true() -> bool {
-    true
 }
 
 fn default_max_results() -> usize {
@@ -216,16 +213,8 @@ impl Default for SearchWebCapability {
 #[async_trait]
 impl CapabilityExecutor for SearchWebCapability {
     async fn execute(&self, args: HashMap<String, Value>) -> CapabilityResult<Value> {
-        let query = args
-            .get("query")
-            .or_else(|| args.get("arg_query"))
-            .or_else(|| args.get("arg0"))
-            .and_then(|value| value.as_string())
-            .ok_or_else(|| RuntimeError::Capability {
-                capability: self.metadata.name.clone(),
-                message: "Missing required 'query' argument".to_string(),
-            })?
-            .to_string();
+        let query =
+            require_string_arg(&args, "query", "arg_query", &self.metadata.name)?.to_string();
 
         self.check_query_policy(&query)?;
 

@@ -43,6 +43,12 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         }
     }
 
+    // Emit memory-write event
+    if let Some(emitter) = &ctx.event_emitter {
+        let scope = memory_tier.as_deref().unwrap_or("stm");
+        emitter.emit_memory_write(scope, &key);
+    }
+
     ctx.aam.set_belief(
         key,
         value.clone(),

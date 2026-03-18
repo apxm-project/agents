@@ -28,6 +28,7 @@ use apxm_backends::{LLMRequest, ToolChoice, ToolDefinition};
 use apxm_core::InnerPlanPayload;
 use apxm_core::apxm_llm;
 use apxm_core::constants::graph::attrs as graph_attrs;
+use apxm_core::constants::runtime::belief_keys;
 use apxm_core::error::RuntimeError;
 use apxm_core::types::operations::AISOperationType;
 use apxm_core::types::{ToolCall, ToolResult};
@@ -763,7 +764,7 @@ async fn execute_llm_once(
             // Record LLM result in AAM
             let label = TransitionLabel::operation(node.id, format!("{:?}", node.op_type));
             ctx.aam.set_belief(
-                format!("_llm_result:{}:{}", mode_name, node.id),
+                format!("{}{}:{}", belief_keys::LLM_RESULT_PREFIX, mode_name, node.id),
                 Value::String(content.chars().take(200).collect::<String>()),
                 label,
             );
@@ -904,7 +905,7 @@ async fn execute_ask_with_tools(
             ctx.memory
                 .write(
                     crate::memory::MemorySpace::Stm,
-                    format!("tool_results:{}:{}", ctx.execution_id, iteration),
+                    format!("{}{}:{}", belief_keys::TOOL_RESULTS_PREFIX, ctx.execution_id, iteration),
                     results_value,
                 )
                 .await
@@ -998,7 +999,7 @@ async fn process_structured_output(
         ctx.memory
             .write(
                 crate::memory::MemorySpace::Stm,
-                format!("goals:{}", ctx.execution_id),
+                format!("{}{}", belief_keys::GOALS_PREFIX, ctx.execution_id),
                 goals_value,
             )
             .await
@@ -1043,7 +1044,7 @@ async fn process_structured_output(
                 ctx.memory
                     .write(
                         crate::memory::MemorySpace::Episodic,
-                        format!("inner_plan_spliced:{}", ctx.execution_id),
+                        format!("{}{}", belief_keys::INNER_PLAN_SPLICED_PREFIX, ctx.execution_id),
                         Value::String(format!(
                             "REASON inner plan merged into DAG with {} nodes",
                             inserted_nodes

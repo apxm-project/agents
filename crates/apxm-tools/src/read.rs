@@ -1,3 +1,4 @@
+use crate::require_string_arg;
 use apxm_core::{error::RuntimeError, types::Value};
 use apxm_runtime::capability::{
     executor::{CapabilityExecutor, CapabilityResult},
@@ -12,7 +13,7 @@ use std::{
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ReadConfig {
-    #[serde(default = "default_true")]
+    #[serde(default = "crate::default_true")]
     pub enabled: bool,
     #[serde(default)]
     pub blocked_paths: Vec<PathBuf>,
@@ -26,10 +27,6 @@ pub struct ReadConfig {
     pub base_directory: Option<PathBuf>,
     #[serde(default = "default_max_lines")]
     pub max_default_lines: usize,
-}
-
-fn default_true() -> bool {
-    true
 }
 
 fn default_max_file_size() -> usize {
@@ -187,15 +184,7 @@ impl Default for ReadCapability {
 #[async_trait]
 impl CapabilityExecutor for ReadCapability {
     async fn execute(&self, args: HashMap<String, Value>) -> CapabilityResult<Value> {
-        let raw_path = args
-            .get("file_path")
-            .or_else(|| args.get("path"))
-            .or_else(|| args.get("arg0"))
-            .and_then(|value| value.as_string())
-            .ok_or_else(|| RuntimeError::Capability {
-                capability: self.metadata.name.clone(),
-                message: "Missing required 'file_path' argument".to_string(),
-            })?;
+        let raw_path = require_string_arg(&args, "file_path", "path", &self.metadata.name)?;
 
         let path = self.resolve_path(raw_path);
         self.validate_path(&path)?;

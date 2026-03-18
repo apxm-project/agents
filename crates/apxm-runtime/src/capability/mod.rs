@@ -74,22 +74,16 @@ impl CapabilitySystem {
 
     /// Create with custom default timeout
     pub fn with_timeout(timeout: Duration) -> Self {
-        Self {
-            registry: Arc::new(CapabilityRegistry::new()),
-            default_timeout: timeout,
-            aam: None,
-            interceptors: Arc::new(RwLock::new(Vec::new())),
-        }
+        let mut sys = Self::new();
+        sys.default_timeout = timeout;
+        sys
     }
 
     /// Create with AAM integration (default timeout)
     pub fn with_aam(aam: Aam) -> Self {
-        Self {
-            registry: Arc::new(CapabilityRegistry::new()),
-            default_timeout: Duration::from_secs(30),
-            aam: Some(aam),
-            interceptors: Arc::new(RwLock::new(Vec::new())),
-        }
+        let mut sys = Self::new();
+        sys.aam = Some(aam);
+        sys
     }
 
     /// Register a capability interceptor.

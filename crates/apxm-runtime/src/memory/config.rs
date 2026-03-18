@@ -122,7 +122,7 @@ impl MemoryConfig {
     }
 }
 
-fn default_ltm_path() -> PathBuf {
+fn memory_dir_path(filename: &str, fallback: &str) -> PathBuf {
     if let Ok(paths) = ApxmPaths::discover() {
         let memory_dir = paths.project_dir().join("memory");
         if let Err(err) = fs::create_dir_all(&memory_dir) {
@@ -132,22 +132,15 @@ fn default_ltm_path() -> PathBuf {
                 "Failed to create .apxm/memory directory"
             );
         }
-        return memory_dir.join("ltm.sqlite");
+        return memory_dir.join(filename);
     }
-    PathBuf::from("apxm_ltm.sqlite")
+    PathBuf::from(fallback)
+}
+
+fn default_ltm_path() -> PathBuf {
+    memory_dir_path("ltm.sqlite", "apxm_ltm.sqlite")
 }
 
 fn default_episodic_path() -> PathBuf {
-    if let Ok(paths) = ApxmPaths::discover() {
-        let memory_dir = paths.project_dir().join("memory");
-        if let Err(err) = fs::create_dir_all(&memory_dir) {
-            log_warn!(
-                "memory::config",
-                error = %err,
-                "Failed to create .apxm/memory directory"
-            );
-        }
-        return memory_dir.join("episodes.jsonl");
-    }
-    PathBuf::from("apxm_episodes.jsonl")
+    memory_dir_path("episodes.jsonl", "apxm_episodes.jsonl")
 }

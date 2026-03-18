@@ -5,7 +5,7 @@
 
 use super::config::EpisodicConfig;
 use apxm_backends::SearchResult;
-use apxm_core::{error::RuntimeError, types::values::Value};
+use apxm_core::{constants::memory as mem_const, error::RuntimeError, types::values::Value};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
@@ -220,7 +220,7 @@ impl EpisodicMemory {
         {
             std::fs::create_dir_all(parent).map_err(|e| RuntimeError::Memory {
                 message: format!("episodic create_dir_all: {e}"),
-                space: Some("episodic".to_string()),
+                space: Some(mem_const::EPISODIC.to_string()),
             })?;
         }
         let mut file = std::fs::OpenOptions::new()
@@ -230,7 +230,7 @@ impl EpisodicMemory {
             .open(path)
             .map_err(|e| RuntimeError::Memory {
                 message: format!("episodic open: {e}"),
-                space: Some("episodic".to_string()),
+                space: Some(mem_const::EPISODIC.to_string()),
             })?;
 
         for entry in entries {
@@ -239,11 +239,11 @@ impl EpisodicMemory {
             file.write_all(line.as_bytes())
                 .map_err(|e| RuntimeError::Memory {
                     message: format!("episodic write: {e}"),
-                    space: Some("episodic".to_string()),
+                    space: Some(mem_const::EPISODIC.to_string()),
                 })?;
             file.write_all(b"\n").map_err(|e| RuntimeError::Memory {
                 message: format!("episodic write newline: {e}"),
-                space: Some("episodic".to_string()),
+                space: Some(mem_const::EPISODIC.to_string()),
             })?;
         }
         Ok(())

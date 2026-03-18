@@ -57,9 +57,9 @@ impl OperationDispatcher {
             AISOperationType::UMem => umem::execute(ctx, node, inputs).await,
 
             // LLM operations (Ask/Think/Reason → unified llm handler)
-            AISOperationType::Ask => llm::execute(ctx, node, inputs).await,
-            AISOperationType::Think => llm::execute(ctx, node, inputs).await,
-            AISOperationType::Reason => llm::execute(ctx, node, inputs).await,
+            AISOperationType::Ask
+            | AISOperationType::Think
+            | AISOperationType::Reason => llm::execute(ctx, node, inputs).await,
 
             // Planning & analysis operations
             AISOperationType::Plan => plan::execute(ctx, node, inputs).await,
@@ -113,11 +113,9 @@ impl OperationDispatcher {
             // Literal operations
             AISOperationType::ConstStr => const_str::execute(ctx, node, inputs).await,
 
-            // Metadata operations (Agent is metadata, not executed)
-            AISOperationType::Agent => Ok(Value::Null),
-
-            // Region terminators (handled within sub-DAG execution, no-op in main dispatcher)
-            AISOperationType::Yield => Ok(Value::Null),
+            // No-op: Agent is metadata, Yield is handled within sub-DAG execution
+            AISOperationType::Agent
+            | AISOperationType::Yield => Ok(Value::Null),
         };
 
         let op_duration = op_start.elapsed();

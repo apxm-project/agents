@@ -12,6 +12,10 @@ use crate::{
     cache, compiler::Compiler, config::ApXmConfig, error::DriverError, runtime::RuntimeExecutor,
 };
 
+fn state_err(msg: impl Into<String>) -> DriverError {
+    DriverError::Runtime(RuntimeError::State(msg.into()))
+}
+
 /// Linker configuration that drives compiler and runtime orchestration.
 #[derive(Debug, Clone)]
 pub struct LinkerConfig {
@@ -103,7 +107,7 @@ impl Linker {
                 if let Some(cached_bytes) = cache::load_cached(h)? {
                     log_info!("driver", "cache hit for graph hash {}", h);
                     let artifact = Artifact::from_bytes(&cached_bytes)
-                        .map_err(|e| DriverError::Runtime(RuntimeError::State(e.to_string())))?;
+                        .map_err(|e| state_err(e.to_string()))?;
                     return Ok(artifact);
                 }
             }
@@ -120,16 +124,13 @@ impl Linker {
         }
 
         let artifact = Artifact::from_bytes(&artifact_bytes)
-            .map_err(|e| DriverError::Runtime(RuntimeError::State(e.to_string())))?;
+            .map_err(|e| state_err(e.to_string()))?;
 
-        let dag = artifact.dag().ok_or_else(|| {
-            DriverError::Runtime(RuntimeError::State("Artifact contains no DAGs".to_string()))
-        })?;
+        let dag = artifact
+            .dag()
+            .ok_or_else(|| state_err("Artifact contains no DAGs"))?;
         if let Err(err) = dag.validate() {
-            return Err(DriverError::Runtime(RuntimeError::State(format!(
-                "Artifact DAG validation failed: {}",
-                err
-            ))));
+            return Err(state_err(format!("Artifact DAG validation failed: {}", err)));
         }
         Ok(artifact)
     }

@@ -41,28 +41,19 @@ impl BackendFactory {
         api_key: &str,
         config: Option<serde_json::Value>,
     ) -> anyhow::Result<Arc<dyn LLMBackend>> {
-        match provider.to_lowercase().as_str() {
-            "openai" => {
-                let backend = openai::OpenAIBackend::new(api_key, config).await?;
-                Ok(Arc::new(backend))
+        let protocol = match provider.to_lowercase().as_str() {
+            "openai" => ProviderProtocol::OpenAI,
+            "anthropic" => ProviderProtocol::Anthropic,
+            "google" => ProviderProtocol::Google,
+            "ollama" => ProviderProtocol::Ollama,
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "Unknown provider: {}. Supported: openai, anthropic, google, ollama",
+                    provider
+                ))
             }
-            "anthropic" => {
-                let backend = anthropic::AnthropicBackend::new(api_key, config).await?;
-                Ok(Arc::new(backend))
-            }
-            "google" => {
-                let backend = google::GoogleBackend::new(api_key, config).await?;
-                Ok(Arc::new(backend))
-            }
-            "ollama" => {
-                let backend = ollama::OllamaBackend::new(api_key, config).await?;
-                Ok(Arc::new(backend))
-            }
-            _ => Err(anyhow::anyhow!(
-                "Unknown provider: {}. Supported: openai, anthropic, google, ollama",
-                provider
-            )),
-        }
+        };
+        Self::create_from_protocol(protocol, api_key, config).await
     }
 
     /// Create a backend from a `ProviderProtocol`.
@@ -75,24 +66,13 @@ impl BackendFactory {
         api_key: &str,
         config: Option<serde_json::Value>,
     ) -> anyhow::Result<Arc<dyn LLMBackend>> {
-        match protocol {
-            ProviderProtocol::OpenAI => {
-                let backend = openai::OpenAIBackend::new(api_key, config).await?;
-                Ok(Arc::new(backend))
-            }
-            ProviderProtocol::Anthropic => {
-                let backend = anthropic::AnthropicBackend::new(api_key, config).await?;
-                Ok(Arc::new(backend))
-            }
-            ProviderProtocol::Google => {
-                let backend = google::GoogleBackend::new(api_key, config).await?;
-                Ok(Arc::new(backend))
-            }
-            ProviderProtocol::Ollama => {
-                let backend = ollama::OllamaBackend::new(api_key, config).await?;
-                Ok(Arc::new(backend))
-            }
-        }
+        let backend: Arc<dyn LLMBackend> = match protocol {
+            ProviderProtocol::OpenAI => Arc::new(openai::OpenAIBackend::new(api_key, config).await?),
+            ProviderProtocol::Anthropic => Arc::new(anthropic::AnthropicBackend::new(api_key, config).await?),
+            ProviderProtocol::Google => Arc::new(google::GoogleBackend::new(api_key, config).await?),
+            ProviderProtocol::Ollama => Arc::new(ollama::OllamaBackend::new(api_key, config).await?),
+        };
+        Ok(backend)
     }
 
     /// List available backend providers.

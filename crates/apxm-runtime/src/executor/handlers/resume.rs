@@ -20,6 +20,7 @@
 use super::{ExecutionContext, Node, Result, Value};
 use apxm_core::constants::defaults;
 use apxm_core::constants::graph::attrs as graph_attrs;
+use apxm_core::constants::runtime::belief_keys;
 use apxm_core::error::RuntimeError;
 use std::time::Duration;
 
@@ -139,7 +140,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
                     format!("{:?}", node.op_type),
                 );
                 ctx.aam.set_belief(
-                    format!("_resume:{}", checkpoint_id),
+                    format!("{}{}", belief_keys::RESUME_PREFIX, checkpoint_id),
                     Value::String("resumed".to_string()),
                     label,
                 );
@@ -186,7 +187,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
 
 /// Restore STM state from a snapshot stored by PAUSE.
 async fn restore_stm_snapshot(ctx: &ExecutionContext, checkpoint_id: &str) {
-    let snapshot_key = format!("_checkpoint_snapshot:{}", checkpoint_id);
+    let snapshot_key = format!("{}{}", belief_keys::CHECKPOINT_SNAPSHOT_PREFIX, checkpoint_id);
     if let Ok(Some(snapshot)) = ctx
         .memory
         .read(crate::memory::MemorySpace::Stm, &snapshot_key)
@@ -195,7 +196,7 @@ async fn restore_stm_snapshot(ctx: &ExecutionContext, checkpoint_id: &str) {
         if let Value::Object(entries) = snapshot {
             for (key, value) in entries {
                 // Restore all snapshot entries except the execution_id (keep current).
-                if key != "_execution_id" {
+                if key != belief_keys::EXECUTION_ID {
                     let _ = ctx
                         .memory
                         .write(crate::memory::MemorySpace::Stm, key, value)

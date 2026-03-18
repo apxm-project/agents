@@ -193,18 +193,9 @@ impl MockLLMBackend {
         }
         &self.default_response
     }
-}
 
-impl Default for MockLLMBackend {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[async_trait]
-impl LLMBackend for MockLLMBackend {
-    async fn generate(&self, request: LLMRequest) -> anyhow::Result<LLMResponse> {
-        // Extract effective prompt: use structured messages if present, else prompt field
+    /// Extract the effective prompt and record the call.
+    fn record_and_extract(&self, request: &LLMRequest) -> String {
         let effective_prompt = if request.has_messages() {
             request
                 .resolved_messages()
@@ -216,7 +207,6 @@ impl LLMBackend for MockLLMBackend {
             request.prompt.clone()
         };
 
-        // Record the call
         self.calls.lock().unwrap().push(RecordedCall {
             prompt: effective_prompt.clone(),
             system: request.system_prompt.clone(),
@@ -224,7 +214,21 @@ impl LLMBackend for MockLLMBackend {
             temperature: request.temperature as f32,
         });
 
-        // Failure injection
+        effective_prompt
+    }
+}
+
+impl Default for MockLLMBackend {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl LLMBackend for MockLLMBackend {
+    async fn generate(&self, request: LLMRequest) -> anyhow::Result<LLMResponse> {
+        let effective_prompt = self.record_and_extract(&request);
+
         if let Some(ref err) = self.fail_with {
             return Err(anyhow::anyhow!("{}", err));
         }
@@ -267,27 +271,8 @@ impl LLMBackend for MockLLMBackend {
         &self,
         request: LLMRequest,
     ) -> Pin<Box<dyn Stream<Item = anyhow::Result<StreamChunk>> + Send + '_>> {
-        // Extract effective prompt (same logic as generate)
-        let effective_prompt = if request.has_messages() {
-            request
-                .resolved_messages()
-                .iter()
-                .map(|m| m.text_content())
-                .collect::<Vec<_>>()
-                .join(" ")
-        } else {
-            request.prompt.clone()
-        };
+        let effective_prompt = self.record_and_extract(&request);
 
-        // Record the call
-        self.calls.lock().unwrap().push(RecordedCall {
-            prompt: effective_prompt.clone(),
-            system: request.system_prompt.clone(),
-            model: self.model.clone(),
-            temperature: request.temperature as f32,
-        });
-
-        // Failure injection
         if let Some(ref err) = self.fail_with {
             let err_msg = err.clone();
             return Box::pin(tokio_stream::iter(vec![Err(anyhow::anyhow!(

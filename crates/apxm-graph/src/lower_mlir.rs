@@ -252,7 +252,7 @@ fn emit_node(
             let value = get_string_attr(
                 &node.attributes,
                 &[
-                    "value",
+                    graph_attrs::VALUE,
                     "text",
                     "const",
                     graph_attrs::TEMPLATE_STR,
@@ -264,7 +264,7 @@ fn emit_node(
             let attrs = extra_attr_dict(
                 &node.attributes,
                 &[
-                    "value",
+                    graph_attrs::VALUE,
                     "text",
                     "const",
                     graph_attrs::TEMPLATE_STR,
@@ -318,7 +318,7 @@ fn emit_node(
                 )
                 .unwrap_or_else(|| "stm".to_string()),
             );
-            let limit = get_u64_attr(&node.attributes, "limit");
+            let limit = get_u64_attr(&node.attributes, graph_attrs::LIMIT);
             let result = format!("%n{}", node.id);
             let attrs = extra_attr_dict(
                 &node.attributes,
@@ -329,7 +329,7 @@ fn emit_node(
                     "scope",
                     graph_attrs::SPACE,
                     graph_attrs::MEMORY_TIER,
-                    "limit",
+                    graph_attrs::LIMIT,
                 ],
             );
             let limit_str = limit

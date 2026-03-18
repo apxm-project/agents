@@ -77,14 +77,7 @@ impl Provider {
         api_key: &str,
         config: Option<serde_json::Value>,
     ) -> anyhow::Result<Self> {
-        match provider_id {
-            ProviderId::OpenAI => Ok(Provider::OpenAI(OpenAIBackend::new(api_key, config).await?)),
-            ProviderId::Anthropic => Ok(Provider::Anthropic(
-                AnthropicBackend::new(api_key, config).await?,
-            )),
-            ProviderId::Google => Ok(Provider::Google(GoogleBackend::new(api_key, config).await?)),
-            ProviderId::Ollama => Ok(Provider::Ollama(OllamaBackend::new(api_key, config).await?)),
-        }
+        Self::from_protocol(provider_id.to_protocol(), api_key, config).await
     }
 
     /// Create a provider from a `ProviderProtocol`.
@@ -121,62 +114,41 @@ impl Provider {
             Provider::Ollama(_) => ProviderId::Ollama,
         }
     }
+
+    fn backend_ref(&self) -> &dyn LLMBackend {
+        match self {
+            Provider::OpenAI(b) => b,
+            Provider::Anthropic(b) => b,
+            Provider::Google(b) => b,
+            Provider::Ollama(b) => b,
+        }
+    }
 }
 
 #[async_trait]
 impl LLMBackend for Provider {
     async fn generate(&self, request: LLMRequest) -> anyhow::Result<LLMResponse> {
-        match self {
-            Provider::OpenAI(backend) => backend.generate(request).await,
-            Provider::Anthropic(backend) => backend.generate(request).await,
-            Provider::Google(backend) => backend.generate(request).await,
-            Provider::Ollama(backend) => backend.generate(request).await,
-        }
+        self.backend_ref().generate(request).await
     }
 
     fn name(&self) -> &str {
-        match self {
-            Provider::OpenAI(backend) => backend.name(),
-            Provider::Anthropic(backend) => backend.name(),
-            Provider::Google(backend) => backend.name(),
-            Provider::Ollama(backend) => backend.name(),
-        }
+        self.backend_ref().name()
     }
 
     fn model(&self) -> &str {
-        match self {
-            Provider::OpenAI(backend) => backend.model(),
-            Provider::Anthropic(backend) => backend.model(),
-            Provider::Google(backend) => backend.model(),
-            Provider::Ollama(backend) => backend.model(),
-        }
+        self.backend_ref().model()
     }
 
     async fn health_check(&self) -> anyhow::Result<()> {
-        match self {
-            Provider::OpenAI(backend) => backend.health_check().await,
-            Provider::Anthropic(backend) => backend.health_check().await,
-            Provider::Google(backend) => backend.health_check().await,
-            Provider::Ollama(backend) => backend.health_check().await,
-        }
+        self.backend_ref().health_check().await
     }
 
     async fn list_models(&self) -> anyhow::Result<Vec<ModelInfo>> {
-        match self {
-            Provider::OpenAI(backend) => backend.list_models().await,
-            Provider::Anthropic(backend) => backend.list_models().await,
-            Provider::Google(backend) => backend.list_models().await,
-            Provider::Ollama(backend) => backend.list_models().await,
-        }
+        self.backend_ref().list_models().await
     }
 
     fn capabilities(&self) -> ModelCapabilities {
-        match self {
-            Provider::OpenAI(backend) => backend.capabilities(),
-            Provider::Anthropic(backend) => backend.capabilities(),
-            Provider::Google(backend) => backend.capabilities(),
-            Provider::Ollama(backend) => backend.capabilities(),
-        }
+        self.backend_ref().capabilities()
     }
 }
 

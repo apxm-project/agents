@@ -28,6 +28,12 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
     // Search memory
     let results = ctx.memory.search(space, &query, limit).await?;
 
+    // Emit memory-read event
+    if let Some(emitter) = &ctx.event_emitter {
+        let scope = memory_tier.as_deref().unwrap_or("stm");
+        emitter.emit_memory_read(scope, &query);
+    }
+
     // Convert search results to Value::Array
     let values: Vec<Value> = results
         .into_iter()
@@ -66,9 +72,55 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
 mod tests {
     use super::*;
     use crate::capability::CapabilitySystem;
+    use crate::executor::events::{ExecutionEvent, ExecutionEventEmitter};
     use crate::memory::{MemoryConfig, MemorySystem};
     use apxm_core::types::operations::AISOperationType;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
+
+    /// Test event emitter that captures events for assertions.
+    struct TestEventEmitter {
+        events: Arc<Mutex<Vec<ExecutionEvent>>>,
+    }
+
+    impl TestEventEmitter {
+        fn new() -> (Self, Arc<Mutex<Vec<ExecutionEvent>>>) {
+            let events = Arc::new(Mutex::new(Vec::new()));
+            (
+                Self {
+                    events: events.clone(),
+                },
+                events,
+            )
+        }
+    }
+
+    impl ExecutionEventEmitter for TestEventEmitter {
+        fn emit_llm_token(&self, _content: &str) {}
+        fn emit_tool_start(
+            &self,
+            _name: &str,
+            _args: &std::collections::HashMap<String, Value>,
+        ) {
+        }
+        fn emit_tool_end(&self, _name: &str, _result: &Value) {}
+
+        fn emit_memory_read(&self, scope: &str, key: &str) {
+            self.events.lock().unwrap().push(ExecutionEvent::MemoryRead {
+                scope: scope.to_string(),
+                key: key.to_string(),
+            });
+        }
+
+        fn emit_memory_write(&self, scope: &str, key: &str) {
+            self.events
+                .lock()
+                .unwrap()
+                .push(ExecutionEvent::MemoryWrite {
+                    scope: scope.to_string(),
+                    key: key.to_string(),
+                });
+        }
+    }
 
     #[tokio::test]
     async fn test_qmem_stm() {
@@ -129,6 +181,66 @@ mod tests {
             assert_eq!(arr.len(), 2);
         } else {
             panic!("Expected array result");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_qmem_emits_memory_read_event() {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(apxm_backends::LLMRegistry::new());
+        let capability_system = Arc::new(CapabilitySystem::new());
+
+        let (emitter, captured_events) = TestEventEmitter::new();
+        let ctx = ExecutionContext::new(
+            memory.clone(),
+            llm_registry,
+            capability_system,
+            crate::aam::Aam::new(),
+        )
+        .with_event_emitter(Some(Arc::new(emitter)));
+
+        // Populate STM
+        memory
+            .write(
+                MemorySpace::Stm,
+                "doc:1".to_string(),
+                Value::String("hello".to_string()),
+            )
+            .await
+            .unwrap();
+
+        // Create QMEM node
+        let mut node = Node {
+            id: 1,
+            op_type: AISOperationType::QMem,
+            attributes: std::collections::HashMap::new(),
+            input_tokens: vec![],
+            output_tokens: vec![],
+            metadata: apxm_core::types::execution::NodeMetadata::default(),
+        };
+        node.attributes.insert(
+            graph_attrs::QUERY.to_string(),
+            Value::String("doc".to_string()),
+        );
+        node.attributes.insert(
+            graph_attrs::MEMORY_TIER.to_string(),
+            Value::String("stm".to_string()),
+        );
+
+        let _result = execute(&ctx, &node, vec![]).await.unwrap();
+
+        let events = captured_events.lock().unwrap();
+        assert_eq!(events.len(), 1, "expected exactly one event");
+        match &events[0] {
+            ExecutionEvent::MemoryRead { scope, key } => {
+                assert_eq!(scope, "stm");
+                assert_eq!(key, "doc");
+            }
+            other => panic!("expected MemoryRead event, got {:?}", other),
         }
     }
 }

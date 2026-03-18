@@ -43,9 +43,8 @@ impl Compiler {
 
     /// Compile a graph file into a compiler module.
     pub fn compile(&self, path: &Path) -> Result<Module, DriverError> {
-        if path.extension().and_then(|ext| ext.to_str()) == Some("mlir")
-            || path.extension().and_then(|ext| ext.to_str()) == Some("ais")
-        {
+        let ext = path.extension().and_then(|ext| ext.to_str());
+        if matches!(ext, Some("mlir" | "ais")) {
             return Err(DriverError::Driver(
                 "Graph-only compile path requires ApxmGraph JSON/binary input".to_string(),
             ));

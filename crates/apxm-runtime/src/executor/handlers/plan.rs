@@ -8,12 +8,14 @@
 //! - Goal-oriented planning
 
 use super::{
-    ExecutionContext, Node, Result, Value, execute_llm_request, get_optional_string_attribute,
+    ExecutionContext, Node, Result, Value, execute_llm_request, extract_json_from_markdown,
+    get_optional_string_attribute,
     inner_plan::{InnerPlanOptions, execute_inner_plan},
 };
 use crate::aam::{Goal as AamGoal, GoalId, GoalStatus, TransitionLabel};
 use apxm_backends::LLMRequest;
 use apxm_core::constants::graph::attrs as graph_attrs;
+use apxm_core::constants::runtime::belief_keys;
 use apxm_core::{InnerPlanPayload, Plan, error::RuntimeError};
 use serde::de::Error;
 use std::collections::HashMap;
@@ -204,6 +206,10 @@ async fn execute_plan_once(
 
     // Try to parse as structured plan
     if let Ok(mut plan) = parse_plan_output(&content) {
+        // Emit plan-created event
+        if let Some(emitter) = &ctx.event_emitter {
+            emitter.emit_plan_created(&ctx.execution_id, plan.steps.len());
+        }
         if enable_inner_plan && !plan.has_inner_plan() {
             match generate_inner_plan(ctx, node, &plan, original_goal, model_override).await {
                 Ok(Some(graph_payload)) => {
@@ -243,20 +249,20 @@ async fn execute_plan_once(
         ctx.memory
             .write(
                 crate::memory::MemorySpace::Stm,
-                format!("plan:{}", ctx.execution_id),
+                format!("{}{}", belief_keys::PLAN_PREFIX, ctx.execution_id),
                 plan_value.clone(),
             )
             .await
             .ok();
 
         ctx.aam.set_belief(
-            format!("goal:{}", ctx.execution_id),
+            format!("{}{}", belief_keys::GOAL_PREFIX, ctx.execution_id),
             Value::String(original_goal.to_string()),
             transition_label.clone(),
         );
 
         ctx.aam.set_belief(
-            format!("plan:{}", ctx.execution_id),
+            format!("{}{}", belief_keys::PLAN_PREFIX, ctx.execution_id),
             plan_value.clone(),
             transition_label.clone(),
         );
@@ -302,7 +308,7 @@ async fn execute_plan_once(
                     ctx.memory
                         .write(
                             crate::memory::MemorySpace::Episodic,
-                            format!("inner_plan_spliced:{}", ctx.execution_id),
+                            format!("{}{}", belief_keys::INNER_PLAN_SPLICED_PREFIX, ctx.execution_id),
                             Value::String(format!(
                                 "Inner plan merged into DAG with {} nodes",
                                 inserted_nodes
@@ -395,26 +401,6 @@ fn parse_plan_output(content: &str) -> std::result::Result<Plan, serde_json::Err
     }
 
     Err(serde_json::Error::custom("Failed to parse plan output"))
-}
-
-/// Extract JSON from markdown code block
-fn extract_json_from_markdown(content: &str) -> Option<String> {
-    if let Some(start) = content.find("```json")
-        && let Some(end) = content[start + 7..].find("```")
-    {
-        return Some(content[start + 7..start + 7 + end].trim().to_string());
-    }
-
-    if let Some(start) = content.find("```")
-        && let Some(end) = content[start + 3..].find("```")
-    {
-        let extracted = content[start + 3..start + 3 + end].trim();
-        if extracted.starts_with('{') || extracted.starts_with('[') {
-            return Some(extracted.to_string());
-        }
-    }
-
-    None
 }
 
 async fn generate_inner_plan(

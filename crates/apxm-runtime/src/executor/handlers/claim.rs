@@ -19,20 +19,22 @@
 //! ```
 
 use super::{
-    ExecutionContext, Node, Result, Value, get_optional_string_attribute, get_string_attribute,
+    ExecutionContext, Node, Result, Value, get_optional_string_attribute,
+    get_optional_u64_attribute, get_string_attribute,
 };
 use crate::memory::MemorySpace;
 use apxm_core::constants::defaults;
 use apxm_core::constants::graph::attrs as graph_attrs;
+use apxm_core::constants::runtime::belief_keys;
 use apxm_core::error::RuntimeError;
 use std::collections::HashMap;
 
 pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -> Result<Value> {
     let queue = get_string_attribute(node, graph_attrs::QUEUE)?;
     let lease_ms =
-        get_optional_u64(node, graph_attrs::LEASE_MS)?.unwrap_or(defaults::DEFAULT_LEASE_MS);
+        get_optional_u64_attribute(node, graph_attrs::LEASE_MS)?.unwrap_or(defaults::DEFAULT_LEASE_MS);
     let max_wait_ms =
-        get_optional_u64(node, graph_attrs::MAX_WAIT_MS)?.unwrap_or(defaults::DEFAULT_MAX_WAIT_MS);
+        get_optional_u64_attribute(node, graph_attrs::MAX_WAIT_MS)?.unwrap_or(defaults::DEFAULT_MAX_WAIT_MS);
 
     let server_url = get_optional_string_attribute(node, graph_attrs::SERVER_URL)?
         .or_else(|| std::env::var("APXM_SERVER_URL").ok())
@@ -121,7 +123,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
         .memory
         .write(
             MemorySpace::Stm,
-            format!("_claim_token:{}", task_id),
+            format!("{}{}", belief_keys::CLAIM_TOKEN_PREFIX, task_id),
             Value::String(claim_token.clone()),
         )
         .await;
@@ -136,7 +138,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
     // Record claim in AAM
     let label = crate::aam::TransitionLabel::operation(node.id, format!("{:?}", node.op_type));
     ctx.aam.set_belief(
-        format!("_claim:{}:{}", queue, task_id),
+        format!("{}{}:{}", belief_keys::CLAIM_PREFIX, queue, task_id),
         Value::String(format!("claimed from queue:{}", queue)),
         label,
     );
@@ -150,12 +152,3 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
     Ok(Value::Object(result))
 }
 
-fn get_optional_u64(node: &Node, key: &str) -> Result<Option<u64>> {
-    match node.attributes.get(key) {
-        Some(v) => v.as_u64().map(Some).ok_or_else(|| RuntimeError::Operation {
-            op_type: node.op_type,
-            message: format!("Attribute '{}' must be a number", key),
-        }),
-        None => Ok(None),
-    }
-}

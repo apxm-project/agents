@@ -11,6 +11,14 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+/// Model name prefix to provider name mapping for automatic routing.
+const MODEL_PREFIX_TO_PROVIDER: &[(&str, &str)] = &[
+    ("gpt-", "openai"),
+    ("o1-", "openai"),
+    ("claude-", "anthropic"),
+    ("gemini-", "google"),
+];
+
 /// Routing strategy determines how backends are selected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum RoutingStrategy {
@@ -107,21 +115,14 @@ fn find_backend_for_model(
     }
 
     // Try provider-based matching (e.g., "gpt-4" -> OpenAI backend)
-    if model.starts_with("gpt-") || model.starts_with("o1-") {
+    let provider_hint = MODEL_PREFIX_TO_PROVIDER
+        .iter()
+        .find(|(prefix, _)| model.starts_with(prefix))
+        .map(|(_, provider)| *provider);
+
+    if let Some(provider_name) = provider_hint {
         for entry in backends.iter() {
-            if entry.value().name().to_lowercase().contains("openai") {
-                return Some(entry.key().clone());
-            }
-        }
-    } else if model.starts_with("claude-") {
-        for entry in backends.iter() {
-            if entry.value().name().to_lowercase().contains("anthropic") {
-                return Some(entry.key().clone());
-            }
-        }
-    } else if model.starts_with("gemini-") {
-        for entry in backends.iter() {
-            if entry.value().name().to_lowercase().contains("google") {
+            if entry.value().name().to_lowercase().contains(provider_name) {
                 return Some(entry.key().clone());
             }
         }

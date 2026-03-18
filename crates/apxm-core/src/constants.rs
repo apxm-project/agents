@@ -131,6 +131,7 @@ pub mod runtime {
     }
 
     pub mod belief_keys {
+        pub const STAGED_PREFIX: &str = "_stage:";
         pub const DELEGATE_PREFIX: &str = "_delegate:";
         pub const NEGOTIATE_ACTIVE: &str = "_negotiate_active";
         pub const NEGOTIATE_PROPOSAL: &str = "_negotiate_proposal";
@@ -146,6 +147,30 @@ pub mod runtime {
         pub const COMMUNICATE_MESSAGE: &str = "_communicate_message";
         pub const PENDING_FLOW_CALL_PREFIX: &str = "_pending_flow_call:";
         pub const FLOW_ARG_PREFIX: &str = "_flow_arg_";
+        pub const BRANCH_PREFIX: &str = "_branch:";
+        pub const GUARD_PREFIX: &str = "_guard:";
+        pub const SWITCH_PREFIX: &str = "_switch:";
+        pub const INV_PREFIX: &str = "_inv:";
+        pub const LLM_RESULT_PREFIX: &str = "_llm_result:";
+        pub const REFLECT_PREFIX: &str = "_reflect:";
+        pub const VERIFY_PREFIX: &str = "_verify:";
+        pub const PRINT_PREFIX: &str = "_print:";
+        pub const ERR_PREFIX: &str = "_err:";
+        pub const PAUSE_PREFIX: &str = "_pause:";
+        pub const RESUME_PREFIX: &str = "_resume:";
+        pub const CLAIM_PREFIX: &str = "_claim:";
+        pub const CLAIM_TOKEN_PREFIX: &str = "_claim_token:";
+        pub const EXC_PREFIX: &str = "exc:";
+        pub const CHECKPOINT_SNAPSHOT_PREFIX: &str = "_checkpoint_snapshot:";
+        pub const LOOP_START_PREFIX: &str = "_loop_start:";
+        pub const LOOP_END_PREFIX: &str = "_loop_end:";
+        pub const EXECUTION_ID: &str = "_execution_id";
+        pub const PLAN_PREFIX: &str = "plan:";
+        pub const GOAL_PREFIX: &str = "goal:";
+        pub const TOOL_RESULTS_PREFIX: &str = "tool_results:";
+        pub const GOALS_PREFIX: &str = "goals:";
+        pub const INNER_PLAN_SPLICED_PREFIX: &str = "inner_plan_spliced:";
+        pub const INSIGHT_PREFIX: &str = "insight:";
     }
 
     pub mod transition_labels {
@@ -174,6 +199,12 @@ pub mod runtime {
         pub const CAPABILITIES: &str = "capabilities";
         pub const GOALS: &str = "goals";
     }
+}
+
+pub mod memory {
+    pub const STM: &str = "stm";
+    pub const LTM: &str = "ltm";
+    pub const EPISODIC: &str = "episodic";
 }
 
 pub mod defaults {

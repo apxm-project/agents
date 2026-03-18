@@ -2,6 +2,7 @@
 
 use super::{ExecutionContext, Node, Result, Value, get_string_attribute};
 use apxm_core::constants::graph::attrs as graph_attrs;
+use apxm_core::constants::runtime::belief_keys;
 use termimad::MadSkin;
 
 /// Format a Value as a human-readable string (recursive for arrays).
@@ -41,7 +42,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     // Record print in AAM
     let label = crate::aam::TransitionLabel::operation(node.id, format!("{:?}", node.op_type));
     ctx.aam.set_belief(
-        format!("_print:{}:{}", ctx.execution_id, node.id),
+        format!("{}{}:{}", belief_keys::PRINT_PREFIX, ctx.execution_id, node.id),
         Value::String(output.chars().take(200).collect::<String>()),
         label,
     );

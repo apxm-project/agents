@@ -3,6 +3,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+const DEFAULT_TEMPERATURE: f64 = 0.7;
+
 /// Definition of a tool that can be called by the LLM.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolDefinition {
@@ -164,7 +166,7 @@ impl LLMRequest {
             prompt: prompt.into(),
             messages: Vec::new(),
             system_prompt: None,
-            temperature: 0.7,
+            temperature: DEFAULT_TEMPERATURE,
             max_tokens: None,
             top_p: None,
             frequency_penalty: None,
@@ -189,19 +191,7 @@ impl LLMRequest {
         LLMRequest {
             prompt,
             messages,
-            system_prompt: None,
-            temperature: 0.7,
-            max_tokens: None,
-            top_p: None,
-            frequency_penalty: None,
-            presence_penalty: None,
-            stop_sequences: Vec::new(),
-            metadata: HashMap::new(),
-            backend: None,
-            model: None,
-            operation_type: None,
-            tools: None,
-            tool_choice: None,
+            ..Self::new("")
         }
     }
 
@@ -324,7 +314,7 @@ impl LLMRequest {
 
     /// Check if this request has tools configured.
     pub fn has_tools(&self) -> bool {
-        self.tools.as_ref().map(|t| !t.is_empty()).unwrap_or(false)
+        self.tools.as_ref().is_some_and(|t| !t.is_empty())
     }
 
     /// Validate request parameters.

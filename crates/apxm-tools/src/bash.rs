@@ -1,3 +1,4 @@
+use crate::require_string_arg;
 use apxm_core::{error::RuntimeError, types::Value};
 use apxm_runtime::capability::{
     executor::{CapabilityExecutor, CapabilityResult},
@@ -10,7 +11,7 @@ use tokio::{process::Command, time::Duration};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BashConfig {
-    #[serde(default = "default_true")]
+    #[serde(default = "crate::default_true")]
     pub enabled: bool,
     #[serde(default)]
     pub blocked_commands: Vec<String>,
@@ -22,10 +23,6 @@ pub struct BashConfig {
     pub timeout_secs: u64,
     #[serde(default = "default_max_output")]
     pub max_output_bytes: usize,
-}
-
-fn default_true() -> bool {
-    true
 }
 
 fn default_timeout() -> u64 {
@@ -181,15 +178,7 @@ impl Default for BashCapability {
 #[async_trait]
 impl CapabilityExecutor for BashCapability {
     async fn execute(&self, args: HashMap<String, Value>) -> CapabilityResult<Value> {
-        let command = args
-            .get("command")
-            .or_else(|| args.get("arg_command"))
-            .or_else(|| args.get("arg0"))
-            .and_then(|value| value.as_string())
-            .ok_or_else(|| RuntimeError::Capability {
-                capability: self.metadata.name.clone(),
-                message: "Missing required 'command' argument".to_string(),
-            })?
+        let command = require_string_arg(&args, "command", "arg_command", &self.metadata.name)?
             .to_string();
 
         self.validate_command(&command)?;

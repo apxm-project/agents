@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Prefix for staged belief keys (used by QMEM).
-pub const STAGED_BELIEF_PREFIX: &str = "_stage:";
+pub const STAGED_BELIEF_PREFIX: &str = apxm_core::constants::runtime::belief_keys::STAGED_PREFIX;
 
 /// Shared handle to the Agent Abstract Machine state.
 #[derive(Clone, Default)]
@@ -161,6 +161,68 @@ impl Aam {
         Some(state.apply_transition(label, move |state| state.remove_goal(goal_id)))
     }
 
+    /// Add a child goal under a parent, registering the relationship in the goal tree.
+    pub fn add_child_goal(
+        &self,
+        parent_id: GoalId,
+        child: Goal,
+        label: TransitionLabel,
+    ) -> TransitionRecord {
+        let child_id = child.id;
+        self.apply_transition(label, move |state| {
+            let delta = state.add_goal(child);
+            state.goal_tree.add_child(parent_id, child_id);
+            delta
+        })
+    }
+
+    /// Set the completion policy for a goal.
+    pub fn set_completion_policy(&self, goal_id: GoalId, policy: CompletionPolicy) {
+        self.inner.write().goal_tree.set_policy(goal_id, policy);
+    }
+
+    /// Check if a parent goal should auto-complete based on its children's statuses,
+    /// and if so, mark it as Completed. Returns the transition record if status changed.
+    pub fn propagate_completion(
+        &self,
+        goal_id: GoalId,
+        label: TransitionLabel,
+    ) -> Option<TransitionRecord> {
+        let state = self.inner.read();
+        let policy = state.goal_tree.policy(&goal_id);
+        let children = state.goal_tree.children_of(&goal_id);
+
+        if children.is_empty() {
+            return None;
+        }
+
+        let should_complete = match policy {
+            CompletionPolicy::AllChildren => children.iter().all(|child_id| {
+                state.goal_details.get(child_id)
+                    .map(|g| g.status == GoalStatus::Completed)
+                    .unwrap_or(true) // missing children count as completed
+            }),
+            CompletionPolicy::AnyChild => children.iter().any(|child_id| {
+                state.goal_details.get(child_id)
+                    .map(|g| g.status == GoalStatus::Completed)
+                    .unwrap_or(false)
+            }),
+            CompletionPolicy::Manual => false,
+        };
+        drop(state); // release read lock before write
+
+        if should_complete {
+            self.update_goal_status(goal_id, GoalStatus::Completed, label)
+        } else {
+            None
+        }
+    }
+
+    /// Get the children of a goal.
+    pub fn children_of(&self, goal_id: &GoalId) -> Vec<GoalId> {
+        self.inner.read().goal_tree.children_of(goal_id).to_vec()
+    }
+
     pub fn has_capability(&self, name: &str) -> bool {
         self.inner.read().capabilities.contains_key(name)
     }
@@ -179,6 +241,7 @@ pub struct AamState {
     pub transitions: Vec<TransitionRecord>,
     pub call_stack: Vec<CallFrame>,
     pub exception_handlers: HashMap<u64, u64>,
+    pub goal_tree: GoalTree,
 }
 
 impl Default for AamState {
@@ -197,6 +260,7 @@ impl AamState {
             transitions: Vec::new(),
             call_stack: Vec::new(),
             exception_handlers: HashMap::new(),
+            goal_tree: GoalTree::new(),
         }
     }
 
@@ -265,6 +329,7 @@ impl AamState {
     fn remove_goal(&mut self, goal_id: GoalId) -> TransitionDelta {
         let mut delta = TransitionDelta::default();
         self.goals.remove(&goal_id);
+        self.goal_tree.remove(&goal_id);
         if self.goal_details.remove(&goal_id).is_some() {
             delta.goal_changes.push(GoalChange::Removed(goal_id));
         }
@@ -276,6 +341,7 @@ impl AamState {
             beliefs: self.beliefs.clone(),
             goals: self.goal_details.values().cloned().collect(),
             capabilities: self.capabilities.clone(),
+            goal_tree: self.goal_tree.clone(),
             timestamp: Utc::now(),
         }
     }
@@ -283,6 +349,7 @@ impl AamState {
     fn restore(&mut self, checkpoint: &AamCheckpoint) {
         self.beliefs = checkpoint.beliefs.clone();
         self.capabilities = checkpoint.capabilities.clone();
+        self.goal_tree = checkpoint.goal_tree.clone();
         self.goals.clear();
         self.goal_details.clear();
         for goal in &checkpoint.goals {
@@ -324,6 +391,68 @@ impl TransitionLabel {
         TransitionLabel::Operation {
             op_id,
             op_type: Some(op_type.into()),
+        }
+    }
+}
+
+/// Policy for when a parent goal should be auto-completed based on children.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CompletionPolicy {
+    /// Parent completes when ALL children are completed.
+    AllChildren,
+    /// Parent completes when ANY child is completed.
+    AnyChild,
+    /// Parent never auto-completes; must be set manually.
+    Manual,
+}
+
+impl Default for CompletionPolicy {
+    fn default() -> Self {
+        CompletionPolicy::AllChildren
+    }
+}
+
+/// Tracks parent-child relationships between goals.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GoalTree {
+    /// Maps parent -> children
+    children: HashMap<GoalId, Vec<GoalId>>,
+    /// Completion policy per goal (only meaningful for parent goals)
+    policies: HashMap<GoalId, CompletionPolicy>,
+}
+
+impl GoalTree {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Register a child goal under a parent.
+    pub fn add_child(&mut self, parent_id: GoalId, child_id: GoalId) {
+        self.children.entry(parent_id).or_default().push(child_id);
+    }
+
+    /// Get children of a goal.
+    pub fn children_of(&self, parent_id: &GoalId) -> &[GoalId] {
+        self.children.get(parent_id).map(|v| v.as_slice()).unwrap_or(&[])
+    }
+
+    /// Set completion policy for a goal.
+    pub fn set_policy(&mut self, goal_id: GoalId, policy: CompletionPolicy) {
+        self.policies.insert(goal_id, policy);
+    }
+
+    /// Get completion policy for a goal (defaults to AllChildren).
+    pub fn policy(&self, goal_id: &GoalId) -> CompletionPolicy {
+        self.policies.get(goal_id).copied().unwrap_or_default()
+    }
+
+    /// Remove a goal from the tree (both as parent and child).
+    pub fn remove(&mut self, goal_id: &GoalId) {
+        self.children.remove(goal_id);
+        self.policies.remove(goal_id);
+        // Remove from parent's children list
+        for children in self.children.values_mut() {
+            children.retain(|id| id != goal_id);
         }
     }
 }
@@ -378,6 +507,8 @@ pub struct AamCheckpoint {
     pub goals: Vec<Goal>,
     #[serde(default)]
     pub capabilities: HashMap<String, CapabilityRecord>,
+    #[serde(default)]
+    pub goal_tree: GoalTree,
     pub timestamp: DateTime<Utc>,
 }
 
@@ -429,5 +560,121 @@ mod tests {
         assert!(
             matches!(record.goal_changes.first(), Some(GoalChange::Added(g)) if g.id == goal.id)
         );
+    }
+
+    #[test]
+    fn test_child_goal_tracking() {
+        let aam = Aam::new();
+        let parent = Goal {
+            id: GoalId::new(),
+            description: "parent".into(),
+            priority: 90,
+            status: GoalStatus::Active,
+            parent_id: None,
+        };
+        let parent_id = parent.id;
+        aam.add_goal(parent, TransitionLabel::custom("test"));
+
+        let child = Goal {
+            id: GoalId::new(),
+            description: "child".into(),
+            priority: 80,
+            status: GoalStatus::Active,
+            parent_id: Some(parent_id),
+        };
+        let child_id = child.id;
+        aam.add_child_goal(parent_id, child, TransitionLabel::custom("test"));
+
+        let children = aam.children_of(&parent_id);
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0], child_id);
+    }
+
+    #[test]
+    fn test_all_children_completion_policy() {
+        let aam = Aam::new();
+        let parent = Goal {
+            id: GoalId::new(),
+            description: "parent".into(),
+            priority: 90,
+            status: GoalStatus::Active,
+            parent_id: None,
+        };
+        let parent_id = parent.id;
+        aam.add_goal(parent, TransitionLabel::custom("test"));
+        aam.set_completion_policy(parent_id, CompletionPolicy::AllChildren);
+
+        let child1 = Goal {
+            id: GoalId::new(),
+            description: "child1".into(),
+            priority: 80,
+            status: GoalStatus::Active,
+            parent_id: Some(parent_id),
+        };
+        let child1_id = child1.id;
+        aam.add_child_goal(parent_id, child1, TransitionLabel::custom("test"));
+
+        let child2 = Goal {
+            id: GoalId::new(),
+            description: "child2".into(),
+            priority: 80,
+            status: GoalStatus::Active,
+            parent_id: Some(parent_id),
+        };
+        let child2_id = child2.id;
+        aam.add_child_goal(parent_id, child2, TransitionLabel::custom("test"));
+
+        // Complete child1 only - parent should NOT complete
+        aam.update_goal_status(child1_id, GoalStatus::Completed, TransitionLabel::custom("test"));
+        let result = aam.propagate_completion(parent_id, TransitionLabel::custom("test"));
+        assert!(result.is_none());
+
+        // Complete child2 - now parent SHOULD complete
+        aam.update_goal_status(child2_id, GoalStatus::Completed, TransitionLabel::custom("test"));
+        let result = aam.propagate_completion(parent_id, TransitionLabel::custom("test"));
+        assert!(result.is_some());
+
+        // Verify parent is now completed
+        let parent_goal = aam.goals().into_iter().find(|g| g.id == parent_id).unwrap();
+        assert_eq!(parent_goal.status, GoalStatus::Completed);
+    }
+
+    #[test]
+    fn test_any_child_completion_policy() {
+        let aam = Aam::new();
+        let parent = Goal {
+            id: GoalId::new(),
+            description: "parent".into(),
+            priority: 90,
+            status: GoalStatus::Active,
+            parent_id: None,
+        };
+        let parent_id = parent.id;
+        aam.add_goal(parent, TransitionLabel::custom("test"));
+        aam.set_completion_policy(parent_id, CompletionPolicy::AnyChild);
+
+        let child1 = Goal {
+            id: GoalId::new(),
+            description: "child1".into(),
+            priority: 80,
+            status: GoalStatus::Active,
+            parent_id: Some(parent_id),
+        };
+        let child1_id = child1.id;
+        aam.add_child_goal(parent_id, child1, TransitionLabel::custom("test"));
+
+        let child2 = Goal {
+            id: GoalId::new(),
+            description: "child2".into(),
+            priority: 80,
+            status: GoalStatus::Active,
+            parent_id: Some(parent_id),
+        };
+        aam.add_child_goal(parent_id, child2, TransitionLabel::custom("test"));
+
+        // Complete just child1 - parent SHOULD complete with AnyChild policy
+        aam.update_goal_status(child1_id, GoalStatus::Completed, TransitionLabel::custom("test"));
+        let result = aam.propagate_completion(parent_id, TransitionLabel::custom("test"));
+        assert!(result.is_some());
     }
 }

@@ -64,15 +64,6 @@ impl FromStr for MemoryTier {
 }
 
 impl MemoryTier {
-    /// Get typical access latency characteristics.
-    pub fn latency_class(&self) -> LatencyClass {
-        match self {
-            MemoryTier::Stm => LatencyClass::Microseconds,
-            MemoryTier::Ltm => LatencyClass::Milliseconds,
-            MemoryTier::Episodic => LatencyClass::Milliseconds,
-        }
-    }
-
     /// Check if tier supports semantic search.
     pub fn supports_semantic_search(&self) -> bool {
         match self {
@@ -92,38 +83,6 @@ impl fmt::Display for MemoryTier {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.as_str())
     }
-}
-
-/// Latency class for memory operations.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LatencyClass {
-    /// Sub-millisecond latency (microseconds).
-    Microseconds,
-    /// Millisecond-scale latency.
-    Milliseconds,
-}
-
-impl LatencyClass {
-    /// Get a human-readable description.
-    pub fn description(&self) -> &'static str {
-        match self {
-            LatencyClass::Microseconds => "~1μs (in-memory)",
-            LatencyClass::Milliseconds => "~1ms (persistent)",
-        }
-    }
-}
-
-/// Memory operation type.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MemoryOperation {
-    /// Read from memory.
-    Read,
-    /// Write to memory.
-    Write,
-    /// Search memory (semantic or keyword).
-    Search,
-    /// Delete from memory.
-    Delete,
 }
 
 #[cfg(test)]

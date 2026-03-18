@@ -108,6 +108,17 @@ pub fn get_input(node: &Node, inputs: &[Value], index: usize) -> Result<Value> {
         })
 }
 
+/// Accumulate a finalized tool call from a `PendingToolCall`.
+fn finalize_pending_tool_call(tc: PendingToolCall) -> apxm_core::types::ToolCall {
+    let args: serde_json::Value =
+        serde_json::from_str(&tc.arguments).unwrap_or(serde_json::Value::Null);
+    apxm_core::types::ToolCall {
+        id: tc.id,
+        name: tc.name,
+        args,
+    }
+}
+
 /// Convert a low-level LLM backend error into a sanitized RuntimeError and emit tracing.
 pub fn llm_error(
     ctx: &ExecutionContext,
@@ -171,10 +182,19 @@ pub async fn execute_llm_request(
     Ok(response)
 }
 
+/// A tool call being accumulated from streaming chunks.
+struct PendingToolCall {
+    id: String,
+    name: String,
+    arguments: String,
+}
+
 /// Streaming variant of execute_llm_request.
 ///
 /// Consumes the stream from generate_stream(), emitting LlmToken events
-/// for each token chunk and returning the final LLMResponse from the Done chunk.
+/// for each token chunk. Tool calls arriving via `ToolCallStart` and
+/// `ToolCallDelta` chunks are accumulated and dispatched mid-stream,
+/// with results appended to the final response's tool_calls list.
 async fn execute_llm_request_streaming(
     ctx: &ExecutionContext,
     phase: &str,
@@ -194,29 +214,62 @@ async fn execute_llm_request_streaming(
     let mut stream = backend.generate_stream(request.clone());
 
     let mut final_response: Option<LLMResponse> = None;
+    // Tool call accumulation state for mid-stream interleaving
+    let mut pending_tool_call: Option<PendingToolCall> = None;
+    let mut streamed_tool_calls: Vec<apxm_core::types::ToolCall> = Vec::new();
 
     while let Some(chunk_result) = stream.next().await {
         let chunk = chunk_result.map_err(|e| llm_error(ctx, phase, request, e))?;
         match chunk {
             StreamChunk::Token(token) => {
+                // If we had a pending tool call being accumulated, it's now
+                // complete (the model moved on to producing text).
+                if let Some(tc) = pending_tool_call.take() {
+                    streamed_tool_calls.push(finalize_pending_tool_call(tc));
+                }
                 if let Some(emitter) = &ctx.event_emitter {
                     emitter.emit_llm_token(&token);
                 }
             }
+            StreamChunk::ToolCallStart { id, name } => {
+                // Finalize any previous pending tool call before starting a new one.
+                if let Some(tc) = pending_tool_call.take() {
+                    streamed_tool_calls.push(finalize_pending_tool_call(tc));
+                }
+                pending_tool_call = Some(PendingToolCall {
+                    id,
+                    name,
+                    arguments: String::new(),
+                });
+            }
+            StreamChunk::ToolCallDelta { id: _, arguments_delta } => {
+                if let Some(tc) = pending_tool_call.as_mut() {
+                    tc.arguments.push_str(&arguments_delta);
+                }
+            }
             StreamChunk::Done(response) => {
+                // Finalize any pending tool call.
+                if let Some(tc) = pending_tool_call.take() {
+                    streamed_tool_calls.push(finalize_pending_tool_call(tc));
+                }
                 final_response = Some(response);
                 break;
-            }
-            StreamChunk::ToolCallStart { .. } | StreamChunk::ToolCallDelta { .. } => {
-                // Tool call streaming will be handled in a future iteration
             }
         }
     }
 
-    let response = final_response.ok_or_else(|| RuntimeError::LLM {
+    let mut response = final_response.ok_or_else(|| RuntimeError::LLM {
         message: format!("LLM stream ended without a Done chunk during {phase}"),
         backend: request.backend.clone().or_else(|| request.model.clone()),
     })?;
+
+    // Merge any tool calls accumulated from streaming into the response.
+    // The Done chunk may already contain tool_calls (from backends that include
+    // them in the final response); streaming-accumulated calls take precedence
+    // when the Done chunk has none.
+    if !streamed_tool_calls.is_empty() && response.tool_calls.is_empty() {
+        response.tool_calls = streamed_tool_calls;
+    }
 
     #[cfg(feature = "metrics")]
     {
@@ -279,4 +332,153 @@ async fn record_llm_event(
             Value::Object(fields.into_iter().collect()),
         )
         .await;
+}
+
+/// Extract JSON from a markdown fenced code block.
+///
+/// Looks for ` ```json ... ``` ` first, then bare ` ``` ... ``` ` blocks
+/// whose content starts with `{` or `[`.
+pub fn extract_json_from_markdown(content: &str) -> Option<String> {
+    if let Some(start) = content.find("```json")
+        && let Some(end) = content[start + 7..].find("```")
+    {
+        return Some(content[start + 7..start + 7 + end].trim().to_string());
+    }
+
+    if let Some(start) = content.find("```")
+        && let Some(end) = content[start + 3..].find("```")
+    {
+        let extracted = content[start + 3..start + 3 + end].trim();
+        if extracted.starts_with('{') || extracted.starts_with('[') {
+            return Some(extracted.to_string());
+        }
+    }
+
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_finalize_pending_tool_call_valid_json() {
+        let tc = PendingToolCall {
+            id: "call_1".into(),
+            name: "web_search".into(),
+            arguments: r#"{"query":"rust async"}"#.into(),
+        };
+        let result = finalize_pending_tool_call(tc);
+        assert_eq!(result.id, "call_1");
+        assert_eq!(result.name, "web_search");
+        assert_eq!(
+            result.args,
+            serde_json::json!({"query": "rust async"})
+        );
+    }
+
+    #[test]
+    fn test_finalize_pending_tool_call_invalid_json() {
+        let tc = PendingToolCall {
+            id: "call_2".into(),
+            name: "broken".into(),
+            arguments: "not json".into(),
+        };
+        let result = finalize_pending_tool_call(tc);
+        assert_eq!(result.name, "broken");
+        assert_eq!(result.args, serde_json::Value::Null);
+    }
+
+    #[test]
+    fn test_finalize_pending_tool_call_empty_args() {
+        let tc = PendingToolCall {
+            id: "call_3".into(),
+            name: "noop".into(),
+            arguments: String::new(),
+        };
+        let result = finalize_pending_tool_call(tc);
+        assert_eq!(result.args, serde_json::Value::Null);
+    }
+
+    #[tokio::test]
+    async fn test_streaming_tool_call_accumulation() {
+        use apxm_backends::StreamChunk;
+        use apxm_core::types::{FinishReason, TokenUsage};
+        use tokio_stream::StreamExt;
+
+        // Simulate a stream with interleaved tool calls
+        let chunks: Vec<anyhow::Result<StreamChunk>> = vec![
+            Ok(StreamChunk::Token("Let me ".into())),
+            Ok(StreamChunk::Token("search ".into())),
+            Ok(StreamChunk::ToolCallStart {
+                id: "tc_1".into(),
+                name: "web_search".into(),
+            }),
+            Ok(StreamChunk::ToolCallDelta {
+                id: "tc_1".into(),
+                arguments_delta: r#"{"query""#.into(),
+            }),
+            Ok(StreamChunk::ToolCallDelta {
+                id: "tc_1".into(),
+                arguments_delta: r#":"rust"}"#.into(),
+            }),
+            Ok(StreamChunk::ToolCallStart {
+                id: "tc_2".into(),
+                name: "read_file".into(),
+            }),
+            Ok(StreamChunk::ToolCallDelta {
+                id: "tc_2".into(),
+                arguments_delta: r#"{"path":"main.rs"}"#.into(),
+            }),
+            Ok(StreamChunk::Done(LLMResponse::new(
+                "results".to_string(),
+                "mock".to_string(),
+                TokenUsage::new(10, 20),
+                FinishReason::ToolUse,
+            ))),
+        ];
+
+        let mut stream = tokio_stream::iter(chunks);
+        let mut pending: Option<PendingToolCall> = None;
+        let mut collected: Vec<apxm_core::types::ToolCall> = Vec::new();
+        let mut final_resp: Option<LLMResponse> = None;
+
+        while let Some(Ok(chunk)) = stream.next().await {
+            match chunk {
+                StreamChunk::Token(_) => {
+                    if let Some(tc) = pending.take() {
+                        collected.push(finalize_pending_tool_call(tc));
+                    }
+                }
+                StreamChunk::ToolCallStart { id, name } => {
+                    if let Some(tc) = pending.take() {
+                        collected.push(finalize_pending_tool_call(tc));
+                    }
+                    pending = Some(PendingToolCall {
+                        id,
+                        name,
+                        arguments: String::new(),
+                    });
+                }
+                StreamChunk::ToolCallDelta { arguments_delta, .. } => {
+                    if let Some(tc) = pending.as_mut() {
+                        tc.arguments.push_str(&arguments_delta);
+                    }
+                }
+                StreamChunk::Done(resp) => {
+                    if let Some(tc) = pending.take() {
+                        collected.push(finalize_pending_tool_call(tc));
+                    }
+                    final_resp = Some(resp);
+                }
+            }
+        }
+
+        assert!(final_resp.is_some());
+        assert_eq!(collected.len(), 2);
+        assert_eq!(collected[0].name, "web_search");
+        assert_eq!(collected[0].args, serde_json::json!({"query": "rust"}));
+        assert_eq!(collected[1].name, "read_file");
+        assert_eq!(collected[1].args, serde_json::json!({"path": "main.rs"}));
+    }
 }

@@ -5,7 +5,7 @@ Generated 2026-03-17.
 
 ## P0: Critical
 
-- [ ] **Phase 1 ISA ops missing from C++ compiler** -- `UpdateGoal`, `Guard`, `Claim`, `Pause`, `Resume` exist in Rust (`definitions.rs`) with runtime handlers but have NO C++ MLIR ops (`AISOps.h`/`AISOps.cpp`), no tablegen definitions, no `OperationKind` entries in `ArtifactEmitter.cpp`, and no wire indices in `from_wire_index()` (map stops at index 24). These ops cannot compile through the MLIR pipeline. Files: `crates/apxm-compiler/mlir/lib/Dialect/AIS/Conversion/Artifact/ArtifactEmitter.cpp`, `crates/apxm-ais/src/operations/definitions.rs`
+- [x] **Phase 1 ISA ops missing from C++ compiler** -- Resolved: `UpdateGoal`, `Guard`, `Claim`, `Pause`, `Resume` added to `AISOps.td` with proper memory effects, assembly formats, and verifiers. `OperationKind` entries 25-29 and `.Case<>()` arms added to `ArtifactEmitter.cpp`. Files: `crates/apxm-compiler/mlir/include/ais/Dialect/AIS/IR/AISOps.td`, `crates/apxm-compiler/mlir/lib/Dialect/AIS/Conversion/Artifact/ArtifactEmitter.cpp`
 
 - [x] **Graph-to-MLIR lowerer missing 7 ops** -- Resolved: all 20 missing match arms added to `emit_node()` in `lower_mlir.rs`. The `unsupported` catch-all removed; match is now exhaustive. Covers Communicate, FlowCall, Exc, Print, Jump, Return, Agent, UpdateGoal, Guard, Claim, Pause, Resume, Nop, Identity, Yield, Delegate, Negotiate, SpawnAgent, RegisterCapability, Autonomous. Files: `crates/apxm-graph/src/lower_mlir.rs`
 

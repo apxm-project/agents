@@ -7,6 +7,7 @@ use super::{
     ExecutionContext, Node, Result, Value, get_optional_u64_attribute, get_string_attribute,
 };
 use apxm_core::constants::graph::attrs as graph_attrs;
+use apxm_core::constants::runtime::belief_keys;
 use apxm_core::error::RuntimeError;
 use std::collections::HashMap;
 
@@ -132,7 +133,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     // Record capability invocation in AAM
     let label = crate::aam::TransitionLabel::operation(node.id, format!("{:?}", node.op_type));
     ctx.aam.set_belief(
-        format!("_inv:{}:{}", capability_name, node.id),
+        format!("{}{}:{}", belief_keys::INV_PREFIX, capability_name, node.id),
         Value::String(format!("invoked:{}", capability_name)),
         label,
     );

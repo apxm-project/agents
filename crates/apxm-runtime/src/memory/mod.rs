@@ -17,6 +17,7 @@ pub use facts::{Fact, FactFilter, FactResult};
 pub use ltm::LongTermMemory;
 pub use stm::ShortTermMemory;
 
+use apxm_core::constants::memory as mem_const;
 use apxm_core::error::RuntimeError;
 use std::sync::Arc;
 
@@ -38,9 +39,9 @@ impl std::str::FromStr for MemorySpace {
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s.to_ascii_lowercase().as_str() {
-            "stm" => Ok(MemorySpace::Stm),
-            "ltm" => Ok(MemorySpace::Ltm),
-            "episodic" => Ok(MemorySpace::Episodic),
+            mem_const::STM => Ok(MemorySpace::Stm),
+            mem_const::LTM => Ok(MemorySpace::Ltm),
+            mem_const::EPISODIC => Ok(MemorySpace::Episodic),
             other => Err(RuntimeError::Memory {
                 message: format!("Unknown memory tier: {}", other),
                 space: Some(other.to_string()),
@@ -78,7 +79,7 @@ impl MemorySystem {
             MemorySpace::Ltm => self.ltm.get(key).await,
             MemorySpace::Episodic => Err(RuntimeError::Memory {
                 message: "Episodic memory is append-only, use query instead".to_string(),
-                space: Some("episodic".to_string()),
+                space: Some(mem_const::EPISODIC.to_string()),
             }),
         }
     }
@@ -95,7 +96,7 @@ impl MemorySystem {
             MemorySpace::Ltm => self.ltm.put(&key, value).await,
             MemorySpace::Episodic => Err(RuntimeError::Memory {
                 message: "Episodic memory is append-only, use record instead".to_string(),
-                space: Some("episodic".to_string()),
+                space: Some(mem_const::EPISODIC.to_string()),
             }),
         }
     }
@@ -107,7 +108,7 @@ impl MemorySystem {
             MemorySpace::Ltm => self.ltm.delete(key).await,
             MemorySpace::Episodic => Err(RuntimeError::Memory {
                 message: "Episodic memory is append-only, cannot delete".to_string(),
-                space: Some("episodic".to_string()),
+                space: Some(mem_const::EPISODIC.to_string()),
             }),
         }
     }

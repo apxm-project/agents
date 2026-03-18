@@ -7,6 +7,7 @@ use std::collections::HashMap;
 
 use super::{ExecutionContext, Node, Result, Value};
 use apxm_core::constants::graph::attrs as graph_attrs;
+use apxm_core::constants::runtime::belief_keys;
 use apxm_core::{
     error::RuntimeError,
     types::{
@@ -66,7 +67,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         .map(|i| format!("case[{}]:{}", i, &discriminant_value))
         .unwrap_or_else(|| "default".to_string());
     ctx.aam.set_belief(
-        format!("_switch:{}:{}", ctx.execution_id, node.id),
+        format!("{}{}:{}", belief_keys::SWITCH_PREFIX, ctx.execution_id, node.id),
         Value::String(match_desc),
         label,
     );

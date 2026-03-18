@@ -1,3 +1,4 @@
+use crate::require_string_arg;
 use apxm_core::{error::RuntimeError, types::Value};
 use apxm_runtime::capability::{
     executor::{CapabilityExecutor, CapabilityResult},
@@ -161,7 +162,7 @@ impl FileTransaction {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WriteConfig {
-    #[serde(default = "default_true")]
+    #[serde(default = "crate::default_true")]
     pub enabled: bool,
     #[serde(default)]
     pub blocked_paths: Vec<PathBuf>,
@@ -171,18 +172,14 @@ pub struct WriteConfig {
     pub allowed_extensions: Option<Vec<String>>,
     #[serde(default)]
     pub blocked_extensions: Vec<String>,
-    #[serde(default = "default_true")]
+    #[serde(default = "crate::default_true")]
     pub create_directories: bool,
-    #[serde(default = "default_true")]
+    #[serde(default = "crate::default_true")]
     pub overwrite_existing: bool,
     #[serde(default)]
     pub max_file_size: Option<usize>,
     #[serde(default)]
     pub base_directory: Option<PathBuf>,
-}
-
-fn default_true() -> bool {
-    true
 }
 
 impl Default for WriteConfig {
@@ -336,15 +333,8 @@ impl Default for WriteCapability {
 #[async_trait]
 impl CapabilityExecutor for WriteCapability {
     async fn execute(&self, args: HashMap<String, Value>) -> CapabilityResult<Value> {
-        let file_path = args
-            .get("file_path")
-            .or_else(|| args.get("path"))
-            .or_else(|| args.get("arg0"))
-            .and_then(|value| value.as_string())
-            .ok_or_else(|| RuntimeError::Capability {
-                capability: self.metadata.name.clone(),
-                message: "Missing required 'file_path' argument".to_string(),
-            })?;
+        let file_path =
+            require_string_arg(&args, "file_path", "path", &self.metadata.name)?;
         let content = args
             .get("content")
             .or_else(|| args.get("arg_content"))

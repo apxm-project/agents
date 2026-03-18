@@ -13,10 +13,9 @@ against current source code as of 2026-03-17.
 
 - [x] **Gap 8b — Two divergent AAM types (spec vs runtime).** Resolved: canonical Goal/GoalId/GoalStatus defined in apxm-ais::aam, re-exported via apxm-core::types::goal, imported by apxm-runtime.
 
-- [ ] **Gap 4 — Flat goals (no parent-child hierarchy).**
-  Runtime `Goal` has no `parent_id` field. `AamState.goals` is a `PriorityQueue<GoalId, u32>` — flat, no tree structure. PLAN produces `Vec<PlanStep>` with string-based `dependencies`, not a recursive goal tree. No completion propagation from child to parent goals.
-  Current: flat priority queue. Needed: `GoalTree` with parent-child links, `CompletionPolicy` (AllChildren, AnyChild, Manual, Condition), and automatic propagation.
-  Files: `crates/apxm-runtime/src/aam/mod.rs`, `crates/apxm-core/src/plan.rs`
+- [x] **Gap 4 — Flat goals (no parent-child hierarchy).**
+  Resolved: `GoalTree` struct added to `AamState` with parent-child index (`HashMap<GoalId, Vec<GoalId>>`). `CompletionPolicy` enum (AllChildren, AnyChild, Manual) with `propagate_completion()`. `Aam::add_child_goal()` and `Aam::children_of()` methods. GoalTree included in checkpoint snapshot/restore. 3 unit tests.
+  Files: `crates/apxm-runtime/src/aam/mod.rs`
 
 - [ ] **Gap 3 — No per-task AAM scoping.**
   `ExecutionContext::child()` clones the same `Arc<RwLock<AamState>>` — parent and child share identical flat state. A UMEM in flow A is immediately visible to flow B. No `ScopeId`, `ScopeSpec`, or belief namespacing exists anywhere in the runtime.
@@ -32,10 +31,9 @@ against current source code as of 2026-03-17.
   Current: two disconnected priority systems. Needed: goal-aware scheduling that projects `Goal.priority` onto node scheduling priority.
   Files: `crates/apxm-runtime/src/scheduler/state.rs` (line 121), `crates/apxm-runtime/src/scheduler/queue.rs`, `crates/apxm-runtime/src/aam/mod.rs`
 
-- [ ] **Gap 7 — Tool discovery pipeline partially connected.**
-  ~~Driver never reads `tools.json`. AamCheckpoint excludes capabilities.~~ Fixed in `f7a3c8c`: `register_user_tools()` now loads `~/.apxm/tools.json` at driver startup. Capabilities included in `AamCheckpoint` snapshot/restore.
-  **Remaining**: `UserToolCapability::execute()` returns a stub error — registered user tools have no actual executor. Needs plugin/subprocess dispatch to make user tools callable at runtime.
-  Files: `crates/apxm-driver/src/runtime/capabilities.rs`, `crates/apxm-runtime/src/aam/mod.rs`
+- [x] **Gap 7 — Tool discovery pipeline partially connected.**
+  Resolved: `UserToolCapability::execute()` now dispatches via `ProcessSandbox`. Tools in `~/.apxm/tools.json` include `command`, `args`, `timeout_ms` fields. Subprocess receives JSON args on stdin, stdout parsed as JSON Value. Timeout and error handling included.
+  Files: `crates/apxm-driver/src/runtime/capabilities.rs`
 
 - [ ] **Gap 1 — Fixed 4-level hierarchy, no recursive composition.**
   The hierarchy is Agent -> Flow -> Task -> Node, exactly four levels. `PlanStep` is a flat list with string dependencies. `ApxmGraph::merge()` flattens into a single DAG. Flows cannot structurally contain sub-flows.

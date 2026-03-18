@@ -53,11 +53,37 @@ use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetReques
 use tower_http::trace::TraceLayer;
 use tracing::{error, info};
 
+const DEFAULT_ADDR: &str = "127.0.0.1:18800";
+const DEFAULT_PUBLIC_URL: &str = "http://localhost:18800";
+
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+fn jsonrpc_ok(id: JsonValue, result: JsonValue) -> Json<JsonValue> {
+    Json(serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": result,
+    }))
+}
+
+fn jsonrpc_err(id: JsonValue, code: i64, message: impl Into<String>) -> Json<JsonValue> {
+    Json(serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "error": { "code": code, "message": message.into() },
+    }))
+}
+
+fn mcp_tool_result(id: JsonValue, text: String, is_error: bool) -> Json<JsonValue> {
+    jsonrpc_ok(id, serde_json::json!({
+        "content": [{ "type": "text", "text": text }],
+        "isError": is_error,
+    }))
 }
 
 // ─── Agent Registry ─────────────────────────────────────────────────────────
@@ -649,7 +675,7 @@ async fn main() -> anyhow::Result<()> {
     let addr = std::env::var("APXM_SERVER_ADDR")
         .ok()
         .and_then(|s| s.parse::<SocketAddr>().ok())
-        .unwrap_or_else(|| "127.0.0.1:18800".parse().expect("valid default addr"));
+        .unwrap_or_else(|| DEFAULT_ADDR.parse().expect("valid default addr"));
     info!(%addr, "starting apxm-server");
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
@@ -753,11 +779,7 @@ async fn mcp_jsonrpc(
                     })
                 })
                 .collect();
-            Json(serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "result": { "tools": tools },
-            }))
+            jsonrpc_ok(id, serde_json::json!({ "tools": tools }))
         }
         "tools/call" => {
             let tool_name = req
@@ -785,64 +807,29 @@ async fn mcp_jsonrpc(
             let cap_sys = state.runtime.capability_system();
             let executor = cap_sys.registry().get(tool_name);
             match executor {
-                None => Json(serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "result": {
-                        "content": [{ "type": "text", "text": format!("Tool '{}' not found", tool_name) }],
-                        "isError": true,
-                    },
-                })),
+                None => mcp_tool_result(id, format!("Tool '{}' not found", tool_name), true),
                 Some(exec) => match exec.execute(args).await {
                     Ok(result) => {
                         let result_json = result
                             .to_json()
                             .unwrap_or_else(|_| JsonValue::String(result.to_string()));
-                        Json(serde_json::json!({
-                            "jsonrpc": "2.0",
-                            "id": id,
-                            "result": {
-                                "content": [{ "type": "text", "text": result_json.to_string() }],
-                                "isError": false,
-                            },
-                        }))
+                        mcp_tool_result(id, result_json.to_string(), false)
                     }
-                    Err(e) => Json(serde_json::json!({
-                        "jsonrpc": "2.0",
-                        "id": id,
-                        "result": {
-                            "content": [{ "type": "text", "text": e.to_string() }],
-                            "isError": true,
-                        },
-                    })),
+                    Err(e) => mcp_tool_result(id, e.to_string(), true),
                 },
             }
         }
-        "initialize" => {
-            // MCP protocol handshake
-            Json(serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "result": {
-                    "protocolVersion": "2025-11-05",
-                    "serverInfo": {
-                        "name": "apxm-server",
-                        "version": env!("CARGO_PKG_VERSION"),
-                    },
-                    "capabilities": {
-                        "tools": { "listChanged": false },
-                    },
-                },
-            }))
-        }
-        unknown => Json(serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "error": {
-                "code": -32601,
-                "message": format!("Method not found: {}", unknown),
+        "initialize" => jsonrpc_ok(id, serde_json::json!({
+            "protocolVersion": "2025-11-05",
+            "serverInfo": {
+                "name": "apxm-server",
+                "version": env!("CARGO_PKG_VERSION"),
+            },
+            "capabilities": {
+                "tools": { "listChanged": false },
             },
         })),
+        unknown => jsonrpc_err(id, -32601, format!("Method not found: {}", unknown)),
     }
 }
 
@@ -880,70 +867,33 @@ async fn a2a_jsonrpc(
                 .store_fact(&text, &["a2a:task".to_string()], &source, None)
                 .await
             {
-                Ok(fact_id) => Json(serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "result": {
-                        "id": task_id,
-                        "factId": fact_id,
-                        "status": { "state": "submitted" },
-                        "message": message,
-                    },
+                Ok(fact_id) => jsonrpc_ok(id, serde_json::json!({
+                    "id": task_id,
+                    "factId": fact_id,
+                    "status": { "state": "submitted" },
+                    "message": message,
                 })),
-                Err(e) => Json(serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "error": {
-                        "code": -32000,
-                        "message": e.to_string(),
-                    },
-                })),
+                Err(e) => jsonrpc_err(id, -32000, e.to_string()),
             }
         }
         "tasks/get" => {
             let task_id = req.params.get("id").and_then(|v| v.as_str()).unwrap_or("");
             // Tasks are stored as memory facts — search by task ID
             match state.runtime.memory().search_facts(task_id, 1).await {
-                Ok(facts) if !facts.is_empty() => Json(serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "result": {
-                        "id": task_id,
-                        "status": { "state": "completed" },
-                        "facts": serde_json::to_value(&facts).unwrap_or(JsonValue::Null),
-                    },
+                Ok(facts) if !facts.is_empty() => jsonrpc_ok(id, serde_json::json!({
+                    "id": task_id,
+                    "status": { "state": "completed" },
+                    "facts": serde_json::to_value(&facts).unwrap_or(JsonValue::Null),
                 })),
-                Ok(_) => Json(serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "error": {
-                        "code": -32001,
-                        "message": format!("Task '{}' not found", task_id),
-                    },
-                })),
-                Err(e) => Json(serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "error": { "code": -32000, "message": e.to_string() },
-                })),
+                Ok(_) => jsonrpc_err(id, -32001, format!("Task '{}' not found", task_id)),
+                Err(e) => jsonrpc_err(id, -32000, e.to_string()),
             }
         }
         "tasks/cancel" => {
             // Best-effort cancellation — APXM runtime doesn't currently support mid-flight cancel
-            Json(serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "result": { "cancelled": true },
-            }))
+            jsonrpc_ok(id, serde_json::json!({ "cancelled": true }))
         }
-        unknown => Json(serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "error": {
-                "code": -32601,
-                "message": format!("A2A method not found: {}", unknown),
-            },
-        })),
+        unknown => jsonrpc_err(id, -32601, format!("A2A method not found: {}", unknown)),
     }
 }
 
@@ -1302,7 +1252,7 @@ async fn deregister_agent(
 
 async fn agent_card(State(state): State<AppState>) -> Json<JsonValue> {
     let base_url =
-        std::env::var("APXM_PUBLIC_URL").unwrap_or_else(|_| "http://localhost:18800".to_string());
+        std::env::var("APXM_PUBLIC_URL").unwrap_or_else(|_| DEFAULT_PUBLIC_URL.to_string());
 
     let skills: Vec<JsonValue> = state
         .agent_registry

@@ -26,10 +26,12 @@
 //! ```
 
 use super::{
-    ExecutionContext, Node, Result, Value, get_optional_string_attribute, get_string_attribute,
+    ExecutionContext, Node, Result, Value, get_optional_string_attribute,
+    get_optional_u64_attribute, get_string_attribute,
 };
 use apxm_core::constants::defaults;
 use apxm_core::constants::graph::attrs as graph_attrs;
+use apxm_core::constants::runtime::belief_keys;
 use apxm_core::error::RuntimeError;
 
 const DEFAULT_POLL_INTERVAL_MS: u64 = 2_000;
@@ -40,9 +42,9 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     let checkpoint_id = get_optional_string_attribute(node, graph_attrs::CHECKPOINT_ID)?
         .unwrap_or_else(|| format!("chk_{}", &uuid::Uuid::new_v4().to_string()[..8]));
 
-    let timeout_ms = get_optional_u64(node, graph_attrs::TIMEOUT_MS)?.unwrap_or(0);
+    let timeout_ms = get_optional_u64_attribute(node, graph_attrs::TIMEOUT_MS)?.unwrap_or(0);
     let poll_interval_ms =
-        get_optional_u64(node, graph_attrs::POLL_INTERVAL_MS)?.unwrap_or(DEFAULT_POLL_INTERVAL_MS);
+        get_optional_u64_attribute(node, graph_attrs::POLL_INTERVAL_MS)?.unwrap_or(DEFAULT_POLL_INTERVAL_MS);
     let notification_url = get_optional_string_attribute(node, graph_attrs::NOTIFICATION_URL)?;
 
     let server_url = get_optional_string_attribute(node, graph_attrs::SERVER_URL)?
@@ -68,7 +70,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     // Record pause in AAM
     let label = crate::aam::TransitionLabel::operation(node.id, format!("{:?}", node.op_type));
     ctx.aam.set_belief(
-        format!("_pause:{}", checkpoint_id),
+        format!("{}{}", belief_keys::PAUSE_PREFIX, checkpoint_id),
         Value::String(message.clone()),
         label,
     );
@@ -229,12 +231,3 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     }
 }
 
-fn get_optional_u64(node: &Node, key: &str) -> Result<Option<u64>> {
-    match node.attributes.get(key) {
-        Some(v) => v.as_u64().map(Some).ok_or_else(|| RuntimeError::Operation {
-            op_type: node.op_type,
-            message: format!("Attribute '{}' must be a number", key),
-        }),
-        None => Ok(None),
-    }
-}

@@ -8,10 +8,12 @@
 //! - Retry logic with exponential backoff
 
 use super::{
-    ExecutionContext, Node, Result, Value, execute_llm_request, get_optional_string_attribute,
+    ExecutionContext, Node, Result, Value, execute_llm_request, extract_json_from_markdown,
+    get_optional_string_attribute,
 };
 use apxm_backends::LLMRequest;
 use apxm_core::constants::graph::attrs as graph_attrs;
+use apxm_core::constants::runtime::belief_keys;
 use apxm_core::error::RuntimeError;
 use serde::de::Error;
 use serde::{Deserialize, Serialize};
@@ -180,7 +182,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
                     _ => format!("{:?}", value).chars().take(200).collect::<String>(),
                 };
                 ctx.aam.set_belief(
-                    format!("_reflect:{}:{}", ctx.execution_id, node.id),
+                    format!("{}{}:{}", belief_keys::REFLECT_PREFIX, ctx.execution_id, node.id),
                     Value::String(summary),
                     label,
                 );
@@ -219,7 +221,7 @@ async fn execute_reflect_once(ctx: &ExecutionContext, request: &LLMRequest) -> R
                 ctx.memory
                     .write(
                         crate::memory::MemorySpace::Episodic,
-                        format!("insight:{}:{}", ctx.execution_id, uuid::Uuid::now_v7()),
+                        format!("{}{}:{}", belief_keys::INSIGHT_PREFIX, ctx.execution_id, uuid::Uuid::now_v7()),
                         Value::String(insight.clone()),
                     )
                     .await
@@ -262,26 +264,6 @@ fn parse_reflection_output(
     Err(serde_json::Error::custom(
         "Failed to parse reflection output",
     ))
-}
-
-/// Extract JSON from markdown code block
-fn extract_json_from_markdown(content: &str) -> Option<String> {
-    if let Some(start) = content.find("```json")
-        && let Some(end) = content[start + 7..].find("```")
-    {
-        return Some(content[start + 7..start + 7 + end].trim().to_string());
-    }
-
-    if let Some(start) = content.find("```")
-        && let Some(end) = content[start + 3..].find("```")
-    {
-        let extracted = content[start + 3..start + 3 + end].trim();
-        if extracted.starts_with('{') || extracted.starts_with('[') {
-            return Some(extracted.to_string());
-        }
-    }
-
-    None
 }
 
 #[cfg(test)]

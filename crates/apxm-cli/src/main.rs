@@ -406,6 +406,42 @@ fn parse_opt_level(level: u8) -> apxm_core::types::OptimizationLevel {
     }
 }
 
+fn category_str(cat: apxm_core::types::OperationCategory) -> &'static str {
+    use apxm_core::types::OperationCategory;
+    match cat {
+        OperationCategory::Metadata => "metadata",
+        OperationCategory::Memory => "memory",
+        OperationCategory::Reasoning => "reasoning",
+        OperationCategory::Tools => "tools",
+        OperationCategory::ControlFlow => "control_flow",
+        OperationCategory::Synchronization => "synchronization",
+        OperationCategory::ErrorHandling => "error_handling",
+        OperationCategory::Communication => "communication",
+        OperationCategory::Internal => "internal",
+        OperationCategory::Coordination => "coordination",
+        OperationCategory::Identity => "identity",
+    }
+}
+
+fn latency_to_ms(lat: apxm_core::types::OperationLatency) -> u64 {
+    use apxm_core::types::OperationLatency;
+    match lat {
+        OperationLatency::None => 10,
+        OperationLatency::Low => 100,
+        OperationLatency::Medium => 1000,
+        OperationLatency::High => 5000,
+    }
+}
+
+fn find_op_spec(op: &str) -> Option<&'static apxm_core::types::OperationSpec> {
+    use apxm_core::types::AIS_OPERATIONS;
+    AIS_OPERATIONS.iter().find(|s| s.op_type.to_string() == op)
+}
+
+fn op_latency_ms(op: &str) -> u64 {
+    find_op_spec(op).map_or(100, |s| latency_to_ms(s.latency))
+}
+
 fn parse_header(s: &str) -> Result<(String, String), String> {
     let pos = s
         .find('=')
@@ -1281,145 +1317,172 @@ fn validate_command(input: PathBuf, json_output: bool) -> Result<()> {
     Ok(())
 }
 
-fn analyze_command(input: PathBuf, json_output: bool) -> Result<()> {
-    use apxm_core::types::{AIS_OPERATIONS, OperationLatency};
+/// Parsed graph topology used by analyze and explain commands.
+struct GraphAnalysis<'a> {
+    graph_name: &'a str,
+    nodes: &'a Vec<serde_json::Value>,
+    edge_count: usize,
+    node_ids: HashSet<u64>,
+    successors: HashMap<u64, Vec<u64>>,
+    predecessors: HashMap<u64, Vec<u64>>,
+    entry_nodes: Vec<u64>,
+    exit_nodes: Vec<u64>,
+    phases: Vec<Vec<u64>>,
+}
 
-    let content = std::fs::read_to_string(&input)
-        .map_err(|e| anyhow::anyhow!("Failed to read {}: {e}", input.display()))?;
+impl<'a> GraphAnalysis<'a> {
+    fn from_raw(raw: &'a serde_json::Value) -> Result<Self> {
+        let graph_name = raw.get("name").and_then(serde_json::Value::as_str).unwrap_or("unnamed");
+        let nodes = raw.get("nodes").and_then(serde_json::Value::as_array)
+            .ok_or_else(|| anyhow::anyhow!("graph has no nodes array"))?;
+        let empty_edges = vec![];
+        let edges = raw.get("edges").and_then(serde_json::Value::as_array).unwrap_or(&empty_edges);
+        let edge_count = edges.len();
 
-    let raw: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|e| anyhow::anyhow!("Invalid JSON in {}: {e}", input.display()))?;
+        let node_ids: HashSet<u64> = nodes.iter()
+            .filter_map(|n| n.get("id").and_then(serde_json::Value::as_u64))
+            .collect();
 
-    let graph_name = raw.get("name").and_then(serde_json::Value::as_str).unwrap_or("unnamed");
-    let nodes = raw.get("nodes").and_then(serde_json::Value::as_array)
-        .ok_or_else(|| anyhow::anyhow!("graph has no nodes array"))?;
-    let edges = raw.get("edges").and_then(serde_json::Value::as_array);
-    let empty_edges = vec![];
-    let edges = edges.unwrap_or(&empty_edges);
+        let mut successors: HashMap<u64, Vec<u64>> = HashMap::new();
+        let mut predecessors: HashMap<u64, Vec<u64>> = HashMap::new();
+        let mut in_degree: HashMap<u64, usize> = node_ids.iter().map(|&id| (id, 0)).collect();
 
-    // Build node map
-    let node_ids: HashSet<u64> = nodes.iter()
-        .filter_map(|n| n.get("id").and_then(serde_json::Value::as_u64))
-        .collect();
-
-    let node_op = |id: u64| -> &str {
-        nodes.iter()
-            .find(|n| n.get("id").and_then(serde_json::Value::as_u64) == Some(id))
-            .and_then(|n| n.get("op").and_then(serde_json::Value::as_str))
-            .unwrap_or("?")
-    };
-
-    let node_name = |id: u64| -> &str {
-        nodes.iter()
-            .find(|n| n.get("id").and_then(serde_json::Value::as_u64) == Some(id))
-            .and_then(|n| n.get("name").and_then(serde_json::Value::as_str))
-            .unwrap_or("?")
-    };
-
-    let node_latency_ms = |id: u64| -> u64 {
-        let op = node_op(id);
-        for spec in AIS_OPERATIONS {
-            if spec.op_type.to_string() == op {
-                return match spec.latency {
-                    OperationLatency::None => 10,
-                    OperationLatency::Low => 100,
-                    OperationLatency::Medium => 1000,
-                    OperationLatency::High => 5000,
-                };
-            }
+        for edge in edges.iter() {
+            let from = edge.get("from").and_then(serde_json::Value::as_u64).unwrap_or(0);
+            let to = edge.get("to").and_then(serde_json::Value::as_u64).unwrap_or(0);
+            successors.entry(from).or_default().push(to);
+            predecessors.entry(to).or_default().push(from);
+            *in_degree.entry(to).or_insert(0) += 1;
         }
-        100
-    };
 
-    // Build adjacency
-    let mut successors: HashMap<u64, Vec<u64>> = HashMap::new();
-    let mut predecessors: HashMap<u64, Vec<u64>> = HashMap::new();
-    let mut in_degree: HashMap<u64, usize> = node_ids.iter().map(|&id| (id, 0)).collect();
+        let entry_nodes: Vec<u64> = in_degree.iter()
+            .filter_map(|(&id, &deg)| if deg == 0 { Some(id) } else { None })
+            .collect();
 
-    for edge in edges {
-        let from = edge.get("from").and_then(serde_json::Value::as_u64).unwrap_or(0);
-        let to = edge.get("to").and_then(serde_json::Value::as_u64).unwrap_or(0);
-        successors.entry(from).or_default().push(to);
-        predecessors.entry(to).or_default().push(from);
-        *in_degree.entry(to).or_insert(0) += 1;
-    }
+        let exit_nodes: Vec<u64> = node_ids.iter()
+            .filter(|&&id| successors.get(&id).is_none_or(|s| s.is_empty()))
+            .copied()
+            .collect();
 
-    let entry_nodes: Vec<u64> = in_degree.iter()
-        .filter_map(|(&id, &deg)| if deg == 0 { Some(id) } else { None })
-        .collect();
+        // BFS phase layering
+        let mut phases: Vec<Vec<u64>> = Vec::new();
+        let mut remaining_in: HashMap<u64, usize> = in_degree.clone();
+        let mut current_layer: Vec<u64> = entry_nodes.clone();
+        current_layer.sort();
 
-    let exit_nodes: Vec<u64> = node_ids.iter()
-        .filter(|&&id| successors.get(&id).is_none_or(|s| s.is_empty()))
-        .copied()
-        .collect();
-
-    // BFS phase layering
-    let mut phases: Vec<Vec<u64>> = Vec::new();
-    let mut remaining_in: HashMap<u64, usize> = in_degree.clone();
-    let mut current_layer: Vec<u64> = entry_nodes.clone();
-    current_layer.sort();
-
-    while !current_layer.is_empty() {
-        phases.push(current_layer.clone());
-        let mut next_layer = Vec::new();
-        for &nid in &current_layer {
-            if let Some(succs) = successors.get(&nid) {
-                for &succ in succs {
-                    if let Some(deg) = remaining_in.get_mut(&succ) {
-                        *deg = deg.saturating_sub(1);
-                        if *deg == 0 {
-                            next_layer.push(succ);
+        while !current_layer.is_empty() {
+            phases.push(current_layer.clone());
+            let mut next_layer = Vec::new();
+            for &nid in &current_layer {
+                if let Some(succs) = successors.get(&nid) {
+                    for &succ in succs {
+                        if let Some(deg) = remaining_in.get_mut(&succ) {
+                            *deg = deg.saturating_sub(1);
+                            if *deg == 0 {
+                                next_layer.push(succ);
+                            }
                         }
                     }
                 }
             }
+            next_layer.sort();
+            next_layer.dedup();
+            current_layer = next_layer;
         }
-        next_layer.sort();
-        next_layer.dedup();
-        current_layer = next_layer;
+
+        Ok(Self { graph_name, nodes, edge_count, node_ids, successors, predecessors, entry_nodes, exit_nodes, phases })
     }
 
-    // Critical path (longest path)
-    let mut dist: HashMap<u64, u64> = HashMap::new();
-    let mut prev: HashMap<u64, u64> = HashMap::new();
-    for phase in &phases {
-        for &nid in phase {
-            let lat = node_latency_ms(nid);
-            let max_pred = predecessors.get(&nid)
-                .and_then(|preds| preds.iter().filter_map(|&p| dist.get(&p)).max().copied())
-                .unwrap_or(0);
-            dist.insert(nid, max_pred + lat);
-            if let Some(preds) = predecessors.get(&nid)
-                && let Some(&best) = preds.iter().max_by_key(|&&p| dist.get(&p).unwrap_or(&0))
-            {
-                prev.insert(nid, best);
+    fn node_by_id(&self, id: u64) -> Option<&serde_json::Value> {
+        self.nodes.iter()
+            .find(|n| n.get("id").and_then(serde_json::Value::as_u64) == Some(id))
+    }
+
+    fn node_op(&self, id: u64) -> &str {
+        self.node_by_id(id)
+            .and_then(|n| n.get("op").and_then(serde_json::Value::as_str))
+            .unwrap_or("?")
+    }
+
+    fn node_name(&self, id: u64) -> &str {
+        self.node_by_id(id)
+            .and_then(|n| n.get("name").and_then(serde_json::Value::as_str))
+            .unwrap_or("?")
+    }
+
+    fn node_latency_ms(&self, id: u64) -> u64 {
+        op_latency_ms(self.node_op(id))
+    }
+
+    fn max_parallelism(&self) -> usize {
+        self.phases.iter().map(|p| p.len()).max().unwrap_or(1)
+    }
+
+    fn parallel_ms(&self) -> u64 {
+        self.phases.iter()
+            .map(|layer| layer.iter().map(|&id| self.node_latency_ms(id)).max().unwrap_or(0))
+            .sum()
+    }
+
+    fn sequential_ms(&self) -> u64 {
+        self.node_ids.iter().map(|&id| self.node_latency_ms(id)).sum()
+    }
+
+    fn speedup(&self) -> f64 {
+        let par = self.parallel_ms();
+        if par > 0 { self.sequential_ms() as f64 / par as f64 } else { 1.0 }
+    }
+
+    fn critical_path(&self) -> (Vec<u64>, u64) {
+        let mut dist: HashMap<u64, u64> = HashMap::new();
+        let mut prev: HashMap<u64, u64> = HashMap::new();
+        for phase in &self.phases {
+            for &nid in phase {
+                let lat = self.node_latency_ms(nid);
+                let max_pred = self.predecessors.get(&nid)
+                    .and_then(|preds| preds.iter().filter_map(|&p| dist.get(&p)).max().copied())
+                    .unwrap_or(0);
+                dist.insert(nid, max_pred + lat);
+                if let Some(preds) = self.predecessors.get(&nid)
+                    && let Some(&best) = preds.iter().max_by_key(|&&p| dist.get(&p).unwrap_or(&0))
+                {
+                    prev.insert(nid, best);
+                }
             }
         }
-    }
 
-    let critical_end = dist.iter().max_by_key(|&(_, &d)| d).map(|(&id, _)| id);
-    let mut critical_path = Vec::new();
-    if let Some(mut node) = critical_end {
-        critical_path.push(node);
-        while let Some(&p) = prev.get(&node) {
-            critical_path.push(p);
-            node = p;
+        let critical_end = dist.iter().max_by_key(|&(_, &d)| d).map(|(&id, _)| id);
+        let mut path = Vec::new();
+        if let Some(mut node) = critical_end {
+            path.push(node);
+            while let Some(&p) = prev.get(&node) {
+                path.push(p);
+                node = p;
+            }
+            path.reverse();
         }
-        critical_path.reverse();
+        let ms = path.iter().map(|&id| self.node_latency_ms(id)).sum();
+        (path, ms)
     }
+}
 
-    let critical_ms: u64 = critical_path.iter().map(|&id| node_latency_ms(id)).sum();
-    let sequential_ms: u64 = node_ids.iter().map(|&id| node_latency_ms(id)).sum();
-    let parallel_ms: u64 = phases.iter()
-        .map(|layer| layer.iter().map(|&id| node_latency_ms(id)).max().unwrap_or(0))
-        .sum();
-    let max_parallelism = phases.iter().map(|p| p.len()).max().unwrap_or(1);
-    let speedup = if parallel_ms > 0 { sequential_ms as f64 / parallel_ms as f64 } else { 1.0 };
+fn analyze_command(input: PathBuf, json_output: bool) -> Result<()> {
+    let content = std::fs::read_to_string(&input)
+        .map_err(|e| anyhow::anyhow!("Failed to read {}: {e}", input.display()))?;
+    let raw: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| anyhow::anyhow!("Invalid JSON in {}: {e}", input.display()))?;
+
+    let ga = GraphAnalysis::from_raw(&raw)?;
+    let (critical_path, critical_ms) = ga.critical_path();
+    let sequential_ms = ga.sequential_ms();
+    let parallel_ms = ga.parallel_ms();
+    let max_parallelism = ga.max_parallelism();
+    let speedup = ga.speedup();
 
     // Build suggestions (used by both JSON and human-readable output)
     let mut suggestions: Vec<String> = Vec::new();
     if max_parallelism > 1 {
-        let parallel_phases: Vec<usize> = phases.iter().enumerate()
+        let parallel_phases: Vec<usize> = ga.phases.iter().enumerate()
             .filter(|(_, p)| p.len() > 1)
             .map(|(i, _)| i + 1)
             .collect();
@@ -1437,19 +1500,19 @@ fn analyze_command(input: PathBuf, json_output: bool) -> Result<()> {
         ));
     }
     if critical_path.len() >= 3
-        && let Some(&bn) = critical_path.iter().max_by_key(|&&id| node_latency_ms(id))
+        && let Some(&bn) = critical_path.iter().max_by_key(|&&id| ga.node_latency_ms(id))
     {
         suggestions.push(format!(
             "Critical path bottleneck: node {} ('{}', op={})",
-            bn, node_name(bn), node_op(bn)
+            bn, ga.node_name(bn), ga.node_op(bn)
         ));
     }
 
     if json_output {
-        let phase_json: Vec<serde_json::Value> = phases.iter().enumerate().map(|(i, layer)| {
-            let max_lat = layer.iter().map(|&id| node_latency_ms(id)).max().unwrap_or(0);
+        let phase_json: Vec<serde_json::Value> = ga.phases.iter().enumerate().map(|(i, layer)| {
+            let max_lat = layer.iter().map(|&id| ga.node_latency_ms(id)).max().unwrap_or(0);
             let node_details: Vec<serde_json::Value> = layer.iter().map(|&id| {
-                serde_json::json!({"id": id, "name": node_name(id), "op": node_op(id), "latency_ms": node_latency_ms(id)})
+                serde_json::json!({"id": id, "name": ga.node_name(id), "op": ga.node_op(id), "latency_ms": ga.node_latency_ms(id)})
             }).collect();
             serde_json::json!({
                 "phase": i + 1,
@@ -1462,12 +1525,12 @@ fn analyze_command(input: PathBuf, json_output: bool) -> Result<()> {
 
         let result = serde_json::json!({
             "file": input.display().to_string(),
-            "graph_name": graph_name,
-            "node_count": nodes.len(),
-            "edge_count": edges.len(),
-            "entry_nodes": entry_nodes,
-            "exit_nodes": exit_nodes,
-            "depth": phases.len(),
+            "graph_name": ga.graph_name,
+            "node_count": ga.nodes.len(),
+            "edge_count": ga.edge_count,
+            "entry_nodes": ga.entry_nodes,
+            "exit_nodes": ga.exit_nodes,
+            "depth": ga.phases.len(),
             "max_parallelism": max_parallelism,
             "execution_phases": phase_json,
             "critical_path": {
@@ -1484,14 +1547,14 @@ fn analyze_command(input: PathBuf, json_output: bool) -> Result<()> {
         });
         println!("{}", serde_json::to_string_pretty(&result).unwrap());
     } else {
-        print_section_header(&format!("Analysis: {graph_name}"));
+        print_section_header(&format!("Analysis: {}", ga.graph_name));
         println!(
             "  {} nodes, {} edges, {} phases, max parallelism {}",
-            nodes.len(), edges.len(), phases.len(), max_parallelism
+            ga.nodes.len(), ga.edge_count, ga.phases.len(), max_parallelism
         );
         println!();
 
-        for (i, layer) in phases.iter().enumerate() {
+        for (i, layer) in ga.phases.iter().enumerate() {
             let tag = if layer.len() > 1 {
                 format!("({}x parallel)", layer.len()).green().to_string()
             } else {
@@ -1502,9 +1565,9 @@ fn analyze_command(input: PathBuf, json_output: bool) -> Result<()> {
                 println!(
                     "    {} {} {} [{}ms]",
                     format!("#{id}").dimmed(),
-                    node_name(id).bold(),
-                    node_op(id).cyan(),
-                    node_latency_ms(id)
+                    ga.node_name(id).bold(),
+                    ga.node_op(id).cyan(),
+                    ga.node_latency_ms(id)
                 );
             }
         }
@@ -1529,153 +1592,21 @@ fn analyze_command(input: PathBuf, json_output: bool) -> Result<()> {
 }
 
 fn explain_command(file: PathBuf, json_output: bool) -> Result<()> {
-    use apxm_core::types::{AIS_OPERATIONS, OperationCategory, OperationLatency};
-
-    fn category_str(cat: OperationCategory) -> &'static str {
-        match cat {
-            OperationCategory::Metadata => "metadata",
-            OperationCategory::Memory => "memory",
-            OperationCategory::Reasoning => "reasoning",
-            OperationCategory::Tools => "tools",
-            OperationCategory::ControlFlow => "control_flow",
-            OperationCategory::Synchronization => "synchronization",
-            OperationCategory::ErrorHandling => "error_handling",
-            OperationCategory::Communication => "communication",
-            OperationCategory::Internal => "internal",
-            OperationCategory::Coordination => "coordination",
-            OperationCategory::Identity => "identity",
-        }
-    }
-
-    fn lat_ms(lat: OperationLatency) -> u64 {
-        match lat {
-            OperationLatency::None => 10,
-            OperationLatency::Low => 100,
-            OperationLatency::Medium => 1000,
-            OperationLatency::High => 5000,
-        }
-    }
-
-    // Parse graph JSON
     let content = std::fs::read_to_string(&file)
         .map_err(|e| anyhow::anyhow!("Failed to read {}: {e}", file.display()))?;
-
     let raw: serde_json::Value = serde_json::from_str(&content)
         .map_err(|e| anyhow::anyhow!("Invalid JSON in {}: {e}", file.display()))?;
 
-    let graph_name = raw
-        .get("name")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("unnamed");
-    let nodes = raw
-        .get("nodes")
-        .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| anyhow::anyhow!("graph has no nodes array"))?;
-    let edges = raw.get("edges").and_then(serde_json::Value::as_array);
-    let empty_edges = vec![];
-    let edges = edges.unwrap_or(&empty_edges);
-
-    // Build node maps
-    let node_ids: HashSet<u64> = nodes
-        .iter()
-        .filter_map(|n| n.get("id").and_then(serde_json::Value::as_u64))
-        .collect();
-
-    let node_by_id = |id: u64| -> Option<&serde_json::Value> {
-        nodes
-            .iter()
-            .find(|n| n.get("id").and_then(serde_json::Value::as_u64) == Some(id))
-    };
-
-    let node_op = |id: u64| -> &str {
-        node_by_id(id)
-            .and_then(|n| n.get("op").and_then(serde_json::Value::as_str))
-            .unwrap_or("?")
-    };
-
-    let node_name = |id: u64| -> &str {
-        node_by_id(id)
-            .and_then(|n| n.get("name").and_then(serde_json::Value::as_str))
-            .unwrap_or("?")
-    };
-
-    let find_spec = |op: &str| -> Option<&'static apxm_core::types::OperationSpec> {
-        AIS_OPERATIONS
-            .iter()
-            .find(|s| s.op_type.to_string() == op)
-    };
-
-    let node_latency_ms = |id: u64| -> u64 {
-        find_spec(node_op(id)).map_or(100, |s| lat_ms(s.latency))
-    };
-
-    // Build adjacency
-    let mut successors: HashMap<u64, Vec<u64>> = HashMap::new();
-    let mut predecessors: HashMap<u64, Vec<u64>> = HashMap::new();
-    let mut in_degree: HashMap<u64, usize> = node_ids.iter().map(|&id| (id, 0)).collect();
-
-    for edge in edges {
-        let from = edge
-            .get("from")
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(0);
-        let to = edge
-            .get("to")
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(0);
-        successors.entry(from).or_default().push(to);
-        predecessors.entry(to).or_default().push(from);
-        *in_degree.entry(to).or_insert(0) += 1;
-    }
-
-    // BFS phase layering
-    let mut phases: Vec<Vec<u64>> = Vec::new();
-    let mut remaining_in: HashMap<u64, usize> = in_degree.clone();
-    let mut current_layer: Vec<u64> = in_degree
-        .iter()
-        .filter_map(|(&id, &deg)| if deg == 0 { Some(id) } else { None })
-        .collect();
-    current_layer.sort();
-
-    while !current_layer.is_empty() {
-        phases.push(current_layer.clone());
-        let mut next_layer = Vec::new();
-        for &nid in &current_layer {
-            if let Some(succs) = successors.get(&nid) {
-                for &succ in succs {
-                    if let Some(deg) = remaining_in.get_mut(&succ) {
-                        *deg = deg.saturating_sub(1);
-                        if *deg == 0 {
-                            next_layer.push(succ);
-                        }
-                    }
-                }
-            }
-        }
-        next_layer.sort();
-        next_layer.dedup();
-        current_layer = next_layer;
-    }
-
-    // Compute summary stats
-    let critical_ms: u64 = phases
-        .iter()
-        .map(|layer| {
-            layer
-                .iter()
-                .map(|&id| node_latency_ms(id))
-                .max()
-                .unwrap_or(0)
-        })
-        .sum();
-    let max_parallelism = phases.iter().map(|p| p.len()).max().unwrap_or(1);
-    let depth = phases.len();
+    let ga = GraphAnalysis::from_raw(&raw)?;
+    let critical_ms = ga.parallel_ms();
+    let max_parallelism = ga.max_parallelism();
+    let depth = ga.phases.len();
     let parallelizable = max_parallelism > 1;
 
     // Helper: get notable attributes from a node for display
     let notable_attrs = |id: u64| -> Vec<(String, String)> {
         let mut attrs = Vec::new();
-        if let Some(node) = node_by_id(id)
+        if let Some(node) = ga.node_by_id(id)
             && let Some(a) = node
                 .get("attributes")
                 .and_then(serde_json::Value::as_object)
@@ -1717,15 +1648,15 @@ fn explain_command(file: PathBuf, json_output: bool) -> Result<()> {
     };
 
     if json_output {
-        let phase_json: Vec<serde_json::Value> = phases
+        let phase_json: Vec<serde_json::Value> = ga.phases
             .iter()
             .enumerate()
             .map(|(i, layer)| {
                 let node_details: Vec<serde_json::Value> = layer
                     .iter()
                     .map(|&id| {
-                        let op = node_op(id);
-                        let spec = find_spec(op);
+                        let op = ga.node_op(id);
+                        let spec = find_op_spec(op);
                         let required_attrs: Vec<String> = spec
                             .map(|s| {
                                 s.fields
@@ -1736,18 +1667,18 @@ fn explain_command(file: PathBuf, json_output: bool) -> Result<()> {
                             })
                             .unwrap_or_default();
                         let feeds: Vec<u64> =
-                            successors.get(&id).cloned().unwrap_or_default();
+                            ga.successors.get(&id).cloned().unwrap_or_default();
                         let depends_on: Vec<u64> =
-                            predecessors.get(&id).cloned().unwrap_or_default();
+                            ga.predecessors.get(&id).cloned().unwrap_or_default();
 
                         serde_json::json!({
                             "id": id,
-                            "name": node_name(id),
+                            "name": ga.node_name(id),
                             "op": op,
                             "category": spec.map(|s| category_str(s.category)).unwrap_or("unknown"),
                             "description": spec.map(|s| s.description).unwrap_or(""),
                             "latency": spec.map(|s| s.latency.as_str()).unwrap_or("unknown"),
-                            "latency_ms": node_latency_ms(id),
+                            "latency_ms": ga.node_latency_ms(id),
                             "produces_output": spec.map(|s| s.produces_output).unwrap_or(false),
                             "required_attributes": required_attrs,
                             "feeds": feeds,
@@ -1765,9 +1696,9 @@ fn explain_command(file: PathBuf, json_output: bool) -> Result<()> {
 
         let result = serde_json::json!({
             "file": file.display().to_string(),
-            "graph_name": graph_name,
-            "node_count": nodes.len(),
-            "edge_count": edges.len(),
+            "graph_name": ga.graph_name,
+            "node_count": ga.nodes.len(),
+            "edge_count": ga.edge_count,
             "depth": depth,
             "execution_flow": phase_json,
             "summary": {
@@ -1782,19 +1713,19 @@ fn explain_command(file: PathBuf, json_output: bool) -> Result<()> {
         println!(
             "  {} {}",
             "Graph:".bold().cyan(),
-            graph_name.bold(),
+            ga.graph_name.bold(),
         );
         println!(
             "  Nodes: {} | Edges: {} | Depth: {}",
-            nodes.len(),
-            edges.len(),
+            ga.nodes.len(),
+            ga.edge_count,
             depth,
         );
         println!();
         println!("  {}", "Execution Flow:".bold().cyan());
         println!("  {}", "\u{2550}".repeat(15).dimmed());
 
-        for (i, layer) in phases.iter().enumerate() {
+        for (i, layer) in ga.phases.iter().enumerate() {
             println!();
             if layer.len() > 1 {
                 println!(
@@ -1807,19 +1738,19 @@ fn explain_command(file: PathBuf, json_output: bool) -> Result<()> {
             }
 
             for &id in layer {
-                let op = node_op(id);
-                let spec = find_spec(op);
+                let op = ga.node_op(id);
+                let spec = find_op_spec(op);
                 let cat = spec
                     .map(|s| category_str(s.category))
                     .unwrap_or("unknown");
-                let lat_val = node_latency_ms(id);
+                let lat_val = ga.node_latency_ms(id);
                 let desc = spec.map(|s| s.description).unwrap_or("");
 
                 println!();
                 println!(
                     "    {} \"{}\" {} {} ({}, ~{}ms)",
                     format!("[{}]", id).dimmed(),
-                    node_name(id).bold(),
+                    ga.node_name(id).bold(),
                     "\u{2014}".dimmed(),
                     op.cyan().bold(),
                     cat,
@@ -1835,8 +1766,8 @@ fn explain_command(file: PathBuf, json_output: bool) -> Result<()> {
                 }
 
                 // Dependency info
-                let deps: Vec<u64> = predecessors.get(&id).cloned().unwrap_or_default();
-                let feeds: Vec<u64> = successors.get(&id).cloned().unwrap_or_default();
+                let deps: Vec<u64> = ga.predecessors.get(&id).cloned().unwrap_or_default();
+                let feeds: Vec<u64> = ga.successors.get(&id).cloned().unwrap_or_default();
                 if !deps.is_empty() {
                     let dep_strs: Vec<String> =
                         deps.iter().map(|d| d.to_string()).collect();
@@ -1866,7 +1797,7 @@ fn explain_command(file: PathBuf, json_output: bool) -> Result<()> {
             if parallelizable {
                 format!(
                     " (phase {})",
-                    phases
+                    ga.phases
                         .iter()
                         .enumerate()
                         .filter(|(_, p)| p.len() > 1)
@@ -2093,22 +2024,6 @@ fn load_user_templates() -> Vec<UserTemplateEntry> {
 
 fn ops_command(action: OpsAction, json_output: bool) -> Result<()> {
     use apxm_core::types::{AIS_OPERATIONS, OperationCategory};
-
-    fn category_str(cat: OperationCategory) -> &'static str {
-        match cat {
-            OperationCategory::Metadata => "metadata",
-            OperationCategory::Memory => "memory",
-            OperationCategory::Reasoning => "reasoning",
-            OperationCategory::Tools => "tools",
-            OperationCategory::ControlFlow => "control_flow",
-            OperationCategory::Synchronization => "synchronization",
-            OperationCategory::ErrorHandling => "error_handling",
-            OperationCategory::Communication => "communication",
-            OperationCategory::Internal => "internal",
-            OperationCategory::Coordination => "coordination",
-            OperationCategory::Identity => "identity",
-        }
-    }
 
     fn parse_category(s: &str) -> Option<OperationCategory> {
         match s.to_lowercase().as_str() {

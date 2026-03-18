@@ -40,13 +40,13 @@ These items live in `apxm-backends`, `apxm-tools`, and cross-crate concerns not 
 
 ### P1: Needs enhancement
 
-- [ ] **Streaming + tool interleaving** -- Even when streaming is added, the current architecture processes tool calls only after a complete LLM response. Need mid-stream tool dispatch (process tool calls as they arrive, not after full response). File: `crates/apxm-runtime/src/executor/handlers/llm.rs`
-- [ ] **CancellationToken** -- No cancellation token hierarchy on `ExecutionContext`. No way to cancel in-flight operations or propagate timeouts through the scheduler. Zero references to CancellationToken in the codebase. File: `crates/apxm-runtime/src/executor/context.rs`
-- [ ] **Event emission** -- Only 3 event types (`LlmToken`, `ToolStart`, `ToolEnd`). Substrate analysis says ~15 are needed (operation start/end, planning events, checkpoint events, memory events, timing). File: `crates/apxm-runtime/src/executor/events.rs` (31 lines total)
+- [x] **Streaming + tool interleaving** -- Resolved: `execute_llm_request_streaming()` now accumulates ToolCallStart/ToolCallDelta chunks via `PendingToolCall` state machine. Accumulated tool calls are finalized and merged into the LLMResponse before returning to the tool loop. 4 unit tests. File: `crates/apxm-runtime/src/executor/handlers/mod.rs`
+- [x] **CancellationToken** -- Resolved: Hierarchical `CancellationToken` with parent/child, `cancel_after(Duration)`, 11 unit tests. Integrated into `ExecutionContext` (context.rs:70) and child context creation (context.rs:216). Dispatcher checks cancellation before each op dispatch. File: `crates/apxm-runtime/src/executor/cancellation.rs` (204 lines)
+- [x] **Event emission** -- Resolved: ~15 event types defined in events.rs (164 lines) with full trait. OperationStart/End wired in dispatcher.rs, memory events in qmem.rs/umem.rs, planning events in plan.rs, token usage in llm.rs. All emitters have default no-op impls. File: `crates/apxm-runtime/src/executor/events.rs`
 - [ ] **Permission/approval flow** -- `InterceptDecision` exists but there is no async user interaction (no approval channel, no session caching, no multi-level guardian rules like Codex's ApprovalStore). File: `crates/apxm-runtime/src/capability/interceptor.rs`
 - [ ] **Session/checkpoint continuity** -- `execution_id` and `session_id` exist but no file-level checkpoints, no resume-from-session-id for process restarts. ~~AamCheckpoint excludes capabilities~~ (fixed in `f7a3c8c`: capabilities now included in checkpoint snapshot/restore). File: `crates/apxm-runtime/src/aam/mod.rs`
-- [ ] **Messages as structured arrays** -- `LLMRequest` uses a single `prompt: String` field. Production agents need `messages: Vec<Message>` with roles, tool_call_id, and content parts. File: `crates/apxm-backends/src/llm/backends/request.rs`
-- [ ] **Configurable max_tool_iterations** -- Hardcoded `MAX_TOOL_ITERATIONS = 10` in llm.rs. Should be configurable per-node via attributes (Codex needs 25+). File: `crates/apxm-runtime/src/executor/handlers/llm.rs` (line 73)
+- [x] **Messages as structured arrays** -- Resolved: `LLMRequest` has `messages: Vec<Message>` with `ContentPart` variants (Text, Image, ToolCall). Full API: `from_messages()`, `with_messages()`, `add_message()`, `has_messages()`, `resolved_messages()`. File: `crates/apxm-backends/src/llm/backends/request.rs` (653 lines)
+- [x] **Configurable max_tool_iterations** -- Resolved: `DEFAULT_MAX_TOOL_ITERATIONS = 10` is a fallback; per-node override via `graph_attrs::MAX_TOOL_ITERATIONS` attribute in llm.rs:800-803. File: `crates/apxm-runtime/src/executor/handlers/llm.rs` (line 73)
 
 ---
 
@@ -56,7 +56,7 @@ Items here are architectural and span multiple crates. Per-handler and per-sched
 
 ### P1: Missing feature
 
-- [ ] **No goal satisfaction detection** -- No mechanism to detect when a goal should be marked complete. No `CompletionPolicy` (AllChildren, AnyChild, Manual, Condition). Relates to runtime TODO Gap 4 (flat goals) but is a distinct missing feature. File: `crates/apxm-runtime/src/aam/mod.rs`
+- [x] **No goal satisfaction detection** -- Resolved: `CompletionPolicy` enum (AllChildren, AnyChild, Manual), `GoalTree` with parent-child index, `propagate_completion()` method on `Aam`. `add_child_goal()` registers parent-child relationships. 3 unit tests. File: `crates/apxm-runtime/src/aam/mod.rs`
 
 ### P2: Hierarchical AAM (from gap-analysis.md vision)
 
@@ -70,12 +70,12 @@ Items here are architectural and span multiple crates. Per-handler and per-sched
 | Category | Total | Done | Open P0 | Open P1 | Open P2 |
 |----------|-------|------|---------|---------|---------|
 | AIS Spec vs Enum Drift | 4 | 0 | 0 | 0 | 4 |
-| Substrate Gaps | 12 | 5 | 1 | 7 | 0 |
-| Cross-Cutting AAM | 3 | 0 | 0 | 1 | 2 |
-| **This file** | **19** | **5** | **1** | **8** | **6** |
-| Runtime TODO (separate) | 13 | 4 | 0 | 5 | 4 |
-| Compiler TODO (separate) | 15 | 7 | 1 | 3 | 4 |
-| **Grand Total** | **47** | **16** | **2** | **16** | **14** |
+| Substrate Gaps | 12 | 10 | 1 | 2 | 0 |
+| Cross-Cutting AAM | 3 | 1 | 0 | 0 | 2 |
+| **This file** | **19** | **11** | **1** | **2** | **6** |
+| Runtime TODO (separate) | 13 | 6 | 0 | 3 | 4 |
+| Compiler TODO (separate) | 15 | 8 | 0 | 3 | 4 |
+| **Grand Total** | **47** | **25** | **1** | **8** | **14** |
 
 ### Key metric: AAM transition coverage
 

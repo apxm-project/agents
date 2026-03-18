@@ -111,27 +111,11 @@ impl ExecutionContext {
         dag_splicer: Arc<dyn DagSplicer>,
         flow_registry: Arc<FlowRegistry>,
     ) -> Self {
-        Self {
-            execution_id: uuid::Uuid::now_v7().to_string(),
-            session_id: None,
-            memory,
-            llm_registry,
-            capability_system,
-            aam,
-            inner_plan_linker,
-            dag_splicer,
-            flow_registry,
-            current_agent: None,
-            instruction_config: InstructionConfig::default(),
-            start_time: std::time::Instant::now(),
-            metadata: std::collections::HashMap::new(),
-            token_budget: None,
-            consumed_tokens: Arc::new(std::sync::atomic::AtomicU64::new(0)),
-            event_emitter: None,
-            token_accountant: Arc::new(TokenAccountant::new()),
-            response_cache: Arc::new(ResponseCache::new()),
-            cancellation_token: CancellationToken::new(),
-        }
+        let mut ctx = Self::new(memory, llm_registry, capability_system, aam);
+        ctx.inner_plan_linker = inner_plan_linker;
+        ctx.dag_splicer = dag_splicer;
+        ctx.flow_registry = flow_registry;
+        ctx
     }
 
     /// Get a reference to the memory subsystem
@@ -194,27 +178,7 @@ impl ExecutionContext {
 
     /// Create a child context with new execution ID
     pub fn child(&self) -> Self {
-        Self {
-            execution_id: uuid::Uuid::now_v7().to_string(),
-            session_id: self.session_id.clone(),
-            memory: Arc::clone(&self.memory),
-            llm_registry: Arc::clone(&self.llm_registry),
-            capability_system: Arc::clone(&self.capability_system),
-            aam: self.aam.clone(),
-            inner_plan_linker: Arc::clone(&self.inner_plan_linker),
-            dag_splicer: Arc::clone(&self.dag_splicer),
-            flow_registry: Arc::clone(&self.flow_registry),
-            current_agent: self.current_agent.as_ref().map(Arc::clone),
-            instruction_config: self.instruction_config.clone(),
-            start_time: std::time::Instant::now(),
-            metadata: self.metadata.clone(),
-            token_budget: self.token_budget,
-            consumed_tokens: Arc::clone(&self.consumed_tokens),
-            event_emitter: self.event_emitter.as_ref().map(Arc::clone),
-            token_accountant: Arc::clone(&self.token_accountant),
-            response_cache: Arc::clone(&self.response_cache),
-            cancellation_token: self.cancellation_token.child(),
-        }
+        self.child_with_aam(self.aam.clone())
     }
 
     /// Create a child context with a scoped AAM.
@@ -308,13 +272,17 @@ impl ExecutionContext {
             }
         }
 
+        self.child_with_aam(child_aam)
+    }
+
+    fn child_with_aam(&self, aam: Aam) -> Self {
         Self {
             execution_id: uuid::Uuid::now_v7().to_string(),
             session_id: self.session_id.clone(),
             memory: Arc::clone(&self.memory),
             llm_registry: Arc::clone(&self.llm_registry),
             capability_system: Arc::clone(&self.capability_system),
-            aam: child_aam,
+            aam,
             inner_plan_linker: Arc::clone(&self.inner_plan_linker),
             dag_splicer: Arc::clone(&self.dag_splicer),
             flow_registry: Arc::clone(&self.flow_registry),

@@ -663,4 +663,119 @@ def AIS_CommunicateOp : AIS_Op<"communicate"> {
   let hasVerifier = 1;
 }
 
+//===----------------------------------------------------------------------===//
+// Phase 1 ISA Extensions
+//===----------------------------------------------------------------------===//
+
+def AIS_UpdateGoalOp : AIS_Op<"update_goal",
+    [MemoryEffects<[MemWrite<AIS_GoalResource>]>]> {
+  let summary = "Update goal status or priority";
+  let description = [{
+    Updates an existing goal's status, priority, or description.
+    Can also create new goals when goal_id is "new".
+
+    Example:
+    ```mlir
+    ais.update_goal "goal-uuid" (%ctx : !ais.token)
+    ```
+  }];
+  let arguments = (ins
+    StrAttr:$goal_id,
+    Variadic<AIS_AnyTokenHandleOrGoal>:$context
+  );
+  let results = (outs AIS_TokenType:$result);
+  let assemblyFormat = [{
+    $goal_id (`(` $context^ `:` type($context) `)`)? attr-dict `:` type($result)
+  }];
+  let hasVerifier = 1;
+}
+
+def AIS_GuardOp : AIS_Op<"guard",
+    [MemoryEffects<[MemRead<AIS_BeliefResource>]>]> {
+  let summary = "Conditional guard on belief state";
+  let description = [{
+    Evaluates a condition against current beliefs. If the condition is met,
+    passes through the input; otherwise blocks or returns a default value.
+
+    Example:
+    ```mlir
+    %result = ais.guard "user_authenticated" (%input : !ais.token) : !ais.token
+    ```
+  }];
+  let arguments = (ins
+    StrAttr:$condition,
+    Optional<AIS_AnyTokenHandleOrGoal>:$input
+  );
+  let results = (outs AIS_TokenType:$result);
+  let assemblyFormat = [{
+    $condition (`(` $input^ `:` type($input) `)`)? attr-dict `:` type($result)
+  }];
+  let hasVerifier = 1;
+}
+
+def AIS_ClaimOp : AIS_Op<"claim", [Pure]> {
+  let summary = "Claim exclusive access to a resource queue";
+  let description = [{
+    Attempts to claim exclusive access to a named resource queue with an
+    optional lease duration. Used for coordination between agents.
+
+    Example:
+    ```mlir
+    %lease = ais.claim "work_queue" : !ais.token
+    %lease = ais.claim "work_queue" {lease_ms = 5000 : i64} : !ais.token
+    ```
+  }];
+  let arguments = (ins
+    StrAttr:$queue,
+    OptionalAttr<I64Attr>:$lease_ms
+  );
+  let results = (outs AIS_TokenType:$result);
+  let assemblyFormat = [{
+    $queue attr-dict `:` type($result)
+  }];
+  let hasVerifier = 1;
+}
+
+def AIS_PauseOp : AIS_Op<"pause",
+    [MemoryEffects<[MemWrite<AIS_EpisodicResource>]>]> {
+  let summary = "Pause execution with checkpoint";
+  let description = [{
+    Pauses execution and saves the current state as a checkpoint.
+    Can be resumed later with the Resume operation.
+
+    Example:
+    ```mlir
+    ais.pause "Waiting for user input" [%ctx : !ais.token]
+    ```
+  }];
+  let arguments = (ins
+    StrAttr:$message,
+    Variadic<AIS_AnyTokenHandleOrGoal>:$context
+  );
+  let assemblyFormat = [{
+    $message (`[` $context^ `:` type($context) `]`)? attr-dict
+  }];
+}
+
+def AIS_ResumeOp : AIS_Op<"resume",
+    [MemoryEffects<[MemRead<AIS_EpisodicResource>]>]> {
+  let summary = "Resume from a checkpoint";
+  let description = [{
+    Resumes execution from a previously saved checkpoint.
+
+    Example:
+    ```mlir
+    %state = ais.resume "checkpoint-123" : !ais.token
+    ```
+  }];
+  let arguments = (ins
+    StrAttr:$checkpoint
+  );
+  let results = (outs AIS_TokenType:$result);
+  let assemblyFormat = [{
+    $checkpoint attr-dict `:` type($result)
+  }];
+  let hasVerifier = 1;
+}
+
 #endif // APXM_AIS_OPS

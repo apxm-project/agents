@@ -4,6 +4,7 @@ use super::{ExecutionContext, Node, Result, Value, get_optional_string_attribute
 use crate::sandbox::policy::SandboxPolicy;
 use crate::sandbox::process::ProcessSandbox;
 use apxm_core::constants::graph::attrs as graph_attrs;
+use apxm_core::constants::runtime::belief_keys;
 
 pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -> Result<Value> {
     // Extract code from 'code' attribute, or fall back to first input
@@ -30,7 +31,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     let transition_label =
         crate::aam::TransitionLabel::operation(node.id, format!("{:?}", node.op_type));
     ctx.aam.set_belief(
-        format!("exc:{}:started", node.id),
+        format!("{}{}:started", belief_keys::EXC_PREFIX, node.id),
         Value::String(format!("Executing {} script", interpreter)),
         transition_label.clone(),
     );
@@ -44,7 +45,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
 
     if result.timed_out {
         ctx.aam.set_belief(
-            format!("exc:{}:timed_out", node.id),
+            format!("{}{}:timed_out", belief_keys::EXC_PREFIX, node.id),
             Value::Bool(true),
             transition_label,
         );
@@ -64,7 +65,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     };
 
     ctx.aam.set_belief(
-        format!("exc:{}:completed", node.id),
+        format!("{}{}:completed", belief_keys::EXC_PREFIX, node.id),
         Value::String(output.clone()),
         transition_label,
     );
