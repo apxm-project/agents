@@ -11,6 +11,154 @@ use std::{
 };
 use tokio::io::AsyncWriteExt;
 
+/// Atomic write with backup: writes to a temp file, then renames.
+/// If the target file already exists, a backup is created and restored on failure.
+async fn atomic_write_with_backup(path: &Path, content: &str) -> std::io::Result<()> {
+    let temp_name = format!("{}.apxm_tmp_{}", path.display(), uuid::Uuid::now_v7());
+    let temp_path = PathBuf::from(&temp_name);
+
+    // Create backup if file exists
+    let backup_path = if path.exists() {
+        let backup = PathBuf::from(format!(
+            "{}.apxm_bak_{}",
+            path.display(),
+            uuid::Uuid::now_v7()
+        ));
+        tokio::fs::copy(path, &backup).await?;
+        Some(backup)
+    } else {
+        None
+    };
+
+    // Write content to temp file
+    tokio::fs::write(&temp_path, content).await?;
+
+    // Atomic rename
+    match tokio::fs::rename(&temp_path, path).await {
+        Ok(()) => {
+            // Success - clean up backup
+            if let Some(backup) = backup_path {
+                let _ = tokio::fs::remove_file(&backup).await;
+            }
+            Ok(())
+        }
+        Err(e) => {
+            // Failure - restore backup, clean temp
+            if let Some(backup) = &backup_path {
+                let _ = tokio::fs::rename(backup, path).await;
+            }
+            let _ = tokio::fs::remove_file(&temp_path).await;
+            Err(e)
+        }
+    }
+}
+
+/// Multi-file transactional write. All writes succeed or all are rolled back.
+pub struct FileTransaction {
+    pending: Vec<PendingWrite>,
+    backups: Vec<(PathBuf, PathBuf)>,
+}
+
+struct PendingWrite {
+    temp_path: PathBuf,
+    final_path: PathBuf,
+}
+
+impl FileTransaction {
+    pub fn new() -> Self {
+        Self {
+            pending: Vec::new(),
+            backups: Vec::new(),
+        }
+    }
+
+    /// Stage a write. Creates the temp file immediately but doesn't rename.
+    pub async fn add_write(&mut self, path: PathBuf, content: &str) -> std::io::Result<()> {
+        // Create parent dirs if needed
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+
+        let temp_path = PathBuf::from(format!(
+            "{}.apxm_tmp_{}",
+            path.display(),
+            uuid::Uuid::now_v7()
+        ));
+
+        // Write content to temp
+        tokio::fs::write(&temp_path, content).await?;
+
+        // Backup existing file
+        if path.exists() {
+            let backup = PathBuf::from(format!(
+                "{}.apxm_bak_{}",
+                path.display(),
+                uuid::Uuid::now_v7()
+            ));
+            if let Err(e) = tokio::fs::copy(&path, &backup).await {
+                // Clean up the temp file we already wrote
+                let _ = tokio::fs::remove_file(&temp_path).await;
+                return Err(e);
+            }
+            self.backups.push((path.clone(), backup));
+        }
+
+        self.pending.push(PendingWrite {
+            temp_path,
+            final_path: path,
+        });
+        Ok(())
+    }
+
+    /// Commit all staged writes atomically.
+    pub async fn commit(self) -> std::io::Result<()> {
+        // Rename all temps to finals
+        for (i, write) in self.pending.iter().enumerate() {
+            if let Err(e) = tokio::fs::rename(&write.temp_path, &write.final_path).await {
+                // Rollback already-committed writes
+                for committed in &self.pending[..i] {
+                    if let Some((_, backup)) = self
+                        .backups
+                        .iter()
+                        .find(|(orig, _)| orig == &committed.final_path)
+                    {
+                        let _ = tokio::fs::rename(backup, &committed.final_path).await;
+                    } else {
+                        let _ = tokio::fs::remove_file(&committed.final_path).await;
+                    }
+                }
+                // Clean remaining temps
+                for remaining in &self.pending[i..] {
+                    let _ = tokio::fs::remove_file(&remaining.temp_path).await;
+                }
+                // Clean remaining backups
+                for (_, backup) in &self.backups {
+                    let _ = tokio::fs::remove_file(backup).await;
+                }
+                return Err(e);
+            }
+        }
+
+        // Success - clean up all backups
+        for (_, backup) in &self.backups {
+            let _ = tokio::fs::remove_file(backup).await;
+        }
+        Ok(())
+    }
+
+    /// Explicitly rollback all staged writes.
+    pub async fn rollback(self) {
+        // Remove all temp files
+        for write in &self.pending {
+            let _ = tokio::fs::remove_file(&write.temp_path).await;
+        }
+        // Remove all backups
+        for (_, backup) in &self.backups {
+            let _ = tokio::fs::remove_file(backup).await;
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WriteConfig {
     #[serde(default = "default_true")]
@@ -252,7 +400,7 @@ impl CapabilityExecutor for WriteCapability {
                     message: format!("Failed to append file '{}': {error}", path.display()),
                 })?;
         } else {
-            tokio::fs::write(&path, content)
+            atomic_write_with_backup(&path, &content)
                 .await
                 .map_err(|error| RuntimeError::Capability {
                     capability: self.metadata.name.clone(),
@@ -269,5 +417,75 @@ impl CapabilityExecutor for WriteCapability {
 
     fn metadata(&self) -> &CapabilityMetadata {
         &self.metadata
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_atomic_write_creates_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.txt");
+        atomic_write_with_backup(&path, "hello world").await.unwrap();
+        assert_eq!(
+            tokio::fs::read_to_string(&path).await.unwrap(),
+            "hello world"
+        );
+        // No temp or backup files remain
+        let entries: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
+        assert_eq!(entries.len(), 1); // only the target file
+    }
+
+    #[tokio::test]
+    async fn test_atomic_write_overwrites() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.txt");
+        tokio::fs::write(&path, "original").await.unwrap();
+        atomic_write_with_backup(&path, "updated").await.unwrap();
+        assert_eq!(
+            tokio::fs::read_to_string(&path).await.unwrap(),
+            "updated"
+        );
+        // No temp or backup files remain
+        let entries: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
+        assert_eq!(entries.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_file_transaction_commit() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut txn = FileTransaction::new();
+        txn.add_write(dir.path().join("a.txt"), "content A")
+            .await
+            .unwrap();
+        txn.add_write(dir.path().join("b.txt"), "content B")
+            .await
+            .unwrap();
+        txn.commit().await.unwrap();
+        assert_eq!(
+            tokio::fs::read_to_string(dir.path().join("a.txt"))
+                .await
+                .unwrap(),
+            "content A"
+        );
+        assert_eq!(
+            tokio::fs::read_to_string(dir.path().join("b.txt"))
+                .await
+                .unwrap(),
+            "content B"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_file_transaction_rollback() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut txn = FileTransaction::new();
+        txn.add_write(dir.path().join("a.txt"), "content")
+            .await
+            .unwrap();
+        txn.rollback().await;
+        assert!(!dir.path().join("a.txt").exists());
     }
 }

@@ -101,8 +101,6 @@ macro_rules! define_string_id {
 define_id!(NodeIdType, u64, "Unique identifier for a DAG node");
 define_id!(TokenIdType, u64, "Unique identifier for a dataflow token");
 define_id!(OpIdType, u64, "Unique identifier for an operation");
-define_id!(GoalIdType, u64, "Unique identifier for an AAM goal");
-
 define_string_id!(ExecutionId, "Unique identifier for an execution context");
 define_string_id!(SessionId, "Unique identifier for a chat session");
 define_string_id!(TraceId, "Unique identifier for an execution trace");

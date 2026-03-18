@@ -14,20 +14,28 @@
 use crate::types::Value;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use uuid::Uuid;
 
-/// Goal descriptor with priority.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Goal {
-    /// Unique identifier for the goal.
-    pub id: String,
-    /// Description of the goal.
-    pub description: String,
-    /// Priority (higher = more important).
-    pub priority: i32,
-    /// Current status.
-    pub status: GoalStatus,
-    /// Optional parent goal (for hierarchical goals).
-    pub parent_id: Option<String>,
+/// Unique identifier for an AAM goal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct GoalId(Uuid);
+
+impl GoalId {
+    pub fn new() -> Self {
+        GoalId(Uuid::now_v7())
+    }
+}
+
+impl Default for GoalId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Display for GoalId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
 }
 
 /// Status of a goal.
@@ -43,6 +51,21 @@ pub enum GoalStatus {
     Failed,
     /// Goal has been cancelled.
     Cancelled,
+}
+
+/// Goal descriptor with priority.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Goal {
+    /// Unique identifier for the goal.
+    pub id: GoalId,
+    /// Description of the goal.
+    pub description: String,
+    /// Priority (higher = more important).
+    pub priority: u32,
+    /// Current status.
+    pub status: GoalStatus,
+    /// Optional parent goal (for hierarchical goals).
+    pub parent_id: Option<GoalId>,
 }
 
 /// Capability (tool) specification.
@@ -143,17 +166,17 @@ impl Goals {
     }
 
     /// Get a goal by ID.
-    pub fn get(&self, id: &str) -> Option<&Goal> {
+    pub fn get(&self, id: GoalId) -> Option<&Goal> {
         self.goals.iter().find(|g| g.id == id)
     }
 
     /// Get a mutable goal by ID.
-    pub fn get_mut(&mut self, id: &str) -> Option<&mut Goal> {
+    pub fn get_mut(&mut self, id: GoalId) -> Option<&mut Goal> {
         self.goals.iter_mut().find(|g| g.id == id)
     }
 
     /// Update goal status.
-    pub fn set_status(&mut self, id: &str, status: GoalStatus) -> bool {
+    pub fn set_status(&mut self, id: GoalId, status: GoalStatus) -> bool {
         if let Some(goal) = self.get_mut(id) {
             goal.status = status;
             true
@@ -293,14 +316,15 @@ mod tests {
     fn test_goals_priority() {
         let mut goals = Goals::new();
         goals.push(Goal {
-            id: "low".to_string(),
+            id: GoalId::new(),
             description: "Low priority".to_string(),
             priority: 1,
             status: GoalStatus::Pending,
             parent_id: None,
         });
+        let high_id = GoalId::new();
         goals.push(Goal {
-            id: "high".to_string(),
+            id: high_id,
             description: "High priority".to_string(),
             priority: 10,
             status: GoalStatus::Pending,
@@ -308,7 +332,7 @@ mod tests {
         });
 
         // High priority should be first
-        assert_eq!(goals.peek().unwrap().id, "high");
+        assert_eq!(goals.peek().unwrap().id, high_id);
     }
 
     #[test]
@@ -332,7 +356,7 @@ mod tests {
         aam.beliefs
             .set("agent_name", Value::String("TestAgent".to_string()));
         aam.goals.push(Goal {
-            id: "goal1".to_string(),
+            id: GoalId::new(),
             description: "Test goal".to_string(),
             priority: 5,
             status: GoalStatus::Pending,

@@ -405,7 +405,7 @@ pub struct StructuredReasonOutput {
 
     /// New goals to add
     #[serde(default)]
-    pub new_goals: Vec<Goal>,
+    pub new_goals: Vec<LlmGoalOutput>,
 
     /// Optional inner plan emitted by the model
     #[serde(default)]
@@ -416,9 +416,9 @@ pub struct StructuredReasonOutput {
     pub result: Value,
 }
 
-/// Goal definition
+/// Goal definition for LLM structured output deserialization.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Goal {
+pub struct LlmGoalOutput {
     pub description: String,
     #[serde(default = "default_priority")]
     pub priority: u32,

@@ -28,11 +28,13 @@
 //! runtime.llm_registry().set_default("mock").unwrap();
 //! ```
 
-use super::traits::LLMBackend;
+use super::traits::{LLMBackend, StreamChunk};
 use super::{LLMRequest, LLMResponse};
 use apxm_core::types::{FinishReason, ModelCapabilities, ModelInfo, TokenUsage};
 use async_trait::async_trait;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+use tokio_stream::Stream;
 
 /// A recorded LLM call for inspection in tests.
 #[derive(Debug, Clone)]
@@ -261,9 +263,65 @@ impl LLMBackend for MockLLMBackend {
         }])
     }
 
+    fn generate_stream(
+        &self,
+        request: LLMRequest,
+    ) -> Pin<Box<dyn Stream<Item = anyhow::Result<StreamChunk>> + Send + '_>> {
+        // Extract effective prompt (same logic as generate)
+        let effective_prompt = if request.has_messages() {
+            request
+                .resolved_messages()
+                .iter()
+                .map(|m| m.text_content())
+                .collect::<Vec<_>>()
+                .join(" ")
+        } else {
+            request.prompt.clone()
+        };
+
+        // Record the call
+        self.calls.lock().unwrap().push(RecordedCall {
+            prompt: effective_prompt.clone(),
+            system: request.system_prompt.clone(),
+            model: self.model.clone(),
+            temperature: request.temperature as f32,
+        });
+
+        // Failure injection
+        if let Some(ref err) = self.fail_with {
+            let err_msg = err.clone();
+            return Box::pin(tokio_stream::iter(vec![Err(anyhow::anyhow!(
+                "{}",
+                err_msg
+            ))]));
+        }
+
+        let resp = self.select_response(&effective_prompt);
+        let response = LLMResponse::new(
+            resp.content.clone(),
+            self.model.clone(),
+            TokenUsage::new(resp.input_tokens, resp.output_tokens),
+            resp.finish_reason.clone(),
+        );
+
+        // Split content into word-level token chunks
+        let words: Vec<String> = response
+            .content
+            .split_whitespace()
+            .map(|w| format!("{} ", w))
+            .collect();
+        let mut chunks: Vec<anyhow::Result<StreamChunk>> = words
+            .into_iter()
+            .map(|w| Ok(StreamChunk::Token(w)))
+            .collect();
+        chunks.push(Ok(StreamChunk::Done(response)));
+
+        Box::pin(tokio_stream::iter(chunks))
+    }
+
     fn capabilities(&self) -> ModelCapabilities {
         ModelCapabilities {
-            streaming: false,
+            streaming: true,
             vision: false,
             functions: true,
             batch: false,
@@ -342,6 +400,37 @@ mod tests {
     async fn test_health_check_fails_when_configured() {
         let mock = MockLLMBackend::new().always_fail("down");
         assert!(mock.health_check().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_mock_streaming() {
+        use tokio_stream::StreamExt;
+
+        let mock = MockLLMBackend::static_response("Hello world from streaming");
+        let request = LLMRequest::new("test prompt");
+        let mut stream = mock.generate_stream(request);
+
+        let mut tokens = Vec::new();
+        let mut done = false;
+        while let Some(chunk) = stream.next().await {
+            match chunk.unwrap() {
+                StreamChunk::Token(t) => tokens.push(t),
+                StreamChunk::Done(resp) => {
+                    assert_eq!(resp.content, "Hello world from streaming");
+                    done = true;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        assert!(done);
+        assert_eq!(tokens.len(), 4);
+        assert_eq!(tokens[0], "Hello ");
+        assert_eq!(tokens[1], "world ");
+        assert_eq!(tokens[2], "from ");
+        assert_eq!(tokens[3], "streaming ");
+        // Streaming call should also be recorded
+        assert_eq!(mock.call_count(), 1);
     }
 
     #[tokio::test]

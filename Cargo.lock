@@ -127,6 +127,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.17",
+ "uuid",
 ]
 
 [[package]]
@@ -153,6 +154,7 @@ dependencies = [
  "dirs 5.0.1",
  "envy",
  "fastembed",
+ "futures",
  "governor",
  "include_dir",
  "jsonschema",
@@ -169,6 +171,7 @@ dependencies = [
  "sqlx",
  "thiserror 2.0.17",
  "tokio",
+ "tokio-stream",
  "tokio-test",
  "toml 0.9.8",
  "tracing",
@@ -312,9 +315,11 @@ dependencies = [
  "serde",
  "serde_json",
  "smallvec",
+ "tempfile",
  "termimad",
  "thiserror 2.0.17",
  "tokio",
+ "tokio-stream",
  "tracing",
  "tracing-subscriber",
  "uuid",
@@ -357,7 +362,9 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
+ "uuid",
 ]
 
 [[package]]

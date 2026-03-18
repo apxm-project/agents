@@ -28,6 +28,7 @@ pub mod executor;
 pub mod memory;
 pub mod observability;
 mod runtime;
+pub mod sandbox;
 pub mod scheduler;
 
 pub use aam::{

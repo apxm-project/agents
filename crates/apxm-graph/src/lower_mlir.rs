@@ -617,30 +617,12 @@ fn emit_node(
                 ty: MlirValueType::Goal,
             }))
         }
-        AISOperationType::Reflect => {
-            let trace_id = get_string_attr(
-                &node.attributes,
-                &[graph_attrs::TRACE_ID, graph_attrs::TRACE],
-            )
-            .unwrap_or_else(|| graph_attrs::TRACE.to_string());
-            let attrs = extra_attr_dict(
-                &node.attributes,
-                &[graph_attrs::TRACE_ID, graph_attrs::TRACE],
-            );
-            let result = format!("%n{}", node.id);
-            let context = format_context(&inputs, '(', ')');
-
-            state.emit(format!(
-                "    {result} = ais.reflect {}{}{} : !ais.token",
-                quote_string(&trace_id),
-                context,
-                attrs
-            ));
-            Ok(Some(MlirValueRef {
-                ssa: result,
-                ty: MlirValueType::Token,
-            }))
-        }
+        AISOperationType::Reflect => emit_simple_op(
+            state, node, &inputs, "reflect",
+            &[graph_attrs::TRACE_ID, graph_attrs::TRACE], graph_attrs::TRACE,
+            &[graph_attrs::TRACE_ID, graph_attrs::TRACE],
+            Some(('(', ')')),
+        ),
         AISOperationType::Verify => {
             let template = get_string_attr(
                 &node.attributes,
@@ -678,11 +660,279 @@ fn emit_node(
                 ty: MlirValueType::Token,
             }))
         }
-        unsupported => Err(GraphError::Lowering(format!(
-            "unsupported operation '{}' in MLIR lowering",
-            unsupported
-        ))),
+        // Communication ops
+        AISOperationType::Communicate => {
+            let message = get_string_attr(
+                &node.attributes,
+                &[graph_attrs::MESSAGE, graph_attrs::TEMPLATE_STR, graph_attrs::PROMPT],
+            )
+            .unwrap_or_else(|| "{0}".to_string());
+            let recipient = get_string_attr(
+                &node.attributes,
+                &[graph_attrs::RECIPIENT, graph_attrs::TARGET],
+            )
+            .unwrap_or_else(|| "default".to_string());
+            let attrs = extra_attr_dict(
+                &node.attributes,
+                &[
+                    graph_attrs::MESSAGE,
+                    graph_attrs::TEMPLATE_STR,
+                    graph_attrs::PROMPT,
+                    graph_attrs::RECIPIENT,
+                    graph_attrs::TARGET,
+                ],
+            );
+            let result = format!("%n{}", node.id);
+            let context = format_context(&inputs, '(', ')');
+
+            state.emit(format!(
+                "    {result} = ais.communicate {} to {}{}{} : !ais.token",
+                quote_string(&message),
+                quote_string(&recipient),
+                context,
+                attrs
+            ));
+            Ok(Some(MlirValueRef {
+                ssa: result,
+                ty: MlirValueType::Token,
+            }))
+        }
+        AISOperationType::Delegate => {
+            let task_spec = get_string_attr(
+                &node.attributes,
+                &[graph_attrs::TASK_SPEC, graph_attrs::TEMPLATE_STR],
+            )
+            .unwrap_or_else(|| "{0}".to_string());
+            let target_agent = get_string_attr(
+                &node.attributes,
+                &[graph_attrs::TARGET_AGENT, graph_attrs::TARGET],
+            )
+            .unwrap_or_else(|| "default".to_string());
+            let attrs = extra_attr_dict(
+                &node.attributes,
+                &[
+                    graph_attrs::TASK_SPEC,
+                    graph_attrs::TEMPLATE_STR,
+                    graph_attrs::TARGET_AGENT,
+                    graph_attrs::TARGET,
+                ],
+            );
+            let result = format!("%n{}", node.id);
+            let context = format_context(&inputs, '(', ')');
+
+            state.emit(format!(
+                "    {result} = ais.delegate {} to {}{}{} : !ais.token",
+                quote_string(&task_spec),
+                quote_string(&target_agent),
+                context,
+                attrs
+            ));
+            Ok(Some(MlirValueRef {
+                ssa: result,
+                ty: MlirValueType::Token,
+            }))
+        }
+        AISOperationType::Negotiate => emit_simple_op(
+            state, node, &inputs, "negotiate",
+            &[graph_attrs::PROPOSAL, graph_attrs::TEMPLATE_STR], "{0}",
+            &[graph_attrs::PROPOSAL, graph_attrs::TEMPLATE_STR],
+            Some(('(', ')')),
+        ),
+        // Control flow ops
+        AISOperationType::FlowCall => emit_simple_op(
+            state, node, &inputs, "flow_call",
+            &[graph_attrs::FLOW_NAME, "flow", graph_attrs::TARGET], "unknown_flow",
+            &[graph_attrs::FLOW_NAME, "flow", graph_attrs::TARGET],
+            Some(('(', ')')),
+        ),
+        AISOperationType::Jump => {
+            let target = get_string_attr(
+                &node.attributes,
+                &[graph_attrs::TARGET, graph_attrs::LABEL],
+            )
+            .unwrap_or_else(|| "next".to_string());
+            let attrs = extra_attr_dict(
+                &node.attributes,
+                &[graph_attrs::TARGET, graph_attrs::LABEL],
+            );
+
+            state.emit(format!(
+                "    ais.jump {}{}",
+                quote_string(&target),
+                attrs
+            ));
+            Ok(None)
+        }
+        AISOperationType::Return => {
+            let attrs = extra_attr_dict(&node.attributes, &[]);
+
+            if let Some(input) = inputs.first() {
+                let token = ensure_token(state, input.clone())?;
+                state.emit(format!(
+                    "    ais.return {} : !ais.token{}",
+                    token.ssa,
+                    attrs
+                ));
+            } else {
+                state.emit(format!("    ais.return{}", attrs));
+            }
+            Ok(None)
+        }
+        // Tool / Execution ops
+        AISOperationType::Exc => emit_simple_op(
+            state, node, &inputs, "exc",
+            &[graph_attrs::CODE, "script"], "",
+            &[graph_attrs::CODE, "script"],
+            Some(('[', ']')),
+        ),
+        AISOperationType::Print => {
+            let template = get_string_attr(
+                &node.attributes,
+                &[graph_attrs::TEMPLATE_STR, graph_attrs::PROMPT, graph_attrs::MESSAGE],
+            )
+            .unwrap_or_else(|| "{0}".to_string());
+            let attrs = extra_attr_dict(
+                &node.attributes,
+                &[graph_attrs::TEMPLATE_STR, graph_attrs::PROMPT, graph_attrs::MESSAGE],
+            );
+            let context = format_context(&inputs, '[', ']');
+
+            state.emit(format!(
+                "    ais.print {}{}{}",
+                quote_string(&template),
+                context,
+                attrs
+            ));
+            Ok(None)
+        }
+        // Agent metadata
+        AISOperationType::Agent => emit_simple_op(
+            state, node, &inputs, "agent",
+            &[graph_attrs::AGENT_NAME, "name"], "agent",
+            &[graph_attrs::AGENT_NAME, "name"],
+            None,
+        ),
+        // AAM / Coordination ops
+        AISOperationType::UpdateGoal => emit_simple_op(
+            state, node, &inputs, "update_goal",
+            &[graph_attrs::GOAL_ID, graph_attrs::GOAL], "goal",
+            &[graph_attrs::GOAL_ID, graph_attrs::GOAL],
+            Some(('[', ']')),
+        ),
+        AISOperationType::Guard => emit_simple_op(
+            state, node, &inputs, "guard",
+            &[graph_attrs::CONDITION, graph_attrs::TEMPLATE_STR], "true",
+            &[graph_attrs::CONDITION, graph_attrs::TEMPLATE_STR],
+            Some(('(', ')')),
+        ),
+        AISOperationType::Claim => {
+            let queue = get_string_attr(
+                &node.attributes,
+                &[graph_attrs::QUEUE, graph_attrs::KEY],
+            )
+            .unwrap_or_else(|| "default".to_string());
+            let lease_ms = get_u64_attr(&node.attributes, graph_attrs::LEASE_MS);
+            let attrs = extra_attr_dict(
+                &node.attributes,
+                &[graph_attrs::QUEUE, graph_attrs::KEY, graph_attrs::LEASE_MS],
+            );
+            let result = format!("%n{}", node.id);
+            let lease_str = lease_ms
+                .map(|ms| format!(" lease_ms {ms}"))
+                .unwrap_or_default();
+
+            state.emit(format!(
+                "    {result} = ais.claim {}{}{} : !ais.token",
+                quote_string(&queue),
+                lease_str,
+                attrs
+            ));
+            Ok(Some(MlirValueRef {
+                ssa: result,
+                ty: MlirValueType::Token,
+            }))
+        }
+        AISOperationType::Pause => emit_simple_op(
+            state, node, &inputs, "pause",
+            &[graph_attrs::MESSAGE, graph_attrs::CHECKPOINT], "paused",
+            &[graph_attrs::MESSAGE, graph_attrs::CHECKPOINT],
+            Some(('[', ']')),
+        ),
+        AISOperationType::Resume => emit_simple_op(
+            state, node, &inputs, "resume",
+            &[graph_attrs::CHECKPOINT, graph_attrs::CHECKPOINT_ID], "latest",
+            &[graph_attrs::CHECKPOINT, graph_attrs::CHECKPOINT_ID],
+            None,
+        ),
+        // Identity / passthrough ops
+        AISOperationType::Nop | AISOperationType::Identity | AISOperationType::Yield => {
+            if let Some(input) = inputs.first() {
+                Ok(Some(input.clone()))
+            } else {
+                let label = match node.op {
+                    AISOperationType::Yield => "yield",
+                    _ => "nop",
+                };
+                let result = emit_const_token(state, label);
+                Ok(Some(result))
+            }
+        }
+        // Self-organization ops
+        AISOperationType::SpawnAgent => emit_simple_op(
+            state, node, &inputs, "spawn_agent",
+            &[graph_attrs::AGENT_NAME, "name"], "child_agent",
+            &[graph_attrs::AGENT_NAME, "name"],
+            Some(('(', ')')),
+        ),
+        AISOperationType::RegisterCapability => emit_simple_op(
+            state, node, &inputs, "register_capability",
+            &[graph_attrs::CAPABILITY_NAME, graph_attrs::CAPABILITY], "capability",
+            &[graph_attrs::CAPABILITY_NAME, graph_attrs::CAPABILITY],
+            None,
+        ),
+        // Autonomous execution
+        AISOperationType::Autonomous => emit_simple_op(
+            state, node, &inputs, "autonomous",
+            &[graph_attrs::STRATEGY, graph_attrs::TEMPLATE_STR], "default",
+            &[graph_attrs::STRATEGY, graph_attrs::TEMPLATE_STR],
+            Some(('(', ')')),
+        ),
     }
+}
+
+/// Emit a simple op: `{result} = ais.{op_name} {primary}{context}{attrs} : !ais.token`
+///
+/// Used by many match arms that follow the same pattern: extract a single primary
+/// string attribute, build context from inputs, and emit a single MLIR line returning
+/// a token value.
+fn emit_simple_op(
+    state: &mut LoweringState,
+    node: &GraphNode,
+    inputs: &[MlirValueRef],
+    op_name: &str,
+    primary_keys: &[&str],
+    primary_default: &str,
+    consumed_keys: &[&str],
+    context_delimiters: Option<(char, char)>,
+) -> Result<Option<MlirValueRef>, GraphError> {
+    let primary = get_string_attr(&node.attributes, primary_keys)
+        .unwrap_or_else(|| primary_default.to_string());
+    let attrs = extra_attr_dict(&node.attributes, consumed_keys);
+    let result = format!("%n{}", node.id);
+    let context = context_delimiters
+        .map(|(open, close)| format_context(inputs, open, close))
+        .unwrap_or_default();
+
+    state.emit(format!(
+        "    {result} = ais.{op_name} {}{}{} : !ais.token",
+        quote_string(&primary),
+        context,
+        attrs
+    ));
+    Ok(Some(MlirValueRef {
+        ssa: result,
+        ty: MlirValueType::Token,
+    }))
 }
 
 fn emit_bridge_token(
@@ -1131,5 +1381,192 @@ mod tests {
         assert!(mlir.contains("ais.loop_end %n2 : !ais.token -> !ais.token"));
         assert!(mlir.contains("ais.try_catch \"try_a\" -> \"catch_a\""));
         assert!(mlir.contains("ais.err %n4 : !ais.token with \"fallback\" -> !ais.token"));
+    }
+
+    #[test]
+    fn lowers_communicate_op() {
+        let graph = ApxmGraph {
+            name: "comm_flow".to_string(),
+            nodes: vec![
+                GraphNode {
+                    id: 1,
+                    name: "seed".to_string(),
+                    op: AISOperationType::ConstStr,
+                    attributes: HashMap::from([(
+                        "value".to_string(),
+                        Value::String("hello world".to_string()),
+                    )]),
+                },
+                GraphNode {
+                    id: 2,
+                    name: "send".to_string(),
+                    op: AISOperationType::Communicate,
+                    attributes: HashMap::from([
+                        (
+                            graph_attrs::MESSAGE.to_string(),
+                            Value::String("status update".to_string()),
+                        ),
+                        (
+                            graph_attrs::RECIPIENT.to_string(),
+                            Value::String("agent_b".to_string()),
+                        ),
+                    ]),
+                },
+            ],
+            edges: vec![crate::GraphEdge {
+                from: 1,
+                to: 2,
+                dependency: DependencyType::Data,
+            }],
+            parameters: vec![],
+            metadata: HashMap::new(),
+        };
+
+        let mlir = lower_to_mlir(&graph).expect("graph lowers to mlir");
+        assert!(mlir.contains("ais.communicate \"status update\" to \"agent_b\""));
+        assert!(mlir.contains(": !ais.token"));
+    }
+
+    #[test]
+    fn lowers_flow_call_op() {
+        let graph = ApxmGraph {
+            name: "caller".to_string(),
+            nodes: vec![
+                GraphNode {
+                    id: 1,
+                    name: "seed".to_string(),
+                    op: AISOperationType::ConstStr,
+                    attributes: HashMap::from([(
+                        "value".to_string(),
+                        Value::String("input data".to_string()),
+                    )]),
+                },
+                GraphNode {
+                    id: 2,
+                    name: "call".to_string(),
+                    op: AISOperationType::FlowCall,
+                    attributes: HashMap::from([(
+                        graph_attrs::FLOW_NAME.to_string(),
+                        Value::String("sub_flow".to_string()),
+                    )]),
+                },
+            ],
+            edges: vec![crate::GraphEdge {
+                from: 1,
+                to: 2,
+                dependency: DependencyType::Data,
+            }],
+            parameters: vec![],
+            metadata: HashMap::new(),
+        };
+
+        let mlir = lower_to_mlir(&graph).expect("graph lowers to mlir");
+        assert!(mlir.contains("ais.flow_call \"sub_flow\""));
+        assert!(mlir.contains("(%n1 : !ais.token)"));
+        assert!(mlir.contains(": !ais.token"));
+    }
+
+    #[test]
+    fn lowers_nop_and_identity_passthrough() {
+        let graph = ApxmGraph {
+            name: "passthrough".to_string(),
+            nodes: vec![
+                GraphNode {
+                    id: 1,
+                    name: "seed".to_string(),
+                    op: AISOperationType::ConstStr,
+                    attributes: HashMap::from([(
+                        "value".to_string(),
+                        Value::String("data".to_string()),
+                    )]),
+                },
+                GraphNode {
+                    id: 2,
+                    name: "nop".to_string(),
+                    op: AISOperationType::Nop,
+                    attributes: HashMap::new(),
+                },
+                GraphNode {
+                    id: 3,
+                    name: "id".to_string(),
+                    op: AISOperationType::Identity,
+                    attributes: HashMap::new(),
+                },
+            ],
+            edges: vec![
+                crate::GraphEdge {
+                    from: 1,
+                    to: 2,
+                    dependency: DependencyType::Data,
+                },
+                crate::GraphEdge {
+                    from: 2,
+                    to: 3,
+                    dependency: DependencyType::Data,
+                },
+            ],
+            parameters: vec![],
+            metadata: HashMap::new(),
+        };
+
+        let mlir = lower_to_mlir(&graph).expect("graph lowers to mlir");
+        // Nop and Identity pass through their inputs so the final return
+        // should reference the const_str value directly.
+        assert!(mlir.contains("func.return %n1 : !ais.token"));
+    }
+
+    #[test]
+    fn lowers_aam_ops_update_goal_pause_resume() {
+        let graph = ApxmGraph {
+            name: "aam".to_string(),
+            nodes: vec![
+                GraphNode {
+                    id: 1,
+                    name: "update".to_string(),
+                    op: AISOperationType::UpdateGoal,
+                    attributes: HashMap::from([(
+                        graph_attrs::GOAL_ID.to_string(),
+                        Value::String("g1".to_string()),
+                    )]),
+                },
+                GraphNode {
+                    id: 2,
+                    name: "pause".to_string(),
+                    op: AISOperationType::Pause,
+                    attributes: HashMap::from([(
+                        graph_attrs::MESSAGE.to_string(),
+                        Value::String("awaiting review".to_string()),
+                    )]),
+                },
+                GraphNode {
+                    id: 3,
+                    name: "resume".to_string(),
+                    op: AISOperationType::Resume,
+                    attributes: HashMap::from([(
+                        graph_attrs::CHECKPOINT.to_string(),
+                        Value::String("cp_1".to_string()),
+                    )]),
+                },
+            ],
+            edges: vec![
+                crate::GraphEdge {
+                    from: 1,
+                    to: 2,
+                    dependency: DependencyType::Control,
+                },
+                crate::GraphEdge {
+                    from: 2,
+                    to: 3,
+                    dependency: DependencyType::Control,
+                },
+            ],
+            parameters: vec![],
+            metadata: HashMap::new(),
+        };
+
+        let mlir = lower_to_mlir(&graph).expect("graph lowers to mlir");
+        assert!(mlir.contains("ais.update_goal \"g1\""));
+        assert!(mlir.contains("ais.pause \"awaiting review\""));
+        assert!(mlir.contains("ais.resume \"cp_1\""));
     }
 }

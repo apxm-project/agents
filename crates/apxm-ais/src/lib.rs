@@ -44,7 +44,7 @@ pub mod types;
 pub mod validation;
 
 // Re-export commonly used types
-pub use aam::{AAM, Beliefs, Capabilities, Goals};
+pub use aam::{AAM, Beliefs, Capabilities, Goal, GoalId, GoalStatus, Goals};
 pub use memory::MemoryTier;
 pub use operations::tablegen::generate_tablegen;
 pub use operations::{

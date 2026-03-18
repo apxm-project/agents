@@ -145,6 +145,14 @@ pub async fn execute_llm_request(
     phase: &str,
     request: &LLMRequest,
 ) -> Result<LLMResponse> {
+    // Use streaming path when an event emitter is available so we can
+    // emit token-by-token events. The default generate_stream() impl
+    // just wraps generate() into a single Done chunk, so this is
+    // backward compatible.
+    if ctx.event_emitter.is_some() {
+        return execute_llm_request_streaming(ctx, phase, request).await;
+    }
+
     #[cfg(feature = "metrics")]
     let start = std::time::Instant::now();
 
@@ -153,6 +161,62 @@ pub async fn execute_llm_request(
         .generate(request.clone())
         .await
         .map_err(|e| llm_error(ctx, phase, request, e))?;
+
+    #[cfg(feature = "metrics")]
+    {
+        let latency = start.elapsed();
+        record_llm_event(ctx, phase, request, &response, latency).await;
+    }
+
+    Ok(response)
+}
+
+/// Streaming variant of execute_llm_request.
+///
+/// Consumes the stream from generate_stream(), emitting LlmToken events
+/// for each token chunk and returning the final LLMResponse from the Done chunk.
+async fn execute_llm_request_streaming(
+    ctx: &ExecutionContext,
+    phase: &str,
+    request: &LLMRequest,
+) -> Result<LLMResponse> {
+    use apxm_backends::StreamChunk;
+    use tokio_stream::StreamExt;
+
+    #[cfg(feature = "metrics")]
+    let start = std::time::Instant::now();
+
+    let backend = ctx
+        .llm_registry
+        .resolve_backend_for_streaming(request)
+        .map_err(|e| llm_error(ctx, phase, request, e))?;
+
+    let mut stream = backend.generate_stream(request.clone());
+
+    let mut final_response: Option<LLMResponse> = None;
+
+    while let Some(chunk_result) = stream.next().await {
+        let chunk = chunk_result.map_err(|e| llm_error(ctx, phase, request, e))?;
+        match chunk {
+            StreamChunk::Token(token) => {
+                if let Some(emitter) = &ctx.event_emitter {
+                    emitter.emit_llm_token(&token);
+                }
+            }
+            StreamChunk::Done(response) => {
+                final_response = Some(response);
+                break;
+            }
+            StreamChunk::ToolCallStart { .. } | StreamChunk::ToolCallDelta { .. } => {
+                // Tool call streaming will be handled in a future iteration
+            }
+        }
+    }
+
+    let response = final_response.ok_or_else(|| RuntimeError::LLM {
+        message: format!("LLM stream ended without a Done chunk during {phase}"),
+        backend: request.backend.clone().or_else(|| request.model.clone()),
+    })?;
 
     #[cfg(feature = "metrics")]
     {

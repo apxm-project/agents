@@ -11,6 +11,7 @@
 pub mod compiler;
 pub mod config;
 pub mod execution;
+pub mod goal;
 pub mod identifiers;
 pub mod intents;
 pub mod models;
@@ -27,9 +28,10 @@ pub use execution::{
     Edge, ExecutionDag, ExecutionStats, MemoryDeclaration, Node, NodeId, NodeMetadata, NodeStatus,
     OpStatus, Task, TaskDag, TaskId, TaskMetadata,
 };
+pub use goal::{Goal, GoalId, GoalStatus};
 pub use identifiers::{
-    CapabilityName, CheckpointId, ExecutionId, GoalIdType, MessageId, NodeIdType, OpIdType,
-    SessionId, TokenIdType, TraceId,
+    CapabilityName, CheckpointId, ExecutionId, MessageId, NodeIdType, OpIdType, SessionId,
+    TokenIdType, TraceId,
 };
 pub use intents::{
     Entity, EntityType, ExportFormat, InspectTarget, Intent, MemoryQueryType, ProgramBuildStep,

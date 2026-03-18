@@ -13,6 +13,8 @@ apxm-core = { version = "0.0.1", path = "../apxm-core" }
 # Async runtime
 async-trait = "0.1"
 tokio = { version = "1.0", features = ["rt", "sync", "time"] }
+tokio-stream = "0.1"
+futures = "0.3"
 
 # HTTP client
 reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls"], default-features = false }

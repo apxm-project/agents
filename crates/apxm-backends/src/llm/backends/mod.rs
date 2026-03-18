@@ -26,7 +26,7 @@ pub use request::{
     ToolChoice, ToolDefinition,
 };
 pub use response::{LLMResponse, TokenUsage};
-pub use traits::LLMBackend;
+pub use traits::{LLMBackend, StreamChunk};
 
 use apxm_core::types::ProviderProtocol;
 use std::sync::Arc;

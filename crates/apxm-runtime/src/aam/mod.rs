@@ -7,6 +7,7 @@
 
 pub mod effects;
 
+pub use apxm_core::types::goal::{Goal, GoalId, GoalStatus};
 use apxm_core::types::values::Value;
 use chrono::{DateTime, Utc};
 use parking_lot::RwLock;
@@ -14,7 +15,6 @@ use priority_queue::PriorityQueue;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use uuid::Uuid;
 
 /// Prefix for staged belief keys (used by QMEM).
 pub const STAGED_BELIEF_PREFIX: &str = "_stage:";
@@ -251,8 +251,8 @@ impl AamState {
     fn update_goal_status(&mut self, goal_id: GoalId, new_status: GoalStatus) -> TransitionDelta {
         let mut delta = TransitionDelta::default();
         if let Some(goal) = self.goal_details.get_mut(&goal_id) {
-            let old = goal.status.clone();
-            goal.status = new_status.clone();
+            let old = goal.status;
+            goal.status = new_status;
             delta.goal_changes.push(GoalChange::StatusChanged {
                 id: goal_id,
                 from: old,
@@ -328,17 +328,6 @@ impl TransitionLabel {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Goal {
-    pub id: GoalId,
-    pub description: String,
-    pub priority: u32,
-    pub status: GoalStatus,
-    /// Optional parent goal for hierarchical goal trees.
-    #[serde(default)]
-    pub parent_id: Option<GoalId>,
-}
-
 /// Controls which parts of an AAM dimension a child scope inherits.
 #[derive(Debug, Clone)]
 pub enum ScopePolicy {
@@ -356,34 +345,6 @@ pub struct ScopeSpec {
     pub beliefs: ScopePolicy,
     pub capabilities: ScopePolicy,
     pub goals: ScopePolicy,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct GoalId(Uuid);
-
-impl GoalId {
-    pub fn new() -> Self {
-        GoalId(Uuid::now_v7())
-    }
-}
-
-impl Default for GoalId {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl std::fmt::Display for GoalId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum GoalStatus {
-    Active,
-    Completed,
-    Cancelled,
 }
 
 #[derive(Debug, Clone)]

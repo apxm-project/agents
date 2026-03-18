@@ -289,6 +289,32 @@ impl LLMRegistry {
         }
     }
 
+    /// Resolve a backend for streaming.
+    ///
+    /// Returns the resolved backend `Arc` so the caller can call
+    /// `generate_stream()` on it directly. The caller keeps the Arc
+    /// alive for the stream's lifetime, avoiding self-referential
+    /// borrow issues.
+    pub fn resolve_backend_for_streaming(
+        &self,
+        request: &LLMRequest,
+    ) -> Result<Arc<dyn LLMBackend>> {
+        let backend_name = self.resolve_backend(request)?;
+
+        let backend = self
+            .backends
+            .get(&backend_name)
+            .with_context(|| format!("Backend '{}' not found", backend_name))?
+            .clone();
+
+        let health = self.health_monitor.status(&backend_name);
+        if health == HealthStatus::Unhealthy {
+            anyhow::bail!("Backend '{}' is unhealthy", backend_name);
+        }
+
+        Ok(backend)
+    }
+
     /// Resolve which backend to use for a request.
     fn resolve_backend(&self, request: &LLMRequest) -> Result<String> {
         // Use resolver to determine backend

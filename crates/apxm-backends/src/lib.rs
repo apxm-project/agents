@@ -66,6 +66,8 @@ pub use llm::{
     RequestTracer,
     RetryConfig,
     RetryStrategy,
+    // Streaming
+    StreamChunk,
     TokenUsage,
     // Structured message types
     ContentPart,

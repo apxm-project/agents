@@ -7,19 +7,11 @@ against current source code as of 2026-03-17.
 
 ## P0: Critical (blocks hierarchical AAM vision)
 
-- [ ] **Gap 8 — AAM transitions missing from most handlers.**
-  Most AIS handlers produce no AAM state transition.
-  Handlers that DO call `ctx.aam.*`: `llm.rs` (REASON only — beliefs + goals via `process_structured_output`), `plan.rs` (beliefs + goals), `umem.rs` (beliefs), `qmem.rs` (beliefs), `communicate.rs` (beliefs), `flow_call.rs` (beliefs), `update_goal.rs` (goals).
-  Handlers that do NOT touch AAM: `llm.rs` (ASK, THINK — return plain `Value::String`, no AAM call), `reflect.rs`, `verify.rs`, `inv.rs`, `fence.rs`, `branch.rs`, `jump.rs`, `loop_start.rs`, `loop_end.rs`, `merge.rs`, `wait_all.rs`, `switch.rs`, `try_catch.rs`, `err.rs`, `exc.rs`, `print.rs`, `return_op.rs`, `const_str.rs`, `claim.rs`, `guard.rs`, `pause.rs`, `resume.rs`.
-  Current: 7 of 32 ops produce transitions (22%). Needed: all ops that have declared effects in `effects.rs` must actually perform them (e.g., FENCE declares writes to B+STM+LTM+G but does nothing; REFLECT declares read of Episodic but never queries it; ASK declares reads from B but ignores the AAM; VERIFY declares read of Beliefs but ignores the AAM).
+- [x] **Gap 8 — AAM transitions wired into all handlers.**
+  Implemented in `61d408f`: all handlers now produce AAM state transitions via `ctx.aam.set_belief()`. Branch, claim, err, exc, guard, inv, llm (ASK/THINK), loop_end, loop_start, pause, print, reflect, resume, switch, verify all record transitions. `effects.rs` rewritten with explicit per-op entries (no catch-all wildcard), Fence corrected to pure barrier, Reflect corrected to write Episodic.
   Files: `crates/apxm-runtime/src/executor/handlers/*.rs`, `crates/apxm-runtime/src/aam/effects.rs`
 
-- [ ] **Gap 8b — Two divergent AAM types (spec vs runtime).**
-  `apxm-ais::aam::Goal` has `parent_id: Option<String>`, `GoalStatus::{Pending, Active, Completed, Failed, Cancelled}`, `priority: i32`.
-  `apxm-runtime::aam::Goal` has no `parent_id`, `GoalStatus::{Active, Completed, Cancelled}` (missing Pending/Failed), `priority: u32`.
-  These must be unified into a single canonical type or explicitly bridged.
-  Current: two incompatible Goal types with different fields and status enums. Needed: single source of truth.
-  Files: `crates/apxm-ais/src/aam.rs`, `crates/apxm-runtime/src/aam/mod.rs`
+- [x] **Gap 8b — Two divergent AAM types (spec vs runtime).** Resolved: canonical Goal/GoalId/GoalStatus defined in apxm-ais::aam, re-exported via apxm-core::types::goal, imported by apxm-runtime.
 
 - [ ] **Gap 4 — Flat goals (no parent-child hierarchy).**
   Runtime `Goal` has no `parent_id` field. `AamState.goals` is a `PriorityQueue<GoalId, u32>` — flat, no tree structure. PLAN produces `Vec<PlanStep>` with string-based `dependencies`, not a recursive goal tree. No completion propagation from child to parent goals.
@@ -40,10 +32,10 @@ against current source code as of 2026-03-17.
   Current: two disconnected priority systems. Needed: goal-aware scheduling that projects `Goal.priority` onto node scheduling priority.
   Files: `crates/apxm-runtime/src/scheduler/state.rs` (line 121), `crates/apxm-runtime/src/scheduler/queue.rs`, `crates/apxm-runtime/src/aam/mod.rs`
 
-- [ ] **Gap 7 — Tool discovery pipeline is disconnected.**
-  `apxm tools register` writes to `~/.apxm/tools.json`. Driver startup calls `register_standard_tools()` which loads only built-in tools (bash, search_web, etc. from `apxm-tools`). The runtime never reads `tools.json`. `AamCheckpoint` excludes capabilities (only serializes beliefs + goals), so capabilities are lost on resume.
-  Current: CLI tool registration and runtime capability system are separate code paths. Needed: driver reads `tools.json` at startup, capabilities included in checkpoint/restore.
-  Files: `crates/apxm-driver/src/runtime/capabilities.rs`, `crates/apxm-tools/src/lib.rs`, `crates/apxm-runtime/src/aam/mod.rs` (line 274-279, 391-395)
+- [ ] **Gap 7 — Tool discovery pipeline partially connected.**
+  ~~Driver never reads `tools.json`. AamCheckpoint excludes capabilities.~~ Fixed in `f7a3c8c`: `register_user_tools()` now loads `~/.apxm/tools.json` at driver startup. Capabilities included in `AamCheckpoint` snapshot/restore.
+  **Remaining**: `UserToolCapability::execute()` returns a stub error — registered user tools have no actual executor. Needs plugin/subprocess dispatch to make user tools callable at runtime.
+  Files: `crates/apxm-driver/src/runtime/capabilities.rs`, `crates/apxm-runtime/src/aam/mod.rs`
 
 - [ ] **Gap 1 — Fixed 4-level hierarchy, no recursive composition.**
   The hierarchy is Agent -> Flow -> Task -> Node, exactly four levels. `PlanStep` is a flat list with string dependencies. `ApxmGraph::merge()` flattens into a single DAG. Flows cannot structurally contain sub-flows.
@@ -80,7 +72,6 @@ against current source code as of 2026-03-17.
   Current: dead code. Needed: either wire into the dispatcher (call enter/exit around each handler dispatch) or remove.
   Files: `crates/apxm-runtime/src/aam/mod.rs` (lines 101-127)
 
-- [ ] **Gap 8d — `effects.rs` declarations don't match actual handler behavior.**
-  `operation_effects(Fence)` declares writes to Beliefs+STM+LTM+Goals, but `fence::execute()` is a pure passthrough (no AAM interaction). `operation_effects(Reflect)` declares read of Episodic, but `reflect::execute()` never queries episodic memory via the AAM. These mismatches can cause the compiler's reordering analysis to be overly conservative.
-  Current: declared effects diverge from actual effects. Needed: align declarations with actual behavior (either update handlers to perform declared effects, or correct the declarations).
+- [x] **Gap 8d — `effects.rs` aligned with handler behavior.**
+  Fixed in `61d408f`: Fence effect corrected to empty (pure barrier), Reflect corrected to read+write Episodic, all ops have explicit entries (no wildcard catch-all). Handlers now match their declared effects.
   Files: `crates/apxm-runtime/src/aam/effects.rs`, `crates/apxm-runtime/src/executor/handlers/fence.rs`, `crates/apxm-runtime/src/executor/handlers/reflect.rs`
