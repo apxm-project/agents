@@ -178,21 +178,20 @@ impl TaskQueueManager {
         // Expire stale claims so their tasks become available again.
         let now = now_ms();
         for task in guard.iter_mut() {
-            if task.status == TaskStatus::Claimed {
-                if let Some(expires) = task.lease_expires_ms {
-                    if now > expires {
-                        task.status = TaskStatus::Pending;
-                        task.claim_token = None;
-                        task.claimed_by = None;
-                        task.lease_expires_ms = None;
-                        // Mirror into all_tasks index.
-                        if let Some(mut indexed) = self.all_tasks.get_mut(&task.id) {
-                            indexed.status = TaskStatus::Pending;
-                            indexed.claim_token = None;
-                            indexed.claimed_by = None;
-                            indexed.lease_expires_ms = None;
-                        }
-                    }
+            if task.status == TaskStatus::Claimed
+                && let Some(expires) = task.lease_expires_ms
+                && now > expires
+            {
+                task.status = TaskStatus::Pending;
+                task.claim_token = None;
+                task.claimed_by = None;
+                task.lease_expires_ms = None;
+                // Mirror into all_tasks index.
+                if let Some(mut indexed) = self.all_tasks.get_mut(&task.id) {
+                    indexed.status = TaskStatus::Pending;
+                    indexed.claim_token = None;
+                    indexed.claimed_by = None;
+                    indexed.lease_expires_ms = None;
                 }
             }
         }
@@ -223,10 +222,10 @@ impl TaskQueueManager {
         if task.claim_token.as_deref() != Some(claim_token) {
             return Err("Invalid claim token".to_string());
         }
-        if let Some(expires) = task.lease_expires_ms {
-            if now_ms() > expires {
-                return Err("lease_expired: Task lease has expired. Task may have been reclaimed by another worker.".to_string());
-            }
+        if let Some(expires) = task.lease_expires_ms
+            && now_ms() > expires
+        {
+            return Err("lease_expired: Task lease has expired. Task may have been reclaimed by another worker.".to_string());
         }
         task.status = TaskStatus::Completed;
         task.result = Some(result.clone());
@@ -648,7 +647,7 @@ fn build_app(state: AppState) -> Router {
         .layer(PropagateRequestIdLayer::new(req_id_header.clone()))
         .layer(SetRequestIdLayer::new(
             req_id_header,
-            MakeRequestUuid::default(),
+            MakeRequestUuid,
         ))
 }
 

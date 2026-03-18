@@ -64,12 +64,12 @@ impl ProcessSandbox {
         let mut child = cmd.spawn()?;
 
         // Write stdin if provided
-        if let Some(data) = stdin_data {
-            if let Some(mut stdin) = child.stdin.take() {
-                use tokio::io::AsyncWriteExt;
-                let _ = stdin.write_all(data.as_bytes()).await;
-                drop(stdin);
-            }
+        if let Some(data) = stdin_data
+            && let Some(mut stdin) = child.stdin.take()
+        {
+            use tokio::io::AsyncWriteExt;
+            let _ = stdin.write_all(data.as_bytes()).await;
+            drop(stdin);
         }
 
         // Take stdout/stderr handles before waiting so we can read them

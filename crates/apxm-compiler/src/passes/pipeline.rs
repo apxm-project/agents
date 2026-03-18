@@ -43,10 +43,10 @@ pub fn build_pipeline_with_config(
                 .build_prompt()?
                 .template_specialization()?
                 .unconsumed_value_warning()?
+                .schema_narrowing()?
                 .scheduling()?
                 .fuse_ask_ops()?
                 .dead_context_elimination()?
-                .schema_narrowing()?
                 .canonicalizer()?;
             if !no_cse_llm {
                 pm.cse()?;
@@ -57,10 +57,10 @@ pub fn build_pipeline_with_config(
             pm.normalize()?.build_prompt()?.unconsumed_value_warning()?;
             for _ in 0..MAX_CONVERGENCE_ITERATIONS {
                 pm.template_specialization()?
+                    .schema_narrowing()?
                     .scheduling()?
                     .fuse_ask_ops()?
                     .dead_context_elimination()?
-                    .schema_narrowing()?
                     .canonicalizer()?;
                 if !no_cse_llm {
                     pm.cse()?;

@@ -127,17 +127,17 @@ fn build_environment() -> Environment<'static> {
     }
 
     // 2. Load user overrides (~/.apxm/prompts/) - overrides embedded.
-    if let Some(user_dir) = user_prompts_dir() {
-        if user_dir.is_dir() {
-            load_filesystem_prompts(&user_dir, &mut templates);
-        }
+    if let Some(user_dir) = user_prompts_dir()
+        && user_dir.is_dir()
+    {
+        load_filesystem_prompts(&user_dir, &mut templates);
     }
 
     // 3. Load project overrides (.apxm/prompts/) - highest priority.
-    if let Some(project_dir) = project_prompts_dir() {
-        if project_dir.is_dir() {
-            load_filesystem_prompts(&project_dir, &mut templates);
-        }
+    if let Some(project_dir) = project_prompts_dir()
+        && project_dir.is_dir()
+    {
+        load_filesystem_prompts(&project_dir, &mut templates);
     }
 
     // Register all templates into the MiniJinja environment.
@@ -210,12 +210,12 @@ fn load_filesystem_prompts_recursive(
         let path = entry.path();
         if path.is_dir() {
             load_filesystem_prompts_recursive(root, &path, templates);
-        } else if path.is_file() {
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                let rel = path.strip_prefix(root).unwrap_or(&path).to_string_lossy();
-                let name = template_key(Path::new(rel.as_ref()));
-                templates.insert(name, content);
-            }
+        } else if path.is_file()
+            && let Ok(content) = std::fs::read_to_string(&path)
+        {
+            let rel = path.strip_prefix(root).unwrap_or(&path).to_string_lossy();
+            let name = template_key(Path::new(rel.as_ref()));
+            templates.insert(name, content);
         }
     }
 }

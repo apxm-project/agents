@@ -92,14 +92,10 @@ pub mod graph {
         pub const DEFAULT_REGION: &str = "default_region";
         pub const BACKEND: &str = "backend";
         pub const CLAIM_TEXT: &str = "claim";
-        pub const EVIDENCE: &str = "evidence";
         pub const CODE: &str = "code";
         pub const COUNT: &str = "count";
-        pub const DISCRIMINANT: &str = "discriminant";
-        pub const HANDOFF: &str = "handoff";
         pub const HANDOFF_FROM: &str = "handoff_from";
         pub const HANDOFF_TO: &str = "handoff_to";
-        pub const GUARDRAIL_KIND: &str = "guardrail_kind";
         pub const MAX_TOOL_ITERATIONS: &str = "max_tool_iterations";
         // Phase 2 coordination/identity/self-organization attributes
         pub const TASK_SPEC: &str = "task_spec";

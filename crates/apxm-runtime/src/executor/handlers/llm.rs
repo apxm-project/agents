@@ -516,11 +516,11 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     let mut request = LLMRequest::new(prompt.clone());
 
     // Apply mode-specific configuration
-    if mode == LlmMode::Think {
-        if let Some(budget_tokens) = budget {
-            request =
-                request.with_metadata_value("thinking_budget", serde_json::json!(budget_tokens));
-        }
+    if mode == LlmMode::Think
+        && let Some(budget_tokens) = budget
+    {
+        request =
+            request.with_metadata_value("thinking_budget", serde_json::json!(budget_tokens));
     }
 
     let system_prompt = resolve_system_prompt(ctx, node, mode)?;
@@ -659,35 +659,35 @@ async fn execute_llm_once(
         request.model.as_deref(),
         request.temperature,
     );
-    if let Some(key) = memo_key {
-        if let Some(cached) = ctx.response_cache.get(key) {
-            apxm_llm!(debug,
-                execution_id = %ctx.execution_id,
-                mode = mode_name,
-                "Memoization cache hit"
-            );
-            if let Some(emitter) = &ctx.event_emitter {
-                emitter.emit_memoization_hit(node.id);
-            }
-            charge_tokens(
-                ctx,
-                resolve_token_budget(ctx, node),
-                cached.input_tokens + cached.output_tokens,
-            )?;
-            return match mode {
-                LlmMode::Ask | LlmMode::Think => Ok(Value::String(cached.content)),
-                LlmMode::Reason => {
-                    if let Ok(structured) = parse_structured_output(&cached.content) {
-                        process_structured_output(
-                            ctx, node, structured, enable_inner_plan, bind_outputs,
-                        )
-                        .await
-                    } else {
-                        Ok(Value::String(cached.content))
-                    }
-                }
-            };
+    if let Some(key) = memo_key
+        && let Some(cached) = ctx.response_cache.get(key)
+    {
+        apxm_llm!(debug,
+            execution_id = %ctx.execution_id,
+            mode = mode_name,
+            "Memoization cache hit"
+        );
+        if let Some(emitter) = &ctx.event_emitter {
+            emitter.emit_memoization_hit(node.id);
         }
+        charge_tokens(
+            ctx,
+            resolve_token_budget(ctx, node),
+            cached.input_tokens + cached.output_tokens,
+        )?;
+        return match mode {
+            LlmMode::Ask | LlmMode::Think => Ok(Value::String(cached.content)),
+            LlmMode::Reason => {
+                if let Ok(structured) = parse_structured_output(&cached.content) {
+                    process_structured_output(
+                        ctx, node, structured, enable_inner_plan, bind_outputs,
+                    )
+                    .await
+                } else {
+                    Ok(Value::String(cached.content))
+                }
+            }
+        };
     }
 
     apxm_llm!(debug,

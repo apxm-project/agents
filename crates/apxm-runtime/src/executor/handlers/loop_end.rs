@@ -7,7 +7,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     // Check if we should continue looping
     let counter = get_input(node, &inputs, 0)?;
 
-    let should_continue = counter.as_u64().map_or(false, |count| count > 0);
+    let should_continue = counter.as_u64().is_some_and(|count| count > 0);
 
     // Record loop check in AAM
     let label = crate::aam::TransitionLabel::operation(node.id, format!("{:?}", node.op_type));

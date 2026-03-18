@@ -11,7 +11,7 @@ For newcomers, read these documents in order. Each builds on the previous:
 1. [**history.md**](history.md) -- How computing history repeats: the pattern from hardware to agents
 2. [**foundations.md**](foundations.md) -- The core problem and the five separations that define A-PXM
 3. [**aam.md**](aam.md) -- The Agent Abstract Machine: the formal state model every instruction operates on
-4. [**ais.md**](ais.md) -- The Agent Instruction Set: the 32 typed operations that form A-PXM's IR
+4. [**ais.md**](ais.md) -- The Agent Instruction Set: the 39 typed operations that form A-PXM's IR
 
 After these four, the deep dives and case study can be read in any order.
 
@@ -26,7 +26,7 @@ After these four, the deep dives and case study can be read in any order.
 | [history.md](history.md) | How the von Neumann bottleneck reappears in every computing era, and why agents are next |
 | [foundations.md](foundations.md) | The agentic von Neumann bottleneck, the five separations (Compute, Memory, State, Optimization, Scheduling), and PXM research lineage |
 | [aam.md](aam.md) | Agent Abstract Machine -- the (Beliefs, Goals, Capabilities) triple that defines agent state, with transition semantics |
-| [ais.md](ais.md) | Agent Instruction Set -- 32 typed operations across nine categories (LLM, Memory, Tool, Control, Sync, Communication, Coordination, Error, Identity) |
+| [ais.md](ais.md) | Agent Instruction Set -- 39 typed operations across nine categories (LLM, Memory, Tool, Control, Sync, Communication, Coordination, Error, Identity) |
 
 ### Deep Dives
 

@@ -43,7 +43,7 @@ One of the most consequential abstractions in computing history is the **Instruc
 
 The x86 ISA, defined in 1978, is still executing programs written today -- nearly fifty years later -- despite the fact that the underlying microarchitecture has been redesigned from scratch at least a dozen times. The Pentium 4 and a modern Zen 5 core share almost nothing in hardware design, but they execute the same ISA. That stability is not an accident. It is the entire point. The ISA decouples progress above the interface from progress below it. Compiler writers and hardware engineers can innovate independently, each relying on the contract.
 
-A-PXM's **Agent Instruction Set (AIS)** is this contract for agentic AI. It defines 32 typed operations -- ASK, THINK, REASON, INV, PLAN, REFLECT, VERIFY, QMEM, UMEM, FENCE, and others -- each with specified inputs, outputs, and state transitions on the Agent Abstract Machine. Above the AIS, any frontend (Python SDK, Rust API, visual editor, LLM-driven planner) can emit AIS graphs. Below the AIS, any runtime (local executor, distributed scheduler, hardware accelerator) can execute them.
+A-PXM's **Agent Instruction Set (AIS)** is this contract for agentic AI. It defines 39 typed operations -- ASK, THINK, REASON, INV, PLAN, REFLECT, VERIFY, QMEM, UMEM, FENCE, and others -- each with specified inputs, outputs, and state transitions on the Agent Abstract Machine. Above the AIS, any frontend (Python SDK, Rust API, visual editor, LLM-driven planner) can emit AIS graphs. Below the AIS, any runtime (local executor, distributed scheduler, hardware accelerator) can execute them.
 
 The parallel is precise:
 

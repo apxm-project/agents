@@ -102,25 +102,24 @@ impl Linker {
         let graph_json = graph.to_json().unwrap_or_default();
         let hash = cache::graph_hash(&graph_json).ok();
 
-        if !self.no_cache {
-            if let Some(ref h) = hash {
-                if let Some(cached_bytes) = cache::load_cached(h)? {
-                    log_info!("driver", "cache hit for graph hash {}", h);
-                    let artifact = Artifact::from_bytes(&cached_bytes)
-                        .map_err(|e| state_err(e.to_string()))?;
-                    return Ok(artifact);
-                }
-            }
+        if !self.no_cache
+            && let Some(ref h) = hash
+            && let Some(cached_bytes) = cache::load_cached(h)?
+        {
+            log_info!("driver", "cache hit for graph hash {}", h);
+            let artifact = Artifact::from_bytes(&cached_bytes)
+                .map_err(|e| state_err(e.to_string()))?;
+            return Ok(artifact);
         }
 
         let module = self.compiler.compile_graph(&graph)?;
         let artifact_bytes = module.generate_artifact_bytes()?;
 
         // Store in cache for next time.
-        if !self.no_cache {
-            if let Some(ref h) = hash {
-                let _ = cache::store_cached(h, &artifact_bytes);
-            }
+        if !self.no_cache
+            && let Some(ref h) = hash
+        {
+            let _ = cache::store_cached(h, &artifact_bytes);
         }
 
         let artifact = Artifact::from_bytes(&artifact_bytes)

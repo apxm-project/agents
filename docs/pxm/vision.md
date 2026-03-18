@@ -31,7 +31,7 @@ Every one of these properties has a direct counterpart in A-PXM.
 
 ### AIS is the IR
 
-The Agent Instruction Set is A-PXM's intermediate representation. It is a set of 32 [typed operations](ais.md) -- ASK, THINK, REASON, INV, PLAN, REFLECT, VERIFY, QMEM, UMEM, FENCE, BRANCH, MERGE, COMM, and others -- organized into a dataflow graph with typed edges.
+The Agent Instruction Set is A-PXM's intermediate representation. It is a set of 39 [typed operations](ais.md) -- ASK, THINK, REASON, INV, PLAN, REFLECT, VERIFY, QMEM, UMEM, FENCE, BRANCH, MERGE, COMM, and others -- organized into a dataflow graph with typed edges.
 
 Any frontend can emit AIS graphs:
 
@@ -264,7 +264,7 @@ The value proposition is not any single feature. It is the combination of formal
 A-PXM's current implementation provides the [foundations](foundations.md): typed AIS operations, MLIR-based compilation, token-counting dataflow scheduling, three-tier memory, and the AAM state model. The [implementation TODOs](../implementation/TODO.md) identify what remains:
 
 **Near-term (realize the AAM):**
-- All 32 operations produce AAM state transitions (currently 7 of 32)
+- All 39 operations produce AAM state transitions (currently 7 of 39)
 - Hierarchical goal tree replaces flat priority queue
 - Scoped AAM per workflow node (Inherit/Isolate/Filter policies)
 - Unified tool discovery pipeline (CLI registration + MCP + runtime)

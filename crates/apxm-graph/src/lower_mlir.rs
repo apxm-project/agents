@@ -905,6 +905,7 @@ fn emit_node(
 /// Used by many match arms that follow the same pattern: extract a single primary
 /// string attribute, build context from inputs, and emit a single MLIR line returning
 /// a token value.
+#[allow(clippy::too_many_arguments)]
 fn emit_simple_op(
     state: &mut LoweringState,
     node: &GraphNode,

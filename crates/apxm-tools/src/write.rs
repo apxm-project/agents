@@ -65,6 +65,12 @@ struct PendingWrite {
     final_path: PathBuf,
 }
 
+impl Default for FileTransaction {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FileTransaction {
     pub fn new() -> Self {
         Self {
@@ -390,7 +396,7 @@ impl CapabilityExecutor for WriteCapability {
                     message: format!("Failed to append file '{}': {error}", path.display()),
                 })?;
         } else {
-            atomic_write_with_backup(&path, &content)
+            atomic_write_with_backup(&path, content)
                 .await
                 .map_err(|error| RuntimeError::Capability {
                     capability: self.metadata.name.clone(),

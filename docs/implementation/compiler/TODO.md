@@ -23,7 +23,7 @@ Generated 2026-03-17.
 
 - [x] **Exploded workflow format (directory compilation)** -- Implemented in `f7a3c8c`: `load_graph_from_directory()` traverses flows/ and nodes/ subdirs, merges fragments via `ApxmGraph::merge`. Files: `crates/apxm-cli/src/main.rs`
 
-- [ ] **No iterative pass convergence** -- Docs say "the pipeline iterates until convergence (no pass makes further changes)." The actual pipeline runs each pass exactly once in sequence with no fixed-point loop. Files: `crates/apxm-compiler/src/passes/pipeline.rs`
+- [x] **No iterative pass convergence** -- Resolved: O3 implements fixed-point loop with MAX_CONVERGENCE_ITERATIONS = 10.
 
 ## P2: Nice to Have
 
@@ -35,7 +35,7 @@ Generated 2026-03-17.
 
 - [ ] **Diagnostics are post-hoc, not per-pass** -- `--emit-diagnostics` generates a JSON with node/edge counts after compilation, but does not report per-pass metrics (which pass fired, how many ops it fused/eliminated, time per pass). Files: `crates/apxm-cli/src/main.rs` (line ~604)
 
-- [ ] **No AUTONOMOUS op** -- Gap analysis proposes a new `AUTONOMOUS` AIS operation for model-driven zones within structured DAGs. Not defined in `definitions.rs` or anywhere else. Requires tablegen definition, C++ MLIR op, Rust enum variant, and handler. Files: `crates/apxm-ais/src/operations/definitions.rs`
+- [x] **No AUTONOMOUS op** -- Resolved: enum variant (Autonomous), handler (autonomous.rs), dispatcher routing, OperationSpec entry all exist.
 
 - [x] **Templates loadable from external files** -- Implemented in `f7a3c8c`: `load_user_templates()` reads `~/.apxm/templates.json`, merges with built-in templates in list/show commands. Files: `crates/apxm-cli/src/main.rs`
 

@@ -52,25 +52,25 @@ impl AnthropicBackend {
 
     /// Convert content parts to Anthropic format.
     fn content_parts_to_anthropic(parts: &[ContentPart]) -> serde_json::Value {
-        if parts.len() == 1 {
-            if let Some(ContentPart::Text { text }) = parts.first() {
-                return json!(text);
-            }
+        if parts.len() == 1
+            && let Some(ContentPart::Text { text }) = parts.first()
+        {
+            return json!(text);
         }
         let anthropic_parts: Vec<serde_json::Value> = parts
             .iter()
-            .filter_map(|p| match p {
-                ContentPart::Text { text } => Some(json!({ "type": "text", "text": text })),
-                ContentPart::Image { url, .. } => Some(json!({
+            .map(|p| match p {
+                ContentPart::Text { text } => json!({ "type": "text", "text": text }),
+                ContentPart::Image { url, .. } => json!({
                     "type": "image",
                     "source": { "type": "url", "url": url }
-                })),
-                ContentPart::ToolCall { id, function } => Some(json!({
+                }),
+                ContentPart::ToolCall { id, function } => json!({
                     "type": "tool_use",
                     "id": id,
                     "name": function.name,
                     "input": function.arguments
-                })),
+                }),
             })
             .collect();
         json!(anthropic_parts)
@@ -84,17 +84,17 @@ impl AnthropicBackend {
             Role::System => "user",
         };
 
-        if msg.role == Role::Tool {
-            if let Some(ref tool_call_id) = msg.tool_call_id {
-                return json!({
-                    "role": "user",
-                    "content": [{
-                        "type": "tool_result",
-                        "tool_use_id": tool_call_id,
-                        "content": msg.text_content()
-                    }]
-                });
-            }
+        if msg.role == Role::Tool
+            && let Some(ref tool_call_id) = msg.tool_call_id
+        {
+            return json!({
+                "role": "user",
+                "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": tool_call_id,
+                    "content": msg.text_content()
+                }]
+            });
         }
 
         json!({

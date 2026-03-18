@@ -92,17 +92,17 @@ impl ResponseCache {
 
     pub fn get(&self, key: MemoKey) -> Option<CachedResponse> {
         let entries = self.entries.read();
-        if let Some(entry) = entries.get(&key) {
-            if entry.inserted_at.elapsed() < self.ttl {
-                self.hits
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                return Some(CachedResponse {
-                    content: entry.content.clone(),
-                    input_tokens: entry.input_tokens,
-                    output_tokens: entry.output_tokens,
-                    model: entry.model.clone(),
-                });
-            }
+        if let Some(entry) = entries.get(&key)
+            && entry.inserted_at.elapsed() < self.ttl
+        {
+            self.hits
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return Some(CachedResponse {
+                content: entry.content.clone(),
+                input_tokens: entry.input_tokens,
+                output_tokens: entry.output_tokens,
+                model: entry.model.clone(),
+            });
         }
         self.misses
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -127,16 +127,15 @@ impl ResponseCache {
             self.evictions
                 .fetch_add(evicted, std::sync::atomic::Ordering::Relaxed);
 
-            if entries.len() >= self.max_entries {
-                if let Some(oldest_key) = entries
+            if entries.len() >= self.max_entries
+                && let Some(oldest_key) = entries
                     .iter()
                     .min_by_key(|(_, e)| e.inserted_at)
                     .map(|(k, _)| *k)
-                {
-                    entries.remove(&oldest_key);
-                    self.evictions
-                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                }
+            {
+                entries.remove(&oldest_key);
+                self.evictions
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
         }
 

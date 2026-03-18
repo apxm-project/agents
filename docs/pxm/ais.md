@@ -16,7 +16,7 @@ The AIS is a typed intermediate representation -- the "instruction set architect
 
 ## Instruction Categories
 
-The AIS contains 32 operations organized into nine categories:
+The AIS contains 39 operations organized into nine categories:
 
 | Category | Operations | Purpose |
 |----------|-----------|---------|

@@ -41,9 +41,6 @@ envy = "0.4"
 # JSON Schema validation
 jsonschema = "0.18"
 
-# Rate limiting
-governor = "0.10"
-
 # ═══ Storage ═══
 
 # Database

@@ -27,35 +27,34 @@ pub async fn configure_llm_registry(
 
     // Primary source: registered credentials from ~/.apxm/credentials.toml
     let mut loaded_from_credentials = false;
-    if let Ok(store) = apxm_credentials::CredentialStore::open() {
-        if let Ok(credentials) = store.list_all() {
-            if !credentials.is_empty() {
-                loaded_from_credentials = true;
-                for (name, credential) in &credentials {
-                    if let Some(allowed) = &allowed_backends {
-                        if !allowed.contains(name) {
-                            continue;
-                        }
-                    }
-
-                    let backend_config = credential_to_backend_config(name, credential);
-                    let provider_name = &credential.provider;
-
-                    let provider_id = resolve_provider_id(provider_name)?;
-                    let api_key = credential.api_key.clone().unwrap_or_default();
-                    let backend_json = build_backend_config(&backend_config)?;
-
-                    let provider = Provider::new(provider_id, &api_key, backend_json)
-                        .await
-                        .map_err(|e| {
-                            DriverError::Driver(format!("Failed to init backend '{}': {e}", name))
-                        })?;
-
-                    registry.register(name.clone(), provider).map_err(|e| {
-                        DriverError::Driver(format!("Failed to register backend '{}': {e}", name))
-                    })?;
-                }
+    if let Ok(store) = apxm_credentials::CredentialStore::open()
+        && let Ok(credentials) = store.list_all()
+        && !credentials.is_empty()
+    {
+        loaded_from_credentials = true;
+        for (name, credential) in &credentials {
+            if let Some(allowed) = &allowed_backends
+                && !allowed.contains(name)
+            {
+                continue;
             }
+
+            let backend_config = credential_to_backend_config(name, credential);
+            let provider_name = &credential.provider;
+
+            let provider_id = resolve_provider_id(provider_name)?;
+            let api_key = credential.api_key.clone().unwrap_or_default();
+            let backend_json = build_backend_config(&backend_config)?;
+
+            let provider = Provider::new(provider_id, &api_key, backend_json)
+                .await
+                .map_err(|e| {
+                    DriverError::Driver(format!("Failed to init backend '{}': {e}", name))
+                })?;
+
+            registry.register(name.clone(), provider).map_err(|e| {
+                DriverError::Driver(format!("Failed to register backend '{}': {e}", name))
+            })?;
         }
     }
 

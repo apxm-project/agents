@@ -15,12 +15,12 @@ This file tracks items that span multiple crates or don't belong in either domai
 
 ### P2: Missing AIS operations from the spec
 
-The spec (docs/pxm/ais.md) lists 32 ops in 9 categories. Cross-referencing with the enum and dispatcher:
+The spec (docs/pxm/ais.md) lists 39 ops in 9 categories. Cross-referencing with the enum and dispatcher:
 
-- [ ] **DELEGATE** -- Listed in spec under Coordination category, but not in `AISOperationType` enum. No handler exists. Files: `crates/apxm-ais/src/operations/definitions.rs`, `docs/pxm/ais.md`
-- [ ] **NEGOTIATE** -- Listed in spec under Coordination category, but not in enum. No handler exists. Files: `crates/apxm-ais/src/operations/definitions.rs`, `docs/pxm/ais.md`
-- [ ] **NOP** -- Listed in spec under Identity category, but not in enum. No handler exists. Files: `crates/apxm-ais/src/operations/definitions.rs`, `docs/pxm/ais.md`
-- [ ] **IDENTITY** -- Listed in spec under Identity category, but not in enum. No handler exists. Files: `crates/apxm-ais/src/operations/definitions.rs`, `docs/pxm/ais.md`
+- [x] **DELEGATE** -- Resolved: enum variant, handler (delegate.rs), dispatcher routing all exist.
+- [x] **NEGOTIATE** -- Resolved: enum variant, handler (negotiate.rs), dispatcher routing all exist.
+- [x] **NOP** -- Resolved: enum variant, handler (nop.rs), dispatcher routing all exist.
+- [x] **IDENTITY** -- Resolved: enum variant, handler (identity.rs), dispatcher routing all exist.
 
 Note: The enum has 32 variants but they differ from the spec's 32. The enum includes Agent, Exc, Print, Jump, BranchOnValue, LoopStart, LoopEnd, Return, Switch, FlowCall, Err, UpdateGoal, Guard, Claim, Pause, Resume, ConstStr, Yield -- which are NOT in the spec table. The spec lists DELEGATE, NEGOTIATE, NOP, IDENTITY, COMM, FLOW -- which are NOT in the enum (COMM -> Communicate, FLOW -> FlowCall exist as renames).
 
@@ -69,13 +69,13 @@ Items here are architectural and span multiple crates. Per-handler and per-sched
 
 | Category | Total | Done | Open P0 | Open P1 | Open P2 |
 |----------|-------|------|---------|---------|---------|
-| AIS Spec vs Enum Drift | 4 | 0 | 0 | 0 | 4 |
+| AIS Spec vs Enum Drift | 4 | 4 | 0 | 0 | 0 |
 | Substrate Gaps | 12 | 10 | 1 | 2 | 0 |
 | Cross-Cutting AAM | 3 | 1 | 0 | 0 | 2 |
-| **This file** | **19** | **11** | **1** | **2** | **6** |
-| Runtime TODO (separate) | 13 | 6 | 0 | 3 | 4 |
-| Compiler TODO (separate) | 15 | 8 | 0 | 3 | 4 |
-| **Grand Total** | **47** | **25** | **1** | **8** | **14** |
+| **This file** | **19** | **15** | **1** | **2** | **2** |
+| Runtime TODO (separate) | 13 | 7 | 0 | 2 | 4 |
+| Compiler TODO (separate) | 15 | 10 | 0 | 2 | 3 |
+| **Grand Total** | **47** | **32** | **1** | **6** | **9** |
 
 ### Key metric: AAM transition coverage
 

@@ -279,7 +279,7 @@ fn tool_validate(args: Value) -> Result<String, String> {
         .map_err(|e| format!("invalid JSON: {e}"))?;
 
     // Check required top-level fields
-    if !raw.get("name").and_then(Value::as_str).is_some_and(|s| !s.is_empty()) {
+    if raw.get("name").and_then(Value::as_str).is_none_or(|s| s.is_empty()) {
         errors.push("graph name must not be empty".to_string());
     }
 
@@ -319,8 +319,7 @@ fn tool_validate(args: Value) -> Result<String, String> {
                 if let Some(spec) = spec {
                     let attrs = node.get("attributes").and_then(Value::as_object);
                     for field in spec.fields.iter().filter(|f| f.required) {
-                        let has_attr = attrs.map_or(false, |a| a.contains_key(field.name));
-                        if !has_attr {
+                        if attrs.is_none_or(|a| !a.contains_key(field.name)) {
                             errors.push(format!(
                                 "node '{name}' (id={id}, op={op}) missing required attribute '{}'",
                                 field.name
@@ -585,10 +584,10 @@ fn tool_execute(args: Value) -> Result<String, String> {
         let json_val = value
             .to_json()
             .unwrap_or_else(|_| Value::String(value.to_string()));
-        if content.is_none() {
-            if let Some(text) = json_val.as_str() {
-                content = Some(text.to_string());
-            }
+        if content.is_none()
+            && let Some(text) = json_val.as_str()
+        {
+            content = Some(text.to_string());
         }
         results_map.insert(token.to_string(), json_val);
     }
@@ -780,7 +779,7 @@ fn tool_analyze(args: Value) -> Result<String, String> {
 
     let exit_nodes: Vec<u64> = node_ids
         .iter()
-        .filter(|&&id| successors.get(&id).map_or(true, |s| s.is_empty()))
+        .filter(|&&id| successors.get(&id).is_none_or(|s| s.is_empty()))
         .copied()
         .collect();
 
@@ -843,16 +842,15 @@ fn tool_analyze(args: Value) -> Result<String, String> {
             let latency = node_latency(node_id);
             let max_pred_dist = predecessors
                 .get(&node_id)
-                .map(|preds| preds.iter().filter_map(|&p| dist.get(&p)).max().copied())
-                .flatten()
+                .and_then(|preds| preds.iter().filter_map(|&p| dist.get(&p)).max().copied())
                 .unwrap_or(0);
             let d = max_pred_dist + latency;
             dist.insert(node_id, d);
             // Track which predecessor gave the max
-            if let Some(preds) = predecessors.get(&node_id) {
-                if let Some(&best_pred) = preds.iter().max_by_key(|&&p| dist.get(&p).unwrap_or(&0)) {
-                    prev.insert(node_id, best_pred);
-                }
+            if let Some(preds) = predecessors.get(&node_id)
+                && let Some(&best_pred) = preds.iter().max_by_key(|&&p| dist.get(&p).unwrap_or(&0))
+            {
+                prev.insert(node_id, best_pred);
             }
         }
     }
@@ -983,13 +981,13 @@ fn build_suggestions(
                 100
             }).unwrap_or(100)
         });
-        if let Some(&bn) = bottleneck {
-            if let Some(node) = graph.nodes.iter().find(|n| n.id == bn) {
-                suggestions.push(format!(
-                    "Critical path bottleneck: node {} ('{}', op={})",
-                    bn, node.name, node.op
-                ));
-            }
+        if let Some(&bn) = bottleneck
+            && let Some(node) = graph.nodes.iter().find(|n| n.id == bn)
+        {
+            suggestions.push(format!(
+                "Critical path bottleneck: node {} ('{}', op={})",
+                bn, node.name, node.op
+            ));
         }
     }
 

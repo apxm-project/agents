@@ -97,13 +97,13 @@ impl GoogleBackend {
             }
         });
 
-        if !system_parts.is_empty() {
-            body.as_object_mut()
-                .expect("generation payload must be object")
-                .insert(
-                    "systemInstruction".to_string(),
-                    json!({ "parts": system_parts }),
-                );
+        if !system_parts.is_empty()
+            && let Some(obj) = body.as_object_mut()
+        {
+            obj.insert(
+                "systemInstruction".to_string(),
+                json!({ "parts": system_parts }),
+            );
         }
 
         body

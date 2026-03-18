@@ -140,7 +140,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
 
         // Basic consensus check: if all parties responded with non-error values
         consensus_reached = responses.values().all(|v| {
-            !matches!(v, Value::Null) && !v.as_string().map_or(false, |s| s.starts_with("Error:"))
+            !matches!(v, Value::Null) && !v.as_string().is_some_and(|s| s.starts_with("Error:"))
         });
 
         if consensus_reached {

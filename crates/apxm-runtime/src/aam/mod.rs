@@ -188,7 +188,7 @@ impl Aam {
         goal_id: GoalId,
         label: TransitionLabel,
     ) -> Option<TransitionRecord> {
-        let state = self.inner.read();
+        let mut state = self.inner.write();
         let policy = state.goal_tree.policy(&goal_id);
         let children = state.goal_tree.children_of(&goal_id);
 
@@ -200,7 +200,7 @@ impl Aam {
             CompletionPolicy::AllChildren => children.iter().all(|child_id| {
                 state.goal_details.get(child_id)
                     .map(|g| g.status == GoalStatus::Completed)
-                    .unwrap_or(true) // missing children count as completed
+                    .unwrap_or(false) // missing children should NOT count as completed
             }),
             CompletionPolicy::AnyChild => children.iter().any(|child_id| {
                 state.goal_details.get(child_id)
@@ -209,10 +209,14 @@ impl Aam {
             }),
             CompletionPolicy::Manual => false,
         };
-        drop(state); // release read lock before write
 
         if should_complete {
-            self.update_goal_status(goal_id, GoalStatus::Completed, label)
+            if !state.goal_details.contains_key(&goal_id) {
+                return None;
+            }
+            Some(state.apply_transition(label, move |state| {
+                state.update_goal_status(goal_id, GoalStatus::Completed)
+            }))
         } else {
             None
         }
@@ -396,20 +400,15 @@ impl TransitionLabel {
 }
 
 /// Policy for when a parent goal should be auto-completed based on children.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CompletionPolicy {
     /// Parent completes when ALL children are completed.
+    #[default]
     AllChildren,
     /// Parent completes when ANY child is completed.
     AnyChild,
     /// Parent never auto-completes; must be set manually.
     Manual,
-}
-
-impl Default for CompletionPolicy {
-    fn default() -> Self {
-        CompletionPolicy::AllChildren
-    }
 }
 
 /// Tracks parent-child relationships between goals.

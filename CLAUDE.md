@@ -8,11 +8,16 @@ Global flag: `--json` emits machine-readable JSON for most commands.
 
 ### Discovery
 ```bash
-apxm ops list                          # all 32 AIS ops, grouped by category
+apxm ops list                          # all 39 AIS ops, grouped by category
 apxm ops list --category reasoning     # filter by category
 apxm ops show ASK                      # detailed info + example JSON for one op
 apxm template list                     # available starter graph patterns
 apxm template show fan-out --json      # emit template as ready-to-use graph JSON
+```
+
+### Project Setup
+```bash
+apxm init                              # scaffold agents/, flows/, nodes/, prompts/, tools/ dirs + apxm.toml
 ```
 
 ### Graph Authoring
@@ -40,6 +45,7 @@ apxm execute graph.json -O0            # skip optimizations (e.g., FuseReasoning
 apxm execute graph.json --emit-metrics metrics.json  # runtime statistics
 apxm run out.apxmobj                   # run a pre-compiled artifact
 apxm run out.apxmobj --emit-metrics metrics.json
+apxm decompile out.apxmobj             # reverse-map artifact back to graph JSON
 ```
 
 ### Environment

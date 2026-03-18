@@ -46,10 +46,7 @@ against current source code as of 2026-03-17.
   _(Compiler-side counterpart: `CondenseOps` pass tracked in `docs/implementation/compiler/TODO.md`)_
   Files: `crates/apxm-runtime/src/scheduler/splicing.rs`, `crates/apxm-runtime/src/scheduler/state.rs`
 
-- [ ] **Gap 5 — No self-organization control plane operations.**
-  No SPAWN_AGENT or REGISTER_CAPABILITY AIS operations exist. `create_task` and `compile_task_dag` exist only as server HTTP endpoints (`apxm-server/src/main.rs` lines 603/1585), not as registered runtime capabilities that agents can invoke from within a workflow.
-  Current: no AIS ops for agent self-modification. Needed: AIS operations that let an agent spawn sub-agents and register capabilities at runtime.
-  Files: `crates/apxm-runtime/src/executor/dispatcher.rs`, `crates/apxm-server/src/main.rs`
+- [x] **Gap 5 — Self-organization operations implemented.** -- Resolved: AISOperationType::SpawnAgent and RegisterCapability exist as enum variants with full handlers and dispatcher routing.
 
 ---
 

@@ -75,7 +75,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         );
         match on_fail.to_lowercase().as_str() {
             "skip" => Ok(Value::Bool(false)),
-            "halt" | _ => Err(RuntimeError::Operation {
+            _ => Err(RuntimeError::Operation {
                 op_type: node.op_type,
                 message: error_message,
             }),
@@ -120,10 +120,10 @@ fn evaluate_condition(condition: &str, value: &Value) -> bool {
     };
 
     // Try numeric comparison
-    if let Some(rhs_num) = parse_number(rhs_str) {
-        if let Some(lhs_num) = value_as_f64(value) {
-            return compare_f64(lhs_num, op, rhs_num);
-        }
+    if let Some(rhs_num) = parse_number(rhs_str)
+        && let Some(lhs_num) = value_as_f64(value)
+    {
+        return compare_f64(lhs_num, op, rhs_num);
     }
 
     // String comparison

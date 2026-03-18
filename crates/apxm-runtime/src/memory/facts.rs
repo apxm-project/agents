@@ -98,7 +98,7 @@ impl MemorySystem {
             }
             facts.push(fact);
         }
-        facts.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        facts.sort_by_key(|f| std::cmp::Reverse(f.updated_at));
         Ok(facts)
     }
 
