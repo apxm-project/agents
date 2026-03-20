@@ -85,7 +85,12 @@ async fn execute_impl(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -
 
     let label = TransitionLabel::Custom(format!("flow_call:{}:{}", agent_name, flow_name));
     ctx.aam.set_belief(
-        format!("{}{}:{}", belief_keys::PENDING_FLOW_CALL_PREFIX, agent_name, flow_name),
+        format!(
+            "{}{}:{}",
+            belief_keys::PENDING_FLOW_CALL_PREFIX,
+            agent_name,
+            flow_name
+        ),
         call_request.clone(),
         label,
     );
@@ -138,7 +143,10 @@ async fn execute_impl(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -
     // Create a child context for the sub-flow execution
     let mut child_ctx = ctx
         .child_with_scope(ScopeSpec::snapshot_all())
-        .with_metadata(metadata::PARENT_EXECUTION_ID.to_string(), ctx.execution_id.clone())
+        .with_metadata(
+            metadata::PARENT_EXECUTION_ID.to_string(),
+            ctx.execution_id.clone(),
+        )
         .with_metadata(
             metadata::FLOW_CALL_DEPTH.to_string(),
             (current_depth + 1).to_string(),
@@ -155,8 +163,9 @@ async fn execute_impl(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -
     for (i, input) in inputs.iter().enumerate() {
         let _ = child_ctx
             .memory
-            .write(
+            .write_scoped(
                 crate::memory::MemorySpace::Stm,
+                child_ctx.scope_id(),
                 format!("{}{}", belief_keys::FLOW_ARG_PREFIX, i),
                 input.clone(),
             )
@@ -182,7 +191,12 @@ async fn execute_impl(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -
 
     // Clear the pending flow call belief
     ctx.aam.set_belief(
-        format!("{}{}:{}", belief_keys::PENDING_FLOW_CALL_PREFIX, agent_name, flow_name),
+        format!(
+            "{}{}:{}",
+            belief_keys::PENDING_FLOW_CALL_PREFIX,
+            agent_name,
+            flow_name
+        ),
         Value::Null,
         TransitionLabel::Custom(format!("flow_call_completed:{}:{}", agent_name, flow_name)),
     );
@@ -213,8 +227,8 @@ mod tests {
     use crate::capability::CapabilitySystem;
     use crate::capability::flow_registry::FlowRegistry;
     use crate::memory::{MemoryConfig, MemorySystem};
-    use apxm_core::constants::runtime::belief_keys;
     use apxm_backends::LLMRegistry;
+    use apxm_core::constants::runtime::belief_keys;
     use apxm_core::types::{
         execution::{ExecutionDag, NodeMetadata},
         operations::AISOperationType,
@@ -359,12 +373,17 @@ mod tests {
         );
 
         let result = execute(&ctx, &node, vec![]).await.unwrap();
-        assert_eq!(result, Value::String("Error: scoped child error".to_string()));
+        assert_eq!(
+            result,
+            Value::String("Error: scoped child error".to_string())
+        );
 
         let root_beliefs = ctx.aam.beliefs();
-        assert!(!root_beliefs
-            .keys()
-            .any(|key| key.starts_with(belief_keys::ERR_PREFIX)));
+        assert!(
+            !root_beliefs
+                .keys()
+                .any(|key| key.starts_with(belief_keys::ERR_PREFIX))
+        );
 
         let child_ids = ctx.scope_registry.children_of(ctx.scope_id());
         assert_eq!(child_ids.len(), 1);
@@ -372,11 +391,13 @@ mod tests {
             .scope_registry
             .get(&child_ids[0])
             .expect("child scope should be registered");
-        assert!(child_entry
-            .aam
-            .beliefs()
-            .keys()
-            .any(|key| key.starts_with(belief_keys::ERR_PREFIX)));
+        assert!(
+            child_entry
+                .aam
+                .beliefs()
+                .keys()
+                .any(|key| key.starts_with(belief_keys::ERR_PREFIX))
+        );
     }
 
     #[tokio::test]

@@ -63,15 +63,19 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     // Create a child context for sub-flow execution
     let child_ctx = ctx
         .child_with_scope(ScopeSpec::snapshot_all())
-        .with_metadata(metadata::PARENT_EXECUTION_ID.to_string(), ctx.execution_id.clone())
+        .with_metadata(
+            metadata::PARENT_EXECUTION_ID.to_string(),
+            ctx.execution_id.clone(),
+        )
         .with_metadata(metadata::DELEGATE_TASK_SPEC.to_string(), task_spec.clone())
         .with_metadata(metadata::DELEGATE_TARGET.to_string(), target_agent.clone());
 
     // Inject the task spec and any input into STM
     let _ = child_ctx
         .memory
-        .write(
+        .write_scoped(
             crate::memory::MemorySpace::Stm,
+            child_ctx.scope_id(),
             belief_keys::DELEGATE_TASK_SPEC.to_string(),
             Value::String(task_spec.clone()),
         )
@@ -80,8 +84,9 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     if let Some(input) = inputs.first() {
         let _ = child_ctx
             .memory
-            .write(
+            .write_scoped(
                 crate::memory::MemorySpace::Stm,
+                child_ctx.scope_id(),
                 belief_keys::DELEGATE_INPUT.to_string(),
                 input.clone(),
             )
@@ -122,7 +127,10 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     // Return result with task handle metadata
     let task_handle = format!("delegate_{}_{}", target_agent, ctx.execution_id);
     let mut result_obj = HashMap::new();
-    result_obj.insert(response_keys::TASK_HANDLE.to_string(), Value::String(task_handle));
+    result_obj.insert(
+        response_keys::TASK_HANDLE.to_string(),
+        Value::String(task_handle),
+    );
     result_obj.insert(response_keys::RESULT.to_string(), response);
 
     tracing::info!(
@@ -174,7 +182,10 @@ mod tests {
         }
     }
 
-    fn make_delegate_node(target_agent: &str, task_spec: &str) -> apxm_core::types::execution::Node {
+    fn make_delegate_node(
+        target_agent: &str,
+        task_spec: &str,
+    ) -> apxm_core::types::execution::Node {
         let mut node = apxm_core::types::execution::Node {
             id: 1,
             op_type: AISOperationType::Delegate,

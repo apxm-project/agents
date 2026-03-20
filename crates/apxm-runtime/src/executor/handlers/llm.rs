@@ -18,8 +18,8 @@
 //! 5. Repeat until LLM returns text (no tool calls)
 
 use super::{
-    ExecutionContext, Node, Result, Value, execute_llm_request,
-    get_optional_string_attribute, get_optional_u64_attribute, get_string_attribute,
+    ExecutionContext, Node, Result, Value, execute_llm_request, get_optional_string_attribute,
+    get_optional_u64_attribute, get_string_attribute,
     inner_plan::{InnerPlanOptions, execute_inner_plan},
 };
 use crate::aam::{Goal as AamGoal, GoalId, GoalStatus, TransitionLabel};
@@ -75,11 +75,7 @@ impl From<&AISOperationType> for LlmMode {
 /// Can be overridden per-node via the `max_tool_iterations` attribute.
 const DEFAULT_MAX_TOOL_ITERATIONS: usize = 10;
 
-fn resolve_system_prompt(
-    ctx: &ExecutionContext,
-    node: &Node,
-    mode: LlmMode,
-) -> Result<String> {
+fn resolve_system_prompt(ctx: &ExecutionContext, node: &Node, mode: LlmMode) -> Result<String> {
     let (config_instruction, template_name, fallback) = match mode {
         LlmMode::Ask => (
             ctx.instruction_config.ask.as_ref(),
@@ -338,9 +334,7 @@ async fn execute_tool_calls_parallel(
                     // Write tool: acquire per-tool-name write lock.
                     let lock = TOOL_WRITE_LOCKS
                         .entry(tc.name.clone())
-                        .or_insert_with(|| {
-                            std::sync::Arc::new(tokio::sync::RwLock::new(()))
-                        })
+                        .or_insert_with(|| std::sync::Arc::new(tokio::sync::RwLock::new(())))
                         .clone();
                     let _guard = lock.write().await;
                     execute_tool_call(ctx, tc).await
@@ -519,8 +513,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     if mode == LlmMode::Think
         && let Some(budget_tokens) = budget
     {
-        request =
-            request.with_metadata_value("thinking_budget", serde_json::json!(budget_tokens));
+        request = request.with_metadata_value("thinking_budget", serde_json::json!(budget_tokens));
     }
 
     let system_prompt = resolve_system_prompt(ctx, node, mode)?;
@@ -680,7 +673,11 @@ async fn execute_llm_once(
             LlmMode::Reason => {
                 if let Ok(structured) = parse_structured_output(&cached.content) {
                     process_structured_output(
-                        ctx, node, structured, enable_inner_plan, bind_outputs,
+                        ctx,
+                        node,
+                        structured,
+                        enable_inner_plan,
+                        bind_outputs,
                     )
                     .await
                 } else {
@@ -708,7 +705,10 @@ async fn execute_llm_once(
 
     // Record token usage in accountant
     {
-        let flow_name = node.attributes.get(graph_attrs::FLOW_NAME).and_then(|v| v.as_string());
+        let flow_name = node
+            .attributes
+            .get(graph_attrs::FLOW_NAME)
+            .and_then(|v| v.as_string());
         let agent_name = ctx.current_agent.as_ref().map(|a| a.name.as_str());
         ctx.token_accountant.record(
             node.id,
@@ -764,7 +764,12 @@ async fn execute_llm_once(
             // Record LLM result in AAM
             let label = TransitionLabel::operation(node.id, format!("{:?}", node.op_type));
             ctx.aam.set_belief(
-                format!("{}{}:{}", belief_keys::LLM_RESULT_PREFIX, mode_name, node.id),
+                format!(
+                    "{}{}:{}",
+                    belief_keys::LLM_RESULT_PREFIX,
+                    mode_name,
+                    node.id
+                ),
                 Value::String(content.chars().take(200).collect::<String>()),
                 label,
             );
@@ -832,7 +837,10 @@ async fn execute_ask_with_tools(
 
         // Record token usage in accountant
         {
-            let flow_name = node.attributes.get(graph_attrs::FLOW_NAME).and_then(|v| v.as_string());
+            let flow_name = node
+                .attributes
+                .get(graph_attrs::FLOW_NAME)
+                .and_then(|v| v.as_string());
             let agent_name = ctx.current_agent.as_ref().map(|a| a.name.as_str());
             ctx.token_accountant.record(
                 node.id,
@@ -903,9 +911,15 @@ async fn execute_ask_with_tools(
             );
 
             ctx.memory
-                .write(
+                .write_scoped(
                     crate::memory::MemorySpace::Stm,
-                    format!("{}{}:{}", belief_keys::TOOL_RESULTS_PREFIX, ctx.execution_id, iteration),
+                    ctx.scope_id(),
+                    format!(
+                        "{}{}:{}",
+                        belief_keys::TOOL_RESULTS_PREFIX,
+                        ctx.execution_id,
+                        iteration
+                    ),
                     results_value,
                 )
                 .await
@@ -968,7 +982,12 @@ async fn process_structured_output(
     // Apply belief updates to LTM
     for (key, value) in structured.belief_updates {
         ctx.memory
-            .write(crate::memory::MemorySpace::Ltm, key.clone(), value.clone())
+            .write_scoped(
+                crate::memory::MemorySpace::Ltm,
+                ctx.scope_id(),
+                key.clone(),
+                value.clone(),
+            )
             .await
             .ok(); // Don't fail on memory errors
 
@@ -997,8 +1016,9 @@ async fn process_structured_output(
         );
 
         ctx.memory
-            .write(
+            .write_scoped(
                 crate::memory::MemorySpace::Stm,
+                ctx.scope_id(),
                 format!("{}{}", belief_keys::GOALS_PREFIX, ctx.execution_id),
                 goals_value,
             )
@@ -1044,7 +1064,11 @@ async fn process_structured_output(
                 ctx.memory
                     .write(
                         crate::memory::MemorySpace::Episodic,
-                        format!("{}{}", belief_keys::INNER_PLAN_SPLICED_PREFIX, ctx.execution_id),
+                        format!(
+                            "{}{}",
+                            belief_keys::INNER_PLAN_SPLICED_PREFIX,
+                            ctx.execution_id
+                        ),
                         Value::String(format!(
                             "REASON inner plan merged into DAG with {} nodes",
                             inserted_nodes
@@ -1068,9 +1092,8 @@ async fn process_structured_output(
 fn parse_structured_output(
     content: &str,
 ) -> std::result::Result<StructuredReasonOutput, serde_json::Error> {
-    let json_value = parse_json_from_text(content).ok_or_else(|| {
-        serde_json::Error::custom("Failed to parse structured output")
-    })?;
+    let json_value = parse_json_from_text(content)
+        .ok_or_else(|| serde_json::Error::custom("Failed to parse structured output"))?;
     serde_json::from_value(json_value)
 }
 

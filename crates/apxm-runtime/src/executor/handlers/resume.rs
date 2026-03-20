@@ -135,10 +135,8 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
                 restore_stm_snapshot(ctx, &checkpoint_id).await;
 
                 // Record resume in AAM
-                let label = crate::aam::TransitionLabel::operation(
-                    node.id,
-                    format!("{:?}", node.op_type),
-                );
+                let label =
+                    crate::aam::TransitionLabel::operation(node.id, format!("{:?}", node.op_type));
                 ctx.aam.set_belief(
                     format!("{}{}", belief_keys::RESUME_PREFIX, checkpoint_id),
                     Value::String("resumed".to_string()),
@@ -187,10 +185,18 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
 
 /// Restore STM state from a snapshot stored by PAUSE.
 async fn restore_stm_snapshot(ctx: &ExecutionContext, checkpoint_id: &str) {
-    let snapshot_key = format!("{}{}", belief_keys::CHECKPOINT_SNAPSHOT_PREFIX, checkpoint_id);
+    let snapshot_key = format!(
+        "{}{}",
+        belief_keys::CHECKPOINT_SNAPSHOT_PREFIX,
+        checkpoint_id
+    );
     if let Ok(Some(snapshot)) = ctx
         .memory
-        .read(crate::memory::MemorySpace::Stm, &snapshot_key)
+        .read_scoped(
+            crate::memory::MemorySpace::Stm,
+            ctx.scope_id(),
+            &snapshot_key,
+        )
         .await
     {
         if let Value::Object(entries) = snapshot {
@@ -199,7 +205,7 @@ async fn restore_stm_snapshot(ctx: &ExecutionContext, checkpoint_id: &str) {
                 if key != belief_keys::EXECUTION_ID {
                     let _ = ctx
                         .memory
-                        .write(crate::memory::MemorySpace::Stm, key, value)
+                        .write_scoped(crate::memory::MemorySpace::Stm, ctx.scope_id(), key, value)
                         .await;
                 }
             }
@@ -207,7 +213,11 @@ async fn restore_stm_snapshot(ctx: &ExecutionContext, checkpoint_id: &str) {
         // Clean up the snapshot key
         let _ = ctx
             .memory
-            .delete(crate::memory::MemorySpace::Stm, &snapshot_key)
+            .delete_scoped(
+                crate::memory::MemorySpace::Stm,
+                ctx.scope_id(),
+                &snapshot_key,
+            )
             .await;
     }
 }

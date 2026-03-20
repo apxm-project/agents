@@ -33,7 +33,11 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
 
     // Record capability registration in AAM
     ctx.aam.set_belief(
-        format!("{}{}", belief_keys::REGISTERED_CAPABILITY_PREFIX, capability_name),
+        format!(
+            "{}{}",
+            belief_keys::REGISTERED_CAPABILITY_PREFIX,
+            capability_name
+        ),
         Value::String(description.clone()),
         TransitionLabel::Custom(format!("register_capability:{}", capability_name)),
     );
@@ -41,17 +45,28 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
     // Store the registration metadata in STM
     let _ = ctx
         .memory
-        .write(
+        .write_scoped(
             crate::memory::MemorySpace::Stm,
-            format!("{}{}", belief_keys::CAPABILITY_REGISTERED_PREFIX, capability_name),
+            ctx.scope_id(),
+            format!(
+                "{}{}",
+                belief_keys::CAPABILITY_REGISTERED_PREFIX,
+                capability_name
+            ),
             Value::String(description.clone()),
         )
         .await;
 
     // Build result
     let mut result = HashMap::new();
-    result.insert(response_keys::CAPABILITY_NAME.to_string(), Value::String(capability_name.clone()));
-    result.insert(response_keys::DESCRIPTION.to_string(), Value::String(description));
+    result.insert(
+        response_keys::CAPABILITY_NAME.to_string(),
+        Value::String(capability_name.clone()),
+    );
+    result.insert(
+        response_keys::DESCRIPTION.to_string(),
+        Value::String(description),
+    );
     result.insert(response_keys::REGISTERED.to_string(), Value::Bool(true));
 
     tracing::info!(
@@ -76,7 +91,10 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
 
-    fn make_register_cap_node(cap_name: &str, description: Option<&str>) -> apxm_core::types::execution::Node {
+    fn make_register_cap_node(
+        cap_name: &str,
+        description: Option<&str>,
+    ) -> apxm_core::types::execution::Node {
         let mut node = apxm_core::types::execution::Node {
             id: 1,
             op_type: AISOperationType::RegisterCapability,
@@ -128,10 +146,7 @@ mod tests {
                     obj.get(response_keys::DESCRIPTION),
                     Some(&Value::String("Search the web".to_string()))
                 );
-                assert_eq!(
-                    obj.get(response_keys::REGISTERED),
-                    Some(&Value::Bool(true))
-                );
+                assert_eq!(obj.get(response_keys::REGISTERED), Some(&Value::Bool(true)));
             }
             _ => panic!("Expected Value::Object, got {:?}", result),
         }
@@ -184,10 +199,13 @@ mod tests {
 
         let key = format!("{}data_fetch", belief_keys::CAPABILITY_REGISTERED_PREFIX);
         let stored = memory
-            .read(crate::memory::MemorySpace::Stm, &key)
+            .read_scoped(crate::memory::MemorySpace::Stm, ctx.scope_id(), &key)
             .await
             .unwrap();
-        assert!(stored.is_some(), "Capability registration should be stored in STM");
+        assert!(
+            stored.is_some(),
+            "Capability registration should be stored in STM"
+        );
     }
 
     #[tokio::test]

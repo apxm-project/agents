@@ -39,7 +39,9 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
                 .await?;
         }
         _ => {
-            ctx.memory.write(space, key.clone(), value.clone()).await?;
+            ctx.memory
+                .write_scoped(space, ctx.scope_id(), key.clone(), value.clone())
+                .await?;
         }
     }
 
@@ -107,7 +109,10 @@ mod tests {
         assert_eq!(result, input_value);
 
         // Verify it was stored
-        let stored = memory.read(MemorySpace::Stm, "test_key").await.unwrap();
+        let stored = memory
+            .read_scoped(MemorySpace::Stm, ctx.scope_id(), "test_key")
+            .await
+            .unwrap();
         assert_eq!(stored, Some(input_value));
     }
 }

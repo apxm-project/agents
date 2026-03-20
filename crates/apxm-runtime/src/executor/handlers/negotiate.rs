@@ -25,12 +25,14 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
     let proposal = get_string_attribute(node, graph_attrs::PROPOSAL)?;
 
     // Parse parties from attribute
-    let parties_value = node.attributes.get(graph_attrs::PARTIES).cloned().ok_or_else(|| {
-        RuntimeError::Operation {
+    let parties_value = node
+        .attributes
+        .get(graph_attrs::PARTIES)
+        .cloned()
+        .ok_or_else(|| RuntimeError::Operation {
             op_type: node.op_type,
             message: "Missing required attribute: parties".to_string(),
-        }
-    })?;
+        })?;
 
     let parties: Vec<String> = match &parties_value {
         Value::Array(arr) => arr
@@ -108,8 +110,9 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
 
             let _ = child_ctx
                 .memory
-                .write(
+                .write_scoped(
                     crate::memory::MemorySpace::Stm,
+                    child_ctx.scope_id(),
                     belief_keys::NEGOTIATE_PROPOSAL.to_string(),
                     Value::String(proposal.clone()),
                 )
@@ -130,10 +133,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
                 }
                 Err(e) => {
                     tracing::warn!(party = %party, error = %e, "NEGOTIATE party failed");
-                    responses.insert(
-                        party.clone(),
-                        Value::String(format!("Error: {}", e)),
-                    );
+                    responses.insert(party.clone(), Value::String(format!("Error: {}", e)));
                 }
             }
         }
@@ -162,7 +162,10 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
         Value::Bool(consensus_reached),
     );
     result.insert(response_keys::PROPOSAL.to_string(), Value::String(proposal));
-    result.insert(response_keys::RESPONSES.to_string(), Value::Object(responses));
+    result.insert(
+        response_keys::RESPONSES.to_string(),
+        Value::Object(responses),
+    );
 
     tracing::info!(
         execution_id = %ctx.execution_id,
@@ -213,7 +216,10 @@ mod tests {
         }
     }
 
-    fn make_negotiate_node(parties: Vec<&str>, proposal: &str) -> apxm_core::types::execution::Node {
+    fn make_negotiate_node(
+        parties: Vec<&str>,
+        proposal: &str,
+    ) -> apxm_core::types::execution::Node {
         let mut node = apxm_core::types::execution::Node {
             id: 1,
             op_type: AISOperationType::Negotiate,
@@ -472,6 +478,9 @@ mod tests {
 
         let node = make_negotiate_node(vec!["alice"], "test");
         let result = execute(&ctx, &node, vec![]).await;
-        assert!(result.is_ok(), "Should succeed with 'communicate' flow fallback");
+        assert!(
+            result.is_ok(),
+            "Should succeed with 'communicate' flow fallback"
+        );
     }
 }

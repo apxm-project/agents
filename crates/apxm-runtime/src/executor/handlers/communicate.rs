@@ -60,7 +60,10 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         format!("{}{}", belief_keys::PENDING_COMMUNICATE_PREFIX, recipient),
         Value::Object(
             vec![
-                (graph_attrs::RECIPIENT.to_string(), Value::String(recipient.clone())),
+                (
+                    graph_attrs::RECIPIENT.to_string(),
+                    Value::String(recipient.clone()),
+                ),
                 (graph_attrs::MESSAGE.to_string(), message.clone()),
             ]
             .into_iter()
@@ -123,15 +126,25 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     // Create a child context for the sub-flow execution
     let child_ctx = ctx
         .child_with_scope(ScopeSpec::snapshot_all())
-        .with_metadata(metadata::PARENT_EXECUTION_ID.to_string(), ctx.execution_id.clone())
-        .with_metadata(metadata::COMMUNICATE_SENDER.to_string(), ctx.execution_id.clone())
-        .with_metadata(metadata::COMMUNICATE_RECIPIENT.to_string(), recipient.clone());
+        .with_metadata(
+            metadata::PARENT_EXECUTION_ID.to_string(),
+            ctx.execution_id.clone(),
+        )
+        .with_metadata(
+            metadata::COMMUNICATE_SENDER.to_string(),
+            ctx.execution_id.clone(),
+        )
+        .with_metadata(
+            metadata::COMMUNICATE_RECIPIENT.to_string(),
+            recipient.clone(),
+        );
 
     // Inject the message into STM so the sub-flow can access it
     let _ = child_ctx
         .memory
-        .write(
+        .write_scoped(
             crate::memory::MemorySpace::Stm,
+            child_ctx.scope_id(),
             belief_keys::COMMUNICATE_MESSAGE.to_string(),
             message.clone(),
         )
@@ -238,10 +251,22 @@ async fn execute_broadcast(ctx: &ExecutionContext, _node: &Node, message: Value)
         // Build a child context per recipient
         let child_ctx = ctx
             .child_with_scope(ScopeSpec::snapshot_all())
-            .with_metadata(metadata::PARENT_EXECUTION_ID.to_string(), ctx.execution_id.clone())
-            .with_metadata(metadata::COMMUNICATE_SENDER.to_string(), ctx.execution_id.clone())
-            .with_metadata(metadata::COMMUNICATE_RECIPIENT.to_string(), agent_name.clone())
-            .with_metadata(metadata::COMMUNICATE_MODE.to_string(), "broadcast".to_string());
+            .with_metadata(
+                metadata::PARENT_EXECUTION_ID.to_string(),
+                ctx.execution_id.clone(),
+            )
+            .with_metadata(
+                metadata::COMMUNICATE_SENDER.to_string(),
+                ctx.execution_id.clone(),
+            )
+            .with_metadata(
+                metadata::COMMUNICATE_RECIPIENT.to_string(),
+                agent_name.clone(),
+            )
+            .with_metadata(
+                metadata::COMMUNICATE_MODE.to_string(),
+                "broadcast".to_string(),
+            );
 
         let msg = message.clone();
         let agent = agent_name.clone();
@@ -251,8 +276,9 @@ async fn execute_broadcast(ctx: &ExecutionContext, _node: &Node, message: Value)
             // Inject message into child STM
             let _ = child_ctx
                 .memory
-                .write(
+                .write_scoped(
                     crate::memory::MemorySpace::Stm,
+                    child_ctx.scope_id(),
                     belief_keys::COMMUNICATE_MESSAGE.to_string(),
                     msg,
                 )

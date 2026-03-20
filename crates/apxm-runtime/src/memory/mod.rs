@@ -22,6 +22,7 @@ use apxm_core::error::RuntimeError;
 use std::sync::Arc;
 
 type Result<T> = std::result::Result<T, RuntimeError>;
+const SCOPE_KEY_PREFIX: &str = "__scope__/";
 
 /// Memory space identifier for routing operations
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,6 +85,40 @@ impl MemorySystem {
         }
     }
 
+    /// Return the storage prefix used for a hierarchical execution scope.
+    pub fn scope_prefix(scope_id: &str) -> String {
+        format!("{SCOPE_KEY_PREFIX}{scope_id}/")
+    }
+
+    /// Build the storage key for a value scoped to a hierarchical execution context.
+    pub fn scoped_key(scope_id: &str, key: &str) -> String {
+        format!("{}{}", Self::scope_prefix(scope_id), key)
+    }
+
+    /// Remove the storage prefix from a scoped key and return the logical key.
+    pub fn strip_scope_prefix(scope_id: &str, key: &str) -> Option<String> {
+        key.strip_prefix(&Self::scope_prefix(scope_id))
+            .map(str::to_string)
+    }
+
+    /// Read a value from STM/LTM within a specific execution scope.
+    pub async fn read_scoped(
+        &self,
+        space: MemorySpace,
+        scope_id: &str,
+        key: &str,
+    ) -> Result<Option<apxm_core::types::values::Value>> {
+        let scoped_key = Self::scoped_key(scope_id, key);
+        match space {
+            MemorySpace::Stm => self.stm.get(&scoped_key).await,
+            MemorySpace::Ltm => self.ltm.get(&scoped_key).await,
+            MemorySpace::Episodic => Err(RuntimeError::Memory {
+                message: "Episodic memory is append-only, use query instead".to_string(),
+                space: Some(mem_const::EPISODIC.to_string()),
+            }),
+        }
+    }
+
     /// Write a value to the specified memory space
     pub async fn write(
         &self,
@@ -101,6 +136,18 @@ impl MemorySystem {
         }
     }
 
+    /// Write a value to STM/LTM within a specific execution scope.
+    pub async fn write_scoped(
+        &self,
+        space: MemorySpace,
+        scope_id: &str,
+        key: String,
+        value: apxm_core::types::values::Value,
+    ) -> Result<()> {
+        self.write(space, Self::scoped_key(scope_id, &key), value)
+            .await
+    }
+
     /// Delete a key from the specified memory space
     pub async fn delete(&self, space: MemorySpace, key: &str) -> Result<()> {
         match space {
@@ -111,6 +158,11 @@ impl MemorySystem {
                 space: Some(mem_const::EPISODIC.to_string()),
             }),
         }
+    }
+
+    /// Delete a key from STM/LTM within a specific execution scope.
+    pub async fn delete_scoped(&self, space: MemorySpace, scope_id: &str, key: &str) -> Result<()> {
+        self.delete(space, &Self::scoped_key(scope_id, key)).await
     }
 
     /// Search memory space (substring matching on keys)
@@ -124,6 +176,39 @@ impl MemorySystem {
             MemorySpace::Stm => self.stm.search(query, limit).await,
             MemorySpace::Ltm => self.ltm.search(query, limit).await,
             MemorySpace::Episodic => self.episodic.search(query, limit).await,
+        }
+    }
+
+    /// Search memory within a specific execution scope.
+    ///
+    /// STM/LTM keys are physically namespaced by `scope_id` and returned with
+    /// the scope prefix stripped so callers continue to work with logical keys.
+    /// Episodic memory remains global for now.
+    pub async fn search_scoped(
+        &self,
+        space: MemorySpace,
+        scope_id: &str,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<apxm_backends::SearchResult>> {
+        match space {
+            MemorySpace::Stm | MemorySpace::Ltm => {
+                let scoped_query = Self::scoped_key(scope_id, query);
+                let results = self.search(space, &scoped_query, limit).await?;
+                Ok(results
+                    .into_iter()
+                    .filter_map(|result| {
+                        Self::strip_scope_prefix(scope_id, &result.key).map(|logical_key| {
+                            apxm_backends::SearchResult {
+                                key: logical_key,
+                                value: result.value,
+                                score: result.score,
+                            }
+                        })
+                    })
+                    .collect())
+            }
+            MemorySpace::Episodic => self.search(space, query, limit).await,
         }
     }
 
@@ -251,6 +336,77 @@ mod tests {
         let episodes = system.query_episodes("exec_123").await?;
         assert_eq!(episodes.len(), 1);
         assert_eq!(episodes[0].event_type, "test_event");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_memory_system_scoped_stm_isolation()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let config = MemoryConfig::in_memory_ltm();
+        let system = MemorySystem::new(config).await?;
+
+        system
+            .write_scoped(
+                MemorySpace::Stm,
+                "scope-a",
+                "shared_key".to_string(),
+                Value::String("alpha".to_string()),
+            )
+            .await?;
+        system
+            .write_scoped(
+                MemorySpace::Stm,
+                "scope-b",
+                "shared_key".to_string(),
+                Value::String("beta".to_string()),
+            )
+            .await?;
+
+        let scope_a = system
+            .read_scoped(MemorySpace::Stm, "scope-a", "shared_key")
+            .await?;
+        let scope_b = system
+            .read_scoped(MemorySpace::Stm, "scope-b", "shared_key")
+            .await?;
+
+        assert_eq!(scope_a, Some(Value::String("alpha".to_string())));
+        assert_eq!(scope_b, Some(Value::String("beta".to_string())));
+        assert_eq!(system.read(MemorySpace::Stm, "shared_key").await?, None);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_memory_system_scoped_search_strips_prefix()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let config = MemoryConfig::in_memory_ltm();
+        let system = MemorySystem::new(config).await?;
+
+        system
+            .write_scoped(
+                MemorySpace::Ltm,
+                "scope-a",
+                "user:1".to_string(),
+                Value::String("alice".to_string()),
+            )
+            .await?;
+        system
+            .write_scoped(
+                MemorySpace::Ltm,
+                "scope-b",
+                "user:2".to_string(),
+                Value::String("bob".to_string()),
+            )
+            .await?;
+
+        let results = system
+            .search_scoped(MemorySpace::Ltm, "scope-a", "user", 10)
+            .await?;
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].key, "user:1");
+        assert_eq!(results[0].value, Value::String("alice".to_string()));
 
         Ok(())
     }

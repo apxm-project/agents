@@ -31,10 +31,10 @@ use std::collections::HashMap;
 
 pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -> Result<Value> {
     let queue = get_string_attribute(node, graph_attrs::QUEUE)?;
-    let lease_ms =
-        get_optional_u64_attribute(node, graph_attrs::LEASE_MS)?.unwrap_or(defaults::DEFAULT_LEASE_MS);
-    let max_wait_ms =
-        get_optional_u64_attribute(node, graph_attrs::MAX_WAIT_MS)?.unwrap_or(defaults::DEFAULT_MAX_WAIT_MS);
+    let lease_ms = get_optional_u64_attribute(node, graph_attrs::LEASE_MS)?
+        .unwrap_or(defaults::DEFAULT_LEASE_MS);
+    let max_wait_ms = get_optional_u64_attribute(node, graph_attrs::MAX_WAIT_MS)?
+        .unwrap_or(defaults::DEFAULT_MAX_WAIT_MS);
 
     let server_url = get_optional_string_attribute(node, graph_attrs::SERVER_URL)?
         .or_else(|| std::env::var("APXM_SERVER_URL").ok())
@@ -121,8 +121,9 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
     // Store claim metadata in STM for COMPLETE op
     let _ = ctx
         .memory
-        .write(
+        .write_scoped(
             MemorySpace::Stm,
+            ctx.scope_id(),
             format!("{}{}", belief_keys::CLAIM_TOKEN_PREFIX, task_id),
             Value::String(claim_token.clone()),
         )
@@ -241,4 +242,3 @@ mod tests {
         assert!(result.is_err());
     }
 }
-

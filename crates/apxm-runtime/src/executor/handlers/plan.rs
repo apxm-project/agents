@@ -82,7 +82,10 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     // Retrieve context from memory if specified
     let mut context_info = String::new();
     if let Some(key) = context_key
-        && let Ok(Some(value)) = ctx.memory.read(crate::memory::MemorySpace::Ltm, &key).await
+        && let Ok(Some(value)) = ctx
+            .memory
+            .read_scoped(crate::memory::MemorySpace::Ltm, ctx.scope_id(), &key)
+            .await
     {
         context_info = format!("\n\nContext: {:?}", value);
     }
@@ -247,8 +250,9 @@ async fn execute_plan_once(
             .unwrap_or(Value::String("<invalid plan>".into()));
 
         ctx.memory
-            .write(
+            .write_scoped(
                 crate::memory::MemorySpace::Stm,
+                ctx.scope_id(),
                 format!("{}{}", belief_keys::PLAN_PREFIX, ctx.execution_id),
                 plan_value.clone(),
             )
@@ -308,7 +312,11 @@ async fn execute_plan_once(
                     ctx.memory
                         .write(
                             crate::memory::MemorySpace::Episodic,
-                            format!("{}{}", belief_keys::INNER_PLAN_SPLICED_PREFIX, ctx.execution_id),
+                            format!(
+                                "{}{}",
+                                belief_keys::INNER_PLAN_SPLICED_PREFIX,
+                                ctx.execution_id
+                            ),
                             Value::String(format!(
                                 "Inner plan merged into DAG with {} nodes",
                                 inserted_nodes

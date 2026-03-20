@@ -42,14 +42,20 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
 
     // Store the new agent's metadata in STM for later reference
     let mut agent_info = HashMap::new();
-    agent_info.insert(response_keys::NAME.to_string(), Value::String(agent_name.clone()));
+    agent_info.insert(
+        response_keys::NAME.to_string(),
+        Value::String(agent_name.clone()),
+    );
     agent_info.insert(
         response_keys::SPAWNED_BY.to_string(),
         Value::String(ctx.execution_id.clone()),
     );
 
     if let Some(capabilities) = node.attributes.get(response_keys::CAPABILITIES) {
-        agent_info.insert(response_keys::CAPABILITIES.to_string(), capabilities.clone());
+        agent_info.insert(
+            response_keys::CAPABILITIES.to_string(),
+            capabilities.clone(),
+        );
     }
     if let Some(goals) = node.attributes.get(response_keys::GOALS) {
         agent_info.insert(response_keys::GOALS.to_string(), goals.clone());
@@ -57,8 +63,9 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
 
     let _ = ctx
         .memory
-        .write(
+        .write_scoped(
             crate::memory::MemorySpace::Stm,
+            ctx.scope_id(),
             format!("{}{}", belief_keys::AGENT_INFO_PREFIX, agent_name),
             Value::Object(agent_info.clone()),
         )
@@ -165,7 +172,7 @@ mod tests {
         // Check STM for agent info
         let key = format!("{}worker_agent", belief_keys::AGENT_INFO_PREFIX);
         let stored = memory
-            .read(crate::memory::MemorySpace::Stm, &key)
+            .read_scoped(crate::memory::MemorySpace::Stm, ctx.scope_id(), &key)
             .await
             .unwrap();
         assert!(stored.is_some(), "Agent info should be stored in STM");

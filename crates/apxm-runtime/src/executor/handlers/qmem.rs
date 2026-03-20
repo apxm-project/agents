@@ -26,7 +26,10 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
     };
 
     // Search memory
-    let results = ctx.memory.search(space, &query, limit).await?;
+    let results = ctx
+        .memory
+        .search_scoped(space, ctx.scope_id(), &query, limit)
+        .await?;
 
     // Emit memory-read event
     if let Some(emitter) = &ctx.event_emitter {
@@ -96,19 +99,17 @@ mod tests {
 
     impl ExecutionEventEmitter for TestEventEmitter {
         fn emit_llm_token(&self, _content: &str) {}
-        fn emit_tool_start(
-            &self,
-            _name: &str,
-            _args: &std::collections::HashMap<String, Value>,
-        ) {
-        }
+        fn emit_tool_start(&self, _name: &str, _args: &std::collections::HashMap<String, Value>) {}
         fn emit_tool_end(&self, _name: &str, _result: &Value) {}
 
         fn emit_memory_read(&self, scope: &str, key: &str) {
-            self.events.lock().unwrap().push(ExecutionEvent::MemoryRead {
-                scope: scope.to_string(),
-                key: key.to_string(),
-            });
+            self.events
+                .lock()
+                .unwrap()
+                .push(ExecutionEvent::MemoryRead {
+                    scope: scope.to_string(),
+                    key: key.to_string(),
+                });
         }
 
         fn emit_memory_write(&self, scope: &str, key: &str) {
@@ -140,16 +141,18 @@ mod tests {
 
         // Populate STM
         memory
-            .write(
+            .write_scoped(
                 MemorySpace::Stm,
+                ctx.scope_id(),
                 "user:1".to_string(),
                 Value::String("alice".to_string()),
             )
             .await
             .unwrap();
         memory
-            .write(
+            .write_scoped(
                 MemorySpace::Stm,
+                ctx.scope_id(),
                 "user:2".to_string(),
                 Value::String("bob".to_string()),
             )
@@ -205,8 +208,9 @@ mod tests {
 
         // Populate STM
         memory
-            .write(
+            .write_scoped(
                 MemorySpace::Stm,
+                ctx.scope_id(),
                 "doc:1".to_string(),
                 Value::String("hello".to_string()),
             )
