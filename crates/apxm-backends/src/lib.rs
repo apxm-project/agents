@@ -40,8 +40,11 @@ pub use llm::{
     AnthropicModel,
     // Factory
     BackendFactory,
+    // Structured message types
+    ContentPart,
     // Retry logic
     ErrorClass,
+    FunctionCall,
     GenerationConfig,
     GoogleModel,
     // Registry and health
@@ -53,6 +56,7 @@ pub use llm::{
     LLMRegistry,
     LLMRequest,
     LLMResponse,
+    Message,
     MetricsTracker,
     OllamaModel,
     OpenAIModel,
@@ -66,14 +70,10 @@ pub use llm::{
     RequestTracer,
     RetryConfig,
     RetryStrategy,
+    Role,
     // Streaming
     StreamChunk,
     TokenUsage,
-    // Structured message types
-    ContentPart,
-    FunctionCall,
-    Message,
-    Role,
     // Tool types
     ToolChoice,
     ToolDefinition,

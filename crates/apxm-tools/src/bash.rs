@@ -178,8 +178,8 @@ impl Default for BashCapability {
 #[async_trait]
 impl CapabilityExecutor for BashCapability {
     async fn execute(&self, args: HashMap<String, Value>) -> CapabilityResult<Value> {
-        let command = require_string_arg(&args, "command", "arg_command", &self.metadata.name)?
-            .to_string();
+        let command =
+            require_string_arg(&args, "command", "arg_command", &self.metadata.name)?.to_string();
 
         self.validate_command(&command)?;
 

@@ -26,7 +26,7 @@ use apxm_artifact::Artifact;
 use apxm_compiler::{Context as CompilerContext, Pipeline as CompilerPipeline};
 use apxm_core::types::{AIS_OPERATIONS, OptimizationLevel};
 use apxm_graph::ApxmGraph;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
 const SERVER_NAME: &str = "apxm-mcp-server";
@@ -98,7 +98,10 @@ fn handle_request(request: Value) -> Value {
         "tools/call" => handle_tools_call(params),
         "ping" => Ok(json!({})),
         "" => Err(rpc_error(PARSE_ERROR, "missing method")),
-        _ => Err(rpc_error(METHOD_NOT_FOUND, format!("unknown method: {method}"))),
+        _ => Err(rpc_error(
+            METHOD_NOT_FOUND,
+            format!("unknown method: {method}"),
+        )),
     };
 
     match result {
@@ -275,11 +278,14 @@ fn tool_validate(args: Value) -> Result<String, String> {
     let mut warnings: Vec<String> = Vec::new();
 
     // Try to parse the JSON first
-    let raw: Value = serde_json::from_str(graph_json)
-        .map_err(|e| format!("invalid JSON: {e}"))?;
+    let raw: Value = serde_json::from_str(graph_json).map_err(|e| format!("invalid JSON: {e}"))?;
 
     // Check required top-level fields
-    if raw.get("name").and_then(Value::as_str).is_none_or(|s| s.is_empty()) {
+    if raw
+        .get("name")
+        .and_then(Value::as_str)
+        .is_none_or(|s| s.is_empty())
+    {
         errors.push("graph name must not be empty".to_string());
     }
 
@@ -290,7 +296,10 @@ fn tool_validate(args: Value) -> Result<String, String> {
 
     // Node-level checks
     let mut node_ids: HashSet<u64> = HashSet::new();
-    let valid_ops: HashSet<String> = AIS_OPERATIONS.iter().map(|s| s.op_type.to_string()).collect();
+    let valid_ops: HashSet<String> = AIS_OPERATIONS
+        .iter()
+        .map(|s| s.op_type.to_string())
+        .collect();
 
     if let Some(nodes) = nodes {
         for node in nodes {
@@ -310,9 +319,7 @@ fn tool_validate(args: Value) -> Result<String, String> {
             if op.is_empty() {
                 errors.push(format!("node '{name}' (id={id}) has empty op"));
             } else if !valid_ops.contains(op) {
-                errors.push(format!(
-                    "node '{name}' (id={id}) has unknown op '{op}'"
-                ));
+                errors.push(format!("node '{name}' (id={id}) has unknown op '{op}'"));
             } else {
                 // Check required attributes
                 let spec = AIS_OPERATIONS.iter().find(|s| s.op_type.to_string() == op);
@@ -336,7 +343,10 @@ fn tool_validate(args: Value) -> Result<String, String> {
         for edge in edges {
             let from = edge.get("from").and_then(Value::as_u64).unwrap_or(0);
             let to = edge.get("to").and_then(Value::as_u64).unwrap_or(0);
-            let dep = edge.get("dependency").and_then(Value::as_str).unwrap_or("Data");
+            let dep = edge
+                .get("dependency")
+                .and_then(Value::as_str)
+                .unwrap_or("Data");
 
             if from == to {
                 errors.push(format!("edge {from}->{to} is a self-loop"));
@@ -398,7 +408,9 @@ fn tool_validate(args: Value) -> Result<String, String> {
 
     // Parameter checks
     if let Some(params) = raw.get("parameters").and_then(Value::as_array) {
-        let valid_types: HashSet<&str> = ["str", "int", "float", "bool", "json"].into_iter().collect();
+        let valid_types: HashSet<&str> = ["str", "int", "float", "bool", "json"]
+            .into_iter()
+            .collect();
         let mut param_names: HashSet<String> = HashSet::new();
         for param in params {
             let pname = param.get("name").and_then(Value::as_str).unwrap_or("");
@@ -423,7 +435,10 @@ fn tool_validate(args: Value) -> Result<String, String> {
         Err(e) => {
             let msg = e.to_string();
             // Avoid duplicating errors we already caught above
-            if !errors.iter().any(|existing| msg.contains(&existing[..existing.len().min(30)])) {
+            if !errors
+                .iter()
+                .any(|existing| msg.contains(&existing[..existing.len().min(30)]))
+            {
                 errors.push(format!("apxm-graph validation: {msg}"));
             }
         }
@@ -448,10 +463,7 @@ fn tool_compile(args: Value) -> Result<String, String> {
         .and_then(Value::as_str)
         .ok_or("missing required argument: graph_json")?;
 
-    let opt_level_num = args
-        .get("opt_level")
-        .and_then(Value::as_u64)
-        .unwrap_or(2);
+    let opt_level_num = args.get("opt_level").and_then(Value::as_u64).unwrap_or(2);
     let opt_level = match opt_level_num {
         0 => OptimizationLevel::O0,
         1 => OptimizationLevel::O1,
@@ -460,8 +472,7 @@ fn tool_compile(args: Value) -> Result<String, String> {
         _ => return Err(format!("opt_level must be 0-3, got {opt_level_num}")),
     };
 
-    let graph = ApxmGraph::from_json(graph_json)
-        .map_err(|e| format!("invalid graph: {e}"))?;
+    let graph = ApxmGraph::from_json(graph_json).map_err(|e| format!("invalid graph: {e}"))?;
 
     let node_count = graph.nodes.len();
     let edge_count = graph.edges.len();
@@ -469,8 +480,8 @@ fn tool_compile(args: Value) -> Result<String, String> {
 
     let start = Instant::now();
 
-    let context = CompilerContext::new()
-        .map_err(|e| format!("compiler context init failed: {e}"))?;
+    let context =
+        CompilerContext::new().map_err(|e| format!("compiler context init failed: {e}"))?;
     let pipeline = CompilerPipeline::with_opt_level(&context, opt_level);
     let module = pipeline
         .compile_graph(&graph)
@@ -487,8 +498,7 @@ fn tool_compile(args: Value) -> Result<String, String> {
     let compile_ms = start.elapsed().as_millis();
 
     // Write artifact to a temp file
-    let artifact_path = std::env::temp_dir()
-        .join(format!("{graph_name}.apxmobj"));
+    let artifact_path = std::env::temp_dir().join(format!("{graph_name}.apxmobj"));
     artifact
         .write_to_path(&artifact_path)
         .map_err(|e| format!("failed to write artifact: {e}"))?;
@@ -522,13 +532,12 @@ fn tool_execute(args: Value) -> Result<String, String> {
         .cloned()
         .unwrap_or_default();
 
-    let graph = ApxmGraph::from_json(graph_json)
-        .map_err(|e| format!("invalid graph: {e}"))?;
+    let graph = ApxmGraph::from_json(graph_json).map_err(|e| format!("invalid graph: {e}"))?;
 
     // Compile
     let compile_start = Instant::now();
-    let context = CompilerContext::new()
-        .map_err(|e| format!("compiler context init failed: {e}"))?;
+    let context =
+        CompilerContext::new().map_err(|e| format!("compiler context init failed: {e}"))?;
     let pipeline = CompilerPipeline::with_opt_level(&context, OptimizationLevel::O1);
     let module = pipeline
         .compile_graph(&graph)
@@ -757,8 +766,8 @@ fn tool_analyze(args: Value) -> Result<String, String> {
         .and_then(Value::as_str)
         .ok_or("missing required argument: graph_json")?;
 
-    let graph: ApxmGraph = ApxmGraph::from_json(graph_json)
-        .map_err(|e| format!("invalid graph: {e}"))?;
+    let graph: ApxmGraph =
+        ApxmGraph::from_json(graph_json).map_err(|e| format!("invalid graph: {e}"))?;
 
     // Build adjacency and reverse-adjacency maps
     let node_ids: HashSet<u64> = graph.nodes.iter().map(|n| n.id).collect();
@@ -880,7 +889,9 @@ fn tool_analyze(args: Value) -> Result<String, String> {
                 .iter()
                 .map(|&id| {
                     let node = graph.nodes.iter().find(|n| n.id == id);
-                    let op = node.map(|n| n.op.to_string()).unwrap_or_else(|| "?".to_string());
+                    let op = node
+                        .map(|n| n.op.to_string())
+                        .unwrap_or_else(|| "?".to_string());
                     let name = node.map(|n| n.name.as_str()).unwrap_or("?");
                     json!({"id": id, "name": name, "op": op, "latency_ms": node_latency(id)})
                 })
@@ -967,19 +978,24 @@ fn build_suggestions(
     if critical_path.len() >= 3 {
         // Find bottleneck node on critical path
         let bottleneck = critical_path.iter().max_by_key(|&&id| {
-            graph.nodes.iter().find(|n| n.id == id).map(|n| {
-                for spec in AIS_OPERATIONS {
-                    if spec.op_type == n.op {
-                        return match spec.latency {
-                            apxm_core::types::OperationLatency::High => 5000u64,
-                            apxm_core::types::OperationLatency::Medium => 1000,
-                            apxm_core::types::OperationLatency::Low => 100,
-                            apxm_core::types::OperationLatency::None => 10,
-                        };
+            graph
+                .nodes
+                .iter()
+                .find(|n| n.id == id)
+                .map(|n| {
+                    for spec in AIS_OPERATIONS {
+                        if spec.op_type == n.op {
+                            return match spec.latency {
+                                apxm_core::types::OperationLatency::High => 5000u64,
+                                apxm_core::types::OperationLatency::Medium => 1000,
+                                apxm_core::types::OperationLatency::Low => 100,
+                                apxm_core::types::OperationLatency::None => 10,
+                            };
+                        }
                     }
-                }
-                100
-            }).unwrap_or(100)
+                    100
+                })
+                .unwrap_or(100)
         });
         if let Some(&bn) = bottleneck
             && let Some(node) = graph.nodes.iter().find(|n| n.id == bn)

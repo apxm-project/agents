@@ -80,10 +80,13 @@ fn jsonrpc_err(id: JsonValue, code: i64, message: impl Into<String>) -> Json<Jso
 }
 
 fn mcp_tool_result(id: JsonValue, text: String, is_error: bool) -> Json<JsonValue> {
-    jsonrpc_ok(id, serde_json::json!({
-        "content": [{ "type": "text", "text": text }],
-        "isError": is_error,
-    }))
+    jsonrpc_ok(
+        id,
+        serde_json::json!({
+            "content": [{ "type": "text", "text": text }],
+            "isError": is_error,
+        }),
+    )
 }
 
 // ─── Agent Registry ─────────────────────────────────────────────────────────
@@ -438,7 +441,9 @@ struct A2aTaskRecord {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 enum A2aPart {
-    Text { text: String },
+    Text {
+        text: String,
+    },
     Data {
         #[allow(dead_code)]
         data: JsonValue,
@@ -645,10 +650,7 @@ fn build_app(state: AppState) -> Router {
         .layer(TraceLayer::new_for_http())
         // Propagate X-Request-Id from clients; generate one when absent
         .layer(PropagateRequestIdLayer::new(req_id_header.clone()))
-        .layer(SetRequestIdLayer::new(
-            req_id_header,
-            MakeRequestUuid,
-        ))
+        .layer(SetRequestIdLayer::new(req_id_header, MakeRequestUuid))
 }
 
 #[tokio::main]
@@ -818,16 +820,19 @@ async fn mcp_jsonrpc(
                 },
             }
         }
-        "initialize" => jsonrpc_ok(id, serde_json::json!({
-            "protocolVersion": "2025-11-05",
-            "serverInfo": {
-                "name": "apxm-server",
-                "version": env!("CARGO_PKG_VERSION"),
-            },
-            "capabilities": {
-                "tools": { "listChanged": false },
-            },
-        })),
+        "initialize" => jsonrpc_ok(
+            id,
+            serde_json::json!({
+                "protocolVersion": "2025-11-05",
+                "serverInfo": {
+                    "name": "apxm-server",
+                    "version": env!("CARGO_PKG_VERSION"),
+                },
+                "capabilities": {
+                    "tools": { "listChanged": false },
+                },
+            }),
+        ),
         unknown => jsonrpc_err(id, -32601, format!("Method not found: {}", unknown)),
     }
 }
@@ -866,12 +871,15 @@ async fn a2a_jsonrpc(
                 .store_fact(&text, &["a2a:task".to_string()], &source, None)
                 .await
             {
-                Ok(fact_id) => jsonrpc_ok(id, serde_json::json!({
-                    "id": task_id,
-                    "factId": fact_id,
-                    "status": { "state": "submitted" },
-                    "message": message,
-                })),
+                Ok(fact_id) => jsonrpc_ok(
+                    id,
+                    serde_json::json!({
+                        "id": task_id,
+                        "factId": fact_id,
+                        "status": { "state": "submitted" },
+                        "message": message,
+                    }),
+                ),
                 Err(e) => jsonrpc_err(id, -32000, e.to_string()),
             }
         }
@@ -879,11 +887,14 @@ async fn a2a_jsonrpc(
             let task_id = req.params.get("id").and_then(|v| v.as_str()).unwrap_or("");
             // Tasks are stored as memory facts — search by task ID
             match state.runtime.memory().search_facts(task_id, 1).await {
-                Ok(facts) if !facts.is_empty() => jsonrpc_ok(id, serde_json::json!({
-                    "id": task_id,
-                    "status": { "state": "completed" },
-                    "facts": serde_json::to_value(&facts).unwrap_or(JsonValue::Null),
-                })),
+                Ok(facts) if !facts.is_empty() => jsonrpc_ok(
+                    id,
+                    serde_json::json!({
+                        "id": task_id,
+                        "status": { "state": "completed" },
+                        "facts": serde_json::to_value(&facts).unwrap_or(JsonValue::Null),
+                    }),
+                ),
                 Ok(_) => jsonrpc_err(id, -32001, format!("Task '{}' not found", task_id)),
                 Err(e) => jsonrpc_err(id, -32000, e.to_string()),
             }
@@ -1052,7 +1063,8 @@ fn prepare_request(
     mut req: ExecuteRequest,
 ) -> Result<(ApxmGraph, Vec<String>, Option<String>), ApiError> {
     let mut graph = ApxmGraph::from_json(
-        &serde_json::to_string(&req.graph).map_err(|e| ApiError::bad_request(format!("invalid json: {e}")))?,
+        &serde_json::to_string(&req.graph)
+            .map_err(|e| ApiError::bad_request(format!("invalid json: {e}")))?,
     )
     .map_err(|e| ApiError::bad_request(format!("invalid graph: {e}")))?;
     apply_runtime_attributes(
@@ -2470,7 +2482,10 @@ mod tests {
         assert!(result.is_ok());
         let resumed = result.unwrap();
         assert_eq!(resumed.status, CheckpointStatus::Resumed);
-        assert_eq!(resumed.human_input, Some(serde_json::json!({"decision": "yes"})));
+        assert_eq!(
+            resumed.human_input,
+            Some(serde_json::json!({"decision": "yes"}))
+        );
         assert!(resumed.resumed_at_ms.is_some());
     }
 
@@ -2552,11 +2567,7 @@ mod tests {
 
     #[test]
     fn mcp_tool_result_success() {
-        let resp = mcp_tool_result(
-            serde_json::json!(1),
-            "tool output text".to_string(),
-            false,
-        );
+        let resp = mcp_tool_result(serde_json::json!(1), "tool output text".to_string(), false);
         let body = resp.0;
         assert_eq!(body["jsonrpc"], "2.0");
         assert_eq!(body["id"], 1);

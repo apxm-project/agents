@@ -306,8 +306,7 @@ mod tests {
         };
 
         let json = serde_json::to_string(&cfg).expect("serialize");
-        let restored: LatencyTierConfig =
-            serde_json::from_str(&json).expect("deserialize");
+        let restored: LatencyTierConfig = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(cfg, restored);
     }
 
@@ -315,8 +314,7 @@ mod tests {
     fn test_latency_tier_config_deserialize_empty() {
         // Empty JSON object should deserialize to defaults
         let json = "{}";
-        let cfg: LatencyTierConfig =
-            serde_json::from_str(json).expect("deserialize");
+        let cfg: LatencyTierConfig = serde_json::from_str(json).expect("deserialize");
         assert!(cfg.is_empty());
     }
 }

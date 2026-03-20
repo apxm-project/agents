@@ -2,13 +2,14 @@
 
 use crate::{
     aam::{Aam, ScopeSpec},
-    capability::CapabilitySystem, capability::flow_registry::FlowRegistry,
+    capability::CapabilitySystem,
+    capability::flow_registry::FlowRegistry,
     memory::MemorySystem,
     workspace::ScopeRegistry,
 };
 use apxm_backends::LLMRegistry;
-use apxm_core::constants::runtime::metadata;
 use apxm_core::InstructionConfig;
+use apxm_core::constants::runtime::metadata;
 use apxm_core::types::Agent;
 use std::sync::Arc;
 
@@ -334,6 +335,9 @@ mod tests {
             Some(&parent.scope_id)
         );
         assert_eq!(parent.scope_registry.len(), 2);
-        assert_eq!(parent.scope_registry.children_of(parent.scope_id()).len(), 1);
+        assert_eq!(
+            parent.scope_registry.children_of(parent.scope_id()).len(),
+            1
+        );
     }
 }

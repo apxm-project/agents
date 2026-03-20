@@ -223,10 +223,7 @@ mod tests {
                 name: "level2".into(),
                 nodes: vec![WorkflowNode::SubWorkflow {
                     name: "level3".into(),
-                    nodes: vec![WorkflowNode::Operation(make_node(
-                        1,
-                        AISOperationType::Ask,
-                    ))],
+                    nodes: vec![WorkflowNode::Operation(make_node(1, AISOperationType::Ask))],
                     edges: vec![],
                 }],
                 edges: vec![],

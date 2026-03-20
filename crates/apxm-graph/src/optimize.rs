@@ -41,10 +41,8 @@ impl ApxmGraph {
 
             if seen.contains_key(&prompt_value) {
                 // Subsequent use — mark as cached.
-                node.attributes.insert(
-                    attrs::CACHED_SYSTEM_PROMPT.to_string(),
-                    Value::Bool(true),
-                );
+                node.attributes
+                    .insert(attrs::CACHED_SYSTEM_PROMPT.to_string(), Value::Bool(true));
             } else {
                 // First occurrence — record it.
                 seen.insert(prompt_value, node.id);
@@ -67,9 +65,7 @@ impl ApxmGraph {
         fn is_pure(op: AISOperationType) -> bool {
             matches!(
                 op,
-                AISOperationType::QMem
-                    | AISOperationType::ConstStr
-                    | AISOperationType::Verify
+                AISOperationType::QMem | AISOperationType::ConstStr | AISOperationType::Verify
             )
         }
 
@@ -102,10 +98,9 @@ impl ApxmGraph {
         // Now apply mutable writes for duplicates.
         for (idx, _op, _canonical, is_dup) in signatures {
             if is_dup {
-                self.nodes[idx].attributes.insert(
-                    attrs::MEMOIZABLE.to_string(),
-                    Value::Bool(true),
-                );
+                self.nodes[idx]
+                    .attributes
+                    .insert(attrs::MEMOIZABLE.to_string(), Value::Bool(true));
             }
         }
 
@@ -133,7 +128,10 @@ mod tests {
                     name: "ask1".to_string(),
                     op: AISOperationType::Ask,
                     attributes: HashMap::from([
-                        (attrs::SYSTEM_PROMPT.to_string(), Value::String("You are a helpful assistant.".into())),
+                        (
+                            attrs::SYSTEM_PROMPT.to_string(),
+                            Value::String("You are a helpful assistant.".into()),
+                        ),
                         (attrs::TEMPLATE_STR.to_string(), Value::String("{0}".into())),
                     ]),
                 },
@@ -142,7 +140,10 @@ mod tests {
                     name: "ask2".to_string(),
                     op: AISOperationType::Ask,
                     attributes: HashMap::from([
-                        (attrs::SYSTEM_PROMPT.to_string(), Value::String("You are a helpful assistant.".into())),
+                        (
+                            attrs::SYSTEM_PROMPT.to_string(),
+                            Value::String("You are a helpful assistant.".into()),
+                        ),
                         (attrs::TEMPLATE_STR.to_string(), Value::String("{0}".into())),
                     ]),
                 },
@@ -151,14 +152,25 @@ mod tests {
                     name: "think1".to_string(),
                     op: AISOperationType::Think,
                     attributes: HashMap::from([
-                        (attrs::SYSTEM_PROMPT.to_string(), Value::String("You are a helpful assistant.".into())),
+                        (
+                            attrs::SYSTEM_PROMPT.to_string(),
+                            Value::String("You are a helpful assistant.".into()),
+                        ),
                         (attrs::TEMPLATE_STR.to_string(), Value::String("{0}".into())),
                     ]),
                 },
             ],
             edges: vec![
-                GraphEdge { from: 1, to: 2, dependency: DependencyType::Data },
-                GraphEdge { from: 2, to: 3, dependency: DependencyType::Data },
+                GraphEdge {
+                    from: 1,
+                    to: 2,
+                    dependency: DependencyType::Data,
+                },
+                GraphEdge {
+                    from: 2,
+                    to: 3,
+                    dependency: DependencyType::Data,
+                },
             ],
             parameters: vec![],
             metadata: HashMap::new(),
@@ -167,7 +179,11 @@ mod tests {
         graph.prompt_caching().unwrap();
 
         // First node should NOT have cached_system_prompt.
-        assert!(!graph.nodes[0].attributes.contains_key(attrs::CACHED_SYSTEM_PROMPT));
+        assert!(
+            !graph.nodes[0]
+                .attributes
+                .contains_key(attrs::CACHED_SYSTEM_PROMPT)
+        );
 
         // Second and third nodes share the same system_prompt -> should be cached.
         assert_eq!(
@@ -190,7 +206,10 @@ mod tests {
                     name: "ask1".to_string(),
                     op: AISOperationType::Ask,
                     attributes: HashMap::from([
-                        (attrs::SYSTEM_PROMPT.to_string(), Value::String("Prompt A".into())),
+                        (
+                            attrs::SYSTEM_PROMPT.to_string(),
+                            Value::String("Prompt A".into()),
+                        ),
                         (attrs::TEMPLATE_STR.to_string(), Value::String("{0}".into())),
                     ]),
                 },
@@ -199,7 +218,10 @@ mod tests {
                     name: "ask2".to_string(),
                     op: AISOperationType::Ask,
                     attributes: HashMap::from([
-                        (attrs::SYSTEM_PROMPT.to_string(), Value::String("Prompt B".into())),
+                        (
+                            attrs::SYSTEM_PROMPT.to_string(),
+                            Value::String("Prompt B".into()),
+                        ),
                         (attrs::TEMPLATE_STR.to_string(), Value::String("{0}".into())),
                     ]),
                 },
@@ -212,8 +234,16 @@ mod tests {
         graph.prompt_caching().unwrap();
 
         // Different prompts -> neither should be cached.
-        assert!(!graph.nodes[0].attributes.contains_key(attrs::CACHED_SYSTEM_PROMPT));
-        assert!(!graph.nodes[1].attributes.contains_key(attrs::CACHED_SYSTEM_PROMPT));
+        assert!(
+            !graph.nodes[0]
+                .attributes
+                .contains_key(attrs::CACHED_SYSTEM_PROMPT)
+        );
+        assert!(
+            !graph.nodes[1]
+                .attributes
+                .contains_key(attrs::CACHED_SYSTEM_PROMPT)
+        );
     }
 
     #[test]
@@ -226,7 +256,10 @@ mod tests {
                     name: "reason1".to_string(),
                     op: AISOperationType::Reason,
                     attributes: HashMap::from([
-                        (attrs::SYSTEM_PROMPT.to_string(), Value::String("Shared prompt".into())),
+                        (
+                            attrs::SYSTEM_PROMPT.to_string(),
+                            Value::String("Shared prompt".into()),
+                        ),
                         (attrs::TEMPLATE_STR.to_string(), Value::String("{0}".into())),
                     ]),
                 },
@@ -235,7 +268,10 @@ mod tests {
                     name: "reason2".to_string(),
                     op: AISOperationType::Reason,
                     attributes: HashMap::from([
-                        (attrs::SYSTEM_PROMPT.to_string(), Value::String("Shared prompt".into())),
+                        (
+                            attrs::SYSTEM_PROMPT.to_string(),
+                            Value::String("Shared prompt".into()),
+                        ),
                         (attrs::TEMPLATE_STR.to_string(), Value::String("{0}".into())),
                     ]),
                 },
@@ -248,8 +284,16 @@ mod tests {
         graph.prompt_caching().unwrap();
 
         // REASON ops should not be processed.
-        assert!(!graph.nodes[0].attributes.contains_key(attrs::CACHED_SYSTEM_PROMPT));
-        assert!(!graph.nodes[1].attributes.contains_key(attrs::CACHED_SYSTEM_PROMPT));
+        assert!(
+            !graph.nodes[0]
+                .attributes
+                .contains_key(attrs::CACHED_SYSTEM_PROMPT)
+        );
+        assert!(
+            !graph.nodes[1]
+                .attributes
+                .contains_key(attrs::CACHED_SYSTEM_PROMPT)
+        );
     }
 
     #[test]
@@ -262,7 +306,10 @@ mod tests {
                     name: "ask1".to_string(),
                     op: AISOperationType::Ask,
                     attributes: HashMap::from([
-                        (attrs::SYSTEM_PROMPT.to_string(), Value::String(String::new())),
+                        (
+                            attrs::SYSTEM_PROMPT.to_string(),
+                            Value::String(String::new()),
+                        ),
                         (attrs::TEMPLATE_STR.to_string(), Value::String("{0}".into())),
                     ]),
                 },
@@ -271,7 +318,10 @@ mod tests {
                     name: "ask2".to_string(),
                     op: AISOperationType::Ask,
                     attributes: HashMap::from([
-                        (attrs::SYSTEM_PROMPT.to_string(), Value::String(String::new())),
+                        (
+                            attrs::SYSTEM_PROMPT.to_string(),
+                            Value::String(String::new()),
+                        ),
                         (attrs::TEMPLATE_STR.to_string(), Value::String("{0}".into())),
                     ]),
                 },
@@ -284,24 +334,31 @@ mod tests {
         graph.prompt_caching().unwrap();
 
         // Empty system prompts should be skipped.
-        assert!(!graph.nodes[0].attributes.contains_key(attrs::CACHED_SYSTEM_PROMPT));
-        assert!(!graph.nodes[1].attributes.contains_key(attrs::CACHED_SYSTEM_PROMPT));
+        assert!(
+            !graph.nodes[0]
+                .attributes
+                .contains_key(attrs::CACHED_SYSTEM_PROMPT)
+        );
+        assert!(
+            !graph.nodes[1]
+                .attributes
+                .contains_key(attrs::CACHED_SYSTEM_PROMPT)
+        );
     }
 
     #[test]
     fn prompt_caching_no_system_prompt_attribute() {
         let mut graph = ApxmGraph {
             name: "test".to_string(),
-            nodes: vec![
-                GraphNode {
-                    id: 1,
-                    name: "ask1".to_string(),
-                    op: AISOperationType::Ask,
-                    attributes: HashMap::from([
-                        (attrs::TEMPLATE_STR.to_string(), Value::String("{0}".into())),
-                    ]),
-                },
-            ],
+            nodes: vec![GraphNode {
+                id: 1,
+                name: "ask1".to_string(),
+                op: AISOperationType::Ask,
+                attributes: HashMap::from([(
+                    attrs::TEMPLATE_STR.to_string(),
+                    Value::String("{0}".into()),
+                )]),
+            }],
             edges: vec![],
             parameters: vec![],
             metadata: HashMap::new(),
@@ -309,7 +366,11 @@ mod tests {
 
         graph.prompt_caching().unwrap();
 
-        assert!(!graph.nodes[0].attributes.contains_key(attrs::CACHED_SYSTEM_PROMPT));
+        assert!(
+            !graph.nodes[0]
+                .attributes
+                .contains_key(attrs::CACHED_SYSTEM_PROMPT)
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -325,17 +386,19 @@ mod tests {
                     id: 1,
                     name: "const1".to_string(),
                     op: AISOperationType::ConstStr,
-                    attributes: HashMap::from([
-                        (attrs::VALUE.to_string(), Value::String("hello".into())),
-                    ]),
+                    attributes: HashMap::from([(
+                        attrs::VALUE.to_string(),
+                        Value::String("hello".into()),
+                    )]),
                 },
                 GraphNode {
                     id: 2,
                     name: "const2".to_string(),
                     op: AISOperationType::ConstStr,
-                    attributes: HashMap::from([
-                        (attrs::VALUE.to_string(), Value::String("hello".into())),
-                    ]),
+                    attributes: HashMap::from([(
+                        attrs::VALUE.to_string(),
+                        Value::String("hello".into()),
+                    )]),
                 },
             ],
             edges: vec![],
@@ -364,17 +427,19 @@ mod tests {
                     id: 1,
                     name: "const1".to_string(),
                     op: AISOperationType::ConstStr,
-                    attributes: HashMap::from([
-                        (attrs::VALUE.to_string(), Value::String("hello".into())),
-                    ]),
+                    attributes: HashMap::from([(
+                        attrs::VALUE.to_string(),
+                        Value::String("hello".into()),
+                    )]),
                 },
                 GraphNode {
                     id: 2,
                     name: "const2".to_string(),
                     op: AISOperationType::ConstStr,
-                    attributes: HashMap::from([
-                        (attrs::VALUE.to_string(), Value::String("world".into())),
-                    ]),
+                    attributes: HashMap::from([(
+                        attrs::VALUE.to_string(),
+                        Value::String("world".into()),
+                    )]),
                 },
             ],
             edges: vec![],
@@ -397,17 +462,19 @@ mod tests {
                     id: 1,
                     name: "qmem1".to_string(),
                     op: AISOperationType::QMem,
-                    attributes: HashMap::from([
-                        (attrs::QUERY.to_string(), Value::String("recall last interaction".into())),
-                    ]),
+                    attributes: HashMap::from([(
+                        attrs::QUERY.to_string(),
+                        Value::String("recall last interaction".into()),
+                    )]),
                 },
                 GraphNode {
                     id: 2,
                     name: "qmem2".to_string(),
                     op: AISOperationType::QMem,
-                    attributes: HashMap::from([
-                        (attrs::QUERY.to_string(), Value::String("recall last interaction".into())),
-                    ]),
+                    attributes: HashMap::from([(
+                        attrs::QUERY.to_string(),
+                        Value::String("recall last interaction".into()),
+                    )]),
                 },
             ],
             edges: vec![],
@@ -433,25 +500,28 @@ mod tests {
                     id: 1,
                     name: "verify1".to_string(),
                     op: AISOperationType::Verify,
-                    attributes: HashMap::from([
-                        (attrs::CONDITION.to_string(), Value::String("x > 0".into())),
-                    ]),
+                    attributes: HashMap::from([(
+                        attrs::CONDITION.to_string(),
+                        Value::String("x > 0".into()),
+                    )]),
                 },
                 GraphNode {
                     id: 2,
                     name: "verify2".to_string(),
                     op: AISOperationType::Verify,
-                    attributes: HashMap::from([
-                        (attrs::CONDITION.to_string(), Value::String("x > 0".into())),
-                    ]),
+                    attributes: HashMap::from([(
+                        attrs::CONDITION.to_string(),
+                        Value::String("x > 0".into()),
+                    )]),
                 },
                 GraphNode {
                     id: 3,
                     name: "verify3".to_string(),
                     op: AISOperationType::Verify,
-                    attributes: HashMap::from([
-                        (attrs::CONDITION.to_string(), Value::String("y > 0".into())),
-                    ]),
+                    attributes: HashMap::from([(
+                        attrs::CONDITION.to_string(),
+                        Value::String("y > 0".into()),
+                    )]),
                 },
             ],
             edges: vec![],
@@ -481,17 +551,19 @@ mod tests {
                     id: 1,
                     name: "ask1".to_string(),
                     op: AISOperationType::Ask,
-                    attributes: HashMap::from([
-                        (attrs::TEMPLATE_STR.to_string(), Value::String("same".into())),
-                    ]),
+                    attributes: HashMap::from([(
+                        attrs::TEMPLATE_STR.to_string(),
+                        Value::String("same".into()),
+                    )]),
                 },
                 GraphNode {
                     id: 2,
                     name: "ask2".to_string(),
                     op: AISOperationType::Ask,
-                    attributes: HashMap::from([
-                        (attrs::TEMPLATE_STR.to_string(), Value::String("same".into())),
-                    ]),
+                    attributes: HashMap::from([(
+                        attrs::TEMPLATE_STR.to_string(),
+                        Value::String("same".into()),
+                    )]),
                 },
             ],
             edges: vec![],
@@ -508,15 +580,28 @@ mod tests {
 
     #[test]
     fn memoization_multiple_duplicates() {
-        let attrs_map = HashMap::from([
-            (attrs::VALUE.to_string(), Value::String("x".into())),
-        ]);
+        let attrs_map = HashMap::from([(attrs::VALUE.to_string(), Value::String("x".into()))]);
         let mut graph = ApxmGraph {
             name: "test".to_string(),
             nodes: vec![
-                GraphNode { id: 1, name: "c1".into(), op: AISOperationType::ConstStr, attributes: attrs_map.clone() },
-                GraphNode { id: 2, name: "c2".into(), op: AISOperationType::ConstStr, attributes: attrs_map.clone() },
-                GraphNode { id: 3, name: "c3".into(), op: AISOperationType::ConstStr, attributes: attrs_map.clone() },
+                GraphNode {
+                    id: 1,
+                    name: "c1".into(),
+                    op: AISOperationType::ConstStr,
+                    attributes: attrs_map.clone(),
+                },
+                GraphNode {
+                    id: 2,
+                    name: "c2".into(),
+                    op: AISOperationType::ConstStr,
+                    attributes: attrs_map.clone(),
+                },
+                GraphNode {
+                    id: 3,
+                    name: "c3".into(),
+                    op: AISOperationType::ConstStr,
+                    attributes: attrs_map.clone(),
+                },
             ],
             edges: vec![],
             parameters: vec![],
@@ -526,8 +611,14 @@ mod tests {
         graph.memoization_hints().unwrap();
 
         assert!(!graph.nodes[0].attributes.contains_key(attrs::MEMOIZABLE));
-        assert_eq!(graph.nodes[1].attributes.get(attrs::MEMOIZABLE), Some(&Value::Bool(true)));
-        assert_eq!(graph.nodes[2].attributes.get(attrs::MEMOIZABLE), Some(&Value::Bool(true)));
+        assert_eq!(
+            graph.nodes[1].attributes.get(attrs::MEMOIZABLE),
+            Some(&Value::Bool(true))
+        );
+        assert_eq!(
+            graph.nodes[2].attributes.get(attrs::MEMOIZABLE),
+            Some(&Value::Bool(true))
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -543,16 +634,20 @@ mod tests {
                     id: 1,
                     name: "const1".to_string(),
                     op: AISOperationType::ConstStr,
-                    attributes: HashMap::from([
-                        (attrs::VALUE.to_string(), Value::String("hello".into())),
-                    ]),
+                    attributes: HashMap::from([(
+                        attrs::VALUE.to_string(),
+                        Value::String("hello".into()),
+                    )]),
                 },
                 GraphNode {
                     id: 2,
                     name: "ask1".to_string(),
                     op: AISOperationType::Ask,
                     attributes: HashMap::from([
-                        (attrs::SYSTEM_PROMPT.to_string(), Value::String("Be concise".into())),
+                        (
+                            attrs::SYSTEM_PROMPT.to_string(),
+                            Value::String("Be concise".into()),
+                        ),
                         (attrs::TEMPLATE_STR.to_string(), Value::String("{0}".into())),
                     ]),
                 },
@@ -560,23 +655,35 @@ mod tests {
                     id: 3,
                     name: "const2".to_string(),
                     op: AISOperationType::ConstStr,
-                    attributes: HashMap::from([
-                        (attrs::VALUE.to_string(), Value::String("hello".into())),
-                    ]),
+                    attributes: HashMap::from([(
+                        attrs::VALUE.to_string(),
+                        Value::String("hello".into()),
+                    )]),
                 },
                 GraphNode {
                     id: 4,
                     name: "ask2".to_string(),
                     op: AISOperationType::Ask,
                     attributes: HashMap::from([
-                        (attrs::SYSTEM_PROMPT.to_string(), Value::String("Be concise".into())),
+                        (
+                            attrs::SYSTEM_PROMPT.to_string(),
+                            Value::String("Be concise".into()),
+                        ),
                         (attrs::TEMPLATE_STR.to_string(), Value::String("{0}".into())),
                     ]),
                 },
             ],
             edges: vec![
-                GraphEdge { from: 1, to: 2, dependency: DependencyType::Data },
-                GraphEdge { from: 3, to: 4, dependency: DependencyType::Data },
+                GraphEdge {
+                    from: 1,
+                    to: 2,
+                    dependency: DependencyType::Data,
+                },
+                GraphEdge {
+                    from: 3,
+                    to: 4,
+                    dependency: DependencyType::Data,
+                },
             ],
             parameters: vec![],
             metadata: HashMap::new(),
@@ -585,7 +692,11 @@ mod tests {
         graph.prompt_caching().unwrap().memoization_hints().unwrap();
 
         // prompt_caching: ask2 should be cached.
-        assert!(!graph.nodes[1].attributes.contains_key(attrs::CACHED_SYSTEM_PROMPT));
+        assert!(
+            !graph.nodes[1]
+                .attributes
+                .contains_key(attrs::CACHED_SYSTEM_PROMPT)
+        );
         assert_eq!(
             graph.nodes[3].attributes.get(attrs::CACHED_SYSTEM_PROMPT),
             Some(&Value::Bool(true))

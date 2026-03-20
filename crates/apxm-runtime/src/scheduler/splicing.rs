@@ -432,8 +432,7 @@ impl SchedulerState {
                 "Replacement node is ready, enqueued"
             );
         } else {
-            self.ready_set
-                .insert_pending(replacement.id, missing_count);
+            self.ready_set.insert_pending(replacement.id, missing_count);
         }
 
         self.record_progress();
@@ -594,8 +593,7 @@ mod tests {
     fn build_state(dag: ExecutionDag) -> Arc<SchedulerState> {
         let cfg = SchedulerConfig::default();
         let metrics = Arc::new(MetricsCollector::default());
-        let (state, _) =
-            SchedulerState::new(dag, cfg, metrics, Instant::now(), vec![]).unwrap();
+        let (state, _) = SchedulerState::new(dag, cfg, metrics, Instant::now(), vec![]).unwrap();
         Arc::new(state)
     }
 
@@ -754,10 +752,7 @@ mod tests {
             .expect("condense single node");
 
         // remaining should stay the same (removed 1, added 1)
-        assert_eq!(
-            state.remaining.load(std::sync::atomic::Ordering::SeqCst),
-            3
-        );
+        assert_eq!(state.remaining.load(std::sync::atomic::Ordering::SeqCst), 3);
 
         assert!(!state.nodes.contains_key(&2));
         assert!(state.nodes.contains_key(&99));

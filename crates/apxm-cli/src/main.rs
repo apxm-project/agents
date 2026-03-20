@@ -892,8 +892,9 @@ fn load_graph_from_directory(dir: &std::path::Path) -> Result<apxm_graph::ApxmGr
                 let text = std::fs::read_to_string(&path)
                     .with_context(|| format!("Failed to read {}", path.display()))?;
                 if text.contains("\"nodes\"") {
-                    let graph = apxm_graph::ApxmGraph::from_json(&text)
-                        .map_err(|e| anyhow::anyhow!("Failed to parse {}: {}", path.display(), e))?;
+                    let graph = apxm_graph::ApxmGraph::from_json(&text).map_err(|e| {
+                        anyhow::anyhow!("Failed to parse {}: {}", path.display(), e)
+                    })?;
                     graphs.push(graph);
                 }
             }
@@ -1183,7 +1184,11 @@ fn validate_command(input: PathBuf, json_output: bool) -> Result<()> {
         .map_err(|e| anyhow::anyhow!("Invalid JSON in {}: {e}", input.display()))?;
 
     // Top-level checks
-    if raw.get("name").and_then(serde_json::Value::as_str).is_none_or(|s| s.is_empty()) {
+    if raw
+        .get("name")
+        .and_then(serde_json::Value::as_str)
+        .is_none_or(|s| s.is_empty())
+    {
         errors.push("graph name must not be empty".to_string());
     }
 
@@ -1194,13 +1199,25 @@ fn validate_command(input: PathBuf, json_output: bool) -> Result<()> {
 
     // Node-level checks
     let mut node_ids: HashSet<u64> = HashSet::new();
-    let valid_ops: HashSet<String> = AIS_OPERATIONS.iter().map(|s| s.op_type.to_string()).collect();
+    let valid_ops: HashSet<String> = AIS_OPERATIONS
+        .iter()
+        .map(|s| s.op_type.to_string())
+        .collect();
 
     if let Some(nodes) = nodes {
         for node in nodes {
-            let id = node.get("id").and_then(serde_json::Value::as_u64).unwrap_or(0);
-            let name = node.get("name").and_then(serde_json::Value::as_str).unwrap_or("");
-            let op = node.get("op").and_then(serde_json::Value::as_str).unwrap_or("");
+            let id = node
+                .get("id")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            let name = node
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            let op = node
+                .get("op")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
 
             if id == 0 {
                 errors.push(format!("node '{name}' has invalid id (0 or missing)"));
@@ -1221,7 +1238,9 @@ fn validate_command(input: PathBuf, json_output: bool) -> Result<()> {
                 // Check required attributes
                 let spec = AIS_OPERATIONS.iter().find(|s| s.op_type.to_string() == op);
                 if let Some(spec) = spec {
-                    let attrs = node.get("attributes").and_then(serde_json::Value::as_object);
+                    let attrs = node
+                        .get("attributes")
+                        .and_then(serde_json::Value::as_object);
                     for field in spec.fields.iter().filter(|f| f.required) {
                         let has_attr = attrs.is_some_and(|a| a.contains_key(field.name));
                         if !has_attr {
@@ -1239,15 +1258,26 @@ fn validate_command(input: PathBuf, json_output: bool) -> Result<()> {
     // Edge checks
     if let Some(edges) = raw.get("edges").and_then(serde_json::Value::as_array) {
         for edge in edges {
-            let from = edge.get("from").and_then(serde_json::Value::as_u64).unwrap_or(0);
-            let to = edge.get("to").and_then(serde_json::Value::as_u64).unwrap_or(0);
-            let dep = edge.get("dependency").and_then(serde_json::Value::as_str).unwrap_or("Data");
+            let from = edge
+                .get("from")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            let to = edge
+                .get("to")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            let dep = edge
+                .get("dependency")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("Data");
 
             if from == to {
                 errors.push(format!("edge {from}->{to} is a self-loop"));
             }
             if !matches!(dep, "Data" | "Control" | "Effect") {
-                errors.push(format!("edge {from}->{to} has invalid dependency type '{dep}'"));
+                errors.push(format!(
+                    "edge {from}->{to} has invalid dependency type '{dep}'"
+                ));
             }
             if !node_ids.contains(&from) {
                 errors.push(format!("edge references non-existent source node {from}"));
@@ -1263,8 +1293,14 @@ fn validate_command(input: PathBuf, json_output: bool) -> Result<()> {
             let mut adjacency: HashMap<u64, Vec<u64>> = HashMap::new();
 
             for edge in edges {
-                let from = edge.get("from").and_then(serde_json::Value::as_u64).unwrap_or(0);
-                let to = edge.get("to").and_then(serde_json::Value::as_u64).unwrap_or(0);
+                let from = edge
+                    .get("from")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0);
+                let to = edge
+                    .get("to")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0);
                 if node_ids.contains(&from) && node_ids.contains(&to) {
                     adjacency.entry(from).or_default().push(to);
                     *in_degree.entry(to).or_insert(0) += 1;
@@ -1291,7 +1327,8 @@ fn validate_command(input: PathBuf, json_output: bool) -> Result<()> {
             }
             if visited != node_ids.len() {
                 errors.push(format!(
-                    "graph contains a cycle ({} nodes involved)", node_ids.len() - visited
+                    "graph contains a cycle ({} nodes involved)",
+                    node_ids.len() - visited
                 ));
             }
         }
@@ -1299,11 +1336,19 @@ fn validate_command(input: PathBuf, json_output: bool) -> Result<()> {
 
     // Parameter checks
     if let Some(params) = raw.get("parameters").and_then(serde_json::Value::as_array) {
-        let valid_types: HashSet<&str> = ["str", "int", "float", "bool", "json"].into_iter().collect();
+        let valid_types: HashSet<&str> = ["str", "int", "float", "bool", "json"]
+            .into_iter()
+            .collect();
         let mut param_names: HashSet<String> = HashSet::new();
         for param in params {
-            let pname = param.get("name").and_then(serde_json::Value::as_str).unwrap_or("");
-            let ptype = param.get("type_name").and_then(serde_json::Value::as_str).unwrap_or("");
+            let pname = param
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            let ptype = param
+                .get("type_name")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
             if pname.is_empty() {
                 errors.push("parameter with empty name".to_string());
             }
@@ -1311,7 +1356,9 @@ fn validate_command(input: PathBuf, json_output: bool) -> Result<()> {
                 errors.push(format!("duplicate parameter name '{pname}'"));
             }
             if !valid_types.contains(ptype) {
-                warnings.push(format!("parameter '{pname}' has non-standard type_name '{ptype}'"));
+                warnings.push(format!(
+                    "parameter '{pname}' has non-standard type_name '{ptype}'"
+                ));
             }
         }
     }
@@ -1323,7 +1370,10 @@ fn validate_command(input: PathBuf, json_output: bool) -> Result<()> {
             Ok(_) => {}
             Err(e) => {
                 let msg = e.to_string();
-                if !errors.iter().any(|existing| msg.contains(&existing[..existing.len().min(30)])) {
+                if !errors
+                    .iter()
+                    .any(|existing| msg.contains(&existing[..existing.len().min(30)]))
+                {
                     errors.push(format!("graph validation: {msg}"));
                 }
             }
@@ -1379,14 +1429,23 @@ struct GraphAnalysis<'a> {
 
 impl<'a> GraphAnalysis<'a> {
     fn from_raw(raw: &'a serde_json::Value) -> Result<Self> {
-        let graph_name = raw.get("name").and_then(serde_json::Value::as_str).unwrap_or("unnamed");
-        let nodes = raw.get("nodes").and_then(serde_json::Value::as_array)
+        let graph_name = raw
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("unnamed");
+        let nodes = raw
+            .get("nodes")
+            .and_then(serde_json::Value::as_array)
             .ok_or_else(|| anyhow::anyhow!("graph has no nodes array"))?;
         let empty_edges = vec![];
-        let edges = raw.get("edges").and_then(serde_json::Value::as_array).unwrap_or(&empty_edges);
+        let edges = raw
+            .get("edges")
+            .and_then(serde_json::Value::as_array)
+            .unwrap_or(&empty_edges);
         let edge_count = edges.len();
 
-        let node_ids: HashSet<u64> = nodes.iter()
+        let node_ids: HashSet<u64> = nodes
+            .iter()
             .filter_map(|n| n.get("id").and_then(serde_json::Value::as_u64))
             .collect();
 
@@ -1395,18 +1454,26 @@ impl<'a> GraphAnalysis<'a> {
         let mut in_degree: HashMap<u64, usize> = node_ids.iter().map(|&id| (id, 0)).collect();
 
         for edge in edges.iter() {
-            let from = edge.get("from").and_then(serde_json::Value::as_u64).unwrap_or(0);
-            let to = edge.get("to").and_then(serde_json::Value::as_u64).unwrap_or(0);
+            let from = edge
+                .get("from")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            let to = edge
+                .get("to")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
             successors.entry(from).or_default().push(to);
             predecessors.entry(to).or_default().push(from);
             *in_degree.entry(to).or_insert(0) += 1;
         }
 
-        let entry_nodes: Vec<u64> = in_degree.iter()
+        let entry_nodes: Vec<u64> = in_degree
+            .iter()
             .filter_map(|(&id, &deg)| if deg == 0 { Some(id) } else { None })
             .collect();
 
-        let exit_nodes: Vec<u64> = node_ids.iter()
+        let exit_nodes: Vec<u64> = node_ids
+            .iter()
             .filter(|&&id| successors.get(&id).is_none_or(|s| s.is_empty()))
             .copied()
             .collect();
@@ -1437,11 +1504,22 @@ impl<'a> GraphAnalysis<'a> {
             current_layer = next_layer;
         }
 
-        Ok(Self { graph_name, nodes, edge_count, node_ids, successors, predecessors, entry_nodes, exit_nodes, phases })
+        Ok(Self {
+            graph_name,
+            nodes,
+            edge_count,
+            node_ids,
+            successors,
+            predecessors,
+            entry_nodes,
+            exit_nodes,
+            phases,
+        })
     }
 
     fn node_by_id(&self, id: u64) -> Option<&serde_json::Value> {
-        self.nodes.iter()
+        self.nodes
+            .iter()
             .find(|n| n.get("id").and_then(serde_json::Value::as_u64) == Some(id))
     }
 
@@ -1466,18 +1544,32 @@ impl<'a> GraphAnalysis<'a> {
     }
 
     fn parallel_ms(&self) -> u64 {
-        self.phases.iter()
-            .map(|layer| layer.iter().map(|&id| self.node_latency_ms(id)).max().unwrap_or(0))
+        self.phases
+            .iter()
+            .map(|layer| {
+                layer
+                    .iter()
+                    .map(|&id| self.node_latency_ms(id))
+                    .max()
+                    .unwrap_or(0)
+            })
             .sum()
     }
 
     fn sequential_ms(&self) -> u64 {
-        self.node_ids.iter().map(|&id| self.node_latency_ms(id)).sum()
+        self.node_ids
+            .iter()
+            .map(|&id| self.node_latency_ms(id))
+            .sum()
     }
 
     fn speedup(&self) -> f64 {
         let par = self.parallel_ms();
-        if par > 0 { self.sequential_ms() as f64 / par as f64 } else { 1.0 }
+        if par > 0 {
+            self.sequential_ms() as f64 / par as f64
+        } else {
+            1.0
+        }
     }
 
     fn critical_path(&self) -> (Vec<u64>, u64) {
@@ -1486,7 +1578,9 @@ impl<'a> GraphAnalysis<'a> {
         for phase in &self.phases {
             for &nid in phase {
                 let lat = self.node_latency_ms(nid);
-                let max_pred = self.predecessors.get(&nid)
+                let max_pred = self
+                    .predecessors
+                    .get(&nid)
                     .and_then(|preds| preds.iter().filter_map(|&p| dist.get(&p)).max().copied())
                     .unwrap_or(0);
                 dist.insert(nid, max_pred + lat);
@@ -1529,7 +1623,10 @@ fn analyze_command(input: PathBuf, json_output: bool) -> Result<()> {
     // Build suggestions (used by both JSON and human-readable output)
     let mut suggestions: Vec<String> = Vec::new();
     if max_parallelism > 1 {
-        let parallel_phases: Vec<usize> = ga.phases.iter().enumerate()
+        let parallel_phases: Vec<usize> = ga
+            .phases
+            .iter()
+            .enumerate()
             .filter(|(_, p)| p.len() > 1)
             .map(|(i, _)| i + 1)
             .collect();
@@ -1547,11 +1644,15 @@ fn analyze_command(input: PathBuf, json_output: bool) -> Result<()> {
         ));
     }
     if critical_path.len() >= 3
-        && let Some(&bn) = critical_path.iter().max_by_key(|&&id| ga.node_latency_ms(id))
+        && let Some(&bn) = critical_path
+            .iter()
+            .max_by_key(|&&id| ga.node_latency_ms(id))
     {
         suggestions.push(format!(
             "Critical path bottleneck: node {} ('{}', op={})",
-            bn, ga.node_name(bn), ga.node_op(bn)
+            bn,
+            ga.node_name(bn),
+            ga.node_op(bn)
         ));
     }
 
@@ -1597,7 +1698,10 @@ fn analyze_command(input: PathBuf, json_output: bool) -> Result<()> {
         print_section_header(&format!("Analysis: {}", ga.graph_name));
         println!(
             "  {} nodes, {} edges, {} phases, max parallelism {}",
-            ga.nodes.len(), ga.edge_count, ga.phases.len(), max_parallelism
+            ga.nodes.len(),
+            ga.edge_count,
+            ga.phases.len(),
+            max_parallelism
         );
         println!();
 
@@ -1620,7 +1724,12 @@ fn analyze_command(input: PathBuf, json_output: bool) -> Result<()> {
         }
 
         println!();
-        println!("  {} Critical path: {} nodes, ~{}ms", "\u{26a1}".yellow(), critical_path.len(), critical_ms);
+        println!(
+            "  {} Critical path: {} nodes, ~{}ms",
+            "\u{26a1}".yellow(),
+            critical_path.len(),
+            critical_ms
+        );
         println!(
             "  \u{1f680} Speedup: {:.2}x (sequential {}ms \u{2192} parallel {}ms)",
             speedup, sequential_ms, parallel_ms
@@ -1695,7 +1804,8 @@ fn explain_command(file: PathBuf, json_output: bool) -> Result<()> {
     };
 
     if json_output {
-        let phase_json: Vec<serde_json::Value> = ga.phases
+        let phase_json: Vec<serde_json::Value> = ga
+            .phases
             .iter()
             .enumerate()
             .map(|(i, layer)| {
@@ -1713,8 +1823,7 @@ fn explain_command(file: PathBuf, json_output: bool) -> Result<()> {
                                     .collect()
                             })
                             .unwrap_or_default();
-                        let feeds: Vec<u64> =
-                            ga.successors.get(&id).cloned().unwrap_or_default();
+                        let feeds: Vec<u64> = ga.successors.get(&id).cloned().unwrap_or_default();
                         let depends_on: Vec<u64> =
                             ga.predecessors.get(&id).cloned().unwrap_or_default();
 
@@ -1757,11 +1866,7 @@ fn explain_command(file: PathBuf, json_output: bool) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&result).unwrap());
     } else {
         println!();
-        println!(
-            "  {} {}",
-            "Graph:".bold().cyan(),
-            ga.graph_name.bold(),
-        );
+        println!("  {} {}", "Graph:".bold().cyan(), ga.graph_name.bold(),);
         println!(
             "  Nodes: {} | Edges: {} | Depth: {}",
             ga.nodes.len(),
@@ -1787,9 +1892,7 @@ fn explain_command(file: PathBuf, json_output: bool) -> Result<()> {
             for &id in layer {
                 let op = ga.node_op(id);
                 let spec = find_op_spec(op);
-                let cat = spec
-                    .map(|s| category_str(s.category))
-                    .unwrap_or("unknown");
+                let cat = spec.map(|s| category_str(s.category)).unwrap_or("unknown");
                 let lat_val = ga.node_latency_ms(id);
                 let desc = spec.map(|s| s.description).unwrap_or("");
 
@@ -1816,8 +1919,7 @@ fn explain_command(file: PathBuf, json_output: bool) -> Result<()> {
                 let deps: Vec<u64> = ga.predecessors.get(&id).cloned().unwrap_or_default();
                 let feeds: Vec<u64> = ga.successors.get(&id).cloned().unwrap_or_default();
                 if !deps.is_empty() {
-                    let dep_strs: Vec<String> =
-                        deps.iter().map(|d| d.to_string()).collect();
+                    let dep_strs: Vec<String> = deps.iter().map(|d| d.to_string()).collect();
                     println!(
                         "        {} depends on: [{}]",
                         "\u{2190}".dimmed(),
@@ -1825,8 +1927,7 @@ fn explain_command(file: PathBuf, json_output: bool) -> Result<()> {
                     );
                 }
                 if !feeds.is_empty() {
-                    let feed_strs: Vec<String> =
-                        feeds.iter().map(|f| f.to_string()).collect();
+                    let feed_strs: Vec<String> = feeds.iter().map(|f| f.to_string()).collect();
                     println!(
                         "        {} feeds: [{}]",
                         "\u{2192}".dimmed(),
@@ -1856,10 +1957,7 @@ fn explain_command(file: PathBuf, json_output: bool) -> Result<()> {
                 String::new()
             },
         );
-        println!(
-            "    Critical path: {} steps (~{}ms)",
-            depth, critical_ms
-        );
+        println!("    Critical path: {} steps (~{}ms)", depth, critical_ms);
         println!(
             "    Parallelizable: {}",
             if parallelizable { "yes" } else { "no" }
@@ -1993,9 +2091,10 @@ fn template_command(action: TemplateAction, json_output: bool) -> Result<()> {
     match action {
         TemplateAction::List => {
             if json_output {
-                let mut items: Vec<serde_json::Value> = templates.iter().map(|t| {
-                    serde_json::json!({"name": t.name, "description": t.description})
-                }).collect();
+                let mut items: Vec<serde_json::Value> = templates
+                    .iter()
+                    .map(|t| serde_json::json!({"name": t.name, "description": t.description}))
+                    .collect();
                 for ut in &user_templates {
                     items.push(serde_json::json!({"name": ut.name, "description": ut.description, "source": "user"}));
                 }
@@ -2007,17 +2106,26 @@ fn template_command(action: TemplateAction, json_output: bool) -> Result<()> {
                 }
                 if !user_templates.is_empty() {
                     println!();
-                    println!("  {} User templates (from ~/.apxm/templates.json):", "~".dimmed());
+                    println!(
+                        "  {} User templates (from ~/.apxm/templates.json):",
+                        "~".dimmed()
+                    );
                     for ut in &user_templates {
                         println!("  {:<16} {}", ut.name.bold(), ut.description);
                     }
                 }
                 println!();
-                println!("  Use {} for the full graph JSON", "apxm template show <name>".bold());
+                println!(
+                    "  Use {} for the full graph JSON",
+                    "apxm template show <name>".bold()
+                );
             }
         }
         TemplateAction::Show { name } => {
-            if let Some(tpl) = templates.iter().find(|t| t.name.eq_ignore_ascii_case(&name)) {
+            if let Some(tpl) = templates
+                .iter()
+                .find(|t| t.name.eq_ignore_ascii_case(&name))
+            {
                 if json_output {
                     println!("{}", tpl.graph_json);
                 } else {
@@ -2026,9 +2134,16 @@ fn template_command(action: TemplateAction, json_output: bool) -> Result<()> {
                     println!();
                     println!("{}", tpl.graph_json);
                     println!();
-                    println!("  {} pipe to validate: {} | apxm validate /dev/stdin", "\u{2139}".cyan(), format!("apxm template show {} --json", tpl.name).dimmed());
+                    println!(
+                        "  {} pipe to validate: {} | apxm validate /dev/stdin",
+                        "\u{2139}".cyan(),
+                        format!("apxm template show {} --json", tpl.name).dimmed()
+                    );
                 }
-            } else if let Some(ut) = user_templates.iter().find(|t| t.name.eq_ignore_ascii_case(&name)) {
+            } else if let Some(ut) = user_templates
+                .iter()
+                .find(|t| t.name.eq_ignore_ascii_case(&name))
+            {
                 if json_output {
                     println!("{}", ut.graph_json);
                 } else {
@@ -2039,7 +2154,8 @@ fn template_command(action: TemplateAction, json_output: bool) -> Result<()> {
                 }
             } else {
                 return Err(anyhow::anyhow!(
-                    "Unknown template '{}'. Run 'apxm template list' to see available templates.", name
+                    "Unknown template '{}'. Run 'apxm template list' to see available templates.",
+                    name
                 ));
             }
         }
@@ -2126,7 +2242,10 @@ fn ops_command(action: OpsAction, json_output: bool) -> Result<()> {
                     if current_cat != Some(spec.category) {
                         current_cat = Some(spec.category);
                         println!();
-                        println!("  {}", category_str(spec.category).to_uppercase().bold().cyan());
+                        println!(
+                            "  {}",
+                            category_str(spec.category).to_uppercase().bold().cyan()
+                        );
                         println!("  {}", "\u{2500}".repeat(40).dimmed());
                     }
                     println!(
@@ -2188,7 +2307,11 @@ fn ops_command(action: OpsAction, json_output: bool) -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&result).unwrap());
             } else {
                 println!();
-                println!("  {} {}", spec.op_type.to_string().bold().cyan(), spec.name.dimmed());
+                println!(
+                    "  {} {}",
+                    spec.op_type.to_string().bold().cyan(),
+                    spec.name.dimmed()
+                );
                 println!("  {}", "\u{2500}".repeat(50).dimmed());
                 println!("  {}", spec.description);
                 println!();
@@ -2196,9 +2319,12 @@ fn ops_command(action: OpsAction, json_output: bool) -> Result<()> {
                 println!();
                 println!(
                     "  {} {}  {} {}  {} {}",
-                    "Category:".bold(), category_str(spec.category),
-                    "Latency:".bold(), spec.latency.as_str(),
-                    "Output:".bold(), if spec.produces_output { "yes" } else { "no" }
+                    "Category:".bold(),
+                    category_str(spec.category),
+                    "Latency:".bold(),
+                    spec.latency.as_str(),
+                    "Output:".bold(),
+                    if spec.produces_output { "yes" } else { "no" }
                 );
 
                 let required_fields: Vec<_> = spec.fields.iter().filter(|f| f.required).collect();
@@ -2428,9 +2554,7 @@ fn detect_conda_prefix() -> Option<PathBuf> {
         for line in text.lines() {
             let trimmed = line.trim().trim_matches('"').trim_end_matches(',');
             let candidate = PathBuf::from(trimmed);
-            if candidate.file_name().map(|n| n == "apxm").unwrap_or(false)
-                && candidate.is_dir()
-            {
+            if candidate.file_name().map(|n| n == "apxm").unwrap_or(false) && candidate.is_dir() {
                 return Some(candidate);
             }
         }
@@ -2472,9 +2596,18 @@ fn print_minimal_mlir_status() {
     }
 
     let checks: &[(&str, bool)] = &[
-        ("mlir-tblgen", mlir_tblgen.as_ref().map(|p| p.is_file()).unwrap_or(false)),
-        ("cmake/mlir", mlir_cmake.as_ref().map(|p| p.is_dir()).unwrap_or(false)),
-        ("cmake/llvm", llvm_cmake.as_ref().map(|p| p.is_dir()).unwrap_or(false)),
+        (
+            "mlir-tblgen",
+            mlir_tblgen.as_ref().map(|p| p.is_file()).unwrap_or(false),
+        ),
+        (
+            "cmake/mlir",
+            mlir_cmake.as_ref().map(|p| p.is_dir()).unwrap_or(false),
+        ),
+        (
+            "cmake/llvm",
+            llvm_cmake.as_ref().map(|p| p.is_dir()).unwrap_or(false),
+        ),
     ];
 
     for &(label, found) in checks {
@@ -2935,7 +3068,12 @@ mod tests {
         let seq = ga.sequential_ms();
         let par = ga.parallel_ms();
         // Sequential sum should be >= parallel sum
-        assert!(seq >= par, "sequential {}ms should be >= parallel {}ms", seq, par);
+        assert!(
+            seq >= par,
+            "sequential {}ms should be >= parallel {}ms",
+            seq,
+            par
+        );
     }
 
     #[test]

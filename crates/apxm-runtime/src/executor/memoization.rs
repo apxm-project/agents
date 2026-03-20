@@ -95,8 +95,7 @@ impl ResponseCache {
         if let Some(entry) = entries.get(&key)
             && entry.inserted_at.elapsed() < self.ttl
         {
-            self.hits
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.hits.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             return Some(CachedResponse {
                 content: entry.content.clone(),
                 input_tokens: entry.input_tokens,

@@ -61,7 +61,10 @@ const VALID_PARALLEL: &str = r#"{
 #[test]
 fn validate_valid_ask_json() {
     let f = write_tmp_graph(VALID_ASK);
-    let out = apxm().args(["--json", "validate", f.path().to_str().unwrap()]).output().unwrap();
+    let out = apxm()
+        .args(["--json", "validate", f.path().to_str().unwrap()])
+        .output()
+        .unwrap();
     assert!(out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["valid"], true);
@@ -71,7 +74,10 @@ fn validate_valid_ask_json() {
 #[test]
 fn validate_valid_pipeline_json() {
     let f = write_tmp_graph(VALID_PIPELINE);
-    let out = apxm().args(["--json", "validate", f.path().to_str().unwrap()]).output().unwrap();
+    let out = apxm()
+        .args(["--json", "validate", f.path().to_str().unwrap()])
+        .output()
+        .unwrap();
     assert!(out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["valid"], true);
@@ -81,87 +87,181 @@ fn validate_valid_pipeline_json() {
 
 #[test]
 fn validate_empty_name() {
-    let f = write_tmp_graph(r#"{"name":"","nodes":[{"id":1,"name":"n","op":"ASK","attributes":{"template_str":"x"}}],"edges":[],"parameters":[]}"#);
-    let out = apxm().args(["--json", "validate", f.path().to_str().unwrap()]).output().unwrap();
+    let f = write_tmp_graph(
+        r#"{"name":"","nodes":[{"id":1,"name":"n","op":"ASK","attributes":{"template_str":"x"}}],"edges":[],"parameters":[]}"#,
+    );
+    let out = apxm()
+        .args(["--json", "validate", f.path().to_str().unwrap()])
+        .output()
+        .unwrap();
     assert!(!out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["valid"], false);
-    assert!(v["errors"].as_array().unwrap().iter().any(|e| e.as_str().unwrap().contains("name must not be empty")));
+    assert!(
+        v["errors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e.as_str().unwrap().contains("name must not be empty"))
+    );
 }
 
 #[test]
 fn validate_unknown_op() {
-    let f = write_tmp_graph(r#"{"name":"t","nodes":[{"id":1,"name":"n","op":"FAKE_OP","attributes":{}}],"edges":[],"parameters":[]}"#);
-    let out = apxm().args(["--json", "validate", f.path().to_str().unwrap()]).output().unwrap();
+    let f = write_tmp_graph(
+        r#"{"name":"t","nodes":[{"id":1,"name":"n","op":"FAKE_OP","attributes":{}}],"edges":[],"parameters":[]}"#,
+    );
+    let out = apxm()
+        .args(["--json", "validate", f.path().to_str().unwrap()])
+        .output()
+        .unwrap();
     assert!(!out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert!(v["errors"].as_array().unwrap().iter().any(|e| e.as_str().unwrap().contains("unknown op")));
+    assert!(
+        v["errors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e.as_str().unwrap().contains("unknown op"))
+    );
 }
 
 #[test]
 fn validate_missing_required_attribute() {
-    let f = write_tmp_graph(r#"{"name":"t","nodes":[{"id":1,"name":"n","op":"ASK","attributes":{}}],"edges":[],"parameters":[]}"#);
-    let out = apxm().args(["--json", "validate", f.path().to_str().unwrap()]).output().unwrap();
+    let f = write_tmp_graph(
+        r#"{"name":"t","nodes":[{"id":1,"name":"n","op":"ASK","attributes":{}}],"edges":[],"parameters":[]}"#,
+    );
+    let out = apxm()
+        .args(["--json", "validate", f.path().to_str().unwrap()])
+        .output()
+        .unwrap();
     assert!(!out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert!(v["errors"].as_array().unwrap().iter().any(|e| e.as_str().unwrap().contains("template_str")));
+    assert!(
+        v["errors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e.as_str().unwrap().contains("template_str"))
+    );
 }
 
 #[test]
 fn validate_duplicate_node_id() {
-    let f = write_tmp_graph(r#"{"name":"t","nodes":[{"id":1,"name":"a","op":"ASK","attributes":{"template_str":"x"}},{"id":1,"name":"b","op":"ASK","attributes":{"template_str":"y"}}],"edges":[],"parameters":[]}"#);
-    let out = apxm().args(["--json", "validate", f.path().to_str().unwrap()]).output().unwrap();
+    let f = write_tmp_graph(
+        r#"{"name":"t","nodes":[{"id":1,"name":"a","op":"ASK","attributes":{"template_str":"x"}},{"id":1,"name":"b","op":"ASK","attributes":{"template_str":"y"}}],"edges":[],"parameters":[]}"#,
+    );
+    let out = apxm()
+        .args(["--json", "validate", f.path().to_str().unwrap()])
+        .output()
+        .unwrap();
     assert!(!out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert!(v["errors"].as_array().unwrap().iter().any(|e| e.as_str().unwrap().contains("duplicate node id")));
+    assert!(
+        v["errors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e.as_str().unwrap().contains("duplicate node id"))
+    );
 }
 
 #[test]
 fn validate_self_loop() {
-    let f = write_tmp_graph(r#"{"name":"t","nodes":[{"id":1,"name":"n","op":"ASK","attributes":{"template_str":"x"}}],"edges":[{"from":1,"to":1,"dependency":"Data"}],"parameters":[]}"#);
-    let out = apxm().args(["--json", "validate", f.path().to_str().unwrap()]).output().unwrap();
+    let f = write_tmp_graph(
+        r#"{"name":"t","nodes":[{"id":1,"name":"n","op":"ASK","attributes":{"template_str":"x"}}],"edges":[{"from":1,"to":1,"dependency":"Data"}],"parameters":[]}"#,
+    );
+    let out = apxm()
+        .args(["--json", "validate", f.path().to_str().unwrap()])
+        .output()
+        .unwrap();
     assert!(!out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert!(v["errors"].as_array().unwrap().iter().any(|e| e.as_str().unwrap().contains("self-loop")));
+    assert!(
+        v["errors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e.as_str().unwrap().contains("self-loop"))
+    );
 }
 
 #[test]
 fn validate_invalid_dependency_type() {
-    let f = write_tmp_graph(r#"{"name":"t","nodes":[{"id":1,"name":"a","op":"ASK","attributes":{"template_str":"x"}},{"id":2,"name":"b","op":"ASK","attributes":{"template_str":"y"}}],"edges":[{"from":1,"to":2,"dependency":"Invalid"}],"parameters":[]}"#);
-    let out = apxm().args(["--json", "validate", f.path().to_str().unwrap()]).output().unwrap();
+    let f = write_tmp_graph(
+        r#"{"name":"t","nodes":[{"id":1,"name":"a","op":"ASK","attributes":{"template_str":"x"}},{"id":2,"name":"b","op":"ASK","attributes":{"template_str":"y"}}],"edges":[{"from":1,"to":2,"dependency":"Invalid"}],"parameters":[]}"#,
+    );
+    let out = apxm()
+        .args(["--json", "validate", f.path().to_str().unwrap()])
+        .output()
+        .unwrap();
     assert!(!out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert!(v["errors"].as_array().unwrap().iter().any(|e| e.as_str().unwrap().contains("invalid dependency type")));
+    assert!(
+        v["errors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e.as_str().unwrap().contains("invalid dependency type"))
+    );
 }
 
 #[test]
 fn validate_edge_nonexistent_target() {
-    let f = write_tmp_graph(r#"{"name":"t","nodes":[{"id":1,"name":"n","op":"ASK","attributes":{"template_str":"x"}}],"edges":[{"from":1,"to":99,"dependency":"Data"}],"parameters":[]}"#);
-    let out = apxm().args(["--json", "validate", f.path().to_str().unwrap()]).output().unwrap();
+    let f = write_tmp_graph(
+        r#"{"name":"t","nodes":[{"id":1,"name":"n","op":"ASK","attributes":{"template_str":"x"}}],"edges":[{"from":1,"to":99,"dependency":"Data"}],"parameters":[]}"#,
+    );
+    let out = apxm()
+        .args(["--json", "validate", f.path().to_str().unwrap()])
+        .output()
+        .unwrap();
     assert!(!out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert!(v["errors"].as_array().unwrap().iter().any(|e| e.as_str().unwrap().contains("target node")));
+    assert!(
+        v["errors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e.as_str().unwrap().contains("target node"))
+    );
 }
 
 #[test]
 fn validate_cycle_detection() {
-    let f = write_tmp_graph(r#"{"name":"t","nodes":[{"id":1,"name":"a","op":"ASK","attributes":{"template_str":"x"}},{"id":2,"name":"b","op":"ASK","attributes":{"template_str":"y"}}],"edges":[{"from":1,"to":2,"dependency":"Data"},{"from":2,"to":1,"dependency":"Data"}],"parameters":[]}"#);
-    let out = apxm().args(["--json", "validate", f.path().to_str().unwrap()]).output().unwrap();
+    let f = write_tmp_graph(
+        r#"{"name":"t","nodes":[{"id":1,"name":"a","op":"ASK","attributes":{"template_str":"x"}},{"id":2,"name":"b","op":"ASK","attributes":{"template_str":"y"}}],"edges":[{"from":1,"to":2,"dependency":"Data"},{"from":2,"to":1,"dependency":"Data"}],"parameters":[]}"#,
+    );
+    let out = apxm()
+        .args(["--json", "validate", f.path().to_str().unwrap()])
+        .output()
+        .unwrap();
     assert!(!out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert!(v["errors"].as_array().unwrap().iter().any(|e| e.as_str().unwrap().contains("cycle")));
+    assert!(
+        v["errors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e.as_str().unwrap().contains("cycle"))
+    );
 }
 
 #[test]
 fn validate_file_not_found() {
-    let out = apxm().args(["validate", "/nonexistent/path.json"]).output().unwrap();
+    let out = apxm()
+        .args(["validate", "/nonexistent/path.json"])
+        .output()
+        .unwrap();
     assert!(!out.status.success());
 }
 
 #[test]
 fn validate_invalid_json() {
     let f = write_tmp_graph("{not valid json");
-    let out = apxm().args(["validate", f.path().to_str().unwrap()]).output().unwrap();
+    let out = apxm()
+        .args(["validate", f.path().to_str().unwrap()])
+        .output()
+        .unwrap();
     assert!(!out.status.success());
 }
 
@@ -170,7 +270,10 @@ fn validate_invalid_json() {
 #[test]
 fn analyze_parallel_graph() {
     let f = write_tmp_graph(VALID_PARALLEL);
-    let out = apxm().args(["--json", "analyze", f.path().to_str().unwrap()]).output().unwrap();
+    let out = apxm()
+        .args(["--json", "analyze", f.path().to_str().unwrap()])
+        .output()
+        .unwrap();
     assert!(out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["max_parallelism"], 2);
@@ -182,7 +285,10 @@ fn analyze_parallel_graph() {
 #[test]
 fn analyze_single_node() {
     let f = write_tmp_graph(VALID_ASK);
-    let out = apxm().args(["--json", "analyze", f.path().to_str().unwrap()]).output().unwrap();
+    let out = apxm()
+        .args(["--json", "analyze", f.path().to_str().unwrap()])
+        .output()
+        .unwrap();
     assert!(out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["max_parallelism"], 1);
@@ -193,7 +299,10 @@ fn analyze_single_node() {
 #[test]
 fn analyze_pipeline_graph() {
     let f = write_tmp_graph(VALID_PIPELINE);
-    let out = apxm().args(["--json", "analyze", f.path().to_str().unwrap()]).output().unwrap();
+    let out = apxm()
+        .args(["--json", "analyze", f.path().to_str().unwrap()])
+        .output()
+        .unwrap();
     assert!(out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["max_parallelism"], 1);
@@ -208,7 +317,11 @@ fn ops_list_json() {
     assert!(out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     let ops = v.as_array().unwrap();
-    assert!(ops.len() >= 30, "expected at least 30 ops, got {}", ops.len());
+    assert!(
+        ops.len() >= 30,
+        "expected at least 30 ops, got {}",
+        ops.len()
+    );
     // Check every op has required fields
     for op in ops {
         assert!(op["op"].is_string());
@@ -219,7 +332,10 @@ fn ops_list_json() {
 
 #[test]
 fn ops_list_category_filter() {
-    let out = apxm().args(["--json", "ops", "list", "--category", "reasoning"]).output().unwrap();
+    let out = apxm()
+        .args(["--json", "ops", "list", "--category", "reasoning"])
+        .output()
+        .unwrap();
     assert!(out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     let ops = v.as_array().unwrap();
@@ -231,17 +347,29 @@ fn ops_list_category_filter() {
 
 #[test]
 fn ops_show_ask_json() {
-    let out = apxm().args(["--json", "ops", "show", "ASK"]).output().unwrap();
+    let out = apxm()
+        .args(["--json", "ops", "show", "ASK"])
+        .output()
+        .unwrap();
     assert!(out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["op"], "ASK");
     assert_eq!(v["category"], "reasoning");
-    assert!(v["required_fields"].as_array().unwrap().iter().any(|f| f["name"] == "template_str"));
+    assert!(
+        v["required_fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["name"] == "template_str")
+    );
 }
 
 #[test]
 fn ops_show_unknown() {
-    let out = apxm().args(["ops", "show", "NONEXISTENT"]).output().unwrap();
+    let out = apxm()
+        .args(["ops", "show", "NONEXISTENT"])
+        .output()
+        .unwrap();
     assert!(!out.status.success());
 }
 
@@ -249,7 +377,10 @@ fn ops_show_unknown() {
 
 #[test]
 fn template_list_json() {
-    let out = apxm().args(["--json", "template", "list"]).output().unwrap();
+    let out = apxm()
+        .args(["--json", "template", "list"])
+        .output()
+        .unwrap();
     assert!(out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     let templates = v.as_array().unwrap();
@@ -262,7 +393,10 @@ fn template_list_json() {
 
 #[test]
 fn template_show_ask_json() {
-    let out = apxm().args(["--json", "template", "show", "ask"]).output().unwrap();
+    let out = apxm()
+        .args(["--json", "template", "show", "ask"])
+        .output()
+        .unwrap();
     assert!(out.status.success());
     // Output should be valid JSON graph
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
@@ -273,18 +407,27 @@ fn template_show_ask_json() {
 
 #[test]
 fn template_show_unknown() {
-    let out = apxm().args(["template", "show", "nonexistent"]).output().unwrap();
+    let out = apxm()
+        .args(["template", "show", "nonexistent"])
+        .output()
+        .unwrap();
     assert!(!out.status.success());
 }
 
 #[test]
 fn template_roundtrip_validate() {
     // Get template JSON and feed it to validate
-    let show_out = apxm().args(["--json", "template", "show", "map-reduce"]).output().unwrap();
+    let show_out = apxm()
+        .args(["--json", "template", "show", "map-reduce"])
+        .output()
+        .unwrap();
     assert!(show_out.status.success());
 
     let f = write_tmp_graph(std::str::from_utf8(&show_out.stdout).unwrap());
-    let val_out = apxm().args(["--json", "validate", f.path().to_str().unwrap()]).output().unwrap();
+    let val_out = apxm()
+        .args(["--json", "validate", f.path().to_str().unwrap()])
+        .output()
+        .unwrap();
     assert!(val_out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&val_out.stdout).unwrap();
     assert_eq!(v["valid"], true);
@@ -295,7 +438,10 @@ fn template_roundtrip_validate() {
 #[test]
 fn validate_no_nodes() {
     let f = write_tmp_graph(r#"{"name":"t","nodes":[],"edges":[],"parameters":[]}"#);
-    let out = apxm().args(["--json", "validate", f.path().to_str().unwrap()]).output().unwrap();
+    let out = apxm()
+        .args(["--json", "validate", f.path().to_str().unwrap()])
+        .output()
+        .unwrap();
     assert!(!out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["valid"], false);
@@ -303,20 +449,39 @@ fn validate_no_nodes() {
 
 #[test]
 fn validate_edge_nonexistent_source() {
-    let f = write_tmp_graph(r#"{"name":"t","nodes":[{"id":1,"name":"n","op":"ASK","attributes":{"template_str":"x"}}],"edges":[{"from":99,"to":1,"dependency":"Data"}],"parameters":[]}"#);
-    let out = apxm().args(["--json", "validate", f.path().to_str().unwrap()]).output().unwrap();
+    let f = write_tmp_graph(
+        r#"{"name":"t","nodes":[{"id":1,"name":"n","op":"ASK","attributes":{"template_str":"x"}}],"edges":[{"from":99,"to":1,"dependency":"Data"}],"parameters":[]}"#,
+    );
+    let out = apxm()
+        .args(["--json", "validate", f.path().to_str().unwrap()])
+        .output()
+        .unwrap();
     assert!(!out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert!(v["errors"].as_array().unwrap().iter().any(|e| e.as_str().unwrap().contains("source")));
+    assert!(
+        v["errors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e.as_str().unwrap().contains("source"))
+    );
 }
 
 #[test]
 fn validate_duplicate_parameter_name() {
-    let f = write_tmp_graph(r#"{"name":"t","nodes":[{"id":1,"name":"n","op":"ASK","attributes":{"template_str":"x"}}],"edges":[],"parameters":[{"name":"p","type_name":"str"},{"name":"p","type_name":"int"}]}"#);
-    let out = apxm().args(["--json", "validate", f.path().to_str().unwrap()]).output().unwrap();
+    let f = write_tmp_graph(
+        r#"{"name":"t","nodes":[{"id":1,"name":"n","op":"ASK","attributes":{"template_str":"x"}}],"edges":[],"parameters":[{"name":"p","type_name":"str"},{"name":"p","type_name":"int"}]}"#,
+    );
+    let out = apxm()
+        .args(["--json", "validate", f.path().to_str().unwrap()])
+        .output()
+        .unwrap();
     // Should have warning or error about duplicate parameter
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    let has_dup = v["errors"].as_array().unwrap_or(&vec![]).iter()
+    let has_dup = v["errors"]
+        .as_array()
+        .unwrap_or(&vec![])
+        .iter()
         .chain(v["warnings"].as_array().unwrap_or(&vec![]).iter())
         .any(|e| e.as_str().unwrap_or("").contains("duplicate"));
     assert!(has_dup);
@@ -325,8 +490,13 @@ fn validate_duplicate_parameter_name() {
 #[test]
 fn validate_disconnected_graph() {
     // Two nodes with no edges — valid but might get a warning
-    let f = write_tmp_graph(r#"{"name":"t","nodes":[{"id":1,"name":"a","op":"ASK","attributes":{"template_str":"x"}},{"id":2,"name":"b","op":"ASK","attributes":{"template_str":"y"}}],"edges":[],"parameters":[]}"#);
-    let out = apxm().args(["--json", "validate", f.path().to_str().unwrap()]).output().unwrap();
+    let f = write_tmp_graph(
+        r#"{"name":"t","nodes":[{"id":1,"name":"a","op":"ASK","attributes":{"template_str":"x"}},{"id":2,"name":"b","op":"ASK","attributes":{"template_str":"y"}}],"edges":[],"parameters":[]}"#,
+    );
+    let out = apxm()
+        .args(["--json", "validate", f.path().to_str().unwrap()])
+        .output()
+        .unwrap();
     assert!(out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["valid"], true);
@@ -334,11 +504,22 @@ fn validate_disconnected_graph() {
 
 #[test]
 fn validate_parameter_invalid_type() {
-    let f = write_tmp_graph(r#"{"name":"t","nodes":[{"id":1,"name":"n","op":"ASK","attributes":{"template_str":"x"}}],"edges":[],"parameters":[{"name":"p","type_name":"invalid_type"}]}"#);
-    let out = apxm().args(["--json", "validate", f.path().to_str().unwrap()]).output().unwrap();
+    let f = write_tmp_graph(
+        r#"{"name":"t","nodes":[{"id":1,"name":"n","op":"ASK","attributes":{"template_str":"x"}}],"edges":[],"parameters":[{"name":"p","type_name":"invalid_type"}]}"#,
+    );
+    let out = apxm()
+        .args(["--json", "validate", f.path().to_str().unwrap()])
+        .output()
+        .unwrap();
     // Should succeed but with warning about non-standard type
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert!(v["warnings"].as_array().unwrap().iter().any(|w| w.as_str().unwrap().contains("non-standard")));
+    assert!(
+        v["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|w| w.as_str().unwrap().contains("non-standard"))
+    );
 }
 
 // ─── analyze: edge cases ────────────────────────────────────────────────────
@@ -346,8 +527,13 @@ fn validate_parameter_invalid_type() {
 #[test]
 fn analyze_disconnected_components() {
     // Two independent nodes — both should be in phase 1
-    let f = write_tmp_graph(r#"{"name":"t","nodes":[{"id":1,"name":"a","op":"ASK","attributes":{"template_str":"x"}},{"id":2,"name":"b","op":"ASK","attributes":{"template_str":"y"}}],"edges":[],"parameters":[]}"#);
-    let out = apxm().args(["--json", "analyze", f.path().to_str().unwrap()]).output().unwrap();
+    let f = write_tmp_graph(
+        r#"{"name":"t","nodes":[{"id":1,"name":"a","op":"ASK","attributes":{"template_str":"x"}},{"id":2,"name":"b","op":"ASK","attributes":{"template_str":"y"}}],"edges":[],"parameters":[]}"#,
+    );
+    let out = apxm()
+        .args(["--json", "analyze", f.path().to_str().unwrap()])
+        .output()
+        .unwrap();
     assert!(out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["max_parallelism"], 2);
@@ -357,7 +543,10 @@ fn analyze_disconnected_components() {
 #[test]
 fn analyze_includes_entry_exit_nodes() {
     let f = write_tmp_graph(VALID_PIPELINE);
-    let out = apxm().args(["--json", "analyze", f.path().to_str().unwrap()]).output().unwrap();
+    let out = apxm()
+        .args(["--json", "analyze", f.path().to_str().unwrap()])
+        .output()
+        .unwrap();
     assert!(out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert!(v["entry_nodes"].is_array());
@@ -371,7 +560,10 @@ fn ops_list_has_coordination_ops() {
     let out = apxm().args(["--json", "ops", "list"]).output().unwrap();
     assert!(out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    let ops: Vec<String> = v.as_array().unwrap().iter()
+    let ops: Vec<String> = v
+        .as_array()
+        .unwrap()
+        .iter()
         .map(|o| o["op"].as_str().unwrap().to_string())
         .collect();
     assert!(ops.contains(&"UPDATE_GOAL".to_string()));
@@ -383,7 +575,10 @@ fn ops_list_has_coordination_ops() {
 
 #[test]
 fn ops_show_has_long_description() {
-    let out = apxm().args(["--json", "ops", "show", "THINK"]).output().unwrap();
+    let out = apxm()
+        .args(["--json", "ops", "show", "THINK"])
+        .output()
+        .unwrap();
     assert!(out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert!(v["long_description"].is_string());
@@ -395,7 +590,10 @@ fn ops_show_has_long_description() {
 #[test]
 fn explain_single_node_json() {
     let f = write_tmp_graph(VALID_ASK);
-    let out = apxm().args(["--json", "explain", f.path().to_str().unwrap()]).output().unwrap();
+    let out = apxm()
+        .args(["--json", "explain", f.path().to_str().unwrap()])
+        .output()
+        .unwrap();
     assert!(out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["graph_name"], "test-ask");
@@ -413,7 +611,10 @@ fn explain_single_node_json() {
 #[test]
 fn explain_pipeline_json() {
     let f = write_tmp_graph(VALID_PIPELINE);
-    let out = apxm().args(["--json", "explain", f.path().to_str().unwrap()]).output().unwrap();
+    let out = apxm()
+        .args(["--json", "explain", f.path().to_str().unwrap()])
+        .output()
+        .unwrap();
     assert!(out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["depth"], 2);
@@ -427,7 +628,10 @@ fn explain_pipeline_json() {
 #[test]
 fn explain_parallel_json() {
     let f = write_tmp_graph(VALID_PARALLEL);
-    let out = apxm().args(["--json", "explain", f.path().to_str().unwrap()]).output().unwrap();
+    let out = apxm()
+        .args(["--json", "explain", f.path().to_str().unwrap()])
+        .output()
+        .unwrap();
     assert!(out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     let flow = v["execution_flow"].as_array().unwrap();
@@ -440,7 +644,10 @@ fn explain_parallel_json() {
 #[test]
 fn explain_human_readable() {
     let f = write_tmp_graph(VALID_PIPELINE);
-    let out = apxm().args(["explain", f.path().to_str().unwrap()]).output().unwrap();
+    let out = apxm()
+        .args(["explain", f.path().to_str().unwrap()])
+        .output()
+        .unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("Phase 1"));
@@ -449,14 +656,20 @@ fn explain_human_readable() {
 
 #[test]
 fn explain_file_not_found() {
-    let out = apxm().args(["explain", "/nonexistent/file.json"]).output().unwrap();
+    let out = apxm()
+        .args(["explain", "/nonexistent/file.json"])
+        .output()
+        .unwrap();
     assert!(!out.status.success());
 }
 
 #[test]
 fn explain_node_metadata() {
     let f = write_tmp_graph(VALID_ASK);
-    let out = apxm().args(["--json", "explain", f.path().to_str().unwrap()]).output().unwrap();
+    let out = apxm()
+        .args(["--json", "explain", f.path().to_str().unwrap()])
+        .output()
+        .unwrap();
     assert!(out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     let node = &v["execution_flow"][0]["nodes"][0];
@@ -472,12 +685,18 @@ fn explain_node_metadata() {
 fn task_merge_two_graphs_json() {
     let g1 = write_tmp_graph(VALID_ASK);
     let g2 = write_tmp_graph(VALID_PIPELINE);
-    let out = apxm().args([
-        "--json", "task", "merge",
-        g1.path().to_str().unwrap(),
-        g2.path().to_str().unwrap(),
-        "--name", "merged-test",
-    ]).output().unwrap();
+    let out = apxm()
+        .args([
+            "--json",
+            "task",
+            "merge",
+            g1.path().to_str().unwrap(),
+            g2.path().to_str().unwrap(),
+            "--name",
+            "merged-test",
+        ])
+        .output()
+        .unwrap();
     assert!(out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["stats"]["input_graphs"], 2);
@@ -491,12 +710,19 @@ fn task_merge_output_file() {
     let g1 = write_tmp_graph(VALID_ASK);
     let out_dir = tempfile::tempdir().unwrap();
     let out_path = out_dir.path().join("merged.json");
-    let out = apxm().args([
-        "--json", "task", "merge",
-        g1.path().to_str().unwrap(),
-        "--name", "single-merge",
-        "-o", out_path.to_str().unwrap(),
-    ]).output().unwrap();
+    let out = apxm()
+        .args([
+            "--json",
+            "task",
+            "merge",
+            g1.path().to_str().unwrap(),
+            "--name",
+            "single-merge",
+            "-o",
+            out_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
     assert!(out.status.success());
     // File should exist and be valid JSON
     let content = std::fs::read_to_string(&out_path).unwrap();
@@ -506,11 +732,10 @@ fn task_merge_output_file() {
 
 #[test]
 fn task_merge_file_not_found() {
-    let out = apxm().args([
-        "task", "merge",
-        "/nonexistent/a.json",
-        "--name", "fail",
-    ]).output().unwrap();
+    let out = apxm()
+        .args(["task", "merge", "/nonexistent/a.json", "--name", "fail"])
+        .output()
+        .unwrap();
     assert!(!out.status.success());
 }
 
@@ -536,7 +761,13 @@ fn tools_register_and_list() {
     // Register a tool
     let out = apxm()
         .env("HOME", tmp_home.path())
-        .args(["tools", "register", "test-search", "--description", "Test search tool"])
+        .args([
+            "tools",
+            "register",
+            "test-search",
+            "--description",
+            "Test search tool",
+        ])
         .output()
         .unwrap();
     assert!(out.status.success());
@@ -579,7 +810,13 @@ fn tools_remove() {
     // Register then remove
     apxm()
         .env("HOME", tmp_home.path())
-        .args(["tools", "register", "rm-tool", "--description", "To be removed"])
+        .args([
+            "tools",
+            "register",
+            "rm-tool",
+            "--description",
+            "To be removed",
+        ])
         .output()
         .unwrap();
     let out = apxm()

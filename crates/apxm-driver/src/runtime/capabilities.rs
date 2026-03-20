@@ -1,8 +1,8 @@
 //! Capability registry configuration for the runtime.
 
 use crate::{config::ApXmConfig, error::DriverError};
-use apxm_runtime::sandbox::{policy::SandboxPolicy, process::ProcessSandbox};
 use apxm_runtime::CapabilitySystem;
+use apxm_runtime::sandbox::{policy::SandboxPolicy, process::ProcessSandbox};
 
 pub fn configure_capability_registry(
     capability_system: &CapabilitySystem,
@@ -19,9 +19,8 @@ pub fn configure_capability_registry(
 }
 
 fn register_user_tools(capability_system: &CapabilitySystem) -> Result<(), DriverError> {
-    let home = dirs::home_dir().ok_or_else(|| {
-        DriverError::Driver("Could not determine home directory".to_string())
-    })?;
+    let home = dirs::home_dir()
+        .ok_or_else(|| DriverError::Driver("Could not determine home directory".to_string()))?;
     let tools_path = home.join(".apxm").join("tools.json");
     if !tools_path.exists() {
         return Ok(());
@@ -168,10 +167,7 @@ mod tests {
         // cat echoes stdin back; JSON is {"key":"hello"}
         match result {
             Value::Object(map) => {
-                assert_eq!(
-                    map.get("key"),
-                    Some(&Value::String("hello".to_string()))
-                );
+                assert_eq!(map.get("key"), Some(&Value::String("hello".to_string())));
             }
             _ => panic!("Expected JSON object output, got: {:?}", result),
         }
@@ -184,7 +180,10 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         let msg = format!("{err}");
-        assert!(msg.contains("timed out"), "Expected timeout error, got: {msg}");
+        assert!(
+            msg.contains("timed out"),
+            "Expected timeout error, got: {msg}"
+        );
     }
 
     #[tokio::test]
@@ -194,7 +193,10 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         let msg = format!("{err}");
-        assert!(msg.contains("42"), "Expected exit code 42 in error, got: {msg}");
+        assert!(
+            msg.contains("42"),
+            "Expected exit code 42 in error, got: {msg}"
+        );
         assert!(msg.contains("oops"), "Expected stderr in error, got: {msg}");
     }
 

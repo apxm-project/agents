@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::{TaskDag, ExecutionDag, FlowParameter};
+use super::{ExecutionDag, FlowParameter, TaskDag};
 use crate::error::runtime::RuntimeError;
 
 /// Unique identifier for an agent.

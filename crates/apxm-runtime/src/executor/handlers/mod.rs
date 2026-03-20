@@ -242,7 +242,10 @@ async fn execute_llm_request_streaming(
                     arguments: String::new(),
                 });
             }
-            StreamChunk::ToolCallDelta { id: _, arguments_delta } => {
+            StreamChunk::ToolCallDelta {
+                id: _,
+                arguments_delta,
+            } => {
                 if let Some(tc) = pending_tool_call.as_mut() {
                     tc.arguments.push_str(&arguments_delta);
                 }
@@ -371,10 +374,7 @@ mod tests {
         let result = finalize_pending_tool_call(tc);
         assert_eq!(result.id, "call_1");
         assert_eq!(result.name, "web_search");
-        assert_eq!(
-            result.args,
-            serde_json::json!({"query": "rust async"})
-        );
+        assert_eq!(result.args, serde_json::json!({"query": "rust async"}));
     }
 
     #[test]
@@ -460,7 +460,9 @@ mod tests {
                         arguments: String::new(),
                     });
                 }
-                StreamChunk::ToolCallDelta { arguments_delta, .. } => {
+                StreamChunk::ToolCallDelta {
+                    arguments_delta, ..
+                } => {
                     if let Some(tc) = pending.as_mut() {
                         tc.arguments.push_str(&arguments_delta);
                     }

@@ -67,7 +67,12 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         .map(|i| format!("case[{}]:{}", i, &discriminant_value))
         .unwrap_or_else(|| "default".to_string());
     ctx.aam.set_belief(
-        format!("{}{}:{}", belief_keys::SWITCH_PREFIX, ctx.execution_id, node.id),
+        format!(
+            "{}{}:{}",
+            belief_keys::SWITCH_PREFIX,
+            ctx.execution_id,
+            node.id
+        ),
         Value::String(match_desc),
         label,
     );
@@ -445,22 +450,14 @@ mod tests {
         // Set a default region with an empty sub-DAG (no nodes)
         let empty_dag = Value::Object(
             vec![
-                (
-                    "nodes".to_string(),
-                    Value::Array(vec![]),
-                ),
-                (
-                    "edges".to_string(),
-                    Value::Array(vec![]),
-                ),
+                ("nodes".to_string(), Value::Array(vec![])),
+                ("edges".to_string(), Value::Array(vec![])),
             ]
             .into_iter()
             .collect(),
         );
-        node.attributes.insert(
-            graph_attrs::DEFAULT_REGION.to_string(),
-            empty_dag,
-        );
+        node.attributes
+            .insert(graph_attrs::DEFAULT_REGION.to_string(), empty_dag);
         // Discriminant "z" doesn't match "a", uses default region
         let result = execute(&ctx, &node, vec![Value::String("z".to_string())])
             .await

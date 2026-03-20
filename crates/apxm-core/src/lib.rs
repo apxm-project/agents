@@ -31,6 +31,6 @@ pub use plan::{InnerPlanPayload, Plan, PlanStep};
 
 pub use types::{
     AISOperation, AISOperationType, CapabilityRecord, CompletionPolicy, DependencyType, Edge,
-    GoalTree, InstructionConfig, Node, NodeId, NodeMetadata, Number, ScopePolicy, ScopeSpec,
-    Token, TokenId, TokenStatus, Value,
+    GoalTree, InstructionConfig, Node, NodeId, NodeMetadata, Number, ScopePolicy, ScopeSpec, Token,
+    TokenId, TokenStatus, Value,
 };

@@ -575,9 +575,7 @@ fn emit_node(
             let attrs = extra_attr_dict(&node.attributes, &[]);
 
             if tokens.is_empty() {
-                state.emit(format!(
-                    "    {result} = ais.{op_name}{attrs} -> !ais.token"
-                ));
+                state.emit(format!("    {result} = ais.{op_name}{attrs} -> !ais.token"));
             } else {
                 let operands = tokens
                     .iter()
@@ -618,8 +616,12 @@ fn emit_node(
             }))
         }
         AISOperationType::Reflect => emit_simple_op(
-            state, node, &inputs, "reflect",
-            &[graph_attrs::TRACE_ID, graph_attrs::TRACE], graph_attrs::TRACE,
+            state,
+            node,
+            &inputs,
+            "reflect",
+            &[graph_attrs::TRACE_ID, graph_attrs::TRACE],
+            graph_attrs::TRACE,
             &[graph_attrs::TRACE_ID, graph_attrs::TRACE],
             Some(('(', ')')),
         ),
@@ -664,7 +666,11 @@ fn emit_node(
         AISOperationType::Communicate => {
             let message = get_string_attr(
                 &node.attributes,
-                &[graph_attrs::MESSAGE, graph_attrs::TEMPLATE_STR, graph_attrs::PROMPT],
+                &[
+                    graph_attrs::MESSAGE,
+                    graph_attrs::TEMPLATE_STR,
+                    graph_attrs::PROMPT,
+                ],
             )
             .unwrap_or_else(|| "{0}".to_string());
             let recipient = get_string_attr(
@@ -733,34 +739,34 @@ fn emit_node(
             }))
         }
         AISOperationType::Negotiate => emit_simple_op(
-            state, node, &inputs, "negotiate",
-            &[graph_attrs::PROPOSAL, graph_attrs::TEMPLATE_STR], "{0}",
+            state,
+            node,
+            &inputs,
+            "negotiate",
+            &[graph_attrs::PROPOSAL, graph_attrs::TEMPLATE_STR],
+            "{0}",
             &[graph_attrs::PROPOSAL, graph_attrs::TEMPLATE_STR],
             Some(('(', ')')),
         ),
         // Control flow ops
         AISOperationType::FlowCall => emit_simple_op(
-            state, node, &inputs, "flow_call",
-            &[graph_attrs::FLOW_NAME, "flow", graph_attrs::TARGET], "unknown_flow",
+            state,
+            node,
+            &inputs,
+            "flow_call",
+            &[graph_attrs::FLOW_NAME, "flow", graph_attrs::TARGET],
+            "unknown_flow",
             &[graph_attrs::FLOW_NAME, "flow", graph_attrs::TARGET],
             Some(('(', ')')),
         ),
         AISOperationType::Jump => {
-            let target = get_string_attr(
-                &node.attributes,
-                &[graph_attrs::TARGET, graph_attrs::LABEL],
-            )
-            .unwrap_or_else(|| "next".to_string());
-            let attrs = extra_attr_dict(
-                &node.attributes,
-                &[graph_attrs::TARGET, graph_attrs::LABEL],
-            );
+            let target =
+                get_string_attr(&node.attributes, &[graph_attrs::TARGET, graph_attrs::LABEL])
+                    .unwrap_or_else(|| "next".to_string());
+            let attrs =
+                extra_attr_dict(&node.attributes, &[graph_attrs::TARGET, graph_attrs::LABEL]);
 
-            state.emit(format!(
-                "    ais.jump {}{}",
-                quote_string(&target),
-                attrs
-            ));
+            state.emit(format!("    ais.jump {}{}", quote_string(&target), attrs));
             Ok(None)
         }
         AISOperationType::Return => {
@@ -770,8 +776,7 @@ fn emit_node(
                 let token = ensure_token(state, input.clone())?;
                 state.emit(format!(
                     "    ais.return {} : !ais.token{}",
-                    token.ssa,
-                    attrs
+                    token.ssa, attrs
                 ));
             } else {
                 state.emit(format!("    ais.return{}", attrs));
@@ -780,20 +785,32 @@ fn emit_node(
         }
         // Tool / Execution ops
         AISOperationType::Exc => emit_simple_op(
-            state, node, &inputs, "exc",
-            &[graph_attrs::CODE, "script"], "",
+            state,
+            node,
+            &inputs,
+            "exc",
+            &[graph_attrs::CODE, "script"],
+            "",
             &[graph_attrs::CODE, "script"],
             Some(('[', ']')),
         ),
         AISOperationType::Print => {
             let template = get_string_attr(
                 &node.attributes,
-                &[graph_attrs::TEMPLATE_STR, graph_attrs::PROMPT, graph_attrs::MESSAGE],
+                &[
+                    graph_attrs::TEMPLATE_STR,
+                    graph_attrs::PROMPT,
+                    graph_attrs::MESSAGE,
+                ],
             )
             .unwrap_or_else(|| "{0}".to_string());
             let attrs = extra_attr_dict(
                 &node.attributes,
-                &[graph_attrs::TEMPLATE_STR, graph_attrs::PROMPT, graph_attrs::MESSAGE],
+                &[
+                    graph_attrs::TEMPLATE_STR,
+                    graph_attrs::PROMPT,
+                    graph_attrs::MESSAGE,
+                ],
             );
             let context = format_context(&inputs, '[', ']');
 
@@ -807,30 +824,39 @@ fn emit_node(
         }
         // Agent metadata
         AISOperationType::Agent => emit_simple_op(
-            state, node, &inputs, "agent",
-            &[graph_attrs::AGENT_NAME, "name"], "agent",
+            state,
+            node,
+            &inputs,
+            "agent",
+            &[graph_attrs::AGENT_NAME, "name"],
+            "agent",
             &[graph_attrs::AGENT_NAME, "name"],
             None,
         ),
         // AAM / Coordination ops
         AISOperationType::UpdateGoal => emit_simple_op(
-            state, node, &inputs, "update_goal",
-            &[graph_attrs::GOAL_ID, graph_attrs::GOAL], "goal",
+            state,
+            node,
+            &inputs,
+            "update_goal",
+            &[graph_attrs::GOAL_ID, graph_attrs::GOAL],
+            "goal",
             &[graph_attrs::GOAL_ID, graph_attrs::GOAL],
             Some(('[', ']')),
         ),
         AISOperationType::Guard => emit_simple_op(
-            state, node, &inputs, "guard",
-            &[graph_attrs::CONDITION, graph_attrs::TEMPLATE_STR], "true",
+            state,
+            node,
+            &inputs,
+            "guard",
+            &[graph_attrs::CONDITION, graph_attrs::TEMPLATE_STR],
+            "true",
             &[graph_attrs::CONDITION, graph_attrs::TEMPLATE_STR],
             Some(('(', ')')),
         ),
         AISOperationType::Claim => {
-            let queue = get_string_attr(
-                &node.attributes,
-                &[graph_attrs::QUEUE, graph_attrs::KEY],
-            )
-            .unwrap_or_else(|| "default".to_string());
+            let queue = get_string_attr(&node.attributes, &[graph_attrs::QUEUE, graph_attrs::KEY])
+                .unwrap_or_else(|| "default".to_string());
             let lease_ms = get_u64_attr(&node.attributes, graph_attrs::LEASE_MS);
             let attrs = extra_attr_dict(
                 &node.attributes,
@@ -853,14 +879,22 @@ fn emit_node(
             }))
         }
         AISOperationType::Pause => emit_simple_op(
-            state, node, &inputs, "pause",
-            &[graph_attrs::MESSAGE, graph_attrs::CHECKPOINT], "paused",
+            state,
+            node,
+            &inputs,
+            "pause",
+            &[graph_attrs::MESSAGE, graph_attrs::CHECKPOINT],
+            "paused",
             &[graph_attrs::MESSAGE, graph_attrs::CHECKPOINT],
             Some(('[', ']')),
         ),
         AISOperationType::Resume => emit_simple_op(
-            state, node, &inputs, "resume",
-            &[graph_attrs::CHECKPOINT, graph_attrs::CHECKPOINT_ID], "latest",
+            state,
+            node,
+            &inputs,
+            "resume",
+            &[graph_attrs::CHECKPOINT, graph_attrs::CHECKPOINT_ID],
+            "latest",
             &[graph_attrs::CHECKPOINT, graph_attrs::CHECKPOINT_ID],
             None,
         ),
@@ -879,21 +913,33 @@ fn emit_node(
         }
         // Self-organization ops
         AISOperationType::SpawnAgent => emit_simple_op(
-            state, node, &inputs, "spawn_agent",
-            &[graph_attrs::AGENT_NAME, "name"], "child_agent",
+            state,
+            node,
+            &inputs,
+            "spawn_agent",
+            &[graph_attrs::AGENT_NAME, "name"],
+            "child_agent",
             &[graph_attrs::AGENT_NAME, "name"],
             Some(('(', ')')),
         ),
         AISOperationType::RegisterCapability => emit_simple_op(
-            state, node, &inputs, "register_capability",
-            &[graph_attrs::CAPABILITY_NAME, graph_attrs::CAPABILITY], "capability",
+            state,
+            node,
+            &inputs,
+            "register_capability",
+            &[graph_attrs::CAPABILITY_NAME, graph_attrs::CAPABILITY],
+            "capability",
             &[graph_attrs::CAPABILITY_NAME, graph_attrs::CAPABILITY],
             None,
         ),
         // Autonomous execution
         AISOperationType::Autonomous => emit_simple_op(
-            state, node, &inputs, "autonomous",
-            &[graph_attrs::STRATEGY, graph_attrs::TEMPLATE_STR], "default",
+            state,
+            node,
+            &inputs,
+            "autonomous",
+            &[graph_attrs::STRATEGY, graph_attrs::TEMPLATE_STR],
+            "default",
             &[graph_attrs::STRATEGY, graph_attrs::TEMPLATE_STR],
             Some(('(', ')')),
         ),

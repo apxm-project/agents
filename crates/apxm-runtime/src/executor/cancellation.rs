@@ -4,8 +4,8 @@
 //! cancels all descendants.  Tokens are cheap to clone (interior `Arc`) and
 //! safe to share across tasks.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use parking_lot::Mutex;

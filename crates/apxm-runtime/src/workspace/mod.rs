@@ -74,13 +74,7 @@ impl ScopeRegistry {
     }
 
     /// Register a new scope. Overwrites any existing entry with the same `id`.
-    pub fn register(
-        &self,
-        id: String,
-        parent: Option<String>,
-        aam: Aam,
-        spec: ScopeSpec,
-    ) {
+    pub fn register(&self, id: String, parent: Option<String>, aam: Aam, spec: ScopeSpec) {
         let entry = ScopeEntry {
             scope_id: id.clone(),
             parent_id: parent,
@@ -200,8 +194,18 @@ mod tests {
     fn test_children_of() {
         let registry = ScopeRegistry::new();
         registry.register("root".into(), None, Aam::new(), default_spec());
-        registry.register("child-a".into(), Some("root".into()), Aam::new(), default_spec());
-        registry.register("child-b".into(), Some("root".into()), Aam::new(), default_spec());
+        registry.register(
+            "child-a".into(),
+            Some("root".into()),
+            Aam::new(),
+            default_spec(),
+        );
+        registry.register(
+            "child-b".into(),
+            Some("root".into()),
+            Aam::new(),
+            default_spec(),
+        );
         registry.register("orphan".into(), None, Aam::new(), default_spec());
 
         let mut children = registry.children_of("root");
@@ -230,7 +234,12 @@ mod tests {
     fn test_overwrite_existing_scope() {
         let registry = ScopeRegistry::new();
         registry.register("s".into(), None, Aam::new(), default_spec());
-        registry.register("s".into(), Some("parent".into()), Aam::new(), default_spec());
+        registry.register(
+            "s".into(),
+            Some("parent".into()),
+            Aam::new(),
+            default_spec(),
+        );
 
         let entry = registry.get("s").unwrap();
         assert_eq!(entry.parent_id.as_deref(), Some("parent"));

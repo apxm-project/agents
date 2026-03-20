@@ -88,9 +88,7 @@ pub fn operation_effects(op: &AISOperationType) -> OperationEffects {
         AISOperationType::LoopEnd => OperationEffects::new(),
         AISOperationType::Return => OperationEffects::new(),
         AISOperationType::Switch => OperationEffects::new(),
-        AISOperationType::FlowCall => OperationEffects::new()
-            .read(Beliefs)
-            .write(Beliefs),
+        AISOperationType::FlowCall => OperationEffects::new().read(Beliefs).write(Beliefs),
 
         // Synchronization -- Fence is a pure ordering barrier, no AAM mutation
         AISOperationType::Fence => OperationEffects::new(),
@@ -102,9 +100,7 @@ pub fn operation_effects(op: &AISOperationType) -> OperationEffects {
         AISOperationType::Err => OperationEffects::new(),
 
         // Communication
-        AISOperationType::Communicate => OperationEffects::new()
-            .read(Beliefs)
-            .write(Beliefs),
+        AISOperationType::Communicate => OperationEffects::new().read(Beliefs).write(Beliefs),
 
         // Coordination (Phase 1)
         AISOperationType::UpdateGoal => OperationEffects::new().read(Goals).write(Goals),
@@ -114,12 +110,8 @@ pub fn operation_effects(op: &AISOperationType) -> OperationEffects {
         AISOperationType::Resume => OperationEffects::new().write(ShortTermMemory),
 
         // Coordination (Phase 2)
-        AISOperationType::Delegate => OperationEffects::new()
-            .read(Beliefs)
-            .write(Beliefs),
-        AISOperationType::Negotiate => OperationEffects::new()
-            .read(Beliefs)
-            .write(Beliefs),
+        AISOperationType::Delegate => OperationEffects::new().read(Beliefs).write(Beliefs),
+        AISOperationType::Negotiate => OperationEffects::new().read(Beliefs).write(Beliefs),
 
         // Identity Operations
         AISOperationType::Nop => OperationEffects::new(),

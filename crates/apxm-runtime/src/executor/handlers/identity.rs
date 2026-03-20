@@ -93,12 +93,7 @@ mod tests {
         let llm_registry = Arc::new(apxm_backends::LLMRegistry::new());
         let capability_system = Arc::new(CapabilitySystem::new());
         let aam = crate::aam::Aam::new();
-        let ctx = ExecutionContext::new(
-            memory,
-            llm_registry,
-            capability_system,
-            aam.clone(),
-        );
+        let ctx = ExecutionContext::new(memory, llm_registry, capability_system, aam.clone());
 
         let node = make_node();
         let input = Value::String("tracked".to_string());

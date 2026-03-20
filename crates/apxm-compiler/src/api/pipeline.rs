@@ -59,14 +59,13 @@ impl<'ctx> Pipeline<'ctx> {
 
         // Apply profile-guided annotations if a profile is configured.
         if let Some(ref profile_path) = self.config.profile_path {
-            let profile =
-                crate::passes::profile::ExecutionProfile::load_from_file(profile_path)
-                    .map_err(|e| {
-                        CompilerError::Unsupported(Box::new(ErrorBuilder::generic(
-                            ErrorCode::InternalError,
-                            format!("Failed to load profile: {e}"),
-                        )))
-                    })?;
+            let profile = crate::passes::profile::ExecutionProfile::load_from_file(profile_path)
+                .map_err(|e| {
+                    CompilerError::Unsupported(Box::new(ErrorBuilder::generic(
+                        ErrorCode::InternalError,
+                        format!("Failed to load profile: {e}"),
+                    )))
+                })?;
             profile.apply_to_graph(&mut graph, self.config.token_budget);
         }
 
@@ -111,14 +110,13 @@ impl<'ctx> Pipeline<'ctx> {
 
         // Apply profile-guided annotations if a profile is configured.
         if let Some(ref profile_path) = self.config.profile_path {
-            let profile =
-                crate::passes::profile::ExecutionProfile::load_from_file(profile_path)
-                    .map_err(|e| {
-                        CompilerError::Unsupported(Box::new(ErrorBuilder::generic(
-                            ErrorCode::InternalError,
-                            format!("Failed to load profile: {e}"),
-                        )))
-                    })?;
+            let profile = crate::passes::profile::ExecutionProfile::load_from_file(profile_path)
+                .map_err(|e| {
+                    CompilerError::Unsupported(Box::new(ErrorBuilder::generic(
+                        ErrorCode::InternalError,
+                        format!("Failed to load profile: {e}"),
+                    )))
+                })?;
             profile.apply_to_graph(&mut graph, self.config.token_budget);
         }
 

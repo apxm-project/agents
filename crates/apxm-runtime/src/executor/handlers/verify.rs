@@ -37,7 +37,12 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     // Record verification result in AAM
     let label = crate::aam::TransitionLabel::operation(node.id, format!("{:?}", node.op_type));
     ctx.aam.set_belief(
-        format!("{}{}:{}", belief_keys::VERIFY_PREFIX, ctx.execution_id, node.id),
+        format!(
+            "{}{}:{}",
+            belief_keys::VERIFY_PREFIX,
+            ctx.execution_id,
+            node.id
+        ),
         Value::Bool(is_verified),
         label,
     );
@@ -85,21 +90,12 @@ mod tests {
 
         let capability_system = Arc::new(CapabilitySystem::new());
         let aam = crate::aam::Aam::new();
-        let ctx = ExecutionContext::new(
-            memory,
-            llm_registry,
-            capability_system,
-            aam.clone(),
-        );
+        let ctx = ExecutionContext::new(memory, llm_registry, capability_system, aam.clone());
 
         let node = make_verify_node("value > 0");
-        let result = execute(
-            &ctx,
-            &node,
-            vec![Value::String("42".to_string())],
-        )
-        .await
-        .unwrap();
+        let result = execute(&ctx, &node, vec![Value::String("42".to_string())])
+            .await
+            .unwrap();
         assert_eq!(result, Value::Bool(true));
 
         // Verify AAM recorded the result
@@ -128,21 +124,12 @@ mod tests {
 
         let capability_system = Arc::new(CapabilitySystem::new());
         let aam = crate::aam::Aam::new();
-        let ctx = ExecutionContext::new(
-            memory,
-            llm_registry,
-            capability_system,
-            aam.clone(),
-        );
+        let ctx = ExecutionContext::new(memory, llm_registry, capability_system, aam.clone());
 
         let node = make_verify_node("value is negative");
-        let result = execute(
-            &ctx,
-            &node,
-            vec![Value::String("42".to_string())],
-        )
-        .await
-        .unwrap();
+        let result = execute(&ctx, &node, vec![Value::String("42".to_string())])
+            .await
+            .unwrap();
         assert_eq!(result, Value::Bool(false));
     }
 

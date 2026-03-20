@@ -1,8 +1,8 @@
 //! This file is responsible for managing passes in the compiler.
 
+use super::metrics::{PassMetrics, PipelineDiagnostics};
 use crate::api::{Context, Module, module::invalid_input_error};
 use crate::ffi;
-use super::metrics::{PassMetrics, PipelineDiagnostics};
 use apxm_core::error::compiler::Result;
 use apxm_core::types::OptimizationLevel;
 use std::ffi::CString;
@@ -20,10 +20,7 @@ impl<'ctx> PassManager<'ctx> {
             "pass manager creation",
         )?;
 
-        Ok(Self {
-            raw,
-            context,
-        })
+        Ok(Self { raw, context })
     }
 
     pub fn from_opt_level(context: &'ctx Context, level: OptimizationLevel) -> Result<Self> {

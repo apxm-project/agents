@@ -271,13 +271,12 @@ impl StorageBackend for SqliteBackend {
     }
 
     async fn exists(&self, key: &str) -> StorageResult<bool> {
-        let exists = sqlx::query_scalar::<_, i64>(
-            "SELECT EXISTS(SELECT 1 FROM kv_store WHERE key = ?1)",
-        )
-        .bind(key)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| mem_err("exists", e))?;
+        let exists =
+            sqlx::query_scalar::<_, i64>("SELECT EXISTS(SELECT 1 FROM kv_store WHERE key = ?1)")
+                .bind(key)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| mem_err("exists", e))?;
 
         Ok(exists != 0)
     }

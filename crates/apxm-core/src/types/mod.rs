@@ -21,10 +21,10 @@ pub mod provider_spec;
 pub mod session;
 pub mod values;
 
+pub use aam::{CapabilityRecord, CompletionPolicy, GoalTree, ScopePolicy, ScopeSpec};
 pub use compiler::{
     CodegenOptions, CompilationStage, EmitFormat, OptimizationLevel, PipelineConfig, stage_rank,
 };
-pub use aam::{CapabilityRecord, CompletionPolicy, GoalTree, ScopePolicy, ScopeSpec};
 pub use execution::{
     Agent, AgentFlow, AgentId, AgentMetadata, CapabilityDeclaration, DagMetadata, DependencyType,
     Edge, ExecutionDag, ExecutionStats, LatencyTierConfig, MemoryDeclaration, Node, NodeId,

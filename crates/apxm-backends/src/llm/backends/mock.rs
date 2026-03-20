@@ -276,8 +276,7 @@ impl LLMBackend for MockLLMBackend {
         if let Some(ref err) = self.fail_with {
             let err_msg = err.clone();
             return Box::pin(tokio_stream::iter(vec![Err(anyhow::anyhow!(
-                "{}",
-                err_msg
+                "{}", err_msg
             ))]));
         }
 

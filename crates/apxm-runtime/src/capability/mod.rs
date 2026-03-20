@@ -38,8 +38,8 @@ pub mod metadata;
 pub mod registry;
 
 use crate::aam::{Aam, TransitionLabel};
-use apxm_core::{error::RuntimeError, types::values::Value};
 use approval::{ApprovalChannel, ApprovalStore};
+use apxm_core::{error::RuntimeError, types::values::Value};
 use executor::CapabilityExecutor;
 use interceptor::{CapabilityInterceptor, InterceptDecision};
 use metadata::CapabilityMetadata;
@@ -252,7 +252,9 @@ impl CapabilitySystem {
                             .record(name.to_string(), decision.clone(), scope);
                         match decision {
                             InterceptDecision::Allow => { /* user overrode the deny */ }
-                            InterceptDecision::Deny { reason: user_reason } => {
+                            InterceptDecision::Deny {
+                                reason: user_reason,
+                            } => {
                                 return Err(RuntimeError::Capability {
                                     capability: name.to_string(),
                                     message: user_reason,

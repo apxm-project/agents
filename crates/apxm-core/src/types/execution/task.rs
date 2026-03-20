@@ -161,16 +161,14 @@ impl TaskDag {
 
     /// Serialize this task DAG as JSON.
     pub fn to_json(&self) -> Result<String, RuntimeError> {
-        serde_json::to_string(self).map_err(|e| {
-            RuntimeError::Serialization(format!("failed to serialize TaskDag: {e}"))
-        })
+        serde_json::to_string(self)
+            .map_err(|e| RuntimeError::Serialization(format!("failed to serialize TaskDag: {e}")))
     }
 
     /// Deserialize a task DAG from JSON.
     pub fn from_json(payload: &str) -> Result<Self, RuntimeError> {
-        serde_json::from_str(payload).map_err(|e| {
-            RuntimeError::Serialization(format!("failed to deserialize TaskDag: {e}"))
-        })
+        serde_json::from_str(payload)
+            .map_err(|e| RuntimeError::Serialization(format!("failed to deserialize TaskDag: {e}")))
     }
 
     /// Validates the task DAG.
@@ -202,8 +200,7 @@ impl TaskDag {
         }
 
         // Cycle detection via topological sort (Kahn's algorithm)
-        let mut in_degree: HashMap<TaskId, usize> =
-            self.tasks.iter().map(|t| (t.id, 0)).collect();
+        let mut in_degree: HashMap<TaskId, usize> = self.tasks.iter().map(|t| (t.id, 0)).collect();
         let mut adjacency: HashMap<TaskId, Vec<TaskId>> =
             self.tasks.iter().map(|t| (t.id, Vec::new())).collect();
 

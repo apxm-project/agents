@@ -9,18 +9,18 @@ mod beliefs;
 mod capabilities;
 pub mod effects;
 mod goals;
-pub mod session;
 mod scope;
+pub mod session;
 
+use apxm_core::error::RuntimeError;
 pub use apxm_core::types::goal::{Goal, GoalId, GoalStatus};
+use apxm_core::types::values::Value;
 pub use beliefs::{BeliefChangeSet, BeliefMap};
 pub use capabilities::{CapabilityChange, CapabilityMap, CapabilityRecord};
-pub use goals::{CompletionPolicy, GoalChange, GoalDetailMap, GoalQueue, GoalTree};
-pub use scope::{ScopePolicy, ScopeSpec};
-use apxm_core::error::RuntimeError;
-use apxm_core::types::values::Value;
 use chrono::{DateTime, Utc};
+pub use goals::{CompletionPolicy, GoalChange, GoalDetailMap, GoalQueue, GoalTree};
 use parking_lot::RwLock;
+pub use scope::{ScopePolicy, ScopeSpec};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
@@ -214,12 +214,16 @@ impl Aam {
 
         let should_complete = match policy {
             CompletionPolicy::AllChildren => children.iter().all(|child_id| {
-                state.goal_details.get(child_id)
+                state
+                    .goal_details
+                    .get(child_id)
                     .map(|g| g.status == GoalStatus::Completed)
                     .unwrap_or(false) // missing children should NOT count as completed
             }),
             CompletionPolicy::AnyChild => children.iter().any(|child_id| {
-                state.goal_details.get(child_id)
+                state
+                    .goal_details
+                    .get(child_id)
                     .map(|g| g.status == GoalStatus::Completed)
                     .unwrap_or(false)
             }),
@@ -292,7 +296,11 @@ impl Aam {
         // Fast path: if everything is Inherit, share the same Arc.
         if matches!(
             (&spec.beliefs, &spec.capabilities, &spec.goals),
-            (ScopePolicy::Inherit, ScopePolicy::Inherit, ScopePolicy::Inherit)
+            (
+                ScopePolicy::Inherit,
+                ScopePolicy::Inherit,
+                ScopePolicy::Inherit
+            )
         ) {
             return Aam {
                 inner: Arc::clone(&self.inner),
@@ -614,12 +622,20 @@ mod tests {
         aam.add_child_goal(parent_id, child2, TransitionLabel::custom("test"));
 
         // Complete child1 only - parent should NOT complete
-        aam.update_goal_status(child1_id, GoalStatus::Completed, TransitionLabel::custom("test"));
+        aam.update_goal_status(
+            child1_id,
+            GoalStatus::Completed,
+            TransitionLabel::custom("test"),
+        );
         let result = aam.propagate_completion(parent_id, TransitionLabel::custom("test"));
         assert!(result.is_none());
 
         // Complete child2 - now parent SHOULD complete
-        aam.update_goal_status(child2_id, GoalStatus::Completed, TransitionLabel::custom("test"));
+        aam.update_goal_status(
+            child2_id,
+            GoalStatus::Completed,
+            TransitionLabel::custom("test"),
+        );
         let result = aam.propagate_completion(parent_id, TransitionLabel::custom("test"));
         assert!(result.is_some());
 
@@ -662,7 +678,11 @@ mod tests {
         aam.add_child_goal(parent_id, child2, TransitionLabel::custom("test"));
 
         // Complete just child1 - parent SHOULD complete with AnyChild policy
-        aam.update_goal_status(child1_id, GoalStatus::Completed, TransitionLabel::custom("test"));
+        aam.update_goal_status(
+            child1_id,
+            GoalStatus::Completed,
+            TransitionLabel::custom("test"),
+        );
         let result = aam.propagate_completion(parent_id, TransitionLabel::custom("test"));
         assert!(result.is_some());
     }
@@ -729,7 +749,10 @@ mod tests {
         };
         aam.add_goal(goal, TransitionLabel::custom("test"));
 
-        assert_eq!(aam.goal_priority_by_description("optimize_latency"), Some(80));
+        assert_eq!(
+            aam.goal_priority_by_description("optimize_latency"),
+            Some(80)
+        );
         assert_eq!(aam.goal_priority_by_description("nonexistent"), None);
     }
 
@@ -738,7 +761,11 @@ mod tests {
     #[test]
     fn scope_inherit_shares_state() {
         let parent = Aam::new();
-        parent.set_belief("x".into(), Value::String("1".into()), TransitionLabel::custom("t"));
+        parent.set_belief(
+            "x".into(),
+            Value::String("1".into()),
+            TransitionLabel::custom("t"),
+        );
 
         let spec = ScopeSpec::default(); // all Inherit
         let child = parent.child_scope(&spec);
@@ -747,18 +774,30 @@ mod tests {
         assert_eq!(child.get_belief("x"), Some(Value::String("1".into())));
 
         // Write in child is visible to parent (same Arc)
-        child.set_belief("y".into(), Value::String("2".into()), TransitionLabel::custom("t"));
+        child.set_belief(
+            "y".into(),
+            Value::String("2".into()),
+            TransitionLabel::custom("t"),
+        );
         assert_eq!(parent.get_belief("y"), Some(Value::String("2".into())));
 
         // Write in parent is visible to child
-        parent.set_belief("z".into(), Value::String("3".into()), TransitionLabel::custom("t"));
+        parent.set_belief(
+            "z".into(),
+            Value::String("3".into()),
+            TransitionLabel::custom("t"),
+        );
         assert_eq!(child.get_belief("z"), Some(Value::String("3".into())));
     }
 
     #[test]
     fn scope_isolate_starts_empty() {
         let parent = Aam::new();
-        parent.set_belief("x".into(), Value::String("1".into()), TransitionLabel::custom("t"));
+        parent.set_belief(
+            "x".into(),
+            Value::String("1".into()),
+            TransitionLabel::custom("t"),
+        );
         parent.register_capability(
             "cap1".into(),
             CapabilityRecord {
@@ -787,14 +826,22 @@ mod tests {
         assert!(parent.has_capability("cap1"));
 
         // Child writes don't leak to parent
-        child.set_belief("y".into(), Value::String("2".into()), TransitionLabel::custom("t"));
+        child.set_belief(
+            "y".into(),
+            Value::String("2".into()),
+            TransitionLabel::custom("t"),
+        );
         assert!(parent.get_belief("y").is_none());
     }
 
     #[test]
     fn scope_snapshot_copies_then_diverges() {
         let parent = Aam::new();
-        parent.set_belief("x".into(), Value::String("1".into()), TransitionLabel::custom("t"));
+        parent.set_belief(
+            "x".into(),
+            Value::String("1".into()),
+            TransitionLabel::custom("t"),
+        );
         parent.register_capability(
             "cap1".into(),
             CapabilityRecord {
@@ -818,20 +865,36 @@ mod tests {
         assert!(child.has_capability("cap1"));
 
         // Child writes do NOT affect parent
-        child.set_belief("x".into(), Value::String("changed".into()), TransitionLabel::custom("t"));
+        child.set_belief(
+            "x".into(),
+            Value::String("changed".into()),
+            TransitionLabel::custom("t"),
+        );
         assert_eq!(parent.get_belief("x"), Some(Value::String("1".into())));
         assert_eq!(child.get_belief("x"), Some(Value::String("changed".into())));
 
         // Parent writes do NOT affect child (separate Arcs)
-        parent.set_belief("new_key".into(), Value::String("parent_only".into()), TransitionLabel::custom("t"));
+        parent.set_belief(
+            "new_key".into(),
+            Value::String("parent_only".into()),
+            TransitionLabel::custom("t"),
+        );
         assert!(child.get_belief("new_key").is_none());
     }
 
     #[test]
     fn scope_filter_inherits_subset() {
         let parent = Aam::new();
-        parent.set_belief("keep".into(), Value::String("yes".into()), TransitionLabel::custom("t"));
-        parent.set_belief("drop".into(), Value::String("no".into()), TransitionLabel::custom("t"));
+        parent.set_belief(
+            "keep".into(),
+            Value::String("yes".into()),
+            TransitionLabel::custom("t"),
+        );
+        parent.set_belief(
+            "drop".into(),
+            Value::String("no".into()),
+            TransitionLabel::custom("t"),
+        );
 
         let spec = ScopeSpec {
             beliefs: ScopePolicy::Filter(vec!["keep".into()]),
@@ -844,14 +907,22 @@ mod tests {
         assert!(child.get_belief("drop").is_none());
 
         // Filter uses snapshot semantics — child writes don't affect parent
-        child.set_belief("keep".into(), Value::String("modified".into()), TransitionLabel::custom("t"));
+        child.set_belief(
+            "keep".into(),
+            Value::String("modified".into()),
+            TransitionLabel::custom("t"),
+        );
         assert_eq!(parent.get_belief("keep"), Some(Value::String("yes".into())));
     }
 
     #[test]
     fn scope_mixed_policies() {
         let parent = Aam::new();
-        parent.set_belief("b".into(), Value::String("belief".into()), TransitionLabel::custom("t"));
+        parent.set_belief(
+            "b".into(),
+            Value::String("belief".into()),
+            TransitionLabel::custom("t"),
+        );
         parent.register_capability(
             "cap".into(),
             CapabilityRecord {
@@ -876,7 +947,11 @@ mod tests {
         // Capabilities were isolated
         assert!(!child.has_capability("cap"));
         // Separate Arc — writes don't cross
-        child.set_belief("b".into(), Value::String("modified".into()), TransitionLabel::custom("t"));
+        child.set_belief(
+            "b".into(),
+            Value::String("modified".into()),
+            TransitionLabel::custom("t"),
+        );
         assert_eq!(parent.get_belief("b"), Some(Value::String("belief".into())));
     }
 }

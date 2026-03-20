@@ -52,10 +52,7 @@ impl SessionManager {
     }
 
     /// Load the most recent checkpoint for `session_id`, if one exists.
-    pub fn load_checkpoint(
-        &self,
-        session_id: &str,
-    ) -> Result<Option<AamCheckpoint>, RuntimeError> {
+    pub fn load_checkpoint(&self, session_id: &str) -> Result<Option<AamCheckpoint>, RuntimeError> {
         let path = self.checkpoint_path(session_id);
         if !path.exists() {
             return Ok(None);
@@ -289,10 +286,7 @@ mod tests {
         let aam2 = Aam::new();
         aam2.restore(&loaded);
 
-        assert_eq!(
-            aam2.get_belief("key"),
-            Some(Value::String("value".into()))
-        );
+        assert_eq!(aam2.get_belief("key"), Some(Value::String("value".into())));
         let goals = aam2.goals();
         assert_eq!(goals.len(), 1);
         assert_eq!(goals[0].id, goal.id);

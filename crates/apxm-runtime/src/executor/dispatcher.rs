@@ -61,9 +61,9 @@ impl OperationDispatcher {
             AISOperationType::UMem => umem::execute(ctx, node, inputs).await,
 
             // LLM operations (Ask/Think/Reason → unified llm handler)
-            AISOperationType::Ask
-            | AISOperationType::Think
-            | AISOperationType::Reason => llm::execute(ctx, node, inputs).await,
+            AISOperationType::Ask | AISOperationType::Think | AISOperationType::Reason => {
+                llm::execute(ctx, node, inputs).await
+            }
 
             // Planning & analysis operations
             AISOperationType::Plan => plan::execute(ctx, node, inputs).await,
@@ -111,15 +111,16 @@ impl OperationDispatcher {
             AISOperationType::Nop => nop::execute(ctx, node, inputs).await,
             AISOperationType::Identity => identity::execute(ctx, node, inputs).await,
             AISOperationType::SpawnAgent => spawn_agent::execute(ctx, node, inputs).await,
-            AISOperationType::RegisterCapability => register_capability::execute(ctx, node, inputs).await,
+            AISOperationType::RegisterCapability => {
+                register_capability::execute(ctx, node, inputs).await
+            }
             AISOperationType::Autonomous => autonomous::execute(ctx, node, inputs).await,
 
             // Literal operations
             AISOperationType::ConstStr => const_str::execute(ctx, node, inputs).await,
 
             // No-op: Agent is metadata, Yield is handled within sub-DAG execution
-            AISOperationType::Agent
-            | AISOperationType::Yield => Ok(Value::Null),
+            AISOperationType::Agent | AISOperationType::Yield => Ok(Value::Null),
         };
 
         // Pop the call stack frame (must happen regardless of success/failure).

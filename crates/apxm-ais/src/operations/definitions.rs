@@ -515,7 +515,9 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             beliefs and goals, and the capabilities the agent can invoke. The runtime uses this \
             to initialize the agent's AAM before executing any other node.",
         latency: OperationLatency::None,
-        example_json: Some(r#"{"id": 0, "op": "AGENT", "attributes": {"memory": {"stm": true}, "beliefs": {"role": "analyst"}, "goals": ["summarize data"], "capabilities": ["search", "calculate"]}}"#),
+        example_json: Some(
+            r#"{"id": 0, "op": "AGENT", "attributes": {"memory": {"stm": true}, "beliefs": {"role": "analyst"}, "goals": ["summarize data"], "capabilities": ["search", "calculate"]}}"#,
+        ),
         fields: &[
             OperationField::optional("memory", "Memory configuration"),
             OperationField::optional("beliefs", "Initial beliefs"),
@@ -537,7 +539,9 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             and Episodic (execution traces). The query string is matched against stored keys. \
             Returns the stored value or null if not found.",
         latency: OperationLatency::Low,
-        example_json: Some(r#"{"id": 2, "op": "QMEM", "attributes": {"query": "user_name", "memory_tier": "stm"}}"#),
+        example_json: Some(
+            r#"{"id": 2, "op": "QMEM", "attributes": {"query": "user_name", "memory_tier": "stm"}}"#,
+        ),
         fields: &[
             OperationField::required("query", "Query string or key to search for"),
             OperationField::optional("memory_tier", "Target memory tier: stm, ltm, or episodic"),
@@ -555,7 +559,9 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             already exists, the value is overwritten. Supports the same three memory tiers as \
             QMEM. Use FENCE after UMEM if subsequent QMEM nodes must see the write.",
         latency: OperationLatency::Low,
-        example_json: Some(r#"{"id": 3, "op": "UMEM", "attributes": {"key": "summary", "value": "{{node_2}}", "memory_tier": "stm"}}"#),
+        example_json: Some(
+            r#"{"id": 3, "op": "UMEM", "attributes": {"key": "summary", "value": "{{node_2}}", "memory_tier": "stm"}}"#,
+        ),
         fields: &[
             OperationField::required("key", "Key to store the value under"),
             OperationField::required("value", "Value to store"),
@@ -576,7 +582,9 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             straightforward questions, classifications, extractions, or reformulations. \
             Template strings support {{node_N}} interpolation for dataflow inputs.",
         latency: OperationLatency::Medium,
-        example_json: Some(r#"{"id": 1, "op": "ASK", "attributes": {"template_str": "Summarize: {{node_0}}"}}"#),
+        example_json: Some(
+            r#"{"id": 1, "op": "ASK", "attributes": {"template_str": "Summarize: {{node_0}}"}}"#,
+        ),
         fields: &[
             OperationField::required("template_str", "Prompt template for the question"),
             OperationField::optional("temperature", "Sampling temperature (0.0-1.0)"),
@@ -596,7 +604,9 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             complex multi-step problems, math, code generation, or planning that benefits from \
             deliberate reasoning. The budget controls how many tokens the model can spend thinking.",
         latency: OperationLatency::High,
-        example_json: Some(r#"{"id": 1, "op": "THINK", "attributes": {"template_str": "Solve step by step: {{node_0}}", "budget": 4096}}"#),
+        example_json: Some(
+            r#"{"id": 1, "op": "THINK", "attributes": {"template_str": "Solve step by step: {{node_0}}", "budget": 4096}}"#,
+        ),
         fields: &[
             OperationField::required("template_str", "Prompt template for deep reasoning"),
             OperationField::optional("budget", "Token budget for extended thinking"),
@@ -617,7 +627,9 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             and goal mutations. Use when the agent needs to update its internal state based on \
             new information. Supports structured JSON output mode.",
         latency: OperationLatency::Medium,
-        example_json: Some(r#"{"id": 1, "op": "REASON", "attributes": {"template_str": "Given {{node_0}}, update your analysis", "structured": true}}"#),
+        example_json: Some(
+            r#"{"id": 1, "op": "REASON", "attributes": {"template_str": "Given {{node_0}}, update your analysis", "structured": true}}"#,
+        ),
         fields: &[
             OperationField::required("template_str", "Prompt template for structured reasoning"),
             OperationField::optional("temperature", "Sampling temperature (0.0-1.0)"),
@@ -638,7 +650,9 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             concrete steps. The output is a structured plan that can be used to drive subsequent \
             nodes. Supports optional constraints to bound the plan space.",
         latency: OperationLatency::High,
-        example_json: Some(r#"{"id": 1, "op": "PLAN", "attributes": {"goal": "Research and summarize recent AI papers", "constraints": "max 5 steps"}}"#),
+        example_json: Some(
+            r#"{"id": 1, "op": "PLAN", "attributes": {"goal": "Research and summarize recent AI papers", "constraints": "max 5 steps"}}"#,
+        ),
         fields: &[
             OperationField::required("goal", "Goal to decompose into steps"),
             OperationField::optional("constraints", "Constraints on the plan"),
@@ -656,7 +670,9 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             for patterns, failures, or improvements. Useful for iterative refinement loops \
             where the agent learns from its own execution history.",
         latency: OperationLatency::Medium,
-        example_json: Some(r#"{"id": 4, "op": "REFLECT", "attributes": {"trace_query": "last_execution"}}"#),
+        example_json: Some(
+            r#"{"id": 4, "op": "REFLECT", "attributes": {"trace_query": "last_execution"}}"#,
+        ),
         fields: &[
             OperationField::required("trace_query", "Query to retrieve trace for reflection"),
             OperationField::optional("reflection_prompt", "Custom prompt for reflection"),
@@ -674,7 +690,9 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             Returns a verification result with confidence score. Use after ASK/THINK/REASON \
             nodes to validate outputs before acting on them.",
         latency: OperationLatency::Medium,
-        example_json: Some(r#"{"id": 5, "op": "VERIFY", "attributes": {"claim": "{{node_3}}", "evidence": "{{node_4}}"}}"#),
+        example_json: Some(
+            r#"{"id": 5, "op": "VERIFY", "attributes": {"claim": "{{node_3}}", "evidence": "{{node_4}}"}}"#,
+        ),
         fields: &[
             OperationField::required("claim", "Claim to verify"),
             OperationField::required("evidence", "Evidence to check against"),
@@ -694,7 +712,9 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             registered in the runtime's CapabilityRegistry. Parameters are passed as \
             a JSON object. The tool's return value becomes this node's output token.",
         latency: OperationLatency::Medium,
-        example_json: Some(r#"{"id": 2, "op": "INV", "attributes": {"capability": "web_search", "parameters": {"query": "{{node_1}}"}}}"#),
+        example_json: Some(
+            r#"{"id": 2, "op": "INV", "attributes": {"capability": "web_search", "parameters": {"query": "{{node_1}}"}}}"#,
+        ),
         fields: &[
             OperationField::required("capability", "Name of the capability/tool to invoke"),
             OperationField::optional("parameters", "Parameters to pass to the tool"),
@@ -731,7 +751,9 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             interpolation. Useful for debugging graphs during development or displaying \
             final results to the user. The message is also stored as the output token.",
         latency: OperationLatency::None,
-        example_json: Some(r#"{"id": 4, "op": "PRINT", "attributes": {"message": "Result: {{node_3}}"}}"#),
+        example_json: Some(
+            r#"{"id": 4, "op": "PRINT", "attributes": {"message": "Result: {{node_3}}"}}"#,
+        ),
         fields: &[OperationField::required("message", "Message to print")],
         needs_submission: true,
         min_inputs: 0,
@@ -762,7 +784,9 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             two labels. If the token matches the value, control goes to label_true; otherwise \
             to label_false. Used for if/else patterns in agent workflows.",
         latency: OperationLatency::None,
-        example_json: Some(r#"{"id": 5, "op": "BRANCH_ON_VALUE", "attributes": {"token": "{{node_4}}", "value": "yes", "label_true": "6", "label_false": "7"}}"#),
+        example_json: Some(
+            r#"{"id": 5, "op": "BRANCH_ON_VALUE", "attributes": {"token": "{{node_4}}", "value": "yes", "label_true": "6", "label_false": "7"}}"#,
+        ),
         fields: &[
             OperationField::required("token", "Token to evaluate"),
             OperationField::required("value", "Value to compare against"),
@@ -830,7 +854,9 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             and a destination node. If no case matches, the default destination is used. \
             The matched branch's result becomes the output token.",
         latency: OperationLatency::None,
-        example_json: Some(r#"{"id": 3, "op": "SWITCH", "attributes": {"discriminant": "{{node_2}}", "cases": [{"label": "math", "node_id": 4}, {"label": "code", "node_id": 5}], "default": "6"}}"#),
+        example_json: Some(
+            r#"{"id": 3, "op": "SWITCH", "attributes": {"discriminant": "{{node_2}}", "cases": [{"label": "math", "node_id": 4}, {"label": "code", "node_id": 5}], "default": "6"}}"#,
+        ),
         fields: &[
             OperationField::required("discriminant", "Token to match against case labels"),
             OperationField::required("cases", "Array of case label/destination pairs"),
@@ -850,7 +876,9 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             execute in parallel if they have no data dependencies between them. This is the \
             primary mechanism for multi-agent composition.",
         latency: OperationLatency::High,
-        example_json: Some(r#"{"id": 4, "op": "FLOW_CALL", "attributes": {"agent_name": "researcher", "flow_name": "analyze", "args": {"topic": "{{node_1}}"}}}"#),
+        example_json: Some(
+            r#"{"id": 4, "op": "FLOW_CALL", "attributes": {"agent_name": "researcher", "flow_name": "analyze", "args": {"topic": "{{node_1}}"}}}"#,
+        ),
         fields: &[
             OperationField::required("agent_name", "Name of the agent to call"),
             OperationField::required("flow_name", "Name of the flow to invoke"),
@@ -870,7 +898,9 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             their output tokens into a single aggregated result. Used after parallel \
             FLOW_CALL or fan-out patterns to collect results before further processing.",
         latency: OperationLatency::None,
-        example_json: Some(r#"{"id": 6, "op": "MERGE", "attributes": {"tokens": ["{{node_3}}", "{{node_4}}", "{{node_5}}"]}}"#),
+        example_json: Some(
+            r#"{"id": 6, "op": "MERGE", "attributes": {"tokens": ["{{node_3}}", "{{node_4}}", "{{node_5}}"]}}"#,
+        ),
         fields: &[OperationField::required(
             "tokens",
             "List of tokens to merge",
@@ -906,7 +936,9 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             MERGE, it does not combine the tokens — it simply acts as a synchronization barrier. \
             Commonly used before a node that needs all its inputs but doesn't need them merged.",
         latency: OperationLatency::None,
-        example_json: Some(r#"{"id": 5, "op": "WAIT_ALL", "attributes": {"tokens": ["{{node_2}}", "{{node_3}}"]}}"#),
+        example_json: Some(
+            r#"{"id": 5, "op": "WAIT_ALL", "attributes": {"tokens": ["{{node_2}}", "{{node_3}}"]}}"#,
+        ),
         fields: &[OperationField::required("tokens", "Tokens to wait for")],
         needs_submission: true,
         min_inputs: 1,
@@ -922,7 +954,9 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             in the try subgraph fails, execution transfers to the catch subgraph. The catch \
             subgraph receives the error context and can attempt recovery or graceful degradation.",
         latency: OperationLatency::None,
-        example_json: Some(r#"{"id": 2, "op": "TRY_CATCH", "attributes": {"try_subgraph": "3", "catch_subgraph": "4"}}"#),
+        example_json: Some(
+            r#"{"id": 2, "op": "TRY_CATCH", "attributes": {"try_subgraph": "3", "catch_subgraph": "4"}}"#,
+        ),
         fields: &[
             OperationField::required("try_subgraph", "Subgraph to try executing"),
             OperationField::required("catch_subgraph", "Recovery subgraph on failure"),
@@ -940,7 +974,9 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             can update the agent's goals and beliefs to reflect the failure and adapt the agent's \
             strategy. Typically used inside TRY_CATCH catch subgraphs.",
         latency: OperationLatency::Medium,
-        example_json: Some(r#"{"id": 4, "op": "ERR", "attributes": {"error_handler": "retry_with_fallback"}}"#),
+        example_json: Some(
+            r#"{"id": 4, "op": "ERR", "attributes": {"error_handler": "retry_with_fallback"}}"#,
+        ),
         fields: &[OperationField::required(
             "error_handler",
             "Error handler to invoke",
@@ -960,7 +996,9 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             protocols (direct, broadcast, request-reply). The response from the target agent \
             becomes this node's output token.",
         latency: OperationLatency::Medium,
-        example_json: Some(r#"{"id": 3, "op": "COMMUNICATE", "attributes": {"target_agent": "reviewer", "message": "Please review: {{node_2}}"}}"#),
+        example_json: Some(
+            r#"{"id": 3, "op": "COMMUNICATE", "attributes": {"target_agent": "reviewer", "message": "Please review: {{node_2}}"}}"#,
+        ),
         fields: &[
             OperationField::required("target_agent", "Target agent to communicate with"),
             OperationField::required("message", "Message to send"),
@@ -981,7 +1019,9 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             a specific goal), and 'clear' (remove all goals). Goal changes are visible to \
             subsequent REASON and REFLECT nodes.",
         latency: OperationLatency::None,
-        example_json: Some(r#"{"id": 3, "op": "UPDATE_GOAL", "attributes": {"goal_id": "optimize_latency", "action": "set", "priority": 2}}"#),
+        example_json: Some(
+            r#"{"id": 3, "op": "UPDATE_GOAL", "attributes": {"goal_id": "optimize_latency", "action": "set", "priority": 2}}"#,
+        ),
         fields: &[
             OperationField::required(
                 "goal_id",
@@ -1004,7 +1044,9 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             downstream subgraph (configurable via on_fail). Use to enforce invariants like \
             confidence thresholds, non-null checks, or content validation.",
         latency: OperationLatency::None,
-        example_json: Some(r#"{"id": 3, "op": "GUARD", "attributes": {"condition": "> 0.8", "on_fail": "skip", "error_message": "Confidence too low"}}"#),
+        example_json: Some(
+            r#"{"id": 3, "op": "GUARD", "attributes": {"condition": "> 0.8", "on_fail": "skip", "error_message": "Confidence too low"}}"#,
+        ),
         fields: &[
             OperationField::required(
                 "condition",
@@ -1027,7 +1069,9 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             is leased for a configurable duration. If the agent doesn't complete within the \
             lease, the task returns to the queue for other agents.",
         latency: OperationLatency::Low,
-        example_json: Some(r#"{"id": 2, "op": "CLAIM", "attributes": {"queue": "review_tasks", "lease_ms": 30000}}"#),
+        example_json: Some(
+            r#"{"id": 2, "op": "CLAIM", "attributes": {"queue": "review_tasks", "lease_ms": 30000}}"#,
+        ),
         fields: &[
             OperationField::required("queue", "Queue name to claim from"),
             OperationField::optional("lease_ms", "Lease duration in ms (default: 60000)"),
@@ -1048,7 +1092,9 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             Optionally sends a webhook notification. The human can provide input that becomes \
             this node's output token when RESUME is called.",
         latency: OperationLatency::High,
-        example_json: Some(r#"{"id": 5, "op": "PAUSE", "attributes": {"message": "Please review the analysis before proceeding"}}"#),
+        example_json: Some(
+            r#"{"id": 5, "op": "PAUSE", "attributes": {"message": "Please review the analysis before proceeding"}}"#,
+        ),
         fields: &[
             OperationField::required("message", "Human-readable message explaining the pause"),
             OperationField::optional(
@@ -1076,7 +1122,9 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             resumes it. When resumed, the human's input (if any) becomes this node's output \
             token. Configurable polling interval and max attempts prevent indefinite blocking.",
         latency: OperationLatency::High,
-        example_json: Some(r#"{"id": 6, "op": "RESUME", "attributes": {"checkpoint": "review_checkpoint_1"}}"#),
+        example_json: Some(
+            r#"{"id": 6, "op": "RESUME", "attributes": {"checkpoint": "review_checkpoint_1"}}"#,
+        ),
         fields: &[
             OperationField::required("checkpoint", "Checkpoint ID to resume from"),
             OperationField::optional(
@@ -1103,7 +1151,9 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             target agent. Returns a task handle that can be used to track the delegated work. \
             The target agent executes the task independently and reports results back.",
         latency: OperationLatency::Medium,
-        example_json: Some(r#"{\"id\": 3, \"op\": \"DELEGATE\", \"attributes\": {\"task_spec\": \"Analyze the dataset\", \"target_agent\": \"analyst\"}}"#),
+        example_json: Some(
+            r#"{\"id\": 3, \"op\": \"DELEGATE\", \"attributes\": {\"task_spec\": \"Analyze the dataset\", \"target_agent\": \"analyst\"}}"#,
+        ),
         fields: &[
             OperationField::required("task_spec", "Description of the task to delegate"),
             OperationField::required("target_agent", "Name of the agent to delegate to"),
@@ -1121,9 +1171,14 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             A proposal is circulated to all parties for a configurable number of rounds. \
             Returns the consensus result or a timeout if no agreement is reached.",
         latency: OperationLatency::High,
-        example_json: Some(r#"{\"id\": 4, \"op\": \"NEGOTIATE\", \"attributes\": {\"parties\": [\"agent_a\", \"agent_b\"], \"proposal\": \"Choose the best approach\", \"max_rounds\": 3}}"#),
+        example_json: Some(
+            r#"{\"id\": 4, \"op\": \"NEGOTIATE\", \"attributes\": {\"parties\": [\"agent_a\", \"agent_b\"], \"proposal\": \"Choose the best approach\", \"max_rounds\": 3}}"#,
+        ),
         fields: &[
-            OperationField::required("parties", "List of agent names participating in negotiation"),
+            OperationField::required(
+                "parties",
+                "List of agent names participating in negotiation",
+            ),
             OperationField::required("proposal", "The proposal to negotiate on"),
             OperationField::optional("max_rounds", "Maximum negotiation rounds (default: 3)"),
         ],
@@ -1172,7 +1227,9 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             The new agent is registered in the flow registry and can receive COMMUNICATE or \
             DELEGATE messages. Returns the new agent's identifier.",
         latency: OperationLatency::Medium,
-        example_json: Some(r#"{\"id\": 3, \"op\": \"SPAWN_AGENT\", \"attributes\": {\"agent_name\": \"worker_1\", \"capabilities\": [\"search\", \"summarize\"], \"goals\": [\"process tasks\"]}}"#),
+        example_json: Some(
+            r#"{\"id\": 3, \"op\": \"SPAWN_AGENT\", \"attributes\": {\"agent_name\": \"worker_1\", \"capabilities\": [\"search\", \"summarize\"], \"goals\": [\"process tasks\"]}}"#,
+        ),
         fields: &[
             OperationField::required("agent_name", "Name for the new agent"),
             OperationField::optional("capabilities", "List of capabilities for the new agent"),
@@ -1191,10 +1248,15 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             registry. The capability becomes available for INV operations after registration. \
             Returns a confirmation with the registered capability name.",
         latency: OperationLatency::Low,
-        example_json: Some(r#"{\"id\": 3, \"op\": \"REGISTER_CAPABILITY\", \"attributes\": {\"capability_name\": \"custom_tool\", \"description\": \"A custom analysis tool\"}}"#),
+        example_json: Some(
+            r#"{\"id\": 3, \"op\": \"REGISTER_CAPABILITY\", \"attributes\": {\"capability_name\": \"custom_tool\", \"description\": \"A custom analysis tool\"}}"#,
+        ),
         fields: &[
             OperationField::required("capability_name", "Name for the capability to register"),
-            OperationField::optional("description", "Human-readable description of the capability"),
+            OperationField::optional(
+                "description",
+                "Human-readable description of the capability",
+            ),
             OperationField::optional("parameters_schema", "JSON schema for capability parameters"),
         ],
         needs_submission: true,
@@ -1211,10 +1273,13 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             returning to structured DAG after the region exits. This is a stub implementation \
             that passes through its input unchanged.",
         latency: OperationLatency::High,
-        example_json: Some(r#"{\"id\": 3, \"op\": \"AUTONOMOUS\", \"attributes\": {\"region\": \"exploration\"}}"#),
-        fields: &[
-            OperationField::optional("region", "Name of the autonomous execution region"),
-        ],
+        example_json: Some(
+            r#"{\"id\": 3, \"op\": \"AUTONOMOUS\", \"attributes\": {\"region\": \"exploration\"}}"#,
+        ),
+        fields: &[OperationField::optional(
+            "region",
+            "Name of the autonomous execution region",
+        )],
         needs_submission: true,
         min_inputs: 0,
         produces_output: true,

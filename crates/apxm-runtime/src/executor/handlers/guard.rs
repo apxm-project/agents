@@ -54,7 +54,12 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     // Record guard evaluation result in AAM
     let label = crate::aam::TransitionLabel::operation(node.id, format!("{:?}", node.op_type));
     ctx.aam.set_belief(
-        format!("{}{}:{}", belief_keys::GUARD_PREFIX, ctx.execution_id, node.id),
+        format!(
+            "{}{}:{}",
+            belief_keys::GUARD_PREFIX,
+            ctx.execution_id,
+            node.id
+        ),
         Value::Bool(passed),
         label,
     );

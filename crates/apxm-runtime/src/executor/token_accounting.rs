@@ -70,7 +70,8 @@ impl TokenAccountant {
         agent_name: Option<&str>,
     ) {
         self.total_input.fetch_add(input_tokens, Ordering::Relaxed);
-        self.total_output.fetch_add(output_tokens, Ordering::Relaxed);
+        self.total_output
+            .fetch_add(output_tokens, Ordering::Relaxed);
         self.total_calls.fetch_add(1, Ordering::Relaxed);
 
         {
@@ -181,8 +182,10 @@ mod tests {
         accountant.record(1, 10, 5, None, None);
         let snap = accountant.snapshot();
         let json = snap.to_json();
-        assert!(json["token_accounting"]["total"]["total_tokens"]
-            .as_u64()
-            .is_some());
+        assert!(
+            json["token_accounting"]["total"]["total_tokens"]
+                .as_u64()
+                .is_some()
+        );
     }
 }

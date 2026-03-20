@@ -479,11 +479,7 @@ mod tests {
     }
 
     /// Helper: create a simple node with explicit input/output tokens.
-    fn make_node(
-        id: NodeId,
-        input_tokens: Vec<TokenId>,
-        output_tokens: Vec<TokenId>,
-    ) -> Node {
+    fn make_node(id: NodeId, input_tokens: Vec<TokenId>, output_tokens: Vec<TokenId>) -> Node {
         Node {
             id,
             op_type: AISOperationType::Nop,
@@ -506,7 +502,8 @@ mod tests {
         let mut dag = ExecutionDag::new();
         dag.add_node(n1).unwrap();
         dag.add_node(n2).unwrap();
-        dag.add_edge(Edge::new(1, 2, 10, DependencyType::Data)).unwrap();
+        dag.add_edge(Edge::new(1, 2, 10, DependencyType::Data))
+            .unwrap();
         dag.entry_nodes = dag.find_entry_nodes();
         dag.exit_nodes = dag.find_exit_nodes();
         dag
@@ -526,8 +523,10 @@ mod tests {
         dag.add_node(n1).unwrap();
         dag.add_node(n2).unwrap();
         dag.add_node(n3).unwrap();
-        dag.add_edge(Edge::new(1, 2, 10, DependencyType::Data)).unwrap();
-        dag.add_edge(Edge::new(1, 3, 11, DependencyType::Data)).unwrap();
+        dag.add_edge(Edge::new(1, 2, 10, DependencyType::Data))
+            .unwrap();
+        dag.add_edge(Edge::new(1, 3, 11, DependencyType::Data))
+            .unwrap();
         dag.entry_nodes = dag.find_entry_nodes();
         dag.exit_nodes = dag.find_exit_nodes();
         dag
@@ -657,7 +656,8 @@ mod tests {
         let mut dag = ExecutionDag::new();
         dag.add_node(n1).unwrap();
         dag.add_node(n2).unwrap();
-        dag.add_edge(Edge::new(1, 2, 10, DependencyType::Data)).unwrap();
+        dag.add_edge(Edge::new(1, 2, 10, DependencyType::Data))
+            .unwrap();
         dag.entry_nodes = dag.find_entry_nodes();
         dag.exit_nodes = dag.find_exit_nodes();
 
@@ -848,10 +848,7 @@ mod tests {
 
         let results = state.collect_exit_values().unwrap();
         assert_eq!(results.len(), 1);
-        assert_eq!(
-            results.get(&20),
-            Some(&Value::String("output".to_string()))
-        );
+        assert_eq!(results.get(&20), Some(&Value::String("output".to_string())));
     }
 
     #[test]
@@ -1022,10 +1019,8 @@ mod tests {
 
         // Node with high compile-time priority
         let mut n1 = make_node(1, vec![], vec![10]);
-        n1.attributes.insert(
-            "goal_id".to_string(),
-            Value::String("low_goal".to_string()),
-        );
+        n1.attributes
+            .insert("goal_id".to_string(), Value::String("low_goal".to_string()));
         n1.metadata.priority = 95; // Critical compile-time priority
 
         let mut dag = ExecutionDag::new();

@@ -359,7 +359,11 @@ pub fn detect_llvm_version(prefix: &Path) -> Option<String> {
             .and_then(|o| String::from_utf8(o.stdout).ok())
             .and_then(|v| v.trim().split('.').next().map(String::from))
     {
-        log_debug!("build::llvm", "Detected LLVM version from llvm-config: {}", version);
+        log_debug!(
+            "build::llvm",
+            "Detected LLVM version from llvm-config: {}",
+            version
+        );
         return Some(version);
     }
 

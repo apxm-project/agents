@@ -72,8 +72,7 @@ impl ExecutionProfile {
     pub fn save_to_file(&self, path: &Path) -> Result<(), ProfileError> {
         let data = serde_json::to_string_pretty(self)
             .map_err(|e| ProfileError::Parse("serialization".to_string(), e.to_string()))?;
-        std::fs::write(path, data)
-            .map_err(|e| ProfileError::Io(path.display().to_string(), e))?;
+        std::fs::write(path, data).map_err(|e| ProfileError::Io(path.display().to_string(), e))?;
         Ok(())
     }
 
@@ -136,11 +135,7 @@ impl ExecutionProfile {
     ///     attribute with a human-readable message.
     ///
     /// Returns the number of nodes that were annotated.
-    pub fn apply_to_graph(
-        &self,
-        graph: &mut ApxmGraph,
-        token_budget: Option<u64>,
-    ) -> usize {
+    pub fn apply_to_graph(&self, graph: &mut ApxmGraph, token_budget: Option<u64>) -> usize {
         let mut annotated = 0;
         for node in &mut graph.nodes {
             if let Some(stats) = self.node_stats.get(&node.name) {
@@ -167,9 +162,7 @@ impl ExecutionProfile {
                 // Token usage annotation
                 node.attributes.insert(
                     ATTR_PROFILE_AVG_TOKENS.to_string(),
-                    Value::Number(apxm_core::types::Number::Integer(
-                        stats.avg_tokens as i64,
-                    )),
+                    Value::Number(apxm_core::types::Number::Integer(stats.avg_tokens as i64)),
                 );
 
                 // Inject retry_count for high-error-rate nodes

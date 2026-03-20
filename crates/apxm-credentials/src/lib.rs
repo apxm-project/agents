@@ -142,8 +142,7 @@ impl CredentialStore {
         let temp = tempfile::NamedTempFile::new_in(&self.dir)?;
         fs::write(temp.path(), &content)?;
         fs::set_permissions(temp.path(), fs::Permissions::from_mode(FILE_PERMISSIONS))?;
-        temp.persist(&self.path)
-            .map_err(std::io::Error::other)?;
+        temp.persist(&self.path).map_err(std::io::Error::other)?;
         Ok(())
     }
 

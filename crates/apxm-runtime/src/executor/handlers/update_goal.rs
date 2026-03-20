@@ -181,9 +181,13 @@ mod tests {
         let (ctx, aam) = make_ctx_and_aam().await;
 
         let node = make_set_node("research_topic", Some(2));
-        let result = execute(&ctx, &node, vec![Value::String("Investigate GPU".to_string())])
-            .await
-            .unwrap();
+        let result = execute(
+            &ctx,
+            &node,
+            vec![Value::String("Investigate GPU".to_string())],
+        )
+        .await
+        .unwrap();
         assert_eq!(result, Value::String("set".to_string()));
 
         let goals = aam.goals();

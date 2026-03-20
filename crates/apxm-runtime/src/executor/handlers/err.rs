@@ -10,7 +10,12 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
     // Record error creation in AAM
     let label = crate::aam::TransitionLabel::operation(node.id, format!("{:?}", node.op_type));
     ctx.aam.set_belief(
-        format!("{}{}:{}", belief_keys::ERR_PREFIX, ctx.execution_id, node.id),
+        format!(
+            "{}{}:{}",
+            belief_keys::ERR_PREFIX,
+            ctx.execution_id,
+            node.id
+        ),
         Value::String(message.clone()),
         label,
     );
@@ -78,12 +83,7 @@ mod tests {
         let llm_registry = Arc::new(apxm_backends::LLMRegistry::new());
         let capability_system = Arc::new(CapabilitySystem::new());
         let aam = crate::aam::Aam::new();
-        let ctx = ExecutionContext::new(
-            memory,
-            llm_registry,
-            capability_system,
-            aam.clone(),
-        );
+        let ctx = ExecutionContext::new(memory, llm_registry, capability_system, aam.clone());
 
         let node = make_node("test error");
         let _result = execute(&ctx, &node, vec![]).await.unwrap();

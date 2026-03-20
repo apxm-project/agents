@@ -17,7 +17,12 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     // Record branch decision in AAM
     let label = crate::aam::TransitionLabel::operation(node.id, format!("{:?}", node.op_type));
     ctx.aam.set_belief(
-        format!("{}{}:{}", belief_keys::BRANCH_PREFIX, ctx.execution_id, node.id),
+        format!(
+            "{}{}:{}",
+            belief_keys::BRANCH_PREFIX,
+            ctx.execution_id,
+            node.id
+        ),
         Value::Bool(is_true),
         label,
     );
@@ -56,9 +61,7 @@ mod tests {
     async fn test_branch_true() {
         let ctx = test_ctx().await;
         let node = branch_node();
-        let result = execute(&ctx, &node, vec![Value::Bool(true)])
-            .await
-            .unwrap();
+        let result = execute(&ctx, &node, vec![Value::Bool(true)]).await.unwrap();
         assert_eq!(result, Value::Bool(true));
     }
 

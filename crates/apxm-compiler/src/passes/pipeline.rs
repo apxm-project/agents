@@ -42,53 +42,65 @@ pub fn build_pass_list(level: OptimizationLevel, no_cse_llm: bool) -> Vec<String
             // No optimization passes at O0
         }
         OptimizationLevel::O1 => {
-            passes.extend([
-                "normalize",
-                "build-prompt",
-                "unconsumed-value-warning",
-                "scheduling",
-                "fuse-ask-ops",
-                "canonicalizer",
-            ].iter().map(|s| s.to_string()));
+            passes.extend(
+                [
+                    "normalize",
+                    "build-prompt",
+                    "unconsumed-value-warning",
+                    "scheduling",
+                    "fuse-ask-ops",
+                    "canonicalizer",
+                ]
+                .iter()
+                .map(|s| s.to_string()),
+            );
             if !no_cse_llm {
                 passes.push("cse".to_string());
             }
             passes.push("symbol-dce".to_string());
         }
         OptimizationLevel::O2 => {
-            passes.extend([
-                "normalize",
-                "build-prompt",
-                "template-specialization",
-                "unconsumed-value-warning",
-                "schema-narrowing",
-                "scheduling",
-                "fuse-ask-ops",
-                "condense-ops",
-                "dead-context-elimination",
-                "canonicalizer",
-            ].iter().map(|s| s.to_string()));
-            if !no_cse_llm {
-                passes.push("cse".to_string());
-            }
-            passes.push("symbol-dce".to_string());
-        }
-        OptimizationLevel::O3 => {
-            passes.extend([
-                "normalize",
-                "build-prompt",
-                "unconsumed-value-warning",
-            ].iter().map(|s| s.to_string()));
-            for _ in 0..MAX_CONVERGENCE_ITERATIONS {
-                passes.extend([
+            passes.extend(
+                [
+                    "normalize",
+                    "build-prompt",
                     "template-specialization",
+                    "unconsumed-value-warning",
                     "schema-narrowing",
                     "scheduling",
                     "fuse-ask-ops",
                     "condense-ops",
                     "dead-context-elimination",
                     "canonicalizer",
-                ].iter().map(|s| s.to_string()));
+                ]
+                .iter()
+                .map(|s| s.to_string()),
+            );
+            if !no_cse_llm {
+                passes.push("cse".to_string());
+            }
+            passes.push("symbol-dce".to_string());
+        }
+        OptimizationLevel::O3 => {
+            passes.extend(
+                ["normalize", "build-prompt", "unconsumed-value-warning"]
+                    .iter()
+                    .map(|s| s.to_string()),
+            );
+            for _ in 0..MAX_CONVERGENCE_ITERATIONS {
+                passes.extend(
+                    [
+                        "template-specialization",
+                        "schema-narrowing",
+                        "scheduling",
+                        "fuse-ask-ops",
+                        "condense-ops",
+                        "dead-context-elimination",
+                        "canonicalizer",
+                    ]
+                    .iter()
+                    .map(|s| s.to_string()),
+                );
                 if !no_cse_llm {
                     passes.push("cse".to_string());
                 }

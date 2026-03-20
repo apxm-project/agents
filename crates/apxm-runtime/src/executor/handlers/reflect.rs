@@ -176,13 +176,19 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         match execute_reflect_once(ctx, &request).await {
             Ok(value) => {
                 // Record reflection result in AAM
-                let label = crate::aam::TransitionLabel::operation(node.id, format!("{:?}", node.op_type));
+                let label =
+                    crate::aam::TransitionLabel::operation(node.id, format!("{:?}", node.op_type));
                 let summary = match &value {
                     Value::String(s) => s.chars().take(200).collect::<String>(),
                     _ => format!("{:?}", value).chars().take(200).collect::<String>(),
                 };
                 ctx.aam.set_belief(
-                    format!("{}{}:{}", belief_keys::REFLECT_PREFIX, ctx.execution_id, node.id),
+                    format!(
+                        "{}{}:{}",
+                        belief_keys::REFLECT_PREFIX,
+                        ctx.execution_id,
+                        node.id
+                    ),
                     Value::String(summary),
                     label,
                 );
@@ -221,7 +227,12 @@ async fn execute_reflect_once(ctx: &ExecutionContext, request: &LLMRequest) -> R
                 ctx.memory
                     .write(
                         crate::memory::MemorySpace::Episodic,
-                        format!("{}{}:{}", belief_keys::INSIGHT_PREFIX, ctx.execution_id, uuid::Uuid::now_v7()),
+                        format!(
+                            "{}{}:{}",
+                            belief_keys::INSIGHT_PREFIX,
+                            ctx.execution_id,
+                            uuid::Uuid::now_v7()
+                        ),
                         Value::String(insight.clone()),
                     )
                     .await

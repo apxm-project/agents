@@ -76,12 +76,7 @@ impl ApprovalStore {
     }
 
     /// Record (cache) a decision for `capability`.
-    pub fn record(
-        &self,
-        capability: String,
-        decision: InterceptDecision,
-        scope: ApprovalScope,
-    ) {
+    pub fn record(&self, capability: String, decision: InterceptDecision, scope: ApprovalScope) {
         let record = ApprovalRecord {
             capability: capability.clone(),
             decision,

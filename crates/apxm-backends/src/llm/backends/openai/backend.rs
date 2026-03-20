@@ -6,9 +6,7 @@
 //! This file updates the provider default model and the list of known models
 //! surfaced by `list_models()` to reflect more recent model names.
 
-use crate::llm::backends::{
-    ContentPart, LLMBackend, LLMRequest, LLMResponse, Role, ToolChoice,
-};
+use crate::llm::backends::{ContentPart, LLMBackend, LLMRequest, LLMResponse, Role, ToolChoice};
 use anyhow::{Context, Result};
 use apxm_core::constants::graph::attrs::{BASE_URL, MODEL};
 use apxm_core::types::{FinishReason, ModelCapabilities, ModelInfo, TokenUsage, ToolCall};

@@ -471,8 +471,8 @@ impl<'a> BinaryReader<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use apxm_core::types::execution::{DagMetadata, FlowParameter};
     use apxm_core::types::NodeMetadata;
+    use apxm_core::types::execution::{DagMetadata, FlowParameter};
 
     /// Helper: compare two DAGs field-by-field.
     /// HashMap ordering is non-deterministic so we compare sorted attribute vecs.
@@ -480,11 +480,31 @@ mod tests {
         assert_eq!(a.nodes.len(), b.nodes.len(), "node count mismatch");
         for (na, nb) in a.nodes.iter().zip(b.nodes.iter()) {
             assert_eq!(na.id, nb.id, "node id mismatch");
-            assert_eq!(na.op_type, nb.op_type, "op_type mismatch for node {}", na.id);
-            assert_eq!(na.input_tokens, nb.input_tokens, "input_tokens mismatch for node {}", na.id);
-            assert_eq!(na.output_tokens, nb.output_tokens, "output_tokens mismatch for node {}", na.id);
-            assert_eq!(na.metadata.priority, nb.metadata.priority, "priority mismatch for node {}", na.id);
-            assert_eq!(na.metadata.estimated_latency, nb.metadata.estimated_latency, "latency mismatch for node {}", na.id);
+            assert_eq!(
+                na.op_type, nb.op_type,
+                "op_type mismatch for node {}",
+                na.id
+            );
+            assert_eq!(
+                na.input_tokens, nb.input_tokens,
+                "input_tokens mismatch for node {}",
+                na.id
+            );
+            assert_eq!(
+                na.output_tokens, nb.output_tokens,
+                "output_tokens mismatch for node {}",
+                na.id
+            );
+            assert_eq!(
+                na.metadata.priority, nb.metadata.priority,
+                "priority mismatch for node {}",
+                na.id
+            );
+            assert_eq!(
+                na.metadata.estimated_latency, nb.metadata.estimated_latency,
+                "latency mismatch for node {}",
+                na.id
+            );
             // Compare attributes by sorted key
             let mut a_attrs: Vec<_> = na.attributes.iter().collect();
             a_attrs.sort_by_key(|(k, _)| (*k).clone());
@@ -533,9 +553,15 @@ mod tests {
 
     fn complex_dag() -> ExecutionDag {
         let mut attrs = HashMap::new();
-        attrs.insert("prompt".to_string(), Value::String("hello world".to_string()));
+        attrs.insert(
+            "prompt".to_string(),
+            Value::String("hello world".to_string()),
+        );
         attrs.insert("temperature".to_string(), Value::Number(Number::Float(0.7)));
-        attrs.insert("max_tokens".to_string(), Value::Number(Number::Integer(1024)));
+        attrs.insert(
+            "max_tokens".to_string(),
+            Value::Number(Number::Integer(1024)),
+        );
         attrs.insert("flag".to_string(), Value::Bool(true));
         attrs.insert("empty".to_string(), Value::Null);
         attrs.insert(
@@ -781,7 +807,11 @@ mod tests {
             let parsed = parse_wire_dags(&bytes)
                 .unwrap_or_else(|e| panic!("parse failed for {:?}: {e}", op));
             assert_eq!(parsed.len(), 1);
-            assert_eq!(parsed[0].nodes[0].op_type, op, "op_type mismatch for {:?}", op);
+            assert_eq!(
+                parsed[0].nodes[0].op_type, op,
+                "op_type mismatch for {:?}",
+                op
+            );
         }
     }
 

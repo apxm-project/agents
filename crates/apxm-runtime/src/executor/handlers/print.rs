@@ -42,7 +42,12 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     // Record print in AAM
     let label = crate::aam::TransitionLabel::operation(node.id, format!("{:?}", node.op_type));
     ctx.aam.set_belief(
-        format!("{}{}:{}", belief_keys::PRINT_PREFIX, ctx.execution_id, node.id),
+        format!(
+            "{}{}:{}",
+            belief_keys::PRINT_PREFIX,
+            ctx.execution_id,
+            node.id
+        ),
         Value::String(output.chars().take(200).collect::<String>()),
         label,
     );
@@ -109,12 +114,7 @@ mod tests {
         let llm_registry = Arc::new(apxm_backends::LLMRegistry::new());
         let capability_system = Arc::new(CapabilitySystem::new());
         let aam = crate::aam::Aam::new();
-        let ctx = ExecutionContext::new(
-            memory,
-            llm_registry,
-            capability_system,
-            aam.clone(),
-        );
+        let ctx = ExecutionContext::new(memory, llm_registry, capability_system, aam.clone());
 
         let node = make_node("Status:");
         let _result = execute(&ctx, &node, vec![Value::String("OK".to_string())])
@@ -148,10 +148,7 @@ mod tests {
 
     #[test]
     fn test_format_value_array() {
-        let arr = Value::Array(vec![
-            Value::String("a".into()),
-            Value::String("b".into()),
-        ]);
+        let arr = Value::Array(vec![Value::String("a".into()), Value::String("b".into())]);
         assert_eq!(format_value(&arr), "ab");
     }
 }

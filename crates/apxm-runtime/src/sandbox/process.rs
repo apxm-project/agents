@@ -167,7 +167,10 @@ mod tests {
     #[tokio::test]
     async fn test_execute_simple_command() {
         let sandbox = ProcessSandbox::with_default_policy();
-        let result = sandbox.execute("echo", &["hello world"], None).await.unwrap();
+        let result = sandbox
+            .execute("echo", &["hello world"], None)
+            .await
+            .unwrap();
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout.trim(), "hello world");
         assert!(!result.timed_out);

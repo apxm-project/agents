@@ -12,7 +12,12 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     // Record loop check in AAM
     let label = crate::aam::TransitionLabel::operation(node.id, format!("{:?}", node.op_type));
     ctx.aam.set_belief(
-        format!("{}{}:{}", belief_keys::LOOP_END_PREFIX, ctx.execution_id, node.id),
+        format!(
+            "{}{}:{}",
+            belief_keys::LOOP_END_PREFIX,
+            ctx.execution_id,
+            node.id
+        ),
         Value::Bool(should_continue),
         label,
     );

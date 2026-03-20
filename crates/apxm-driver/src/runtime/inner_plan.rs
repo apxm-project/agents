@@ -6,7 +6,7 @@ use apxm_artifact::Artifact;
 use apxm_compiler::{self, Pipeline};
 use apxm_core::constants::graph::{attrs as graph_attrs, metadata as graph_meta};
 use apxm_core::types::OptimizationLevel;
-use apxm_core::types::execution::{TaskDag, ExecutionDag};
+use apxm_core::types::execution::{ExecutionDag, TaskDag};
 use apxm_core::types::{AISOperationType, DependencyType, Value};
 use apxm_core::{log_debug, log_info};
 use apxm_graph::{ApxmGraph, GraphEdge, GraphNode, Parameter};
@@ -104,17 +104,11 @@ impl InnerPlanLinker for CompilerInnerPlanLinker {
         let context = self.context.lock();
         let pipeline = Pipeline::with_opt_level(&context, OptimizationLevel::O1);
         let module = pipeline.compile_graph(&graph).map_err(|e| {
-            RuntimeError::State(format!(
-                "Inner plan task graph compilation failed: {}",
-                e
-            ))
+            RuntimeError::State(format!("Inner plan task graph compilation failed: {}", e))
         })?;
 
         let artifact_bytes = module.generate_artifact_bytes().map_err(|e| {
-            RuntimeError::State(format!(
-                "Inner plan task artifact generation failed: {}",
-                e
-            ))
+            RuntimeError::State(format!("Inner plan task artifact generation failed: {}", e))
         })?;
         let artifact = Artifact::from_bytes(&artifact_bytes).map_err(|e| {
             RuntimeError::State(format!("Inner plan task artifact parsing failed: {}", e))
@@ -195,10 +189,7 @@ fn task_dag_to_graph(dag: &TaskDag) -> Result<ApxmGraph, RuntimeError> {
 
     for task in &dag.tasks {
         let to = *first_node_by_task.get(&task.id).ok_or_else(|| {
-            RuntimeError::State(format!(
-                "Missing first node mapping for task {}",
-                task.id
-            ))
+            RuntimeError::State(format!("Missing first node mapping for task {}", task.id))
         })?;
         for dep in &task.depends_on {
             let from = *last_node_by_task.get(dep).ok_or_else(|| {

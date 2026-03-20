@@ -4,8 +4,7 @@ use crate::{
     aam::Aam,
     capability::{CapabilitySystem, flow_registry::FlowRegistry},
     executor::{
-        ExecutionContext, ExecutionEventEmitter, ExecutorEngine, InnerPlanLinker,
-        NoOpLinker,
+        ExecutionContext, ExecutionEventEmitter, ExecutorEngine, InnerPlanLinker, NoOpLinker,
     },
     memory::{MemoryConfig, MemorySystem},
     scheduler::{DataflowScheduler, SchedulerConfig, SessionLaneGuard},

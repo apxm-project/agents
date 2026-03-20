@@ -33,8 +33,8 @@ pub mod scheduler;
 pub mod workspace;
 
 pub use aam::{
-    Aam, AamCheckpoint, CapabilityRecord, Goal, GoalId, GoalStatus,
-    ScopePolicy, ScopeSpec, STAGED_BELIEF_PREFIX, TransitionLabel,
+    Aam, AamCheckpoint, CapabilityRecord, Goal, GoalId, GoalStatus, STAGED_BELIEF_PREFIX,
+    ScopePolicy, ScopeSpec, TransitionLabel,
     effects::{AamComponent, OperationEffects, operation_effects},
     session::SessionManager,
 };

@@ -167,7 +167,9 @@ impl ApxmGraph {
             }
 
             for (k, v) in &graph.metadata {
-                merged_metadata.entry(k.clone()).or_insert_with(|| v.clone());
+                merged_metadata
+                    .entry(k.clone())
+                    .or_insert_with(|| v.clone());
             }
 
             if let Some(max_id) = graph.nodes.iter().map(|n| n.id).max() {
@@ -176,8 +178,7 @@ impl ApxmGraph {
         }
 
         // Find exit nodes: nodes with no outgoing edges
-        let sources: std::collections::HashSet<u64> =
-            merged_edges.iter().map(|e| e.from).collect();
+        let sources: std::collections::HashSet<u64> = merged_edges.iter().map(|e| e.from).collect();
         let exit_ids: Vec<u64> = merged_nodes
             .iter()
             .filter(|n| !sources.contains(&n.id))
@@ -361,12 +362,24 @@ mod tests {
         // All node IDs should be unique
         let ids: Vec<u64> = merged.nodes.iter().map(|n| n.id).collect();
         let unique: std::collections::HashSet<u64> = ids.iter().copied().collect();
-        assert_eq!(ids.len(), unique.len(), "node IDs must be unique after merge");
+        assert_eq!(
+            ids.len(),
+            unique.len(),
+            "node IDs must be unique after merge"
+        );
 
         // Edges should only reference valid node IDs
         for edge in &merged.edges {
-            assert!(unique.contains(&edge.from), "edge.from {} not in node IDs", edge.from);
-            assert!(unique.contains(&edge.to), "edge.to {} not in node IDs", edge.to);
+            assert!(
+                unique.contains(&edge.from),
+                "edge.from {} not in node IDs",
+                edge.from
+            );
+            assert!(
+                unique.contains(&edge.to),
+                "edge.to {} not in node IDs",
+                edge.to
+            );
         }
 
         // The WAIT_ALL node should have 2 Control edges (one per sub-graph exit)
@@ -380,13 +393,25 @@ mod tests {
     fn merge_deduplicates_parameters() {
         let mut g1 = make_simple_graph("a", 1);
         g1.parameters = vec![
-            Parameter { name: "shared".into(), type_name: "str".into() },
-            Parameter { name: "only_a".into(), type_name: "int".into() },
+            Parameter {
+                name: "shared".into(),
+                type_name: "str".into(),
+            },
+            Parameter {
+                name: "only_a".into(),
+                type_name: "int".into(),
+            },
         ];
         let mut g2 = make_simple_graph("b", 1);
         g2.parameters = vec![
-            Parameter { name: "shared".into(), type_name: "float".into() }, // dupe, should be skipped
-            Parameter { name: "only_b".into(), type_name: "bool".into() },
+            Parameter {
+                name: "shared".into(),
+                type_name: "float".into(),
+            }, // dupe, should be skipped
+            Parameter {
+                name: "only_b".into(),
+                type_name: "bool".into(),
+            },
         ];
 
         let merged = ApxmGraph::merge("combo", &[g1, g2]);
@@ -402,6 +427,8 @@ mod tests {
         let g1 = make_simple_graph("a", 1);
         let g2 = make_simple_graph("b", 1);
         let merged = ApxmGraph::merge("valid", &[g1, g2]);
-        merged.validate().expect("merged graph should pass validation");
+        merged
+            .validate()
+            .expect("merged graph should pass validation");
     }
 }

@@ -294,9 +294,9 @@ fn spawn_workers(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use apxm_core::types::Node;
     use apxm_core::types::execution::{LatencyTierConfig, NodeMetadata};
     use apxm_core::types::operations::AISOperationType;
-    use apxm_core::types::Node;
     use std::collections::HashMap;
 
     /// Helper: create a node with an estimated latency (used as cost).
@@ -479,9 +479,8 @@ mod tests {
             default_latency_ns: 0,
         };
 
-        let scheduler = DataflowScheduler::new(
-            SchedulerConfig::new().with_latency_tiers(tier_config),
-        );
+        let scheduler =
+            DataflowScheduler::new(SchedulerConfig::new().with_latency_tiers(tier_config));
 
         let mut dag = ExecutionDag::new();
         dag.add_node(make_backend_node(1, 100, "gpt-4")).unwrap();
@@ -504,12 +503,12 @@ mod tests {
             default_latency_ns: 5000,
         };
 
-        let scheduler = DataflowScheduler::new(
-            SchedulerConfig::new().with_latency_tiers(tier_config),
-        );
+        let scheduler =
+            DataflowScheduler::new(SchedulerConfig::new().with_latency_tiers(tier_config));
 
         let mut dag = ExecutionDag::new();
-        dag.add_node(make_backend_node(1, 100, "unknown-backend")).unwrap();
+        dag.add_node(make_backend_node(1, 100, "unknown-backend"))
+            .unwrap();
         dag.add_node(make_costed_node(2, 300)).unwrap(); // no backend attr
         dag.entry_nodes = dag.find_entry_nodes();
         dag.exit_nodes = dag.find_exit_nodes();
@@ -540,7 +539,8 @@ mod tests {
         );
 
         let mut dag = ExecutionDag::new();
-        dag.add_node(make_backend_node(1, 100, "expensive")).unwrap();
+        dag.add_node(make_backend_node(1, 100, "expensive"))
+            .unwrap();
         dag.entry_nodes = dag.find_entry_nodes();
         dag.exit_nodes = dag.find_exit_nodes();
 
@@ -560,9 +560,8 @@ mod tests {
             default_latency_ns: 0,
         };
 
-        let scheduler = DataflowScheduler::new(
-            SchedulerConfig::new().with_latency_tiers(tier_config),
-        );
+        let scheduler =
+            DataflowScheduler::new(SchedulerConfig::new().with_latency_tiers(tier_config));
 
         let mut dag = ExecutionDag::new();
         dag.add_node(make_costed_node(1, 5000)).unwrap();
@@ -583,9 +582,8 @@ mod tests {
             default_latency_ns: 9999,
         };
 
-        let scheduler = DataflowScheduler::new(
-            SchedulerConfig::new().with_latency_tiers(tier_config),
-        );
+        let scheduler =
+            DataflowScheduler::new(SchedulerConfig::new().with_latency_tiers(tier_config));
 
         let mut dag = ExecutionDag::new();
         dag.add_node(make_backend_node(1, 100, "special")).unwrap();

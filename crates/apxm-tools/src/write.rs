@@ -339,8 +339,7 @@ impl Default for WriteCapability {
 #[async_trait]
 impl CapabilityExecutor for WriteCapability {
     async fn execute(&self, args: HashMap<String, Value>) -> CapabilityResult<Value> {
-        let file_path =
-            require_string_arg(&args, "file_path", "path", &self.metadata.name)?;
+        let file_path = require_string_arg(&args, "file_path", "path", &self.metadata.name)?;
         let content = args
             .get("content")
             .or_else(|| args.get("arg_content"))
@@ -424,7 +423,9 @@ mod tests {
     async fn test_atomic_write_creates_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test.txt");
-        atomic_write_with_backup(&path, "hello world").await.unwrap();
+        atomic_write_with_backup(&path, "hello world")
+            .await
+            .unwrap();
         assert_eq!(
             tokio::fs::read_to_string(&path).await.unwrap(),
             "hello world"
@@ -440,10 +441,7 @@ mod tests {
         let path = dir.path().join("test.txt");
         tokio::fs::write(&path, "original").await.unwrap();
         atomic_write_with_backup(&path, "updated").await.unwrap();
-        assert_eq!(
-            tokio::fs::read_to_string(&path).await.unwrap(),
-            "updated"
-        );
+        assert_eq!(tokio::fs::read_to_string(&path).await.unwrap(), "updated");
         // No temp or backup files remain
         let entries: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
         assert_eq!(entries.len(), 1);

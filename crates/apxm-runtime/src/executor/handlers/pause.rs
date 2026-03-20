@@ -43,8 +43,8 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         .unwrap_or_else(|| format!("chk_{}", &uuid::Uuid::new_v4().to_string()[..8]));
 
     let timeout_ms = get_optional_u64_attribute(node, graph_attrs::TIMEOUT_MS)?.unwrap_or(0);
-    let poll_interval_ms =
-        get_optional_u64_attribute(node, graph_attrs::POLL_INTERVAL_MS)?.unwrap_or(DEFAULT_POLL_INTERVAL_MS);
+    let poll_interval_ms = get_optional_u64_attribute(node, graph_attrs::POLL_INTERVAL_MS)?
+        .unwrap_or(DEFAULT_POLL_INTERVAL_MS);
     let notification_url = get_optional_string_attribute(node, graph_attrs::NOTIFICATION_URL)?;
 
     let server_url = get_optional_string_attribute(node, graph_attrs::SERVER_URL)?
@@ -273,12 +273,7 @@ mod tests {
         let llm_registry = Arc::new(apxm_backends::LLMRegistry::new());
         let capability_system = Arc::new(CapabilitySystem::new());
         let aam = crate::aam::Aam::new();
-        let ctx = ExecutionContext::new(
-            memory,
-            llm_registry,
-            capability_system,
-            aam.clone(),
-        );
+        let ctx = ExecutionContext::new(memory, llm_registry, capability_system, aam.clone());
 
         // Use an unreachable server URL so the HTTP call will fail
         let node = make_pause_node("Review findings", "http://127.0.0.1:1");
@@ -335,4 +330,3 @@ mod tests {
         assert!(result.is_err());
     }
 }
-

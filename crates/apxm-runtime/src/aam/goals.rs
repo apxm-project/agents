@@ -1,7 +1,7 @@
 //! Goal-state helpers for the Agent Abstract Machine.
 
-pub use apxm_core::{CompletionPolicy, GoalTree};
 use apxm_core::types::goal::{Goal, GoalId, GoalStatus};
+pub use apxm_core::{CompletionPolicy, GoalTree};
 use priority_queue::PriorityQueue;
 use std::collections::HashMap;
 

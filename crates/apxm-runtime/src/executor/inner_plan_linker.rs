@@ -6,7 +6,7 @@
 
 use apxm_core::{
     error::RuntimeError,
-    types::execution::{TaskDag, ExecutionDag},
+    types::execution::{ExecutionDag, TaskDag},
 };
 use async_trait::async_trait;
 
