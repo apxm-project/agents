@@ -50,6 +50,10 @@ pub struct OllamaBackend {
 }
 
 impl OllamaBackend {
+    fn request_model<'a>(&'a self, request: &'a LLMRequest) -> &'a str {
+        request.model.as_deref().unwrap_or(&self.model)
+    }
+
     /// Create a new Ollama backend.
     pub async fn new(_api_key: &str, config: Option<serde_json::Value>) -> Result<Self> {
         let model = config
@@ -120,6 +124,7 @@ impl OllamaBackend {
 
     /// Build request body for Ollama API.
     fn build_request_body(&self, request: &LLMRequest) -> serde_json::Value {
+        let model = self.request_model(request);
         let prompt = request
             .resolved_messages()
             .iter()
@@ -150,7 +155,7 @@ impl OllamaBackend {
         }
 
         let body = json!({
-            "model": self.model,
+            "model": model,
             "prompt": prompt,
             "stream": false,
             "options": options
@@ -165,7 +170,7 @@ impl OllamaBackend {
     }
 
     /// Parse Ollama API response.
-    fn parse_response(&self, response: OllamaResponse) -> Result<LLMResponse> {
+    fn parse_response(&self, response: OllamaResponse, model: &str) -> Result<LLMResponse> {
         // Ollama uses approximate token counts
         let input_tokens = response.prompt_eval_count.unwrap_or(0);
         let output_tokens = response.eval_count.unwrap_or(0);
@@ -179,7 +184,7 @@ impl OllamaBackend {
 
         Ok(LLMResponse::new(
             response.response,
-            &self.model,
+            model,
             usage,
             finish_reason,
         ))
@@ -191,11 +196,12 @@ impl LLMBackend for OllamaBackend {
     async fn generate(&self, request: LLMRequest) -> Result<LLMResponse> {
         request.validate()?;
 
+        let model = self.request_model(&request).to_string();
         let body = self.build_request_body(&request);
         let url = format!("{}/api/generate", self.base_url);
 
         tracing::debug!(
-            model = %self.model,
+            model = %model,
             url = %url,
             "Sending request to Ollama"
         );
@@ -223,7 +229,7 @@ impl LLMBackend for OllamaBackend {
             .await
             .context("Failed to parse Ollama response")?;
 
-        self.parse_response(api_response)
+        self.parse_response(api_response, &model)
     }
 
     fn name(&self) -> &str {

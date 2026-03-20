@@ -193,6 +193,57 @@ impl fmt::Display for AISOperationType {
     }
 }
 
+impl std::str::FromStr for AISOperationType {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, String> {
+        let normalized = value.trim().to_ascii_lowercase().replace('-', "_");
+
+        match normalized.as_str() {
+            "agent" => Ok(AISOperationType::Agent),
+            "qmem" => Ok(AISOperationType::QMem),
+            "umem" => Ok(AISOperationType::UMem),
+            "ask" => Ok(AISOperationType::Ask),
+            "think" => Ok(AISOperationType::Think),
+            "reason" => Ok(AISOperationType::Reason),
+            "plan" => Ok(AISOperationType::Plan),
+            "reflect" => Ok(AISOperationType::Reflect),
+            "verify" => Ok(AISOperationType::Verify),
+            "inv" => Ok(AISOperationType::Inv),
+            "exc" => Ok(AISOperationType::Exc),
+            "print" => Ok(AISOperationType::Print),
+            "jump" => Ok(AISOperationType::Jump),
+            "branch_on_value" => Ok(AISOperationType::BranchOnValue),
+            "loop_start" => Ok(AISOperationType::LoopStart),
+            "loop_end" => Ok(AISOperationType::LoopEnd),
+            "return" => Ok(AISOperationType::Return),
+            "switch" => Ok(AISOperationType::Switch),
+            "flow_call" => Ok(AISOperationType::FlowCall),
+            "merge" => Ok(AISOperationType::Merge),
+            "fence" => Ok(AISOperationType::Fence),
+            "wait_all" => Ok(AISOperationType::WaitAll),
+            "try_catch" => Ok(AISOperationType::TryCatch),
+            "err" => Ok(AISOperationType::Err),
+            "communicate" => Ok(AISOperationType::Communicate),
+            "update_goal" => Ok(AISOperationType::UpdateGoal),
+            "guard" => Ok(AISOperationType::Guard),
+            "claim" => Ok(AISOperationType::Claim),
+            "pause" => Ok(AISOperationType::Pause),
+            "resume" => Ok(AISOperationType::Resume),
+            "delegate" => Ok(AISOperationType::Delegate),
+            "negotiate" => Ok(AISOperationType::Negotiate),
+            "nop" => Ok(AISOperationType::Nop),
+            "identity" => Ok(AISOperationType::Identity),
+            "spawn_agent" => Ok(AISOperationType::SpawnAgent),
+            "register_capability" => Ok(AISOperationType::RegisterCapability),
+            "autonomous" => Ok(AISOperationType::Autonomous),
+            "const_str" => Ok(AISOperationType::ConstStr),
+            "yield" => Ok(AISOperationType::Yield),
+            _ => Err(format!("Unknown AIS operation type: '{value}'")),
+        }
+    }
+}
+
 impl AISOperationType {
     /// Returns the MLIR mnemonic for this operation (e.g., "rsn", "qmem").
     pub fn mlir_mnemonic(&self) -> &'static str {
@@ -1490,5 +1541,26 @@ mod tests {
                 "Wire-indexed op {op:?} (index {i}) is not in all_operations()"
             );
         }
+    }
+
+    #[test]
+    fn test_operation_type_parses_identifiers() {
+        assert_eq!(
+            "plan".parse::<AISOperationType>().unwrap(),
+            AISOperationType::Plan
+        );
+        assert_eq!(
+            "PLAN".parse::<AISOperationType>().unwrap(),
+            AISOperationType::Plan
+        );
+        assert_eq!(
+            "flow-call".parse::<AISOperationType>().unwrap(),
+            AISOperationType::FlowCall
+        );
+        assert_eq!(
+            "spawn_agent".parse::<AISOperationType>().unwrap(),
+            AISOperationType::SpawnAgent
+        );
+        assert!("not_real".parse::<AISOperationType>().is_err());
     }
 }

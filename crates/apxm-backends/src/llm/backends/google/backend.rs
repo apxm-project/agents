@@ -23,6 +23,10 @@ pub struct GoogleBackend {
 }
 
 impl GoogleBackend {
+    fn request_model<'a>(&'a self, request: &'a LLMRequest) -> &'a str {
+        request.model.as_deref().unwrap_or(&self.model)
+    }
+
     /// Create a new Google backend.
     pub async fn new(api_key: &str, config: Option<serde_json::Value>) -> Result<Self> {
         let model = config
@@ -110,7 +114,7 @@ impl GoogleBackend {
     }
 
     /// Parse Google API response.
-    fn parse_response(&self, response: GoogleResponse) -> Result<LLMResponse> {
+    fn parse_response(&self, response: GoogleResponse, model: &str) -> Result<LLMResponse> {
         let candidate = response
             .candidates
             .first()
@@ -128,7 +132,7 @@ impl GoogleBackend {
         // Google doesn't provide detailed token usage in all responses
         let usage = TokenUsage::new(0, text.split_whitespace().count());
 
-        Ok(LLMResponse::new(text, &self.model, usage, finish_reason))
+        Ok(LLMResponse::new(text, model, usage, finish_reason))
     }
 }
 
@@ -137,12 +141,13 @@ impl LLMBackend for GoogleBackend {
     async fn generate(&self, request: LLMRequest) -> Result<LLMResponse> {
         request.validate()?;
 
+        let model = self.request_model(&request).to_string();
         let body = self.build_request_body(&request);
-        let url = format!("{}/models/{}:generateContent", self.base_url, self.model);
+        let url = format!("{}/models/{}:generateContent", self.base_url, model);
 
         log_debug!(
             "models::google",
-            model = %self.model,
+            model = %model,
             "Sending request to Google AI"
         );
 
@@ -166,7 +171,7 @@ impl LLMBackend for GoogleBackend {
                 "models::google",
                 status = %status,
                 body = %error_text,
-                model = %self.model,
+                model = %model,
                 "Google API request failed"
             );
             anyhow::bail!("Google API error (status {}): {}", status, error_text);
@@ -177,7 +182,7 @@ impl LLMBackend for GoogleBackend {
             .await
             .context("Failed to parse Google response")?;
 
-        self.parse_response(api_response)
+        self.parse_response(api_response, &model)
     }
 
     fn name(&self) -> &str {

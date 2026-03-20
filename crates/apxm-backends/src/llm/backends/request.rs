@@ -1,5 +1,6 @@
 //! LLM request types and builders.
 
+use apxm_core::types::AISOperationType;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -148,8 +149,8 @@ pub struct LLMRequest {
     pub backend: Option<String>,
     /// Explicitly requested model (for routing)
     pub model: Option<String>,
-    /// Operation type for intelligent routing (e.g., "reason", "plan", "generate")
-    pub operation_type: Option<String>,
+    /// AIS operation type used for intelligent routing.
+    pub operation_type: Option<AISOperationType>,
     /// Tools available for the LLM to call
     pub tools: Option<Vec<ToolDefinition>>,
     /// How the LLM should use tools
@@ -288,9 +289,9 @@ impl LLMRequest {
         self
     }
 
-    /// Set operation type for routing (e.g., "reason", "plan", "generate").
-    pub fn with_operation_type(mut self, operation: impl Into<String>) -> Self {
-        self.operation_type = Some(operation.into());
+    /// Set operation type for routing.
+    pub fn with_operation_type(mut self, operation: AISOperationType) -> Self {
+        self.operation_type = Some(operation);
         self
     }
 

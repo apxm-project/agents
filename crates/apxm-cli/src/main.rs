@@ -945,7 +945,8 @@ async fn execute_command(
 
     // Emit metrics JSON if requested
     if let Some(metrics_path) = emit_metrics {
-        let metrics_json = serde_json::json!({
+        #[allow(unused_mut)]
+        let mut metrics_json = serde_json::json!({
             "input": input.display().to_string(),
             "optimization_level": format!("O{}", opt_level),
             "execution": {

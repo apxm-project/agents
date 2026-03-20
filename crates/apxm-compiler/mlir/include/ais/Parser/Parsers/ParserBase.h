@@ -38,7 +38,9 @@ namespace apxm::parser {
   case TokenKind::kw_context: return "context";
   case TokenKind::kw_memory: return "memory";
   case TokenKind::kw_capability: return "capability";
+  case TokenKind::kw_discoverable: return "discoverable";
   case TokenKind::kw_flow: return "flow";
+  case TokenKind::kw_tools: return "tools";
   case TokenKind::kw_let: return "let";
   case TokenKind::kw_if: return "if";
   case TokenKind::kw_else: return "else";

@@ -40,6 +40,8 @@ pub use llm::{
     AnthropicModel,
     // Factory
     BackendFactory,
+    BackendFallback,
+    BackendRegistration,
     // Structured message types
     ContentPart,
     // Retry logic
@@ -58,13 +60,17 @@ pub use llm::{
     LLMResponse,
     Message,
     MetricsTracker,
+    ModelAliasRegistration,
+    ModelRegistration,
     OllamaModel,
     OpenAIModel,
+    OperationRoute,
     OutputParser,
     // Provider management
     Provider,
     ProviderId,
     RegisteredProvider,
+    RegistryPolicy,
     RequestBuilder,
     RequestMetrics,
     RequestTracer,

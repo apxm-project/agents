@@ -2,10 +2,11 @@
 
 use crate::config::{ApXmConfig, LlmBackendConfig};
 use crate::error::DriverError;
-use apxm_backends::{LLMRegistry, Provider, ProviderId};
-use apxm_core::constants::graph::attrs::{BASE_URL, MODEL};
-use apxm_core::types::resolve_builtin_provider;
-use serde_json::{Map, Value as JsonValue, json};
+use apxm_backends::{
+    BackendFallback, BackendRegistration, LLMRegistry, ModelAliasRegistration, ModelRegistration,
+    OperationRoute, RegistryPolicy,
+};
+use apxm_core::types::{AISOperationType, ProviderProtocol, resolve_builtin_provider};
 use std::env;
 
 pub async fn configure_llm_registry(
@@ -42,17 +43,9 @@ pub async fn configure_llm_registry(
             let backend_config = credential_to_backend_config(name, credential);
             let provider_name = &credential.provider;
 
-            let provider_id = resolve_provider_id(provider_name)?;
-            let api_key = credential.api_key.clone().unwrap_or_default();
-            let backend_json = build_backend_config(&backend_config)?;
-
-            let provider = Provider::new(provider_id, &api_key, backend_json)
-                .await
-                .map_err(|e| {
-                    DriverError::Driver(format!("Failed to init backend '{}': {e}", name))
-                })?;
-
-            registry.register(name.clone(), provider).map_err(|e| {
+            let protocol = resolve_provider_protocol(None, provider_name)?;
+            let registration = credential_to_registration(name, &backend_config, protocol);
+            registration.register(registry).await.map_err(|e| {
                 DriverError::Driver(format!("Failed to register backend '{}': {e}", name))
             })?;
         }
@@ -67,53 +60,102 @@ pub async fn configure_llm_registry(
                 continue;
             }
 
-            let provider_name = backend.provider.as_deref().unwrap_or("openai").to_string();
-            let provider_id = resolve_provider_id(&provider_name)?;
-            let api_key = resolve_api_key(provider_id.clone(), backend)?;
-            let backend_config: Option<JsonValue> = build_backend_config(backend)?;
-
-            let provider = Provider::new(provider_id, &api_key, backend_config)
-                .await
-                .map_err(|e| {
-                    DriverError::Driver(format!("Failed to init backend '{}': {e}", backend.name))
-                })?;
-
-            registry
-                .register(backend.name.clone(), provider)
-                .map_err(|e| {
-                    DriverError::Driver(format!(
-                        "Failed to register backend '{}': {e}",
-                        backend.name
-                    ))
-                })?;
+            let provider_name = backend.provider.as_deref().unwrap_or("openai");
+            let protocol = resolve_provider_protocol(Some(backend), provider_name)?;
+            let registration = backend_to_registration(backend, protocol)?;
+            registration.register(registry).await.map_err(|e| {
+                DriverError::Driver(format!(
+                    "Failed to register backend '{}': {e}",
+                    backend.name
+                ))
+            })?;
         }
     }
 
-    if let Some(default) = config.chat.providers.first() {
-        registry.set_default(default.clone()).map_err(|e| {
-            DriverError::Driver(format!("Failed to set default backend '{}': {e}", default))
-        })?;
+    let default_backend = config
+        .chat
+        .default_backend
+        .clone()
+        .or_else(|| config.chat.providers.first().cloned())
+        .or_else(|| registry.backend_names().into_iter().next());
+
+    let mut operation_routes = config
+        .chat
+        .routing
+        .operation_routes
+        .iter()
+        .map(|(operation, route)| {
+            let operation = parse_operation_type(operation)?;
+            Ok(OperationRoute {
+                operation,
+                backend: route.backend.clone(),
+                model: route.model.clone(),
+            })
+        })
+        .collect::<Result<Vec<_>, DriverError>>()?;
+
+    if let Some(planning_model) = &config.chat.planning_model {
+        operation_routes.push(OperationRoute {
+            operation: AISOperationType::Plan,
+            backend: None,
+            model: Some(planning_model.clone()),
+        });
     }
+
+    let model_aliases = config
+        .chat
+        .routing
+        .model_aliases
+        .iter()
+        .map(|(alias, target)| ModelAliasRegistration {
+            alias: alias.clone(),
+            model: target.model.clone(),
+            backend: target.backend.clone(),
+        })
+        .collect::<Vec<_>>();
+
+    let fallback_chains = config
+        .chat
+        .routing
+        .fallback_chains
+        .iter()
+        .map(|chain| BackendFallback {
+            backend: chain.backend.clone(),
+            fallbacks: chain.fallbacks.clone(),
+        })
+        .collect::<Vec<_>>();
+
+    let policy = RegistryPolicy {
+        default_backend,
+        default_model: config.chat.default_model.clone(),
+        operation_routes,
+        model_aliases,
+        fallback_chains,
+    };
+
+    policy
+        .apply(registry)
+        .map_err(|e| DriverError::Driver(format!("Failed to apply LLM registry policy: {e}")))?;
 
     Ok(())
 }
 
-/// Resolve a provider name to a ProviderId, using builtin specs as fallback.
-fn resolve_provider_id(provider_name: &str) -> Result<ProviderId, DriverError> {
-    match provider_name.parse::<ProviderId>() {
-        Ok(id) => Ok(id),
-        Err(_) => {
-            let spec = resolve_builtin_provider(provider_name).ok_or_else(|| {
-                DriverError::Driver(format!("Unknown provider '{}'", provider_name))
-            })?;
-            Ok(match spec.protocol {
-                apxm_core::types::ProviderProtocol::OpenAI => ProviderId::OpenAI,
-                apxm_core::types::ProviderProtocol::Anthropic => ProviderId::Anthropic,
-                apxm_core::types::ProviderProtocol::Google => ProviderId::Google,
-                apxm_core::types::ProviderProtocol::Ollama => ProviderId::Ollama,
-            })
-        }
+/// Resolve a backend protocol using explicit config first, then builtin provider aliases.
+fn resolve_provider_protocol(
+    config: Option<&LlmBackendConfig>,
+    provider_name: &str,
+) -> Result<ProviderProtocol, DriverError> {
+    if let Some(protocol) = config.and_then(|cfg| cfg.protocol) {
+        return Ok(protocol);
     }
+
+    if let Ok(protocol) = provider_name.parse::<ProviderProtocol>() {
+        return Ok(protocol);
+    }
+
+    let spec = resolve_builtin_provider(provider_name)
+        .ok_or_else(|| DriverError::Driver(format!("Unknown provider '{}'", provider_name)))?;
+    Ok(spec.protocol)
 }
 
 /// Convert a credential from the credential store to an LlmBackendConfig.
@@ -124,7 +166,9 @@ fn credential_to_backend_config(
     LlmBackendConfig {
         name: name.to_string(),
         provider: Some(credential.provider.clone()),
-        model: credential.model.clone(),
+        protocol: None,
+        default_model: credential.model.clone(),
+        models: Vec::new(),
         api_key: credential.api_key.clone(),
         endpoint: credential.base_url.clone(),
         options: std::collections::HashMap::new(),
@@ -136,7 +180,103 @@ fn credential_to_backend_config(
     }
 }
 
-fn resolve_api_key(provider: ProviderId, config: &LlmBackendConfig) -> Result<String, DriverError> {
+fn credential_to_registration(
+    name: &str,
+    backend_config: &LlmBackendConfig,
+    protocol: ProviderProtocol,
+) -> BackendRegistration {
+    BackendRegistration {
+        name: name.to_string(),
+        protocol,
+        api_key: backend_config.api_key.clone().unwrap_or_default(),
+        default_model: backend_config.default_model.clone(),
+        models: backend_config
+            .models
+            .iter()
+            .map(|model| ModelRegistration {
+                id: model.id.clone(),
+                aliases: model.aliases.clone(),
+                info: model.to_model_info(),
+            })
+            .collect(),
+        endpoint: backend_config.endpoint.clone(),
+        options: backend_config.options.clone(),
+        extra_headers: backend_config.extra_headers.clone(),
+    }
+}
+
+fn backend_to_registration(
+    config: &LlmBackendConfig,
+    protocol: ProviderProtocol,
+) -> Result<BackendRegistration, DriverError> {
+    let api_key = resolve_api_key(protocol, config)?;
+    let default_model = config
+        .default_model
+        .as_deref()
+        .map(|value| resolve_env_value(value, "default_model", &config.name))
+        .transpose()?;
+    let endpoint = config
+        .endpoint
+        .as_deref()
+        .map(|value| resolve_env_value(value, "endpoint", &config.name))
+        .transpose()?;
+    let options = config
+        .options
+        .iter()
+        .map(|(key, value)| resolve_env_value(value, key, &config.name).map(|v| (key.clone(), v)))
+        .collect::<Result<std::collections::HashMap<_, _>, _>>()?;
+    let extra_headers = config
+        .extra_headers
+        .iter()
+        .map(|(key, value)| {
+            resolve_env_value(value, &format!("extra_headers.{}", key), &config.name)
+                .map(|v| (key.clone(), v))
+        })
+        .collect::<Result<std::collections::HashMap<_, _>, _>>()?;
+
+    let models = config
+        .models
+        .iter()
+        .map(|model| {
+            let id = resolve_env_value(&model.id, "models.id", &config.name)?;
+            let aliases = model
+                .aliases
+                .iter()
+                .map(|alias| resolve_env_value(alias, "models.aliases", &config.name))
+                .collect::<Result<Vec<_>, _>>()?;
+            let info = model.to_model_info().map(|mut info| {
+                info.id = id.clone();
+                info
+            });
+            Ok(ModelRegistration { id, aliases, info })
+        })
+        .collect::<Result<Vec<_>, DriverError>>()?;
+
+    Ok(BackendRegistration {
+        name: config.name.clone(),
+        protocol,
+        api_key,
+        default_model,
+        models,
+        endpoint,
+        options,
+        extra_headers,
+    })
+}
+
+fn parse_operation_type(value: &str) -> Result<AISOperationType, DriverError> {
+    value.parse::<AISOperationType>().map_err(|err| {
+        DriverError::Driver(format!(
+            "Invalid AIS operation '{}' in chat.routing.operation_routes: {}",
+            value, err
+        ))
+    })
+}
+
+fn resolve_api_key(
+    provider: ProviderProtocol,
+    config: &LlmBackendConfig,
+) -> Result<String, DriverError> {
     match config.api_key.as_deref() {
         Some(key) if key.starts_with("env:") => {
             let env_name = key.strip_prefix("env:").unwrap();
@@ -148,7 +288,7 @@ fn resolve_api_key(provider: ProviderId, config: &LlmBackendConfig) -> Result<St
             })
         }
         Some(key) if !key.is_empty() => Ok(key.to_string()),
-        _ if matches!(provider, ProviderId::Ollama) => Ok(String::new()),
+        _ if matches!(provider, ProviderProtocol::Ollama) => Ok(String::new()),
         _ => Err(DriverError::Driver(format!(
             "Missing API key for backend '{}'. Set `api_key` or use `env:VAR`.",
             config.name
@@ -171,41 +311,4 @@ fn resolve_env_value(value: &str, field: &str, backend: &str) -> Result<String, 
     } else {
         Ok(value.to_string())
     }
-}
-
-fn build_backend_config(config: &LlmBackendConfig) -> Result<Option<JsonValue>, DriverError> {
-    let mut map = Map::new();
-
-    if let Some(model) = &config.model {
-        let resolved = resolve_env_value(model, MODEL, &config.name)?;
-        map.insert(MODEL.to_string(), json!(resolved));
-    }
-    if let Some(endpoint) = &config.endpoint {
-        let resolved = resolve_env_value(endpoint, "endpoint", &config.name)?;
-        map.insert(BASE_URL.to_string(), json!(resolved));
-    }
-    if !config.options.is_empty() {
-        for (key, value) in &config.options {
-            let resolved = resolve_env_value(value, key, &config.name)?;
-            map.insert(key.clone(), json!(resolved));
-        }
-    }
-
-    // Resolve and forward extra_headers so the backend can inject custom HTTP
-    // headers (e.g. X-Custom-Gateway-Key for on-premises LLM gateways).
-    // Values are resolved here at startup so missing env vars fail fast.
-    if !config.extra_headers.is_empty() {
-        let mut headers = Map::new();
-        for (k, v) in &config.extra_headers {
-            let resolved = resolve_env_value(v, &format!("extra_headers.{}", k), &config.name)?;
-            headers.insert(k.clone(), json!(resolved));
-        }
-        map.insert("extra_headers".to_string(), JsonValue::Object(headers));
-    }
-
-    Ok(if map.is_empty() {
-        None
-    } else {
-        Some(JsonValue::Object(map))
-    })
 }

@@ -616,6 +616,78 @@ LogicalResult CommunicateOp::verify() {
 }
 
 //===----------------------------------------------------------------------===//
+// Phase 1 ISA Extensions
+//===----------------------------------------------------------------------===//
+
+LogicalResult UpdateGoalOp::verify() {
+  // Check goal_id is non-empty
+  if (getGoalId().empty())
+    return emitOpError("goal_id cannot be empty");
+
+  // Check result is TokenType
+  if (failed(verifyType<TokenType>(*this, getResult(), "result must be !ais.token type")))
+    return failure();
+
+  // Check all context operands are tokens, handles, or goals
+  if (failed(verifyTypes<TokenType, HandleType, GoalType>(
+          *this, getContext(),
+          "context operands must be !ais.token, !ais.handle, or !ais.goal types")))
+    return failure();
+
+  return success();
+}
+
+LogicalResult GuardOp::verify() {
+  // Check condition is non-empty
+  if (getCondition().empty())
+    return emitOpError("condition cannot be empty");
+
+  // Check result is TokenType
+  if (failed(verifyType<TokenType>(*this, getResult(), "result must be !ais.token type")))
+    return failure();
+
+  // Check input operand type if present
+  if (getInput()) {
+    auto inputType = getInput().getType();
+    if (!llvm::isa<TokenType>(inputType) && !llvm::isa<HandleType>(inputType) &&
+        !llvm::isa<GoalType>(inputType))
+      return emitOpError("input operand must be !ais.token, !ais.handle, or !ais.goal type");
+  }
+
+  return success();
+}
+
+LogicalResult ClaimOp::verify() {
+  // Check queue name is non-empty
+  if (getQueue().empty())
+    return emitOpError("queue name cannot be empty");
+
+  // Check result is TokenType
+  if (failed(verifyType<TokenType>(*this, getResult(), "result must be !ais.token type")))
+    return failure();
+
+  // Check lease_ms is positive if specified
+  if (auto lease = getLeaseMs()) {
+    if (*lease <= 0)
+      return emitOpError("lease_ms must be positive if specified");
+  }
+
+  return success();
+}
+
+LogicalResult ResumeOp::verify() {
+  // Check checkpoint is non-empty
+  if (getCheckpoint().empty())
+    return emitOpError("checkpoint identifier cannot be empty");
+
+  // Check result is TokenType
+  if (failed(verifyType<TokenType>(*this, getResult(), "result must be !ais.token type")))
+    return failure();
+
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
 // SwitchOp - Multi-way Branch with Case Regions
 //===----------------------------------------------------------------------===//
 

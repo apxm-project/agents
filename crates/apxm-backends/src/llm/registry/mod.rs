@@ -7,6 +7,7 @@
 use crate::llm::RequestMetrics;
 use crate::llm::backends::{LLMBackend, LLMRequest, LLMResponse};
 use anyhow::{Context as AnyhowContext, Result};
+use apxm_core::types::AISOperationType;
 #[cfg(feature = "metrics")]
 use apxm_core::types::TokenUsage;
 use dashmap::DashMap;
@@ -30,10 +31,18 @@ pub struct LLMRegistry {
     backends: Arc<DashMap<String, Arc<dyn LLMBackend>>>,
     /// Default backend name
     default_backend: Arc<parking_lot::RwLock<Option<String>>>,
+    /// Default model name
+    default_model: Arc<parking_lot::RwLock<Option<String>>>,
     /// Operation-specific backend defaults
-    operation_defaults: Arc<DashMap<String, String>>,
+    operation_defaults: Arc<DashMap<AISOperationType, String>>,
+    /// Operation-specific model defaults
+    operation_models: Arc<DashMap<AISOperationType, String>>,
     /// Fallback chains: backend -> list of fallback backends
     fallback_chains: Arc<DashMap<String, Vec<String>>>,
+    /// Named model aliases (e.g. "fast" -> "gpt-4o-mini")
+    model_aliases: Arc<DashMap<String, String>>,
+    /// Explicit model to backend routing (e.g. "claude-3-7" -> "anthropic")
+    model_routes: Arc<DashMap<String, String>>,
     /// Health monitor
     health_monitor: Arc<HealthMonitor>,
     /// Routing strategy
@@ -49,8 +58,12 @@ impl LLMRegistry {
         LLMRegistry {
             backends: Arc::new(DashMap::new()),
             default_backend: Arc::new(parking_lot::RwLock::new(None)),
+            default_model: Arc::new(parking_lot::RwLock::new(None)),
             operation_defaults: Arc::new(DashMap::new()),
+            operation_models: Arc::new(DashMap::new()),
             fallback_chains: Arc::new(DashMap::new()),
+            model_aliases: Arc::new(DashMap::new()),
+            model_routes: Arc::new(DashMap::new()),
             health_monitor: Arc::new(HealthMonitor::new()),
             routing_strategy: RoutingStrategy::default(),
             #[cfg(feature = "metrics")]
@@ -63,8 +76,12 @@ impl LLMRegistry {
         LLMRegistry {
             backends: Arc::new(DashMap::new()),
             default_backend: Arc::new(parking_lot::RwLock::new(None)),
+            default_model: Arc::new(parking_lot::RwLock::new(None)),
             operation_defaults: Arc::new(DashMap::new()),
+            operation_models: Arc::new(DashMap::new()),
             fallback_chains: Arc::new(DashMap::new()),
+            model_aliases: Arc::new(DashMap::new()),
+            model_routes: Arc::new(DashMap::new()),
             health_monitor: Arc::new(HealthMonitor::new()),
             routing_strategy,
             #[cfg(feature = "metrics")]
@@ -130,10 +147,15 @@ impl LLMRegistry {
         Ok(())
     }
 
+    /// Set the default model to apply when a request omits `model`.
+    pub fn set_default_model(&self, model: impl Into<String>) {
+        *self.default_model.write() = Some(model.into());
+    }
+
     /// Set operation-specific backend default.
     pub fn set_operation_default(
         &self,
-        operation: impl Into<String>,
+        operation: AISOperationType,
         backend: impl Into<String>,
     ) -> Result<()> {
         let backend_name = backend.into();
@@ -143,9 +165,13 @@ impl LLMRegistry {
             anyhow::bail!("Backend '{}' not registered", backend_name);
         }
 
-        self.operation_defaults
-            .insert(operation.into(), backend_name);
+        self.operation_defaults.insert(operation, backend_name);
         Ok(())
+    }
+
+    /// Set operation-specific model default.
+    pub fn set_operation_model(&self, operation: AISOperationType, model: impl Into<String>) {
+        self.operation_models.insert(operation, model.into());
     }
 
     /// Set fallback chain for a backend.
@@ -167,6 +193,26 @@ impl LLMRegistry {
         Ok(())
     }
 
+    /// Register a named model alias.
+    pub fn register_model_alias(&self, alias: impl Into<String>, model: impl Into<String>) {
+        self.model_aliases.insert(alias.into(), model.into());
+    }
+
+    /// Route a model name or alias to a specific backend.
+    pub fn set_model_route(
+        &self,
+        model_or_alias: impl Into<String>,
+        backend: impl Into<String>,
+    ) -> Result<()> {
+        let backend_name = backend.into();
+        if !self.backends.contains_key(&backend_name) {
+            anyhow::bail!("Backend '{}' not registered", backend_name);
+        }
+        self.model_routes
+            .insert(model_or_alias.into(), backend_name);
+        Ok(())
+    }
+
     /// Get registered backend names.
     pub fn backend_names(&self) -> Vec<String> {
         self.backends
@@ -185,8 +231,44 @@ impl LLMRegistry {
         self.health_monitor.status(name)
     }
 
+    /// Normalize model/backend selection for a request using the configured policy.
+    pub fn prepare_request(&self, request: &LLMRequest) -> LLMRequest {
+        let mut prepared = request.clone();
+
+        if prepared.model.is_none() {
+            if let Some(operation) = prepared.operation_type
+                && let Some(entry) = self.operation_models.get(&operation)
+            {
+                prepared.model = Some(entry.value().clone());
+            } else if let Some(default_model) = self.default_model.read().clone() {
+                prepared.model = Some(default_model);
+            }
+        }
+
+        if let Some(model) = prepared.model.clone() {
+            let canonical_model = self
+                .model_aliases
+                .get(&model)
+                .map(|entry| entry.value().clone())
+                .unwrap_or(model.clone());
+
+            if prepared.backend.is_none() {
+                if let Some(entry) = self.model_routes.get(&model) {
+                    prepared.backend = Some(entry.value().clone());
+                } else if let Some(entry) = self.model_routes.get(&canonical_model) {
+                    prepared.backend = Some(entry.value().clone());
+                }
+            }
+
+            prepared.model = Some(canonical_model);
+        }
+
+        prepared
+    }
+
     /// Generate a response using intelligent routing.
     pub async fn generate(&self, request: LLMRequest) -> Result<LLMResponse> {
+        let request = self.prepare_request(&request);
         // Resolve which backend to use
         let backend_name = self.resolve_backend(&request)?;
 
@@ -315,6 +397,12 @@ impl LLMRegistry {
         Ok(backend)
     }
 
+    /// Resolve the backend name that would handle this request after policy normalization.
+    pub fn resolve_backend_name(&self, request: &LLMRequest) -> Result<String> {
+        let prepared = self.prepare_request(request);
+        self.resolve_backend(&prepared)
+    }
+
     /// Resolve which backend to use for a request.
     fn resolve_backend(&self, request: &LLMRequest) -> Result<String> {
         // Use resolver to determine backend
@@ -408,5 +496,54 @@ mod tests {
                 .set_fallback("nonexistent", vec!["other".to_string()])
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn test_prepare_request_applies_alias_and_route() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let registry = LLMRegistry::new();
+        let backend = Provider::OpenAI(OpenAIBackend::new("test-key", None).await?);
+        registry.register("primary", backend)?;
+        registry.register_model_alias("fast", "gpt-4o-mini");
+        registry.set_model_route("fast", "primary")?;
+
+        let request = LLMRequest::new("hello").with_model("fast");
+        let prepared = registry.prepare_request(&request);
+
+        assert_eq!(prepared.backend.as_deref(), Some("primary"));
+        assert_eq!(prepared.model.as_deref(), Some("gpt-4o-mini"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_prepare_request_applies_operation_model() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let registry = LLMRegistry::new();
+        let backend = Provider::OpenAI(OpenAIBackend::new("test-key", None).await?);
+        registry.register("primary", backend)?;
+        registry.set_default("primary")?;
+        registry.set_operation_model(AISOperationType::Plan, "gpt-4.1");
+
+        let request = LLMRequest::new("hello").with_operation_type(AISOperationType::Plan);
+        let prepared = registry.prepare_request(&request);
+
+        assert_eq!(prepared.model.as_deref(), Some("gpt-4.1"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_resolve_backend_name_uses_registered_route()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let registry = LLMRegistry::new();
+        let backend = Provider::OpenAI(OpenAIBackend::new("test-key", None).await?);
+        registry.register("primary", backend)?;
+        registry.register_model_alias("fast", "gpt-4o-mini");
+        registry.set_model_route("fast", "primary")?;
+
+        let request = LLMRequest::new("hello").with_model("fast");
+        let backend_name = registry.resolve_backend_name(&request)?;
+
+        assert_eq!(backend_name, "primary");
+        Ok(())
     }
 }

@@ -11,7 +11,6 @@
 //! - **Modular**: Each provider is independently extensible
 //! - **DRY**: No duplication across providers
 //! - **Type-safe**: Leverages Rust's type system
-//! ```
 
 pub mod backends;
 #[cfg(feature = "metrics")]
@@ -132,6 +131,7 @@ pub mod observability {
     }
 }
 pub mod provider;
+pub mod registration;
 pub mod registry;
 pub mod retry;
 pub mod schema;
@@ -144,6 +144,10 @@ pub use backends::{
 };
 pub use observability::{AggregatedMetrics, MetricsTracker, RequestMetrics, RequestTracer};
 pub use provider::{Provider, ProviderId, RegisteredProvider};
+pub use registration::{
+    BackendFallback, BackendRegistration, ModelAliasRegistration, ModelRegistration,
+    OperationRoute, RegistryPolicy,
+};
 pub use registry::{HealthMonitor, HealthStatus, LLMRegistry};
 pub use retry::{ErrorClass, RetryConfig, RetryStrategy};
 pub use schema::{JsonSchema, OutputParser};

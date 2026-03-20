@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use apxm_core::types::{ModelInfo, ProviderProtocol};
 use dirs::home_dir;
 use serde::{Deserialize, Serialize};
 use std::env;
@@ -39,6 +40,9 @@ pub struct ChatConfig {
     /// Explicit LLM providers to load.
     pub providers: Vec<String>,
 
+    /// Default backend to use when a request does not select one explicitly.
+    pub default_backend: Option<String>,
+
     /// Default exec policy (e.g., `project:execpolicy.toml`).
     pub default_exec_policy: Option<String>,
 
@@ -56,8 +60,56 @@ pub struct ChatConfig {
     /// Model to use for planning (defaults to default_model if not specified).
     pub planning_model: Option<String>,
 
+    /// Typed routing policy layered on top of backend registration.
+    #[serde(default)]
+    pub routing: LlmRoutingConfig,
+
     /// System prompt for chat sessions.
     pub system_prompt: Option<String>,
+}
+
+/// Policy configuration layered over the dynamic registry.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct LlmRoutingConfig {
+    /// Operation-scoped routing rules.
+    #[serde(default)]
+    pub operation_routes: HashMap<String, OperationRouteConfig>,
+
+    /// Named model aliases shared across runtimes.
+    #[serde(default)]
+    pub model_aliases: HashMap<String, ModelAliasConfig>,
+
+    /// Backend fallback chains for availability-aware recovery.
+    #[serde(default)]
+    pub fallback_chains: Vec<BackendFallbackConfig>,
+}
+
+/// Routing rule for a logical operation like `plan` or `reason`.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct OperationRouteConfig {
+    /// Preferred backend for this operation.
+    pub backend: Option<String>,
+    /// Preferred model or model alias for this operation.
+    pub model: Option<String>,
+}
+
+/// Named model alias with an optional preferred backend binding.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelAliasConfig {
+    /// Canonical model identifier to use at request time.
+    pub model: String,
+    /// Optional backend to bind this alias to.
+    pub backend: Option<String>,
+}
+
+/// Fallback policy for a backend registered in the runtime.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct BackendFallbackConfig {
+    /// Primary backend name.
+    pub backend: String,
+    /// Ordered fallback backend names.
+    #[serde(default)]
+    pub fallbacks: Vec<String>,
 }
 
 /// Definition of an LLM backend.
@@ -69,8 +121,16 @@ pub struct LlmBackendConfig {
     /// Human-friendly provider name (optional).
     pub provider: Option<String>,
 
-    /// Model alias to request.
-    pub model: Option<String>,
+    /// Explicit protocol binding for this backend.
+    pub protocol: Option<ProviderProtocol>,
+
+    /// Default model to use when this backend is selected.
+    #[serde(default, alias = "model")]
+    pub default_model: Option<String>,
+
+    /// Additional model registrations routed through this backend.
+    #[serde(default)]
+    pub models: Vec<LlmModelConfig>,
 
     /// API key or token (safely stored in config).
     pub api_key: Option<String>,
@@ -101,12 +161,59 @@ impl Default for LlmBackendConfig {
         Self {
             name: "default".to_string(),
             provider: None,
-            model: None,
+            protocol: None,
+            default_model: None,
+            models: Vec::new(),
             api_key: None,
             endpoint: None,
             options: HashMap::new(),
             extra_headers: HashMap::new(),
         }
+    }
+}
+
+/// Rich model registration attached to an LLM backend.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct LlmModelConfig {
+    /// Canonical model identifier.
+    pub id: String,
+
+    /// Alternative aliases resolved to this model.
+    #[serde(default)]
+    pub aliases: Vec<String>,
+
+    /// Optional human-readable model name.
+    pub name: Option<String>,
+
+    /// Optional context window size in tokens.
+    pub context_window: Option<usize>,
+
+    /// Whether the model supports image inputs.
+    #[serde(default)]
+    pub supports_vision: bool,
+
+    /// Whether the model supports function/tool calling.
+    #[serde(default)]
+    pub supports_functions: bool,
+}
+
+impl LlmModelConfig {
+    pub fn to_model_info(&self) -> Option<ModelInfo> {
+        if self.name.is_none()
+            && self.context_window.is_none()
+            && !self.supports_vision
+            && !self.supports_functions
+        {
+            return None;
+        }
+
+        Some(ModelInfo {
+            id: self.id.clone(),
+            name: self.name.clone().unwrap_or_else(|| self.id.clone()),
+            context_window: self.context_window.unwrap_or_default(),
+            supports_vision: self.supports_vision,
+            supports_functions: self.supports_functions,
+        })
     }
 }
 
@@ -524,13 +631,36 @@ mod tests {
         let toml = r#"
             [chat]
             providers = ["openai", "local"]
+            default_backend = "openai"
             default_exec_policy = "project:policy.toml"
+            default_model = "gpt-4o-mini"
+            planning_model = "claude-3-7-sonnet"
+
+            [chat.routing.operation_routes.plan]
+            backend = "openai"
+            model = "fast"
+
+            [chat.routing.model_aliases.fast]
+            model = "claude-3-7-sonnet"
+            backend = "openai"
+
+            [[chat.routing.fallback_chains]]
+            backend = "openai"
+            fallbacks = ["local"]
 
             [[llm_backends]]
             name = "openai"
             provider = "openai"
-            model = "gpt-4"
+            protocol = "openai"
+            default_model = "gpt-4"
             api_key = "token"
+
+            [[llm_backends.models]]
+            id = "gpt-4o-mini"
+            aliases = ["fast", "default"]
+            name = "GPT-4o mini"
+            context_window = 128000
+            supports_functions = true
 
             [tools.shell]
             enabled = true
@@ -539,11 +669,95 @@ mod tests {
 
         let config: ApXmConfig = toml::from_str(toml).unwrap();
         assert_eq!(config.chat.providers.len(), 2);
+        assert_eq!(config.chat.default_backend.as_deref(), Some("openai"));
         assert_eq!(
             config.chat.default_exec_policy.as_deref(),
             Some("project:policy.toml")
         );
+        assert_eq!(config.chat.default_model.as_deref(), Some("gpt-4o-mini"));
+        assert_eq!(
+            config.chat.planning_model.as_deref(),
+            Some("claude-3-7-sonnet")
+        );
+        assert_eq!(
+            config
+                .chat
+                .routing
+                .operation_routes
+                .get("plan")
+                .and_then(|route| route.backend.as_deref()),
+            Some("openai")
+        );
+        assert_eq!(
+            config
+                .chat
+                .routing
+                .operation_routes
+                .get("plan")
+                .and_then(|route| route.model.as_deref()),
+            Some("fast")
+        );
+        assert_eq!(
+            config
+                .chat
+                .routing
+                .model_aliases
+                .get("fast")
+                .map(|alias| alias.model.as_str()),
+            Some("claude-3-7-sonnet")
+        );
+        assert_eq!(
+            config
+                .chat
+                .routing
+                .model_aliases
+                .get("fast")
+                .and_then(|alias| alias.backend.as_deref()),
+            Some("openai")
+        );
+        assert_eq!(
+            config
+                .chat
+                .routing
+                .fallback_chains
+                .first()
+                .map(|chain| chain.backend.as_str()),
+            Some("openai")
+        );
+        assert_eq!(
+            config
+                .chat
+                .routing
+                .fallback_chains
+                .first()
+                .and_then(|chain| chain.fallbacks.first())
+                .map(String::as_str),
+            Some("local")
+        );
         assert_eq!(config.llm_backends.first().unwrap().name, "openai");
+        assert_eq!(
+            config.llm_backends.first().unwrap().protocol,
+            Some(ProviderProtocol::OpenAI)
+        );
+        assert_eq!(
+            config
+                .llm_backends
+                .first()
+                .unwrap()
+                .default_model
+                .as_deref(),
+            Some("gpt-4")
+        );
+        assert_eq!(
+            config
+                .llm_backends
+                .first()
+                .unwrap()
+                .models
+                .first()
+                .map(|model| model.id.as_str()),
+            Some("gpt-4o-mini")
+        );
         assert!(config.tools.contains_key("shell"));
     }
 

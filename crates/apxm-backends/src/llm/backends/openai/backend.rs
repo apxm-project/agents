@@ -45,6 +45,10 @@ pub struct OpenAIBackend {
 }
 
 impl OpenAIBackend {
+    fn request_model<'a>(&'a self, request: &'a LLMRequest) -> &'a str {
+        request.model.as_deref().unwrap_or(&self.model)
+    }
+
     /// Create a new OpenAI backend.
     ///
     /// The optional `config` value may contain:
@@ -172,6 +176,7 @@ impl OpenAIBackend {
 
     /// Build request body for OpenAI API.
     fn build_request_body(&self, request: &LLMRequest) -> serde_json::Value {
+        let model = self.request_model(request);
         let messages: Vec<serde_json::Value> = request
             .resolved_messages()
             .iter()
@@ -179,7 +184,7 @@ impl OpenAIBackend {
             .collect();
 
         let mut body = json!({
-            "model": self.model,
+            "model": model,
             "messages": messages,
             "temperature": request.temperature,
         });
@@ -247,7 +252,7 @@ impl OpenAIBackend {
     /// `content: null` and place the generated text in a `reasoning` field instead.
     /// We fall back to `reasoning` when `content` is absent so those endpoints work
     /// transparently.
-    fn parse_response(&self, response: OpenAIResponse) -> Result<LLMResponse> {
+    fn parse_response(&self, response: OpenAIResponse, model: &str) -> Result<LLMResponse> {
         let choice = response.choices.first().context("No choices in response")?;
 
         // Prefer `content`; fall back to `reasoning` for on-premises reasoning models.
@@ -288,10 +293,7 @@ impl OpenAIBackend {
             response.usage.completion_tokens,
         );
 
-        Ok(
-            LLMResponse::new(content, &self.model, usage, finish_reason)
-                .with_tool_calls(tool_calls),
-        )
+        Ok(LLMResponse::new(content, model, usage, finish_reason).with_tool_calls(tool_calls))
     }
 }
 
@@ -300,11 +302,12 @@ impl LLMBackend for OpenAIBackend {
     async fn generate(&self, request: LLMRequest) -> Result<LLMResponse> {
         request.validate()?;
 
+        let model = self.request_model(&request).to_string();
         let body = self.build_request_body(&request);
         let url = format!("{}/chat/completions", self.base_url);
 
         tracing::debug!(
-            model = %self.model,
+            model = %model,
             url = %url,
             "Sending request to OpenAI"
         );
@@ -340,7 +343,7 @@ impl LLMBackend for OpenAIBackend {
             .await
             .context("Failed to parse OpenAI response")?;
 
-        self.parse_response(api_response)
+        self.parse_response(api_response, &model)
     }
 
     fn name(&self) -> &str {

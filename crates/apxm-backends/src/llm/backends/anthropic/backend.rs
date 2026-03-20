@@ -26,6 +26,10 @@ pub struct AnthropicBackend {
 }
 
 impl AnthropicBackend {
+    fn request_model<'a>(&'a self, request: &'a LLMRequest) -> &'a str {
+        request.model.as_deref().unwrap_or(&self.model)
+    }
+
     /// Create a new Anthropic backend.
     pub async fn new(api_key: &str, config: Option<serde_json::Value>) -> Result<Self> {
         let model = config
@@ -105,6 +109,7 @@ impl AnthropicBackend {
 
     /// Build request body for Anthropic API.
     fn build_request_body(&self, request: &LLMRequest) -> serde_json::Value {
+        let model = self.request_model(request);
         let all_messages = request.resolved_messages();
 
         let system_text: String = all_messages
@@ -121,7 +126,7 @@ impl AnthropicBackend {
             .collect();
 
         let mut body = json!({
-            "model": self.model,
+            "model": model,
             "messages": conversation_messages,
             "max_tokens": request.max_tokens.unwrap_or(4096),
             "temperature": request.temperature,
@@ -174,7 +179,7 @@ impl AnthropicBackend {
     }
 
     /// Parse Anthropic API response.
-    fn parse_response(&self, response: AnthropicResponse) -> Result<LLMResponse> {
+    fn parse_response(&self, response: AnthropicResponse, model: &str) -> Result<LLMResponse> {
         let mut text_content = String::new();
         let mut tool_calls = Vec::new();
 
@@ -199,10 +204,7 @@ impl AnthropicBackend {
 
         let usage = TokenUsage::new(response.usage.input_tokens, response.usage.output_tokens);
 
-        Ok(
-            LLMResponse::new(text_content, &self.model, usage, finish_reason)
-                .with_tool_calls(tool_calls),
-        )
+        Ok(LLMResponse::new(text_content, model, usage, finish_reason).with_tool_calls(tool_calls))
     }
 }
 
@@ -211,12 +213,13 @@ impl LLMBackend for AnthropicBackend {
     async fn generate(&self, request: LLMRequest) -> Result<LLMResponse> {
         request.validate()?;
 
+        let model = self.request_model(&request).to_string();
         let body = self.build_request_body(&request);
         let url = format!("{}/messages", self.base_url);
 
         log_debug!(
             "models::anthropic",
-            model = %self.model,
+            model = %model,
             url = %url,
             "Sending request to Anthropic"
         );
@@ -246,7 +249,7 @@ impl LLMBackend for AnthropicBackend {
             .await
             .context("Failed to parse Anthropic response")?;
 
-        self.parse_response(api_response)
+        self.parse_response(api_response, &model)
     }
 
     fn name(&self) -> &str {

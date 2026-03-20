@@ -6,18 +6,11 @@
 use super::health::{HealthMonitor, HealthStatus};
 use crate::llm::backends::{LLMBackend, LLMRequest};
 use anyhow::Result;
+use apxm_core::types::AISOperationType;
 use dashmap::DashMap;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-
-/// Model name prefix to provider name mapping for automatic routing.
-const MODEL_PREFIX_TO_PROVIDER: &[(&str, &str)] = &[
-    ("gpt-", "openai"),
-    ("o1-", "openai"),
-    ("claude-", "anthropic"),
-    ("gemini-", "google"),
-];
 
 /// Routing strategy determines how backends are selected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -38,8 +31,8 @@ pub struct SelectionCriteria {
     pub backend: Option<String>,
     /// Requested model name
     pub model: Option<String>,
-    /// Operation type (e.g., "reason", "plan", "generate")
-    pub operation: Option<String>,
+    /// AIS operation type associated with the request.
+    pub operation: Option<AISOperationType>,
 }
 
 impl SelectionCriteria {
@@ -57,7 +50,7 @@ impl SelectionCriteria {
 pub fn resolve(
     criteria: &SelectionCriteria,
     backends: &Arc<DashMap<String, Arc<dyn LLMBackend>>>,
-    operation_defaults: &Arc<DashMap<String, String>>,
+    operation_defaults: &Arc<DashMap<AISOperationType, String>>,
     default_backend: &Arc<RwLock<Option<String>>>,
     health_monitor: &HealthMonitor,
     strategy: &RoutingStrategy,
@@ -78,8 +71,8 @@ pub fn resolve(
     }
 
     // Priority 3: Operation-specific default
-    if let Some(ref operation) = criteria.operation
-        && let Some(entry) = operation_defaults.get(operation)
+    if let Some(operation) = criteria.operation
+        && let Some(entry) = operation_defaults.get(&operation)
     {
         let backend_name = entry.value().clone();
         if backends.contains_key(&backend_name) {
@@ -106,25 +99,12 @@ fn find_backend_for_model(
     backends: &Arc<DashMap<String, Arc<dyn LLMBackend>>>,
     model: &str,
 ) -> Option<String> {
-    // Try exact model match first
+    // Only use explicit backend registrations. Provider-name heuristics belong
+    // outside the registry because they undermine APXM's registration model.
     for entry in backends.iter() {
         let backend = entry.value();
         if backend.model() == model {
             return Some(entry.key().clone());
-        }
-    }
-
-    // Try provider-based matching (e.g., "gpt-4" -> OpenAI backend)
-    let provider_hint = MODEL_PREFIX_TO_PROVIDER
-        .iter()
-        .find(|(prefix, _)| model.starts_with(prefix))
-        .map(|(_, provider)| *provider);
-
-    if let Some(provider_name) = provider_hint {
-        for entry in backends.iter() {
-            if entry.value().name().to_lowercase().contains(provider_name) {
-                return Some(entry.key().clone());
-            }
         }
     }
 
@@ -236,8 +216,7 @@ mod tests {
 
     #[test]
     fn test_model_matching() {
-        assert!("gpt-4".starts_with("gpt-"));
-        assert!("claude-3-opus".starts_with("claude-"));
-        assert!("gemini-pro".starts_with("gemini-"));
+        let backends = Arc::new(DashMap::<String, Arc<dyn LLMBackend>>::new());
+        assert!(find_backend_for_model(&backends, "gpt-4").is_none());
     }
 }

@@ -15,6 +15,7 @@ pub mod execution;
 pub mod goal;
 pub mod identifiers;
 pub mod intents;
+pub mod llm_control_plane;
 pub mod models;
 pub mod operations;
 pub mod provider_spec;
@@ -37,6 +38,13 @@ pub use identifiers::{
 };
 pub use intents::{
     Entity, EntityType, ExportFormat, InspectTarget, Intent, MemoryQueryType, ProgramBuildStep,
+};
+pub use llm_control_plane::{
+    APXM_CONFIG_ENV_VAR, APXM_LLM_BACKEND_ENV_VAR, APXM_MODEL_ENV_VAR, APXM_USE_LLM_ENV_VAR,
+    ApxmBackendFallbackConfig, ApxmCredentialConfig, ApxmCredentialsFile, ApxmLlmBackendConfig,
+    ApxmLlmChatConfig, ApxmLlmConfigFile, ApxmLlmControlPlane, ApxmLlmRoutingConfig,
+    ApxmModelAliasConfig, ApxmOperationRouteConfig, ApxmRegisteredModelConfig,
+    ResolvedApxmBackendConfig, ResolvedApxmModelAlias, ResolvedApxmModelConfig,
 };
 pub use models::{
     FinishReason, LLMResponse, ModelCapabilities, ModelInfo, TokenUsage, ToolCall, ToolResult,

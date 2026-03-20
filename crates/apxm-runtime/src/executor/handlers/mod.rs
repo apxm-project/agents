@@ -206,12 +206,14 @@ async fn execute_llm_request_streaming(
     #[cfg(feature = "metrics")]
     let start = std::time::Instant::now();
 
+    let prepared_request = ctx.llm_registry.prepare_request(request);
+
     let backend = ctx
         .llm_registry
-        .resolve_backend_for_streaming(request)
-        .map_err(|e| llm_error(ctx, phase, request, e))?;
+        .resolve_backend_for_streaming(&prepared_request)
+        .map_err(|e| llm_error(ctx, phase, &prepared_request, e))?;
 
-    let mut stream = backend.generate_stream(request.clone());
+    let mut stream = backend.generate_stream(prepared_request.clone());
 
     let mut final_response: Option<LLMResponse> = None;
     // Tool call accumulation state for mid-stream interleaving
@@ -219,7 +221,7 @@ async fn execute_llm_request_streaming(
     let mut streamed_tool_calls: Vec<apxm_core::types::ToolCall> = Vec::new();
 
     while let Some(chunk_result) = stream.next().await {
-        let chunk = chunk_result.map_err(|e| llm_error(ctx, phase, request, e))?;
+        let chunk = chunk_result.map_err(|e| llm_error(ctx, phase, &prepared_request, e))?;
         match chunk {
             StreamChunk::Token(token) => {
                 // If we had a pending tool call being accumulated, it's now
