@@ -1,16 +1,7 @@
 //! Capability-state helpers for the Agent Abstract Machine.
 
-use serde::{Deserialize, Serialize};
+pub use apxm_core::CapabilityRecord;
 use std::collections::HashMap;
-
-/// Capability metadata tracked in the AAM.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CapabilityRecord {
-    pub name: String,
-    pub description: String,
-    pub schema: serde_json::Value,
-    pub cost_estimate: f64,
-}
 
 /// Concrete capability storage used by the runtime today.
 pub type CapabilityMap = HashMap<String, CapabilityRecord>;

@@ -8,6 +8,7 @@
 //!
 //! AIS operation types are re-exported from `apxm-ais` via `operations`.
 
+pub mod aam;
 pub mod compiler;
 pub mod config;
 pub mod execution;
@@ -23,6 +24,7 @@ pub mod values;
 pub use compiler::{
     CodegenOptions, CompilationStage, EmitFormat, OptimizationLevel, PipelineConfig, stage_rank,
 };
+pub use aam::{CapabilityRecord, CompletionPolicy, GoalTree, ScopePolicy, ScopeSpec};
 pub use execution::{
     Agent, AgentFlow, AgentId, AgentMetadata, CapabilityDeclaration, DagMetadata, DependencyType,
     Edge, ExecutionDag, ExecutionStats, LatencyTierConfig, MemoryDeclaration, Node, NodeId,
