@@ -1,11 +1,11 @@
-"""Dependency checking for APXM CLI -- powered by sniff."""
+"""Dependency checking for APXM CLI -- powered by dekk."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sniff import DependencyChecker, DependencySpec, DependencyResult
-from sniff.version import VersionSpec, version_satisfies
+from dekk import DependencyChecker, DependencySpec, DependencyResult
+from dekk.version import VersionSpec, version_satisfies
 
 from .messages import (
     FIX_SUGGESTIONS,
@@ -16,7 +16,7 @@ from .messages import (
 
 @dataclass
 class ApxmDependency:
-    """An APXM dependency: a sniff DependencySpec plus a rich version constraint."""
+    """An APXM dependency: a dekk DependencySpec plus a rich version constraint."""
 
     spec: DependencySpec
     version_constraint: VersionSpec | None = None
@@ -130,7 +130,7 @@ def check_all(
         deps: Optional list of ApxmDependency to check. Defaults to APXM_DEPENDENCIES.
 
     Returns:
-        List of DependencyResult from sniff.
+        List of DependencyResult from dekk.
     """
     if deps is None:
         deps = APXM_DEPENDENCIES

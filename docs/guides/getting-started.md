@@ -23,9 +23,8 @@ Rust, CMake, and MLIR/LLVM are installed automatically by the installer.
 ### Install
 
 ```bash
-git clone --recursive https://github.com/randreshg/apxm
+git clone https://github.com/randreshg/apxm
 cd apxm
-pip install -e external/sniff
 python3 tools/apxm_cli.py install
 source ~/.bashrc  # or ~/.zshrc — restart shell
 ```
@@ -37,6 +36,8 @@ apxm doctor
 ```
 
 The installer creates a conda environment with MLIR/LLVM 21, builds the project, and installs a wrapper at `~/.local/bin/apxm` that handles all environment setup automatically.
+
+On the first run, `tools/apxm_cli.py` installs `dekk` from PyPI into `.apxm/bootstrap-venv` and re-runs the CLI there.
 
 ### Troubleshooting
 

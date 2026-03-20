@@ -1,18 +1,18 @@
 """Build command for APXM CLI.
 
-Uses sniff.build.BuildSystemDetector for Cargo workspace detection
-and sniff.compiler.CompilerDetector to verify rustc availability.
+Uses dekk.build.BuildSystemDetector for Cargo workspace detection
+and dekk.compiler.CompilerDetector to verify rustc availability.
 """
 
 import os
 import shutil
 import subprocess
 
-from sniff import Typer, Option, Exit
+from dekk import Typer, Option, Exit
 
-from sniff.build import BuildSystemDetector, BuildSystem
-from sniff.compiler import CompilerDetector
-from sniff import print_error, print_header, print_info, print_step, print_success, print_warning
+from dekk.build import BuildSystemDetector, BuildSystem
+from dekk.compiler import CompilerDetector
+from dekk import print_error, print_header, print_info, print_step, print_success, print_warning
 
 from . import get_config
 from .ci_env import apply_ci_cargo_flags, apply_ci_env, ci_build_hints

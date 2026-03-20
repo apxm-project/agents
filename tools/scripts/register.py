@@ -3,7 +3,7 @@
 import subprocess
 from typing import Optional
 
-from sniff import Typer, Argument, Option, Exit
+from dekk import Typer, Argument, Option, Exit
 
 from . import get_config, ensure_binary
 

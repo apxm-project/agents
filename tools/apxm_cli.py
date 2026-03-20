@@ -6,8 +6,8 @@ Automatically handles conda environment detection, MLIR environment setup,
 and provides convenient commands for building, running, and testing.
 
 Usage:
-    apxm doctor                     # Check environment status (built-in via sniff)
-    apxm version                    # Show version information (built-in via sniff)
+    apxm doctor                     # Check environment status (built-in via dekk)
+    apxm version                    # Show version information (built-in via dekk)
     apxm build                      # Build compiler and runtime
     apxm execute workflow.json      # Compile and execute an ApxmGraph file
     apxm compile workflow.json -o out.apxmobj  # Compile to artifact
@@ -18,7 +18,11 @@ Usage:
     apxm --help                     # Show all available commands
 """
 
-from sniff import Typer, Option, Argument, Exit
+from bootstrap_dekk import ensure_dekk_bootstrap
+
+ensure_dekk_bootstrap()
+
+from dekk import Typer
 
 from scripts.build import register_commands as register_build
 from scripts.compile import register_commands as register_compile
@@ -31,12 +35,10 @@ from scripts.test import register_commands as register_test
 VERSION = "0.2.0"
 
 # Main CLI app with auto-activation
-# This automatically activates the conda environment from .sniff.toml
-# before running commands (except install, which handles it specially)
 app = Typer(
     name="apxm",
-    auto_activate=True,  # Auto-detect and activate environment
-    fail_fast=False,     # Don't fail immediately - let commands handle it
+    auto_activate=True,
+    fail_fast=False,
     add_doctor_command=True,
     add_version_command=True,
     project_version=VERSION,

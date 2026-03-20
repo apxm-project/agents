@@ -1,5 +1,5 @@
 # APXM Environment Specification
-# Enables automatic environment setup with: sniff activate
+# Enables automatic environment setup with: dekk activate
 
 [project]
 name = "apxm"

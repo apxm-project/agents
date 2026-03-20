@@ -29,14 +29,14 @@ def _find_conda_env_prefix(conda_cmd: str, env_name: str) -> "Path | None":
         pass
     return None
 
-from sniff import (
+from dekk import (
     BinaryInstaller, CondaDetector, Exit, Option, ToolChecker, Typer,
     print_blank, print_error, print_header, print_info,
     print_next_steps, print_numbered_list, print_step,
     print_success, print_warning, print_dep_results, run_logged,
 )
-from sniff.activation import EnvironmentActivator
-from sniff.envspec import EnvironmentSpec
+from dekk.activation import EnvironmentActivator
+from dekk.envspec import EnvironmentSpec
 
 from . import get_config, messages as msg
 from .deps import check_all
@@ -135,6 +135,7 @@ def register_commands(app: Typer) -> None:
                         [conda_cmd, "env", "update", "-f", str(env_yaml), "-n", env_name],
                         log_path=log_path, label="Conda env update",
                         spinner_text="Updating conda environment...", append=True,
+                        cwd=config.apxm_dir,
                     )
                     conda_ok_msg = msg.MSG_CONDA_ENV_UPDATED
                 else:
@@ -142,6 +143,7 @@ def register_commands(app: Typer) -> None:
                         [conda_cmd, "env", "create", "-f", str(env_yaml)],
                         log_path=log_path, label="Conda env create",
                         spinner_text="Creating conda environment...", append=True,
+                        cwd=config.apxm_dir,
                     )
                     conda_ok_msg = msg.MSG_CONDA_ENV_CREATED
 
@@ -201,10 +203,10 @@ def register_commands(app: Typer) -> None:
                 print_warning(msg.MSG_CARGO_NOT_AVAILABLE)
                 missing.append(msg.MSG_BUILD_INSTALL_RUST)
             else:
-                # Use sniff's EnvironmentActivator to get build env vars
+                # Use dekk's EnvironmentActivator to get build env vars
                 # (auto_activate may not have run if conda was just created)
                 _PREPEND_VARS = {"PATH", "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "PYTHONPATH", "PKG_CONFIG_PATH"}
-                spec_file = config.apxm_dir / ".sniff.toml"
+                spec_file = config.apxm_dir / ".dekk.toml"
                 spec = None
                 env = None
                 if spec_file.exists():
@@ -217,7 +219,7 @@ def register_commands(app: Typer) -> None:
                             for key, value in result.env_vars.items():
                                 if key in _PREPEND_VARS:
                                     current = env.get(key, "")
-                                    env[key] = f"{value}:{current}" if current else value
+                                    env[key] = f"{value}{os.pathsep}{current}" if current else value
                                 else:
                                     env[key] = value
                     except Exception:

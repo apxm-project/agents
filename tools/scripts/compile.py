@@ -3,8 +3,8 @@
 from pathlib import Path
 from typing import Optional
 
-from sniff import Typer, Argument, Option, Exit
-from sniff import print_error, print_step, print_success
+from dekk import Typer, Argument, Option, Exit
+from dekk import print_error, print_step, print_success
 
 from . import get_config, build_apxm_cmd, resolve_path, run_apxm
 

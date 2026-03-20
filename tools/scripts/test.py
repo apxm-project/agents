@@ -4,8 +4,8 @@ import os
 import subprocess
 from typing import Optional
 
-from sniff import Typer, Option, Exit
-from sniff import print_error, print_header, print_info, print_success, print_warning
+from dekk import Typer, Option, Exit
+from dekk import print_error, print_header, print_info, print_success, print_warning
 
 from . import get_config
 from .ci_env import (

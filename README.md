@@ -14,26 +14,22 @@ APXM is a full toolchain for building autonomous agents:
 
 **New installation:**
 ```bash
-git clone --recursive https://github.com/randreshg/apxm
+git clone https://github.com/randreshg/apxm
 cd apxm
-pip install -e external/sniff
 python3 tools/apxm_cli.py install
 source ~/.bashrc  # or ~/.zshrc - restart shell
 apxm doctor
 ```
 
-**Already cloned? Just add the submodule:**
+**What happens on first run:**
 ```bash
-cd apxm
-git submodule update --init --recursive
-pip install -e external/sniff
 python3 tools/apxm_cli.py install
-source ~/.bashrc  # or ~/.zshrc - restart shell
-apxm doctor
 ```
+
+On the first run, APXM installs `dekk` from PyPI into `.apxm/bootstrap-venv` and then re-runs the CLI from that environment.
 
 **What the installer does:**
-- ✓ Detects platform and package manager (via sniff)
+- ✓ Detects platform and package manager (via dekk)
 - ✓ Creates conda environment with MLIR/LLVM 21
 - ✓ Installs Rust nightly if needed
 - ✓ Builds the APXM binary
@@ -58,7 +54,7 @@ Run `apxm doctor` to check your environment automatically.
 ## CLI Commands
 
 ```bash
-apxm doctor                           # Check environment (powered by sniff)
+apxm doctor                           # Check environment (powered by dekk)
 apxm install                          # Install/update conda environment
 apxm activate                         # Print shell exports for MLIR/LLVM env setup
 apxm compile <file.json> -o out.apxmobj  # Compile to .apxmobj artifact
@@ -188,7 +184,7 @@ docs/             # Documentation
 
 ## Environment Diagnostics
 
-The `apxm doctor` command uses [sniff](https://github.com/randres/sniff) for comprehensive environment detection:
+The `apxm doctor` command uses [dekk](https://github.com/randreshg/dekk) for comprehensive environment detection:
 
 ```bash
 apxm doctor
@@ -247,4 +243,3 @@ Each check provides actionable fix suggestions when issues are found.
 - [Dataflow Scheduler](docs/runtime/dataflow-scheduler.md) — Token-based scheduling
 - [Memory Hierarchy](docs/runtime/memory-hierarchy.md) — STM, LTM, Episodic tiers
 - [Multi-Agent Execution](docs/runtime/multi-agent.md) — Cross-agent parallelism
-

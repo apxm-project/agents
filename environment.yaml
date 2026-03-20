@@ -10,8 +10,6 @@ dependencies:
     # Python CLI runtime
     - python=3.11
     - pip
-    - typer
-    - rich
     # Common native build tools
     - cmake
     - ninja
@@ -24,4 +22,4 @@ dependencies:
     - zstd
     # Python packages via pip
     - pip:
-        - -e ../sniff
+        - dekk

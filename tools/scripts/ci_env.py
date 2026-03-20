@@ -1,17 +1,17 @@
 """CI environment detection and Cargo build tuning for APXM.
 
-Thin Cargo-specific adapter over sniff.ci_build.CIBuildAdvisor.
-All CI detection logic and parallelism heuristics live in sniff;
+Thin Cargo-specific adapter over dekk.ci_build.CIBuildAdvisor.
+All CI detection logic and parallelism heuristics live in dekk;
 this module only maps build-system-agnostic hints to Cargo flags.
 """
 
 from __future__ import annotations
 
-from sniff.ci import CIBuildAdvisor, CIBuildHints, CIDetector, CIInfo
+from dekk.ci import CIBuildAdvisor, CIBuildHints, CIDetector, CIInfo
 
 
 def detect_ci() -> CIInfo:
-    """Detect the CI environment using sniff."""
+    """Detect the CI environment using dekk."""
     return CIDetector().detect()
 
 
