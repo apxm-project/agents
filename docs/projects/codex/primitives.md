@@ -50,7 +50,7 @@ Spawn sub-agents, divide work, aggregate results. Complex tasks require multiple
 
 **AIS mapping**: `FLOW_CALL` (invoke a sub-workflow), `Communicate` (inter-agent messaging with local/HTTP/broadcast protocols), `WAIT_ALL` / `MERGE` (synchronization barriers).
 
-**What A-PXM adds**: The scheduler handles synchronization automatically with deadlock detection (watchdog timer). `Communicate` supports local in-process dispatch via `FlowRegistry`, HTTP dispatch to remote agents, and broadcast fan-out. Note: compiler-level topology validation (orphan agents, deadlock cycles) and hierarchical AAM scoping between agents are not yet implemented (P2 gap in `implementation/TODO.md`).
+**What A-PXM adds**: The scheduler handles synchronization automatically with deadlock detection (watchdog timer). `Communicate` supports local in-process dispatch via `FlowRegistry`, HTTP dispatch to remote agents, and broadcast fan-out. Child flows and sub-agents now execute in snapshot-scoped child AAMs by default, which gives basic state isolation for recursive execution paths. Remaining gaps are file-backed workspace materialization, state projection between scopes, and compiler-level topology validation.
 
 ### 7. Streaming Output
 

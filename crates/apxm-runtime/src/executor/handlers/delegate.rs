@@ -9,7 +9,7 @@
 //! - `target_agent`  (required): name of the agent to delegate to
 
 use super::{ExecutionContext, Node, Result, Value, get_string_attribute};
-use crate::aam::TransitionLabel;
+use crate::aam::{ScopeSpec, TransitionLabel};
 use crate::executor::ExecutorEngine;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::constants::runtime::{belief_keys, metadata, response_keys};
@@ -62,7 +62,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
 
     // Create a child context for sub-flow execution
     let child_ctx = ctx
-        .child()
+        .child_with_scope(ScopeSpec::snapshot_all())
         .with_metadata(metadata::PARENT_EXECUTION_ID.to_string(), ctx.execution_id.clone())
         .with_metadata(metadata::DELEGATE_TASK_SPEC.to_string(), task_spec.clone())
         .with_metadata(metadata::DELEGATE_TARGET.to_string(), target_agent.clone());

@@ -1,8 +1,8 @@
 # AgentMate — Frontend SDK for A-PXM
 
-AgentMate is the developer-facing framework for building agents and workflows on top of A-PXM. It provides ergonomic Rust and Python APIs for authoring agent graphs that compile to optimized A-PXM artifacts.
+AgentMate is the developer-facing framework for building agents and workflows on top of A-PXM. It provides ergonomic Rust and Python APIs for authoring agent graphs that compile to optimized A-PXM artifacts, but it is a frontend layer rather than the architectural core.
 
-**A-PXM is the engine. AgentMate is the steering wheel.**
+**A-PXM is the engine. AgentMate is one steering wheel.**
 
 ## Relationship
 
@@ -15,6 +15,10 @@ Developer → AgentMate (authoring) → A-PXM (compilation + execution) → LLM/
 | **AgentMate** | Define agents, flows, tools, guardrails | Clang (frontend) |
 | **A-PXM** | Compile, optimize, schedule, execute | LLVM (backend) |
 | **LLM backends** | Inference | CPU/GPU hardware |
+
+## Strategic Role
+
+AgentMate is useful when it accelerates adoption of the substrate. It should not duplicate the core runtime architecture or become the center of the platform thesis. Codex-on-APXM is the proof target; AgentMate is a supporting frontend whose strongest pieces may be reused selectively.
 
 ## What AgentMate Provides (That A-PXM Doesn't)
 

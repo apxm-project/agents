@@ -2,7 +2,7 @@
 
 Codex-on-APXM is the proof-of-concept that A-PXM's substrate can represent a production coding agent. Like LLVM-GCC proved LLVM IR could represent real C programs, Codex-on-APXM proves AIS graphs can represent real agent execution.
 
-This directory tracks the plan, architecture, and progress toward reconstructing a Codex-class coding agent on top of AgentMate + A-PXM.
+This directory tracks the plan, architecture, and progress toward reconstructing a Codex-class coding agent on top of A-PXM. AgentMate is treated as an optional/native frontend for authoring graphs; the architectural target is the A-PXM substrate itself.
 
 ## Why Codex First
 
@@ -26,4 +26,4 @@ Coding agents are the best first target because:
 
 - **Theory**: [case-study.md](case-study.md) — the high-level "why" (now in this directory)
 - **Optimizations**: [optimizations.md](../../advantages/optimizations.md) — what A-PXM provides that Codex doesn't have today
-- **AgentMate**: [../agentmate/](../agentmate/) — the frontend SDK that Codex-on-APXM will be built with
+- **AgentMate**: [../agentmate/](../agentmate/) — optional/reference frontend SDK; reusable pieces may be absorbed where they strengthen A-PXM

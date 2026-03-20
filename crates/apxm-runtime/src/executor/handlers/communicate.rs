@@ -14,7 +14,7 @@
 //! currently registered in the FlowRegistry; results are collected in parallel.
 
 use super::{ExecutionContext, Node, Result, Value, get_string_attribute};
-use crate::aam::TransitionLabel;
+use crate::aam::{ScopeSpec, TransitionLabel};
 use crate::executor::ExecutorEngine;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::constants::runtime::{belief_keys, metadata};
@@ -122,7 +122,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
 
     // Create a child context for the sub-flow execution
     let child_ctx = ctx
-        .child()
+        .child_with_scope(ScopeSpec::snapshot_all())
         .with_metadata(metadata::PARENT_EXECUTION_ID.to_string(), ctx.execution_id.clone())
         .with_metadata(metadata::COMMUNICATE_SENDER.to_string(), ctx.execution_id.clone())
         .with_metadata(metadata::COMMUNICATE_RECIPIENT.to_string(), recipient.clone());
@@ -237,7 +237,7 @@ async fn execute_broadcast(ctx: &ExecutionContext, _node: &Node, message: Value)
 
         // Build a child context per recipient
         let child_ctx = ctx
-            .child()
+            .child_with_scope(ScopeSpec::snapshot_all())
             .with_metadata(metadata::PARENT_EXECUTION_ID.to_string(), ctx.execution_id.clone())
             .with_metadata(metadata::COMMUNICATE_SENDER.to_string(), ctx.execution_id.clone())
             .with_metadata(metadata::COMMUNICATE_RECIPIENT.to_string(), agent_name.clone())

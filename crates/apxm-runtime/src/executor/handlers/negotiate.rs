@@ -10,7 +10,7 @@
 //! - `max_rounds` (optional): maximum negotiation rounds (default: 3)
 
 use super::{ExecutionContext, Node, Result, Value, get_string_attribute};
-use crate::aam::TransitionLabel;
+use crate::aam::{ScopeSpec, TransitionLabel};
 use crate::executor::ExecutorEngine;
 use apxm_core::constants::defaults;
 use apxm_core::constants::graph::attrs as graph_attrs;
@@ -101,7 +101,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
             };
 
             let child_ctx = ctx
-                .child()
+                .child_with_scope(ScopeSpec::snapshot_all())
                 .with_metadata(metadata::NEGOTIATE_PROPOSAL.to_string(), proposal.clone())
                 .with_metadata(metadata::NEGOTIATE_ROUND.to_string(), round.to_string())
                 .with_metadata(metadata::NEGOTIATE_PARTY.to_string(), party.clone());

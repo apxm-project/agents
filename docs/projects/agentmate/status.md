@@ -2,6 +2,10 @@
 
 Current state of the AgentMate ↔ A-PXM integration.
 
+## Strategic Position
+
+AgentMate remains a frontend/integration layer. The primary architectural work belongs in A-PXM itself, especially for runtime, memory, scheduling, and hierarchical AAM. AgentMate should be kept where it contributes reusable authoring, UX, sandbox, or bridge components, and trimmed where it duplicates substrate behavior.
+
 ## Done
 
 | Component | Status |

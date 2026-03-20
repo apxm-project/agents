@@ -4,7 +4,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 use super::{ExecutionContext, Node, Result, Value, get_string_attribute};
-use crate::aam::TransitionLabel;
+use crate::aam::{ScopeSpec, TransitionLabel};
 use crate::executor::ExecutorEngine;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::constants::runtime::{belief_keys, metadata};
@@ -137,7 +137,7 @@ async fn execute_impl(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -
 
     // Create a child context for the sub-flow execution
     let mut child_ctx = ctx
-        .child()
+        .child_with_scope(ScopeSpec::snapshot_all())
         .with_metadata(metadata::PARENT_EXECUTION_ID.to_string(), ctx.execution_id.clone())
         .with_metadata(
             metadata::FLOW_CALL_DEPTH.to_string(),
@@ -213,6 +213,7 @@ mod tests {
     use crate::capability::CapabilitySystem;
     use crate::capability::flow_registry::FlowRegistry;
     use crate::memory::{MemoryConfig, MemorySystem};
+    use apxm_core::constants::runtime::belief_keys;
     use apxm_backends::LLMRegistry;
     use apxm_core::types::{
         execution::{ExecutionDag, NodeMetadata},
@@ -241,6 +242,29 @@ mod tests {
             edges: vec![],
             entry_nodes: vec![1],
             exit_nodes: vec![1],
+            metadata: Default::default(),
+        }
+    }
+
+    fn create_err_flow_dag() -> ExecutionDag {
+        let mut err_node = apxm_core::types::execution::Node {
+            id: 2,
+            op_type: AISOperationType::Err,
+            attributes: HashMap::new(),
+            input_tokens: vec![],
+            output_tokens: vec![101],
+            metadata: NodeMetadata::default(),
+        };
+        err_node.attributes.insert(
+            graph_attrs::MESSAGE.to_string(),
+            Value::String("scoped child error".to_string()),
+        );
+
+        ExecutionDag {
+            nodes: vec![err_node],
+            edges: vec![],
+            entry_nodes: vec![2],
+            exit_nodes: vec![2],
             metadata: Default::default(),
         }
     }
@@ -291,6 +315,68 @@ mod tests {
 
         let result = execute(&ctx, &node, vec![]).await.unwrap();
         assert_eq!(result, Value::String("hello from sub-flow".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_flow_call_executes_in_registered_child_scope() {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(LLMRegistry::new());
+        let capability_system = Arc::new(CapabilitySystem::new());
+        let flow_registry = Arc::new(FlowRegistry::new());
+
+        flow_registry.register_flow("ScopedAgent", "err_flow", create_err_flow_dag());
+
+        let ctx = ExecutionContext::new(
+            memory,
+            llm_registry,
+            capability_system,
+            crate::aam::Aam::new(),
+        );
+        let ctx = ExecutionContext {
+            flow_registry,
+            ..ctx
+        };
+
+        let mut node = apxm_core::types::execution::Node {
+            id: 1,
+            op_type: AISOperationType::FlowCall,
+            attributes: HashMap::new(),
+            input_tokens: vec![],
+            output_tokens: vec![100],
+            metadata: NodeMetadata::default(),
+        };
+        node.attributes.insert(
+            graph_attrs::AGENT_NAME.to_string(),
+            Value::String("ScopedAgent".to_string()),
+        );
+        node.attributes.insert(
+            graph_attrs::FLOW_NAME.to_string(),
+            Value::String("err_flow".to_string()),
+        );
+
+        let result = execute(&ctx, &node, vec![]).await.unwrap();
+        assert_eq!(result, Value::String("Error: scoped child error".to_string()));
+
+        let root_beliefs = ctx.aam.beliefs();
+        assert!(!root_beliefs
+            .keys()
+            .any(|key| key.starts_with(belief_keys::ERR_PREFIX)));
+
+        let child_ids = ctx.scope_registry.children_of(ctx.scope_id());
+        assert_eq!(child_ids.len(), 1);
+        let child_entry = ctx
+            .scope_registry
+            .get(&child_ids[0])
+            .expect("child scope should be registered");
+        assert!(child_entry
+            .aam
+            .beliefs()
+            .keys()
+            .any(|key| key.starts_with(belief_keys::ERR_PREFIX)));
     }
 
     #[tokio::test]

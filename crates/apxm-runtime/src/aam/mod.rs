@@ -5,15 +5,22 @@
 //! episodic state transitions. The interface is intentionally conservative so we
 //! can evolve it alongside the rest of the runtime.
 
+mod beliefs;
+mod capabilities;
 pub mod effects;
+mod goals;
 pub mod session;
+mod scope;
 
 pub use apxm_core::types::goal::{Goal, GoalId, GoalStatus};
+pub use beliefs::{BeliefChangeSet, BeliefMap};
+pub use capabilities::{CapabilityChange, CapabilityMap, CapabilityRecord};
+pub use goals::{CompletionPolicy, GoalChange, GoalDetailMap, GoalQueue, GoalTree};
+pub use scope::{ScopePolicy, ScopeSpec};
 use apxm_core::error::RuntimeError;
 use apxm_core::types::values::Value;
 use chrono::{DateTime, Utc};
 use parking_lot::RwLock;
-use priority_queue::PriorityQueue;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
@@ -296,38 +303,22 @@ impl Aam {
 
         let beliefs = match &spec.beliefs {
             ScopePolicy::Inherit | ScopePolicy::Snapshot => parent.beliefs.clone(),
-            ScopePolicy::Isolate => HashMap::new(),
-            ScopePolicy::Filter(keys) => keys
-                .iter()
-                .filter_map(|k| parent.beliefs.get(k).map(|v| (k.clone(), v.clone())))
-                .collect(),
+            ScopePolicy::Isolate => BeliefMap::new(),
+            ScopePolicy::Filter(keys) => beliefs::snapshot_subset(&parent.beliefs, keys),
         };
 
         let capabilities = match &spec.capabilities {
             ScopePolicy::Inherit | ScopePolicy::Snapshot => parent.capabilities.clone(),
-            ScopePolicy::Isolate => HashMap::new(),
-            ScopePolicy::Filter(keys) => keys
-                .iter()
-                .filter_map(|k| parent.capabilities.get(k).map(|v| (k.clone(), v.clone())))
-                .collect(),
+            ScopePolicy::Isolate => CapabilityMap::new(),
+            ScopePolicy::Filter(keys) => capabilities::snapshot_subset(&parent.capabilities, keys),
         };
 
         let (goals, goal_details) = match &spec.goals {
             ScopePolicy::Inherit | ScopePolicy::Snapshot => {
                 (parent.goals.clone(), parent.goal_details.clone())
             }
-            ScopePolicy::Isolate => (PriorityQueue::new(), HashMap::new()),
-            ScopePolicy::Filter(keys) => {
-                let mut gq = PriorityQueue::new();
-                let mut gd = HashMap::new();
-                for goal in parent.goal_details.values() {
-                    if keys.contains(&goal.description) {
-                        gq.push(goal.id, goal.priority);
-                        gd.insert(goal.id, goal.clone());
-                    }
-                }
-                (gq, gd)
-            }
+            ScopePolicy::Isolate => (GoalQueue::new(), GoalDetailMap::new()),
+            ScopePolicy::Filter(keys) => goals::filtered_state(keys, &parent.goal_details),
         };
 
         let new_state = AamState {
@@ -350,10 +341,10 @@ impl Aam {
 
 /// Internal AAM state.
 pub struct AamState {
-    pub beliefs: HashMap<String, Value>,
-    pub goals: PriorityQueue<GoalId, u32>,
-    pub goal_details: HashMap<GoalId, Goal>,
-    pub capabilities: HashMap<String, CapabilityRecord>,
+    pub beliefs: BeliefMap,
+    pub goals: GoalQueue,
+    pub goal_details: GoalDetailMap,
+    pub capabilities: CapabilityMap,
     pub transitions: Vec<TransitionRecord>,
     pub call_stack: Vec<CallFrame>,
     pub exception_handlers: HashMap<u64, u64>,
@@ -369,10 +360,10 @@ impl Default for AamState {
 impl AamState {
     pub fn new() -> Self {
         Self {
-            beliefs: HashMap::new(),
-            goals: PriorityQueue::new(),
-            goal_details: HashMap::new(),
-            capabilities: HashMap::new(),
+            beliefs: BeliefMap::new(),
+            goals: GoalQueue::new(),
+            goal_details: GoalDetailMap::new(),
+            capabilities: CapabilityMap::new(),
             transitions: Vec::new(),
             call_stack: Vec::new(),
             exception_handlers: HashMap::new(),
@@ -386,7 +377,7 @@ impl AamState {
     {
         let before = self.beliefs.clone();
         let delta = f(self);
-        let belief_changes = Self::diff_beliefs(&before, &self.beliefs, delta.belief_changes);
+        let belief_changes = beliefs::diff_beliefs(&before, &self.beliefs, delta.belief_changes);
 
         let record = TransitionRecord {
             timestamp: Utc::now(),
@@ -397,24 +388,6 @@ impl AamState {
         };
         self.transitions.push(record.clone());
         record
-    }
-
-    fn diff_beliefs(
-        before_snapshot: &HashMap<String, Value>,
-        after: &HashMap<String, Value>,
-        mut explicit_changes: HashMap<String, (Option<Value>, Option<Value>)>,
-    ) -> HashMap<String, (Option<Value>, Option<Value>)> {
-        for key in before_snapshot.keys().chain(after.keys()) {
-            if explicit_changes.contains_key(key) {
-                continue;
-            }
-            let before = before_snapshot.get(key).cloned();
-            let after = after.get(key).cloned();
-            if before != after {
-                explicit_changes.insert(key.clone(), (before, after));
-            }
-        }
-        explicit_changes
     }
 
     fn add_goal(&mut self, goal: Goal) -> TransitionDelta {
@@ -479,14 +452,14 @@ impl AamState {
 pub struct TransitionRecord {
     pub timestamp: DateTime<Utc>,
     pub label: TransitionLabel,
-    pub belief_changes: HashMap<String, (Option<Value>, Option<Value>)>,
+    pub belief_changes: BeliefChangeSet,
     pub goal_changes: Vec<GoalChange>,
     pub capability_changes: Vec<CapabilityChange>,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct TransitionDelta {
-    pub belief_changes: HashMap<String, (Option<Value>, Option<Value>)>,
+    pub belief_changes: BeliefChangeSet,
     pub goal_changes: Vec<GoalChange>,
     pub capability_changes: Vec<CapabilityChange>,
 }
@@ -509,103 +482,6 @@ impl TransitionLabel {
             op_type: Some(op_type.into()),
         }
     }
-}
-
-/// Policy for when a parent goal should be auto-completed based on children.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum CompletionPolicy {
-    /// Parent completes when ALL children are completed.
-    #[default]
-    AllChildren,
-    /// Parent completes when ANY child is completed.
-    AnyChild,
-    /// Parent never auto-completes; must be set manually.
-    Manual,
-}
-
-/// Tracks parent-child relationships between goals.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct GoalTree {
-    /// Maps parent -> children
-    children: HashMap<GoalId, Vec<GoalId>>,
-    /// Completion policy per goal (only meaningful for parent goals)
-    policies: HashMap<GoalId, CompletionPolicy>,
-}
-
-impl GoalTree {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Register a child goal under a parent.
-    pub fn add_child(&mut self, parent_id: GoalId, child_id: GoalId) {
-        self.children.entry(parent_id).or_default().push(child_id);
-    }
-
-    /// Get children of a goal.
-    pub fn children_of(&self, parent_id: &GoalId) -> &[GoalId] {
-        self.children.get(parent_id).map(|v| v.as_slice()).unwrap_or(&[])
-    }
-
-    /// Set completion policy for a goal.
-    pub fn set_policy(&mut self, goal_id: GoalId, policy: CompletionPolicy) {
-        self.policies.insert(goal_id, policy);
-    }
-
-    /// Get completion policy for a goal (defaults to AllChildren).
-    pub fn policy(&self, goal_id: &GoalId) -> CompletionPolicy {
-        self.policies.get(goal_id).copied().unwrap_or_default()
-    }
-
-    /// Remove a goal from the tree (both as parent and child).
-    pub fn remove(&mut self, goal_id: &GoalId) {
-        self.children.remove(goal_id);
-        self.policies.remove(goal_id);
-        // Remove from parent's children list
-        for children in self.children.values_mut() {
-            children.retain(|id| id != goal_id);
-        }
-    }
-}
-
-/// Controls which parts of an AAM dimension a child scope inherits.
-#[derive(Debug, Clone)]
-pub enum ScopePolicy {
-    /// Share all entries from the parent (child writes are visible to parent).
-    Inherit,
-    /// Start with empty state.
-    Isolate,
-    /// Child gets a point-in-time copy; writes do not affect the parent.
-    Snapshot,
-    /// Inherit only the listed keys (snapshot semantics for the selected keys).
-    Filter(Vec<String>),
-}
-
-/// Per-dimension scope specification for `child_with_scope`.
-#[derive(Debug, Clone)]
-pub struct ScopeSpec {
-    pub beliefs: ScopePolicy,
-    pub capabilities: ScopePolicy,
-    pub goals: ScopePolicy,
-}
-
-#[derive(Debug, Clone)]
-pub enum GoalChange {
-    Added(Goal),
-    Removed(GoalId),
-    StatusChanged {
-        id: GoalId,
-        from: GoalStatus,
-        to: GoalStatus,
-    },
-}
-
-#[derive(Debug, Clone)]
-pub enum CapabilityChange {
-    Registered {
-        name: String,
-        metadata: CapabilityRecord,
-    },
 }
 
 #[derive(Debug, Clone)]
@@ -640,24 +516,6 @@ impl AamCheckpoint {
         let json = std::fs::read_to_string(path)
             .map_err(|e| RuntimeError::State(format!("Failed to read checkpoint: {}", e)))?;
         serde_json::from_str(&json).map_err(|e| RuntimeError::Serialization(e.to_string()))
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CapabilityRecord {
-    pub name: String,
-    pub description: String,
-    pub schema: serde_json::Value,
-    pub cost_estimate: f64,
-}
-
-impl Default for ScopeSpec {
-    fn default() -> Self {
-        Self {
-            beliefs: ScopePolicy::Inherit,
-            capabilities: ScopePolicy::Inherit,
-            goals: ScopePolicy::Inherit,
-        }
     }
 }
 

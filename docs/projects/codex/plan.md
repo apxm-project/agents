@@ -1,17 +1,17 @@
 # Codex-on-APXM Implementation Plan
 
-Step-by-step plan to build a Codex-class coding agent on AgentMate + A-PXM.
+Step-by-step plan to build a Codex-class coding agent on A-PXM. Frontends such as AgentMate are optional accelerators, not the architectural target.
 
 ## Phase 1: Single-Turn Agent
 
 **Goal**: An agent that takes a coding task, calls the LLM with tools, and produces output.
 
 **Components**:
-- AgentBuilder with `bash`, `read`, `write`, `search_web` tools
+- A graph authoring layer with `bash`, `read`, `write`, `search_web` tools
 - Capability interceptors for policy-driven tool access (OS-level sandbox deferred -- P0 gap)
 - Single `ASK` node with tool iteration
 
-**Deliverable**: `agentmate coder "Fix the failing test in src/parser.rs"`
+**Deliverable**: An APXM-backed coder entry point that can take a concrete repo task and execute a Codex-like single-turn loop.
 
 **Validates**: Basic inference loop + tool dispatch work end-to-end.
 
@@ -34,7 +34,7 @@ Step-by-step plan to build a Codex-class coding agent on AgentMate + A-PXM.
 **Goal**: Agent follows structured workflows — read code, propose changes, apply edits, run tests, iterate.
 
 **Components**:
-- WorkflowBuilder graph with `ASK` → `INV` → `VERIFY` → `BRANCH` pipeline
+- AIS graph with `ASK` → `INV` → `VERIFY` → `BRANCH` pipeline
 - Compiler optimization (fuse sequential ASKs, extract parallelism from independent INVs)
 - `REFLECT` for self-evaluation after test failures
 
@@ -49,7 +49,7 @@ Step-by-step plan to build a Codex-class coding agent on AgentMate + A-PXM.
 **Components**:
 - `FLOW_CALL` to invoke sub-agent workflows
 - `Communicate` for inter-agent message passing (local, HTTP, and broadcast protocols)
-- AAM scoping to isolate agent state (not yet implemented -- P2 gap)
+- AAM scoping to isolate agent state (basic snapshot-scoped child execution is implemented; file-backed hierarchical workspace projection remains open)
 - `PLAN` for dynamic task decomposition
 
 **Deliverable**: Architecture agent decomposes task → specialist agents execute in parallel → coordinator merges results.
@@ -88,10 +88,10 @@ See `advantages/hypotheses.md` for full measurement plans and current status of 
   - Parallel tool dispatch within ASK tool loop -- currently sequential `for` loop over tool calls in `llm.rs`
   - Configurable `MAX_TOOL_ITERATIONS` -- hardcoded at 10, Codex-class agents need 25+
   - Messages as structured arrays -- `LLMRequest` uses single `prompt: String`, needs `messages: Vec<Message>` with roles
-- **Requires from AgentMate**:
-  - OS-level sandbox (Seatbelt/Landlock) -- no sandbox crate exists yet (P0 gap)
-  - Streaming TUI integration -- event emitter trait exists but only 3 event types
-  - Codebase indexing -- no tree-sitter/embedding integration exists (P0 gap)
+- **Optional reusable pieces from AgentMate or other frontends**:
+  - OS-level sandbox (Seatbelt/Landlock)
+  - Streaming TUI integration
+  - Codebase indexing
 - **Requires from both**:
   - AAM checkpoint/restore -- partially implemented (`AamCheckpoint` covers beliefs + goals but not capabilities)
   - Async user approval flow for interceptors -- `InterceptDecision` exists but no interactive approval channel (P1 gap)

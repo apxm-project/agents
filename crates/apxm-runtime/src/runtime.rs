@@ -138,27 +138,20 @@ impl Runtime {
         session_id: Option<String>,
         event_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
     ) -> ExecutionContext {
-        ExecutionContext {
-            execution_id: uuid::Uuid::now_v7().to_string(),
-            session_id,
-            memory: Arc::clone(&self.memory),
-            llm_registry: Arc::clone(&self.llm_registry),
-            capability_system: Arc::clone(&self.capability_system),
-            aam: self.aam.clone(),
-            inner_plan_linker: Arc::clone(&self.inner_plan_linker),
-            dag_splicer: Arc::new(crate::executor::NoOpSplicer),
-            flow_registry: Arc::clone(&self.flow_registry),
-            current_agent: None,
-            instruction_config: self.instruction_config.clone(),
-            start_time: std::time::Instant::now(),
-            metadata: std::collections::HashMap::new(),
-            token_budget: self.config.token_budget,
-            consumed_tokens: Arc::new(std::sync::atomic::AtomicU64::new(0)),
-            event_emitter,
-            token_accountant: Arc::new(crate::executor::TokenAccountant::new()),
-            response_cache: Arc::new(crate::executor::ResponseCache::new()),
-            cancellation_token: crate::executor::CancellationToken::new(),
-        }
+        let mut ctx = ExecutionContext::new(
+            Arc::clone(&self.memory),
+            Arc::clone(&self.llm_registry),
+            Arc::clone(&self.capability_system),
+            self.aam.clone(),
+        );
+        ctx.session_id = session_id;
+        ctx.inner_plan_linker = Arc::clone(&self.inner_plan_linker);
+        ctx.dag_splicer = Arc::new(crate::executor::NoOpSplicer);
+        ctx.flow_registry = Arc::clone(&self.flow_registry);
+        ctx.instruction_config = self.instruction_config.clone();
+        ctx.token_budget = self.config.token_budget;
+        ctx.event_emitter = event_emitter;
+        ctx
     }
 
     /// Attach a custom inner plan linker implementation to the runtime.

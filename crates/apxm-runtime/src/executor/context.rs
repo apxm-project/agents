@@ -4,8 +4,10 @@ use crate::{
     aam::{Aam, ScopeSpec},
     capability::CapabilitySystem, capability::flow_registry::FlowRegistry,
     memory::MemorySystem,
+    workspace::ScopeRegistry,
 };
 use apxm_backends::LLMRegistry;
+use apxm_core::constants::runtime::metadata;
 use apxm_core::InstructionConfig;
 use apxm_core::types::Agent;
 use std::sync::Arc;
@@ -42,6 +44,10 @@ pub struct ExecutionContext {
     pub capability_system: Arc<CapabilitySystem>,
     /// Agent Abstract Machine state handle
     pub aam: Aam,
+    /// Scope identifier for hierarchical AAM execution.
+    pub scope_id: String,
+    /// Shared registry of active hierarchical scopes.
+    pub scope_registry: Arc<ScopeRegistry>,
     /// Inner plan linker for compiling graph payloads from LLMs
     pub inner_plan_linker: Arc<dyn InnerPlanLinker>,
     /// DAG splicer for dynamic inner/outer plan unification
@@ -78,20 +84,30 @@ impl ExecutionContext {
         capability_system: Arc<CapabilitySystem>,
         aam: Aam,
     ) -> Self {
+        let execution_id = uuid::Uuid::now_v7().to_string();
+        let scope_id = uuid::Uuid::now_v7().to_string();
+        let scope_registry = Arc::new(ScopeRegistry::new());
+        scope_registry.register(scope_id.clone(), None, aam.clone(), ScopeSpec::default());
+
+        let mut metadata_map = std::collections::HashMap::new();
+        metadata_map.insert(metadata::SCOPE_ID.to_string(), scope_id.clone());
+
         Self {
-            execution_id: uuid::Uuid::now_v7().to_string(),
+            execution_id,
             session_id: None,
             memory,
             llm_registry,
             capability_system,
             aam,
+            scope_id,
+            scope_registry,
             inner_plan_linker: Arc::new(NoOpLinker),
             dag_splicer: Arc::new(NoOpSplicer),
             flow_registry: Arc::new(FlowRegistry::new()),
             current_agent: None,
             instruction_config: InstructionConfig::default(),
             start_time: std::time::Instant::now(),
-            metadata: std::collections::HashMap::new(),
+            metadata: metadata_map,
             token_budget: None,
             consumed_tokens: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             event_emitter: None,
@@ -190,10 +206,21 @@ impl ExecutionContext {
     /// - [`ScopePolicy::Filter(keys)`] -- child gets only the listed keys (snapshot semantics)
     pub fn child_with_scope(&self, scope: ScopeSpec) -> Self {
         let child_aam = self.aam.child_scope(&scope);
-        self.child_with_aam(child_aam)
+        let child_scope_id = uuid::Uuid::now_v7().to_string();
+        self.scope_registry.register(
+            child_scope_id.clone(),
+            Some(self.scope_id.clone()),
+            child_aam.clone(),
+            scope,
+        );
+        self.child_with_aam(child_aam, child_scope_id)
     }
 
-    fn child_with_aam(&self, aam: Aam) -> Self {
+    fn child_with_aam(&self, aam: Aam, scope_id: String) -> Self {
+        let mut metadata_map = self.metadata.clone();
+        metadata_map.insert(metadata::SCOPE_ID.to_string(), scope_id.clone());
+        metadata_map.insert(metadata::PARENT_SCOPE_ID.to_string(), self.scope_id.clone());
+
         Self {
             execution_id: uuid::Uuid::now_v7().to_string(),
             session_id: self.session_id.clone(),
@@ -201,13 +228,15 @@ impl ExecutionContext {
             llm_registry: Arc::clone(&self.llm_registry),
             capability_system: Arc::clone(&self.capability_system),
             aam,
+            scope_id,
+            scope_registry: Arc::clone(&self.scope_registry),
             inner_plan_linker: Arc::clone(&self.inner_plan_linker),
             dag_splicer: Arc::clone(&self.dag_splicer),
             flow_registry: Arc::clone(&self.flow_registry),
             current_agent: self.current_agent.as_ref().map(Arc::clone),
             instruction_config: self.instruction_config.clone(),
             start_time: std::time::Instant::now(),
-            metadata: self.metadata.clone(),
+            metadata: metadata_map,
             token_budget: self.token_budget,
             consumed_tokens: Arc::clone(&self.consumed_tokens),
             event_emitter: self.event_emitter.as_ref().map(Arc::clone),
@@ -219,6 +248,10 @@ impl ExecutionContext {
 
     pub fn aam(&self) -> &Aam {
         &self.aam
+    }
+
+    pub fn scope_id(&self) -> &str {
+        &self.scope_id
     }
 
     /// Get a reference to the flow registry
@@ -245,9 +278,11 @@ mod tests {
         let ctx = ExecutionContext::new(memory, llm_registry, capability_system, Aam::new());
 
         assert!(!ctx.execution_id.is_empty());
+        assert!(!ctx.scope_id.is_empty());
         assert!(ctx.session_id.is_none());
         assert!(ctx.current_agent.is_none());
-        assert!(ctx.metadata.is_empty());
+        assert_eq!(ctx.metadata.get(metadata::SCOPE_ID), Some(&ctx.scope_id));
+        assert_eq!(ctx.scope_registry.len(), 1);
     }
 
     #[tokio::test]
@@ -284,6 +319,8 @@ mod tests {
 
         // Should have different execution ID
         assert_ne!(child.execution_id, parent.execution_id);
+        // Child should execute in its own scope
+        assert_ne!(child.scope_id, parent.scope_id);
         // Should inherit session ID
         assert_eq!(child.session_id, parent.session_id);
         // Should inherit current agent identity
@@ -291,5 +328,12 @@ mod tests {
             child.current_agent.as_ref().map(|a| a.name.as_str()),
             parent.current_agent.as_ref().map(|a| a.name.as_str())
         );
+        // Scope metadata/registry should reflect parent-child relationship
+        assert_eq!(
+            child.metadata.get(metadata::PARENT_SCOPE_ID),
+            Some(&parent.scope_id)
+        );
+        assert_eq!(parent.scope_registry.len(), 2);
+        assert_eq!(parent.scope_registry.children_of(parent.scope_id()).len(), 1);
     }
 }
