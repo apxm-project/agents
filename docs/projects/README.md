@@ -2,13 +2,25 @@
 
 Concrete applications being built on A-PXM. Each project validates a different aspect of the platform thesis.
 
-## Projects
+## Codex & Gemini-CLI Integration (Active)
+
+Migrating both OpenAI Codex (Rust, 74-crate workspace) and Google Gemini-CLI (TypeScript, 7-package monorepo) onto A-PXM as their shared execution substrate. Five phases, bottom-up.
+
+- **[Global Integration Plan](plan-global-integration.md)** — Overview, five-phase adoption path, architecture diagrams
+- **[Phase 1: LLM Backend](phase-1-llm-backend/)** — Replace LLM transport with apxm-backends
+- **[Phase 2: Tool Migration](phase-2-tool-migration/)** — Register consumer tools as APXM capabilities
+- **[Phase 3: AAM State Model](phase-3-aam-state/)** — Map agent state to hierarchical (B, G, C)
+- **[Phase 4: Agent Loop as Graph](phase-4-agent-loop/)** — Express turn loops as AIS graphs
+- **[Phase 5: Compiler Integration](phase-5-compiler/)** — Compile, analyze, optimize (the punch line)
+
+## Consumer Case Studies
 
 ### [`codex/`](codex/) — Codex-on-APXM
 
-Reconstruct a Codex-class coding agent on A-PXM. This is the "LLVM-GCC" moment — proving the substrate can represent production agent execution. AgentMate is one possible frontend for authoring graphs, not the strategic center of the effort.
+Reconstruct a Codex-class coding agent on A-PXM. This is the "LLVM-GCC" moment — proving the substrate can represent production agent execution.
 
-- [plan.md](codex/plan.md) — 5-phase implementation plan
+- [case-study.md](codex/case-study.md) — The redundancy problem and LLVM-GCC parallel
+- [plan.md](codex/plan.md) — 5-phase reconstruction plan
 - [architecture.md](codex/architecture.md) — Codex concepts → A-PXM component mapping
 - [primitives.md](codex/primitives.md) — The 7 runtime primitives every coding agent needs
 
