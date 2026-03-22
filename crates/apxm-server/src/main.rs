@@ -58,7 +58,8 @@ use tokio_stream::StreamExt;
 use tower_http::cors::CorsLayer;
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
 use tower_http::trace::TraceLayer;
-use tracing::{error, info};
+use apxm_backends::llm::provider::{Provider, ProviderId};
+use tracing::{error, info, warn};
 
 const DEFAULT_ADDR: &str = "127.0.0.1:18800";
 const DEFAULT_PUBLIC_URL: &str = "http://localhost:18800";
@@ -673,6 +674,67 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let runtime = Arc::new(Runtime::new(RuntimeConfig::default()).await?);
+
+    // ── Auto-load LLM credentials from credential store ──
+    {
+        let mut loaded = 0u32;
+        let mut first_name: Option<String> = None;
+        match apxm_credentials::CredentialStore::open() {
+            Ok(store) => match store.list_all() {
+                Ok(creds) if creds.is_empty() => {
+                    warn!("credential store is empty — no LLM backends registered");
+                }
+                Ok(creds) => {
+                    for (name, cred) in creds {
+                        let provider_id = match cred.provider.parse::<ProviderId>() {
+                            Ok(id) => id,
+                            Err(e) => {
+                                warn!(%name, error = %e, "skipping credential: unknown provider");
+                                continue;
+                            }
+                        };
+                        let api_key = cred.api_key.as_deref().unwrap_or("");
+                        let config = cred.base_url.as_ref().map(|url| {
+                            serde_json::json!({ "base_url": url })
+                        });
+                        match Provider::new(provider_id, api_key, config).await {
+                            Ok(provider) => {
+                                if let Err(e) = runtime.llm_registry().register(&name, provider) {
+                                    warn!(%name, error = %e, "failed to register LLM backend");
+                                    continue;
+                                }
+                                if let Some(model) = &cred.model {
+                                    if let Err(e) = runtime.llm_registry().set_model_route(model, &name) {
+                                        warn!(%name, %model, error = %e, "failed to route model to backend");
+                                    }
+                                }
+                                if first_name.is_none() {
+                                    first_name = Some(name.clone());
+                                }
+                                loaded += 1;
+                            }
+                            Err(e) => {
+                                warn!(%name, error = %e, "failed to create LLM provider");
+                            }
+                        }
+                    }
+                    if let Some(ref default) = first_name {
+                        if let Err(e) = runtime.llm_registry().set_default(default) {
+                            warn!(backend = %default, error = %e, "failed to set default backend");
+                        }
+                    }
+                    info!(count = loaded, "loaded LLM backends from credential store");
+                }
+                Err(e) => {
+                    warn!(error = %e, "failed to read credential store");
+                }
+            },
+            Err(e) => {
+                warn!(error = %e, "credential store unavailable — no LLM backends registered");
+            }
+        }
+    }
+
     let state = AppState {
         runtime,
         agent_registry: Arc::new(DashMap::new()),
@@ -684,10 +746,23 @@ async fn main() -> anyhow::Result<()> {
 
     let app = build_app(state);
 
-    let addr = std::env::var("APXM_SERVER_ADDR")
-        .ok()
-        .and_then(|s| s.parse::<SocketAddr>().ok())
-        .unwrap_or_else(|| DEFAULT_ADDR.parse().expect("valid default addr"));
+    // Parse --port from CLI args (service-manager passes `--port <N>`)
+    let cli_port: Option<u16> = {
+        let args: Vec<String> = std::env::args().collect();
+        args.iter()
+            .position(|a| a == "--port")
+            .and_then(|i| args.get(i + 1))
+            .and_then(|v| v.parse().ok())
+    };
+
+    let addr = if let Some(port) = cli_port {
+        SocketAddr::from(([127, 0, 0, 1], port))
+    } else {
+        std::env::var("APXM_SERVER_ADDR")
+            .ok()
+            .and_then(|s| s.parse::<SocketAddr>().ok())
+            .unwrap_or_else(|| DEFAULT_ADDR.parse().expect("valid default addr"))
+    };
     info!(%addr, "starting apxm-server");
     let listener = tokio::net::TcpListener::bind(addr).await?;
 

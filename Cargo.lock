@@ -340,6 +340,7 @@ dependencies = [
  "apxm-backends",
  "apxm-compiler",
  "apxm-core",
+ "apxm-credentials",
  "apxm-graph",
  "apxm-runtime",
  "async-stream",
