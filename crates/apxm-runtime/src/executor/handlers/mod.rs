@@ -260,6 +260,19 @@ async fn execute_llm_request_streaming(
                 final_response = Some(response);
                 break;
             }
+            StreamChunk::Thought(thought) => {
+                // Extended thinking tokens — emit as LLM token for now
+                if let Some(emitter) = &ctx.event_emitter {
+                    emitter.emit_llm_token(&thought);
+                }
+            }
+            StreamChunk::Usage(_usage) => {
+                // Incremental usage update — final usage comes in Done chunk
+            }
+            StreamChunk::Error(msg) => {
+                // Non-fatal stream error — log and continue
+                tracing::warn!(error = %msg, "Non-fatal stream error during {}", phase);
+            }
         }
     }
 

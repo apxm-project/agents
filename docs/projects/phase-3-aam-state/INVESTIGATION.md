@@ -89,7 +89,7 @@ This is a **foundation for Phase 3** but uses flat JSON files, not the hierarchi
 
 ### 2.1 SessionState Structure
 
-Located at `codex/codex-rs/core/src/state/session.rs:20-36`.
+Located at `openai/codex/codex-rs/core/src/state/session.rs:20-36`.
 
 | Plan's Mapped Field | Actual Codex Field | Exists? |
 |---------------------|-------------------|---------|
@@ -104,7 +104,7 @@ Located at `codex/codex-rs/core/src/state/session.rs:20-36`.
 
 ### 2.2 TurnState Structure
 
-Located at `codex/codex-rs/core/src/state/turn.rs:77-87`.
+Located at `openai/codex/codex-rs/core/src/state/turn.rs:77-87`.
 
 | Plan's Mapped Field | Actual Codex Field | Notes |
 |---------------------|-------------------|-------|
@@ -128,7 +128,7 @@ Located at `codex/codex-rs/core/src/state/turn.rs:77-87`.
 
 ### 3.1 GeminiChat Class
 
-Located at `gemini-cli/packages/core/src/core/geminiChat.ts:249`.
+Located at `google/gemini-cli/packages/core/src/core/geminiChat.ts:249`.
 
 | Plan's Mapped Field | Actual Field | Exists? |
 |---------------------|-------------|---------|
@@ -145,7 +145,7 @@ Located at `gemini-cli/packages/core/src/core/geminiChat.ts:249`.
 
 ### 3.2 ChatCompressionService
 
-Located at `gemini-cli/packages/core/src/services/chatCompressionService.ts:233`.
+Located at `google/gemini-cli/packages/core/src/services/chatCompressionService.ts:233`.
 
 - It is a **class** (not a TypeScript type/interface), confirmed at line 233
 - The `compress()` method takes a `GeminiChat`, config, and returns `{ newHistory, info }`
@@ -154,7 +154,7 @@ Located at `gemini-cli/packages/core/src/services/chatCompressionService.ts:233`
 
 ### 3.3 Loop Detection
 
-Located at `gemini-cli/packages/core/src/services/loopDetectionService.ts`.
+Located at `google/gemini-cli/packages/core/src/services/loopDetectionService.ts`.
 
 The plan states: "Loop detection reads from episodic trace (not ad-hoc pattern matching)" as a validation criterion (`gemini-cli.md:129`). This is a **future state** goal, not current behavior:
 
@@ -464,18 +464,18 @@ Test 19: full_phase_3_integration
 
 | File | Lines | Role |
 |------|-------|------|
-| `codex/codex-rs/core/src/state/session.rs` | 241 | SessionState (history, config, rate limits, permissions) |
-| `codex/codex-rs/core/src/state/turn.rs` | 222 | TurnState (pending approvals, channels, tool_calls counter) |
-| `codex/codex-rs/core/src/context_manager/mod.rs` | -- | ContextManager (history management) |
+| `openai/codex/codex-rs/core/src/state/session.rs` | 241 | SessionState (history, config, rate limits, permissions) |
+| `openai/codex/codex-rs/core/src/state/turn.rs` | 222 | TurnState (pending approvals, channels, tool_calls counter) |
+| `openai/codex/codex-rs/core/src/context_manager/mod.rs` | -- | ContextManager (history management) |
 
 ### Gemini-CLI Source Files
 
 | File | Lines | Role |
 |------|-------|------|
-| `gemini-cli/packages/core/src/core/geminiChat.ts` | 249+ | GeminiChat class (history, systemInstruction, tools) |
-| `gemini-cli/packages/core/src/services/chatCompressionService.ts` | 233+ | ChatCompressionService (token-threshold compression) |
-| `gemini-cli/packages/core/src/services/loopDetectionService.ts` | 760 | LoopDetectionService (tool call, content, LLM-based detection) |
-| `gemini-cli/packages/core/src/agents/local-executor.ts` | 108+ | LocalAgentExecutor (executeTurn loop, owns compression+tools) |
+| `google/gemini-cli/packages/core/src/core/geminiChat.ts` | 249+ | GeminiChat class (history, systemInstruction, tools) |
+| `google/gemini-cli/packages/core/src/services/chatCompressionService.ts` | 233+ | ChatCompressionService (token-threshold compression) |
+| `google/gemini-cli/packages/core/src/services/loopDetectionService.ts` | 760 | LoopDetectionService (tool call, content, LLM-based detection) |
+| `google/gemini-cli/packages/core/src/agents/local-executor.ts` | 108+ | LocalAgentExecutor (executeTurn loop, owns compression+tools) |
 
 ### Plan Documents
 

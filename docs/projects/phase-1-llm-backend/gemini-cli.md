@@ -1,6 +1,6 @@
 # Phase 1: Gemini-CLI Changes -- LLM Backend
 
-**Draft v6 -- Revised with investigation findings**
+**v7 -- Revised with gap analysis**
 
 **Timeline:** Weeks 1-6 (7 days estimated)
 **Depends on:** [APXM Phase 1 (A0-A4)](apxm.md) -- specifically `apxm-server` binary with HTTP+SSE endpoints
@@ -104,7 +104,7 @@ Every operation Gemini-CLI performs today has a direct AIS equivalent. This mapp
 
 ## G1: TypeScript types for APXM events (1 day)
 
-**New file:** `gemini-cli/packages/core/src/core/apxm/types.ts`
+**New file:** `google/gemini-cli/packages/core/src/core/apxm/types.ts`
 
 **Option A (recommended):** Auto-generate from `apxm-server` schema endpoint:
 
@@ -157,7 +157,7 @@ Each payload interface mirrors the Rust `ApxmEvent` variant exactly. See v4 for 
 
 Two new files:
 
-### `gemini-cli/packages/core/src/core/apxm/client.ts` (~100 lines)
+### `google/gemini-cli/packages/core/src/core/apxm/client.ts` (~100 lines)
 
 `ApxmServiceClient` -- HTTP+SSE client for `apxm-server`:
 - `generateStream(request, signal?): AsyncGenerator<ApxmEvent>` -- POST to `/v1/generate-stream`, parse SSE `data:` lines
@@ -174,22 +174,40 @@ export interface ApxmGenerateRequest {
   tools?: Array<{ name: string; description: string; parameters: unknown }>;
   thinking_config?: { enabled: boolean; budget_tokens?: number };
   provider_config?: Record<string, unknown>;
+  trace_id?: string;  // propagated to EventMeta.trace_id on all response events
 }
 ```
 
-### `gemini-cli/packages/core/src/core/apxm/service-manager.ts` (~60 lines)
+The `generateStream` method sends `trace_id` in the request body (or sets `X-Trace-ID` header when using HTTP transport in Phase 4+). If not provided, the server generates a UUID v4.
+
+### `google/gemini-cli/packages/core/src/core/apxm/service-manager.ts` (~80 lines)
 
 `ApxmServiceManager` -- sidecar lifecycle management:
 - Discovers binary at `$APXM_HOME/bin/apxm-server` (default: `~/.apxm/bin/apxm-server`)
-- `start()` -- spawns process, waits for health check (10s timeout)
-- `stop()` -- kills process
+- `start()` -- spawns process, waits for health check (10s timeout, 500ms poll interval)
+- `stop()` -- sends SIGTERM, waits 5s, then SIGKILL if still alive
 - Port default: 9100
+
+#### Port conflict handling
+
+If port 9100 is in use:
+1. Check if existing process is a healthy `apxm-server` (GET `/v1/health`) -- if so, reuse it
+2. If not an `apxm-server` or unhealthy, try ports 9101-9109 in sequence
+3. If all ports exhausted, fall back to direct provider dispatch with warning
+
+#### Multi-instance coordination
+
+Multiple Gemini-CLI instances may start concurrently. To avoid race conditions:
+- Use a file lock at `~/.apxm/run/apxm-server.lock` before spawning
+- Lock holder writes `{ "pid": <pid>, "port": <port> }` to `~/.apxm/run/apxm-server.json`
+- Non-holders read the JSON and connect to the existing instance
+- On process exit, release lock and clean up JSON file
 
 ---
 
 ## G3: Event translator (pure function) (1 day)
 
-**New file:** `gemini-cli/packages/core/src/core/apxm/event-translator.ts` (~120 lines)
+**New file:** `google/gemini-cli/packages/core/src/core/apxm/event-translator.ts` (~120 lines)
 
 Pure function. No state. No buffering. Translates `ApxmEvent` --> `ServerGeminiStreamEvent`.
 
@@ -221,7 +239,7 @@ Unit-testable with all 18 `GeminiEventType` mappings covered.
 
 ## G4: Upgrade `ApxmContentGenerator` (2 days)
 
-**File:** `gemini-cli/packages/core/src/core/apxmContentGenerator.ts`
+**File:** `google/gemini-cli/packages/core/src/core/apxmContentGenerator.ts`
 
 **Strategy:** The existing `ApxmContentGenerator` class stays but its internals change:
 - **Remove (~400 lines):** `generateWithOpenAI()`, `generateWithAnthropic()`, `generateWithOllama()`, `generateWithGoogle()`, per-provider response/request interfaces, per-provider message/tool translators
@@ -257,7 +275,7 @@ async *generateContentStream(request, promptId, role): AsyncGenerator<GenerateCo
 **Module structure:**
 
 ```
-gemini-cli/packages/core/src/core/apxm/
+google/gemini-cli/packages/core/src/core/apxm/
   types.ts           -- ApxmEvent TypeScript types
   client.ts          -- ApxmServiceClient (SSE)
   service-manager.ts -- Sidecar process management
@@ -293,13 +311,13 @@ These Gemini-CLI systems are untouched in Phase 1:
 | Task | Days | New Files | Modified Files | New Lines | Deleted Lines |
 |------|------|-----------|----------------|-----------|---------------|
 | G1: TypeScript types | 1 | 1 | 0 | ~200 | 0 |
-| G2: SSE client + service manager | 1.5 | 2 | 0 | ~160 | 0 |
+| G2: SSE client + service manager | 1.5 | 2 | 0 | ~180 | 0 |
 | G3: Event translator | 1 | 1 | 0 | ~120 | 0 |
 | G4: Upgrade generator | 2 | 0 | 1 | ~100 | ~400 |
 | G5: Integration + tests | 1.5 | 1 | 1 | ~100 | 0 |
-| **Total** | **7** | **5** | **2** | **~680** | **~400** |
+| **Total** | **7** | **5** | **2** | **~700** | **~400** |
 
-**Net change:** +280 lines (680 added, 400 deleted from provider dispatch)
+**Net change:** +300 lines (700 added, 400 deleted from provider dispatch)
 
 ### Migration Timeline
 

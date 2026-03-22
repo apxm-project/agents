@@ -1,6 +1,6 @@
 # Phase 1: Codex Changes -- LLM Backend
 
-**Draft v6 -- Revised with investigation findings**
+**v7 -- Revised with gap analysis**
 
 **Timeline:** Weeks 1-6 (6.5 days estimated)
 **Depends on:** [APXM Phase 1 (A0-A4)](apxm.md) -- `apxm-events` crate with 33 event payloads, `apxm-backends` with `StreamAssembler` and 5 LLM backends
@@ -112,7 +112,7 @@ Every operation Codex performs today has a direct AIS equivalent. This mapping i
 
 ### C1.1 Workspace root
 
-**File:** `codex/codex-rs/Cargo.toml`
+**File:** `openai/codex/codex-rs/Cargo.toml`
 
 APXM crates consumed as **external git dependencies**, not relative paths:
 
@@ -123,11 +123,11 @@ apxm-backends = { git = "https://github.com/user/apxm", tag = "v0.1.0" }
 apxm-events   = { git = "https://github.com/user/apxm", tag = "v0.1.0" }
 ```
 
-The existing `apxm-core` dependency in `core/Cargo.toml` (currently `path = "../../../apxm/crates/apxm-core"`) is migrated to the workspace git dependency.
+The existing `apxm-core` dependency in `core/Cargo.toml` (currently `path = "../../../../apxm/crates/apxm-core"` when Codex lives at `openai/codex/`) is migrated to the workspace git dependency.
 
 ### C1.2 Core crate
 
-**File:** `codex/codex-rs/core/Cargo.toml`
+**File:** `openai/codex/codex-rs/core/Cargo.toml`
 
 New crates added as optional, feature-gated:
 
@@ -149,7 +149,7 @@ Feature-gated so existing builds are unaffected. The existing `apxm_provider_con
 
 ### C2.1 Event translator (pure function)
 
-**New file:** `codex/codex-rs/core/src/apxm_adapter/event_translator.rs`
+**New file:** `openai/codex/codex-rs/core/src/apxm_adapter/event_translator.rs`
 
 Pure function -- no state, no buffering. Translates `ApxmEvent` to Codex-compatible outputs:
 
@@ -193,15 +193,15 @@ pub enum CodexApxmEvent {
 
 ### C2.2 Request translator
 
-**New file:** `codex/codex-rs/core/src/apxm_adapter/request_translator.rs`
+**New file:** `openai/codex/codex-rs/core/src/apxm_adapter/request_translator.rs`
 
-Converts Codex `Prompt` to APXM `LLMRequest`:
+Converts Codex `Prompt` to APXM `LLMRequest`. Propagates the Codex turn ID as `trace_id` for cross-process event correlation:
 
 ```rust
 use apxm_backends::llm::LLMRequest;
 use crate::client_common::Prompt;
 
-pub fn prompt_to_llm_request(prompt: &Prompt, config: &ApxmTurnConfig) -> LLMRequest {
+pub fn prompt_to_llm_request(prompt: &Prompt, config: &ApxmTurnConfig, turn_id: &str) -> LLMRequest {
     LLMRequest {
         messages: items_to_messages(&prompt.input),
         model: config.model.clone(),
@@ -209,6 +209,7 @@ pub fn prompt_to_llm_request(prompt: &Prompt, config: &ApxmTurnConfig) -> LLMReq
         temperature: config.temperature,
         max_tokens: config.max_tokens,
         tools: tools_to_definitions(&prompt.tools),
+        trace_id: Some(turn_id.to_string()),
         // ... map remaining fields
     }
 }
@@ -218,7 +219,7 @@ pub fn prompt_to_llm_request(prompt: &Prompt, config: &ApxmTurnConfig) -> LLMReq
 
 ### C2.3 APXM LLM client
 
-**New file:** `codex/codex-rs/core/src/apxm_adapter/client.rs`
+**New file:** `openai/codex/codex-rs/core/src/apxm_adapter/client.rs`
 
 Wraps `LLMRegistry` for Codex's session model:
 
@@ -249,7 +250,7 @@ impl ApxmModelClient {
 
 ### C2.4 Module structure
 
-**New file:** `codex/codex-rs/core/src/apxm_adapter/mod.rs`
+**New file:** `openai/codex/codex-rs/core/src/apxm_adapter/mod.rs`
 
 ```rust
 mod client;
@@ -278,7 +279,7 @@ pub use request_translator::prompt_to_llm_request;
 
 ### C3.1 Wire into agent loop
 
-**File:** `codex/codex-rs/core/src/codex.rs` (7321 lines; `submission_loop()` at line ~4138)
+**File:** `openai/codex/codex-rs/core/src/codex.rs` (7321 lines; `submission_loop()` at line ~4138)
 
 Add feature-gated branch:
 
@@ -298,7 +299,7 @@ Add feature-gated branch:
 
 ### C3.2 Configuration
 
-**File:** `codex/codex-rs/core/src/config/types.rs`
+**File:** `openai/codex/codex-rs/core/src/config/types.rs`
 
 ```rust
 #[cfg(feature = "apxm-llm")]
@@ -334,6 +335,16 @@ match self.apxm_client.stream_turn(&prompt, &config).await {
 // Stage 3: Remove legacy
 self.apxm_client.stream_turn(&prompt, &config).await
 ```
+
+#### Divergence metric definition
+
+`compare_outputs()` measures divergence on three axes:
+
+1. **Token-level diff:** `|len(apxm_tokens) - len(legacy_tokens)| / len(legacy_tokens)` -- must be < 0.01 (1%)
+2. **Semantic equivalence:** Tool call names match AND argument keys match (values may differ due to LLM non-determinism)
+3. **Structural match:** Same number of tool calls in same order
+
+When divergence exceeds threshold, both outputs are logged at `WARN` level with the divergence ratio and a diff of tool call sequences for manual review. Shadow mode runs for 3-4 weeks before progressing to Stage 2.
 
 ### C3.4 Files modified
 

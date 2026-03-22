@@ -9,6 +9,7 @@ apxm-artifact = { path = "../apxm-artifact" }
 apxm-compiler = { path = "../apxm-compiler" }
 apxm-core = { path = "../apxm-core" }
 apxm-graph = { path = "../apxm-graph" }
+apxm-backends = { path = "../apxm-backends" }
 apxm-runtime = { path = "../apxm-runtime", features = ["metrics"] }
 
 anyhow = "1.0"
@@ -21,7 +22,8 @@ axum = { version = "0.7", features = ["json"] }
 futures = "0.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "sync", "signal"] }
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "sync", "signal", "time"] }
+tokio-stream = "0.1"
 tower = { version = "0.4", features = ["util"] }
 tower-http = { version = "0.6", features = ["cors", "trace", "request-id", "set-header"] }
 tracing = "0.1"

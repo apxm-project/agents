@@ -81,7 +81,7 @@ These represent in-flight coordination that only exists during active execution.
 
 ## 3. Gemini-CLI GeminiChat → AAM Field Mapping
 
-Source: `gemini-cli/packages/core/src/core/geminiChat.ts`, `local-executor.ts`
+Source: `google/gemini-cli/packages/core/src/core/geminiChat.ts`, `local-executor.ts`
 
 ### 3.1 Beliefs (B)
 

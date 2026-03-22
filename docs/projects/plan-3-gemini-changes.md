@@ -3,7 +3,7 @@
 **Author:** Architecture Team
 **Date:** 2026-03-20
 **Status:** Draft v6 -- Revised with investigation findings
-**Scope:** All changes needed inside `gemini-cli/` across all five phases of A-PXM adoption -- from LLM backend through tools, AAM state, agent loop as graph, and compiler integration
+**Scope:** All changes needed inside `google/gemini-cli/` across all five phases of A-PXM adoption -- from LLM backend through tools, AAM state, agent loop as graph, and compiler integration
 **Depends on:** Plan 1 (APXM Changes) -- specifically all APXM-side deliverables per phase
 **Does NOT depend on:** Plan 2 (Codex) -- these are independent
 
@@ -143,7 +143,7 @@ These Gemini-CLI systems are untouched in Phase 1:
 
 ### G1: TypeScript types for APXM events (1 day)
 
-**New file:** `gemini-cli/packages/core/src/core/apxm/types.ts`
+**New file:** `google/gemini-cli/packages/core/src/core/apxm/types.ts`
 
 **Option A (recommended):** Auto-generate from `apxm-server` schema endpoint:
 
@@ -194,7 +194,7 @@ Each payload interface mirrors the Rust `ApxmEvent` variant exactly. See v4 for 
 
 Two new files:
 
-**`gemini-cli/packages/core/src/core/apxm/client.ts`** (~100 lines)
+**`google/gemini-cli/packages/core/src/core/apxm/client.ts`** (~100 lines)
 
 `ApxmServiceClient` -- HTTP+SSE client for `apxm-server`:
 - `generateStream(request, signal?): AsyncGenerator<ApxmEvent>` -- POST to `/v1/generate-stream`, parse SSE `data:` lines
@@ -214,7 +214,7 @@ export interface ApxmGenerateRequest {
 }
 ```
 
-**`gemini-cli/packages/core/src/core/apxm/service-manager.ts`** (~60 lines)
+**`google/gemini-cli/packages/core/src/core/apxm/service-manager.ts`** (~60 lines)
 
 `ApxmServiceManager` -- sidecar lifecycle management:
 - Discovers binary at `$APXM_HOME/bin/apxm-server` (default: `~/.apxm/bin/apxm-server`)
@@ -224,7 +224,7 @@ export interface ApxmGenerateRequest {
 
 ### G3: Event translator (pure function) (1 day)
 
-**New file:** `gemini-cli/packages/core/src/core/apxm/event-translator.ts` (~120 lines)
+**New file:** `google/gemini-cli/packages/core/src/core/apxm/event-translator.ts` (~120 lines)
 
 Pure function. No state. No buffering. Translates `ApxmEvent` --> `ServerGeminiStreamEvent`.
 
@@ -254,7 +254,7 @@ Unit-testable with all 18 `GeminiEventType` mappings covered.
 
 ### G4: Upgrade `ApxmContentGenerator` (2 days)
 
-**File:** `gemini-cli/packages/core/src/core/apxmContentGenerator.ts`
+**File:** `google/gemini-cli/packages/core/src/core/apxmContentGenerator.ts`
 
 **Strategy:** The existing `ApxmContentGenerator` class stays but its internals change:
 - **Remove (~400 lines):** `generateWithOpenAI()`, `generateWithAnthropic()`, `generateWithOllama()`, `generateWithGoogle()`, per-provider response/request interfaces, per-provider message/tool translators
@@ -288,7 +288,7 @@ async *generateContentStream(request, promptId, role): AsyncGenerator<GenerateCo
 **Module structure:**
 
 ```
-gemini-cli/packages/core/src/core/apxm/
+google/gemini-cli/packages/core/src/core/apxm/
   types.ts           -- ApxmEvent TypeScript types
   client.ts          -- ApxmServiceClient (SSE)
   service-manager.ts -- Sidecar process management

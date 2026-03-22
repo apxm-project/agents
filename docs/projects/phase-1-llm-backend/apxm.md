@@ -1,6 +1,6 @@
 # Phase 1: APXM Changes -- LLM Backend
 
-**Draft v6 -- Revised with investigation findings**
+**v7 -- Revised with gap analysis**
 
 **Timeline:** Weeks 1-8 (11.5 days estimated)
 **Depends on:** Nothing (this is the foundation)
@@ -13,7 +13,7 @@
 
 ### Why This Comes First
 
-Current plans reference APXM crates via relative paths (`../../../apxm/crates/apxm-core`). This is fragile, non-portable, and assumes a specific monorepo directory layout. Both Codex and Gemini-CLI must be able to depend on APXM as an external package.
+Current plans reference APXM crates via relative paths (e.g. `../../../../apxm/crates/apxm-core` from `openai/codex/codex-rs/core`). This is fragile, non-portable, and assumes a specific monorepo directory layout. Both Codex and Gemini-CLI must be able to depend on APXM as an external package.
 
 ### A0.1 Version tagging
 
@@ -250,10 +250,30 @@ Supporting types: `ThoughtSummary`, `ToolCallInfo`, `TokenUsageInfo`, `CitationI
 
 ### A1.6 EventBus + EventEmitter (`emitter.rs`)
 
-- `EventBus` backed by `tokio::broadcast::channel`
+- `EventBus` backed by `tokio::broadcast::channel` with **configurable capacity** (default: 1024 events)
+- `EventBus::new()` uses default capacity; `EventBus::with_capacity(n)` allows tuning for high-throughput scenarios (Phase 4+ metrics, telemetry, scheduler)
 - `EventEmitter` trait: `fn emit(&self, event: ApxmEvent)`
-- `BusEmitter`: cloneable handle implementing `EventEmitter`
-- `FilteredReceiver`: wraps broadcast receiver with predicate
+- `BusEmitter`: cloneable handle implementing `EventEmitter`. Publisher never blocks -- `tokio::broadcast` guarantees this.
+- `FilteredReceiver`: wraps broadcast receiver with predicate. On `RecvError::Lagged(n)`, logs a warning with the number of skipped events and continues from current position. Events are not replayed.
+
+```rust
+pub struct EventBus {
+    tx: broadcast::Sender<ApxmEvent>,
+}
+
+impl EventBus {
+    pub fn new() -> Self { Self::with_capacity(1024) }
+    pub fn with_capacity(capacity: usize) -> Self {
+        let (tx, _) = broadcast::channel(capacity);
+        Self { tx }
+    }
+    pub fn emitter(&self) -> BusEmitter { BusEmitter { tx: self.tx.clone() } }
+    pub fn subscribe(&self) -> broadcast::Receiver<ApxmEvent> { self.tx.subscribe() }
+    pub fn filtered(&self, predicate: impl Fn(&ApxmEvent) -> bool + Send + 'static) -> FilteredReceiver {
+        FilteredReceiver::new(self.subscribe(), predicate)
+    }
+}
+```
 
 ### A1.7 Tests
 
@@ -282,15 +302,33 @@ Supporting types: `ThoughtSummary`, `ToolCallInfo`, `TokenUsageInfo`, `CitationI
 |------|--------|
 | `apxm/Cargo.toml` | Add `"crates/apxm-events"` to workspace members |
 
-### A1.10 Forward compatibility decisions
+### A1.10 Forward compatibility decisions and trace ID protocol
 
 | Decision | Why It Matters |
 |----------|---------------|
 | `#[non_exhaustive]` on `EventPayload` | New AIS operation events can be added without breaking consumer adapters |
-| `EventMeta` includes `trace_id` | Correlates events across process boundaries (Gemini-CLI -> apxm-server -> backend) |
-| `EventBus` uses `tokio::broadcast` | Multiple consumers (TUI, metrics, telemetry, scheduler) is the Phase 4+ normal case |
+| `EventMeta` includes `trace_id` | Correlates events across process boundaries (Gemini-CLI -> apxm-server -> backend). See trace ID propagation protocol below. |
+| `EventBus` uses `tokio::broadcast` | Multiple consumers (TUI, metrics, telemetry, scheduler) is the Phase 4+ normal case. Capacity-bounded (default 1024) with lagged-consumer handling. |
 | `StreamAssembler` is internal to `apxm-backends` | Can be replaced with a graph-aware assembler in Phase 4 without changing consumer APIs |
 | Runtime events share `EventPayload` enum | One vocabulary, one bus, one schema across all phases |
+
+#### Trace ID propagation protocol
+
+Trace IDs correlate events across process boundaries. The propagation chain:
+
+```
+Codex/Gemini-CLI (generates trace_id)
+  → LLMRequest.trace_id / X-Trace-ID header
+    → apxm-server (reads header, passes to generate_events)
+      → StreamAssembler (attaches to EventMeta)
+        → ApxmEvent.meta.trace_id (returned to consumer)
+```
+
+Rules:
+1. If `LLMRequest.trace_id` is `Some(id)`, use that as the trace ID for all events in the stream
+2. If `None`, `StreamAssembler` generates a UUID v4 at stream creation
+3. `apxm-server` reads the `X-Trace-ID` HTTP header and sets it as `LLMRequest.trace_id`
+4. Consumers are responsible for generating trace IDs at their boundary (Codex uses turn ID; Gemini-CLI uses a per-request UUID)
 
 ---
 
@@ -331,10 +369,21 @@ These new variants let backend implementors emit richer events. `StreamChunk` st
 Internal component that converts `StreamChunk` -> `ApxmEvent`:
 - Accumulates `ToolCallStart` + `ToolCallDelta` fragments -> emits single `ToolCallEvent` on `Done`
 - Assigns monotonic sequence numbers
-- Attaches `EventMeta` (trace ID, source, timestamp)
+- Attaches `EventMeta` (trace ID from `LLMRequest.trace_id` or generated UUID v4, source, timestamp)
 - Converts `LLMResponse` -> `LlmDoneEvent` with full type mapping
 
-~120 lines.
+#### Fragment assembly algorithm
+
+Tool calls arrive as fragmented deltas across multiple SSE chunks. The assembler maintains an `accumulators: HashMap<String, ToolCallAccumulator>` map:
+
+1. **`ToolCallStart { id, name }`** -- Creates a new accumulator entry keyed by `id`. If an entry already exists for this `id` (duplicate start), reset the accumulator and log a warning.
+2. **`ToolCallDelta { id, arguments_delta }`** -- Appends `arguments_delta` to the accumulator for `id`. If no accumulator exists for `id` (unknown delta), create an implicit accumulator with `name: ""` and log a warning.
+3. **`Done(LLMResponse)`** -- Flush all open accumulators: parse each accumulated `arguments` string as JSON, emit a `ToolCallEvent` for each, then emit `LlmDoneEvent`. Accumulators are cleared.
+4. **Timeout** -- If no `StreamChunk` arrives for 30 seconds, flush all accumulators with `partial: true` flag set on each `ToolCallEvent`, emit a `Warning` event with code `stream_timeout`, and close the stream.
+5. **Stream error** -- On stream error (backend disconnect, HTTP error), flush all accumulators with `partial: true`, emit an `Error` event, and propagate the error.
+6. **Malformed arguments** -- If accumulated arguments fail JSON parsing on flush, emit the `ToolCallEvent` with `arguments: serde_json::Value::String(raw)` (preserve raw string) and log a warning.
+
+~150 lines (increased from 120 to cover edge cases).
 
 ### A2.4 Add `LLMRegistry::generate_events()` method (NEW)
 
@@ -349,10 +398,21 @@ impl LLMRegistry {
         request: LLMRequest,
     ) -> Pin<Box<dyn Stream<Item = anyhow::Result<ApxmEvent>> + Send + '_>> {
         // 1. Resolve backend
-        // 2. Create StreamAssembler for that backend
+        // 2. Create StreamAssembler with trace_id from request.trace_id (or generate UUID v4)
         // 3. Call backend.generate_stream()
         // 4. flat_map each StreamChunk through assembler.process()
     }
+}
+```
+
+`LLMRequest` gains an optional `trace_id` field for cross-process correlation:
+
+```rust
+pub struct LLMRequest {
+    // ... existing fields ...
+    /// Optional trace ID for correlating events across process boundaries.
+    /// If None, StreamAssembler generates a UUID v4.
+    pub trace_id: Option<String>,
 }
 ```
 
@@ -412,6 +472,8 @@ No new code. No line count impact.
 
 **New file:** `apxm-backends/src/llm/backends/openai/responses.rs`
 
+> **Scope decision:** A2.8 is in Phase 1 scope but **sequenced after A2.5** (Chat Completions streaming). Chat Completions streaming is sufficient for Phase 1 MVP. If the Responses API shape proves incorrect during implementation, A2.8 can be deferred to Phase 2 without blocking Phase 1 completion.
+
 Codex uses OpenAI's Responses API (POST /v1/responses), NOT Chat Completions. Key differences:
 - Items format instead of messages
 - Stateful via `previous_response_id`
@@ -450,7 +512,7 @@ When retrying requests (429, 5xx):
 |------|--------|-------------|
 | `apxm-backends/Cargo.toml` | Modified (add apxm-events dep) | +1 |
 | `apxm-backends/src/llm/backends/traits.rs` | Modified (3 new StreamChunk variants) | +10 |
-| `apxm-backends/src/llm/assembler.rs` | **NEW** | ~120 |
+| `apxm-backends/src/llm/assembler.rs` | **NEW** (fragment assembly algorithm + edge cases) | ~150 |
 | `apxm-backends/src/llm/registry.rs` | Modified (generate_events, retry) | +80 |
 | `apxm-backends/src/llm/backends/openai/backend.rs` | Modified (real streaming) | +200 |
 | `apxm-backends/src/llm/backends/openai/responses.rs` | **NEW** (Responses API) | ~600 |
@@ -513,6 +575,11 @@ anyhow = "1.0"
 The wire format IS `ApxmEvent` serialized as JSON. No separate spec needed.
 
 **Request format** (POST /v1/generate-stream):
+
+Headers:
+- `Content-Type: application/json`
+- `X-Trace-ID: <uuid>` (optional) -- propagated to `EventMeta.trace_id` on all response events. If omitted, server generates a UUID v4.
+
 ```json
 {
   "messages": [...],
@@ -529,14 +596,31 @@ The wire format IS `ApxmEvent` serialized as JSON. No separate spec needed.
 **Response format** (SSE):
 ```
 event: apxm
-data: {"meta":{...},"payload":{"kind":"token","text":"Hello"}}
+data: {"meta":{"seq":1,"timestamp":"...","trace_id":"abc-123","source":{"component":"apxm-server"}},"payload":{"kind":"token","text":"Hello"}}
 
 event: apxm
-data: {"meta":{...},"payload":{"kind":"tool_call","id":"...","name":"...","arguments":{...}}}
+data: {"meta":{"seq":2,...},"payload":{"kind":"tool_call","id":"...","name":"...","arguments":{...}}}
 
 event: apxm
-data: {"meta":{...},"payload":{"kind":"llm_done",...}}
+data: {"meta":{"seq":3,...},"payload":{"kind":"llm_done",...}}
 ```
+
+**Error format** (SSE):
+```
+event: error
+data: {"code":"backend_error","message":"Anthropic API returned 500: Internal Server Error"}
+```
+
+#### SSE error semantics
+
+| Condition | Behavior |
+|-----------|----------|
+| Backend returns HTTP error before stream starts | Return HTTP error response (not SSE) |
+| Backend error mid-stream | Emit `event: error` with code and message, then close stream |
+| Stream timeout (no event for 60s) | Emit `event: error` with code `stream_timeout`, then close stream |
+| Malformed chunk from backend | Log warning, skip chunk, continue stream. Emit `event: apxm` with `Warning` payload. |
+| Client disconnects | Server detects via TCP keepalive, cancels backend request, cleans up resources |
+| Server shutdown during stream | Emit `event: error` with code `server_shutdown`, then close stream |
 
 ### A3.3 Key routes
 

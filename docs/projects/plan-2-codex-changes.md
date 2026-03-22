@@ -3,7 +3,7 @@
 **Author:** Architecture Team
 **Date:** 2026-03-20
 **Status:** Draft v6 -- Revised with investigation findings
-**Scope:** All changes needed inside `codex/codex-rs/` across all five adoption phases -- from LLM backend swap through tool migration, AAM state model, agent loop as graph, and compiler integration
+**Scope:** All changes needed inside `openai/codex/codex-rs/` across all five adoption phases -- from LLM backend swap through tool migration, AAM state model, agent loop as graph, and compiler integration
 **Depends on:** Plan 1 (APXM Changes) -- each phase depends on the corresponding Plan 1 deliverables
 **Does NOT depend on:** Plan 3 (Gemini-CLI) -- these are independent
 
@@ -136,7 +136,7 @@ Every operation Codex performs today has a direct AIS equivalent. This mapping i
 
 #### C1.1 Workspace root
 
-**File:** `codex/codex-rs/Cargo.toml`
+**File:** `openai/codex/codex-rs/Cargo.toml`
 
 APXM crates consumed as **external git dependencies**, not relative paths:
 
@@ -147,11 +147,11 @@ apxm-backends = { git = "https://github.com/user/apxm", tag = "v0.1.0" }
 apxm-events   = { git = "https://github.com/user/apxm", tag = "v0.1.0" }
 ```
 
-The existing `apxm-core` dependency in `core/Cargo.toml` (currently `path = "../../../apxm/crates/apxm-core"`) is migrated to the workspace git dependency.
+The existing `apxm-core` dependency in `core/Cargo.toml` (currently `path = "../../../../apxm/crates/apxm-core"` when Codex lives at `openai/codex/`) is migrated to the workspace git dependency.
 
 #### C1.2 Core crate
 
-**File:** `codex/codex-rs/core/Cargo.toml`
+**File:** `openai/codex/codex-rs/core/Cargo.toml`
 
 New crates added as optional, feature-gated:
 
@@ -171,7 +171,7 @@ Feature-gated so existing builds are unaffected. The existing `apxm_provider_con
 
 #### C2.1 Event translator (pure function)
 
-**New file:** `codex/codex-rs/core/src/apxm_adapter/event_translator.rs`
+**New file:** `openai/codex/codex-rs/core/src/apxm_adapter/event_translator.rs`
 
 Pure function -- no state, no buffering. Translates `ApxmEvent` to Codex-compatible outputs:
 
@@ -215,7 +215,7 @@ pub enum CodexApxmEvent {
 
 #### C2.2 Request translator
 
-**New file:** `codex/codex-rs/core/src/apxm_adapter/request_translator.rs`
+**New file:** `openai/codex/codex-rs/core/src/apxm_adapter/request_translator.rs`
 
 Converts Codex `Prompt` to APXM `LLMRequest`:
 
@@ -240,7 +240,7 @@ pub fn prompt_to_llm_request(prompt: &Prompt, config: &ApxmTurnConfig) -> LLMReq
 
 #### C2.3 APXM LLM client
 
-**New file:** `codex/codex-rs/core/src/apxm_adapter/client.rs`
+**New file:** `openai/codex/codex-rs/core/src/apxm_adapter/client.rs`
 
 Wraps `LLMRegistry` for Codex's session model:
 
@@ -271,7 +271,7 @@ impl ApxmModelClient {
 
 #### C2.4 Module structure
 
-**New file:** `codex/codex-rs/core/src/apxm_adapter/mod.rs`
+**New file:** `openai/codex/codex-rs/core/src/apxm_adapter/mod.rs`
 
 ```rust
 mod client;
@@ -298,7 +298,7 @@ pub use request_translator::prompt_to_llm_request;
 
 #### C3.1 Wire into agent loop
 
-**File:** `codex/codex-rs/core/src/codex.rs` (at `submission_loop()`, line ~4138)
+**File:** `openai/codex/codex-rs/core/src/codex.rs` (at `submission_loop()`, line ~4138)
 
 Add feature-gated branch:
 
@@ -318,7 +318,7 @@ Add feature-gated branch:
 
 #### C3.2 Configuration
 
-**File:** `codex/codex-rs/core/src/config/types.rs`
+**File:** `openai/codex/codex-rs/core/src/config/types.rs`
 
 ```rust
 #[cfg(feature = "apxm-llm")]

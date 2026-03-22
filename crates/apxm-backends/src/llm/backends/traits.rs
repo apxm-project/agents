@@ -1,7 +1,7 @@
 //! Core LLMBackend trait defining the unified interface.
 
 use super::{LLMRequest, LLMResponse};
-use apxm_core::types::{ModelCapabilities, ModelInfo};
+use apxm_core::types::{ModelCapabilities, ModelInfo, TokenUsage};
 use async_trait::async_trait;
 use serde_json::Value;
 use std::pin::Pin;
@@ -18,6 +18,12 @@ pub enum StreamChunk {
     ToolCallDelta { id: String, arguments_delta: String },
     /// Final response (streaming complete).
     Done(LLMResponse),
+    /// Extended thinking / reasoning token from the model.
+    Thought(String),
+    /// Incremental token usage update.
+    Usage(TokenUsage),
+    /// Stream-level error (non-fatal; the stream may continue or end).
+    Error(String),
 }
 
 /// Core trait that all LLM backends must implement.
@@ -64,5 +70,96 @@ pub trait LLMBackend: Send + Sync {
             "model": self.model(),
             "capabilities": serde_json::to_value(self.capabilities()).unwrap_or(Value::Null),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use apxm_core::types::{FinishReason, LLMResponse, TokenUsage};
+
+    #[test]
+    fn test_stream_chunk_token() {
+        let chunk = StreamChunk::Token("hello".into());
+        assert!(matches!(chunk, StreamChunk::Token(ref t) if t == "hello"));
+    }
+
+    #[test]
+    fn test_stream_chunk_thought() {
+        let chunk = StreamChunk::Thought("reasoning step".into());
+        assert!(matches!(chunk, StreamChunk::Thought(ref t) if t == "reasoning step"));
+    }
+
+    #[test]
+    fn test_stream_chunk_usage() {
+        let usage = TokenUsage::new(50, 100);
+        let chunk = StreamChunk::Usage(usage.clone());
+        if let StreamChunk::Usage(u) = chunk {
+            assert_eq!(u.input_tokens, 50);
+            assert_eq!(u.output_tokens, 100);
+        } else {
+            panic!("Expected Usage variant");
+        }
+    }
+
+    #[test]
+    fn test_stream_chunk_error() {
+        let chunk = StreamChunk::Error("connection lost".into());
+        assert!(matches!(chunk, StreamChunk::Error(ref e) if e == "connection lost"));
+    }
+
+    #[test]
+    fn test_stream_chunk_done() {
+        let resp = LLMResponse::new(
+            "content",
+            "model",
+            TokenUsage::new(10, 20),
+            FinishReason::Stop,
+        );
+        let chunk = StreamChunk::Done(resp);
+        if let StreamChunk::Done(r) = chunk {
+            assert_eq!(r.content, "content");
+        } else {
+            panic!("Expected Done variant");
+        }
+    }
+
+    #[test]
+    fn test_stream_chunk_tool_call_start() {
+        let chunk = StreamChunk::ToolCallStart {
+            id: "call_1".into(),
+            name: "bash".into(),
+        };
+        if let StreamChunk::ToolCallStart { id, name } = chunk {
+            assert_eq!(id, "call_1");
+            assert_eq!(name, "bash");
+        } else {
+            panic!("Expected ToolCallStart variant");
+        }
+    }
+
+    #[test]
+    fn test_stream_chunk_tool_call_delta() {
+        let chunk = StreamChunk::ToolCallDelta {
+            id: "call_1".into(),
+            arguments_delta: r#"{"key":"#.into(),
+        };
+        if let StreamChunk::ToolCallDelta {
+            id,
+            arguments_delta,
+        } = chunk
+        {
+            assert_eq!(id, "call_1");
+            assert_eq!(arguments_delta, r#"{"key":"#);
+        } else {
+            panic!("Expected ToolCallDelta variant");
+        }
+    }
+
+    #[test]
+    fn test_stream_chunk_clone() {
+        let chunk = StreamChunk::Thought("test".into());
+        let cloned = chunk.clone();
+        assert!(matches!(cloned, StreamChunk::Thought(ref t) if t == "test"));
     }
 }

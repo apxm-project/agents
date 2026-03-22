@@ -4,14 +4,18 @@
 //! This file updates the default model and the set of models returned by
 //! `list_models()` to include newer Claude model identifiers.
 
+use crate::llm::backends::traits::StreamChunk;
 use crate::llm::backends::{ContentPart, LLMBackend, LLMRequest, LLMResponse, Role, ToolChoice};
 use anyhow::{Context, Result};
 use apxm_core::constants::graph::attrs::{BASE_URL, MODEL};
 use apxm_core::log_debug;
 use apxm_core::types::{FinishReason, ModelCapabilities, ModelInfo, TokenUsage, ToolCall};
 use async_trait::async_trait;
+use futures::StreamExt as _;
 use serde::Deserialize;
 use serde_json::json;
+use std::pin::Pin;
+use tokio_stream::Stream;
 
 const DEFAULT_BASE_URL: &str = "https://api.anthropic.com/v1";
 const DEFAULT_MODEL: &str = "claude-opus-4";
@@ -250,6 +254,221 @@ impl LLMBackend for AnthropicBackend {
             .context("Failed to parse Anthropic response")?;
 
         self.parse_response(api_response, &model)
+    }
+
+    fn generate_stream(
+        &self,
+        request: LLMRequest,
+    ) -> Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send + '_>> {
+        Box::pin(async_stream::try_stream! {
+            request.validate()?;
+            let model = self.request_model(&request).to_string();
+            let mut body = self.build_request_body(&request);
+            body["stream"] = json!(true);
+
+            let url = format!("{}/messages", self.base_url);
+
+            log_debug!(
+                "models::anthropic",
+                model = %model,
+                url = %url,
+                "Sending streaming request to Anthropic"
+            );
+
+            let response = self.client
+                .post(&url)
+                .header("x-api-key", &self.api_key)
+                .header("anthropic-version", ANTHROPIC_VERSION)
+                .header("Content-Type", "application/json")
+                .json(&body)
+                .send()
+                .await
+                .context("Failed to send streaming request to Anthropic")?
+                .error_for_status()
+                .map_err(|e| anyhow::anyhow!("Anthropic API error: {}", e))?;
+
+            let mut stream = response.bytes_stream();
+            let mut buffer = String::new();
+            let mut full_content = String::new();
+            let mut tool_calls: Vec<ToolCall> = Vec::new();
+            let mut input_tokens: usize = 0;
+            let mut output_tokens: usize = 0;
+
+            // Track current content block for tool_use accumulation.
+            let mut current_tool_id = String::new();
+            let mut current_tool_name = String::new();
+            let mut current_tool_input = String::new();
+
+            while let Some(chunk_result) = stream.next().await {
+                let chunk = chunk_result.context("Stream read error")?;
+                buffer.push_str(&String::from_utf8_lossy(&chunk));
+
+                // Process SSE lines.  Anthropic sends:
+                //   event: <type>\n
+                //   data: <json>\n\n
+                while let Some(double_newline) = buffer.find("\n\n") {
+                    let block = buffer[..double_newline].to_string();
+                    buffer = buffer[double_newline + 2..].to_string();
+
+                    let mut event_type = String::new();
+                    let mut data_str = String::new();
+
+                    for line in block.lines() {
+                        if let Some(et) = line.strip_prefix("event: ") {
+                            event_type = et.trim().to_string();
+                        } else if let Some(d) = line.strip_prefix("data: ") {
+                            data_str = d.trim().to_string();
+                        }
+                    }
+
+                    if data_str.is_empty() {
+                        continue;
+                    }
+
+                    let parsed: serde_json::Value = match serde_json::from_str(&data_str) {
+                        Ok(v) => v,
+                        Err(_) => continue,
+                    };
+
+                    match event_type.as_str() {
+                        "message_start" => {
+                            // Extract usage from message.usage.
+                            if let Some(usage) = parsed["message"]["usage"].as_object() {
+                                input_tokens = usage.get("input_tokens")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0) as usize;
+                            }
+                        }
+                        "content_block_start" => {
+                            let block = &parsed["content_block"];
+                            let block_type = block["type"].as_str().unwrap_or("");
+                            if block_type == "tool_use" {
+                                current_tool_id = block["id"].as_str().unwrap_or("").to_string();
+                                current_tool_name = block["name"].as_str().unwrap_or("").to_string();
+                                current_tool_input.clear();
+                                yield StreamChunk::ToolCallStart {
+                                    id: current_tool_id.clone(),
+                                    name: current_tool_name.clone(),
+                                };
+                            }
+                            // "thinking" blocks emit Thought chunks.
+                            if block_type == "thinking" {
+                                if let Some(text) = block["thinking"].as_str() {
+                                    if !text.is_empty() {
+                                        yield StreamChunk::Thought(text.to_string());
+                                    }
+                                }
+                            }
+                        }
+                        "content_block_delta" => {
+                            let delta = &parsed["delta"];
+                            let delta_type = delta["type"].as_str().unwrap_or("");
+                            match delta_type {
+                                "text_delta" => {
+                                    if let Some(text) = delta["text"].as_str() {
+                                        if !text.is_empty() {
+                                            full_content.push_str(text);
+                                            yield StreamChunk::Token(text.to_string());
+                                        }
+                                    }
+                                }
+                                "input_json_delta" => {
+                                    if let Some(partial) = delta["partial_json"].as_str() {
+                                        if !partial.is_empty() {
+                                            current_tool_input.push_str(partial);
+                                            yield StreamChunk::ToolCallDelta {
+                                                id: current_tool_id.clone(),
+                                                arguments_delta: partial.to_string(),
+                                            };
+                                        }
+                                    }
+                                }
+                                "thinking_delta" => {
+                                    if let Some(text) = delta["thinking"].as_str() {
+                                        if !text.is_empty() {
+                                            yield StreamChunk::Thought(text.to_string());
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        "content_block_stop" => {
+                            // If we were accumulating a tool call, finalize it.
+                            if !current_tool_id.is_empty() {
+                                let args: serde_json::Value = serde_json::from_str(&current_tool_input)
+                                    .unwrap_or(json!({}));
+                                tool_calls.push(ToolCall::new(
+                                    current_tool_id.clone(),
+                                    current_tool_name.clone(),
+                                    args,
+                                ));
+                                current_tool_id.clear();
+                                current_tool_name.clear();
+                                current_tool_input.clear();
+                            }
+                        }
+                        "message_delta" => {
+                            // Extract output token count.
+                            if let Some(usage) = parsed["usage"].as_object() {
+                                output_tokens = usage.get("output_tokens")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0) as usize;
+                            }
+                        }
+                        "message_stop" => {
+                            // Final response.
+                            let finish_reason = if !tool_calls.is_empty() {
+                                FinishReason::ToolUse
+                            } else {
+                                FinishReason::Stop
+                            };
+
+                            let usage = TokenUsage::new(input_tokens, output_tokens);
+                            if input_tokens > 0 || output_tokens > 0 {
+                                yield StreamChunk::Usage(usage.clone());
+                            }
+
+                            let resp = LLMResponse::new(
+                                full_content.clone(),
+                                &model,
+                                usage,
+                                finish_reason,
+                            ).with_tool_calls(tool_calls.clone());
+
+                            yield StreamChunk::Done(resp);
+                            return;
+                        }
+                        "error" => {
+                            let msg = parsed["error"]["message"]
+                                .as_str()
+                                .unwrap_or("Unknown streaming error")
+                                .to_string();
+                            yield StreamChunk::Error(msg);
+                        }
+                        // ping and other events are ignored.
+                        _ => {}
+                    }
+                }
+            }
+
+            // Stream ended without message_stop -- emit what we have.
+            let finish_reason = if !tool_calls.is_empty() {
+                FinishReason::ToolUse
+            } else {
+                FinishReason::Stop
+            };
+
+            let usage = TokenUsage::new(input_tokens, output_tokens);
+            let resp = LLMResponse::new(
+                full_content,
+                &model,
+                usage,
+                finish_reason,
+            ).with_tool_calls(tool_calls);
+
+            yield StreamChunk::Done(resp);
+        })
     }
 
     fn name(&self) -> &str {

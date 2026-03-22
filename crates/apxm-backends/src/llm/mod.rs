@@ -12,6 +12,7 @@
 //! - **DRY**: No duplication across providers
 //! - **Type-safe**: Leverages Rust's type system
 
+pub mod assembler;
 pub mod backends;
 #[cfg(feature = "metrics")]
 pub mod observability;
@@ -137,6 +138,7 @@ pub mod retry;
 pub mod schema;
 
 // Re-export key public API types
+pub use assembler::{AssembledEvent, AssembledToolCall, StreamAssembler};
 pub use backends::{
     AnthropicModel, BackendFactory, ContentPart, FunctionCall, GenerationConfig, GoogleModel,
     LLMBackend, LLMRequest, LLMResponse, Message, OllamaModel, OpenAIModel, RequestBuilder, Role,

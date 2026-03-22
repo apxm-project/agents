@@ -36,7 +36,7 @@ But the compiler requires the runtime, the runtime requires the AAM, and the AAM
 
 ## APXM as External Dependency (NOT Relative Paths)
 
-**Problem:** Current plans reference APXM crates via relative paths (`../../../apxm/crates/apxm-core`). This is fragile, non-portable, and assumes a specific directory layout.
+**Problem:** Current plans reference APXM crates via relative paths (e.g. `../../../../apxm/crates/apxm-core` from `openai/codex/codex-rs/core`). This is fragile, non-portable, and assumes a specific directory layout.
 
 **Solution:** APXM must be installable as a proper external dependency. Both Codex and Gemini-CLI must auto-install it.
 

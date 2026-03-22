@@ -148,6 +148,7 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "apxm-core",
+ "async-stream",
  "async-trait",
  "chrono",
  "dashmap",
@@ -279,6 +280,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "apxm-events"
+version = "0.0.1"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "apxm-graph"
 version = "0.0.1"
 dependencies = [
@@ -325,6 +337,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "apxm-artifact",
+ "apxm-backends",
  "apxm-compiler",
  "apxm-core",
  "apxm-graph",
@@ -339,6 +352,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tokio-stream",
  "tower 0.4.13",
  "tower-http",
  "tracing",

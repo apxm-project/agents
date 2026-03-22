@@ -1,6 +1,6 @@
 # Phase 1 Investigation: LLM Backend -- Source Code Cross-Reference
 
-**Date:** 2026-03-20
+**Date:** 2026-03-20 (gap analysis added 2026-03-22)
 **Scope:** APXM (A0-A4), Codex (C1-C4), Gemini-CLI (G1-G5) plan claims vs source code
 
 ---
@@ -30,7 +30,7 @@
 | OpenAI | NO (uses default `Done` wrapper) | Plan correctly identifies this needs implementation (A2.5) |
 | Anthropic | NO (uses default `Done` wrapper) | Plan correctly identifies this (A2.6) |
 | Google | NO (uses default `Done` wrapper) | Plan correctly identifies this (A2.7) |
-| Ollama | NO (uses default `Done` wrapper) | Not addressed in plan |
+| Ollama | NO (uses default `Done` wrapper) | Explicitly deferred in plan (A2.7b); uses `Done`-wrapper fallback in Phase 1 |
 | Mock | YES (word-level token streaming, line 270) | Only mock has real streaming |
 
 #### ExecutionEvent variants
@@ -68,12 +68,12 @@
 
 | Claim | Status | Evidence |
 |-------|--------|----------|
-| `apxm_provider_config.rs` exists | VERIFIED | `$HOME/projects/agents/codex/codex-rs/core/src/apxm_provider_config.rs` (336 lines) |
+| `apxm_provider_config.rs` exists | VERIFIED | `$HOME/projects/agents/openai/codex/codex-rs/core/src/apxm_provider_config.rs` (336 lines) |
 | File loads APXM backend configs | VERIFIED | Imports `ApxmLlmControlPlane`, `ResolvedApxmBackendConfig` from `apxm_core`, loads from `~/.apxm/config.toml` |
 | Line count: plan says 337 | VERIFIED | Actual: 336 lines (off by 1 -- trivially close) |
 | `submission_loop()` exists at line ~4138 | VERIFIED | `codex.rs:4138` -- `async fn submission_loop(sess: Arc<Session>, config: Arc<Config>, rx_sub: Receiver<Submission>)` |
 | `codex.rs` size: plan says ~5400 | **DISCREPANCY** | Actual: 7321 lines (36% larger than claimed) |
-| apxm-core dependency via relative path | VERIFIED | `core/Cargo.toml:21` -- `apxm-core = { path = "../../../apxm/crates/apxm-core" }` (not workspace git dep) |
+| apxm-core dependency via relative path | VERIFIED | `core/Cargo.toml:21` -- `apxm-core = { path = "../../../../apxm/crates/apxm-core" }` (not workspace git dep; path from `openai/codex/codex-rs/core`) |
 | No workspace-level APXM dependency | VERIFIED | `codex-rs/Cargo.toml` has no `apxm` references |
 | `ResponseEvent` enum (plan says 12 variants) | VERIFIED | `codex-api/src/common.rs:66-95` -- 12 variants: `Created`, `OutputItemDone`, `OutputItemAdded`, `ServerModel`, `ServerReasoningIncluded`, `Completed`, `OutputTextDelta`, `ReasoningSummaryDelta`, `ReasoningContentDelta`, `ReasoningSummaryPartAdded`, `RateLimits`, `ModelsEtag` |
 | `client.rs` size: plan says ~800 | **DISCREPANCY** | Actual: 1823 lines (2.3x larger) |
@@ -105,7 +105,7 @@ The 21 listed handlers all match actual file names and struct names exactly.
 
 | Claim | Status | Evidence |
 |-------|--------|----------|
-| `ApxmContentGenerator` exists | VERIFIED | `$HOME/projects/agents/gemini-cli/packages/core/src/core/apxmContentGenerator.ts` |
+| `ApxmContentGenerator` exists | VERIFIED | `$HOME/projects/agents/google/gemini-cli/packages/core/src/core/apxmContentGenerator.ts` |
 | File size: plan says 954 | VERIFIED | Actual: 953 lines (off by 1) |
 | Has `generateWithOpenAI`, `generateWithAnthropic`, `generateWithOllama`, `generateWithGoogle` | VERIFIED | Lines 691, 763, 826, 676 respectively |
 | `executeTurn()` at line 316 of `local-executor.ts` | VERIFIED | `local-executor.ts:316` -- `private async executeTurn(` |
@@ -182,17 +182,17 @@ These tests verify the contract between APXM and its consumers:
 |------|-----------------|----------|
 | **CT-1: `StreamChunk` serde round-trip** | All 7 StreamChunk variants (4 existing + 3 new) serialize/deserialize correctly | `apxm-backends/tests/` |
 | **CT-2: `ApxmEvent` serde round-trip** | All 33 EventPayload variants round-trip through JSON | `apxm-events/tests/` |
-| **CT-3: `LLMRequest` schema completeness** | `LLMRequest` carries all fields needed by consumers (model, backend, temperature, max_tokens, tools, thinking_config) | `apxm-backends/tests/` |
+| **CT-3: `LLMRequest` schema completeness** | `LLMRequest` carries all fields needed by consumers (model, backend, temperature, max_tokens, tools, thinking_config, trace_id) | `apxm-backends/tests/` |
 | **CT-4: `LLMResponse` -> `LlmDoneEvent` mapping** | `StreamAssembler` correctly converts `LLMResponse` fields to `LlmDoneEvent` (content, model, finish_reason, usage, tool_calls, thinking) | `apxm-backends/tests/` |
-| **CT-5: SSE wire format** | `apxm-llm-service` SSE output matches `event: apxm\ndata: {json}\n\n` format exactly | `apxm-llm-service/tests/` |
+| **CT-5: SSE wire format** | `apxm-server` SSE output matches `event: apxm\ndata: {json}\n\n` format exactly | `apxm-server/tests/` |
 | **CT-6: `ExecutionEvent` -> `EventPayload` bridge** | All 16 `ExecutionEventEmitter` methods produce correct `EventPayload` variants through `EventBusEmitter` | `apxm-runtime/tests/` |
 
 #### Consumer -> APXM Contract
 
 | Test | What It Verifies | Location |
 |------|-----------------|----------|
-| **CT-7: Codex `Prompt` -> `LLMRequest`** | All `Prompt` fields map to `LLMRequest` fields without data loss (messages, tools, model, temperature) | `codex-rs/core/tests/` |
-| **CT-8: Gemini `GenerateContentParameters` -> `ApxmGenerateRequest`** | Gemini SDK request format converts correctly to APXM request format | `gemini-cli/packages/core/tests/` |
+| **CT-7: Codex `Prompt` -> `LLMRequest`** | All `Prompt` fields map to `LLMRequest` fields without data loss (messages, tools, model, temperature), including `trace_id` propagation | `codex-rs/core/tests/` |
+| **CT-8: Gemini `GenerateContentParameters` -> `ApxmGenerateRequest`** | Gemini SDK request format converts correctly to APXM request format | `google/gemini-cli/packages/core/tests/` |
 | **CT-9: Feature gate isolation** | `cargo build -p codex-core` (without `apxm-llm` feature) compiles with no APXM-related code | `codex-rs/` CI |
 
 ### 3.2 Phase 1 Integration Tests (End-to-End within Phase)
@@ -203,18 +203,18 @@ These tests verify the contract between APXM and its consumers:
 | **IT-2: Codex APXM adapter round-trip** | `Prompt` -> `ApxmModelClient.stream_turn()` -> `CodexApxmEvent` stream -> `ServerNotification` | MockBackend in LLMRegistry |
 | **IT-3: Gemini-CLI event translation** | `ApxmEvent` JSON -> `toGeminiEvent()` -> `ServerGeminiStreamEvent` for all 18 `GeminiEventType` values | Pure function, no mocks needed |
 | **IT-4: Gemini-CLI SSE client** | `ApxmServiceClient.generateStream()` correctly parses multi-line SSE stream with all event types | Mock HTTP server |
-| **IT-5: `apxm-llm-service` health + stream** | Start service, health check, POST generate-stream, verify SSE events arrive | In-process axum test server |
+| **IT-5: `apxm-server` health + stream** | Start service, health check, POST generate-stream, verify SSE events arrive | In-process axum test server |
 | **IT-6: Codex shadow mode** | Run both legacy and APXM paths, compare `ServerNotification` sequences for divergence < 1% | Real API keys (E2E) |
 | **IT-7: Retry event surfacing** | 429 response -> `RetryEvent` -> Codex `ThreadStatusChanged` / Gemini `GeminiEventType.Retry` | Mock HTTP returning 429 then 200 |
 | **IT-8: Tool call assembly** | Multi-fragment `ToolCallStart` + N x `ToolCallDelta` + `Done` -> single `ToolCallEvent` with complete args | MockBackend with fragmented tool calls |
-| **IT-9: Graceful degradation** | Gemini-CLI falls back to direct provider dispatch when `apxm-llm-service` is unavailable | Kill sidecar process |
+| **IT-9: Graceful degradation** | Gemini-CLI falls back to direct provider dispatch when `apxm-server` is unavailable | Kill sidecar process |
 
 ### 3.3 Mock/Stub Boundaries
 
 | Boundary | What to Mock | Why |
 |----------|-------------|-----|
 | **LLM Provider APIs** | HTTP responses from OpenAI/Anthropic/Google | Avoid live API calls in CI; deterministic SSE stream |
-| **`apxm-llm-service` process** | In-process axum test server | Avoid spawning a separate process in unit tests |
+| **`apxm-server` process** | In-process axum test server | Avoid spawning a separate process in unit tests |
 | **Codex `ModelClient`** | Mock that returns known `ResponseEvent` sequences | Needed for shadow mode comparison |
 | **Gemini-CLI `ContentGenerator`** | Mock that returns known `GenerateContentResponse` sequences | Needed for fallback testing |
 | **File system (`~/.apxm/`)** | Temp directory with test configs | Avoid polluting real user config |
@@ -234,7 +234,7 @@ apxm/crates/apxm-backends/tests/
   retry.rs                 -- IT-7 (APXM side)
   generate_events.rs       -- IT-1
 
-apxm/crates/apxm-llm-service/tests/
+apxm/crates/apxm-server/tests/
   sse_wire_format.rs       -- CT-5
   health_endpoint.rs       -- IT-5
   stream_endpoint.rs       -- IT-5
@@ -242,14 +242,14 @@ apxm/crates/apxm-llm-service/tests/
 apxm/crates/apxm-runtime/tests/
   event_bridge.rs          -- CT-6
 
-codex/codex-rs/core/tests/
+openai/codex/codex-rs/core/tests/
   apxm_adapter/
     event_translator.rs    -- CT-7
     request_translator.rs  -- CT-7
     client.rs              -- IT-2
     notification_bridge.rs -- IT-7 (Codex side)
 
-gemini-cli/packages/core/src/core/apxm/
+google/gemini-cli/packages/core/src/core/apxm/
   __tests__/
     types.test.ts          -- type validation
     event-translator.test.ts -- IT-3
@@ -293,8 +293,77 @@ gemini-cli/packages/core/src/core/apxm/
 
 2. **Ship `apxm-events` LLM layer first** -- The 33-variant `EventPayload` enum can be staged: ship the 9 LLM variants first to unblock Codex and Gemini-CLI, then add runtime (16) and session (8) variants.
 
-3. **Add Ollama streaming** -- Even if deprioritized, document that Ollama will use the `Done` wrapper fallback in Phase 1.
+3. **Ollama streaming documented** -- A2.7b now explicitly states Ollama uses the `Done` wrapper fallback in Phase 1. Real NDJSON streaming deferred until A2.5-A2.7 patterns are proven.
 
-4. **Clarify `generate_stream()` vs `generate_events()`** -- The plan narrative in A2.2 implies extending an existing method. Clarify that `generate_events()` is an entirely new method on `LLMRegistry`, not a modification of `generate_stream()` (which only exists on `LLMBackend` trait, not on `LLMRegistry`).
+4. **`generate_stream()` vs `generate_events()` clarified** -- A2.4 now explicitly states that `generate_events()` is an entirely new method on `LLMRegistry`. There is no existing `generate_stream()` on the registry -- only `generate()` and `resolve_backend_for_streaming()`. The `generate_stream()` method exists only on the `LLMBackend` trait.
 
 5. **Test the multi_agents handlers** -- The plan says "21 ToolHandler implementations" but there are 26. The 5 `multi_agents` handlers (`spawn`, `wait`, `send_input`, `resume_agent`, `close_agent`) may need APXM adapters in Phase 2 even though the plan defers them to Phase 4 (`FLOW_CALL`/`WAIT_ALL`).
+
+---
+
+## 6. Gap Analysis
+
+The following gaps were identified during investigation and have been addressed in the revised plan documents:
+
+### 6.1 Trace ID Propagation Protocol (HIGH)
+
+**Gap:** `EventMeta.trace_id` is defined in `apxm-events` but there is no specification for how trace IDs propagate across process boundaries. Gemini-CLI sends requests to `apxm-server`, which calls LLM backends -- but no mechanism exists to correlate events across these hops.
+
+**Resolution:**
+- `LLMRequest` gains an optional `trace_id: Option<String>` field (apxm.md A2.4)
+- `apxm-server` reads `X-Trace-ID` HTTP header and passes it to `LLMRegistry::generate_events()` (apxm.md A3.2)
+- If no trace ID provided, `StreamAssembler` generates a UUID v4 (apxm.md A2.3)
+- Codex request translator propagates turn ID as trace_id (codex.md C2.2)
+- Gemini-CLI SSE client sends trace_id in request body (gemini-cli.md G2)
+
+### 6.2 StreamAssembler Algorithm (HIGH)
+
+**Gap:** Tool call delta assembly is described conceptually ("accumulates ToolCallStart + ToolCallDelta fragments") but no algorithm covers edge cases.
+
+**Resolution:** Algorithm spec added to apxm.md A2.3:
+1. `ToolCallStart { id, name }` creates a new accumulator entry keyed by `id`
+2. `ToolCallDelta { id, arguments_delta }` appends to the accumulator for that `id`
+3. On `Done`, all open accumulators are flushed as `ToolCallEvent` payloads
+4. **Timeout:** If no chunks arrive for 30 seconds, flush all accumulators with an error flag and emit a Warning event
+5. **Duplicate fragments:** Idempotent -- `ToolCallStart` for an already-open `id` resets the accumulator (logs warning)
+6. **Unknown id on delta:** Create implicit accumulator with empty name (logs warning)
+7. **Interrupted stream:** On stream error, flush all accumulators with `partial: true` flag
+
+### 6.3 EventBus Broadcast Capacity (MEDIUM)
+
+**Gap:** `tokio::broadcast` has a bounded channel. No capacity is specified. Slow consumers (metrics, telemetry in Phase 4+) could cause the publisher to block or events to be dropped.
+
+**Resolution:** Added to apxm.md A1.6:
+- Default channel capacity: 1024 events
+- Configurable via `EventBus::with_capacity(n)`
+- When a receiver lags, `tokio::broadcast` returns `Lagged(n)` -- the `FilteredReceiver` logs the count as a warning and continues from current position
+- Publisher never blocks -- broadcast semantics guarantee this
+
+### 6.4 SSE Error Semantics (MEDIUM)
+
+**Gap:** No specification for how `apxm-server` handles streaming errors (backend hang, malformed chunk, connection drop).
+
+**Resolution:** Added to apxm.md A3.2:
+- **Backend error mid-stream:** Emit `event: error\ndata: {"code":"backend_error","message":"..."}\n\n`, then close stream
+- **Stream timeout:** If no event emitted for 60 seconds, emit error event and close
+- **Malformed chunk from backend:** Log, skip chunk, continue stream. Emit Warning event.
+- **Connection drop (client disconnects):** Server detects via TCP keepalive, cancels backend request
+
+### 6.5 Shadow Mode Divergence Metric (MEDIUM)
+
+**Gap:** Codex shadow mode specifies "<1% divergence" but does not define how divergence is measured.
+
+**Resolution:** Defined in codex.md C3.3:
+- **Token-level diff:** `|len(apxm_tokens) - len(legacy_tokens)| / len(legacy_tokens) < 0.01`
+- **Semantic equivalence:** Tool call names match AND argument keys match (values may differ due to non-determinism)
+- **Structural match:** Same number of tool calls in same order
+- Divergence logged with both outputs for manual review
+
+### 6.6 OpenAI Responses API Scope Decision (MEDIUM)
+
+**Gap:** A2.8 (~600 LOC) is based on assumptions about OpenAI's Responses API. No actual API contract is linked.
+
+**Resolution:** Decision recorded in apxm.md A2.8:
+- A2.8 is in Phase 1 scope but **sequenced after** A2.5 (Chat Completions streaming)
+- If the Responses API shape proves incorrect during implementation, A2.8 can be deferred to Phase 2 without blocking Phase 1 completion
+- Chat Completions streaming (A2.5) is sufficient for Phase 1 MVP

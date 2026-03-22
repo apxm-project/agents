@@ -6,6 +6,17 @@ Concrete applications being built on A-PXM. Each project validates a different a
 
 Migrating both OpenAI Codex (Rust, 74-crate workspace) and Google Gemini-CLI (TypeScript, 7-package monorepo) onto A-PXM as their shared execution substrate. Five phases, bottom-up.
 
+**Private working copies (this machine):**
+
+| Upstream | GitHub (private) | Local path |
+|----------|------------------|------------|
+| [openai/codex](https://github.com/openai/codex) | [youruser/openai-codex](https://github.com/youruser/openai-codex) | `$HOME/projects/agents/openai/codex` |
+| [google-gemini/gemini-cli](https://github.com/google-gemini/gemini-cli) | [youruser/google-gemini-cli](https://github.com/youruser/google-gemini-cli) | `$HOME/projects/agents/google/gemini-cli` |
+
+`origin` on each clone points at the private repo; `upstream` is the public OpenAI/Google repository. Paths in the phase docs below use the `openai/codex/...` and `google/gemini-cli/...` prefixes relative to `$HOME/projects/agents/`.
+
+Bare clones used for mirror maintenance (optional): `$APXM_HOME-cli/` (`openai-codex.git`, `gemini-cli.git`).
+
 - **[Global Integration Plan](plan-global-integration.md)** — Overview, five-phase adoption path, architecture diagrams
 - **[Phase 1: LLM Backend](phase-1-llm-backend/)** — Replace LLM transport with apxm-backends
 - **[Phase 2: Tool Migration](phase-2-tool-migration/)** — Register consumer tools as APXM capabilities

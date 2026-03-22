@@ -194,14 +194,14 @@ apxm/crates/apxm-server/tests/
   capability_registration.rs -- CT-P2-5
   capability_invocation.rs   -- CT-P2-6
 
-codex/codex-rs/core/tests/apxm_adapter/
+openai/codex/codex-rs/core/tests/apxm_adapter/
   tool_adapters.rs        -- CT-P2-7 (21 standard adapter round-trips; 5 multi_agents deferred to Phase 4)
   guardian_interceptor.rs -- CT-P2-8 (verdict mapping)
   tool_registration.rs   -- IT-P2-3 (apxm tools list integration)
   mcp_registration.rs    -- IT-P2-5 (MCP unified registration)
   tool_persistence.rs    -- IT-P2-9
 
-gemini-cli/packages/core/src/core/apxm/
+google/gemini-cli/packages/core/src/core/apxm/
   __tests__/
     tool-registration.test.ts  -- CT-P2-9, IT-P2-4
     tool-state-mapping.test.ts -- CT-P2-10

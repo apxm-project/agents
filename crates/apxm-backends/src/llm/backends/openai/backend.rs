@@ -6,13 +6,17 @@
 //! This file updates the provider default model and the list of known models
 //! surfaced by `list_models()` to reflect more recent model names.
 
+use crate::llm::backends::traits::StreamChunk;
 use crate::llm::backends::{ContentPart, LLMBackend, LLMRequest, LLMResponse, Role, ToolChoice};
 use anyhow::{Context, Result};
 use apxm_core::constants::graph::attrs::{BASE_URL, MODEL};
 use apxm_core::types::{FinishReason, ModelCapabilities, ModelInfo, TokenUsage, ToolCall};
 use async_trait::async_trait;
+use futures::StreamExt as _;
 use serde::Deserialize;
 use serde_json::json;
+use std::pin::Pin;
+use tokio_stream::Stream;
 
 const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
 const DEFAULT_MODEL: &str = "gpt-4o-mini";
@@ -344,6 +348,177 @@ impl LLMBackend for OpenAIBackend {
             .context("Failed to parse OpenAI response")?;
 
         self.parse_response(api_response, &model)
+    }
+
+    fn generate_stream(
+        &self,
+        request: LLMRequest,
+    ) -> Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send + '_>> {
+        Box::pin(async_stream::try_stream! {
+            request.validate()?;
+            let model = self.request_model(&request).to_string();
+            let mut body = self.build_request_body(&request);
+            body["stream"] = json!(true);
+
+            let url = format!("{}/chat/completions", self.base_url);
+
+            tracing::debug!(
+                model = %model,
+                url = %url,
+                "Sending streaming request to OpenAI"
+            );
+
+            let mut req_builder = self.client
+                .post(&url)
+                .header("Authorization", format!("Bearer {}", self.api_key))
+                .header("Content-Type", "application/json");
+
+            for (name, value) in &self.extra_headers {
+                req_builder = req_builder.header(name.as_str(), value.as_str());
+            }
+
+            let response = req_builder.json(&body).send().await
+                .context("Failed to send streaming request to OpenAI")?
+                .error_for_status()
+                .map_err(|e| anyhow::anyhow!("OpenAI API error: {}", e))?;
+
+            let mut stream = response.bytes_stream();
+            let mut buffer = String::new();
+            let mut full_content = String::new();
+            let mut last_usage = TokenUsage::new(0, 0);
+            let mut tool_calls_map: std::collections::HashMap<usize, (String, String, String)> =
+                std::collections::HashMap::new();
+
+            while let Some(chunk_result) = stream.next().await {
+                let chunk = chunk_result.context("Stream read error")?;
+                buffer.push_str(&String::from_utf8_lossy(&chunk));
+
+                // Process SSE lines.
+                while let Some(line_end) = buffer.find('\n') {
+                    let line = buffer[..line_end].trim_end().to_string();
+                    buffer.drain(..line_end + 1);
+                    let line = line.trim();
+
+                    if line.is_empty() || line.starts_with(':') {
+                        continue;
+                    }
+
+                    if let Some(data) = line.strip_prefix("data: ") {
+                        if data.trim() == "[DONE]" {
+                            // Build final response.
+                            let tool_calls: Vec<ToolCall> = tool_calls_map.values()
+                                .map(|(id, name, args)| {
+                                    let args_val = serde_json::from_str(args)
+                                        .unwrap_or(json!({}));
+                                    ToolCall::new(id.clone(), name.clone(), args_val)
+                                })
+                                .collect();
+
+                            let finish_reason = if !tool_calls.is_empty() {
+                                FinishReason::ToolUse
+                            } else {
+                                FinishReason::Stop
+                            };
+
+                            let resp = LLMResponse::new(
+                                full_content.clone(),
+                                &model,
+                                last_usage.clone(),
+                                finish_reason,
+                            ).with_tool_calls(tool_calls);
+
+                            yield StreamChunk::Done(resp);
+                            return;
+                        }
+
+                        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
+                            // Emit usage if present at top level.
+                            if let Some(usage_obj) = parsed.get("usage") {
+                                let input = usage_obj["prompt_tokens"].as_u64().unwrap_or(0) as usize;
+                                let output = usage_obj["completion_tokens"].as_u64().unwrap_or(0) as usize;
+                                if input > 0 || output > 0 {
+                                    last_usage = TokenUsage::new(input, output);
+                                    yield StreamChunk::Usage(last_usage.clone());
+                                }
+                            }
+
+                            if let Some(choices) = parsed["choices"].as_array() {
+                                for choice in choices {
+                                    let delta = &choice["delta"];
+
+                                    // Text content.
+                                    if let Some(content) = delta["content"].as_str() {
+                                        if !content.is_empty() {
+                                            full_content.push_str(content);
+                                            yield StreamChunk::Token(content.to_string());
+                                        }
+                                    }
+
+                                    // Tool calls.
+                                    if let Some(tc_arr) = delta["tool_calls"].as_array() {
+                                        for tc in tc_arr {
+                                            let index = tc["index"].as_u64().unwrap_or(0) as usize;
+
+                                            if let Some(id) = tc["id"].as_str() {
+                                                let name = tc["function"]["name"]
+                                                    .as_str()
+                                                    .unwrap_or("")
+                                                    .to_string();
+                                                tool_calls_map.insert(
+                                                    index,
+                                                    (id.to_string(), name.clone(), String::new()),
+                                                );
+                                                yield StreamChunk::ToolCallStart {
+                                                    id: id.to_string(),
+                                                    name,
+                                                };
+                                            }
+
+                                            if let Some(args) = tc["function"]["arguments"].as_str() {
+                                                if !args.is_empty() {
+                                                    if let Some((id, _, accumulated_args)) =
+                                                        tool_calls_map.get_mut(&index)
+                                                    {
+                                                        accumulated_args.push_str(args);
+                                                        yield StreamChunk::ToolCallDelta {
+                                                            id: id.clone(),
+                                                            arguments_delta: args.to_string(),
+                                                        };
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Stream ended without [DONE] -- emit what we have.
+            let tool_calls: Vec<ToolCall> = tool_calls_map.values()
+                .map(|(id, name, args)| {
+                    let args_val = serde_json::from_str(args).unwrap_or(json!({}));
+                    ToolCall::new(id.clone(), name.clone(), args_val)
+                })
+                .collect();
+
+            let finish_reason = if !tool_calls.is_empty() {
+                FinishReason::ToolUse
+            } else {
+                FinishReason::Stop
+            };
+
+            let resp = LLMResponse::new(
+                full_content,
+                &model,
+                last_usage,
+                finish_reason,
+            ).with_tool_calls(tool_calls);
+
+            yield StreamChunk::Done(resp);
+        })
     }
 
     fn name(&self) -> &str {

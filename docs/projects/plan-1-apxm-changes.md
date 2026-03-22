@@ -43,7 +43,7 @@ This plan covers every APXM-side change across all five phases. Phase 1 (LLM Bac
 
 ### Why This Comes First
 
-Current plans reference APXM crates via relative paths (`../../../apxm/crates/apxm-core`). This is fragile, non-portable, and assumes a specific monorepo directory layout. Both Codex and Gemini-CLI must be able to depend on APXM as an external package.
+Current plans reference APXM crates via relative paths (e.g. `../../../../apxm/crates/apxm-core` from `openai/codex/codex-rs/core`). This is fragile, non-portable, and assumes a specific monorepo directory layout. Both Codex and Gemini-CLI must be able to depend on APXM as an external package.
 
 ### A0.1 Version tagging
 

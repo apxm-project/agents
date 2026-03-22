@@ -155,6 +155,8 @@ pub struct LLMRequest {
     pub tools: Option<Vec<ToolDefinition>>,
     /// How the LLM should use tools
     pub tool_choice: Option<ToolChoice>,
+    /// Trace ID for cross-process event correlation.
+    pub trace_id: Option<String>,
 }
 
 impl LLMRequest {
@@ -179,6 +181,7 @@ impl LLMRequest {
             operation_type: None,
             tools: None,
             tool_choice: None,
+            trace_id: None,
         }
     }
 
@@ -313,6 +316,12 @@ impl LLMRequest {
         self
     }
 
+    /// Set a trace ID for cross-process event correlation.
+    pub fn with_trace_id(mut self, trace_id: impl Into<String>) -> Self {
+        self.trace_id = Some(trace_id.into());
+        self
+    }
+
     /// Check if this request has tools configured.
     pub fn has_tools(&self) -> bool {
         self.tools.as_ref().is_some_and(|t| !t.is_empty())
@@ -398,6 +407,12 @@ impl RequestBuilder {
     /// Set how the LLM should use tools.
     pub fn tool_choice(mut self, choice: ToolChoice) -> Self {
         self.request = self.request.with_tool_choice(choice);
+        self
+    }
+
+    /// Set a trace ID for cross-process event correlation.
+    pub fn trace_id(mut self, id: impl Into<String>) -> Self {
+        self.request = self.request.with_trace_id(id);
         self
     }
 
@@ -640,5 +655,26 @@ mod tests {
         let deserialized: Message = serde_json::from_value(json).unwrap();
         assert_eq!(deserialized.role, Role::User);
         assert_eq!(deserialized.text_content(), "Hello");
+    }
+
+    #[test]
+    fn test_trace_id_default_none() {
+        let req = LLMRequest::new("Hello");
+        assert!(req.trace_id.is_none());
+    }
+
+    #[test]
+    fn test_with_trace_id() {
+        let req = LLMRequest::new("Hello").with_trace_id("trace-abc-123");
+        assert_eq!(req.trace_id, Some("trace-abc-123".to_string()));
+    }
+
+    #[test]
+    fn test_builder_trace_id() {
+        let req = RequestBuilder::new("Hello")
+            .trace_id("trace-xyz")
+            .build()
+            .unwrap();
+        assert_eq!(req.trace_id, Some("trace-xyz".to_string()));
     }
 }
