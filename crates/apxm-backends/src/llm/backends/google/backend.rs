@@ -231,6 +231,7 @@ impl LLMBackend for GoogleBackend {
             let mut stream = response.bytes_stream();
             let mut buffer = String::new();
             let mut full_content = String::new();
+            let mut last_usage = TokenUsage::new(0, 0);
 
             while let Some(chunk_result) = stream.next().await {
                 let chunk = chunk_result.context("Stream read error")?;
@@ -238,8 +239,9 @@ impl LLMBackend for GoogleBackend {
 
                 // Process SSE lines.
                 while let Some(line_end) = buffer.find('\n') {
-                    let line = buffer[..line_end].trim().to_string();
-                    buffer = buffer[line_end + 1..].to_string();
+                    let line = buffer[..line_end].trim_end().to_string();
+                    buffer.drain(..line_end + 1);
+                    let line = line.trim();
 
                     if line.is_empty() || line.starts_with(':') {
                         continue;
@@ -270,7 +272,8 @@ impl LLMBackend for GoogleBackend {
                                 let output = usage_meta["candidatesTokenCount"]
                                     .as_u64().unwrap_or(0) as usize;
                                 if input > 0 || output > 0 {
-                                    yield StreamChunk::Usage(TokenUsage::new(input, output));
+                                    last_usage = TokenUsage::new(input, output);
+                                    yield StreamChunk::Usage(last_usage.clone());
                                 }
                             }
                         }
@@ -278,12 +281,11 @@ impl LLMBackend for GoogleBackend {
                 }
             }
 
-            // Emit final Done.
-            let usage = TokenUsage::new(0, full_content.split_whitespace().count());
+            // Emit final Done with last known usage.
             let resp = LLMResponse::new(
                 full_content,
                 &model,
-                usage,
+                last_usage,
                 FinishReason::Stop,
             );
             yield StreamChunk::Done(resp);

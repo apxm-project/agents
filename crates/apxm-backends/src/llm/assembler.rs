@@ -54,8 +54,12 @@ impl StreamAssembler {
 
     /// Process a single chunk and return any complete events.
     pub fn process(&mut self, chunk: StreamChunk) -> Vec<AssembledEvent> {
-        // Check for timed-out accumulators first.
-        let mut events = self.flush_timed_out();
+        // Check for timed-out accumulators first (skip if none pending).
+        let mut events = if self.accumulators.is_empty() {
+            Vec::new()
+        } else {
+            self.flush_timed_out()
+        };
 
         match chunk {
             StreamChunk::Token(text) => {

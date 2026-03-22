@@ -308,7 +308,7 @@ impl LLMBackend for AnthropicBackend {
                 //   data: <json>\n\n
                 while let Some(double_newline) = buffer.find("\n\n") {
                     let block = buffer[..double_newline].to_string();
-                    buffer = buffer[double_newline + 2..].to_string();
+                    buffer.drain(..double_newline + 2);
 
                     let mut event_type = String::new();
                     let mut data_str = String::new();
