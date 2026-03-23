@@ -13,6 +13,7 @@ apxm-runtime = { path = "../apxm-runtime" }
 apxm-artifact = { path = "../apxm-artifact" }
 apxm-backends = { path = "../apxm-backends" }
 apxm-tools = { path = "../apxm-tools" }
+apxm-sandbox = { path = "../apxm-sandbox" }
 apxm-graph = { path = "../apxm-graph" }
 apxm-credentials = { path = "../apxm-credentials" }
 

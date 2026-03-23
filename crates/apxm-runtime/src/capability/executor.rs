@@ -2,6 +2,7 @@
 
 use super::metadata::CapabilityMetadata;
 use apxm_core::{error::RuntimeError, types::values::Value};
+use apxm_sandbox::{ExecRequest, ExecResult};
 use async_trait::async_trait;
 use std::collections::HashMap;
 
@@ -35,6 +36,44 @@ pub trait CapabilityExecutor: Send + Sync {
     /// Provides schema, description, and other metadata
     /// used for validation and introspection
     fn metadata(&self) -> &CapabilityMetadata;
+
+    /// If this capability executes by spawning an external process, return
+    /// an [`ExecRequest`] describing that process. The capability system will
+    /// route it through the registered [`SandboxBackend`] instead of calling
+    /// [`execute()`] directly.
+    ///
+    /// Return `None` (the default) for capabilities that don't spawn processes.
+    fn to_exec_request(&self, args: &HashMap<String, Value>) -> Option<ExecRequest> {
+        let _ = args; // suppress unused warning
+        None
+    }
+}
+
+/// Convert a sandbox [`ExecResult`] into a [`Value`] suitable for
+/// returning from a capability invocation.
+pub fn exec_result_to_value(result: ExecResult) -> Value {
+    if result.timed_out {
+        Value::String(format!(
+            "[TIMEOUT after {:?}]\nstdout:\n{}\nstderr:\n{}",
+            result.duration, result.stdout, result.stderr
+        ))
+    } else {
+        // Match the format used by BashCapability
+        let mut payload = result.stdout.clone();
+        if !result.stderr.is_empty() {
+            if !payload.is_empty() {
+                payload.push('\n');
+            }
+            payload.push_str("[stderr]\n");
+            payload.push_str(&result.stderr);
+        }
+        if let Some(code) = result.exit_code {
+            if code != 0 {
+                payload.push_str(&format!("\n[exit code: {}]", code));
+            }
+        }
+        Value::String(payload)
+    }
 }
 
 /// Built-in echo capability for testing

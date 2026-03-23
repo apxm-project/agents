@@ -11,6 +11,7 @@ use apxm_backends::LLMRegistry;
 use apxm_core::InstructionConfig;
 use apxm_core::constants::runtime::metadata;
 use apxm_core::types::Agent;
+use apxm_sandbox::SandboxRegistry;
 use std::sync::Arc;
 
 use super::cancellation::CancellationToken;
@@ -75,6 +76,15 @@ pub struct ExecutionContext {
     pub response_cache: Arc<ResponseCache>,
     /// Cancellation token for cooperative cancellation / timeouts.
     pub cancellation_token: CancellationToken,
+    /// Sandbox registry for tool execution isolation.
+    ///
+    /// Host applications register their [`SandboxBackend`](apxm_sandbox::SandboxBackend)
+    /// implementations here. The runtime queries the registry when executing
+    /// INV/tool nodes to find the appropriate isolation backend.
+    ///
+    /// LLM operations (ASK, THINK, REASON, etc.) bypass the sandbox entirely —
+    /// they are HTTP calls that don't need process isolation.
+    pub sandbox_registry: Arc<SandboxRegistry>,
 }
 
 impl ExecutionContext {
@@ -115,6 +125,7 @@ impl ExecutionContext {
             token_accountant: Arc::new(TokenAccountant::new()),
             response_cache: Arc::new(ResponseCache::new()),
             cancellation_token: CancellationToken::new(),
+            sandbox_registry: Arc::new(SandboxRegistry::new()),
         }
     }
 
@@ -244,7 +255,14 @@ impl ExecutionContext {
             token_accountant: Arc::clone(&self.token_accountant),
             response_cache: Arc::clone(&self.response_cache),
             cancellation_token: self.cancellation_token.child(),
+            sandbox_registry: Arc::clone(&self.sandbox_registry),
         }
+    }
+
+    /// Set the sandbox registry.
+    pub fn with_sandbox_registry(mut self, registry: Arc<SandboxRegistry>) -> Self {
+        self.sandbox_registry = registry;
+        self
     }
 
     pub fn aam(&self) -> &Aam {

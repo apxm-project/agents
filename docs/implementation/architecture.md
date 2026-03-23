@@ -39,6 +39,8 @@ a dataflow scheduler that automatically extracts parallelism from dependencies.
 | [Tasks](runtime/tasks.md) | Task abstraction and grouping |
 | [Multi-Agent](runtime/multi-agent.md) | Agent model, FlowRegistry, FLOW_CALL |
 | Hierarchical AAM *(TODO)* | Nested agent scoping and delegation |
+| [Pluggable Sandbox](pluggable-sandbox-design.md) | SandboxBackend trait, IsolationLevel, SecurityManifest |
+| [Host Integration](host-integration-guide.md) | Codex & Gemini integration, AAM deep dive |
 
 ### AIS Operations
 

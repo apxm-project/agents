@@ -4,6 +4,7 @@ use apxm_runtime::capability::{
     executor::{CapabilityExecutor, CapabilityResult},
     metadata::CapabilityMetadata,
 };
+use apxm_sandbox::ExecRequest;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::PathBuf, process::Stdio};
@@ -234,5 +235,35 @@ impl CapabilityExecutor for BashCapability {
 
     fn metadata(&self) -> &CapabilityMetadata {
         &self.metadata
+    }
+
+    fn to_exec_request(&self, args: &HashMap<String, Value>) -> Option<ExecRequest> {
+        // Extract command the same way execute() does
+        let command = args
+            .get("command")
+            .or_else(|| args.get("arg_command"))
+            .or_else(|| args.get("arg0"))
+            .and_then(|v| v.as_string())
+            .map(|s| s.to_string())?;
+
+        // Run policy validation — if the command is blocked, return None
+        // to fall through to execute() which will return a proper error
+        if self.validate_command(&command).is_err() {
+            return None;
+        }
+
+        let timeout_secs = args
+            .get("timeout")
+            .or_else(|| args.get("arg_timeout"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(30);
+
+        Some(ExecRequest {
+            program: "sh".to_string(),
+            args: vec!["-lc".to_string(), command],
+            timeout: std::time::Duration::from_secs(timeout_secs),
+            origin_op: Some("INV".to_string()),
+            ..ExecRequest::default()
+        })
     }
 }

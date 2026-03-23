@@ -12,7 +12,8 @@ members = [
 	"crates/apxm-runtime",
 	"crates/apxm-artifact",
 	"crates/apxm-backends",
-	"crates/apxm-events"
+	"crates/apxm-events",
+	"crates/apxm-sandbox",
 ]
 
 resolver = "3"

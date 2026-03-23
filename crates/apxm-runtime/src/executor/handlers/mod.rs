@@ -488,6 +488,9 @@ mod tests {
                     }
                     final_resp = Some(resp);
                 }
+                StreamChunk::Thought(_) | StreamChunk::Usage(_) | StreamChunk::Error(_) => {
+                    // Informational chunks — not relevant for tool call parsing
+                }
             }
         }
 

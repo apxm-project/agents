@@ -40,7 +40,8 @@ pub mod registry;
 use crate::aam::{Aam, TransitionLabel};
 use approval::{ApprovalChannel, ApprovalStore};
 use apxm_core::{error::RuntimeError, types::values::Value};
-use executor::CapabilityExecutor;
+use apxm_sandbox::SandboxRegistry;
+use executor::{CapabilityExecutor, exec_result_to_value};
 use interceptor::{CapabilityInterceptor, InterceptDecision};
 use metadata::CapabilityMetadata;
 use parking_lot::RwLock;
@@ -63,6 +64,7 @@ pub struct CapabilitySystem {
     interceptors: Arc<RwLock<Vec<Arc<dyn CapabilityInterceptor>>>>,
     approval_store: Arc<ApprovalStore>,
     approval_channel: Option<Arc<dyn ApprovalChannel>>,
+    sandbox_registry: RwLock<Option<Arc<SandboxRegistry>>>,
 }
 
 impl CapabilitySystem {
@@ -75,6 +77,7 @@ impl CapabilitySystem {
             interceptors: Arc::new(RwLock::new(Vec::new())),
             approval_store: Arc::new(ApprovalStore::new()),
             approval_channel: None,
+            sandbox_registry: RwLock::new(None),
         }
     }
 
@@ -109,6 +112,17 @@ impl CapabilitySystem {
     /// Get a reference to the approval store.
     pub fn approval_store(&self) -> &ApprovalStore {
         &self.approval_store
+    }
+
+    /// Set the sandbox registry for routing capability execution through
+    /// sandbox backends.
+    ///
+    /// When set, capabilities that return an [`ExecRequest`] from
+    /// [`to_exec_request()`](executor::CapabilityExecutor::to_exec_request)
+    /// will have their execution routed through the sandbox backend
+    /// instead of calling `execute()` directly.
+    pub fn set_sandbox_registry(&self, registry: Arc<SandboxRegistry>) {
+        *self.sandbox_registry.write() = Some(registry);
     }
 
     /// Register a capability interceptor.
@@ -282,8 +296,46 @@ impl CapabilitySystem {
 
         tracing::debug!(capability = %name, "Invoking capability");
 
-        // Execute with timeout
-        let result = tokio::time::timeout(timeout, capability.execute(args))
+        // Execute with timeout — route through sandbox if the capability
+        // provides an ExecRequest, otherwise execute directly.
+        let sandbox_reg = self.sandbox_registry.read().clone();
+        let result = tokio::time::timeout(timeout, async {
+            // Check if capability wants sandbox execution
+            if let Some(exec_req) = capability.to_exec_request(&args) {
+                // Route through sandbox backend
+                if let Some(ref registry) = sandbox_reg {
+                    if let Some(backend) = registry.default_backend() {
+                        tracing::debug!(
+                            capability = %name,
+                            backend = %backend.capabilities().name,
+                            "routing capability through sandbox backend"
+                        );
+                        let session = backend.create_session().await
+                            .map_err(|e| RuntimeError::Capability {
+                                capability: name.to_string(),
+                                message: format!("sandbox session: {e}"),
+                            })?;
+                        let exec_result = backend.execute(&session, exec_req).await
+                            .map_err(|e| RuntimeError::Capability {
+                                capability: name.to_string(),
+                                message: format!("sandbox execute: {e}"),
+                            })?;
+                        let _ = backend.destroy_session(session).await;
+                        Ok(exec_result_to_value(exec_result))
+                    } else {
+                        // No available backend, fall back to direct execution
+                        tracing::warn!(capability = %name, "no sandbox backend available, executing directly");
+                        capability.execute(args).await
+                    }
+                } else {
+                    // No sandbox registry configured, execute directly
+                    capability.execute(args).await
+                }
+            } else {
+                // Capability doesn't need sandbox, execute directly
+                capability.execute(args).await
+            }
+        })
             .await
             .map_err(|_| RuntimeError::Timeout { op_id: 0, timeout })?
             .map_err(|e| {

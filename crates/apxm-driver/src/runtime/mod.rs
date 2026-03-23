@@ -12,6 +12,8 @@ mod llm;
 use llm::configure_llm_registry;
 mod capabilities;
 use capabilities::configure_capability_registry;
+pub mod sandbox;
+use sandbox::configure_sandbox_registry;
 mod inner_plan;
 use inner_plan::CompilerInnerPlanLinker;
 
@@ -28,6 +30,9 @@ impl RuntimeExecutor {
 
         configure_llm_registry(runtime.llm_registry(), &config.apxm_config).await?;
         configure_capability_registry(runtime.capability_system(), &config.apxm_config)?;
+
+        let sandbox_registry = configure_sandbox_registry();
+        runtime.set_sandbox_registry(sandbox_registry);
 
         runtime.set_instruction_config(config.apxm_config.instruction.clone());
 

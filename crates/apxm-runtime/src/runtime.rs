@@ -12,6 +12,7 @@ use crate::{
 use apxm_artifact::Artifact;
 use apxm_backends::LLMRegistry;
 use apxm_core::log_info;
+use apxm_sandbox::SandboxRegistry;
 use apxm_core::{
     error::RuntimeError,
     types::{
@@ -85,6 +86,7 @@ pub struct Runtime {
     session_lane_guard: SessionLaneGuard,
     inner_plan_linker: Arc<dyn InnerPlanLinker>,
     instruction_config: apxm_core::InstructionConfig,
+    sandbox_registry: Arc<SandboxRegistry>,
 }
 
 impl Runtime {
@@ -129,6 +131,7 @@ impl Runtime {
             session_lane_guard: SessionLaneGuard::new(),
             inner_plan_linker: Arc::new(NoOpLinker),
             instruction_config: apxm_core::InstructionConfig::default(),
+            sandbox_registry: Arc::new(SandboxRegistry::new()),
         })
     }
 
@@ -150,6 +153,7 @@ impl Runtime {
         ctx.instruction_config = self.instruction_config.clone();
         ctx.token_budget = self.config.token_budget;
         ctx.event_emitter = event_emitter;
+        ctx.sandbox_registry = Arc::clone(&self.sandbox_registry);
         ctx
     }
 
@@ -169,6 +173,27 @@ impl Runtime {
     /// Get the instruction configuration.
     pub fn instruction_config(&self) -> &apxm_core::InstructionConfig {
         &self.instruction_config
+    }
+
+    /// Set the sandbox registry.
+    ///
+    /// Host applications register their [`SandboxBackend`](apxm_sandbox::SandboxBackend)
+    /// implementations into a [`SandboxRegistry`] and inject it here.
+    /// The runtime passes it through to every [`ExecutionContext`].
+    ///
+    /// LLM operations (ASK, THINK, REASON, etc.) never use the sandbox —
+    /// only tool execution (INV, capabilities) does.
+    pub fn set_sandbox_registry(&mut self, registry: Arc<SandboxRegistry>) {
+        self.sandbox_registry = Arc::clone(&registry);
+        // Also propagate to the capability system so that
+        // CapabilitySystem::invoke_with_timeout() can route process-spawning
+        // capabilities through the sandbox backend.
+        self.capability_system.set_sandbox_registry(registry);
+    }
+
+    /// Get a reference to the sandbox registry.
+    pub fn sandbox_registry(&self) -> &SandboxRegistry {
+        &self.sandbox_registry
     }
 
     /// Execute a DAG with parallel dataflow execution

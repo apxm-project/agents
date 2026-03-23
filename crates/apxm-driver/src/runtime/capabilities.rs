@@ -134,6 +134,22 @@ impl apxm_runtime::capability::executor::CapabilityExecutor for UserToolCapabili
     fn metadata(&self) -> &apxm_runtime::capability::metadata::CapabilityMetadata {
         &self.metadata
     }
+
+    fn to_exec_request(
+        &self,
+        args: &std::collections::HashMap<String, apxm_core::types::values::Value>,
+    ) -> Option<apxm_sandbox::ExecRequest> {
+        let json_input = serde_json::to_string(&args).ok()?;
+
+        Some(apxm_sandbox::ExecRequest {
+            program: self.command.clone(),
+            args: self.args.clone(),
+            stdin_data: Some(json_input),
+            timeout: std::time::Duration::from_millis(self.timeout_ms),
+            origin_op: Some("INV".to_string()),
+            ..apxm_sandbox::ExecRequest::default()
+        })
+    }
 }
 
 #[cfg(test)]

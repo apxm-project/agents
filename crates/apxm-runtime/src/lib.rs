@@ -52,6 +52,9 @@ pub use observability::{MetricsCollector, SchedulerMetrics};
 pub use runtime::{Runtime, RuntimeConfig, RuntimeExecutionResult};
 pub use scheduler::{DataflowScheduler, SchedulerConfig};
 
+// Re-export sandbox interface for host applications
+pub use apxm_sandbox;
+
 pub type RuntimeResult<T> = std::result::Result<T, RuntimeError>;
 
 // Re-export commonly used types

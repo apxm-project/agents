@@ -265,6 +265,7 @@ dependencies = [
  "apxm-credentials",
  "apxm-graph",
  "apxm-runtime",
+ "apxm-sandbox",
  "apxm-tools",
  "async-trait",
  "dirs 5.0.1",
@@ -308,6 +309,7 @@ dependencies = [
  "apxm-artifact",
  "apxm-backends",
  "apxm-core",
+ "apxm-sandbox",
  "async-trait",
  "chrono",
  "crossbeam-deque",
@@ -329,6 +331,20 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "apxm-sandbox"
+version = "0.0.1"
+dependencies = [
+ "async-trait",
+ "futures",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -367,6 +383,7 @@ version = "0.0.1"
 dependencies = [
  "apxm-core",
  "apxm-runtime",
+ "apxm-sandbox",
  "async-trait",
  "reqwest",
  "serde",
