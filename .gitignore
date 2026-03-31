@@ -19,6 +19,9 @@ target
 # Build directories (CMake, etc.)
 **/build/
 
+# Node.js
+node_modules/
+
 # Python
 __pycache__/
 *.pyc

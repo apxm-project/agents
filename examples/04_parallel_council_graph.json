@@ -1,0 +1,108 @@
+{
+  "name": "parallel_research_council",
+  "nodes": [
+    {
+      "id": 1,
+      "name": "question",
+      "op": "ASK",
+      "attributes": {
+        "template_str": "Define the research question: What are the best hardware choices for LLM inference at scale?"
+      }
+    },
+    {
+      "id": 2,
+      "name": "web_search",
+      "op": "INV",
+      "attributes": {
+        "capability": "search_web",
+        "params_json": "{\"query\": \"LLM inference hardware benchmarks 2026\"}"
+      }
+    },
+    {
+      "id": 3,
+      "name": "expert_analysis",
+      "op": "THINK",
+      "attributes": {
+        "template_str": "As a hardware architect, analyze compute requirements for LLM inference: {0}",
+        "budget_tokens": "800"
+      }
+    },
+    {
+      "id": 4,
+      "name": "critical_review",
+      "op": "REASON",
+      "attributes": {
+        "template_str": "Identify logical gaps, biases, and unstated assumptions in the research question: {0}"
+      }
+    },
+    {
+      "id": 5,
+      "name": "sync_results",
+      "op": "WAIT_ALL",
+      "attributes": {
+        "tokens": ["{{node_2}}", "{{node_3}}", "{{node_4}}"]
+      }
+    },
+    {
+      "id": 6,
+      "name": "synthesize",
+      "op": "THINK",
+      "attributes": {
+        "template_str": "Synthesize web search results, expert analysis, and critical review into a unified assessment: {0}",
+        "budget_tokens": "1200"
+      }
+    },
+    {
+      "id": 7,
+      "name": "fact_check",
+      "op": "VERIFY",
+      "attributes": {
+        "claim": "{{node_6}}",
+        "evidence": "{{node_2}}"
+      }
+    },
+    {
+      "id": 8,
+      "name": "process_review",
+      "op": "REFLECT",
+      "attributes": {
+        "trace_query": "last_execution",
+        "reflection_prompt": "Were any perspectives missed or underweighted in the synthesis?"
+      }
+    },
+    {
+      "id": 9,
+      "name": "merge_checks",
+      "op": "MERGE",
+      "attributes": {
+        "tokens": ["{{node_7}}", "{{node_8}}"]
+      }
+    },
+    {
+      "id": 10,
+      "name": "final_report",
+      "op": "ASK",
+      "attributes": {
+        "template_str": "Produce a final executive report incorporating verified findings and process reflections: {0}"
+      }
+    }
+  ],
+  "edges": [
+    { "from": 1, "to": 2, "dependency": "Data" },
+    { "from": 1, "to": 3, "dependency": "Data" },
+    { "from": 1, "to": 4, "dependency": "Data" },
+    { "from": 2, "to": 5, "dependency": "Data" },
+    { "from": 3, "to": 5, "dependency": "Data" },
+    { "from": 4, "to": 5, "dependency": "Data" },
+    { "from": 5, "to": 6, "dependency": "Data" },
+    { "from": 6, "to": 7, "dependency": "Data" },
+    { "from": 6, "to": 8, "dependency": "Data" },
+    { "from": 7, "to": 9, "dependency": "Control" },
+    { "from": 8, "to": 9, "dependency": "Effect" },
+    { "from": 9, "to": 10, "dependency": "Data" }
+  ],
+  "parameters": [],
+  "metadata": {
+    "is_entry": true
+  }
+}
