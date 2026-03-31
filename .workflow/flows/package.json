@@ -1,0 +1,21 @@
+{
+  "name": "workflow-test-flows",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "acpx workflow flows for workflow-test project",
+  "scripts": {
+    "review": "acpx flow run ./review.flow.ts --approve-all",
+    "triage": "acpx flow run ./triage.flow.ts --approve-all",
+    "strategy": "acpx flow run ./strategy-revision-orchestrator.flow.ts --approve-all",
+    "strategy:monolith": "acpx flow run ./strategy-revision.flow.ts --approve-all",
+    "strategy:doc": "acpx flow run ./strategy-revision-doc.flow.ts --approve-all"
+  },
+  "dependencies": {
+    "acpx": "file:../../acpx"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "tsx": "^4.21.0"
+  }
+}

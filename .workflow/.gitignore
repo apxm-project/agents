@@ -1,0 +1,8 @@
+node_modules/
+dist/
+CLAUDE.md
+AGENTS.md
+.cursorrules
+.agents.json
+.claude/
+.github/
