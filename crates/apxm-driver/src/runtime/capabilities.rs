@@ -5,16 +5,27 @@ use apxm_runtime::CapabilitySystem;
 use apxm_runtime::sandbox::{policy::SandboxPolicy, process::ProcessSandbox};
 
 pub fn configure_capability_registry(
-    capability_system: &CapabilitySystem,
+    capability_system: std::sync::Arc<CapabilitySystem>,
     config: &ApXmConfig,
 ) -> Result<(), DriverError> {
     let tools_config = config.tools_config();
-    apxm_tools::register_standard_tools(capability_system, &tools_config)
+    apxm_tools::register_standard_tools(&capability_system, &tools_config)
         .map_err(DriverError::Runtime)?;
 
-    if let Err(e) = register_user_tools(capability_system) {
+    if let Err(e) = register_user_tools(&capability_system) {
         tracing::warn!("Failed to load user tools from ~/.apxm/tools.json: {}", e);
     }
+
+    // Register ACP capability for INV(acp) nodes
+    let session_pool = std::sync::Arc::new(apxm_acp::SessionPool::new());
+    let acp = apxm_acp::AcpCapability::new(
+        std::sync::Arc::clone(&capability_system),
+        session_pool,
+    );
+    capability_system
+        .register(std::sync::Arc::new(acp))
+        .map_err(DriverError::Runtime)?;
+
     Ok(())
 }
 

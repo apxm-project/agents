@@ -29,7 +29,10 @@ impl RuntimeExecutor {
             .map_err(DriverError::Runtime)?;
 
         configure_llm_registry(runtime.llm_registry(), &config.apxm_config).await?;
-        configure_capability_registry(runtime.capability_system(), &config.apxm_config)?;
+        configure_capability_registry(
+            runtime.capability_system_arc(),
+            &config.apxm_config,
+        )?;
 
         let sandbox_registry = configure_sandbox_registry();
         runtime.set_sandbox_registry(sandbox_registry);

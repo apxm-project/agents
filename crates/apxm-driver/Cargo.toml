@@ -16,6 +16,7 @@ apxm-tools = { path = "../apxm-tools" }
 apxm-sandbox = { path = "../apxm-sandbox" }
 apxm-graph = { path = "../apxm-graph" }
 apxm-credentials = { path = "../apxm-credentials" }
+apxm-acp = { path = "../apxm-acp" }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }

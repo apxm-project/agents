@@ -1,0 +1,338 @@
+use std::process::Stdio;
+
+use tokio::process::{Child, Command};
+use tokio::time::Duration;
+
+use crate::auth;
+use crate::constants::{args as cap_args, client, fields, methods, protocol, stop_reasons, timeouts};
+use crate::content::ContentBlock;
+use crate::protocol::StdioTransport;
+use crate::reverse::{CapabilityReverseHandler, ReverseHandler};
+use crate::registry::AgentProfile;
+use crate::AcpError;
+
+/// Result of a prompt round-trip.
+#[derive(Debug, Clone)]
+pub struct PromptResult {
+    pub text: String,
+    pub model: Option<String>,
+    pub stop_reason: String,
+    pub token_usage: Option<TokenUsage>,
+}
+
+/// Token usage from a prompt response.
+#[derive(Debug, Clone)]
+pub struct TokenUsage {
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+}
+
+/// A live ACP session with a spawned agent process.
+pub struct AcpSession {
+    session_id: String,
+    agent_session_id: Option<String>,
+    profile_name: String,
+    transport: Option<StdioTransport>,
+    child: Child,
+    close_grace_ms: u64,
+    turn_count: u32,
+    closed: bool,
+}
+
+impl AcpSession {
+    /// Spawn an agent, initialize the ACP protocol, and create a session.
+    pub async fn spawn(
+        profile_name: &str,
+        profile: &AgentProfile,
+        cwd: &std::path::Path,
+    ) -> Result<Self, AcpError> {
+        let parts = shell_words::split(&profile.command).map_err(|e| AcpError::Spawn {
+            agent: profile_name.to_string(),
+            reason: format!("bad command: {e}"),
+        })?;
+        let (program, args) = parts.split_first().ok_or_else(|| AcpError::Spawn {
+            agent: profile_name.to_string(),
+            reason: "empty command".to_string(),
+        })?;
+
+        let mut cmd = Command::new(program);
+        cmd.args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .current_dir(cwd);
+        for (k, v) in &profile.env {
+            cmd.env(k, v);
+        }
+
+        let mut child = cmd.spawn().map_err(|e| AcpError::Spawn {
+            agent: profile_name.to_string(),
+            reason: e.to_string(),
+        })?;
+
+        let stdin = child.stdin.take().ok_or_else(|| AcpError::Spawn {
+            agent: profile_name.to_string(),
+            reason: "no stdin".to_string(),
+        })?;
+        let stdout = child.stdout.take().ok_or_else(|| AcpError::Spawn {
+            agent: profile_name.to_string(),
+            reason: "no stdout".to_string(),
+        })?;
+
+        let mut transport = StdioTransport::new(stdin, stdout);
+        let session_id = uuid::Uuid::new_v4().to_string();
+        let timeout = Duration::from_millis(profile.session_create_timeout_ms);
+
+        // Phase 1: initialize
+        let init_params = serde_json::json!({
+            fields::PROTOCOL_VERSION: protocol::ACP_PROTOCOL_VERSION,
+            fields::CLIENT_CAPABILITIES: {
+                "fs": {"readTextFile": true, "writeTextFile": true},
+                "terminal": true,
+            },
+            fields::CLIENT_INFO: {
+                "name": client::CLIENT_NAME,
+                "version": client::CLIENT_VERSION,
+            },
+        });
+
+        let no_op = NoOpReverseHandler;
+        let init_id = transport
+            .send_request(methods::INITIALIZE, Some(init_params))
+            .await?;
+        let init_result = tokio::time::timeout(timeout, transport.read_response(init_id, &no_op))
+            .await
+            .map_err(|_| AcpError::Timeout(format!("{} timed out", methods::INITIALIZE)))??;
+
+        // Phase 2: authenticate if agent requested it
+        if let Some(auth_methods) = init_result
+            .get(fields::AUTH_METHODS)
+            .and_then(|v| v.as_array())
+        {
+            for method in auth_methods {
+                if let Some(method_id) = method.get(fields::METHOD_ID).and_then(|v| v.as_str()) {
+                    if let Some(credential) = auth::resolve_auth_credential(method_id) {
+                        let auth_params = serde_json::json!({
+                            fields::METHOD_ID: method_id,
+                            fields::CREDENTIAL: credential,
+                        });
+                        let auth_id = transport
+                            .send_request(methods::AUTHENTICATE, Some(auth_params))
+                            .await?;
+                        let _ = tokio::time::timeout(
+                            Duration::from_secs(timeouts::AUTH_TIMEOUT_SECS),
+                            transport.read_response(auth_id, &no_op),
+                        )
+                        .await
+                        .map_err(|_| {
+                            AcpError::Timeout(format!("{} timed out", methods::AUTHENTICATE))
+                        })??;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Phase 3: session/new
+        let new_params = serde_json::json!({
+            cap_args::CWD: cwd.to_string_lossy(),
+        });
+        let new_id = transport
+            .send_request(methods::SESSION_NEW, Some(new_params))
+            .await?;
+        let new_result = tokio::time::timeout(timeout, transport.read_response(new_id, &no_op))
+            .await
+            .map_err(|_| AcpError::Timeout(format!("{} timed out", methods::SESSION_NEW)))??;
+
+        let agent_session_id = new_result
+            .get(fields::SESSION_ID)
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        tracing::info!(
+            agent = profile_name,
+            session_id = %session_id,
+            agent_session_id = ?agent_session_id,
+            "ACP session established"
+        );
+
+        Ok(Self {
+            session_id,
+            agent_session_id,
+            profile_name: profile_name.to_string(),
+            transport: Some(transport),
+            child,
+            close_grace_ms: profile.close_grace_ms,
+            turn_count: 0,
+            closed: false,
+        })
+    }
+
+    fn transport(&mut self) -> Result<&mut StdioTransport, AcpError> {
+        self.transport.as_mut().ok_or(AcpError::SessionClosed)
+    }
+
+    /// Send a prompt to the agent and collect the response.
+    pub async fn prompt(
+        &mut self,
+        text: &str,
+        handler: &CapabilityReverseHandler,
+    ) -> Result<PromptResult, AcpError> {
+        self.turn_count += 1;
+        let blocks = vec![ContentBlock::text(text)];
+
+        let params = serde_json::json!({
+            fields::SESSION_ID: self.agent_session_id,
+            cap_args::PROMPT: blocks,
+        });
+
+        let id = self
+            .transport()?
+            .send_request(methods::SESSION_PROMPT, Some(params))
+            .await?;
+
+        // Read response — reverse requests, notifications, and final response
+        // are all handled by the transport + handler
+        let result = self.transport()?.read_response(id, handler).await?;
+
+        // Collect accumulated text from streaming notifications
+        let text = handler.take_response_text();
+        let (input_tokens, output_tokens) = handler.take_token_usage();
+
+        let stop_reason = result
+            .get(fields::STOP_REASON)
+            .and_then(|v| v.as_str())
+            .unwrap_or(stop_reasons::END_TURN)
+            .to_string();
+        let model = result
+            .get("model")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        let token_usage = if input_tokens.is_some() || output_tokens.is_some() {
+            Some(TokenUsage {
+                input_tokens,
+                output_tokens,
+            })
+        } else {
+            None
+        };
+
+        Ok(PromptResult {
+            text,
+            model,
+            stop_reason,
+            token_usage,
+        })
+    }
+
+    /// Send a request and read the response directly (no reverse handler).
+    /// Used for session control commands (set_mode, set_model, cancel).
+    pub(crate) async fn send_request_no_reverse(
+        &mut self,
+        method: &str,
+        params: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value, AcpError> {
+        let no_op = NoOpReverseHandler;
+        let id = self.transport()?.send_request(method, params).await?;
+        let result = tokio::time::timeout(
+            Duration::from_secs(timeouts::CONTROL_TIMEOUT_SECS),
+            self.transport()?.read_response(id, &no_op),
+        )
+        .await
+        .map_err(|_| AcpError::Timeout(format!("{method} timed out")))??;
+        Ok(result)
+    }
+
+    /// Gracefully close the session.
+    pub async fn close(mut self) {
+        self.closed = true;
+
+        // Drop transport (closes stdin pipe → signals EOF to agent)
+        self.transport.take();
+
+        tokio::time::sleep(Duration::from_millis(self.close_grace_ms)).await;
+
+        if self.child.try_wait().ok().flatten().is_some() {
+            return;
+        }
+
+        // SIGTERM
+        #[cfg(unix)]
+        if let Some(pid) = self.child.id() {
+            send_sigterm(pid);
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = self.child.start_kill();
+        }
+
+        tokio::time::sleep(Duration::from_millis(timeouts::SIGTERM_GRACE_MS)).await;
+
+        if self.child.try_wait().ok().flatten().is_some() {
+            return;
+        }
+
+        // SIGKILL
+        let _ = self.child.kill().await;
+        tokio::time::sleep(Duration::from_millis(timeouts::SIGKILL_GRACE_MS)).await;
+        let _ = self.child.wait().await;
+    }
+
+    pub fn session_id(&self) -> &str {
+        &self.session_id
+    }
+
+    pub fn agent_session_id(&self) -> Option<&str> {
+        self.agent_session_id.as_deref()
+    }
+
+    pub fn profile_name(&self) -> &str {
+        &self.profile_name
+    }
+
+    pub fn turn_count(&self) -> u32 {
+        self.turn_count
+    }
+}
+
+impl Drop for AcpSession {
+    fn drop(&mut self) {
+        // Skip if close() was already called
+        if self.closed {
+            return;
+        }
+        // Best-effort SIGKILL to prevent zombie processes
+        #[cfg(unix)]
+        if let Some(pid) = self.child.id() {
+            unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+        }
+        #[cfg(not(unix))]
+        if let Some(_pid) = self.child.id() {
+            let _ = self.child.start_kill();
+        }
+    }
+}
+
+/// Send SIGTERM to a process via libc (Unix only).
+#[cfg(unix)]
+fn send_sigterm(pid: u32) {
+    unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+}
+
+/// No-op reverse handler used during initialize/authenticate/session-new.
+struct NoOpReverseHandler;
+
+#[async_trait::async_trait]
+impl ReverseHandler for NoOpReverseHandler {
+    async fn handle(
+        &self,
+        method: &str,
+        _params: serde_json::Value,
+    ) -> Result<serde_json::Value, AcpError> {
+        tracing::warn!(method, "reverse request during init phase — rejecting");
+        Err(AcpError::Protocol(format!(
+            "reverse request {method} not supported during initialization"
+        )))
+    }
+}

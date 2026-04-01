@@ -1,0 +1,185 @@
+use dashmap::DashMap;
+use std::process::ExitStatus;
+use tokio::io::AsyncReadExt;
+use tokio::process::Command;
+use std::process::Stdio;
+
+use crate::constants::terminal as term_consts;
+use crate::AcpError;
+
+pub struct TerminalManager {
+    terminals: DashMap<String, Terminal>,
+}
+
+struct Terminal {
+    child: Option<tokio::process::Child>,
+    output_buffer: Vec<u8>,
+    exit_status: Option<ExitStatus>,
+    truncated: bool,
+}
+
+impl TerminalManager {
+    pub fn new() -> Self {
+        Self {
+            terminals: DashMap::new(),
+        }
+    }
+
+    /// Spawn a new terminal process, returning its terminal ID.
+    pub async fn create(
+        &self,
+        command: &str,
+        args: &[String],
+        cwd: Option<&str>,
+        env: &[(String, String)],
+    ) -> Result<String, AcpError> {
+        let terminal_id = uuid::Uuid::new_v4().to_string();
+
+        let mut cmd = Command::new(command);
+        cmd.args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        if let Some(dir) = cwd {
+            cmd.current_dir(dir);
+        }
+        for (k, v) in env {
+            cmd.env(k, v);
+        }
+
+        let child = cmd.spawn().map_err(|e| AcpError::Spawn {
+            agent: command.to_string(),
+            reason: e.to_string(),
+        })?;
+
+        self.terminals.insert(
+            terminal_id.clone(),
+            Terminal {
+                child: Some(child),
+                output_buffer: Vec::new(),
+                exit_status: None,
+                truncated: false,
+            },
+        );
+
+        Ok(terminal_id)
+    }
+
+    /// Collect available output from a terminal.
+    pub async fn output(
+        &self,
+        terminal_id: &str,
+    ) -> Result<(String, bool, Option<i32>), AcpError> {
+        let mut entry = self
+            .terminals
+            .get_mut(terminal_id)
+            .ok_or_else(|| AcpError::Protocol(format!("Unknown terminal: {terminal_id}")))?;
+        let term = entry.value_mut();
+
+        // Try to read any available output from the child
+        if let Some(child) = &mut term.child {
+            if let Some(stdout) = child.stdout.as_mut() {
+                let mut buf = vec![0u8; 4096];
+                // Non-blocking read attempt
+                match tokio::time::timeout(
+                    std::time::Duration::from_millis(term_consts::READ_POLL_TIMEOUT_MS),
+                    stdout.read(&mut buf),
+                )
+                .await
+                {
+                    Ok(Ok(n)) if n > 0 => {
+                        if term.output_buffer.len() + n > term_consts::DEFAULT_OUTPUT_LIMIT {
+                            term.truncated = true;
+                        } else {
+                            term.output_buffer.extend_from_slice(&buf[..n]);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            // Check if child has exited
+            if let Ok(Some(status)) = child.try_wait() {
+                term.exit_status = Some(status);
+            }
+        }
+
+        let output = String::from_utf8_lossy(&term.output_buffer).to_string();
+        let exit_code = term.exit_status.and_then(|s| s.code());
+        Ok((output, term.truncated, exit_code))
+    }
+
+    /// Wait for a terminal process to exit.
+    pub async fn wait_for_exit(&self, terminal_id: &str) -> Result<(i32, Option<i32>), AcpError> {
+        let mut child = {
+            let mut entry = self
+                .terminals
+                .get_mut(terminal_id)
+                .ok_or_else(|| AcpError::Protocol(format!("Unknown terminal: {terminal_id}")))?;
+            entry.value_mut().child.take()
+        };
+
+        if let Some(ref mut child) = child {
+            let status = child
+                .wait()
+                .await
+                .map_err(|e| AcpError::Protocol(format!("wait failed: {e}")))?;
+
+            // Drain remaining output
+            if let Some(mut stdout) = child.stdout.take() {
+                let mut buf = Vec::new();
+                let _ = stdout.read_to_end(&mut buf).await;
+                if let Some(mut entry) = self.terminals.get_mut(terminal_id) {
+                    let term = entry.value_mut();
+                    if term.output_buffer.len() + buf.len() <= term_consts::DEFAULT_OUTPUT_LIMIT {
+                        term.output_buffer.extend_from_slice(&buf);
+                    } else {
+                        term.truncated = true;
+                    }
+                    term.exit_status = Some(status);
+                }
+            }
+
+            let exit_code = status.code().unwrap_or(-1);
+            // signal = None for normal exit
+            #[cfg(unix)]
+            let signal = {
+                use std::os::unix::process::ExitStatusExt;
+                status.signal()
+            };
+            #[cfg(not(unix))]
+            let signal = None;
+
+            Ok((exit_code, signal))
+        } else {
+            // Child already taken (already waited)
+            let entry = self
+                .terminals
+                .get(terminal_id)
+                .ok_or_else(|| AcpError::Protocol(format!("Unknown terminal: {terminal_id}")))?;
+            let code = entry.exit_status.and_then(|s| s.code()).unwrap_or(-1);
+            Ok((code, None))
+        }
+    }
+
+    /// Kill a terminal process.
+    pub async fn kill(&self, terminal_id: &str) -> Result<(), AcpError> {
+        if let Some(mut entry) = self.terminals.get_mut(terminal_id) {
+            if let Some(ref mut child) = entry.value_mut().child {
+                let _ = child.kill().await;
+            }
+        }
+        Ok(())
+    }
+
+    /// Release a terminal, cleaning up resources.
+    pub fn release(&self, terminal_id: &str) {
+        self.terminals.remove(terminal_id);
+    }
+}
+
+impl Default for TerminalManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}

@@ -1,0 +1,42 @@
+{
+  "name": "parallel-review",
+  "parameters": [{"name": "question", "type_name": "str"}],
+  "nodes": [
+    {
+      "id": 1,
+      "name": "ask_codex",
+      "op": "INV",
+      "attributes": {
+        "capability": "acp",
+        "params_json": "{\"agent\": \"codex\", \"prompt\": \"Answer: {0}\"}",
+        "timeout_ms": 300000
+      }
+    },
+    {
+      "id": 2,
+      "name": "ask_claude",
+      "op": "INV",
+      "attributes": {
+        "capability": "acp",
+        "params_json": "{\"agent\": \"claude\", \"prompt\": \"Answer: {0}\"}",
+        "timeout_ms": 300000
+      }
+    },
+    {
+      "id": 3,
+      "name": "compare",
+      "op": "ASK",
+      "attributes": {
+        "template_str": "Compare these answers:\nCodex: {0}\nClaude: {1}\nWhich is better and why?",
+        "model_policy": "fast"
+      }
+    }
+  ],
+  "edges": [
+    {"from": 1, "to": 3, "dependency": "Data"},
+    {"from": 2, "to": 3, "dependency": "Data"}
+  ],
+  "metadata": {
+    "description": "Ask two ACP agents the same question in parallel, then compare their answers"
+  }
+}

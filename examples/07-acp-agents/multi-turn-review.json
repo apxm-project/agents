@@ -1,0 +1,40 @@
+{
+  "name": "multi-turn-review",
+  "parameters": [{"name": "repo", "type_name": "str"}],
+  "nodes": [
+    {
+      "id": 1,
+      "name": "analyze",
+      "op": "INV",
+      "attributes": {
+        "capability": "acp",
+        "params_json": "{\"agent\": \"claude\", \"prompt\": \"Analyze the codebase at {0} for potential issues\", \"session_handle\": \"reviewer\", \"mode\": \"architect\"}"
+      }
+    },
+    {
+      "id": 2,
+      "name": "fix",
+      "op": "INV",
+      "attributes": {
+        "capability": "acp",
+        "params_json": "{\"agent\": \"claude\", \"prompt\": \"Now fix the top 3 issues you identified\", \"session_handle\": \"reviewer\", \"mode\": \"code\"}"
+      }
+    },
+    {
+      "id": 3,
+      "name": "verify",
+      "op": "INV",
+      "attributes": {
+        "capability": "acp",
+        "params_json": "{\"agent\": \"claude\", \"prompt\": \"Run the tests and verify your fixes work\", \"session_handle\": \"reviewer\"}"
+      }
+    }
+  ],
+  "edges": [
+    {"from": 1, "to": 2, "dependency": "Data"},
+    {"from": 2, "to": 3, "dependency": "Data"}
+  ],
+  "metadata": {
+    "description": "Multi-turn review: analyze, fix, and verify using a shared ACP session"
+  }
+}

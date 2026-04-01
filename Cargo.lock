@@ -121,6 +121,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
+name = "apxm-acp"
+version = "0.1.0"
+dependencies = [
+ "apxm-core",
+ "apxm-credentials",
+ "apxm-runtime",
+ "async-trait",
+ "dashmap",
+ "dirs 5.0.1",
+ "libc",
+ "serde",
+ "serde_json",
+ "shell-words",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "toml",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "apxm-ais"
 version = "0.0.1"
 dependencies = [
@@ -183,6 +205,7 @@ name = "apxm-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "apxm-acp",
  "apxm-artifact",
  "apxm-core",
  "apxm-credentials",
@@ -258,6 +281,7 @@ dependencies = [
 name = "apxm-driver"
 version = "0.1.0"
 dependencies = [
+ "apxm-acp",
  "apxm-artifact",
  "apxm-backends",
  "apxm-compiler",
@@ -3913,6 +3937,12 @@ checksum = "f40ca3c46823713e0d4209592e8d6e826aa57e928f09752619fc696c499637f6"
 dependencies = [
  "lazy_static",
 ]
+
+[[package]]
+name = "shell-words"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc6fe69c597f9c37bfeeeeeb33da3530379845f10be461a66d16d03eca2ded77"
 
 [[package]]
 name = "shlex"

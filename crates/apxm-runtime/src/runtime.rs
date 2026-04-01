@@ -345,6 +345,10 @@ impl Runtime {
         &self.capability_system
     }
 
+    pub fn capability_system_arc(&self) -> Arc<CapabilitySystem> {
+        Arc::clone(&self.capability_system)
+    }
+
     pub fn aam(&self) -> &Aam {
         &self.aam
     }

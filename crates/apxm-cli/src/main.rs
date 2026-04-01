@@ -148,6 +148,11 @@ enum Commands {
         #[command(subcommand)]
         action: ToolsAction,
     },
+    /// Manage ACP agent profiles for INV(acp) nodes
+    Agents {
+        #[command(subcommand)]
+        action: AgentsAction,
+    },
     /// Browse AIS operations (the agent instruction set)
     Ops {
         #[command(subcommand)]
@@ -280,6 +285,36 @@ enum ToolsAction {
     },
 }
 
+#[derive(Subcommand)]
+enum AgentsAction {
+    /// List available ACP agents (built-in + user-registered)
+    List,
+    /// Add or override an agent profile
+    Add {
+        /// Agent profile name (e.g., "my-agent")
+        name: String,
+        /// Agent command to spawn (e.g., "my-agent --acp")
+        #[arg(long)]
+        command: String,
+        /// Permission mode (approve-all, approve-reads, deny-all)
+        #[arg(long, default_value = "approve-reads")]
+        permissions: String,
+        /// Grace period in ms after closing stdin before SIGTERM
+        #[arg(long)]
+        close_grace_ms: Option<u64>,
+    },
+    /// Remove a user-registered agent profile
+    Remove {
+        /// Agent profile name to remove
+        name: String,
+    },
+    /// Test spawning an agent (runs initialize + session/new + close)
+    Test {
+        /// Agent profile name to test
+        name: String,
+    },
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 struct ToolEntry {
     name: String,
@@ -295,7 +330,7 @@ struct ToolsFile {
 }
 
 fn tools_path() -> PathBuf {
-    let mut p = dirs::home_dir().expect("could not determine home directory");
+    let mut p = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
     p.push(".apxm");
     p.push("tools.json");
     p
@@ -323,6 +358,133 @@ fn save_tools(tf: &ToolsFile) -> Result<()> {
         .map_err(|e| anyhow::anyhow!("Failed to serialize tools: {e}"))?;
     std::fs::write(&path, content)
         .map_err(|e| anyhow::anyhow!("Failed to write {}: {e}", path.display()))?;
+    Ok(())
+}
+
+async fn agents_command(action: AgentsAction, json_output: bool) -> Result<()> {
+    match action {
+        AgentsAction::List => {
+            let reg = apxm_acp::AgentRegistry::load();
+            let list = reg.list();
+            if json_output {
+                let entries: Vec<serde_json::Value> = list
+                    .iter()
+                    .map(|(name, profile, builtin)| {
+                        serde_json::json!({
+                            "name": name,
+                            "command": profile.command,
+                            "source": if *builtin { "builtin" } else { "user" },
+                            "close_grace_ms": profile.close_grace_ms,
+                            "session_create_timeout_ms": profile.session_create_timeout_ms,
+                        })
+                    })
+                    .collect();
+                println!("{}", serde_json::to_string_pretty(&entries)
+                    .map_err(|e| anyhow::anyhow!("JSON: {e}"))?);
+                return Ok(());
+            }
+
+            print_section_header("ACP Agent Profiles");
+            let max_name = list.iter().map(|(n, _, _)| n.len()).max().unwrap_or(8);
+            let max_source = 7; // "builtin"
+            println!(
+                "  {:<name_w$}  {:<src_w$}  {}",
+                "PROFILE", "SOURCE", "COMMAND",
+                name_w = max_name,
+                src_w = max_source,
+            );
+            for (name, profile, builtin) in &list {
+                let source = if *builtin { "builtin" } else { "user" };
+                println!(
+                    "  {:<name_w$}  {:<src_w$}  {}",
+                    name.bold(),
+                    source.dimmed(),
+                    profile.command,
+                    name_w = max_name,
+                    src_w = max_source,
+                );
+            }
+            println!();
+            println!(
+                "{} agent profile{} registered",
+                list.len(),
+                if list.len() == 1 { "" } else { "s" }
+            );
+        }
+        AgentsAction::Add {
+            name,
+            command,
+            permissions,
+            close_grace_ms,
+        } => {
+            let permission_mode: apxm_acp::PermissionMode = permissions
+                .parse()
+                .map_err(|e: String| anyhow::anyhow!(e))?;
+            use apxm_acp::constants::timeouts as acp_timeouts;
+            let profile = apxm_acp::AgentProfile {
+                command: command.clone(),
+                close_grace_ms: close_grace_ms.unwrap_or(acp_timeouts::DEFAULT_CLOSE_GRACE_MS),
+                session_create_timeout_ms: acp_timeouts::DEFAULT_SESSION_TIMEOUT_MS,
+                permission_mode,
+                env: Default::default(),
+            };
+            let mut reg = apxm_acp::AgentRegistry::load();
+            reg.add(name.clone(), profile)
+                .map_err(|e| anyhow::anyhow!("Failed to save agent profile: {e}"))?;
+            print_section_header("Agent Profile Added");
+            print_status_line(&name, Status::Ok, &command);
+        }
+        AgentsAction::Remove { name } => {
+            let mut reg = apxm_acp::AgentRegistry::load();
+            if reg.is_builtin(&name) {
+                return Err(anyhow::anyhow!(
+                    "Cannot remove built-in agent '{name}'. You can override it with: apxm agents add {name} --command ..."
+                ));
+            }
+            match reg.remove(&name) {
+                Ok(true) => {
+                    print_section_header("Agent Profile Removed");
+                    print_status_line(&name, Status::Ok, "removed");
+                }
+                Ok(false) => {
+                    return Err(anyhow::anyhow!("Agent profile '{name}' not found"));
+                }
+                Err(e) => {
+                    return Err(anyhow::anyhow!("Failed to remove agent profile: {e}"));
+                }
+            }
+        }
+        AgentsAction::Test { name } => {
+            let reg = apxm_acp::AgentRegistry::load();
+            let profile = reg.get(&name).ok_or_else(|| {
+                anyhow::anyhow!("Agent profile '{name}' not found. Run: apxm agents list")
+            })?;
+            println!("Testing agent '{}'...", name.bold());
+            println!("  Command: {}", profile.command);
+            let cwd = std::env::current_dir().unwrap_or_default();
+            let start = std::time::Instant::now();
+            match apxm_acp::AcpSession::spawn(&name, profile, &cwd).await {
+                Ok(session) => {
+                    let elapsed = start.elapsed();
+                    println!("  Session ID: {}", session.session_id());
+                    if let Some(agent_sid) = session.agent_session_id() {
+                        println!("  Agent Session ID: {agent_sid}");
+                    }
+                    println!(
+                        "  {}",
+                        format!("Connected in {:.1}s", elapsed.as_secs_f64())
+                            .green()
+                    );
+                    session.close().await;
+                    print_status_line(&name, Status::Ok, "agent reachable");
+                }
+                Err(e) => {
+                    print_status_line(&name, Status::Error, &format!("{e}"));
+                    return Err(anyhow::anyhow!("Agent test failed: {e}"));
+                }
+            }
+        }
+    }
     Ok(())
 }
 
@@ -494,6 +656,7 @@ async fn run_cli() -> Result<()> {
         Commands::Install => install_command(),
         Commands::Register { action } => register_command(action).await,
         Commands::Tools { action } => tools_command(action, cli.json),
+        Commands::Agents { action } => agents_command(action, cli.json).await,
         Commands::Ops { action } => ops_command(action, cli.json),
         Commands::Validate { input } => validate_command(input, cli.json),
         Commands::Analyze { input } => analyze_command(input, cli.json),
@@ -513,6 +676,7 @@ async fn run_cli_no_driver() -> Result<()> {
         Commands::Install => install_command(),
         Commands::Register { action } => register_command(action).await,
         Commands::Tools { action } => tools_command(action, cli.json),
+        Commands::Agents { action } => agents_command(action, cli.json).await,
         Commands::Ops { action } => ops_command(action, cli.json),
         Commands::Validate { input } => validate_command(input, cli.json),
         Commands::Analyze { input } => analyze_command(input, cli.json),
