@@ -3,13 +3,15 @@ use std::process::Stdio;
 use tokio::process::{Child, Command};
 use tokio::time::Duration;
 
+use crate::AcpError;
 use crate::auth;
-use crate::constants::{args as cap_args, client, fields, methods, protocol, stop_reasons, timeouts};
+use crate::constants::{
+    args as cap_args, client, fields, methods, protocol, stop_reasons, timeouts,
+};
 use crate::content::ContentBlock;
 use crate::protocol::StdioTransport;
-use crate::reverse::{CapabilityReverseHandler, ReverseHandler};
 use crate::registry::AgentProfile;
-use crate::AcpError;
+use crate::reverse::{CapabilityReverseHandler, ReverseHandler};
 
 /// Result of a prompt round-trip.
 #[derive(Debug, Clone)]

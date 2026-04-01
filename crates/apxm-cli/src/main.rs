@@ -379,8 +379,11 @@ async fn agents_command(action: AgentsAction, json_output: bool) -> Result<()> {
                         })
                     })
                     .collect();
-                println!("{}", serde_json::to_string_pretty(&entries)
-                    .map_err(|e| anyhow::anyhow!("JSON: {e}"))?);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&entries)
+                        .map_err(|e| anyhow::anyhow!("JSON: {e}"))?
+                );
                 return Ok(());
             }
 
@@ -389,7 +392,9 @@ async fn agents_command(action: AgentsAction, json_output: bool) -> Result<()> {
             let max_source = 7; // "builtin"
             println!(
                 "  {:<name_w$}  {:<src_w$}  {}",
-                "PROFILE", "SOURCE", "COMMAND",
+                "PROFILE",
+                "SOURCE",
+                "COMMAND",
                 name_w = max_name,
                 src_w = max_source,
             );
@@ -472,8 +477,7 @@ async fn agents_command(action: AgentsAction, json_output: bool) -> Result<()> {
                     }
                     println!(
                         "  {}",
-                        format!("Connected in {:.1}s", elapsed.as_secs_f64())
-                            .green()
+                        format!("Connected in {:.1}s", elapsed.as_secs_f64()).green()
                     );
                     session.close().await;
                     print_status_line(&name, Status::Ok, "agent reachable");

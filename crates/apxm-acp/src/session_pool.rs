@@ -4,9 +4,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+use crate::AcpError;
 use crate::registry::AgentProfile;
 use crate::session::AcpSession;
-use crate::AcpError;
 
 /// Key for identifying a unique session in the pool.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

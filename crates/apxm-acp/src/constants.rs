@@ -158,7 +158,8 @@ pub mod terminal {
 
 pub mod registry {
     /// TOML file header for user agent profiles.
-    pub const FILE_HEADER: &str = "# APXM ACP Agent Profiles\n# User overrides — managed by `apxm agents`\n\n";
+    pub const FILE_HEADER: &str =
+        "# APXM ACP Agent Profiles\n# User overrides — managed by `apxm agents`\n\n";
     /// File name for user agent config.
     pub const AGENTS_FILENAME: &str = "agents.toml";
 }

@@ -12,7 +12,6 @@ use crate::{
 use apxm_artifact::Artifact;
 use apxm_backends::LLMRegistry;
 use apxm_core::log_info;
-use apxm_sandbox::SandboxRegistry;
 use apxm_core::{
     error::RuntimeError,
     types::{
@@ -20,6 +19,7 @@ use apxm_core::{
         values::Value,
     },
 };
+use apxm_sandbox::SandboxRegistry;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
 

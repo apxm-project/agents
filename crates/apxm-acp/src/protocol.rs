@@ -181,7 +181,10 @@ impl StdioTransport {
                 }
                 JsonRpcMessage::ReverseRequest(req) => {
                     let req_id = req.id.clone();
-                    match handler.handle(&req.method, req.params.unwrap_or_default()).await {
+                    match handler
+                        .handle(&req.method, req.params.unwrap_or_default())
+                        .await
+                    {
                         Ok(result) => {
                             self.send_response(req_id, result).await?;
                         }
@@ -234,9 +237,7 @@ fn classify(raw: serde_json::Value) -> Result<JsonRpcMessage, AcpError> {
         let params = raw.get("params").cloned();
         Ok(JsonRpcMessage::Notification { method, params })
     } else {
-        Err(AcpError::Protocol(format!(
-            "unclassifiable message: {raw}"
-        )))
+        Err(AcpError::Protocol(format!("unclassifiable message: {raw}")))
     }
 }
 
@@ -253,24 +254,21 @@ mod tests {
 
     #[test]
     fn classify_error_response() {
-        let raw =
-            serde_json::json!({"jsonrpc": JSONRPC_VERSION, "id": 1, "error": {"code": -1, "message": "bad"}});
+        let raw = serde_json::json!({"jsonrpc": JSONRPC_VERSION, "id": 1, "error": {"code": -1, "message": "bad"}});
         let msg = classify(raw).unwrap();
         assert!(matches!(msg, JsonRpcMessage::Response(_)));
     }
 
     #[test]
     fn classify_notification() {
-        let raw =
-            serde_json::json!({"jsonrpc": JSONRPC_VERSION, "method": "session/update", "params": {}});
+        let raw = serde_json::json!({"jsonrpc": JSONRPC_VERSION, "method": "session/update", "params": {}});
         let msg = classify(raw).unwrap();
         assert!(matches!(msg, JsonRpcMessage::Notification { .. }));
     }
 
     #[test]
     fn classify_reverse_request() {
-        let raw =
-            serde_json::json!({"jsonrpc": JSONRPC_VERSION, "id": 5, "method": "fs/readTextFile", "params": {}});
+        let raw = serde_json::json!({"jsonrpc": JSONRPC_VERSION, "id": 5, "method": "fs/readTextFile", "params": {}});
         let msg = classify(raw).unwrap();
         assert!(matches!(msg, JsonRpcMessage::ReverseRequest(_)));
     }

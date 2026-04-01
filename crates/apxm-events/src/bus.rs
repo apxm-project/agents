@@ -33,10 +33,7 @@ impl EventBus {
     /// active subscribers (the event is returned so the caller can decide
     /// what to do with it).
     pub fn publish(&self, event: ApxmEvent) -> Result<(), ApxmEvent> {
-        self.tx
-            .send(event)
-            .map(|_| ())
-            .map_err(|e| e.0)
+        self.tx.send(event).map(|_| ()).map_err(|e| e.0)
     }
 
     /// Create a new subscriber that receives all future events.

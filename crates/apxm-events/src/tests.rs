@@ -209,13 +209,11 @@ mod tests {
 
     #[test]
     fn serde_scheduler_decision() {
-        roundtrip(EventPayload::SchedulerDecision(
-            SchedulerDecisionPayload {
-                node_id: 5,
-                delay_ms: 500,
-                reason: "backpressure".into(),
-            },
-        ));
+        roundtrip(EventPayload::SchedulerDecision(SchedulerDecisionPayload {
+            node_id: 5,
+            delay_ms: 500,
+            reason: "backpressure".into(),
+        }));
     }
 
     #[test]
@@ -330,9 +328,7 @@ mod tests {
         let mut sub = bus.subscribe();
 
         let event = ApxmEvent::new(
-            EventPayload::Token(TokenPayload {
-                text: "hi".into(),
-            }),
+            EventPayload::Token(TokenPayload { text: "hi".into() }),
             EventSource::Backend("openai".into()),
             "trace-1",
         )

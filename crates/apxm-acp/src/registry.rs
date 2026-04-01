@@ -103,9 +103,19 @@ impl AgentRegistry {
         let dg = timeouts::DEFAULT_CLOSE_GRACE_MS;
         let dt = timeouts::DEFAULT_SESSION_TIMEOUT_MS;
         let entries: &[(&str, &str, u64, u64)] = &[
-            ("claude", "npx -y @agentclientprotocol/claude-agent-acp@^0.24.2", dg, timeouts::CLAUDE_SESSION_TIMEOUT_MS),
+            (
+                "claude",
+                "npx -y @agentclientprotocol/claude-agent-acp@^0.24.2",
+                dg,
+                timeouts::CLAUDE_SESSION_TIMEOUT_MS,
+            ),
             ("codex", "npx @zed-industries/codex-acp@^0.10.0", dg, dt),
-            ("gemini", "gemini --acp", dg, timeouts::GEMINI_SESSION_TIMEOUT_MS),
+            (
+                "gemini",
+                "gemini --acp",
+                dg,
+                timeouts::GEMINI_SESSION_TIMEOUT_MS,
+            ),
             ("copilot", "copilot --acp --stdio", dg, dt),
             ("openclaw", "openclaw acp", dg, dt),
             ("pi", "npx pi-acp@^0.0.22", dg, dt),
@@ -115,7 +125,12 @@ impl AgentRegistry {
             ("kimi", "kimi acp", dg, dt),
             ("kiro", "kiro-cli-chat acp", dg, dt),
             ("opencode", "npx -y opencode-ai acp", dg, dt),
-            ("qoder", "qodercli --acp", timeouts::QODER_CLOSE_GRACE_MS, dt),
+            (
+                "qoder",
+                "qodercli --acp",
+                timeouts::QODER_CLOSE_GRACE_MS,
+                dt,
+            ),
             ("qwen", "qwen --acp", dg, dt),
             ("trae", "traecli acp serve", dg, dt),
             ("iflow", "iflow --experimental-acp", dg, dt),
@@ -230,7 +245,10 @@ mod tests {
         let claude = reg.get("claude").unwrap();
         assert!(claude.command.contains("claude-agent-acp"));
         assert_eq!(claude.close_grace_ms, timeouts::DEFAULT_CLOSE_GRACE_MS);
-        assert_eq!(claude.session_create_timeout_ms, timeouts::CLAUDE_SESSION_TIMEOUT_MS);
+        assert_eq!(
+            claude.session_create_timeout_ms,
+            timeouts::CLAUDE_SESSION_TIMEOUT_MS
+        );
     }
 
     #[test]

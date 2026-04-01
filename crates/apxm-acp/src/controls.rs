@@ -1,6 +1,6 @@
+use crate::AcpError;
 use crate::constants::{fields, methods};
 use crate::session::AcpSession;
-use crate::AcpError;
 
 /// Session control operations (mode, model, cancel).
 ///

@@ -1,11 +1,11 @@
 use dashmap::DashMap;
 use std::process::ExitStatus;
+use std::process::Stdio;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
-use std::process::Stdio;
 
-use crate::constants::terminal as term_consts;
 use crate::AcpError;
+use crate::constants::terminal as term_consts;
 
 pub struct TerminalManager {
     terminals: DashMap<String, Terminal>,
@@ -67,10 +67,7 @@ impl TerminalManager {
     }
 
     /// Collect available output from a terminal.
-    pub async fn output(
-        &self,
-        terminal_id: &str,
-    ) -> Result<(String, bool, Option<i32>), AcpError> {
+    pub async fn output(&self, terminal_id: &str) -> Result<(String, bool, Option<i32>), AcpError> {
         let mut entry = self
             .terminals
             .get_mut(terminal_id)

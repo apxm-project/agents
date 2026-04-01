@@ -6,9 +6,9 @@ use async_trait::async_trait;
 
 use apxm_core::error::RuntimeError;
 use apxm_core::types::values::Value;
+use apxm_runtime::CapabilitySystem;
 use apxm_runtime::capability::executor::{CapabilityExecutor, CapabilityResult};
 use apxm_runtime::capability::metadata::CapabilityMetadata;
-use apxm_runtime::CapabilitySystem;
 
 use crate::constants::{args as cap_args, capability as cap_consts, result_keys};
 use crate::controls::SessionControls;
@@ -28,10 +28,7 @@ pub struct AcpCapability {
 }
 
 impl AcpCapability {
-    pub fn new(
-        capability_system: Arc<CapabilitySystem>,
-        session_pool: Arc<SessionPool>,
-    ) -> Self {
+    pub fn new(capability_system: Arc<CapabilitySystem>, session_pool: Arc<SessionPool>) -> Self {
         let schema = serde_json::json!({
             "type": "object",
             "properties": {
@@ -71,7 +68,10 @@ impl AcpCapability {
             )
             .with_returns("object")
             .with_latency(cap_consts::DEFAULT_LATENCY_MS)
-            .with_tags(vec!["agent".to_string(), cap_consts::ACP_CAPABILITY_NAME.to_string()]),
+            .with_tags(vec![
+                "agent".to_string(),
+                cap_consts::ACP_CAPABILITY_NAME.to_string(),
+            ]),
             registry: AgentRegistry::load(),
             capability_system,
             session_pool,
@@ -280,10 +280,7 @@ mod tests {
             "agent".to_string(),
             Value::String("nonexistent-agent".to_string()),
         );
-        args.insert(
-            "prompt".to_string(),
-            Value::String("hello".to_string()),
-        );
+        args.insert("prompt".to_string(), Value::String("hello".to_string()));
         let result = cap.execute(args).await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();

@@ -126,15 +126,19 @@ async fn multi_turn_on_same_session() {
     let cap_sys = Arc::new(apxm_runtime::CapabilitySystem::new());
 
     // Turn 1
-    let handler =
-        apxm_acp::reverse::CapabilityReverseHandler::new(Arc::clone(&cap_sys), PermissionMode::ApproveAll);
+    let handler = apxm_acp::reverse::CapabilityReverseHandler::new(
+        Arc::clone(&cap_sys),
+        PermissionMode::ApproveAll,
+    );
     let r1 = session.prompt("Turn 1", &handler).await.expect("turn 1");
     assert_eq!(r1.text, "Hello from mock");
     assert_eq!(session.turn_count(), 1);
 
     // Turn 2
-    let handler =
-        apxm_acp::reverse::CapabilityReverseHandler::new(Arc::clone(&cap_sys), PermissionMode::ApproveAll);
+    let handler = apxm_acp::reverse::CapabilityReverseHandler::new(
+        Arc::clone(&cap_sys),
+        PermissionMode::ApproveAll,
+    );
     let r2 = session.prompt("Turn 2", &handler).await.expect("turn 2");
     assert_eq!(r2.text, "Hello from mock");
     assert_eq!(session.turn_count(), 2);

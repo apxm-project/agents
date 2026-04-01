@@ -1,10 +1,10 @@
 use async_trait::async_trait;
 use std::sync::Arc;
 
+use crate::AcpError;
 use crate::constants::{fields, methods, option_kinds, outcomes, tool_kinds, update_types};
 use crate::registry::PermissionMode;
 use crate::terminal::TerminalManager;
-use crate::AcpError;
 
 /// Trait for handling reverse requests and notifications from an ACP agent.
 #[async_trait]
@@ -159,7 +159,11 @@ impl CapabilityReverseHandler {
             .ok_or_else(|| AcpError::Protocol("missing command".to_string()))?;
         let args: Vec<String> = params["args"]
             .as_array()
-            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default();
         let cwd = params["cwd"].as_str();
         let env: Vec<(String, String)> = params["env"]
@@ -264,10 +268,7 @@ impl CapabilityReverseHandler {
 }
 
 /// Find the first option whose "kind" starts with the given prefix and return its optionId.
-fn find_option_id<'a>(
-    options: &'a [serde_json::Value],
-    kind_prefix: &str,
-) -> Option<&'a str> {
+fn find_option_id<'a>(options: &'a [serde_json::Value], kind_prefix: &str) -> Option<&'a str> {
     options
         .iter()
         .find(|o| {

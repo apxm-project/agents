@@ -10,11 +10,7 @@ impl ApxmEvent {
     ///
     /// The timestamp is set to `Utc::now()` and the sequence number
     /// defaults to `0` (call [`with_seq`](Self::with_seq) to override).
-    pub fn new(
-        payload: EventPayload,
-        source: EventSource,
-        trace_id: impl Into<String>,
-    ) -> Self {
+    pub fn new(payload: EventPayload, source: EventSource, trace_id: impl Into<String>) -> Self {
         Self {
             meta: EventMeta {
                 seq: 0,

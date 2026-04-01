@@ -31,6 +31,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use apxm_artifact::Artifact;
+use apxm_backends::llm::provider::{Provider, ProviderId};
 use apxm_backends::{
     LLMRequest, Message as LLMMessage, Role as LLMRole, StreamChunk, ToolDefinition,
 };
@@ -58,7 +59,6 @@ use tokio_stream::StreamExt;
 use tower_http::cors::CorsLayer;
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
 use tower_http::trace::TraceLayer;
-use apxm_backends::llm::provider::{Provider, ProviderId};
 use tracing::{error, info, warn};
 
 const DEFAULT_ADDR: &str = "127.0.0.1:18800";
@@ -694,9 +694,10 @@ async fn main() -> anyhow::Result<()> {
                             }
                         };
                         let api_key = cred.api_key.as_deref().unwrap_or("");
-                        let config = cred.base_url.as_ref().map(|url| {
-                            serde_json::json!({ "base_url": url })
-                        });
+                        let config = cred
+                            .base_url
+                            .as_ref()
+                            .map(|url| serde_json::json!({ "base_url": url }));
                         match Provider::new(provider_id, api_key, config).await {
                             Ok(provider) => {
                                 if let Err(e) = runtime.llm_registry().register(&name, provider) {
@@ -704,7 +705,9 @@ async fn main() -> anyhow::Result<()> {
                                     continue;
                                 }
                                 if let Some(model) = &cred.model {
-                                    if let Err(e) = runtime.llm_registry().set_model_route(model, &name) {
+                                    if let Err(e) =
+                                        runtime.llm_registry().set_model_route(model, &name)
+                                    {
                                         warn!(%name, %model, error = %e, "failed to route model to backend");
                                     }
                                 }
@@ -1746,9 +1749,8 @@ async fn handle_generate_stream(
                 Ok(Some(Ok(chunk))) => {
                     let seq_val = seq.fetch_add(1, Ordering::Relaxed);
                     let maybe_event = match &chunk {
-                        StreamChunk::Token(text) => Some(Event::default()
-                            .event("apxm")
-                            .data(
+                        StreamChunk::Token(text) => Some(
+                            Event::default().event("apxm").data(
                                 serde_json::json!({
                                     "meta": {
                                         "seq": seq_val,
@@ -1762,10 +1764,10 @@ async fn handle_generate_stream(
                                     }
                                 })
                                 .to_string(),
-                            )),
-                        StreamChunk::Thought(text) => Some(Event::default()
-                            .event("apxm")
-                            .data(
+                            ),
+                        ),
+                        StreamChunk::Thought(text) => Some(
+                            Event::default().event("apxm").data(
                                 serde_json::json!({
                                     "meta": {
                                         "seq": seq_val,
@@ -1779,10 +1781,10 @@ async fn handle_generate_stream(
                                     }
                                 })
                                 .to_string(),
-                            )),
-                        StreamChunk::ToolCallStart { id, name } => Some(Event::default()
-                            .event("apxm")
-                            .data(
+                            ),
+                        ),
+                        StreamChunk::ToolCallStart { id, name } => Some(
+                            Event::default().event("apxm").data(
                                 serde_json::json!({
                                     "meta": {
                                         "seq": seq_val,
@@ -1798,13 +1800,13 @@ async fn handle_generate_stream(
                                     }
                                 })
                                 .to_string(),
-                            )),
+                            ),
+                        ),
                         StreamChunk::ToolCallDelta {
                             id,
                             arguments_delta,
-                        } => Some(Event::default()
-                            .event("apxm")
-                            .data(
+                        } => Some(
+                            Event::default().event("apxm").data(
                                 serde_json::json!({
                                     "meta": {
                                         "seq": seq_val,
@@ -1820,10 +1822,10 @@ async fn handle_generate_stream(
                                     }
                                 })
                                 .to_string(),
-                            )),
-                        StreamChunk::Done(response) => Some(Event::default()
-                            .event("apxm")
-                            .data(
+                            ),
+                        ),
+                        StreamChunk::Done(response) => Some(
+                            Event::default().event("apxm").data(
                                 serde_json::json!({
                                     "meta": {
                                         "seq": seq_val,
@@ -1844,10 +1846,10 @@ async fn handle_generate_stream(
                                     }
                                 })
                                 .to_string(),
-                            )),
-                        StreamChunk::Usage(usage) => Some(Event::default()
-                            .event("apxm")
-                            .data(
+                            ),
+                        ),
+                        StreamChunk::Usage(usage) => Some(
+                            Event::default().event("apxm").data(
                                 serde_json::json!({
                                     "meta": {
                                         "seq": seq_val,
@@ -1863,13 +1865,13 @@ async fn handle_generate_stream(
                                     }
                                 })
                                 .to_string(),
-                            )),
+                            ),
+                        ),
                         StreamChunk::Error(msg) => {
                             // Non-fatal stream error — forward as warning event
                             tracing::warn!(error = %msg, "Non-fatal streaming error from backend");
-                            Some(Event::default()
-                                .event("apxm")
-                                .data(
+                            Some(
+                                Event::default().event("apxm").data(
                                     serde_json::json!({
                                         "meta": {
                                             "seq": seq_val,
@@ -1883,7 +1885,8 @@ async fn handle_generate_stream(
                                         }
                                     })
                                     .to_string(),
-                                ))
+                                ),
+                            )
                         }
                     };
                     if let Some(event) = maybe_event {
@@ -1907,11 +1910,9 @@ async fn handle_generate_stream(
                 }
                 Err(_) => {
                     // Timeout — no activity for 60 seconds
-                    let timeout_event = Event::default()
-                        .event("error")
-                        .data(
-                            serde_json::json!({"message": "Stream timeout after 60s"}).to_string(),
-                        );
+                    let timeout_event = Event::default().event("error").data(
+                        serde_json::json!({"message": "Stream timeout after 60s"}).to_string(),
+                    );
                     let _ = tx.send(Ok(timeout_event)).await;
                     break;
                 }
