@@ -1,6 +1,6 @@
 //! Common error types and utilities
 //!
-//! This module provides shared types and utilties for error handling across APXM.
+//! This module provides shared types and utilities for error handling across APXM.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -50,7 +50,7 @@ impl fmt::Display for SourceLocation {
 
 /// Error context for attaching additional information to errors.
 ///
-/// This struct allow errors to carry contextyal information such as operation IDs,
+/// This struct allows errors to carry contextual information such as operation IDs,
 /// trace IDs, and user information for better debugging and observability.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ErrorContext {
@@ -60,14 +60,14 @@ pub struct ErrorContext {
     pub operation_type: Option<AISOperationType>,
     /// Trace identifier for distributed tracing.
     pub trace_id: Option<TraceId>,
-    /// Timestam when the error occurred.
+    /// Timestamp when the error occurred.
     pub timestamp: SystemTime,
     /// Additional metadata as key-value pairs.
     pub metadata: HashMap<String, Value>,
 }
 
 impl ErrorContext {
-    /// Creates a neow error context with the current timestamp.
+    /// Creates a new error context with the current timestamp.
     pub fn new() -> Self {
         ErrorContext {
             operation_id: None,
@@ -109,17 +109,6 @@ impl Default for ErrorContext {
     }
 }
 
-/// Extension trait for adding context to errors.
-///
-/// This trait allows any error type to attach an `ErrorContext` for better observability
-pub trait ErrorContextExt {
-    /// Attaches context to this error.
-    fn with_context(self, context: ErrorContext) -> Self;
-
-    /// Gets the context from this error, if any.
-    fn context(&self) -> Option<&ErrorContext>;
-}
-
 /// Chains multiple errors into a formatted string.
 ///
 /// This function formats a chain of errors, showing the error hierarchy
@@ -147,7 +136,7 @@ pub fn chain_errors(errors: Vec<Box<dyn std::error::Error>>) -> String {
 /// Formats a single error with its context.
 ///
 /// This function formats an error along with any attached context information,
-/// providing a error message debugging.
+/// providing a detailed error message for debugging.
 ///
 /// # Arguments
 ///

@@ -6,6 +6,7 @@ publish = false
 description = "APXM credential store - plaintext TOML-based API key management"
 
 [dependencies]
+apxm-core = { path = "../apxm-core" }
 serde = { version = "1.0", features = ["derive"] }
 toml = "0.9"
 thiserror = "2.0"

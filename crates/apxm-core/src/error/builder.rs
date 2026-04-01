@@ -31,16 +31,13 @@ impl ErrorBuilder {
 
     /// Create a parse error with unknown span.
     ///
-    /// Uses `ErrorCode::InternalError` as the default code for parse errors
-    /// without specific location information.
-    ///
     /// # Example
     ///
     /// ```ignore
     /// let err = ErrorBuilder::parse("Failed to parse input");
     /// ```
     pub fn parse(message: impl Into<String>) -> Error {
-        Self::generic(ErrorCode::InternalError, message)
+        Self::generic(ErrorCode::SyntaxError, message)
     }
 
     /// Create a verification error with unknown span.

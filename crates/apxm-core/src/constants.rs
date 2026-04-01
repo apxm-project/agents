@@ -303,6 +303,77 @@ pub mod sandbox {
     }
 }
 
+pub mod protocols {
+    /// MCP (Model Context Protocol) version string.
+    pub const MCP_VERSION: &str = "2025-11-05";
+    /// A2A (Agent-to-Agent) protocol version.
+    pub const A2A_VERSION: &str = "0.3";
+}
+
+pub mod http {
+    pub mod headers {
+        pub const CONTENT_TYPE: &str = "content-type";
+        pub const CONTENT_TYPE_JSON: &str = "application/json";
+        pub const AUTHORIZATION: &str = "authorization";
+        pub const X_REQUEST_ID: &str = "x-request-id";
+        pub const X_API_KEY: &str = "x-api-key";
+        pub const ANTHROPIC_VERSION: &str = "anthropic-version";
+        pub const X_GOOG_API_KEY: &str = "x-goog-api-key";
+    }
+}
+
+pub mod llm {
+    pub mod message_keys {
+        pub const ROLE: &str = "role";
+        pub const CONTENT: &str = "content";
+        pub const TYPE: &str = "type";
+        pub const TEXT: &str = "text";
+        pub const IMAGE: &str = "image";
+        pub const IMAGE_URL: &str = "image_url";
+        pub const SOURCE: &str = "source";
+        pub const URL: &str = "url";
+        pub const MODEL: &str = "model";
+        pub const MESSAGES: &str = "messages";
+        pub const MAX_TOKENS: &str = "max_tokens";
+        pub const TEMPERATURE: &str = "temperature";
+        pub const STREAM: &str = "stream";
+    }
+
+    pub mod tool_keys {
+        pub const TOOLS: &str = "tools";
+        pub const TOOL_CHOICE: &str = "tool_choice";
+        pub const TOOL_USE: &str = "tool_use";
+        pub const TOOL_RESULT: &str = "tool_result";
+        pub const TOOL_CALLS: &str = "tool_calls";
+        pub const FUNCTION: &str = "function";
+        pub const NAME: &str = "name";
+        pub const ID: &str = "id";
+        pub const INPUT: &str = "input";
+        pub const INPUT_SCHEMA: &str = "input_schema";
+        pub const ARGUMENTS: &str = "arguments";
+    }
+
+    pub mod roles {
+        pub const USER: &str = "user";
+        pub const ASSISTANT: &str = "assistant";
+        pub const SYSTEM: &str = "system";
+        pub const TOOL: &str = "tool";
+    }
+
+    pub mod finish_reasons {
+        pub const STOP: &str = "stop";
+        pub const TOOL_USE: &str = "tool_use";
+        pub const LENGTH: &str = "length";
+        pub const ERROR: &str = "error";
+    }
+
+    pub mod streaming {
+        pub const DELTA: &str = "delta";
+        pub const CHOICES: &str = "choices";
+        pub const TEXT_DELTA: &str = "text_delta";
+    }
+}
+
 pub mod defaults {
     pub const DEFAULT_SERVER_URL: &str = "http://127.0.0.1:18800";
     pub const DEFAULT_TIMEOUT_MS: u64 = 30_000;

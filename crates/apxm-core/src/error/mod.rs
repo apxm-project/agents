@@ -41,7 +41,7 @@ pub use builder::ErrorBuilder;
 pub use cli::{CliError, CliResult};
 pub use codes::ErrorCode;
 pub use common::{
-    ErrorContext, ErrorContextExt, OpId, SourceLocation, TraceId, chain_errors, format_error,
+    ErrorContext, OpId, SourceLocation, TraceId, chain_errors, format_error,
 };
 pub use compile::CompileError;
 pub use compiler::CompilerError;

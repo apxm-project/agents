@@ -28,7 +28,7 @@ use apxm_core::types::{AIS_OPERATIONS, OptimizationLevel};
 use apxm_graph::ApxmGraph;
 use serde_json::{Value, json};
 
-const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
+const MCP_PROTOCOL_VERSION: &str = apxm_core::constants::protocols::MCP_VERSION;
 const SERVER_NAME: &str = "apxm-mcp-server";
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 

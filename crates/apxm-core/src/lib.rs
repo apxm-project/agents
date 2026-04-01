@@ -20,7 +20,7 @@ pub mod utils;
 
 pub use error::{
     cli::{CliError, CliResult},
-    common::{ErrorContext, ErrorContextExt, OpId, SourceLocation, TraceId},
+    common::{ErrorContext, OpId, SourceLocation, TraceId},
     compile::CompileError,
     compiler::CompilerError,
     runtime::RuntimeError,

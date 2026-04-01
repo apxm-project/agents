@@ -912,7 +912,7 @@ async fn mcp_jsonrpc(
         "initialize" => jsonrpc_ok(
             id,
             serde_json::json!({
-                "protocolVersion": "2025-11-05",
+                "protocolVersion": apxm_core::constants::protocols::MCP_VERSION,
                 "serverInfo": {
                     "name": "apxm-server",
                     "version": env!("CARGO_PKG_VERSION"),
@@ -1376,7 +1376,7 @@ async fn agent_card(State(state): State<AppState>) -> Json<JsonValue> {
         .collect();
 
     Json(serde_json::json!({
-        "protocolVersion": "0.3",
+        "protocolVersion": apxm_core::constants::protocols::A2A_VERSION,
         "name": "APXM Agent Runtime",
         "description": "Program Execution Model for AI agents — parallel dataflow, multi-model councils, formal agent programs.",
         "version": env!("CARGO_PKG_VERSION"),

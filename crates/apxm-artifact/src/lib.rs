@@ -1,8 +1,8 @@
 //! Artifact loader and parser for compiled `.apxmobj` files.
 //!
-//! Reads the APXM binary wire format (version 3) produced by the MLIR compiler,
-//! validates integrity via BLAKE3 checksums, and deserializes the execution DAG
-//! from the artifact container.
+//! Reads the APXM binary wire format (version 1, magic `b"APXM"`) produced by
+//! the MLIR compiler, validates integrity via BLAKE3 checksums, and deserializes
+//! the execution DAG from the artifact container.
 
 use std::io::{Read, Write};
 use std::path::Path;
@@ -17,7 +17,19 @@ mod wire;
 
 const MAGIC: &[u8; 4] = b"APXM";
 const VERSION: u32 = 1;
-const HEADER_SIZE: usize = 4 + 4 + 8 + 32 + 4;
+
+// Wire format header layout: [MAGIC][VERSION][PAYLOAD_LEN][HASH][FLAGS]
+const SIZE_MAGIC: usize = 4;
+const SIZE_VERSION: usize = 4;
+const SIZE_PAYLOAD_LEN: usize = 8;
+const SIZE_HASH: usize = 32;
+const SIZE_FLAGS: usize = 4;
+const HEADER_SIZE: usize = SIZE_MAGIC + SIZE_VERSION + SIZE_PAYLOAD_LEN + SIZE_HASH + SIZE_FLAGS;
+
+const OFFSET_VERSION: usize = SIZE_MAGIC;
+const OFFSET_PAYLOAD_LEN: usize = OFFSET_VERSION + SIZE_VERSION;
+const OFFSET_HASH: usize = OFFSET_PAYLOAD_LEN + SIZE_PAYLOAD_LEN;
+const OFFSET_FLAGS: usize = OFFSET_HASH + SIZE_HASH;
 
 #[derive(Debug, Error)]
 pub enum ArtifactError {
@@ -169,18 +181,30 @@ impl Artifact {
             return Err(ArtifactError::InvalidHeader);
         }
 
-        if &bytes[..4] != MAGIC {
+        if &bytes[..SIZE_MAGIC] != MAGIC {
             return Err(ArtifactError::InvalidHeader);
         }
 
-        let version = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
+        let version = u32::from_le_bytes(
+            bytes[OFFSET_VERSION..OFFSET_VERSION + SIZE_VERSION]
+                .try_into()
+                .map_err(|_| ArtifactError::InvalidHeader)?,
+        );
         if version != VERSION {
             return Err(ArtifactError::VersionMismatch(version));
         }
 
-        let payload_len = u64::from_le_bytes(bytes[8..16].try_into().unwrap()) as usize;
-        let hash = &bytes[16..48];
-        let flags = u32::from_le_bytes(bytes[48..52].try_into().unwrap());
+        let payload_len = u64::from_le_bytes(
+            bytes[OFFSET_PAYLOAD_LEN..OFFSET_PAYLOAD_LEN + SIZE_PAYLOAD_LEN]
+                .try_into()
+                .map_err(|_| ArtifactError::InvalidHeader)?,
+        ) as usize;
+        let hash = &bytes[OFFSET_HASH..OFFSET_HASH + SIZE_HASH];
+        let flags = u32::from_le_bytes(
+            bytes[OFFSET_FLAGS..OFFSET_FLAGS + SIZE_FLAGS]
+                .try_into()
+                .map_err(|_| ArtifactError::InvalidHeader)?,
+        );
 
         if bytes.len() < HEADER_SIZE + payload_len {
             return Err(ArtifactError::InvalidHeader);
