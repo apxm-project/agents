@@ -1,6 +1,7 @@
 //! Capability registry configuration for the runtime.
 
 use crate::{config::ApXmConfig, error::DriverError};
+use apxm_core::types::AISOperationType;
 use apxm_runtime::CapabilitySystem;
 use apxm_runtime::sandbox::{policy::SandboxPolicy, process::ProcessSandbox};
 
@@ -18,10 +19,7 @@ pub fn configure_capability_registry(
 
     // Register ACP capability for INV(acp) nodes
     let session_pool = std::sync::Arc::new(apxm_acp::SessionPool::new());
-    let acp = apxm_acp::AcpCapability::new(
-        std::sync::Arc::clone(&capability_system),
-        session_pool,
-    );
+    let acp = apxm_acp::AcpCapability::new(std::sync::Arc::clone(&capability_system), session_pool);
     capability_system
         .register(std::sync::Arc::new(acp))
         .map_err(DriverError::Runtime)?;
@@ -153,11 +151,13 @@ impl apxm_runtime::capability::executor::CapabilityExecutor for UserToolCapabili
         let json_input = serde_json::to_string(&args).ok()?;
 
         Some(apxm_sandbox::ExecRequest {
+            min_isolation: apxm_sandbox::IsolationLevel::OsLevel,
             program: self.command.clone(),
             args: self.args.clone(),
             stdin_data: Some(json_input),
             timeout: std::time::Duration::from_millis(self.timeout_ms),
-            origin_op: Some("INV".to_string()),
+            needs_network: true,
+            origin_op: Some(AISOperationType::Inv.to_string()),
             ..apxm_sandbox::ExecRequest::default()
         })
     }

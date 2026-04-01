@@ -1,4 +1,5 @@
 use super::policy::SandboxPolicy;
+use apxm_core::constants::sandbox::{env as sandbox_env, messages, session_prefixes};
 use tokio::process::Command;
 
 /// Result of a sandboxed execution.
@@ -31,6 +32,15 @@ impl ProcessSandbox {
         args: &[&str],
         stdin_data: Option<&str>,
     ) -> std::io::Result<SandboxResult> {
+        if let Some(allowed_commands) = &self.policy.allowed_commands
+            && !allowed_commands.iter().any(|allowed| allowed == command)
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                messages::COMMAND_BLOCKED_BY_POLICY,
+            ));
+        }
+
         // Create temp working directory if not specified
         let temp_dir;
         let work_dir = if let Some(dir) = &self.policy.working_dir {
@@ -51,9 +61,19 @@ impl ProcessSandbox {
 
         // Set up restricted environment: clear everything, then whitelist safe vars
         cmd.env_clear();
-        for key in &["PATH", "HOME", "LANG", "LC_ALL", "TERM"] {
+        for key in sandbox_env::SAFE_PASSTHROUGH {
             if let Ok(val) = std::env::var(key) {
                 cmd.env(key, val);
+            }
+        }
+        for (key, value) in &self.policy.env_overrides {
+            if !self
+                .policy
+                .blocked_env_vars
+                .iter()
+                .any(|blocked| blocked == key)
+            {
+                cmd.env(key, value);
             }
         }
 
@@ -125,7 +145,7 @@ impl ProcessSandbox {
                 let _ = child.kill().await;
                 Ok(SandboxResult {
                     stdout: String::new(),
-                    stderr: "Process timed out and was killed".to_string(),
+                    stderr: messages::PROCESS_TIMED_OUT_AND_KILLED.to_string(),
                     exit_code: -1,
                     timed_out: true,
                 })
@@ -140,7 +160,7 @@ impl ProcessSandbox {
         code: &str,
     ) -> std::io::Result<SandboxResult> {
         let script_dir = tempfile::tempdir()?;
-        let script_path = script_dir.path().join("script");
+        let script_path = script_dir.path().join(session_prefixes::SCRIPT);
         tokio::fs::write(&script_path, code).await?;
 
         // Make executable
@@ -153,7 +173,7 @@ impl ProcessSandbox {
 
         self.execute(
             interpreter,
-            &[script_path.to_str().unwrap_or("script")],
+            &[script_path.to_str().unwrap_or(session_prefixes::SCRIPT)],
             None,
         )
         .await
@@ -163,6 +183,7 @@ impl ProcessSandbox {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use apxm_core::constants::sandbox::executables;
 
     #[tokio::test]
     async fn test_execute_simple_command() {
@@ -180,7 +201,7 @@ mod tests {
     async fn test_execute_script() {
         let sandbox = ProcessSandbox::with_default_policy();
         let result = sandbox
-            .execute_script("bash", "echo 'from script'")
+            .execute_script(executables::BASH, "echo 'from script'")
             .await
             .unwrap();
         assert_eq!(result.exit_code, 0);
@@ -204,7 +225,7 @@ mod tests {
         // except the whitelisted ones (PATH, HOME, LANG, LC_ALL, TERM).
         let sandbox = ProcessSandbox::with_default_policy();
         let result = sandbox
-            .execute_script("bash", "echo $OPENAI_API_KEY")
+            .execute_script(executables::BASH, "echo $OPENAI_API_KEY")
             .await
             .unwrap();
         assert!(

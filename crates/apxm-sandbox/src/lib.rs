@@ -35,7 +35,5 @@ mod types;
 pub use backend::{DefaultBackend, SandboxBackend, ValidationResult};
 pub use error::SandboxError;
 pub use manifest::{NodeSandboxReq, SecurityManifest};
-pub use registry::SandboxRegistry;
-pub use types::{
-    ExecRequest, ExecResult, IsolationLevel, SandboxCapabilities, SandboxContext,
-};
+pub use registry::{SandboxRegistry, SandboxSelection};
+pub use types::{ExecRequest, ExecResult, IsolationLevel, SandboxCapabilities, SandboxContext};

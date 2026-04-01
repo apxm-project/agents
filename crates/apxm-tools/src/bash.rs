@@ -1,13 +1,17 @@
 use crate::require_string_arg;
-use apxm_core::{error::RuntimeError, types::Value};
+use apxm_core::{
+    constants::sandbox::{executables, shell_args},
+    error::RuntimeError,
+    types::{AISOperationType, Value},
+};
 use apxm_runtime::capability::{
-    executor::{CapabilityExecutor, CapabilityResult},
+    executor::{CapabilityExecutor, CapabilityResult, exec_result_to_value},
     metadata::CapabilityMetadata,
 };
-use apxm_sandbox::ExecRequest;
+use apxm_sandbox::{ExecRequest, ExecResult, IsolationLevel};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, path::PathBuf, process::Stdio};
+use std::{collections::HashMap, path::PathBuf, process::Stdio, time::Instant};
 use tokio::{process::Command, time::Duration};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -168,6 +172,59 @@ impl BashCapability {
 
         Ok(())
     }
+
+    fn timeout_secs(&self, args: &HashMap<String, Value>) -> u64 {
+        args.get("timeout")
+            .or_else(|| args.get("arg_timeout"))
+            .or_else(|| args.get("timeout_secs"))
+            .and_then(|value| value.as_u64())
+            .unwrap_or(self.config.timeout_secs)
+    }
+
+    fn needs_network(&self, args: &HashMap<String, Value>) -> bool {
+        args.get("needs_network")
+            .or_else(|| args.get("arg_needs_network"))
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false)
+    }
+
+    fn working_directory(&self) -> Option<PathBuf> {
+        self.config
+            .working_directory
+            .clone()
+            .or_else(|| std::env::current_dir().ok())
+    }
+
+    fn build_exec_request(&self, args: &HashMap<String, Value>) -> CapabilityResult<ExecRequest> {
+        let command =
+            require_string_arg(args, "command", "arg_command", &self.metadata.name)?.to_string();
+        self.validate_command(&command)?;
+
+        let working_dir = self.working_directory();
+        let read_paths: Vec<PathBuf> = working_dir.iter().cloned().collect();
+        let write_paths: Vec<PathBuf> = working_dir.iter().cloned().collect();
+
+        Ok(ExecRequest {
+            min_isolation: IsolationLevel::OsLevel,
+            program: executables::SHELL.to_string(),
+            args: vec![shell_args::LOGIN_COMMAND.to_string(), command],
+            working_dir,
+            timeout: Duration::from_secs(self.timeout_secs(args)),
+            max_output_bytes: self.config.max_output_bytes,
+            read_paths,
+            write_paths,
+            needs_network: self.needs_network(args),
+            needs_process_spawn: true,
+            origin_op: Some(AISOperationType::Inv.to_string()),
+            ..ExecRequest::default()
+        })
+    }
+
+    fn truncate_output(stdout: &mut String, stderr: &mut String, max_output_bytes: usize) {
+        let mut remaining = max_output_bytes;
+        truncate_string_in_place(stdout, &mut remaining);
+        truncate_string_in_place(stderr, &mut remaining);
+    }
 }
 
 impl Default for BashCapability {
@@ -179,58 +236,42 @@ impl Default for BashCapability {
 #[async_trait]
 impl CapabilityExecutor for BashCapability {
     async fn execute(&self, args: HashMap<String, Value>) -> CapabilityResult<Value> {
-        let command =
-            require_string_arg(&args, "command", "arg_command", &self.metadata.name)?.to_string();
-
-        self.validate_command(&command)?;
-
-        let timeout_secs = args
-            .get("timeout")
-            .or_else(|| args.get("timeout_secs"))
-            .and_then(|value| value.as_u64())
-            .unwrap_or(self.config.timeout_secs);
-
-        let mut command_process = Command::new("sh");
+        let exec_request = self.build_exec_request(&args)?;
+        let mut command_process = Command::new(&exec_request.program);
         command_process
-            .arg("-lc")
-            .arg(&command)
+            .args(&exec_request.args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        if let Some(working_directory) = &self.config.working_directory {
+        if let Some(working_directory) = &exec_request.working_dir {
             command_process.current_dir(working_directory);
         }
 
-        let output =
-            tokio::time::timeout(Duration::from_secs(timeout_secs), command_process.output())
-                .await
-                .map_err(|_| RuntimeError::Timeout {
-                    op_id: 0,
-                    timeout: Duration::from_secs(timeout_secs),
-                })?
-                .map_err(|error| RuntimeError::Capability {
-                    capability: self.metadata.name.clone(),
-                    message: format!("Failed to execute command: {error}"),
-                })?;
+        let start = Instant::now();
+        let output = tokio::time::timeout(exec_request.timeout, command_process.output())
+            .await
+            .map_err(|_| RuntimeError::Timeout {
+                op_id: 0,
+                timeout: exec_request.timeout,
+            })?
+            .map_err(|error| RuntimeError::Capability {
+                capability: self.metadata.name.clone(),
+                message: format!("Failed to execute command: {error}"),
+            })?;
 
-        let mut payload = String::new();
-        payload.push_str(&String::from_utf8_lossy(&output.stdout));
-        payload.push_str(&String::from_utf8_lossy(&output.stderr));
+        let mut stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        let mut stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        Self::truncate_output(&mut stdout, &mut stderr, exec_request.max_output_bytes);
 
-        if payload.len() > self.config.max_output_bytes {
-            payload = String::from_utf8_lossy(&payload.as_bytes()[..self.config.max_output_bytes])
-                .to_string();
-            payload.push_str("\n[output truncated]");
-        }
-
-        if let Some(code) = output.status.code() {
-            payload.push_str(&format!("\n[exit_code={code}]"));
-        } else {
-            payload.push_str("\n[exit_code=unknown]");
-        }
-
-        Ok(Value::String(payload))
+        Ok(exec_result_to_value(ExecResult {
+            success: output.status.success(),
+            exit_code: output.status.code(),
+            stdout,
+            stderr,
+            duration: start.elapsed(),
+            timed_out: false,
+        }))
     }
 
     fn metadata(&self) -> &CapabilityMetadata {
@@ -238,32 +279,22 @@ impl CapabilityExecutor for BashCapability {
     }
 
     fn to_exec_request(&self, args: &HashMap<String, Value>) -> Option<ExecRequest> {
-        // Extract command the same way execute() does
-        let command = args
-            .get("command")
-            .or_else(|| args.get("arg_command"))
-            .or_else(|| args.get("arg0"))
-            .and_then(|v| v.as_string())
-            .map(|s| s.to_string())?;
-
-        // Run policy validation — if the command is blocked, return None
-        // to fall through to execute() which will return a proper error
-        if self.validate_command(&command).is_err() {
-            return None;
-        }
-
-        let timeout_secs = args
-            .get("timeout")
-            .or_else(|| args.get("arg_timeout"))
-            .and_then(|v| v.as_u64())
-            .unwrap_or(30);
-
-        Some(ExecRequest {
-            program: "sh".to_string(),
-            args: vec!["-lc".to_string(), command],
-            timeout: std::time::Duration::from_secs(timeout_secs),
-            origin_op: Some("INV".to_string()),
-            ..ExecRequest::default()
-        })
+        self.build_exec_request(args).ok()
     }
+}
+
+fn truncate_string_in_place(value: &mut String, remaining: &mut usize) {
+    if *remaining == 0 {
+        value.clear();
+        return;
+    }
+
+    if value.len() <= *remaining {
+        *remaining -= value.len();
+        return;
+    }
+
+    let boundary = value.floor_char_boundary(*remaining);
+    value.truncate(boundary);
+    *remaining = 0;
 }

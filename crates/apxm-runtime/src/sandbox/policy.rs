@@ -1,3 +1,5 @@
+use apxm_core::constants::sandbox::env as sandbox_env;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -12,6 +14,8 @@ pub struct SandboxPolicy {
     pub allowed_commands: Option<Vec<String>>,
     /// Environment variables to remove before execution.
     pub blocked_env_vars: Vec<String>,
+    /// Additional environment variables to inject after the safe baseline.
+    pub env_overrides: HashMap<String, String>,
     /// Override working directory (uses temp dir if None).
     pub working_dir: Option<PathBuf>,
 }
@@ -22,15 +26,11 @@ impl Default for SandboxPolicy {
             timeout: Duration::from_secs(30),
             max_output_bytes: 1024 * 1024, // 1 MB
             allowed_commands: None,
-            blocked_env_vars: vec![
-                "AWS_SECRET_ACCESS_KEY".into(),
-                "AWS_ACCESS_KEY_ID".into(),
-                "OPENAI_API_KEY".into(),
-                "ANTHROPIC_API_KEY".into(),
-                "DATABASE_URL".into(),
-                "SECRET_KEY".into(),
-                "PRIVATE_KEY".into(),
-            ],
+            blocked_env_vars: sandbox_env::BLOCKED_DEFAULTS
+                .iter()
+                .map(|key| (*key).to_string())
+                .collect(),
+            env_overrides: HashMap::new(),
             working_dir: None,
         }
     }

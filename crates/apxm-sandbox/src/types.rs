@@ -13,7 +13,18 @@ use std::time::Duration;
 ///
 /// Host applications report their isolation level via
 /// [`SandboxCapabilities::isolation_level`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum IsolationLevel {
     /// No isolation — trust the process. Dev/testing only.
@@ -72,6 +83,8 @@ pub struct SandboxCapabilities {
 /// namespace flags. The backend translates this into platform-specific calls.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecRequest {
+    /// Minimum isolation level required for this execution.
+    pub min_isolation: IsolationLevel,
     /// The program to execute (e.g. "sh", "python3", "node").
     pub program: String,
     /// Arguments to pass to the program.
@@ -97,12 +110,13 @@ pub struct ExecRequest {
     /// The AIS operation that triggered this execution (for audit/logging).
     pub origin_op: Option<String>,
     /// The node ID in the graph that triggered this execution.
-    pub origin_node_id: Option<u32>,
+    pub origin_node_id: Option<u64>,
 }
 
 impl Default for ExecRequest {
     fn default() -> Self {
         Self {
+            min_isolation: IsolationLevel::PolicyOnly,
             program: String::new(),
             args: Vec::new(),
             working_dir: None,

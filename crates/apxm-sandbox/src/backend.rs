@@ -8,8 +8,10 @@ use crate::error::SandboxError;
 use crate::types::{ExecRequest, ExecResult, SandboxCapabilities, SandboxContext};
 use async_trait::async_trait;
 
+const DEFAULT_SESSION_ID_PREFIX: &str = "sandbox";
+
 /// Validation result returned by [`SandboxBackend::validate`].
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValidationResult {
     /// Backend can fully satisfy all requirements.
     Ok,
@@ -106,8 +108,11 @@ pub trait SandboxBackend: Send + Sync {
 /// session management, this avoids implementing the full trait.
 pub struct DefaultBackend {
     caps: SandboxCapabilities,
-    executor:
-        Box<dyn Fn(ExecRequest) -> futures::future::BoxFuture<'static, Result<ExecResult, SandboxError>> + Send + Sync>,
+    executor: Box<
+        dyn Fn(ExecRequest) -> futures::future::BoxFuture<'static, Result<ExecResult, SandboxError>>
+            + Send
+            + Sync,
+    >,
 }
 
 impl DefaultBackend {
@@ -166,7 +171,12 @@ fn uuid_v7_string() -> String {
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default();
-    format!("sandbox-{}-{}", ts.as_millis(), ts.subsec_nanos())
+    format!(
+        "{}-{}-{}",
+        DEFAULT_SESSION_ID_PREFIX,
+        ts.as_millis(),
+        ts.subsec_nanos()
+    )
 }
 
 impl std::fmt::Debug for DefaultBackend {
@@ -214,10 +224,7 @@ mod tests {
         assert_eq!(ctx.backend_name, "test");
         assert_eq!(ctx.isolation_level, IsolationLevel::None);
 
-        let result = backend
-            .execute(&ctx, ExecRequest::default())
-            .await
-            .unwrap();
+        let result = backend.execute(&ctx, ExecRequest::default()).await.unwrap();
         assert!(result.success);
         assert_eq!(result.stdout, "hello");
 

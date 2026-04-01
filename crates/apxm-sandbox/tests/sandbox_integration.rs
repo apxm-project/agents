@@ -17,8 +17,8 @@ use apxm_sandbox::{
     SandboxContext, SandboxError, SandboxRegistry, SecurityManifest, ValidationResult,
 };
 use async_trait::async_trait;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 // ---------------------------------------------------------------------------
@@ -165,8 +165,10 @@ fn registry_selects_lowest_qualifying_backend() {
     let none_backend = Arc::new(CountingBackend::new("passthrough", IsolationLevel::None));
     let policy_backend = Arc::new(CountingBackend::new("policy", IsolationLevel::PolicyOnly));
     let container_backend = Arc::new(CountingBackend::new("container", IsolationLevel::Container));
-    let hypervisor_backend =
-        Arc::new(CountingBackend::new("hypervisor", IsolationLevel::Hypervisor));
+    let hypervisor_backend = Arc::new(CountingBackend::new(
+        "hypervisor",
+        IsolationLevel::Hypervisor,
+    ));
 
     reg.register(none_backend);
     reg.register(policy_backend);
@@ -268,7 +270,10 @@ fn registry_default_backend_is_first_registered() {
 
 #[tokio::test]
 async fn mock_backend_full_lifecycle() {
-    let backend = Arc::new(CountingBackend::new("test-mock", IsolationLevel::PolicyOnly));
+    let backend = Arc::new(CountingBackend::new(
+        "test-mock",
+        IsolationLevel::PolicyOnly,
+    ));
 
     // 1. Check availability
     assert!(backend.is_available());
@@ -418,6 +423,7 @@ fn exec_request_defaults_are_sane() {
     let req = ExecRequest::default();
     assert!(req.program.is_empty());
     assert!(req.args.is_empty());
+    assert_eq!(req.min_isolation, IsolationLevel::PolicyOnly);
     assert_eq!(req.timeout, Duration::from_secs(30));
     assert_eq!(req.max_output_bytes, 1024 * 1024);
     assert!(!req.needs_network);
@@ -456,6 +462,7 @@ async fn exec_request_fields_propagate_to_backend() {
     let ctx = backend.create_session().await.unwrap();
 
     let request = ExecRequest {
+        min_isolation: IsolationLevel::OsLevel,
         program: "node".to_string(),
         args: vec!["script.js".to_string()],
         working_dir: Some(PathBuf::from("/tmp/sandbox")),
@@ -475,8 +482,12 @@ async fn exec_request_fields_propagate_to_backend() {
 
     backend.execute(&ctx, request).await.unwrap();
 
-    let captured = captured_req.lock().clone().expect("request should be captured");
+    let captured = captured_req
+        .lock()
+        .clone()
+        .expect("request should be captured");
     assert_eq!(captured.program, "node");
+    assert_eq!(captured.min_isolation, IsolationLevel::OsLevel);
     assert_eq!(captured.args, vec!["script.js"]);
     assert_eq!(captured.working_dir, Some(PathBuf::from("/tmp/sandbox")));
     assert_eq!(

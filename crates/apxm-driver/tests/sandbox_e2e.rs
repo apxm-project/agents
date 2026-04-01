@@ -19,12 +19,13 @@
 //! sandbox entirely.  See `sandbox_integration::test_gap_sandbox_not_called_by_inv`
 //! in the `apxm-sandbox` crate for the full trace.
 
+use apxm_core::constants::sandbox::backend_names;
 use apxm_sandbox::{
     DefaultBackend, ExecRequest, ExecResult, IsolationLevel, SandboxBackend, SandboxCapabilities,
     SandboxRegistry,
 };
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 // ---------------------------------------------------------------------------
@@ -41,13 +42,13 @@ async fn process_sandbox_backend_executes_echo() {
 
     // Verify capabilities
     let caps = backend.capabilities();
-    assert_eq!(caps.name, "apxm-process");
+    assert_eq!(caps.name, backend_names::PROCESS);
     assert_eq!(caps.isolation_level, IsolationLevel::PolicyOnly);
     assert!(backend.is_available());
 
     // Full lifecycle
     let ctx = backend.create_session().await.unwrap();
-    assert_eq!(ctx.backend_name, "apxm-process");
+    assert_eq!(ctx.backend_name, backend_names::PROCESS);
 
     let request = ExecRequest {
         program: "echo".to_string(),
@@ -119,23 +120,17 @@ fn configure_sandbox_registry_returns_populated_registry() {
     use apxm_driver::runtime::sandbox::configure_sandbox_registry;
 
     let registry = configure_sandbox_registry();
-    assert_eq!(registry.len(), 1);
-
     let caps = registry.list();
-    assert_eq!(caps.len(), 1);
-    assert_eq!(caps[0].name, "apxm-process");
-    assert_eq!(caps[0].isolation_level, IsolationLevel::PolicyOnly);
+    assert!(!caps.is_empty());
+    assert!(caps.iter().any(|cap| cap.name == backend_names::PROCESS));
 
     // Can select the backend for PolicyOnly
     let backend = registry.select(IsolationLevel::PolicyOnly).unwrap();
-    assert_eq!(backend.capabilities().name, "apxm-process");
+    assert_eq!(backend.capabilities().name, backend_names::PROCESS);
 
     // Can also select for None (PolicyOnly >= None)
     let backend = registry.select(IsolationLevel::None).unwrap();
-    assert_eq!(backend.capabilities().name, "apxm-process");
-
-    // Cannot select for Container (PolicyOnly < Container)
-    assert!(registry.select(IsolationLevel::Container).is_err());
+    assert_eq!(backend.capabilities().name, backend_names::PROCESS);
 }
 
 // ---------------------------------------------------------------------------
@@ -212,7 +207,7 @@ async fn multi_backend_registry_selects_correctly() {
     // Test selection at each level
     // PolicyOnly -> apxm-process (real backend, lowest qualifying)
     let selected = reg.select(IsolationLevel::PolicyOnly).unwrap();
-    assert_eq!(selected.capabilities().name, "apxm-process");
+    assert_eq!(selected.capabilities().name, backend_names::PROCESS);
 
     // Container -> mock-container (exact match)
     let selected = reg.select(IsolationLevel::Container).unwrap();
@@ -335,10 +330,9 @@ async fn runtime_inv_node_with_sandbox_registry_configured() {
         output_tokens: vec![100],
         metadata: NodeMetadata::default(),
     };
-    inv_node.attributes.insert(
-        "capability".to_string(),
-        Value::String("bash".to_string()),
-    );
+    inv_node
+        .attributes
+        .insert("capability".to_string(), Value::String("bash".to_string()));
     inv_node.attributes.insert(
         "arg_command".to_string(),
         Value::String("echo hello from sandbox test".to_string()),
@@ -361,7 +355,10 @@ async fn runtime_inv_node_with_sandbox_registry_configured() {
 
     // The INV node should produce the tracking backend's mock output
     // (routed through sandbox, NOT direct execution)
-    let output = result.results.get(&100).expect("output token 100 should exist");
+    let output = result
+        .results
+        .get(&100)
+        .expect("output token 100 should exist");
     assert_eq!(
         output.as_string().map(|s| s.as_str()),
         Some("from-tracking-backend")
@@ -383,11 +380,11 @@ async fn runtime_inv_node_with_sandbox_registry_configured() {
 /// Runtime -> ExecutionContext -> child ExecutionContext chain.
 #[tokio::test]
 async fn sandbox_registry_propagates_to_child_contexts() {
+    use apxm_backends::LLMRegistry;
+    use apxm_runtime::aam::Aam;
     use apxm_runtime::capability::CapabilitySystem;
     use apxm_runtime::executor::ExecutionContext;
     use apxm_runtime::memory::{MemoryConfig, MemorySystem};
-    use apxm_backends::LLMRegistry;
-    use apxm_runtime::aam::Aam;
 
     let memory = Arc::new(
         MemorySystem::new(MemoryConfig::in_memory_ltm())

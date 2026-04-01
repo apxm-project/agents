@@ -40,7 +40,7 @@ pub mod registry;
 use crate::aam::{Aam, TransitionLabel};
 use approval::{ApprovalChannel, ApprovalStore};
 use apxm_core::{error::RuntimeError, types::values::Value};
-use apxm_sandbox::SandboxRegistry;
+use apxm_sandbox::{SandboxRegistry, ValidationResult};
 use executor::{CapabilityExecutor, exec_result_to_value};
 use interceptor::{CapabilityInterceptor, InterceptDecision};
 use metadata::CapabilityMetadata;
@@ -304,7 +304,22 @@ impl CapabilitySystem {
             if let Some(exec_req) = capability.to_exec_request(&args) {
                 // Route through sandbox backend
                 if let Some(ref registry) = sandbox_reg {
-                    if let Some(backend) = registry.default_backend() {
+                    if !registry.is_empty() {
+                        let selection = registry
+                            .select_for_request(&exec_req)
+                            .map_err(|e| RuntimeError::Capability {
+                                capability: name.to_string(),
+                                message: format!("sandbox select: {e}"),
+                            })?;
+                        let backend = selection.backend;
+                        if let ValidationResult::Degraded { warnings } = &selection.validation {
+                            tracing::warn!(
+                                capability = %name,
+                                backend = %backend.capabilities().name,
+                                warnings = ?warnings,
+                                "sandbox backend selected with degraded guarantees"
+                            );
+                        }
                         tracing::debug!(
                             capability = %name,
                             backend = %backend.capabilities().name,
@@ -315,11 +330,16 @@ impl CapabilitySystem {
                                 capability: name.to_string(),
                                 message: format!("sandbox session: {e}"),
                             })?;
-                        let exec_result = backend.execute(&session, exec_req).await
-                            .map_err(|e| RuntimeError::Capability {
-                                capability: name.to_string(),
-                                message: format!("sandbox execute: {e}"),
-                            })?;
+                        let exec_result = match backend.execute(&session, exec_req).await {
+                            Ok(result) => result,
+                            Err(error) => {
+                                let _ = backend.destroy_session(session).await;
+                                return Err(RuntimeError::Capability {
+                                    capability: name.to_string(),
+                                    message: format!("sandbox execute: {error}"),
+                                });
+                            }
+                        };
                         let _ = backend.destroy_session(session).await;
                         Ok(exec_result_to_value(exec_result))
                     } else {

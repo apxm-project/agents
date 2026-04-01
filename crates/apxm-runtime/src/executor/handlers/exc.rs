@@ -6,8 +6,17 @@ use super::{
 };
 use crate::sandbox::policy::SandboxPolicy;
 use crate::sandbox::process::ProcessSandbox;
-use apxm_core::constants::graph::attrs as graph_attrs;
-use apxm_core::constants::runtime::belief_keys;
+use apxm_core::constants::{
+    defaults,
+    graph::attrs as graph_attrs,
+    runtime::belief_keys,
+    sandbox::{executables, session_prefixes},
+};
+use apxm_sandbox::{ExecRequest, ExecResult, IsolationLevel, ValidationResult};
+
+const ERR_EXC_SANDBOX_SELECT_PREFIX: &str = "Sandbox selection failed";
+const ERR_EXC_SANDBOX_SESSION_PREFIX: &str = "Sandbox session failed";
+const ERR_EXC_SANDBOX_EXEC_PREFIX: &str = "Sandbox execution failed";
 
 pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -> Result<Value> {
     // Extract code from 'code' attribute, or fall back to first input
@@ -22,17 +31,11 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
             message: "EXC requires 'code' attribute or input".to_string(),
         })?;
 
-    let interpreter =
-        get_optional_string_attribute(node, "interpreter")?.unwrap_or_else(|| "bash".to_string());
+    let interpreter = get_optional_string_attribute(node, graph_attrs::INTERPRETER)?
+        .unwrap_or_else(|| executables::BASH.to_string());
 
-    let timeout_secs = get_optional_u64_attribute(node, "timeout")?.unwrap_or(30);
-
-    let policy = SandboxPolicy {
-        timeout: std::time::Duration::from_secs(timeout_secs),
-        ..SandboxPolicy::default()
-    };
-
-    let sandbox = ProcessSandbox::new(policy);
+    let timeout_secs = get_optional_u64_attribute(node, graph_attrs::TIMEOUT)?
+        .unwrap_or(defaults::DEFAULT_TIMEOUT_MS / 1000);
 
     // AAM transition
     let transition_label =
@@ -43,13 +46,101 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         transition_label.clone(),
     );
 
-    let result = sandbox
-        .execute_script(&interpreter, &code)
-        .await
-        .map_err(|e| apxm_core::error::RuntimeError::Operation {
-            op_type: node.op_type,
-            message: format!("Sandbox execution failed: {e}"),
+    let timeout = std::time::Duration::from_secs(timeout_secs);
+    let result = if ctx.sandbox_registry.is_empty() {
+        let policy = SandboxPolicy {
+            timeout,
+            ..SandboxPolicy::default()
+        };
+        let sandbox = ProcessSandbox::new(policy);
+        let start = std::time::Instant::now();
+        let result = sandbox
+            .execute_script(&interpreter, &code)
+            .await
+            .map_err(|e| apxm_core::error::RuntimeError::Operation {
+                op_type: node.op_type,
+                message: format!("{ERR_EXC_SANDBOX_EXEC_PREFIX}: {e}"),
+            })?;
+
+        ExecResult {
+            success: result.exit_code == 0 && !result.timed_out,
+            exit_code: if result.timed_out {
+                None
+            } else {
+                Some(result.exit_code)
+            },
+            stdout: result.stdout,
+            stderr: result.stderr,
+            duration: start.elapsed(),
+            timed_out: result.timed_out,
+        }
+    } else {
+        let script_dir =
+            tempfile::tempdir().map_err(|e| apxm_core::error::RuntimeError::Operation {
+                op_type: node.op_type,
+                message: format!("{ERR_EXC_SANDBOX_EXEC_PREFIX}: {e}"),
+            })?;
+        let script_path = script_dir.path().join(session_prefixes::SCRIPT);
+        tokio::fs::write(&script_path, &code).await.map_err(|e| {
+            apxm_core::error::RuntimeError::Operation {
+                op_type: node.op_type,
+                message: format!("{ERR_EXC_SANDBOX_EXEC_PREFIX}: {e}"),
+            }
         })?;
+
+        let request = ExecRequest {
+            min_isolation: IsolationLevel::OsLevel,
+            program: interpreter.clone(),
+            args: vec![script_path.to_string_lossy().into_owned()],
+            working_dir: Some(script_dir.path().to_path_buf()),
+            timeout,
+            read_paths: vec![script_dir.path().to_path_buf()],
+            write_paths: vec![script_dir.path().to_path_buf()],
+            needs_network: false,
+            needs_process_spawn: true,
+            origin_op: Some(node.op_type.to_string()),
+            origin_node_id: Some(node.id),
+            ..ExecRequest::default()
+        };
+
+        let selection = ctx
+            .sandbox_registry
+            .select_for_request(&request)
+            .map_err(|e| apxm_core::error::RuntimeError::Operation {
+                op_type: node.op_type,
+                message: format!("{ERR_EXC_SANDBOX_SELECT_PREFIX}: {e}"),
+            })?;
+
+        if let ValidationResult::Degraded { warnings } = &selection.validation {
+            tracing::warn!(
+                node_id = node.id,
+                backend = %selection.backend.capabilities().name,
+                warnings = ?warnings,
+                "EXC selected sandbox backend with degraded guarantees"
+            );
+        }
+
+        let session = selection.backend.create_session().await.map_err(|e| {
+            apxm_core::error::RuntimeError::Operation {
+                op_type: node.op_type,
+                message: format!("{ERR_EXC_SANDBOX_SESSION_PREFIX}: {e}"),
+            }
+        })?;
+
+        let exec_result = match selection.backend.execute(&session, request).await {
+            Ok(result) => result,
+            Err(error) => {
+                let _ = selection.backend.destroy_session(session).await;
+                return Err(apxm_core::error::RuntimeError::Operation {
+                    op_type: node.op_type,
+                    message: format!("{ERR_EXC_SANDBOX_EXEC_PREFIX}: {error}"),
+                });
+            }
+        };
+
+        let _ = selection.backend.destroy_session(session).await;
+        exec_result
+    };
 
     if result.timed_out {
         ctx.aam.set_belief(
@@ -63,13 +154,16 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         });
     }
 
-    let output = if result.exit_code != 0 {
-        format!(
-            "Exit code: {}\nStdout: {}\nStderr: {}",
-            result.exit_code, result.stdout, result.stderr
-        )
-    } else {
-        result.stdout
+    let output = match result.exit_code {
+        Some(0) => result.stdout,
+        Some(code) => format!(
+            "Exit code: {code}\nStdout: {}\nStderr: {}",
+            result.stdout, result.stderr
+        ),
+        None => format!(
+            "Exit status unavailable\nStdout: {}\nStderr: {}",
+            result.stdout, result.stderr
+        ),
     };
 
     ctx.aam.set_belief(

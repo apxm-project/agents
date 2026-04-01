@@ -1,14 +1,19 @@
 //! Sandbox registry configuration for the runtime.
 //!
-//! Wraps the existing [`ProcessSandbox`] from `apxm-runtime` as a
-//! [`SandboxBackend`] implementation and registers it as the default
-//! backend.  This provides policy-level isolation (env-var filtering,
-//! timeouts) without any OS-level sandboxing — hosts that need stronger
-//! isolation register their own backend *after* this one.
+//! APXM keeps the sandbox interface generic in `apxm-sandbox`, but the driver
+//! can register stronger host-side implementations. On Linux we prefer a
+//! bubblewrap-backed backend that enforces read-only-by-default filesystem
+//! access and optional network isolation. The process backend remains as a
+//! portable degraded fallback.
+
+#[cfg(target_os = "linux")]
+#[path = "sandbox_linux.rs"]
+mod sandbox_linux;
 
 use std::sync::Arc;
 use std::time::Instant;
 
+use apxm_core::constants::sandbox::{backend_names, session_prefixes};
 use apxm_runtime::sandbox::{policy::SandboxPolicy, process::ProcessSandbox};
 use apxm_sandbox::{
     ExecRequest, ExecResult, IsolationLevel, SandboxBackend, SandboxCapabilities, SandboxContext,
@@ -16,12 +21,22 @@ use apxm_sandbox::{
 };
 use async_trait::async_trait;
 
+#[cfg(target_os = "linux")]
+pub use sandbox_linux::BubblewrapSandboxBackend;
+
+const WARN_PROCESS_NO_OS_ISOLATION: &str =
+    "process fallback provides policy-only isolation and cannot enforce OS-level sandboxing";
+const WARN_PROCESS_NO_FILESYSTEM_RESTRICTION: &str =
+    "process fallback cannot enforce filesystem read/write restrictions";
+const WARN_PROCESS_NO_NETWORK_RESTRICTION: &str =
+    "process fallback cannot enforce network isolation";
+const ERR_PROCESS_SANDBOX_PREFIX: &str = "process sandbox";
+
 /// Default APXM sandbox backend backed by [`ProcessSandbox`].
 ///
-/// Translates [`ExecRequest`] into [`ProcessSandbox::execute`] calls.
-/// Reports [`IsolationLevel::PolicyOnly`] because `ProcessSandbox` only
-/// performs environment-variable filtering and timeout enforcement — no
-/// OS-level namespace/seccomp isolation.
+/// This backend is intentionally weak and exists as a portability fallback.
+/// It enforces timeouts, controlled environment propagation, and optional
+/// command allowlists, but it does not provide namespace or syscall isolation.
 pub struct ProcessSandboxBackend {
     policy: SandboxPolicy,
 }
@@ -47,44 +62,41 @@ impl SandboxBackend for ProcessSandboxBackend {
             supports_network_restriction: false,
             supports_syscall_filtering: false,
             supports_resource_limits: false,
-            name: "apxm-process".to_string(),
+            name: backend_names::PROCESS.to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
         }
     }
 
     fn is_available(&self) -> bool {
-        true // ProcessSandbox works on any platform with tokio::process
+        true
     }
 
-    fn validate(&self, _request: &ExecRequest) -> ValidationResult {
-        // ProcessSandbox can run anything — it just doesn't provide
-        // filesystem/network/syscall restrictions.
-        ValidationResult::Degraded {
-            warnings: vec![
-                "ProcessSandbox provides policy-only isolation (env filtering + timeout); \
-                 no OS-level sandboxing is applied."
-                    .to_string(),
-            ],
+    fn validate(&self, request: &ExecRequest) -> ValidationResult {
+        let mut warnings = Vec::new();
+
+        if request.min_isolation > IsolationLevel::PolicyOnly {
+            warnings.push(WARN_PROCESS_NO_OS_ISOLATION.to_string());
+        }
+        if !request.read_paths.is_empty() || !request.write_paths.is_empty() {
+            warnings.push(WARN_PROCESS_NO_FILESYSTEM_RESTRICTION.to_string());
+        }
+        if !request.needs_network {
+            warnings.push(WARN_PROCESS_NO_NETWORK_RESTRICTION.to_string());
+        }
+
+        if warnings.is_empty() {
+            ValidationResult::Ok
+        } else {
+            ValidationResult::Degraded { warnings }
         }
     }
 
     async fn create_session(&self) -> Result<SandboxContext, SandboxError> {
-        // ProcessSandbox is stateless — no container to start, no VM to boot.
-        // We store the policy in the context so execute() can reconstruct the
-        // sandbox with the correct settings.
-        let id = format!(
-            "process-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos()
-        );
-
         Ok(SandboxContext::new(
-            id,
-            "apxm-process",
+            session_id(session_prefixes::PROCESS),
+            backend_names::PROCESS,
             IsolationLevel::PolicyOnly,
-            (), // no internal state needed
+            (),
         ))
     }
 
@@ -93,11 +105,11 @@ impl SandboxBackend for ProcessSandboxBackend {
         _ctx: &SandboxContext,
         request: ExecRequest,
     ) -> Result<ExecResult, SandboxError> {
-        // Build a per-request policy from the ExecRequest fields.
         let policy = SandboxPolicy {
             timeout: request.timeout,
             max_output_bytes: request.max_output_bytes,
             working_dir: request.working_dir.clone(),
+            env_overrides: request.env.clone(),
             ..self.policy.clone()
         };
 
@@ -106,11 +118,10 @@ impl SandboxBackend for ProcessSandboxBackend {
         let args_refs: Vec<&str> = args_owned.iter().map(|s| s.as_str()).collect();
 
         let start = Instant::now();
-
         let result = sandbox
             .execute(&request.program, &args_refs, request.stdin_data.as_deref())
             .await
-            .map_err(|e| SandboxError::ExecutionFailed(format!("process sandbox: {e}")))?;
+            .map_err(map_process_error)?;
 
         let duration = start.elapsed();
 
@@ -136,22 +147,43 @@ impl SandboxBackend for ProcessSandboxBackend {
     }
 
     async fn destroy_session(&self, _ctx: SandboxContext) -> Result<(), SandboxError> {
-        // ProcessSandbox is stateless — nothing to clean up.
         Ok(())
     }
 }
 
-/// Create and populate a [`SandboxRegistry`] with the default
-/// [`ProcessSandboxBackend`].
-///
-/// This mirrors the pattern of [`configure_llm_registry`] and
-/// [`configure_capability_registry`] — it creates the registry, registers
-/// the built-in backend, and returns it wrapped in an [`Arc`].
+/// Create and populate a [`SandboxRegistry`] with the best available host
+/// backends for this platform.
 pub fn configure_sandbox_registry() -> Arc<SandboxRegistry> {
     let mut registry = SandboxRegistry::new();
-    let backend = Arc::new(ProcessSandboxBackend::with_default_policy());
-    registry.register(backend);
+
+    #[cfg(target_os = "linux")]
+    {
+        let bubblewrap_backend = Arc::new(BubblewrapSandboxBackend::with_default_policy());
+        if bubblewrap_backend.is_available() {
+            registry.register(bubblewrap_backend);
+        }
+    }
+
+    registry.register(Arc::new(ProcessSandboxBackend::with_default_policy()));
     Arc::new(registry)
+}
+
+fn map_process_error(error: std::io::Error) -> SandboxError {
+    match error.kind() {
+        std::io::ErrorKind::PermissionDenied => SandboxError::PermissionDenied(error.to_string()),
+        _ => SandboxError::ExecutionFailed(format!("{ERR_PROCESS_SANDBOX_PREFIX}: {error}")),
+    }
+}
+
+fn session_id(prefix: &str) -> String {
+    format!("{}-{}", prefix, monotonic_nanos())
+}
+
+fn monotonic_nanos() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos()
 }
 
 #[cfg(test)]
@@ -164,7 +196,7 @@ mod tests {
         let backend = ProcessSandboxBackend::with_default_policy();
         let caps = backend.capabilities();
         assert_eq!(caps.isolation_level, IsolationLevel::PolicyOnly);
-        assert_eq!(caps.name, "apxm-process");
+        assert_eq!(caps.name, backend_names::PROCESS);
         assert!(!caps.supports_filesystem_restriction);
         assert!(!caps.supports_network_restriction);
     }
@@ -176,9 +208,22 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_returns_degraded() {
+    fn test_validate_returns_ok_for_policy_only_request() {
         let backend = ProcessSandboxBackend::with_default_policy();
-        let result = backend.validate(&ExecRequest::default());
+        let result = backend.validate(&ExecRequest {
+            needs_network: true,
+            ..ExecRequest::default()
+        });
+        assert_eq!(result, ValidationResult::Ok);
+    }
+
+    #[test]
+    fn test_validate_returns_degraded_for_os_level_request() {
+        let backend = ProcessSandboxBackend::with_default_policy();
+        let result = backend.validate(&ExecRequest {
+            min_isolation: IsolationLevel::OsLevel,
+            ..ExecRequest::default()
+        });
         assert!(matches!(result, ValidationResult::Degraded { .. }));
     }
 
@@ -186,7 +231,7 @@ mod tests {
     async fn test_session_lifecycle() {
         let backend = ProcessSandboxBackend::with_default_policy();
         let ctx = backend.create_session().await.unwrap();
-        assert_eq!(ctx.backend_name, "apxm-process");
+        assert_eq!(ctx.backend_name, backend_names::PROCESS);
         assert_eq!(ctx.isolation_level, IsolationLevel::PolicyOnly);
         backend.destroy_session(ctx).await.unwrap();
     }
@@ -234,9 +279,19 @@ mod tests {
     #[test]
     fn test_configure_sandbox_registry() {
         let registry = configure_sandbox_registry();
-        assert_eq!(registry.len(), 1);
         let caps = registry.list();
-        assert_eq!(caps[0].name, "apxm-process");
-        assert_eq!(caps[0].isolation_level, IsolationLevel::PolicyOnly);
+
+        assert!(!caps.is_empty());
+        assert!(caps.iter().any(|cap| cap.name == backend_names::PROCESS));
+
+        #[cfg(target_os = "linux")]
+        {
+            let bubblewrap_available =
+                BubblewrapSandboxBackend::with_default_policy().is_available();
+            assert_eq!(
+                caps.iter().any(|cap| cap.name == backend_names::BUBBLEWRAP),
+                bubblewrap_available
+            );
+        }
     }
 }

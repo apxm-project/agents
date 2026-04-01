@@ -8,11 +8,26 @@
 //! **APXM never auto-detects backends.** Detection logic (checking for
 //! `bwrap`, `docker`, `wasmtime`, etc.) belongs in the host application.
 
-use crate::backend::SandboxBackend;
+use crate::backend::{SandboxBackend, ValidationResult};
 use crate::error::SandboxError;
 use crate::manifest::SecurityManifest;
-use crate::types::{IsolationLevel, SandboxCapabilities};
+use crate::types::{ExecRequest, IsolationLevel, SandboxCapabilities};
 use std::sync::Arc;
+
+const REJECTED_UNAVAILABLE_SUFFIX: &str = " unavailable";
+const REJECTED_UNSUPPORTED_SEPARATOR: &str = " unsupported: ";
+const NO_AVAILABLE_BACKEND_PREFIX: &str = "no available backend provides at least ";
+const NO_AVAILABLE_BACKEND_MIDDLE: &str = " isolation (registered: ";
+const NO_COMPATIBLE_BACKEND_PREFIX: &str = "no compatible backend for request requiring at least ";
+const NO_COMPATIBLE_BACKEND_MIDDLE: &str = " isolation (registered: ";
+const NO_COMPATIBLE_BACKEND_REJECTED_SEPARATOR: &str = "; rejected: ";
+const NO_COMPATIBLE_BACKEND_SUFFIX: &str = ")";
+
+/// Selected backend together with its validation outcome for a request.
+pub struct SandboxSelection {
+    pub backend: Arc<dyn SandboxBackend>,
+    pub validation: ValidationResult,
+}
 
 /// Registry that holds available sandbox backends.
 ///
@@ -76,19 +91,149 @@ impl SandboxRegistry {
             .first()
             .map(|b| Arc::clone(b))
             .ok_or_else(|| {
+                let registered = self
+                    .backends
+                    .iter()
+                    .map(|b| {
+                        let c = b.capabilities();
+                        format!("{}({})", c.name, c.isolation_level)
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 SandboxError::RequirementsNotMet(format!(
-                    "no available backend provides at least {min_isolation} isolation \
-                     (registered: {})",
-                    self.backends
-                        .iter()
-                        .map(|b| {
-                            let c = b.capabilities();
-                            format!("{}({})", c.name, c.isolation_level)
-                        })
-                        .collect::<Vec<_>>()
-                        .join(", ")
+                    "{NO_AVAILABLE_BACKEND_PREFIX}{min_isolation}{NO_AVAILABLE_BACKEND_MIDDLE}{registered}{NO_COMPATIBLE_BACKEND_SUFFIX}"
                 ))
             })
+    }
+
+    /// Select the best backend for a concrete execution request.
+    ///
+    /// Selection prefers:
+    /// 1. backends whose isolation level meets or exceeds `min_isolation`
+    /// 2. fully validated backends over degraded ones
+    /// 3. the closest matching isolation level among qualifying backends
+    ///
+    /// If nothing satisfies `min_isolation`, the registry falls back to the
+    /// strongest compatible backend below that level instead of silently
+    /// bypassing sandboxing entirely.
+    pub fn select_for_request(
+        &self,
+        request: &ExecRequest,
+    ) -> Result<SandboxSelection, SandboxError> {
+        let min_isolation = request.min_isolation;
+
+        #[derive(Clone)]
+        struct Candidate {
+            index: usize,
+            backend: Arc<dyn SandboxBackend>,
+            capabilities: SandboxCapabilities,
+            validation: ValidationResult,
+        }
+
+        let mut validated = Vec::new();
+        let mut rejected = Vec::new();
+
+        for (index, backend) in self.backends.iter().enumerate() {
+            if !backend.is_available() {
+                let caps = backend.capabilities();
+                rejected.push(format!(
+                    "{name}{REJECTED_UNAVAILABLE_SUFFIX}",
+                    name = caps.name
+                ));
+                continue;
+            }
+
+            let capabilities = backend.capabilities();
+            let validation = backend.validate(request);
+            match &validation {
+                ValidationResult::Unsupported { reason } => {
+                    rejected.push(format!(
+                        "{name}{REJECTED_UNSUPPORTED_SEPARATOR}{reason}",
+                        name = capabilities.name
+                    ));
+                }
+                ValidationResult::Ok | ValidationResult::Degraded { .. } => {
+                    validated.push(Candidate {
+                        index,
+                        backend: Arc::clone(backend),
+                        capabilities,
+                        validation,
+                    });
+                }
+            }
+        }
+
+        let choose_candidate =
+            |mut candidates: Vec<Candidate>, prefer_lowest_isolation: bool| -> Option<Candidate> {
+                candidates.sort_by(|left, right| {
+                    let left_validation_rank = match left.validation {
+                        ValidationResult::Ok => 0_u8,
+                        ValidationResult::Degraded { .. } => 1,
+                        ValidationResult::Unsupported { .. } => 2,
+                    };
+                    let right_validation_rank = match right.validation {
+                        ValidationResult::Ok => 0_u8,
+                        ValidationResult::Degraded { .. } => 1,
+                        ValidationResult::Unsupported { .. } => 2,
+                    };
+
+                    left_validation_rank
+                        .cmp(&right_validation_rank)
+                        .then_with(|| {
+                            if prefer_lowest_isolation {
+                                left.capabilities
+                                    .isolation_level
+                                    .cmp(&right.capabilities.isolation_level)
+                            } else {
+                                right
+                                    .capabilities
+                                    .isolation_level
+                                    .cmp(&left.capabilities.isolation_level)
+                            }
+                        })
+                        .then_with(|| left.index.cmp(&right.index))
+                });
+                candidates.into_iter().next()
+            };
+
+        let mut meets_min = Vec::new();
+        let mut below_min = Vec::new();
+
+        for candidate in validated {
+            if candidate.capabilities.isolation_level >= min_isolation {
+                meets_min.push(candidate);
+            } else {
+                below_min.push(candidate);
+            }
+        }
+
+        let selected = choose_candidate(meets_min, true)
+            .or_else(|| choose_candidate(below_min, false))
+            .ok_or_else(|| {
+                let registered = self
+                    .backends
+                    .iter()
+                    .map(|b| {
+                        let c = b.capabilities();
+                        format!("{}({})", c.name, c.isolation_level)
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let rejected_text = if rejected.is_empty() {
+                    "none".to_string()
+                } else {
+                    rejected.join("; ")
+                };
+                SandboxError::RequirementsNotMet(format!(
+                    "{NO_COMPATIBLE_BACKEND_PREFIX}{min_isolation}{NO_COMPATIBLE_BACKEND_MIDDLE}{registered}{NO_COMPATIBLE_BACKEND_REJECTED_SEPARATOR}{rejected_text}{NO_COMPATIBLE_BACKEND_SUFFIX}",
+                    min_isolation = request.min_isolation,
+                ))
+            })?;
+
+        Ok(SandboxSelection {
+            backend: selected.backend,
+            validation: selected.validation,
+        })
     }
 
     /// Select the best backend for a compiler-generated [`SecurityManifest`].
@@ -132,11 +277,21 @@ impl std::fmt::Debug for SandboxRegistry {
     }
 }
 
+impl std::fmt::Debug for SandboxSelection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SandboxSelection")
+            .field("backend", &self.backend.capabilities())
+            .field("validation", &self.validation)
+            .finish()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::backend::DefaultBackend;
-    use crate::types::{ExecResult, SandboxCapabilities};
+    use crate::error::SandboxError;
+    use crate::types::{ExecRequest, ExecResult, SandboxCapabilities};
     use std::time::Duration;
 
     fn make_backend(name: &str, level: IsolationLevel) -> Arc<dyn SandboxBackend> {
@@ -236,5 +391,127 @@ mod tests {
         reg.register(make_backend("second", IsolationLevel::Container));
 
         assert_eq!(reg.default_backend().unwrap().capabilities().name, "first");
+    }
+
+    #[test]
+    fn test_select_for_request_prefers_ok_backend_that_meets_minimum() {
+        let mut reg = SandboxRegistry::new();
+
+        reg.register(make_backend("process", IsolationLevel::PolicyOnly));
+
+        let container = Arc::new(DefaultBackend::new(
+            SandboxCapabilities {
+                isolation_level: IsolationLevel::Container,
+                supports_filesystem_restriction: true,
+                supports_network_restriction: true,
+                supports_syscall_filtering: false,
+                supports_resource_limits: false,
+                name: "container".to_string(),
+                version: "test".to_string(),
+            },
+            |_req| async {
+                Ok(ExecResult {
+                    success: true,
+                    exit_code: Some(0),
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    duration: Duration::ZERO,
+                    timed_out: false,
+                })
+            },
+        ));
+        reg.register(container);
+
+        let selection = reg
+            .select_for_request(&ExecRequest {
+                min_isolation: IsolationLevel::OsLevel,
+                ..ExecRequest::default()
+            })
+            .unwrap();
+        assert_eq!(selection.backend.capabilities().name, "container");
+        assert_eq!(selection.validation, ValidationResult::Ok);
+    }
+
+    #[test]
+    fn test_select_for_request_uses_degraded_backend_when_needed() {
+        struct DegradedBackend {
+            caps: SandboxCapabilities,
+        }
+
+        #[async_trait::async_trait]
+        impl SandboxBackend for DegradedBackend {
+            fn capabilities(&self) -> SandboxCapabilities {
+                self.caps.clone()
+            }
+
+            fn is_available(&self) -> bool {
+                true
+            }
+
+            fn validate(&self, _request: &ExecRequest) -> ValidationResult {
+                ValidationResult::Degraded {
+                    warnings: vec!["read allowlists are not enforced".to_string()],
+                }
+            }
+
+            async fn create_session(&self) -> Result<crate::types::SandboxContext, SandboxError> {
+                unreachable!("not needed for selection tests")
+            }
+
+            async fn execute(
+                &self,
+                _ctx: &crate::types::SandboxContext,
+                _request: ExecRequest,
+            ) -> Result<ExecResult, SandboxError> {
+                unreachable!("not needed for selection tests")
+            }
+
+            async fn destroy_session(
+                &self,
+                _ctx: crate::types::SandboxContext,
+            ) -> Result<(), SandboxError> {
+                unreachable!("not needed for selection tests")
+            }
+        }
+
+        let mut reg = SandboxRegistry::new();
+        reg.register(Arc::new(DegradedBackend {
+            caps: SandboxCapabilities {
+                isolation_level: IsolationLevel::Container,
+                supports_filesystem_restriction: true,
+                supports_network_restriction: true,
+                supports_syscall_filtering: false,
+                supports_resource_limits: false,
+                name: "degraded-container".to_string(),
+                version: "test".to_string(),
+            },
+        }));
+
+        let selection = reg
+            .select_for_request(&ExecRequest {
+                min_isolation: IsolationLevel::OsLevel,
+                ..ExecRequest::default()
+            })
+            .unwrap();
+        assert_eq!(selection.backend.capabilities().name, "degraded-container");
+        assert!(matches!(
+            selection.validation,
+            ValidationResult::Degraded { .. }
+        ));
+    }
+
+    #[test]
+    fn test_select_for_request_falls_back_to_strongest_compatible_backend_below_minimum() {
+        let mut reg = SandboxRegistry::new();
+        reg.register(make_backend("policy", IsolationLevel::PolicyOnly));
+        reg.register(make_backend("os", IsolationLevel::OsLevel));
+
+        let selection = reg
+            .select_for_request(&ExecRequest {
+                min_isolation: IsolationLevel::Container,
+                ..ExecRequest::default()
+            })
+            .unwrap();
+        assert_eq!(selection.backend.capabilities().name, "os");
     }
 }
