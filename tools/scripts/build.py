@@ -10,8 +10,7 @@ import subprocess
 
 from dekk import Typer, Option, Exit
 
-from dekk.build import BuildSystemDetector, BuildSystem
-from dekk.compiler import CompilerDetector
+from dekk import BuildSystemDetector, BuildSystem, CompilerDetector
 from dekk import print_error, print_header, print_info, print_step, print_success, print_warning
 
 from . import get_config

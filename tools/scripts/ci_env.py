@@ -7,7 +7,7 @@ this module only maps build-system-agnostic hints to Cargo flags.
 
 from __future__ import annotations
 
-from dekk.ci import CIBuildAdvisor, CIBuildHints, CIDetector, CIInfo
+from dekk import CIBuildAdvisor, CIBuildHints, CIDetector, CIInfo
 
 
 def detect_ci() -> CIInfo:

@@ -1,33 +1,9 @@
 """Install command for APXM CLI."""
 
-import json
 import os
 import shutil
-import subprocess as _sp
 from pathlib import Path
 
-
-def _find_conda_env_prefix(conda_cmd: str, env_name: str) -> "Path | None":
-    """Return the prefix Path for *env_name* by scanning envs directories.
-
-    Checks the filesystem directly so it finds broken directories (present but
-    missing conda-meta) that mamba's env registry silently omits.
-    """
-    try:
-        info = _sp.run(
-            [conda_cmd, "info", "--json"],
-            capture_output=True, text=True, timeout=10,
-        )
-        data = json.loads(info.stdout or "{}")
-        # mamba uses "envs directories", conda uses "envs_dirs"
-        envs_dirs = data.get("envs directories") or data.get("envs_dirs") or []
-        for d in envs_dirs:
-            candidate = Path(d) / env_name
-            if candidate.is_dir():
-                return candidate
-    except Exception:
-        pass
-    return None
 
 from dekk import (
     BinaryInstaller, CondaDetector, Exit, Option, ToolChecker, Typer,
@@ -35,8 +11,7 @@ from dekk import (
     print_next_steps, print_numbered_list, print_step,
     print_success, print_warning, print_dep_results, run_logged,
 )
-from dekk.activation import EnvironmentActivator
-from dekk.envspec import EnvironmentSpec
+from dekk import EnvironmentActivator, EnvironmentSpec
 
 from . import get_config, messages as msg
 from .deps import check_all
@@ -101,17 +76,13 @@ def register_commands(app: Typer) -> None:
 
         # -- Stage 3: Conda environment ---
         print_step(msg.STAGE_CONDA_ENV)
-        conda_cmd = shutil.which("mamba") or shutil.which("conda")
-        if not conda_cmd:
-            print_error(msg.MSG_CONDA_NOT_FOUND)
-            missing.append("Mamba/Conda")
-        else:
-            print_success(msg.MSG_CONDA_FOUND.format(cmd=conda_cmd))
-            env_yaml = config.apxm_dir / "environment.yaml"
-            if not env_yaml.exists():
-                print_error(msg.MSG_CONDA_ENV_YAML_NOT_FOUND.format(path=env_yaml))
-                missing.append("environment.yaml")
-            elif check:
+        if check:
+            conda_cmd = shutil.which("mamba") or shutil.which("conda")
+            if not conda_cmd:
+                print_error(msg.MSG_CONDA_NOT_FOUND)
+                missing.append("Mamba/Conda")
+            else:
+                print_success(msg.MSG_CONDA_FOUND.format(cmd=conda_cmd))
                 detector = CondaDetector()
                 prefix = detector.find_prefix("apxm", probe_common=True)
                 if prefix:
@@ -119,39 +90,16 @@ def register_commands(app: Typer) -> None:
                 else:
                     print_warning(msg.MSG_CONDA_ENV_NOT_FOUND_WILL_CREATE)
                     missing.append(msg.MSG_CONDA_ENV_NOT_FOUND_RUN_INSTALL)
+        else:
+            from dekk import run_setup
+            setup_result = run_setup(config.apxm_dir)
+            if setup_result.ok:
+                print_success(msg.MSG_CONDA_ENV_CREATED if setup_result.environment_created
+                              else msg.MSG_CONDA_ENV_UPDATED)
             else:
-                env_name = "apxm"
-                env_prefix = _find_conda_env_prefix(conda_cmd, env_name)
-                env_valid = env_prefix is not None and (env_prefix / "conda-meta").is_dir()
-                env_broken = env_prefix is not None and not env_valid
-
-                if env_broken:
-                    print_warning(f"Removing broken environment: {env_prefix}")
-                    shutil.rmtree(env_prefix, ignore_errors=True)
-                    env_valid = False
-
-                if env_valid:
-                    conda_result = run_logged(
-                        [conda_cmd, "env", "update", "-f", str(env_yaml), "-n", env_name],
-                        log_path=log_path, label="Conda env update",
-                        spinner_text="Updating conda environment...", append=True,
-                        cwd=config.apxm_dir,
-                    )
-                    conda_ok_msg = msg.MSG_CONDA_ENV_UPDATED
-                else:
-                    conda_result = run_logged(
-                        [conda_cmd, "env", "create", "-f", str(env_yaml)],
-                        log_path=log_path, label="Conda env create",
-                        spinner_text="Creating conda environment...", append=True,
-                        cwd=config.apxm_dir,
-                    )
-                    conda_ok_msg = msg.MSG_CONDA_ENV_CREATED
-
-                if conda_result.ok:
-                    print_success(conda_ok_msg)
-                else:
-                    print_error(msg.MSG_CONDA_CREATE_FAILED.format(cmd=conda_cmd))
-                    missing.append(msg.MSG_CONDA_ENV_CREATE_FAILED)
+                for err in setup_result.errors:
+                    print_error(err)
+                missing.append(msg.MSG_CONDA_ENV_CREATE_FAILED)
         print_blank()
 
         # -- Stage 4: Rust toolchain ---
@@ -242,9 +190,8 @@ def register_commands(app: Typer) -> None:
                                 spec = EnvironmentSpec.from_file(spec_file)
                             conda_prefix = env.get("CONDA_PREFIX") if env else None
                             res = BinaryInstaller(config.apxm_dir).install_wrapper(
-                                target=config.apxm_dir / "tools" / "apxm_cli.py",
+                                target=binary_path,
                                 spec=spec,
-                                python=Path(conda_prefix) / "bin" / "python3" if conda_prefix else None,
                                 name="apxm",
                             )
                             print_success(res.message)

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from dekk import DependencyChecker, DependencySpec, DependencyResult
-from dekk.version import VersionSpec, version_satisfies
+from dekk import VersionSpec, version_satisfies
 
 from .messages import (
     FIX_SUGGESTIONS,

@@ -2,9 +2,10 @@
 name = "workflow-test"
 description = "Agentic workflow orchestration with acpx flows"
 
-[conda]
+[environment]
+type = "conda"
+path = "{project}/.dekk/env"
 name = "workflow-test"
-packages = ["nodejs>=22"]
 
 [npm]
 pnpm = "latest"
