@@ -43,6 +43,7 @@ execute = { run = "apxm execute", description = "Compile and execute a graph", s
 run = { run = "apxm run", description = "Run a pre-compiled .apxmobj artifact", skill = true, group = "Compilation" }
 decompile = { run = "apxm decompile", description = "Reverse-map artifact back to graph JSON", group = "Compilation" }
 
+view = { run = "python tools/scripts/view.py", description = "Open interactive graph visualizer", skill = true, group = "Authoring" }
 validate = { run = "apxm validate", description = "Validate graph against AIS contract", skill = true, group = "Authoring" }
 analyze = { run = "apxm analyze", description = "Analyze parallelism and critical path", group = "Authoring" }
 explain = { run = "apxm explain", description = "Human-readable summary of a graph", group = "Authoring" }
