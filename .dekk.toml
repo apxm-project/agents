@@ -1,15 +1,20 @@
-# APXM Environment Specification
-# Enables automatic environment setup with: dekk activate
+# APXM — dekk apxm install
 
 [project]
 name = "apxm"
 description = "MLIR compiler and runtime for agent workflows"
 
-
-[conda]
+[environment]
+type = "conda"
+path = "{project}/.dekk/env"
 name = "apxm"
-file = "environment.yaml"
+channels = ["conda-forge"]
 
+[environment.packages]
+mlir = "22"
+libclang13 = "22"
+python = "3.11"
+cmake = ""
 
 [tools]
 cmake = { command = "cmake", version = ">=3.20" }
@@ -18,12 +23,42 @@ cargo = { command = "cargo", version = ">=1.70" }
 python = { command = "python", version = ">=3.10" }
 clang = { command = "clang", version = ">=17" }
 
-
 [env]
-MLIR_DIR = "{conda}/lib/cmake/mlir"
-LLVM_DIR = "{conda}/lib/cmake/llvm"
+MLIR_DIR = "{environment}/lib/cmake/mlir"
+LLVM_DIR = "{environment}/lib/cmake/llvm"
 APXM_HOME = "{project}"
 LD_LIBRARY_PATH = "{project}/target/release/lib:{project}/target/release"
 
 [paths]
 bin = ["{project}/bin", "{project}/target/release"]
+
+[commands]
+build = { run = "cargo build -p apxm-cli --features driver,metrics --release", description = "Build APXM" }
+test = { run = "cargo test --workspace --exclude apxm-compiler", description = "Run tests" }
+test-all = { run = "cargo test --workspace", description = "All tests (requires MLIR)" }
+clean = { run = "cargo clean", description = "Clean" }
+
+[install]
+wrap = { name = "apxm", target = "target/release/apxm" }
+
+[[install.components]]
+name = "compiler-runtime"
+label = "Compiler + Runtime"
+description = "APXM compiler and dataflow runtime"
+run = "cargo build -p apxm-cli --features driver,metrics --release"
+default = true
+
+[[install.components]]
+name = "mcp-server"
+label = "MCP Server"
+description = "HTTP API + MCP protocol server for IDE integration"
+run = "cargo build -p apxm-server --release"
+default = true
+
+[[install.components]]
+name = "graph-viewer"
+label = "Graph Visualizer"
+description = "Interactive web-based DAG visualizer (requires Node.js)"
+run = "cd tools/graph-viewer && npm install && npm run build"
+default = false
+requires = ["npm"]
