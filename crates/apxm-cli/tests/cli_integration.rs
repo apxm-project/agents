@@ -739,15 +739,15 @@ fn task_merge_file_not_found() {
     assert!(!out.status.success());
 }
 
-// ─── tools ─────────────────────────────────────────────────────────────────
+// ─── tool ──────────────────────────────────────────────────────────────────
 
 #[test]
-fn tools_list_empty_json() {
+fn tool_list_empty_json() {
     // Use a temp HOME to avoid reading real ~/.apxm/tools.json
     let tmp_home = tempfile::tempdir().unwrap();
     let out = apxm()
         .env("HOME", tmp_home.path())
-        .args(["--json", "tools", "list"])
+        .args(["--json", "tool", "list"])
         .output()
         .unwrap();
     assert!(out.status.success());
@@ -756,14 +756,14 @@ fn tools_list_empty_json() {
 }
 
 #[test]
-fn tools_register_and_list() {
+fn tool_add_and_list() {
     let tmp_home = tempfile::tempdir().unwrap();
-    // Register a tool
+    // Add a tool
     let out = apxm()
         .env("HOME", tmp_home.path())
         .args([
-            "tools",
-            "register",
+            "tool",
+            "add",
             "test-search",
             "--description",
             "Test search tool",
@@ -772,10 +772,10 @@ fn tools_register_and_list() {
         .unwrap();
     assert!(out.status.success());
 
-    // List tools, should contain the registered tool
+    // List tools, should contain the added tool
     let out = apxm()
         .env("HOME", tmp_home.path())
-        .args(["--json", "tools", "list"])
+        .args(["--json", "tool", "list"])
         .output()
         .unwrap();
     assert!(out.status.success());
@@ -787,32 +787,32 @@ fn tools_register_and_list() {
 }
 
 #[test]
-fn tools_register_duplicate_fails() {
+fn tool_add_duplicate_fails() {
     let tmp_home = tempfile::tempdir().unwrap();
-    // Register once
+    // Add once
     apxm()
         .env("HOME", tmp_home.path())
-        .args(["tools", "register", "dup-tool", "--description", "First"])
+        .args(["tool", "add", "dup-tool", "--description", "First"])
         .output()
         .unwrap();
-    // Register same name again
+    // Add same name again
     let out = apxm()
         .env("HOME", tmp_home.path())
-        .args(["tools", "register", "dup-tool", "--description", "Second"])
+        .args(["tool", "add", "dup-tool", "--description", "Second"])
         .output()
         .unwrap();
     assert!(!out.status.success());
 }
 
 #[test]
-fn tools_remove() {
+fn tool_remove() {
     let tmp_home = tempfile::tempdir().unwrap();
-    // Register then remove
+    // Add then remove
     apxm()
         .env("HOME", tmp_home.path())
         .args([
-            "tools",
-            "register",
+            "tool",
+            "add",
             "rm-tool",
             "--description",
             "To be removed",
@@ -821,7 +821,7 @@ fn tools_remove() {
         .unwrap();
     let out = apxm()
         .env("HOME", tmp_home.path())
-        .args(["tools", "remove", "rm-tool"])
+        .args(["tool", "remove", "rm-tool"])
         .output()
         .unwrap();
     assert!(out.status.success());
@@ -829,7 +829,7 @@ fn tools_remove() {
     // Verify it's gone
     let out = apxm()
         .env("HOME", tmp_home.path())
-        .args(["--json", "tools", "list"])
+        .args(["--json", "tool", "list"])
         .output()
         .unwrap();
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
@@ -837,11 +837,11 @@ fn tools_remove() {
 }
 
 #[test]
-fn tools_remove_nonexistent_fails() {
+fn tool_remove_nonexistent_fails() {
     let tmp_home = tempfile::tempdir().unwrap();
     let out = apxm()
         .env("HOME", tmp_home.path())
-        .args(["tools", "remove", "no-such-tool"])
+        .args(["tool", "remove", "no-such-tool"])
         .output()
         .unwrap();
     assert!(!out.status.success());

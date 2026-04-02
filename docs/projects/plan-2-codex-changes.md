@@ -506,14 +506,14 @@ The VERIFY AIS operation maps to this interceptor: the guardian's risk score IS 
 
 ### C7: Tool Persistence and MCP Registration (1 day)
 
-- Codex's 26 tool registrations (21 standard + 5 multi_agents) persist to `~/.apxm/tools.toml` so they are visible to `apxm tools list`. The 5 multi_agents handlers (spawn, wait, send_input, resume_agent, close_agent) are deferred to Phase 4 as `FLOW_CALL`/`WAIT_ALL` graph operations.
+- Codex's 26 tool registrations (21 standard + 5 multi_agents) persist to `~/.apxm/tools.toml` so they are visible to `apxm tool list`. The 5 multi_agents handlers (spawn, wait, send_input, resume_agent, close_agent) are deferred to Phase 4 as `FLOW_CALL`/`WAIT_ALL` graph operations.
 - MCP tools discovered by `McpHandler` and `McpResourceHandler` are registered as APXM MCP capabilities
-- `apxm tools list --json` includes Codex-registered tools
+- `apxm tool list --json` includes Codex-registered tools
 
 **Deliverables:**
 - Startup code writes Codex tool metadata to `~/.apxm/tools.toml`
 - MCP-discovered tools registered via `CapabilitySystem::register()`
-- Integration test: `apxm tools list` shows all Codex tools
+- Integration test: `apxm tool list` shows all Codex tools
 
 ### Phase 2 Summary
 
@@ -831,7 +831,7 @@ Weeks 23+:     Phase 5 -- Compiler Integration (C12)
 
 ### Phase 2 Complete:
 - [ ] All 21 standard Codex `ToolHandler` implementations registered as APXM `CapabilityExecutor` (5 multi_agents deferred to Phase 4)
-- [ ] `apxm tools list` shows all Codex-registered tools
+- [ ] `apxm tool list` shows all Codex-registered tools
 - [ ] Guardian approval flows through APXM interceptor pipeline
 - [ ] MCP-discovered tools registered as APXM capabilities
 - [ ] `~/.apxm/tools.toml` persists Codex tool registrations

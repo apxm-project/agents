@@ -468,7 +468,7 @@ These become implementation details of `AcpCapability`, not a separate system.
 
 | File | Action | Description |
 |------|--------|-------------|
-| `apxm-cli/src/commands/agents.rs` | Create | `apxm agents list/test/add` |
+| `apxm-cli/src/commands/agent.rs` | Create | `apxm agent list/test/add` |
 | Tests | Create | End-to-end: graph with INV(acp) -> Claude Code |
 | `apxm-runtime/src/capability/mod.rs` | Modify | Auto-register AcpCapability |
 
@@ -510,6 +510,19 @@ timeout_ms = 600000
 ```
 
 ---
+
+## Process Model Integration
+
+With the APXM process model, ACP agents gain formal lifecycle management:
+
+- **SPAWN_AGENT** with `profile` attribute replaces manual subprocess management
+- **COMMUNICATE** with `protocol: "acp"` replaces direct session/prompt calls
+- **ProcessTable** provides the unified registry for all live agent processes
+- **AgentProcess** encapsulates the session, profile, and state
+
+This completes the absorption: ACPX's orchestration is now expressed as
+standard APXM operations (SPAWN_AGENT + COMMUNICATE) rather than as a
+separate layer on top.
 
 ## Summary
 

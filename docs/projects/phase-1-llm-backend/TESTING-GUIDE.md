@@ -35,11 +35,11 @@ Credentials are stored in `~/.apxm/credentials.toml` (0600 permissions).
 The `apxm-server` auto-loads all registered credentials at startup.
 
 ```bash
-apxm register add openai --provider openai --api-key $OPENAI_API_KEY
-apxm register add anthropic --provider anthropic --api-key $ANTHROPIC_API_KEY
-apxm register add google --provider google --api-key $GOOGLE_API_KEY
-apxm register list
-apxm register test
+apxm llm add openai --provider openai --api-key $OPENAI_API_KEY
+apxm llm add anthropic --provider anthropic --api-key $ANTHROPIC_API_KEY
+apxm llm add google --provider google --api-key $GOOGLE_API_KEY
+apxm llm list
+apxm llm test
 ```
 
 ### 4. Consumer builds
@@ -168,7 +168,7 @@ curl -s http://localhost:9100/v1/models | jq .
 }
 ```
 
-**Verify:** The list matches `apxm register list` output.
+**Verify:** The list matches `apxm llm list` output.
 
 ### B3. Schema endpoint
 
@@ -467,8 +467,8 @@ export PATH="$PWD/target/release:$PATH"
 3. Register LLM credentials (if not already done):
 
 ```bash
-apxm register add openai --provider openai --api-key $OPENAI_API_KEY
-apxm register test openai
+apxm llm add openai --provider openai --api-key $OPENAI_API_KEY
+apxm llm test openai
 ```
 
 ### E1. Simple prompt
@@ -532,7 +532,7 @@ codex "Explain what /etc/hosts does in one sentence"
 ### E5. Extended thinking (Anthropic backend)
 
 ```bash
-apxm register add anthropic --provider anthropic --api-key $ANTHROPIC_API_KEY
+apxm llm add anthropic --provider anthropic --api-key $ANTHROPIC_API_KEY
 CODEX_USE_APXM=1 codex "Think step by step: what is 17 * 23?"
 ```
 
@@ -558,7 +558,7 @@ CODEX_USE_APXM=1 codex "Say hello"
 **How it works:** When `GEMINI_CLI_USE_APXM=true` is set, the CLI's `ApxmContentGenerator`
 spawns an `apxm-server` child process via `ApxmServiceManager`, health-checks it, and routes
 requests through `ApxmServiceClient` (SSE over HTTP). The server auto-loads credentials from
-`~/.apxm/credentials.toml` at startup, so any model registered via `apxm register` is available.
+`~/.apxm/credentials.toml` at startup, so any model registered via `apxm llm` is available.
 
 ### Prerequisites
 

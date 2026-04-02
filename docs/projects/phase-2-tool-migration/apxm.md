@@ -79,7 +79,7 @@ read_only = true
 
 **`ToolStore`** -- load from / save to `~/.apxm/tools.toml`, produces `Vec<CapabilityMetadata>` for registration at startup.
 
-Both Codex and Gemini-CLI write their tool registrations to this file so that `apxm tools list` shows a unified view of all registered capabilities regardless of which consumer registered them.
+Both Codex and Gemini-CLI write their tool registrations to this file so that `apxm tool list` shows a unified view of all registered capabilities regardless of which consumer registered them.
 
 ---
 
@@ -117,15 +117,15 @@ These interceptors are used by both consumers:
 
 ## A5.5 CLI Commands
 
-Extend the existing `apxm tools` CLI:
+Extend the existing `apxm tool` CLI:
 
 ```bash
-apxm tools register my-tool --type binary --command ./my-tool --description "..."
-apxm tools list [--json]
-apxm tools show my-tool [--json]
-apxm tools remove my-tool
-apxm tools test my-tool
-apxm tools doctor           # validate all registrations
+apxm tool add my-tool --type binary --command ./my-tool --description "..."
+apxm tool list [--json]
+apxm tool show my-tool [--json]
+apxm tool remove my-tool
+apxm tool test my-tool
+apxm tool doctor           # validate all registrations
 ```
 
 ---
@@ -148,7 +148,7 @@ apxm tools doctor           # validate all registrations
 - [ ] Gemini-CLI tools registerable via HTTP bridge
 - [ ] Registrations persist in `~/.apxm/tools.toml`
 - [ ] Interceptor pipeline (approval + sandbox + audit) works end-to-end
-- [ ] `apxm tools list --json` returns all registered capabilities
+- [ ] `apxm tool list --json` returns all registered capabilities
 
 ---
 

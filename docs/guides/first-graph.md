@@ -191,6 +191,6 @@ apxm execute fanout.json -O2
 
 ## Next steps
 
-- Run `apxm ops list` to browse all 32 AIS operations.
+- Run `apxm ops list` to browse all 39 AIS operations.
 - Run `apxm template list` to see built-in graph patterns (ask, pipeline, fan-out, map-reduce, verify, conditional).
 - Run `apxm template show <name> --json` to get a ready-to-use graph and pipe it to validate: `apxm template show fan-out --json | apxm validate /dev/stdin`.

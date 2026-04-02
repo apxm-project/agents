@@ -882,4 +882,4 @@ Phase 5 -- Compiler Integration (Weeks 25-28)
 - [Vision: The LLVM for Agents](../pxm/vision.md) -- File tree as AAM, CapabilityExecutor, compiler as punch line
 - [Hierarchical AAM Diagrams](../implementation/runtime/hierarchical-aam.md) -- 14 diagrams: flat --> hierarchical migration
 - [AIS Operations](../pxm/ais.md) -- 39 typed operations
-- [Tools CLI Design](../cli/tools-cli-design.md) -- `apxm tools` command specification
+- [Tools CLI Design](../cli/tools-cli-design.md) -- `apxm tool` command specification

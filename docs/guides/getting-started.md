@@ -17,6 +17,7 @@ Write agent workflows once, compile them, run with any LLM backend.
 
 - **Conda or Mamba** ([Miniforge](https://github.com/conda-forge/miniforge) recommended)
 - **Git**
+- **dekk** (`pip install dekk`)
 
 Rust, CMake, and MLIR/LLVM are installed automatically by the installer.
 
@@ -25,25 +26,64 @@ Rust, CMake, and MLIR/LLVM are installed automatically by the installer.
 ```bash
 git clone https://github.com/randreshg/apxm
 cd apxm
-python3 tools/apxm_cli.py install
-source ~/.bashrc  # or ~/.zshrc — restart shell
+dekk apxm install
 ```
 
-Verify:
+This sets up the conda environment (MLIR/LLVM 21, build tools), builds APXM, and installs default components. Use `dekk apxm <command>` to interact with the project — it resolves the nearest `.dekk.toml` and activates the environment automatically.
+
+#### Interactive mode (default)
+
+Running `dekk apxm install` interactively prompts you to select components:
+
+```
+APXM Install
+────────────────────────────────────
+
+? Select components to install:
+ » ● Compiler + Runtime — APXM compiler and dataflow runtime
+   ● MCP Server — HTTP API + MCP protocol server for IDE integration
+   ○ Graph Visualizer — Interactive web-based DAG visualizer (requires Node.js)
+
+[1/4] ▶ Setting up environment
+  ✓ Setting up environment
+[2/4] ▶ Installing Compiler + Runtime
+  ✓ Installing Compiler + Runtime (138s)
+[3/4] ▶ Installing MCP Server
+  ✓ Installing MCP Server (42s)
+
+  ✓ Installation complete!
+```
+
+`»` = cursor, `●` (blue) = selected, `○` (dim) = not selected. Arrow keys to move, Space to toggle, Enter to confirm. Escape cancels selection; Ctrl-C cancels installation.
+
+#### Non-interactive mode (agents / CI)
 
 ```bash
-apxm doctor
+dekk apxm install --no-interactive   # default components, no prompt
+dekk apxm install --all              # all components, no prompt
+dekk apxm install --components mcp-server,graph-viewer  # explicit list
 ```
 
-The installer creates a conda environment with MLIR/LLVM 21, builds the project, and installs a wrapper at `~/.local/bin/apxm` that handles all environment setup automatically.
+#### Optional global wrapper
 
-On the first run, `tools/apxm_cli.py` installs `dekk` from PyPI into `.apxm/bootstrap-venv` and re-runs the CLI there.
+By default, you use `dekk apxm <command>` which is worktree-safe. If you prefer a bare `apxm` command (single-worktree setup), add `--wrap`:
+
+```bash
+dekk apxm install --wrap
+# Now: apxm doctor, apxm compile, etc.
+```
+
+### Verify
+
+```bash
+dekk apxm test
+```
 
 ### Troubleshooting
 
-- **"apxm: command not found"** — Run `source ~/.bashrc` or check `ls ~/.local/bin/apxm`
-- **Build failures** — Check `.apxm/install.log` for details, then re-run `apxm install`
-- **Start fresh** — `conda env remove -n apxm && rm -rf target/ bin/ && python3 tools/apxm_cli.py install`
+- **Build failures** — Check `.dekk/install.log` for details, then re-run `dekk apxm install`
+- **Verbose error output** — `dekk apxm install --verbose` shows the last 15 lines of build output on failure
+- **Start fresh** — `dekk apxm setup --force && dekk apxm install`
 
 ---
 
@@ -53,16 +93,16 @@ Before running programs, register at least one LLM provider:
 
 ```bash
 # OpenAI
-apxm register add my-openai --provider openai --api-key sk-...
+apxm llm add my-openai --provider openai --api-key sk-...
 
 # Anthropic
-apxm register add my-anthropic --provider anthropic --api-key sk-ant-...
+apxm llm add my-anthropic --provider anthropic --api-key sk-ant-...
 
 # Ollama (local, no API key)
-apxm register add local --provider ollama
+apxm llm add local --provider ollama
 ```
 
-Verify: `apxm register test`
+Verify: `apxm llm test`
 
 See [LLM Backends](llm-backends.md) for full provider documentation, enterprise gateways, and security details.
 

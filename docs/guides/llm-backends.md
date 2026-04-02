@@ -17,7 +17,7 @@ This guide covers how to register and configure LLM backends for use with APXM w
 
 ## Overview
 
-APXM uses a secure credential store at `~/.apxm/credentials.toml` to manage LLM provider API keys and configuration. The `apxm register` command provides a simple interface for adding, listing, testing, and removing credentials.
+APXM uses a secure credential store at `~/.apxm/credentials.toml` to manage LLM provider API keys and configuration. The `apxm llm` command provides a simple interface for adding, listing, testing, and removing credentials.
 
 **Key Features:**
 - Secure storage with strict file permissions (0600)
@@ -47,7 +47,7 @@ Credentials are stored at:
 ### File Structure
 
 ```toml
-# APXM Credentials - Managed by `apxm register`
+# APXM Credentials - Managed by `apxm llm`
 # Permissions: 0600 (owner read/write only)
 # DO NOT edit manually unless you know what you're doing.
 
@@ -87,7 +87,7 @@ provider = "ollama"
 ### Add a Credential
 
 ```bash
-apxm register add <name> --provider <provider> [OPTIONS]
+apxm llm add <name> --provider <provider> [OPTIONS]
 ```
 
 **Arguments:**
@@ -104,16 +104,16 @@ apxm register add <name> --provider <provider> [OPTIONS]
 
 ```bash
 # Interactive API key entry (recommended)
-apxm register add my-openai --provider openai
+apxm llm add my-openai --provider openai
 
 # Command-line API key
-apxm register add my-openai --provider openai --api-key sk-proj-abc123...
+apxm llm add my-openai --provider openai --api-key sk-proj-abc123...
 
 # With custom model
-apxm register add my-gpt4 --provider openai --api-key sk-... --model gpt-4
+apxm llm add my-gpt4 --provider openai --api-key sk-... --model gpt-4
 
 # Enterprise gateway with custom headers
-apxm register add corp-llm \
+apxm llm add corp-llm \
   --provider openai \
   --api-key dummy \
   --base-url https://llm-api.company.com/v1 \
@@ -125,7 +125,7 @@ apxm register add corp-llm \
 ### List Credentials
 
 ```bash
-apxm register list
+apxm llm list
 ```
 
 **Output:**
@@ -144,33 +144,33 @@ Store: /home/user/.apxm/credentials.toml
 ### Remove a Credential
 
 ```bash
-apxm register remove <name>
+apxm llm remove <name>
 ```
 
 **Example:**
 ```bash
-apxm register remove my-openai
+apxm llm remove my-openai
 ```
 
 **Note:** Credentials are immutable. To update a credential, remove and re-add it:
 ```bash
-apxm register remove my-openai
-apxm register add my-openai --provider openai --api-key sk-new-key
+apxm llm remove my-openai
+apxm llm add my-openai --provider openai --api-key sk-new-key
 ```
 
 ### Test Credentials
 
 ```bash
 # Test a specific credential
-apxm register test <name>
+apxm llm test <name>
 
 # Test all registered credentials
-apxm register test
+apxm llm test
 ```
 
 **Example:**
 ```bash
-$ apxm register test my-openai
+$ apxm llm test my-openai
 Testing Credentials
   my-openai        OK (200)
 ```
@@ -189,7 +189,7 @@ A 400 status is considered success if authentication worked (indicates valid key
 ### Generate config.toml
 
 ```bash
-apxm register generate-config >> ~/.apxm/config.toml
+apxm llm generate-config >> ~/.apxm/config.toml
 ```
 
 Converts registered credentials to config.toml format (useful for migration or inspection).
@@ -202,13 +202,13 @@ Converts registered credentials to config.toml format (useful for migration or i
 
 **Standard OpenAI API:**
 ```bash
-apxm register add my-openai --provider openai
+apxm llm add my-openai --provider openai
 # Enter API key when prompted
 ```
 
 **With specific model:**
 ```bash
-apxm register add my-gpt4 \
+apxm llm add my-gpt4 \
   --provider openai \
   --api-key sk-proj-... \
   --model gpt-4
@@ -216,7 +216,7 @@ apxm register add my-gpt4 \
 
 **OpenAI-compatible endpoint (e.g., Azure OpenAI):**
 ```bash
-apxm register add azure-gpt \
+apxm llm add azure-gpt \
   --provider openai \
   --api-key your-key \
   --base-url https://your-resource.openai.azure.com/openai/deployments/your-deployment \
@@ -234,13 +234,13 @@ apxm register add azure-gpt \
 
 **Standard Claude API:**
 ```bash
-apxm register add my-claude --provider anthropic
+apxm llm add my-claude --provider anthropic
 # Enter API key when prompted
 ```
 
 **With specific model:**
 ```bash
-apxm register add claude-sonnet \
+apxm llm add claude-sonnet \
   --provider anthropic \
   --api-key sk-ant-... \
   --model claude-sonnet-4
@@ -257,13 +257,13 @@ apxm register add claude-sonnet \
 
 **Standard Gemini API:**
 ```bash
-apxm register add my-gemini --provider google
+apxm llm add my-gemini --provider google
 # Enter API key when prompted
 ```
 
 **With specific model:**
 ```bash
-apxm register add gemini-pro \
+apxm llm add gemini-pro \
   --provider google \
   --api-key AIza... \
   --model gemini-pro
@@ -279,12 +279,12 @@ apxm register add gemini-pro \
 
 **Standard local Ollama:**
 ```bash
-apxm register add local --provider ollama
+apxm llm add local --provider ollama
 ```
 
 **Custom Ollama server:**
 ```bash
-apxm register add remote-ollama \
+apxm llm add remote-ollama \
   --provider ollama \
   --base-url http://gpu-server:11434 \
   --model llama3.1:70b
@@ -298,7 +298,7 @@ apxm register add remote-ollama \
 
 **Multi-provider gateway:**
 ```bash
-apxm register add openrouter \
+apxm llm add openrouter \
   --provider openrouter \
   --api-key sk-or-... \
   --model anthropic/claude-opus-4
@@ -310,7 +310,7 @@ apxm register add openrouter \
 
 **Custom gateway with authentication headers:**
 ```bash
-apxm register add corp-gateway \
+apxm llm add corp-gateway \
   --provider openai \
   --api-key dummy \
   --base-url https://llm-api.company.com/OnPrem \
@@ -343,12 +343,12 @@ Testing validates:
 
 **Test a single credential:**
 ```bash
-apxm register test my-openai
+apxm llm test my-openai
 ```
 
 **Test all credentials:**
 ```bash
-apxm register test
+apxm llm test
 ```
 
 **Example output:**
@@ -407,7 +407,7 @@ The credential names in the `providers` list must match registered credential na
 
 ### Credential Store as Source of Truth
 
-When using `apxm register`, you don't need `[[llm_backends]]` sections in config.toml. The credential store is the source of truth.
+When using `apxm llm`, you don't need `[[llm_backends]]` sections in config.toml. The credential store is the source of truth.
 
 **Before (manual config):**
 ```toml
@@ -436,12 +436,12 @@ Credentials are automatically loaded from `~/.apxm/credentials.toml`.
 If you want to migrate to manual config or inspect the generated format:
 
 ```bash
-apxm register generate-config
+apxm llm generate-config
 ```
 
 **Output:**
 ```toml
-# Generated by `apxm register generate-config`
+# Generated by `apxm llm generate-config`
 
 [chat]
 providers = ["my-openai", "my-claude"]
@@ -461,7 +461,7 @@ model = "claude-opus-4"
 
 You can redirect this to a file:
 ```bash
-apxm register generate-config >> ~/.apxm/config.toml
+apxm llm generate-config >> ~/.apxm/config.toml
 ```
 
 ---
@@ -492,8 +492,8 @@ Move `~/.apxm` outside of any git repository. The credential store must be in a 
 **Solution:**
 Remove the existing credential first:
 ```bash
-apxm register remove my-openai
-apxm register add my-openai --provider openai --api-key sk-new-key
+apxm llm remove my-openai
+apxm llm add my-openai --provider openai --api-key sk-new-key
 ```
 
 ### Provider Not Found
@@ -513,7 +513,7 @@ For custom endpoints, use `provider = "openai"` with `--base-url`.
 ### API Key Not Working
 
 **Symptoms:**
-- `apxm register test` shows `ERROR (401)`
+- `apxm llm test` shows `ERROR (401)`
 - Workflows fail with authentication errors
 
 **Debugging steps:**
@@ -521,8 +521,8 @@ For custom endpoints, use `provider = "openai"` with `--base-url`.
 1. **Verify API key is correct:**
    ```bash
    # Re-register with correct key
-   apxm register remove my-openai
-   apxm register add my-openai --provider openai
+   apxm llm remove my-openai
+   apxm llm add my-openai --provider openai
    # Enter correct key when prompted
    ```
 
@@ -618,7 +618,7 @@ For custom endpoints, use `provider = "openai"` with `--base-url`.
    curl http://gpu-server:11434/api/tags
 
    # Register with correct base_url
-   apxm register add remote-ollama \
+   apxm llm add remote-ollama \
      --provider ollama \
      --base-url http://gpu-server:11434
    ```
@@ -628,10 +628,10 @@ For custom endpoints, use `provider = "openai"` with `--base-url`.
 You can register multiple credentials for the same provider:
 
 ```bash
-apxm register add openai-personal --provider openai --api-key sk-personal-...
-apxm register add openai-work --provider openai --api-key sk-work-...
-apxm register add gpt4 --provider openai --api-key sk-... --model gpt-4
-apxm register add gpt4-mini --provider openai --api-key sk-... --model gpt-4o-mini
+apxm llm add openai-personal --provider openai --api-key sk-personal-...
+apxm llm add openai-work --provider openai --api-key sk-work-...
+apxm llm add gpt4 --provider openai --api-key sk-... --model gpt-4
+apxm llm add gpt4-mini --provider openai --api-key sk-... --model gpt-4o-mini
 ```
 
 Use different names and reference the appropriate one in your workflow config.
@@ -652,7 +652,7 @@ base_url = "https://gateway.company.com"
 user = "env:USER"
 ```
 
-**Note:** The credential store stores literal values. Environment variable substitution only works in config.toml with the `env:` prefix. When using `apxm register --header "user=$USER"`, the value is expanded by your shell before being stored.
+**Note:** The credential store stores literal values. Environment variable substitution only works in config.toml with the `env:` prefix. When using `apxm llm --header "user=$USER"`, the value is expanded by your shell before being stored.
 
 ---
 
@@ -662,18 +662,18 @@ user = "env:USER"
 
 ```bash
 # Add credentials
-apxm register add my-openai --provider openai
-apxm register add my-claude --provider anthropic
-apxm register add local --provider ollama
+apxm llm add my-openai --provider openai
+apxm llm add my-claude --provider anthropic
+apxm llm add local --provider ollama
 
 # Test credentials
-apxm register test
+apxm llm test
 
 # List credentials
-apxm register list
+apxm llm list
 
 # Remove credential
-apxm register remove my-openai
+apxm llm remove my-openai
 
 # Use in config
 echo 'providers = ["my-openai", "my-claude"]' >> ~/.apxm/config.toml
@@ -686,7 +686,7 @@ echo 'providers = ["my-openai", "my-claude"]' >> ~/.apxm/config.toml
 3. Use descriptive names (e.g., "work-gpt4", "personal-claude")
 4. Keep credentials outside git repositories
 5. Verify file permissions are 0600
-6. Use `apxm register test` regularly to catch expired keys
+6. Use `apxm llm test` regularly to catch expired keys
 7. For production, consider using environment variables in config.toml
 
 **Security Notes:**

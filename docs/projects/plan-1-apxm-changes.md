@@ -725,15 +725,15 @@ The interceptor pipeline already exists (`approval.rs`, `interceptor.rs`). Exten
 
 ### A5.5 CLI commands
 
-Extend the existing `apxm tools` CLI:
+Extend the existing `apxm tool` CLI:
 
 ```bash
-apxm tools register my-tool --type binary --command ./my-tool --description "..."
-apxm tools list [--json]
-apxm tools show my-tool [--json]
-apxm tools remove my-tool
-apxm tools test my-tool
-apxm tools doctor           # validate all registrations
+apxm tool add my-tool --type binary --command ./my-tool --description "..."
+apxm tool list [--json]
+apxm tool show my-tool [--json]
+apxm tool remove my-tool
+apxm tool test my-tool
+apxm tool doctor           # validate all registrations
 ```
 
 ### A5.6 Deliverables
@@ -752,7 +752,7 @@ apxm tools doctor           # validate all registrations
 - [ ] Gemini-CLI tools registerable via HTTP bridge
 - [ ] Registrations persist in `~/.apxm/tools.toml`
 - [ ] Interceptor pipeline (approval + sandbox + audit) works end-to-end
-- [ ] `apxm tools list --json` returns all registered capabilities
+- [ ] `apxm tool list --json` returns all registered capabilities
 
 ---
 

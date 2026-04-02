@@ -14,7 +14,7 @@ Usage:
     apxm run out.apxmobj            # Run pre-compiled artifact
     apxm test                       # Run test suite
     apxm install                    # Install/update environment
-    apxm register add <name> ...    # Register API credentials
+    apxm llm add <name> ...         # Register API credentials
     apxm --help                     # Show all available commands
 """
 

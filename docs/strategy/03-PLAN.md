@@ -227,7 +227,7 @@ timeout_ms = 600000
 
 | File | Action | Description |
 |------|--------|-------------|
-| `apxm-cli/src/commands/agents.rs` | Create | `apxm agents list/test/add` |
+| `apxm-cli/src/commands/agent.rs` | Create | `apxm agent list/test/add` |
 | `apxm-runtime/src/capability/mod.rs` | Modify | Auto-register AcpCapability |
 | Tests | Create | End-to-end: graph with INV(acp) -> Claude Code |
 
@@ -274,7 +274,7 @@ timeout_ms = 600000
 - [ ] Agent adapter registry with configurable profiles
 - [ ] Reverse request handling (file I/O, terminal ops, permissions)
 - [ ] `~/.apxm/agents.toml` configuration
-- [ ] `apxm agents list/test` CLI commands
+- [ ] `apxm agent list/test` CLI commands
 - [ ] End-to-end test: INV(acp) -> Claude Code -> code changes
 
 ---

@@ -105,7 +105,7 @@ Replace ACPX orchestration with ~800 lines of Rust inside APXM.
 | 5 | Configuration | apxm | `apxm-runtime/src/capability/acp/config.rs` | `~/.apxm/agents.toml` |
 | 5 | Reverse requests | apxm | `apxm-runtime/src/capability/acp/reverse.rs` | File I/O, terminal ops |
 | 5 | Model routing integration | apxm | capability + model_router | Profile-based policy |
-| 6 | CLI commands | apxm | `apxm-cli/src/commands/agents.rs` | `apxm agents list/test/add` |
+| 6 | CLI commands | apxm | `apxm-cli/src/commands/agent.rs` | `apxm agent list/test/add` |
 | 6 | Auto-register | apxm | `apxm-runtime/src/capability/mod.rs` | AcpCapability in capability registry |
 | 6 | E2E test | apxm | tests/ | INV(acp) -> Claude Code -> code changes |
 

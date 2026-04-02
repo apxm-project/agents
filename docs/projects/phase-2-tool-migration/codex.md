@@ -133,9 +133,9 @@ This integrates with the interceptor pipeline from [APXM A5.4](apxm.md#a54-inter
 
 ## C7: Tool Persistence and MCP Registration (1 day)
 
-- Codex's 26 tool registrations (21 standard + 5 multi_agents) persist to `~/.apxm/tools.toml` so they are visible to `apxm tools list`. The 5 multi_agents handlers (spawn, wait, send_input, resume_agent, close_agent) are deferred to Phase 4 as `FLOW_CALL`/`WAIT_ALL` graph operations.
+- Codex's 26 tool registrations (21 standard + 5 multi_agents) persist to `~/.apxm/tools.toml` so they are visible to `apxm tool list`. The 5 multi_agents handlers (spawn, wait, send_input, resume_agent, close_agent) are deferred to Phase 4 as `FLOW_CALL`/`WAIT_ALL` graph operations.
 - MCP tools discovered by `McpHandler` and `McpResourceHandler` are registered as APXM MCP capabilities
-- `apxm tools list --json` includes Codex-registered tools
+- `apxm tool list --json` includes Codex-registered tools
 
 The persistence layer is provided by [APXM A5.2](apxm.md#a52-tool-persistence-layer) (`ToolStore`).
 
@@ -145,7 +145,7 @@ The persistence layer is provided by [APXM A5.2](apxm.md#a52-tool-persistence-la
 |-------------|------------|
 | Startup registration | Writes Codex tool metadata to `~/.apxm/tools.toml` |
 | MCP tool registration | MCP-discovered tools registered via `CapabilitySystem::register()` |
-| Integration test | `apxm tools list` shows all Codex tools |
+| Integration test | `apxm tool list` shows all Codex tools |
 
 ---
 

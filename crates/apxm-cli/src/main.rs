@@ -139,19 +139,19 @@ enum Commands {
     /// Install or update the conda environment from environment.yaml
     Install,
     /// Manage LLM provider credentials
-    Register {
+    Llm {
         #[command(subcommand)]
-        action: RegisterAction,
+        action: LlmAction,
     },
     /// Manage external tool/capability registrations for INV nodes
-    Tools {
+    Tool {
         #[command(subcommand)]
-        action: ToolsAction,
+        action: ToolAction,
     },
     /// Manage ACP agent profiles for INV(acp) nodes
-    Agents {
+    Agent {
         #[command(subcommand)]
-        action: AgentsAction,
+        action: AgentAction,
     },
     /// Browse AIS operations (the agent instruction set)
     Ops {
@@ -228,7 +228,7 @@ enum OpsAction {
 }
 
 #[derive(Subcommand)]
-enum RegisterAction {
+enum LlmAction {
     /// Register a new LLM provider credential
     Add {
         /// Credential name (e.g., "my-openai")
@@ -264,11 +264,11 @@ enum RegisterAction {
 }
 
 #[derive(Subcommand)]
-enum ToolsAction {
+enum ToolAction {
     /// List registered tools
     List,
-    /// Register a new external tool
-    Register {
+    /// Add a new external tool
+    Add {
         /// Tool name (used in INV node's "capability" attribute)
         name: String,
         /// Tool description
@@ -286,7 +286,7 @@ enum ToolsAction {
 }
 
 #[derive(Subcommand)]
-enum AgentsAction {
+enum AgentAction {
     /// List available ACP agents (built-in + user-registered)
     List,
     /// Add or override an agent profile
@@ -338,11 +338,11 @@ fn tools_path() -> PathBuf {
 
 fn load_tools() -> Result<ToolsFile> {
     let path = tools_path();
-    if !path.exists() {
-        return Ok(ToolsFile::default());
-    }
-    let content = std::fs::read_to_string(&path)
-        .map_err(|e| anyhow::anyhow!("Failed to read {}: {e}", path.display()))?;
+    let content = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(ToolsFile::default()),
+        Err(e) => return Err(anyhow::anyhow!("Failed to read {}: {e}", path.display())),
+    };
     let tf: ToolsFile = serde_json::from_str(&content)
         .map_err(|e| anyhow::anyhow!("Failed to parse {}: {e}", path.display()))?;
     Ok(tf)
@@ -361,9 +361,9 @@ fn save_tools(tf: &ToolsFile) -> Result<()> {
     Ok(())
 }
 
-async fn agents_command(action: AgentsAction, json_output: bool) -> Result<()> {
+async fn agent_command(action: AgentAction, json_output: bool) -> Result<()> {
     match action {
-        AgentsAction::List => {
+        AgentAction::List => {
             let reg = apxm_acp::AgentRegistry::load();
             let list = reg.list();
             if json_output {
@@ -416,7 +416,7 @@ async fn agents_command(action: AgentsAction, json_output: bool) -> Result<()> {
                 if list.len() == 1 { "" } else { "s" }
             );
         }
-        AgentsAction::Add {
+        AgentAction::Add {
             name,
             command,
             permissions,
@@ -432,6 +432,11 @@ async fn agents_command(action: AgentsAction, json_output: bool) -> Result<()> {
                 session_create_timeout_ms: acp_timeouts::DEFAULT_SESSION_TIMEOUT_MS,
                 permission_mode,
                 env: Default::default(),
+                skills: Vec::new(),
+                default_mode: None,
+                default_model: None,
+                system_prompt: None,
+                mcp_servers: Vec::new(),
             };
             let mut reg = apxm_acp::AgentRegistry::load();
             reg.add(name.clone(), profile)
@@ -439,11 +444,11 @@ async fn agents_command(action: AgentsAction, json_output: bool) -> Result<()> {
             print_section_header("Agent Profile Added");
             print_status_line(&name, Status::Ok, &command);
         }
-        AgentsAction::Remove { name } => {
+        AgentAction::Remove { name } => {
             let mut reg = apxm_acp::AgentRegistry::load();
             if reg.is_builtin(&name) {
                 return Err(anyhow::anyhow!(
-                    "Cannot remove built-in agent '{name}'. You can override it with: apxm agents add {name} --command ..."
+                    "Cannot remove built-in agent '{name}'. You can override it with: apxm agent add {name} --command ..."
                 ));
             }
             match reg.remove(&name) {
@@ -459,10 +464,10 @@ async fn agents_command(action: AgentsAction, json_output: bool) -> Result<()> {
                 }
             }
         }
-        AgentsAction::Test { name } => {
+        AgentAction::Test { name } => {
             let reg = apxm_acp::AgentRegistry::load();
             let profile = reg.get(&name).ok_or_else(|| {
-                anyhow::anyhow!("Agent profile '{name}' not found. Run: apxm agents list")
+                anyhow::anyhow!("Agent profile '{name}' not found. Run: apxm agent list")
             })?;
             println!("Testing agent '{}'...", name.bold());
             println!("  Command: {}", profile.command);
@@ -492,9 +497,9 @@ async fn agents_command(action: AgentsAction, json_output: bool) -> Result<()> {
     Ok(())
 }
 
-fn tools_command(action: ToolsAction, json_output: bool) -> Result<()> {
+fn tool_command(action: ToolAction, json_output: bool) -> Result<()> {
     match action {
-        ToolsAction::List => {
+        ToolAction::List => {
             let tf = load_tools()?;
             if json_output {
                 let json = serde_json::to_string_pretty(&tf.tools)
@@ -504,7 +509,7 @@ fn tools_command(action: ToolsAction, json_output: bool) -> Result<()> {
             }
             if tf.tools.is_empty() {
                 println!("No tools registered.");
-                println!("Add one with: apxm tools register <name> --description \"...\"");
+                println!("Add one with: apxm tool add <name> --description \"...\"");
                 return Ok(());
             }
             print_section_header("Registered Tools");
@@ -524,7 +529,7 @@ fn tools_command(action: ToolsAction, json_output: bool) -> Result<()> {
                 if tf.tools.len() == 1 { "" } else { "s" }
             );
         }
-        ToolsAction::Register {
+        ToolAction::Add {
             name,
             description,
             schema,
@@ -532,7 +537,7 @@ fn tools_command(action: ToolsAction, json_output: bool) -> Result<()> {
             let mut tf = load_tools()?;
             if tf.tools.iter().any(|t| t.name == name) {
                 return Err(anyhow::anyhow!(
-                    "Tool '{}' is already registered. Remove it first with: apxm tools remove {}",
+                    "Tool '{}' is already registered. Remove it first with: apxm tool remove {}",
                     name,
                     name
                 ));
@@ -546,7 +551,7 @@ fn tools_command(action: ToolsAction, json_output: bool) -> Result<()> {
             print_section_header("Tool Registered");
             print_status_line(&name, Status::Ok, &description);
         }
-        ToolsAction::Remove { name } => {
+        ToolAction::Remove { name } => {
             let mut tf = load_tools()?;
             let before = tf.tools.len();
             tf.tools.retain(|t| t.name != name);
@@ -658,9 +663,9 @@ async fn run_cli() -> Result<()> {
         Commands::Doctor => doctor_command(cli.config, cli.json),
         Commands::Activate { shell } => activate_command(&shell),
         Commands::Install => install_command(),
-        Commands::Register { action } => register_command(action).await,
-        Commands::Tools { action } => tools_command(action, cli.json),
-        Commands::Agents { action } => agents_command(action, cli.json).await,
+        Commands::Llm { action } => llm_command(action).await,
+        Commands::Tool { action } => tool_command(action, cli.json),
+        Commands::Agent { action } => agent_command(action, cli.json).await,
         Commands::Ops { action } => ops_command(action, cli.json),
         Commands::Validate { input } => validate_command(input, cli.json),
         Commands::Analyze { input } => analyze_command(input, cli.json),
@@ -678,9 +683,9 @@ async fn run_cli_no_driver() -> Result<()> {
         Commands::Doctor => doctor_command(cli.config, cli.json),
         Commands::Activate { shell } => activate_command(&shell),
         Commands::Install => install_command(),
-        Commands::Register { action } => register_command(action).await,
-        Commands::Tools { action } => tools_command(action, cli.json),
-        Commands::Agents { action } => agents_command(action, cli.json).await,
+        Commands::Llm { action } => llm_command(action).await,
+        Commands::Tool { action } => tool_command(action, cli.json),
+        Commands::Agent { action } => agent_command(action, cli.json).await,
         Commands::Ops { action } => ops_command(action, cli.json),
         Commands::Validate { input } => validate_command(input, cli.json),
         Commands::Analyze { input } => analyze_command(input, cli.json),
@@ -1227,11 +1232,11 @@ async fn run_command(
     Ok(())
 }
 
-async fn register_command(action: RegisterAction) -> Result<()> {
+async fn llm_command(action: LlmAction) -> Result<()> {
     let store = CredentialStore::open().map_err(|e| anyhow::anyhow!("{e}"))?;
 
     match action {
-        RegisterAction::Add {
+        LlmAction::Add {
             name,
             provider,
             api_key,
@@ -1265,11 +1270,11 @@ async fn register_command(action: RegisterAction) -> Result<()> {
             print_status_line("Provider", Status::Ok, &provider);
             print_status_line("Store", Status::Ok, &store.path().display().to_string());
         }
-        RegisterAction::List => {
+        LlmAction::List => {
             let creds = store.list().map_err(|e| anyhow::anyhow!("{e}"))?;
             if creds.is_empty() {
                 println!("No credentials registered.");
-                println!("Add one with: apxm register add <name> --provider <provider>");
+                println!("Add one with: apxm llm add <name> --provider <provider>");
                 return Ok(());
             }
 
@@ -1296,12 +1301,12 @@ async fn register_command(action: RegisterAction) -> Result<()> {
             println!();
             println!("Store: {}", store.path().display());
         }
-        RegisterAction::Remove { name } => {
+        LlmAction::Remove { name } => {
             store.remove(&name).map_err(|e| anyhow::anyhow!("{e}"))?;
             print_section_header("Credential Removed");
             print_status_line(&name, Status::Ok, "removed");
         }
-        RegisterAction::Test { name } => {
+        LlmAction::Test { name } => {
             let creds_to_test: Vec<(String, Credential)> = match name {
                 Some(ref n) => {
                     let cred = store
@@ -2640,7 +2645,7 @@ fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> {
         );
     } else {
         print_status_line("Credentials", Status::Warning, "none registered");
-        print_hint("Run `apxm register add` to configure an LLM provider.");
+        print_hint("Run `apxm llm add` to configure an LLM provider.");
     }
 
     // 3. Environment Variables

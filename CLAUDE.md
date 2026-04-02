@@ -58,15 +58,15 @@ apxm install                           # install/update conda env from environme
 
 ### Configuration
 ```bash
-apxm register add my-key --provider openai --api-key sk-...   # add LLM credential
-apxm register add local --provider ollama --base-url http://localhost:11434
-apxm register list                     # show registered credentials
-apxm register test                     # validate all credentials via test API call
-apxm register test my-key              # validate one credential
-apxm register remove my-key            # delete a credential
-apxm tools register my-tool --description "..."    # register external tool for INV nodes
-apxm tools list                        # list registered tools
-apxm tools remove my-tool              # remove a tool registration
+apxm llm add my-key --provider openai --api-key sk-...   # add LLM credential
+apxm llm add local --provider ollama --base-url http://localhost:11434
+apxm llm list                          # show registered credentials
+apxm llm test                          # validate all credentials via test API call
+apxm llm test my-key                   # validate one credential
+apxm llm remove my-key                 # delete a credential
+apxm tool add my-tool --description "..."    # register external tool for INV nodes
+apxm tool list                         # list registered tools
+apxm tool remove my-tool               # remove a tool registration
 ```
 
 ## Graph JSON Contract

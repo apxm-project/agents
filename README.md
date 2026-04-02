@@ -63,9 +63,9 @@ apxm execute <file.json> --trace debug   # Run with debug tracing
 apxm run <file.apxmobj>               # Run pre-compiled artifact
 apxm validate <file.json>             # Validate an ApxmGraph JSON file
 apxm analyze <file.json>              # Analyze parallelism and critical path
-apxm register add <name> --provider openai --api-key sk-...  # Add LLM credential
-apxm register list                    # List registered credentials
-apxm tools list                       # List registered external tools
+apxm llm add <name> --provider openai --api-key sk-...  # Add LLM credential
+apxm llm list                         # List registered credentials
+apxm tool list                        # List registered external tools
 apxm ops list                         # Browse AIS operations
 apxm ops show ASK                     # Detailed info for a specific op
 apxm template list                    # Browse graph templates

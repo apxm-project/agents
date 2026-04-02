@@ -30,7 +30,7 @@ Capability system extensions that enable consumer tool registration:
 | `ToolStore` persistence (`~/.apxm/tools.toml`) | `apxm-runtime/src/capability/store.rs` |
 | HTTP capability bridge (`POST /v1/capabilities/`) | `apxm-server/src/routes/capabilities.rs` |
 | Sandbox/Audit/Cost interceptors | `apxm-runtime/src/capability/interceptor/` |
-| CLI `apxm tools` commands (register, list, show, remove, test, doctor) | `apxm-cli/src/commands/tools.rs` |
+| CLI `apxm tool` commands (register, list, show, remove, test, doctor) | `apxm-cli/src/commands/tools.rs` |
 
 See [apxm.md](apxm.md) for full details.
 
@@ -71,7 +71,7 @@ See [gemini-cli.md](gemini-cli.md) for full details.
 |------|-----------|---------------|---------------------|
 | 9-10 | ToolAdapter trait, blanket impl, ToolStore | C5: 26 ToolHandler adapters (21 standard + 5 multi_agents; multi_agents deferred to Phase 4) | G6: Capability registration bridge |
 | 11-12 | HTTP capability bridge, interceptor pipeline | C6: Guardian interceptor | G7: Parallel calls + VERIFY mapping |
-| 13 | CLI `apxm tools` commands | C7: Tool persistence + MCP | G8: PolicyEngine as interceptors |
+| 13 | CLI `apxm tool` commands | C7: Tool persistence + MCP | G8: PolicyEngine as interceptors |
 | 14 | Integration testing | Integration testing | Integration testing |
 
 ---
@@ -86,7 +86,7 @@ Combined acceptance criteria from all three plans:
 - [ ] Gemini-CLI tools registerable via HTTP bridge
 - [ ] Registrations persist in `~/.apxm/tools.toml`
 - [ ] Interceptor pipeline (approval + sandbox + audit) works end-to-end
-- [ ] `apxm tools list --json` returns all registered capabilities
+- [ ] `apxm tool list --json` returns all registered capabilities
 
 ### Codex (C5-C7)
 
@@ -95,7 +95,7 @@ Combined acceptance criteria from all three plans:
 - [ ] VERIFY semantics map to guardian risk-score verdicts
 - [ ] Codex tool registrations persist to `~/.apxm/tools.toml`
 - [ ] MCP-discovered tools registered via `CapabilitySystem`
-- [ ] `apxm tools list --json` includes all Codex-registered tools
+- [ ] `apxm tool list --json` includes all Codex-registered tools
 - [ ] Round-trip conversion tests pass for each handler
 
 ### Gemini-CLI (G6-G8)
@@ -173,8 +173,8 @@ These tests verify the contract between APXM capability system and consumers:
 |------|-----------------|
 | **IT-P2-1:** Full Codex tool round-trip | LLM returns tool call -> APXM dispatches -> ToolHandler executes -> result returned |
 | **IT-P2-2:** Guardian interceptor flow | Tool call -> GuardianInterceptor -> risk score -> approval/deny -> executes or rejects |
-| **IT-P2-3:** `apxm tools list` shows Codex tools | Codex registers tools at startup -> `apxm tools list --json` returns all 26 tools (21 standard + 5 multi_agents) |
-| **IT-P2-4:** Gemini HTTP tool registration | Gemini-CLI registers tools via HTTP -> `apxm tools list` shows them -> invoke works |
+| **IT-P2-3:** `apxm tool list` shows Codex tools | Codex registers tools at startup -> `apxm tool list --json` returns all 26 tools (21 standard + 5 multi_agents) |
+| **IT-P2-4:** Gemini HTTP tool registration | Gemini-CLI registers tools via HTTP -> `apxm tool list` shows them -> invoke works |
 | **IT-P2-5:** MCP tool unified registration | MCP tools discovered by Codex/Gemini -> registered in APXM -> visible alongside built-ins |
 | **IT-P2-6:** Parallel tool invocation | N concurrent tool calls -> APXM dispatches in parallel -> all results collected |
 | **IT-P2-7:** Sandbox interceptor | Tool with blocked args -> SandboxInterceptor denies -> tool does not execute |
@@ -197,7 +197,7 @@ apxm/crates/apxm-server/tests/
 openai/codex/codex-rs/core/tests/apxm_adapter/
   tool_adapters.rs        -- CT-P2-7 (21 standard adapter round-trips; 5 multi_agents deferred to Phase 4)
   guardian_interceptor.rs -- CT-P2-8 (verdict mapping)
-  tool_registration.rs   -- IT-P2-3 (apxm tools list integration)
+  tool_registration.rs   -- IT-P2-3 (apxm tool list integration)
   mcp_registration.rs    -- IT-P2-5 (MCP unified registration)
   tool_persistence.rs    -- IT-P2-9
 

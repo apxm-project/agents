@@ -37,7 +37,7 @@ The Phase 2 plan describes the capability system as "more mature than one might 
 | `ToolStore` persistence (`~/.apxm/tools.toml`) | A5.2 | Does NOT exist -- no persistence layer for tool registrations |
 | HTTP capability bridge (`POST /v1/capabilities/`) | A5.3 | Does NOT exist -- `apxm-llm-service` does not exist yet either (Phase 1 deliverable) |
 | `SandboxInterceptor`, `AuditInterceptor`, `CostInterceptor` | A5.4 | Do NOT exist -- only `DenyAll` test interceptor exists; no production interceptors |
-| CLI `apxm tools` commands | A5.5 | Partially scaffolded per MEMORY.md (tools-cli-design.md exists) |
+| CLI `apxm tool` commands | A5.5 | Partially scaffolded per MEMORY.md (tools-cli-design.md exists) |
 
 ### 1.3 Codex Tool System
 
@@ -138,8 +138,8 @@ These tests verify the contract between APXM capability system and consumers:
 |------|-----------------|-----------------|
 | **IT-P2-1: Full Codex tool round-trip** | LLM returns tool call -> APXM capability system dispatches -> ToolHandler executes -> result returned to LLM | MockBackend, real ToolHandler |
 | **IT-P2-2: Guardian interceptor flow** | Tool call -> GuardianInterceptor -> risk score -> approval/deny -> tool executes or rejects | Mock GuardianReviewSessionManager |
-| **IT-P2-3: `apxm tools list` shows Codex tools** | Codex registers tools at startup -> `apxm tools list --json` returns all 21+ tools with correct metadata | Real `ToolStore` in temp dir |
-| **IT-P2-4: Gemini HTTP tool registration** | Gemini-CLI registers tools via HTTP -> `apxm tools list` shows them -> invoke via HTTP works | In-process service |
+| **IT-P2-3: `apxm tool list` shows Codex tools** | Codex registers tools at startup -> `apxm tool list --json` returns all 21+ tools with correct metadata | Real `ToolStore` in temp dir |
+| **IT-P2-4: Gemini HTTP tool registration** | Gemini-CLI registers tools via HTTP -> `apxm tool list` shows them -> invoke via HTTP works | In-process service |
 | **IT-P2-5: MCP tool unified registration** | MCP tools discovered by Codex/Gemini -> registered in APXM -> visible alongside built-in tools | Mock MCP server |
 | **IT-P2-6: Parallel tool invocation** | N concurrent tool calls -> APXM dispatches in parallel -> all results collected | Mock tools with artificial delay |
 | **IT-P2-7: Sandbox interceptor** | Tool with blocked args -> SandboxInterceptor denies -> tool does not execute | Real SandboxInterceptor |
@@ -173,7 +173,7 @@ apxm/crates/apxm-llm-service/tests/ (or apxm-service)
 openai/codex/codex-rs/core/tests/apxm_adapter/
   tool_adapters.rs        -- CT-P2-7 (21+ adapter round-trips)
   guardian_interceptor.rs -- CT-P2-8 (verdict mapping)
-  tool_registration.rs   -- IT-P2-3 (apxm tools list integration)
+  tool_registration.rs   -- IT-P2-3 (apxm tool list integration)
   mcp_registration.rs    -- IT-P2-5 (MCP unified registration)
   tool_persistence.rs    -- IT-P2-9
 

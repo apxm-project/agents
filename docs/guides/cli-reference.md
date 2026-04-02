@@ -16,8 +16,9 @@ Complete command reference for the APXM CLI. For installation and first steps, s
 | `apxm run <file.apxmobj> [args]` | Run a pre-compiled artifact |
 | `apxm validate <file>` | Validate an ApxmGraph JSON file |
 | `apxm analyze <file>` | Analyze an ApxmGraph for parallelism |
-| `apxm register <subcommand>` | Manage LLM credentials |
-| `apxm tools <subcommand>` | Manage external tool/capability registrations |
+| `apxm llm <subcommand>` | Manage LLM credentials |
+| `apxm tool <subcommand>` | Manage external tool/capability registrations |
+| `apxm agent <subcommand>` | Manage agent profiles |
 | `apxm ops <subcommand>` | Browse AIS operations |
 | `apxm template <subcommand>` | Browse graph templates |
 | `apxm explain <file>` | Explain what a graph does in human terms |
@@ -104,17 +105,17 @@ Trace targets: `apxm::scheduler`, `apxm::ops`, `apxm::llm`, `apxm::tokens`, `apx
 
 ---
 
-## Credentials
+## LLM
 
 See [LLM Backends](llm-backends.md) for full provider documentation.
 
 ```bash
-apxm register add <name> --provider <type> --api-key <key>
-apxm register add <name> --provider <type>   # Interactive (hidden input)
-apxm register list                           # List (keys masked)
-apxm register test [name]                    # Test credential(s)
-apxm register remove <name>                  # Delete
-apxm register generate-config                # Export to config.toml
+apxm llm add <name> --provider <type> --api-key <key>
+apxm llm add <name> --provider <type>   # Interactive (hidden input)
+apxm llm list                           # List (keys masked)
+apxm llm test [name]                    # Test credential(s)
+apxm llm remove <name>                  # Delete
+apxm llm generate-config                # Export to config.toml
 ```
 
 Supported providers: `openai`, `anthropic`, `google`, `ollama`, `openrouter`.
@@ -175,13 +176,26 @@ apxm task merge a.json b.json -o combined.json       # Merge graph fragments
 
 ---
 
-## Tools
+## Tool
 
 ```bash
-apxm tools list                       # List registered external tools
-apxm tools add <name> --endpoint <url>  # Register an external tool/capability
-apxm tools remove <name>              # Unregister a tool
+apxm tool list                       # List registered external tools
+apxm tool add <name> --description "..." # Register an external tool/capability
+apxm tool remove <name>              # Unregister a tool
 ```
+
+---
+
+## Agent
+
+```bash
+apxm agent list                      # List registered agent profiles
+apxm agent add <name> --command "..."  # Register an agent profile
+apxm agent test <name>               # Test an agent profile
+apxm agent remove <name>             # Remove an agent profile
+```
+
+APXM ships with 16 built-in agent profiles. Use `apxm agent list` to see them.
 
 ---
 
@@ -197,7 +211,7 @@ APXM looks for configuration in this order:
 providers = ["my-openai"]
 default_model = "gpt-4"
 
-# Only needed if NOT using `apxm register`:
+# Only needed if NOT using `apxm llm`:
 [[llm_backends]]
 name = "my-openai"
 provider = "openai"
@@ -205,7 +219,7 @@ api_key = "env:OPENAI_API_KEY"
 model = "gpt-4"
 ```
 
-When using `apxm register`, the credential store is the source of truth — `[[llm_backends]]` is unnecessary.
+When using `apxm llm`, the credential store is the source of truth — `[[llm_backends]]` is unnecessary.
 
 ---
 
@@ -266,4 +280,4 @@ cargo build -p apxm-compiler --release
 
 **Install failures** — Check `.apxm/install.log` for full output.
 
-**Credential issues** — Run `apxm register test` to verify API connectivity.
+**Credential issues** — Run `apxm llm test` to verify API connectivity.
