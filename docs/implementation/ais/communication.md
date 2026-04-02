@@ -172,3 +172,34 @@ graph TD
 ```
 
 All topologies use the same primitives (COMM, FLOW) with the dataflow scheduler automatically managing parallelism across agents. In evaluation, multi-agent workloads achieve up to **10.37x latency reduction** compared to sequential inter-agent communication.
+
+## ACP Protocol (`protocol: "acp"`)
+
+The `acp` protocol enables communication with external ACP agent subprocesses
+that were spawned via `SPAWN_AGENT` with a `profile` attribute.
+
+### Workflow
+
+```json
+{
+  "nodes": [
+    {"id": 1, "op": "SPAWN_AGENT", "attributes": {"agent_name": "reviewer", "profile": "claude"}},
+    {"id": 2, "op": "COMMUNICATE", "attributes": {"recipient": "reviewer", "protocol": "acp"}}
+  ],
+  "edges": [{"from": 1, "to": 2, "dependency": "Control"}]
+}
+```
+
+### Dispatch
+
+When `protocol` is `"acp"`, COMMUNICATE:
+
+1. Looks up the recipient in the `ProcessTable` (not FlowRegistry)
+2. Extracts the live `AcpSession` from the process entry
+3. Sends the input message as a `session/prompt` request
+4. Returns the agent's response as a structured `Value::Object`
+
+### Multi-turn
+
+Multiple COMMUNICATE nodes can target the same ACP agent. Each reuses the
+same session, maintaining conversation context across turns.

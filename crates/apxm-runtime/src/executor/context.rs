@@ -5,6 +5,7 @@ use crate::{
     capability::CapabilitySystem,
     capability::flow_registry::FlowRegistry,
     memory::MemorySystem,
+    process_table::ProcessTable,
     workspace::ScopeRegistry,
 };
 use apxm_backends::LLMRegistry;
@@ -85,6 +86,12 @@ pub struct ExecutionContext {
     /// LLM operations (ASK, THINK, REASON, etc.) bypass the sandbox entirely —
     /// they are HTTP calls that don't need process isolation.
     pub sandbox_registry: Arc<SandboxRegistry>,
+    /// Process table for agent lifecycle management.
+    ///
+    /// Tracks all live agent processes (local and external ACP subprocesses).
+    /// Used by SPAWN_AGENT to register new processes and by COMMUNICATE with
+    /// `protocol: "acp"` to look up recipient agents.
+    pub process_table: Arc<ProcessTable>,
 }
 
 impl ExecutionContext {
@@ -126,6 +133,7 @@ impl ExecutionContext {
             response_cache: Arc::new(ResponseCache::new()),
             cancellation_token: CancellationToken::new(),
             sandbox_registry: Arc::new(SandboxRegistry::new()),
+            process_table: Arc::new(ProcessTable::new()),
         }
     }
 
@@ -256,7 +264,14 @@ impl ExecutionContext {
             response_cache: Arc::clone(&self.response_cache),
             cancellation_token: self.cancellation_token.child(),
             sandbox_registry: Arc::clone(&self.sandbox_registry),
+            process_table: Arc::clone(&self.process_table),
         }
+    }
+
+    /// Set the process table for agent lifecycle management.
+    pub fn with_process_table(mut self, table: Arc<ProcessTable>) -> Self {
+        self.process_table = table;
+        self
     }
 
     /// Set the sandbox registry.

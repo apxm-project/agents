@@ -16,6 +16,8 @@ pub mod sandbox;
 use sandbox::configure_sandbox_registry;
 mod inner_plan;
 use inner_plan::CompilerInnerPlanLinker;
+mod agents;
+use agents::configure_agent_registry;
 
 /// Runtime executor used by the driver to run compiled DAGs.
 pub struct RuntimeExecutor {
@@ -33,6 +35,12 @@ impl RuntimeExecutor {
 
         let sandbox_registry = configure_sandbox_registry();
         runtime.set_sandbox_registry(sandbox_registry);
+
+        configure_agent_registry(
+            runtime.process_table(),
+            runtime.capability_system_arc(),
+        )
+        .await?;
 
         runtime.set_instruction_config(config.apxm_config.instruction.clone());
 

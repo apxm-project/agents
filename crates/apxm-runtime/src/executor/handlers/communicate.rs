@@ -1,8 +1,9 @@
 //! COMMUNICATE operation - Inter-agent communication
 //!
-//! Supports three dispatch modes:
+//! Supports four dispatch modes:
 //!   - `local` (default): in-process sub-flow execution via FlowRegistry
 //!   - `http`: POST to an external APXM agent's `/v1/receive` endpoint
+//!   - `acp`: send a prompt to an ACP agent subprocess via the ProcessTable
 //!   - `broadcast`: fan-out to ALL registered agents in FlowRegistry in parallel;
 //!     returns an Array of all responses (non-fatal errors included as strings)
 //!
@@ -10,12 +11,17 @@
 //! For HTTP, `recipient` may be a full URL (`http://...`) or an agent name
 //! looked up via `APXM_SERVER_URL/v1/agents/{name}`.
 //!
+//! For ACP, `recipient` must match an agent name previously spawned via
+//! `SPAWN_AGENT` with a `profile` attribute. The agent must be registered
+//! in the ProcessTable.
+//!
 //! For BROADCAST, `recipient` is ignored. The message is sent to every agent
 //! currently registered in the FlowRegistry; results are collected in parallel.
 
 use super::{ExecutionContext, Node, Result, Value, get_string_attribute};
 use crate::aam::{ScopeSpec, TransitionLabel};
 use crate::executor::ExecutorEngine;
+use apxm_core::constants::communicate_protocols as comm_proto;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::constants::runtime::{belief_keys, metadata};
 use apxm_core::error::RuntimeError;
@@ -29,13 +35,16 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     let recipient = get_string_attribute(node, graph_attrs::RECIPIENT)
         .or_else(|_| get_string_attribute(node, graph_attrs::TARGET))
         .unwrap_or_default();
-    let protocol =
-        get_string_attribute(node, graph_attrs::PROTOCOL).unwrap_or_else(|_| "local".to_string());
+    let protocol = get_string_attribute(node, graph_attrs::PROTOCOL)
+        .unwrap_or_else(|_| comm_proto::LOCAL.to_string());
     let message = inputs.first().cloned().unwrap_or(Value::Null);
 
     match protocol.as_str() {
-        "http" | "https" => return execute_http(ctx, node, &recipient, message).await,
-        "broadcast" => return execute_broadcast(ctx, node, message).await,
+        comm_proto::HTTP | comm_proto::HTTPS => {
+            return execute_http(ctx, node, &recipient, message).await
+        }
+        comm_proto::BROADCAST => return execute_broadcast(ctx, node, message).await,
+        comm_proto::ACP => return execute_acp(ctx, node, &recipient, message).await,
         _ => {
             // local — require recipient
             if recipient.is_empty() {
@@ -265,7 +274,7 @@ async fn execute_broadcast(ctx: &ExecutionContext, _node: &Node, message: Value)
             )
             .with_metadata(
                 metadata::COMMUNICATE_MODE.to_string(),
-                "broadcast".to_string(),
+                comm_proto::BROADCAST.to_string(),
             );
 
         let msg = message.clone();
@@ -326,6 +335,116 @@ async fn execute_broadcast(ctx: &ExecutionContext, _node: &Node, message: Value)
     );
 
     Ok(Value::Array(responses))
+}
+
+// ─── ACP dispatch ──────────────────────────────────────────────────────────
+
+/// Dispatch COMMUNICATE to an ACP agent subprocess via the ProcessTable.
+///
+/// The recipient must have been previously spawned via `SPAWN_AGENT` with a
+/// `profile` attribute. The message is sent as a `session/prompt` request
+/// via the live ACP connection. The response is returned as a structured
+/// `Value::Object`.
+async fn execute_acp(
+    ctx: &ExecutionContext,
+    node: &Node,
+    recipient: &str,
+    message: Value,
+) -> Result<Value> {
+    if recipient.is_empty() {
+        return Err(RuntimeError::Operation {
+            op_type: node.op_type,
+            message: "COMMUNICATE(acp) requires a 'recipient' attribute".to_string(),
+        });
+    }
+
+    tracing::info!(
+        execution_id = %ctx.execution_id,
+        recipient = %recipient,
+        "COMMUNICATE ACP dispatch"
+    );
+
+    // Look up the agent process — clone out of the DashMap guard immediately
+    // to avoid holding the shard lock across the async prompt boundary.
+    let process = {
+        let guard = ctx.process_table.get_by_name(recipient).ok_or_else(|| {
+            let names = ctx.process_table.list_process_names();
+            let hint = if names.is_empty() {
+                "No agent processes are registered. Did you SPAWN_AGENT first?".to_string()
+            } else {
+                format!(
+                    "Agent '{}' not found in ProcessTable. Active agents: {}",
+                    recipient,
+                    names.join(", ")
+                )
+            };
+            RuntimeError::Operation {
+                op_type: node.op_type,
+                message: hint,
+            }
+        })?;
+        guard.clone()
+    };
+
+    // Get the prompter
+    let prompter = ctx
+        .process_table
+        .agent_prompter()
+        .await
+        .ok_or_else(|| RuntimeError::Operation {
+            op_type: node.op_type,
+            message: "No AgentPrompter configured. Cannot send ACP prompts.".to_string(),
+        })?;
+
+    // Convert message to prompt text
+    let prompt_text = match &message {
+        Value::String(s) => s.clone(),
+        Value::Null => String::new(),
+        other => other
+            .to_json()
+            .map(|j| serde_json::to_string(&j).unwrap_or_default())
+            .unwrap_or_default(),
+    };
+
+    // Record the outgoing message in AAM beliefs for observability
+    let label = TransitionLabel::Custom(format!("communicate_acp:{}", recipient));
+    ctx.aam.set_belief(
+        format!("{}{}", belief_keys::PENDING_COMMUNICATE_PREFIX, recipient),
+        Value::Object(
+            vec![
+                (
+                    graph_attrs::RECIPIENT.to_string(),
+                    Value::String(recipient.to_string()),
+                ),
+                (
+                    graph_attrs::PROTOCOL.to_string(),
+                    Value::String(comm_proto::ACP.to_string()),
+                ),
+                (graph_attrs::MESSAGE.to_string(), message.clone()),
+            ]
+            .into_iter()
+            .collect(),
+        ),
+        label,
+    );
+
+    // Send prompt via the AgentPrompter trait
+    let response = prompter.prompt(&process, &prompt_text).await?;
+
+    // Clear the pending belief
+    ctx.aam.set_belief(
+        format!("{}{}", belief_keys::PENDING_COMMUNICATE_PREFIX, recipient),
+        Value::Null,
+        TransitionLabel::Custom(format!("communicate_acp_completed:{}", recipient)),
+    );
+
+    tracing::info!(
+        execution_id = %ctx.execution_id,
+        recipient = %recipient,
+        "COMMUNICATE ACP completed"
+    );
+
+    Ok(response)
 }
 
 // ─── HTTP dispatch ─────────────────────────────────────────────────────────

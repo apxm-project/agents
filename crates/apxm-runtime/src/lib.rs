@@ -30,6 +30,9 @@ pub mod observability;
 mod runtime;
 pub mod sandbox;
 pub mod scheduler;
+pub mod process;
+pub mod process_table;
+pub mod thread;
 pub mod workspace;
 
 pub use aam::{
@@ -50,7 +53,10 @@ pub use executor::{
 pub use memory::{Fact, FactFilter, FactResult, MemoryConfig, MemorySpace, MemorySystem};
 pub use observability::{MetricsCollector, SchedulerMetrics};
 pub use runtime::{Runtime, RuntimeConfig, RuntimeExecutionResult};
+pub use process::{AgentProcess, ProcessId, ProcessKind, ProcessState};
+pub use process_table::{AgentPrompter, AgentSpawner, ProcessTable};
 pub use scheduler::{DataflowScheduler, SchedulerConfig};
+pub use thread::{AgentThread, ThreadId, ThreadState};
 
 // Re-export sandbox interface for host applications
 pub use apxm_sandbox;

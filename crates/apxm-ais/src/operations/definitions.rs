@@ -1041,19 +1041,19 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         op_type: AISOperationType::Communicate,
         name: "Communicate",
         category: OperationCategory::Communication,
-        description: "Send message to recipient using protocol",
-        long_description: "Sends a message from this agent to another agent. The target agent \
-            must be reachable in the runtime's agent registry. Supports different communication \
-            protocols (direct, broadcast, request-reply). The response from the target agent \
-            becomes this node's output token.",
+        description: "Send message to recipient agent via selected protocol",
+        long_description: "Sends a message from this agent to another agent. The message is \
+            received via input tokens from upstream edges. Supports four protocol dispatch modes: \
+            'local' (default, in-process sub-flow), 'http'/'https' (external APXM agent), \
+            'acp' (ACP subprocess via ProcessTable), and 'broadcast' (fan-out to all agents). \
+            The recipient attribute accepts 'recipient' or 'target' as key.",
         latency: OperationLatency::Medium,
         example_json: Some(
-            r#"{"id": 3, "op": "COMMUNICATE", "attributes": {"target_agent": "reviewer", "message": "Please review: {{node_2}}"}}"#,
+            r#"{"id": 3, "op": "COMMUNICATE", "attributes": {"recipient": "reviewer", "protocol": "acp"}}"#,
         ),
         fields: &[
-            OperationField::required("target_agent", "Target agent to communicate with"),
-            OperationField::required("message", "Message to send"),
-            OperationField::optional("protocol", "Communication protocol to use"),
+            OperationField::required("recipient", "Target agent name (or URL for http protocol)"),
+            OperationField::optional("protocol", "Dispatch protocol: local (default), http, https, acp, broadcast"),
         ],
         needs_submission: true,
         min_inputs: 0,
@@ -1273,16 +1273,22 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         op_type: AISOperationType::SpawnAgent,
         name: "SpawnAgent",
         category: OperationCategory::Coordination,
-        description: "Create a new agent instance at runtime with given capabilities",
-        long_description: "Spawns a new agent instance with specified capabilities and goals. \
-            The new agent is registered in the flow registry and can receive COMMUNICATE or \
-            DELEGATE messages. Returns the new agent's identifier.",
+        description: "Create a new agent instance at runtime, optionally as an ACP subprocess",
+        long_description: "Spawns a new agent instance. Without 'profile', registers a local \
+            process for flow-based agents. With 'profile', spawns a real ACP subprocess \
+            (Claude, Codex, Gemini, etc.) via the ProcessTable's AgentSpawner. The agent \
+            can then receive COMMUNICATE (protocol 'acp' or 'local') or DELEGATE messages. \
+            Returns the agent's identifier and metadata.",
         latency: OperationLatency::Medium,
         example_json: Some(
-            r#"{\"id\": 3, \"op\": \"SPAWN_AGENT\", \"attributes\": {\"agent_name\": \"worker_1\", \"capabilities\": [\"search\", \"summarize\"], \"goals\": [\"process tasks\"]}}"#,
+            r#"{"id": 1, "op": "SPAWN_AGENT", "attributes": {"agent_name": "reviewer", "profile": "claude", "mode": "architect"}}"#,
         ),
         fields: &[
             OperationField::required("agent_name", "Name for the new agent"),
+            OperationField::optional("profile", "ACP agent profile (e.g. 'claude', 'codex'). When present, spawns an ACP subprocess"),
+            OperationField::optional("mode", "Agent mode to set after spawn (e.g. 'architect', 'code')"),
+            OperationField::optional("model", "Model override (e.g. 'claude-sonnet-4')"),
+            OperationField::optional("cwd", "Working directory for the agent subprocess (defaults to current dir)"),
             OperationField::optional("capabilities", "List of capabilities for the new agent"),
             OperationField::optional("goals", "Initial goals for the new agent"),
         ],
