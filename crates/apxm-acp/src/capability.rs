@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
+use apxm_core::apxm_acp;
 use apxm_core::error::RuntimeError;
 use apxm_core::types::values::Value;
 use apxm_runtime::CapabilitySystem;
@@ -179,13 +180,13 @@ impl CapabilityExecutor for AcpCapability {
             .await
             .map_err(|e| self.cap_err(format!("Prompt failed: {e}")))?;
 
-        tracing::info!(
+        apxm_acp!(info,
             agent = %agent_name,
             session = %session.session_id(),
             turn = session.turn_count(),
             stop_reason = %result.stop_reason,
             response_len = result.text.len(),
-            "ACP prompt completed"
+            "prompt completed"
         );
 
         // 7. Build structured result

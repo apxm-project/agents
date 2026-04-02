@@ -21,21 +21,24 @@ use colored::Colorize;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::env;
 
-/// Initialize the tracing subscriber based on the --trace flag.
-/// If no trace level is provided, no subscriber is registered (zero overhead).
+/// Initialize the tracing subscriber based on the --trace flag or RUST_LOG env var.
+/// If neither is provided, no subscriber is registered (zero overhead).
 #[cfg(feature = "driver")]
 fn initialize_tracing(level: &Option<String>) {
     use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
-    let filter = match level {
-        Some(lvl) => {
-            // Build filter for apxm crates at specified level
-            let filter_str =
-                format!("apxm={lvl},apxm_runtime={lvl},apxm_driver={lvl},apxm_core={lvl}");
-            EnvFilter::try_new(&filter_str).unwrap_or_else(|_| EnvFilter::new("apxm=info"))
-        }
-        None => return, // No subscriber = no overhead
+    let filter_str = match level {
+        Some(lvl) => format!(
+            "apxm={lvl},apxm_runtime={lvl},apxm_driver={lvl},apxm_core={lvl},apxm_acp={lvl},apxm_backends={lvl},apxm_server={lvl}"
+        ),
+        None => match std::env::var("RUST_LOG") {
+            Ok(val) if !val.is_empty() => val,
+            _ => return, // No subscriber = no overhead
+        },
     };
+
+    let filter =
+        EnvFilter::try_new(&filter_str).unwrap_or_else(|_| EnvFilter::new("apxm=info"));
 
     tracing_subscriber::registry()
         .with(filter)

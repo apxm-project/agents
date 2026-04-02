@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use apxm_core::apxm_acp;
+
 use crate::constants::{registry as reg_consts, timeouts};
 
 /// Permission mode for handling agent reverse requests.
@@ -108,7 +110,7 @@ impl AgentRegistry {
                         reg.profiles.insert(name, profile);
                     }
                 } else {
-                    tracing::warn!("Failed to parse {}", path.display());
+                    apxm_acp!(warn, path = %path.display(), "failed to parse agent config");
                 }
             }
         }

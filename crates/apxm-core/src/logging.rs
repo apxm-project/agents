@@ -156,6 +156,24 @@ macro_rules! apxm_dag {
     }
 }
 
+/// Trace ACP protocol events (initialize, session, prompt, reverse requests)
+#[cfg(not(feature = "no-trace"))]
+#[macro_export]
+macro_rules! apxm_acp {
+    ($level:ident, $($arg:tt)*) => {
+        tracing::$level!(target: "apxm::acp", $($arg)*)
+    }
+}
+
+/// Trace server events (HTTP, A2A, agent registry)
+#[cfg(not(feature = "no-trace"))]
+#[macro_export]
+macro_rules! apxm_server {
+    ($level:ident, $($arg:tt)*) => {
+        tracing::$level!(target: "apxm::server", $($arg)*)
+    }
+}
+
 // ---- With tracing disabled (no-trace feature) ----
 
 /// Trace scheduler-level events - compiles to nothing when no-trace is enabled
@@ -193,5 +211,19 @@ macro_rules! apxm_token {
 #[cfg(feature = "no-trace")]
 #[macro_export]
 macro_rules! apxm_dag {
+    ($level:ident, $($arg:tt)*) => {};
+}
+
+/// Trace ACP protocol events - compiles to nothing when no-trace is enabled
+#[cfg(feature = "no-trace")]
+#[macro_export]
+macro_rules! apxm_acp {
+    ($level:ident, $($arg:tt)*) => {};
+}
+
+/// Trace server events - compiles to nothing when no-trace is enabled
+#[cfg(feature = "no-trace")]
+#[macro_export]
+macro_rules! apxm_server {
     ($level:ident, $($arg:tt)*) => {};
 }

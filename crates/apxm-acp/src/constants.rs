@@ -6,8 +6,8 @@
 pub mod protocol {
     /// JSON-RPC 2.0 version string.
     pub const JSONRPC_VERSION: &str = "2.0";
-    /// ACP protocol version negotiated during initialize.
-    pub const ACP_PROTOCOL_VERSION: &str = "2025-11-05";
+    /// ACP protocol version negotiated during initialize (uint16, per ACP spec).
+    pub const ACP_PROTOCOL_VERSION: u16 = 1;
 }
 
 pub mod client {

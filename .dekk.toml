@@ -33,32 +33,55 @@ LD_LIBRARY_PATH = "{project}/target/release/lib:{project}/target/release"
 bin = ["{project}/bin", "{project}/target/release"]
 
 [commands]
-# Build & test
-build = { run = "cargo build -p apxm-cli --features driver,metrics --release", description = "Build APXM", skill = true }
-test = { run = "cargo test --workspace --exclude apxm-compiler", description = "Run tests", skill = true }
-test-all = { run = "cargo test --workspace", description = "All tests (requires MLIR)" }
-clean = { run = "cargo clean", description = "Clean" }
+build = { run = "cargo build -p apxm-cli --features driver,metrics --release", description = "Build APXM", skill = true, group = "Build & Test" }
+test = { run = "cargo test --workspace --exclude apxm-compiler", description = "Run tests", skill = true, group = "Build & Test" }
+test-all = { run = "cargo test --workspace", description = "All tests (requires MLIR)", group = "Build & Test" }
+clean = { run = "cargo clean", description = "Clean", group = "Build & Test" }
 
-# Compilation & execution
-compile = { run = "apxm compile", description = "Compile graph to .apxmobj artifact", skill = true }
-execute = { run = "apxm execute", description = "Compile and execute a graph", skill = true }
-run = { run = "apxm run", description = "Run a pre-compiled .apxmobj artifact", skill = true }
-decompile = { run = "apxm decompile", description = "Reverse-map artifact back to graph JSON" }
+compile = { run = "apxm compile", description = "Compile graph to .apxmobj artifact", skill = true, group = "Compilation" }
+execute = { run = "apxm execute", description = "Compile and execute a graph", skill = true, group = "Compilation" }
+run = { run = "apxm run", description = "Run a pre-compiled .apxmobj artifact", skill = true, group = "Compilation" }
+decompile = { run = "apxm decompile", description = "Reverse-map artifact back to graph JSON", group = "Compilation" }
 
-# Discovery
-ops = { run = "apxm ops", description = "Browse AIS operations (list, show)" }
-template = { run = "apxm template", description = "Browse graph templates (list, show)" }
+validate = { run = "apxm validate", description = "Validate graph against AIS contract", skill = true, group = "Authoring" }
+analyze = { run = "apxm analyze", description = "Analyze parallelism and critical path", group = "Authoring" }
+explain = { run = "apxm explain", description = "Human-readable summary of a graph", group = "Authoring" }
+merge = { run = "apxm task merge", description = "Merge graph fragments into one workflow", group = "Authoring" }
 
-# Graph authoring
-validate = { run = "apxm validate", description = "Validate graph against AIS contract", skill = true }
-analyze = { run = "apxm analyze", description = "Analyze parallelism and critical path" }
-explain = { run = "apxm explain", description = "Human-readable summary of a graph" }
-merge = { run = "apxm task merge", description = "Merge graph fragments into one workflow" }
+[commands.llm]
+description = "Manage LLM provider credentials"
+group = "Configuration"
+add = { run = "apxm llm add", description = "Add credential", skill = true }
+list = { run = "apxm llm list", description = "List credentials" }
+remove = { run = "apxm llm remove", description = "Remove credential" }
+test = { run = "apxm llm test", description = "Test credentials" }
 
-# Configuration
-llm = { run = "apxm llm", description = "Manage LLM provider credentials" }
-tool = { run = "apxm tool", description = "Manage external tool registrations" }
-agent = { run = "apxm agent", description = "Manage ACP agent profiles" }
+[commands.ops]
+description = "Browse AIS operations"
+group = "Discovery"
+list = { run = "apxm ops list", description = "List all operations" }
+show = { run = "apxm ops show", description = "Show operation details" }
+
+[commands.template]
+description = "Browse graph templates"
+group = "Discovery"
+list = { run = "apxm template list", description = "List templates" }
+show = { run = "apxm template show", description = "Show template" }
+
+[commands.tool]
+description = "Manage external tool registrations"
+group = "Configuration"
+add = { run = "apxm tool add", description = "Register tool" }
+list = { run = "apxm tool list", description = "List tools" }
+remove = { run = "apxm tool remove", description = "Remove tool" }
+
+[commands.agent]
+description = "Manage ACP agent profiles"
+group = "Configuration"
+list = { run = "apxm agent list", description = "List agents" }
+add = { run = "apxm agent add", description = "Add agent profile" }
+remove = { run = "apxm agent remove", description = "Remove agent" }
+test = { run = "apxm agent test", description = "Test agent" }
 
 [install]
 wrap = { name = "apxm", target = "target/release/apxm" }

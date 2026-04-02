@@ -1,6 +1,8 @@
 use async_trait::async_trait;
 use std::sync::Arc;
 
+use apxm_core::apxm_acp;
+
 use crate::AcpError;
 use crate::constants::{fields, methods, option_kinds, outcomes, tool_kinds, update_types};
 use crate::registry::PermissionMode;
@@ -286,7 +288,7 @@ impl ReverseHandler for CapabilityReverseHandler {
         method: &str,
         params: serde_json::Value,
     ) -> Result<serde_json::Value, AcpError> {
-        tracing::debug!(method, "handling reverse request");
+        apxm_acp!(debug, method = method, "handling reverse request");
         match method {
             methods::FS_READ_TEXT_FILE => self.handle_read_file(&params).await,
             methods::FS_WRITE_TEXT_FILE => self.handle_write_file(&params).await,
@@ -320,13 +322,13 @@ impl ReverseHandler for CapabilityReverseHandler {
                         }
                     }
                     Some(other) => {
-                        tracing::debug!(update_type = other, "ignoring session/update");
+                        apxm_acp!(trace, update_type = other, "ignoring session/update");
                     }
                     None => {}
                 }
             }
         } else {
-            tracing::debug!(method, "ignoring notification");
+            apxm_acp!(trace, method = method, "ignoring notification");
         }
     }
 }

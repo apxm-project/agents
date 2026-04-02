@@ -3,6 +3,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStdin, ChildStdout};
 
+use apxm_core::apxm_acp;
+
 use crate::AcpError;
 use crate::constants::json_rpc_errors;
 use crate::constants::protocol::JSONRPC_VERSION;
@@ -93,6 +95,7 @@ impl StdioTransport {
             method: method.to_string(),
             params,
         };
+        apxm_acp!(debug, method = %request.method, id = id, "-> request");
         self.write_line(&request).await?;
         Ok(id)
     }
@@ -163,23 +166,23 @@ impl StdioTransport {
                     let expected_val = serde_json::Value::Number(expected_id.into());
                     if resp.id == expected_val {
                         if let Some(err) = resp.error {
+                            apxm_acp!(warn, id = expected_id, code = err.code, msg = %err.message, data = ?err.data, "<- error");
                             return Err(AcpError::AgentError {
                                 code: err.code,
                                 message: err.message,
                             });
                         }
+                        apxm_acp!(debug, id = expected_id, "<- ok");
                         return Ok(resp.result.unwrap_or(serde_json::Value::Null));
                     }
-                    tracing::warn!(
-                        expected = expected_id,
-                        got = %resp.id,
-                        "unexpected response id"
-                    );
+                    apxm_acp!(warn, expected = expected_id, got = %resp.id, "unexpected response id");
                 }
                 JsonRpcMessage::Notification { method, params } => {
+                    apxm_acp!(trace, method = %method, "<- notification");
                     handler.on_notification(&method, params.as_ref()).await;
                 }
                 JsonRpcMessage::ReverseRequest(req) => {
+                    apxm_acp!(debug, method = %req.method, id = %req.id, "<- reverse request");
                     let req_id = req.id.clone();
                     match handler
                         .handle(&req.method, req.params.unwrap_or_default())
@@ -189,6 +192,7 @@ impl StdioTransport {
                             self.send_response(req_id, result).await?;
                         }
                         Err(e) => {
+                            apxm_acp!(warn, method = %req.method, error = %e, "reverse request failed");
                             self.send_error(
                                 req_id,
                                 json_rpc_errors::INTERNAL_ERROR,

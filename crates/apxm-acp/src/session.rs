@@ -3,6 +3,8 @@ use std::process::Stdio;
 use tokio::process::{Child, Command};
 use tokio::time::Duration;
 
+use apxm_core::apxm_acp;
+
 use crate::AcpError;
 use crate::auth;
 use crate::constants::{
@@ -136,13 +138,12 @@ impl AcpSession {
         }
 
         // Phase 3: session/new
-        let mut new_params = serde_json::json!({
+        let mcp_servers_val = serde_json::to_value(&profile.mcp_servers)
+            .unwrap_or_else(|_| serde_json::Value::Array(vec![]));
+        let new_params = serde_json::json!({
             cap_args::CWD: cwd.to_string_lossy(),
+            "mcpServers": mcp_servers_val,
         });
-        if !profile.mcp_servers.is_empty() {
-            new_params["mcpServers"] = serde_json::to_value(&profile.mcp_servers)
-                .unwrap_or_default();
-        }
         let new_id = transport
             .send_request(methods::SESSION_NEW, Some(new_params))
             .await?;
@@ -155,11 +156,11 @@ impl AcpSession {
             .and_then(|v| v.as_str())
             .map(String::from);
 
-        tracing::info!(
+        apxm_acp!(info,
             agent = profile_name,
             session_id = %session_id,
             agent_session_id = ?agent_session_id,
-            "ACP session established"
+            "session established"
         );
 
         Ok(Self {
@@ -336,7 +337,7 @@ impl ReverseHandler for NoOpReverseHandler {
         method: &str,
         _params: serde_json::Value,
     ) -> Result<serde_json::Value, AcpError> {
-        tracing::warn!(method, "reverse request during init phase — rejecting");
+        apxm_acp!(warn, method = method, "reverse request during init phase — rejecting");
         Err(AcpError::Protocol(format!(
             "reverse request {method} not supported during initialization"
         )))
