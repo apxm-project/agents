@@ -15,13 +15,13 @@ mlir = "22"
 libclang13 = "22"
 python = "3.11"
 cmake = ""
+nodejs = "22"
 
 [tools]
 cmake = { command = "cmake", version = ">=3.20" }
 ninja = { command = "ninja" }
 cargo = { command = "cargo", version = ">=1.70" }
 python = { command = "python", version = ">=3.10" }
-clang = { command = "clang", version = ">=17" }
 
 [env]
 MLIR_DIR = "{environment}/lib/cmake/mlir"
@@ -33,10 +33,31 @@ LD_LIBRARY_PATH = "{project}/target/release/lib:{project}/target/release"
 bin = ["{project}/bin", "{project}/target/release"]
 
 [commands]
+# Build & test
 build = { run = "cargo build -p apxm-cli --features driver,metrics --release", description = "Build APXM" }
 test = { run = "cargo test --workspace --exclude apxm-compiler", description = "Run tests" }
 test-all = { run = "cargo test --workspace", description = "All tests (requires MLIR)" }
 clean = { run = "cargo clean", description = "Clean" }
+
+# Compilation & execution
+compile = { run = "apxm compile", description = "Compile graph to .apxmobj artifact" }
+execute = { run = "apxm execute", description = "Compile and execute a graph" }
+run = { run = "apxm run", description = "Run a pre-compiled .apxmobj artifact" }
+decompile = { run = "apxm decompile", description = "Reverse-map artifact back to graph JSON" }
+
+# Discovery
+ops = { run = "apxm ops", description = "Browse AIS operations (list, show)" }
+template = { run = "apxm template", description = "Browse graph templates (list, show)" }
+
+# Graph authoring
+validate = { run = "apxm validate", description = "Validate graph against AIS contract" }
+analyze = { run = "apxm analyze", description = "Analyze parallelism and critical path" }
+explain = { run = "apxm explain", description = "Human-readable summary of a graph" }
+merge = { run = "apxm task merge", description = "Merge graph fragments into one workflow" }
+
+# Configuration
+register = { run = "apxm register", description = "Manage LLM provider credentials" }
+tools = { run = "apxm tools", description = "Manage external tool registrations" }
 
 [install]
 wrap = { name = "apxm", target = "target/release/apxm" }
