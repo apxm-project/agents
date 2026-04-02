@@ -47,6 +47,17 @@ impl std::fmt::Display for PermissionMode {
     }
 }
 
+/// Configuration for an MCP (Model Context Protocol) server to attach to an agent session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpServerConfig {
+    pub name: String,
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+}
+
 /// Profile describing how to spawn and interact with an ACP agent.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentProfile {
@@ -59,6 +70,16 @@ pub struct AgentProfile {
     pub permission_mode: PermissionMode,
     #[serde(default)]
     pub env: BTreeMap<String, String>,
+    #[serde(default)]
+    pub skills: Vec<String>,
+    #[serde(default)]
+    pub default_mode: Option<String>,
+    #[serde(default)]
+    pub default_model: Option<String>,
+    #[serde(default)]
+    pub system_prompt: Option<String>,
+    #[serde(default)]
+    pub mcp_servers: Vec<McpServerConfig>,
 }
 
 fn default_close_grace() -> u64 {
@@ -146,6 +167,11 @@ impl AgentRegistry {
                     session_create_timeout_ms: timeout,
                     permission_mode: PermissionMode::default(),
                     env: BTreeMap::new(),
+                    skills: Vec::new(),
+                    default_mode: None,
+                    default_model: None,
+                    system_prompt: None,
+                    mcp_servers: Vec::new(),
                 },
             );
         }
@@ -281,6 +307,11 @@ mod tests {
             session_create_timeout_ms: 10_000,
             permission_mode: PermissionMode::DenyAll,
             env: BTreeMap::new(),
+            skills: Vec::new(),
+            default_mode: None,
+            default_model: None,
+            system_prompt: None,
+            mcp_servers: Vec::new(),
         };
         let toml_str = toml::to_string_pretty(&profile).unwrap();
         let parsed: AgentProfile = toml::from_str(&toml_str).unwrap();

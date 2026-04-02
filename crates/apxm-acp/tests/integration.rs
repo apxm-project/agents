@@ -14,6 +14,11 @@ fn mock_profile() -> AgentProfile {
         session_create_timeout_ms: 5_000,
         permission_mode: PermissionMode::ApproveAll,
         env: BTreeMap::new(),
+        skills: Vec::new(),
+        default_mode: None,
+        default_model: None,
+        system_prompt: None,
+        mcp_servers: Vec::new(),
     }
 }
 

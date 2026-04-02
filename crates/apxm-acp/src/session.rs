@@ -136,9 +136,13 @@ impl AcpSession {
         }
 
         // Phase 3: session/new
-        let new_params = serde_json::json!({
+        let mut new_params = serde_json::json!({
             cap_args::CWD: cwd.to_string_lossy(),
         });
+        if !profile.mcp_servers.is_empty() {
+            new_params["mcpServers"] = serde_json::to_value(&profile.mcp_servers)
+                .unwrap_or_default();
+        }
         let new_id = transport
             .send_request(methods::SESSION_NEW, Some(new_params))
             .await?;
