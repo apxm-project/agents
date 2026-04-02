@@ -149,3 +149,18 @@ Parallel workers sync via `WAIT_ALL`, then a final step synthesizes. Built-in: `
 | Error handling | TRY_CATCH, ERR | Control | Recovery from failures |
 | Memory | QMEM, UMEM, FENCE | Data | Persistent state across steps |
 | Coordination | GUARD, CLAIM, UPDATE_GOAL | Data | Multi-agent work distribution |
+| Multi-Agent (ACP) | SPAWN_AGENT, COMMUNICATE, MERGE | Control + Data | External agent orchestration |
+
+## 9. Multi-Agent (ACP)
+
+`SPAWN_AGENT` starts an external agent (Claude Code, Codex, etc.). `COMMUNICATE` sends a message over ACP and returns the response. `MERGE` combines multiple agent outputs. Use `Control` edges from spawn to communicate to ensure agents are alive before messaging them.
+
+```
+SPAWN claude ──Control──► COMMUNICATE(claude) ──Data──► MERGE ──► PRINT
+SPAWN codex  ──Control──► COMMUNICATE(codex)  ──Data──┘
+CONST_STR    ──Data─────► both COMMUNICATE nodes
+```
+
+See `examples/07-acp-agents/parallel-agents.json` for the full graph, or use `INV` with `capability: "acp"` for a more concise session-managed approach.
+
+For the full multi-agent walkthrough including session-managed INV style, cross-critique, and pipeline patterns, see [Multi-Agent Workflows](multi-agent.md).
