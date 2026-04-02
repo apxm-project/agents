@@ -22,7 +22,10 @@ pub mod provider_spec;
 pub mod session;
 pub mod values;
 
-pub use aam::{CapabilityRecord, CompletionPolicy, GoalTree, ScopePolicy, ScopeSpec};
+pub use aam::{
+    AamContext, CapabilityProjection, CapabilityRecord, CompletionPolicy, GoalProjection, GoalTree,
+    ScopePolicy, ScopeSpec,
+};
 pub use compiler::{
     CodegenOptions, CompilationStage, EmitFormat, OptimizationLevel, PipelineConfig, stage_rank,
 };

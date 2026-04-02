@@ -181,6 +181,8 @@ pub mod runtime {
         pub const GOALS_PREFIX: &str = "goals:";
         pub const INNER_PLAN_SPLICED_PREFIX: &str = "inner_plan_spliced:";
         pub const INSIGHT_PREFIX: &str = "insight:";
+        /// Prefix for internal beliefs that should not be transmitted to external agents.
+        pub const INTERNAL_PREFIX: &str = "_";
     }
 
     pub mod transition_labels {

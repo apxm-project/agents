@@ -19,9 +19,12 @@ use super::{
     ExecutionContext, Node, Result, Value, get_optional_string_attribute, get_string_attribute,
 };
 use crate::aam::TransitionLabel;
+use apxm_core::apxm_op;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::constants::runtime::{belief_keys, response_keys};
 use apxm_core::error::RuntimeError;
+use apxm_core::types::aam::{AamContext, CapabilityProjection, GoalProjection};
+use apxm_core::types::goal::GoalStatus;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -29,7 +32,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
     let agent_name = get_string_attribute(node, graph_attrs::AGENT_NAME)?;
     let profile = get_optional_string_attribute(node, graph_attrs::PROFILE)?;
 
-    tracing::info!(
+    apxm_op!(info,
         execution_id = %ctx.execution_id,
         agent_name = %agent_name,
         profile = ?profile,
@@ -103,6 +106,9 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
             .map(PathBuf::from)
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
 
+        // Project current AAM state into AamContext for the spawned agent
+        let aam_context = project_aam_context(ctx);
+
         let session = spawner
             .spawn_external(
                 &agent_name,
@@ -110,6 +116,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
                 &cwd,
                 mode.as_deref(),
                 model.as_deref(),
+                &aam_context,
             )
             .await?;
 
@@ -135,7 +142,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
             Value::String(process_id),
         );
 
-        tracing::info!(
+        apxm_op!(info,
             execution_id = %ctx.execution_id,
             agent_name = %agent_name,
             profile = %profile_name,
@@ -166,13 +173,55 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
         )
         .await;
 
-    tracing::info!(
+    apxm_op!(info,
         execution_id = %ctx.execution_id,
         agent_name = %agent_name,
         "SPAWN_AGENT completed successfully"
     );
 
     Ok(Value::Object(agent_info))
+}
+
+/// Project the current AAM state into an `AamContext` for transmission to a spawned agent.
+///
+/// Filters out internal beliefs (prefixed with `_`) and only includes active goals.
+/// Values are converted from the runtime `Value` type to `serde_json::Value`.
+fn project_aam_context(ctx: &ExecutionContext) -> AamContext {
+    let beliefs: HashMap<String, serde_json::Value> = ctx
+        .aam
+        .beliefs()
+        .into_iter()
+        .filter(|(k, _)| !k.starts_with(belief_keys::INTERNAL_PREFIX))
+        .filter_map(|(k, v)| v.to_json().ok().map(|jv| (k, jv)))
+        .collect();
+
+    let goals: Vec<GoalProjection> = ctx
+        .aam
+        .goals()
+        .into_iter()
+        .filter(|g| g.status == GoalStatus::Active)
+        .map(|g| GoalProjection {
+            description: g.description,
+            priority: g.priority,
+        })
+        .collect();
+
+    let capabilities: Vec<CapabilityProjection> = ctx
+        .aam
+        .capabilities()
+        .into_iter()
+        .map(|(_, rec)| CapabilityProjection {
+            name: rec.name,
+            description: rec.description,
+        })
+        .collect();
+
+    AamContext {
+        beliefs,
+        goals,
+        capabilities,
+        system_prompt: None, // profile.system_prompt handled in session.rs
+    }
 }
 
 #[cfg(test)]

@@ -128,6 +128,13 @@ pub mod capability {
     pub const DEFAULT_LATENCY_MS: u64 = 30_000;
 }
 
+pub mod wire {
+    /// ACP wire key for MCP servers (called "capabilities" in APXM).
+    pub const MCP_SERVERS: &str = "mcpServers";
+    /// ACP wire key for model in prompt response.
+    pub const MODEL: &str = "model";
+}
+
 pub mod timeouts {
     /// Grace period after closing stdin before SIGTERM (ms).
     pub const DEFAULT_CLOSE_GRACE_MS: u64 = 100;
@@ -147,6 +154,8 @@ pub mod timeouts {
     pub const AUTH_TIMEOUT_SECS: u64 = 10;
     /// Timeout for session control requests (secs).
     pub const CONTROL_TIMEOUT_SECS: u64 = 10;
+    /// Timeout for system preamble injection (secs).
+    pub const PREAMBLE_TIMEOUT_SECS: u64 = 30;
 }
 
 pub mod terminal {

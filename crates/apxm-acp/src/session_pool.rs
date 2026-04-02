@@ -1,4 +1,5 @@
 use apxm_core::constants::defaults::DEFAULT_MAX_SESSIONS;
+use apxm_core::types::aam::AamContext;
 use dashmap::DashMap;
 use std::hash::Hash;
 use std::path::{Path, PathBuf};
@@ -48,12 +49,17 @@ impl SessionPool {
     /// Uses DashMap's entry API to avoid TOCTOU race conditions where
     /// two concurrent callers could both see an absent key and spawn
     /// duplicate sessions.
+    ///
+    /// `aam_context` is only used on the initial spawn — subsequent calls
+    /// with the same key return the existing session (context was already
+    /// injected on first turn).
     pub async fn get_or_create(
         &self,
         agent: &str,
         cwd: &Path,
         handle: &str,
         profile: &AgentProfile,
+        aam_context: &AamContext,
     ) -> Result<Arc<Mutex<AcpSession>>, AcpError> {
         let key = SessionKey {
             agent: agent.to_string(),
@@ -81,7 +87,7 @@ impl SessionPool {
         // Slow path: spawn a new session outside the lock, then insert
         // atomically. If another thread raced us, we close our session
         // and return the winner.
-        let session = AcpSession::spawn(agent, profile, cwd).await?;
+        let session = AcpSession::spawn(agent, profile, cwd, aam_context).await?;
         let session_arc = Arc::new(Mutex::new(session));
 
         use dashmap::mapref::entry::Entry;

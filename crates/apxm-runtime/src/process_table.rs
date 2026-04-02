@@ -29,6 +29,7 @@ pub trait AgentSpawner: Send + Sync {
         cwd: &std::path::Path,
         mode: Option<&str>,
         model: Option<&str>,
+        aam_context: &apxm_core::types::aam::AamContext,
     ) -> Result<Arc<tokio::sync::Mutex<dyn std::any::Any + Send + Sync>>, RuntimeError>;
 }
 

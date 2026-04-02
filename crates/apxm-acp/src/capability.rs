@@ -148,9 +148,12 @@ impl CapabilityExecutor for AcpCapability {
             .clone();
 
         // 3. Get or create session from pool (multi-turn support)
+        // INV nodes use empty AAM context — their context comes from
+        // the graph's data flow (prompt text via edges), not from AAM state.
+        let aam_context = apxm_core::types::aam::AamContext::default();
         let session_arc = self
             .session_pool
-            .get_or_create(&agent_name, &cwd, &session_handle, &profile)
+            .get_or_create(&agent_name, &cwd, &session_handle, &profile, &aam_context)
             .await
             .map_err(|e| self.cap_err(format!("Session spawn failed: {e}")))?;
 

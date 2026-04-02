@@ -8,7 +8,7 @@ use apxm_core::apxm_acp;
 use crate::AcpError;
 use crate::auth;
 use crate::constants::{
-    args as cap_args, client, fields, methods, protocol, stop_reasons, timeouts,
+    args as cap_args, client, fields, methods, protocol, stop_reasons, timeouts, wire,
 };
 use crate::content::ContentBlock;
 use crate::protocol::StdioTransport;
@@ -45,10 +45,13 @@ pub struct AcpSession {
 
 impl AcpSession {
     /// Spawn an agent, initialize the ACP protocol, and create a session.
+    ///
+    /// `aam_context` is the projected AAM state to inject as a system preamble.
     pub async fn spawn(
         profile_name: &str,
         profile: &AgentProfile,
         cwd: &std::path::Path,
+        aam_context: &apxm_core::types::aam::AamContext,
     ) -> Result<Self, AcpError> {
         let parts = shell_words::split(&profile.command).map_err(|e| AcpError::Spawn {
             agent: profile_name.to_string(),
@@ -138,12 +141,7 @@ impl AcpSession {
         }
 
         // Phase 3: session/new
-        let mcp_servers_val = serde_json::to_value(&profile.mcp_servers)
-            .unwrap_or_else(|_| serde_json::Value::Array(vec![]));
-        let new_params = serde_json::json!({
-            cap_args::CWD: cwd.to_string_lossy(),
-            "mcpServers": mcp_servers_val,
-        });
+        let new_params = crate::aam_bridge::render_session_params(cwd, &profile.capabilities);
         let new_id = transport
             .send_request(methods::SESSION_NEW, Some(new_params))
             .await?;
@@ -163,7 +161,7 @@ impl AcpSession {
             "session established"
         );
 
-        Ok(Self {
+        let mut session = Self {
             session_id,
             agent_session_id,
             profile_name: profile_name.to_string(),
@@ -172,11 +170,50 @@ impl AcpSession {
             close_grace_ms: profile.close_grace_ms,
             turn_count: 0,
             closed: false,
-        })
+        };
+
+        // Inject AAM context as a system preamble (turn 0, doesn't increment turn_count)
+        if let Some(preamble) = crate::aam_bridge::render_system_prompt(aam_context) {
+            let system_text = match &profile.system_prompt {
+                Some(sp) => format!("{sp}\n\n{preamble}"),
+                None => preamble,
+            };
+            session.send_system_preamble(&system_text).await?;
+        } else if let Some(sp) = &profile.system_prompt {
+            session.send_system_preamble(sp).await?;
+        }
+
+        Ok(session)
     }
 
     fn transport(&mut self) -> Result<&mut StdioTransport, AcpError> {
         self.transport.as_mut().ok_or(AcpError::SessionClosed)
+    }
+
+    /// Send a system preamble as an inaugural prompt (turn 0).
+    ///
+    /// This sets context for the agent without incrementing `turn_count`.
+    /// The response is discarded — this is a context-setting turn, not a user turn.
+    async fn send_system_preamble(&mut self, text: &str) -> Result<(), AcpError> {
+        let blocks = vec![ContentBlock::text(text)];
+        let params = serde_json::json!({
+            fields::SESSION_ID: self.agent_session_id,
+            cap_args::PROMPT: blocks,
+        });
+
+        let no_op = NoOpReverseHandler;
+        let id = self.transport()?.send_request(methods::SESSION_PROMPT, Some(params)).await?;
+        let timeout = Duration::from_secs(timeouts::PREAMBLE_TIMEOUT_SECS);
+        let _ = tokio::time::timeout(timeout, self.transport()?.read_response(id, &no_op))
+            .await
+            .map_err(|_| AcpError::Timeout("system preamble timed out".to_string()))??;
+
+        apxm_acp!(info,
+            agent = %self.profile_name,
+            preamble_len = text.len(),
+            "system preamble injected"
+        );
+        Ok(())
     }
 
     /// Send a prompt to the agent and collect the response.
@@ -212,7 +249,7 @@ impl AcpSession {
             .unwrap_or(stop_reasons::END_TURN)
             .to_string();
         let model = result
-            .get("model")
+            .get(wire::MODEL)
             .and_then(|v| v.as_str())
             .map(String::from);
 

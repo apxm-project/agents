@@ -17,7 +17,9 @@ pub mod session_pool;
 pub mod terminal;
 
 pub use capability::AcpCapability;
-pub use registry::{AgentProfile, AgentRegistry, McpServerConfig, PermissionMode};
+pub mod aam_bridge;
+
+pub use registry::{AgentProfile, AgentRegistry, CapabilityServerConfig, PermissionMode};
 pub use session::AcpSession;
 pub use session_pool::SessionPool;
 

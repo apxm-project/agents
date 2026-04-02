@@ -10,7 +10,9 @@ use apxm_acp::constants::result_keys;
 use apxm_acp::registry::AgentRegistry;
 use apxm_acp::reverse::CapabilityReverseHandler;
 use apxm_acp::session::AcpSession;
+use apxm_core::apxm_acp;
 use apxm_core::error::RuntimeError;
+use apxm_core::types::aam::AamContext;
 use apxm_core::types::values::Value;
 use apxm_runtime::process::AgentProcess;
 use apxm_runtime::process_table::{AgentPrompter, AgentSpawner};
@@ -60,6 +62,7 @@ impl AgentSpawner for AcpAgentSpawner {
         cwd: &std::path::Path,
         mode: Option<&str>,
         model: Option<&str>,
+        aam_context: &AamContext,
     ) -> Result<Arc<tokio::sync::Mutex<dyn std::any::Any + Send + Sync>>, RuntimeError> {
         let profile = self
             .registry
@@ -82,7 +85,11 @@ impl AgentSpawner for AcpAgentSpawner {
             })?
             .clone();
 
-        tracing::info!(
+        // Apply profile defaults as fallbacks for mode/model
+        let effective_mode = mode.or(profile.default_mode.as_deref());
+        let effective_model = model.or(profile.default_model.as_deref());
+
+        apxm_acp!(info,
             agent_name = agent_name,
             profile = profile_name,
             cwd = %cwd.display(),
@@ -90,15 +97,15 @@ impl AgentSpawner for AcpAgentSpawner {
         );
 
         let mut session =
-            AcpSession::spawn(agent_name, &profile, cwd)
+            AcpSession::spawn(agent_name, &profile, cwd, aam_context)
                 .await
                 .map_err(|e| RuntimeError::Operation {
                     op_type: apxm_core::types::operations::AISOperationType::SpawnAgent,
                     message: format!("ACP spawn failed for '{}': {}", agent_name, e),
                 })?;
 
-        // Apply session controls if specified
-        if let Some(mode_id) = mode {
+        // Apply session controls if specified (or from profile defaults)
+        if let Some(mode_id) = effective_mode {
             apxm_acp::controls::SessionControls::set_mode(&mut session, mode_id)
                 .await
                 .map_err(|e| RuntimeError::Operation {
@@ -106,7 +113,7 @@ impl AgentSpawner for AcpAgentSpawner {
                     message: format!("set_mode('{}') failed: {}", mode_id, e),
                 })?;
         }
-        if let Some(model_id) = model {
+        if let Some(model_id) = effective_model {
             apxm_acp::controls::SessionControls::set_model(&mut session, model_id)
                 .await
                 .map_err(|e| RuntimeError::Operation {
@@ -115,7 +122,7 @@ impl AgentSpawner for AcpAgentSpawner {
                 })?;
         }
 
-        tracing::info!(
+        apxm_acp!(info,
             agent_name = agent_name,
             session_id = %session.session_id(),
             agent_session_id = ?session.agent_session_id(),
@@ -203,7 +210,7 @@ impl AgentPrompter for AcpAgentPrompter {
                 message: format!("ACP prompt to '{}' failed: {}", process.name, e),
             })?;
 
-        tracing::info!(
+        apxm_acp!(info,
             agent = %process.name,
             session_id = %session.session_id(),
             turn = session.turn_count(),

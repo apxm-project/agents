@@ -4,6 +4,32 @@ use crate::types::goal::GoalId;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// Projected AAM state for transmission to an ACP agent.
+///
+/// This is the bridge type — a purpose-built projection of (B, G, C)
+/// that can be rendered into formats ACP agents understand.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AamContext {
+    pub beliefs: HashMap<String, serde_json::Value>,
+    pub goals: Vec<GoalProjection>,
+    pub capabilities: Vec<CapabilityProjection>,
+    pub system_prompt: Option<String>,
+}
+
+/// A goal projected for transmission to an ACP agent.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GoalProjection {
+    pub description: String,
+    pub priority: u32,
+}
+
+/// A capability projected for transmission to an ACP agent.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CapabilityProjection {
+    pub name: String,
+    pub description: String,
+}
+
 /// Capability metadata tracked in the AAM.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CapabilityRecord {

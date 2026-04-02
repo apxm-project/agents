@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use apxm_acp::{AcpSession, AgentProfile, PermissionMode, SessionPool};
+use apxm_core::types::aam::AamContext;
 
 fn mock_profile() -> AgentProfile {
     let mock_script = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -14,11 +15,10 @@ fn mock_profile() -> AgentProfile {
         session_create_timeout_ms: 5_000,
         permission_mode: PermissionMode::ApproveAll,
         env: BTreeMap::new(),
-        skills: Vec::new(),
         default_mode: None,
         default_model: None,
         system_prompt: None,
-        mcp_servers: Vec::new(),
+        capabilities: Vec::new(),
     }
 }
 
@@ -42,7 +42,8 @@ async fn full_session_lifecycle() {
     let cwd = std::env::current_dir().unwrap();
 
     // Spawn session
-    let mut session = AcpSession::spawn("mock", &profile, &cwd)
+    let aam_ctx = AamContext::default();
+    let mut session = AcpSession::spawn("mock", &profile, &cwd, &aam_ctx)
         .await
         .expect("should spawn mock agent");
 
@@ -79,17 +80,18 @@ async fn session_pool_reuse() {
     let profile = mock_profile();
     let cwd = std::env::current_dir().unwrap();
     let pool = SessionPool::new();
+    let aam_ctx = AamContext::default();
 
     // First get_or_create should spawn
     let s1 = pool
-        .get_or_create("mock", &cwd, "main", &profile)
+        .get_or_create("mock", &cwd, "main", &profile, &aam_ctx)
         .await
         .expect("should create session");
     assert_eq!(pool.len(), 1);
 
     // Second get_or_create with same key should reuse
     let s2 = pool
-        .get_or_create("mock", &cwd, "main", &profile)
+        .get_or_create("mock", &cwd, "main", &profile, &aam_ctx)
         .await
         .expect("should reuse session");
     assert_eq!(pool.len(), 1);
@@ -101,7 +103,7 @@ async fn session_pool_reuse() {
 
     // Different handle should create a new session
     let s3 = pool
-        .get_or_create("mock", &cwd, "reviewer", &profile)
+        .get_or_create("mock", &cwd, "reviewer", &profile, &aam_ctx)
         .await
         .expect("should create new session for different handle");
     assert_eq!(pool.len(), 2);
@@ -124,7 +126,8 @@ async fn multi_turn_on_same_session() {
     let profile = mock_profile();
     let cwd = std::env::current_dir().unwrap();
 
-    let mut session = AcpSession::spawn("mock", &profile, &cwd)
+    let aam_ctx = AamContext::default();
+    let mut session = AcpSession::spawn("mock", &profile, &cwd, &aam_ctx)
         .await
         .expect("should spawn");
 

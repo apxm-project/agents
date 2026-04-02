@@ -435,11 +435,10 @@ async fn agent_command(action: AgentAction, json_output: bool) -> Result<()> {
                 session_create_timeout_ms: acp_timeouts::DEFAULT_SESSION_TIMEOUT_MS,
                 permission_mode,
                 env: Default::default(),
-                skills: Vec::new(),
                 default_mode: None,
                 default_model: None,
                 system_prompt: None,
-                mcp_servers: Vec::new(),
+                capabilities: Vec::new(),
             };
             let mut reg = apxm_acp::AgentRegistry::load();
             reg.add(name.clone(), profile)
@@ -476,7 +475,8 @@ async fn agent_command(action: AgentAction, json_output: bool) -> Result<()> {
             println!("  Command: {}", profile.command);
             let cwd = std::env::current_dir().unwrap_or_default();
             let start = std::time::Instant::now();
-            match apxm_acp::AcpSession::spawn(&name, profile, &cwd).await {
+            let aam_context = apxm_core::types::aam::AamContext::default();
+            match apxm_acp::AcpSession::spawn(&name, profile, &cwd, &aam_context).await {
                 Ok(session) => {
                     let elapsed = start.elapsed();
                     println!("  Session ID: {}", session.session_id());
