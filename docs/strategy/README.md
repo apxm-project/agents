@@ -17,6 +17,7 @@
 | 06 | [GAP-ANALYSIS](06-GAP-ANALYSIS.md) | Current vs target state: 15 gaps with priorities |
 | **07** | **[ACPX-ABSORPTION](07-ACPX-ABSORPTION.md)** | **Why ACPX disappears into APXM (revised architecture)** |
 | **08** | **[OPTIMIZATION-TARGETS](08-OPTIMIZATION-TARGETS.md)** | **Goal-directed compiler targets: -O(tokens), -O(parallel), -O(latency), -O(cost)** |
+| **09** | **[VLLM-GRAPH-AWARENESS](09-VLLM-GRAPH-AWARENESS.md)** | **Making vLLM pipeline-aware: KV-cache pinning, priority scheduling, token pipelining** |
 
 ---
 
