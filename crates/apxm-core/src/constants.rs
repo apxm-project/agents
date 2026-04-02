@@ -98,6 +98,10 @@ pub mod graph {
         pub const HANDOFF_FROM: &str = "handoff_from";
         pub const HANDOFF_TO: &str = "handoff_to";
         pub const MAX_TOOL_ITERATIONS: &str = "max_tool_iterations";
+        // SPAWN_AGENT attributes
+        pub const PROFILE: &str = "profile";
+        pub const MODE: &str = "mode";
+        pub const CWD: &str = "cwd";
         // Phase 2 coordination/identity/self-organization attributes
         pub const TASK_SPEC: &str = "task_spec";
         pub const TARGET_AGENT: &str = "target_agent";
@@ -204,6 +208,8 @@ pub mod runtime {
         pub const SPAWNED_BY: &str = "spawned_by";
         pub const CAPABILITIES: &str = "capabilities";
         pub const GOALS: &str = "goals";
+        pub const PROCESS_ID: &str = "process_id";
+        pub const PROFILE: &str = "profile";
     }
 }
 
@@ -310,6 +316,20 @@ pub mod protocols {
     pub const A2A_VERSION: &str = "0.3";
 }
 
+/// COMMUNICATE operation protocol dispatch modes.
+pub mod communicate_protocols {
+    /// In-process sub-flow execution via FlowRegistry.
+    pub const LOCAL: &str = "local";
+    /// HTTP POST to an external APXM agent's `/v1/receive` endpoint.
+    pub const HTTP: &str = "http";
+    /// HTTPS variant of the HTTP protocol.
+    pub const HTTPS: &str = "https";
+    /// ACP JSON-RPC over stdio to a spawned agent subprocess.
+    pub const ACP: &str = "acp";
+    /// Fan-out to ALL registered agents in parallel.
+    pub const BROADCAST: &str = "broadcast";
+}
+
 pub mod http {
     pub mod headers {
         pub const CONTENT_TYPE: &str = "content-type";
@@ -384,4 +404,12 @@ pub mod defaults {
     pub const DEFAULT_MAX_CONTEXT_TOKENS: usize = 8192;
     pub const DEFAULT_MAX_NEGOTIATE_ROUNDS: usize = 3;
     pub const DEFAULT_DESCRIPTION: &str = "Dynamically registered capability";
+
+    // Resource governance limits
+    /// Maximum number of concurrent agent processes in the process table.
+    pub const DEFAULT_MAX_PROCESSES: usize = 32;
+    /// Maximum spawn depth for recursive SPAWN_AGENT chains.
+    pub const DEFAULT_MAX_SPAWN_DEPTH: usize = 4;
+    /// Maximum number of concurrent ACP sessions in the session pool.
+    pub const DEFAULT_MAX_SESSIONS: usize = 16;
 }

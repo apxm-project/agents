@@ -1,3 +1,4 @@
+use apxm_core::constants::defaults::DEFAULT_MAX_SESSIONS;
 use dashmap::DashMap;
 use std::hash::Hash;
 use std::path::{Path, PathBuf};
@@ -23,12 +24,22 @@ struct SessionKey {
 /// nodes and cleans them up when execution completes.
 pub struct SessionPool {
     sessions: DashMap<SessionKey, Arc<Mutex<AcpSession>>>,
+    max_sessions: usize,
 }
 
 impl SessionPool {
     pub fn new() -> Self {
         Self {
             sessions: DashMap::new(),
+            max_sessions: DEFAULT_MAX_SESSIONS,
+        }
+    }
+
+    /// Create a session pool with a custom session limit.
+    pub fn with_max_sessions(max: usize) -> Self {
+        Self {
+            sessions: DashMap::new(),
+            max_sessions: max,
         }
     }
 
@@ -53,6 +64,18 @@ impl SessionPool {
         // Fast path: session already exists
         if let Some(entry) = self.sessions.get(&key) {
             return Ok(Arc::clone(entry.value()));
+        }
+
+        // Check capacity before spawning a new session
+        if self.sessions.len() >= self.max_sessions {
+            return Err(AcpError::Spawn {
+                agent: agent.to_string(),
+                reason: format!(
+                    "Session pool full: {} active sessions (max {})",
+                    self.sessions.len(),
+                    self.max_sessions
+                ),
+            });
         }
 
         // Slow path: spawn a new session outside the lock, then insert

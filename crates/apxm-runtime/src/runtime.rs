@@ -7,6 +7,7 @@ use crate::{
         ExecutionContext, ExecutionEventEmitter, ExecutorEngine, InnerPlanLinker, NoOpLinker,
     },
     memory::{MemoryConfig, MemorySystem},
+    process_table::ProcessTable,
     scheduler::{DataflowScheduler, SchedulerConfig, SessionLaneGuard},
 };
 use apxm_artifact::Artifact;
@@ -87,6 +88,7 @@ pub struct Runtime {
     inner_plan_linker: Arc<dyn InnerPlanLinker>,
     instruction_config: apxm_core::InstructionConfig,
     sandbox_registry: Arc<SandboxRegistry>,
+    process_table: Arc<ProcessTable>,
 }
 
 impl Runtime {
@@ -118,6 +120,13 @@ impl Runtime {
         // Initialize scheduler
         let scheduler = DataflowScheduler::new(config.scheduler_config.clone());
 
+        if config.token_budget.is_none() {
+            tracing::warn!(
+                "No token budget set. Execution has no token limit. \
+                 Set RuntimeConfig::token_budget for cost protection."
+            );
+        }
+
         log_info!("runtime", "APxM Runtime initialized successfully");
 
         Ok(Self {
@@ -132,6 +141,7 @@ impl Runtime {
             inner_plan_linker: Arc::new(NoOpLinker),
             instruction_config: apxm_core::InstructionConfig::default(),
             sandbox_registry: Arc::new(SandboxRegistry::new()),
+            process_table: Arc::new(ProcessTable::new()),
         })
     }
 
@@ -154,6 +164,7 @@ impl Runtime {
         ctx.token_budget = self.config.token_budget;
         ctx.event_emitter = event_emitter;
         ctx.sandbox_registry = Arc::clone(&self.sandbox_registry);
+        ctx.process_table = Arc::clone(&self.process_table);
         ctx
     }
 
@@ -359,6 +370,14 @@ impl Runtime {
 
     pub fn flow_registry(&self) -> &FlowRegistry {
         &self.flow_registry
+    }
+
+    pub fn process_table(&self) -> &ProcessTable {
+        &self.process_table
+    }
+
+    pub fn process_table_arc(&self) -> Arc<ProcessTable> {
+        Arc::clone(&self.process_table)
     }
 }
 
