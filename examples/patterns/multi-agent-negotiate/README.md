@@ -24,6 +24,6 @@ Structured technical debate: two agents independently propose solutions, cross-c
 ```bash
 apxm agent test claude
 apxm agent test codex
-apxm validate examples/patterns/multi-agent-negotiate/negotiate-consensus.json
-apxm execute examples/patterns/multi-agent-negotiate/negotiate-consensus.json
+apxm validate examples/patterns/multi-agent-negotiate/negotiate-consensus.apxm
+apxm execute examples/patterns/multi-agent-negotiate/negotiate-consensus.apxm
 ```

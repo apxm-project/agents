@@ -12,11 +12,11 @@
 
 ## Note on LOOP_START / LOOP_END
 
-The JSON graph format enforces DAG structure (no back-edges), so true loops are only available in the `.ais` source format. This graph unrolls 3 iterations explicitly — the clearest way to show the reflect/refine pattern.
+The graph format enforces DAG structure (no back-edges), so true loops are only available in the `.ais` source format. This graph unrolls 3 iterations explicitly — the clearest way to show the reflect/refine pattern.
 
 ## Running
 
 ```bash
-apxm validate examples/patterns/iterative-refine/iterative-refine.json
-apxm execute examples/patterns/iterative-refine/iterative-refine.json
+apxm validate examples/patterns/iterative-refine/iterative-refine.apxm
+apxm execute examples/patterns/iterative-refine/iterative-refine.apxm
 ```

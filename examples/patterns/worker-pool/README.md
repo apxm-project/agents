@@ -21,6 +21,6 @@ Distributed work queue processing: multiple agents claim tasks atomically, proce
 ## Running
 
 ```bash
-apxm validate examples/patterns/worker-pool/worker-pool.json
-apxm execute examples/patterns/worker-pool/worker-pool.json
+apxm validate examples/patterns/worker-pool/worker-pool.apxm
+apxm execute examples/patterns/worker-pool/worker-pool.apxm
 ```
