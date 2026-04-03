@@ -16,18 +16,18 @@ The AIS is a typed intermediate representation -- the "instruction set architect
 
 ## Instruction Categories
 
-The AIS contains 39 operations organized into nine categories:
+The AIS operations are organized across multiple categories. Run `apxm ops list` for the complete, current operation set.
 
-| Category | Operations | Purpose |
+| Category | Representative Operations | Purpose |
 |----------|-----------|---------|
-| **LLM** | ASK, THINK, REASON, PLAN, REFLECT, VERIFY | Language model interactions at different latency tiers |
+| **Reasoning** | ASK, THINK, REASON, PLAN, REFLECT, VERIFY | Language model interactions at different latency tiers |
 | **Memory** | QMEM, UMEM | Three-tier memory access (STM/LTM/Episodic) |
-| **Tool** | INV | External tool invocation with typed parameter marshalling |
-| **Control** | BRANCH, SWITCH | Conditional routing based on values |
-| **Sync** | MERGE, WAIT_ALL, FENCE | Synchronization barriers and token collection |
-| **Communication** | COMM, FLOW_CALL | Inter-agent messaging and cross-agent flow calls |
+| **Tools** | INV | External tool invocation with typed parameter marshalling |
+| **ControlFlow** | BRANCH_ON_VALUE, SWITCH, FLOW_CALL | Conditional routing and sub-flow invocation |
+| **Synchronization** | MERGE, WAIT_ALL, FENCE | Synchronization barriers and token collection |
+| **Communication** | COMM | Inter-agent messaging |
 | **Coordination** | DELEGATE, NEGOTIATE | Multi-agent task distribution |
-| **Error** | TRY_CATCH | Exception handling with recovery subgraphs |
+| **ErrorHandling** | TRY_CATCH | Exception handling with recovery subgraphs |
 | **Identity** | NOP, IDENTITY | Pass-through operations for graph structuring |
 
 ## Latency-Typed LLM Operations

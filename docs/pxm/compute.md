@@ -124,7 +124,7 @@ loop(State) ->
 The actor model provides excellent concurrency and isolation but lacks two properties critical for agent optimization:
 
 1. **No compile-time dependency graph**: Since actors communicate via runtime messages, no compiler can analyze the full communication pattern statically. APXM's dataflow graph makes all dependencies explicit before execution begins.
-2. **Untyped operations**: The actor model treats all computation uniformly as "handle this message." APXM distinguishes between LLM calls (ASK, THINK, REASON), tool invocations (INV), memory operations (QMEM, UMEM), and control flow (BRANCH, SWITCH), enabling operation-type-specific optimization and scheduling.
+2. **Untyped operations**: The actor model treats all computation uniformly as "handle this message." APXM distinguishes between LLM calls (ASK, THINK, REASON), tool invocations (INV), memory operations (QMEM, UMEM), and control flow (BRANCH_ON_VALUE, SWITCH), enabling operation-type-specific optimization and scheduling.
 
 ---
 
@@ -207,14 +207,14 @@ The fundamental observation driving APXM's compute model is that **agent operati
 
 APXM defines compute through the **Agent Instruction Set (AIS)** -- a set of typed operations organized into categories:
 
-| Category | Operations | Semantics |
+| Category | Representative Operations | Semantics |
 |----------|-----------|-----------|
-| **LLM** | ASK, THINK, REASON, PLAN, REFLECT, VERIFY | Typed LLM calls with distinct reasoning characteristics and latency profiles |
-| **Tool** | INV | External tool invocation with typed parameter schemas |
-| **Memory** | QMEM, UMEM, FENCE | Structured memory access across three tiers |
-| **Control** | BRANCH, SWITCH | Conditional routing in the dataflow graph |
-| **Sync** | MERGE, WAIT_ALL | Parallel path synchronization |
-| **Communication** | COMM, FLOW_CALL | Cross-agent messaging and sub-flow invocation |
+| **Reasoning** | ASK, THINK, REASON, PLAN, REFLECT, VERIFY | Typed LLM calls with distinct reasoning characteristics and latency profiles |
+| **Tools** | INV | External tool invocation with typed parameter schemas |
+| **Memory** | QMEM, UMEM | Structured memory access across three tiers |
+| **ControlFlow** | BRANCH_ON_VALUE, SWITCH, FLOW_CALL | Conditional routing and sub-flow invocation |
+| **Synchronization** | MERGE, WAIT_ALL, FENCE | Parallel path synchronization and memory barriers |
+| **Communication** | COMM | Cross-agent messaging |
 
 Each operation is a node in the dataflow DAG with:
 - **Typed inputs and outputs**: not opaque function calls, but values with known types

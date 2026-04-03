@@ -17,7 +17,7 @@ that the runtime IMPLEMENTS the abstract machine — it is not separate from it.
  │                                                                        │
  │  Defines the THEORY of how agents compute                              │
  │  - What is an agent? → AAM = (B, G, C)                                │
- │  - What operations exist? → AIS (32 typed instructions)                │
+ │  - What operations exist? → AIS (typed instructions)                   │
  │  - How do transitions work? → δ(AAM, Instr) → AAM'                   │
  │  - How is execution scheduled? → Dataflow (token-based)               │
  ├────────────────────────────────────────────────────────────────────────┤
@@ -87,8 +87,9 @@ in-memory, and agent-global.
  │              │                  Value>            │ ◄── FLAT. One       │
  │              │                                   │     global map.     │
  │              │  goals:        PriorityQueue       │     Every node      │
- │              │                <GoalId, u32>       │ ◄── FLAT. No        │
- │              │                                   │     parent-child.   │
+ │              │                <GoalId, u32>       │     sees it.        │
+ │              │  goal_tree:    GoalTree            │ ◄── parent-child    │
+ │              │                                   │     via GoalTree    │
  │              │  goal_details: HashMap<GoalId,     │                     │
  │              │                  Goal>             │                     │
  │              │                                   │                     │
@@ -96,7 +97,8 @@ in-memory, and agent-global.
  │              │                CapabilityRecord>   │     global registry.│
  │              │                                   │                     │
  │              │  transitions:  Vec<TransitionRec>  │                     │
- │              │  call_stack:   Vec<CallFrame>      │ ◄── never used      │
+ │              │  call_stack:   Vec<CallFrame>      │ ◄── used by          │
+ │              │                                   │     enter/exit_op   │
  │              │  exception_handlers: HashMap       │                     │
  │              └──────────────────────────────────┘                     │
  │                              │                                         │
@@ -121,6 +123,14 @@ in-memory, and agent-global.
           Node B in Flow "review" can see it immediately.
           There is no task-level isolation.
 ```
+
+---
+
+---
+
+> **Everything below this point is future vision / speculative design.**
+> Diagrams 1-2 above reflect the current implementation. Diagrams 3+ describe
+> proposed extensions that have not been built yet.
 
 ---
 
@@ -219,28 +229,30 @@ implementation of the AAM where the filesystem backs (B, G, C).
   │                                                        │
   └──────────────────────┬─────────────────────────────────┘
                          │
-          ┌──────────────┼──────────────────┐
-          │              │                  │
-          ▼              ▼                  ▼
-  ┌───────────┐  ┌───────────┐      ┌───────────┐
-  │ INHERIT   │  │ ISOLATE   │      │ FILTER    │
-  │           │  │           │      │           │
-  │ B = B_par │  │ B = {}    │      │ B = B_par │
-  │  + B_local│  │  + B_local│      │  ∩ {keys} │
-  │           │  │           │      │  + B_local│
-  │ C = C_par │  │ C = {}    │      │           │
-  │  + C_local│  │  + C_local│      │ C = C_par │
-  │           │  │           │      │  ∩ {names}│
-  │ G = child │  │ G = child │      │           │
-  │  of G_par │  │  of G_par │      │ G = child │
-  └───────────┘  └───────────┘      └───────────┘
+          ┌──────────────┼─────────────────────────────────┐
+          │              │                  │              │
+          ▼              ▼                  ▼              ▼
+  ┌───────────┐  ┌───────────┐      ┌───────────┐  ┌───────────┐
+  │ INHERIT   │  │ ISOLATE   │      │ SNAPSHOT  │  │ FILTER    │
+  │           │  │           │      │           │  │           │
+  │ B = B_par │  │ B = {}    │      │ B = copy  │  │ B = B_par │
+  │  + B_local│  │  + B_local│      │  of B_par │  │  ∩ {keys} │
+  │           │  │           │      │  (diverge)│  │  + B_local│
+  │ C = C_par │  │ C = {}    │      │           │  │           │
+  │  + C_local│  │  + C_local│      │ C = copy  │  │ C = C_par │
+  │           │  │           │      │  of C_par │  │  ∩ {names}│
+  │ G = child │  │ G = child │      │           │  │           │
+  │  of G_par │  │  of G_par │      │ G = child │  │ G = child │
+  └───────────┘  └───────────┘      └───────────┘  └───────────┘
 
-  INHERIT:  Full access to parent. Child sees everything +
-            adds its own local state.
+  INHERIT:  Full access to parent (shares Arc — bidirectional writes).
             Use case: sub-task that needs full context.
 
   ISOLATE:  Clean slate. No parent state visible.
             Use case: independent sub-agent, sandbox.
+
+  SNAPSHOT: Copies parent state then diverges. Writes are local.
+            Use case: speculative execution, rollback-safe branches.
 
   FILTER:   Selective access. Only specified keys/caps visible.
             Use case: security boundary, need-to-know.
@@ -276,8 +288,9 @@ implementation of the AAM where the filesystem backs (B, G, C).
  │                    │                        │    AamScope("research/") │
  │  No scoping.       │                        │    AamScope("analysis/") │
  │  No hierarchy.     │                        │    AamScope("report/")   │
- │  No persistence    │                        │  ]                       │
- │  beyond session.   │                        │                          │
+ │  STM dropped on    │                        │  ]                       │
+ │  exit; LTM/Episodic│                        │                          │
+ │  persist.          │                        │                          │
  └────────────────────┘                        │  Each child has its OWN  │
                                                │  scoped (B, G, C) that   │
                                                │  INHERITS from parent.   │
@@ -551,6 +564,10 @@ The file tree naturally supports the "condense a workflow into a tool" pattern.
 ---
 
 ## Diagram 10: The .agentmate/ Directory — Already Halfway There
+
+> **Note:** This diagram refers to the `.agentmate/` structure from an external
+> project (agentmate), not the APXM runtime itself. It is included for
+> comparison purposes only.
 
 ```
  CURRENT .agentmate/ STRUCTURE:          WHAT IT MAPS TO IN AAM:

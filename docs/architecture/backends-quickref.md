@@ -26,8 +26,8 @@
 | Type | Examples | Lifecycle | Cost | Graph Hints |
 |------|----------|-----------|------|-------------|
 | `cloud` | Anthropic, OpenAI, Google | Always on | Per-token | ❌ |
-| `onprem` | Enterprise API, Azure OpenAI | IT-managed | Internal | ✅ if APXM vLLM |
-| `local` | vLLM on GPU, Ollama | **You run it** | Hardware only | ✅ |
+| `onprem` | Enterprise API, Azure OpenAI | IT-managed | Internal | ✅ only if `protocol = "vllm"` |
+| `local` | vLLM on GPU, Ollama | **You run it** | Hardware only | ✅ only if `protocol = "vllm"` |
 
 ## Protocols
 
@@ -73,6 +73,16 @@ model = "claude-haiku-4-5"       # "fast" resolves to haiku
 backend = "anthropic"
 fallbacks = ["corp-gateway", "local-gpu"]
 ```
+
+## Routing Strategy
+
+When no explicit backend or operation route matches, APXM uses the configured `RoutingStrategy`:
+
+| Strategy | Behavior |
+|----------|----------|
+| `FirstHealthy` | Pick the first healthy backend (default) |
+| `RoundRobin` | Cycle through healthy backends |
+| `LowLatency` | Pick the backend with lowest observed latency |
 
 ## CLI Commands
 

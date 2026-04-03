@@ -40,4 +40,4 @@ apxm execute <file>.json
 ## Further Reading
 
 - [Multi-Agent Guide](../../docs/guides/multi-agent.md) -- full walkthrough of concepts, setup, and patterns
-- [Common Patterns](../../docs/guides/common-patterns.md) -- single-agent graph patterns
+- Run `apxm template list` to browse single-agent graph patterns

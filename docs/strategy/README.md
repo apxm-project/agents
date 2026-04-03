@@ -1,5 +1,7 @@
 # Unified Agent Execution Strategy
 
+> **Status**: Several strategy documents below describe completed work. See `docs/STATE-2026-04-03.md` for current project status.
+
 **Date**: March 31, 2026
 **Scope**: APXM + vLLM (ACPX absorbed into APXM)
 

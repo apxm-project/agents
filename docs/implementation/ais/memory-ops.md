@@ -1,90 +1,63 @@
----
-title: "Memory Operations"
-description: "AIS instruction reference for QMEM, UMEM, and FENCE."
----
-
 # Memory Operations
 
-For the formal memory model (tier semantics, cognitive rationale), see [Memory in PXMs](../../pxm/memory.md).
-For backing-store implementation, see [Memory Hierarchy](../runtime/memory-hierarchy.md).
+Category: **Memory** (QMEM, UMEM, UPDATE_GOAL) and **Synchronization** (FENCE). These operations read and write the agent's memory system and goal state. All have **None** latency tier (microseconds) except that QMEM/UMEM are submitted to the executor.
 
-## QMEM -- QueryMemory
+## QMEM -- Query Memory
 
-```
-QMEM(q: String, sid: SessionID, k: Int) -> Value
-```
+Reads from the agent's memory system (STM, LTM, or Episodic). Returns the stored value or null if not found.
 
-| Operand | Type | Description |
-|---------|------|-------------|
-| `q` | `String` | Query key or search expression |
-| `sid` | `SessionID` | Session scope for the lookup |
-| `k` | `Int` | Maximum number of results to return |
+| Field | Required | Description |
+|-------|----------|-------------|
+| `query` | yes | Query string or key to search for |
+| `memory_tier` | no | Target tier: `stm`, `ltm`, or `episodic` |
 
-```mlir
-%user_history = "ais.qmem"(%query, %session, %k) {
-  tier_hint = "ltm"
-} : (!ais.string, !ais.session_id, i64) -> !ais.value
+```json
+{"id": 2, "op": "QMEM", "attributes": {"query": "user_name", "memory_tier": "stm"}}
 ```
 
-**Attributes:** `tier_hint` (optional) -- bypasses unnecessary tier searches when the target tier is known statically.
+## UMEM -- Update Memory
 
-## UMEM -- UpdateMemory
+Writes a key-value pair to the agent's memory system. Overwrites if the key already exists.
 
-```
-UMEM(data: Value, sid: SessionID) -> Void
-```
+| Field | Required | Description |
+|-------|----------|-------------|
+| `key` | yes | Key to store the value under |
+| `value` | yes | Value to store (supports `{{node_N}}` interpolation) |
+| `memory_tier` | no | Target tier: `stm`, `ltm`, or `episodic` |
 
-| Operand | Type | Description |
-|---------|------|-------------|
-| `data` | `Value` | The typed value to store |
-| `sid` | `SessionID` | Session scope for the write |
-
-```mlir
-"ais.umem"(%analysis_result, %session) {
-  durable = true,
-  belief_key = "latest_analysis"
-} : (!ais.value, !ais.session_id) -> ()
+```json
+{"id": 3, "op": "UMEM", "attributes": {"key": "summary", "value": "{{node_2}}", "memory_tier": "stm"}}
 ```
 
-**Attributes:** `durable` -- when `true`, writes to both STM and LTM atomically (higher latency, ~ms for SQLite commit). `belief_key` -- updates the AAM Beliefs map entry.
+## UPDATE_GOAL -- Modify Goals at Runtime
+
+Dynamically modifies the agent's goal set. Changes are visible to subsequent REASON and REFLECT nodes.
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `goal_id` | yes | Goal identifier (description key for upsert/remove) |
+| `action` | no | `set` (default), `remove`, or `clear` |
+| `priority` | no | Goal priority (u32, default: 1) |
+
+```json
+{"id": 3, "op": "UPDATE_GOAL", "attributes": {"goal_id": "optimize_latency", "action": "set", "priority": 2}}
+```
 
 ## FENCE -- Memory Barrier
 
-```
-FENCE() -> Void
-```
+Ensures all preceding UMEM writes are committed before subsequent QMEM reads can execute. Place between UMEM and QMEM when ordering matters.
 
-Synchronization point: blocks until all preceding UMEM operations in the current subgraph have committed, then emits a token for downstream QMEM operations.
+| Field | Required | Description |
+|-------|----------|-------------|
+| `ordering` | no | Memory ordering constraint |
 
-```mlir
-"ais.umem"(%result_a, %session) : (!ais.value, !ais.session_id) -> ()
-"ais.umem"(%result_b, %session) : (!ais.value, !ais.session_id) -> ()
-"ais.fence"() : () -> ()
-%merged = "ais.qmem"(%merge_query, %session, %k) : (!ais.string, !ais.session_id, i64) -> !ais.value
-```
+No fields are required. FENCE has no example JSON in the spec.
 
 ## Ordering Guarantees
 
 | Scenario | Guarantee |
 |----------|-----------|
-| QMEM after UMEM (same key, same subgraph) | Read sees write (data dependency edge) |
-| QMEM after UMEM (different keys) | No guarantee without FENCE |
+| QMEM after UMEM (same key, data edge) | Read sees write |
+| QMEM after UMEM (different keys, no edge) | No guarantee without FENCE |
 | UMEM after UMEM (same key) | Last-writer-wins within subgraph ordering |
-| Cross-agent memory access | Requires COMM protocol; no shared memory |
-
-## Patterns
-
-**Read-Modify-Write:**
-```mlir
-%old = "ais.qmem"(%key, %sid, %one) : (...) -> !ais.value
-%new = "ais.ask"(%modify_prompt, %old) : (...) -> !ais.future<!ais.string>
-"ais.umem"(%new, %sid) { belief_key = "counter" } : (...) -> ()
-```
-
-**Bulk Retrieval:**
-```mlir
-%results = "ais.qmem"(%broad_query, %sid, %ten) {
-  tier_hint = "ltm",
-  similarity_threshold = 0.8
-} : (!ais.string, !ais.session_id, i64) -> !ais.value
-```
+| Cross-agent memory access | Requires COMMUNICATE; no shared memory |

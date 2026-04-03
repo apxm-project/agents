@@ -9,9 +9,9 @@ If you are new to A-PXM, start here:
 1. [**history.md**](pxm/history.md) -- How computing history repeats at the agentic scale.
 2. [**foundations.md**](pxm/foundations.md) -- The agentic von Neumann bottleneck and the five separations.
 3. [**aam.md**](pxm/aam.md) -- The Agent Abstract Machine (Beliefs, Goals, Capabilities).
-4. [**ais.md**](pxm/ais.md) -- The 32 typed operations that agents actually execute.
+4. [**ais.md**](pxm/ais.md) -- The typed operations that agents actually execute.
 5. [**vision.md**](pxm/vision.md) -- The LLVM-for-agents vision and where this is going.
-6. [**optimizations.md**](advantages/optimizations.md) -- What you get: 25 compiler and runtime optimizations.
+6. [**optimizations.md**](advantages/optimizations.md) -- What you get: compiler and runtime optimizations.
 7. [**getting-started.md**](guides/getting-started.md) -- Install, build, and run your first graph.
 
 ---
@@ -25,7 +25,7 @@ What A-PXM *is* -- the formal execution model, its foundations, and where it is 
 - [**history.md**](pxm/history.md) -- How computing history repeats: from von Neumann to agents
 - [**foundations.md**](pxm/foundations.md) -- The agentic von Neumann bottleneck and the five separations
 - [**aam.md**](pxm/aam.md) -- Agent Abstract Machine: Beliefs, Goals, Capabilities
-- [**ais.md**](pxm/ais.md) -- Agent Instruction Set: 32 typed operations
+- [**ais.md**](pxm/ais.md) -- Agent Instruction Set: typed operations across multiple categories
 - [**compute.md**](pxm/compute.md), [**memory.md**](pxm/memory.md), [**scheduling.md**](pxm/scheduling.md) -- Deep dives on each separation
 - [**vision.md**](pxm/vision.md) -- The LLVM-for-agents vision: shared infrastructure for all agents
 
@@ -44,8 +44,7 @@ Compiler, runtime, wire-level contracts, and TODOs toward the vision.
 
 What you get for free by targeting A-PXM instead of building from scratch.
 
-- [**optimizations.md**](advantages/optimizations.md) -- The optimization catalog: 25 compiler and runtime optimizations with LLVM analogues
-- [**hypotheses.md**](advantages/hypotheses.md) -- 8 testable hypotheses about A-PXM's value, with success metrics
+- [**optimizations.md**](advantages/optimizations.md) -- The optimization catalog: compiler and runtime optimizations with LLVM analogues
 - [**llvm-parallel.md**](advantages/llvm-parallel.md) -- Why the LLVM analogy is architecturally precise
 
 ### [`projects/`](projects/) -- Applied Projects *(for builders)*
@@ -58,10 +57,19 @@ Concrete applications and SDKs being built on A-PXM.
 ### [`guides/`](guides/) -- Getting Started *(for users)*
 
 - [**getting-started.md**](guides/getting-started.md) -- Installation, first build, first run
-- [**cli-reference.md**](guides/cli-reference.md) -- Complete CLI command reference
 - [**llm-backends.md**](guides/llm-backends.md) -- Configuring LLM providers
 - [**first-graph.md**](guides/first-graph.md) -- Writing your first agent graph
-- [**common-patterns.md**](guides/common-patterns.md) -- Fan-out/fan-in, conditional routing, checkpoints
+- [**debugging.md**](guides/debugging.md) -- Debugging agent workflows
+- [**multi-agent.md**](guides/multi-agent.md) -- Multi-agent orchestration
+
+### [`architecture/`](architecture/) -- System Architecture
+
+- [**backends-and-models.md**](architecture/backends-and-models.md) -- Backend/model hierarchy and routing
+- [**backends-quickref.md**](architecture/backends-quickref.md) -- Quick reference for backend configuration
+
+### [`reference/`](reference/) -- Configuration Reference
+
+- [**config.md**](reference/config.md) -- Complete `~/.apxm/config.toml` file reference
 
 ### External References
 

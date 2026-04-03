@@ -35,7 +35,7 @@ On the first run, APXM installs `dekk` from PyPI into `.apxm/bootstrap-venv` and
 - ✓ Builds the APXM binary
 - ✓ Installs a self-contained wrapper to `~/.local/bin/apxm` (no manual `conda activate` needed)
 
-See [docs/getting-started.md](docs/getting-started.md) for detailed instructions and troubleshooting.
+See [Getting Started](docs/guides/getting-started.md) for detailed instructions and troubleshooting.
 
 ## Prerequisites
 
@@ -74,7 +74,7 @@ apxm explain <file.json>              # Explain what a graph does in human terms
 apxm task merge a.json b.json -o combined.json      # Merge graph fragments
 ```
 
-See [docs/cli-reference.md](docs/cli-reference.md) for complete reference.
+Run `apxm --help` for complete command reference.
 
 ---
 
@@ -205,9 +205,9 @@ Each check provides actionable fix suggestions when issues are found.
 ## Documentation
 
 ### Guides
-- [Getting Started](docs/getting-started.md) — Installation, first program, common patterns
-- [CLI Reference](docs/cli-reference.md) — All commands, options, and workflows
-- [LLM Backends](docs/llm-backends.md) — Provider setup, credentials, security
+- [Getting Started](docs/guides/getting-started.md) — Installation, first program, common patterns
+- CLI Reference — Run `apxm --help` for all commands, options, and workflows
+- [LLM Backends](docs/guides/llm-backends.md) — Provider setup, credentials, security
 
 ### Concepts
 - [What is A-PXM?](docs/concepts/overview.md) — High-level overview

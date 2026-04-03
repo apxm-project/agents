@@ -1,707 +1,167 @@
-# Registering LLM Backends in APXM
+# LLM Backends
 
-This guide covers how to register and configure LLM backends for use with APXM workflows.
+Practical guide to registering LLM backends and making them available to APXM workflows.
 
-## Table of Contents
-
-- [Overview](#overview)
-- [Credential Storage](#credential-storage)
-- [Supported Providers](#supported-providers)
-- [Registration Commands](#registration-commands)
-- [Provider-Specific Examples](#provider-specific-examples)
-- [Testing Credentials](#testing-credentials)
-- [Configuration Integration](#configuration-integration)
-- [Troubleshooting](#troubleshooting)
+> **Full spec:** [config.md](../reference/config.md) |
+> **Architecture:** [backends-and-models.md](../architecture/backends-and-models.md)
 
 ---
 
-## Overview
+## Quick Start
 
-APXM uses a secure credential store at `~/.apxm/credentials.toml` to manage LLM provider API keys and configuration. The `apxm llm` command provides a simple interface for adding, listing, testing, and removing credentials.
+```bash
+# Register a cloud backend
+apxm backend add my-openai --type cloud --protocol openai --api-key sk-...
 
-**Key Features:**
-- Secure storage with strict file permissions (0600)
-- Support for 5+ LLM providers
-- Custom headers for enterprise gateways
-- Interactive API key entry (hidden input)
-- Validation via real API calls
+# Verify connectivity
+apxm backend test my-openai
+
+# List what you have
+apxm backend list
+apxm models list
+```
+
+That is all you need. The backend is now available to every graph execution.
 
 ---
 
-## Credential Storage
+## Supported Protocols
 
-### Location and Security
+| Protocol | Typical Use | Default Endpoint |
+|----------|-------------|------------------|
+| `openai` | GPT, OpenRouter, Azure OpenAI, any compatible API | `https://api.openai.com/v1` |
+| `anthropic` | Claude models | `https://api.anthropic.com` |
+| `google` | Gemini models | Google AI endpoints |
+| `ollama` | Local Ollama server | `http://localhost:11434` |
+| `vllm` | Self-hosted vLLM (+ APXM graph-hint extensions) | None (must specify) |
 
-Credentials are stored at:
-```
-~/.apxm/credentials.toml
-```
+---
 
-**Security measures:**
-- File permissions: `0600` (owner read/write only)
-- Directory permissions: `0700` (owner-only access)
-- Git protection: refuses to store inside git repositories
-- Auto-generated `.gitignore` as safety net
-- Permissions validated on every read
+## Backend Types
 
-### File Structure
+- **`cloud`** -- SaaS providers; pay-per-token, always on.
+- **`onprem`** -- Enterprise gateways; managed by IT, may need custom headers.
+- **`local`** -- You own the GPUs; full Docker lifecycle via `apxm backend start/stop`.
+
+---
+
+## Config File
+
+All backends live in `~/.apxm/config.toml` (the single source of truth). Minimal example:
 
 ```toml
-# APXM Credentials - Managed by `apxm llm`
-# Permissions: 0600 (owner read/write only)
-# DO NOT edit manually unless you know what you're doing.
-
-[credentials.my-openai]
-provider = "openai"
-api_key = "sk-proj-abc123..."
-model = "gpt-4o-mini"
-
-[credentials.my-anthropic]
-provider = "anthropic"
-api_key = "sk-ant-xyz789..."
-
-[credentials.local-ollama]
-provider = "ollama"
-```
-
-**Note:** While credentials are stored as plaintext, this follows industry-standard practices used by AWS CLI, GitHub CLI, npm, and other developer tools. The strict file permissions prevent unauthorized access on multi-user systems.
-
----
-
-## Supported Providers
-
-| Provider | Name | Default Model | API Key Required | Base URL |
-|----------|------|---------------|------------------|----------|
-| OpenAI | `openai` | `gpt-4o-mini` | Yes | `https://api.openai.com/v1` |
-| Anthropic | `anthropic` | `claude-opus-4` | Yes | `https://api.anthropic.com/v1` |
-| Google | `google` | `gemini-flash-latest` | Yes | `https://generativelanguage.googleapis.com/v1beta` |
-| Ollama | `ollama` | `gpt-oss:120b-cloud` | No | `http://localhost:11434` |
-| OpenRouter | `openrouter` | (varies) | Yes | `https://openrouter.ai/api` |
-
-**Custom Providers:** Any OpenAI-compatible API endpoint can be registered using `provider = "openai"` with a custom `--base-url`.
-
----
-
-## Registration Commands
-
-### Add a Credential
-
-```bash
-apxm llm add <name> --provider <provider> [OPTIONS]
-```
-
-**Arguments:**
-- `<name>` - Unique identifier for this credential (e.g., "my-openai", "work-claude")
-- `--provider` - Provider type (openai, anthropic, google, ollama, openrouter)
-
-**Options:**
-- `--api-key <KEY>` - API key (omit for interactive entry)
-- `--base-url <URL>` - Custom API endpoint
-- `--model <MODEL>` - Default model name
-- `--header <KEY=VALUE>` - Additional HTTP headers (repeatable)
-
-**Examples:**
-
-```bash
-# Interactive API key entry (recommended)
-apxm llm add my-openai --provider openai
-
-# Command-line API key
-apxm llm add my-openai --provider openai --api-key sk-proj-abc123...
-
-# With custom model
-apxm llm add my-gpt4 --provider openai --api-key sk-... --model gpt-4
-
-# Enterprise gateway with custom headers
-apxm llm add corp-llm \
-  --provider openai \
-  --api-key dummy \
-  --base-url https://llm-api.company.com/v1 \
-  --model gpt-oss-20b \
-  --header "X-Custom-Gateway-Key=abc123" \
-  --header "user=$USER"
-```
-
-### List Credentials
-
-```bash
-apxm llm list
-```
-
-**Output:**
-```
-Registered Credentials
-  my-openai        openai       key=sk-p...xyz
-  my-anthropic     anthropic    key=sk-a...123  model=claude-opus-4
-  corp-llm         openai       key=dumm...ummy  model=gpt-oss-20b  +2 headers
-  local-ollama     ollama       key=<none>
-
-Store: /home/user/.apxm/credentials.toml
-```
-
-**Note:** API keys are masked for security. Only the first 4 and last 3 characters are shown.
-
-### Remove a Credential
-
-```bash
-apxm llm remove <name>
-```
-
-**Example:**
-```bash
-apxm llm remove my-openai
-```
-
-**Note:** Credentials are immutable. To update a credential, remove and re-add it:
-```bash
-apxm llm remove my-openai
-apxm llm add my-openai --provider openai --api-key sk-new-key
-```
-
-### Test Credentials
-
-```bash
-# Test a specific credential
-apxm llm test <name>
-
-# Test all registered credentials
-apxm llm test
-```
-
-**Example:**
-```bash
-$ apxm llm test my-openai
-Testing Credentials
-  my-openai        OK (200)
-```
-
-**How Testing Works:**
-
-Different providers use different validation methods:
-
-- **OpenAI/OpenRouter:** Tries `GET /v1/models`, falls back to minimal chat completion
-- **Anthropic:** Sends minimal message request to `/v1/messages`
-- **Google:** Queries `GET /v1/models` with API key
-- **Ollama:** Checks local server at `GET /api/tags`
-
-A 400 status is considered success if authentication worked (indicates valid key but bad request).
-
-### Generate config.toml
-
-```bash
-apxm llm generate-config >> ~/.apxm/config.toml
-```
-
-Converts registered credentials to config.toml format (useful for migration or inspection).
-
----
-
-## Provider-Specific Examples
-
-### OpenAI
-
-**Standard OpenAI API:**
-```bash
-apxm llm add my-openai --provider openai
-# Enter API key when prompted
-```
-
-**With specific model:**
-```bash
-apxm llm add my-gpt4 \
-  --provider openai \
-  --api-key sk-proj-... \
-  --model gpt-4
-```
-
-**OpenAI-compatible endpoint (e.g., Azure OpenAI):**
-```bash
-apxm llm add azure-gpt \
-  --provider openai \
-  --api-key your-key \
-  --base-url https://your-resource.openai.azure.com/openai/deployments/your-deployment \
-  --model gpt-4
-```
-
-**Models supported:**
-- `gpt-4o` - Latest flagship model
-- `gpt-4o-mini` - Fast, cost-effective (default)
-- `gpt-4-turbo` - Previous generation flagship
-- `gpt-4` - Original GPT-4
-- `gpt-3.5-turbo` - Legacy model
-
-### Anthropic
-
-**Standard Claude API:**
-```bash
-apxm llm add my-claude --provider anthropic
-# Enter API key when prompted
-```
-
-**With specific model:**
-```bash
-apxm llm add claude-sonnet \
-  --provider anthropic \
-  --api-key sk-ant-... \
-  --model claude-sonnet-4
-```
-
-**Models supported:**
-- `claude-opus-4` - Highest capability (default)
-- `claude-sonnet-4` - Balanced performance
-- `claude-haiku-4` - Fast, efficient
-- `claude-3-opus-20240229` - Legacy Opus
-- `claude-3-5-sonnet-20241022` - Legacy Sonnet
-
-### Google
-
-**Standard Gemini API:**
-```bash
-apxm llm add my-gemini --provider google
-# Enter API key when prompted
-```
-
-**With specific model:**
-```bash
-apxm llm add gemini-pro \
-  --provider google \
-  --api-key AIza... \
-  --model gemini-pro
-```
-
-**Models supported:**
-- `gemini-flash-latest` - Fast, efficient (default)
-- `gemini-pro-latest` - Advanced capabilities
-- `gemini-pro` - Stable version
-- `gemini-flash` - Speed-optimized
-
-### Ollama (Local Models)
-
-**Standard local Ollama:**
-```bash
-apxm llm add local --provider ollama
-```
-
-**Custom Ollama server:**
-```bash
-apxm llm add remote-ollama \
-  --provider ollama \
-  --base-url http://gpu-server:11434 \
-  --model llama3.1:70b
-```
-
-**Models:** Any model available in your local Ollama installation. Use `ollama list` to see available models.
-
-**Note:** Ollama does not require an API key. The provider connects to your local Ollama server (default: `http://localhost:11434`).
-
-### OpenRouter
-
-**Multi-provider gateway:**
-```bash
-apxm llm add openrouter \
-  --provider openrouter \
-  --api-key sk-or-... \
-  --model anthropic/claude-opus-4
-```
-
-**Note:** OpenRouter provides access to multiple model providers through a single API. Specify the model in the format `provider/model-name`.
-
-### Enterprise/On-Premises Gateways
-
-**Custom gateway with authentication headers:**
-```bash
-apxm llm add corp-gateway \
-  --provider openai \
-  --api-key dummy \
-  --base-url https://llm-api.company.com/OnPrem \
-  --model GPT-oss-20B \
-  --header "X-Custom-Gateway-Key=your-subscription-key" \
-  --header "user=$USER"
-```
-
-**Custom headers are useful for:**
-- Azure APIM subscription keys
-- Corporate proxy authentication
-- User tracking/attribution
-- Custom routing headers
-
-**Note:** Custom headers are added to every request. Values are stored in plaintext in the credentials file.
-
----
-
-## Testing Credentials
-
-### Why Test?
-
-Testing validates:
-1. API key is correct
-2. Network connectivity works
-3. Provider endpoint is reachable
-4. Custom headers are properly configured
-
-### How to Test
-
-**Test a single credential:**
-```bash
-apxm llm test my-openai
-```
-
-**Test all credentials:**
-```bash
-apxm llm test
-```
-
-**Example output:**
-```
-Testing Credentials
-  my-openai        OK (200)
-  my-anthropic     OK (200)
-  corp-gateway     OK (200)
-  broken-key       ERROR (401) Unauthorized
-```
-
-### Interpreting Results
-
-| Status | Meaning |
-|--------|---------|
-| `OK (200)` | Success - credential is valid |
-| `OK (400)` | Success - auth worked, request format issue (still valid) |
-| `ERROR (401)` | Unauthorized - invalid API key |
-| `ERROR (403)` | Forbidden - valid key but insufficient permissions |
-| `ERROR (404)` | Endpoint not found - check base_url |
-| `ERROR (...)` | Other HTTP error - check provider status |
-
-### Common Issues
-
-**OpenAI 404 on /v1/models:**
-- Expected for some on-premises gateways
-- Test falls back to `/chat/completions` automatically
-- If you see `OK (200)` or `OK (400)`, your credential is valid
-
-**Anthropic 400 Bad Request:**
-- Expected - minimal request is intentionally malformed
-- Authentication is checked before request validation
-- `OK (400)` means your API key is valid
-
-**Ollama Connection Failed:**
-- Check Ollama is running: `ollama list`
-- Verify base_url if using remote server
-- Ensure port is accessible (default: 11434)
-
----
-
-## Configuration Integration
-
-### Using Credentials in Workflows
-
-When you register credentials, they become available to APXM workflows. Reference them in your config:
-
-**~/.apxm/config.toml:**
-```toml
-[chat]
-providers = ["my-openai", "my-claude"]
-default_model = "gpt-4o-mini"
-```
-
-The credential names in the `providers` list must match registered credential names.
-
-### Credential Store as Source of Truth
-
-When using `apxm llm`, you don't need `[[llm_backends]]` sections in config.toml. The credential store is the source of truth.
-
-**Before (manual config):**
-```toml
-[[llm_backends]]
+[[backends]]
 name = "my-openai"
-provider = "openai"
-api_key = "sk-proj-..."
-model = "gpt-4"
-
-[[llm_backends]]
-name = "my-claude"
-provider = "anthropic"
-api_key = "sk-ant-..."
+type = "cloud"
+protocol = "openai"
+api_key = "env:OPENAI_API_KEY"
 ```
 
-**After (using credential store):**
+Use `"env:VAR_NAME"` to read secrets from the environment instead of storing them in plaintext.
+
+See [config.md](../reference/config.md) for the full field reference.
+
+---
+
+## Models
+
+Declare models under each backend with `[[backends.models]]`:
+
 ```toml
-[chat]
-providers = ["my-openai", "my-claude"]
+[[backends]]
+name = "anthropic"
+type = "cloud"
+protocol = "anthropic"
+api_key = "env:ANTHROPIC_API_KEY"
+
+[[backends.models]]
+id = "claude-sonnet-4-5"
+aliases = ["sonnet", "claude"]
+context_window = 200000
+tags = ["production", "smart"]
+
+[[backends.models]]
+id = "claude-haiku-4-5"
+aliases = ["haiku", "fast"]
+tags = ["fast", "cheap"]
 ```
 
-Credentials are automatically loaded from `~/.apxm/credentials.toml`.
+Aliases let you reference a model as `sonnet` instead of the full id.
+Tags drive the routing system (see [config.md](../reference/config.md) for `[chat.routing]`).
 
-### Generating config.toml from Credentials
+---
 
-If you want to migrate to manual config or inspect the generated format:
+## Docker Lifecycle (Local Backends)
+
+Local backends with a `[backends.docker]` section support container management:
 
 ```bash
-apxm llm generate-config
+apxm backend start  local-gpu   # launch container
+apxm backend status local-gpu   # check if running
+apxm backend logs   local-gpu   # tail container logs
+apxm backend stop   local-gpu   # shut down
+apxm backend restart local-gpu  # restart
 ```
 
-**Output:**
+Example Docker config:
+
 ```toml
-# Generated by `apxm llm generate-config`
+[[backends]]
+name = "local-gpu"
+type = "local"
+protocol = "vllm"
+endpoint = "http://localhost:8000"
 
-[chat]
-providers = ["my-openai", "my-claude"]
+[backends.docker]
+image = "gpu/pytorch-private:vllm-v0.14.0"
+model_path = "/shared_inference/models/Google/Gemma-3-27b-it"
+tensor_parallel = 4
 
-[[llm_backends]]
-name = "my-openai"
-provider = "openai"
-api_key = "sk-proj-..."
-model = "gpt-4o-mini"
-
-[[llm_backends]]
-name = "my-claude"
-provider = "anthropic"
-api_key = "sk-ant-..."
-model = "claude-opus-4"
-```
-
-You can redirect this to a file:
-```bash
-apxm llm generate-config >> ~/.apxm/config.toml
+[backends.docker.env]
+HIP_VISIBLE_DEVICES = "0,1,2,3"
 ```
 
 ---
 
-## Troubleshooting
+## Migration from `credentials.toml`
 
-### Permission Errors
-
-**Error:** `Credential store at ~/.apxm/credentials.toml has insecure permissions (644)`
-
-**Solution:**
-```bash
-chmod 600 ~/.apxm/credentials.toml
-chmod 700 ~/.apxm
-```
-
-### Git Repository Warning
-
-**Error:** `Credential store is inside a git repository at /path/to/repo`
-
-**Solution:**
-Move `~/.apxm` outside of any git repository. The credential store must be in a location not tracked by git to prevent accidental credential leaks.
-
-### Credential Already Exists
-
-**Error:** `Credential 'my-openai' already exists`
-
-**Solution:**
-Remove the existing credential first:
-```bash
-apxm llm remove my-openai
-apxm llm add my-openai --provider openai --api-key sk-new-key
-```
-
-### Provider Not Found
-
-**Error:** `Unknown provider 'xyz' - cannot validate`
-
-**Solution:**
-Use one of the supported providers:
-- `openai`
-- `anthropic`
-- `google`
-- `ollama`
-- `openrouter`
-
-For custom endpoints, use `provider = "openai"` with `--base-url`.
-
-### API Key Not Working
-
-**Symptoms:**
-- `apxm llm test` shows `ERROR (401)`
-- Workflows fail with authentication errors
-
-**Debugging steps:**
-
-1. **Verify API key is correct:**
-   ```bash
-   # Re-register with correct key
-   apxm llm remove my-openai
-   apxm llm add my-openai --provider openai
-   # Enter correct key when prompted
-   ```
-
-2. **Test with curl:**
-   ```bash
-   # OpenAI
-   curl https://api.openai.com/v1/models \
-     -H "Authorization: Bearer sk-your-key"
-
-   # Anthropic
-   curl https://api.anthropic.com/v1/messages \
-     -H "x-api-key: sk-ant-your-key" \
-     -H "anthropic-version: 2023-06-01" \
-     -H "content-type: application/json" \
-     -d '{"model":"claude-3-haiku-20240307","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}'
-   ```
-
-3. **Check provider status:**
-   - OpenAI: https://status.openai.com/
-   - Anthropic: https://status.anthropic.com/
-   - Google: https://status.cloud.google.com/
-
-4. **Verify account/billing:**
-   - Ensure your API key has active credits
-   - Check if your account is in good standing
-   - Verify usage limits haven't been exceeded
-
-### Custom Headers Not Working
-
-**Symptoms:**
-- On-premises gateway returns 401/403
-- Custom authentication fails
-
-**Debugging:**
-
-1. **Check header format:**
-   ```bash
-   # Correct: KEY=VALUE (no spaces around =)
-   --header "X-Custom-Gateway-Key=abc123"
-
-   # Incorrect: KEY = VALUE
-   --header "X-Custom-Gateway-Key = abc123"
-   ```
-
-2. **Test headers manually:**
-   ```bash
-   curl https://your-gateway.com/v1/chat/completions \
-     -H "Authorization: Bearer dummy" \
-     -H "X-Custom-Gateway-Key: abc123" \
-     -H "user: $USER" \
-     -H "Content-Type: application/json" \
-     -d '{"model":"gpt-4","messages":[{"role":"user","content":"test"}],"max_tokens":1}'
-   ```
-
-3. **Inspect stored headers:**
-   ```bash
-   cat ~/.apxm/credentials.toml
-   ```
-
-   Should show:
-   ```toml
-   [credentials.corp-gateway.headers]
-   X-Custom-Gateway-Key = "abc123"
-   user = "youruser"
-   ```
-
-### Ollama Connection Issues
-
-**Error:** `Failed to connect to Ollama`
-
-**Solutions:**
-
-1. **Check Ollama is running:**
-   ```bash
-   ollama list
-   # Should show installed models
-   ```
-
-2. **Start Ollama if not running:**
-   ```bash
-   ollama serve
-   ```
-
-3. **Verify port accessibility:**
-   ```bash
-   curl http://localhost:11434/api/tags
-   # Should return JSON with model list
-   ```
-
-4. **For remote Ollama:**
-   ```bash
-   # Test remote connection
-   curl http://gpu-server:11434/api/tags
-
-   # Register with correct base_url
-   apxm llm add remote-ollama \
-     --provider ollama \
-     --base-url http://gpu-server:11434
-   ```
-
-### Multiple Credentials for Same Provider
-
-You can register multiple credentials for the same provider:
+If you have backends registered under the legacy `apxm llm` system:
 
 ```bash
-apxm llm add openai-personal --provider openai --api-key sk-personal-...
-apxm llm add openai-work --provider openai --api-key sk-work-...
-apxm llm add gpt4 --provider openai --api-key sk-... --model gpt-4
-apxm llm add gpt4-mini --provider openai --api-key sk-... --model gpt-4o-mini
+apxm backend migrate
 ```
 
-Use different names and reference the appropriate one in your workflow config.
-
-### Environment Variable Substitution
-
-Custom headers support `env:` prefix for environment variables:
-
-**In config.toml (manual config):**
-```toml
-[[llm_backends]]
-name = "corp"
-provider = "openai"
-api_key = "env:CORP_API_KEY"
-base_url = "https://gateway.company.com"
-
-[llm_backends.extra_headers]
-user = "env:USER"
-```
-
-**Note:** The credential store stores literal values. Environment variable substitution only works in config.toml with the `env:` prefix. When using `apxm llm --header "user=$USER"`, the value is expanded by your shell before being stored.
+This converts `~/.apxm/credentials.toml` entries into `[[backends]]` blocks in `config.toml`. After migration, `credentials.toml` is no longer consulted.
 
 ---
 
-## Summary
+## CLI Reference
 
-**Quick Reference:**
+### `apxm backend`
 
-```bash
-# Add credentials
-apxm llm add my-openai --provider openai
-apxm llm add my-claude --provider anthropic
-apxm llm add local --provider ollama
+| Command | Description |
+|---------|-------------|
+| `apxm backend list` | List all registered backends |
+| `apxm backend add <name>` | Add a backend (supports `--type`, `--protocol`, `--api-key`, `--endpoint`, `--header`) |
+| `apxm backend remove <name>` | Remove a backend |
+| `apxm backend test [name]` | Test connectivity (all or one) |
+| `apxm backend migrate` | Import legacy `credentials.toml` |
+| `apxm backend start <name>` | Start Docker container (local only) |
+| `apxm backend stop <name>` | Stop Docker container |
+| `apxm backend status [name]` | Container status |
+| `apxm backend logs <name>` | Tail container logs (`--tail N`) |
+| `apxm backend restart <name>` | Restart container |
 
-# Test credentials
-apxm llm test
+### `apxm models`
 
-# List credentials
-apxm llm list
+| Command | Description |
+|---------|-------------|
+| `apxm models list` | List all models across all backends |
+| `apxm models health` | ModelRouter health status |
 
-# Remove credential
-apxm llm remove my-openai
+---
 
-# Use in config
-echo 'providers = ["my-openai", "my-claude"]' >> ~/.apxm/config.toml
-```
+## See Also
 
-**Best Practices:**
-
-1. Use interactive API key entry (omit `--api-key` flag) to avoid shell history
-2. Test credentials after registration
-3. Use descriptive names (e.g., "work-gpt4", "personal-claude")
-4. Keep credentials outside git repositories
-5. Verify file permissions are 0600
-6. Use `apxm llm test` regularly to catch expired keys
-7. For production, consider using environment variables in config.toml
-
-**Security Notes:**
-
-- Credentials are stored as plaintext (industry standard for CLI tools)
-- File permissions (0600) prevent unauthorized access
-- Never commit `credentials.toml` to version control
-- Use separate credentials for different environments (dev/prod)
-- Rotate API keys regularly following provider best practices
-
-For more information, see:
-- [CLI Reference](cli-reference.md) - Complete CLI documentation
-- [Configuration](../README.md) - Config.toml reference
-- Provider documentation:
-  - [OpenAI API](https://platform.openai.com/docs/api-reference)
-  - [Anthropic API](https://docs.anthropic.com/claude/reference/getting-started)
-  - [Google AI](https://ai.google.dev/docs)
-  - [Ollama](https://ollama.ai/docs)
+- [config.md](../reference/config.md) -- complete config file reference
+- [backends-and-models.md](../architecture/backends-and-models.md) -- architecture and routing details

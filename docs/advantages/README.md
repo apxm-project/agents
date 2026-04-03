@@ -7,7 +7,6 @@ This directory documents the concrete value propositions of building agents on A
 | Document | Description |
 |----------|-------------|
 | [optimizations.md](optimizations.md) | The optimization catalog — compiler and runtime optimizations that benefit every agent on the platform |
-| [hypotheses.md](hypotheses.md) | Testable hypotheses about A-PXM's value, with success metrics |
 | [llvm-parallel.md](llvm-parallel.md) | Why the LLVM analogy is architecturally precise, not aspirational |
 
 ## The Value Question

@@ -206,7 +206,7 @@ def register_commands(app: Typer) -> None:
 
         # -- Stage 6: vLLM (optional) ---
         print_step(msg.STAGE_VLLM)
-        vllm_dir = config.apxm_dir / "ext" / "vllm"
+        vllm_dir = config.apxm_dir / "external" / "vllm"
         if with_vllm:
             if check:
                 if vllm_dir.exists() and (vllm_dir / "pyproject.toml").exists():
@@ -219,7 +219,7 @@ def register_commands(app: Typer) -> None:
                 if not (vllm_dir / "pyproject.toml").exists():
                     print_info(msg.MSG_VLLM_SUBMODULE_INIT)
                     run_logged(
-                        ["git", "submodule", "update", "--init", "ext/vllm"],
+                        ["git", "submodule", "update", "--init", "external/vllm"],
                         log_path=log_path, label="Git submodule init",
                         spinner_text=msg.MSG_VLLM_SUBMODULE_INIT,
                         cwd=config.apxm_dir, append=True,

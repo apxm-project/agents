@@ -79,7 +79,7 @@ Step-by-step plan to build a Codex-class coding agent on A-PXM. Frontends such a
 | Latency vs. raw Codex | ≤ 90% (10% reduction from parallelism) | H2 (≥2x speedup on N≥3 branches) |
 | Lines of agent-specific code | ≤ 500 (everything else is shared substrate) | H7 (≤10% of from-scratch code) |
 
-See `advantages/hypotheses.md` for full measurement plans and current status of each hypothesis.
+Measurement plans and hypothesis validation criteria are tracked in the implementation plan phases above.
 
 ## Dependencies
 
@@ -96,4 +96,4 @@ See `advantages/hypotheses.md` for full measurement plans and current status of 
   - AAM checkpoint/restore -- partially implemented (`AamCheckpoint` covers beliefs + goals but not capabilities)
   - Async user approval flow for interceptors -- `InterceptDecision` exists but no interactive approval channel (P1 gap)
 
-Cross-references: These gaps align with hypotheses H7 (shared infrastructure, `advantages/hypotheses.md`) and the P0 substrate gaps in `implementation/TODO.md`.
+Cross-references: These gaps align with hypothesis H7 (shared infrastructure) and the P0 substrate gaps in `implementation/TODO.md`.

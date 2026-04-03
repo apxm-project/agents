@@ -1,9 +1,9 @@
 # APXM Backend Unification — Implementation Specification
 
-> **Status: COMPLETED (2026-04-03)**
+> **Historical document** — this implementation plan has been completed. See [`backends-and-models.md`](backends-and-models.md) for the current architecture.
 >
-> This document is historical. All phases have been implemented and legacy removed.
-> For the current config format, see [`docs/reference/config.md`](../reference/config.md).
+> **Status: COMPLETED (2026-04-03)** — All phases have been implemented and legacy removed.
+> For the full configuration format, see [`docs/reference/config.md`](../reference/config.md).
 
 ---
 
@@ -305,10 +305,10 @@ group = "Configuration"
 
 ## Success Criteria
 
-- [ ] `apxm backend add/list/remove/test` works
-- [ ] `apxm backend start/stop` manages Docker containers
-- [ ] `apxm backend health` shows circuit breaker state
-- [ ] Existing `credentials.toml` users continue to work
-- [ ] ModelRouter loads models from [[backends.models]]
-- [ ] All 400+ tests pass
-- [ ] Zero breaking changes to graph execution
+- [x] `apxm backend add/list/remove/test` works
+- [x] `apxm backend start/stop` manages Docker containers
+- [x] `apxm backend health` shows circuit breaker state
+- [x] Existing `credentials.toml` users continue to work
+- [x] ModelRouter loads models from [[backends.models]]
+- [x] All 400+ tests pass
+- [x] Zero breaking changes to graph execution

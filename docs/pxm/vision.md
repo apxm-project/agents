@@ -31,7 +31,7 @@ Every one of these properties has a direct counterpart in A-PXM.
 
 ### AIS is the IR
 
-The Agent Instruction Set is A-PXM's intermediate representation. It is a set of 39 [typed operations](ais.md) -- ASK, THINK, REASON, INV, PLAN, REFLECT, VERIFY, QMEM, UMEM, FENCE, BRANCH, MERGE, COMM, and others -- organized into a dataflow graph with typed edges.
+The Agent Instruction Set is A-PXM's intermediate representation. It is the full set of [typed operations](ais.md) -- ASK, THINK, REASON, INV, PLAN, REFLECT, VERIFY, QMEM, UMEM, FENCE, BRANCH_ON_VALUE, MERGE, COMM, and others -- organized into a dataflow graph with typed edges.
 
 Any frontend can emit AIS graphs:
 
@@ -113,7 +113,7 @@ From the backend side: target any deployment -- local, cloud,
 edge, sandboxed -- by implementing the AIS operation handlers.
 ```
 
-The typed operations (ASK, THINK, REASON, INV, QMEM, UMEM, FENCE, BRANCH, MERGE, COMM, FLOW_CALL, DELEGATE, NEGOTIATE) are the "instructions" of this ISA. Each has:
+The typed operations (ASK, THINK, REASON, INV, QMEM, UMEM, FENCE, BRANCH_ON_VALUE, MERGE, COMM, FLOW_CALL, DELEGATE, NEGOTIATE) are the "instructions" of this ISA. Each has:
 
 - **Typed inputs and outputs** -- not opaque function calls, but values with known types
 - **Explicit data edges** -- declaring exactly what each operation depends on
@@ -250,7 +250,7 @@ The value proposition is not any single feature. It is the combination of formal
 | Capability | Ad-Hoc Runtime | A-PXM |
 |-----------|---------------|-------|
 | **Optimization** | Manual. Developer must find and eliminate redundant calls | Automatic. Compiler passes (FuseAskOps, CSE, DCE) compound over time |
-| **Verification** | Runtime errors after expensive LLM calls | Compile-time type checking (49x faster error detection) |
+| **Verification** | Runtime errors after expensive LLM calls | Compile-time type checking (errors caught before execution) |
 | **Parallelism** | Manual `async`/`await`, error-prone | Automatic from DAG structure, zero developer effort |
 | **Auditability** | Log files, stack traces | Formal execution traces with typed AAM state transitions |
 | **Portability** | Tied to one runtime, one deployment | `.apxmobj` artifacts run on any conforming backend |
@@ -264,7 +264,7 @@ The value proposition is not any single feature. It is the combination of formal
 A-PXM's current implementation provides the [foundations](foundations.md): typed AIS operations, MLIR-based compilation, token-counting dataflow scheduling, three-tier memory, and the AAM state model. The [implementation TODOs](../implementation/TODO.md) identify what remains:
 
 **Near-term (realize the AAM):**
-- All 39 operations produce AAM state transitions (currently 7 of 39)
+- All AIS operations produce AAM state transitions (most are not yet wired)
 - Hierarchical goal tree replaces flat priority queue
 - Scoped AAM per workflow node (Inherit/Isolate/Filter policies)
 - Unified tool discovery pipeline (CLI registration + MCP + runtime)

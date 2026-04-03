@@ -202,7 +202,7 @@ APXM formalizes agent memory into three tiers, each with distinct semantics, bac
 
 | Tier | Backing Store | Access Latency | Semantics | Mutability |
 |------|---------------|----------------|-----------|------------|
-| **STM** (Short-Term Memory) | In-memory KV map (`DashMap`) | Microseconds | Working memory / session scratch | Read-write, volatile |
+| **STM** (Short-Term Memory) | In-memory KV map (`RwLock<HashMap>`) | Microseconds | Working memory / session scratch | Read-write, volatile |
 | **LTM** (Long-Term Memory) | SQLite (WAL mode) | Milliseconds | Persistent knowledge, learned facts | Read-write, durable |
 | **Episodic** | Append-only log | Milliseconds | Execution traces for reflection | Append-only, durable |
 
@@ -220,7 +220,7 @@ Unlike frameworks where memory access is buried in library calls or hidden in fu
 
 | Instruction | Signature | Semantics |
 |-------------|-----------|-----------|
-| `QMEM` | `(q: String, sid: SessionID, k: Int) -> Value` | Query memory with tiered fallthrough: STM -> LTM -> Episodic |
+| `QMEM` | `(q: String, sid: SessionID, k: Int) -> Value` | Query memory; dispatches to a single tier (tiered fallthrough STM -> LTM -> Episodic is aspirational, not yet implemented) |
 | `UMEM` | `(data: Value, sid: SessionID) -> Void` | Write to memory; optionally durable (write-through to LTM) |
 | `FENCE` | `() -> Void` | Memory barrier: flush pending writes, enforce ordering |
 
@@ -254,7 +254,7 @@ Because memory operations are DAG nodes, the compiler can:
 APXM memory is addressed by **tier and key**, not by raw numeric addresses. The `MemorySpace` enum (`Stm | Ltm | Episodic`) is a compile-time construct that routes operations to the correct backing store through a memory router:
 
 ```
-Operation -> Memory Router -> { STM (DashMap) | LTM (SQLite) | Episodic (append log) }
+Operation -> Memory Router -> { STM (RwLock<HashMap>) | LTM (SQLite) | Episodic (append log) }
 ```
 
 Each tier enforces its own invariants:
@@ -279,7 +279,7 @@ Each tier has an **independent concurrency mechanism**, preventing cross-tier co
 
 | Tier | Mechanism | Contention Profile |
 |------|-----------|-------------------|
-| STM | Lock-free (`DashMap` sharding) | No blocking; concurrent reads and writes to different keys |
+| STM | `RwLock`-based | Concurrent readers; exclusive writer access |
 | LTM | SQLite WAL mode | Concurrent readers; single writer with millisecond commits |
 | Episodic | Single-writer append; reader snapshots via WAL | No read-write conflicts |
 

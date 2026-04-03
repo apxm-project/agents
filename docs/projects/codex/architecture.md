@@ -88,7 +88,7 @@ A Codex-class coding agent session as an AIS graph:
 
 1. **Compiler sees the full workflow** — can fuse operations, eliminate dead paths, extract parallelism
 2. **Formal state model** — AAM transitions record belief/goal changes, and child flows/sub-agents can now execute in snapshot-scoped child AAMs
-3. **Shared optimizations** — prompt caching, model routing, token compaction benefit all agents (prompt caching and model routing not yet implemented -- see `advantages/hypotheses.md` H3, H5)
+3. **Shared optimizations** — prompt caching, model routing, token compaction benefit all agents (prompt caching and model routing not yet implemented)
 4. **Checkpoint/resume** — AAM state can be serialized and restored (`AamCheckpoint` covers beliefs + goals; capabilities not included yet)
 5. **Tool isolation** — capability interceptors provide auditable, policy-driven tool access (no OS-level sandboxing yet -- P0 gap)
 

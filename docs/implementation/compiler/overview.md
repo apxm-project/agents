@@ -5,98 +5,63 @@ description: "Four-stage pipeline from canonical ApxmGraph input to optimized .a
 
 # Compilation Pipeline
 
-The A-PXM compiler transforms canonical `ApxmGraph` input into an optimized, portable execution artifact. The pipeline has four stages, each with well-defined input and output formats, enabling independent testing and extension.
+The A-PXM compiler transforms canonical `ApxmGraph` input into an optimized, portable execution artifact. The pipeline has four stages, each with well-defined input and output formats.
 
 ## Pipeline Overview
 
-```mermaid
-graph LR
-    SRC["Frontend Input\n(DSL/Rust/Python)"] --> NORM["Stage 1\nNormalize to ApxmGraph"]
-    NORM --> MLIR["Stage 2\nLower to AIS Dialect"]
-    MLIR --> OPT["Stage 3\nOptimize"]
-    OPT --> EMIT["Stage 4\nArtifact Emit"]
-    EMIT --> OBJ[".apxmobj\nBinary"]
-
-    style SRC fill:#e0f2fe
-    style OBJ fill:#dcfce7
+```
+  Graph JSON ──► Parse ──► Lower to MLIR ──► Optimize ──► Emit ──► .apxmobj
+                  (1)          (2)              (3)         (4)
 ```
 
-## Stage 1: Normalize to ApxmGraph
+## Stage 1: Parse
 
-**Input:** Frontend source (AIS DSL AST, Rust builder graph, Python graph)
+**Input:** Graph JSON (or AIS DSL / directory layout)
 **Output:** Canonical `ApxmGraph`
 
-The normalization layer performs:
+Parses the frontend source into an `ApxmGraph`, then validates canonical constraints (node IDs, edge references, DAG structure, parameter integrity). Errors at this stage produce human-readable diagnostics before any MLIR work begins.
 
-1. **Frontend capture**: parse/collect frontend constructs.
-2. **Graph construction**: map frontend constructs into `ApxmGraph` nodes/edges/parameters.
-3. **Graph validation**: enforce canonical graph constraints (IDs, edge references, DAG checks, parameter integrity).
-
-Errors at this stage produce human-readable diagnostics before any MLIR lowering or runtime execution.
-
-### DSL Frontend Note
-
-For AIS DSL specifically, frontend capture proceeds through AST iteration before graph construction:
-- **AAM declarations**: Beliefs, Goals, Capabilities with their types
-- **Workflow blocks**: sequences of AIS instructions with data flow annotations
-- **Subgraph definitions**: named blocks for BRANCH/SWITCH targets and TRY_CATCH scopes
-
-## Stage 2: Lower to AIS Dialect
+## Stage 2: Lower to MLIR
 
 **Input:** `ApxmGraph`
 **Output:** Unoptimized AIS MLIR dialect
 
-The lowering pipeline converts graph IR into AIS Dialect MLIR, constructing typed operations with custom verifiers:
+Converts graph IR into AIS Dialect MLIR: resolves implicit types, constructs typed operations with custom verifiers, and wraps subgraphs (TRY_CATCH scopes, BRANCH targets) in MLIR regions.
 
-1. **Type inference**: resolve implicit types from graph context.
-2. **Op construction**: create MLIR operations for each AIS graph op with full type annotations.
-3. **Verifier attachment**: attach custom verification logic that checks AIS-specific invariants (latency budget ranges, capability existence, protocol validity).
-4. **Region construction**: wrap subgraphs (TRY_CATCH scopes, BRANCH targets) in MLIR regions.
+At O2 and above, two **graph-level passes** run on the `ApxmGraph` *before* MLIR lowering so that the resulting hint attributes are visible in the generated IR:
 
-```mlir
-// Example lowerer output
-module @research_workflow {
-  func.func @main(%ctx: !ais.context) -> !ais.value {
-    %query = "ais.qmem"(%search_key, %session, %k) : (...) -> !ais.value
-    %analysis = "ais.reason"(%prompt, %query) {
-      latency_budget = 10000 : i64
-    } : (!ais.string, !ais.value) -> !ais.future<!ais.string>
-    %result = "ais.inv"(%summarize_tool, %analysis) : (...) -> !ais.future<!ais.tool_result>
-    return %result : !ais.future<!ais.tool_result>
-  }
-}
-```
+- `prompt_caching` -- detects shared prompt prefixes across operations and marks them for caching
+- `memoization_hints` -- identifies deterministic operations and annotates them for cross-run caching
 
 ## Stage 3: Optimize
 
 **Input:** Unoptimized AIS MLIR
 **Output:** Optimized AIS MLIR
 
-The optimizer runs a configurable sequence of passes over the MLIR representation:
+The optimizer runs a configurable sequence of MLIR passes. The pass list depends on the optimization level:
 
-| Pass | Effect | Typical Improvement |
-|------|--------|-------------------|
-| **FuseAskOps** | Batch producer-consumer ASK chains into single calls | 1.29x fewer API calls |
-| **CSE** | Eliminate redundant computations with identical inputs | Variable |
-| **Dead-code elimination** | Remove operations whose results are never consumed | Reduces graph size |
-| **Canonicalization** | Normalize operation patterns for consistent downstream handling | Enables further optimization |
+| Level | Passes | Description |
+|-------|--------|-------------|
+| **O0** | *(none)* | No optimization; passthrough |
+| **O1** | `normalize`, `build-prompt`, `unconsumed-value-warning`, `scheduling`, `fuse-ask-ops`, `canonicalizer`, `cse`\*, `symbol-dce` | Basic optimizations (8 passes) |
+| **O2** | `normalize`, `build-prompt`, `template-specialization`, `unconsumed-value-warning`, `schema-narrowing`, `scheduling`, `fuse-ask-ops`, `condense-ops`, `dead-context-elimination`, `canonicalizer`, `cse`\*, `symbol-dce` | Standard optimizations (12 passes) |
+| **O3** | Preamble (`normalize`, `build-prompt`, `unconsumed-value-warning`) then the O2 optimization core iterated up to 10 times for fixed-point convergence | Aggressive optimizations |
 
-Passes are composable and order-independent where possible. The optimizer iterates until a fixed point is reached (no pass makes further changes).
+\* CSE is skipped when the `--no-cse-llm` flag is set (useful for non-zero temperature workflows).
 
-See [Optimization Passes](optimization-passes.md) for detailed descriptions.
+See [Optimization Passes](optimization-passes.md) for detailed descriptions of each pass.
 
 ## Stage 4: Artifact Emit
 
 **Input:** Optimized AIS MLIR
 **Output:** `.apxmobj` binary artifact
 
-The emitter serializes the optimized dataflow graph into a portable binary format:
+The emitter serializes the optimized dataflow graph into a bincode-serialized `ArtifactPayload`:
 
-1. **DAG serialization**: encode nodes (operations), edges (token flows), and subgraphs (regions) into a compact binary representation.
+1. **DAG serialization**: encode nodes, edges, and subgraphs into a compact binary representation.
 2. **Metadata embedding**: attach AAM declarations, capability schemas, and compilation flags.
-3. **Entry point registration**: mark the top-level workflow entry points for the runtime loader.
-4. **Schema packing**: include parameter schemas for runtime type checking of external inputs.
-5. **Version stamping**: embed the artifact format version for backwards compatibility.
+3. **Entry point registration**: mark top-level workflow entry points for the runtime loader.
+4. **Version stamping**: embed the artifact format version for backwards compatibility.
 
 See [Artifact Format](artifact-format.md) for the binary layout.
 
@@ -104,19 +69,12 @@ See [Artifact Format](artifact-format.md) for the binary layout.
 
 The compiler provides errors at the earliest possible stage:
 
-```mermaid
-graph TD
-    subgraph Errors["Error Detection by Stage"]
-        P["Normalization Errors\n(parse/frontends, invalid graph shape)"]
-        M["MLIR Errors\n(type mismatches, invalid ops)"]
-        O["Optimization Warnings\n(dead code, unused capabilities)"]
-        E["Emit Errors\n(schema violations)"]
-    end
+- **Parse errors**: invalid graph shape, missing fields, malformed JSON
+- **MLIR errors**: type mismatches, invalid operations, verifier failures
+- **Optimization warnings**: dead code, unused capabilities, unconsumed values
+- **Emit errors**: schema violations
 
-    P --> M --> O --> E
-```
-
-Compared to runtime-only error detection (as in LangGraph), compile-time checking catches errors **49x faster** -- before any LLM call is made, before any tool is invoked, before any cost is incurred.
+Compile-time checking catches structural errors before any LLM call is made, before any tool is invoked, before any cost is incurred.
 
 ## CLI Usage
 
@@ -124,14 +82,17 @@ Compared to runtime-only error detection (as in LangGraph), compile-time checkin
 # Full pipeline: graph source to artifact
 apxm compile workflow.json -o workflow.apxmobj
 
-# Compile with no optimization passes
+# No optimization
 apxm compile workflow.json -o workflow.apxmobj -O0
 
-# Compile with aggressive optimization
+# Aggressive optimization with convergence
 apxm compile workflow.json -o workflow.apxmobj -O3
 
-# Emit compilation diagnostics JSON
-apxm compile workflow.json -o workflow.apxmobj --emit-diagnostics compile_diagnostics.json
+# Skip CSE for non-deterministic workflows
+apxm compile workflow.json -o workflow.apxmobj --no-cse-llm
+
+# Emit per-pass diagnostics
+apxm compile workflow.json -o workflow.apxmobj --emit-diagnostics diag.json
 ```
 
 ---
@@ -141,5 +102,3 @@ apxm compile workflow.json -o workflow.apxmobj --emit-diagnostics compile_diagno
 1. C. Lattner and V. Adve, "LLVM: A Compilation Framework for Lifelong Program Analysis & Transformation," in *Proc. CGO '04*, IEEE, 2004. DOI: [10.1109/CGO.2004.1281665](https://doi.org/10.1109/CGO.2004.1281665)
 
 2. C. Lattner et al., "MLIR: Scaling Compiler Infrastructure for Domain Specific Computation," in *Proc. CGO '21*, IEEE, 2021. DOI: [10.1109/CGO51591.2021.9370308](https://doi.org/10.1109/CGO51591.2021.9370308)
-
-3. G. R. Gao, R. Patel, and T. St. John, "The Codelet Program Execution Model," presented at *WiA, ISCA '13*, Tel-Aviv, Israel, 2013.

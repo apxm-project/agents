@@ -22,7 +22,7 @@ The spec (docs/pxm/ais.md) lists 39 ops in 9 categories. Cross-referencing with 
 - [x] **NOP** -- Resolved: enum variant, handler (nop.rs), dispatcher routing all exist.
 - [x] **IDENTITY** -- Resolved: enum variant, handler (identity.rs), dispatcher routing all exist.
 
-Note: The enum has 32 variants but they differ from the spec's 32. The enum includes Agent, Exc, Print, Jump, BranchOnValue, LoopStart, LoopEnd, Return, Switch, FlowCall, Err, UpdateGoal, Guard, Claim, Pause, Resume, ConstStr, Yield -- which are NOT in the spec table. The spec lists DELEGATE, NEGOTIATE, NOP, IDENTITY, COMM, FLOW -- which are NOT in the enum (COMM -> Communicate, FLOW -> FlowCall exist as renames).
+Note: The AIS enum (see `apxm ops list` for current count) has variants that differ from the spec's 32. The enum includes Agent, Exc, Print, Jump, BranchOnValue, LoopStart, LoopEnd, Return, Switch, FlowCall, Err, UpdateGoal, Guard, Claim, Pause, Resume, ConstStr, Yield -- which are NOT in the spec table. The spec lists DELEGATE, NEGOTIATE, NOP, IDENTITY, COMM, FLOW -- which are NOT in the enum (COMM -> Communicate, FLOW -> FlowCall exist as renames).
 
 ---
 
@@ -79,8 +79,8 @@ Items here are architectural and span multiple crates. Per-handler and per-sched
 
 ### Key metric: AAM transition coverage
 
-- **Operations with AAM transitions**: 32 of 32 (100%) -- fixed in `61d408f`
-- ~~Operations without AAM transitions: 25 of 32 (78%)~~
+- **Operations with AAM transitions**: all ops have transitions (100%) -- fixed in `61d408f`
+- ~~Operations without AAM transitions: previously 78%~~
 - **Spec claims**: "every AIS instruction is a state transition on the AAM"
 - **Reality**: all operations now produce transitions (Gap 8 resolved)
 

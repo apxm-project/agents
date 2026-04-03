@@ -11,19 +11,48 @@ This page covers the Rust implementation specifics.
 
 ## Scheduler State
 
+> **Simplified sketch** -- see `crates/apxm-runtime/src/scheduler/state.rs` for
+> the full definition which includes work-stealing, concurrency control, metrics,
+> and execution frames.
+
 ```rust
 struct SchedulerState {
-    tokens: DashMap<TokenId, TokenState>,   // live token metadata
-    ops: DashMap<NodeId, OpState>,          // pending counters + status
-    ready: ReadySet,                        // lock-free set of runnable nodes
-    queue: PriorityQueue<NodeId, Priority>, // scheduling order
+    // Immutable node data
+    nodes: Arc<DashMap<NodeId, Arc<Node>>>,
+    priorities: Arc<DashMap<NodeId, Priority>>,
+
+    // Readiness tracking
+    ready_set: ReadySet,
+    tokens: Arc<DashMap<TokenId, TokenState>>,
+    op_states: Arc<DashMap<NodeId, OpState>>,
+
+    // Work-stealing scheduler + priority queue
+    work_stealing: Arc<WorkStealingScheduler>,
+    queue: Arc<PriorityQueue>,
+
+    // Concurrency control
+    concurrency: ConcurrencyControl,
+    // ... coordination, promise tracking, etc.
 }
 ```
 
 `DashMap` provides sharded concurrent access so multiple executor threads can
-retire tokens without contending on a single lock. Chosen over `RwLock<HashMap>`
-because it eliminates reader-writer contention at the cost of slightly higher
-per-key overhead -- a worthwhile trade at the concurrency levels A-PXM targets.
+retire tokens without contending on a single lock.
+
+### Work-Stealing
+
+The scheduler uses a 3-level steal hierarchy (implemented in
+`scheduler/work_stealing.rs`):
+
+1. **Local queue** -- worker pops from its own deque (fastest path).
+2. **Global injectors** -- steal from priority-level injectors, high to low.
+3. **Peer workers** -- round-robin steal from other workers' deques (slowest).
+
+### Cost Budget Enforcement
+
+Before execution begins, `enforce_cost_budget()` sums estimated latencies across
+the DAG and rejects execution if the total exceeds the configured `max_cost`.
+This happens before state construction, so no work is wasted.
 
 ## Backpressure
 
@@ -39,5 +68,7 @@ configurable timeout.
 ## Priority Policy
 
 The compiler annotates each node with a static priority estimate based on
-critical-path length. The scheduler uses it as the initial key and may adjust
-dynamically based on observed latency.
+critical-path length. At execution startup, `apply_goal_priorities()` projects
+AAM goal priorities onto node scheduler priorities (using `max(compile_time,
+goal_priority)`), but this projection happens once before workers start -- the
+scheduler does not adjust priority dynamically during execution.

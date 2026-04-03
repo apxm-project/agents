@@ -59,6 +59,7 @@ variant.  If the two tables disagree, operations are misidentified at runtime.
 | 35 | `SpawnAgent` | `SpawnAgent` | `ais.spawn_agent` |
 | 36 | `RegisterCapability` | `RegisterCapability` | `ais.register_capability` |
 | 37 | `Autonomous` | `Autonomous` | `ais.autonomous` |
+| 38 | `Checkpoint` | `Checkpoint` | `ais.checkpoint` |
 
 ### 1.2 Phase 1 Extensions (Rust-Only, indices 25–30 reserved)
 
@@ -75,6 +76,8 @@ created programmatically in Rust, not compiled from MLIR source:
 | `Pause` | 28 | `handlers/pause.rs` |
 | `Resume` | 29 | `handlers/resume.rs` |
 
+Index 30 is an unused reserved slot (5 ops occupy indices 25–29; index 30 remains available).
+
 ### 1.3 Rust-Only (no wire index)
 
 These ops have no wire index and cannot be emitted by the compiler:
@@ -82,8 +85,10 @@ These ops have no wire index and cannot be emitted by the compiler:
 | Rust `AISOperationType` | Handler module |
 |-------------------------|----------------|
 | `Agent` | *(structural, no handler)* |
-| `ConstStr` | `handlers/const_str.rs` |
 | `Yield` | *(region terminator, no handler)* |
+
+Note: `ConstStr` was previously listed here but it **does** have wire index 19
+(see section 1.1) and can be emitted by the compiler.
 
 ---
 
@@ -94,7 +99,7 @@ wire format.
 
 ### 2.1 Outer Container (`.apxm` / `.apxmobj`)
 
-Defined in `crates/runtime/apxm-artifact/src/lib.rs`.
+Defined in `crates/apxm-artifact/src/lib.rs`.
 
 The outer container has a **52-byte fixed header** followed by a
 bincode-serialized payload:
@@ -236,11 +241,11 @@ Follow these steps in order to add a new AIS operation end-to-end:
 3. **`AISOps.td`** -- Add the TableGen op definition (`AIS_NewOp`).  This
    drives MLIR C++ codegen for parsing, verification, and printing.
 
-4. **`crates/runtime/apxm-runtime/src/executor/handlers/`** -- Create a new
+4. **`crates/apxm-runtime/src/executor/handlers/`** -- Create a new
    handler module (e.g. `new_op.rs`) with `pub async fn execute(...)`.  Register
    the module in `handlers/mod.rs`.
 
-5. **`crates/runtime/apxm-runtime/src/executor/dispatcher.rs`** -- Add a match
+5. **`crates/apxm-runtime/src/executor/dispatcher.rs`** -- Add a match
    arm routing `AISOperationType::NewOp` to the new handler.
 
 6. **Tests** -- Update `test_operation_counts` and `all_operations_covered`
@@ -252,7 +257,7 @@ Follow these steps in order to add a new AIS operation end-to-end:
 
 ## 4. Shared Constants
 
-`crates/runtime/apxm-core/src/constants.rs` is the canonical source for
+`crates/apxm-core/src/constants.rs` is the canonical source for
 string constants shared between the compiler and runtime.  Key namespaces:
 
 - **`constants::graph::attrs`** -- Attribute keys used in node attribute maps
