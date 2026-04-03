@@ -447,6 +447,48 @@ impl AISOperationType {
 // Field Specifications
 // ============================================================================
 
+/// Indicates that an operation field references an external resource.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReferenceType {
+    /// ACP agent profile (e.g., "claude", "codex").
+    Profile,
+    /// Registered LLM backend (e.g., "openai", "corp-gateway").
+    Backend,
+    /// LLM model identifier (e.g., "gpt-4", "claude-sonnet-4").
+    Model,
+    /// Registered tool/capability (e.g., "bash", "web_search").
+    Capability,
+}
+
+impl ReferenceType {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Profile => "agent profile",
+            Self::Backend => "backend",
+            Self::Model => "model",
+            Self::Capability => "capability",
+        }
+    }
+
+    pub const fn list_command(self) -> &'static str {
+        match self {
+            Self::Profile => "apxm agent list",
+            Self::Backend => "apxm backend list",
+            Self::Model => "apxm backend list",
+            Self::Capability => "apxm tool list",
+        }
+    }
+
+    pub const fn add_command(self) -> &'static str {
+        match self {
+            Self::Profile => "apxm agent add",
+            Self::Backend => "apxm backend add",
+            Self::Model => "apxm backend add-model",
+            Self::Capability => "apxm tool add",
+        }
+    }
+}
+
 /// A field in an operation specification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OperationField {
@@ -456,6 +498,8 @@ pub struct OperationField {
     pub required: bool,
     /// Description of the field.
     pub description: &'static str,
+    /// If set, the field value references an external resource of this type.
+    pub ref_type: Option<ReferenceType>,
 }
 
 impl OperationField {
@@ -465,6 +509,7 @@ impl OperationField {
             name,
             required: true,
             description,
+            ref_type: None,
         }
     }
 
@@ -474,6 +519,35 @@ impl OperationField {
             name,
             required: false,
             description,
+            ref_type: None,
+        }
+    }
+
+    /// Create a required field that references an external resource.
+    pub const fn required_ref(
+        name: &'static str,
+        description: &'static str,
+        ref_type: ReferenceType,
+    ) -> Self {
+        Self {
+            name,
+            required: true,
+            description,
+            ref_type: Some(ref_type),
+        }
+    }
+
+    /// Create an optional field that references an external resource.
+    pub const fn optional_ref(
+        name: &'static str,
+        description: &'static str,
+        ref_type: ReferenceType,
+    ) -> Self {
+        Self {
+            name,
+            required: false,
+            description,
+            ref_type: Some(ref_type),
         }
     }
 }
@@ -651,7 +725,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         fields: &[
             OperationField::required("template_str", "Prompt template for the question"),
             OperationField::optional("temperature", "Sampling temperature (0.0-1.0)"),
-            OperationField::optional("model", "LLM model override (uses config default)"),
+            OperationField::optional_ref("model", "LLM model override (uses config default)", ReferenceType::Model),
         ],
         needs_submission: true,
         min_inputs: 0,
@@ -674,7 +748,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             OperationField::required("template_str", "Prompt template for deep reasoning"),
             OperationField::optional("budget", "Token budget for extended thinking"),
             OperationField::optional("temperature", "Sampling temperature (0.0-1.0)"),
-            OperationField::optional("model", "LLM model override (uses config default)"),
+            OperationField::optional_ref("model", "LLM model override (uses config default)", ReferenceType::Model),
         ],
         needs_submission: true,
         min_inputs: 0,
@@ -696,7 +770,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         fields: &[
             OperationField::required("template_str", "Prompt template for structured reasoning"),
             OperationField::optional("temperature", "Sampling temperature (0.0-1.0)"),
-            OperationField::optional("model", "LLM model override (uses config default)"),
+            OperationField::optional_ref("model", "LLM model override (uses config default)", ReferenceType::Model),
             OperationField::optional("structured", "Enable structured JSON output"),
         ],
         needs_submission: true,
@@ -779,7 +853,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             r#"{"id": 2, "op": "INV", "attributes": {"capability": "web_search", "parameters": {"query": "{{node_1}}"}}}"#,
         ),
         fields: &[
-            OperationField::required("capability", "Name of the capability/tool to invoke"),
+            OperationField::required_ref("capability", "Name of the capability/tool to invoke", ReferenceType::Capability),
             OperationField::optional("parameters", "Parameters to pass to the tool"),
         ],
         needs_submission: true,
@@ -1300,15 +1374,16 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         ),
         fields: &[
             OperationField::required("agent_name", "Name for the new agent"),
-            OperationField::optional(
+            OperationField::optional_ref(
                 "profile",
                 "ACP agent profile (e.g. 'claude', 'codex'). When present, spawns an ACP subprocess",
+                ReferenceType::Profile,
             ),
             OperationField::optional(
                 "mode",
                 "Agent mode to set after spawn (e.g. 'architect', 'code')",
             ),
-            OperationField::optional("model", "Model override (e.g. 'claude-sonnet-4')"),
+            OperationField::optional_ref("model", "Model override (e.g. 'claude-sonnet-4')", ReferenceType::Model),
             OperationField::optional(
                 "cwd",
                 "Working directory for the agent subprocess (defaults to current dir)",

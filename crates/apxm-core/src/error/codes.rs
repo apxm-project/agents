@@ -270,6 +270,30 @@ pub enum ErrorCode {
     LLMBackendError = 406,
 
     // ========================================================================
+    // Semantic Validation Errors (E501-E599)
+    // ========================================================================
+    /// E501: Template placeholder out of bounds
+    TemplatePlaceholderBounds = 501,
+    /// E502: COMMUNICATE recipient not spawned in graph
+    CommunicateRecipientNotSpawned = 502,
+    /// E503: Duplicate agent name in SPAWN_AGENT nodes
+    DuplicateAgentName = 503,
+    /// E504: INV params_json placeholder out of bounds
+    InvPlaceholderBounds = 504,
+    /// E505: Parameter count vs entry node count mismatch
+    ParameterArityMismatch = 505,
+    /// E506: Agent profile not registered
+    ProfileNotRegistered = 506,
+    /// E507: INV(acp) references unregistered agent
+    InvAcpAgentNotRegistered = 507,
+    /// E508: Backend not registered
+    BackendNotRegistered = 508,
+    /// E509: Model not found in any backend
+    ModelNotFound = 509,
+    /// E510: Capability not registered
+    CapabilityNotRegistered = 510,
+
+    // ========================================================================
     // Generic Errors (E900-E999)
     // ========================================================================
     /// E900: Internal error
@@ -351,6 +375,16 @@ impl ErrorCode {
             ErrorCode::CapabilityNotFound => "E404",
             ErrorCode::MemoryAccessError => "E405",
             ErrorCode::LLMBackendError => "E406",
+            ErrorCode::TemplatePlaceholderBounds => "E501",
+            ErrorCode::CommunicateRecipientNotSpawned => "E502",
+            ErrorCode::DuplicateAgentName => "E503",
+            ErrorCode::InvPlaceholderBounds => "E504",
+            ErrorCode::ParameterArityMismatch => "E505",
+            ErrorCode::ProfileNotRegistered => "E506",
+            ErrorCode::InvAcpAgentNotRegistered => "E507",
+            ErrorCode::BackendNotRegistered => "E508",
+            ErrorCode::ModelNotFound => "E509",
+            ErrorCode::CapabilityNotRegistered => "E510",
             ErrorCode::InternalError => "E900",
             ErrorCode::NotImplemented => "E901",
             ErrorCode::InvalidConfiguration => "E902",
@@ -371,9 +405,23 @@ impl ErrorCode {
             "optimization"
         } else if code < 500 {
             "runtime"
+        } else if code < 600 {
+            "semantic"
         } else {
             "generic"
         }
+    }
+
+    /// Returns `true` if this error code represents a warning rather than a hard error.
+    pub fn is_warning(&self) -> bool {
+        matches!(
+            self,
+            ErrorCode::InvPlaceholderBounds
+                | ErrorCode::ParameterArityMismatch
+                | ErrorCode::InvAcpAgentNotRegistered
+                | ErrorCode::ModelNotFound
+                | ErrorCode::CapabilityNotRegistered
+        )
     }
 
     /// Get documentation URL
@@ -442,6 +490,16 @@ impl ErrorCode {
             404 => Some(ErrorCode::CapabilityNotFound),
             405 => Some(ErrorCode::MemoryAccessError),
             406 => Some(ErrorCode::LLMBackendError),
+            501 => Some(ErrorCode::TemplatePlaceholderBounds),
+            502 => Some(ErrorCode::CommunicateRecipientNotSpawned),
+            503 => Some(ErrorCode::DuplicateAgentName),
+            504 => Some(ErrorCode::InvPlaceholderBounds),
+            505 => Some(ErrorCode::ParameterArityMismatch),
+            506 => Some(ErrorCode::ProfileNotRegistered),
+            507 => Some(ErrorCode::InvAcpAgentNotRegistered),
+            508 => Some(ErrorCode::BackendNotRegistered),
+            509 => Some(ErrorCode::ModelNotFound),
+            510 => Some(ErrorCode::CapabilityNotRegistered),
             900 => Some(ErrorCode::InternalError),
             901 => Some(ErrorCode::NotImplemented),
             902 => Some(ErrorCode::InvalidConfiguration),

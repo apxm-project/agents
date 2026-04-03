@@ -118,6 +118,9 @@ enum Commands {
         /// Emit metrics JSON file with runtime execution statistics
         #[arg(long)]
         emit_metrics: Option<PathBuf>,
+        /// Emit session output folder with all node results, events, metrics
+        #[arg(long)]
+        emit_session: Option<Option<PathBuf>>,
     },
     /// Run a pre-compiled artifact (.apxmobj)
     Run {
@@ -129,6 +132,9 @@ enum Commands {
         /// Emit metrics JSON file with runtime execution statistics
         #[arg(long)]
         emit_metrics: Option<PathBuf>,
+        /// Emit session output folder with all node results, events, metrics
+        #[arg(long)]
+        emit_session: Option<Option<PathBuf>>,
     },
     /// Diagnose compiler/runtime dependencies
     Doctor,
@@ -169,6 +175,9 @@ enum Commands {
     Validate {
         /// Input graph file (.json)
         input: PathBuf,
+        /// Skip Tier 2 environment checks (registered backends, profiles, etc.)
+        #[arg(long)]
+        no_check_resources: bool,
     },
     /// Analyze an ApxmGraph for parallelism, critical path, and execution phases
     Analyze {
@@ -892,12 +901,14 @@ async fn run_cli() -> Result<()> {
             args,
             opt_level,
             emit_metrics,
-        } => execute_command(input, args, opt_level, cli.config, emit_metrics).await,
+            emit_session,
+        } => execute_command(input, args, opt_level, cli.config, emit_metrics, emit_session).await,
         Commands::Run {
             input,
             args,
             emit_metrics,
-        } => run_command(input, args, cli.config, emit_metrics).await,
+            emit_session,
+        } => run_command(input, args, cli.config, emit_metrics, emit_session).await,
         Commands::Doctor => doctor_command(cli.config, cli.json),
         Commands::Activate { shell } => activate_command(&shell),
         Commands::Install => install_command(),
@@ -906,7 +917,10 @@ async fn run_cli() -> Result<()> {
         Commands::Agent { action } => agent_command(action, cli.json).await,
         Commands::Models { action } => models_command(action, cli.json).await,
         Commands::Ops { action } => ops_command(action, cli.json),
-        Commands::Validate { input } => validate_command(input, cli.json),
+        Commands::Validate {
+            input,
+            no_check_resources,
+        } => validate_command(input, cli.json, no_check_resources),
         Commands::Analyze { input } => analyze_command(input, cli.json),
         Commands::Template { action } => template_command(action, cli.json),
         Commands::Explain { file } => explain_command(file, cli.json),
@@ -926,7 +940,10 @@ async fn run_cli_no_driver() -> Result<()> {
         Commands::Agent { action } => agent_command(action, cli.json).await,
         Commands::Models { action } => models_command(action, cli.json).await,
         Commands::Ops { action } => ops_command(action, cli.json),
-        Commands::Validate { input } => validate_command(input, cli.json),
+        Commands::Validate {
+            input,
+            no_check_resources,
+        } => validate_command(input, cli.json, no_check_resources),
         Commands::Analyze { input } => analyze_command(input, cli.json),
         Commands::Template { action } => template_command(action, cli.json),
         Commands::Explain { file } => explain_command(file, cli.json),
@@ -1339,13 +1356,27 @@ async fn execute_command(
     opt_level: u8,
     config: Option<PathBuf>,
     emit_metrics: Option<PathBuf>,
+    emit_session: Option<Option<PathBuf>>,
 ) -> Result<()> {
     let apxm_config = load_config(config).context("Failed to load configuration")?;
     let opt = parse_opt_level(opt_level);
-    let linker_config = LinkerConfig::from_apxm_config(apxm_config).with_opt_level(opt);
+    let mut linker_config = LinkerConfig::from_apxm_config(apxm_config).with_opt_level(opt);
+
+    // Enable all-outputs collection when session output is requested
+    if emit_session.is_some() {
+        linker_config.runtime_config.scheduler_config.collect_all_outputs = true;
+    }
+
     let linker = Linker::new(linker_config)
         .await
         .context("Failed to initialize runtime")?;
+
+    // Read input graph for session output
+    let input_graph_json = if emit_session.is_some() {
+        std::fs::read_to_string(&input).ok()
+    } else {
+        None
+    };
 
     let result = match linker.run_graph(&input, args).await {
         Ok(r) => r,
@@ -1356,43 +1387,106 @@ async fn execute_command(
     };
 
     // Emit metrics JSON if requested
-    if let Some(metrics_path) = emit_metrics {
-        #[allow(unused_mut)]
-        let mut metrics_json = serde_json::json!({
-            "input": input.display().to_string(),
-            "optimization_level": format!("O{}", opt_level),
-            "execution": {
-                "nodes_executed": result.execution.stats.executed_nodes,
-                "nodes_failed": result.execution.stats.failed_nodes,
-                "duration_ms": result.execution.stats.duration_ms,
-                "status": if result.execution.stats.failed_nodes == 0 { "success" } else { "partial_failure" }
-            },
-            "scheduler": result.execution.scheduler_metrics.to_json()
+    #[allow(unused_mut)]
+    let mut metrics_json = serde_json::json!({
+        "input": input.display().to_string(),
+        "optimization_level": format!("O{}", opt_level),
+        "execution": {
+            "nodes_executed": result.execution.stats.executed_nodes,
+            "nodes_failed": result.execution.stats.failed_nodes,
+            "duration_ms": result.execution.stats.duration_ms,
+            "status": if result.execution.stats.failed_nodes == 0 { "success" } else { "partial_failure" }
+        },
+        "scheduler": result.execution.scheduler_metrics.to_json()
+    });
+
+    #[cfg(feature = "metrics")]
+    {
+        let llm_metrics = &result.execution.llm_metrics;
+        metrics_json["llm"] = serde_json::json!({
+            "total_requests": llm_metrics.total_requests,
+            "total_input_tokens": llm_metrics.total_input_tokens,
+            "total_output_tokens": llm_metrics.total_output_tokens,
+            "avg_latency_ms": llm_metrics.average_latency.as_millis(),
+            "p50_latency_ms": llm_metrics.p50_latency.as_millis(),
+            "p99_latency_ms": llm_metrics.p99_latency.as_millis()
         });
 
-        #[cfg(feature = "metrics")]
-        {
-            let llm_metrics = &result.execution.llm_metrics;
-            metrics_json["llm"] = serde_json::json!({
-                "total_requests": llm_metrics.total_requests,
-                "total_input_tokens": llm_metrics.total_input_tokens,
-                "total_output_tokens": llm_metrics.total_output_tokens,
-                "avg_latency_ms": llm_metrics.average_latency.as_millis(),
-                "p50_latency_ms": llm_metrics.p50_latency.as_millis(),
-                "p99_latency_ms": llm_metrics.p99_latency.as_millis()
-            });
+        let link_metrics = &result.metrics;
+        metrics_json["link_phases"] = serde_json::json!({
+            "compile_ms": link_metrics.compile_time.as_secs_f64() * 1000.0,
+            "runtime_ms": link_metrics.runtime_time.as_secs_f64() * 1000.0
+        });
+    }
 
-            let link_metrics = &result.metrics;
-            metrics_json["link_phases"] = serde_json::json!({
-                "compile_ms": link_metrics.compile_time.as_secs_f64() * 1000.0,
-                "runtime_ms": link_metrics.runtime_time.as_secs_f64() * 1000.0
-            });
-        }
-
+    if let Some(metrics_path) = emit_metrics {
         std::fs::write(&metrics_path, serde_json::to_string_pretty(&metrics_json)?)
             .with_context(|| format!("Failed to write metrics to {}", metrics_path.display()))?;
 
         println!("Wrote metrics to {}", metrics_path.display());
+    }
+
+    // Emit session output if requested
+    if let Some(custom_path) = emit_session {
+        use apxm_core::paths::ApxmPaths;
+        use apxm_driver::session_output::SessionOutputWriter;
+
+        let base_dir = match custom_path {
+            Some(p) => p,
+            None => ApxmPaths::discover()
+                .context("Failed to discover APXM paths")?
+                .sessions_dir()
+                .context("Failed to create sessions directory")?,
+        };
+
+        let execution_id = format!(
+            "{}-{}",
+            input.file_stem().and_then(|s| s.to_str()).unwrap_or("graph"),
+            chrono::Utc::now().format("%Y%m%dT%H%M%S")
+        );
+
+        let writer = SessionOutputWriter::new(&base_dir, &execution_id)
+            .context("Failed to create session output directory")?;
+
+        // Write manifest
+        let graph_name = input.file_stem().and_then(|s| s.to_str());
+        writer
+            .write_manifest(
+                &execution_id,
+                graph_name,
+                result.execution.stats.duration_ms,
+                result.execution.stats.executed_nodes + result.execution.stats.failed_nodes,
+                result.execution.stats.failed_nodes == 0,
+            )
+            .context("Failed to write manifest")?;
+
+        // Write input graph
+        if let Some(ref graph_json) = input_graph_json {
+            writer
+                .write_input_graph(graph_json)
+                .context("Failed to write input graph")?;
+        }
+
+        // Write results (with all_outputs if available)
+        if let (Some(all_outputs), Some(node_map)) =
+            (&result.execution.all_outputs, &result.execution.node_output_map)
+        {
+            writer
+                .write_results(all_outputs, node_map, &result.execution.results)
+                .context("Failed to write results")?;
+        }
+
+        // Write metrics
+        writer
+            .write_metrics(&metrics_json)
+            .context("Failed to write metrics")?;
+
+        // Write node statuses
+        writer
+            .write_node_statuses(&result.execution.stats.node_statuses)
+            .context("Failed to write node statuses")?;
+
+        println!("Wrote session output to {}", writer.session_dir().display());
     }
 
     // Print workflow outputs
@@ -1419,6 +1513,7 @@ async fn run_command(
     args: Vec<String>,
     config: Option<PathBuf>,
     emit_metrics: Option<PathBuf>,
+    emit_session: Option<Option<PathBuf>>,
 ) -> Result<()> {
     use apxm_artifact::Artifact;
     use apxm_driver::runtime::RuntimeExecutor;
@@ -1438,7 +1533,13 @@ async fn run_command(
 
     // Initialize runtime
     let apxm_config = load_config(config).context("Failed to load configuration")?;
-    let linker_config = LinkerConfig::from_apxm_config(apxm_config);
+    let mut linker_config = LinkerConfig::from_apxm_config(apxm_config);
+
+    // Enable all-outputs collection when session output is requested
+    if emit_session.is_some() {
+        linker_config.runtime_config.scheduler_config.collect_all_outputs = true;
+    }
+
     let runtime = RuntimeExecutor::new(&linker_config)
         .await
         .context("Failed to initialize runtime")?;
@@ -1449,23 +1550,80 @@ async fn run_command(
         .await
         .map_err(|e| anyhow::anyhow!("Execution failed: {}", e))?;
 
+    // Build metrics JSON
+    let metrics_json = serde_json::json!({
+        "input": input.display().to_string(),
+        "execution": {
+            "nodes_executed": result.stats.executed_nodes,
+            "nodes_failed": result.stats.failed_nodes,
+            "duration_ms": result.stats.duration_ms,
+            "status": if result.stats.failed_nodes == 0 { "success" } else { "partial_failure" }
+        },
+        "scheduler": result.scheduler_metrics.to_json()
+    });
+
     // Emit metrics JSON if requested
     if let Some(metrics_path) = emit_metrics {
-        let metrics_json = serde_json::json!({
-            "input": input.display().to_string(),
-            "execution": {
-                "nodes_executed": result.stats.executed_nodes,
-                "nodes_failed": result.stats.failed_nodes,
-                "duration_ms": result.stats.duration_ms,
-                "status": if result.stats.failed_nodes == 0 { "success" } else { "partial_failure" }
-            },
-            "scheduler": result.scheduler_metrics.to_json()
-        });
-
         std::fs::write(&metrics_path, serde_json::to_string_pretty(&metrics_json)?)
             .with_context(|| format!("Failed to write metrics to {}", metrics_path.display()))?;
 
         println!("Wrote metrics to {}", metrics_path.display());
+    }
+
+    // Emit session output if requested
+    if let Some(custom_path) = emit_session {
+        use apxm_core::paths::ApxmPaths;
+        use apxm_driver::session_output::SessionOutputWriter;
+
+        let base_dir = match custom_path {
+            Some(p) => p,
+            None => ApxmPaths::discover()
+                .context("Failed to discover APXM paths")?
+                .sessions_dir()
+                .context("Failed to create sessions directory")?,
+        };
+
+        let execution_id = format!(
+            "{}-{}",
+            input.file_stem().and_then(|s| s.to_str()).unwrap_or("artifact"),
+            chrono::Utc::now().format("%Y%m%dT%H%M%S")
+        );
+
+        let writer = SessionOutputWriter::new(&base_dir, &execution_id)
+            .context("Failed to create session output directory")?;
+
+        // Write manifest
+        let graph_name = input.file_stem().and_then(|s| s.to_str());
+        writer
+            .write_manifest(
+                &execution_id,
+                graph_name,
+                result.stats.duration_ms,
+                result.stats.executed_nodes + result.stats.failed_nodes,
+                result.stats.failed_nodes == 0,
+            )
+            .context("Failed to write manifest")?;
+
+        // Write results (with all_outputs if available)
+        if let (Some(all_outputs), Some(node_map)) =
+            (&result.all_outputs, &result.node_output_map)
+        {
+            writer
+                .write_results(all_outputs, node_map, &result.results)
+                .context("Failed to write results")?;
+        }
+
+        // Write metrics
+        writer
+            .write_metrics(&metrics_json)
+            .context("Failed to write metrics")?;
+
+        // Write node statuses
+        writer
+            .write_node_statuses(&result.stats.node_statuses)
+            .context("Failed to write node statuses")?;
+
+        println!("Wrote session output to {}", writer.session_dir().display());
     }
 
     Ok(())
@@ -1781,7 +1939,54 @@ async fn backend_command(action: BackendAction, json_output: bool) -> Result<()>
     Ok(())
 }
 
-fn validate_command(input: PathBuf, json_output: bool) -> Result<()> {
+#[cfg(feature = "driver")]
+fn build_semantic_context() -> apxm_graph::semantic::SemanticContext {
+    use apxm_core::constants::capabilities;
+    use apxm_core::types::identifiers::{BackendId, CapabilityName, ModelId, ProfileId};
+    use apxm_graph::semantic::SemanticContext;
+
+    let backends = apxm_credentials::BackendStore::open()
+        .and_then(|s| s.list())
+        .unwrap_or_default();
+
+    let registry = apxm_acp::AgentRegistry::load();
+    let profiles_list = registry.list();
+
+    let model_count: usize = backends
+        .iter()
+        .map(|b| b.models.len() + b.models.iter().map(|m| m.aliases.len()).sum::<usize>())
+        .sum();
+
+    let mut ctx = SemanticContext::with_capacity(
+        profiles_list.len(),
+        backends.len(),
+        model_count,
+        capabilities::BUILTINS.len(),
+    );
+
+    for (name, _, _) in &profiles_list {
+        ctx.profiles.insert(ProfileId::from(name.as_str()));
+    }
+
+    for b in &backends {
+        ctx.backends.insert(BackendId::from(b.name.as_str()));
+        for m in &b.models {
+            ctx.models.insert(ModelId::from(m.id.as_str()));
+            for a in &m.aliases {
+                ctx.models.insert(ModelId::from(a.as_str()));
+            }
+        }
+    }
+
+    for name in capabilities::BUILTINS {
+        ctx.capabilities.insert(CapabilityName::from(*name));
+    }
+
+    ctx
+}
+
+#[allow(unused_variables)]
+fn validate_command(input: PathBuf, json_output: bool, no_check_resources: bool) -> Result<()> {
     use apxm_core::types::AIS_OPERATIONS;
     use std::collections::HashSet;
 
@@ -1976,10 +2181,30 @@ fn validate_command(input: PathBuf, json_output: bool) -> Result<()> {
     }
 
     // Also attempt full Rust-side parse+validate for deeper checks (when driver feature available)
+    #[allow(unused_mut)]
+    let mut semantic_errors: Vec<String> = Vec::new();
+    #[allow(unused_mut)]
+    let mut semantic_warnings: Vec<String> = Vec::new();
     #[cfg(feature = "driver")]
     {
         match apxm_graph::ApxmGraph::from_json(&content) {
-            Ok(_) => {}
+            Ok(graph) => {
+                // Semantic validation: Tier 1 always, Tier 2 unless --no-check-resources
+                let ctx = if no_check_resources {
+                    apxm_graph::semantic::SemanticContext::default()
+                } else {
+                    build_semantic_context()
+                };
+                let sem_errors = apxm_graph::semantic::validate_semantic(&graph, &ctx);
+                for err in &sem_errors {
+                    let msg = err.short_message();
+                    if err.code.is_warning() {
+                        semantic_warnings.push(msg);
+                    } else {
+                        semantic_errors.push(msg);
+                    }
+                }
+            }
             Err(e) => {
                 let msg = e.to_string();
                 if !errors
@@ -1992,6 +2217,8 @@ fn validate_command(input: PathBuf, json_output: bool) -> Result<()> {
         }
     }
 
+    errors.extend(semantic_errors);
+    warnings.extend(semantic_warnings);
     let valid = errors.is_empty();
 
     if json_output {

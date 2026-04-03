@@ -217,7 +217,7 @@ impl WriteCapability {
     pub fn with_config(config: WriteConfig) -> Self {
         Self {
             metadata: CapabilityMetadata::new(
-                "write",
+                apxm_core::constants::capabilities::WRITE,
                 "Write content to a file with policy enforcement",
                 serde_json::json!({
                     "type": "object",

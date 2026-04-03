@@ -64,7 +64,7 @@ impl BashCapability {
     pub fn with_config(config: BashConfig) -> Self {
         Self {
             metadata: CapabilityMetadata::new(
-                "bash",
+                apxm_core::constants::capabilities::BASH,
                 "Execute shell commands with policy enforcement",
                 serde_json::json!({
                     "type": "object",

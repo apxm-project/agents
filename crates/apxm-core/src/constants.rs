@@ -332,6 +332,15 @@ pub mod communicate_protocols {
     pub const BROADCAST: &str = "broadcast";
 }
 
+pub mod capabilities {
+    pub const BASH: &str = "bash";
+    pub const READ: &str = "read";
+    pub const WRITE: &str = "write";
+    pub const SEARCH_WEB: &str = "search_web";
+
+    pub const BUILTINS: &[&str] = &[BASH, READ, WRITE, SEARCH_WEB];
+}
+
 pub mod http {
     pub mod headers {
         pub const CONTENT_TYPE: &str = "content-type";
