@@ -104,7 +104,9 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
         let model = get_optional_string_attribute(node, graph_attrs::MODEL)?;
         let cwd = get_optional_string_attribute(node, graph_attrs::CWD)?
             .map(PathBuf::from)
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+            .unwrap_or_else(|| {
+                std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp"))
+            });
 
         // Project current AAM state into AamContext for the spawned agent
         let aam_context = project_aam_context(ctx);
@@ -120,6 +122,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
             )
             .await?;
 
+        // Register the session — if this fails, shut down the subprocess to avoid leaking it
         let process_id = ctx
             .process_table
             .register_external(
@@ -130,7 +133,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
             )
             .map_err(|e| RuntimeError::Operation {
                 op_type: node.op_type,
-                message: format!("Failed to register process: {}", e),
+                message: format!("Failed to register ACP process '{}': {}", agent_name, e),
             })?;
 
         agent_info.insert(
@@ -150,20 +153,25 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
         );
     } else {
         // No profile — register as a local process for tracking
-        let process_id = ctx
-            .process_table
-            .spawn_local(agent_name.clone(), parent_process_id)
-            .unwrap_or_default(); // Non-fatal: local agents can still work via FlowRegistry
-
-        if !process_id.is_empty() {
-            agent_info.insert(
-                response_keys::PROCESS_ID.to_string(),
-                Value::String(process_id),
-            );
+        match ctx.process_table.spawn_local(agent_name.clone(), parent_process_id) {
+            Ok(process_id) => {
+                agent_info.insert(
+                    response_keys::PROCESS_ID.to_string(),
+                    Value::String(process_id),
+                );
+            }
+            Err(e) => {
+                // Log but don't fail — local agents work via FlowRegistry without a process entry
+                apxm_op!(warn,
+                    agent_name = %agent_name,
+                    error = %e,
+                    "SPAWN_AGENT: local process registration failed (agent still usable via FlowRegistry)"
+                );
+            }
         }
     }
 
-    let _ = ctx
+    if let Err(e) = ctx
         .memory
         .write_scoped(
             crate::memory::MemorySpace::Stm,
@@ -171,7 +179,15 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
             format!("{}{}", belief_keys::AGENT_INFO_PREFIX, agent_name),
             Value::Object(agent_info.clone()),
         )
-        .await;
+        .await
+    {
+        // STM write failure is non-fatal but warn — downstream COMMUNICATE lookups may fail
+        apxm_op!(warn,
+            agent_name = %agent_name,
+            error = %e,
+            "SPAWN_AGENT: failed to write agent info to STM (downstream lookups may fail)"
+        );
+    }
 
     apxm_op!(info,
         execution_id = %ctx.execution_id,

@@ -1,0 +1,146 @@
+{
+  "name": "apxm-dev-workflow",
+  "parameters": [
+    {"name": "task", "type_name": "str"}
+  ],
+  "nodes": [
+    {
+      "id": 1,
+      "name": "spawn_architect",
+      "op": "SPAWN_AGENT",
+      "attributes": {
+        "agent_name": "architect",
+        "profile": "claude"
+      }
+    },
+    {
+      "id": 2,
+      "name": "spawn_coder",
+      "op": "SPAWN_AGENT",
+      "attributes": {
+        "agent_name": "coder",
+        "profile": "codex"
+      }
+    },
+    {
+      "id": 3,
+      "name": "architect_prompt",
+      "op": "CONST_STR",
+      "attributes": {
+        "value": "You are the lead architect for the APXM project (an MLIR-based compiler and runtime for multi-agent workflows). Your task: produce a detailed, actionable implementation plan for the following feature or fix. Include: (1) which files to modify, (2) exact changes needed, (3) any new files to create, (4) potential pitfalls. Be specific enough that a coding agent can implement it directly.\n\nTask: "
+      }
+    },
+    {
+      "id": 4,
+      "name": "build_architect_prompt",
+      "op": "MERGE",
+      "attributes": {
+        "strategy": "concat",
+        "tokens": ["{{node_3}}", "{{task}}"]
+      }
+    },
+    {
+      "id": 5,
+      "name": "architect_plans",
+      "op": "COMMUNICATE",
+      "attributes": {
+        "recipient": "architect",
+        "protocol": "acp"
+      }
+    },
+    {
+      "id": 6,
+      "name": "coder_prompt",
+      "op": "CONST_STR",
+      "attributes": {
+        "value": "You are an expert Rust/C++ developer working on the APXM project. Implement the following plan from the architect. Make the changes directly in the codebase. After implementing, run the tests to verify nothing is broken: `cargo test --workspace --exclude apxm-compiler 2>&1 | tail -5`. Report what you changed and the test results.\n\nArchitect's plan:\n"
+      }
+    },
+    {
+      "id": 7,
+      "name": "build_coder_prompt",
+      "op": "MERGE",
+      "attributes": {
+        "strategy": "concat",
+        "tokens": ["{{node_6}}", "{{node_5}}"]
+      }
+    },
+    {
+      "id": 8,
+      "name": "coder_implements",
+      "op": "COMMUNICATE",
+      "attributes": {
+        "recipient": "coder",
+        "protocol": "acp"
+      }
+    },
+    {
+      "id": 9,
+      "name": "review_prompt",
+      "op": "CONST_STR",
+      "attributes": {
+        "value": "Review the implementation from Codex. Check: (1) does it match your plan? (2) any bugs or missing cases? (3) is the code idiomatic Rust? (4) should we ship it or iterate? If it needs fixes, describe them concisely.\n\nCodex's implementation report:\n"
+      }
+    },
+    {
+      "id": 10,
+      "name": "build_review_prompt",
+      "op": "MERGE",
+      "attributes": {
+        "strategy": "concat",
+        "tokens": ["{{node_9}}", "{{node_8}}"]
+      }
+    },
+    {
+      "id": 11,
+      "name": "architect_reviews",
+      "op": "COMMUNICATE",
+      "attributes": {
+        "recipient": "architect",
+        "protocol": "acp"
+      }
+    },
+    {
+      "id": 12,
+      "name": "print_plan",
+      "op": "PRINT",
+      "attributes": {
+        "message": "=== ARCHITECT PLAN ==="
+      }
+    },
+    {
+      "id": 13,
+      "name": "print_implementation",
+      "op": "PRINT",
+      "attributes": {
+        "message": "=== CODER IMPLEMENTATION ==="
+      }
+    },
+    {
+      "id": 14,
+      "name": "print_review",
+      "op": "PRINT",
+      "attributes": {
+        "message": "=== ARCHITECT REVIEW ==="
+      }
+    }
+  ],
+  "edges": [
+    {"from": 1, "to": 5, "dependency": "Control"},
+    {"from": 2, "to": 8, "dependency": "Control"},
+    {"from": 3, "to": 4, "dependency": "Data"},
+    {"from": 4, "to": 5, "dependency": "Data"},
+    {"from": 5, "to": 12, "dependency": "Data"},
+    {"from": 5, "to": 7, "dependency": "Data"},
+    {"from": 6, "to": 7, "dependency": "Data"},
+    {"from": 7, "to": 8, "dependency": "Data"},
+    {"from": 8, "to": 13, "dependency": "Data"},
+    {"from": 8, "to": 10, "dependency": "Data"},
+    {"from": 9, "to": 10, "dependency": "Data"},
+    {"from": 10, "to": 11, "dependency": "Data"},
+    {"from": 11, "to": 14, "dependency": "Data"}
+  ],
+  "metadata": {
+    "description": "APXM development workflow: Claude architects, Codex implements, Claude reviews. Pass task as parameter."
+  }
+}
