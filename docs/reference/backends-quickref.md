@@ -1,6 +1,6 @@
 # APXM Backends — Quick Reference
 
-> Full reference: [`docs/reference/config.md`](../reference/config.md)
+> Full reference: [`docs/reference/config.md`](config.md)
 
 ## The Hierarchy
 

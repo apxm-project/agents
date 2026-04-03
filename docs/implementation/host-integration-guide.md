@@ -222,7 +222,7 @@ communication channels: subprocess for sandbox, HTTP+SSE for LLM.
 │                                                               │
 │  ┌──────────────────────────────────────────────────────┐      │
 │  │ apxmContentGenerator.ts (1312 lines)                 │      │
-│  │  Reads ~/.apxm/config.toml + credentials.toml        │      │
+│  │  Reads ~/.apxm/config.toml        │      │
 │  │  Routes to OpenAI/Anthropic/Google/Ollama providers   │      │
 │  └──────────────────────────────────────────────────────┘      │
 └───────────┬──────────────────────────┬────────────────────────┘

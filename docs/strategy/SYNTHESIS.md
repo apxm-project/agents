@@ -936,7 +936,7 @@ apxm run review.apxmobj 42                  # pre-compiled
 # Models + Agents
 apxm models list
 apxm models health
-apxm llm add my-openai --provider openai --api-key sk-...
+apxm backend add my-openai --type cloud --protocol openai --api-key sk-...
 
 # Debugging
 apxm execute review.ais --trace debug --emit-metrics metrics.json

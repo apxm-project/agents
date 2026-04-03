@@ -65,14 +65,7 @@ stop = { run = "apxm backend stop", description = "Stop local backend" }
 status = { run = "apxm backend status", description = "Show backend status" }
 logs = { run = "apxm backend logs", description = "Show backend logs" }
 restart = { run = "apxm backend restart", description = "Restart local backend" }
-
-[commands.llm]
-description = "Manage LLM provider credentials (deprecated, use 'backend')"
-group = "Configuration"
-add = { run = "apxm llm add", description = "Add credential", skill = true }
-list = { run = "apxm llm list", description = "List credentials" }
-remove = { run = "apxm llm remove", description = "Remove credential" }
-test = { run = "apxm llm test", description = "Test credentials" }
+add-model = { run = "apxm backend add-model", description = "Add model to backend" }
 
 [commands.ops]
 description = "Browse AIS operations"
