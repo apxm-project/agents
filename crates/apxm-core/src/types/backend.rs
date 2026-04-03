@@ -227,7 +227,7 @@ mod tests {
         };
 
         let json = serde_json::to_string(&config).unwrap();
-        let deserialized: DockerConfig = serde_json::from_str(json).unwrap();
+        let deserialized: DockerConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.image, "vllm/vllm-openai:latest");
         assert_eq!(deserialized.tensor_parallel, Some(2));
     }
