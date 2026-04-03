@@ -29,6 +29,7 @@ def register_commands(app: Typer) -> None:
         check: bool = Option(False, "--check", help="Dry-run: report status without changes"),
         skip_deps: bool = Option(False, "--skip-deps", help="Skip dependency checks"),
         skip_build: bool = Option(False, "--skip-build", help="Skip build step"),
+        with_vllm: bool = Option(False, "--with-vllm", help="Install graph-aware vLLM fork (optional)"),
         auto: bool = Option(False, "--auto", "-y", help="Automatic mode (no prompts)"),
     ):
         """Install or update APXM environment.
@@ -42,7 +43,8 @@ def register_commands(app: Typer) -> None:
           3. Conda environment
           4. Rust toolchain
           5. Build
-          6. Summary
+          6. vLLM (optional, --with-vllm)
+          7. Summary
         """
         config = get_config()
         platform = app.platform
@@ -202,7 +204,48 @@ def register_commands(app: Typer) -> None:
                     missing.append(msg.MSG_BUILD_FIX_RETRY)
             print_blank()
 
-        # -- Stage 6: Summary ---
+        # -- Stage 6: vLLM (optional) ---
+        print_step(msg.STAGE_VLLM)
+        vllm_dir = config.apxm_dir / "ext" / "vllm"
+        if with_vllm:
+            if check:
+                if vllm_dir.exists() and (vllm_dir / "pyproject.toml").exists():
+                    print_success(msg.MSG_VLLM_SUBMODULE_FOUND)
+                else:
+                    print_warning(msg.MSG_VLLM_SUBMODULE_MISSING)
+                    missing.append("vLLM submodule (git submodule update --init ext/vllm)")
+            else:
+                # Init submodule if needed
+                if not (vllm_dir / "pyproject.toml").exists():
+                    print_info(msg.MSG_VLLM_SUBMODULE_INIT)
+                    run_logged(
+                        ["git", "submodule", "update", "--init", "ext/vllm"],
+                        log_path=log_path, label="Git submodule init",
+                        spinner_text=msg.MSG_VLLM_SUBMODULE_INIT,
+                        cwd=config.apxm_dir, append=True,
+                    )
+                if (vllm_dir / "pyproject.toml").exists():
+                    print_success(msg.MSG_VLLM_SUBMODULE_FOUND)
+                    print_info(msg.MSG_VLLM_INSTALLING)
+                    vllm_install = run_logged(
+                        ["pip", "install", "-e", str(vllm_dir)],
+                        log_path=log_path, label="vLLM install",
+                        spinner_text=msg.MSG_VLLM_INSTALLING,
+                        cwd=config.apxm_dir, append=True,
+                    )
+                    if vllm_install.ok:
+                        print_success(msg.MSG_VLLM_INSTALLED)
+                    else:
+                        print_error(msg.MSG_VLLM_INSTALL_FAILED)
+                        missing.append(msg.MSG_VLLM_INSTALL_FAILED)
+                else:
+                    print_error(msg.MSG_VLLM_SUBMODULE_MISSING)
+                    missing.append("vLLM submodule init failed")
+        else:
+            print_info(msg.MSG_VLLM_SKIPPED)
+        print_blank()
+
+        # -- Stage 7: Summary ---
         if missing:
             print_header(msg.HEADER_ACTION_REQUIRED)
             print_numbered_list(missing)

@@ -111,3 +111,11 @@ description = "Interactive web-based DAG visualizer (requires Node.js)"
 run = "cd tools/graph-viewer && npm install && npm run build"
 default = false
 requires = ["npm"]
+
+[[install.components]]
+name = "vllm"
+label = "vLLM (graph-aware fork)"
+description = "Graph-aware vLLM server with APXM KV-pinning and priority scheduling"
+run = "git submodule update --init ext/vllm && pip install -e ext/vllm"
+default = false
+requires = ["pip"]

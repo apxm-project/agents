@@ -26,33 +26,53 @@ pub async fn configure_llm_registry(
         )
     };
 
-    // Primary source: registered credentials from ~/.apxm/credentials.toml
-    let mut loaded_from_credentials = false;
-    if let Ok(store) = apxm_credentials::CredentialStore::open()
-        && let Ok(credentials) = store.list_all()
-        && !credentials.is_empty()
-    {
-        loaded_from_credentials = true;
-        for (name, credential) in &credentials {
+    // Priority 1: Load from config.toml's [[backends]] (new unified system)
+    let mut loaded_from_backends = false;
+    if !config.backends.is_empty() {
+        loaded_from_backends = true;
+        for backend in &config.backends {
             if let Some(allowed) = &allowed_backends
-                && !allowed.contains(name)
+                && !allowed.contains(&backend.name)
             {
                 continue;
             }
 
-            let backend_config = credential_to_backend_config(name, credential);
-            let provider_name = &credential.provider;
-
-            let protocol = resolve_provider_protocol(None, provider_name)?;
-            let registration = credential_to_registration(name, &backend_config, protocol);
+            let registration = unified_backend_to_registration(backend)?;
             registration.register(registry).await.map_err(|e| {
-                DriverError::Driver(format!("Failed to register backend '{}': {e}", name))
+                DriverError::Driver(format!("Failed to register backend '{}': {e}", backend.name))
             })?;
         }
     }
 
-    // Fallback: load from config.toml's [[llm_backends]] if no credentials were loaded
-    if !loaded_from_credentials {
+    // Priority 2: Load from ~/.apxm/credentials.toml (legacy)
+    let mut loaded_from_credentials = false;
+    if !loaded_from_backends {
+        if let Ok(store) = apxm_credentials::CredentialStore::open()
+            && let Ok(credentials) = store.list_all()
+            && !credentials.is_empty()
+        {
+            loaded_from_credentials = true;
+            for (name, credential) in &credentials {
+                if let Some(allowed) = &allowed_backends
+                    && !allowed.contains(name)
+                {
+                    continue;
+                }
+
+                let backend_config = credential_to_backend_config(name, credential);
+                let provider_name = &credential.provider;
+
+                let protocol = resolve_provider_protocol(None, provider_name)?;
+                let registration = credential_to_registration(name, &backend_config, protocol);
+                registration.register(registry).await.map_err(|e| {
+                    DriverError::Driver(format!("Failed to register backend '{}': {e}", name))
+                })?;
+            }
+        }
+    }
+
+    // Priority 3: Load from config.toml's [[llm_backends]] (legacy)
+    if !loaded_from_backends && !loaded_from_credentials {
         for backend in &config.llm_backends {
             if let Some(allowed) = &allowed_backends
                 && !allowed.contains(&backend.name)
@@ -260,6 +280,106 @@ fn backend_to_registration(
         models,
         endpoint,
         options,
+        extra_headers,
+    })
+}
+
+/// Convert a unified BackendConfig to a BackendRegistration.
+fn unified_backend_to_registration(
+    backend: &apxm_core::types::BackendConfig,
+) -> Result<BackendRegistration, DriverError> {
+    use apxm_core::types::{BackendType, ProviderProtocol};
+
+    // Resolve API key (with env: support)
+    let api_key = match backend.api_key.as_deref() {
+        Some(key) if key.starts_with("env:") => {
+            let env_name = key.strip_prefix("env:").unwrap();
+            env::var(env_name).map_err(|_| {
+                DriverError::Driver(format!(
+                    "Environment variable '{}' not set for backend '{}'",
+                    env_name, backend.name
+                ))
+            })?
+        }
+        Some(key) => key.to_string(),
+        None if backend.backend_type == BackendType::Local
+            || backend.protocol == ProviderProtocol::Ollama =>
+        {
+            String::new()
+        }
+        None => {
+            return Err(DriverError::Driver(format!(
+                "Missing API key for backend '{}'. Set `api_key` or use `env:VAR`.",
+                backend.name
+            )))
+        }
+    };
+
+    // Resolve endpoint (with env: support)
+    let endpoint = backend
+        .endpoint
+        .as_deref()
+        .map(|value| {
+            if let Some(var_name) = value.strip_prefix("env:") {
+                env::var(var_name).map_err(|_| {
+                    DriverError::Driver(format!(
+                        "Environment variable '{}' not set for endpoint in backend '{}'",
+                        var_name, backend.name
+                    ))
+                })
+            } else {
+                Ok(value.to_string())
+            }
+        })
+        .transpose()?;
+
+    // Resolve headers (with env: support)
+    let extra_headers = backend
+        .headers
+        .iter()
+        .map(|(key, value)| {
+            let resolved_value = if let Some(var_name) = value.strip_prefix("env:") {
+                env::var(var_name).map_err(|_| {
+                    DriverError::Driver(format!(
+                        "Environment variable '{}' not set for header '{}' in backend '{}'",
+                        var_name, key, backend.name
+                    ))
+                })?
+            } else {
+                value.clone()
+            };
+            Ok((key.clone(), resolved_value))
+        })
+        .collect::<Result<std::collections::HashMap<_, _>, DriverError>>()?;
+
+    // Convert models
+    let models = backend
+        .models
+        .iter()
+        .map(|model| {
+            let info = Some(apxm_core::types::ModelInfo {
+                id: model.id.clone(),
+                name: model.id.clone(), // Use id as name if not specified
+                context_window: model.context_window,
+                supports_vision: model.supports_vision,
+                supports_functions: model.supports_functions,
+            });
+            ModelRegistration {
+                id: model.id.clone(),
+                aliases: model.aliases.clone(),
+                info,
+            }
+        })
+        .collect();
+
+    Ok(BackendRegistration {
+        name: backend.name.clone(),
+        protocol: backend.protocol,
+        api_key,
+        default_model: None, // BackendConfig doesn't have default_model; models are explicit
+        models,
+        endpoint,
+        options: std::collections::HashMap::new(), // BackendConfig doesn't have options
         extra_headers,
     })
 }

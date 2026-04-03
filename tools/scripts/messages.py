@@ -17,6 +17,7 @@ STAGE_CHECKING_DEPS = "Stage 2: Checking dependencies"
 STAGE_CONDA_ENV = "Stage 3: Conda environment"
 STAGE_RUST_TOOLCHAIN = "Stage 4: Rust toolchain"
 STAGE_BUILD = "Stage 5: Build"
+STAGE_VLLM = "Stage 6: vLLM (optional)"
 
 # ── Platform messages ─────────────────────────────────────────────────
 MSG_OS = "OS: {os_label}"
@@ -94,6 +95,16 @@ MSG_BUILD_INSTALL_RUST = "Build (install Rust first)"
 MSG_BUILD_FIX_RETRY = "Build (fix errors and retry: apxm build)"
 MSG_CARGO_NOT_AVAILABLE = "Cargo not available -- skipping build"
 MSG_CONDA_NOT_ACTIVATED = "Conda env not found -- skipping build"
+
+# ── vLLM ─────────────────────────────────────────────────────────────
+MSG_VLLM_SUBMODULE_FOUND = "vLLM submodule: ext/vllm"
+MSG_VLLM_SUBMODULE_INIT = "Initializing vLLM submodule..."
+MSG_VLLM_SUBMODULE_MISSING = "vLLM submodule not initialized (use --with-vllm to install)"
+MSG_VLLM_INSTALLING = "Installing vLLM in editable mode (this may take a while)..."
+MSG_VLLM_INSTALLED = "vLLM (graph-aware fork) installed"
+MSG_VLLM_INSTALL_FAILED = "vLLM installation failed"
+MSG_VLLM_ALREADY_INSTALLED = "vLLM: already installed"
+MSG_VLLM_SKIPPED = "vLLM: skipped (pass --with-vllm to install)"
 
 # ── Summary ───────────────────────────────────────────────────────────
 MSG_EVERYTHING_OK = "Everything looks good!"
