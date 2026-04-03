@@ -8,8 +8,7 @@
       "op": "SPAWN_AGENT",
       "attributes": {
         "agent_name": "architect",
-        "profile": "claude",
-        "mode": "architect"
+        "profile": "claude"
       }
     },
     {
