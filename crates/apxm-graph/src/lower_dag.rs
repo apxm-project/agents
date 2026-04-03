@@ -44,16 +44,27 @@ pub fn lower_to_execution_dag(graph: &ApxmGraph) -> Result<ExecutionDag, GraphEr
         ));
     }
 
+    let mut synthetic_token = edges.len() as u64 + 1;
+
+    if !graph.parameters.is_empty() {
+        let param_tokens: Vec<u64> = {
+            let base = synthetic_token;
+            synthetic_token += graph.parameters.len() as u64;
+            (0..graph.parameters.len() as u64).map(|i| base + i).collect()
+        };
+
+        for node in nodes.iter_mut() {
+            if node.input_tokens.is_empty() {
+                node.input_tokens = param_tokens.clone();
+            }
+        }
+    }
+
     let entry_nodes = nodes
         .iter()
         .filter(|node| node.input_tokens.is_empty())
         .map(|node| node.id)
         .collect::<Vec<_>>();
-
-    // Assign synthetic output tokens to exit nodes (nodes with no outgoing edges)
-    // so the scheduler can capture their results via the standard token mechanism.
-    let next_token_id = edges.len() as u64 + 1;
-    let mut synthetic_token = next_token_id;
 
     let exit_nodes: Vec<u64> = nodes
         .iter_mut()

@@ -6,9 +6,7 @@
 
 use std::path::PathBuf;
 
-#[cfg(feature = "driver")]
-use anyhow::Context;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use apxm_core::utils::build::MlirEnvReport;
 use apxm_credentials::docker::{DockerManager, ContainerStatus};
 #[cfg(feature = "driver")]
@@ -78,9 +76,9 @@ enum Commands {
         /// Project name (creates a directory with this name)
         name: String,
     },
-    /// Compile ApxmGraph JSON/binary to an artifact
+    /// Compile ApxmGraph to an artifact
     Compile {
-        /// Input graph file or directory (.json or JSON-encoded binary)
+        /// Input graph file or directory (.apxm or binary)
         input: PathBuf,
         /// Output artifact path
         #[arg(short, long)]
@@ -106,7 +104,7 @@ enum Commands {
     /// Compile and execute an ApxmGraph file through the runtime
     #[command(trailing_var_arg = true)]
     Execute {
-        /// Input graph file (.json or JSON-encoded binary)
+        /// Input graph file (.apxm or binary)
         input: PathBuf,
         /// Arguments to pass to the entry flow
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -171,9 +169,9 @@ enum Commands {
         #[command(subcommand)]
         action: OpsAction,
     },
-    /// Validate an ApxmGraph JSON file against the AIS contract
+    /// Validate an ApxmGraph file against the AIS contract
     Validate {
-        /// Input graph file (.json)
+        /// Input graph file (.apxm)
         input: PathBuf,
         /// Skip Tier 2 environment checks (registered backends, profiles, etc.)
         #[arg(long)]
@@ -181,7 +179,7 @@ enum Commands {
     },
     /// Analyze an ApxmGraph for parallelism, critical path, and execution phases
     Analyze {
-        /// Input graph file (.json)
+        /// Input graph file (.apxm)
         input: PathBuf,
     },
     /// Browse graph templates (starter patterns)
@@ -198,6 +196,11 @@ enum Commands {
     Task {
         #[command(subcommand)]
         action: TaskAction,
+    },
+    /// Replay a session trace as a timeline
+    Replay {
+        /// Session directory path
+        session: PathBuf,
     },
 }
 
@@ -925,6 +928,7 @@ async fn run_cli() -> Result<()> {
         Commands::Template { action } => template_command(action, cli.json),
         Commands::Explain { file } => explain_command(file, cli.json),
         Commands::Task { action } => task_command(action, cli.json),
+        Commands::Replay { session } => replay_command(session),
     }
 }
 
@@ -948,6 +952,7 @@ async fn run_cli_no_driver() -> Result<()> {
         Commands::Template { action } => template_command(action, cli.json),
         Commands::Explain { file } => explain_command(file, cli.json),
         Commands::Task { action } => task_command(action, cli.json),
+        Commands::Replay { session } => replay_command(session),
         _ => Err(anyhow::anyhow!(
             "Command requires the `driver` feature. Re-run with: cargo run -p apxm-cli --features driver -- <command>"
         )),
@@ -1153,9 +1158,9 @@ fn compile_command(
 
     let out_path = output.unwrap_or_else(|| {
         if input.is_dir() {
-            input.join(format!("{}.apxmobj", graph.name))
+            input.join(format!("{}.{}", graph.name, apxm_core::constants::extensions::ARTIFACT))
         } else {
-            input.with_extension("apxmobj")
+            input.with_extension(apxm_core::constants::extensions::ARTIFACT)
         }
     });
     std::fs::write(&out_path, &bytes)
@@ -1317,7 +1322,7 @@ fn load_graph_from_directory(dir: &std::path::Path) -> Result<apxm_graph::ApxmGr
         for entry in std::fs::read_dir(&search_dir)? {
             let entry = entry?;
             let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) == Some("json") {
+            if matches!(path.extension().and_then(|e| e.to_str()), Some(apxm_core::constants::extensions::GRAPH | "json")) {
                 let text = std::fs::read_to_string(&path)
                     .with_context(|| format!("Failed to read {}", path.display()))?;
                 if text.contains("\"nodes\"") {
@@ -1332,7 +1337,7 @@ fn load_graph_from_directory(dir: &std::path::Path) -> Result<apxm_graph::ApxmGr
 
     if graphs.is_empty() {
         return Err(anyhow::anyhow!(
-            "No graph JSON files found in directory '{}'",
+            "No graph files (.apxm) found in directory '{}'",
             dir.display()
         ));
     }
@@ -1347,6 +1352,61 @@ fn load_graph_from_directory(dir: &std::path::Path) -> Result<apxm_graph::ApxmGr
         .unwrap_or("merged")
         .to_string();
     Ok(apxm_graph::ApxmGraph::merge(&name, &graphs))
+}
+
+/// Shared session setup: creates session dir, writes running manifest, creates emitter.
+#[cfg(feature = "driver")]
+fn setup_session(
+    emit_session: &Option<Option<PathBuf>>,
+    input: &std::path::Path,
+    default_stem: &str,
+    input_graph_json: Option<&str>,
+) -> Result<(
+    Option<apxm_driver::session_output::SessionOutputWriter>,
+    Option<std::sync::Arc<dyn apxm_runtime::ExecutionEventEmitter>>,
+    Option<String>,
+)> {
+    use apxm_core::paths::ApxmPaths;
+    use apxm_driver::session_output::{SessionEventEmitter, SessionOutputWriter};
+
+    let Some(custom_path) = emit_session else {
+        return Ok((None, None, None));
+    };
+
+    let base_dir = match custom_path {
+        Some(p) => p.clone(),
+        None => ApxmPaths::discover()
+            .context("Failed to discover APXM paths")?
+            .sessions_dir()
+            .context("Failed to create sessions directory")?,
+    };
+
+    let exec_id = format!(
+        "{}-{}",
+        input.file_stem().and_then(|s| s.to_str()).unwrap_or(default_stem),
+        chrono::Utc::now().format("%Y%m%dT%H%M%S")
+    );
+
+    let w = SessionOutputWriter::new(&base_dir, &exec_id)
+        .context("Failed to create session output directory")?;
+
+    let graph_name = input.file_stem().and_then(|s| s.to_str());
+    w.write_manifest_running(&exec_id, graph_name)
+        .context("Failed to write manifest")?;
+
+    if let Some(graph_json) = input_graph_json {
+        w.write_input_graph(graph_json)
+            .context("Failed to write input graph")?;
+    }
+
+    eprintln!("Session: {}", w.session_dir().display());
+
+    let emitter = SessionEventEmitter::new(w.session_dir(), exec_id.clone())
+        .context("Failed to create session event emitter")?;
+
+    let emitter: Option<std::sync::Arc<dyn apxm_runtime::ExecutionEventEmitter>> =
+        Some(std::sync::Arc::new(emitter));
+    Ok((Some(w), emitter, Some(exec_id)))
 }
 
 #[cfg(feature = "driver")]
@@ -1378,7 +1438,15 @@ async fn execute_command(
         None
     };
 
-    let result = match linker.run_graph(&input, args).await {
+    // Set up session output + live emitter BEFORE execution
+    let (writer, emitter, execution_id) = setup_session(
+        &emit_session,
+        &input,
+        "graph",
+        input_graph_json.as_deref(),
+    )?;
+
+    let result = match linker.run_graph(&input, args, emitter).await {
         Ok(r) => r,
         Err(err) => {
             eprintln!("{}", err);
@@ -1426,46 +1494,21 @@ async fn execute_command(
         println!("Wrote metrics to {}", metrics_path.display());
     }
 
-    // Emit session output if requested
-    if let Some(custom_path) = emit_session {
-        use apxm_core::paths::ApxmPaths;
-        use apxm_driver::session_output::SessionOutputWriter;
-
-        let base_dir = match custom_path {
-            Some(p) => p,
-            None => ApxmPaths::discover()
-                .context("Failed to discover APXM paths")?
-                .sessions_dir()
-                .context("Failed to create sessions directory")?,
-        };
-
-        let execution_id = format!(
-            "{}-{}",
-            input.file_stem().and_then(|s| s.to_str()).unwrap_or("graph"),
-            chrono::Utc::now().format("%Y%m%dT%H%M%S")
-        );
-
-        let writer = SessionOutputWriter::new(&base_dir, &execution_id)
-            .context("Failed to create session output directory")?;
-
-        // Write manifest
+    // Finalize session output after execution
+    if let Some(writer) = writer {
         let graph_name = input.file_stem().and_then(|s| s.to_str());
+        let exec_id = execution_id.as_deref().unwrap_or("unknown");
+
+        // Update manifest with final status
         writer
             .write_manifest(
-                &execution_id,
+                exec_id,
                 graph_name,
                 result.execution.stats.duration_ms,
                 result.execution.stats.executed_nodes + result.execution.stats.failed_nodes,
                 result.execution.stats.failed_nodes == 0,
             )
-            .context("Failed to write manifest")?;
-
-        // Write input graph
-        if let Some(ref graph_json) = input_graph_json {
-            writer
-                .write_input_graph(graph_json)
-                .context("Failed to write input graph")?;
-        }
+            .context("Failed to update manifest")?;
 
         // Write results (with all_outputs if available)
         if let (Some(all_outputs), Some(node_map)) =
@@ -1486,7 +1529,7 @@ async fn execute_command(
             .write_node_statuses(&result.execution.stats.node_statuses)
             .context("Failed to write node statuses")?;
 
-        println!("Wrote session output to {}", writer.session_dir().display());
+        eprintln!("Session complete: {}", writer.session_dir().display());
     }
 
     // Print workflow outputs
@@ -1519,7 +1562,7 @@ async fn run_command(
     use apxm_driver::runtime::RuntimeExecutor;
 
     // Validate file extension
-    if input.extension().and_then(|e| e.to_str()) != Some("apxmobj") {
+    if input.extension().and_then(|e| e.to_str()) != Some(apxm_core::constants::extensions::ARTIFACT) {
         return Err(anyhow::anyhow!(
             "Expected .apxmobj artifact file. Use 'execute' command for graph source files."
         ));
@@ -1544,9 +1587,17 @@ async fn run_command(
         .await
         .context("Failed to initialize runtime")?;
 
-    // Execute artifact with args
+    // Set up session output + live emitter BEFORE execution
+    let (writer, emitter, execution_id) = setup_session(
+        &emit_session,
+        &input,
+        "artifact",
+        None,
+    )?;
+
+    // Execute artifact with args + emitter
     let result = runtime
-        .execute_artifact_with_args(artifact, args)
+        .execute_artifact_with_emitter(artifact, args, emitter)
         .await
         .map_err(|e| anyhow::anyhow!("Execution failed: {}", e))?;
 
@@ -1570,39 +1621,20 @@ async fn run_command(
         println!("Wrote metrics to {}", metrics_path.display());
     }
 
-    // Emit session output if requested
-    if let Some(custom_path) = emit_session {
-        use apxm_core::paths::ApxmPaths;
-        use apxm_driver::session_output::SessionOutputWriter;
-
-        let base_dir = match custom_path {
-            Some(p) => p,
-            None => ApxmPaths::discover()
-                .context("Failed to discover APXM paths")?
-                .sessions_dir()
-                .context("Failed to create sessions directory")?,
-        };
-
-        let execution_id = format!(
-            "{}-{}",
-            input.file_stem().and_then(|s| s.to_str()).unwrap_or("artifact"),
-            chrono::Utc::now().format("%Y%m%dT%H%M%S")
-        );
-
-        let writer = SessionOutputWriter::new(&base_dir, &execution_id)
-            .context("Failed to create session output directory")?;
-
-        // Write manifest
+    // Finalize session output after execution
+    if let Some(writer) = writer {
         let graph_name = input.file_stem().and_then(|s| s.to_str());
+        let exec_id = execution_id.as_deref().unwrap_or("unknown");
+
         writer
             .write_manifest(
-                &execution_id,
+                exec_id,
                 graph_name,
                 result.stats.duration_ms,
                 result.stats.executed_nodes + result.stats.failed_nodes,
                 result.stats.failed_nodes == 0,
             )
-            .context("Failed to write manifest")?;
+            .context("Failed to update manifest")?;
 
         // Write results (with all_outputs if available)
         if let (Some(all_outputs), Some(node_map)) =
@@ -1623,7 +1655,7 @@ async fn run_command(
             .write_node_statuses(&result.stats.node_statuses)
             .context("Failed to write node statuses")?;
 
-        println!("Wrote session output to {}", writer.session_dir().display());
+        eprintln!("Session complete: {}", writer.session_dir().display());
     }
 
     Ok(())
@@ -1990,193 +2022,189 @@ fn validate_command(input: PathBuf, json_output: bool, no_check_resources: bool)
     use apxm_core::types::AIS_OPERATIONS;
     use std::collections::HashSet;
 
+    #[derive(serde::Deserialize)]
+    struct RawGraph {
+        #[serde(default)]
+        name: String,
+        #[serde(default)]
+        nodes: Vec<RawNode>,
+        #[serde(default)]
+        edges: Vec<RawEdge>,
+        #[serde(default)]
+        parameters: Vec<RawParam>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct RawNode {
+        #[serde(default)]
+        id: u64,
+        #[serde(default)]
+        name: String,
+        #[serde(default)]
+        op: String,
+        #[serde(default)]
+        attributes: HashMap<String, serde_json::Value>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct RawEdge {
+        #[serde(default)]
+        from: u64,
+        #[serde(default)]
+        to: u64,
+        #[serde(default = "RawEdge::default_dependency")]
+        dependency: String,
+    }
+
+    impl RawEdge {
+        fn default_dependency() -> String {
+            "Data".to_string()
+        }
+    }
+
+    #[derive(serde::Deserialize)]
+    struct RawParam {
+        #[serde(default)]
+        name: String,
+        #[serde(default)]
+        type_name: String,
+    }
+
     let content = std::fs::read_to_string(&input)
         .map_err(|e| anyhow::anyhow!("Failed to read {}: {e}", input.display()))?;
 
     let mut errors: Vec<String> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
 
-    // Parse JSON
-    let raw: serde_json::Value = serde_json::from_str(&content)
+    let raw: RawGraph = serde_json::from_str(&content)
         .map_err(|e| anyhow::anyhow!("Invalid JSON in {}: {e}", input.display()))?;
 
-    // Top-level checks
-    if raw
-        .get("name")
-        .and_then(serde_json::Value::as_str)
-        .is_none_or(|s| s.is_empty())
-    {
+    if raw.name.is_empty() {
         errors.push("graph name must not be empty".to_string());
     }
 
-    let nodes = raw.get("nodes").and_then(serde_json::Value::as_array);
-    if nodes.is_none() || nodes.is_some_and(|n| n.is_empty()) {
+    if raw.nodes.is_empty() {
         errors.push("graph must contain at least one node".to_string());
     }
 
-    // Node-level checks
     let mut node_ids: HashSet<u64> = HashSet::new();
     let valid_ops: HashSet<String> = AIS_OPERATIONS
         .iter()
         .map(|s| s.op_type.to_string())
         .collect();
 
-    if let Some(nodes) = nodes {
-        for node in nodes {
-            let id = node
-                .get("id")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(0);
-            let name = node
-                .get("name")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("");
-            let op = node
-                .get("op")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("");
+    for node in &raw.nodes {
+        let id = node.id;
+        let name = &node.name;
+        let op = &node.op;
 
-            if id == 0 {
-                errors.push(format!("node '{name}' has invalid id (0 or missing)"));
-            }
-            if !node_ids.insert(id) {
-                errors.push(format!("duplicate node id {id}"));
-            }
-            if name.is_empty() {
-                errors.push(format!("node id={id} has empty name"));
-            }
-            if op.is_empty() {
-                errors.push(format!("node '{name}' (id={id}) has empty op"));
-            } else if !valid_ops.contains(op) {
-                errors.push(format!(
-                    "node '{name}' (id={id}) has unknown op '{op}'. Run 'apxm ops list' for valid ops."
-                ));
-            } else {
-                // Check required attributes
-                let spec = AIS_OPERATIONS.iter().find(|s| s.op_type.to_string() == op);
-                if let Some(spec) = spec {
-                    let attrs = node
-                        .get("attributes")
-                        .and_then(serde_json::Value::as_object);
-                    for field in spec.fields.iter().filter(|f| f.required) {
-                        let has_attr = attrs.is_some_and(|a| a.contains_key(field.name));
-                        if !has_attr {
-                            errors.push(format!(
-                                "node '{name}' (id={id}, op={op}) missing required attribute '{}'",
-                                field.name
-                            ));
-                        }
+        if id == 0 {
+            errors.push(format!("node '{name}' has invalid id (0 or missing)"));
+        }
+        if !node_ids.insert(id) {
+            errors.push(format!("duplicate node id {id}"));
+        }
+        if name.is_empty() {
+            errors.push(format!("node id={id} has empty name"));
+        }
+        if op.is_empty() {
+            errors.push(format!("node '{name}' (id={id}) has empty op"));
+        } else if !valid_ops.contains(op.as_str()) {
+            errors.push(format!(
+                "node '{name}' (id={id}) has unknown op '{op}'. Run 'apxm ops list' for valid ops."
+            ));
+        } else {
+            let spec = AIS_OPERATIONS.iter().find(|s| s.op_type.to_string() == *op);
+            if let Some(spec) = spec {
+                for field in spec.fields.iter().filter(|f| f.required) {
+                    if !node.attributes.contains_key(field.name) {
+                        errors.push(format!(
+                            "node '{name}' (id={id}, op={op}) missing required attribute '{}'",
+                            field.name
+                        ));
                     }
                 }
             }
         }
     }
 
-    // Edge checks
-    if let Some(edges) = raw.get("edges").and_then(serde_json::Value::as_array) {
-        for edge in edges {
-            let from = edge
-                .get("from")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(0);
-            let to = edge
-                .get("to")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(0);
-            let dep = edge
-                .get("dependency")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("Data");
+    for edge in &raw.edges {
+        let from = edge.from;
+        let to = edge.to;
+        let dep = &edge.dependency;
 
-            if from == to {
-                errors.push(format!("edge {from}->{to} is a self-loop"));
-            }
-            if !matches!(dep, "Data" | "Control" | "Effect") {
-                errors.push(format!(
-                    "edge {from}->{to} has invalid dependency type '{dep}'"
-                ));
-            }
-            if !node_ids.contains(&from) {
-                errors.push(format!("edge references non-existent source node {from}"));
-            }
-            if !node_ids.contains(&to) {
-                errors.push(format!("edge references non-existent target node {to}"));
-            }
+        if from == to {
+            errors.push(format!("edge {from}->{to} is a self-loop"));
         }
-
-        // DAG cycle check (Kahn's algorithm)
-        if !node_ids.is_empty() && !edges.is_empty() {
-            let mut in_degree: HashMap<u64, usize> = node_ids.iter().map(|&id| (id, 0)).collect();
-            let mut adjacency: HashMap<u64, Vec<u64>> = HashMap::new();
-
-            for edge in edges {
-                let from = edge
-                    .get("from")
-                    .and_then(serde_json::Value::as_u64)
-                    .unwrap_or(0);
-                let to = edge
-                    .get("to")
-                    .and_then(serde_json::Value::as_u64)
-                    .unwrap_or(0);
-                if node_ids.contains(&from) && node_ids.contains(&to) {
-                    adjacency.entry(from).or_default().push(to);
-                    *in_degree.entry(to).or_insert(0) += 1;
-                }
-            }
-
-            let mut queue: std::collections::VecDeque<u64> = in_degree
-                .iter()
-                .filter_map(|(&id, &deg)| if deg == 0 { Some(id) } else { None })
-                .collect();
-            let mut visited = 0usize;
-            while let Some(node_id) = queue.pop_front() {
-                visited += 1;
-                if let Some(neighbors) = adjacency.get(&node_id) {
-                    for &neighbor in neighbors {
-                        if let Some(current) = in_degree.get_mut(&neighbor) {
-                            *current = current.saturating_sub(1);
-                            if *current == 0 {
-                                queue.push_back(neighbor);
-                            }
-                        }
-                    }
-                }
-            }
-            if visited != node_ids.len() {
-                errors.push(format!(
-                    "graph contains a cycle ({} nodes involved)",
-                    node_ids.len() - visited
-                ));
-            }
+        if !matches!(dep.as_str(), "Data" | "Control" | "Effect") {
+            errors.push(format!(
+                "edge {from}->{to} has invalid dependency type '{dep}'"
+            ));
+        }
+        if !node_ids.contains(&from) {
+            errors.push(format!("edge references non-existent source node {from}"));
+        }
+        if !node_ids.contains(&to) {
+            errors.push(format!("edge references non-existent target node {to}"));
         }
     }
 
-    // Parameter checks
-    if let Some(params) = raw.get("parameters").and_then(serde_json::Value::as_array) {
-        let valid_types: HashSet<&str> = ["str", "int", "float", "bool", "json"]
-            .into_iter()
+    if !node_ids.is_empty() && !raw.edges.is_empty() {
+        let mut in_degree: HashMap<u64, usize> = node_ids.iter().map(|&id| (id, 0)).collect();
+        let mut adjacency: HashMap<u64, Vec<u64>> = HashMap::new();
+
+        for edge in &raw.edges {
+            let from = edge.from;
+            let to = edge.to;
+            if node_ids.contains(&from) && node_ids.contains(&to) {
+                adjacency.entry(from).or_default().push(to);
+                *in_degree.entry(to).or_insert(0) += 1;
+            }
+        }
+
+        let mut queue: std::collections::VecDeque<u64> = in_degree
+            .iter()
+            .filter_map(|(&id, &deg)| if deg == 0 { Some(id) } else { None })
             .collect();
-        let mut param_names: HashSet<String> = HashSet::new();
-        for param in params {
-            let pname = param
-                .get("name")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("");
-            let ptype = param
-                .get("type_name")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("");
-            if pname.is_empty() {
-                errors.push("parameter with empty name".to_string());
+        let mut visited = 0usize;
+        while let Some(node_id) = queue.pop_front() {
+            visited += 1;
+            if let Some(neighbors) = adjacency.get(&node_id) {
+                for &neighbor in neighbors {
+                    if let Some(current) = in_degree.get_mut(&neighbor) {
+                        *current = current.saturating_sub(1);
+                        if *current == 0 {
+                            queue.push_back(neighbor);
+                        }
+                    }
+                }
             }
-            if !param_names.insert(pname.to_string()) {
-                errors.push(format!("duplicate parameter name '{pname}'"));
-            }
-            if !valid_types.contains(ptype) {
-                warnings.push(format!(
-                    "parameter '{pname}' has non-standard type_name '{ptype}'"
-                ));
-            }
+        }
+        if visited != node_ids.len() {
+            errors.push(format!(
+                "graph contains a cycle ({} nodes involved)",
+                node_ids.len() - visited
+            ));
+        }
+    }
+
+    let valid_types: HashSet<&str> = ["str", "int", "float", "bool", "json"]
+        .into_iter()
+        .collect();
+    let mut param_names: HashSet<String> = HashSet::new();
+    for param in &raw.parameters {
+        let pname = &param.name;
+        let ptype = &param.type_name;
+        if pname.is_empty() {
+            errors.push("parameter with empty name".to_string());
+        }
+        if !param_names.insert(pname.to_string()) {
+            errors.push(format!("duplicate parameter name '{pname}'"));
+        }
+        if !valid_types.contains(ptype.as_str()) {
+            warnings.push(format!(
+                "parameter '{pname}' has non-standard type_name '{ptype}'"
+            ));
         }
     }
 
@@ -2236,16 +2264,16 @@ fn validate_command(input: PathBuf, json_output: bool, no_check_resources: bool)
         print_status_line(&input.display().to_string(), Status::Ok, "valid");
         if !warnings.is_empty() {
             for w in &warnings {
-                println!("  {} {}", "\u{26a0}".yellow(), w);
+                println!("  {} {}", apxm_core::constants::ui::icons::CAUTION.yellow(), w);
             }
         }
     } else {
         print_status_line(&input.display().to_string(), Status::Error, "invalid");
         for e in &errors {
-            println!("  {} {}", "\u{2717}".red(), e);
+            println!("  {} {}", apxm_core::constants::ui::icons::FAILED.red(), e);
         }
         for w in &warnings {
-            println!("  {} {}", "\u{26a0}".yellow(), w);
+            println!("  {} {}", apxm_core::constants::ui::icons::CAUTION.yellow(), w);
         }
         return Err(anyhow::anyhow!("{} error(s) found", errors.len()));
     }
@@ -2255,8 +2283,7 @@ fn validate_command(input: PathBuf, json_output: bool, no_check_resources: bool)
 
 /// Parsed graph topology used by analyze and explain commands.
 struct GraphAnalysis<'a> {
-    graph_name: &'a str,
-    nodes: &'a Vec<serde_json::Value>,
+    graph: &'a apxm_graph::ApxmGraph,
     edge_count: usize,
     node_ids: HashSet<u64>,
     successors: HashMap<u64, Vec<u64>>,
@@ -2267,43 +2294,18 @@ struct GraphAnalysis<'a> {
 }
 
 impl<'a> GraphAnalysis<'a> {
-    fn from_raw(raw: &'a serde_json::Value) -> Result<Self> {
-        let graph_name = raw
-            .get("name")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("unnamed");
-        let nodes = raw
-            .get("nodes")
-            .and_then(serde_json::Value::as_array)
-            .ok_or_else(|| anyhow::anyhow!("graph has no nodes array"))?;
-        let empty_edges = vec![];
-        let edges = raw
-            .get("edges")
-            .and_then(serde_json::Value::as_array)
-            .unwrap_or(&empty_edges);
-        let edge_count = edges.len();
-
-        let node_ids: HashSet<u64> = nodes
-            .iter()
-            .filter_map(|n| n.get("id").and_then(serde_json::Value::as_u64))
-            .collect();
+    fn from_graph(graph: &'a apxm_graph::ApxmGraph) -> Self {
+        let node_ids: HashSet<u64> = graph.nodes.iter().map(|n| n.id).collect();
+        let edge_count = graph.edges.len();
 
         let mut successors: HashMap<u64, Vec<u64>> = HashMap::new();
         let mut predecessors: HashMap<u64, Vec<u64>> = HashMap::new();
         let mut in_degree: HashMap<u64, usize> = node_ids.iter().map(|&id| (id, 0)).collect();
 
-        for edge in edges.iter() {
-            let from = edge
-                .get("from")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(0);
-            let to = edge
-                .get("to")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(0);
-            successors.entry(from).or_default().push(to);
-            predecessors.entry(to).or_default().push(from);
-            *in_degree.entry(to).or_insert(0) += 1;
+        for edge in &graph.edges {
+            successors.entry(edge.from).or_default().push(edge.to);
+            predecessors.entry(edge.to).or_default().push(edge.from);
+            *in_degree.entry(edge.to).or_insert(0) += 1;
         }
 
         let entry_nodes: Vec<u64> = in_degree
@@ -2317,7 +2319,6 @@ impl<'a> GraphAnalysis<'a> {
             .copied()
             .collect();
 
-        // BFS phase layering
         let mut phases: Vec<Vec<u64>> = Vec::new();
         let mut remaining_in: HashMap<u64, usize> = in_degree.clone();
         let mut current_layer: Vec<u64> = entry_nodes.clone();
@@ -2343,9 +2344,8 @@ impl<'a> GraphAnalysis<'a> {
             current_layer = next_layer;
         }
 
-        Ok(Self {
-            graph_name,
-            nodes,
+        Self {
+            graph,
             edge_count,
             node_ids,
             successors,
@@ -2353,29 +2353,25 @@ impl<'a> GraphAnalysis<'a> {
             entry_nodes,
             exit_nodes,
             phases,
-        })
+        }
     }
 
-    fn node_by_id(&self, id: u64) -> Option<&serde_json::Value> {
-        self.nodes
-            .iter()
-            .find(|n| n.get("id").and_then(serde_json::Value::as_u64) == Some(id))
+    fn node_by_id(&self, id: u64) -> Option<&apxm_graph::GraphNode> {
+        self.graph.nodes.iter().find(|n| n.id == id)
     }
 
-    fn node_op(&self, id: u64) -> &str {
+    fn node_op(&self, id: u64) -> String {
         self.node_by_id(id)
-            .and_then(|n| n.get("op").and_then(serde_json::Value::as_str))
-            .unwrap_or("?")
+            .map(|n| n.op.to_string())
+            .unwrap_or_else(|| "?".to_string())
     }
 
     fn node_name(&self, id: u64) -> &str {
-        self.node_by_id(id)
-            .and_then(|n| n.get("name").and_then(serde_json::Value::as_str))
-            .unwrap_or("?")
+        self.node_by_id(id).map(|n| n.name.as_str()).unwrap_or("?")
     }
 
     fn node_latency_ms(&self, id: u64) -> u64 {
-        op_latency_ms(self.node_op(id))
+        op_latency_ms(&self.node_op(id))
     }
 
     fn max_parallelism(&self) -> usize {
@@ -2449,10 +2445,10 @@ impl<'a> GraphAnalysis<'a> {
 fn analyze_command(input: PathBuf, json_output: bool) -> Result<()> {
     let content = std::fs::read_to_string(&input)
         .map_err(|e| anyhow::anyhow!("Failed to read {}: {e}", input.display()))?;
-    let raw: serde_json::Value = serde_json::from_str(&content)
+    let graph: apxm_graph::ApxmGraph = serde_json::from_str(&content)
         .map_err(|e| anyhow::anyhow!("Invalid JSON in {}: {e}", input.display()))?;
 
-    let ga = GraphAnalysis::from_raw(&raw)?;
+    let ga = GraphAnalysis::from_graph(&graph);
     let (critical_path, critical_ms) = ga.critical_path();
     let sequential_ms = ga.sequential_ms();
     let parallel_ms = ga.parallel_ms();
@@ -2512,8 +2508,8 @@ fn analyze_command(input: PathBuf, json_output: bool) -> Result<()> {
 
         let result = serde_json::json!({
             "file": input.display().to_string(),
-            "graph_name": ga.graph_name,
-            "node_count": ga.nodes.len(),
+            "graph_name": ga.graph.name,
+            "node_count": ga.graph.nodes.len(),
             "edge_count": ga.edge_count,
             "entry_nodes": ga.entry_nodes,
             "exit_nodes": ga.exit_nodes,
@@ -2534,10 +2530,10 @@ fn analyze_command(input: PathBuf, json_output: bool) -> Result<()> {
         });
         println!("{}", serde_json::to_string_pretty(&result).unwrap());
     } else {
-        print_section_header(&format!("Analysis: {}", ga.graph_name));
+        print_section_header(&format!("Analysis: {}", ga.graph.name));
         println!(
             "  {} nodes, {} edges, {} phases, max parallelism {}",
-            ga.nodes.len(),
+            ga.graph.nodes.len(),
             ga.edge_count,
             ga.phases.len(),
             max_parallelism
@@ -2550,7 +2546,7 @@ fn analyze_command(input: PathBuf, json_output: bool) -> Result<()> {
             } else {
                 "(sequential)".dimmed().to_string()
             };
-            println!("  {} Phase {} {}", "\u{25b6}".cyan(), i + 1, tag);
+            println!("  {} Phase {} {}", apxm_core::constants::ui::icons::STARTED.cyan(), i + 1, tag);
             for &id in layer {
                 println!(
                     "    {} {} {} [{}ms]",
@@ -2565,20 +2561,23 @@ fn analyze_command(input: PathBuf, json_output: bool) -> Result<()> {
         println!();
         println!(
             "  {} Critical path: {} nodes, ~{}ms",
-            "\u{26a1}".yellow(),
+            apxm_core::constants::ui::icons::LIGHTNING.yellow(),
             critical_path.len(),
             critical_ms
         );
         println!(
-            "  \u{1f680} Speedup: {:.2}x (sequential {}ms \u{2192} parallel {}ms)",
-            speedup, sequential_ms, parallel_ms
+            "  {} Speedup: {:.2}x (sequential {}ms {} parallel {}ms)",
+            apxm_core::constants::ui::icons::ROCKET,
+            speedup, sequential_ms,
+            apxm_core::constants::ui::icons::ARROW_RIGHT,
+            parallel_ms
         );
 
         if !suggestions.is_empty() {
             println!();
             println!("  {}", "Suggestions:".bold());
             for s in &suggestions {
-                println!("    {} {s}", "\u{2022}".dimmed());
+                println!("    {} {s}", apxm_core::constants::ui::icons::BULLET.dimmed());
             }
         }
     }
@@ -2589,23 +2588,18 @@ fn analyze_command(input: PathBuf, json_output: bool) -> Result<()> {
 fn explain_command(file: PathBuf, json_output: bool) -> Result<()> {
     let content = std::fs::read_to_string(&file)
         .map_err(|e| anyhow::anyhow!("Failed to read {}: {e}", file.display()))?;
-    let raw: serde_json::Value = serde_json::from_str(&content)
+    let graph: apxm_graph::ApxmGraph = serde_json::from_str(&content)
         .map_err(|e| anyhow::anyhow!("Invalid JSON in {}: {e}", file.display()))?;
 
-    let ga = GraphAnalysis::from_raw(&raw)?;
+    let ga = GraphAnalysis::from_graph(&graph);
     let critical_ms = ga.parallel_ms();
     let max_parallelism = ga.max_parallelism();
     let depth = ga.phases.len();
     let parallelizable = max_parallelism > 1;
 
-    // Helper: get notable attributes from a node for display
     let notable_attrs = |id: u64| -> Vec<(String, String)> {
         let mut attrs = Vec::new();
-        if let Some(node) = ga.node_by_id(id)
-            && let Some(a) = node
-                .get("attributes")
-                .and_then(serde_json::Value::as_object)
-        {
+        if let Some(node) = ga.node_by_id(id) {
             let interesting = [
                 "template_str",
                 "capability",
@@ -2624,9 +2618,9 @@ fn explain_command(file: PathBuf, json_output: bool) -> Result<()> {
                 "target_task",
             ];
             for &key in &interesting {
-                if let Some(val) = a.get(key) {
+                if let Some(val) = node.attributes.get(key) {
                     let display = match val {
-                        serde_json::Value::String(s) => {
+                        apxm_core::types::Value::String(s) => {
                             if s.len() > 60 {
                                 format!("{}...", &s[..57])
                             } else {
@@ -2652,7 +2646,7 @@ fn explain_command(file: PathBuf, json_output: bool) -> Result<()> {
                     .iter()
                     .map(|&id| {
                         let op = ga.node_op(id);
-                        let spec = find_op_spec(op);
+                        let spec = find_op_spec(&op);
                         let required_attrs: Vec<String> = spec
                             .map(|s| {
                                 s.fields
@@ -2691,8 +2685,8 @@ fn explain_command(file: PathBuf, json_output: bool) -> Result<()> {
 
         let result = serde_json::json!({
             "file": file.display().to_string(),
-            "graph_name": ga.graph_name,
-            "node_count": ga.nodes.len(),
+            "graph_name": ga.graph.name,
+            "node_count": ga.graph.nodes.len(),
             "edge_count": ga.edge_count,
             "depth": depth,
             "execution_flow": phase_json,
@@ -2705,16 +2699,16 @@ fn explain_command(file: PathBuf, json_output: bool) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&result).unwrap());
     } else {
         println!();
-        println!("  {} {}", "Graph:".bold().cyan(), ga.graph_name.bold(),);
+        println!("  {} {}", "Graph:".bold().cyan(), ga.graph.name.bold(),);
         println!(
             "  Nodes: {} | Edges: {} | Depth: {}",
-            ga.nodes.len(),
+            ga.graph.nodes.len(),
             ga.edge_count,
             depth,
         );
         println!();
         println!("  {}", "Execution Flow:".bold().cyan());
-        println!("  {}", "\u{2550}".repeat(15).dimmed());
+        println!("  {}", apxm_core::constants::ui::icons::HRULE_DOUBLE.repeat(15).dimmed());
 
         for (i, layer) in ga.phases.iter().enumerate() {
             println!();
@@ -2730,7 +2724,7 @@ fn explain_command(file: PathBuf, json_output: bool) -> Result<()> {
 
             for &id in layer {
                 let op = ga.node_op(id);
-                let spec = find_op_spec(op);
+                let spec = find_op_spec(&op);
                 let cat = spec.map(|s| category_str(s.category)).unwrap_or("unknown");
                 let lat_val = ga.node_latency_ms(id);
                 let desc = spec.map(|s| s.description).unwrap_or("");
@@ -2740,7 +2734,7 @@ fn explain_command(file: PathBuf, json_output: bool) -> Result<()> {
                     "    {} \"{}\" {} {} ({}, ~{}ms)",
                     format!("[{}]", id).dimmed(),
                     ga.node_name(id).bold(),
-                    "\u{2014}".dimmed(),
+                    apxm_core::constants::ui::icons::EM_DASH.dimmed(),
                     op.cyan().bold(),
                     cat,
                     lat_val,
@@ -2761,7 +2755,7 @@ fn explain_command(file: PathBuf, json_output: bool) -> Result<()> {
                     let dep_strs: Vec<String> = deps.iter().map(|d| d.to_string()).collect();
                     println!(
                         "        {} depends on: [{}]",
-                        "\u{2190}".dimmed(),
+                        apxm_core::constants::ui::icons::ARROW_LEFT.dimmed(),
                         dep_strs.join(", "),
                     );
                 }
@@ -2769,7 +2763,7 @@ fn explain_command(file: PathBuf, json_output: bool) -> Result<()> {
                     let feed_strs: Vec<String> = feeds.iter().map(|f| f.to_string()).collect();
                     println!(
                         "        {} feeds: [{}]",
-                        "\u{2192}".dimmed(),
+                        apxm_core::constants::ui::icons::ARROW_RIGHT.dimmed(),
                         feed_strs.join(", "),
                     );
                 }
@@ -2975,7 +2969,7 @@ fn template_command(action: TemplateAction, json_output: bool) -> Result<()> {
                     println!();
                     println!(
                         "  {} pipe to validate: {} | apxm validate /dev/stdin",
-                        "\u{2139}".cyan(),
+                        apxm_core::constants::ui::icons::INFO.cyan(),
                         format!("apxm template show {} --json", tpl.name).dimmed()
                     );
                 }
@@ -3085,7 +3079,7 @@ fn ops_command(action: OpsAction, json_output: bool) -> Result<()> {
                             "  {}",
                             category_str(spec.category).to_uppercase().bold().cyan()
                         );
-                        println!("  {}", "\u{2500}".repeat(40).dimmed());
+                        println!("  {}", apxm_core::constants::ui::icons::HRULE.repeat(40).dimmed());
                     }
                     println!(
                         "  {:<18} {}  {}",
@@ -3151,7 +3145,7 @@ fn ops_command(action: OpsAction, json_output: bool) -> Result<()> {
                     spec.op_type.to_string().bold().cyan(),
                     spec.name.dimmed()
                 );
-                println!("  {}", "\u{2500}".repeat(50).dimmed());
+                println!("  {}", apxm_core::constants::ui::icons::HRULE.repeat(50).dimmed());
                 println!("  {}", spec.description);
                 println!();
                 println!("  {}", spec.long_description);
@@ -3549,9 +3543,10 @@ fn task_command(action: TaskAction, json_output: bool) -> Result<()> {
 }
 
 fn print_section_header(title: &str) {
+    use apxm_core::constants::ui;
     println!();
     println!("  {}", title.bold().cyan());
-    println!("  {}", "\u{2500}".repeat(title.len()).dimmed());
+    println!("  {}", ui::icons::HRULE.repeat(title.len()).dimmed());
 }
 
 fn print_subsection_header(title: &str) {
@@ -3560,7 +3555,8 @@ fn print_subsection_header(title: &str) {
 }
 
 fn print_hint(message: &str) {
-    println!("  {} {}", "\u{2139}".cyan(), message);
+    use apxm_core::constants::ui;
+    println!("  {} {}", ui::icons::INFO.cyan(), message);
 }
 
 enum Status {
@@ -3570,12 +3566,163 @@ enum Status {
 }
 
 fn print_status_line(label: &str, status: Status, value: &str) {
+    use apxm_core::constants::ui;
     let (icon, status_str) = match status {
-        Status::Ok => ("\u{2713}".green(), "OK".green().bold()),
-        Status::Warning => ("!".yellow(), "WARN".yellow().bold()),
-        Status::Error => ("\u{2717}".red(), "MISSING".red().bold()),
+        Status::Ok => (ui::icons::SUCCESS.green(), ui::labels::OK.green().bold()),
+        Status::Warning => (ui::icons::WARNING.yellow(), ui::labels::WARN.yellow().bold()),
+        Status::Error => (ui::icons::FAILED.red(), ui::labels::MISSING.red().bold()),
     };
     println!("  {} {:<14} [{}] {}", icon, label.bold(), status_str, value);
+}
+
+fn replay_command(session: PathBuf) -> Result<()> {
+    use apxm_core::constants;
+    use apxm_core::types::SessionManifest;
+
+    // Read manifest
+    let manifest_path = session.join(constants::session::files::MANIFEST);
+    let manifest_text = std::fs::read_to_string(&manifest_path)
+        .with_context(|| format!("Failed to read {}", manifest_path.display()))?;
+    let manifest: SessionManifest = serde_json::from_str(&manifest_text)
+        .context("Failed to parse manifest")?;
+
+    let duration_secs = manifest.duration_ms as f64 / 1000.0;
+    let status_str = if manifest.success { "success" } else { "failed" };
+
+    println!(
+        "Session: {} ({} nodes, {:.1}s, {})",
+        manifest.execution_id, manifest.node_count, duration_secs, status_str
+    );
+    println!();
+
+    // Read trace
+    let trace_path = session.join(constants::session::files::TRACE);
+    if !trace_path.exists() {
+        println!("  (no trace file found)");
+        return Ok(());
+    }
+
+    // Read node names from the input graph
+    let input_path = session.join(constants::session::files::INPUT_GRAPH);
+    let node_names: HashMap<u64, String> = if input_path.exists() {
+        std::fs::read_to_string(&input_path)
+            .ok()
+            .and_then(|text| apxm_graph::ApxmGraph::from_json(&text).ok())
+            .map(|graph| {
+                graph.nodes.iter().map(|n| (n.id, n.name.clone())).collect()
+            })
+            .unwrap_or_default()
+    } else {
+        HashMap::new()
+    };
+
+    // Parse trace events and build timeline
+    use apxm_events::ApxmEvent;
+    use apxm_events::payload::EventPayload;
+
+    enum EventKind {
+        Start,
+        End { duration_ms: u64, success: bool },
+    }
+
+    struct TimelineEntry {
+        timestamp_ms: f64,
+        node_name: String,
+        op_type: String,
+        kind: EventKind,
+    }
+
+    let mut entries: Vec<TimelineEntry> = Vec::new();
+    let mut first_timestamp: Option<chrono::DateTime<chrono::Utc>> = None;
+
+    let trace_file = std::fs::File::open(&trace_path)
+        .with_context(|| format!("Failed to open {}", trace_path.display()))?;
+    let reader = std::io::BufReader::new(trace_file);
+
+    for line in std::io::BufRead::lines(reader) {
+        let line = match line {
+            Ok(l) => l,
+            Err(_) => continue,
+        };
+        if line.trim().is_empty() {
+            continue;
+        }
+        let event: ApxmEvent = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        let ts = event.meta.timestamp;
+        if first_timestamp.is_none() {
+            first_timestamp = Some(ts);
+        }
+        let elapsed_ms = (ts - first_timestamp.unwrap())
+            .num_milliseconds()
+            .max(0) as f64;
+
+        let resolve_name = |node_id: u64| {
+            node_names
+                .get(&node_id)
+                .cloned()
+                .unwrap_or_else(|| format!("node_{}", node_id))
+        };
+
+        match event.payload {
+            EventPayload::OperationStart(ref p) => {
+                entries.push(TimelineEntry {
+                    timestamp_ms: elapsed_ms,
+                    node_name: resolve_name(p.node_id),
+                    op_type: p.op_type.clone(),
+                    kind: EventKind::Start,
+                });
+            }
+            EventPayload::OperationEnd(ref p) => {
+                entries.push(TimelineEntry {
+                    timestamp_ms: elapsed_ms,
+                    node_name: resolve_name(p.node_id),
+                    op_type: p.op_type.clone(),
+                    kind: EventKind::End {
+                        duration_ms: p.duration_ms,
+                        success: p.success,
+                    },
+                });
+            }
+            _ => {}
+        }
+    }
+
+    if entries.is_empty() {
+        println!("  (no operation events in trace)");
+        return Ok(());
+    }
+
+    // Sort by timestamp
+    entries.sort_by(|a, b| a.timestamp_ms.partial_cmp(&b.timestamp_ms).unwrap());
+
+    // Print timeline
+    for entry in &entries {
+        let t = entry.timestamp_ms / 1000.0;
+        let (icon, detail) = match &entry.kind {
+            EventKind::Start => (
+                constants::ui::icons::STARTED,
+                constants::ui::labels::STARTED.to_string(),
+            ),
+            EventKind::End { duration_ms, success } => {
+                let i = if *success {
+                    constants::ui::icons::SUCCESS
+                } else {
+                    constants::ui::icons::FAILED
+                };
+                (i, format!("{:.1}s", *duration_ms as f64 / 1000.0))
+            }
+        };
+        println!(
+            "  {:>5.1}s  {:<20} {:<15} {} {}",
+            t, entry.node_name, entry.op_type, icon, detail
+        );
+    }
+
+    Ok(())
 }
 
 #[cfg(feature = "driver")]
@@ -3690,9 +3837,8 @@ mod tests {
 
     // ── GraphAnalysis tests ─────────────────────────────────────────────────
 
-    /// Build a simple test graph JSON: A -> B -> C (sequential pipeline)
-    fn pipeline_graph() -> serde_json::Value {
-        serde_json::json!({
+    fn pipeline_graph() -> apxm_graph::ApxmGraph {
+        serde_json::from_value(serde_json::json!({
             "name": "test-pipeline",
             "nodes": [
                 {"id": 1, "name": "step-a", "op": "ASK", "attributes": {"template_str": "a"}},
@@ -3705,12 +3851,11 @@ mod tests {
             ],
             "parameters": [],
             "metadata": {}
-        })
+        })).unwrap()
     }
 
-    /// Build a fan-out graph: 1,2,3 (parallel) -> 4 (sync)
-    fn fanout_graph() -> serde_json::Value {
-        serde_json::json!({
+    fn fanout_graph() -> apxm_graph::ApxmGraph {
+        serde_json::from_value(serde_json::json!({
             "name": "test-fanout",
             "nodes": [
                 {"id": 1, "name": "a", "op": "ASK", "attributes": {"template_str": "a"}},
@@ -3725,12 +3870,11 @@ mod tests {
             ],
             "parameters": [],
             "metadata": {}
-        })
+        })).unwrap()
     }
 
-    /// Single-node graph (no edges)
-    fn single_node_graph() -> serde_json::Value {
-        serde_json::json!({
+    fn single_node_graph() -> apxm_graph::ApxmGraph {
+        serde_json::from_value(serde_json::json!({
             "name": "single",
             "nodes": [
                 {"id": 1, "name": "only", "op": "ASK", "attributes": {"template_str": "hi"}}
@@ -3738,16 +3882,16 @@ mod tests {
             "edges": [],
             "parameters": [],
             "metadata": {}
-        })
+        })).unwrap()
     }
 
     #[test]
     fn graph_analysis_pipeline_basic_properties() {
         let raw = pipeline_graph();
-        let ga = GraphAnalysis::from_raw(&raw).unwrap();
+        let ga = GraphAnalysis::from_graph(&raw);
 
-        assert_eq!(ga.graph_name, "test-pipeline");
-        assert_eq!(ga.nodes.len(), 3);
+        assert_eq!(ga.graph.name, "test-pipeline");
+        assert_eq!(ga.graph.nodes.len(), 3);
         assert_eq!(ga.edge_count, 2);
         assert_eq!(ga.node_ids.len(), 3);
     }
@@ -3755,7 +3899,7 @@ mod tests {
     #[test]
     fn graph_analysis_pipeline_entry_exit_nodes() {
         let raw = pipeline_graph();
-        let ga = GraphAnalysis::from_raw(&raw).unwrap();
+        let ga = GraphAnalysis::from_graph(&raw);
 
         // In a pipeline A->B->C, entry is [1] and exit is [3]
         assert_eq!(ga.entry_nodes, vec![1]);
@@ -3765,7 +3909,7 @@ mod tests {
     #[test]
     fn graph_analysis_pipeline_phases() {
         let raw = pipeline_graph();
-        let ga = GraphAnalysis::from_raw(&raw).unwrap();
+        let ga = GraphAnalysis::from_graph(&raw);
 
         // Sequential pipeline should have 3 phases, each with 1 node
         assert_eq!(ga.phases.len(), 3);
@@ -3777,7 +3921,7 @@ mod tests {
     #[test]
     fn graph_analysis_pipeline_max_parallelism() {
         let raw = pipeline_graph();
-        let ga = GraphAnalysis::from_raw(&raw).unwrap();
+        let ga = GraphAnalysis::from_graph(&raw);
 
         // Sequential => max parallelism = 1
         assert_eq!(ga.max_parallelism(), 1);
@@ -3786,7 +3930,7 @@ mod tests {
     #[test]
     fn graph_analysis_pipeline_speedup() {
         let raw = pipeline_graph();
-        let ga = GraphAnalysis::from_raw(&raw).unwrap();
+        let ga = GraphAnalysis::from_graph(&raw);
 
         // Sequential => speedup ~1.0
         let speedup = ga.speedup();
@@ -3800,7 +3944,7 @@ mod tests {
     #[test]
     fn graph_analysis_pipeline_critical_path() {
         let raw = pipeline_graph();
-        let ga = GraphAnalysis::from_raw(&raw).unwrap();
+        let ga = GraphAnalysis::from_graph(&raw);
 
         let (path, ms) = ga.critical_path();
         // Critical path includes all 3 nodes in sequence
@@ -3812,7 +3956,7 @@ mod tests {
     #[test]
     fn graph_analysis_fanout_max_parallelism() {
         let raw = fanout_graph();
-        let ga = GraphAnalysis::from_raw(&raw).unwrap();
+        let ga = GraphAnalysis::from_graph(&raw);
 
         // Nodes 1,2,3 are all entry nodes with no predecessors => phase 1 has 3 nodes
         assert_eq!(ga.max_parallelism(), 3);
@@ -3821,7 +3965,7 @@ mod tests {
     #[test]
     fn graph_analysis_fanout_phases() {
         let raw = fanout_graph();
-        let ga = GraphAnalysis::from_raw(&raw).unwrap();
+        let ga = GraphAnalysis::from_graph(&raw);
 
         // Phase 1: [1,2,3] parallel, Phase 2: [4] sync
         assert_eq!(ga.phases.len(), 2);
@@ -3832,7 +3976,7 @@ mod tests {
     #[test]
     fn graph_analysis_fanout_speedup_greater_than_one() {
         let raw = fanout_graph();
-        let ga = GraphAnalysis::from_raw(&raw).unwrap();
+        let ga = GraphAnalysis::from_graph(&raw);
 
         let speedup = ga.speedup();
         assert!(
@@ -3845,7 +3989,7 @@ mod tests {
     #[test]
     fn graph_analysis_fanout_entry_exit() {
         let raw = fanout_graph();
-        let ga = GraphAnalysis::from_raw(&raw).unwrap();
+        let ga = GraphAnalysis::from_graph(&raw);
 
         // Entry: 1,2,3 (sorted)
         let mut entries = ga.entry_nodes.clone();
@@ -3859,10 +4003,10 @@ mod tests {
     #[test]
     fn graph_analysis_single_node() {
         let raw = single_node_graph();
-        let ga = GraphAnalysis::from_raw(&raw).unwrap();
+        let ga = GraphAnalysis::from_graph(&raw);
 
-        assert_eq!(ga.graph_name, "single");
-        assert_eq!(ga.nodes.len(), 1);
+        assert_eq!(ga.graph.name, "single");
+        assert_eq!(ga.graph.nodes.len(), 1);
         assert_eq!(ga.edge_count, 0);
         assert_eq!(ga.entry_nodes, vec![1]);
         assert_eq!(ga.exit_nodes, vec![1]);
@@ -3874,7 +4018,7 @@ mod tests {
     #[test]
     fn graph_analysis_node_accessors() {
         let raw = pipeline_graph();
-        let ga = GraphAnalysis::from_raw(&raw).unwrap();
+        let ga = GraphAnalysis::from_graph(&raw);
 
         assert_eq!(ga.node_op(1), "ASK");
         assert_eq!(ga.node_name(1), "step-a");
@@ -3889,7 +4033,7 @@ mod tests {
     #[test]
     fn graph_analysis_critical_path_fanout() {
         let raw = fanout_graph();
-        let ga = GraphAnalysis::from_raw(&raw).unwrap();
+        let ga = GraphAnalysis::from_graph(&raw);
 
         let (path, ms) = ga.critical_path();
         // Critical path goes through one of the parallel nodes + sync
@@ -3902,7 +4046,7 @@ mod tests {
     #[test]
     fn graph_analysis_sequential_vs_parallel_ms() {
         let raw = fanout_graph();
-        let ga = GraphAnalysis::from_raw(&raw).unwrap();
+        let ga = GraphAnalysis::from_graph(&raw);
 
         let seq = ga.sequential_ms();
         let par = ga.parallel_ms();
@@ -3917,8 +4061,9 @@ mod tests {
 
     #[test]
     fn graph_analysis_no_nodes_errors() {
-        let raw = serde_json::json!({"name": "empty"});
-        let result = GraphAnalysis::from_raw(&raw);
+        let result = serde_json::from_value::<apxm_graph::ApxmGraph>(
+            serde_json::json!({"name": "empty"}),
+        );
         assert!(result.is_err());
     }
 }

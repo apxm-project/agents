@@ -31,14 +31,14 @@ This is a **meta-workflow** — a graph that builds new APXM features by orchest
 
 ```bash
 # Validate
-apxm validate examples/workflows/add-apxm-feature.json
+apxm validate examples/workflows/add-apxm-feature.apxm
 
 # Run with a feature request
-apxm execute examples/workflows/add-apxm-feature.json -- \
+apxm execute examples/workflows/add-apxm-feature.apxm -- \
   "Add a ROLLBACK operation that reverts execution state to a previous CHECKPOINT"
 
 # Another example
-apxm execute examples/workflows/add-apxm-feature.json -- \
+apxm execute examples/workflows/add-apxm-feature.apxm -- \
   "Add support for TIMEOUT attribute on COMMUNICATE that cancels if agent doesn't respond within N ms"
 ```
 

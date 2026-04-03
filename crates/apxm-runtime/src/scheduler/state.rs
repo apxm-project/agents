@@ -262,6 +262,23 @@ impl SchedulerState {
         Ok(results)
     }
 
+    pub fn collect_all_values(&self) -> RuntimeResult<HashMap<TokenId, Value>> {
+        let mut results = HashMap::new();
+        for entry in self.tokens.iter() {
+            if let Some(ref value) = entry.value().value {
+                results.insert(*entry.key(), value.clone());
+            }
+        }
+        Ok(results)
+    }
+
+    pub fn node_output_map(&self) -> HashMap<NodeId, Vec<TokenId>> {
+        self.nodes
+            .iter()
+            .map(|entry| (*entry.key(), entry.value().output_tokens.clone()))
+            .collect()
+    }
+
     /// Create a new promise token for a flow call.
     ///
     /// The token is registered as "not ready" and will be resolved

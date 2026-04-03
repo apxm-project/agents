@@ -325,76 +325,77 @@ impl LLMBackend for AnthropicBackend {
                         continue;
                     }
 
-                    let parsed: serde_json::Value = match serde_json::from_str(&data_str) {
-                        Ok(v) => v,
-                        Err(_) => continue,
-                    };
-
                     match event_type.as_str() {
                         "message_start" => {
-                            // Extract usage from message.usage.
-                            if let Some(usage) = parsed["message"]["usage"].as_object() {
-                                input_tokens = usage.get("input_tokens")
-                                    .and_then(|v| v.as_u64())
-                                    .unwrap_or(0) as usize;
+                            if let Ok(payload) = serde_json::from_str::<MessageStartPayload>(&data_str) {
+                                if let Some(msg) = payload.message {
+                                    if let Some(usage) = msg.usage {
+                                        input_tokens = usage.input_tokens as usize;
+                                    }
+                                }
                             }
                         }
                         "content_block_start" => {
-                            let block = &parsed["content_block"];
-                            let block_type = block["type"].as_str().unwrap_or("");
-                            if block_type == "tool_use" {
-                                current_tool_id = block["id"].as_str().unwrap_or("").to_string();
-                                current_tool_name = block["name"].as_str().unwrap_or("").to_string();
-                                current_tool_input.clear();
-                                yield StreamChunk::ToolCallStart {
-                                    id: current_tool_id.clone(),
-                                    name: current_tool_name.clone(),
-                                };
-                            }
-                            // "thinking" blocks emit Thought chunks.
-                            if block_type == "thinking" {
-                                if let Some(text) = block["thinking"].as_str() {
-                                    if !text.is_empty() {
-                                        yield StreamChunk::Thought(text.to_string());
+                            if let Ok(payload) = serde_json::from_str::<ContentBlockStartPayload>(&data_str) {
+                                if let Some(block) = payload.content_block {
+                                    match block {
+                                        StreamContentBlock::ToolUse { id, name } => {
+                                            current_tool_id = id;
+                                            current_tool_name = name;
+                                            current_tool_input.clear();
+                                            yield StreamChunk::ToolCallStart {
+                                                id: current_tool_id.clone(),
+                                                name: current_tool_name.clone(),
+                                            };
+                                        }
+                                        StreamContentBlock::Thinking { thinking } => {
+                                            if let Some(text) = thinking {
+                                                if !text.is_empty() {
+                                                    yield StreamChunk::Thought(text);
+                                                }
+                                            }
+                                        }
+                                        _ => {}
                                     }
                                 }
                             }
                         }
                         "content_block_delta" => {
-                            let delta = &parsed["delta"];
-                            let delta_type = delta["type"].as_str().unwrap_or("");
-                            match delta_type {
-                                "text_delta" => {
-                                    if let Some(text) = delta["text"].as_str() {
-                                        if !text.is_empty() {
-                                            full_content.push_str(text);
-                                            yield StreamChunk::Token(text.to_string());
+                            if let Ok(payload) = serde_json::from_str::<ContentBlockDeltaPayload>(&data_str) {
+                                if let Some(delta) = payload.delta {
+                                    match delta {
+                                        StreamDelta::TextDelta { text } => {
+                                            if let Some(text) = text {
+                                                if !text.is_empty() {
+                                                    full_content.push_str(&text);
+                                                    yield StreamChunk::Token(text);
+                                                }
+                                            }
                                         }
+                                        StreamDelta::InputJsonDelta { partial_json } => {
+                                            if let Some(partial) = partial_json {
+                                                if !partial.is_empty() {
+                                                    current_tool_input.push_str(&partial);
+                                                    yield StreamChunk::ToolCallDelta {
+                                                        id: current_tool_id.clone(),
+                                                        arguments_delta: partial,
+                                                    };
+                                                }
+                                            }
+                                        }
+                                        StreamDelta::ThinkingDelta { thinking } => {
+                                            if let Some(text) = thinking {
+                                                if !text.is_empty() {
+                                                    yield StreamChunk::Thought(text);
+                                                }
+                                            }
+                                        }
+                                        StreamDelta::Other => {}
                                     }
                                 }
-                                "input_json_delta" => {
-                                    if let Some(partial) = delta["partial_json"].as_str() {
-                                        if !partial.is_empty() {
-                                            current_tool_input.push_str(partial);
-                                            yield StreamChunk::ToolCallDelta {
-                                                id: current_tool_id.clone(),
-                                                arguments_delta: partial.to_string(),
-                                            };
-                                        }
-                                    }
-                                }
-                                "thinking_delta" => {
-                                    if let Some(text) = delta["thinking"].as_str() {
-                                        if !text.is_empty() {
-                                            yield StreamChunk::Thought(text.to_string());
-                                        }
-                                    }
-                                }
-                                _ => {}
                             }
                         }
                         "content_block_stop" => {
-                            // If we were accumulating a tool call, finalize it.
                             if !current_tool_id.is_empty() {
                                 let args: serde_json::Value = serde_json::from_str(&current_tool_input)
                                     .unwrap_or(json!({}));
@@ -409,15 +410,13 @@ impl LLMBackend for AnthropicBackend {
                             }
                         }
                         "message_delta" => {
-                            // Extract output token count.
-                            if let Some(usage) = parsed["usage"].as_object() {
-                                output_tokens = usage.get("output_tokens")
-                                    .and_then(|v| v.as_u64())
-                                    .unwrap_or(0) as usize;
+                            if let Ok(payload) = serde_json::from_str::<MessageDeltaPayload>(&data_str) {
+                                if let Some(usage) = payload.usage {
+                                    output_tokens = usage.output_tokens as usize;
+                                }
                             }
                         }
                         "message_stop" => {
-                            // Final response.
                             let finish_reason = if !tool_calls.is_empty() {
                                 FinishReason::ToolUse
                             } else {
@@ -440,13 +439,15 @@ impl LLMBackend for AnthropicBackend {
                             return;
                         }
                         "error" => {
-                            let msg = parsed["error"]["message"]
-                                .as_str()
-                                .unwrap_or("Unknown streaming error")
-                                .to_string();
-                            yield StreamChunk::Error(msg);
+                            if let Ok(payload) = serde_json::from_str::<StreamErrorPayload>(&data_str) {
+                                let msg = payload.error
+                                    .and_then(|e| e.message)
+                                    .unwrap_or_else(|| "Unknown streaming error".to_string());
+                                yield StreamChunk::Error(msg);
+                            } else {
+                                yield StreamChunk::Error("Unknown streaming error".to_string());
+                            }
                         }
-                        // ping and other events are ignored.
                         _ => {}
                     }
                 }
@@ -535,6 +536,115 @@ enum ContentBlock {
 struct Usage {
     input_tokens: usize,
     output_tokens: usize,
+}
+
+// Anthropic streaming response types (constructed by serde, not user code)
+#[allow(dead_code)]
+#[derive(Deserialize)]
+struct MessageStartPayload {
+    #[serde(default)]
+    message: Option<MessageStartMessage>,
+}
+
+#[allow(dead_code)]
+#[derive(Deserialize)]
+struct MessageStartMessage {
+    #[serde(default)]
+    usage: Option<StreamInputUsage>,
+}
+
+#[allow(dead_code)]
+#[derive(Deserialize)]
+struct StreamInputUsage {
+    #[serde(default)]
+    input_tokens: u64,
+}
+
+#[allow(dead_code)]
+#[derive(Deserialize)]
+struct ContentBlockStartPayload {
+    #[serde(default)]
+    content_block: Option<StreamContentBlock>,
+}
+
+#[allow(dead_code)]
+#[derive(Deserialize)]
+#[serde(tag = "type")]
+enum StreamContentBlock {
+    #[serde(rename = "tool_use")]
+    ToolUse {
+        #[serde(default)]
+        id: String,
+        #[serde(default)]
+        name: String,
+    },
+    #[serde(rename = "thinking")]
+    Thinking {
+        #[serde(default)]
+        thinking: Option<String>,
+    },
+    #[serde(rename = "text")]
+    Text {},
+    #[serde(other)]
+    Other,
+}
+
+#[allow(dead_code)]
+#[derive(Deserialize)]
+struct ContentBlockDeltaPayload {
+    #[serde(default)]
+    delta: Option<StreamDelta>,
+}
+
+#[allow(dead_code)]
+#[derive(Deserialize)]
+#[serde(tag = "type")]
+enum StreamDelta {
+    #[serde(rename = "text_delta")]
+    TextDelta {
+        #[serde(default)]
+        text: Option<String>,
+    },
+    #[serde(rename = "input_json_delta")]
+    InputJsonDelta {
+        #[serde(default)]
+        partial_json: Option<String>,
+    },
+    #[serde(rename = "thinking_delta")]
+    ThinkingDelta {
+        #[serde(default)]
+        thinking: Option<String>,
+    },
+    #[serde(other)]
+    Other,
+}
+
+#[allow(dead_code)]
+#[derive(Deserialize)]
+struct MessageDeltaPayload {
+    #[serde(default)]
+    usage: Option<StreamOutputUsage>,
+}
+
+#[allow(dead_code)]
+#[derive(Deserialize)]
+struct StreamOutputUsage {
+    #[serde(default)]
+    output_tokens: u64,
+}
+
+#[allow(dead_code)]
+#[derive(Deserialize)]
+struct StreamErrorPayload {
+    #[serde(default)]
+    error: Option<StreamError>,
+}
+
+#[allow(dead_code)]
+#[derive(Deserialize)]
+struct StreamError {
+    #[serde(default)]
+    message: Option<String>,
 }
 
 #[cfg(test)]

@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use apxm_artifact::Artifact;
 use apxm_core::types::execution::ExecutionDag;
-use apxm_runtime::{Runtime, RuntimeExecutionResult};
+use apxm_runtime::{ExecutionEventEmitter, Runtime, RuntimeExecutionResult};
 
 use crate::{error::DriverError, linker::LinkerConfig};
 
@@ -84,6 +84,19 @@ impl RuntimeExecutor {
     ) -> Result<RuntimeExecutionResult, DriverError> {
         self.runtime
             .execute_artifact_with_args(artifact, args)
+            .await
+            .map_err(DriverError::Runtime)
+    }
+
+    /// Execute an artifact with arguments and an optional event emitter.
+    pub async fn execute_artifact_with_emitter(
+        &self,
+        artifact: Artifact,
+        args: Vec<String>,
+        emitter: Option<Arc<dyn ExecutionEventEmitter>>,
+    ) -> Result<RuntimeExecutionResult, DriverError> {
+        self.runtime
+            .execute_artifact_with_session_and_emitter(artifact, args, None, emitter)
             .await
             .map_err(DriverError::Runtime)
     }

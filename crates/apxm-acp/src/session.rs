@@ -7,6 +7,7 @@ use apxm_core::apxm_acp;
 
 use crate::AcpError;
 use crate::auth;
+use apxm_core::constants::acp::client_capabilities as client_caps;
 use crate::constants::{
     args as cap_args, client, fields, methods, protocol, stop_reasons, timeouts, wire,
 };
@@ -94,12 +95,12 @@ impl AcpSession {
         let init_params = serde_json::json!({
             fields::PROTOCOL_VERSION: protocol::ACP_PROTOCOL_VERSION,
             fields::CLIENT_CAPABILITIES: {
-                "fs": {"readTextFile": true, "writeTextFile": true},
-                "terminal": true,
+                client_caps::FS: {client_caps::READ_TEXT_FILE: true, client_caps::WRITE_TEXT_FILE: true},
+                client_caps::TERMINAL: true,
             },
             fields::CLIENT_INFO: {
-                "name": client::CLIENT_NAME,
-                "version": client::CLIENT_VERSION,
+                client_caps::NAME: client::CLIENT_NAME,
+                client_caps::VERSION: client::CLIENT_VERSION,
             },
         });
 

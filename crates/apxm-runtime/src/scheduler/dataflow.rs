@@ -51,6 +51,8 @@ impl DataflowScheduler {
         std::collections::HashMap<u64, Value>,
         ExecutionStats,
         SchedulerMetrics,
+        Option<std::collections::HashMap<u64, Value>>,
+        Option<std::collections::HashMap<u64, Vec<u64>>>,
     )> {
         let start = Instant::now();
 
@@ -126,6 +128,12 @@ impl DataflowScheduler {
         // Collect exit values
         let results = state.collect_exit_values()?;
 
+        let (all_outputs, node_output_map) = if self.config.collect_all_outputs {
+            (Some(state.collect_all_values()?), Some(state.node_output_map()))
+        } else {
+            (None, None)
+        };
+
         // Build statistics
         let stats = state.build_stats();
 
@@ -140,7 +148,7 @@ impl DataflowScheduler {
             "DAG execution completed"
         );
 
-        Ok((results, stats, scheduler_metrics))
+        Ok((results, stats, scheduler_metrics, all_outputs, node_output_map))
     }
 
     /// Apply runtime latency tier overrides to DAG nodes.

@@ -23,10 +23,12 @@ dirs = "5.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"], optional = true }
+apxm-events = { path = "../apxm-events" }
 apxm-credentials = { path = "../apxm-credentials" }
 apxm-acp = { path = "../apxm-acp" }
 apxm-runtime = { path = "../apxm-runtime" }
 rpassword = "7.0"
+chrono = "0.4"
 
 [dev-dependencies]
 tempfile = "3.0"

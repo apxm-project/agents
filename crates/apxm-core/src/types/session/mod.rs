@@ -4,4 +4,4 @@
 
 mod types;
 
-pub use types::{Example, Message, MessageMetadata, MessageRole};
+pub use types::{Example, Message, MessageMetadata, MessageRole, SessionManifest};

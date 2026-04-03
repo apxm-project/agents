@@ -29,6 +29,7 @@ pub mod config;
 pub mod error;
 pub mod linker;
 pub mod runtime;
+pub mod session_output;
 
 // --- Config ---
 pub use config::{ApXmConfig, ChatConfig, ConfigError, ToolConfig};

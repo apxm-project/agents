@@ -94,6 +94,9 @@ pub struct SchedulerConfig {
     /// Default: empty (compile-time latencies are used as-is)
     #[serde(default)]
     pub latency_tiers: LatencyTierConfig,
+
+    #[serde(default)]
+    pub collect_all_outputs: bool,
 }
 
 impl Default for SchedulerConfig {
@@ -109,6 +112,7 @@ impl Default for SchedulerConfig {
             max_cost: 0,
             queue_capacity: default_queue_capacity(),
             latency_tiers: LatencyTierConfig::default(),
+            collect_all_outputs: false,
         }
     }
 }

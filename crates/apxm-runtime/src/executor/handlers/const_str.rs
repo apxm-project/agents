@@ -3,8 +3,13 @@
 use super::{ExecutionContext, Node, Result, Value, get_string_attribute};
 use apxm_core::constants::graph::attrs as graph_attrs;
 
-pub async fn execute(_ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -> Result<Value> {
-    let value = get_string_attribute(node, graph_attrs::VALUE)?;
+pub async fn execute(_ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -> Result<Value> {
+    let mut value = get_string_attribute(node, graph_attrs::VALUE)?;
+    for (i, input) in inputs.iter().enumerate() {
+        if let Some(s) = input.as_string() {
+            value = value.replace(&format!("{{{i}}}"), s);
+        }
+    }
     Ok(Value::String(value))
 }
 
@@ -54,7 +59,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_const_str_ignores_inputs() {
+    async fn test_const_str_ignores_inputs_without_placeholders() {
         let memory = Arc::new(
             MemorySystem::new(MemoryConfig::in_memory_ltm())
                 .await
@@ -74,6 +79,36 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result, Value::String("constant".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_const_str_substitutes_placeholders() {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(apxm_backends::LLMRegistry::new());
+        let capability_system = Arc::new(CapabilitySystem::new());
+        let ctx = ExecutionContext::new(
+            memory,
+            llm_registry,
+            capability_system,
+            crate::aam::Aam::new(),
+        );
+
+        let node = make_node("hello {0}, meet {1}");
+        let result = execute(
+            &ctx,
+            &node,
+            vec![
+                Value::String("world".to_string()),
+                Value::String("rust".to_string()),
+            ],
+        )
+        .await
+        .unwrap();
+        assert_eq!(result, Value::String("hello world, meet rust".to_string()));
     }
 
     #[tokio::test]

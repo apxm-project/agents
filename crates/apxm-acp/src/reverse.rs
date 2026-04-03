@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use apxm_core::apxm_acp;
 
+use apxm_core::constants::acp::{notification, reverse_params, reverse_response};
 use crate::AcpError;
 use crate::constants::{fields, methods, option_kinds, outcomes, tool_kinds, update_types};
 use crate::registry::PermissionMode;
@@ -90,18 +91,18 @@ impl CapabilityReverseHandler {
         params: &serde_json::Value,
     ) -> Result<serde_json::Value, AcpError> {
         self.check_read_permission()?;
-        let path = params["path"]
+        let path = params[reverse_params::PATH]
             .as_str()
             .ok_or_else(|| AcpError::Protocol("missing path".to_string()))?;
 
         let mut args = std::collections::HashMap::new();
         args.insert(
-            "path".to_string(),
+            reverse_params::PATH.to_string(),
             apxm_core::types::values::Value::String(path.to_string()),
         );
-        if let Some(line) = params["line"].as_u64() {
+        if let Some(line) = params[reverse_params::LINE].as_u64() {
             args.insert(
-                "offset".to_string(),
+                reverse_params::OFFSET.to_string(),
                 apxm_core::types::values::Value::Number(apxm_core::types::values::Number::Integer(
                     line as i64,
                 )),
@@ -118,7 +119,7 @@ impl CapabilityReverseHandler {
             .as_string()
             .map(|s| s.to_string())
             .unwrap_or_default();
-        Ok(serde_json::json!({"content": content}))
+        Ok(serde_json::json!({reverse_response::CONTENT: content}))
     }
 
     async fn handle_write_file(
@@ -126,20 +127,20 @@ impl CapabilityReverseHandler {
         params: &serde_json::Value,
     ) -> Result<serde_json::Value, AcpError> {
         self.check_write_permission()?;
-        let path = params["path"]
+        let path = params[reverse_params::PATH]
             .as_str()
             .ok_or_else(|| AcpError::Protocol("missing path".to_string()))?;
-        let content = params["content"]
+        let content = params[reverse_params::CONTENT]
             .as_str()
             .ok_or_else(|| AcpError::Protocol("missing content".to_string()))?;
 
         let mut args = std::collections::HashMap::new();
         args.insert(
-            "path".to_string(),
+            reverse_params::PATH.to_string(),
             apxm_core::types::values::Value::String(path.to_string()),
         );
         args.insert(
-            "content".to_string(),
+            reverse_params::CONTENT.to_string(),
             apxm_core::types::values::Value::String(content.to_string()),
         );
 
@@ -156,10 +157,10 @@ impl CapabilityReverseHandler {
         params: &serde_json::Value,
     ) -> Result<serde_json::Value, AcpError> {
         self.check_exec_permission()?;
-        let command = params["command"]
+        let command = params[reverse_params::COMMAND]
             .as_str()
             .ok_or_else(|| AcpError::Protocol("missing command".to_string()))?;
-        let args: Vec<String> = params["args"]
+        let args: Vec<String> = params[reverse_params::ARGS]
             .as_array()
             .map(|a| {
                 a.iter()
@@ -167,14 +168,14 @@ impl CapabilityReverseHandler {
                     .collect()
             })
             .unwrap_or_default();
-        let cwd = params["cwd"].as_str();
-        let env: Vec<(String, String)> = params["env"]
+        let cwd = params[reverse_params::CWD].as_str();
+        let env: Vec<(String, String)> = params[reverse_params::ENV]
             .as_array()
             .map(|a| {
                 a.iter()
                     .filter_map(|v| {
-                        let name = v["name"].as_str()?;
-                        let value = v["value"].as_str()?;
+                        let name = v[reverse_params::NAME].as_str()?;
+                        let value = v[reverse_params::VALUE].as_str()?;
                         Some((name.to_string(), value.to_string()))
                     })
                     .collect()
@@ -193,7 +194,7 @@ impl CapabilityReverseHandler {
             .as_str()
             .ok_or_else(|| AcpError::Protocol("missing terminalId".to_string()))?;
         let (output, truncated, exit_status) = self.terminals.output(terminal_id).await?;
-        let mut result = serde_json::json!({"output": output, "truncated": truncated});
+        let mut result = serde_json::json!({reverse_response::OUTPUT: output, reverse_response::TRUNCATED: truncated});
         if let Some(code) = exit_status {
             result[fields::EXIT_STATUS] = serde_json::json!(code);
         }
@@ -210,7 +211,7 @@ impl CapabilityReverseHandler {
         let (exit_code, signal) = self.terminals.wait_for_exit(terminal_id).await?;
         let mut result = serde_json::json!({fields::EXIT_CODE: exit_code});
         if let Some(sig) = signal {
-            result["signal"] = serde_json::json!(sig);
+            result[reverse_response::SIGNAL] = serde_json::json!(sig);
         }
         Ok(result)
     }
@@ -241,7 +242,7 @@ impl CapabilityReverseHandler {
         &self,
         params: &serde_json::Value,
     ) -> Result<serde_json::Value, AcpError> {
-        let options = params["options"]
+        let options = params[reverse_params::OPTIONS]
             .as_array()
             .ok_or_else(|| AcpError::Protocol("missing options".to_string()))?;
 
@@ -249,7 +250,7 @@ impl CapabilityReverseHandler {
             PermissionMode::ApproveAll => find_option_id(options, option_kinds::ALLOW),
             PermissionMode::DenyAll => find_option_id(options, option_kinds::REJECT),
             PermissionMode::ApproveReads => {
-                let tool_kind = params[fields::TOOL_CALL]["kind"].as_str().unwrap_or("");
+                let tool_kind = params[fields::TOOL_CALL][reverse_params::KIND].as_str().unwrap_or("");
                 if tool_kind == tool_kinds::READ || tool_kind == tool_kinds::SEARCH {
                     find_option_id(options, option_kinds::ALLOW)
                 } else {
@@ -260,10 +261,10 @@ impl CapabilityReverseHandler {
 
         match selected {
             Some(id) => Ok(serde_json::json!({
-                "outcome": {"outcome": outcomes::SELECTED, fields::OPTION_ID: id}
+                reverse_response::OUTCOME: {reverse_response::OUTCOME: outcomes::SELECTED, fields::OPTION_ID: id}
             })),
             None => Ok(serde_json::json!({
-                "outcome": {"outcome": outcomes::CANCELLED}
+                reverse_response::OUTCOME: {reverse_response::OUTCOME: outcomes::CANCELLED}
             })),
         }
     }
@@ -274,7 +275,7 @@ fn find_option_id<'a>(options: &'a [serde_json::Value], kind_prefix: &str) -> Op
     options
         .iter()
         .find(|o| {
-            o["kind"]
+            o[reverse_params::KIND]
                 .as_str()
                 .is_some_and(|k| k.starts_with(kind_prefix))
         })
@@ -305,16 +306,16 @@ impl ReverseHandler for CapabilityReverseHandler {
     async fn on_notification(&self, method: &str, params: Option<&serde_json::Value>) {
         if method == methods::SESSION_UPDATE {
             if let Some(params) = params {
-                let update = &params["update"];
+                let update = &params[notification::UPDATE];
                 // ACP uses "sessionUpdate" as the discriminator key (not "type")
                 // and nests text under "content.text"
-                let update_kind = update["sessionUpdate"].as_str()
-                    .or_else(|| update["type"].as_str()); // fallback for older protocol
+                let update_kind = update[notification::SESSION_UPDATE].as_str()
+                    .or_else(|| update[notification::TYPE].as_str()); // fallback for older protocol
                 match update_kind {
                     Some(t) if t == update_types::AGENT_MESSAGE_CHUNK => {
                         // Text is under content.text in the current ACP protocol
-                        let text = update["content"]["text"].as_str()
-                            .or_else(|| update["text"].as_str()); // fallback
+                        let text = update[reverse_response::CONTENT][notification::TEXT].as_str()
+                            .or_else(|| update[notification::TEXT].as_str()); // fallback
                         if let Some(text) = text {
                             self.response_text.lock().unwrap().push_str(text);
                         }
@@ -323,11 +324,11 @@ impl ReverseHandler for CapabilityReverseHandler {
                         let mut usage = self.token_usage.lock().unwrap();
                         // Try standard field names first, then ACP-specific names
                         if let Some(input) = update[fields::INPUT_TOKENS].as_u64()
-                            .or_else(|| update["used"].as_u64()) {
+                            .or_else(|| update[notification::USED].as_u64()) {
                             usage.0 = Some(input);
                         }
                         if let Some(output) = update[fields::OUTPUT_TOKENS].as_u64()
-                            .or_else(|| update["size"].as_u64()) {
+                            .or_else(|| update[notification::SIZE].as_u64()) {
                             usage.1 = Some(output);
                         }
                     }
@@ -354,14 +355,14 @@ mod tests {
             PermissionMode::ApproveAll,
         );
         let params = serde_json::json!({
-            "toolCall": {"kind": "write"},
-            "options": [
-                {"optionId": "reject_1", "kind": "reject_once"},
-                {"optionId": "allow_1", "kind": "allow_once"},
+            fields::TOOL_CALL: {reverse_params::KIND: "write"},
+            reverse_params::OPTIONS: [
+                {fields::OPTION_ID: "reject_1", reverse_params::KIND: "reject_once"},
+                {fields::OPTION_ID: "allow_1", reverse_params::KIND: "allow_once"},
             ]
         });
         let result = handler.handle_request_permission(&params).unwrap();
-        assert_eq!(result["outcome"]["optionId"], "allow_1");
+        assert_eq!(result[reverse_response::OUTCOME][fields::OPTION_ID], "allow_1");
     }
 
     #[test]
@@ -371,14 +372,14 @@ mod tests {
             PermissionMode::DenyAll,
         );
         let params = serde_json::json!({
-            "toolCall": {"kind": "write"},
-            "options": [
-                {"optionId": "allow_1", "kind": "allow_once"},
-                {"optionId": "reject_1", "kind": "reject_once"},
+            fields::TOOL_CALL: {reverse_params::KIND: "write"},
+            reverse_params::OPTIONS: [
+                {fields::OPTION_ID: "allow_1", reverse_params::KIND: "allow_once"},
+                {fields::OPTION_ID: "reject_1", reverse_params::KIND: "reject_once"},
             ]
         });
         let result = handler.handle_request_permission(&params).unwrap();
-        assert_eq!(result["outcome"]["optionId"], "reject_1");
+        assert_eq!(result[reverse_response::OUTCOME][fields::OPTION_ID], "reject_1");
     }
 
     #[test]
@@ -388,14 +389,14 @@ mod tests {
             PermissionMode::ApproveReads,
         );
         let params = serde_json::json!({
-            "toolCall": {"kind": "read"},
-            "options": [
-                {"optionId": "allow_1", "kind": "allow_once"},
-                {"optionId": "reject_1", "kind": "reject_once"},
+            fields::TOOL_CALL: {reverse_params::KIND: tool_kinds::READ},
+            reverse_params::OPTIONS: [
+                {fields::OPTION_ID: "allow_1", reverse_params::KIND: "allow_once"},
+                {fields::OPTION_ID: "reject_1", reverse_params::KIND: "reject_once"},
             ]
         });
         let result = handler.handle_request_permission(&params).unwrap();
-        assert_eq!(result["outcome"]["optionId"], "allow_1");
+        assert_eq!(result[reverse_response::OUTCOME][fields::OPTION_ID], "allow_1");
     }
 
     #[test]
@@ -405,13 +406,13 @@ mod tests {
             PermissionMode::ApproveReads,
         );
         let params = serde_json::json!({
-            "toolCall": {"kind": "write"},
-            "options": [
-                {"optionId": "allow_1", "kind": "allow_once"},
-                {"optionId": "reject_1", "kind": "reject_once"},
+            fields::TOOL_CALL: {reverse_params::KIND: "write"},
+            reverse_params::OPTIONS: [
+                {fields::OPTION_ID: "allow_1", reverse_params::KIND: "allow_once"},
+                {fields::OPTION_ID: "reject_1", reverse_params::KIND: "reject_once"},
             ]
         });
         let result = handler.handle_request_permission(&params).unwrap();
-        assert_eq!(result["outcome"]["optionId"], "reject_1");
+        assert_eq!(result[reverse_response::OUTCOME][fields::OPTION_ID], "reject_1");
     }
 }
