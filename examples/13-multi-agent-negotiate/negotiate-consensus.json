@@ -1,0 +1,205 @@
+{
+  "name": "multi-agent-negotiate-consensus",
+  "parameters": [],
+  "nodes": [
+    {
+      "id": 1,
+      "name": "spawn_claude",
+      "op": "SPAWN_AGENT",
+      "attributes": {
+        "agent_name": "claude_negotiator",
+        "profile": "claude"
+      }
+    },
+    {
+      "id": 2,
+      "name": "spawn_codex",
+      "op": "SPAWN_AGENT",
+      "attributes": {
+        "agent_name": "codex_negotiator",
+        "profile": "codex"
+      }
+    },
+    {
+      "id": 3,
+      "name": "negotiation_topic",
+      "op": "CONST_STR",
+      "attributes": {
+        "value": "What is the best approach for building a distributed task queue in Rust? Consider: (A) custom implementation using tokio + Redis, (B) using an existing library like lapin (AMQP/RabbitMQ), (C) using a cloud-managed queue (SQS/GCP Pub/Sub). Argue for your preferred approach with specific technical reasoning."
+      }
+    },
+    {
+      "id": 4,
+      "name": "claude_initial",
+      "op": "COMMUNICATE",
+      "attributes": {
+        "recipient": "claude_negotiator",
+        "protocol": "acp"
+      }
+    },
+    {
+      "id": 5,
+      "name": "codex_initial",
+      "op": "COMMUNICATE",
+      "attributes": {
+        "recipient": "codex_negotiator",
+        "protocol": "acp"
+      }
+    },
+    {
+      "id": 6,
+      "name": "checkpoint_initial_positions",
+      "op": "CHECKPOINT",
+      "attributes": {
+        "checkpoint_id": "negotiate-initial-positions",
+        "scope": "full",
+        "storage": "fs"
+      }
+    },
+    {
+      "id": 7,
+      "name": "sync_initial",
+      "op": "WAIT_ALL",
+      "attributes": {
+        "tokens": ["{{node_4}}", "{{node_5}}"]
+      }
+    },
+    {
+      "id": 8,
+      "name": "claude_counter_prefix",
+      "op": "CONST_STR",
+      "attributes": {
+        "value": "Your negotiating partner proposed the following approach. Counter-argue or find common ground:\n\nPartner's position:\n"
+      }
+    },
+    {
+      "id": 9,
+      "name": "codex_counter_prefix",
+      "op": "CONST_STR",
+      "attributes": {
+        "value": "Your negotiating partner proposed the following approach. Counter-argue or find common ground:\n\nPartner's position:\n"
+      }
+    },
+    {
+      "id": 10,
+      "name": "claude_counter_prompt",
+      "op": "MERGE",
+      "attributes": {
+        "strategy": "concat",
+        "tokens": ["{{node_8}}", "{{node_5}}"]
+      }
+    },
+    {
+      "id": 11,
+      "name": "codex_counter_prompt",
+      "op": "MERGE",
+      "attributes": {
+        "strategy": "concat",
+        "tokens": ["{{node_9}}", "{{node_4}}"]
+      }
+    },
+    {
+      "id": 12,
+      "name": "claude_counter",
+      "op": "COMMUNICATE",
+      "attributes": {
+        "recipient": "claude_negotiator",
+        "protocol": "acp"
+      }
+    },
+    {
+      "id": 13,
+      "name": "codex_counter",
+      "op": "COMMUNICATE",
+      "attributes": {
+        "recipient": "codex_negotiator",
+        "protocol": "acp"
+      }
+    },
+    {
+      "id": 14,
+      "name": "sync_counters",
+      "op": "WAIT_ALL",
+      "attributes": {
+        "tokens": ["{{node_12}}", "{{node_13}}"]
+      }
+    },
+    {
+      "id": 15,
+      "name": "final_synthesis",
+      "op": "THINK",
+      "attributes": {
+        "template_str": "Two agents negotiated the best approach for a distributed task queue in Rust.\n\nInitial positions:\n{{node_7}}\n\nCounter-arguments and refinements:\n{{node_14}}\n\nSynthesize a final consensus recommendation. Where did they agree? What are the key trade-offs? What would you recommend for a production system?",
+        "budget_tokens": 4000
+      }
+    },
+    {
+      "id": 16,
+      "name": "store_consensus",
+      "op": "UMEM",
+      "attributes": {
+        "key": "rust_task_queue_consensus",
+        "value": "{{node_15}}",
+        "memory_tier": "ltm"
+      }
+    },
+    {
+      "id": 17,
+      "name": "checkpoint_final",
+      "op": "CHECKPOINT",
+      "attributes": {
+        "checkpoint_id": "negotiate-consensus-final",
+        "scope": "full",
+        "storage": "fs"
+      }
+    },
+    {
+      "id": 18,
+      "name": "print_positions",
+      "op": "PRINT",
+      "attributes": { "message": "=== INITIAL POSITIONS ===" }
+    },
+    {
+      "id": 19,
+      "name": "print_counters",
+      "op": "PRINT",
+      "attributes": { "message": "=== COUNTER-ARGUMENTS ===" }
+    },
+    {
+      "id": 20,
+      "name": "print_consensus",
+      "op": "PRINT",
+      "attributes": { "message": "=== FINAL CONSENSUS ===" }
+    }
+  ],
+  "edges": [
+    { "from": 1, "to": 4, "dependency": "Control" },
+    { "from": 2, "to": 5, "dependency": "Control" },
+    { "from": 3, "to": 4, "dependency": "Data" },
+    { "from": 3, "to": 5, "dependency": "Data" },
+    { "from": 4, "to": 7, "dependency": "Data" },
+    { "from": 5, "to": 7, "dependency": "Data" },
+    { "from": 4, "to": 6, "dependency": "Data" },
+    { "from": 5, "to": 6, "dependency": "Data" },
+    { "from": 7, "to": 18, "dependency": "Data" },
+    { "from": 8, "to": 10, "dependency": "Data" },
+    { "from": 5, "to": 10, "dependency": "Data" },
+    { "from": 9, "to": 11, "dependency": "Data" },
+    { "from": 4, "to": 11, "dependency": "Data" },
+    { "from": 10, "to": 12, "dependency": "Data" },
+    { "from": 11, "to": 13, "dependency": "Data" },
+    { "from": 12, "to": 14, "dependency": "Data" },
+    { "from": 13, "to": 14, "dependency": "Data" },
+    { "from": 14, "to": 19, "dependency": "Data" },
+    { "from": 7, "to": 15, "dependency": "Data" },
+    { "from": 14, "to": 15, "dependency": "Data" },
+    { "from": 15, "to": 20, "dependency": "Data" },
+    { "from": 15, "to": 16, "dependency": "Data" },
+    { "from": 16, "to": 17, "dependency": "Data" }
+  ],
+  "metadata": {
+    "description": "2-agent negotiation: SPAWN two ACP agents, send them the same topic simultaneously, WAIT_ALL syncs initial positions, each agent counters the other's argument via COMMUNICATE, WAIT_ALL syncs counters, THINK synthesizes consensus, UMEM stores result, CHECKPOINT saves final state.",
+    "pattern": "spawn × 2 → communicate × 2 → wait-all → cross-counter × 2 → wait-all → think → umem → checkpoint",
+    "ops_demonstrated": ["SPAWN_AGENT", "COMMUNICATE", "CONST_STR", "MERGE", "WAIT_ALL", "CHECKPOINT", "THINK", "UMEM", "PRINT"]
+  }
+}

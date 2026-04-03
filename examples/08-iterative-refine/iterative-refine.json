@@ -1,0 +1,177 @@
+{
+  "name": "iterative-refine-unrolled",
+  "parameters": [],
+  "nodes": [
+    {
+      "id": 1,
+      "name": "initial_draft",
+      "op": "ASK",
+      "attributes": {
+        "template_str": "Write a concise technical explanation of how LLM inference works, targeting a software engineer audience. Be thorough but under 300 words."
+      }
+    },
+    {
+      "id": 2,
+      "name": "checkpoint_v0",
+      "op": "CHECKPOINT",
+      "attributes": {
+        "checkpoint_id": "iterative-refine-v0",
+        "scope": "full",
+        "storage": "fs"
+      }
+    },
+    {
+      "id": 3,
+      "name": "reflect_1",
+      "op": "REFLECT",
+      "attributes": {
+        "trace_query": "last_execution",
+        "reflection_prompt": "Critique this draft: is it accurate, clear, and appropriately technical? What specific improvements are needed? Be concrete."
+      }
+    },
+    {
+      "id": 4,
+      "name": "refine_1",
+      "op": "ASK",
+      "attributes": {
+        "template_str": "Improve this draft based on the critique below.\n\nOriginal draft:\n{{node_1}}\n\nCritique:\n{{node_3}}\n\nOutput only the improved draft."
+      }
+    },
+    {
+      "id": 5,
+      "name": "checkpoint_v1",
+      "op": "CHECKPOINT",
+      "attributes": {
+        "checkpoint_id": "iterative-refine-v1",
+        "scope": "full",
+        "storage": "fs"
+      }
+    },
+    {
+      "id": 6,
+      "name": "reflect_2",
+      "op": "REFLECT",
+      "attributes": {
+        "trace_query": "last_execution",
+        "reflection_prompt": "Critique this revised draft. Is it better than before? What is still imprecise or could be clearer? Focus on technical accuracy."
+      }
+    },
+    {
+      "id": 7,
+      "name": "refine_2",
+      "op": "ASK",
+      "attributes": {
+        "template_str": "Improve this draft based on the second round of critique.\n\nRevised draft:\n{{node_4}}\n\nCritique:\n{{node_6}}\n\nOutput only the improved draft."
+      }
+    },
+    {
+      "id": 8,
+      "name": "checkpoint_v2",
+      "op": "CHECKPOINT",
+      "attributes": {
+        "checkpoint_id": "iterative-refine-v2",
+        "scope": "full",
+        "storage": "fs"
+      }
+    },
+    {
+      "id": 9,
+      "name": "reflect_3",
+      "op": "REFLECT",
+      "attributes": {
+        "trace_query": "last_execution",
+        "reflection_prompt": "Final critique: polish for publication quality. Check grammar, flow, and technical precision."
+      }
+    },
+    {
+      "id": 10,
+      "name": "refine_3",
+      "op": "ASK",
+      "attributes": {
+        "template_str": "Apply the final polish to this draft.\n\nDraft:\n{{node_7}}\n\nFinal critique:\n{{node_9}}\n\nOutput the publication-ready version."
+      }
+    },
+    {
+      "id": 11,
+      "name": "verify_final",
+      "op": "VERIFY",
+      "attributes": {
+        "claim": "{{node_10}}",
+        "evidence": "The explanation must cover: tokenization, transformer architecture, attention mechanism, and autoregressive generation. It must be under 300 words and technically accurate."
+      }
+    },
+    {
+      "id": 12,
+      "name": "checkpoint_final",
+      "op": "CHECKPOINT",
+      "attributes": {
+        "checkpoint_id": "iterative-refine-final",
+        "scope": "full",
+        "storage": "fs"
+      }
+    },
+    {
+      "id": 13,
+      "name": "store_result",
+      "op": "UMEM",
+      "attributes": {
+        "key": "llm_inference_explanation_v3",
+        "value": "{{node_10}}",
+        "memory_tier": "ltm"
+      }
+    },
+    {
+      "id": 14,
+      "name": "print_v0",
+      "op": "PRINT",
+      "attributes": { "message": "=== DRAFT v0 (initial) ===" }
+    },
+    {
+      "id": 15,
+      "name": "print_v1",
+      "op": "PRINT",
+      "attributes": { "message": "=== DRAFT v1 (after reflect+refine #1) ===" }
+    },
+    {
+      "id": 16,
+      "name": "print_v2",
+      "op": "PRINT",
+      "attributes": { "message": "=== DRAFT v2 (after reflect+refine #2) ===" }
+    },
+    {
+      "id": 17,
+      "name": "print_final",
+      "op": "PRINT",
+      "attributes": { "message": "=== FINAL (after reflect+refine #3 + verify) ===" }
+    }
+  ],
+  "edges": [
+    { "from": 1, "to": 14, "dependency": "Data" },
+    { "from": 1, "to": 2, "dependency": "Data" },
+    { "from": 2, "to": 3, "dependency": "Data" },
+    { "from": 1, "to": 3, "dependency": "Data" },
+    { "from": 3, "to": 4, "dependency": "Data" },
+    { "from": 1, "to": 4, "dependency": "Data" },
+    { "from": 4, "to": 15, "dependency": "Data" },
+    { "from": 4, "to": 5, "dependency": "Data" },
+    { "from": 5, "to": 6, "dependency": "Data" },
+    { "from": 4, "to": 6, "dependency": "Data" },
+    { "from": 6, "to": 7, "dependency": "Data" },
+    { "from": 4, "to": 7, "dependency": "Data" },
+    { "from": 7, "to": 16, "dependency": "Data" },
+    { "from": 7, "to": 8, "dependency": "Data" },
+    { "from": 8, "to": 9, "dependency": "Data" },
+    { "from": 7, "to": 9, "dependency": "Data" },
+    { "from": 9, "to": 10, "dependency": "Data" },
+    { "from": 7, "to": 10, "dependency": "Data" },
+    { "from": 10, "to": 11, "dependency": "Data" },
+    { "from": 11, "to": 12, "dependency": "Data" },
+    { "from": 12, "to": 13, "dependency": "Data" },
+    { "from": 10, "to": 17, "dependency": "Data" }
+  ],
+  "metadata": {
+    "description": "Iterative self-refinement: 3 rounds of REFLECT → ASK with CHECKPOINTs after each version. Final VERIFY checks quality. UMEM persists the polished result. Note: LOOP_START/LOOP_END back-edges are not supported in the JSON graph format (use AIS source for true loops); this graph unrolls 3 iterations explicitly.",
+    "pattern": "ask → checkpoint → (reflect → ask → checkpoint) × 3 → verify → checkpoint → umem",
+    "ops_demonstrated": ["ASK", "REFLECT", "CHECKPOINT", "VERIFY", "UMEM", "PRINT"]
+  }
+}

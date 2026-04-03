@@ -137,19 +137,7 @@ Parallel workers sync via `WAIT_ALL`, then a final step synthesizes. Built-in: `
 }
 ```
 
-## Quick Reference
 
-| Pattern | Key Ops | Edge Type | Use Case |
-|---------|---------|-----------|----------|
-| Pipeline | ASK, THINK | Data | Sequential multi-step processing |
-| Fan-out | ASK, WAIT_ALL | Data | Independent parallel tasks |
-| Map-reduce | ASK, WAIT_ALL | Data | Parallel analysis + synthesis |
-| Verify | ASK, VERIFY | Data | Fact-checking generated content |
-| Conditional | BRANCH_ON_VALUE | Data + Control | Routing based on runtime values |
-| Error handling | TRY_CATCH, ERR | Control | Recovery from failures |
-| Memory | QMEM, UMEM, FENCE | Data | Persistent state across steps |
-| Coordination | GUARD, CLAIM, UPDATE_GOAL | Data | Multi-agent work distribution |
-| Multi-Agent (ACP) | SPAWN_AGENT, COMMUNICATE, MERGE | Control + Data | External agent orchestration |
 
 ## 9. Multi-Agent (ACP)
 
@@ -164,3 +152,99 @@ CONST_STR    ──Data─────► both COMMUNICATE nodes
 See `examples/07-acp-agents/parallel-agents.json` for the full graph, or use `INV` with `capability: "acp"` for a more concise session-managed approach.
 
 For the full multi-agent walkthrough including session-managed INV style, cross-critique, and pipeline patterns, see [Multi-Agent Workflows](multi-agent.md).
+
+## 10. Iterative Self-Refinement (Unrolled Loop)
+
+`REFLECT` critiques a draft using the execution trace; `ASK` rewrites it. Repeat N times with `CHECKPOINT` after each version. `VERIFY` validates the final result. Note: LOOP_START/LOOP_END back-edges are not supported in JSON graph format — unroll iterations explicitly.
+
+```json
+{
+  "name": "iterative-refine",
+  "nodes": [
+    {"id": 1, "name": "draft",    "op": "ASK",        "attributes": {"template_str": "Write a short blog post about async Rust"}},
+    {"id": 2, "name": "ckpt_v0", "op": "CHECKPOINT", "attributes": {"checkpoint_id": "v0", "storage": "fs"}},
+    {"id": 3, "name": "reflect",  "op": "REFLECT",    "attributes": {"trace_query": "last_execution", "reflection_prompt": "What is imprecise or unclear? Be specific."}},
+    {"id": 4, "name": "refine",   "op": "ASK",        "attributes": {"template_str": "Improve this draft:\n{{node_1}}\n\nBased on: {{node_3}}"}},
+    {"id": 5, "name": "verify",   "op": "VERIFY",     "attributes": {"claim": "{{node_4}}", "evidence": "Must cover async/await, Tokio, and common pitfalls"}},
+    {"id": 6, "name": "store",    "op": "UMEM",       "attributes": {"key": "async_rust_post", "value": "{{node_4}}", "memory_tier": "ltm"}}
+  ],
+  "edges": [
+    {"from": 1, "to": 2, "dependency": "Data"}, {"from": 2, "to": 3, "dependency": "Data"},
+    {"from": 1, "to": 3, "dependency": "Data"}, {"from": 3, "to": 4, "dependency": "Data"},
+    {"from": 1, "to": 4, "dependency": "Data"}, {"from": 4, "to": 5, "dependency": "Data"},
+    {"from": 5, "to": 6, "dependency": "Data"}
+  ],
+  "parameters": [], "metadata": {}
+}
+```
+
+## 11. Plan → Fan-Out → Synthesize
+
+`PLAN` decomposes a goal into structured steps. Parallel `ASK` nodes each handle one section. `WAIT_ALL` syncs them. `THINK` assembles the final output with extended reasoning. `VERIFY` checks quality.
+
+```
+PLAN ──► ASK(section_1) ──► WAIT_ALL ──► THINK ──► VERIFY ──► CHECKPOINT
+     ──► ASK(section_2) ──┘
+     ──► ASK(section_3) ──┘
+```
+
+See `examples/09-plan-fan-out/plan-fan-out.json` for the complete graph.
+
+## 12. Resilient ACP Pipeline (with Fallback)
+
+`GUARD` validates input. Primary agent via `COMMUNICATE`. `CHECKPOINT` saves state (on_fail: continue). `VERIFY` checks output quality. `BRANCH_ON_VALUE` routes to a fallback agent if quality is insufficient. Final `ASK` synthesizes both outputs.
+
+```
+GUARD ──► COMMUNICATE(primary) ──► CHECKPOINT ──► VERIFY ──► BRANCH ──► COMMUNICATE(fallback) ──► ASK(synthesize)
+                                                                  └──► (valid) ──────────────────────┘
+```
+
+See `examples/10-resilient-acp/resilient-acp-pipeline.json`.
+
+## 13. Worker Pool (CLAIM + Parallel Workers)
+
+`UPDATE_GOAL` declares intent. Three parallel `CLAIM` nodes atomically pull tasks from a shared queue. `GUARD` (on_fail: skip) handles empty slots. `THINK` workers process in parallel. `CHECKPOINT` saves intermediate state. `WAIT_ALL` syncs. `ASK` aggregates. `UMEM` persists. `UPDATE_GOAL` marks done.
+
+See `examples/11-worker-pool/worker-pool.json`.
+
+## 14. Memory-Augmented RAG
+
+`QMEM` recalls from LTM + episodic in parallel. `FENCE` orders reads. `GUARD` (on_fail: skip) handles cold-start. `REASON` answers with or without prior context. `VERIFY` validates. `UMEM` persists new knowledge. `FENCE` orders writes. `CHECKPOINT` saves session state.
+
+```
+QMEM(ltm) ──► FENCE ──► MERGE ──► GUARD ──► REASON ──► VERIFY ──► UMEM ──► FENCE ──► CHECKPOINT
+QMEM(epi) ──┘
+```
+
+See `examples/12-memory-rag/memory-rag-pipeline.json`.
+
+## 15. Multi-Agent Negotiation → Consensus
+
+Two agents receive the same topic, propose independently, then cross-critique each other's arguments. `THINK` synthesizes a consensus. `UMEM` persists the result.
+
+```
+SPAWN(claude) ──Control──► COMMUNICATE(topic) ──► WAIT_ALL ──► cross-MERGE ──► COMMUNICATE(counter) ──► WAIT_ALL ──► THINK ──► UMEM
+SPAWN(codex)  ──Control──► COMMUNICATE(topic) ──┘                                                    ──┘
+```
+
+See `examples/13-multi-agent-negotiate/negotiate-consensus.json`.
+
+## Quick Reference
+
+| Pattern | Key Ops | Edge Type | Use Case |
+|---------|---------|-----------|----------|
+| Pipeline | ASK, THINK | Data | Sequential multi-step processing |
+| Fan-out | ASK, WAIT_ALL | Data | Independent parallel tasks |
+| Map-reduce | ASK, WAIT_ALL | Data | Parallel analysis + synthesis |
+| Verify | ASK, VERIFY | Data | Fact-checking generated content |
+| Conditional | BRANCH_ON_VALUE | Data + Control | Routing based on runtime values |
+| Error handling | TRY_CATCH, ERR | Control | Recovery from failures |
+| Memory | QMEM, UMEM, FENCE | Data | Persistent state across steps |
+| Coordination | GUARD, CLAIM, UPDATE_GOAL | Data | Multi-agent work distribution |
+| Multi-Agent (ACP) | SPAWN_AGENT, COMMUNICATE, MERGE | Control + Data | External agent orchestration |
+| Iterative Refine | ASK, REFLECT, CHECKPOINT, VERIFY | Data | Self-improving draft loop |
+| Plan + Fan-out | PLAN, ASK, WAIT_ALL, THINK | Data | Decompose then parallelize |
+| Resilient ACP | GUARD, COMMUNICATE, VERIFY, BRANCH | Data + Control | Fault-tolerant ACP pipeline |
+| Worker Pool | CLAIM, GUARD, THINK, WAIT_ALL | Data | Distributed queue processing |
+| Memory RAG | QMEM, FENCE, REASON, UMEM | Data | Knowledge-augmented answering |
+| Negotiation | SPAWN_AGENT, COMMUNICATE, THINK | Control + Data | Debate → consensus |

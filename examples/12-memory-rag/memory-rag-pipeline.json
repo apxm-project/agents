@@ -1,0 +1,167 @@
+{
+  "name": "memory-rag-pipeline",
+  "parameters": [],
+  "nodes": [
+    {
+      "id": 1,
+      "name": "query",
+      "op": "CONST_STR",
+      "attributes": {
+        "value": "What are the trade-offs between Rust async runtimes: Tokio vs async-std vs smol?"
+      }
+    },
+    {
+      "id": 2,
+      "name": "recall_ltm",
+      "op": "QMEM",
+      "attributes": {
+        "query": "rust async runtimes",
+        "memory_tier": "ltm"
+      }
+    },
+    {
+      "id": 3,
+      "name": "recall_episodic",
+      "op": "QMEM",
+      "attributes": {
+        "query": "previous rust async discussions",
+        "memory_tier": "episodic"
+      }
+    },
+    {
+      "id": 4,
+      "name": "fence_reads",
+      "op": "FENCE",
+      "attributes": {}
+    },
+    {
+      "id": 5,
+      "name": "synthesize_context",
+      "op": "MERGE",
+      "attributes": {
+        "strategy": "concat",
+        "tokens": ["{{node_2}}", "{{node_3}}"]
+      }
+    },
+    {
+      "id": 6,
+      "name": "guard_has_memory",
+      "op": "GUARD",
+      "attributes": {
+        "condition": "not_null",
+        "on_fail": "skip",
+        "error_message": "No prior memory — will answer from scratch"
+      }
+    },
+    {
+      "id": 7,
+      "name": "answer_with_context",
+      "op": "REASON",
+      "attributes": {
+        "template_str": "Answer this question using prior knowledge from memory:\n\nQuestion: {{node_1}}\n\nRelevant prior knowledge:\n{{node_5}}\n\nProvide a structured comparison with trade-offs.",
+        "belief_update": true,
+        "goal_update": false
+      }
+    },
+    {
+      "id": 8,
+      "name": "answer_cold",
+      "op": "REASON",
+      "attributes": {
+        "template_str": "Answer this question (no prior memory available):\n\nQuestion: {{node_1}}\n\nProvide a structured comparison with trade-offs.",
+        "belief_update": true,
+        "goal_update": false
+      }
+    },
+    {
+      "id": 9,
+      "name": "verify_answer",
+      "op": "VERIFY",
+      "attributes": {
+        "claim": "{{node_7}}",
+        "evidence": "Known facts: Tokio is the most widely used, async-std mirrors std API, smol is minimal. Trade-offs exist in ecosystem size, API design, and runtime complexity."
+      }
+    },
+    {
+      "id": 10,
+      "name": "store_new_knowledge",
+      "op": "UMEM",
+      "attributes": {
+        "key": "rust_async_runtimes_comparison",
+        "value": "{{node_7}}",
+        "memory_tier": "ltm"
+      }
+    },
+    {
+      "id": 11,
+      "name": "store_episodic",
+      "op": "UMEM",
+      "attributes": {
+        "key": "session_rust_async_query",
+        "value": "{{node_1}}",
+        "memory_tier": "episodic"
+      }
+    },
+    {
+      "id": 12,
+      "name": "fence_writes",
+      "op": "FENCE",
+      "attributes": {}
+    },
+    {
+      "id": 13,
+      "name": "checkpoint_session",
+      "op": "CHECKPOINT",
+      "attributes": {
+        "checkpoint_id": "memory-rag-session",
+        "scope": "full",
+        "storage": "fs",
+        "ttl_seconds": 86400
+      }
+    },
+    {
+      "id": 14,
+      "name": "print_memory_status",
+      "op": "PRINT",
+      "attributes": { "message": "=== MEMORY RECALL RESULTS ===" }
+    },
+    {
+      "id": 15,
+      "name": "print_answer",
+      "op": "PRINT",
+      "attributes": { "message": "=== ANSWER ===" }
+    },
+    {
+      "id": 16,
+      "name": "print_verify",
+      "op": "PRINT",
+      "attributes": { "message": "=== VERIFICATION ===" }
+    }
+  ],
+  "edges": [
+    { "from": 1, "to": 2, "dependency": "Data" },
+    { "from": 1, "to": 3, "dependency": "Data" },
+    { "from": 2, "to": 4, "dependency": "Data" },
+    { "from": 3, "to": 4, "dependency": "Data" },
+    { "from": 4, "to": 5, "dependency": "Data" },
+    { "from": 5, "to": 14, "dependency": "Data" },
+    { "from": 5, "to": 6, "dependency": "Data" },
+    { "from": 6, "to": 7, "dependency": "Data" },
+    { "from": 6, "to": 8, "dependency": "Control" },
+    { "from": 1, "to": 7, "dependency": "Data" },
+    { "from": 1, "to": 8, "dependency": "Data" },
+    { "from": 7, "to": 9, "dependency": "Data" },
+    { "from": 7, "to": 15, "dependency": "Data" },
+    { "from": 9, "to": 16, "dependency": "Data" },
+    { "from": 9, "to": 10, "dependency": "Data" },
+    { "from": 1, "to": 11, "dependency": "Data" },
+    { "from": 10, "to": 12, "dependency": "Data" },
+    { "from": 11, "to": 12, "dependency": "Data" },
+    { "from": 12, "to": 13, "dependency": "Data" }
+  ],
+  "metadata": {
+    "description": "Memory-augmented RAG pipeline: QMEM recalls from LTM + episodic, FENCE orders reads, GUARD branches on memory availability, REASON answers with or without context, VERIFY validates the answer, UMEM persists new knowledge + episodic trace, FENCE orders writes, CHECKPOINT saves session state.",
+    "pattern": "qmem × 2 → fence → merge → guard → reason → verify → umem × 2 → fence → checkpoint",
+    "ops_demonstrated": ["CONST_STR", "QMEM", "FENCE", "MERGE", "GUARD", "REASON", "VERIFY", "UMEM", "CHECKPOINT", "PRINT"]
+  }
+}
