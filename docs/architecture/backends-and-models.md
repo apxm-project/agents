@@ -1,109 +1,71 @@
 # Backends and Models Architecture
 
-This document defines the conceptual hierarchy for LLM infrastructure in APXM.
+> **Reference:** For the full configuration format, see [`docs/reference/config.md`](../reference/config.md).
 
-## Core Concepts
+## The Hierarchy
+
+APXM has a three-level hierarchy for LLM infrastructure:
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                              BACKEND                                     │
-│  The infrastructure where inference runs                                 │
-│  Examples: Anthropic Cloud, vendor On-Prem, Local vLLM on GPU           │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│   ┌─────────────────────────────────────────────────────────────────┐   │
-│   │                           MODEL                                  │   │
-│   │  A specific LLM deployed on this backend                        │   │
-│   │  Examples: claude-sonnet-4-5, Gemma-3-27B-it, GPT-4o            │   │
-│   ├─────────────────────────────────────────────────────────────────┤   │
-│   │                                                                  │   │
-│   │   ┌─────────────────────────────────────────────────────────┐   │   │
-│   │   │                      ENDPOINT                            │   │   │
-│   │   │  How to reach this model                                 │   │   │
-│   │   │  • Protocol: OpenAI, Anthropic, vLLM                    │   │   │
-│   │   │  • URL: https://api.anthropic.com                       │   │   │
-│   │   │  • Auth: API key, headers                               │   │   │
-│   │   └─────────────────────────────────────────────────────────┘   │   │
-│   │                                                                  │   │
-│   │   Metadata:                                                      │   │
-│   │   • Context window: 200,000 tokens                              │   │
-│   │   • Capabilities: vision, function calling                      │   │
-│   │   • Cost: $0.003/1K input, $0.015/1K output                    │   │
-│   │   • Tags: [production, smart]                                   │   │
-│   │                                                                  │   │
-│   └─────────────────────────────────────────────────────────────────┘   │
-│                                                                          │
-└─────────────────────────────────────────────────────────────────────────┘
+BACKEND  ── where inference physically runs
+  └── MODEL  ── a specific LLM deployed on that backend
+        └── ENDPOINT  ── how to reach it (protocol + URL + auth)
 ```
+
+A single `~/.apxm/config.toml` is the only source of truth. There are no parallel systems, no `credentials.toml`, no `[[llm_backends]]`. Just `[[backends]]`.
+
+---
 
 ## Backend Types
 
-APXM supports three categories of backends, each with different characteristics:
+APXM supports three backend categories with different lifecycle, cost, and capability profiles:
 
-### 1. Cloud Backends
+### Cloud
 
-**What:** SaaS APIs from major LLM providers. Pay-per-token pricing.
+SaaS APIs from major LLM providers. You pay per token; the provider manages everything else.
 
-**Examples:**
-- **Anthropic** — Claude models (Sonnet, Opus, Haiku)
-- **OpenAI** — GPT models (GPT-4o, GPT-4o-mini, o1)
-- **Google** — Gemini models (Gemini Pro, Gemini Flash)
-
-**Characteristics:**
 | Property | Value |
 |----------|-------|
-| Lifecycle | Always available (managed by provider) |
-| Cost Model | Per-token (input + output) |
-| Reliability | High SLA (99.9%+) |
-| Latency | Variable (network + queue) |
-| APXM Graph Hints | ❌ Not supported |
+| Lifecycle | Always on (managed by provider) |
+| Cost | Per-token |
+| APXM Graph Hints | ❌ |
 | Setup | API key only |
 
-**Configuration:**
+**Examples:** Anthropic (Claude), OpenAI (GPT), Google (Gemini)
+
 ```toml
 [[backends]]
 name = "anthropic"
 type = "cloud"
 protocol = "anthropic"
-endpoint = "https://api.anthropic.com"
 api_key = "env:ANTHROPIC_API_KEY"
 
 [[backends.models]]
 id = "claude-sonnet-4-5"
 context_window = 200000
-cost_per_1k_input = 0.003
-cost_per_1k_output = 0.015
 tags = ["production", "smart"]
 ```
 
 ---
 
-### 2. On-Prem / Managed Backends
+### On-Prem
 
-**What:** Enterprise-managed LLM endpoints. Fixed cost or internal billing.
+Enterprise-managed endpoints. Fixed allocation or internal billing. You have an API but someone else manages the GPUs.
 
-**Examples:**
-- **enterprise LLM gateway** — Internal vendor model hosting
-- **Azure OpenAI** — Azure-hosted OpenAI models
-- **AWS Bedrock** — AWS-managed model access
-- **Private vLLM clusters** — Company-managed GPU clusters
-
-**Characteristics:**
 | Property | Value |
 |----------|-------|
-| Lifecycle | Managed by IT/infra team |
-| Cost Model | Internal billing / fixed allocation |
-| Reliability | Depends on deployment |
-| Latency | Often lower (same network) |
-| APXM Graph Hints | ✅ If running APXM-patched vLLM |
+| Lifecycle | Managed by IT/infra |
+| Cost | Internal billing |
+| APXM Graph Hints | ✅ if running APXM-patched vLLM |
 | Setup | API key + custom headers |
 
-**Configuration:**
+**Examples:** enterprise LLM gateway, Azure OpenAI, AWS Bedrock, private vLLM clusters
+
 ```toml
 [[backends]]
 name = "corp-gateway"
 type = "onprem"
-protocol = "openai"  # OpenAI-compatible API
+protocol = "openai"
 endpoint = "https://llm.example.com/v1"
 api_key = "env:OCP_APIM_KEY"
 
@@ -118,290 +80,20 @@ tags = ["onprem", "internal"]
 
 ---
 
-### 3. Local / Self-Hosted Backends
+### Local
 
-**What:** You control the infrastructure. Run your own inference server.
+You own the full stack. You download the model, manage GPU allocation, start and stop the server.
 
-**Examples:**
-- **vLLM on GPU** — High-performance vendor GPU inference
-- **vLLM on NVIDIA** — CUDA-based inference
-- **Ollama** — Easy local model running
-- **llama.cpp** — CPU/Metal inference
-
-**Characteristics:**
 | Property | Value |
 |----------|-------|
-| Lifecycle | **You manage it** (start/stop) |
-| Cost Model | Hardware cost only (no per-token) |
-| Reliability | Depends on your setup |
-| Latency | Lowest (local network) |
-| APXM Graph Hints | ✅ Full support with APXM vLLM branch |
-| Setup | Docker container, model download |
+| Lifecycle | **You manage it** |
+| Cost | Hardware only |
+| APXM Graph Hints | ✅ full support with APXM vLLM branch |
+| Setup | Docker config + model path |
 
-**Configuration:**
-```toml
-[[backends]]
-name = "local-gpu"
-type = "local"
-protocol = "vllm"  # OpenAI-compatible + APXM graph hints
-endpoint = "http://localhost:8000"
-
-# Lifecycle management (optional)
-[backends.docker]
-image = "gpu/vllm:latest"
-args = ["--device", "/dev/kfd", "--device", "/dev/dri"]
-env = { HIP_VISIBLE_DEVICES = "0,1,2,3" }
-model_path = "/models/Google/Gemma-3-27b-it"
-tensor_parallel = 4
-
-[[backends.models]]
-id = "/models/Google/Gemma-3-27b-it"
-context_window = 8192
-tags = ["local", "free", "vision"]
-```
-
----
-
-## Protocol Types
-
-The `protocol` field determines how APXM communicates with the backend:
-
-| Protocol | Description | Streaming | Functions | Graph Hints |
-|----------|-------------|-----------|-----------|-------------|
-| `openai` | OpenAI Chat Completions API | ✅ | ✅ | ❌ |
-| `anthropic` | Anthropic Messages API | ✅ | ✅ | ❌ |
-| `google` | Google Gemini API | ✅ | ✅ | ❌ |
-| `ollama` | Ollama native API | ✅ | ✅ | ❌ |
-| `vllm` | OpenAI-compatible + APXM extensions | ✅ | ✅ | ✅ |
-
-### vLLM Protocol
-
-The `vllm` protocol extends OpenAI compatibility with APXM-specific features:
-
-- **Graph Registration:** `POST /v1/apxm/graphs/` — Register a graph for priority scheduling
-- **Graph Status:** `GET /v1/apxm/graphs/{id}` — Check registered graph
-- **Graph Deletion:** `DELETE /v1/apxm/graphs/{id}` — Unregister graph
-- **Priority Hints:** Requests include `x-apxm-graph-id` and `x-apxm-critical-path` headers
-
-This enables the vLLM scheduler to prioritize critical-path operations in APXM graphs.
-
----
-
-## Model Metadata
-
-Each model has associated metadata for routing decisions:
+**Examples:** vLLM on GPU, Ollama, llama.cpp
 
 ```toml
-[[backends.models]]
-id = "claude-sonnet-4-5"           # Canonical model identifier
-aliases = ["sonnet", "claude-4"]    # Alternative names
-context_window = 200000             # Max tokens
-cost_per_1k_input = 0.003          # USD per 1K input tokens
-cost_per_1k_output = 0.015         # USD per 1K output tokens
-supports_vision = true              # Can process images
-supports_functions = true           # Supports tool/function calling
-tags = ["production", "smart"]      # Routing tags
-```
-
-### Routing Tags
-
-Tags enable policy-based model selection:
-
-| Tag | Meaning |
-|-----|---------|
-| `production` | Approved for production workloads |
-| `development` | Development/testing only |
-| `smart` | High capability, higher cost |
-| `fast` | Low latency, lower capability |
-| `cheap` | Cost-optimized |
-| `local` | Runs locally (no API costs) |
-| `vision` | Supports image inputs |
-
----
-
-## Routing Configuration
-
-The `[routing]` section configures how APXM selects backends and models:
-
-```toml
-[routing]
-# Global defaults
-default_backend = "anthropic"
-default_model = "claude-sonnet-4-5"
-
-# Tag-based selection
-prefer_tags = ["production", "smart"]   # First choice
-fallback_tags = ["local", "cheap"]      # When preferred unavailable
-
-# Operation-specific routing
-[routing.operations]
-plan = { model = "claude-sonnet-4-5" }      # Planning uses Sonnet
-think = { backend = "local-gpu" }        # Thinking uses local Gemma
-reason = { model = "claude-sonnet-4-5" }     # Reasoning uses Sonnet
-ask = { backend = "corp-gateway" }             # Simple queries use on-prem
-
-# Fallback chains
-[[routing.fallbacks]]
-backend = "anthropic"
-fallbacks = ["corp-gateway", "local-gpu"]
-
-[[routing.fallbacks]]
-backend = "local-gpu"
-fallbacks = ["corp-gateway"]
-```
-
-### Routing Resolution Order
-
-When selecting a backend/model for a request:
-
-1. **Explicit request** — If the request specifies a model, use it
-2. **Operation route** — Check `routing.operations` for this AIS operation type
-3. **Model alias** — Resolve aliases (e.g., "fast" → "gpt-4o-mini")
-4. **Tag matching** — Select from models matching `prefer_tags`
-5. **Default model** — Fall back to `routing.default_model`
-6. **Default backend** — Fall back to `routing.default_backend`
-
-If the selected backend is unhealthy, the circuit breaker triggers fallback chain resolution.
-
----
-
-## Health Monitoring
-
-APXM continuously monitors backend health:
-
-```
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│  anthropic  │     │  corp-gateway │     │local-gpu│
-│   HEALTHY   │     │   HEALTHY   │     │  DEGRADED   │
-│  latency:   │     │  latency:   │     │  latency:   │
-│   120ms     │     │    45ms     │     │   2100ms    │
-└─────────────┘     └─────────────┘     └─────────────┘
-```
-
-### Health States
-
-| State | Meaning | Behavior |
-|-------|---------|----------|
-| `Healthy` | Normal operation | Accept requests |
-| `Degraded` | High latency or errors | Accept with warning |
-| `Unhealthy` | Failed health check | Trigger fallback |
-| `Unknown` | No health data yet | Treat as healthy |
-
-### Circuit Breaker
-
-Each backend has a circuit breaker that:
-- **Opens** after N consecutive failures (default: 5)
-- **Half-opens** after timeout (default: 30s) to test recovery
-- **Closes** after successful request in half-open state
-
----
-
-## CLI Commands
-
-### Backend Management
-
-```bash
-# List all backends
-apxm backend list
-
-# Add a new backend
-apxm backend add anthropic \
-  --protocol anthropic \
-  --api-key "$ANTHROPIC_API_KEY"
-
-# Add local vLLM backend
-apxm backend add gemma3-local \
-  --protocol vllm \
-  --endpoint http://localhost:8000
-
-# Test backend connectivity
-apxm backend test anthropic
-
-# Check health of all backends
-apxm backend health
-
-# Start a local backend (if docker config exists)
-apxm backend start local-gpu
-
-# Stop a local backend
-apxm backend stop local-gpu
-```
-
-### Model Management
-
-```bash
-# List all models across backends
-apxm model list
-
-# List models for a specific backend
-apxm model list --backend anthropic
-
-# Add a model to a backend
-apxm model add claude-sonnet-4-5 \
-  --backend anthropic \
-  --context-window 200000 \
-  --cost-input 0.003 \
-  --cost-output 0.015 \
-  --tags production,smart
-
-# Show model details
-apxm model show claude-sonnet-4-5
-```
-
----
-
-## Complete Example Configuration
-
-```toml
-# ~/.apxm/config.toml
-
-# ═══════════════════════════════════════════════════════════════════════════
-# BACKENDS
-# ═══════════════════════════════════════════════════════════════════════════
-
-# Cloud: Anthropic
-[[backends]]
-name = "anthropic"
-type = "cloud"
-protocol = "anthropic"
-endpoint = "https://api.anthropic.com"
-api_key = "env:ANTHROPIC_API_KEY"
-
-[[backends.models]]
-id = "claude-sonnet-4-5"
-aliases = ["sonnet", "claude"]
-context_window = 200000
-cost_per_1k_input = 0.003
-cost_per_1k_output = 0.015
-supports_vision = true
-supports_functions = true
-tags = ["production", "smart"]
-
-[[backends.models]]
-id = "claude-haiku-4-5"
-aliases = ["haiku", "fast"]
-context_window = 200000
-cost_per_1k_input = 0.00025
-cost_per_1k_output = 0.00125
-supports_functions = true
-tags = ["fast", "cheap"]
-
-# On-Prem: Enterprise Internal
-[[backends]]
-name = "corp-gateway"
-type = "onprem"
-protocol = "openai"
-endpoint = "https://llm.example.com/v1"
-api_key = "env:OCP_APIM_KEY"
-
-[backends.headers]
-X-Custom-Gateway-Key = "env:OCP_APIM_KEY"
-
-[[backends.models]]
-id = "GPT-oss-20B"
-tags = ["onprem", "internal"]
-
-# Local: vLLM on GPU
 [[backends]]
 name = "local-gpu"
 type = "local"
@@ -409,76 +101,180 @@ protocol = "vllm"
 endpoint = "http://localhost:8000"
 
 [backends.docker]
-image = "gpu/pytorch-private:vllm-v0.14.0_amd_dev_aiter_nixl_ravgupta"
-args = [
-  "--device", "/dev/kfd",
-  "--device", "/dev/dri",
-  "--ipc", "host",
-  "--group-add", "video",
-  "-v", "/models:/models"
-]
-env = { HIP_VISIBLE_DEVICES = "0,1,2,3" }
-command = [
-  "vllm", "serve", "/models/Google/Gemma-3-27b-it",
-  "--tensor-parallel-size", "4",
-  "--port", "8000"
-]
+image = "gpu/pytorch-private:vllm-v0.14.0"
+model_path = "/shared_inference/models/Google/Gemma-3-27b-it"
+tensor_parallel = 4
+
+[backends.docker.env]
+HIP_VISIBLE_DEVICES = "0,1,2,3"
+HSA_OVERRIDE_GFX_VERSION = "9.4.2"
 
 [[backends.models]]
-id = "/models/Google/Gemma-3-27b-it"
+id = "/shared_inference/models/Google/Gemma-3-27b-it"
 aliases = ["gemma3", "local"]
 context_window = 8192
 supports_vision = true
-tags = ["local", "free", "vision"]
-
-# ═══════════════════════════════════════════════════════════════════════════
-# ROUTING
-# ═══════════════════════════════════════════════════════════════════════════
-
-[routing]
-default_backend = "anthropic"
-default_model = "claude-sonnet-4-5"
-prefer_tags = ["production"]
-fallback_tags = ["local"]
-
-[routing.operations]
-plan = { model = "claude-sonnet-4-5" }
-think = { backend = "local-gpu" }
-reason = { model = "claude-sonnet-4-5" }
-reflect = { model = "claude-sonnet-4-5" }
-ask = { backend = "corp-gateway" }
-
-[[routing.fallbacks]]
-backend = "anthropic"
-fallbacks = ["corp-gateway", "local-gpu"]
-
-[[routing.fallbacks]]
-backend = "corp-gateway"
-fallbacks = ["local-gpu"]
+tags = ["local", "free"]
 ```
 
 ---
 
-## Migration from credentials.toml
+## Protocols
 
-The legacy `~/.apxm/credentials.toml` format is still supported but deprecated:
+The `protocol` field determines the HTTP wire format APXM uses to talk to the backend:
+
+| Protocol | Description | Graph Hints |
+|----------|-------------|-------------|
+| `openai` | OpenAI Chat Completions API (also used by OpenRouter, Together, etc.) | ❌ |
+| `anthropic` | Anthropic Messages API | ❌ |
+| `google` | Google Gemini API | ❌ |
+| `ollama` | Ollama local API | ❌ |
+| `vllm` | OpenAI-compatible + APXM graph extensions | ✅ |
+
+### vLLM and Graph Hints
+
+When `protocol = "vllm"`, APXM sends additional scheduling metadata with each request:
+
+- `POST /v1/apxm/graphs/` — Register a graph for priority scheduling
+- `GET /v1/apxm/graphs/{id}` — Check graph registration status
+- Requests include `x-apxm-graph-id` and `x-apxm-critical-path` headers
+
+This allows the vLLM scheduler (APXM branch) to prioritize critical-path operations in a running graph, reducing end-to-end latency.
+
+---
+
+## Model Metadata
+
+Each model carries metadata used for routing, cost estimation, and capability checks:
 
 ```toml
-# OLD: credentials.toml (deprecated)
-[credentials.anthropic]
-provider = "anthropic"
-api_key = "sk-..."
-model = "claude-sonnet-4-5"
-
-# NEW: config.toml (recommended)
-[[backends]]
-name = "anthropic"
-type = "cloud"
-protocol = "anthropic"
-api_key = "sk-..."
-
 [[backends.models]]
-id = "claude-sonnet-4-5"
+id = "claude-sonnet-4-5"        # Identifier sent to the API (required)
+aliases = ["sonnet", "claude"]  # Alternative routing names
+context_window = 200000         # Max tokens (0 = unknown)
+cost_per_1k_input = 0.003       # USD per 1K input tokens
+cost_per_1k_output = 0.015      # USD per 1K output tokens
+supports_vision = true          # Image input support
+supports_functions = true       # Tool/function calling
+supports_thinking = false       # Extended reasoning (o1, Claude thinking)
+tags = ["production", "smart"]  # Routing tags
 ```
 
-Run `apxm config migrate` to convert automatically.
+### Tag Conventions
+
+| Tag | Meaning |
+|-----|---------|
+| `production` | Approved for production workloads |
+| `development` | Dev/testing only |
+| `smart` | High capability, higher cost |
+| `fast` | Low latency, lower capability |
+| `cheap` | Cost-optimized |
+| `local` | Self-hosted, no per-token cost |
+| `vision` | Supports image inputs |
+| `thinking` | Extended reasoning mode |
+| `onprem` | Enterprise internal |
+
+---
+
+## Routing
+
+Routing controls which backend and model handle each request. Configured under `[chat]` and `[chat.routing]`.
+
+### Resolution Order
+
+When selecting a backend/model for a request:
+
+1. Explicit request override (request specifies backend/model directly)
+2. `[chat.routing.operation_routes]` — per-AIS-operation routing rules
+3. Model alias resolution (`[chat.routing.model_aliases]`)
+4. `chat.default_model`
+5. `chat.default_backend`
+6. If selected backend is unhealthy → circuit breaker triggers fallback chain
+
+### Operation Routes
+
+Route specific AIS operations to specific backends:
+
+```toml
+[chat.routing.operation_routes.plan]
+model = "claude-sonnet-4-5"     # Use this model for PLAN ops
+
+[chat.routing.operation_routes.think]
+backend = "local-gpu"       # Use local GPU for THINK ops
+
+[chat.routing.operation_routes.ask]
+backend = "corp-gateway"          # Cheap queries go on-prem
+```
+
+Routable operations: `plan`, `think`, `reason`, `reflect`, `ask`, `verify`
+
+### Fallback Chains
+
+When a backend becomes unhealthy, the circuit breaker redirects to the fallback chain:
+
+```toml
+[[chat.routing.fallback_chains]]
+backend = "anthropic"
+fallbacks = ["corp-gateway", "local-gpu"]
+```
+
+---
+
+## Health Monitoring
+
+APXM's ModelRouter continuously monitors backend health:
+
+| State | Meaning | Behavior |
+|-------|---------|----------|
+| `Healthy` | Normal operation | Accept requests |
+| `Degraded` | High latency or elevated error rate | Accept with warning |
+| `Unhealthy` | Failed health check | Trigger fallback chain |
+
+The circuit breaker opens after N consecutive failures (default: 5), half-opens after a timeout (default: 30s) to test recovery, and closes after a successful request.
+
+---
+
+## Docker Lifecycle (Local Backends)
+
+Local backends with `[backends.docker]` config support full container lifecycle via CLI:
+
+```bash
+apxm backend start local-gpu    # Launch container
+apxm backend status local-gpu   # Check if running
+apxm backend logs local-gpu     # Tail logs
+apxm backend stop local-gpu     # Shut down
+apxm backend restart local-gpu  # Restart
+```
+
+The `DockerManager` translates the `[backends.docker]` config into `docker run` commands with the correct GPU device mappings, environment variables, model mounts, and tensor-parallel settings.
+
+---
+
+## CLI Reference
+
+```bash
+# Discovery
+apxm backend list              # All registered backends
+apxm models list               # All models across all backends
+apxm models health             # ModelRouter health status
+
+# Management
+apxm backend add <name>        # Add a backend (interactive)
+apxm backend remove <name>     # Remove a backend
+apxm backend test [name]       # Test connectivity (all or specific)
+apxm backend migrate           # Import from legacy credentials.toml
+
+# Local backend lifecycle
+apxm backend start <name>      # Start Docker container
+apxm backend stop <name>       # Stop container
+apxm backend status [name]     # Container status
+apxm backend logs <name>       # Container logs (--tail N)
+apxm backend restart <name>    # Restart container
+```
+
+---
+
+## See Also
+
+- [`docs/reference/config.md`](../reference/config.md) — Complete config file reference
+- [`docs/architecture/backends-quickref.md`](backends-quickref.md) — One-page cheat sheet

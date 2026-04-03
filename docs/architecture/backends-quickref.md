@@ -1,69 +1,45 @@
-# APXM Backends Quick Reference
+# APXM Backends — Quick Reference
+
+> Full reference: [`docs/reference/config.md`](../reference/config.md)
 
 ## The Hierarchy
 
 ```
-BACKEND (where inference runs)
-│
-├── type: cloud | onprem | local
-├── protocol: openai | anthropic | google | ollama | vllm
-├── endpoint: https://api.anthropic.com
-├── auth: api_key, headers
-│
-└── MODELS (LLMs deployed here)
-    │
-    ├── id: claude-sonnet-4-5
-    ├── aliases: [sonnet, claude]
-    ├── context_window: 200000
-    ├── cost: $0.003/$0.015 per 1K tokens
-    ├── capabilities: vision, functions
-    └── tags: [production, smart]
+~/.apxm/config.toml  ← single source of truth
+
+[[backends]]         ← WHERE inference runs
+  type               : cloud | onprem | local
+  protocol           : openai | anthropic | google | ollama | vllm
+  endpoint           : URL
+  api_key            : value or "env:VAR"
+  [backends.docker]  : lifecycle config (local only)
+
+  [[backends.models]]  ← WHAT you're calling
+    id               : model identifier sent to API
+    aliases          : routing shortcuts
+    context_window   : max tokens
+    tags             : routing labels
 ```
 
 ## Backend Types at a Glance
 
 | Type | Examples | Lifecycle | Cost | Graph Hints |
 |------|----------|-----------|------|-------------|
-| **cloud** | Anthropic, OpenAI, Google | Always on | Per-token | ❌ |
-| **onprem** | Enterprise API, Azure OpenAI | Managed | Internal | ✅ if vLLM |
-| **local** | vLLM, Ollama | You run it | Hardware only | ✅ |
+| `cloud` | Anthropic, OpenAI, Google | Always on | Per-token | ❌ |
+| `onprem` | Enterprise API, Azure OpenAI | IT-managed | Internal | ✅ if APXM vLLM |
+| `local` | vLLM on GPU, Ollama | **You run it** | Hardware only | ✅ |
 
-## Quick Commands
+## Protocols
 
-```bash
-# Backends
-apxm backend list              # Show all backends
-apxm backend add <name>        # Add backend
-apxm backend test <name>       # Test connectivity
-apxm backend health            # Show health status
-apxm backend start <name>      # Start local backend
-apxm backend stop <name>       # Stop local backend
+| Protocol | Use for |
+|----------|---------|
+| `anthropic` | Claude models |
+| `openai` | GPT models + anything OpenAI-compatible |
+| `google` | Gemini models |
+| `ollama` | Local Ollama server |
+| `vllm` | Local/on-prem vLLM (+ APXM graph hints) |
 
-# Models
-apxm model list                # Show all models
-apxm model list -b anthropic   # Models on specific backend
-apxm model show <id>           # Model details
-```
-
-## Routing Flow
-
-```
-Request → Operation Route? → Model Alias? → Tag Match? → Default
-              │                   │              │           │
-              ▼                   ▼              ▼           ▼
-         plan→sonnet        fast→haiku    prefer_tags   default_model
-                                          [production]   claude-sonnet
-```
-
-## Config Locations
-
-| File | Purpose |
-|------|---------|
-| `~/.apxm/config.toml` | Main config (backends, models, routing) |
-| `~/.apxm/credentials.toml` | Legacy credentials (deprecated) |
-| `.apxm/config.toml` | Project-level overrides |
-
-## Minimal Config Example
+## Minimal Config
 
 ```toml
 [[backends]]
@@ -74,9 +50,52 @@ api_key = "env:ANTHROPIC_API_KEY"
 
 [[backends.models]]
 id = "claude-sonnet-4-5"
-tags = ["default"]
+tags = ["production"]
 
-[routing]
+[chat]
 default_backend = "anthropic"
 default_model = "claude-sonnet-4-5"
 ```
+
+## Routing
+
+```toml
+[chat.routing.operation_routes.think]
+backend = "local-gpu"        # Route THINK ops to local GPU
+
+[chat.routing.operation_routes.ask]
+backend = "corp-gateway"           # Route ASK ops to on-prem
+
+[chat.routing.model_aliases.fast]
+model = "claude-haiku-4-5"       # "fast" resolves to haiku
+
+[[chat.routing.fallback_chains]]
+backend = "anthropic"
+fallbacks = ["corp-gateway", "local-gpu"]
+```
+
+## CLI Commands
+
+```bash
+# Backend management
+apxm backend list / add / remove / test / migrate
+
+# Local backend lifecycle
+apxm backend start / stop / status / logs / restart <name>
+
+# Model inspection
+apxm models list
+apxm models health
+```
+
+## `env:` Prefix
+
+Any `api_key`, `endpoint`, or header value can reference an env var:
+
+```toml
+api_key = "env:ANTHROPIC_API_KEY"   # reads $ANTHROPIC_API_KEY at runtime
+```
+
+## Routable AIS Operations
+
+`plan` · `think` · `reason` · `reflect` · `ask` · `verify`
