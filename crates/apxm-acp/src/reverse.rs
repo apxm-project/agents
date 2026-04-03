@@ -306,18 +306,28 @@ impl ReverseHandler for CapabilityReverseHandler {
         if method == methods::SESSION_UPDATE {
             if let Some(params) = params {
                 let update = &params["update"];
-                match update["type"].as_str() {
+                // ACP uses "sessionUpdate" as the discriminator key (not "type")
+                // and nests text under "content.text"
+                let update_kind = update["sessionUpdate"].as_str()
+                    .or_else(|| update["type"].as_str()); // fallback for older protocol
+                match update_kind {
                     Some(t) if t == update_types::AGENT_MESSAGE_CHUNK => {
-                        if let Some(text) = update["text"].as_str() {
+                        // Text is under content.text in the current ACP protocol
+                        let text = update["content"]["text"].as_str()
+                            .or_else(|| update["text"].as_str()); // fallback
+                        if let Some(text) = text {
                             self.response_text.lock().unwrap().push_str(text);
                         }
                     }
                     Some(t) if t == update_types::USAGE_UPDATE => {
                         let mut usage = self.token_usage.lock().unwrap();
-                        if let Some(input) = update[fields::INPUT_TOKENS].as_u64() {
+                        // Try standard field names first, then ACP-specific names
+                        if let Some(input) = update[fields::INPUT_TOKENS].as_u64()
+                            .or_else(|| update["used"].as_u64()) {
                             usage.0 = Some(input);
                         }
-                        if let Some(output) = update[fields::OUTPUT_TOKENS].as_u64() {
+                        if let Some(output) = update[fields::OUTPUT_TOKENS].as_u64()
+                            .or_else(|| update["size"].as_u64()) {
                             usage.1 = Some(output);
                         }
                     }
