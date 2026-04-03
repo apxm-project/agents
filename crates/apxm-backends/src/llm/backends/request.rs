@@ -1,6 +1,7 @@
 //! LLM request types and builders.
 
 use apxm_core::types::AISOperationType;
+use super::vllm::ApxmGraphHints;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -157,6 +158,10 @@ pub struct LLMRequest {
     pub tool_choice: Option<ToolChoice>,
     /// Trace ID for cross-process event correlation.
     pub trace_id: Option<String>,
+    /// APXM graph hints for vLLM scheduling optimizations.
+    pub apxm_hints: Option<ApxmGraphHints>,
+    /// Extra body fields to send to the LLM (provider-specific).
+    pub extra_body: Option<serde_json::Value>,
 }
 
 impl LLMRequest {
@@ -182,6 +187,8 @@ impl LLMRequest {
             tools: None,
             tool_choice: None,
             trace_id: None,
+            apxm_hints: None,
+            extra_body: None,
         }
     }
 
@@ -283,6 +290,18 @@ impl LLMRequest {
     /// Set explicit backend for routing.
     pub fn with_backend(mut self, backend: impl Into<String>) -> Self {
         self.backend = Some(backend.into());
+        self
+    }
+
+    /// Set APXM graph hints for vLLM scheduling.
+    pub fn with_apxm_hints(mut self, hints: ApxmGraphHints) -> Self {
+        self.apxm_hints = Some(hints);
+        self
+    }
+
+    /// Set extra body fields (provider-specific).
+    pub fn with_extra_body(mut self, body: serde_json::Value) -> Self {
+        self.extra_body = Some(body);
         self
     }
 

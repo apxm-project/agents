@@ -4,6 +4,7 @@
 //! [`RegisteredProvider`] for extensible provider management.
 
 use crate::llm::backends::{
+    GraphAwareVllmBackend,
     AnthropicBackend, GoogleBackend, LLMBackend, LLMRequest, LLMResponse, OllamaBackend,
     OpenAIBackend,
 };
@@ -68,6 +69,7 @@ pub enum Provider {
     Anthropic(AnthropicBackend),
     Google(GoogleBackend),
     Ollama(OllamaBackend),
+    Vllm(GraphAwareVllmBackend),
 }
 
 impl Provider {
@@ -102,6 +104,9 @@ impl Provider {
             ProviderProtocol::Ollama => {
                 Ok(Provider::Ollama(OllamaBackend::new(api_key, config).await?))
             }
+            ProviderProtocol::Vllm => {
+                Ok(Provider::Vllm(GraphAwareVllmBackend::new(api_key, config).await?))
+            }
         }
     }
 
@@ -112,6 +117,7 @@ impl Provider {
             Provider::Anthropic(_) => ProviderId::Anthropic,
             Provider::Google(_) => ProviderId::Google,
             Provider::Ollama(_) => ProviderId::Ollama,
+            Provider::Vllm(_) => ProviderId::OpenAI, // Vllm is OpenAI-compatible
         }
     }
 
@@ -121,6 +127,7 @@ impl Provider {
             Provider::Anthropic(b) => b,
             Provider::Google(b) => b,
             Provider::Ollama(b) => b,
+            Provider::Vllm(b) => b,
         }
     }
 }

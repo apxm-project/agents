@@ -22,6 +22,8 @@ pub enum ProviderProtocol {
     Google,
     /// Ollama local API
     Ollama,
+    /// vLLM-compatible API with APXM graph-awareness extensions
+    Vllm,
 }
 
 impl ProviderProtocol {
@@ -31,6 +33,7 @@ impl ProviderProtocol {
             ProviderProtocol::Anthropic => "anthropic",
             ProviderProtocol::Google => "google",
             ProviderProtocol::Ollama => "ollama",
+            ProviderProtocol::Vllm => "vllm",
         }
     }
 }
@@ -50,6 +53,7 @@ impl std::str::FromStr for ProviderProtocol {
             "anthropic" => Ok(ProviderProtocol::Anthropic),
             "google" => Ok(ProviderProtocol::Google),
             "ollama" => Ok(ProviderProtocol::Ollama),
+            "vllm" | "vllm-graph-aware" => Ok(ProviderProtocol::Vllm),
             _ => Err(format!("Unknown provider protocol: '{}'", s)),
         }
     }
@@ -109,6 +113,14 @@ pub const BUILTIN_PROVIDERS: &[BuiltinProviderSpec] = &[
         requires_api_key: true,
         protocol: ProviderProtocol::Google,
         aliases: &["gemini"],
+    },
+    BuiltinProviderSpec {
+        id: "vllm",
+        api_key_env_var: None,
+        default_base_url: Some("http://localhost:8000"),
+        requires_api_key: false,
+        protocol: ProviderProtocol::Vllm,
+        aliases: &["vllm-graph-aware"],
     },
     BuiltinProviderSpec {
         id: "openrouter",
@@ -211,6 +223,22 @@ mod tests {
     fn test_provider_protocol_roundtrip() {
         let proto = ProviderProtocol::OpenAI;
         assert_eq!(proto.as_str().parse::<ProviderProtocol>().unwrap(), proto);
+    }
+
+    #[test]
+    fn test_vllm_provider_spec() {
+        let spec = resolve_builtin_provider("vllm").unwrap();
+        assert_eq!(spec.id, "vllm");
+        assert_eq!(spec.protocol, ProviderProtocol::Vllm);
+        assert!(!spec.requires_api_key);
+        assert_eq!(spec.default_base_url, Some("http://localhost:8000"));
+    }
+
+    #[test]
+    fn test_vllm_alias() {
+        let spec = resolve_builtin_provider("vllm-graph-aware").unwrap();
+        assert_eq!(spec.id, "vllm");
+        assert_eq!(spec.protocol, ProviderProtocol::Vllm);
     }
 
     #[test]

@@ -1,0 +1,6 @@
+//! vLLM graph-aware backend module.
+pub mod backend;
+pub mod graph_meta;
+
+pub use backend::GraphAwareVllmBackend;
+pub use graph_meta::{ApxmGraphHints, GraphMetadata, NodeSpec, PinPolicy};

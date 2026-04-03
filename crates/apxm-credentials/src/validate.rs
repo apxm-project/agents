@@ -29,6 +29,8 @@ pub async fn validate_credential(name: &str, cred: &Credential) -> Result<String
         ProviderProtocol::Anthropic => validate_anthropic(&client, name, cred, base).await,
         ProviderProtocol::Google => validate_google(&client, name, cred, base).await,
         ProviderProtocol::Ollama => validate_ollama(&client, name, cred, base).await,
+        // vLLM uses OpenAI-compatible validation (same /v1/models endpoint)
+        ProviderProtocol::Vllm => validate_openai(&client, name, cred, base).await,
     }
 }
 

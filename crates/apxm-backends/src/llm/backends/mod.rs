@@ -15,12 +15,14 @@ pub mod google;
 pub mod mock;
 pub mod ollama;
 pub mod openai;
+pub mod vllm;
 
 pub use anthropic::{AnthropicBackend, AnthropicModel};
 pub use google::{GoogleBackend, GoogleModel};
 pub use mock::{MockLLMBackend, MockResponse, RecordedCall};
 pub use ollama::{OllamaBackend, OllamaModel};
 pub use openai::{OpenAIBackend, OpenAIModel};
+pub use vllm::{GraphAwareVllmBackend, ApxmGraphHints, GraphMetadata, NodeSpec, PinPolicy};
 pub use request::{
     ContentPart, FunctionCall, GenerationConfig, LLMRequest, Message, RequestBuilder, Role,
     ToolChoice, ToolDefinition,
@@ -79,12 +81,15 @@ impl BackendFactory {
             ProviderProtocol::Ollama => {
                 Arc::new(ollama::OllamaBackend::new(api_key, config).await?)
             }
+            ProviderProtocol::Vllm => {
+                Arc::new(vllm::GraphAwareVllmBackend::new(api_key, config).await?)
+            }
         };
         Ok(backend)
     }
 
     /// List available backend providers.
     pub fn list_providers() -> Vec<&'static str> {
-        vec!["openai", "anthropic", "google", "ollama"]
+        vec!["openai", "anthropic", "google", "ollama", "vllm"]
     }
 }
