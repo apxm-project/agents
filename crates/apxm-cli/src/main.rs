@@ -12,6 +12,7 @@ use anyhow::Result;
 use apxm_core::utils::build::MlirEnvReport;
 use apxm_credentials::CredentialStore;
 use apxm_credentials::credential::Credential;
+use apxm_credentials::docker::{DockerManager, ContainerStatus};
 #[cfg(feature = "driver")]
 use apxm_driver::compiler::Compiler;
 #[cfg(feature = "driver")]
@@ -283,6 +284,34 @@ enum BackendAction {
         /// Skip confirmation prompt
         #[arg(long)]
         yes: bool,
+    },
+    /// Start a local backend container
+    Start {
+        /// Backend name
+        name: String,
+    },
+    /// Stop a local backend container
+    Stop {
+        /// Backend name
+        name: String,
+    },
+    /// Show status of local backend containers
+    Status {
+        /// Backend name (omit to show all)
+        name: Option<String>,
+    },
+    /// Show logs from a local backend container
+    Logs {
+        /// Backend name
+        name: String,
+        /// Number of lines to show (default: 50)
+        #[arg(long, default_value = "50")]
+        tail: usize,
+    },
+    /// Restart a local backend container
+    Restart {
+        /// Backend name
+        name: String,
     },
 }
 
@@ -1635,6 +1664,104 @@ async fn backend_command(action: BackendAction, json_output: bool) -> Result<()>
                     println!("Your legacy credentials.toml can now be safely removed.");
                     println!("To view the migrated backends: apxm backend list");
                 }
+            }
+        }
+        BackendAction::Start { name } => {
+            let backend = store
+                .get(&name)
+                .map_err(|e| anyhow::anyhow!("{e}"))?
+                .ok_or_else(|| anyhow::anyhow!("Backend '{name}' not found"))?;
+
+            let container_id = DockerManager::start(&backend)
+                .map_err(|e| anyhow::anyhow!("Failed to start backend: {e}"))?;
+
+            if json_output {
+                println!("{{\"status\":\"ok\",\"backend\":\"{name}\",\"container_id\":\"{container_id}\"}}");
+            } else {
+                print_section_header("Backend Started");
+                print_status_line("Backend", Status::Ok, &name);
+                print_status_line("Container ID", Status::Ok, &container_id);
+            }
+        }
+        BackendAction::Stop { name } => {
+            DockerManager::stop_by_name(&name)
+                .map_err(|e| anyhow::anyhow!("Failed to stop backend: {e}"))?;
+
+            if json_output {
+                println!("{{\"status\":\"ok\",\"backend\":\"{name}\",\"action\":\"stopped\"}}");
+            } else {
+                print_section_header("Backend Stopped");
+                print_status_line("Backend", Status::Ok, &name);
+            }
+        }
+        BackendAction::Status { name } => {
+            let backends_to_check: Vec<BackendConfig> = match name {
+                Some(ref n) => {
+                    let backend = store
+                        .get(n)
+                        .map_err(|e| anyhow::anyhow!("{e}"))?
+                        .ok_or_else(|| anyhow::anyhow!("Backend '{n}' not found"))?;
+                    vec![backend]
+                }
+                None => store.list().map_err(|e| anyhow::anyhow!("{e}"))?,
+            };
+
+            if json_output {
+                let mut statuses = Vec::new();
+                for backend in &backends_to_check {
+                    if backend.backend_type == BackendType::Local {
+                        let status = DockerManager::status(&backend.name)
+                            .unwrap_or(ContainerStatus::NotFound);
+                        statuses.push(serde_json::json!({
+                            "backend": backend.name,
+                            "status": status.to_string()
+                        }));
+                    }
+                }
+                println!("{}", serde_json::to_string_pretty(&statuses)?);
+            } else {
+                print_section_header("Backend Status");
+                for backend in &backends_to_check {
+                    if backend.backend_type == BackendType::Local {
+                        let status = DockerManager::status(&backend.name)
+                            .unwrap_or(ContainerStatus::NotFound);
+                        let status_display = match status {
+                            ContainerStatus::Running => Status::Ok,
+                            ContainerStatus::Stopped => Status::Warning,
+                            ContainerStatus::NotFound => Status::Error,
+                        };
+                        print_status_line(&backend.name, status_display, &status.to_string());
+                    }
+                }
+            }
+        }
+        BackendAction::Logs { name, tail } => {
+            let container_id = DockerManager::get_container_id(&name)
+                .map_err(|e| anyhow::anyhow!("Failed to get container ID: {e}"))?
+                .ok_or_else(|| anyhow::anyhow!("Container not found for backend '{name}'"))?;
+
+            let logs = DockerManager::logs(&container_id, tail)
+                .map_err(|e| anyhow::anyhow!("Failed to get logs: {e}"))?;
+
+            if json_output {
+                println!("{{\"status\":\"ok\",\"backend\":\"{name}\",\"logs\":{}}}", serde_json::to_string(&logs)?);
+            } else {
+                println!("{}", logs);
+            }
+        }
+        BackendAction::Restart { name } => {
+            let container_id = DockerManager::get_container_id(&name)
+                .map_err(|e| anyhow::anyhow!("Failed to get container ID: {e}"))?
+                .ok_or_else(|| anyhow::anyhow!("Container not found for backend '{name}'"))?;
+
+            DockerManager::restart(&container_id)
+                .map_err(|e| anyhow::anyhow!("Failed to restart backend: {e}"))?;
+
+            if json_output {
+                println!("{{\"status\":\"ok\",\"backend\":\"{name}\",\"action\":\"restarted\"}}");
+            } else {
+                print_section_header("Backend Restarted");
+                print_status_line("Backend", Status::Ok, &name);
             }
         }
     }
