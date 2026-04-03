@@ -37,7 +37,17 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         .unwrap_or_default();
     let protocol = get_string_attribute(node, graph_attrs::PROTOCOL)
         .unwrap_or_else(|_| comm_proto::LOCAL.to_string());
-    let message = inputs.first().cloned().unwrap_or(Value::Null);
+    // For ACP protocol: prefer the first String input (the actual prompt).
+    // Control edges from SPAWN_AGENT carry Object metadata — skip them.
+    let message = if protocol == comm_proto::ACP {
+        inputs.iter()
+            .find(|v| matches!(v, Value::String(_)))
+            .cloned()
+            .or_else(|| inputs.first().cloned())
+            .unwrap_or(Value::Null)
+    } else {
+        inputs.first().cloned().unwrap_or(Value::Null)
+    };
 
     match protocol.as_str() {
         comm_proto::HTTP | comm_proto::HTTPS => {
@@ -431,10 +441,27 @@ async fn execute_acp(
     // Send prompt via the AgentPrompter trait
     let response = prompter.prompt(&process, &prompt_text).await?;
 
+    // Extract plain text for downstream nodes; store full object in beliefs for observability
+    let text_output = if let Value::Object(ref map) = response {
+        map.get("text")
+            .and_then(|v| if let Value::String(s) = v { Some(s.clone()) } else { None })
+            .map(Value::String)
+            .unwrap_or_else(|| response.clone())
+    } else {
+        response.clone()
+    };
+
     // Clear the pending belief
     ctx.aam.set_belief(
         format!("{}{}", belief_keys::PENDING_COMMUNICATE_PREFIX, recipient),
         Value::Null,
+        TransitionLabel::Custom(format!("communicate_acp_completed:{}", recipient)),
+    );
+
+    // Store full response object in beliefs for observability
+    ctx.aam.set_belief(
+        format!("{}{}:last", belief_keys::PENDING_COMMUNICATE_PREFIX, recipient),
+        response,
         TransitionLabel::Custom(format!("communicate_acp_completed:{}", recipient)),
     );
 
@@ -444,7 +471,7 @@ async fn execute_acp(
         "COMMUNICATE ACP completed"
     );
 
-    Ok(response)
+    Ok(text_output)
 }
 
 // ─── HTTP dispatch ─────────────────────────────────────────────────────────

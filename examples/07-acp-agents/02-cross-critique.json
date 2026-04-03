@@ -1,0 +1,137 @@
+{
+  "name": "cross-critique",
+  "parameters": [],
+  "nodes": [
+    {
+      "id": 1,
+      "name": "spawn_claude",
+      "op": "SPAWN_AGENT",
+      "attributes": {
+        "agent_name": "agent_a",
+        "profile": "claude"
+      }
+    },
+    {
+      "id": 2,
+      "name": "spawn_codex",
+      "op": "SPAWN_AGENT",
+      "attributes": {
+        "agent_name": "agent_b",
+        "profile": "codex"
+      }
+    },
+    {
+      "id": 3,
+      "name": "question",
+      "op": "CONST_STR",
+      "attributes": {
+        "value": "In the APXM project (this codebase), what is the single most impactful next feature to implement for the ACP multi-agent system? Propose your top idea with a one-paragraph justification. Be specific and concrete. Under 150 words."
+      }
+    },
+    {
+      "id": 4,
+      "name": "claude_proposes",
+      "op": "COMMUNICATE",
+      "attributes": {
+        "recipient": "agent_a",
+        "protocol": "acp"
+      }
+    },
+    {
+      "id": 5,
+      "name": "codex_proposes",
+      "op": "COMMUNICATE",
+      "attributes": {
+        "recipient": "agent_b",
+        "protocol": "acp"
+      }
+    },
+    {
+      "id": 6,
+      "name": "critique_prefix_for_codex",
+      "op": "CONST_STR",
+      "attributes": {
+        "value": "Critique the following feature proposal from Claude for the APXM project. Is it feasible? Is it truly the most impactful? What's missing? Under 100 words.\n\nClaude's proposal:\n"
+      }
+    },
+    {
+      "id": 7,
+      "name": "critique_prefix_for_claude",
+      "op": "CONST_STR",
+      "attributes": {
+        "value": "Critique the following feature proposal from Codex for the APXM project. Is it feasible? Is it truly the most impactful? What's missing? Under 100 words.\n\nCodex's proposal:\n"
+      }
+    },
+    {
+      "id": 8,
+      "name": "build_codex_critique",
+      "op": "MERGE",
+      "attributes": {
+        "strategy": "concat", "tokens": ["{{node_6}}", "{{node_4}}"]
+      }
+    },
+    {
+      "id": 9,
+      "name": "build_claude_critique",
+      "op": "MERGE",
+      "attributes": {
+        "strategy": "concat", "tokens": ["{{node_7}}", "{{node_5}}"]
+      }
+    },
+    {
+      "id": 10,
+      "name": "codex_critiques_claude",
+      "op": "COMMUNICATE",
+      "attributes": {
+        "recipient": "agent_b",
+        "protocol": "acp"
+      }
+    },
+    {
+      "id": 11,
+      "name": "claude_critiques_codex",
+      "op": "COMMUNICATE",
+      "attributes": {
+        "recipient": "agent_a",
+        "protocol": "acp"
+      }
+    },
+    {
+      "id": 12,
+      "name": "print_proposals",
+      "op": "PRINT",
+      "attributes": {
+        "message": "=== PROPOSALS (parallel) ==="
+      }
+    },
+    {
+      "id": 13,
+      "name": "print_critiques",
+      "op": "PRINT",
+      "attributes": {
+        "message": "=== CRITIQUES ==="
+      }
+    }
+  ],
+  "edges": [
+    {"from": 1, "to": 4, "dependency": "Control"},
+    {"from": 2, "to": 5, "dependency": "Control"},
+    {"from": 3, "to": 4, "dependency": "Data"},
+    {"from": 3, "to": 5, "dependency": "Data"},
+    {"from": 4, "to": 12, "dependency": "Data"},
+    {"from": 5, "to": 12, "dependency": "Data"},
+    {"from": 4, "to": 8, "dependency": "Data"},
+    {"from": 6, "to": 8, "dependency": "Data"},
+    {"from": 5, "to": 9, "dependency": "Data"},
+    {"from": 7, "to": 9, "dependency": "Data"},
+    {"from": 8, "to": 10, "dependency": "Data"},
+    {"from": 5, "to": 10, "dependency": "Control"},
+    {"from": 9, "to": 11, "dependency": "Data"},
+    {"from": 4, "to": 11, "dependency": "Control"},
+    {"from": 10, "to": 13, "dependency": "Data"},
+    {"from": 11, "to": 13, "dependency": "Data"}
+  ],
+  "metadata": {
+    "description": "Claude and Codex propose next ACP features in parallel, then each critiques the other. True diamond dataflow with cross-agent context passing."
+  }
+}

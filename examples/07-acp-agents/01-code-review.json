@@ -1,0 +1,95 @@
+{
+  "name": "code-review",
+  "parameters": [],
+  "nodes": [
+    {
+      "id": 1,
+      "name": "spawn_coder",
+      "op": "SPAWN_AGENT",
+      "attributes": {
+        "agent_name": "coder",
+        "profile": "codex"
+      }
+    },
+    {
+      "id": 2,
+      "name": "spawn_reviewer",
+      "op": "SPAWN_AGENT",
+      "attributes": {
+        "agent_name": "reviewer",
+        "profile": "claude"
+      }
+    },
+    {
+      "id": 3,
+      "name": "coding_task",
+      "op": "CONST_STR",
+      "attributes": {
+        "value": "Look at the file crates/apxm-runtime/src/executor/handlers/spawn_agent.rs in this codebase. Write a brief summary of what it does and identify one potential improvement or edge case that could be handled better. Keep your response under 200 words."
+      }
+    },
+    {
+      "id": 4,
+      "name": "coder_analyzes",
+      "op": "COMMUNICATE",
+      "attributes": {
+        "recipient": "coder",
+        "protocol": "acp"
+      }
+    },
+    {
+      "id": 5,
+      "name": "review_prefix",
+      "op": "CONST_STR",
+      "attributes": {
+        "value": "You are doing a code review. Here is Codex's analysis of the spawn_agent handler. Review it critically: is it accurate? Did it miss anything? Do you agree with the improvement? Be concise, under 150 words.\n\nCodex's analysis:\n"
+      }
+    },
+    {
+      "id": 6,
+      "name": "build_review_prompt",
+      "op": "MERGE",
+      "attributes": {
+        "strategy": "concat", "tokens": ["{{node_5}}", "{{node_4}}"]
+      }
+    },
+    {
+      "id": 7,
+      "name": "reviewer_critiques",
+      "op": "COMMUNICATE",
+      "attributes": {
+        "recipient": "reviewer",
+        "protocol": "acp"
+      }
+    },
+    {
+      "id": 8,
+      "name": "print_coder",
+      "op": "PRINT",
+      "attributes": {
+        "message": "=== CODEX ANALYSIS ==="
+      }
+    },
+    {
+      "id": 9,
+      "name": "print_reviewer",
+      "op": "PRINT",
+      "attributes": {
+        "message": "=== CLAUDE REVIEW ==="
+      }
+    }
+  ],
+  "edges": [
+    {"from": 1, "to": 4, "dependency": "Control"},
+    {"from": 2, "to": 7, "dependency": "Control"},
+    {"from": 3, "to": 4, "dependency": "Data"},
+    {"from": 4, "to": 8, "dependency": "Data"},
+    {"from": 4, "to": 6, "dependency": "Data"},
+    {"from": 5, "to": 6, "dependency": "Data"},
+    {"from": 6, "to": 7, "dependency": "Data"},
+    {"from": 7, "to": 9, "dependency": "Data"}
+  ],
+  "metadata": {
+    "description": "Codex analyzes the spawn_agent handler, Claude reviews Codex's analysis. Sequential pipeline: Codex goes first, Claude gets the full context."
+  }
+}

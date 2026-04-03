@@ -1,0 +1,133 @@
+{
+  "name": "architect-implement-review",
+  "parameters": [],
+  "nodes": [
+    {
+      "id": 1,
+      "name": "spawn_architect",
+      "op": "SPAWN_AGENT",
+      "attributes": {
+        "agent_name": "architect",
+        "profile": "claude",
+        "mode": "architect"
+      }
+    },
+    {
+      "id": 2,
+      "name": "spawn_coder",
+      "op": "SPAWN_AGENT",
+      "attributes": {
+        "agent_name": "coder",
+        "profile": "codex"
+      }
+    },
+    {
+      "id": 3,
+      "name": "design_prompt",
+      "op": "CONST_STR",
+      "attributes": {
+        "value": "You are the architect for the APXM project. Design a CHECKPOINT operation for the AIS instruction set. A CHECKPOINT allows a running graph to save its current execution state so it can be resumed later (useful for long-running agent workflows). Provide: (1) MLIR mnemonic, (2) required and optional node attributes, (3) what the runtime handler should do at a high level, (4) suggested wire index (next available after 37). Be structured and concise, under 250 words."
+      }
+    },
+    {
+      "id": 4,
+      "name": "architect_designs",
+      "op": "COMMUNICATE",
+      "attributes": {
+        "recipient": "architect",
+        "protocol": "acp"
+      }
+    },
+    {
+      "id": 5,
+      "name": "implement_prefix",
+      "op": "CONST_STR",
+      "attributes": {
+        "value": "Based on the following design spec, write the stub implementation. Produce exactly two sections:\n1. Rust handler: crates/apxm-runtime/src/executor/handlers/checkpoint.rs\n2. TableGen op: the def AIS_CheckpointOp block for AISOps.td\nKeep it compilable. Base it on how spawn_agent.rs and AISOps.td are structured in this repo.\n\nDesign spec:\n"
+      }
+    },
+    {
+      "id": 6,
+      "name": "build_implement_prompt",
+      "op": "MERGE",
+      "attributes": {
+        "strategy": "concat", "tokens": ["{{node_5}}", "{{node_4}}"]
+      }
+    },
+    {
+      "id": 7,
+      "name": "coder_implements",
+      "op": "COMMUNICATE",
+      "attributes": {
+        "recipient": "coder",
+        "protocol": "acp"
+      }
+    },
+    {
+      "id": 8,
+      "name": "review_prefix",
+      "op": "CONST_STR",
+      "attributes": {
+        "value": "Review the following stub implementation from Codex for the CHECKPOINT op you designed. Does it match your spec? What's correct, what's wrong, and what would you change? Be specific.\n\nCodex's implementation:\n"
+      }
+    },
+    {
+      "id": 9,
+      "name": "build_review_prompt",
+      "op": "MERGE",
+      "attributes": {
+        "strategy": "concat", "tokens": ["{{node_8}}", "{{node_7}}"]
+      }
+    },
+    {
+      "id": 10,
+      "name": "architect_reviews",
+      "op": "COMMUNICATE",
+      "attributes": {
+        "recipient": "architect",
+        "protocol": "acp"
+      }
+    },
+    {
+      "id": 11,
+      "name": "print_design",
+      "op": "PRINT",
+      "attributes": {
+        "message": "=== ARCHITECT DESIGN ==="
+      }
+    },
+    {
+      "id": 12,
+      "name": "print_implementation",
+      "op": "PRINT",
+      "attributes": {
+        "message": "=== CODER IMPLEMENTATION ==="
+      }
+    },
+    {
+      "id": 13,
+      "name": "print_review",
+      "op": "PRINT",
+      "attributes": {
+        "message": "=== ARCHITECT REVIEW ==="
+      }
+    }
+  ],
+  "edges": [
+    {"from": 1, "to": 4, "dependency": "Control"},
+    {"from": 2, "to": 7, "dependency": "Control"},
+    {"from": 3, "to": 4, "dependency": "Data"},
+    {"from": 4, "to": 11, "dependency": "Data"},
+    {"from": 4, "to": 6, "dependency": "Data"},
+    {"from": 5, "to": 6, "dependency": "Data"},
+    {"from": 6, "to": 7, "dependency": "Data"},
+    {"from": 7, "to": 12, "dependency": "Data"},
+    {"from": 7, "to": 9, "dependency": "Data"},
+    {"from": 8, "to": 9, "dependency": "Data"},
+    {"from": 9, "to": 10, "dependency": "Data"},
+    {"from": 10, "to": 13, "dependency": "Data"}
+  ],
+  "metadata": {
+    "description": "Full SDLC in 3 stages: Claude (architect) designs CHECKPOINT op, Codex writes the stub implementation, Claude reviews it. Each stage receives the previous output as context."
+  }
+}
