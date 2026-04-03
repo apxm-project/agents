@@ -1,4 +1,4 @@
-# 10 — Resilient ACP Pipeline (with Fallback)
+# Resilient ACP Pipeline (with Fallback)
 
 **Pattern:** `GUARD → SPAWN → COMMUNICATE → CHECKPOINT → VERIFY → BRANCH → fallback COMMUNICATE → synthesize ASK`
 
@@ -20,6 +20,6 @@ Code review pipeline that self-heals: if the primary agent produces a substandar
 ```bash
 apxm agent test claude
 apxm agent test codex
-apxm validate examples/10-resilient-acp/resilient-acp-pipeline.json
-apxm execute examples/10-resilient-acp/resilient-acp-pipeline.json
+apxm validate examples/patterns/resilient-acp/resilient-acp-pipeline.json
+apxm execute examples/patterns/resilient-acp/resilient-acp-pipeline.json
 ```

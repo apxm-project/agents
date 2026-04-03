@@ -1,4 +1,4 @@
-# 09 — Plan → Fan-Out → Synthesize
+# Plan → Fan-Out → Synthesize
 
 **Pattern:** `PLAN → ASK × 3 (parallel) → WAIT_ALL → THINK → VERIFY → CHECKPOINT`
 
@@ -14,6 +14,6 @@
 ## Running
 
 ```bash
-apxm validate examples/09-plan-fan-out/plan-fan-out.json
-apxm execute examples/09-plan-fan-out/plan-fan-out.json
+apxm validate examples/patterns/plan-fan-out/plan-fan-out.json
+apxm execute examples/patterns/plan-fan-out/plan-fan-out.json
 ```

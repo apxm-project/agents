@@ -1,4 +1,4 @@
-# 12 — Memory-Augmented RAG Pipeline
+# Memory-Augmented RAG Pipeline
 
 **Pattern:** `QMEM × 2 → FENCE → MERGE → GUARD → REASON (w/ context) → VERIFY → UMEM × 2 → FENCE → CHECKPOINT`
 
@@ -21,6 +21,6 @@ Knowledge-augmented Q&A: the agent recalls what it already knows, reasons with t
 ## Running
 
 ```bash
-apxm validate examples/12-memory-rag/memory-rag-pipeline.json
-apxm execute examples/12-memory-rag/memory-rag-pipeline.json
+apxm validate examples/patterns/memory-rag/memory-rag-pipeline.json
+apxm execute examples/patterns/memory-rag/memory-rag-pipeline.json
 ```

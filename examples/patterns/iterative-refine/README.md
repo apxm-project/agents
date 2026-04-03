@@ -1,4 +1,4 @@
-# 08 — Iterative Self-Refinement
+# Iterative Self-Refinement
 
 **Pattern:** `ASK → CHECKPOINT → (REFLECT → ASK → CHECKPOINT) × 3 → VERIFY → CHECKPOINT → UMEM`
 
@@ -17,6 +17,6 @@ The JSON graph format enforces DAG structure (no back-edges), so true loops are 
 ## Running
 
 ```bash
-apxm validate examples/08-iterative-refine/iterative-refine.json
-apxm execute examples/08-iterative-refine/iterative-refine.json
+apxm validate examples/patterns/iterative-refine/iterative-refine.json
+apxm execute examples/patterns/iterative-refine/iterative-refine.json
 ```

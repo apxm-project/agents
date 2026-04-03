@@ -1,4 +1,4 @@
-# 13 — Multi-Agent Negotiation → Consensus
+# Multi-Agent Negotiation → Consensus
 
 **Pattern:** `SPAWN × 2 → COMMUNICATE × 2 (parallel) → WAIT_ALL → cross-counter × 2 → WAIT_ALL → THINK → UMEM → CHECKPOINT`
 
@@ -24,6 +24,6 @@ Structured technical debate: two agents independently propose solutions, cross-c
 ```bash
 apxm agent test claude
 apxm agent test codex
-apxm validate examples/13-multi-agent-negotiate/negotiate-consensus.json
-apxm execute examples/13-multi-agent-negotiate/negotiate-consensus.json
+apxm validate examples/patterns/multi-agent-negotiate/negotiate-consensus.json
+apxm execute examples/patterns/multi-agent-negotiate/negotiate-consensus.json
 ```

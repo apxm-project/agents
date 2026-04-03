@@ -1,4 +1,4 @@
-# 11 — Worker Pool (CLAIM + Parallel Workers)
+# Worker Pool (CLAIM + Parallel Workers)
 
 **Pattern:** `UPDATE_GOAL → CLAIM × 3 → GUARD × 3 → THINK × 3 → CHECKPOINT → WAIT_ALL → ASK → UMEM → UPDATE_GOAL`
 
@@ -21,6 +21,6 @@ Distributed work queue processing: multiple agents claim tasks atomically, proce
 ## Running
 
 ```bash
-apxm validate examples/11-worker-pool/worker-pool.json
-apxm execute examples/11-worker-pool/worker-pool.json
+apxm validate examples/patterns/worker-pool/worker-pool.json
+apxm execute examples/patterns/worker-pool/worker-pool.json
 ```

@@ -149,7 +149,7 @@ SPAWN codex  ──Control──► COMMUNICATE(codex)  ──Data──┘
 CONST_STR    ──Data─────► both COMMUNICATE nodes
 ```
 
-See `examples/07-acp-agents/parallel-agents.json` for the full graph, or use `INV` with `capability: "acp"` for a more concise session-managed approach.
+See `examples/acp-agents/parallel-agents.json` for the full graph, or use `INV` with `capability: "acp"` for a more concise session-managed approach.
 
 For the full multi-agent walkthrough including session-managed INV style, cross-critique, and pipeline patterns, see [Multi-Agent Workflows](multi-agent.md).
 
@@ -188,7 +188,7 @@ PLAN ──► ASK(section_1) ──► WAIT_ALL ──► THINK ──► VERIF
      ──► ASK(section_3) ──┘
 ```
 
-See `examples/09-plan-fan-out/plan-fan-out.json` for the complete graph.
+See `examples/patterns/plan-fan-out/plan-fan-out.json` for the complete graph.
 
 ## 12. Resilient ACP Pipeline (with Fallback)
 
@@ -199,13 +199,13 @@ GUARD ──► COMMUNICATE(primary) ──► CHECKPOINT ──► VERIFY ─�
                                                                   └──► (valid) ──────────────────────┘
 ```
 
-See `examples/10-resilient-acp/resilient-acp-pipeline.json`.
+See `examples/patterns/resilient-acp/resilient-acp-pipeline.json`.
 
 ## 13. Worker Pool (CLAIM + Parallel Workers)
 
 `UPDATE_GOAL` declares intent. Three parallel `CLAIM` nodes atomically pull tasks from a shared queue. `GUARD` (on_fail: skip) handles empty slots. `THINK` workers process in parallel. `CHECKPOINT` saves intermediate state. `WAIT_ALL` syncs. `ASK` aggregates. `UMEM` persists. `UPDATE_GOAL` marks done.
 
-See `examples/11-worker-pool/worker-pool.json`.
+See `examples/patterns/worker-pool/worker-pool.json`.
 
 ## 14. Memory-Augmented RAG
 
@@ -216,7 +216,7 @@ QMEM(ltm) ──► FENCE ──► MERGE ──► GUARD ──► REASON ─�
 QMEM(epi) ──┘
 ```
 
-See `examples/12-memory-rag/memory-rag-pipeline.json`.
+See `examples/patterns/memory-rag/memory-rag-pipeline.json`.
 
 ## 15. Multi-Agent Negotiation → Consensus
 
@@ -227,7 +227,7 @@ SPAWN(claude) ──Control──► COMMUNICATE(topic) ──► WAIT_ALL ─�
 SPAWN(codex)  ──Control──► COMMUNICATE(topic) ──┘                                                    ──┘
 ```
 
-See `examples/13-multi-agent-negotiate/negotiate-consensus.json`.
+See `examples/patterns/multi-agent-negotiate/negotiate-consensus.json`.
 
 ## Quick Reference
 

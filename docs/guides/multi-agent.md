@@ -36,7 +36,7 @@ The `apxm agent test` command sends a lightweight ping over ACP and reports the 
 
 APXM supports two styles for working with agents. Both produce valid graphs.
 
-> **Note on JSON formats:** Style A examples below use the **runtime token format** (`op_type`, `input_tokens`, `output_tokens`, `entry_nodes`, `exit_nodes`) — this is the format emitted by the compiler and used in `examples/07-acp-agents/`. Style B examples use the **ApxmGraph IR format** (`op`, `name`, `parameters`) — this is the format accepted by `apxm validate` and described in CLAUDE.md's Graph JSON Contract. Both are valid; the runtime handles conversion automatically.
+> **Note on JSON formats:** Style A examples below use the **runtime token format** (`op_type`, `input_tokens`, `output_tokens`, `entry_nodes`, `exit_nodes`) — this is the format emitted by the compiler and used in `examples/acp-agents/`. Style B examples use the **ApxmGraph IR format** (`op`, `name`, `parameters`) — this is the format accepted by `apxm validate` and described in CLAUDE.md's Graph JSON Contract. Both are valid; the runtime handles conversion automatically.
 
 ### Style A: SPAWN_AGENT + COMMUNICATE (explicit lifecycle)
 
@@ -469,7 +469,7 @@ apxm execute workflow.json --emit-metrics metrics.json
 
 ## Next Steps
 
-- Browse the example graphs: `examples/07-acp-agents/`
+- Browse the example graphs: `examples/acp-agents/`
 - See all AIS operations: `apxm ops list`
 - Full CLI reference for `apxm agent`, `apxm llm`, `apxm tool`: [CLI Reference](cli-reference.md)
 - Learn single-agent patterns: [Common Patterns](common-patterns.md)

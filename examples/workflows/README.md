@@ -1,4 +1,4 @@
-# 14 — Add APXM Feature (Meta-Workflow)
+# Add APXM Feature (Meta-Workflow)
 
 **Pattern:** `SPAWN × 13 → parallel COMMUNICATE × 10 → WAIT_ALL × 2 → synthesize → implement → simplify → VERIFY → commit`
 
@@ -31,14 +31,14 @@ This is a **meta-workflow** — a graph that builds new APXM features by orchest
 
 ```bash
 # Validate
-apxm validate examples/14-add-feature/add-apxm-feature.json
+apxm validate examples/workflows/add-apxm-feature.json
 
 # Run with a feature request
-apxm execute examples/14-add-feature/add-apxm-feature.json -- \
+apxm execute examples/workflows/add-apxm-feature.json -- \
   "Add a ROLLBACK operation that reverts execution state to a previous CHECKPOINT"
 
 # Another example
-apxm execute examples/14-add-feature/add-apxm-feature.json -- \
+apxm execute examples/workflows/add-apxm-feature.json -- \
   "Add support for TIMEOUT attribute on COMMUNICATE that cancels if agent doesn't respond within N ms"
 ```
 
