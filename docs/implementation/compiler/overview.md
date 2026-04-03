@@ -80,19 +80,19 @@ Compile-time checking catches structural errors before any LLM call is made, bef
 
 ```bash
 # Full pipeline: graph source to artifact
-apxm compile workflow.json -o workflow.apxmobj
+apxm compile workflow.apxm -o workflow.apxmobj
 
 # No optimization
-apxm compile workflow.json -o workflow.apxmobj -O0
+apxm compile workflow.apxm -o workflow.apxmobj -O0
 
 # Aggressive optimization with convergence
-apxm compile workflow.json -o workflow.apxmobj -O3
+apxm compile workflow.apxm -o workflow.apxmobj -O3
 
 # Skip CSE for non-deterministic workflows
-apxm compile workflow.json -o workflow.apxmobj --no-cse-llm
+apxm compile workflow.apxm -o workflow.apxmobj --no-cse-llm
 
 # Emit per-pass diagnostics
-apxm compile workflow.json -o workflow.apxmobj --emit-diagnostics diag.json
+apxm compile workflow.apxm -o workflow.apxmobj --emit-diagnostics diag.json
 ```
 
 ---

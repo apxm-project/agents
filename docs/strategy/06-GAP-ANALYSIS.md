@@ -91,7 +91,7 @@
 
 **Current**: APXM only accepts its own ApxmGraph JSON format. No import from ACPX flows or other workflow systems.
 
-**Evidence**: `apxm compile` takes `.apxm.json` files only. No `apxm import` command.
+**Evidence**: `apxm compile` takes `.apxm` files only. No `apxm import` command.
 
 **Required**:
 - TypeScript tool to parse ACPX .flow.ts

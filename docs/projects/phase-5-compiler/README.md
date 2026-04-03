@@ -177,7 +177,7 @@ Structural errors caught before any LLM call:
 End-to-end validation for Phase 5 completion:
 
 1. Construct a consumer-style turn graph (ASK -> BRANCH_ON_VALUE -> INV x3 -> WAIT_ALL -> VERIFY -> UMEM)
-2. Compile at O2: `apxm compile graph.json -o turn.apxmobj -O2`
+2. Compile at O2: `apxm compile graph.apxm -o turn.apxmobj -O2`
 3. Verify artifact produced with optimization report
 4. Execute artifact: `apxm run turn.apxmobj`
 5. Compare: compiled execution produces same results as uncompiled execution
@@ -188,10 +188,10 @@ End-to-end validation for Phase 5 completion:
 
 ## Phase 5 Validation Criteria
 
-- [ ] `apxm compile agent-graph.json` produces optimized `.apxmobj` from consumer graphs
+- [ ] `apxm compile agent-graph.apxm` produces optimized `.apxmobj` from consumer graphs
 - [ ] `fuse-ask-ops` measurably reduces API calls on real Codex/Gemini-CLI workflows
 - [ ] Compile-time validation catches structural errors before any LLM call
-- [ ] `apxm analyze graph.json --json` provides parallelism and optimization report
+- [ ] `apxm analyze graph.apxm --json` provides parallelism and optimization report
 - [ ] Compiled artifact execution produces identical results to uncompiled graphs
 - [ ] Optimization metrics (parallelism, fused ops, eliminated ops) reported for each consumer
 
@@ -214,11 +214,11 @@ End-to-end validation for Phase 5 completion:
 - **Reference:** See `apxm/docs/implementation/compiler/overview.md` for compiler architecture details.
 - **CLI commands:**
   ```bash
-  apxm compile graph.json -o out.apxmobj -O2          # compile with optimizations
-  apxm compile graph.json --emit-diagnostics diag.json # machine-readable analysis
+  apxm compile graph.apxm -o out.apxmobj -O2          # compile with optimizations
+  apxm compile graph.apxm --emit-diagnostics diag.json # machine-readable analysis
   apxm run out.apxmobj --emit-metrics metrics.json     # execute compiled artifact
   apxm decompile out.apxmobj                           # inspect optimized graph
-  apxm analyze graph.json --json                       # parallelism + optimization report
+  apxm analyze graph.apxm --json                       # parallelism + optimization report
   ```
 
 ---

@@ -185,4 +185,4 @@ Main turn graph fails (timeout, max_turns, protocol violation)
 - **APXM execution endpoint:** [apxm.md](apxm.md) -- A7.2 provides the `/v1/execute` endpoint these graphs are submitted to
 - **Codex parallel effort:** [codex.md](codex.md) -- C10 does the same for `submission_loop()`
 - **Phase overview:** [README.md](README.md)
-- **Next phase:** Phase 5 compiles `gemini-turn.json` via `apxm compile gemini-turn.json -o gemini-turn.apxmobj -O2`
+- **Next phase:** Phase 5 compiles `gemini-turn.apxm` via `apxm compile gemini-turn.apxm -o gemini-turn.apxmobj -O2`

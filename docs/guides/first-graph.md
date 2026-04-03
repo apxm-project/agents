@@ -4,7 +4,7 @@ This tutorial walks you through building APXM graphs from scratch using JSON and
 
 ## 1. Your first graph: a single ASK node
 
-Create a file called `hello.json`:
+Create a file called `hello.apxm`:
 
 ```json
 {
@@ -23,18 +23,18 @@ Every graph needs `name`, `nodes`, `edges`, `parameters`, and `metadata`. A sing
 Validate it:
 
 ```bash
-apxm validate hello.json
+apxm validate hello.apxm
 ```
 
 Then inspect what the compiler sees:
 
 ```bash
-apxm explain hello.json
+apxm explain hello.apxm
 ```
 
 ## 2. Adding a second step: pipeline pattern
 
-Create `pipeline.json`. The second node references the first node's output with `{{node_1}}`, and a `Data` edge declares the dependency:
+Create `pipeline.apxm`. The second node references the first node's output with `{{node_1}}`, and a `Data` edge declares the dependency:
 
 ```json
 {
@@ -56,14 +56,14 @@ The `Data` edge tells the scheduler that node 2 cannot start until node 1 finish
 Analyze the execution plan:
 
 ```bash
-apxm analyze pipeline.json
+apxm analyze pipeline.apxm
 ```
 
 This shows two sequential phases: node 1 runs first, then node 2.
 
 ## 3. Going parallel: fan-out pattern
 
-Create `fanout.json`. Two independent ASK nodes run in parallel, then a WAIT_ALL node synchronizes them:
+Create `fanout.apxm`. Two independent ASK nodes run in parallel, then a WAIT_ALL node synchronizes them:
 
 ```json
 {
@@ -87,7 +87,7 @@ Nodes 1 and 2 have no edges between them, so the scheduler runs them concurrentl
 Run the analysis to confirm parallelism:
 
 ```bash
-apxm analyze fanout.json
+apxm analyze fanout.apxm
 ```
 
 The output will show nodes 1 and 2 in the same execution phase and report a speedup estimate.
@@ -118,15 +118,15 @@ Valid `type_name` values are: `str`, `int`, `float`, `bool`, `json`.
 The `{{topic}}` placeholder is resolved from the parameter value provided at execution time:
 
 ```bash
-apxm validate parameterized.json
-apxm execute parameterized.json "quantum computing"
+apxm validate parameterized.apxm
+apxm execute parameterized.apxm "quantum computing"
 ```
 
 ## 5. Composing graphs
 
 Save two small graphs to separate files, then merge them with `apxm task merge`.
 
-`step-a.json`:
+`step-a.apxm`:
 
 ```json
 {
@@ -140,7 +140,7 @@ Save two small graphs to separate files, then merge them with `apxm task merge`.
 }
 ```
 
-`step-b.json`:
+`step-b.apxm`:
 
 ```json
 {
@@ -157,14 +157,14 @@ Save two small graphs to separate files, then merge them with `apxm task merge`.
 Merge them into a single graph:
 
 ```bash
-apxm task merge step-a.json step-b.json --name combined -o combined.json
+apxm task merge step-a.apxm step-b.apxm --name combined -o combined.apxm
 ```
 
 This re-numbers node IDs to avoid collisions and adds a WAIT_ALL sync node. Validate the result:
 
 ```bash
-apxm validate combined.json
-apxm analyze combined.json
+apxm validate combined.apxm
+apxm analyze combined.apxm
 ```
 
 ## 6. Compiling and running
@@ -174,19 +174,19 @@ The `compile` and `execute` commands require the `driver` feature and a conda en
 Compile a graph to an optimized artifact:
 
 ```bash
-apxm compile fanout.json -o fanout.apxmobj
+apxm compile fanout.apxm -o fanout.apxmobj
 ```
 
 Compile and execute in one step:
 
 ```bash
-apxm execute fanout.json
+apxm execute fanout.apxm
 ```
 
 Set the optimization level with `-O`:
 
 ```bash
-apxm execute fanout.json -O2
+apxm execute fanout.apxm -O2
 ```
 
 ## Next steps

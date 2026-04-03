@@ -113,7 +113,7 @@ APXM already has every capability that an orchestrator would provide:
 | Optimization | MLIR compiler: FuseAskOps, CSE, DCE, critical path analysis |
 | Observability | Metrics, events, episodic memory, `--emit-metrics` |
 | External agent dispatch | `apxm-acp` crate: full ACP JSON-RPC 2.0 with 17 agent profiles |
-| Compilation | `.ais` / `.json` --> MLIR --> `.apxmobj` binary artifacts |
+| Compilation | `.ais` / `.apxm` --> MLIR --> `.apxmobj` binary artifacts |
 
 ---
 
@@ -414,7 +414,7 @@ All three paths converge on the same canonical `ApxmGraph` IR before compilation
 ## 7. The Compilation Pipeline
 
 ```
-  Input (.ais / .json / Python)
+  Input (.ais / .apxm / Python)
             │
   ┌─────────▼──────────┐
   │ Stage 1: Normalize  │  Validate structure, IDs, DAG properties
@@ -946,7 +946,7 @@ apxm template list
 apxm template show fan-out --json
 
 # Graph composition
-apxm task merge step-a.json step-b.json -o combined.json
+apxm task merge step-a.apxm step-b.apxm -o combined.apxm
 
 # Targets
 apxm targets list

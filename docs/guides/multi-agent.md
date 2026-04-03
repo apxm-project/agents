@@ -421,7 +421,7 @@ Registered agents become available by name in `SPAWN_AGENT` attributes and `INV`
 Check that a multi-agent graph is well-formed before running it:
 
 ```bash
-apxm validate workflow.json
+apxm validate workflow.apxm
 ```
 
 The validator checks DAG constraints, operation names, required attributes, and that all `COMMUNICATE` nodes reference agents that appear in a `SPAWN_AGENT` node (or are registered via `apxm agent add`).
@@ -431,7 +431,7 @@ The validator checks DAG constraints, operation names, required attributes, and 
 Inspect the execution plan to understand parallelism and the critical path:
 
 ```bash
-apxm analyze workflow.json
+apxm analyze workflow.apxm
 ```
 
 For multi-agent graphs, this shows which agents run concurrently and where synchronization points (MERGE, WAIT_ALL) introduce sequential bottlenecks.
@@ -441,19 +441,19 @@ For multi-agent graphs, this shows which agents run concurrently and where synch
 Compile and run the graph:
 
 ```bash
-apxm execute workflow.json
+apxm execute workflow.apxm
 ```
 
 Add `--trace info` for detailed execution logs showing agent spawn times, message round-trips, and merge points:
 
 ```bash
-apxm execute workflow.json --trace info
+apxm execute workflow.apxm --trace info
 ```
 
 Use `--emit-metrics` to write runtime statistics (agent latencies, token counts) to a JSON file:
 
 ```bash
-apxm execute workflow.json --emit-metrics metrics.json
+apxm execute workflow.apxm --emit-metrics metrics.json
 ```
 
 ## Quick Reference

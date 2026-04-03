@@ -475,11 +475,11 @@ This is the key new addition: **the APXM compiler gets optimization targets** th
 **Optimization targets** (see [08-OPTIMIZATION-TARGETS.md](08-OPTIMIZATION-TARGETS.md) for full details):
 
 ```
-$ apxm compile graph.json -O2 --target tokens     # Minimize token usage
-$ apxm compile graph.json -O2 --target parallel    # Maximize parallelism
-$ apxm compile graph.json -O2 --target latency     # Minimize end-to-end time
-$ apxm compile graph.json -O2 --target cost        # Minimize API costs
-$ apxm compile graph.json -O2 --target balanced     # Default: good all-around
+$ apxm compile graph.apxm -O2 --target tokens     # Minimize token usage
+$ apxm compile graph.apxm -O2 --target parallel    # Maximize parallelism
+$ apxm compile graph.apxm -O2 --target latency     # Minimize end-to-end time
+$ apxm compile graph.apxm -O2 --target cost        # Minimize API costs
+$ apxm compile graph.apxm -O2 --target balanced     # Default: good all-around
 ```
 
 Each target enables/disables specific passes and tunes pass options:
@@ -494,7 +494,7 @@ Each target enables/disables specific passes and tunes pass options:
 
 **Composability**: Targets can be combined:
 ```
-$ apxm compile graph.json -O2 --target tokens,parallel
+$ apxm compile graph.apxm -O2 --target tokens,parallel
 ```
 
 ### Week 16: Full Integration + Benchmarking

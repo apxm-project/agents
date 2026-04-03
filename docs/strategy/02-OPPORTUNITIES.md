@@ -327,13 +327,13 @@ A compiler that translates ACPX flow definitions into APXM graphs:
 # or: apxm import --from acpx flow.ts
 
 # Phase 1: Static translation
-apxm import review.flow.ts -o review.apxm.json
-apxm compile review.apxm.json -o review.apxmobj
+apxm import review.flow.ts -o review.apxm
+apxm compile review.apxm -o review.apxmobj
 
 # Phase 2: Dynamic generation
 # OpenClaw agent receives request, calls:
-apxm generate "review PRs, run tests, merge if clean" -o pipeline.apxm.json
-apxm compile pipeline.apxm.json -O2 -o pipeline.apxmobj
+apxm generate "review PRs, run tests, merge if clean" -o pipeline.apxm
+apxm compile pipeline.apxm -O2 -o pipeline.apxmobj
 apxm run pipeline.apxmobj --input '{"repo":"org/repo","pr":42}'
 ```
 

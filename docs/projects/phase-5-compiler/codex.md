@@ -4,7 +4,7 @@
 
 > Source: [Plan 2 -- Codex Changes](../plan-2-codex-changes.md), Phase 5 (C12)
 > Timeline: 3+ days (within Phase 5, Weeks 29+)
-> Dependencies: Phase 4 complete (`codex-turn.json` exists), Plan 1 A8 (APXM compiler passes), all prerequisites resolved
+> Dependencies: Phase 4 complete (`codex-turn.apxm` exists), Plan 1 A8 (APXM compiler passes), all prerequisites resolved
 
 ---
 
@@ -18,10 +18,10 @@ Compile the Codex turn graph, run optimization passes, and measure improvement. 
 
 ## C12: Compile and Optimize
 
-Once `codex-turn.json` exists (Phase 4), the compiler becomes available:
+Once `codex-turn.apxm` exists (Phase 4), the compiler becomes available:
 
 ```bash
-apxm compile codex-turn.json -o codex-turn.apxmobj -O2
+apxm compile codex-turn.apxm -o codex-turn.apxmobj -O2
 ```
 
 ### What the Compiler Provides
@@ -55,7 +55,7 @@ The traditional Codex flow generates a plan, executes tools, and discovers error
 
 ## Deliverables
 
-- `apxm compile codex-turn.json` produces optimized `.apxmobj`
+- `apxm compile codex-turn.apxm` produces optimized `.apxmobj`
 - Measured reduction in API calls from `fuse-ask-ops` on real Codex workflows
 - Measured compile-time error detection rate vs. runtime error detection
 - `apxm decompile codex-turn.apxmobj` shows optimized graph structure

@@ -65,7 +65,7 @@ FLOW_CALL (verified at `apxm-runtime/src/executor/handlers/flow_call.rs`) suppor
 
 ### C10 Deliverables
 
-- `codex-turn.json` -- AIS graph representing a single Codex turn
+- `codex-turn.apxm` -- AIS graph representing a single Codex turn
 - Graph authoring code that emits the turn graph from Codex's configuration
 - Integration with APXM's dataflow scheduler for execution
 - Validation that graph-based execution produces identical outputs to imperative code
@@ -111,4 +111,4 @@ The compiler sees this subgraph and can:
 - **APXM execution endpoint:** [apxm.md](apxm.md) -- A7.2 provides the `/v1/execute` endpoint these graphs are submitted to
 - **Gemini-CLI parallel effort:** [gemini-cli.md](gemini-cli.md) -- G11 does the same for `executeTurn()`
 - **Phase overview:** [README.md](README.md)
-- **Next phase:** Phase 5 compiles `codex-turn.json` via `apxm compile codex-turn.json -o codex-turn.apxmobj -O2`
+- **Next phase:** Phase 5 compiles `codex-turn.apxm` via `apxm compile codex-turn.apxm -o codex-turn.apxmobj -O2`
