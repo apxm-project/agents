@@ -1,159 +1,158 @@
 {
   "name": "add-apxm-feature",
   "parameters": [
-    { "name": "feature_request", "type_name": "str", "description": "Description of the APXM feature to implement" }
+    {"name": "feature_request", "type_name": "str", "description": "Feature to implement"}
   ],
   "nodes": [
-    {"id": 1, "name": "spawn_claude_planner_1", "op": "SPAWN_AGENT", "attributes": {"agent_name": "claude_planner_1", "profile": "claude"}},
-    {"id": 2, "name": "spawn_claude_planner_2", "op": "SPAWN_AGENT", "attributes": {"agent_name": "claude_planner_2", "profile": "claude"}},
-    {"id": 3, "name": "spawn_claude_planner_3", "op": "SPAWN_AGENT", "attributes": {"agent_name": "claude_planner_3", "profile": "claude"}},
-    {"id": 4, "name": "spawn_claude_planner_4", "op": "SPAWN_AGENT", "attributes": {"agent_name": "claude_planner_4", "profile": "claude"}},
-    {"id": 5, "name": "spawn_claude_planner_5", "op": "SPAWN_AGENT", "attributes": {"agent_name": "claude_planner_5", "profile": "claude"}},
-    {"id": 6, "name": "spawn_codex_planner_1", "op": "SPAWN_AGENT", "attributes": {"agent_name": "codex_planner_1", "profile": "codex"}},
-    {"id": 7, "name": "spawn_codex_planner_2", "op": "SPAWN_AGENT", "attributes": {"agent_name": "codex_planner_2", "profile": "codex"}},
-    {"id": 8, "name": "spawn_codex_planner_3", "op": "SPAWN_AGENT", "attributes": {"agent_name": "codex_planner_3", "profile": "codex"}},
-    {"id": 9, "name": "spawn_codex_planner_4", "op": "SPAWN_AGENT", "attributes": {"agent_name": "codex_planner_4", "profile": "codex"}},
-    {"id": 10, "name": "spawn_codex_planner_5", "op": "SPAWN_AGENT", "attributes": {"agent_name": "codex_planner_5", "profile": "codex"}},
-    {"id": 11, "name": "spawn_claude_synthesizer", "op": "SPAWN_AGENT", "attributes": {"agent_name": "claude_synthesizer", "profile": "claude"}},
-    {"id": 12, "name": "spawn_codex_implementer", "op": "SPAWN_AGENT", "attributes": {"agent_name": "codex_implementer", "profile": "codex"}},
-    {"id": 13, "name": "spawn_claude_simplifier", "op": "SPAWN_AGENT", "attributes": {"agent_name": "claude_simplifier", "profile": "claude"}},
+    {
+      "id": 1,
+      "name": "claude_planning_prefix",
+      "op": "CONST_STR",
+      "attributes": {
+        "value": "You are an APXM architect (project at ~/projects/agents/apxm). Think very deeply (ultrathink). Read the relevant codebase first. Produce a detailed, file-by-file implementation plan with exact paths and code snippets.\n\nFeature: "
+      }
+    },
+    {
+      "id": 2,
+      "name": "codex_planning_prefix",
+      "op": "CONST_STR",
+      "attributes": {
+        "value": "You are an APXM implementation expert (project at ~/projects/agents/apxm). Think very deeply (ultrathink). Focus on Rust code: exact file paths, function signatures, error handling, tests. Produce a complete implementation plan with full code blocks.\n\nFeature: "
+      }
+    },
 
-    {"id": 14, "name": "feature_prompt", "op": "CONST_STR", "attributes": {"value": "{{feature_request}}"}},
+    {"id": 3, "name": "claude_prompt_1", "op": "THINK", "attributes": {"template_str": "{0}\n\nPlan #1 (architectural focus): {1}", "budget": 8000}},
+    {"id": 4, "name": "claude_prompt_2", "op": "THINK", "attributes": {"template_str": "{0}\n\nPlan #2 (test coverage focus): {1}", "budget": 8000}},
+    {"id": 5, "name": "claude_prompt_3", "op": "THINK", "attributes": {"template_str": "{0}\n\nPlan #3 (error handling focus): {1}", "budget": 8000}},
+    {"id": 6, "name": "claude_prompt_4", "op": "THINK", "attributes": {"template_str": "{0}\n\nPlan #4 (performance focus): {1}", "budget": 8000}},
+    {"id": 7, "name": "claude_prompt_5", "op": "THINK", "attributes": {"template_str": "{0}\n\nPlan #5 (API design focus): {1}", "budget": 8000}},
 
-    {"id": 15, "name": "claude_ultrathink_prefix", "op": "CONST_STR", "attributes": {"value": "You are an APXM architect agent. Think VERY deeply (ultrathink mode) about the following feature request. Analyze all angles: what operations are needed, what handlers must be implemented, what tests are required, what documentation should be added. Produce a detailed, step-by-step implementation plan with file paths and code snippets. Be thorough — this will guide implementation.\n\nFeature request:\n"}},
+    {"id": 8, "name": "codex_prompt_1", "op": "THINK", "attributes": {"template_str": "{0}\n\nPlan #1 (step-by-step impl): {1}", "budget": 8000}},
+    {"id": 9, "name": "codex_prompt_2", "op": "THINK", "attributes": {"template_str": "{0}\n\nPlan #2 (testing strategy): {1}", "budget": 8000}},
+    {"id": 10, "name": "codex_prompt_3", "op": "THINK", "attributes": {"template_str": "{0}\n\nPlan #3 (integration points): {1}", "budget": 8000}},
+    {"id": 11, "name": "codex_prompt_4", "op": "THINK", "attributes": {"template_str": "{0}\n\nPlan #4 (backwards compat): {1}", "budget": 8000}},
+    {"id": 12, "name": "codex_prompt_5", "op": "THINK", "attributes": {"template_str": "{0}\n\nPlan #5 (minimal viable): {1}", "budget": 8000}},
 
-    {"id": 16, "name": "claude_prompt_full", "op": "MERGE", "attributes": {"strategy": "concat", "tokens": ["{{node_15}}", "{{node_14}}"]}},
+    {
+      "id": 13,
+      "name": "sync_claude_plans",
+      "op": "WAIT_ALL",
+      "attributes": {"tokens": ["{{node_3}}", "{{node_4}}", "{{node_5}}", "{{node_6}}", "{{node_7}}"]}
+    },
+    {
+      "id": 14,
+      "name": "sync_codex_plans",
+      "op": "WAIT_ALL",
+      "attributes": {"tokens": ["{{node_8}}", "{{node_9}}", "{{node_10}}", "{{node_11}}", "{{node_12}}"]}
+    },
 
-    {"id": 17, "name": "claude_plan_1", "op": "COMMUNICATE", "attributes": {"recipient": "claude_planner_1", "protocol": "acp"}},
-    {"id": 18, "name": "claude_plan_2", "op": "COMMUNICATE", "attributes": {"recipient": "claude_planner_2", "protocol": "acp"}},
-    {"id": 19, "name": "claude_plan_3", "op": "COMMUNICATE", "attributes": {"recipient": "claude_planner_3", "protocol": "acp"}},
-    {"id": 20, "name": "claude_plan_4", "op": "COMMUNICATE", "attributes": {"recipient": "claude_planner_4", "protocol": "acp"}},
-    {"id": 21, "name": "claude_plan_5", "op": "COMMUNICATE", "attributes": {"recipient": "claude_planner_5", "protocol": "acp"}},
+    {"id": 15, "name": "print_plans_done", "op": "PRINT", "attributes": {"message": "=== 10 PLANS COLLECTED ==="}},
 
-    {"id": 22, "name": "sync_claude_plans", "op": "WAIT_ALL", "attributes": {"tokens": ["{{node_17}}", "{{node_18}}", "{{node_19}}", "{{node_20}}", "{{node_21}}"]}},
-    {"id": 23, "name": "checkpoint_claude_plans", "op": "CHECKPOINT", "attributes": {"checkpoint_id": "add-feature-claude-plans", "scope": "full", "storage": "fs"}},
-    {"id": 24, "name": "print_claude_plans", "op": "PRINT", "attributes": {"message": "=== CLAUDE PLANS (5 agents) ==="}},
+    {
+      "id": 16,
+      "name": "all_plans",
+      "op": "MERGE",
+      "attributes": {"strategy": "concat", "tokens": ["{{node_13}}", "{{node_14}}"]}
+    },
+    {
+      "id": 17,
+      "name": "synthesize_plan",
+      "op": "THINK",
+      "attributes": {
+        "template_str": "You are a senior APXM architect. You have 10 implementation plans for the same feature (5 architectural, 5 implementation-focused). Analyze all plans, identify best ideas from each, resolve conflicts, produce ONE unified implementation plan with exact file paths, complete working code, and test cases.\n\nFeature: {0}\n\nAll 10 plans:\n{1}",
+        "budget": 16000
+      }
+    },
+    {"id": 18, "name": "print_synthesis", "op": "PRINT", "attributes": {"message": "=== SYNTHESIZED PLAN ==="}},
 
-    {"id": 25, "name": "codex_ultrathink_prefix", "op": "CONST_STR", "attributes": {"value": "You are an APXM implementation expert. Think VERY deeply (ultrathink mode) about the following feature request. Focus on: Rust code structure, MLIR dialect changes if needed, test coverage, error handling, performance. Produce a detailed implementation plan with exact file paths, function signatures, and code blocks. Be comprehensive.\n\nFeature request:\n"}},
+    {
+      "id": 19,
+      "name": "implement",
+      "op": "INV",
+      "attributes": {
+        "capability": "acp",
+        "params_json": "{\"agent\": \"codex\", \"prompt\": \"{1}\", \"cwd\": \"~/projects/agents/apxm\"}",
+        "timeout_ms": 1800000
+      }
+    },
+    {"id": 20, "name": "print_implement", "op": "PRINT", "attributes": {"message": "=== IMPLEMENTATION COMPLETE ==="}},
 
-    {"id": 26, "name": "codex_prompt_full", "op": "MERGE", "attributes": {"strategy": "concat", "tokens": ["{{node_25}}", "{{node_14}}"]}},
+    {
+      "id": 21,
+      "name": "implement_prompt_full",
+      "op": "THINK",
+      "attributes": {
+        "template_str": "You are the APXM implementer. The project is at ~/projects/agents/apxm. Execute this plan EXACTLY: make all code changes, run: source ~/.cargo/env && cargo test --workspace --exclude apxm-compiler, fix failures, git add -A, commit. Report what you changed.\n\nPlan:\n{0}",
+        "budget": 4000
+      }
+    },
 
-    {"id": 27, "name": "codex_plan_1", "op": "COMMUNICATE", "attributes": {"recipient": "codex_planner_1", "protocol": "acp"}},
-    {"id": 28, "name": "codex_plan_2", "op": "COMMUNICATE", "attributes": {"recipient": "codex_planner_2", "protocol": "acp"}},
-    {"id": 29, "name": "codex_plan_3", "op": "COMMUNICATE", "attributes": {"recipient": "codex_planner_3", "protocol": "acp"}},
-    {"id": 30, "name": "codex_plan_4", "op": "COMMUNICATE", "attributes": {"recipient": "codex_planner_4", "protocol": "acp"}},
-    {"id": 31, "name": "codex_plan_5", "op": "COMMUNICATE", "attributes": {"recipient": "codex_planner_5", "protocol": "acp"}},
+    {
+      "id": 22,
+      "name": "simplify",
+      "op": "INV",
+      "attributes": {
+        "capability": "acp",
+        "params_json": "{\"agent\": \"claude\", \"prompt\": \"{1}\", \"cwd\": \"~/projects/agents/apxm\"}",
+        "timeout_ms": 900000
+      }
+    },
+    {
+      "id": 23,
+      "name": "simplify_prompt_full",
+      "op": "THINK",
+      "attributes": {
+        "template_str": "You are the APXM code reviewer at ~/projects/agents/apxm. Review this implementation: check correctness, simplify complexity, ensure tests pass and everything is committed.\n\nImplementation report:\n{0}",
+        "budget": 4000
+      }
+    },
 
-    {"id": 32, "name": "sync_codex_plans", "op": "WAIT_ALL", "attributes": {"tokens": ["{{node_27}}", "{{node_28}}", "{{node_29}}", "{{node_30}}", "{{node_31}}"]}},
-    {"id": 33, "name": "checkpoint_codex_plans", "op": "CHECKPOINT", "attributes": {"checkpoint_id": "add-feature-codex-plans", "scope": "full", "storage": "fs"}},
-    {"id": 34, "name": "print_codex_plans", "op": "PRINT", "attributes": {"message": "=== CODEX PLANS (5 agents) ==="}},
-
-    {"id": 35, "name": "synthesis_prefix", "op": "CONST_STR", "attributes": {"value": "You are a senior APXM architect. You have received 10 independent implementation plans for the same feature — 5 from Claude planners (more architectural) and 5 from Codex planners (more implementation-focused).\n\nYour job:\n1. Analyze all 10 plans for common themes and unique insights\n2. Identify the best ideas from each\n3. Resolve any conflicts or contradictions\n4. Produce ONE unified, comprehensive implementation plan that combines the best of all\n\nThe unified plan must include:\n- Exact file paths and what to change in each\n- Complete code snippets (not pseudocode)\n- Test cases to add\n- Documentation updates\n- Step-by-step execution order\n\nHere are all 10 plans:\n\n"}},
-
-    {"id": 36, "name": "all_plans", "op": "MERGE", "attributes": {"strategy": "concat", "tokens": ["{{node_22}}", "{{node_32}}"]}},
-    {"id": 37, "name": "synthesis_prompt", "op": "MERGE", "attributes": {"strategy": "concat", "tokens": ["{{node_35}}", "{{node_36}}"]}},
-    {"id": 38, "name": "synthesize_plan", "op": "COMMUNICATE", "attributes": {"recipient": "claude_synthesizer", "protocol": "acp"}},
-    {"id": 39, "name": "checkpoint_synthesis", "op": "CHECKPOINT", "attributes": {"checkpoint_id": "add-feature-synthesis", "scope": "full", "storage": "fs"}},
-    {"id": 40, "name": "print_synthesis", "op": "PRINT", "attributes": {"message": "=== SYNTHESIZED PLAN ==="}},
-
-    {"id": 41, "name": "implement_prefix", "op": "CONST_STR", "attributes": {"value": "You are the APXM implementer. Execute the following implementation plan EXACTLY as specified. Make all the code changes, run the tests, fix any issues. Use `dekk apxm build` (never bare cargo). After implementation, run `cargo test --workspace --exclude apxm-compiler` and report results.\n\nImplementation plan:\n"}},
-    {"id": 42, "name": "implement_prompt", "op": "MERGE", "attributes": {"strategy": "concat", "tokens": ["{{node_41}}", "{{node_38}}"]}},
-    {"id": 43, "name": "implement", "op": "COMMUNICATE", "attributes": {"recipient": "codex_implementer", "protocol": "acp"}},
-    {"id": 44, "name": "checkpoint_implement", "op": "CHECKPOINT", "attributes": {"checkpoint_id": "add-feature-implementation", "scope": "full", "storage": "fs"}},
-    {"id": 45, "name": "print_implement", "op": "PRINT", "attributes": {"message": "=== IMPLEMENTATION COMPLETE ==="}},
-
-    {"id": 46, "name": "simplify_prefix", "op": "CONST_STR", "attributes": {"value": "You are the APXM code reviewer and simplifier. Review the implementation below:\n\n1. Check for correctness — does it match the plan?\n2. Check for bugs, edge cases, error handling\n3. SIMPLIFY — remove unnecessary complexity, redundant code, over-engineering\n4. Ensure tests pass\n5. Suggest any final improvements\n\nIf changes are needed, make them directly. Then run tests again.\n\nImplementation report:\n"}},
-    {"id": 47, "name": "simplify_prompt", "op": "MERGE", "attributes": {"strategy": "concat", "tokens": ["{{node_46}}", "{{node_43}}"]}},
-    {"id": 48, "name": "simplify", "op": "COMMUNICATE", "attributes": {"recipient": "claude_simplifier", "protocol": "acp"}},
-    {"id": 49, "name": "verify_quality", "op": "VERIFY", "attributes": {"claim": "{{node_48}}", "evidence": "Implementation must: (1) compile without errors, (2) pass all tests, (3) follow APXM code patterns, (4) include documentation"}},
-    {"id": 50, "name": "checkpoint_final", "op": "CHECKPOINT", "attributes": {"checkpoint_id": "add-feature-final", "scope": "full", "storage": "fs"}},
-    {"id": 51, "name": "print_simplify", "op": "PRINT", "attributes": {"message": "=== SIMPLIFIED + REVIEWED ==="}},
-
-    {"id": 52, "name": "commit_prefix", "op": "CONST_STR", "attributes": {"value": "Commit the changes with a descriptive commit message. Use conventional commits format (feat/fix/docs/refactor). Stage all changed files with `git add`, then commit. Report the commit hash and summary of what was committed.\n\nChanges to commit:\n"}},
-    {"id": 53, "name": "commit_prompt", "op": "MERGE", "attributes": {"strategy": "concat", "tokens": ["{{node_52}}", "{{node_48}}"]}},
-    {"id": 54, "name": "commit", "op": "COMMUNICATE", "attributes": {"recipient": "codex_implementer", "protocol": "acp"}},
-    {"id": 55, "name": "store_result", "op": "UMEM", "attributes": {"key": "last_feature_implementation", "value": "{{node_54}}", "memory_tier": "ltm"}},
-    {"id": 56, "name": "print_final", "op": "PRINT", "attributes": {"message": "=== FEATURE COMMITTED ==="}}
+    {"id": 24, "name": "print_final", "op": "PRINT", "attributes": {"message": "=== FEATURE COMPLETE ==="}}
   ],
   "edges": [
-    {"from": 1, "to": 17, "dependency": "Control"},
-    {"from": 2, "to": 18, "dependency": "Control"},
-    {"from": 3, "to": 19, "dependency": "Control"},
-    {"from": 4, "to": 20, "dependency": "Control"},
-    {"from": 5, "to": 21, "dependency": "Control"},
-    {"from": 6, "to": 27, "dependency": "Control"},
-    {"from": 7, "to": 28, "dependency": "Control"},
-    {"from": 8, "to": 29, "dependency": "Control"},
-    {"from": 9, "to": 30, "dependency": "Control"},
-    {"from": 10, "to": 31, "dependency": "Control"},
-    {"from": 11, "to": 38, "dependency": "Control"},
-    {"from": 12, "to": 43, "dependency": "Control"},
-    {"from": 12, "to": 54, "dependency": "Control"},
-    {"from": 13, "to": 48, "dependency": "Control"},
+    {"from": 1, "to": 3, "dependency": "Data"},
+    {"from": 1, "to": 4, "dependency": "Data"},
+    {"from": 1, "to": 5, "dependency": "Data"},
+    {"from": 1, "to": 6, "dependency": "Data"},
+    {"from": 1, "to": 7, "dependency": "Data"},
+    {"from": 2, "to": 8, "dependency": "Data"},
+    {"from": 2, "to": 9, "dependency": "Data"},
+    {"from": 2, "to": 10, "dependency": "Data"},
+    {"from": 2, "to": 11, "dependency": "Data"},
+    {"from": 2, "to": 12, "dependency": "Data"},
 
+    {"from": 3, "to": 13, "dependency": "Data"},
+    {"from": 4, "to": 13, "dependency": "Data"},
+    {"from": 5, "to": 13, "dependency": "Data"},
+    {"from": 6, "to": 13, "dependency": "Data"},
+    {"from": 7, "to": 13, "dependency": "Data"},
+    {"from": 8, "to": 14, "dependency": "Data"},
+    {"from": 9, "to": 14, "dependency": "Data"},
+    {"from": 10, "to": 14, "dependency": "Data"},
+    {"from": 11, "to": 14, "dependency": "Data"},
+    {"from": 12, "to": 14, "dependency": "Data"},
+
+    {"from": 13, "to": 15, "dependency": "Data"},
+    {"from": 14, "to": 15, "dependency": "Data"},
+    {"from": 13, "to": 16, "dependency": "Data"},
     {"from": 14, "to": 16, "dependency": "Data"},
-    {"from": 15, "to": 16, "dependency": "Data"},
+
     {"from": 16, "to": 17, "dependency": "Data"},
-    {"from": 16, "to": 18, "dependency": "Data"},
-    {"from": 16, "to": 19, "dependency": "Data"},
-    {"from": 16, "to": 20, "dependency": "Data"},
-    {"from": 16, "to": 21, "dependency": "Data"},
+    {"from": 17, "to": 18, "dependency": "Data"},
 
-    {"from": 17, "to": 22, "dependency": "Data"},
-    {"from": 18, "to": 22, "dependency": "Data"},
-    {"from": 19, "to": 22, "dependency": "Data"},
-    {"from": 20, "to": 22, "dependency": "Data"},
-    {"from": 21, "to": 22, "dependency": "Data"},
-    {"from": 22, "to": 23, "dependency": "Data"},
-    {"from": 22, "to": 24, "dependency": "Data"},
+    {"from": 17, "to": 21, "dependency": "Data"},
+    {"from": 21, "to": 19, "dependency": "Data"},
+    {"from": 19, "to": 20, "dependency": "Data"},
 
-    {"from": 14, "to": 26, "dependency": "Data"},
-    {"from": 25, "to": 26, "dependency": "Data"},
-    {"from": 26, "to": 27, "dependency": "Data"},
-    {"from": 26, "to": 28, "dependency": "Data"},
-    {"from": 26, "to": 29, "dependency": "Data"},
-    {"from": 26, "to": 30, "dependency": "Data"},
-    {"from": 26, "to": 31, "dependency": "Data"},
-
-    {"from": 27, "to": 32, "dependency": "Data"},
-    {"from": 28, "to": 32, "dependency": "Data"},
-    {"from": 29, "to": 32, "dependency": "Data"},
-    {"from": 30, "to": 32, "dependency": "Data"},
-    {"from": 31, "to": 32, "dependency": "Data"},
-    {"from": 32, "to": 33, "dependency": "Data"},
-    {"from": 32, "to": 34, "dependency": "Data"},
-
-    {"from": 22, "to": 36, "dependency": "Data"},
-    {"from": 32, "to": 36, "dependency": "Data"},
-    {"from": 35, "to": 37, "dependency": "Data"},
-    {"from": 36, "to": 37, "dependency": "Data"},
-    {"from": 37, "to": 38, "dependency": "Data"},
-    {"from": 38, "to": 39, "dependency": "Data"},
-    {"from": 38, "to": 40, "dependency": "Data"},
-
-    {"from": 41, "to": 42, "dependency": "Data"},
-    {"from": 38, "to": 42, "dependency": "Data"},
-    {"from": 42, "to": 43, "dependency": "Data"},
-    {"from": 43, "to": 44, "dependency": "Data"},
-    {"from": 43, "to": 45, "dependency": "Data"},
-
-    {"from": 46, "to": 47, "dependency": "Data"},
-    {"from": 43, "to": 47, "dependency": "Data"},
-    {"from": 47, "to": 48, "dependency": "Data"},
-    {"from": 48, "to": 49, "dependency": "Data"},
-    {"from": 49, "to": 50, "dependency": "Data"},
-    {"from": 48, "to": 51, "dependency": "Data"},
-
-    {"from": 52, "to": 53, "dependency": "Data"},
-    {"from": 48, "to": 53, "dependency": "Data"},
-    {"from": 53, "to": 54, "dependency": "Data"},
-    {"from": 54, "to": 55, "dependency": "Data"},
-    {"from": 54, "to": 56, "dependency": "Data"}
+    {"from": 19, "to": 23, "dependency": "Data"},
+    {"from": 23, "to": 22, "dependency": "Data"},
+    {"from": 22, "to": 24, "dependency": "Data"}
   ],
   "metadata": {
-    "description": "Meta-workflow for adding new APXM features. Spawns 13 agents: 5 Claude planners + 5 Codex planners (parallel ultrathink), 1 Claude synthesizer (merges 10 plans), 1 Codex implementer (executes plan + commits), 1 Claude simplifier (review + polish). CHECKPOINTs after each phase for recovery.",
-    "pattern": "spawn-13 → parallel-plan-10 → synthesize → implement → simplify → verify → commit",
-    "ops_demonstrated": ["SPAWN_AGENT", "CONST_STR", "MERGE", "COMMUNICATE", "WAIT_ALL", "CHECKPOINT", "VERIFY", "UMEM", "PRINT"],
-    "usage": "apxm execute examples/14-add-feature/add-apxm-feature.json -- 'Add a ROLLBACK operation that reverts to a previous CHECKPOINT'"
+    "description": "Meta-workflow: 10 parallel THINK nodes (5 Claude-style + 5 Codex-style perspectives) produce plans, THINK synthesizes, THINK formats the implementer prompt, INV(codex) implements, THINK formats reviewer prompt, INV(claude) reviews.",
+    "pattern": "think x10 (parallel) → wait-all x2 → merge → think (synthesize) → think (format impl prompt) → inv(codex) → think (format review prompt) → inv(claude)",
+    "ops_demonstrated": ["CONST_STR", "THINK", "WAIT_ALL", "MERGE", "INV", "PRINT"],
+    "note": "THINK uses {0}=first-input {1}=second-input positional substitution. INV(acp) uses {1} for the THINK-formatted prompt passed as second positional arg.",
+    "usage": "dekk apxm execute examples/14-add-feature/add-apxm-feature.json -- \"your feature\""
   }
 }
