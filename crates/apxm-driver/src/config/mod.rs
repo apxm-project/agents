@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use apxm_core::types::{BackendConfig, ModelInfo, ProviderProtocol};
+use apxm_core::types::BackendConfig;
 use dirs::home_dir;
 use serde::{Deserialize, Serialize};
 use std::env;
@@ -23,13 +23,9 @@ pub struct ApXmConfig {
     /// Chat/runtime specific flags.
     pub chat: ChatConfig,
 
-    /// Unified backend definitions (replaces llm_backends).
+    /// Unified backend definitions.
     #[serde(default)]
     pub backends: Vec<BackendConfig>,
-
-    /// Legacy LLM backend definitions (deprecated, use backends instead).
-    #[serde(default)]
-    pub llm_backends: Vec<LlmBackendConfig>,
 
     /// Tool-specific behavior overrides.
     pub tools: HashMap<String, ToolConfig>,
@@ -117,110 +113,6 @@ pub struct BackendFallbackConfig {
     pub fallbacks: Vec<String>,
 }
 
-/// Definition of an LLM backend.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LlmBackendConfig {
-    /// Identifier used in the configuration (e.g., `openai`, `ollama-local`).
-    pub name: String,
-
-    /// Human-friendly provider name (optional).
-    pub provider: Option<String>,
-
-    /// Explicit protocol binding for this backend.
-    pub protocol: Option<ProviderProtocol>,
-
-    /// Default model to use when this backend is selected.
-    #[serde(default, alias = "model")]
-    pub default_model: Option<String>,
-
-    /// Additional model registrations routed through this backend.
-    #[serde(default)]
-    pub models: Vec<LlmModelConfig>,
-
-    /// API key or token (safely stored in config).
-    pub api_key: Option<String>,
-
-    /// URL/endpoint for the provider service.
-    pub endpoint: Option<String>,
-
-    /// Arbitrary backend options.
-    #[serde(default)]
-    pub options: HashMap<String, String>,
-
-    /// Additional HTTP headers sent with every LLM request.
-    /// Values prefixed with `env:` are resolved from environment variables
-    /// at backend construction time.
-    ///
-    /// # Example
-    /// ```toml
-    /// [llm_backends.extra_headers]
-    /// X-Custom-Gateway-Key = "env:OCP_APIM_KEY"
-    /// user = "env:USER"
-    /// ```
-    #[serde(default)]
-    pub extra_headers: HashMap<String, String>,
-}
-
-impl Default for LlmBackendConfig {
-    fn default() -> Self {
-        Self {
-            name: "default".to_string(),
-            provider: None,
-            protocol: None,
-            default_model: None,
-            models: Vec::new(),
-            api_key: None,
-            endpoint: None,
-            options: HashMap::new(),
-            extra_headers: HashMap::new(),
-        }
-    }
-}
-
-/// Rich model registration attached to an LLM backend.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct LlmModelConfig {
-    /// Canonical model identifier.
-    pub id: String,
-
-    /// Alternative aliases resolved to this model.
-    #[serde(default)]
-    pub aliases: Vec<String>,
-
-    /// Optional human-readable model name.
-    pub name: Option<String>,
-
-    /// Optional context window size in tokens.
-    pub context_window: Option<usize>,
-
-    /// Whether the model supports image inputs.
-    #[serde(default)]
-    pub supports_vision: bool,
-
-    /// Whether the model supports function/tool calling.
-    #[serde(default)]
-    pub supports_functions: bool,
-}
-
-impl LlmModelConfig {
-    pub fn to_model_info(&self) -> Option<ModelInfo> {
-        if self.name.is_none()
-            && self.context_window.is_none()
-            && !self.supports_vision
-            && !self.supports_functions
-        {
-            return None;
-        }
-
-        Some(ModelInfo {
-            id: self.id.clone(),
-            name: self.name.clone().unwrap_or_else(|| self.id.clone()),
-            context_window: self.context_window.unwrap_or_default(),
-            supports_vision: self.supports_vision,
-            supports_functions: self.supports_functions,
-        })
-    }
-}
 
 /// Tool-specific configuration overrides.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -653,19 +545,6 @@ mod tests {
             backend = "openai"
             fallbacks = ["local"]
 
-            [[llm_backends]]
-            name = "openai"
-            provider = "openai"
-            protocol = "openai"
-            default_model = "gpt-4"
-            api_key = "token"
-
-            [[llm_backends.models]]
-            id = "gpt-4o-mini"
-            aliases = ["fast", "default"]
-            name = "GPT-4o mini"
-            context_window = 128000
-            supports_functions = true
 
             [tools.shell]
             enabled = true
@@ -738,30 +617,6 @@ mod tests {
                 .and_then(|chain| chain.fallbacks.first())
                 .map(String::as_str),
             Some("local")
-        );
-        assert_eq!(config.llm_backends.first().unwrap().name, "openai");
-        assert_eq!(
-            config.llm_backends.first().unwrap().protocol,
-            Some(ProviderProtocol::OpenAI)
-        );
-        assert_eq!(
-            config
-                .llm_backends
-                .first()
-                .unwrap()
-                .default_model
-                .as_deref(),
-            Some("gpt-4")
-        );
-        assert_eq!(
-            config
-                .llm_backends
-                .first()
-                .unwrap()
-                .models
-                .first()
-                .map(|model| model.id.as_str()),
-            Some("gpt-4o-mini")
         );
         assert!(config.tools.contains_key("shell"));
     }

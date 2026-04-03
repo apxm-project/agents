@@ -10,8 +10,6 @@ use std::path::PathBuf;
 use anyhow::Context;
 use anyhow::Result;
 use apxm_core::utils::build::MlirEnvReport;
-use apxm_credentials::CredentialStore;
-use apxm_credentials::credential::Credential;
 use apxm_credentials::docker::{DockerManager, ContainerStatus};
 #[cfg(feature = "driver")]
 use apxm_driver::compiler::Compiler;
@@ -19,7 +17,7 @@ use apxm_driver::compiler::Compiler;
 use apxm_driver::{ApXmConfig, ConfigError, Linker, LinkerConfig};
 use clap::{Parser, Subcommand};
 use colored::Colorize;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::env;
 
 /// Initialize the tracing subscriber based on the --trace flag or RUST_LOG env var.
@@ -146,11 +144,6 @@ enum Commands {
     Backend {
         #[command(subcommand)]
         action: BackendAction,
-    },
-    /// Manage LLM provider credentials (deprecated, use 'backend')
-    Llm {
-        #[command(subcommand)]
-        action: LlmAction,
     },
     /// Manage external tool/capability registrations for INV nodes
     Tool {
@@ -312,42 +305,6 @@ enum BackendAction {
     Restart {
         /// Backend name
         name: String,
-    },
-}
-
-#[derive(Subcommand)]
-enum LlmAction {
-    /// Register a new LLM provider credential
-    Add {
-        /// Credential name (e.g., "my-openai")
-        name: String,
-        /// Provider type (openai, anthropic, google, openrouter, ollama)
-        #[arg(long)]
-        provider: String,
-        /// API key (omit to enter interactively)
-        #[arg(long)]
-        api_key: Option<String>,
-        /// Base URL override
-        #[arg(long)]
-        base_url: Option<String>,
-        /// Default model
-        #[arg(long)]
-        model: Option<String>,
-        /// Extra headers as key=value pairs
-        #[arg(long, value_parser = parse_header)]
-        header: Vec<(String, String)>,
-    },
-    /// List registered credentials
-    List,
-    /// Remove a credential
-    Remove {
-        /// Name of the credential to remove
-        name: String,
-    },
-    /// Validate a credential by making a test API call
-    Test {
-        /// Name of the credential to test (omit to test all)
-        name: Option<String>,
     },
 }
 
@@ -667,13 +624,13 @@ async fn models_command(action: ModelsAction, json_output: bool) -> Result<()> {
         }
 
         ModelsAction::Health => {
-            // Load backends from the credential store (same logic as llm_command)
+            // Load backends from the backend store
             let mut backend_names: Vec<String> = Vec::new();
-            if let Ok(store) = apxm_credentials::CredentialStore::open()
-                && let Ok(credentials) = store.list_all()
+            if let Ok(store) = apxm_credentials::BackendStore::open()
+                && let Ok(backends) = store.list()
             {
-                for (name, _) in credentials {
-                    backend_names.push(name);
+                for backend in backends {
+                    backend_names.push(backend.name);
                 }
             }
 
@@ -914,7 +871,6 @@ async fn run_cli() -> Result<()> {
         Commands::Activate { shell } => activate_command(&shell),
         Commands::Install => install_command(),
         Commands::Backend { action } => backend_command(action, cli.json).await,
-        Commands::Llm { action } => llm_command(action).await,
         Commands::Tool { action } => tool_command(action, cli.json),
         Commands::Agent { action } => agent_command(action, cli.json).await,
         Commands::Models { action } => models_command(action, cli.json).await,
@@ -935,7 +891,6 @@ async fn run_cli_no_driver() -> Result<()> {
         Commands::Doctor => doctor_command(cli.config, cli.json),
         Commands::Activate { shell } => activate_command(&shell),
         Commands::Install => install_command(),
-        Commands::Llm { action } => llm_command(action).await,
         Commands::Tool { action } => tool_command(action, cli.json),
         Commands::Agent { action } => agent_command(action, cli.json).await,
         Commands::Models { action } => models_command(action, cli.json).await,
@@ -1486,7 +1441,7 @@ async fn run_command(
 }
 
 async fn backend_command(action: BackendAction, json_output: bool) -> Result<()> {
-    use apxm_credentials::backend::{BackendError, BackendStore};
+    use apxm_credentials::backend::BackendStore;
     use apxm_core::types::{BackendConfig, BackendType, ProviderProtocol};
     use std::str::FromStr;
 
@@ -1617,17 +1572,7 @@ async fn backend_command(action: BackendAction, json_output: bool) -> Result<()>
             print_section_header("Testing Backends");
             let mut all_ok = true;
             for backend in &backends_to_test {
-                // TODO: Implement actual backend validation
-                // For now, just check that required fields are present
-                let result = if backend.api_key.is_some() || backend.backend_type == BackendType::Local {
-                    Ok("configuration valid".to_string())
-                } else {
-                    Err(BackendError::NotFound {
-                        name: "api_key missing".to_string(),
-                    })
-                };
-
-                match result {
+                match apxm_credentials::validate::validate_backend(backend).await {
                     Ok(msg) => print_status_line(&backend.name, Status::Ok, &msg),
                     Err(e) => {
                         print_status_line(&backend.name, Status::Error, &e.to_string());
@@ -1762,117 +1707,6 @@ async fn backend_command(action: BackendAction, json_output: bool) -> Result<()>
             } else {
                 print_section_header("Backend Restarted");
                 print_status_line("Backend", Status::Ok, &name);
-            }
-        }
-    }
-
-    Ok(())
-}
-
-async fn llm_command(action: LlmAction) -> Result<()> {
-    let store = CredentialStore::open().map_err(|e| anyhow::anyhow!("{e}"))?;
-
-    match action {
-        LlmAction::Add {
-            name,
-            provider,
-            api_key,
-            base_url,
-            model,
-            header,
-        } => {
-            let api_key = if api_key.is_some() || provider == "ollama" {
-                api_key
-            } else {
-                eprint!("Enter API key for {name}: ");
-                let key = rpassword::read_password()
-                    .map_err(|e| anyhow::anyhow!("Failed to read API key: {e}"))?;
-                if key.is_empty() { None } else { Some(key) }
-            };
-
-            let headers: BTreeMap<String, String> = header.into_iter().collect();
-
-            let cred = Credential {
-                provider: provider.clone(),
-                api_key,
-                base_url,
-                model,
-                headers,
-            };
-
-            store.add(&name, cred).map_err(|e| anyhow::anyhow!("{e}"))?;
-
-            print_section_header("Credential Registered");
-            print_status_line("Name", Status::Ok, &name);
-            print_status_line("Provider", Status::Ok, &provider);
-            print_status_line("Store", Status::Ok, &store.path().display().to_string());
-        }
-        LlmAction::List => {
-            let creds = store.list().map_err(|e| anyhow::anyhow!("{e}"))?;
-            if creds.is_empty() {
-                println!("No credentials registered.");
-                println!("Add one with: apxm llm add <name> --provider <provider>");
-                return Ok(());
-            }
-
-            print_section_header("Registered Credentials");
-            for (name, summary) in &creds {
-                let key_display = summary.masked_key.as_deref().unwrap_or("<none>");
-                println!(
-                    "  {:<16} {:<12} key={}{}{}",
-                    name.bold(),
-                    summary.provider,
-                    key_display,
-                    summary
-                        .model
-                        .as_ref()
-                        .map(|m| format!("  model={m}"))
-                        .unwrap_or_default(),
-                    if summary.header_count > 0 {
-                        format!("  +{} headers", summary.header_count)
-                    } else {
-                        String::new()
-                    }
-                );
-            }
-            println!();
-            println!("Store: {}", store.path().display());
-        }
-        LlmAction::Remove { name } => {
-            store.remove(&name).map_err(|e| anyhow::anyhow!("{e}"))?;
-            print_section_header("Credential Removed");
-            print_status_line(&name, Status::Ok, "removed");
-        }
-        LlmAction::Test { name } => {
-            let creds_to_test: Vec<(String, Credential)> = match name {
-                Some(ref n) => {
-                    let cred = store
-                        .get(n)
-                        .map_err(|e| anyhow::anyhow!("{e}"))?
-                        .ok_or_else(|| anyhow::anyhow!("Credential '{n}' not found"))?;
-                    vec![(n.clone(), cred)]
-                }
-                None => store.list_all().map_err(|e| anyhow::anyhow!("{e}"))?,
-            };
-
-            if creds_to_test.is_empty() {
-                println!("No credentials to test.");
-                return Ok(());
-            }
-
-            print_section_header("Testing Credentials");
-            let mut all_ok = true;
-            for (cname, cred) in &creds_to_test {
-                match apxm_credentials::validate::validate_credential(cname, cred).await {
-                    Ok(msg) => print_status_line(cname, Status::Ok, &msg),
-                    Err(e) => {
-                        print_status_line(cname, Status::Error, &e.to_string());
-                        all_ok = false;
-                    }
-                }
-            }
-            if !all_ok {
-                return Err(anyhow::anyhow!("Some credentials failed validation"));
             }
         }
     }
@@ -3078,11 +2912,11 @@ fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> {
         .map(|p| p.display().to_string());
     let mlir_version = report.llvm_version.clone();
 
-    // --- LLM Credentials ---
-    let (cred_count, cred_providers): (usize, Vec<String>) = match CredentialStore::open() {
+    // --- Backends ---
+    let (backend_count, backend_names): (usize, Vec<String>) = match apxm_credentials::BackendStore::open() {
         Ok(store) => match store.list() {
-            Ok(entries) => {
-                let names: Vec<String> = entries.iter().map(|(name, _)| name.clone()).collect();
+            Ok(backends) => {
+                let names: Vec<String> = backends.iter().map(|b| b.name.clone()).collect();
                 (names.len(), names)
             }
             Err(_) => (0, vec![]),
@@ -3103,7 +2937,7 @@ fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> {
                 let path = ApXmConfig::default_path()
                     .map(|p| p.display().to_string())
                     .unwrap_or_else(|_| "~/.apxm/config.toml".to_string());
-                let backends = cfg.llm_backends.len();
+                let backends = cfg.backends.len();
                 (true, Some(path), backends)
             }
             Err(_) => {
@@ -3129,9 +2963,9 @@ fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> {
                 "prefix": mlir_prefix,
                 "version": mlir_version,
             },
-            "credentials": {
-                "count": cred_count,
-                "providers": cred_providers,
+            "backends": {
+                "count": backend_count,
+                "names": backend_names,
             },
             "environment": {
                 "APXM_BACKEND": env_apxm_backend,
@@ -3168,21 +3002,21 @@ fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> {
         print_status_line("MLIR toolchain", Status::Error, "missing");
     }
 
-    // 2. LLM Credentials
-    print_section_header("LLM Credentials");
-    if cred_count > 0 {
+    // 2. Backends
+    print_section_header("Backends");
+    if backend_count > 0 {
         print_status_line(
-            "Credentials",
+            "Backends",
             Status::Ok,
             &format!(
-                "{} provider{} registered",
-                cred_count,
-                if cred_count == 1 { "" } else { "s" }
+                "{} backend{} registered",
+                backend_count,
+                if backend_count == 1 { "" } else { "s" }
             ),
         );
     } else {
-        print_status_line("Credentials", Status::Warning, "none registered");
-        print_hint("Run `apxm llm add` to configure an LLM provider.");
+        print_status_line("Backends", Status::Warning, "none registered");
+        print_hint("Run `apxm backend add` to configure a backend.");
     }
 
     // 3. Environment Variables

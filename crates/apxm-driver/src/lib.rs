@@ -31,7 +31,7 @@ pub mod linker;
 pub mod runtime;
 
 // --- Config ---
-pub use config::{ApXmConfig, ChatConfig, ConfigError, LlmBackendConfig, ToolConfig};
+pub use config::{ApXmConfig, ChatConfig, ConfigError, ToolConfig};
 
 // --- Linker ---
 pub use linker::{LinkResult, Linker, LinkerConfig};

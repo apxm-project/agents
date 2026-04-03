@@ -11,9 +11,6 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
-use crate::credential::Credential;
-use crate::CredentialError;
-
 const FILE_PERMISSIONS: u32 = 0o600;
 const DIR_PERMISSIONS: u32 = 0o700;
 const CONFIG_FILENAME: &str = "config.toml";
@@ -44,9 +41,6 @@ pub enum BackendError {
         "Config file at {path} has insecure permissions ({mode:o}). Fix with: chmod 600 {path}"
     )]
     InsecurePermissions { path: String, mode: u32 },
-
-    #[error("Credential store error: {0}")]
-    CredentialStore(#[from] CredentialError),
 }
 
 /// Simplified config structure for backend management.
@@ -189,23 +183,61 @@ impl BackendStore {
     ///
     /// Returns the number of credentials migrated.
     pub fn migrate_from_credentials(&self) -> Result<usize, BackendError> {
-        let cred_store = crate::CredentialStore::open()?;
-        let credentials = cred_store.list_all()?;
+        use serde::Deserialize;
+        use std::collections::BTreeMap;
 
-        if credentials.is_empty() {
+        // Define minimal credential structure for reading
+        #[derive(Debug, Clone, Deserialize)]
+        struct Credential {
+            provider: String,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            api_key: Option<String>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            base_url: Option<String>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            model: Option<String>,
+            #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+            headers: BTreeMap<String, String>,
+        }
+
+        #[derive(Debug, Default, Deserialize)]
+        struct CredentialsFile {
+            #[serde(default)]
+            credentials: BTreeMap<String, Credential>,
+        }
+
+        // Read credentials.toml directly
+        let home = dirs::home_dir().ok_or(BackendError::HomeDirMissing)?;
+        let credentials_path = home.join(".apxm").join("credentials.toml");
+
+        if !credentials_path.exists() {
+            return Ok(0);
+        }
+
+        let contents = fs::read_to_string(&credentials_path)?;
+        let creds_file: CredentialsFile = toml::from_str(&contents)?;
+
+        if creds_file.credentials.is_empty() {
             return Ok(0);
         }
 
         let mut file = self.read_file()?;
         let mut count = 0;
 
-        for (name, cred) in credentials {
+        for (name, cred) in creds_file.credentials {
             // Skip if already migrated
             if file.backends.iter().any(|b| b.name == name) {
                 continue;
             }
 
-            let backend = credential_to_backend(&name, cred);
+            let legacy_cred = LegacyCredential {
+                provider: cred.provider,
+                api_key: cred.api_key,
+                base_url: cred.base_url,
+                model: cred.model,
+                headers: cred.headers,
+            };
+            let backend = credential_to_backend(&name, legacy_cred);
             file.backends.push(backend);
             count += 1;
         }
@@ -223,8 +255,18 @@ impl BackendStore {
     }
 }
 
-/// Convert a legacy Credential to a BackendConfig.
-fn credential_to_backend(name: &str, cred: Credential) -> BackendConfig {
+/// Minimal credential structure for migration (matches credentials.toml format).
+#[derive(Debug)]
+struct LegacyCredential {
+    provider: String,
+    api_key: Option<String>,
+    base_url: Option<String>,
+    model: Option<String>,
+    headers: std::collections::BTreeMap<String, String>,
+}
+
+/// Convert a legacy Credential (from credentials.toml) to a BackendConfig.
+fn credential_to_backend(name: &str, cred: LegacyCredential) -> BackendConfig {
     use apxm_core::types::{BackendType, ModelConfig};
     use apxm_core::types::ProviderProtocol;
     use std::collections::HashMap;

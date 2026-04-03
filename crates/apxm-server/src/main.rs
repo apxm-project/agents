@@ -675,49 +675,49 @@ async fn main() -> anyhow::Result<()> {
 
     let runtime = Arc::new(Runtime::new(RuntimeConfig::default()).await?);
 
-    // ── Auto-load LLM credentials from credential store ──
+    // ── Auto-load LLM backends from backend store ──
     {
         let mut loaded = 0u32;
         let mut first_name: Option<String> = None;
-        match apxm_credentials::CredentialStore::open() {
-            Ok(store) => match store.list_all() {
-                Ok(creds) if creds.is_empty() => {
-                    warn!("credential store is empty — no LLM backends registered");
+        match apxm_credentials::BackendStore::open() {
+            Ok(store) => match store.list() {
+                Ok(backends) if backends.is_empty() => {
+                    warn!("backend store is empty — no LLM backends registered");
                 }
-                Ok(creds) => {
-                    for (name, cred) in creds {
-                        let provider_id = match cred.provider.parse::<ProviderId>() {
+                Ok(backends) => {
+                    for backend in backends {
+                        let provider_id = match backend.protocol.to_string().parse::<ProviderId>() {
                             Ok(id) => id,
                             Err(e) => {
-                                warn!(%name, error = %e, "skipping credential: unknown provider");
+                                warn!(name = %backend.name, error = %e, "skipping backend: unknown protocol");
                                 continue;
                             }
                         };
-                        let api_key = cred.api_key.as_deref().unwrap_or("");
-                        let config = cred
-                            .base_url
+                        let api_key = backend.api_key.as_deref().unwrap_or("");
+                        let config = backend
+                            .endpoint
                             .as_ref()
                             .map(|url| serde_json::json!({ "base_url": url }));
                         match Provider::new(provider_id, api_key, config).await {
                             Ok(provider) => {
-                                if let Err(e) = runtime.llm_registry().register(&name, provider) {
-                                    warn!(%name, error = %e, "failed to register LLM backend");
+                                if let Err(e) = runtime.llm_registry().register(&backend.name, provider) {
+                                    warn!(name = %backend.name, error = %e, "failed to register LLM backend");
                                     continue;
                                 }
-                                if let Some(model) = &cred.model {
+                                if let Some(model) = backend.models.first() {
                                     if let Err(e) =
-                                        runtime.llm_registry().set_model_route(model, &name)
+                                        runtime.llm_registry().set_model_route(&model.id, &backend.name)
                                     {
-                                        warn!(%name, %model, error = %e, "failed to route model to backend");
+                                        warn!(name = %backend.name, model = %model.id, error = %e, "failed to route model to backend");
                                     }
                                 }
                                 if first_name.is_none() {
-                                    first_name = Some(name.clone());
+                                    first_name = Some(backend.name.clone());
                                 }
                                 loaded += 1;
                             }
                             Err(e) => {
-                                warn!(%name, error = %e, "failed to create LLM provider");
+                                warn!(name = %backend.name, error = %e, "failed to create LLM provider");
                             }
                         }
                     }
@@ -726,10 +726,10 @@ async fn main() -> anyhow::Result<()> {
                             warn!(backend = %default, error = %e, "failed to set default backend");
                         }
                     }
-                    info!(count = loaded, "loaded LLM backends from credential store");
+                    info!(count = loaded, "loaded LLM backends from backend store");
                 }
                 Err(e) => {
-                    warn!(error = %e, "failed to read credential store");
+                    warn!(error = %e, "failed to read backend store");
                 }
             },
             Err(e) => {
