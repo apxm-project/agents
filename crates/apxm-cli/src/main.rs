@@ -141,7 +141,12 @@ enum Commands {
     },
     /// Install or update the conda environment from environment.yaml
     Install,
-    /// Manage LLM provider credentials
+    /// Manage inference backends (cloud/onprem/local)
+    Backend {
+        #[command(subcommand)]
+        action: BackendAction,
+    },
+    /// Manage LLM provider credentials (deprecated, use 'backend')
     Llm {
         #[command(subcommand)]
         action: LlmAction,
@@ -232,6 +237,52 @@ enum OpsAction {
     Show {
         /// Operation name (e.g., ASK, THINK, INV, FLOW_CALL)
         name: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum BackendAction {
+    /// List all registered backends
+    List {
+        /// Output format (table or json)
+        #[arg(long, default_value = "table")]
+        format: String,
+    },
+    /// Add a new backend
+    Add {
+        /// Backend name (e.g., "openai", "local-vllm")
+        name: String,
+        /// Backend type (cloud, onprem, local)
+        #[arg(long)]
+        r#type: String,
+        /// Protocol (openai, anthropic, google, ollama, vllm)
+        #[arg(long)]
+        protocol: String,
+        /// API endpoint URL
+        #[arg(long)]
+        endpoint: Option<String>,
+        /// API key (omit to read from env or enter interactively)
+        #[arg(long)]
+        api_key: Option<String>,
+        /// Extra headers as key=value pairs
+        #[arg(long, value_parser = parse_header)]
+        header: Vec<(String, String)>,
+    },
+    /// Remove a backend
+    Remove {
+        /// Backend name to remove
+        name: String,
+    },
+    /// Test backend connectivity
+    Test {
+        /// Backend name to test (omit to test all)
+        name: Option<String>,
+    },
+    /// Migrate from legacy credentials.toml
+    Migrate {
+        /// Skip confirmation prompt
+        #[arg(long)]
+        yes: bool,
     },
 }
 
@@ -833,6 +884,7 @@ async fn run_cli() -> Result<()> {
         Commands::Doctor => doctor_command(cli.config, cli.json),
         Commands::Activate { shell } => activate_command(&shell),
         Commands::Install => install_command(),
+        Commands::Backend { action } => backend_command(action, cli.json).await,
         Commands::Llm { action } => llm_command(action).await,
         Commands::Tool { action } => tool_command(action, cli.json),
         Commands::Agent { action } => agent_command(action, cli.json).await,
@@ -1399,6 +1451,192 @@ async fn run_command(
             .with_context(|| format!("Failed to write metrics to {}", metrics_path.display()))?;
 
         println!("Wrote metrics to {}", metrics_path.display());
+    }
+
+    Ok(())
+}
+
+async fn backend_command(action: BackendAction, json_output: bool) -> Result<()> {
+    use apxm_credentials::backend::{BackendError, BackendStore};
+    use apxm_core::types::{BackendConfig, BackendType, ProviderProtocol};
+    use std::str::FromStr;
+
+    let store = BackendStore::open().map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    match action {
+        BackendAction::Add {
+            name,
+            r#type,
+            protocol,
+            endpoint,
+            api_key,
+            header,
+        } => {
+            // Parse backend type
+            let backend_type = BackendType::from_str(&r#type)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+            // Parse protocol
+            let protocol = ProviderProtocol::from_str(&protocol)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+            // Get API key if needed
+            let api_key = if api_key.is_some() || backend_type == BackendType::Local {
+                api_key
+            } else {
+                eprint!("Enter API key for {name} (or press Enter to skip): ");
+                let key = rpassword::read_password()
+                    .map_err(|e| anyhow::anyhow!("Failed to read API key: {e}"))?;
+                if key.is_empty() { None } else { Some(key) }
+            };
+
+            let headers: std::collections::HashMap<String, String> = header.into_iter().collect();
+
+            let backend = BackendConfig {
+                name: name.clone(),
+                backend_type,
+                protocol,
+                endpoint,
+                api_key,
+                headers,
+                models: vec![],
+                docker: None,
+            };
+
+            store.add(backend).map_err(|e| anyhow::anyhow!("{e}"))?;
+
+            if json_output {
+                println!("{{\"status\":\"ok\",\"backend\":\"{name}\"}}");
+            } else {
+                print_section_header("Backend Registered");
+                print_status_line("Name", Status::Ok, &name);
+                print_status_line("Type", Status::Ok, &format!("{backend_type}"));
+                print_status_line("Protocol", Status::Ok, &format!("{protocol}"));
+                print_status_line("Store", Status::Ok, &store.path().display().to_string());
+            }
+        }
+        BackendAction::List { format } => {
+            let backends = store.list().map_err(|e| anyhow::anyhow!("{e}"))?;
+
+            if json_output || format == "json" {
+                println!("{}", serde_json::to_string_pretty(&backends)?);
+                return Ok(());
+            }
+
+            if backends.is_empty() {
+                println!("No backends registered.");
+                println!("Add one with: apxm backend add <name> --type cloud --protocol openai");
+                return Ok(());
+            }
+
+            print_section_header("Registered Backends");
+            for backend in &backends {
+                let key_display = backend
+                    .api_key
+                    .as_deref()
+                    .map(|k| apxm_credentials::mask::mask_key(k))
+                    .unwrap_or_else(|| "<none>".to_string());
+
+                println!(
+                    "  {:<16} {:<8} {:<10} key={}{}{}",
+                    backend.name.bold(),
+                    format!("{}", backend.backend_type),
+                    format!("{}", backend.protocol),
+                    key_display,
+                    backend
+                        .endpoint
+                        .as_ref()
+                        .map(|e| format!("  endpoint={e}"))
+                        .unwrap_or_default(),
+                    if !backend.models.is_empty() {
+                        format!("  +{} models", backend.models.len())
+                    } else {
+                        String::new()
+                    }
+                );
+            }
+            println!();
+            println!("Store: {}", store.path().display());
+        }
+        BackendAction::Remove { name } => {
+            store.remove(&name).map_err(|e| anyhow::anyhow!("{e}"))?;
+
+            if json_output {
+                println!("{{\"status\":\"ok\",\"action\":\"removed\",\"backend\":\"{name}\"}}");
+            } else {
+                print_section_header("Backend Removed");
+                print_status_line(&name, Status::Ok, "removed");
+            }
+        }
+        BackendAction::Test { name } => {
+            let backends_to_test: Vec<BackendConfig> = match name {
+                Some(ref n) => {
+                    let backend = store
+                        .get(n)
+                        .map_err(|e| anyhow::anyhow!("{e}"))?
+                        .ok_or_else(|| anyhow::anyhow!("Backend '{n}' not found"))?;
+                    vec![backend]
+                }
+                None => store.list().map_err(|e| anyhow::anyhow!("{e}"))?,
+            };
+
+            if backends_to_test.is_empty() {
+                println!("No backends to test.");
+                return Ok(());
+            }
+
+            print_section_header("Testing Backends");
+            let mut all_ok = true;
+            for backend in &backends_to_test {
+                // TODO: Implement actual backend validation
+                // For now, just check that required fields are present
+                let result = if backend.api_key.is_some() || backend.backend_type == BackendType::Local {
+                    Ok("configuration valid".to_string())
+                } else {
+                    Err(BackendError::NotFound {
+                        name: "api_key missing".to_string(),
+                    })
+                };
+
+                match result {
+                    Ok(msg) => print_status_line(&backend.name, Status::Ok, &msg),
+                    Err(e) => {
+                        print_status_line(&backend.name, Status::Error, &e.to_string());
+                        all_ok = false;
+                    }
+                }
+            }
+            if !all_ok {
+                return Err(anyhow::anyhow!("Some backends failed validation"));
+            }
+        }
+        BackendAction::Migrate { yes } => {
+            if !yes {
+                eprintln!("This will migrate credentials from ~/.apxm/credentials.toml to ~/.apxm/config.toml");
+                eprint!("Continue? [y/N] ");
+                use std::io::{self, BufRead};
+                let mut line = String::new();
+                io::stdin().lock().read_line(&mut line)?;
+                if !line.trim().eq_ignore_ascii_case("y") {
+                    println!("Aborted.");
+                    return Ok(());
+                }
+            }
+
+            let count = store.migrate_from_credentials().map_err(|e| anyhow::anyhow!("{e}"))?;
+
+            if json_output {
+                println!("{{\"status\":\"ok\",\"migrated\":{count}}}");
+            } else {
+                print_section_header("Migration Complete");
+                print_status_line("Migrated", Status::Ok, &format!("{count} credentials"));
+                if count > 0 {
+                    println!();
+                    println!("Your legacy credentials.toml can now be safely removed.");
+                    println!("To view the migrated backends: apxm backend list");
+                }
+            }
+        }
     }
 
     Ok(())
