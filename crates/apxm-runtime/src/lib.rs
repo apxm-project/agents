@@ -33,6 +33,7 @@ mod runtime;
 pub mod sandbox;
 pub mod scheduler;
 pub mod thread;
+pub mod model_router;
 pub mod workspace;
 
 pub use aam::{
@@ -55,6 +56,7 @@ pub use observability::{MetricsCollector, SchedulerMetrics};
 pub use process::{AgentProcess, ProcessId, ProcessKind, ProcessState};
 pub use process_table::{AgentPrompter, AgentSpawner, ProcessTable};
 pub use runtime::{Runtime, RuntimeConfig, RuntimeExecutionResult};
+pub use model_router::{BackendHealth, CircuitBreakerConfig, CircuitState, ModelEntry, ModelRouter, ModelRouterConfig, RoutingDecision, RoutingTarget};
 pub use scheduler::{DataflowScheduler, SchedulerConfig};
 pub use thread::{AgentThread, ThreadId, ThreadState};
 

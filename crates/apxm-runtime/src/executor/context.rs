@@ -21,6 +21,7 @@ use super::events::ExecutionEventEmitter;
 use super::inner_plan_linker::{InnerPlanLinker, NoOpLinker};
 use super::memoization::ResponseCache;
 use super::token_accounting::TokenAccountant;
+use crate::model_router::ModelRouter;
 
 /// Execution context passed to all operation handlers
 ///
@@ -92,6 +93,11 @@ pub struct ExecutionContext {
     /// Used by SPAWN_AGENT to register new processes and by COMMUNICATE with
     /// `protocol: "acp"` to look up recipient agents.
     pub process_table: Arc<ProcessTable>,
+    /// Optional ModelRouter for dynamic backend/model selection with circuit breakers.
+    ///
+    /// When set, the LLM handler delegates backend selection to the router
+    /// instead of going directly to `llm_registry`. Set via `with_model_router`.
+    pub model_router: Option<Arc<ModelRouter>>,
 }
 
 impl ExecutionContext {
@@ -134,6 +140,7 @@ impl ExecutionContext {
             cancellation_token: CancellationToken::new(),
             sandbox_registry: Arc::new(SandboxRegistry::new()),
             process_table: Arc::new(ProcessTable::new()),
+            model_router: None,
         }
     }
 
@@ -265,6 +272,7 @@ impl ExecutionContext {
             cancellation_token: self.cancellation_token.child(),
             sandbox_registry: Arc::clone(&self.sandbox_registry),
             process_table: Arc::clone(&self.process_table),
+            model_router: self.model_router.as_ref().map(Arc::clone),
         }
     }
 
@@ -277,6 +285,12 @@ impl ExecutionContext {
     /// Set the sandbox registry.
     pub fn with_sandbox_registry(mut self, registry: Arc<SandboxRegistry>) -> Self {
         self.sandbox_registry = registry;
+        self
+    }
+
+    /// Attach a ModelRouter for dynamic backend/model selection with circuit breakers.
+    pub fn with_model_router(mut self, router: Arc<ModelRouter>) -> Self {
+        self.model_router = Some(router);
         self
     }
 

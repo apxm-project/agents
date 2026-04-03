@@ -168,11 +168,18 @@ pub async fn execute_llm_request(
     #[cfg(feature = "metrics")]
     let start = std::time::Instant::now();
 
-    let response = ctx
-        .llm_registry
-        .generate(request.clone())
-        .await
-        .map_err(|e| llm_error(ctx, phase, request, e))?;
+    // Route through ModelRouter when available (circuit breakers + policy routing).
+    let response = if let Some(router) = &ctx.model_router {
+        router
+            .generate(request.clone())
+            .await
+            .map_err(|e| llm_error(ctx, phase, request, e))?
+    } else {
+        ctx.llm_registry
+            .generate(request.clone())
+            .await
+            .map_err(|e| llm_error(ctx, phase, request, e))?
+    };
 
     #[cfg(feature = "metrics")]
     {
@@ -207,7 +214,18 @@ async fn execute_llm_request_streaming(
     #[cfg(feature = "metrics")]
     let start = std::time::Instant::now();
 
-    let prepared_request = ctx.llm_registry.prepare_request(request);
+    // When a ModelRouter is present, let it choose backend/model first.
+    let router_decision = ctx.model_router.as_ref().and_then(|r| r.select(request).ok());
+    let prepared_request = if let Some(ref decision) = router_decision {
+        let mut req = request.clone();
+        req.backend = Some(decision.backend.clone());
+        if let Some(ref m) = decision.model {
+            req.model = Some(m.clone());
+        }
+        ctx.llm_registry.prepare_request(&req)
+    } else {
+        ctx.llm_registry.prepare_request(request)
+    };
 
     let backend = ctx
         .llm_registry
@@ -294,6 +312,13 @@ async fn execute_llm_request_streaming(
     {
         let latency = start.elapsed();
         record_llm_event(ctx, phase, request, &response, latency).await;
+    }
+
+    // Record success in ModelRouter circuit breaker (streaming path).
+    if let Some(router) = &ctx.model_router {
+        if let Some(ref decision) = router_decision {
+            router.record_success(&decision.backend);
+        }
     }
 
     Ok(response)
