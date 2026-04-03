@@ -1,63 +1,60 @@
 {
-  "metadata": {
-    "name": "default.main",
-    "is_entry": true,
-    "description": "Cross-critique: two agents propose, then critique each other"
-  },
+  "name": "cross-critique",
+  "parameters": [],
   "nodes": [
     {
       "id": 1,
-      "op_type": "SPAWN_AGENT",
-      "attributes": { "agent_name": "agent_a", "profile": "claude" },
-      "input_tokens": [], "output_tokens": [101], "metadata": {}
+      "name": "spawn_agent_a",
+      "op": "SPAWN_AGENT",
+      "attributes": { "agent_name": "agent_a", "profile": "claude" }
     },
     {
       "id": 2,
-      "op_type": "SPAWN_AGENT",
-      "attributes": { "agent_name": "agent_b", "profile": "codex" },
-      "input_tokens": [], "output_tokens": [102], "metadata": {}
+      "name": "spawn_agent_b",
+      "op": "SPAWN_AGENT",
+      "attributes": { "agent_name": "agent_b", "profile": "codex" }
     },
     {
       "id": 3,
-      "op_type": "CONST_STR",
-      "attributes": { "value": "Propose a design for a REST API for a todo application." },
-      "input_tokens": [], "output_tokens": [103], "metadata": {}
+      "name": "design_prompt",
+      "op": "CONST_STR",
+      "attributes": { "value": "Propose a design for a REST API for a todo application." }
     },
     {
       "id": 4,
-      "op_type": "COMMUNICATE",
-      "attributes": { "recipient": "agent_a", "protocol": "acp" },
-      "input_tokens": [103], "output_tokens": [104], "metadata": {}
+      "name": "send_prompt_to_a",
+      "op": "COMMUNICATE",
+      "attributes": { "recipient": "agent_a", "protocol": "acp" }
     },
     {
       "id": 5,
-      "op_type": "COMMUNICATE",
-      "attributes": { "recipient": "agent_b", "protocol": "acp" },
-      "input_tokens": [103], "output_tokens": [105], "metadata": {}
+      "name": "send_prompt_to_b",
+      "op": "COMMUNICATE",
+      "attributes": { "recipient": "agent_b", "protocol": "acp" }
     },
     {
       "id": 6,
-      "op_type": "COMMUNICATE",
-      "attributes": { "recipient": "agent_b", "protocol": "acp" },
-      "input_tokens": [104], "output_tokens": [106], "metadata": {}
+      "name": "send_a_proposal_to_b",
+      "op": "COMMUNICATE",
+      "attributes": { "recipient": "agent_b", "protocol": "acp" }
     },
     {
       "id": 7,
-      "op_type": "COMMUNICATE",
-      "attributes": { "recipient": "agent_a", "protocol": "acp" },
-      "input_tokens": [105], "output_tokens": [107], "metadata": {}
+      "name": "send_b_proposal_to_a",
+      "op": "COMMUNICATE",
+      "attributes": { "recipient": "agent_a", "protocol": "acp" }
     },
     {
       "id": 8,
-      "op_type": "MERGE",
-      "attributes": {},
-      "input_tokens": [106, 107], "output_tokens": [108], "metadata": {}
+      "name": "merge_critiques",
+      "op": "MERGE",
+      "attributes": { "tokens": ["{{node_6}}", "{{node_7}}"] }
     },
     {
       "id": 9,
-      "op_type": "PRINT",
-      "attributes": {},
-      "input_tokens": [108], "output_tokens": [109], "metadata": {}
+      "name": "print_result",
+      "op": "PRINT",
+      "attributes": { "message": "{{node_8}}" }
     }
   ],
   "edges": [
@@ -73,6 +70,7 @@
     {"from": 7, "to": 8, "dependency": "Data"},
     {"from": 8, "to": 9, "dependency": "Data"}
   ],
-  "entry_nodes": [1, 2, 3],
-  "exit_nodes": [9]
+  "metadata": {
+    "description": "Cross-critique: two agents propose, then critique each other"
+  }
 }

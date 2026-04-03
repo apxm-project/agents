@@ -167,6 +167,21 @@ pub mod registry {
         "# APXM ACP Agent Profiles\n# User overrides — managed by `apxm agent`\n\n";
     /// File name for user agent config.
     pub const AGENTS_FILENAME: &str = "agents.toml";
+
+    /// JSON output keys for `agent list` / `agent templates`.
+    pub mod json_keys {
+        pub const NAME: &str = "name";
+        pub const COMMAND: &str = "command";
+        pub const SOURCE: &str = "source";
+        pub const CLOSE_GRACE_MS: &str = "close_grace_ms";
+        pub const SESSION_CREATE_TIMEOUT_MS: &str = "session_create_timeout_ms";
+    }
+
+    /// Source labels for registered agents.
+    pub mod sources {
+        pub const TEMPLATE: &str = "template";
+        pub const CUSTOM: &str = "custom";
+    }
 }
 
 pub mod permission_modes {
