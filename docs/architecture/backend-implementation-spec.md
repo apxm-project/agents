@@ -1,5 +1,12 @@
 # APXM Backend Unification — Implementation Specification
 
+> **Status: COMPLETED (2026-04-03)**
+>
+> This document is historical. All phases have been implemented and legacy removed.
+> For the current config format, see [`docs/reference/config.md`](../reference/config.md).
+
+---
+
 ## Overview
 
 Unify the current fragmented LLM configuration system (`credentials.toml`, `models.toml`, `config.toml`) into a coherent **Backend → Model → Endpoint** hierarchy with proper CLI support.
