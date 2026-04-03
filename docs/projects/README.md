@@ -47,4 +47,4 @@ AgentMate is the developer-facing Rust + Python SDK. It is to A-PXM what Clang i
 
 - **Theory** (why): [`../pxm/`](../pxm/) — the formal execution model
 - **Implementation** (how): [`../implementation/`](../implementation/) — compiler, runtime, TODOs
-- **Advantages** (value): [`../advantages/`](../advantages/) — optimizations, hypotheses, LLVM parallel
+- **Advantages** (value): [`../advantages/`](../advantages/) — optimizations, LLVM parallel

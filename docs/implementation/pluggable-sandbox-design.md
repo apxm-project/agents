@@ -82,7 +82,7 @@ A critical architectural insight: LLM operations (ASK, THINK, REASON, PLAN, REFL
 ## Crate: `apxm-sandbox`
 
 **Location**: `crates/apxm-sandbox/`
-**Dependencies**: Only `async-trait`, `futures`, `serde`, `thiserror`, `tracing` — no platform deps.
+**Dependencies**: Only `async-trait`, `futures`, `serde`, `serde_json`, `thiserror`, `tracing` — no platform deps.
 
 ### Files
 
@@ -107,7 +107,8 @@ struct ExecRequest {
     timeout: Duration, max_output_bytes: usize,
     read_paths: Vec<PathBuf>, write_paths: Vec<PathBuf>,
     needs_network: bool, needs_process_spawn: bool,
-    origin_op: Option<String>, origin_node_id: Option<u32>,
+    origin_op: Option<String>, origin_node_id: Option<u64>,
+    min_isolation: IsolationLevel,
 }
 
 // ExecResult — what comes back
@@ -175,6 +176,13 @@ Follows the exact same pattern as `LLMRegistry`:
 | **T3: Privileged** | GUARD, CLAIM, RELEASE, RESUME, DELEGATE, SPAWN | `Container` | Multi-agent coordination |
 
 Unknown operations default to T2 (safe by default).
+
+> **Note:** Many ops listed in the tier table (e.g., EXPLAIN, SUMMARIZE, SCORE,
+> RANK, CLASSIFY, EXTRACT, TRANSFORM, SELECT, SPLIT, CRITIQUE, DECIDE, SMEM,
+> AMEM, RMEM, STM_PUT, STM_GET, EMIT, RELEASE) are forward-compatibility
+> entries in `classify_op()` — they do not exist as `AISOperationType` enum
+> variants yet. They are pre-classified so that adding them later does not
+> require updating the sandbox tier logic.
 
 ## Host Integration Examples
 

@@ -38,7 +38,7 @@ a dataflow scheduler that automatically extracts parallelism from dependencies.
 | [Memory Hierarchy](runtime/memory-hierarchy.md) | Three-tier memory (node / agent / global) |
 | [Tasks](runtime/tasks.md) | Task abstraction and grouping |
 | [Multi-Agent](runtime/multi-agent.md) | Agent model, FlowRegistry, FLOW_CALL |
-| Hierarchical AAM *(TODO)* | Nested agent scoping and delegation |
+| Hierarchical AAM *(partial — ScopeRegistry, WorkspaceManager, GoalTree implemented)* | Nested agent scoping and delegation |
 | [Pluggable Sandbox](pluggable-sandbox-design.md) | SandboxBackend trait, IsolationLevel, SecurityManifest |
 | [Host Integration](host-integration-guide.md) | Codex & Gemini integration, AAM deep dive |
 

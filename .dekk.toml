@@ -130,6 +130,6 @@ requires = ["npm"]
 name = "vllm"
 label = "vLLM (graph-aware fork)"
 description = "Graph-aware vLLM server with APXM KV-pinning and priority scheduling"
-run = "git submodule update --init ext/vllm && pip install -e ext/vllm"
+run = "git submodule update --init external/vllm && pip install -e external/vllm"
 default = false
 requires = ["pip"]

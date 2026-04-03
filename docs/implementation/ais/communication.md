@@ -1,205 +1,127 @@
----
-title: "Communication & Error Handling"
-description: "AIS instructions for inter-agent messaging, cross-agent flow invocation, and structured exception handling."
----
+# Communication Operations
 
-# Communication & Error Handling
+These operations handle inter-agent messaging, task distribution, human-in-the-loop suspension, and agent lifecycle. They span multiple categories: **Communication** (COMMUNICATE, CLAIM, PAUSE), **Coordination** (SPAWN_AGENT, DELEGATE, NEGOTIATE, REGISTER_CAPABILITY, AUTONOMOUS).
 
-These operations extend A-PXM beyond single-agent workflows into multi-agent systems and robust error recovery. TRY_CATCH provides structured exception handling within a dataflow graph; COMM and FLOW enable typed communication between agents.
+## COMMUNICATE
 
-## TRY_CATCH -- Exception Handling
+Sends a message to another agent. The input token from upstream edges provides the message content.
 
-Wraps a subgraph in an exception boundary. If any operation within the try subgraph fails, execution transfers to the catch subgraph for recovery.
+| Field | Required | Description |
+|-------|----------|-------------|
+| `recipient` | yes | Target agent name (or URL for http/https protocol) |
+| `protocol` | no | Dispatch mode: `local` (default), `http`, `https`, `acp`, `broadcast` |
 
-**Signature:**
-```
-TRY_CATCH(trySubg: Subgraph, catchSubg: Subgraph) -> Value
-```
+**Latency tier:** Medium.
 
-| Operand | Type | Description |
-|---------|------|-------------|
-| `trySubg` | `Subgraph` | The primary execution subgraph |
-| `catchSubg` | `Subgraph` | The recovery subgraph, executed on failure |
-
-**Semantics:**
-
-1. Execute `trySubg` normally under dataflow scheduling.
-2. If all operations in `trySubg` complete successfully, emit the final token as the result.
-3. If any operation in `trySubg` fails (tool error, LLM timeout, type mismatch), halt remaining operations in `trySubg`.
-4. Pass the error token (containing failure metadata) to `catchSubg`.
-5. Execute `catchSubg` and emit its result.
-
-```mermaid
-graph TD
-    subgraph TRY["Try Subgraph"]
-        T1["INV primary_api"] --> T2["THINK process"]
-    end
-
-    subgraph CATCH["Catch Subgraph"]
-        C1["ASK fallback_prompt"] --> C2["UMEM log_error"]
-    end
-
-    INPUT["Input Token"] --> TRY
-    TRY -->|Success| OUTPUT["Output Token"]
-    TRY -->|Failure| CATCH
-    CATCH --> OUTPUT
-```
-
-**Example:**
-```mlir
-%result = "ais.try_catch"() ({
-  // Try: call the primary API and process results
-  %data = "ais.inv"(%primary_api, %params) : (...) -> !ais.future<!ais.tool_result>
-  %processed = "ais.think"(%process_prompt, %data) : (...) -> !ais.future<!ais.string>
-  "ais.yield"(%processed) : (!ais.future<!ais.string>) -> ()
-}, {
-  ^catch(%error: !ais.error):
-  // Catch: use a fallback strategy
-  %fallback = "ais.ask"(%fallback_prompt, %error) : (...) -> !ais.future<!ais.string>
-  "ais.yield"(%fallback) : (!ais.future<!ais.string>) -> ()
-}) : () -> !ais.value
-```
-
-### Error Scoping
-
-TRY_CATCH scopes are **lexical** within the DAG. An error in a nested TRY_CATCH is handled by the innermost enclosing catch subgraph. If the catch subgraph itself fails, the error propagates to the next outer TRY_CATCH.
-
-### Recovery Patterns
-
-| Pattern | Try Subgraph | Catch Subgraph |
-|---------|-------------|----------------|
-| **Fallback tool** | INV primary_api | INV backup_api |
-| **Graceful degradation** | REASON deep_analysis | ASK simple_summary |
-| **Human escalation** | INV automated_process | COMM human_agent |
-| **Retry with backoff** | INV flaky_api | INV flaky_api (with delay) |
-
-## COMM -- Communicate
-
-Sends a typed message to another agent. COMM is the primitive for multi-agent coordination.
-
-**Signature:**
-```
-COMM(rcpt: AgentID, msg: Message, prot: Protocol) -> Ack
-```
-
-| Operand | Type | Description |
-|---------|------|-------------|
-| `rcpt` | `AgentID` | The recipient agent's identifier |
-| `msg` | `Message` | The typed message payload |
-| `prot` | `Protocol` | Communication protocol (request-reply, fire-and-forget, broadcast) |
-
-**Protocols:**
-
-| Protocol | Semantics | Blocking? |
-|----------|-----------|-----------|
-| `REQUEST_REPLY` | Send message, wait for typed response | Yes -- blocks until reply |
-| `FIRE_FORGET` | Send message, continue immediately | No -- returns Ack |
-| `BROADCAST` | Send to all registered agents | No -- returns Ack |
-
-**Example:**
-```mlir
-%ack = "ais.comm"(%research_agent, %findings_msg, %request_reply) : (
-  !ais.agent_id, !ais.message, !ais.protocol
-) -> !ais.ack
-```
-
-## FLOW -- Cross-Agent Flow Invocation
-
-Invokes a named flow on a remote agent and returns a future handle to the result. FLOW is the cross-agent equivalent of a function call.
-
-**Signature:**
-```
-FLOW(agent: AgentID, flow: FlowName, args: Args) -> Future<Value>
-```
-
-| Operand | Type | Description |
-|---------|------|-------------|
-| `agent` | `AgentID` | The target agent |
-| `flow` | `FlowName` | The name of the flow to invoke |
-| `args` | `Args` | Typed arguments matching the flow's input signature |
-
-**Semantics:** FLOW dispatches work to another agent's dataflow scheduler and returns immediately with a `Future<Value>`. The calling agent can continue executing independent operations while the remote flow runs. When the future resolves, downstream tasks that depend on it become eligible to fire.
-
-```mermaid
-sequenceDiagram
-    participant A as Agent A
-    participant Sched as Scheduler
-    participant B as Agent B
-
-    A->>Sched: FLOW(B, "analyze", args)
-    Sched->>B: Dispatch flow "analyze"
-    Note over A: Continues independent work
-    B->>B: Execute flow DAG
-    B-->>Sched: Return result
-    Sched-->>A: Resolve Future<Value>
-    Note over A: Dependent tasks now fire
-```
-
-**Example:**
-```mlir
-%analysis = "ais.flow"(%analyst_agent, %analyze_flow, %report_data) : (
-  !ais.agent_id, !ais.flow_name, !ais.args
-) -> !ais.future<!ais.value>
-
-// Independent work continues in parallel
-%summary = "ais.ask"(%quick_summary_prompt, %ctx) : (...) -> !ais.future<!ais.string>
-
-// Synchronize when both are needed
-%combined = "ais.wait_all"(%analysis, %summary) : (...) -> !ais.tuple<...>
-```
-
-## Multi-Agent Topology
-
-COMM and FLOW enable various multi-agent topologies:
-
-```mermaid
-graph TD
-    subgraph Hierarchical["Hierarchical"]
-        H_COORD["Coordinator"] --> H_A["Worker A"]
-        H_COORD --> H_B["Worker B"]
-        H_COORD --> H_C["Worker C"]
-    end
-
-    subgraph Pipeline["Pipeline"]
-        P_A["Researcher"] --> P_B["Analyst"] --> P_C["Writer"]
-    end
-
-    subgraph Mesh["Mesh"]
-        M_A["Agent A"] <--> M_B["Agent B"]
-        M_B <--> M_C["Agent C"]
-        M_A <--> M_C
-    end
-```
-
-All topologies use the same primitives (COMM, FLOW) with the dataflow scheduler automatically managing parallelism across agents. In evaluation, multi-agent workloads achieve up to **10.37x latency reduction** compared to sequential inter-agent communication.
-
-## ACP Protocol (`protocol: "acp"`)
-
-The `acp` protocol enables communication with external ACP agent subprocesses
-that were spawned via `SPAWN_AGENT` with a `profile` attribute.
-
-### Workflow
+**Protocol dispatch:**
+- `local` -- in-process sub-flow invocation (default).
+- `http` / `https` -- external APXM agent over HTTP.
+- `acp` -- ACP subprocess via ProcessTable. The recipient must have been spawned with SPAWN_AGENT + `profile`.
+- `broadcast` -- fan-out to all registered agents.
 
 ```json
-{
-  "nodes": [
-    {"id": 1, "op": "SPAWN_AGENT", "attributes": {"agent_name": "reviewer", "profile": "claude"}},
-    {"id": 2, "op": "COMMUNICATE", "attributes": {"recipient": "reviewer", "protocol": "acp"}}
-  ],
-  "edges": [{"from": 1, "to": 2, "dependency": "Control"}]
-}
+{"id": 3, "op": "COMMUNICATE", "attributes": {"recipient": "reviewer", "protocol": "acp"}}
 ```
 
-### Dispatch
+Multiple COMMUNICATE nodes targeting the same ACP agent reuse the same session, maintaining conversation context across turns.
 
-When `protocol` is `"acp"`, COMMUNICATE:
+## CLAIM
 
-1. Looks up the recipient in the `ProcessTable` (not FlowRegistry)
-2. Extracts the live `AcpSession` from the process entry
-3. Sends the input message as a `session/prompt` request
-4. Returns the agent's response as a structured `Value::Object`
+Atomically claims a task from a distributed work queue managed by the APXM server.
 
-### Multi-turn
+| Field | Required | Description |
+|-------|----------|-------------|
+| `queue` | yes | Queue name to claim from |
+| `lease_ms` | no | Lease duration in ms (default: 60000) |
+| `max_wait_ms` | no | Max time to wait for a task (default: 5000) |
+| `server_url` | no | Override `APXM_SERVER_URL` env var |
 
-Multiple COMMUNICATE nodes can target the same ACP agent. Each reuses the
-same session, maintaining conversation context across turns.
+**Latency tier:** Low. **Category:** Communication.
+
+```json
+{"id": 2, "op": "CLAIM", "attributes": {"queue": "review_tasks", "lease_ms": 30000}}
+```
+
+## PAUSE
+
+Creates a checkpoint and suspends execution until a human resumes it via the APXM server API.
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `message` | yes | Human-readable message explaining the pause |
+| `checkpoint_id` | no | Stable checkpoint ID (auto-generated if omitted) |
+| `timeout_ms` | no | Max wait in ms (0 = indefinite, default: 0) |
+| `poll_interval_ms` | no | Polling interval in ms (default: 2000) |
+| `notification_url` | no | Webhook URL to notify on pause creation |
+| `server_url` | no | Override `APXM_SERVER_URL` env var |
+
+**Latency tier:** High (human-dependent). **Category:** Communication.
+
+```json
+{"id": 5, "op": "PAUSE", "attributes": {"message": "Please review the analysis before proceeding"}}
+```
+
+## SPAWN_AGENT
+
+Creates a new agent instance at runtime. Without `profile`, registers a local process for flow-based agents. With `profile`, spawns a real ACP subprocess (Claude, Codex, Gemini, etc.) via the AgentSpawner.
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `agent_name` | yes | Name for the new agent |
+| `profile` | no | ACP agent profile (e.g. `claude`, `codex`). Spawns ACP subprocess when present |
+| `mode` | no | Agent mode (e.g. `architect`, `code`) |
+| `model` | no | Model override (e.g. `claude-sonnet-4`) |
+| `cwd` | no | Working directory for the subprocess |
+| `capabilities` | no | List of capabilities for the new agent |
+| `goals` | no | Initial goals for the new agent |
+
+**Latency tier:** Variable. **Category:** Coordination.
+
+```json
+{"id": 1, "op": "SPAWN_AGENT", "attributes": {"agent_name": "reviewer", "profile": "claude", "mode": "architect"}}
+```
+
+## DELEGATE
+
+Delegates a task to a sub-agent for execution. Returns a task handle.
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `task_spec` | yes | Description of the task to delegate |
+| `target_agent` | yes | Name of the agent to delegate to |
+
+**Latency tier:** Variable. **Category:** Coordination.
+
+## NEGOTIATE
+
+Multi-party negotiation protocol among a set of agents. Circulates a proposal for configurable rounds and returns the consensus result.
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `parties` | yes | List of agent names participating |
+| `proposal` | yes | The proposal to negotiate on |
+| `max_rounds` | no | Maximum negotiation rounds (default: 3) |
+
+**Latency tier:** Variable. **Category:** Coordination.
+
+## REGISTER_CAPABILITY
+
+Dynamically registers a new capability in the runtime's CapabilityRegistry, making it available for INV operations.
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `capability_name` | yes | Name for the capability |
+| `description` | no | Human-readable description |
+| `parameters_schema` | no | JSON schema for capability parameters |
+
+**Latency tier:** Low. **Category:** Coordination.
+
+## AUTONOMOUS
+
+Switches a sub-graph region to model-driven (unstructured) execution. Currently a stub that passes through input unchanged.
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `region` | no | Name of the autonomous execution region |
+
+**Latency tier:** Variable. **Category:** Coordination.

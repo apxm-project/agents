@@ -32,7 +32,7 @@ These run during `apxm compile` and transform the AIS graph before execution.
 
 **Impact**: Eliminates redundant LLM calls. If two parts of a workflow ask the same question with the same context, only one call is made.
 
-**Limitation**: Treats LLM calls as pure (same prompt → same result). Sound at temperature=0. A `--no-cse-llm` flag to disable CSE for non-zero temperature workflows is planned but not yet wired into the CLI (see compiler TODO).
+**Limitation**: Treats LLM calls as pure (same prompt → same result). Sound at temperature=0. The `--no-cse-llm` flag disables CSE for non-zero temperature workflows.
 
 ### 1.3 Dead Code Elimination (DCE) — IMPLEMENTED
 
@@ -78,9 +78,9 @@ These run during `apxm compile` and transform the AIS graph before execution.
 
 ---
 
-### PLANNED: Compile-Time Optimizations
+### Additional Compile-Time Optimizations
 
-### 1.8 Template Specialization / Partial Evaluation
+### 1.8 Template Specialization / Partial Evaluation — IMPLEMENTED (O2+)
 
 **What**: When parts of a prompt template are known at compile time (graph parameters with defaults, CONST_STR values), pre-render them. This is constant folding for prompts.
 
@@ -104,7 +104,7 @@ These run during `apxm compile` and transform the AIS graph before execution.
 
 **Difficulty**: Medium. Requires prefix extraction analysis and runtime support per backend.
 
-### 1.10 Dead Context Elimination
+### 1.10 Dead Context Elimination — IMPLEMENTED (O2+)
 
 **What**: Remove context entries from a prompt that downstream nodes never consume. If ASK-A produces a JSON object with 10 fields, but ASK-B only uses 2, the compiler can instruct the runtime to extract only those 2 fields before passing them downstream.
 
@@ -116,7 +116,7 @@ These run during `apxm compile` and transform the AIS graph before execution.
 
 **Difficulty**: Hard. Requires output schema analysis and template variable tracking.
 
-### 1.11 Output Schema Narrowing
+### 1.11 Output Schema Narrowing — IMPLEMENTED (O2+)
 
 **What**: When a REASON node produces structured JSON output, narrow the output schema to include only fields consumed by downstream nodes.
 
@@ -258,7 +258,7 @@ These improve performance across multiple executions.
 
 **Difficulty**: Medium. Metrics collection is easy; using them to guide passes requires pass-specific integration.
 
-### 3.2 Capability Condensation — PLANNED
+### 3.2 Capability Condensation — IMPLEMENTED (O2+)
 
 **What**: Replace a sub-DAG with a single capability invocation when a provider ships that functionality. If a workflow has `QMEM → ASK → UMEM` (read context, ask LLM, save result) and a provider offers a "stateful chat" API that does all three, condense the sub-DAG into a single INV node.
 
@@ -323,10 +323,10 @@ These improve performance across multiple executions.
 | **Normalize** | Compiler | Implemented | Low | Low | IR canonicalization |
 | **BuildPrompt** | Compiler | Implemented | Low | Low | — (domain-specific) |
 | **Scheduling** | Compiler | Implemented | None | Moderate | Instruction scheduling |
-| Template Specialization | Compiler | Planned | Low | Low | Constant prop/folding |
+| Template Specialization | Compiler | Implemented (O2+) | Low | Low | Constant prop/folding |
 | Prompt Caching | Compiler | Planned | **Very High** | Low | Shared libraries |
-| Dead Context Elim | Compiler | Planned | High | Moderate | Dead store elim |
-| Output Schema Narrow | Compiler | Planned | Moderate | Moderate | SROA |
+| Dead Context Elim | Compiler | Implemented (O2+) | High | Moderate | Dead store elim |
+| Output Schema Narrow | Compiler | Implemented (O2+) | Moderate | Moderate | SROA |
 | Conditional Hoisting | Compiler | Planned | Moderate | High | LICM |
 | Batch Inference | Compiler | Planned | Low | High | Vectorization |
 | Speculative Exec | Compiler | Planned | None | High | Branch prediction |
@@ -337,7 +337,7 @@ These improve performance across multiple executions.
 | Memory Tiers | Runtime | Partial | None | Low | Cache hierarchy |
 | Streaming + Cancel | Runtime | Gap (P0) | Moderate | High | Short-circuit eval |
 | PGO | Cross-run | Planned | Variable | Variable | PGO |
-| Condensation | Cross-run | Planned | High | High | Library call recognition |
+| Condensation | Cross-run | Implemented (O2+) | High | High | Library call recognition |
 | Learned Templates | Cross-run | Future | Low | Low | Auto-tuning |
 | Token Accounting | Cost | Planned | Indirect | None | Cost model |
 | Quality-Aware Fusion | Cost | Planned | Variable | Variable | Inlining heuristics |

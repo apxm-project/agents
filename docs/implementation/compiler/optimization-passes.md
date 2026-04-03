@@ -5,153 +5,138 @@ description: "Compiler optimization passes that reduce latency, eliminate redund
 
 # Optimization Passes
 
-The A-PXM compiler runs a sequence of optimization passes over the AIS MLIR representation. Each pass transforms the dataflow graph to reduce latency, eliminate redundant operations, or normalize patterns for more efficient execution.
+The A-PXM compiler runs a configurable sequence of optimization passes over the AIS MLIR representation. Passes are grouped below by category. The pipeline source of truth is `crates/apxm-compiler/src/passes/pipeline.rs`.
 
-> For the full catalog of implemented and planned optimizations with LLVM analogues, see [advantages/optimizations.md](../../advantages/optimizations.md).
+## AIS-Specific Passes
 
-## FuseAskOps
+### normalize
 
-**Category:** Domain-specific
-**Improvement:** 1.29x fewer API round-trips
+**Levels:** O1, O2, O3
 
-FuseAskOps identifies producer-consumer chains of ASK operations where the output of one ASK feeds directly into the prompt of the next. Rather than making two sequential API calls, the pass fuses them into a single call with a combined prompt.
+Normalizes graph structure into canonical form. Ensures consistent node ordering, resolves implicit attributes, and standardizes edge representations so that downstream passes operate on a uniform IR.
 
-### Before Fusion
+### build-prompt
 
-```mermaid
-graph LR
-    A["ASK\n'Extract entities'"] --> B["ASK\n'Classify entities'"]
-```
+**Levels:** O1, O2, O3
 
-Two API calls, sequential. Total latency: ~2s.
+Assembles prompt templates for ASK and THINK operations from their constituent parts (system instructions, context references, user templates). Resolves template interpolation so later passes see fully-formed prompt strings.
 
-### After Fusion
+### fuse-ask-ops
 
-```mermaid
-graph LR
-    AB["ASK (fused)\n'Extract and classify entities'"]
-```
+**Levels:** O1, O2, O3
 
-One API call. Total latency: ~1s. The fused prompt instructs the model to perform both tasks in a single inference pass.
+Identifies producer-consumer chains of ASK operations where one ASK's output feeds directly into the next ASK's prompt. Fuses them into a single combined call, reducing API round-trips. The pass is conservative: it will not fuse across TRY_CATCH boundaries, across FENCE barriers, or when the intermediate result has multiple consumers.
 
-### Applicability Conditions
+### condense-ops
 
-FuseAskOps fires when:
+**Levels:** O2, O3
 
-1. Operation A produces a `String` output consumed only by operation B
-2. Both A and B are ASK operations (same latency tier)
-3. B's prompt is a template that interpolates A's output
-4. No side effects between A and B (no UMEM, INV, or COMM)
+Condenses consecutive QMEM/UMEM operations targeting the same memory space into batched single-node operations, reducing the number of memory-access round-trips.
 
-The pass is conservative: it will not fuse operations across TRY_CATCH boundaries, across FENCE barriers, or when the intermediate result is consumed by multiple downstream operations.
+### scheduling
 
-## CSE -- Common Subexpression Elimination
+**Levels:** O1, O2, O3
 
-**Category:** Classical
-**Improvement:** Variable (depends on workflow redundancy)
+Analyzes data dependencies to determine which operations can execute in parallel. Inserts synchronization points and computes the critical path for the runtime scheduler.
 
-CSE identifies operations with identical opcodes and identical input tokens, replacing duplicates with a single operation whose output is shared.
+## Analysis Passes
 
-### Example
+### unconsumed-value-warning
 
-```
-%a = ais.ask(%prompt_1, %ctx)
-%b = ais.ask(%prompt_1, %ctx)   // identical to %a
-%c = ais.think(%combine, %a, %b)
-```
+**Levels:** O1, O2, O3
 
-After CSE:
+Emits warnings for operations whose output values are never consumed by any downstream operation. This helps authors identify dead branches or missing connections in their workflows.
 
-```
-%a = ais.ask(%prompt_1, %ctx)
-%c = ais.think(%combine, %a, %a)   // %b eliminated
-```
+## Standard MLIR Passes
 
-This eliminates a redundant LLM call, saving both latency and API cost.
+### canonicalizer
 
-### Limitations
+**Levels:** O1, O2, O3
 
-CSE treats LLM operations as **pure** for deduplication purposes (same prompt + same context = same result). This is a sound approximation when temperature is 0. A `--no-cse-llm` flag to disable CSE for non-zero temperature workflows is planned but not yet wired into the CLI (see compiler TODO).
+MLIR's built-in canonicalization pass. Rewrites operations into standard forms (e.g., normalizing branch conditions, collapsing single-input MERGE/WAIT_ALL into direct edges, removing empty TRY_CATCH wrappers). Enables further optimization by reducing the pattern space.
 
-## Dead-Code Elimination (DCE)
+### cse
 
-**Category:** Classical
-**Improvement:** Reduces graph size, eliminates wasted computation
+**Levels:** O1, O2, O3 (skipped when `--no-cse-llm` is set)
 
-DCE removes operations whose output tokens are never consumed by any downstream operation. This occurs when:
+Common Subexpression Elimination. Identifies operations with identical opcodes and identical inputs, replacing duplicates with a single operation whose output is shared. For LLM operations, this treats same-prompt + same-context as equivalent (sound at temperature 0). Use `--no-cse-llm` to disable CSE for non-deterministic workflows.
 
-- A developer declares operations that are no longer connected to the output
-- Optimization passes (like CSE) make previously-needed operations redundant
-- Conditional branches render certain subgraphs unreachable
+### symbol-dce
 
-### Example
+**Levels:** O1, O2, O3
 
-```mermaid
-graph TD
-    A["REASON\n(analyze)"] --> B["THINK\n(summarize)"]
-    A --> C["ASK\n(classify)"]
-    B --> D["OUTPUT"]
-    C -.->|"output unused"| DEAD["(eliminated)"]
+Symbol Dead Code Elimination. Removes unused symbol definitions (functions, globals) from the module. Runs last in the pipeline to clean up anything made dead by prior passes.
 
-    style DEAD fill:#fca5a5,stroke-dasharray: 5 5
-```
+## O2-Only Passes
 
-If no downstream operation consumes the output of ASK (classify), DCE removes it entirely, saving an API call.
+These passes are added at O2 and above, providing deeper optimization beyond the O1 baseline.
 
-## Canonicalization
+### template-specialization
 
-**Category:** Normalization
-**Improvement:** Enables downstream passes, reduces pattern space
+**Levels:** O2, O3
 
-Canonicalization rewrites operations into standard forms:
+Specializes generic prompt templates for specific operation contexts, producing tighter prompts that reduce token usage and improve model focus.
 
-| Pattern | Canonical Form | Rationale |
-|---------|---------------|-----------|
-| `BRANCH(tok, true, A, B)` | `BRANCH(tok, true, A, B)` | Already canonical |
-| `BRANCH(tok, false, A, B)` | `BRANCH(tok, true, B, A)` | Normalize to true-branch |
-| `WAIT_ALL([single_token])` | Direct edge | Unnecessary sync point |
-| `MERGE([single_input])` | Direct edge | Unnecessary merge point |
-| Nested `TRY_CATCH` with empty catch | Remove `TRY_CATCH` wrapper | No recovery logic |
+### schema-narrowing
 
-## Pass Pipeline
+**Levels:** O2, O3
 
-The default optimization pipeline runs passes in this order:
+Narrows parameter schemas to their tightest valid types based on data-flow analysis. Reduces the surface area for runtime type-checking and enables the model to produce more constrained outputs.
 
-```mermaid
-graph TD
-    C["Canonicalization"] --> CSE["CSE"]
-    CSE --> FUSE["FuseAskOps"]
-    FUSE --> DCE["Dead-Code Elimination"]
-    DCE --> C2["Canonicalization (final)"]
-    C2 --> VERIFY["Verification"]
-```
+### dead-context-elimination
 
-The pipeline iterates until convergence (no pass makes changes) or a maximum iteration count is reached. The final verification pass ensures the optimized graph is still well-typed and structurally valid.
+**Levels:** O2, O3
 
-## Future Passes
+Removes context values that are threaded through the graph but never actually read. Unlike symbol-dce (which operates on top-level symbols), this targets intermediate context bindings within workflows.
 
-| Pass | Description | Expected Impact |
-|------|-------------|----------------|
-| **Prompt caching** | Detect shared prompt prefixes across operations and cache them | Reduced token cost |
-| **Memoization** | Cache results of deterministic operations across runs | Latency elimination for repeated queries |
-| **Quality-aware fusion** | Fuse operations only when quality metrics remain above threshold | Better accuracy-latency tradeoff |
-| **Speculative execution** | Pre-execute likely branches while waiting for discriminant | Reduced conditional latency |
-| **Token compression** | Compress large intermediate tokens before transport | Reduced memory pressure |
+## Graph-Level Passes
+
+These passes operate on the `ApxmGraph` representation *before* MLIR lowering (at O2 and above). They annotate graph nodes with hint attributes that are then visible in the generated MLIR.
+
+### prompt_caching
+
+**Levels:** O2, O3 (pre-MLIR)
+
+Detects shared prompt prefixes across ASK/THINK operations and marks them for caching, reducing redundant token processing at runtime.
+
+### memoization_hints
+
+**Levels:** O2, O3 (pre-MLIR)
+
+Identifies deterministic operations (side-effect-free, fixed inputs) and annotates them for cross-run result caching. The runtime can skip re-execution when a cache hit occurs.
+
+## Pipeline Composition
+
+The pass ordering for each optimization level is defined in `build_pass_list()`:
+
+| Level | Pass sequence |
+|-------|---------------|
+| **O0** | *(none)* |
+| **O1** | `normalize`, `build-prompt`, `unconsumed-value-warning`, `scheduling`, `fuse-ask-ops`, `canonicalizer`, `cse`\*, `symbol-dce` |
+| **O2** | `normalize`, `build-prompt`, `template-specialization`, `unconsumed-value-warning`, `schema-narrowing`, `scheduling`, `fuse-ask-ops`, `condense-ops`, `dead-context-elimination`, `canonicalizer`, `cse`\*, `symbol-dce` |
+| **O3** | Preamble: `normalize`, `build-prompt`, `unconsumed-value-warning`. Then 10 convergence iterations of: `template-specialization`, `schema-narrowing`, `scheduling`, `fuse-ask-ops`, `condense-ops`, `dead-context-elimination`, `canonicalizer`, `cse`\*, `symbol-dce` |
+
+\* Skipped when `--no-cse-llm` is set.
+
+At O2 and above, graph-level passes (`prompt_caching`, `memoization_hints`) run before the MLIR pipeline begins.
 
 ## Configuration
 
-Passes can be individually enabled, disabled, or configured:
-
 ```bash
-# Run all default passes
+# Standard optimization (O2 is the default)
 apxm compile workflow.json -O2 -o workflow.apxmobj
 
-# Compile with minimal optimization baseline
+# No optimization
 apxm compile workflow.json -O0 -o workflow.apxmobj
 
-# Capture diagnostics for pass-level analysis
-apxm compile workflow.json -O3 -o workflow.apxmobj --emit-diagnostics compile_diagnostics.json
+# Skip CSE for non-deterministic workflows
+apxm compile workflow.json --no-cse-llm -o workflow.apxmobj
+
+# Per-pass timing diagnostics
+apxm compile workflow.json --emit-diagnostics diag.json
 ```
+
+The `--emit-diagnostics` flag produces a JSON report with per-pass metrics: name, duration, ops before/after, and ops delta.
 
 ---
 
@@ -159,8 +144,4 @@ apxm compile workflow.json -O3 -o workflow.apxmobj --emit-diagnostics compile_di
 
 1. C. Lattner et al., "MLIR: Scaling Compiler Infrastructure for Domain Specific Computation," in *Proc. CGO '21*, IEEE, 2021. DOI: [10.1109/CGO51591.2021.9370308](https://doi.org/10.1109/CGO51591.2021.9370308)
 
-2. R. Cytron et al., "Efficiently Computing Static Single Assignment Form and the Control Dependence Graph," *ACM TOPLAS*, vol. 13, no. 4, pp. 451–490, 1991. DOI: [10.1145/115372.115320](https://doi.org/10.1145/115372.115320)
-
-3. J. Cocke, "Global Common Subexpression Elimination," in *Proc. Symposium on Compiler Optimization*, ACM, 1970. DOI: [10.1145/800028.808480](https://doi.org/10.1145/800028.808480)
-
-4. F. E. Allen, "Control Flow Analysis," in *Proc. Symposium on Compiler Optimization*, ACM, 1970. DOI: [10.1145/800028.808479](https://doi.org/10.1145/800028.808479)
+2. J. Cocke, "Global Common Subexpression Elimination," in *Proc. Symposium on Compiler Optimization*, ACM, 1970. DOI: [10.1145/800028.808480](https://doi.org/10.1145/800028.808480)

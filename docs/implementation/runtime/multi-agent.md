@@ -15,8 +15,8 @@ This page covers runtime-specific implementation details.
 Artifact loading reconstructs runtime agents and registers them through
 `FlowRegistry::register_agent()`, which stores:
 
-- `agents: agent_name -> Agent`
-- `flows: (agent_name, flow_name) -> ExecutionDag` (legacy lookup path for `FLOW`)
+- `agents: DashMap<String, Arc<Agent>>`
+- `flows: DashMap<(String, String), Arc<ExecutionDag>>` (legacy lookup path for `FLOW`)
 
 ## Performance
 
@@ -67,6 +67,16 @@ Agent A and Agent B execute fully in parallel. Agent C blocks only on the two
 When an agent fails:
 
 1. The runtime cancels all in-flight operations owned by that agent.
-2. An `AgentError` token is propagated along every outgoing `COMM`/`FLOW` edge.
-3. Receiving agents can handle the error via `BRANCH` on the error token or let
-   it propagate upward.
+2. The error propagates as a standard `RuntimeError` through the scheduler.
+   There is no special `AgentError` token type -- errors surface through the
+   normal `OpState.last_error` / `first_error` mechanism in `SchedulerState`.
+3. Receiving agents that depend on the failed agent's outputs will not fire
+   (their input tokens remain unresolved).
+
+## Process Management
+
+Multi-agent execution is tracked via `ProcessTable` and `AgentProcess` (see
+`crates/apxm-runtime/src/process_table.rs` and `process.rs`). Each spawned agent
+gets a `ProcessId` (UUID v7), optional parent process link, and is indexed by
+name for lookup. The `ProcessTable` enforces `max_processes` and
+`max_spawn_depth` limits.

@@ -50,11 +50,11 @@ X-Custom-Gateway-Key = "env:KEY"
 
 | Protocol | For | Default endpoint |
 |----------|-----|------------------|
-| `anthropic` | Claude models | `https://api.anthropic.com` |
-| `openai` | GPT + OpenAI-compatible | `https://api.openai.com/v1` |
-| `google` | Gemini models | Google AI endpoints |
+| `anthropic` | Claude models | None (must specify or use `env:` var) |
+| `openai` | GPT + OpenAI-compatible | None (must specify or use `env:` var) |
+| `google` | Gemini models | None (must specify or use `env:` var) |
 | `ollama` | Local Ollama | `http://localhost:11434` |
-| `vllm` | vLLM (+ APXM graph hints) | None (must specify) |
+| `vllm` | vLLM (+ APXM graph hints) | `http://localhost:8000` |
 
 ### Example: Cloud Backend
 
@@ -252,11 +252,11 @@ fallbacks = ["local-gpu"]
 
 ### Routing Resolution Order
 
-1. Explicit request (request specifies backend/model)
-2. Operation route (`[chat.routing.operation_routes]`)
-3. Model alias resolution (`[chat.routing.model_aliases]`)
-4. `chat.default_model`
-5. `chat.default_backend`
+1. Explicit backend selection (request specifies backend/model directly)
+2. Model-based routing (model alias resolution via `[chat.routing.model_aliases]`)
+3. Operation-specific default (`[chat.routing.operation_routes]`)
+4. Global default backend (`chat.default_backend` / `chat.default_model`)
+5. Strategy-based selection (`FirstHealthy` / `RoundRobin` / `LowLatency`)
 6. Fallback chain (if primary is unhealthy)
 
 ---
@@ -299,7 +299,7 @@ blocked_commands = ["rm -rf", "sudo", "su "]
 enabled = true
 max_file_size = 1048576                   # 1MB
 max_default_lines = 200
-base_directory = "/home/user/project"
+working_directory = "/home/user/project"
 allowed_extensions = ["rs", "py", "js", "toml", "md", "txt"]
 blocked_paths = [".env", "credentials", ".git/config"]
 # allowed_paths = ["/repo"]              # Whitelist mode
@@ -311,7 +311,7 @@ blocked_paths = [".env", "credentials", ".git/config"]
 [tools.write]
 enabled = true
 max_file_size = 1048576
-base_directory = "/home/user/project"
+working_directory = "/home/user/project"
 create_directories = true
 overwrite_existing = true
 blocked_extensions = ["exe", "sh", "bat", "ps1", "dll", "so"]
@@ -333,6 +333,8 @@ blocked_queries = ["illegal"]
 ```
 
 ### Presets
+
+> **Note:** Preset names (like `bash_safe`, `read_source`, etc.) are just config section names with no built-in behavior. They serve as organizational conventions — the user must fill in the actual configuration values (timeouts, blocked commands, allowed paths, etc.) for each preset.
 
 Use preset names for common security profiles:
 
@@ -367,7 +369,7 @@ enabled = true
 
 ```bash
 apxm backend list                  # List all backends
-apxm backend add <name>            # Add backend (interactive)
+apxm backend add <name>            # Add backend (flags: --type, --protocol, --endpoint, --api-key)
 apxm backend remove <name>         # Remove backend
 apxm backend test [name]           # Test connectivity
 apxm backend migrate               # Import from legacy credentials.toml

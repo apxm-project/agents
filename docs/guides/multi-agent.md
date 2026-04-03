@@ -20,7 +20,7 @@ Register at least one LLM backend for APXM's own nodes, then verify that agents 
 
 ```bash
 # Register an LLM backend for ASK/THINK/REASON nodes
-apxm llm add my-openai --provider openai --api-key sk-...
+apxm backend add my-openai --type cloud --protocol openai --api-key sk-...
 
 # List available agents
 apxm agent list
@@ -152,8 +152,7 @@ The `INV` operation with `capability: "acp"` handles agent lifecycle automatical
       "name": "compare",
       "op": "ASK",
       "attributes": {
-        "template_str": "Compare these answers:\nCodex: {0}\nClaude: {1}\nWhich is better and why?",
-        "model_policy": "fast"
+        "template_str": "Compare these answers:\nCodex: {0}\nClaude: {1}\nWhich is better and why?"
       }
     }
   ],
@@ -471,6 +470,5 @@ apxm execute workflow.json --emit-metrics metrics.json
 
 - Browse the example graphs: `examples/acp-agents/`
 - See all AIS operations: `apxm ops list`
-- Full CLI reference for `apxm agent`, `apxm llm`, `apxm tool`: [CLI Reference](cli-reference.md)
-- Learn single-agent patterns: [Common Patterns](common-patterns.md)
+- Full CLI reference: run `apxm --help`
 - Build your first graph: [First Graph](first-graph.md)

@@ -96,9 +96,9 @@ An append-only execution trace that records every operation the agent has perfor
 
 **Access pattern**: append-only writes, sequential reads during reflection.
 
-### Tier 4: External World
+### Tier 4: External World (Conceptual)
 
-Beyond the agent's own memory lies the external world: RAG systems for retrieval-augmented generation, tool APIs for actions, and human-in-the-loop interfaces for escalation. These are accessed through typed AIS instructions (INV, COMM) rather than direct memory operations.
+Beyond the agent's own memory lies the external world: RAG systems for retrieval-augmented generation, tool APIs for actions, and human-in-the-loop interfaces for escalation. These are accessed through typed AIS instructions (INV, COMM) rather than direct memory operations. Note: this tier is conceptual -- it is not an actual memory tier in the runtime implementation, but a framing for how external data sources relate to the memory hierarchy.
 
 ## Concurrency Model
 
@@ -106,7 +106,7 @@ Each memory tier has an **independent lock**, allowing concurrent access across 
 
 | Tier | Lock Granularity | Consistency |
 |------|-----------------|-------------|
-| STM | Per-key | Eventual (within agent) |
+| STM | Whole-store RwLock | Eventual (within agent) |
 | LTM | Per-table | Transactional (SQLite) |
 | Episodic | Append-only (no conflicts) | Sequential |
 
@@ -133,10 +133,10 @@ This file-tree-backed approach means an agent's entire state is inspectable with
 The current runtime uses flat in-memory structures:
 
 - **Beliefs**: `HashMap<String, TypedValue>` -- a single global key-value store
-- **Goals**: `PriorityQueue<Goal>` -- a flat priority queue with no hierarchy
+- **Goals**: `GoalTree` -- a priority queue with parent-child hierarchy (GoalTree is now implemented)
 - **Capabilities**: `HashMap<String, Signature>` -- a flat registry of available tools
 
-The vision is **hierarchical, scoped state**: each workflow or task gets its own AAM scope that inherits from its parent, mirroring how function calls create stack frames. A task's beliefs include its parent's beliefs unless explicitly shadowed.
+The vision is **hierarchical, scoped state**: each workflow or task gets its own AAM scope that inherits from its parent, mirroring how function calls create stack frames. A task's beliefs include its parent's beliefs unless explicitly shadowed. Scoped state is partially implemented: `ScopeSpec`, `ScopePolicy` (Inherit, Isolate, Snapshot, Filter), and `read_scoped`/`write_scoped` exist, but full hierarchical composition is still in progress.
 
 ### Why This Matters for Debugging
 

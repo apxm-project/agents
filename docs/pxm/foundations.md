@@ -182,7 +182,7 @@ A-PXM provides a **three-tier memory hierarchy** matching how agents use context
 
 | Tier | Purpose | Backing | Access | Analogy |
 |------|---------|---------|--------|---------|
-| **STM** | Working memory (current session) | In-memory DashMap | ~us | L1 cache |
+| **STM** | Working memory (current session) | In-memory key-value store | ~us | L1 cache |
 | **LTM** | Persistent knowledge | SQLite + FTS5 + vectors | ~ms | Main memory |
 | **Episodic** | Execution history (for reflection) | Append-only log | ~ms | Disk archive |
 

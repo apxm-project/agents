@@ -93,18 +93,18 @@ Before running programs, register at least one LLM provider:
 
 ```bash
 # OpenAI
-apxm llm add my-openai --provider openai --api-key sk-...
+apxm backend add my-openai --type cloud --protocol openai --api-key sk-...
 
 # Anthropic
-apxm llm add my-anthropic --provider anthropic --api-key sk-ant-...
+apxm backend add my-anthropic --type cloud --protocol anthropic --api-key sk-ant-...
 
 # Ollama (local, no API key)
-apxm llm add local --provider ollama
+apxm backend add local --type cloud --protocol ollama
 ```
 
-Verify: `apxm llm test`
+Verify: `apxm backend test`
 
-See [LLM Backends](llm-backends.md) for full provider documentation, enterprise gateways, and security details.
+See [LLM Backends](llm-backends.md) for backend configuration, enterprise gateways, and security details.
 
 ---
 
@@ -263,7 +263,7 @@ For deeper understanding, see [PXM Foundations](../pxm/foundations.md).
 
 ## Next Steps
 
-1. **Explore examples** — `examples/hello.ais`, `examples/apxm_council.ais`, `examples/multi_flow.ais`
-2. **CLI reference** — [CLI Reference](cli-reference.md) for all commands and options
-3. **LLM backends** — [LLM Backends](llm-backends.md) for provider setup
+1. **Explore examples** — `examples/basics/hello.ais`, `examples/multi-agent/apxm_council.ais`, `examples/multi-agent/multi_flow.ais`
+2. **CLI reference** — Run `apxm --help` for all commands and options
+3. **LLM backends** — [LLM Backends](llm-backends.md) for backend setup
 4. **Architecture** — [Architecture](../implementation/architecture.md) for system design

@@ -12,7 +12,7 @@ BACKEND  ── where inference physically runs
         └── ENDPOINT  ── how to reach it (protocol + URL + auth)
 ```
 
-A single `~/.apxm/config.toml` is the only source of truth. There are no parallel systems, no `credentials.toml`, no `[[llm_backends]]`. Just `[[backends]]`.
+A single `~/.apxm/config.toml` is the only source of truth.
 
 ---
 
@@ -56,7 +56,7 @@ Enterprise-managed endpoints. Fixed allocation or internal billing. You have an 
 |----------|-------|
 | Lifecycle | Managed by IT/infra |
 | Cost | Internal billing |
-| APXM Graph Hints | ✅ if running APXM-patched vLLM |
+| APXM Graph Hints | ✅ only if `protocol = "vllm"` |
 | Setup | API key + custom headers |
 
 **Examples:** enterprise LLM gateway, Azure OpenAI, AWS Bedrock, private vLLM clusters
@@ -135,9 +135,9 @@ The `protocol` field determines the HTTP wire format APXM uses to talk to the ba
 
 When `protocol = "vllm"`, APXM sends additional scheduling metadata with each request:
 
-- `POST /v1/apxm/graphs/` — Register a graph for priority scheduling
-- `GET /v1/apxm/graphs/{id}` — Check graph registration status
-- Requests include `x-apxm-graph-id` and `x-apxm-critical-path` headers
+- `POST /v1/apxm/graphs/register` — Register a graph for priority scheduling
+- `DELETE /v1/apxm/graphs/{graph_id}` — Release KV-cache for a completed graph
+- Requests include hints via the `extra_body.apxm` JSON field (graph ID, critical-path flag, etc.)
 
 This allows the vLLM scheduler (APXM branch) to prioritize critical-path operations in a running graph, reducing end-to-end latency.
 
@@ -184,11 +184,11 @@ Routing controls which backend and model handle each request. Configured under `
 
 When selecting a backend/model for a request:
 
-1. Explicit request override (request specifies backend/model directly)
-2. `[chat.routing.operation_routes]` — per-AIS-operation routing rules
-3. Model alias resolution (`[chat.routing.model_aliases]`)
-4. `chat.default_model`
-5. `chat.default_backend`
+1. Explicit backend selection (request specifies backend/model directly)
+2. Model-based routing (model alias resolution via `[chat.routing.model_aliases]`)
+3. Operation-specific default (`[chat.routing.operation_routes]`)
+4. Global default backend (`chat.default_backend` / `chat.default_model`)
+5. Strategy-based selection (`FirstHealthy`, `RoundRobin`, or `LowLatency`)
 6. If selected backend is unhealthy → circuit breaker triggers fallback chain
 
 ### Operation Routes
@@ -226,11 +226,12 @@ APXM's ModelRouter continuously monitors backend health:
 
 | State | Meaning | Behavior |
 |-------|---------|----------|
+| `Unknown` | Initial state (not enough requests recorded) | Accept requests |
 | `Healthy` | Normal operation | Accept requests |
 | `Degraded` | High latency or elevated error rate | Accept with warning |
 | `Unhealthy` | Failed health check | Trigger fallback chain |
 
-The circuit breaker opens after N consecutive failures (default: 5), half-opens after a timeout (default: 30s) to test recovery, and closes after a successful request.
+This is the `HealthMonitor` system (success-rate-based). The circuit breaker (in `apxm-runtime::ModelRouter`) is a separate mechanism: it opens after N consecutive failures (default: 5), half-opens after a timeout (default: 30s) to test recovery, and closes after a successful request.
 
 ---
 
@@ -259,7 +260,7 @@ apxm models list               # All models across all backends
 apxm models health             # ModelRouter health status
 
 # Management
-apxm backend add <name>        # Add a backend (interactive)
+apxm backend add <name>        # Add a backend (uses flags: --type, --protocol, --endpoint, --api-key)
 apxm backend remove <name>     # Remove a backend
 apxm backend test [name]       # Test connectivity (all or specific)
 apxm backend migrate           # Import from legacy credentials.toml

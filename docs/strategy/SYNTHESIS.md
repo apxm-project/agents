@@ -1,5 +1,7 @@
 # APXM Strategy Synthesis: Unified Orchestration and Execution
 
+> **Note**: Written March 31, 2026. Phases 1–3 are now COMPLETE. See `docs/STATE-2026-04-03.md` for current status. CLI references to `apxm llm` below are stale; the current CLI uses `apxm backend`.
+
 **Date**: April 1, 2026
 **Scope**: APXM as the complete agent execution platform -- graph building, compilation, and execution in one system
 **Source**: Strategy documents 01-08, architecture docs, implementation specs, patent alignment, codebase investigation

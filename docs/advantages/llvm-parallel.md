@@ -10,7 +10,7 @@ LLVM did not win because Clang was a better C compiler than GCC. For years, GCC 
 
 LLVM IR is a typed, SSA-based intermediate representation that any frontend can target and any backend can consume. The IR is the contract.
 
-**A-PXM equivalent**: The Agent Instruction Set (AIS) — 32 typed operations across 9 categories. Any agent framework can emit AIS graphs. Any runtime can execute them. The AIS is the contract.
+**A-PXM equivalent**: The Agent Instruction Set (AIS) — typed operations across multiple categories. Any agent framework can emit AIS graphs. Any runtime can execute them. The AIS is the contract.
 
 | Property | LLVM IR | AIS |
 |----------|---------|-----|

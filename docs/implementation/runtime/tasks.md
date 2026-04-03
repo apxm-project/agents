@@ -36,7 +36,7 @@ Tasks can originate from three distinct sources, all converging on the same comp
 
 2. **User-authored (JSON)** — Submitted as JSON payloads (e.g., from a web UI or API call) and deserialized via `TaskDag::from_json()`. This enables non-developer users to define workflows without writing code.
 
-3. **Agent-generated (tool-use / PLAN instruction)** — Created at runtime by agents using the `create_task` and `compile_task_dag` tools. The PLAN instruction's `task_dag` field also allows agents to express multi-step plans as tasks.
+3. **Agent-generated (PLAN instruction)** — Created at runtime by agents. The PLAN instruction's `task_dag` field allows agents to express multi-step plans as tasks, which are then compiled through the standard graph pipeline.
 
 Regardless of source, all tasks follow the same path inside a flow:
 **TaskDag → compile → ExecutionDag → Runtime (under Agent/Flow ownership)**.
@@ -54,12 +54,13 @@ A task consists of:
 | `pending` | `AtomicInt` | Counter of unresolved input tokens |
 | `priority` | `Int` | Scheduling priority (higher = sooner when multiple tasks are ready) |
 
-Runtime metadata on each task:
+Runtime metadata on each execution node (preserved from the originating task):
 
 ```rust
-pub struct TaskMetadata {
+pub struct NodeMetadata {
     pub priority: u32,
-    pub expected_output_schema: Option<String>,
+    pub estimated_latency: Option<u64>,
+    pub task_source_id: Option<TaskId>,  // ← source task
 }
 ```
 
@@ -187,15 +188,7 @@ When multiple tasks are ready simultaneously, the scheduler uses the `priority` 
 
 ## Intellectual Heritage
 
-The task abstraction draws on two traditions:
-
-### HPC Dataflow
-
-Gao et al.'s work on dataflow architectures (the Manchester Dataflow Machine, MIT Tagged-Token Architecture) established the principle that computation should be driven by data availability, not program counters. A-PXM applies this principle to AI workloads where the "instructions" are LLM calls with seconds of latency rather than ALU operations with nanoseconds. In the original literature, these units were called "codelets" — A-PXM uses the more intuitive term "tasks" while preserving the same dataflow firing semantics.
-
-### Cognitive Science
-
-Baars and Franklin's **Global Workspace Theory** (GWT) models cognition as a collection of specialized processors that compete for access to a shared workspace. Winning processors broadcast their results, triggering further processing. A-PXM tasks mirror this structure: independent specialized operations that produce tokens consumed by downstream processors, with the dataflow graph serving as the global workspace.
+The task abstraction descends from HPC dataflow "codelets" (Gao et al., 2013) and draws parallels with Global Workspace Theory (Baars & Franklin).
 
 ## Task Lifecycle
 
@@ -207,10 +200,14 @@ stateDiagram-v2
     Running --> Complete: Operation succeeds
     Running --> Failed: Operation fails
     Complete --> [*]: Tokens emitted to successors
-    Failed --> Recovery: TRY_CATCH scope active
-    Failed --> [*]: No recovery scope
-    Recovery --> Pending: Retry with recovery subgraph
+    Failed --> Retry: retries < max_retries
+    Failed --> [*]: retries exhausted
+    Retry --> Running: exponential backoff delay
 ```
+
+Retry uses exponential backoff in the worker loop via `OpState.retries`
+(see `scheduler/worker.rs`). The delay is calculated as
+`base_delay * 2^(attempt-1)` capped at a configured maximum.
 
 ---
 

@@ -13,6 +13,8 @@ description: "Stable JSON contract for external graph generators using ApxmGraph
 - `nodes: GraphNode[]`
 - `edges: GraphEdge[]`
 
+Each `GraphNode` must have an `id` field of type `u64`.
+
 ## Canonical Value Formats
 
 - `nodes[].op` uses `SCREAMING_SNAKE_CASE` AIS operation names (for example `ASK`, `WAIT_ALL`, `CONST_STR`).
@@ -24,6 +26,10 @@ description: "Stable JSON contract for external graph generators using ApxmGraph
 - `parameters: Parameter[]` defaults to `[]`
 - `metadata: object` defaults to `{}`
 - `GraphNode.attributes` defaults to `{}`
+
+## Parameter Types
+
+Valid parameter types are: `str`, `int`, `float`, `bool`, `json`.
 
 ## Validation Guarantees
 

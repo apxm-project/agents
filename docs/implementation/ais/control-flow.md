@@ -1,111 +1,129 @@
----
-title: "Control Flow"
-description: "Conditional branching and multi-way routing in the AIS dataflow model."
----
+# Control Flow Operations
 
-# Control Flow
+Category: **ControlFlow**. These operations route tokens through different subgraphs based on runtime values. All have **None** latency tier (microseconds) except FLOW_CALL (Variable) and RESUME (High). Run `apxm ops list --category control_flow` for the current set.
 
-Control flow operations route tokens through different subgraphs based on runtime values. Unlike traditional if/else statements that redirect a program counter, A-PXM's control flow operations route **data tokens** -- the downstream subgraph that receives the token is the one that executes.
+## JUMP
 
-## BRANCH -- BranchOnValue
+Unconditional transfer of control to a target label.
 
-Conditional branch that routes execution based on whether a token matches an expected value.
+| Field | Required | Description |
+|-------|----------|-------------|
+| `label` | yes | Target node ID to jump to |
 
-**Signature:**
-```
-BRANCH(tok: Token, val: Value, lblT: Label, lblF: Label) -> Void
+```json
+{"id": 5, "op": "JUMP", "attributes": {"label": "7"}}
 ```
 
-| Operand | Type | Description |
-|---------|------|-------------|
-| `tok` | `Token` | The token to evaluate |
-| `val` | `Value` | The value to compare against |
-| `lblT` | `Label` | Target subgraph if `tok == val` |
-| `lblF` | `Label` | Target subgraph if `tok != val` |
+## BRANCH_ON_VALUE
 
-**Semantics:** BRANCH evaluates the comparison and emits the token to exactly one of two outgoing edges. The target subgraph receives the token and its tasks become eligible to fire; the other subgraph receives nothing and remains dormant.
+Conditional branch: compares an input token against a value and routes to one of two labels.
 
-```mermaid
-graph TD
-    ASK["ASK\n(classify intent)"]
-    ASK --> BRANCH["BRANCH\n(intent == 'search')"]
-    BRANCH -->|True| SEARCH["INV search_api"]
-    BRANCH -->|False| CALC["INV calculator"]
-    SEARCH --> MERGE["MERGE"]
-    CALC --> MERGE
-    MERGE --> RESPOND["ASK\n(format response)"]
+| Field | Required | Description |
+|-------|----------|-------------|
+| `token` | yes | Token to evaluate |
+| `value` | yes | Value to compare against |
+| `label_true` | yes | Target if comparison is true |
+| `label_false` | yes | Target if comparison is false |
+
+Min inputs: 1.
+
+```json
+{"id": 5, "op": "BRANCH_ON_VALUE", "attributes": {"token": "{{node_4}}", "value": "yes", "label_true": "6", "label_false": "7"}}
 ```
 
-**Example:**
-```mlir
-%intent = "ais.ask"(%classify_prompt, %ctx) : (...) -> !ais.future<!ais.string>
+## LOOP_START
 
-"ais.branch"(%intent, %search_val, @search_subgraph, @calc_subgraph) : (
-  !ais.future<!ais.string>, !ais.string, !ais.label, !ais.label
-) -> ()
+Marks the beginning of a bounded loop. Must be paired with LOOP_END.
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `count_token` | yes | Token containing iteration count |
+
+Min inputs: 1.
+
+```json
+{"id": 3, "op": "LOOP_START", "attributes": {"count_token": "3"}}
 ```
 
-### Conditional Latency Savings
+## LOOP_END
 
-In sequential execution, both branches would typically be evaluated (or the developer must manually implement conditional logic). With BRANCH, only the taken path executes. In evaluation workloads, this yields up to **5.18x latency reduction** through conditional routing -- the untaken branch contributes zero latency.
+Marks the end of a bounded loop started by LOOP_START. Decrements the loop counter and branches back if iterations remain. No fields.
 
-## SWITCH -- Multi-Way Branch
+## RETURN
 
-Routes tokens to one of N target subgraphs based on a discriminant value. SWITCH generalizes BRANCH for cases with more than two outcomes.
+Returns a value from a subgraph or flow. Used as the terminal node in flows invoked via FLOW_CALL.
 
-**Signature:**
-```
-SWITCH(disc: Value, cases: [(Value, Label)]) -> Void
-```
+| Field | Required | Description |
+|-------|----------|-------------|
+| `token` | yes | Result token to return |
 
-| Operand | Type | Description |
-|---------|------|-------------|
-| `disc` | `Value` | The discriminant value to match |
-| `cases` | `[(Value, Label)]` | Ordered list of (match value, target label) pairs |
+Min inputs: 1.
 
-**Semantics:** The discriminant is compared against each case value in order. The first matching case receives the token. If no case matches and a default label is provided, the token routes there; otherwise, it is an error (caught at compile time if the discriminant type is an enum with exhaustive cases).
-
-```mermaid
-graph TD
-    CLASSIFY["ASK\n(classify document type)"]
-    CLASSIFY --> SWITCH["SWITCH\n(doc_type)"]
-    SWITCH -->|"'invoice'"| INV_PROC["INV invoice_processor"]
-    SWITCH -->|"'contract'"| CON_PROC["INV contract_analyzer"]
-    SWITCH -->|"'email'"| EMAIL_PROC["THINK summarize_email"]
-    SWITCH -->|"default"| GENERIC["ASK generic_handler"]
-    INV_PROC --> JOIN["MERGE"]
-    CON_PROC --> JOIN
-    EMAIL_PROC --> JOIN
-    GENERIC --> JOIN
-    JOIN --> OUTPUT["UMEM store_result"]
+```json
+{"id": 6, "op": "RETURN", "attributes": {"token": "{{node_5}}"}}
 ```
 
-**Example:**
-```mlir
-%doc_type = "ais.ask"(%classify_prompt, %doc_ctx) : (...) -> !ais.future<!ais.string>
+## SWITCH
 
-"ais.switch"(%doc_type, [
-  (%invoice_val, @invoice_subgraph),
-  (%contract_val, @contract_subgraph),
-  (%email_val, @email_subgraph)
-]) { default = @generic_subgraph } : (
-  !ais.future<!ais.string>, !ais.case_list
-) -> ()
+Multi-way branch: routes execution based on matching a discriminant against case labels.
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `discriminant` | yes | Token to match against case labels |
+| `cases` | yes | Array of `{"label": "...", "node_id": N}` pairs |
+| `default` | no | Default destination if no case matches |
+
+Min inputs: 1.
+
+```json
+{"id": 3, "op": "SWITCH", "attributes": {"discriminant": "{{node_2}}", "cases": [{"label": "math", "node_id": 4}, {"label": "code", "node_id": 5}], "default": "6"}}
 ```
 
-## Interaction with MERGE
+## FLOW_CALL
 
-Both BRANCH and SWITCH create divergent paths that typically reconverge at a MERGE or WAIT_ALL node. The MERGE operation accepts a token from **any one** of its input edges, producing a single output token. This allows the graph to continue uniformly regardless of which branch was taken.
+Invokes a named flow on a target agent. The target executes its flow graph independently and returns the result. Multiple FLOW_CALL nodes can run in parallel if they have no data dependencies.
 
-## Compile-Time Verification
+| Field | Required | Description |
+|-------|----------|-------------|
+| `agent_name` | yes | Name of the agent to call |
+| `flow_name` | yes | Name of the flow to invoke |
+| `args` | no | Arguments to pass to the flow |
 
-The compiler verifies control flow operations statically:
+**Latency tier:** Variable.
 
-| Check | Description |
-|-------|-------------|
-| **Type compatibility** | Discriminant type must be comparable with case values |
-| **Exhaustiveness** | For enum discriminants, all variants must be covered (or a default provided) |
-| **Reachability** | Every branch target must be a valid subgraph label |
-| **Reconvergence** | Divergent paths should reconverge at a MERGE (warning if they do not) |
+```json
+{"id": 4, "op": "FLOW_CALL", "attributes": {"agent_name": "researcher", "flow_name": "analyze", "args": {"topic": "{{node_1}}"}}}
+```
 
-These checks prevent an entire class of runtime errors -- routing to nonexistent subgraphs, comparing incompatible types, or leaving dead-end branches without synchronization.
+## GUARD
+
+Evaluates a condition against the input token. On failure, either halts execution or skips downstream nodes (configurable via `on_fail`).
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `condition` | yes | Condition expression: `> 0.8`, `!= null`, `not_empty`, etc. |
+| `error_message` | no | Message on failure |
+| `on_fail` | no | Failure mode: `halt` (default) or `skip` |
+
+Min inputs: 1.
+
+```json
+{"id": 3, "op": "GUARD", "attributes": {"condition": "> 0.8", "on_fail": "skip", "error_message": "Confidence too low"}}
+```
+
+## RESUME
+
+Polls the APXM server for a checkpoint until a human resumes it. The human's input (if any) becomes the output token.
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `checkpoint` | yes | Checkpoint ID to resume from |
+| `poll_max_attempts` | no | Max polling attempts (default 60 x 5s = 5 min) |
+| `poll_interval_ms` | no | Interval between polls in ms (default 5000) |
+| `server_url` | no | Override `APXM_SERVER_URL` env var |
+
+**Latency tier:** High (human-dependent).
+
+```json
+{"id": 6, "op": "RESUME", "attributes": {"checkpoint": "review_checkpoint_1"}}
+```
