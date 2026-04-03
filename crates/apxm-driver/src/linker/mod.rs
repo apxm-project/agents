@@ -8,6 +8,9 @@ use apxm_core::log_info;
 use apxm_core::types::OptimizationLevel;
 use apxm_runtime::{RuntimeConfig, RuntimeExecutionResult};
 
+use apxm_artifact::ArtifactMetadata;
+use apxm_graph::ApxmGraph;
+
 use crate::{
     cache, compiler::Compiler, config::ApXmConfig, error::DriverError, runtime::RuntimeExecutor,
 };
@@ -71,15 +74,28 @@ pub struct LinkMetrics {
 
 /// High-level linker that orchestrates compiler and runtime execution.
 pub struct Linker {
-    compiler: Compiler,
+    /// MLIR compiler — None when MLIR toolchain is not available (graph-direct mode).
+    compiler: Option<Compiler>,
     runtime: RuntimeExecutor,
     no_cache: bool,
 }
 
 impl Linker {
     /// Create a new linker instance with the provided configuration.
+    ///
+    /// The MLIR compiler is optional — if the toolchain is unavailable, the linker
+    /// falls back to graph-direct execution (JSON → ExecutionDag, bypassing MLIR).
     pub async fn new(config: LinkerConfig) -> Result<Self, DriverError> {
-        let compiler = Compiler::with_opt_level(config.opt_level)?;
+        let compiler = match Compiler::with_opt_level(config.opt_level) {
+            Ok(c) => {
+                log_info!("driver", "MLIR compiler initialized");
+                Some(c)
+            }
+            Err(e) => {
+                log_info!("driver", "MLIR unavailable ({}); using graph-direct mode", e);
+                None
+            }
+        };
         let runtime = RuntimeExecutor::new(&config).await?;
         let no_cache = config.no_cache;
 
@@ -90,13 +106,78 @@ impl Linker {
         })
     }
 
+    /// Compile a JSON graph directly to an Artifact without going through MLIR.
+    ///
+    /// Uses `ApxmGraph::to_execution_dag()` which is pure Rust and always available.
+    /// This path is used when MLIR is unavailable or the input is a plain JSON graph.
+    fn compile_graph_direct(&self, input: &Path) -> Result<Artifact, DriverError> {
+        let bytes = std::fs::read(input)?;
+        let text = std::str::from_utf8(&bytes)
+            .map_err(|e| DriverError::Driver(format!("Graph file is not valid UTF-8: {e}")))?;
+        let graph = ApxmGraph::from_json(text)
+            .map_err(|e| DriverError::Driver(format!("Graph parse error: {e}")))?;
+
+        // Check cache using graph hash
+        let graph_json = graph.to_json().unwrap_or_default();
+        let hash = cache::graph_hash(&graph_json).ok();
+        if !self.no_cache
+            && let Some(ref h) = hash
+            && let Some(cached_bytes) = cache::load_cached(h)?
+        {
+            log_info!("driver", "cache hit (direct) for graph hash {}", h);
+            return Artifact::from_bytes(&cached_bytes).map_err(|e| state_err(e.to_string()));
+        }
+
+        let dag = graph
+            .to_execution_dag()
+            .map_err(|e| DriverError::Driver(format!("Graph lowering error: {e}")))?;
+
+        let module_name = input
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_string());
+        let metadata = ArtifactMetadata::new(module_name, env!("CARGO_PKG_VERSION"));
+        let artifact = Artifact::new(metadata, vec![dag]);
+
+        // Store serialized artifact in cache
+        if !self.no_cache
+            && let Some(ref h) = hash
+        {
+            if let Ok(artifact_bytes) = artifact.to_bytes() {
+                let _ = cache::store_cached(h, &artifact_bytes);
+            }
+        }
+
+        log_info!("driver", "graph-direct compilation complete");
+        Ok(artifact)
+    }
+
     /// Compile graph input into an executable artifact.
+    ///
+    /// For JSON graph inputs, uses the graph-direct path (pure Rust, no MLIR) when
+    /// the MLIR compiler is unavailable. Falls back to full MLIR compilation otherwise.
     ///
     /// When caching is enabled (the default), the graph JSON is hashed and
     /// looked up in `~/.cache/apxm/artifacts/`.  On a cache hit the
     /// compilation step is skipped entirely.
     pub fn compile_graph(&self, input: &Path) -> Result<Artifact, DriverError> {
-        let graph = self.compiler.load_graph(input)?;
+        let is_json = input
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e == "json")
+            .unwrap_or(false);
+
+        // Use graph-direct path when MLIR is unavailable or input is JSON
+        let Some(ref compiler) = self.compiler else {
+            if is_json {
+                return self.compile_graph_direct(input);
+            }
+            return Err(DriverError::Driver(
+                "MLIR compiler required for non-JSON inputs (.ais, .mlir) but is not available.                  Run `dekk apxm build` to rebuild with MLIR support.".to_string(),
+            ));
+        };
+
+        let graph = compiler.load_graph(input)?;
 
         // Try the artifact cache first.
         let graph_json = graph.to_json().unwrap_or_default();
@@ -112,7 +193,7 @@ impl Linker {
             return Ok(artifact);
         }
 
-        let module = self.compiler.compile_graph(&graph)?;
+        let module = compiler.compile_graph(&graph)?;
         let artifact_bytes = module.generate_artifact_bytes()?;
 
         // Store in cache for next time.

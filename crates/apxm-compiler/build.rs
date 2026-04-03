@@ -341,6 +341,35 @@ fn generate_bindings(
         }
     }
 
+    // Find clang resource directory (contains stddef.h and other builtins).
+    // conda-forge puts them at $prefix/lib/clang/<version>/include.
+    // We search several candidate roots including the miniforge base env.
+    let mut extra_clang_args: Vec<String> = Vec::new();
+    let home_dir = std::env::var("HOME").unwrap_or_default();
+    let miniforge_apxm = std::path::PathBuf::from(format!("{}/miniforge3/envs/apxm", home_dir));
+    let clang_roots = [
+        mlir_prefix.to_path_buf(),
+        miniforge_apxm,
+        std::path::PathBuf::from(format!("{}/miniforge3", home_dir)),
+    ];
+    'outer: for root in &clang_roots {
+        for ver in ["21", "22", "20", "19", "18"] {
+            let candidate = root.join("lib/clang").join(ver).join("include");
+            if candidate.join("stddef.h").exists() {
+                log_info!(
+                    "apxm-compiler-build",
+                    "Found clang builtins at {}",
+                    candidate.display()
+                );
+                extra_clang_args.push(format!("-I{}", candidate.display()));
+                break 'outer;
+            }
+        }
+    }
+    if extra_clang_args.is_empty() {
+        log_info!("apxm-compiler-build", "WARNING: Could not find clang builtins (stddef.h). Bindgen may fail.");
+    }
+
     let builder = bindgen::Builder::default()
         .header(header_path.to_str().context("Invalid header path")?)
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
@@ -348,6 +377,7 @@ fn generate_bindings(
         .allowlist_type("Apxm.*")
         .clang_arg(format!("-I{}", mlir_include_dir.display()))
         .clang_arg(format!("-I{}", project_include_dir.display()))
+        .clang_args(extra_clang_args)
         .size_t_is_usize(true);
 
     let bindings = builder.generate().context("Failed to generate bindings")?;
