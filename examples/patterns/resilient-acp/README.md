@@ -20,6 +20,6 @@ Code review pipeline that self-heals: if the primary agent produces a substandar
 ```bash
 apxm agent test claude
 apxm agent test codex
-apxm validate examples/patterns/resilient-acp/resilient-acp-pipeline.json
-apxm execute examples/patterns/resilient-acp/resilient-acp-pipeline.json
+apxm validate examples/patterns/resilient-acp/resilient-acp-pipeline.apxm
+apxm execute examples/patterns/resilient-acp/resilient-acp-pipeline.apxm
 ```

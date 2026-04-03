@@ -14,8 +14,8 @@ apxm agent test codex
 ## Running
 
 ```bash
-apxm validate <file>.json
-apxm execute <file>.json
+apxm validate <file>.apxm
+apxm execute <file>.apxm
 ```
 
 ## Examples
@@ -24,18 +24,18 @@ apxm execute <file>.json
 
 | File | Description |
 |------|-------------|
-| `spawn-communicate-basic.json` | Spawn a single Claude agent in architect mode and send one message |
-| `parallel-agents.json` | Spawn Claude and Codex in parallel, send the same prompt, merge results |
-| `multi-turn-communicate.json` | Multi-turn conversation: analyze, fix, verify with sequential COMMUNICATE nodes |
-| `cross-critique.json` | Two agents independently propose, then critique each other's proposals |
-| `full-sdlc.json` | Pipeline: architect designs, coder implements, architect reviews |
+| `spawn-communicate-basic.apxm` | Spawn a single Claude agent in architect mode and send one message |
+| `parallel-agents.apxm` | Spawn Claude and Codex in parallel, send the same prompt, merge results |
+| `multi-turn-communicate.apxm` | Multi-turn conversation: analyze, fix, verify with sequential COMMUNICATE nodes |
+| `cross-critique.apxm` | Two agents independently propose, then critique each other's proposals |
+| `full-sdlc.apxm` | Pipeline: architect designs, coder implements, architect reviews |
 
 ### Style B: INV with ACP capability (session-managed)
 
 | File | Description |
 |------|-------------|
-| `parallel-review.json` | Ask Codex and Claude the same question in parallel, then compare answers |
-| `multi-turn-review.json` | Multi-turn session (analyze, fix, verify) using a shared session handle |
+| `parallel-review.apxm` | Ask Codex and Claude the same question in parallel, then compare answers |
+| `multi-turn-review.apxm` | Multi-turn session (analyze, fix, verify) using a shared session handle |
 
 ## Further Reading
 

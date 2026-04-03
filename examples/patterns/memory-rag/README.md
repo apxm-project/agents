@@ -21,6 +21,6 @@ Knowledge-augmented Q&A: the agent recalls what it already knows, reasons with t
 ## Running
 
 ```bash
-apxm validate examples/patterns/memory-rag/memory-rag-pipeline.json
-apxm execute examples/patterns/memory-rag/memory-rag-pipeline.json
+apxm validate examples/patterns/memory-rag/memory-rag-pipeline.apxm
+apxm execute examples/patterns/memory-rag/memory-rag-pipeline.apxm
 ```

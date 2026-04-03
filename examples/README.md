@@ -7,7 +7,7 @@ examples/
 ├── basics/         Single-agent fundamentals (ASK, tool use)
 ├── multi-agent/    Multi-agent coordination and councils (.ais format)
 ├── acp-agents/     ACP protocol workflows (SPAWN + COMMUNICATE, INV)
-├── patterns/       Advanced graph patterns (JSON format)
+├── patterns/       Advanced graph patterns
 │   ├── iterative-refine/       Self-refinement loop
 │   ├── plan-fan-out/           Plan → parallel sections → synthesize
 │   ├── resilient-acp/          ACP pipeline with fallback agent
@@ -22,18 +22,18 @@ examples/
 | File | Description |
 |------|-------------|
 | `basics/hello.ais` | Minimal agent with single ASK operation |
-| `basics/hello_graph.json` | Same agent in JSON graph format |
+| `basics/hello_graph.apxm` | Same agent in graph format |
 | `basics/tool_use.ais` | Tool/capability invocation patterns |
-| `basics/tool_use_graph.json` | Tool usage in graph format |
+| `basics/tool_use_graph.apxm` | Tool usage in graph format |
 
 ## Multi-Agent
 
 | File | Description |
 |------|-------------|
 | `multi-agent/multi_flow.ais` | Cross-agent control flow and coordination |
-| `multi-agent/multi_flow_graph.json` | Multi-flow in graph format |
+| `multi-agent/multi_flow_graph.apxm` | Multi-flow in graph format |
 | `multi-agent/multi_agent_communicate.ais` | Agent-to-agent communication via COMMUNICATE |
-| `multi-agent/parallel_council_graph.json` | Fan-out/fan-in council pattern |
+| `multi-agent/parallel_council_graph.apxm` | Fan-out/fan-in council pattern |
 | `multi-agent/apxm_council.ais` | Council pattern with multiple experts |
 | `multi-agent/code_review_council.ais` | Code review workflow with councils |
 
@@ -67,14 +67,14 @@ apxm compile examples/basics/hello.ais -o hello.apxm
 # Execute the compiled binary
 apxm execute hello.apxm
 
-# Compile from JSON graph
-apxm compile examples/basics/hello_graph.json -o hello.apxm
+# Compile from graph file
+apxm compile examples/basics/hello_graph.apxm -o hello.apxm
 
-# Validate any JSON graph before running
-apxm validate examples/patterns/plan-fan-out/plan-fan-out.json
+# Validate any graph before running
+apxm validate examples/patterns/plan-fan-out/plan-fan-out.apxm
 
-# Run a JSON graph directly
-apxm execute examples/patterns/plan-fan-out/plan-fan-out.json
+# Run a graph directly
+apxm execute examples/patterns/plan-fan-out/plan-fan-out.apxm
 ```
 
 See `docs/guides/getting-started.md` for detailed tutorials.

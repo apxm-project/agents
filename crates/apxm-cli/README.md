@@ -5,7 +5,7 @@ Minimal CLI wrapper for compile/run workflows.
 ## Overview
 
 `apxm-cli` is a thin wrapper around `apxm-driver` that exposes:
-- `compile` -- compile ApxmGraph JSON/binary to an artifact
+- `compile` -- compile ApxmGraph (.apxm) to an artifact
 - `execute` -- compile + execute a graph via the runtime
 - `run` -- execute a precompiled artifact
 - `doctor` -- verify environment, dependencies, and toolchain (powered by [dekk](https://github.com/randreshg/dekk))
@@ -47,7 +47,7 @@ python -m pip install dekk
 # Use the CLI
 apxm doctor
 apxm compiler build
-apxm compiler run examples/hello_graph.json
+apxm compiler run examples/hello_graph.apxm
 ```
 
 See `docs/AGENTS.md` for the complete CLI reference.
@@ -59,8 +59,8 @@ See `docs/AGENTS.md` for the complete CLI reference.
 cargo build -p apxm-cli --features driver --release
 
 # Use the compiled binary
-./target/release/apxm execute examples/hello_graph.json
-./target/release/apxm compile examples/hello_graph.json -o output.apxmobj
+./target/release/apxm execute examples/hello_graph.apxm
+./target/release/apxm compile examples/hello_graph.apxm -o output.apxmobj
 ./target/release/apxm doctor
 ```
 
@@ -78,7 +78,7 @@ eval "$(cargo run -p apxm-cli -- activate --shell fish)"
 ## Metrics (Optional)
 
 ```bash
-cargo run -p apxm-cli --features metrics -- execute examples/hello_graph.json
+cargo run -p apxm-cli --features metrics -- execute examples/hello_graph.apxm
 ```
 
 ## Testing

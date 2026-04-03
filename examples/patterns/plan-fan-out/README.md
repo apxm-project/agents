@@ -14,6 +14,6 @@
 ## Running
 
 ```bash
-apxm validate examples/patterns/plan-fan-out/plan-fan-out.json
-apxm execute examples/patterns/plan-fan-out/plan-fan-out.json
+apxm validate examples/patterns/plan-fan-out/plan-fan-out.apxm
+apxm execute examples/patterns/plan-fan-out/plan-fan-out.apxm
 ```
