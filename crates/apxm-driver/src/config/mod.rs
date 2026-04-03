@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use apxm_core::types::{ModelInfo, ProviderProtocol};
+use apxm_core::types::{BackendConfig, ModelInfo, ProviderProtocol};
 use dirs::home_dir;
 use serde::{Deserialize, Serialize};
 use std::env;
@@ -23,7 +23,12 @@ pub struct ApXmConfig {
     /// Chat/runtime specific flags.
     pub chat: ChatConfig,
 
-    /// LLM backend definitions.
+    /// Unified backend definitions (replaces llm_backends).
+    #[serde(default)]
+    pub backends: Vec<BackendConfig>,
+
+    /// Legacy LLM backend definitions (deprecated, use backends instead).
+    #[serde(default)]
     pub llm_backends: Vec<LlmBackendConfig>,
 
     /// Tool-specific behavior overrides.
