@@ -28,7 +28,7 @@
 //! | LLM/Reasoning | ASK, THINK, REASON, PLAN, REFLECT, VERIFY |
 //! | Tools | INV, EXC, PRINT |
 //! | Control Flow | JUMP, BRANCH_ON_VALUE, LOOP_START, LOOP_END, RETURN, SWITCH, FLOW_CALL |
-//! | Synchronization | MERGE, FENCE, WAIT_ALL |
+//! | Synchronization | MERGE, FENCE, WAIT_ALL, CHECKPOINT |
 //! | Error Handling | TRY_CATCH, ERR |
 //! | Communication | COMMUNICATE |
 //! | Goal/State | UPDATE_GOAL, GUARD, CLAIM, PAUSE, RESUME |

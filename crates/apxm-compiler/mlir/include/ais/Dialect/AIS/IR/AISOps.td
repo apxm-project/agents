@@ -10,7 +10,7 @@
  *   - Reasoning (reflect, verify)
  *   - Planning (plan)
  *   - Execution (exc)
- *   - Synchronization (wait_all, merge, fence)
+ *   - Synchronization (wait_all, merge, fence, checkpoint)
  *   - Control flow (jump, branch_on_value, loop_*, try_catch, return)
  *   - Error handling (err)
  *   - Communication (communicate)
