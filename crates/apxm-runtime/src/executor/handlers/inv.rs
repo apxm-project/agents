@@ -86,6 +86,27 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         }
     }
 
+    // Substitute {{input_N}} and {N} placeholders in string values with upstream inputs.
+    // This allows params_json to reference upstream node outputs, e.g.:
+    //   params_json: {"agent": "claude", "prompt": "{{input_0}}"}
+    // where input_0 is the first data-edge input to this INV node.
+    if !inputs.is_empty() {
+        for val in args.values_mut() {
+            if let Value::String(s) = val {
+                let mut result = s.clone();
+                for (i, input_value) in inputs.iter().enumerate() {
+                    let input_str = match input_value {
+                        Value::String(sv) => sv.clone(),
+                        other => format!("{:?}", other),
+                    };
+                    result = result.replace(&format!("{{{{input_{}}}}}", i), &input_str);
+                    result = result.replace(&format!("{{input_{}}}", i), &input_str);
+                }
+                *s = result;
+            }
+        }
+    }
+
     // If no args from params_json, check for arg_* attributes (named arguments)
     if args.is_empty() {
         let args_from_attrs = node

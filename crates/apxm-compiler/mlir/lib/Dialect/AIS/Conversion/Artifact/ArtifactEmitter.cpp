@@ -66,6 +66,7 @@ enum class OperationKind : uint32_t {
   SpawnAgent = 35,
   RegisterCapability = 36,
   Autonomous = 37,
+  Checkpoint = 38,
 };
 
 enum class DependencyKind : uint8_t {
@@ -386,6 +387,7 @@ std::optional<OperationKind> mapOperation(Operation *op) {
       .Case<NegotiateOp>([](auto) { return OperationKind::Negotiate; })
       .Case<NopOp>([](auto) { return OperationKind::Nop; })
       .Case<IdentityOp>([](auto) { return OperationKind::Identity; })
+      .Case<CheckpointOp>([](auto) { return OperationKind::Checkpoint; })
       .Case<YieldOp>([](auto) {
         return std::nullopt;
       }) // Skip yield - it's a region terminator
