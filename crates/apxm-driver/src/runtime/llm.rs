@@ -1,12 +1,12 @@
 //! LLM registry configuration for the runtime.
 
-use crate::config::{ApXmConfig, LlmBackendConfig};
+use crate::config::ApXmConfig;
 use crate::error::DriverError;
 use apxm_backends::{
     BackendFallback, BackendRegistration, LLMRegistry, ModelAliasRegistration, ModelRegistration,
     OperationRoute, RegistryPolicy,
 };
-use apxm_core::types::{AISOperationType, ProviderProtocol, resolve_builtin_provider};
+use apxm_core::types::AISOperationType;
 use std::env;
 
 pub async fn configure_llm_registry(
@@ -26,70 +26,24 @@ pub async fn configure_llm_registry(
         )
     };
 
-    // Priority 1: Load from config.toml's [[backends]] (new unified system)
-    let mut loaded_from_backends = false;
-    if !config.backends.is_empty() {
-        loaded_from_backends = true;
-        for backend in &config.backends {
-            if let Some(allowed) = &allowed_backends
-                && !allowed.contains(&backend.name)
-            {
-                continue;
-            }
-
-            let registration = unified_backend_to_registration(backend)?;
-            registration.register(registry).await.map_err(|e| {
-                DriverError::Driver(format!("Failed to register backend '{}': {e}", backend.name))
-            })?;
-        }
+    // Load from config.toml's [[backends]] (unified system)
+    if config.backends.is_empty() {
+        return Err(DriverError::Driver(
+            "No backends configured. Add backends with: apxm backend add <name> ...".to_string(),
+        ));
     }
 
-    // Priority 2: Load from ~/.apxm/credentials.toml (legacy)
-    let mut loaded_from_credentials = false;
-    if !loaded_from_backends {
-        if let Ok(store) = apxm_credentials::CredentialStore::open()
-            && let Ok(credentials) = store.list_all()
-            && !credentials.is_empty()
+    for backend in &config.backends {
+        if let Some(allowed) = &allowed_backends
+            && !allowed.contains(&backend.name)
         {
-            loaded_from_credentials = true;
-            for (name, credential) in &credentials {
-                if let Some(allowed) = &allowed_backends
-                    && !allowed.contains(name)
-                {
-                    continue;
-                }
-
-                let backend_config = credential_to_backend_config(name, credential);
-                let provider_name = &credential.provider;
-
-                let protocol = resolve_provider_protocol(None, provider_name)?;
-                let registration = credential_to_registration(name, &backend_config, protocol);
-                registration.register(registry).await.map_err(|e| {
-                    DriverError::Driver(format!("Failed to register backend '{}': {e}", name))
-                })?;
-            }
+            continue;
         }
-    }
 
-    // Priority 3: Load from config.toml's [[llm_backends]] (legacy)
-    if !loaded_from_backends && !loaded_from_credentials {
-        for backend in &config.llm_backends {
-            if let Some(allowed) = &allowed_backends
-                && !allowed.contains(&backend.name)
-            {
-                continue;
-            }
-
-            let provider_name = backend.provider.as_deref().unwrap_or("openai");
-            let protocol = resolve_provider_protocol(Some(backend), provider_name)?;
-            let registration = backend_to_registration(backend, protocol)?;
-            registration.register(registry).await.map_err(|e| {
-                DriverError::Driver(format!(
-                    "Failed to register backend '{}': {e}",
-                    backend.name
-                ))
-            })?;
-        }
+        let registration = unified_backend_to_registration(backend)?;
+        registration.register(registry).await.map_err(|e| {
+            DriverError::Driver(format!("Failed to register backend '{}': {e}", backend.name))
+        })?;
     }
 
     let default_backend = config
@@ -160,129 +114,6 @@ pub async fn configure_llm_registry(
     Ok(())
 }
 
-/// Resolve a backend protocol using explicit config first, then builtin provider aliases.
-fn resolve_provider_protocol(
-    config: Option<&LlmBackendConfig>,
-    provider_name: &str,
-) -> Result<ProviderProtocol, DriverError> {
-    if let Some(protocol) = config.and_then(|cfg| cfg.protocol) {
-        return Ok(protocol);
-    }
-
-    if let Ok(protocol) = provider_name.parse::<ProviderProtocol>() {
-        return Ok(protocol);
-    }
-
-    let spec = resolve_builtin_provider(provider_name)
-        .ok_or_else(|| DriverError::Driver(format!("Unknown provider '{}'", provider_name)))?;
-    Ok(spec.protocol)
-}
-
-/// Convert a credential from the credential store to an LlmBackendConfig.
-fn credential_to_backend_config(
-    name: &str,
-    credential: &apxm_credentials::credential::Credential,
-) -> LlmBackendConfig {
-    LlmBackendConfig {
-        name: name.to_string(),
-        provider: Some(credential.provider.clone()),
-        protocol: None,
-        default_model: credential.model.clone(),
-        models: Vec::new(),
-        api_key: credential.api_key.clone(),
-        endpoint: credential.base_url.clone(),
-        options: std::collections::HashMap::new(),
-        extra_headers: credential
-            .headers
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect(),
-    }
-}
-
-fn credential_to_registration(
-    name: &str,
-    backend_config: &LlmBackendConfig,
-    protocol: ProviderProtocol,
-) -> BackendRegistration {
-    BackendRegistration {
-        name: name.to_string(),
-        protocol,
-        api_key: backend_config.api_key.clone().unwrap_or_default(),
-        default_model: backend_config.default_model.clone(),
-        models: backend_config
-            .models
-            .iter()
-            .map(|model| ModelRegistration {
-                id: model.id.clone(),
-                aliases: model.aliases.clone(),
-                info: model.to_model_info(),
-            })
-            .collect(),
-        endpoint: backend_config.endpoint.clone(),
-        options: backend_config.options.clone(),
-        extra_headers: backend_config.extra_headers.clone(),
-    }
-}
-
-fn backend_to_registration(
-    config: &LlmBackendConfig,
-    protocol: ProviderProtocol,
-) -> Result<BackendRegistration, DriverError> {
-    let api_key = resolve_api_key(protocol, config)?;
-    let default_model = config
-        .default_model
-        .as_deref()
-        .map(|value| resolve_env_value(value, "default_model", &config.name))
-        .transpose()?;
-    let endpoint = config
-        .endpoint
-        .as_deref()
-        .map(|value| resolve_env_value(value, "endpoint", &config.name))
-        .transpose()?;
-    let options = config
-        .options
-        .iter()
-        .map(|(key, value)| resolve_env_value(value, key, &config.name).map(|v| (key.clone(), v)))
-        .collect::<Result<std::collections::HashMap<_, _>, _>>()?;
-    let extra_headers = config
-        .extra_headers
-        .iter()
-        .map(|(key, value)| {
-            resolve_env_value(value, &format!("extra_headers.{}", key), &config.name)
-                .map(|v| (key.clone(), v))
-        })
-        .collect::<Result<std::collections::HashMap<_, _>, _>>()?;
-
-    let models = config
-        .models
-        .iter()
-        .map(|model| {
-            let id = resolve_env_value(&model.id, "models.id", &config.name)?;
-            let aliases = model
-                .aliases
-                .iter()
-                .map(|alias| resolve_env_value(alias, "models.aliases", &config.name))
-                .collect::<Result<Vec<_>, _>>()?;
-            let info = model.to_model_info().map(|mut info| {
-                info.id = id.clone();
-                info
-            });
-            Ok(ModelRegistration { id, aliases, info })
-        })
-        .collect::<Result<Vec<_>, DriverError>>()?;
-
-    Ok(BackendRegistration {
-        name: config.name.clone(),
-        protocol,
-        api_key,
-        default_model,
-        models,
-        endpoint,
-        options,
-        extra_headers,
-    })
-}
 
 /// Convert a unified BackendConfig to a BackendRegistration.
 fn unified_backend_to_registration(
@@ -393,42 +224,3 @@ fn parse_operation_type(value: &str) -> Result<AISOperationType, DriverError> {
     })
 }
 
-fn resolve_api_key(
-    provider: ProviderProtocol,
-    config: &LlmBackendConfig,
-) -> Result<String, DriverError> {
-    match config.api_key.as_deref() {
-        Some(key) if key.starts_with("env:") => {
-            let env_name = key.strip_prefix("env:").unwrap();
-            env::var(env_name).map_err(|_| {
-                DriverError::Driver(format!(
-                    "Environment variable '{}' not set for backend '{}'",
-                    env_name, config.name
-                ))
-            })
-        }
-        Some(key) if !key.is_empty() => Ok(key.to_string()),
-        _ if matches!(provider, ProviderProtocol::Ollama) => Ok(String::new()),
-        _ => Err(DriverError::Driver(format!(
-            "Missing API key for backend '{}'. Set `api_key` or use `env:VAR`.",
-            config.name
-        ))),
-    }
-}
-
-/// Resolve a value that may be prefixed with `env:` to read from an environment variable.
-///
-/// Returns an error when an `env:` prefix is present but the variable is not set,
-/// ensuring misconfiguration is caught at startup rather than at request time.
-fn resolve_env_value(value: &str, field: &str, backend: &str) -> Result<String, DriverError> {
-    if let Some(var_name) = value.strip_prefix("env:") {
-        env::var(var_name).map_err(|_| {
-            DriverError::Driver(format!(
-                "Environment variable '{}' not set for field '{}' in backend '{}'",
-                var_name, field, backend
-            ))
-        })
-    } else {
-        Ok(value.to_string())
-    }
-}

@@ -1,22 +1,21 @@
 use apxm_core::types::provider_spec::{ProviderProtocol, resolve_builtin_provider};
+use apxm_core::types::BackendConfig;
+use crate::BackendError;
 
-use crate::CredentialError;
-use crate::credential::Credential;
-
-/// Validate a credential by making a minimal API call.
+/// Validate a backend by making a minimal API call.
 ///
-/// Dispatches on the typed [`ProviderProtocol`] enum instead of raw provider
-/// strings. Default base URLs are resolved from [`BUILTIN_PROVIDERS`].
-pub async fn validate_credential(name: &str, cred: &Credential) -> Result<String, CredentialError> {
-    let spec = resolve_builtin_provider(&cred.provider).ok_or_else(|| {
-        CredentialError::Validation {
-            name: name.to_string(),
-            reason: format!("Unknown provider '{}' — cannot validate", cred.provider),
-        }
+/// Dispatches on the typed [`ProviderProtocol`] enum. Default base URLs are
+/// resolved from [`BUILTIN_PROVIDERS`] if not specified in the backend config.
+pub async fn validate_backend(backend: &BackendConfig) -> Result<String, BackendError> {
+    let spec = resolve_builtin_provider(&backend.protocol.to_string()).ok_or_else(|| {
+        BackendError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("Unknown protocol '{}' — cannot validate", backend.protocol),
+        ))
     })?;
 
-    let base = cred
-        .base_url
+    let base = backend
+        .endpoint
         .as_deref()
         .or(spec.default_base_url)
         .unwrap_or("");
@@ -24,44 +23,44 @@ pub async fn validate_credential(name: &str, cred: &Credential) -> Result<String
 
     let client = reqwest::Client::new();
 
-    match spec.protocol {
-        ProviderProtocol::OpenAI => validate_openai(&client, name, cred, base).await,
-        ProviderProtocol::Anthropic => validate_anthropic(&client, name, cred, base).await,
-        ProviderProtocol::Google => validate_google(&client, name, cred, base).await,
-        ProviderProtocol::Ollama => validate_ollama(&client, name, cred, base).await,
+    match backend.protocol {
+        ProviderProtocol::OpenAI => validate_openai(&client, &backend.name, backend, base).await,
+        ProviderProtocol::Anthropic => validate_anthropic(&client, &backend.name, backend, base).await,
+        ProviderProtocol::Google => validate_google(&client, &backend.name, backend, base).await,
+        ProviderProtocol::Ollama => validate_ollama(&client, &backend.name, backend, base).await,
         // vLLM uses OpenAI-compatible validation (same /v1/models endpoint)
-        ProviderProtocol::Vllm => validate_openai(&client, name, cred, base).await,
+        ProviderProtocol::Vllm => validate_openai(&client, &backend.name, backend, base).await,
     }
 }
 
-fn require_api_key<'a>(name: &str, cred: &'a Credential) -> Result<&'a str, CredentialError> {
-    cred.api_key
-        .as_deref()
-        .ok_or_else(|| CredentialError::Validation {
-            name: name.to_string(),
-            reason: "No API key set".to_string(),
-        })
+fn require_api_key<'a>(name: &str, backend: &'a BackendConfig) -> Result<&'a str, BackendError> {
+    backend.api_key.as_deref().ok_or_else(|| {
+        BackendError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("Backend '{}': No API key set", name),
+        ))
+    })
 }
 
-fn validation_err(name: &str, reason: impl Into<String>) -> CredentialError {
-    CredentialError::Validation {
-        name: name.to_string(),
-        reason: reason.into(),
-    }
+fn validation_err(name: &str, reason: impl Into<String>) -> BackendError {
+    BackendError::Io(std::io::Error::new(
+        std::io::ErrorKind::Other,
+        format!("Backend '{}': {}", name, reason.into()),
+    ))
 }
 
 async fn validate_openai(
     client: &reqwest::Client,
     name: &str,
-    cred: &Credential,
+    backend: &BackendConfig,
     base: &str,
-) -> Result<String, CredentialError> {
-    let api_key = require_api_key(name, cred)?;
+) -> Result<String, BackendError> {
+    let api_key = require_api_key(name, backend)?;
 
     // Try GET /v1/models first (standard OpenAI).
     let models_url = format!("{base}/v1/models");
     let mut req = client.get(&models_url).bearer_auth(api_key);
-    for (k, v) in &cred.headers {
+    for (k, v) in &backend.headers {
         req = req.header(k.as_str(), v.as_str());
     }
 
@@ -76,7 +75,11 @@ async fn validate_openai(
 
     // Fallback: minimal chat completion (for on-premises/custom gateways
     // that don't expose /v1/models but do serve /chat/completions).
-    let model = cred.model.as_deref().unwrap_or("gpt-4o-mini");
+    let model = backend
+        .models
+        .first()
+        .map(|m| m.id.as_str())
+        .unwrap_or("gpt-4o-mini");
     let chat_url = format!("{base}/chat/completions");
     let mut req = client
         .post(&chat_url)
@@ -85,7 +88,7 @@ async fn validate_openai(
         .body(format!(
             r#"{{"model":"{model}","max_completion_tokens":1,"messages":[{{"role":"user","content":"hi"}}]}}"#,
         ));
-    for (k, v) in &cred.headers {
+    for (k, v) in &backend.headers {
         req = req.header(k.as_str(), v.as_str());
     }
 
@@ -104,10 +107,10 @@ async fn validate_openai(
 async fn validate_anthropic(
     client: &reqwest::Client,
     name: &str,
-    cred: &Credential,
+    backend: &BackendConfig,
     base: &str,
-) -> Result<String, CredentialError> {
-    let api_key = require_api_key(name, cred)?;
+) -> Result<String, BackendError> {
+    let api_key = require_api_key(name, backend)?;
     let url = format!("{base}/v1/messages");
 
     let resp = client
@@ -131,10 +134,10 @@ async fn validate_anthropic(
 async fn validate_google(
     client: &reqwest::Client,
     name: &str,
-    cred: &Credential,
+    backend: &BackendConfig,
     base: &str,
-) -> Result<String, CredentialError> {
-    let api_key = require_api_key(name, cred)?;
+) -> Result<String, BackendError> {
+    let api_key = require_api_key(name, backend)?;
     let url = format!("{base}/v1/models?key={api_key}");
 
     let resp = client
@@ -153,9 +156,9 @@ async fn validate_google(
 async fn validate_ollama(
     client: &reqwest::Client,
     name: &str,
-    _cred: &Credential,
+    _backend: &BackendConfig,
     base: &str,
-) -> Result<String, CredentialError> {
+) -> Result<String, BackendError> {
     let url = format!("{base}/api/tags");
 
     let resp = client

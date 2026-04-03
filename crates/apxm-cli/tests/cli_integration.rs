@@ -856,8 +856,8 @@ fn doctor_json_output() {
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert!(v["mlir"].is_object());
     assert!(v["mlir"]["available"].is_boolean());
-    assert!(v["credentials"].is_object());
-    assert!(v["credentials"]["count"].is_number());
+    assert!(v["backends"].is_object());
+    assert!(v["backends"]["count"].is_number());
     assert!(v["environment"].is_object());
 }
 

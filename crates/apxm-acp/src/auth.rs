@@ -6,7 +6,6 @@ use std::env;
 /// 1. Exact env var: `{method_id}`
 /// 2. Normalized: `ACPX_AUTH_{NORM}`
 /// 3. Normalized: `{NORM}`
-/// 4. APXM credential store (`~/.apxm/credentials.toml`)
 ///
 /// Normalization: trim, replace `[^a-zA-Z0-9]` with `_`, strip leading/trailing `_`, uppercase.
 pub fn resolve_auth_credential(method_id: &str) -> Option<String> {
@@ -31,15 +30,6 @@ pub fn resolve_auth_credential(method_id: &str) -> Option<String> {
     if let Ok(val) = env::var(&norm) {
         if !val.is_empty() {
             return Some(val);
-        }
-    }
-
-    // 4. APXM credential store
-    if let Ok(store) = apxm_credentials::CredentialStore::open() {
-        if let Ok(Some(cred)) = store.get(method_id) {
-            if let Some(key) = cred.api_key {
-                return Some(key);
-            }
         }
     }
 
