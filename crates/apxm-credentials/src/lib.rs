@@ -3,7 +3,11 @@
 //! Stores and retrieves credentials from `~/.apxm/credentials.toml` with
 //! owner-only file permissions. Supports OpenAI, Anthropic, Google, and
 //! Ollama provider backends.
+//!
+//! The newer [`backend`] module provides unified backend configuration
+//! management that replaces the legacy credentials system.
 
+pub mod backend;
 pub mod credential;
 pub mod mask;
 pub mod validate;
