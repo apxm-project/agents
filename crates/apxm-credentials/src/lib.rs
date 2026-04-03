@@ -5,10 +5,12 @@
 //! Ollama provider backends.
 //!
 //! The newer [`backend`] module provides unified backend configuration
-//! management that replaces the legacy credentials system.
+//! management that replaces the legacy credentials system. The [`docker`]
+//! module provides lifecycle management for local containerized backends.
 
 pub mod backend;
 pub mod credential;
+pub mod docker;
 pub mod mask;
 pub mod validate;
 
