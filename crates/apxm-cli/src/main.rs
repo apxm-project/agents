@@ -1391,7 +1391,14 @@ fn setup_session(
         .context("Failed to create session output directory")?;
 
     let graph_name = input.file_stem().and_then(|s| s.to_str());
-    w.write_manifest_running(&exec_id, graph_name)
+    w.write_manifest(
+            &exec_id,
+            graph_name,
+            apxm_core::constants::session::status::RUNNING,
+            0,
+            0,
+            false,
+        )
         .context("Failed to write manifest")?;
 
     if let Some(graph_json) = input_graph_json {
@@ -1498,36 +1505,22 @@ async fn execute_command(
     if let Some(writer) = writer {
         let graph_name = input.file_stem().and_then(|s| s.to_str());
         let exec_id = execution_id.as_deref().unwrap_or("unknown");
+        let stats = &result.execution.stats;
 
-        // Update manifest with final status
         writer
-            .write_manifest(
+            .finalize(
                 exec_id,
                 graph_name,
-                result.execution.stats.duration_ms,
-                result.execution.stats.executed_nodes + result.execution.stats.failed_nodes,
-                result.execution.stats.failed_nodes == 0,
+                stats.duration_ms,
+                stats.executed_nodes + stats.failed_nodes,
+                stats.failed_nodes == 0,
+                result.execution.all_outputs.as_ref(),
+                result.execution.node_output_map.as_ref(),
+                &result.execution.results,
+                &metrics_json,
+                &stats.node_statuses,
             )
-            .context("Failed to update manifest")?;
-
-        // Write results (with all_outputs if available)
-        if let (Some(all_outputs), Some(node_map)) =
-            (&result.execution.all_outputs, &result.execution.node_output_map)
-        {
-            writer
-                .write_results(all_outputs, node_map, &result.execution.results)
-                .context("Failed to write results")?;
-        }
-
-        // Write metrics
-        writer
-            .write_metrics(&metrics_json)
-            .context("Failed to write metrics")?;
-
-        // Write node statuses
-        writer
-            .write_node_statuses(&result.execution.stats.node_statuses)
-            .context("Failed to write node statuses")?;
+            .context("Failed to finalize session")?;
 
         eprintln!("Session complete: {}", writer.session_dir().display());
     }
@@ -1625,35 +1618,22 @@ async fn run_command(
     if let Some(writer) = writer {
         let graph_name = input.file_stem().and_then(|s| s.to_str());
         let exec_id = execution_id.as_deref().unwrap_or("unknown");
+        let stats = &result.stats;
 
         writer
-            .write_manifest(
+            .finalize(
                 exec_id,
                 graph_name,
-                result.stats.duration_ms,
-                result.stats.executed_nodes + result.stats.failed_nodes,
-                result.stats.failed_nodes == 0,
+                stats.duration_ms,
+                stats.executed_nodes + stats.failed_nodes,
+                stats.failed_nodes == 0,
+                result.all_outputs.as_ref(),
+                result.node_output_map.as_ref(),
+                &result.results,
+                &metrics_json,
+                &stats.node_statuses,
             )
-            .context("Failed to update manifest")?;
-
-        // Write results (with all_outputs if available)
-        if let (Some(all_outputs), Some(node_map)) =
-            (&result.all_outputs, &result.node_output_map)
-        {
-            writer
-                .write_results(all_outputs, node_map, &result.results)
-                .context("Failed to write results")?;
-        }
-
-        // Write metrics
-        writer
-            .write_metrics(&metrics_json)
-            .context("Failed to write metrics")?;
-
-        // Write node statuses
-        writer
-            .write_node_statuses(&result.stats.node_statuses)
-            .context("Failed to write node statuses")?;
+            .context("Failed to finalize session")?;
 
         eprintln!("Session complete: {}", writer.session_dir().display());
     }
@@ -2284,6 +2264,7 @@ fn validate_command(input: PathBuf, json_output: bool, no_check_resources: bool)
 /// Parsed graph topology used by analyze and explain commands.
 struct GraphAnalysis<'a> {
     graph: &'a apxm_graph::ApxmGraph,
+    node_index: HashMap<u64, usize>,
     edge_count: usize,
     node_ids: HashSet<u64>,
     successors: HashMap<u64, Vec<u64>>,
@@ -2295,6 +2276,7 @@ struct GraphAnalysis<'a> {
 
 impl<'a> GraphAnalysis<'a> {
     fn from_graph(graph: &'a apxm_graph::ApxmGraph) -> Self {
+        let node_index: HashMap<u64, usize> = graph.nodes.iter().enumerate().map(|(i, n)| (n.id, i)).collect();
         let node_ids: HashSet<u64> = graph.nodes.iter().map(|n| n.id).collect();
         let edge_count = graph.edges.len();
 
@@ -2346,6 +2328,7 @@ impl<'a> GraphAnalysis<'a> {
 
         Self {
             graph,
+            node_index,
             edge_count,
             node_ids,
             successors,
@@ -2357,7 +2340,7 @@ impl<'a> GraphAnalysis<'a> {
     }
 
     fn node_by_id(&self, id: u64) -> Option<&apxm_graph::GraphNode> {
-        self.graph.nodes.iter().find(|n| n.id == id)
+        self.node_index.get(&id).map(|&i| &self.graph.nodes[i])
     }
 
     fn node_op(&self, id: u64) -> String {
@@ -3595,26 +3578,26 @@ fn replay_command(session: PathBuf) -> Result<()> {
     );
     println!();
 
-    // Read trace
+    // Read trace (open directly, handle missing file)
     let trace_path = session.join(constants::session::files::TRACE);
-    if !trace_path.exists() {
-        println!("  (no trace file found)");
-        return Ok(());
-    }
-
-    // Read node names from the input graph
-    let input_path = session.join(constants::session::files::INPUT_GRAPH);
-    let node_names: HashMap<u64, String> = if input_path.exists() {
-        std::fs::read_to_string(&input_path)
-            .ok()
-            .and_then(|text| apxm_graph::ApxmGraph::from_json(&text).ok())
-            .map(|graph| {
-                graph.nodes.iter().map(|n| (n.id, n.name.clone())).collect()
-            })
-            .unwrap_or_default()
-    } else {
-        HashMap::new()
+    let trace_file = match std::fs::File::open(&trace_path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            println!("  (no trace file found)");
+            return Ok(());
+        }
+        Err(e) => return Err(anyhow::anyhow!("Failed to open {}: {e}", trace_path.display())),
     };
+
+    // Read node names from the input graph (best-effort)
+    let input_path = session.join(constants::session::files::INPUT_GRAPH);
+    let node_names: HashMap<u64, String> = std::fs::read_to_string(&input_path)
+        .ok()
+        .and_then(|text| apxm_graph::ApxmGraph::from_json(&text).ok())
+        .map(|graph| {
+            graph.nodes.iter().map(|n| (n.id, n.name.clone())).collect()
+        })
+        .unwrap_or_default();
 
     // Parse trace events and build timeline
     use apxm_events::ApxmEvent;
@@ -3635,8 +3618,6 @@ fn replay_command(session: PathBuf) -> Result<()> {
     let mut entries: Vec<TimelineEntry> = Vec::new();
     let mut first_timestamp: Option<chrono::DateTime<chrono::Utc>> = None;
 
-    let trace_file = std::fs::File::open(&trace_path)
-        .with_context(|| format!("Failed to open {}", trace_path.display()))?;
     let reader = std::io::BufReader::new(trace_file);
 
     for line in std::io::BufRead::lines(reader) {
