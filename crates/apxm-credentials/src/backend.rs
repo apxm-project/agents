@@ -5,7 +5,7 @@
 //! can include type information (cloud/onprem/local), model metadata, and Docker
 //! configurations for local deployments.
 
-use apxm_core::types::BackendConfig;
+use apxm_core::types::{BackendConfig, ModelConfig};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -33,6 +33,9 @@ pub enum BackendError {
 
     #[error("Backend '{name}' not found")]
     NotFound { name: String },
+
+    #[error("Model '{model}' already exists in backend '{backend}'")]
+    ModelAlreadyExists { backend: String, model: String },
 
     #[error("Unable to determine home directory")]
     HomeDirMissing,
@@ -176,6 +179,26 @@ impl BackendStore {
                 name: name.to_string(),
             })?;
         file.backends[pos] = backend;
+        self.write_file(&file)
+    }
+
+    /// Add a model to an existing backend. Fails if the model ID already exists.
+    pub fn add_model(&self, backend_name: &str, model: ModelConfig) -> Result<(), BackendError> {
+        let mut file = self.read_file()?;
+        let pos = file
+            .backends
+            .iter()
+            .position(|b| b.name == backend_name)
+            .ok_or_else(|| BackendError::NotFound {
+                name: backend_name.to_string(),
+            })?;
+        if file.backends[pos].models.iter().any(|m| m.id == model.id) {
+            return Err(BackendError::ModelAlreadyExists {
+                backend: backend_name.to_string(),
+                model: model.id,
+            });
+        }
+        file.backends[pos].models.push(model);
         self.write_file(&file)
     }
 
@@ -581,5 +604,94 @@ mod tests {
         let metadata = fs::metadata(&store.config_path).unwrap();
         let mode = metadata.permissions().mode() & 0o777;
         assert_eq!(mode, FILE_PERMISSIONS);
+    }
+
+    #[test]
+    fn add_model_to_backend() {
+        let tmp = TempDir::new().unwrap();
+        let store = test_store(tmp.path());
+
+        let backend = BackendConfig {
+            name: "model-test".to_string(),
+            backend_type: BackendType::Cloud,
+            protocol: ProviderProtocol::OpenAI,
+            endpoint: None,
+            api_key: Some("key".to_string()),
+            headers: HashMap::new(),
+            models: vec![],
+            docker: None,
+        };
+        store.add(backend).unwrap();
+
+        let model = ModelConfig {
+            id: "gpt-4o".to_string(),
+            aliases: vec!["4o".to_string()],
+            context_window: 128000,
+            cost_per_1k_input: 0.005,
+            cost_per_1k_output: 0.015,
+            supports_vision: true,
+            supports_functions: true,
+            supports_thinking: false,
+            tags: vec!["production".to_string()],
+        };
+        store.add_model("model-test", model).unwrap();
+
+        let got = store.get("model-test").unwrap().unwrap();
+        assert_eq!(got.models.len(), 1);
+        assert_eq!(got.models[0].id, "gpt-4o");
+        assert_eq!(got.models[0].context_window, 128000);
+    }
+
+    #[test]
+    fn add_model_to_nonexistent_backend() {
+        let tmp = TempDir::new().unwrap();
+        let store = test_store(tmp.path());
+
+        let model = ModelConfig {
+            id: "gpt-4o".to_string(),
+            aliases: vec![],
+            context_window: 0,
+            cost_per_1k_input: 0.0,
+            cost_per_1k_output: 0.0,
+            supports_vision: false,
+            supports_functions: false,
+            supports_thinking: false,
+            tags: vec![],
+        };
+        let result = store.add_model("nonexistent", model);
+        assert!(matches!(result, Err(BackendError::NotFound { .. })));
+    }
+
+    #[test]
+    fn add_model_duplicate_fails() {
+        let tmp = TempDir::new().unwrap();
+        let store = test_store(tmp.path());
+
+        let backend = BackendConfig {
+            name: "dup-model".to_string(),
+            backend_type: BackendType::Cloud,
+            protocol: ProviderProtocol::OpenAI,
+            endpoint: None,
+            api_key: Some("key".to_string()),
+            headers: HashMap::new(),
+            models: vec![],
+            docker: None,
+        };
+        store.add(backend).unwrap();
+
+        let model = ModelConfig {
+            id: "gpt-4o".to_string(),
+            aliases: vec![],
+            context_window: 0,
+            cost_per_1k_input: 0.0,
+            cost_per_1k_output: 0.0,
+            supports_vision: false,
+            supports_functions: false,
+            supports_thinking: false,
+            tags: vec![],
+        };
+        store.add_model("dup-model", model.clone()).unwrap();
+        let result = store.add_model("dup-model", model);
+        assert!(matches!(result, Err(BackendError::ModelAlreadyExists { .. })));
     }
 }

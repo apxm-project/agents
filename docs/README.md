@@ -57,19 +57,15 @@ Concrete applications and SDKs being built on A-PXM.
 ### [`guides/`](guides/) -- Getting Started *(for users)*
 
 - [**getting-started.md**](guides/getting-started.md) -- Installation, first build, first run
-- [**llm-backends.md**](guides/llm-backends.md) -- Configuring LLM providers
+- [**backends.md**](guides/backends.md) -- Backend/model hierarchy, setup, and routing
 - [**first-graph.md**](guides/first-graph.md) -- Writing your first agent graph
 - [**debugging.md**](guides/debugging.md) -- Debugging agent workflows
 - [**multi-agent.md**](guides/multi-agent.md) -- Multi-agent orchestration
 
-### [`architecture/`](architecture/) -- System Architecture
-
-- [**backends-and-models.md**](architecture/backends-and-models.md) -- Backend/model hierarchy and routing
-- [**backends-quickref.md**](architecture/backends-quickref.md) -- Quick reference for backend configuration
-
 ### [`reference/`](reference/) -- Configuration Reference
 
 - [**config.md**](reference/config.md) -- Complete `~/.apxm/config.toml` file reference
+- [**backends-quickref.md**](reference/backends-quickref.md) -- Quick reference for backend configuration
 
 ### External References
 

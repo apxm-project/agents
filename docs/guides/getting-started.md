@@ -87,7 +87,7 @@ dekk apxm test
 
 ---
 
-## Register an LLM Backend
+## Register an Inference Backend
 
 Before running programs, register at least one LLM provider:
 
@@ -104,7 +104,7 @@ apxm backend add local --type cloud --protocol ollama
 
 Verify: `apxm backend test`
 
-See [LLM Backends](llm-backends.md) for backend configuration, enterprise gateways, and security details.
+See [Backend Setup](backends.md) for backend configuration, enterprise gateways, and security details.
 
 ---
 
@@ -265,5 +265,5 @@ For deeper understanding, see [PXM Foundations](../pxm/foundations.md).
 
 1. **Explore examples** — `examples/basics/hello.ais`, `examples/multi-agent/apxm_council.ais`, `examples/multi-agent/multi_flow.ais`
 2. **CLI reference** — Run `apxm --help` for all commands and options
-3. **LLM backends** — [LLM Backends](llm-backends.md) for backend setup
+3. **Backends** — [Backend Setup](backends.md) for backend configuration
 4. **Architecture** — [Architecture](../implementation/architecture.md) for system design

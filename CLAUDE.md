@@ -58,12 +58,15 @@ apxm install                           # install/update conda env from environme
 
 ### Configuration
 ```bash
-apxm llm add my-key --provider openai --api-key sk-...   # add LLM credential
-apxm llm add local --provider ollama --base-url http://localhost:11434
-apxm llm list                          # show registered credentials
-apxm llm test                          # validate all credentials via test API call
-apxm llm test my-key                   # validate one credential
-apxm llm remove my-key                 # delete a credential
+apxm backend add my-key --type cloud --protocol openai --api-key sk-...
+apxm backend add local --type local --protocol ollama --endpoint http://localhost:11434
+apxm backend list                      # show registered backends
+apxm backend test                      # validate all backends
+apxm backend test my-key               # validate one backend
+apxm backend remove my-key             # delete a backend
+apxm backend add-model my-key gpt-4o   # add model to a backend
+apxm backend start <name>              # start local backend container
+apxm backend stop <name>               # stop local backend container
 apxm tool add my-tool --description "..."    # register external tool for INV nodes
 apxm tool list                         # list registered tools
 apxm tool remove my-tool               # remove a tool registration

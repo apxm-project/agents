@@ -278,4 +278,4 @@ apxm backend restart <name>    # Restart container
 ## See Also
 
 - [`docs/reference/config.md`](../reference/config.md) — Complete config file reference
-- [`docs/architecture/backends-quickref.md`](backends-quickref.md) — One-page cheat sheet
+- [`docs/reference/backends-quickref.md`](../reference/backends-quickref.md) — One-page cheat sheet

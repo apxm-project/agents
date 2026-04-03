@@ -14,7 +14,6 @@ Usage:
     apxm run out.apxmobj            # Run pre-compiled artifact
     apxm test                       # Run test suite
     apxm install                    # Install/update environment
-    apxm llm add <name> ...         # Register API credentials
     apxm --help                     # Show all available commands
 """
 
@@ -28,7 +27,6 @@ from scripts.build import register_commands as register_build
 from scripts.compile import register_commands as register_compile
 from scripts.execute import register_commands as register_execute
 from scripts.install import register_commands as register_install
-from scripts.register import create_app as create_register_app
 from scripts.run import register_commands as register_run
 from scripts.test import register_commands as register_test
 
@@ -53,9 +51,6 @@ register_execute(app)
 register_run(app)
 register_test(app)
 register_install(app)
-
-# Register sub-apps
-app.add_typer(create_register_app(), name="register")
 
 
 if __name__ == "__main__":

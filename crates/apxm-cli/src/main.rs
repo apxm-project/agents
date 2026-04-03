@@ -306,6 +306,37 @@ enum BackendAction {
         /// Backend name
         name: String,
     },
+    /// Add a model to an existing backend
+    AddModel {
+        /// Backend to add the model to
+        backend: String,
+        /// Model identifier (sent to API)
+        model_id: String,
+        /// Alternative routing names
+        #[arg(long)]
+        alias: Vec<String>,
+        /// Maximum context window in tokens
+        #[arg(long, default_value = "0")]
+        context_window: usize,
+        /// Cost per 1K input tokens (USD)
+        #[arg(long, default_value = "0.0")]
+        cost_input: f64,
+        /// Cost per 1K output tokens (USD)
+        #[arg(long, default_value = "0.0")]
+        cost_output: f64,
+        /// Model supports image inputs
+        #[arg(long)]
+        supports_vision: bool,
+        /// Model supports function/tool calling
+        #[arg(long)]
+        supports_functions: bool,
+        /// Model supports extended thinking
+        #[arg(long)]
+        supports_thinking: bool,
+        /// Classification tags
+        #[arg(long)]
+        tag: Vec<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1707,6 +1738,42 @@ async fn backend_command(action: BackendAction, json_output: bool) -> Result<()>
             } else {
                 print_section_header("Backend Restarted");
                 print_status_line("Backend", Status::Ok, &name);
+            }
+        }
+        BackendAction::AddModel {
+            backend,
+            model_id,
+            alias,
+            context_window,
+            cost_input,
+            cost_output,
+            supports_vision,
+            supports_functions,
+            supports_thinking,
+            tag,
+        } => {
+            use apxm_core::types::ModelConfig;
+
+            let model = ModelConfig {
+                id: model_id.clone(),
+                aliases: alias,
+                context_window,
+                cost_per_1k_input: cost_input,
+                cost_per_1k_output: cost_output,
+                supports_vision,
+                supports_functions,
+                supports_thinking,
+                tags: tag,
+            };
+
+            store.add_model(&backend, model).map_err(|e| anyhow::anyhow!("{e}"))?;
+
+            if json_output {
+                println!("{{\"status\":\"ok\",\"backend\":\"{backend}\",\"model\":\"{model_id}\"}}");
+            } else {
+                print_section_header("Model Added");
+                print_status_line("Backend", Status::Ok, &backend);
+                print_status_line("Model", Status::Ok, &model_id);
             }
         }
     }
