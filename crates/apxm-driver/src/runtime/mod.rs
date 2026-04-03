@@ -33,6 +33,10 @@ impl RuntimeExecutor {
         configure_llm_registry(runtime.llm_registry(), &config.apxm_config).await?;
         configure_capability_registry(runtime.capability_system_arc(), &config.apxm_config)?;
 
+        // Initialize ModelRouter after LLM backends are registered.
+        // Loads ~/.apxm/models.toml and registers circuit breakers for each backend.
+        runtime.init_model_router(apxm_runtime::ModelRouterConfig::default());
+
         let sandbox_registry = configure_sandbox_registry();
         runtime.set_sandbox_registry(sandbox_registry);
 

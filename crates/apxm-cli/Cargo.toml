@@ -25,6 +25,7 @@ serde_json = "1.0"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"], optional = true }
 apxm-credentials = { path = "../apxm-credentials" }
 apxm-acp = { path = "../apxm-acp" }
+apxm-runtime = { path = "../apxm-runtime" }
 rpassword = "7.0"
 
 [dev-dependencies]

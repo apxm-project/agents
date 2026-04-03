@@ -21,6 +21,7 @@ use apxm_core::{
     },
 };
 use apxm_sandbox::SandboxRegistry;
+use crate::model_router::{ModelRouter, ModelRouterConfig};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
 
@@ -89,6 +90,8 @@ pub struct Runtime {
     instruction_config: apxm_core::InstructionConfig,
     sandbox_registry: Arc<SandboxRegistry>,
     process_table: Arc<ProcessTable>,
+    /// Optional ModelRouter for dynamic backend/model selection with circuit breakers.
+    model_router: Option<Arc<ModelRouter>>,
 }
 
 impl Runtime {
@@ -142,6 +145,7 @@ impl Runtime {
             instruction_config: apxm_core::InstructionConfig::default(),
             sandbox_registry: Arc::new(SandboxRegistry::new()),
             process_table: Arc::new(ProcessTable::new()),
+            model_router: None,
         })
     }
 
@@ -165,6 +169,9 @@ impl Runtime {
         ctx.event_emitter = event_emitter;
         ctx.sandbox_registry = Arc::clone(&self.sandbox_registry);
         ctx.process_table = Arc::clone(&self.process_table);
+        if let Some(ref router) = self.model_router {
+            ctx.model_router = Some(Arc::clone(router));
+        }
         ctx
     }
 
@@ -205,6 +212,30 @@ impl Runtime {
     /// Get a reference to the sandbox registry.
     pub fn sandbox_registry(&self) -> &SandboxRegistry {
         &self.sandbox_registry
+    }
+
+    /// Attach a ModelRouter to the runtime.
+    ///
+    /// Once set, every [`ExecutionContext`] built by this runtime will have
+    /// the router available, enabling circuit-breaker-aware LLM dispatch.
+    pub fn set_model_router(&mut self, router: Arc<ModelRouter>) {
+        self.model_router = Some(router);
+    }
+
+    /// Build a ModelRouter from the current LLM registry and attach it.
+    ///
+    /// This is a convenience method for the driver — it creates the router
+    /// with default config, loads `~/.apxm/models.toml`, and registers
+    /// circuit breakers for all currently registered backends.
+    pub fn init_model_router(&mut self, config: ModelRouterConfig) {
+        let router = ModelRouter::new(Arc::clone(&self.llm_registry), config);
+        self.model_router = Some(Arc::new(router));
+        tracing::info!("ModelRouter initialized with circuit breakers");
+    }
+
+    /// Get a reference to the model router, if one is attached.
+    pub fn model_router(&self) -> Option<&Arc<ModelRouter>> {
+        self.model_router.as_ref()
     }
 
     /// Execute a DAG with parallel dataflow execution
