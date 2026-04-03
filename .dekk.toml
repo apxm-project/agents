@@ -27,7 +27,8 @@ python = { command = "python", version = ">=3.10" }
 MLIR_DIR = "{environment}/lib/cmake/mlir"
 LLVM_DIR = "{environment}/lib/cmake/llvm"
 APXM_HOME = "{project}"
-LD_LIBRARY_PATH = "{project}/target/release/lib:{project}/target/release"
+LD_LIBRARY_PATH = "{project}/target/release/lib:{project}/target/release:{environment}/lib"
+APXM_BACKEND = "corp-gateway"
 
 [paths]
 bin = ["{project}/bin", "{project}/target/release", "{home}/.cargo/bin"]
