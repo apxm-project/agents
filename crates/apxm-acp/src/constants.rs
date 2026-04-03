@@ -4,8 +4,6 @@
 //! following the pattern in `apxm-core/src/constants.rs`.
 
 pub mod protocol {
-    /// JSON-RPC 2.0 version string.
-    pub const JSONRPC_VERSION: &str = "2.0";
     /// ACP protocol version negotiated during initialize (uint16, per ACP spec).
     pub const ACP_PROTOCOL_VERSION: u16 = 1;
 }
@@ -129,8 +127,6 @@ pub mod capability {
 }
 
 pub mod wire {
-    /// ACP wire key for MCP servers (called "capabilities" in APXM).
-    pub const MCP_SERVERS: &str = "mcpServers";
     /// ACP wire key for model in prompt response.
     pub const MODEL: &str = "model";
 }

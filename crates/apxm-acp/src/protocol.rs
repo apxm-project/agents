@@ -8,7 +8,6 @@ use apxm_core::apxm_acp;
 use crate::AcpError;
 use apxm_core::constants::jsonrpc;
 use crate::constants::json_rpc_errors;
-use crate::constants::protocol::JSONRPC_VERSION;
 
 /// A JSON-RPC 2.0 request (client→agent).
 #[derive(Debug, Serialize, Deserialize)]
@@ -91,7 +90,7 @@ impl StdioTransport {
     ) -> Result<u64, AcpError> {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let request = JsonRpcRequest {
-            jsonrpc: JSONRPC_VERSION.to_string(),
+            jsonrpc: jsonrpc::VERSION.to_string(),
             id: serde_json::Value::Number(id.into()),
             method: method.to_string(),
             params,
@@ -108,7 +107,7 @@ impl StdioTransport {
         result: serde_json::Value,
     ) -> Result<(), AcpError> {
         let response = JsonRpcResponse {
-            jsonrpc: JSONRPC_VERSION.to_string(),
+            jsonrpc: jsonrpc::VERSION.to_string(),
             id,
             result: Some(result),
             error: None,
@@ -124,7 +123,7 @@ impl StdioTransport {
         message: &str,
     ) -> Result<(), AcpError> {
         let response = JsonRpcResponse {
-            jsonrpc: JSONRPC_VERSION.to_string(),
+            jsonrpc: jsonrpc::VERSION.to_string(),
             id,
             result: None,
             error: Some(JsonRpcError {
@@ -252,42 +251,42 @@ mod tests {
 
     #[test]
     fn classify_response() {
-        let raw = serde_json::json!({"jsonrpc": JSONRPC_VERSION, "id": 1, "result": "ok"});
+        let raw = serde_json::json!({"jsonrpc": jsonrpc::VERSION, "id": 1, "result": "ok"});
         let msg = classify(raw).unwrap();
         assert!(matches!(msg, JsonRpcMessage::Response(_)));
     }
 
     #[test]
     fn classify_error_response() {
-        let raw = serde_json::json!({"jsonrpc": JSONRPC_VERSION, "id": 1, "error": {"code": -1, "message": "bad"}});
+        let raw = serde_json::json!({"jsonrpc": jsonrpc::VERSION, "id": 1, "error": {"code": -1, "message": "bad"}});
         let msg = classify(raw).unwrap();
         assert!(matches!(msg, JsonRpcMessage::Response(_)));
     }
 
     #[test]
     fn classify_notification() {
-        let raw = serde_json::json!({"jsonrpc": JSONRPC_VERSION, "method": "session/update", "params": {}});
+        let raw = serde_json::json!({"jsonrpc": jsonrpc::VERSION, "method": "session/update", "params": {}});
         let msg = classify(raw).unwrap();
         assert!(matches!(msg, JsonRpcMessage::Notification { .. }));
     }
 
     #[test]
     fn classify_reverse_request() {
-        let raw = serde_json::json!({"jsonrpc": JSONRPC_VERSION, "id": 5, "method": "fs/readTextFile", "params": {}});
+        let raw = serde_json::json!({"jsonrpc": jsonrpc::VERSION, "id": 5, "method": "fs/readTextFile", "params": {}});
         let msg = classify(raw).unwrap();
         assert!(matches!(msg, JsonRpcMessage::ReverseRequest(_)));
     }
 
     #[test]
     fn classify_empty_method_is_error() {
-        let raw = serde_json::json!({"jsonrpc": JSONRPC_VERSION, "method": ""});
+        let raw = serde_json::json!({"jsonrpc": jsonrpc::VERSION, "method": ""});
         assert!(classify(raw).is_err());
     }
 
     #[test]
     fn request_roundtrip() {
         let req = JsonRpcRequest {
-            jsonrpc: JSONRPC_VERSION.to_string(),
+            jsonrpc: jsonrpc::VERSION.to_string(),
             id: serde_json::Value::Number(42.into()),
             method: "test".to_string(),
             params: Some(serde_json::json!({"key": "val"})),
