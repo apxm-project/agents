@@ -124,16 +124,16 @@ At O2 and above, graph-level passes (`prompt_caching`, `memoization_hints`) run 
 
 ```bash
 # Standard optimization (O2 is the default)
-apxm compile workflow.json -O2 -o workflow.apxmobj
+apxm compile workflow.apxm -O2 -o workflow.apxmobj
 
 # No optimization
-apxm compile workflow.json -O0 -o workflow.apxmobj
+apxm compile workflow.apxm -O0 -o workflow.apxmobj
 
 # Skip CSE for non-deterministic workflows
-apxm compile workflow.json --no-cse-llm -o workflow.apxmobj
+apxm compile workflow.apxm --no-cse-llm -o workflow.apxmobj
 
 # Per-pass timing diagnostics
-apxm compile workflow.json --emit-diagnostics diag.json
+apxm compile workflow.apxm --emit-diagnostics diag.json
 ```
 
 The `--emit-diagnostics` flag produces a JSON report with per-pass metrics: name, duration, ops before/after, and ops delta.

@@ -60,7 +60,7 @@ The four passes referenced in the plan all exist:
 | O2 | 12 | O1 + template-specialization, dead-context-elimination, schema-narrowing, condense-ops |
 | O3 | 93 | O2 passes iterated 10 times for fixed-point convergence |
 
-The plan references `apxm compile graph.json -o out.apxmobj -O2` which is correct and uses the standard O2 pipeline.
+The plan references `apxm compile graph.apxm -o out.apxmobj -O2` which is correct and uses the standard O2 pipeline.
 
 ### 1.3 PassManager Architecture
 
@@ -221,7 +221,7 @@ This is a documentation gap rather than a code problem. The plan is accurate abo
 
 ### 2.8 LOW: `apxm analyze` Command
 
-**Plan claims:** `apxm analyze graph.json --json` provides parallelism and optimization report.
+**Plan claims:** `apxm analyze graph.apxm --json` provides parallelism and optimization report.
 
 **Observation:** The `apxm analyze` command is referenced in CLAUDE.md as an existing CLI command. Its implementation was not investigated in detail, but the MCP server (`apxm_mcp.rs`) contains analysis logic that identifies parallel phases and provides speedup estimates.
 
@@ -279,7 +279,7 @@ This is a documentation gap rather than a code problem. The plan is accurate abo
 ```
 test_end_to_end_compile_execute:
   1. Construct a consumer-style turn graph (ASK -> BRANCH_ON_VALUE -> INV x3 -> WAIT_ALL -> VERIFY -> UMEM)
-  2. Compile at O2: `apxm compile graph.json -o turn.apxmobj -O2`
+  2. Compile at O2: `apxm compile graph.apxm -o turn.apxmobj -O2`
   3. Verify artifact produced with optimization report
   4. Execute artifact: `apxm run turn.apxmobj`
   5. Compare: compiled execution produces same results as uncompiled execution

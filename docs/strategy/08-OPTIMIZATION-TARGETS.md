@@ -17,9 +17,9 @@ APXM already has optimization levels (`-O0` through `-O3`) that control *how agg
 **Optimization targets** tell the compiler what metric to prioritize. They compose with optimization levels:
 
 ```bash
-apxm compile graph.json -O2 --target latency     # Standard passes, tuned for speed
-apxm compile graph.json -O3 --target cost         # Aggressive passes, tuned for savings
-apxm compile graph.json -O1 --target tokens       # Basic passes, tuned for context
+apxm compile graph.apxm -O2 --target latency     # Standard passes, tuned for speed
+apxm compile graph.apxm -O3 --target cost         # Aggressive passes, tuned for savings
+apxm compile graph.apxm -O1 --target tokens       # Basic passes, tuned for context
 ```
 
 ---
@@ -295,10 +295,10 @@ Targets can be combined for multi-objective optimization:
 
 ```bash
 # Minimize tokens AND maximize parallelism
-apxm compile graph.json -O2 --target tokens,parallel
+apxm compile graph.apxm -O2 --target tokens,parallel
 
 # Minimize cost AND latency (partial conflict -- cost wins on model choice, latency wins on execution)
-apxm compile graph.json -O2 --target cost,latency
+apxm compile graph.apxm -O2 --target cost,latency
 ```
 
 **Conflict resolution** (when targets disagree):
@@ -408,10 +408,10 @@ pub fn build_pass_list(
 
 ```bash
 # Compile with optimization target
-apxm compile graph.json -O2 --target latency -o graph.apxmobj
+apxm compile graph.apxm -O2 --target latency -o graph.apxmobj
 
 # Execute with target (compile + run)
-apxm execute graph.json -O2 --target cost
+apxm execute graph.apxm -O2 --target cost
 
 # Run pre-compiled artifact with runtime target hints
 apxm run graph.apxmobj --runtime-target cost
@@ -437,8 +437,8 @@ latency     Minimize end-to-end time             30-50% latency reduction
 cost        Minimize API costs                   50-80% cost reduction
 
 # Analyze graph with target-specific recommendations
-apxm analyze graph.json --target cost
-ANALYSIS: graph.json with --target cost
+apxm analyze graph.apxm --target cost
+ANALYSIS: graph.apxm with --target cost
   Nodes eligible for model downgrade:    4/7 (ASK nodes without output_schema)
   Estimated cost reduction:              $0.12/run -> $0.03/run (75%)
   Fusible ASK chains:                    2 (saves 2 API calls)
@@ -464,7 +464,7 @@ The existing PGO system (`ExecutionProfile`) feeds data back to the compiler. Op
 apxm run graph.apxmobj --emit-metrics profile.json
 
 # Recompile with profile data + target
-apxm compile graph.json -O2 --target latency --profile profile.json -o graph-optimized.apxmobj
+apxm compile graph.apxm -O2 --target latency --profile profile.json -o graph-optimized.apxmobj
 ```
 
 ---

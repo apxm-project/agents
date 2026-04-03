@@ -738,7 +738,7 @@ Main turn graph fails (timeout, max_turns, protocol violation)
 **G13.1 Compile turn graph**
 
 ```bash
-apxm compile gemini-turn.json -o gemini-turn.apxmobj -O2
+apxm compile gemini-turn.apxm -o gemini-turn.apxmobj -O2
 ```
 
 The compiler produces an optimized `.apxmobj` artifact from the turn graph. Optimization passes include:
@@ -781,7 +781,7 @@ The compiled artifact runs on the A-PXM dataflow scheduler with the same semanti
 
 ### Phase 5 Validation
 
-- [ ] `apxm compile gemini-turn.json` produces valid `.apxmobj`
+- [ ] `apxm compile gemini-turn.apxm` produces valid `.apxmobj`
 - [ ] FuseAskOps reduces API calls on workflows with sequential LLM calls
 - [ ] Compile-time validation catches structural errors before any LLM call
 - [ ] Compiled artifact execution produces identical results to uncompiled
@@ -867,7 +867,7 @@ Phase 5 -- Compiler Integration (Weeks 25-28)
 - [ ] Hooks fire at correct graph positions via FENCE
 
 ### Phase 5 Complete:
-- [ ] `apxm compile gemini-turn.json` produces optimized `.apxmobj`
+- [ ] `apxm compile gemini-turn.apxm` produces optimized `.apxmobj`
 - [ ] FuseAskOps reduces API calls on real workflows
 - [ ] Compile-time validation catches structural errors before any LLM call
 

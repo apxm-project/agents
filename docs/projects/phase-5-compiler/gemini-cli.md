@@ -4,7 +4,7 @@
 
 > Source: [Plan 3 -- Gemini-CLI Changes](../plan-3-gemini-changes.md), Phase 5 (G13)
 > Timeline: 3 days (within Phase 5, Weeks 29+)
-> Dependencies: Phase 4 complete (`gemini-turn.json` exists), Plan 1 A8 (APXM compiler passes), all prerequisites resolved
+> Dependencies: Phase 4 complete (`gemini-turn.apxm` exists), Plan 1 A8 (APXM compiler passes), all prerequisites resolved
 
 ---
 
@@ -23,7 +23,7 @@ Compile Gemini-CLI's turn graph to optimized `.apxmobj` artifacts. The compiler 
 ### G13.1 Compile Turn Graph
 
 ```bash
-apxm compile gemini-turn.json -o gemini-turn.apxmobj -O2
+apxm compile gemini-turn.apxm -o gemini-turn.apxmobj -O2
 ```
 
 The compiler produces an optimized `.apxmobj` artifact from the turn graph. Optimization passes include:
@@ -72,7 +72,7 @@ The compiled artifact runs on the A-PXM dataflow scheduler with the same semanti
 
 ## Phase 5 Validation
 
-- [ ] `apxm compile gemini-turn.json` produces valid `.apxmobj`
+- [ ] `apxm compile gemini-turn.apxm` produces valid `.apxmobj`
 - [ ] `fuse-ask-ops` reduces API calls on workflows with sequential LLM calls
 - [ ] Compile-time validation catches structural errors before any LLM call
 - [ ] Compiled artifact execution produces identical results to uncompiled

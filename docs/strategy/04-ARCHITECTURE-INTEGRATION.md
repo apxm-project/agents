@@ -235,7 +235,7 @@ apxm-runtime/src/
    Parallelism detected: review + test can run independently
 
 5. APXM Compilation
-   apxm compile review.apxm.json
+   apxm compile review.apxm
    Passes:
      - DAG validation (unique IDs, valid ops)
      - Dead code elimination

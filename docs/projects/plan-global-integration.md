@@ -266,7 +266,7 @@ Instead of:                        You write:
 │ }                    │           │   umem(save_result)   │
 └──────────────────────┘           └──────────────────────┘
                                               │
-                                    apxm compile graph.json
+                                    apxm compile graph.apxm
                                               │
                                               ▼
                                    ┌──────────────────────┐
@@ -409,7 +409,7 @@ Phase 5 — Compiler Integration (Weeks 29+)
 - [ ] Automatic parallelism demonstrated on concurrent tool calls
 
 ### Phase 5 Complete:
-- [ ] `apxm compile agent-graph.json` produces optimized `.apxmobj`
+- [ ] `apxm compile agent-graph.apxm` produces optimized `.apxmobj`
 - [ ] FuseAskOps reduces API calls on real workflows
 - [ ] Compile-time validation catches structural errors before any LLM call
 

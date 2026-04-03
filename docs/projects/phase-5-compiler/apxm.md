@@ -62,14 +62,14 @@ Phase A8 ensures these passes work on the graph patterns consumers produce:
 ## A8.2 `apxm compile` for Consumer Graphs
 
 ```bash
-apxm compile codex-turn.json -o codex-turn.apxmobj -O2
+apxm compile codex-turn.apxm -o codex-turn.apxmobj -O2
 # Produces optimized artifact with compile-time analysis report
 
-apxm compile codex-turn.json --emit-diagnostics diag.json
+apxm compile codex-turn.apxm --emit-diagnostics diag.json
 # Machine-readable: parallelism opportunities, fused ops, dead code, type errors
 ```
 
-The `apxm compile` command is extended to handle consumer-authored graph patterns. This includes graphs produced by Codex (`codex-turn.json`) and Gemini-CLI (`gemini-turn.json`) in Phase 4. The compiler applies the full optimization pipeline and emits a `.apxmobj` artifact that can be executed with `apxm run`.
+The `apxm compile` command is extended to handle consumer-authored graph patterns. This includes graphs produced by Codex (`codex-turn.apxm`) and Gemini-CLI (`gemini-turn.apxm`) in Phase 4. The compiler applies the full optimization pipeline and emits a `.apxmobj` artifact that can be executed with `apxm run`.
 
 ---
 
@@ -113,10 +113,10 @@ The `.apxmobj` artifact format:
 
 ## A8.6 Acceptance Criteria
 
-- [ ] `apxm compile agent-graph.json` produces optimized `.apxmobj` from consumer graphs
+- [ ] `apxm compile agent-graph.apxm` produces optimized `.apxmobj` from consumer graphs
 - [ ] `fuse-ask-ops` measurably reduces API calls on real Codex/Gemini-CLI workflows
 - [ ] Compile-time validation catches structural errors before any LLM call
-- [ ] `apxm analyze graph.json --json` provides parallelism and optimization report
+- [ ] `apxm analyze graph.apxm --json` provides parallelism and optimization report
 
 ---
 

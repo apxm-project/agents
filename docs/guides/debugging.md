@@ -7,7 +7,7 @@ APXM provides structured, zero-overhead tracing across all subsystems. When disa
 ### Via `--trace` flag (all subsystems at one level)
 
 ```bash
-apxm --trace debug execute graph.json
+apxm --trace debug execute graph.apxm
 apxm --trace trace agent test claude
 ```
 
@@ -18,10 +18,10 @@ apxm --trace trace agent test claude
 RUST_LOG=apxm::acp=debug dekk apxm agent test claude
 
 # Multiple subsystems at different levels
-RUST_LOG=apxm::acp=debug,apxm::ops=trace dekk apxm execute graph.json
+RUST_LOG=apxm::acp=debug,apxm::ops=trace dekk apxm execute graph.apxm
 
 # Everything at trace level
-RUST_LOG=apxm=trace dekk apxm execute graph.json
+RUST_LOG=apxm=trace dekk apxm execute graph.apxm
 ```
 
 ## Tracing Targets
@@ -63,7 +63,7 @@ WARN  apxm::acp: <- error id=2 code=-32602 msg=Invalid params data={...}
 
 ```bash
 # Scheduler + operation tracing
-RUST_LOG=apxm::ops=debug,apxm::scheduler=info dekk apxm execute graph.json
+RUST_LOG=apxm::ops=debug,apxm::scheduler=info dekk apxm execute graph.apxm
 ```
 
 ## Metrics
@@ -71,7 +71,7 @@ RUST_LOG=apxm::ops=debug,apxm::scheduler=info dekk apxm execute graph.json
 Runtime metrics are separate from tracing, enabled via the `metrics` feature:
 
 ```bash
-dekk apxm execute graph.json --emit-metrics metrics.json
+dekk apxm execute graph.apxm --emit-metrics metrics.json
 ```
 
 Metrics include scheduler overhead (ns), parallelism, work stealing, and per-operation timing.

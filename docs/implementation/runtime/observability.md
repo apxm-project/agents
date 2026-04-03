@@ -25,7 +25,7 @@ When the `no-trace` feature is enabled, all `apxm_*` macros compile to empty blo
 ### Filtering
 
 ```bash
-RUST_LOG=apxm::scheduler=debug,apxm::llm=trace dekk apxm execute graph.json
+RUST_LOG=apxm::scheduler=debug,apxm::llm=trace dekk apxm execute graph.apxm
 ```
 
 ## Event System

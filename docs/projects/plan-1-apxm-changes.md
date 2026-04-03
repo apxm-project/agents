@@ -975,10 +975,10 @@ Optimization levels:
 ### A8.2 `apxm compile` for consumer graphs
 
 ```bash
-apxm compile codex-turn.json -o codex-turn.apxmobj -O2
+apxm compile codex-turn.apxm -o codex-turn.apxmobj -O2
 # Produces optimized artifact with compile-time analysis report
 
-apxm compile codex-turn.json --emit-diagnostics diag.json
+apxm compile codex-turn.apxm --emit-diagnostics diag.json
 # Machine-readable: parallelism opportunities, fused ops, dead code, type errors
 ```
 
@@ -1004,10 +1004,10 @@ Structural errors caught before any LLM call:
 
 ### A8.5 Acceptance criteria
 
-- [ ] `apxm compile agent-graph.json` produces optimized `.apxmobj` from consumer graphs
+- [ ] `apxm compile agent-graph.apxm` produces optimized `.apxmobj` from consumer graphs
 - [ ] FuseAskOps measurably reduces API calls on real Codex/Gemini-CLI workflows
 - [ ] Compile-time validation catches structural errors before any LLM call
-- [ ] `apxm analyze graph.json --json` provides parallelism and optimization report
+- [ ] `apxm analyze graph.apxm --json` provides parallelism and optimization report
 
 ---
 
@@ -1115,10 +1115,10 @@ Phase 1 (A0-A4)
 - [ ] Graph validation catches structural errors with actionable messages
 
 ### Phase 5 Complete:
-- [ ] `apxm compile agent-graph.json` produces optimized `.apxmobj`
+- [ ] `apxm compile agent-graph.apxm` produces optimized `.apxmobj`
 - [ ] FuseAskOps reduces API calls on real consumer workflows
 - [ ] Compile-time validation catches structural errors before any LLM call
-- [ ] `apxm analyze graph.json --json` provides optimization report
+- [ ] `apxm analyze graph.apxm --json` provides optimization report
 
 ---
 

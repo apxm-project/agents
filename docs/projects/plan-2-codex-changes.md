@@ -662,7 +662,7 @@ Codex's multi-agent system (`spawn.rs`, `wait.rs`, `resume_agent.rs`, `close_age
 ```
 
 **Deliverables:**
-- `codex-turn.json` -- AIS graph representing a single Codex turn
+- `codex-turn.apxm` -- AIS graph representing a single Codex turn
 - Graph authoring code that emits the turn graph from Codex's configuration
 - Integration with APXM's dataflow scheduler for execution
 - Validation that graph-based execution produces identical outputs to imperative code
@@ -706,10 +706,10 @@ The compiler sees this subgraph and can:
 
 ### C12: Compile and Optimize (ongoing)
 
-Once `codex-turn.json` exists (Phase 4), the compiler becomes available:
+Once `codex-turn.apxm` exists (Phase 4), the compiler becomes available:
 
 ```bash
-apxm compile codex-turn.json -o codex-turn.apxmobj -O2
+apxm compile codex-turn.apxm -o codex-turn.apxmobj -O2
 ```
 
 **What the compiler provides:**
@@ -733,7 +733,7 @@ apxm compile codex-turn.json -o codex-turn.apxmobj -O2
 **Key insight:** Instead of a simple plan, Codex creates an **apxm-graph that gets compiled and analyzed**. The graph IS the plan, and the compiler IS the analysis engine.
 
 **Deliverables:**
-- `apxm compile codex-turn.json` produces optimized `.apxmobj`
+- `apxm compile codex-turn.apxm` produces optimized `.apxmobj`
 - Measured reduction in API calls from FuseAskOps on real Codex workflows
 - Measured compile-time error detection rate vs. runtime error detection
 - `apxm decompile codex-turn.apxmobj` shows optimized graph structure
@@ -845,14 +845,14 @@ Weeks 23+:     Phase 5 -- Compiler Integration (C12)
 - [ ] Context compaction uses QMEM/UMEM operations
 
 ### Phase 4 Complete:
-- [ ] `codex-turn.json` -- valid AIS graph representing a Codex turn
-- [ ] `apxm validate codex-turn.json` passes
+- [ ] `codex-turn.apxm` -- valid AIS graph representing a Codex turn
+- [ ] `apxm validate codex-turn.apxm` passes
 - [ ] Graph-based execution produces identical outputs to imperative `submission_loop()`
 - [ ] Multi-agent spawn/wait expressed as FLOW_CALL/WAIT_ALL
 - [ ] Automatic parallelism demonstrated on concurrent tool calls
 
 ### Phase 5 Complete:
-- [ ] `apxm compile codex-turn.json` produces optimized `.apxmobj`
+- [ ] `apxm compile codex-turn.apxm` produces optimized `.apxmobj`
 - [ ] FuseAskOps reduces API calls on real Codex workflows
 - [ ] Compile-time validation catches structural errors before any LLM call
 - [ ] Measured improvement reported (latency, API calls, error detection speed)
