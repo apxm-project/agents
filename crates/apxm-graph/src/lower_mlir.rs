@@ -943,6 +943,17 @@ fn emit_node(
             &[graph_attrs::STRATEGY, graph_attrs::TEMPLATE_STR],
             Some(('(', ')')),
         ),
+        // Durable execution checkpoint
+        AISOperationType::Checkpoint => emit_simple_op(
+            state,
+            node,
+            &inputs,
+            "checkpoint",
+            &[graph_attrs::CHECKPOINT_ID],
+            "checkpoint",
+            &[graph_attrs::CHECKPOINT_ID],
+            None,
+        ),
     }
 }
 

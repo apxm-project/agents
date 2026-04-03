@@ -1,7 +1,7 @@
 //! AIS Operation Definitions - Single Source of Truth
 //!
-//! This module contains the complete specification for all 39 AIS operations
-//! (36 public + 1 metadata + 2 internal). Both the compiler and runtime use
+//! This module contains the complete specification for all 40 AIS operations
+//! (37 public + 1 metadata + 2 internal). Both the compiler and runtime use
 //! these definitions to ensure consistent semantics.
 
 use super::category::OperationCategory;
@@ -14,9 +14,9 @@ use std::fmt;
 
 /// Represents all AIS operation types.
 ///
-/// This enum is the canonical list of operations (39 total):
+/// This enum is the canonical list of operations (40 total):
 /// - 1 metadata operation (AgentOp)
-/// - 36 public operations
+/// - 37 public operations
 /// - 2 internal operations (ConstStr, Yield)
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -125,6 +125,10 @@ pub enum AISOperationType {
     /// Switch a sub-graph region to model-driven execution.
     Autonomous,
 
+    // Durable Execution
+    /// Create a durable execution checkpoint (snapshot AAM + tokens to STM).
+    Checkpoint,
+
     // Internal Operations (not part of public AIS)
     /// String constant (compiler internal).
     ConstStr,
@@ -186,6 +190,8 @@ impl fmt::Display for AISOperationType {
             AISOperationType::RegisterCapability => write!(f, "REGISTER_CAPABILITY"),
             // Autonomous
             AISOperationType::Autonomous => write!(f, "AUTONOMOUS"),
+            // Durable Execution
+            AISOperationType::Checkpoint => write!(f, "CHECKPOINT"),
             // Internal
             AISOperationType::ConstStr => write!(f, "CONST_STR"),
             AISOperationType::Yield => write!(f, "YIELD"),
@@ -237,6 +243,7 @@ impl std::str::FromStr for AISOperationType {
             "spawn_agent" => Ok(AISOperationType::SpawnAgent),
             "register_capability" => Ok(AISOperationType::RegisterCapability),
             "autonomous" => Ok(AISOperationType::Autonomous),
+            "checkpoint" => Ok(AISOperationType::Checkpoint),
             "const_str" => Ok(AISOperationType::ConstStr),
             "yield" => Ok(AISOperationType::Yield),
             _ => Err(format!("Unknown AIS operation type: '{value}'")),
@@ -285,6 +292,7 @@ impl AISOperationType {
             AISOperationType::SpawnAgent => "spawn_agent",
             AISOperationType::RegisterCapability => "register_capability",
             AISOperationType::Autonomous => "autonomous",
+            AISOperationType::Checkpoint => "checkpoint",
             AISOperationType::ConstStr => "const_str",
             AISOperationType::Yield => "yield",
         }
@@ -335,6 +343,7 @@ impl AISOperationType {
             35 => Some(AISOperationType::SpawnAgent),
             36 => Some(AISOperationType::RegisterCapability),
             37 => Some(AISOperationType::Autonomous),
+            38 => Some(AISOperationType::Checkpoint),
             _ => None,
         }
     }
@@ -343,6 +352,7 @@ impl AISOperationType {
     ///
     /// Returns `None` for operation types that do not have a wire-format index
     /// (e.g., `Agent`, `UpdateGoal`, `Guard`, `Claim`, `Pause`, `Resume`, `Yield`).
+    /// `Checkpoint` has wire index 38.
     ///
     /// This is the inverse of [`from_wire_index`].
     pub fn to_wire_index(self) -> Option<u32> {
@@ -380,12 +390,13 @@ impl AISOperationType {
             AISOperationType::SpawnAgent => Some(35),
             AISOperationType::RegisterCapability => Some(36),
             AISOperationType::Autonomous => Some(37),
+            AISOperationType::Checkpoint => Some(38),
             // Ops without wire indices
             _ => None,
         }
     }
 
-    /// Get all operation types (39 total: 27 original + 5 phase-1 + 7 phase-2 extensions).
+    /// Get all operation types (40 total: 27 original + 5 phase-1 + 7 phase-2 + 1 durable execution).
     pub fn all_operations() -> &'static [AISOperationType] {
         &[
             AISOperationType::Agent,
@@ -425,6 +436,7 @@ impl AISOperationType {
             AISOperationType::SpawnAgent,
             AISOperationType::RegisterCapability,
             AISOperationType::Autonomous,
+            AISOperationType::Checkpoint,
             AISOperationType::ConstStr,
             AISOperationType::Yield,
         ]
@@ -913,7 +925,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             OperationField::required("cases", "Array of case label/destination pairs"),
             OperationField::optional("default", "Default destination if no case matches"),
         ],
-        needs_submission: true,
+        needs_submission: false,
         min_inputs: 1,
         produces_output: true,
     },
@@ -1053,7 +1065,10 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         ),
         fields: &[
             OperationField::required("recipient", "Target agent name (or URL for http protocol)"),
-            OperationField::optional("protocol", "Dispatch protocol: local (default), http, https, acp, broadcast"),
+            OperationField::optional(
+                "protocol",
+                "Dispatch protocol: local (default), http, https, acp, broadcast",
+            ),
         ],
         needs_submission: true,
         min_inputs: 0,
@@ -1285,10 +1300,19 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         ),
         fields: &[
             OperationField::required("agent_name", "Name for the new agent"),
-            OperationField::optional("profile", "ACP agent profile (e.g. 'claude', 'codex'). When present, spawns an ACP subprocess"),
-            OperationField::optional("mode", "Agent mode to set after spawn (e.g. 'architect', 'code')"),
+            OperationField::optional(
+                "profile",
+                "ACP agent profile (e.g. 'claude', 'codex'). When present, spawns an ACP subprocess",
+            ),
+            OperationField::optional(
+                "mode",
+                "Agent mode to set after spawn (e.g. 'architect', 'code')",
+            ),
             OperationField::optional("model", "Model override (e.g. 'claude-sonnet-4')"),
-            OperationField::optional("cwd", "Working directory for the agent subprocess (defaults to current dir)"),
+            OperationField::optional(
+                "cwd",
+                "Working directory for the agent subprocess (defaults to current dir)",
+            ),
             OperationField::optional("capabilities", "List of capabilities for the new agent"),
             OperationField::optional("goals", "Initial goals for the new agent"),
         ],
@@ -1339,6 +1363,36 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         )],
         needs_submission: true,
         min_inputs: 0,
+        produces_output: true,
+    },
+    // ========== Durable Execution (1) ==========
+    OperationSpec {
+        op_type: AISOperationType::Checkpoint,
+        name: "Checkpoint",
+        category: OperationCategory::Synchronization,
+        description: "Create a durable execution checkpoint and emit a manifest token",
+        long_description: "Serializes execution state at a barrier point and persists it under \
+            a stable checkpoint identifier. The snapshot captures AAM state plus runtime \
+            checkpoint metadata, and emits a manifest token containing the checkpoint id, \
+            timestamp, and byte size so downstream nodes can reference the saved state. \
+            Execution continues immediately after the snapshot — this is NOT a suspend point \
+            (use PAUSE when you need human-gated suspension).",
+        latency: OperationLatency::Low,
+        example_json: Some(
+            r#"{"id": 4, "op": "CHECKPOINT", "attributes": {"checkpoint_id": "before_analysis"}}"#,
+        ),
+        fields: &[
+            OperationField::required("checkpoint_id", "Stable identifier for this checkpoint"),
+            OperationField::optional("scope", "Snapshot scope: full (default) or local"),
+            OperationField::optional(
+                "storage",
+                "Storage backend: fs (default), memory, or custom",
+            ),
+            OperationField::optional("ttl_seconds", "Time-to-live for the checkpoint in seconds"),
+            OperationField::optional("on_fail", "Failure mode: halt (default) or continue"),
+        ],
+        needs_submission: false,
+        min_inputs: 1,
         produces_output: true,
     },
     // ========== Internal Operations (2) ==========
@@ -1421,13 +1475,13 @@ mod tests {
     fn test_operation_counts() {
         assert_eq!(
             AIS_OPERATIONS.len(),
-            39,
-            "Expected 39 total operations (1 metadata + 36 public + 2 internal)"
+            40,
+            "Expected 40 total operations (1 metadata + 37 public + 2 internal)"
         );
         assert_eq!(
             AISOperationType::all_operations().len(),
-            39,
-            "Expected 39 total operation types"
+            40,
+            "Expected 40 total operation types"
         );
     }
 
@@ -1481,8 +1535,13 @@ mod tests {
             AISOperationType::from_wire_index(37),
             Some(AISOperationType::Autonomous)
         );
+        // Durable execution
+        assert_eq!(
+            AISOperationType::from_wire_index(38),
+            Some(AISOperationType::Checkpoint)
+        );
         // Out-of-range returns None
-        assert_eq!(AISOperationType::from_wire_index(38), None);
+        assert_eq!(AISOperationType::from_wire_index(39), None);
         assert_eq!(AISOperationType::from_wire_index(u32::MAX), None);
     }
 
@@ -1515,15 +1574,24 @@ mod tests {
                 "from_wire_index({i}) returned duplicate {op:?}"
             );
         }
+        // Durable execution: 38
+        {
+            let op =
+                AISOperationType::from_wire_index(38).expect("wire index 38 should be Checkpoint");
+            assert!(
+                seen.insert(op),
+                "from_wire_index(38) returned duplicate {op:?}"
+            );
+        }
         assert_eq!(
             seen.len(),
-            32,
-            "Expected 32 distinct wire-indexed operations (25 original + 7 phase-2)"
+            33,
+            "Expected 33 distinct wire-indexed operations (25 original + 7 phase-2 + 1 durable)"
         );
         assert_eq!(
-            AISOperationType::from_wire_index(38),
+            AISOperationType::from_wire_index(39),
             None,
-            "Index 38 should be out of range"
+            "Index 39 should be out of range"
         );
     }
 
@@ -1539,8 +1607,8 @@ mod tests {
                 "Wire-indexed op {op:?} (index {i}) is not in all_operations()"
             );
         }
-        // Phase 2 ops: 31-37
-        for i in 31u32..38 {
+        // Phase 2 ops: 31-38 (includes Checkpoint at 38)
+        for i in 31u32..39 {
             let op = AISOperationType::from_wire_index(i).unwrap();
             assert!(
                 all_ops.contains(&op),

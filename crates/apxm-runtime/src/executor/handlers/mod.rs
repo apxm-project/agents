@@ -2,6 +2,7 @@
 
 pub mod autonomous;
 pub mod branch;
+pub mod checkpoint;
 pub mod claim;
 pub mod communicate;
 pub mod const_str;

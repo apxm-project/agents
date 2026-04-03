@@ -431,6 +431,36 @@ def AIS_FenceOp : AIS_Op<"fence"> {
   let hasVerifier = 1;
 }
 
+def AIS_CheckpointOp : AIS_Op<"checkpoint",
+    [MemoryEffects<[MemRead<AIS_BeliefResource>, MemRead<AIS_GoalResource>,
+                    MemRead<AIS_CapabilityResource>, MemWrite<AIS_EpisodicResource>]>]> {
+  let summary = "Persist a runtime checkpoint and emit a manifest token";
+  let description = [{
+    Serializes execution state at a barrier point and persists it under a
+    stable checkpoint identifier. The checkpoint manifest becomes the output
+    token so downstream nodes can reference the saved state.
+
+    scope selects the capture boundary: full (default) snapshots the full
+    execution scope, while local snapshots only the current subgraph scope.
+    storage selects the persistence backend: fs (default), memory, or custom.
+    on_fail controls whether persistence failure halts execution (default) or
+    emits a manifest describing the failure and allows the graph to continue.
+  }];
+  let arguments = (ins
+    StrAttr:$checkpoint_id,
+    OptionalAttr<StrAttr>:$scope,
+    OptionalAttr<StrAttr>:$storage,
+    OptionalAttr<I64Attr>:$ttl_seconds,
+    OptionalAttr<StrAttr>:$on_fail,
+    Variadic<AIS_TokenType>:$tokens
+  );
+  let results = (outs AIS_TokenType:$result);
+  let assemblyFormat = [{
+    $checkpoint_id (`[` $tokens^ `:` type($tokens) `]`)? attr-dict `:` type($result)
+  }];
+}
+
+
 //===----------------------------------------------------------------------===//
 // Control Flow Operations
 //===----------------------------------------------------------------------===//
@@ -777,6 +807,7 @@ def AIS_ResumeOp : AIS_Op<"resume",
   }];
   let hasVerifier = 1;
 }
+
 
 //===----------------------------------------------------------------------===//
 // Phase 2 Coordination ops (AcpCapability - stub implementations)

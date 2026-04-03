@@ -4,11 +4,11 @@
 //! It tracks all live agent processes (local and external) and their threads,
 //! providing lookup, lifecycle management, and observability.
 
-use std::sync::Arc;
-use dashmap::DashMap;
 use apxm_core::constants::defaults::{DEFAULT_MAX_PROCESSES, DEFAULT_MAX_SPAWN_DEPTH};
 use apxm_core::error::RuntimeError;
 use apxm_core::types::operations::AISOperationType;
+use dashmap::DashMap;
+use std::sync::Arc;
 
 use crate::process::{AgentProcess, ProcessId, ProcessKind, ProcessState};
 use crate::thread::{AgentThread, ThreadId, ThreadState};
@@ -111,7 +111,11 @@ impl ProcessTable {
     }
 
     /// Spawn a new local agent process.
-    pub fn spawn_local(&self, name: String, parent_id: Option<ProcessId>) -> Result<ProcessId, RuntimeError> {
+    pub fn spawn_local(
+        &self,
+        name: String,
+        parent_id: Option<ProcessId>,
+    ) -> Result<ProcessId, RuntimeError> {
         let reservation = self.reserve_spawn_slot(name.clone(), &parent_id)?;
 
         let id = uuid::Uuid::now_v7().to_string();
@@ -154,7 +158,10 @@ impl ProcessTable {
     }
 
     /// Look up a process by agent name.
-    pub fn get_by_name(&self, name: &str) -> Option<dashmap::mapref::one::Ref<'_, ProcessId, AgentProcess>> {
+    pub fn get_by_name(
+        &self,
+        name: &str,
+    ) -> Option<dashmap::mapref::one::Ref<'_, ProcessId, AgentProcess>> {
         let id = self.name_index.get(name)?;
         self.processes.get(id.value())
     }
@@ -401,7 +408,9 @@ mod tests {
     fn thread_lifecycle() {
         let table = ProcessTable::new();
         let pid = table.spawn_local("agent_c".to_string(), None).unwrap();
-        let tid = table.register_thread(pid.clone(), 1, AISOperationType::Ask).unwrap();
+        let tid = table
+            .register_thread(pid.clone(), 1, AISOperationType::Ask)
+            .unwrap();
         assert_eq!(table.list_threads(&pid).len(), 1);
 
         table.complete_thread(&tid);
@@ -441,9 +450,9 @@ mod tests {
     #[test]
     fn spawn_depth_limit_enforced() {
         let table = ProcessTable::with_limits(32, 2);
-        let p1 = table.spawn_local("a".into(), None).unwrap();        // depth 0
-        let p2 = table.spawn_local("b".into(), Some(p1)).unwrap();    // depth 1
-        let err = table.spawn_local("c".into(), Some(p2));            // depth 2 -> rejected
+        let p1 = table.spawn_local("a".into(), None).unwrap(); // depth 0
+        let p2 = table.spawn_local("b".into(), Some(p1)).unwrap(); // depth 1
+        let err = table.spawn_local("c".into(), Some(p2)); // depth 2 -> rejected
         assert!(err.is_err());
         assert!(err.unwrap_err().to_string().contains("depth limit"));
     }

@@ -77,6 +77,7 @@ impl OperationDispatcher {
             AISOperationType::WaitAll => wait_all::execute(ctx, node, inputs).await,
             AISOperationType::Merge => merge::execute(ctx, node, inputs).await,
             AISOperationType::Fence => fence::execute(ctx, node, inputs).await,
+            AISOperationType::Checkpoint => checkpoint::execute(ctx, node, inputs).await,
 
             // Control flow operations
             AISOperationType::BranchOnValue => branch::execute(ctx, node, inputs).await,
@@ -185,7 +186,7 @@ mod tests {
         // match and CONTRACTS.md accordingly.
         assert_eq!(
             AISOperationType::all_operations().len(),
-            39,
+            40,
             "AISOperationType variant count changed — update dispatcher and CONTRACTS.md"
         );
     }

@@ -94,6 +94,11 @@ pub fn operation_effects(op: &AISOperationType) -> OperationEffects {
         AISOperationType::Fence => OperationEffects::new(),
         AISOperationType::Merge => OperationEffects::new(),
         AISOperationType::WaitAll => OperationEffects::new(),
+        AISOperationType::Checkpoint => OperationEffects::new()
+            .read(Beliefs)
+            .read(Goals)
+            .read(Capabilities)
+            .write(ShortTermMemory),
 
         // Error Handling
         AISOperationType::TryCatch => OperationEffects::new(),

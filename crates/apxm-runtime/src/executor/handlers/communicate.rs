@@ -40,7 +40,8 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     // For ACP protocol: prefer the first String input (the actual prompt).
     // Control edges from SPAWN_AGENT carry Object metadata — skip them.
     let message = if protocol == comm_proto::ACP {
-        inputs.iter()
+        inputs
+            .iter()
             .find(|v| matches!(v, Value::String(_)))
             .cloned()
             .or_else(|| inputs.first().cloned())
@@ -51,7 +52,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
 
     match protocol.as_str() {
         comm_proto::HTTP | comm_proto::HTTPS => {
-            return execute_http(ctx, node, &recipient, message).await
+            return execute_http(ctx, node, &recipient, message).await;
         }
         comm_proto::BROADCAST => return execute_broadcast(ctx, node, message).await,
         comm_proto::ACP => return execute_acp(ctx, node, &recipient, message).await,
@@ -397,14 +398,14 @@ async fn execute_acp(
     };
 
     // Get the prompter
-    let prompter = ctx
-        .process_table
-        .agent_prompter()
-        .await
-        .ok_or_else(|| RuntimeError::Operation {
-            op_type: node.op_type,
-            message: "No AgentPrompter configured. Cannot send ACP prompts.".to_string(),
-        })?;
+    let prompter =
+        ctx.process_table
+            .agent_prompter()
+            .await
+            .ok_or_else(|| RuntimeError::Operation {
+                op_type: node.op_type,
+                message: "No AgentPrompter configured. Cannot send ACP prompts.".to_string(),
+            })?;
 
     // Convert message to prompt text
     let prompt_text = match &message {
@@ -444,7 +445,13 @@ async fn execute_acp(
     // Extract plain text for downstream nodes; store full object in beliefs for observability
     let text_output = if let Value::Object(ref map) = response {
         map.get("text")
-            .and_then(|v| if let Value::String(s) = v { Some(s.clone()) } else { None })
+            .and_then(|v| {
+                if let Value::String(s) = v {
+                    Some(s.clone())
+                } else {
+                    None
+                }
+            })
             .map(Value::String)
             .unwrap_or_else(|| response.clone())
     } else {
@@ -460,7 +467,11 @@ async fn execute_acp(
 
     // Store full response object in beliefs for observability
     ctx.aam.set_belief(
-        format!("{}{}:last", belief_keys::PENDING_COMMUNICATE_PREFIX, recipient),
+        format!(
+            "{}{}:last",
+            belief_keys::PENDING_COMMUNICATE_PREFIX,
+            recipient
+        ),
         response,
         TransitionLabel::Custom(format!("communicate_acp_completed:{}", recipient)),
     );

@@ -91,22 +91,20 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
 
     // When profile is present, spawn an ACP subprocess
     if let Some(profile_name) = &profile {
-        let spawner = ctx
-            .process_table
-            .agent_spawner()
-            .await
-            .ok_or_else(|| RuntimeError::Operation {
-                op_type: node.op_type,
-                message: "No AgentSpawner configured. Cannot spawn ACP agent.".to_string(),
-            })?;
+        let spawner =
+            ctx.process_table
+                .agent_spawner()
+                .await
+                .ok_or_else(|| RuntimeError::Operation {
+                    op_type: node.op_type,
+                    message: "No AgentSpawner configured. Cannot spawn ACP agent.".to_string(),
+                })?;
 
         let mode = get_optional_string_attribute(node, graph_attrs::MODE)?;
         let model = get_optional_string_attribute(node, graph_attrs::MODEL)?;
         let cwd = get_optional_string_attribute(node, graph_attrs::CWD)?
             .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp"))
-            });
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp")));
 
         // Project current AAM state into AamContext for the spawned agent
         let aam_context = project_aam_context(ctx);
@@ -153,7 +151,10 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
         );
     } else {
         // No profile — register as a local process for tracking
-        match ctx.process_table.spawn_local(agent_name.clone(), parent_process_id) {
+        match ctx
+            .process_table
+            .spawn_local(agent_name.clone(), parent_process_id)
+        {
             Ok(process_id) => {
                 agent_info.insert(
                     response_keys::PROCESS_ID.to_string(),
