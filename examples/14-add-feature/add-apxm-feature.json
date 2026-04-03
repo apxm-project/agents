@@ -1,158 +1,134 @@
 {
   "name": "add-apxm-feature",
-  "parameters": [
-    {"name": "feature_request", "type_name": "str", "description": "Feature to implement"}
-  ],
+  "parameters": [],
   "nodes": [
     {
       "id": 1,
-      "name": "claude_planning_prefix",
-      "op": "CONST_STR",
+      "name": "arch_prompt",
+      "op": "THINK",
       "attributes": {
-        "value": "You are an APXM architect (project at ~/projects/agents/apxm). Think very deeply (ultrathink). Read the relevant codebase first. Produce a detailed, file-by-file implementation plan with exact paths and code snippets.\n\nFeature: "
+        "template_str": "You are an APXM architect (project at ~/projects/agents/apxm). Think deeply (ultrathink). Read the relevant codebase first. Produce a detailed, file-by-file implementation plan with exact paths and code snippets. Focus: architecture, API design, and integration points.\n\nFeature to implement:\n{{FEATURE_REQUEST}}",
+        "budget": 6000
       }
     },
     {
       "id": 2,
-      "name": "codex_planning_prefix",
-      "op": "CONST_STR",
+      "name": "impl_prompt",
+      "op": "THINK",
       "attributes": {
-        "value": "You are an APXM implementation expert (project at ~/projects/agents/apxm). Think very deeply (ultrathink). Focus on Rust code: exact file paths, function signatures, error handling, tests. Produce a complete implementation plan with full code blocks.\n\nFeature: "
+        "template_str": "You are an APXM implementation expert (project at ~/projects/agents/apxm). Think deeply (ultrathink). Focus: exact Rust code, function signatures, error handling, tests. Produce a complete implementation plan with full code blocks.\n\nFeature to implement:\n{{FEATURE_REQUEST}}",
+        "budget": 6000
+      }
+    },
+    {
+      "id": 3,
+      "name": "test_prompt",
+      "op": "THINK",
+      "attributes": {
+        "template_str": "You are an APXM quality engineer (project at ~/projects/agents/apxm). Think deeply (ultrathink). Focus: test coverage, edge cases, error paths, backward compatibility, and minimal viable implementation.\n\nFeature to implement:\n{{FEATURE_REQUEST}}",
+        "budget": 6000
       }
     },
 
-    {"id": 3, "name": "claude_prompt_1", "op": "THINK", "attributes": {"template_str": "{0}\n\nPlan #1 (architectural focus): {1}", "budget": 8000}},
-    {"id": 4, "name": "claude_prompt_2", "op": "THINK", "attributes": {"template_str": "{0}\n\nPlan #2 (test coverage focus): {1}", "budget": 8000}},
-    {"id": 5, "name": "claude_prompt_3", "op": "THINK", "attributes": {"template_str": "{0}\n\nPlan #3 (error handling focus): {1}", "budget": 8000}},
-    {"id": 6, "name": "claude_prompt_4", "op": "THINK", "attributes": {"template_str": "{0}\n\nPlan #4 (performance focus): {1}", "budget": 8000}},
-    {"id": 7, "name": "claude_prompt_5", "op": "THINK", "attributes": {"template_str": "{0}\n\nPlan #5 (API design focus): {1}", "budget": 8000}},
-
-    {"id": 8, "name": "codex_prompt_1", "op": "THINK", "attributes": {"template_str": "{0}\n\nPlan #1 (step-by-step impl): {1}", "budget": 8000}},
-    {"id": 9, "name": "codex_prompt_2", "op": "THINK", "attributes": {"template_str": "{0}\n\nPlan #2 (testing strategy): {1}", "budget": 8000}},
-    {"id": 10, "name": "codex_prompt_3", "op": "THINK", "attributes": {"template_str": "{0}\n\nPlan #3 (integration points): {1}", "budget": 8000}},
-    {"id": 11, "name": "codex_prompt_4", "op": "THINK", "attributes": {"template_str": "{0}\n\nPlan #4 (backwards compat): {1}", "budget": 8000}},
-    {"id": 12, "name": "codex_prompt_5", "op": "THINK", "attributes": {"template_str": "{0}\n\nPlan #5 (minimal viable): {1}", "budget": 8000}},
-
     {
-      "id": 13,
-      "name": "sync_claude_plans",
+      "id": 4,
+      "name": "sync_plans",
       "op": "WAIT_ALL",
-      "attributes": {"tokens": ["{{node_3}}", "{{node_4}}", "{{node_5}}", "{{node_6}}", "{{node_7}}"]}
-    },
-    {
-      "id": 14,
-      "name": "sync_codex_plans",
-      "op": "WAIT_ALL",
-      "attributes": {"tokens": ["{{node_8}}", "{{node_9}}", "{{node_10}}", "{{node_11}}", "{{node_12}}"]}
+      "attributes": {"tokens": ["{{node_1}}", "{{node_2}}", "{{node_3}}"]}
     },
 
-    {"id": 15, "name": "print_plans_done", "op": "PRINT", "attributes": {"message": "=== 10 PLANS COLLECTED ==="}},
+    {"id": 5, "name": "print_plans_done", "op": "PRINT", "attributes": {"message": "=== 3 PLANS COLLECTED ==="}},
 
     {
-      "id": 16,
+      "id": 6,
       "name": "all_plans",
       "op": "MERGE",
-      "attributes": {"strategy": "concat", "tokens": ["{{node_13}}", "{{node_14}}"]}
+      "attributes": {"strategy": "concat", "tokens": ["{{node_1}}", "{{node_2}}", "{{node_3}}"]}
     },
+
     {
-      "id": 17,
+      "id": 7,
       "name": "synthesize_plan",
       "op": "THINK",
       "attributes": {
-        "template_str": "You are a senior APXM architect. You have 10 implementation plans for the same feature (5 architectural, 5 implementation-focused). Analyze all plans, identify best ideas from each, resolve conflicts, produce ONE unified implementation plan with exact file paths, complete working code, and test cases.\n\nFeature: {0}\n\nAll 10 plans:\n{1}",
-        "budget": 16000
+        "template_str": "You are a senior APXM architect. You have 3 implementation plans for the same feature (architectural, implementation, and test-focused). Analyze all plans, pick the best ideas from each, resolve conflicts, and produce ONE unified implementation plan with exact file paths, complete working Rust code, and test cases.\n\nAll 3 plans:\n{0}",
+        "budget": 12000
       }
     },
-    {"id": 18, "name": "print_synthesis", "op": "PRINT", "attributes": {"message": "=== SYNTHESIZED PLAN ==="}},
+    {"id": 8, "name": "print_synthesis", "op": "PRINT", "attributes": {"message": "=== SYNTHESIZED PLAN ==="}},
 
     {
-      "id": 19,
+      "id": 9,
+      "name": "implement_prompt",
+      "op": "THINK",
+      "attributes": {
+        "template_str": "You are the APXM implementer. The project is at ~/projects/agents/apxm. Execute this plan EXACTLY: make all code changes, run: source ~/.cargo/env && dekk apxm build, fix any failures, run tests (dekk apxm test or cargo test --workspace --exclude apxm-compiler), git add -A, git commit. Report exactly what you changed.\n\nPlan:\n{0}",
+        "budget": 3000
+      }
+    },
+
+    {
+      "id": 10,
       "name": "implement",
       "op": "INV",
       "attributes": {
         "capability": "acp",
-        "params_json": "{\"agent\": \"codex\", \"prompt\": \"{1}\", \"cwd\": \"~/projects/agents/apxm\"}",
+        "params_json": "{\"agent\": \"codex\", \"prompt\": \"{{input_0}}\", \"cwd\": \"~/projects/agents/apxm\"}",
         "timeout_ms": 1800000
       }
     },
-    {"id": 20, "name": "print_implement", "op": "PRINT", "attributes": {"message": "=== IMPLEMENTATION COMPLETE ==="}},
+    {"id": 11, "name": "print_implement", "op": "PRINT", "attributes": {"message": "=== IMPLEMENTATION COMPLETE ==="}},
 
     {
-      "id": 21,
-      "name": "implement_prompt_full",
+      "id": 12,
+      "name": "review_prompt",
       "op": "THINK",
       "attributes": {
-        "template_str": "You are the APXM implementer. The project is at ~/projects/agents/apxm. Execute this plan EXACTLY: make all code changes, run: source ~/.cargo/env && cargo test --workspace --exclude apxm-compiler, fix failures, git add -A, commit. Report what you changed.\n\nPlan:\n{0}",
-        "budget": 4000
+        "template_str": "You are the APXM code reviewer at ~/projects/agents/apxm. Review the implementation below: check correctness, run tests, simplify complexity, ensure everything is committed and the build passes. Fix anything that is wrong.\n\nImplementation report:\n{0}",
+        "budget": 3000
       }
     },
 
     {
-      "id": 22,
-      "name": "simplify",
+      "id": 13,
+      "name": "review",
       "op": "INV",
       "attributes": {
         "capability": "acp",
-        "params_json": "{\"agent\": \"claude\", \"prompt\": \"{1}\", \"cwd\": \"~/projects/agents/apxm\"}",
+        "params_json": "{\"agent\": \"claude\", \"prompt\": \"{{input_0}}\", \"cwd\": \"~/projects/agents/apxm\"}",
         "timeout_ms": 900000
       }
     },
-    {
-      "id": 23,
-      "name": "simplify_prompt_full",
-      "op": "THINK",
-      "attributes": {
-        "template_str": "You are the APXM code reviewer at ~/projects/agents/apxm. Review this implementation: check correctness, simplify complexity, ensure tests pass and everything is committed.\n\nImplementation report:\n{0}",
-        "budget": 4000
-      }
-    },
 
-    {"id": 24, "name": "print_final", "op": "PRINT", "attributes": {"message": "=== FEATURE COMPLETE ==="}}
+    {"id": 14, "name": "print_final", "op": "PRINT", "attributes": {"message": "=== FEATURE COMPLETE ==="}}
   ],
   "edges": [
-    {"from": 1, "to": 3, "dependency": "Data"},
     {"from": 1, "to": 4, "dependency": "Data"},
-    {"from": 1, "to": 5, "dependency": "Data"},
+    {"from": 2, "to": 4, "dependency": "Data"},
+    {"from": 3, "to": 4, "dependency": "Data"},
+
+    {"from": 4, "to": 5, "dependency": "Data"},
     {"from": 1, "to": 6, "dependency": "Data"},
-    {"from": 1, "to": 7, "dependency": "Data"},
-    {"from": 2, "to": 8, "dependency": "Data"},
-    {"from": 2, "to": 9, "dependency": "Data"},
-    {"from": 2, "to": 10, "dependency": "Data"},
-    {"from": 2, "to": 11, "dependency": "Data"},
-    {"from": 2, "to": 12, "dependency": "Data"},
+    {"from": 2, "to": 6, "dependency": "Data"},
+    {"from": 3, "to": 6, "dependency": "Data"},
 
-    {"from": 3, "to": 13, "dependency": "Data"},
-    {"from": 4, "to": 13, "dependency": "Data"},
-    {"from": 5, "to": 13, "dependency": "Data"},
-    {"from": 6, "to": 13, "dependency": "Data"},
-    {"from": 7, "to": 13, "dependency": "Data"},
-    {"from": 8, "to": 14, "dependency": "Data"},
-    {"from": 9, "to": 14, "dependency": "Data"},
-    {"from": 10, "to": 14, "dependency": "Data"},
-    {"from": 11, "to": 14, "dependency": "Data"},
-    {"from": 12, "to": 14, "dependency": "Data"},
+    {"from": 6, "to": 7, "dependency": "Data"},
+    {"from": 7, "to": 8, "dependency": "Data"},
 
-    {"from": 13, "to": 15, "dependency": "Data"},
-    {"from": 14, "to": 15, "dependency": "Data"},
-    {"from": 13, "to": 16, "dependency": "Data"},
-    {"from": 14, "to": 16, "dependency": "Data"},
+    {"from": 7, "to": 9, "dependency": "Data"},
+    {"from": 9, "to": 10, "dependency": "Data"},
+    {"from": 10, "to": 11, "dependency": "Data"},
 
-    {"from": 16, "to": 17, "dependency": "Data"},
-    {"from": 17, "to": 18, "dependency": "Data"},
-
-    {"from": 17, "to": 21, "dependency": "Data"},
-    {"from": 21, "to": 19, "dependency": "Data"},
-    {"from": 19, "to": 20, "dependency": "Data"},
-
-    {"from": 19, "to": 23, "dependency": "Data"},
-    {"from": 23, "to": 22, "dependency": "Data"},
-    {"from": 22, "to": 24, "dependency": "Data"}
+    {"from": 10, "to": 12, "dependency": "Data"},
+    {"from": 12, "to": 13, "dependency": "Data"},
+    {"from": 13, "to": 14, "dependency": "Data"}
   ],
   "metadata": {
-    "description": "Meta-workflow: 10 parallel THINK nodes (5 Claude-style + 5 Codex-style perspectives) produce plans, THINK synthesizes, THINK formats the implementer prompt, INV(codex) implements, THINK formats reviewer prompt, INV(claude) reviews.",
-    "pattern": "think x10 (parallel) → wait-all x2 → merge → think (synthesize) → think (format impl prompt) → inv(codex) → think (format review prompt) → inv(claude)",
-    "ops_demonstrated": ["CONST_STR", "THINK", "WAIT_ALL", "MERGE", "INV", "PRINT"],
-    "note": "THINK uses {0}=first-input {1}=second-input positional substitution. INV(acp) uses {1} for the THINK-formatted prompt passed as second positional arg.",
-    "usage": "dekk apxm execute examples/14-add-feature/add-apxm-feature.json -- \"your feature\""
+    "description": "Meta-workflow: 3 parallel THINK planning nodes (architectural, implementation, test-focused), WAIT_ALL sync, MERGE concat, THINK synthesis, THINK formats implementer prompt, INV(codex) implements, THINK formats reviewer prompt, INV(claude) reviews and fixes.",
+    "pattern": "think x3 (parallel) → wait-all → merge → think (synthesize) → think (format impl prompt) → inv(codex) → think (format review prompt) → inv(claude)",
+    "ops_demonstrated": ["THINK", "WAIT_ALL", "MERGE", "INV", "PRINT"],
+    "note": "THINK uses {0}=first-input positional substitution at runtime. INV(acp) uses {{input_0}} for the THINK-formatted prompt. Feature text is embedded directly in template_str by launch-feature.sh before execution.",
+    "usage": "Use launch-feature.sh to run — it substitutes {{FEATURE_REQUEST}} with the actual feature text before invoking dekk apxm execute.",
+    "is_entry": true
   }
 }
