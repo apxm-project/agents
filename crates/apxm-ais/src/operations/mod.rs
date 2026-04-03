@@ -14,5 +14,5 @@ pub mod tablegen;
 pub use category::OperationCategory;
 pub use definitions::{
     AIS_OPERATIONS, AISOperationType, OperationField, OperationLatency, OperationSpec,
-    get_all_operations, get_operation_spec,
+    ReferenceType, get_all_operations, get_operation_spec,
 };

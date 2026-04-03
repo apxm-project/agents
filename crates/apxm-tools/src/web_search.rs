@@ -102,7 +102,7 @@ impl SearchWebCapability {
     pub fn with_config(config: SearchWebConfig) -> Self {
         Self {
             metadata: CapabilityMetadata::new(
-                "search_web",
+                apxm_core::constants::capabilities::SEARCH_WEB,
                 "Search the web via Tavily API",
                 serde_json::json!({
                     "type": "object",

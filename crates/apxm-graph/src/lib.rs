@@ -32,6 +32,7 @@ use thiserror::Error;
 mod lower_dag;
 mod lower_mlir;
 mod optimize;
+pub mod semantic;
 mod validate;
 
 #[derive(Debug, Error)]
@@ -430,5 +431,72 @@ mod tests {
         merged
             .validate()
             .expect("merged graph should pass validation");
+    }
+
+    #[test]
+    fn lower_dag_injects_parameter_tokens_into_entry_nodes() {
+        let graph = ApxmGraph {
+            name: "param_test".to_string(),
+            nodes: vec![
+                GraphNode {
+                    id: 1,
+                    name: "task".to_string(),
+                    op: AISOperationType::ConstStr,
+                    attributes: HashMap::from([("value".into(), Value::String("{0}".into()))]),
+                },
+                GraphNode {
+                    id: 2,
+                    name: "ask".to_string(),
+                    op: AISOperationType::Ask,
+                    attributes: HashMap::from([(
+                        graph_attrs::TEMPLATE_STR.into(),
+                        Value::String("{0}".into()),
+                    )]),
+                },
+            ],
+            edges: vec![GraphEdge {
+                from: 1,
+                to: 2,
+                dependency: DependencyType::Data,
+            }],
+            parameters: vec![Parameter {
+                name: "question".to_string(),
+                type_name: "str".to_string(),
+            }],
+            metadata: HashMap::new(),
+        };
+
+        let dag = graph.to_execution_dag().expect("lower to dag");
+
+        // Node 1 is an entry node (no incoming edges) — should get the parameter token
+        let node1 = dag.nodes.iter().find(|n| n.id == 1).unwrap();
+        assert!(
+            !node1.input_tokens.is_empty(),
+            "entry node should have parameter token as input"
+        );
+
+        // Node 2 has an incoming edge — should NOT get extra parameter tokens
+        let node2 = dag.nodes.iter().find(|n| n.id == 2).unwrap();
+        assert_eq!(
+            node2.input_tokens.len(),
+            1,
+            "non-entry node should only have edge token"
+        );
+
+        // The parameter token on node 1 should have no producer (not in any output_tokens)
+        let all_output_tokens: std::collections::HashSet<u64> = dag
+            .nodes
+            .iter()
+            .flat_map(|n| n.output_tokens.iter().copied())
+            .collect();
+        let param_token = node1.input_tokens[0];
+        assert!(
+            !all_output_tokens.contains(&param_token),
+            "parameter token should have no producer"
+        );
+
+        // Metadata should carry the parameter
+        assert_eq!(dag.metadata.parameters.len(), 1);
+        assert_eq!(dag.metadata.parameters[0].name, "question");
     }
 }

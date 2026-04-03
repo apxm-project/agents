@@ -95,6 +95,12 @@ macro_rules! define_string_id {
                 &self.0
             }
         }
+
+        impl std::borrow::Borrow<str> for $name {
+            fn borrow(&self) -> &str {
+                &self.0
+            }
+        }
     };
 }
 
@@ -107,3 +113,6 @@ define_string_id!(TraceId, "Unique identifier for an execution trace");
 define_string_id!(CapabilityName, "Unique identifier for a capability");
 define_string_id!(MessageId, "Unique identifier for a chat message");
 define_string_id!(CheckpointId, "Unique identifier for a session checkpoint");
+define_string_id!(ProfileId, "ACP agent profile name (e.g., 'claude', 'codex')");
+define_string_id!(BackendId, "Registered LLM backend identifier (e.g., 'openai', 'corp-gateway')");
+define_string_id!(ModelId, "LLM model identifier (e.g., 'gpt-4', 'claude-sonnet-4')");

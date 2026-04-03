@@ -64,7 +64,7 @@ impl ReadCapability {
     pub fn with_config(config: ReadConfig) -> Self {
         Self {
             metadata: CapabilityMetadata::new(
-                "read",
+                apxm_core::constants::capabilities::READ,
                 "Read file contents with path and extension restrictions",
                 serde_json::json!({
                     "type": "object",

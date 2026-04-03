@@ -24,6 +24,7 @@ apxm init                              # scaffold agents/, flows/, nodes/, promp
 ```bash
 apxm validate graph.json               # check graph against AIS contract
 apxm validate graph.json --json        # machine-readable validation errors
+apxm validate graph.json --no-check-resources  # skip Tier 2 environment checks
 apxm analyze graph.json                # parallelism, critical path, speedup estimate
 apxm analyze graph.json --json         # full analysis as JSON
 apxm explain graph.json                # human-readable summary of what a graph does
