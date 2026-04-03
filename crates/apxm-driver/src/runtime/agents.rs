@@ -77,7 +77,8 @@ impl AgentSpawner for AcpAgentSpawner {
                 RuntimeError::Operation {
                     op_type: apxm_core::types::operations::AISOperationType::SpawnAgent,
                     message: format!(
-                        "Unknown agent profile '{}'. Available: {}",
+                        "Unknown agent profile '{}'. Register with: apxm agent add {}. Registered: [{}]",
+                        profile_name,
                         profile_name,
                         available.join(", ")
                     ),

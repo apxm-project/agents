@@ -16,21 +16,27 @@ Key distinction: agents are autonomous processes that manage their own context, 
 
 ## 2. Setup
 
-Register at least one LLM backend for APXM's own nodes, then verify that agents are reachable:
+APXM uses **explicit registration** for agents — nothing is available until you register it. This mirrors the backend system and prevents silent runtime failures from missing tools.
 
 ```bash
-# Register an LLM backend for ASK/THINK/REASON nodes
+# 1. Register an LLM backend for ASK/THINK/REASON nodes
 apxm backend add my-openai --type cloud --protocol openai --api-key sk-...
 
-# List available agents
+# 2. See which agent templates are available
+apxm agent templates
+
+# 3. Register agents you want to use (runs a spawn test to verify the tool is installed)
+apxm agent add claude
+apxm agent add codex
+
+# 4. List registered agents
 apxm agent list
 
-# Test connectivity to specific agents
+# 5. Re-test connectivity any time
 apxm agent test claude
-apxm agent test codex
 ```
 
-The `apxm agent test` command sends a lightweight ping over ACP and reports the agent's status, version, and supported modes.
+`apxm agent add <name>` uses a built-in template (command, timeouts) and runs a spawn test to verify the tool is installed. If the spawn fails, registration is rejected — use `--no-test` to skip this check in offline environments.
 
 ## 3. Two Authoring Styles
 
@@ -394,25 +400,47 @@ Execution flow:
 3. Agent A's proposal goes to Agent B for critique (node 6); Agent B's proposal goes to Agent A (node 7). The `Control` edges from nodes 4 and 5 ensure both proposals are ready before critiques begin.
 4. Both critiques merge (node 8) and print (node 9).
 
-## 5. Custom Agent Registration
+## 5. Agent Registration
 
-Register agents that are not built-in:
+Agents must be registered before they can be used in graphs. APXM ships 16 built-in templates (command, timeouts) but does **not** make them available by default — you register the ones you need.
+
+### Templates vs. Custom Agents
 
 ```bash
+# List all 16 built-in templates
+apxm agent templates
+
+# Register from a template (spawn-tested automatically)
+apxm agent add claude
+apxm agent add codex --permissions approve-all
+
 # Register a custom agent that speaks ACP
 apxm agent add my-agent --command "my-cli --acp" --permissions approve-reads
 
-# List all registered agents
+# Skip the spawn test (e.g., tool not yet installed)
+apxm agent add gemini --no-test
+```
+
+### Managing Registrations
+
+```bash
+# List registered agents
 apxm agent list
 
 # Test connectivity
-apxm agent test my-agent
+apxm agent test claude
 
-# Remove an agent
-apxm agent remove my-agent
+# Remove a registration
+apxm agent remove claude
 ```
 
-Registered agents become available by name in `SPAWN_AGENT` attributes and `INV` `params_json`. The `--permissions` flag controls what the agent is allowed to do (file reads, writes, shell commands).
+Registered agents become available by name in `SPAWN_AGENT` attributes and `INV` `params_json`. The `--permissions` flag controls what the agent is allowed to do:
+
+| Mode | Behavior |
+|------|----------|
+| `approve-reads` (default) | Allow file reads and searches, require approval for writes/exec |
+| `approve-all` | Allow all file and terminal operations |
+| `deny-all` | Deny all file and terminal operations |
 
 ## 6. Running and Debugging
 

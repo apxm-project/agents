@@ -70,6 +70,13 @@ apxm backend remove my-key             # delete a backend
 apxm backend add-model my-key gpt-4o   # add model to a backend
 apxm backend start <name>              # start local backend container
 apxm backend stop <name>               # stop local backend container
+apxm agent templates                   # list available built-in agent templates
+apxm agent add claude                  # register agent from template (tests spawn)
+apxm agent add claude --no-test        # register without spawn test
+apxm agent add my-agent --command "my-agent --acp"  # register custom agent
+apxm agent list                        # show registered agents
+apxm agent test claude                 # test spawning a registered agent
+apxm agent remove claude               # remove a registered agent
 apxm tool add my-tool --description "..."    # register external tool for INV nodes
 apxm tool list                         # list registered tools
 apxm tool remove my-tool               # remove a tool registration

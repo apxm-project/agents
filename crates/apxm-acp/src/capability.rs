@@ -70,7 +70,7 @@ impl AcpCapability {
             .with_returns("object")
             .with_latency(cap_consts::DEFAULT_LATENCY_MS)
             .with_tags(vec![
-                "agent".to_string(),
+                cap_args::AGENT.to_string(),
                 cap_consts::ACP_CAPABILITY_NAME.to_string(),
             ]),
             registry: AgentRegistry::load(),
@@ -141,7 +141,7 @@ impl CapabilityExecutor for AcpCapability {
                     .map(|(name, _, _)| name)
                     .collect();
                 self.cap_err(format!(
-                    "Unknown agent: '{agent_name}'. Available: {}",
+                    "Unknown agent: '{agent_name}'. Register with: apxm agent add {agent_name}. Registered: [{}]",
                     available.join(", ")
                 ))
             })?
@@ -253,7 +253,10 @@ mod tests {
         let result = cap.execute(args).await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("agent"), "error should mention 'agent': {err}");
+        assert!(
+            err.contains(cap_args::AGENT),
+            "error should mention 'agent': {err}"
+        );
     }
 
     #[tokio::test]
@@ -263,28 +266,34 @@ mod tests {
             Arc::new(SessionPool::new()),
         );
         let mut args = HashMap::new();
-        args.insert("agent".to_string(), Value::String("claude".to_string()));
+        args.insert(
+            cap_args::AGENT.to_string(),
+            Value::String("claude".to_string()),
+        );
         let result = cap.execute(args).await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(
-            err.contains("prompt"),
+            err.contains(cap_args::PROMPT),
             "error should mention 'prompt': {err}"
         );
     }
 
     #[tokio::test]
-    async fn unknown_agent_returns_error_with_available_list() {
+    async fn unknown_agent_returns_error_with_registration_hint() {
         let cap = AcpCapability::new(
             Arc::new(CapabilitySystem::new()),
             Arc::new(SessionPool::new()),
         );
         let mut args = HashMap::new();
         args.insert(
-            "agent".to_string(),
+            cap_args::AGENT.to_string(),
             Value::String("nonexistent-agent".to_string()),
         );
-        args.insert("prompt".to_string(), Value::String("hello".to_string()));
+        args.insert(
+            cap_args::PROMPT.to_string(),
+            Value::String("hello".to_string()),
+        );
         let result = cap.execute(args).await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
@@ -293,8 +302,8 @@ mod tests {
             "error should mention the agent name: {err}"
         );
         assert!(
-            err.contains("claude"),
-            "error should list available agents: {err}"
+            err.contains("apxm agent add"),
+            "error should suggest registration: {err}"
         );
     }
 
@@ -304,7 +313,10 @@ mod tests {
             Arc::new(CapabilitySystem::new()),
             Arc::new(SessionPool::new()),
         );
-        assert_eq!(cap.metadata().name, "acp");
-        assert!(cap.metadata().tags.contains(&"agent".to_string()));
+        assert_eq!(cap.metadata().name, cap_consts::ACP_CAPABILITY_NAME);
+        assert!(cap
+            .metadata()
+            .tags
+            .contains(&cap_args::AGENT.to_string()));
     }
 }

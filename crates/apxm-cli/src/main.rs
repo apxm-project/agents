@@ -375,23 +375,26 @@ enum ToolAction {
 
 #[derive(Subcommand)]
 enum AgentAction {
-    /// List available ACP agents (built-in + user-registered)
+    /// List registered ACP agents
     List,
-    /// Add or override an agent profile
+    /// Register an agent profile (from template or custom command)
     Add {
-        /// Agent profile name (e.g., "my-agent")
+        /// Agent profile name (e.g., "claude" or "my-agent")
         name: String,
-        /// Agent command to spawn (e.g., "my-agent --acp")
+        /// Agent command to spawn (e.g., "my-agent --acp"). Optional for known templates.
         #[arg(long)]
-        command: String,
+        command: Option<String>,
         /// Permission mode (approve-all, approve-reads, deny-all)
-        #[arg(long, default_value = "approve-reads")]
-        permissions: String,
+        #[arg(long, default_value_t)]
+        permissions: apxm_acp::PermissionMode,
         /// Grace period in ms after closing stdin before SIGTERM
         #[arg(long)]
         close_grace_ms: Option<u64>,
+        /// Skip spawn test (register without verifying the agent is reachable)
+        #[arg(long)]
+        no_test: bool,
     },
-    /// Remove a user-registered agent profile
+    /// Remove a registered agent profile
     Remove {
         /// Agent profile name to remove
         name: String,
@@ -401,6 +404,8 @@ enum AgentAction {
         /// Agent profile name to test
         name: String,
     },
+    /// List available built-in agent templates
+    Templates,
 }
 
 /// Actions for `apxm models`
@@ -459,6 +464,7 @@ fn save_tools(tf: &ToolsFile) -> Result<()> {
 }
 
 async fn agent_command(action: AgentAction, json_output: bool) -> Result<()> {
+    use apxm_acp::constants::registry::{json_keys, sources};
     match action {
         AgentAction::List => {
             let reg = apxm_acp::AgentRegistry::load();
@@ -466,13 +472,13 @@ async fn agent_command(action: AgentAction, json_output: bool) -> Result<()> {
             if json_output {
                 let entries: Vec<serde_json::Value> = list
                     .iter()
-                    .map(|(name, profile, builtin)| {
+                    .map(|(name, profile, from_template)| {
                         serde_json::json!({
-                            "name": name,
-                            "command": profile.command,
-                            "source": if *builtin { "builtin" } else { "user" },
-                            "close_grace_ms": profile.close_grace_ms,
-                            "session_create_timeout_ms": profile.session_create_timeout_ms,
+                            (json_keys::NAME): name,
+                            (json_keys::COMMAND): profile.command,
+                            (json_keys::SOURCE): if *from_template { sources::TEMPLATE } else { sources::CUSTOM },
+                            (json_keys::CLOSE_GRACE_MS): profile.close_grace_ms,
+                            (json_keys::SESSION_CREATE_TIMEOUT_MS): profile.session_create_timeout_ms,
                         })
                     })
                     .collect();
@@ -484,19 +490,26 @@ async fn agent_command(action: AgentAction, json_output: bool) -> Result<()> {
                 return Ok(());
             }
 
-            print_section_header("ACP Agent Profiles");
+            if list.is_empty() {
+                println!(
+                    "No agents registered. Run 'apxm agent add <agent>' or 'apxm agent templates' to see available templates."
+                );
+                return Ok(());
+            }
+
+            print_section_header("Registered ACP Agents");
             let max_name = list.iter().map(|(n, _, _)| n.len()).max().unwrap_or(8);
-            let max_source = 7; // "builtin"
+            let max_source = 8; // "template"
             println!(
                 "  {:<name_w$}  {:<src_w$}  {}",
-                "PROFILE",
+                "AGENT",
                 "SOURCE",
                 "COMMAND",
                 name_w = max_name,
                 src_w = max_source,
             );
-            for (name, profile, builtin) in &list {
-                let source = if *builtin { "builtin" } else { "user" };
+            for (name, profile, from_template) in &list {
+                let source = if *from_template { sources::TEMPLATE } else { sources::CUSTOM };
                 println!(
                     "  {:<name_w$}  {:<src_w$}  {}",
                     name.bold(),
@@ -508,7 +521,7 @@ async fn agent_command(action: AgentAction, json_output: bool) -> Result<()> {
             }
             println!();
             println!(
-                "{} agent profile{} registered",
+                "{} agent{} registered",
                 list.len(),
                 if list.len() == 1 { "" } else { "s" }
             );
@@ -518,52 +531,101 @@ async fn agent_command(action: AgentAction, json_output: bool) -> Result<()> {
             command,
             permissions,
             close_grace_ms,
+            no_test,
         } => {
-            let permission_mode: apxm_acp::PermissionMode = permissions
-                .parse()
-                .map_err(|e: String| anyhow::anyhow!(e))?;
             use apxm_acp::constants::timeouts as acp_timeouts;
-            let profile = apxm_acp::AgentProfile {
-                command: command.clone(),
-                close_grace_ms: close_grace_ms.unwrap_or(acp_timeouts::DEFAULT_CLOSE_GRACE_MS),
-                session_create_timeout_ms: acp_timeouts::DEFAULT_SESSION_TIMEOUT_MS,
-                permission_mode,
-                env: Default::default(),
-                default_mode: None,
-                default_model: None,
-                system_prompt: None,
-                capabilities: Vec::new(),
-            };
+
             let mut reg = apxm_acp::AgentRegistry::load();
+
+            let profile = match command {
+                Some(cmd) => {
+                    // Custom registration with explicit command
+                    apxm_acp::AgentProfile {
+                        command: cmd,
+                        close_grace_ms: close_grace_ms
+                            .unwrap_or(acp_timeouts::DEFAULT_CLOSE_GRACE_MS),
+                        session_create_timeout_ms: acp_timeouts::DEFAULT_SESSION_TIMEOUT_MS,
+                        permission_mode: permissions,
+                        env: Default::default(),
+                        default_mode: None,
+                        default_model: None,
+                        system_prompt: None,
+                        capabilities: Vec::new(),
+                    }
+                }
+                None => {
+                    // Template-based registration
+                    let mut profile = reg
+                        .get_template(&name)
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "Unknown template '{name}'. Run: apxm agent templates"
+                            )
+                        })?
+                        .clone();
+                    // Apply overrides
+                    profile.permission_mode = permissions;
+                    if let Some(grace) = close_grace_ms {
+                        profile.close_grace_ms = grace;
+                    }
+                    profile
+                }
+            };
+
+            // Spawn test: verify the agent is reachable before persisting
+            if !no_test {
+                println!("Testing agent '{}'...", name.bold());
+                println!("  Command: {}", profile.command);
+                let cwd = std::env::current_dir().unwrap_or_default();
+                let start = std::time::Instant::now();
+                let aam_context = apxm_core::types::aam::AamContext::default();
+                match apxm_acp::AcpSession::spawn(&name, &profile, &cwd, &aam_context).await {
+                    Ok(session) => {
+                        let elapsed = start.elapsed();
+                        println!(
+                            "  {}",
+                            format!("Connected in {:.1}s", elapsed.as_secs_f64()).green()
+                        );
+                        session.close().await;
+                    }
+                    Err(e) => {
+                        print_status_line(&name, Status::Error, &format!("{e}"));
+                        return Err(anyhow::anyhow!(
+                            "Agent '{}' is not reachable. Is the tool installed?\n\
+                             Use --no-test to register without testing.",
+                            name
+                        ));
+                    }
+                }
+            }
+
+            let display_cmd = profile.command.clone();
             reg.add(name.clone(), profile)
                 .map_err(|e| anyhow::anyhow!("Failed to save agent profile: {e}"))?;
-            print_section_header("Agent Profile Added");
-            print_status_line(&name, Status::Ok, &command);
+            print_section_header("Agent Registered");
+            print_status_line(&name, Status::Ok, &display_cmd);
         }
         AgentAction::Remove { name } => {
             let mut reg = apxm_acp::AgentRegistry::load();
-            if reg.is_builtin(&name) {
-                return Err(anyhow::anyhow!(
-                    "Cannot remove built-in agent '{name}'. You can override it with: apxm agent add {name} --command ..."
-                ));
-            }
             match reg.remove(&name) {
                 Ok(true) => {
-                    print_section_header("Agent Profile Removed");
+                    print_section_header("Agent Removed");
                     print_status_line(&name, Status::Ok, "removed");
                 }
                 Ok(false) => {
-                    return Err(anyhow::anyhow!("Agent profile '{name}' not found"));
+                    return Err(anyhow::anyhow!("Agent '{name}' not found. Run: apxm agent list"));
                 }
                 Err(e) => {
-                    return Err(anyhow::anyhow!("Failed to remove agent profile: {e}"));
+                    return Err(anyhow::anyhow!("Failed to remove agent: {e}"));
                 }
             }
         }
         AgentAction::Test { name } => {
             let reg = apxm_acp::AgentRegistry::load();
             let profile = reg.get(&name).ok_or_else(|| {
-                anyhow::anyhow!("Agent profile '{name}' not found. Run: apxm agent list")
+                anyhow::anyhow!(
+                    "Agent '{name}' not registered. Register with: apxm agent add {name}"
+                )
             })?;
             println!("Testing agent '{}'...", name.bold());
             println!("  Command: {}", profile.command);
@@ -589,6 +651,53 @@ async fn agent_command(action: AgentAction, json_output: bool) -> Result<()> {
                     return Err(anyhow::anyhow!("Agent test failed: {e}"));
                 }
             }
+        }
+        AgentAction::Templates => {
+            let reg = apxm_acp::AgentRegistry::load();
+            let templates = reg.list_templates();
+            if json_output {
+                let entries: Vec<serde_json::Value> = templates
+                    .iter()
+                    .map(|(name, profile)| {
+                        serde_json::json!({
+                            (json_keys::NAME): name,
+                            (json_keys::COMMAND): profile.command,
+                            (json_keys::CLOSE_GRACE_MS): profile.close_grace_ms,
+                            (json_keys::SESSION_CREATE_TIMEOUT_MS): profile.session_create_timeout_ms,
+                        })
+                    })
+                    .collect();
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&entries)
+                        .map_err(|e| anyhow::anyhow!("JSON: {e}"))?
+                );
+                return Ok(());
+            }
+
+            print_section_header("Built-in Agent Templates");
+            let max_name = templates.iter().map(|(n, _)| n.len()).max().unwrap_or(8);
+            println!(
+                "  {:<name_w$}  {:<8}  {}",
+                "TEMPLATE",
+                "TIMEOUT",
+                "COMMAND",
+                name_w = max_name,
+            );
+            for (name, profile) in &templates {
+                println!(
+                    "  {:<name_w$}  {:<8}  {}",
+                    name.bold(),
+                    format!("{}ms", profile.session_create_timeout_ms).dimmed(),
+                    profile.command,
+                    name_w = max_name,
+                );
+            }
+            println!();
+            println!(
+                "{} templates available. Register with: apxm agent add <name>",
+                templates.len()
+            );
         }
     }
     Ok(())

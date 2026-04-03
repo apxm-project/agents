@@ -1,50 +1,41 @@
 {
-  "metadata": {
-    "name": "default.main",
-    "is_entry": true,
-    "description": "Basic: spawn a Claude agent and send one message"
-  },
+  "name": "spawn-communicate-basic",
+  "parameters": [],
   "nodes": [
     {
       "id": 1,
-      "op_type": "SPAWN_AGENT",
+      "name": "spawn_reviewer",
+      "op": "SPAWN_AGENT",
       "attributes": {
         "agent_name": "reviewer",
         "profile": "claude",
         "mode": "architect"
-      },
-      "input_tokens": [],
-      "output_tokens": [101],
-      "metadata": {}
+      }
     },
     {
       "id": 2,
-      "op_type": "CONST_STR",
+      "name": "review_prompt",
+      "op": "CONST_STR",
       "attributes": {
         "value": "Review the current directory structure and suggest improvements."
-      },
-      "input_tokens": [],
-      "output_tokens": [102],
-      "metadata": {}
+      }
     },
     {
       "id": 3,
-      "op_type": "COMMUNICATE",
+      "name": "send_to_reviewer",
+      "op": "COMMUNICATE",
       "attributes": {
         "recipient": "reviewer",
         "protocol": "acp"
-      },
-      "input_tokens": [102],
-      "output_tokens": [103],
-      "metadata": {}
+      }
     },
     {
       "id": 4,
-      "op_type": "PRINT",
-      "attributes": {},
-      "input_tokens": [103],
-      "output_tokens": [104],
-      "metadata": {}
+      "name": "print_response",
+      "op": "PRINT",
+      "attributes": {
+        "message": "{{node_3}}"
+      }
     }
   ],
   "edges": [
@@ -52,6 +43,7 @@
     {"from": 2, "to": 3, "dependency": "Data"},
     {"from": 3, "to": 4, "dependency": "Data"}
   ],
-  "entry_nodes": [1, 2],
-  "exit_nodes": [4]
+  "metadata": {
+    "description": "Basic: spawn a Claude agent and send one message"
+  }
 }

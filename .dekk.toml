@@ -89,10 +89,11 @@ remove = { run = "apxm tool remove", description = "Remove tool" }
 [commands.agent]
 description = "Manage ACP agent profiles"
 group = "Configuration"
-list = { run = "apxm agent list", description = "List agents" }
-add = { run = "apxm agent add", description = "Add agent profile" }
+list = { run = "apxm agent list", description = "List registered agents" }
+add = { run = "apxm agent add", description = "Register agent profile" }
 remove = { run = "apxm agent remove", description = "Remove agent" }
 test = { run = "apxm agent test", description = "Test agent" }
+templates = { run = "apxm agent templates", description = "List built-in templates" }
 
 [install]
 wrap = { name = "apxm", target = "target/release/apxm" }
