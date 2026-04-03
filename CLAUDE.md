@@ -22,31 +22,33 @@ apxm init                              # scaffold agents/, flows/, nodes/, promp
 
 ### Graph Authoring
 ```bash
-apxm validate graph.json               # check graph against AIS contract
-apxm validate graph.json --json        # machine-readable validation errors
-apxm validate graph.json --no-check-resources  # skip Tier 2 environment checks
-apxm analyze graph.json                # parallelism, critical path, speedup estimate
-apxm analyze graph.json --json         # full analysis as JSON
-apxm explain graph.json                # human-readable summary of what a graph does
+apxm validate graph.apxm              # check graph against AIS contract
+apxm validate graph.apxm --json       # machine-readable validation errors
+apxm validate graph.apxm --no-check-resources  # skip Tier 2 environment checks
+apxm analyze graph.apxm               # parallelism, critical path, speedup estimate
+apxm analyze graph.apxm --json        # full analysis as JSON
+apxm explain graph.apxm               # human-readable summary of what a graph does
 ```
 
 ### Composition
 ```bash
-apxm task merge a.json b.json --name combined   # merge graph fragments into one workflow
-apxm task merge a.json b.json --name combined -o out.json
+apxm task merge a.apxm b.apxm --name combined   # merge graph fragments into one workflow
+apxm task merge a.apxm b.apxm --name combined -o out.apxm
 ```
 
 ### Compilation & Execution
 ```bash
-apxm compile graph.json                # compile graph to .apxmobj artifact
-apxm compile graph.json -o out.apxmobj -O2          # with output path + opt level
-apxm compile graph.json --emit-diagnostics diag.json # compilation statistics
-apxm execute graph.json                # compile + run in one step
-apxm execute graph.json -O0            # skip optimizations (e.g., FuseReasoning)
-apxm execute graph.json --emit-metrics metrics.json  # runtime statistics
+apxm compile graph.apxm               # compile graph to .apxmobj artifact
+apxm compile graph.apxm -o out.apxmobj -O2          # with output path + opt level
+apxm compile graph.apxm --emit-diagnostics diag.json # compilation statistics
+apxm execute graph.apxm               # compile + run in one step
+apxm execute graph.apxm -O0           # skip optimizations (e.g., FuseReasoning)
+apxm execute graph.apxm --emit-metrics metrics.json  # runtime statistics
+apxm execute graph.apxm --emit-session              # live tracing to session dir
 apxm run out.apxmobj                   # run a pre-compiled artifact
 apxm run out.apxmobj --emit-metrics metrics.json
-apxm decompile out.apxmobj             # reverse-map artifact back to graph JSON
+apxm decompile out.apxmobj            # reverse-map artifact back to graph JSON
+apxm replay ~/.apxm/sessions/<id>     # replay a session trace as timeline
 ```
 
 ### Environment
@@ -73,15 +75,26 @@ apxm tool list                         # list registered tools
 apxm tool remove my-tool               # remove a tool registration
 ```
 
-## Graph JSON Contract
+## Graph File Format
 
-All graphs share this shape (see `apxm ops show <OP>` for per-op attributes):
+Graph files use the `.apxm` extension (JSON content). All graphs share this shape (see `apxm ops show <OP>` for per-op attributes):
 
 ```json
 {"name": "...", "nodes": [{"id": 1, "name": "...", "op": "ASK", "attributes": {...}}], "edges": [{"from": 1, "to": 2, "dependency": "Data"}], "parameters": [], "metadata": {}}
 ```
 
 Valid dependency types: `Data`, `Control`, `Effect`. Valid parameter types: `str`, `int`, `float`, `bool`, `json`.
+
+## Session Output
+
+When `--emit-session` is passed, APXM creates a session directory with:
+- `manifest.json` — execution metadata (status updates live during execution)
+- `input.apxm` — copy of the input graph
+- `trace.ndjson` — NDJSON event stream (written live during execution)
+- `live.json` — current progress snapshot (atomically updated)
+- `results.json` — all node outputs
+- `metrics.json` — execution metrics
+- `node_statuses.json` — per-node status
 
 ## Build
 

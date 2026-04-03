@@ -6,6 +6,7 @@ use tokio::process::{ChildStdin, ChildStdout};
 use apxm_core::apxm_acp;
 
 use crate::AcpError;
+use apxm_core::constants::jsonrpc;
 use crate::constants::json_rpc_errors;
 use crate::constants::protocol::JSONRPC_VERSION;
 
@@ -215,13 +216,13 @@ impl StdioTransport {
 /// Classify a raw JSON-RPC message by field presence.
 /// Takes ownership to avoid cloning the Value tree during deserialization.
 fn classify(raw: serde_json::Value) -> Result<JsonRpcMessage, AcpError> {
-    let has_id = raw.get("id").is_some();
+    let has_id = raw.get(jsonrpc::ID).is_some();
     let has_method = raw
-        .get("method")
+        .get(jsonrpc::METHOD)
         .and_then(|m| m.as_str())
         .is_some_and(|s| !s.is_empty());
-    let has_result = raw.get("result").is_some();
-    let has_error = raw.get("error").is_some();
+    let has_result = raw.get(jsonrpc::RESULT).is_some();
+    let has_error = raw.get(jsonrpc::ERROR).is_some();
 
     if has_id && (has_result || has_error) {
         let resp: JsonRpcResponse = serde_json::from_value(raw)
@@ -234,11 +235,11 @@ fn classify(raw: serde_json::Value) -> Result<JsonRpcMessage, AcpError> {
     } else if has_method && !has_id {
         // Safe: `has_method` guard guarantees `method` is a non-empty string.
         let method = raw
-            .get("method")
+            .get(jsonrpc::METHOD)
             .and_then(|m| m.as_str())
             .ok_or_else(|| AcpError::Protocol("method field must be a string".to_string()))?
             .to_string();
-        let params = raw.get("params").cloned();
+        let params = raw.get(jsonrpc::PARAMS).cloned();
         Ok(JsonRpcMessage::Notification { method, params })
     } else {
         Err(AcpError::Protocol(format!("unclassifiable message: {raw}")))

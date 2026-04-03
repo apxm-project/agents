@@ -1,9 +1,9 @@
 //! AAM-to-ACP bridge: renders projected AAM state into formats ACP agents understand.
 
+use apxm_core::constants::acp::session_params;
 use apxm_core::constants::runtime::belief_keys;
 use apxm_core::types::aam::AamContext;
 
-use crate::constants::{args as cap_args, wire};
 use crate::registry::CapabilityServerConfig;
 
 /// Render AAM context as a structured system prompt preamble.
@@ -70,8 +70,8 @@ pub fn render_session_params(
     let mcp_servers_val = serde_json::to_value(capabilities)
         .unwrap_or_else(|_| serde_json::Value::Array(vec![]));
     serde_json::json!({
-        cap_args::CWD: cwd.to_string_lossy(),
-        (wire::MCP_SERVERS): mcp_servers_val,
+        session_params::CWD: cwd.to_string_lossy(),
+        (session_params::MCP_SERVERS): mcp_servers_val,
     })
 }
 
@@ -154,8 +154,8 @@ mod tests {
         let cwd = std::path::Path::new("/tmp/test");
         let caps = vec![];
         let params = render_session_params(cwd, &caps);
-        assert!(params.get("mcpServers").is_some());
-        assert!(params.get("cwd").is_some());
+        assert!(params.get(session_params::MCP_SERVERS).is_some());
+        assert!(params.get(session_params::CWD).is_some());
     }
 
     #[test]
@@ -168,7 +168,7 @@ mod tests {
             env: Default::default(),
         }];
         let params = render_session_params(cwd, &caps);
-        let servers = params.get("mcpServers").unwrap().as_array().unwrap();
+        let servers = params.get(session_params::MCP_SERVERS).unwrap().as_array().unwrap();
         assert_eq!(servers.len(), 1);
         assert_eq!(servers[0]["name"], "test-mcp");
     }

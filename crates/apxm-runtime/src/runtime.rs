@@ -37,6 +37,8 @@ pub struct RuntimeExecutionResult {
     pub llm_metrics: apxm_backends::AggregatedMetrics,
     /// Scheduler overhead metrics
     pub scheduler_metrics: crate::observability::SchedulerMetrics,
+    pub all_outputs: Option<HashMap<u64, Value>>,
+    pub node_output_map: Option<HashMap<u64, Vec<u64>>>,
 }
 
 /// Runtime configuration
@@ -260,7 +262,7 @@ impl Runtime {
         let executor = Arc::new(ExecutorEngine::new(context.clone()));
 
         // Execute with dataflow scheduler for automatic parallelism
-        let (results, stats, scheduler_metrics) = self
+        let (results, stats, scheduler_metrics, all_outputs, node_output_map) = self
             .scheduler
             .execute(dag, executor, context, vec![])
             .await?;
@@ -274,6 +276,8 @@ impl Runtime {
             #[cfg(feature = "metrics")]
             llm_metrics,
             scheduler_metrics,
+            all_outputs,
+            node_output_map,
         })
     }
 
@@ -357,7 +361,7 @@ impl Runtime {
 
         let context = self.build_context(session_id, event_emitter);
         let executor = Arc::new(ExecutorEngine::new(context.clone()));
-        let (results, stats, scheduler_metrics) = self
+        let (results, stats, scheduler_metrics, all_outputs, node_output_map) = self
             .scheduler
             .execute(entry_dag, executor, context, arg_values)
             .await?;
@@ -368,6 +372,8 @@ impl Runtime {
             #[cfg(feature = "metrics")]
             llm_metrics: self.llm_registry.metrics().aggregate(),
             scheduler_metrics,
+            all_outputs,
+            node_output_map,
         })
     }
 

@@ -180,6 +180,26 @@ impl fmt::Display for Example {
     }
 }
 
+/// Session execution manifest — written to `manifest.json` in each session directory.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionManifest {
+    /// Unique execution identifier.
+    pub execution_id: String,
+    /// Name of the graph that was executed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graph_name: Option<String>,
+    /// ISO 8601 timestamp of when the session started.
+    pub timestamp: String,
+    /// Current status (running/completed/failed).
+    pub status: String,
+    /// Total execution duration in milliseconds.
+    pub duration_ms: u128,
+    /// Number of nodes executed.
+    pub node_count: usize,
+    /// Whether execution succeeded.
+    pub success: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

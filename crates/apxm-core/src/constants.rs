@@ -318,6 +318,69 @@ pub mod protocols {
     pub const A2A_VERSION: &str = "0.3";
 }
 
+pub mod acp {
+    pub mod session_params {
+        pub const MCP_SERVERS: &str = "mcpServers";
+        pub const CWD: &str = "cwd";
+    }
+
+    pub mod client_capabilities {
+        pub const FS: &str = "fs";
+        pub const READ_TEXT_FILE: &str = "readTextFile";
+        pub const WRITE_TEXT_FILE: &str = "writeTextFile";
+        pub const TERMINAL: &str = "terminal";
+        pub const NAME: &str = "name";
+        pub const VERSION: &str = "version";
+    }
+
+    pub mod reverse_params {
+        pub const PATH: &str = "path";
+        pub const LINE: &str = "line";
+        pub const CONTENT: &str = "content";
+        pub const COMMAND: &str = "command";
+        pub const ARGS: &str = "args";
+        pub const CWD: &str = "cwd";
+        pub const ENV: &str = "env";
+        pub const NAME: &str = "name";
+        pub const VALUE: &str = "value";
+        pub const OPTIONS: &str = "options";
+        pub const KIND: &str = "kind";
+        pub const OFFSET: &str = "offset";
+    }
+
+    pub mod reverse_response {
+        pub const CONTENT: &str = "content";
+        pub const OUTPUT: &str = "output";
+        pub const TRUNCATED: &str = "truncated";
+        pub const SIGNAL: &str = "signal";
+        pub const OUTCOME: &str = "outcome";
+    }
+
+    pub mod notification {
+        pub const UPDATE: &str = "update";
+        pub const SESSION_UPDATE: &str = "sessionUpdate";
+        pub const TYPE: &str = "type";
+        pub const TEXT: &str = "text";
+        pub const USED: &str = "used";
+        pub const SIZE: &str = "size";
+    }
+
+    pub mod set_session {
+        pub const MODEL: &str = "model";
+        pub const VALUE: &str = "value";
+    }
+}
+
+pub mod jsonrpc {
+    pub const ID: &str = "id";
+    pub const METHOD: &str = "method";
+    pub const PARAMS: &str = "params";
+    pub const RESULT: &str = "result";
+    pub const ERROR: &str = "error";
+    pub const JSONRPC: &str = "jsonrpc";
+    pub const VERSION: &str = "2.0";
+}
+
 /// COMMUNICATE operation protocol dispatch modes.
 pub mod communicate_protocols {
     /// In-process sub-flow execution via FlowRegistry.
@@ -402,6 +465,72 @@ pub mod llm {
         pub const DELTA: &str = "delta";
         pub const CHOICES: &str = "choices";
         pub const TEXT_DELTA: &str = "text_delta";
+    }
+}
+
+pub mod extensions {
+    /// Graph source file extension.
+    pub const GRAPH: &str = "apxm";
+    /// Compiled artifact extension.
+    pub const ARTIFACT: &str = "apxmobj";
+}
+
+pub mod session {
+    pub mod files {
+        pub const MANIFEST: &str = "manifest.json";
+        pub const INPUT_GRAPH: &str = "input.apxm";
+        pub const RESULTS: &str = "results.json";
+        pub const METRICS: &str = "metrics.json";
+        pub const NODE_STATUSES: &str = "node_statuses.json";
+        pub const TRACE: &str = "trace.ndjson";
+        pub const LIVE: &str = "live.json";
+    }
+
+    pub mod status {
+        pub const RUNNING: &str = "running";
+        pub const COMPLETED: &str = "completed";
+        pub const FAILED: &str = "failed";
+    }
+}
+
+pub mod ui {
+    /// Status icons for terminal output.
+    pub mod icons {
+        /// Operation started / in progress.
+        pub const STARTED: &str = "\u{25b6}";
+        /// Operation completed successfully.
+        pub const SUCCESS: &str = "\u{2713}";
+        /// Operation failed.
+        pub const FAILED: &str = "\u{2717}";
+        /// Information hint.
+        pub const INFO: &str = "\u{2139}";
+        /// Warning sign.
+        pub const WARNING: &str = "!";
+        /// Caution / alert.
+        pub const CAUTION: &str = "\u{26a0}";
+        /// Lightning bolt / performance.
+        pub const LIGHTNING: &str = "\u{26a1}";
+        /// Rocket / speedup.
+        pub const ROCKET: &str = "\u{1f680}";
+        /// Bullet point.
+        pub const BULLET: &str = "\u{2022}";
+        /// Horizontal rule (thin).
+        pub const HRULE: &str = "\u{2500}";
+        /// Horizontal rule (double).
+        pub const HRULE_DOUBLE: &str = "\u{2550}";
+        /// Em dash.
+        pub const EM_DASH: &str = "\u{2014}";
+        /// Left arrow.
+        pub const ARROW_LEFT: &str = "\u{2190}";
+        /// Right arrow.
+        pub const ARROW_RIGHT: &str = "\u{2192}";
+    }
+
+    pub mod labels {
+        pub const STARTED: &str = "started";
+        pub const OK: &str = "OK";
+        pub const WARN: &str = "WARN";
+        pub const MISSING: &str = "MISSING";
     }
 }
 

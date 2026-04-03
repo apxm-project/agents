@@ -62,7 +62,7 @@ pub use operations::metadata::{
 };
 pub use operations::{AISOperation, AISOperationType, OperationCategory, validate_operation};
 
-pub use session::{Example, Message, MessageMetadata, MessageRole};
+pub use session::{Example, Message, MessageMetadata, MessageRole, SessionManifest};
 pub use values::{Number, Token, TokenId, TokenStatus, Value};
 
 pub use backend::{BackendConfig, BackendType, DockerConfig, ModelConfig};

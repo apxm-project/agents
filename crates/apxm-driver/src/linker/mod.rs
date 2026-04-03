@@ -1,12 +1,14 @@
 //! High-level linker that orchestrates compiler and runtime execution.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use apxm_artifact::Artifact;
+use apxm_core::constants;
 use apxm_core::error::runtime::RuntimeError;
 use apxm_core::log_info;
 use apxm_core::types::OptimizationLevel;
-use apxm_runtime::{RuntimeConfig, RuntimeExecutionResult};
+use apxm_runtime::{ExecutionEventEmitter, RuntimeConfig, RuntimeExecutionResult};
 
 use apxm_artifact::ArtifactMetadata;
 use apxm_graph::ApxmGraph;
@@ -164,7 +166,7 @@ impl Linker {
         let is_json = input
             .extension()
             .and_then(|e| e.to_str())
-            .map(|e| e == "json")
+            .map(|e| e == constants::extensions::GRAPH || e == "json")
             .unwrap_or(false);
 
         // Use graph-direct path when MLIR is unavailable or input is JSON
@@ -223,6 +225,7 @@ impl Linker {
         &self,
         input: &Path,
         args: Vec<String>,
+        event_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
     ) -> Result<LinkResult, DriverError> {
         log_info!("driver", "Compiling graph {}", input.display());
         #[cfg(feature = "metrics")]
@@ -235,7 +238,7 @@ impl Linker {
         let runtime_start = std::time::Instant::now();
         let execution = self
             .runtime
-            .execute_artifact_with_args(artifact.clone(), args)
+            .execute_artifact_with_emitter(artifact.clone(), args, event_emitter)
             .await?;
         #[cfg(feature = "metrics")]
         let runtime_time = runtime_start.elapsed();

@@ -17,6 +17,7 @@ apxm-sandbox = { path = "../apxm-sandbox" }
 apxm-graph = { path = "../apxm-graph" }
 apxm-credentials = { path = "../apxm-credentials" }
 apxm-acp = { path = "../apxm-acp" }
+apxm-events = { path = "../apxm-events" }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -34,6 +35,7 @@ sha2 = "0.10"
 tempfile = "3.0"
 parking_lot = "0.12"
 tracing = "0.1"
+chrono = "0.4"
 
 [features]
 metrics = ["apxm-runtime/metrics", "apxm-backends/metrics"]

@@ -431,23 +431,21 @@ impl LLMBackend for OpenAIBackend {
                             return;
                         }
 
-                        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
+                        if let Ok(parsed) = serde_json::from_str::<StreamChunkPayload>(data) {
                             // Emit usage if present at top level.
-                            if let Some(usage_obj) = parsed.get("usage") {
-                                let input = usage_obj["prompt_tokens"].as_u64().unwrap_or(0) as usize;
-                                let output = usage_obj["completion_tokens"].as_u64().unwrap_or(0) as usize;
+                            if let Some(ref usage_obj) = parsed.usage {
+                                let input = usage_obj.prompt_tokens as usize;
+                                let output = usage_obj.completion_tokens as usize;
                                 if input > 0 || output > 0 {
                                     last_usage = TokenUsage::new(input, output);
                                     yield StreamChunk::Usage(last_usage.clone());
                                 }
                             }
 
-                            if let Some(choices) = parsed["choices"].as_array() {
-                                for choice in choices {
-                                    let delta = &choice["delta"];
-
+                            for choice in &parsed.choices {
+                                if let Some(ref delta) = choice.delta {
                                     // Text content.
-                                    if let Some(content) = delta["content"].as_str() {
+                                    if let Some(ref content) = delta.content {
                                         if !content.is_empty() {
                                             full_content.push_str(content);
                                             yield StreamChunk::Token(content.to_string());
@@ -455,13 +453,14 @@ impl LLMBackend for OpenAIBackend {
                                     }
 
                                     // Tool calls.
-                                    if let Some(tc_arr) = delta["tool_calls"].as_array() {
+                                    if let Some(ref tc_arr) = delta.tool_calls {
                                         for tc in tc_arr {
-                                            let index = tc["index"].as_u64().unwrap_or(0) as usize;
+                                            let index = tc.index as usize;
 
-                                            if let Some(id) = tc["id"].as_str() {
-                                                let name = tc["function"]["name"]
-                                                    .as_str()
+                                            if let Some(ref id) = tc.id {
+                                                let name = tc.function
+                                                    .as_ref()
+                                                    .and_then(|f| f.name.as_deref())
                                                     .unwrap_or("")
                                                     .to_string();
                                                 tool_calls_map.insert(
@@ -474,7 +473,7 @@ impl LLMBackend for OpenAIBackend {
                                                 };
                                             }
 
-                                            if let Some(args) = tc["function"]["arguments"].as_str() {
+                                            if let Some(ref args) = tc.function.as_ref().and_then(|f| f.arguments.as_ref()) {
                                                 if !args.is_empty() {
                                                     if let Some((id, _, accumulated_args)) =
                                                         tool_calls_map.get_mut(&index)
@@ -600,7 +599,6 @@ struct Choice {
 struct ResponseMessage {
     #[serde(default)]
     content: Option<String>,
-    /// On-premises reasoning models return generated text here when content is null.
     #[serde(default)]
     reasoning: Option<String>,
     #[serde(default)]
@@ -623,6 +621,61 @@ struct OpenAIFunction {
 struct Usage {
     prompt_tokens: usize,
     completion_tokens: usize,
+}
+
+// OpenAI streaming response types (constructed by serde, not user code)
+#[allow(dead_code)]
+#[derive(Deserialize)]
+struct StreamChunkPayload {
+    #[serde(default)]
+    usage: Option<StreamUsage>,
+    #[serde(default)]
+    choices: Vec<StreamChoice>,
+}
+
+#[allow(dead_code)]
+#[derive(Deserialize)]
+struct StreamUsage {
+    #[serde(default)]
+    prompt_tokens: u64,
+    #[serde(default)]
+    completion_tokens: u64,
+}
+
+#[allow(dead_code)]
+#[derive(Deserialize)]
+struct StreamChoice {
+    #[serde(default)]
+    delta: Option<StreamDelta>,
+}
+
+#[allow(dead_code)]
+#[derive(Deserialize)]
+struct StreamDelta {
+    #[serde(default)]
+    content: Option<String>,
+    #[serde(default)]
+    tool_calls: Option<Vec<StreamToolCallDelta>>,
+}
+
+#[allow(dead_code)]
+#[derive(Deserialize)]
+struct StreamToolCallDelta {
+    #[serde(default)]
+    index: u64,
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    function: Option<StreamFunctionDelta>,
+}
+
+#[allow(dead_code)]
+#[derive(Deserialize)]
+struct StreamFunctionDelta {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    arguments: Option<String>,
 }
 
 #[cfg(test)]

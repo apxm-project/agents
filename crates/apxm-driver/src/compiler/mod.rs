@@ -1,6 +1,7 @@
 //! Compiler wrapper used by the driver.
 
 use apxm_compiler::{Context, Module, Pipeline, PipelineDiagnostics};
+use apxm_core::constants;
 use apxm_core::types::{OptimizationLevel, PipelineConfig};
 use apxm_core::utils::build::MlirEnvReport;
 use apxm_graph::ApxmGraph;
@@ -98,7 +99,7 @@ impl Compiler {
         let bytes = fs::read(path)?;
 
         match path.extension().and_then(|ext| ext.to_str()) {
-            Some("json") => std::str::from_utf8(&bytes)
+            Some(constants::extensions::GRAPH | "json") => std::str::from_utf8(&bytes)
                 .map_err(|e| DriverError::Driver(format!("Graph file is not UTF-8 JSON: {e}")))
                 .and_then(|text| {
                     ApxmGraph::from_json(text)

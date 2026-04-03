@@ -16,6 +16,7 @@ const PROJECT_DIR: &str = ".apxm";
 const ARTIFACTS_DIR: &str = "artifacts";
 const CACHE_DIR: &str = "cache";
 const LOGS_DIR: &str = "logs";
+const SESSIONS_DIR: &str = "sessions";
 
 /// Resolved APXM directories for the current process.
 #[derive(Debug, Clone)]
@@ -107,5 +108,10 @@ impl ApxmPaths {
     /// Directory for logs, e.g. `.apxm/logs`.
     pub fn logs_dir(&self) -> io::Result<PathBuf> {
         self.ensure_subdir(LOGS_DIR)
+    }
+
+    /// Directory for session output, e.g. `.apxm/sessions`.
+    pub fn sessions_dir(&self) -> io::Result<PathBuf> {
+        self.ensure_subdir(SESSIONS_DIR)
     }
 }

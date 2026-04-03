@@ -1,3 +1,4 @@
+use apxm_core::constants::acp::set_session;
 use crate::AcpError;
 use crate::constants::{fields, methods};
 use crate::session::AcpSession;
@@ -25,7 +26,7 @@ impl SessionControls {
     pub async fn set_model(session: &mut AcpSession, model_id: &str) -> Result<(), AcpError> {
         let params = serde_json::json!({
             fields::SESSION_ID: session.agent_session_id(),
-            "model": model_id,
+            set_session::MODEL: model_id,
         });
         session
             .send_request_no_reverse(methods::UNSTABLE_SET_SESSION_MODEL, Some(params))
@@ -42,7 +43,7 @@ impl SessionControls {
         let params = serde_json::json!({
             fields::SESSION_ID: session.agent_session_id(),
             fields::CONFIG_ID: config_id,
-            "value": value,
+            set_session::VALUE: value,
         });
         session
             .send_request_no_reverse(methods::SESSION_SET_CONFIG_OPTION, Some(params))

@@ -26,6 +26,7 @@ use apxm_artifact::Artifact;
 use apxm_compiler::{Context as CompilerContext, Pipeline as CompilerPipeline};
 use apxm_core::types::{AIS_OPERATIONS, OptimizationLevel};
 use apxm_graph::ApxmGraph;
+use apxm_core::constants::jsonrpc;
 use serde_json::{Value, json};
 
 const MCP_PROTOCOL_VERSION: &str = apxm_core::constants::protocols::MCP_VERSION;
@@ -56,9 +57,9 @@ fn main() {
             Ok(v) => v,
             Err(e) => {
                 let resp = json!({
-                    "jsonrpc": "2.0",
-                    "id": null,
-                    "error": { "code": PARSE_ERROR, "message": format!("invalid JSON: {e}") }
+                    jsonrpc::JSONRPC: jsonrpc::VERSION,
+                    jsonrpc::ID: null,
+                    jsonrpc::ERROR: { "code": PARSE_ERROR, "message": format!("invalid JSON: {e}") }
                 });
                 write_response(&mut stdout, &resp);
                 continue;
@@ -79,15 +80,15 @@ fn write_response(stdout: &mut io::Stdout, response: &Value) {
 }
 
 fn handle_request(request: Value) -> Value {
-    let id = request.get("id").cloned().unwrap_or(Value::Null);
+    let id = request.get(jsonrpc::ID).cloned().unwrap_or(Value::Null);
     let method = request
-        .get("method")
+        .get(jsonrpc::METHOD)
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let params = request.get("params").cloned().unwrap_or(Value::Null);
+    let params = request.get(jsonrpc::PARAMS).cloned().unwrap_or(Value::Null);
 
     // Notifications (no "id" field) -- handle silently
-    if request.get("id").is_none() {
+    if request.get(jsonrpc::ID).is_none() {
         // notifications/initialized, notifications/cancelled, etc.
         return Value::Null;
     }
@@ -106,14 +107,14 @@ fn handle_request(request: Value) -> Value {
 
     match result {
         Ok(result) => json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "result": result,
+            jsonrpc::JSONRPC: jsonrpc::VERSION,
+            jsonrpc::ID: id,
+            jsonrpc::RESULT: result,
         }),
         Err(error) => json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "error": error,
+            jsonrpc::JSONRPC: jsonrpc::VERSION,
+            jsonrpc::ID: id,
+            jsonrpc::ERROR: error,
         }),
     }
 }
@@ -277,164 +278,132 @@ fn tool_validate(args: Value) -> Result<String, String> {
     let mut errors: Vec<String> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
 
-    // Try to parse the JSON first
-    let raw: Value = serde_json::from_str(graph_json).map_err(|e| format!("invalid JSON: {e}"))?;
+    let graph = match serde_json::from_str::<ApxmGraph>(graph_json) {
+        Ok(g) => g,
+        Err(e) => {
+            errors.push(format!("graph deserialization failed: {e}"));
+            let result = json!({
+                "valid": false,
+                "errors": errors,
+                "warnings": warnings,
+            });
+            return Ok(serde_json::to_string_pretty(&result).unwrap());
+        }
+    };
 
-    // Check required top-level fields
-    if raw
-        .get("name")
-        .and_then(Value::as_str)
-        .is_none_or(|s| s.is_empty())
-    {
+    if graph.name.is_empty() {
         errors.push("graph name must not be empty".to_string());
     }
 
-    let nodes = raw.get("nodes").and_then(Value::as_array);
-    if nodes.is_none() || nodes.is_some_and(|n| n.is_empty()) {
+    if graph.nodes.is_empty() {
         errors.push("graph must contain at least one node".to_string());
     }
 
-    // Node-level checks
     let mut node_ids: HashSet<u64> = HashSet::new();
-    let valid_ops: HashSet<String> = AIS_OPERATIONS
-        .iter()
-        .map(|s| s.op_type.to_string())
-        .collect();
 
-    if let Some(nodes) = nodes {
-        for node in nodes {
-            let id = node.get("id").and_then(Value::as_u64).unwrap_or(0);
-            let name = node.get("name").and_then(Value::as_str).unwrap_or("");
-            let op = node.get("op").and_then(Value::as_str).unwrap_or("");
+    for node in &graph.nodes {
+        if node.id == 0 {
+            errors.push(format!("node '{}' has invalid id (0 or missing)", node.name));
+        }
+        if !node_ids.insert(node.id) {
+            errors.push(format!("duplicate node id {}", node.id));
+        }
+        if node.name.is_empty() {
+            errors.push(format!("node id={} has empty name", node.id));
+        }
 
-            if id == 0 {
-                errors.push(format!("node '{name}' has invalid id (0 or missing)"));
-            }
-            if !node_ids.insert(id) {
-                errors.push(format!("duplicate node id {id}"));
-            }
-            if name.is_empty() {
-                errors.push(format!("node id={id} has empty name"));
-            }
-            if op.is_empty() {
-                errors.push(format!("node '{name}' (id={id}) has empty op"));
-            } else if !valid_ops.contains(op) {
-                errors.push(format!("node '{name}' (id={id}) has unknown op '{op}'"));
-            } else {
-                // Check required attributes
-                let spec = AIS_OPERATIONS.iter().find(|s| s.op_type.to_string() == op);
-                if let Some(spec) = spec {
-                    let attrs = node.get("attributes").and_then(Value::as_object);
-                    for field in spec.fields.iter().filter(|f| f.required) {
-                        if attrs.is_none_or(|a| !a.contains_key(field.name)) {
-                            errors.push(format!(
-                                "node '{name}' (id={id}, op={op}) missing required attribute '{}'",
-                                field.name
-                            ));
-                        }
-                    }
+        let spec = AIS_OPERATIONS.iter().find(|s| s.op_type == node.op);
+        if let Some(spec) = spec {
+            for field in spec.fields.iter().filter(|f| f.required) {
+                if !node.attributes.contains_key(field.name) {
+                    errors.push(format!(
+                        "node '{}' (id={}, op={}) missing required attribute '{}'",
+                        node.name, node.id, node.op, field.name
+                    ));
                 }
             }
         }
     }
 
-    // Edge checks
-    if let Some(edges) = raw.get("edges").and_then(Value::as_array) {
-        for edge in edges {
-            let from = edge.get("from").and_then(Value::as_u64).unwrap_or(0);
-            let to = edge.get("to").and_then(Value::as_u64).unwrap_or(0);
-            let dep = edge
-                .get("dependency")
-                .and_then(Value::as_str)
-                .unwrap_or("Data");
-
-            if from == to {
-                errors.push(format!("edge {from}->{to} is a self-loop"));
-            }
-            if !matches!(dep, "Data" | "Control" | "Effect") {
-                errors.push(format!(
-                    "edge {from}->{to} has invalid dependency type '{dep}'"
-                ));
-            }
-            if !node_ids.contains(&from) {
-                errors.push(format!("edge references non-existent source node {from}"));
-            }
-            if !node_ids.contains(&to) {
-                errors.push(format!("edge references non-existent target node {to}"));
-            }
+    for edge in &graph.edges {
+        if edge.from == edge.to {
+            errors.push(format!("edge {}->{} is a self-loop", edge.from, edge.to));
         }
-
-        // DAG cycle check (Kahn's algorithm)
-        if !node_ids.is_empty() && !edges.is_empty() {
-            let mut in_degree: HashMap<u64, usize> = node_ids.iter().map(|&id| (id, 0)).collect();
-            let mut adjacency: HashMap<u64, Vec<u64>> = HashMap::new();
-
-            for edge in edges {
-                let from = edge.get("from").and_then(Value::as_u64).unwrap_or(0);
-                let to = edge.get("to").and_then(Value::as_u64).unwrap_or(0);
-                if node_ids.contains(&from) && node_ids.contains(&to) {
-                    adjacency.entry(from).or_default().push(to);
-                    *in_degree.entry(to).or_insert(0) += 1;
-                }
-            }
-
-            let mut queue: VecDeque<u64> = in_degree
-                .iter()
-                .filter_map(|(&id, &deg)| if deg == 0 { Some(id) } else { None })
-                .collect();
-            let mut visited = 0usize;
-            while let Some(node_id) = queue.pop_front() {
-                visited += 1;
-                if let Some(neighbors) = adjacency.get(&node_id) {
-                    for &neighbor in neighbors {
-                        if let Some(current) = in_degree.get_mut(&neighbor) {
-                            *current = current.saturating_sub(1);
-                            if *current == 0 {
-                                queue.push_back(neighbor);
-                            }
-                        }
-                    }
-                }
-            }
-
-            if visited != node_ids.len() {
-                let cycle_nodes = node_ids.len() - visited;
-                errors.push(format!(
-                    "graph contains a cycle ({cycle_nodes} nodes involved)"
-                ));
-            }
+        if !node_ids.contains(&edge.from) {
+            errors.push(format!(
+                "edge references non-existent source node {}",
+                edge.from
+            ));
+        }
+        if !node_ids.contains(&edge.to) {
+            errors.push(format!(
+                "edge references non-existent target node {}",
+                edge.to
+            ));
         }
     }
 
-    // Parameter checks
-    if let Some(params) = raw.get("parameters").and_then(Value::as_array) {
-        let valid_types: HashSet<&str> = ["str", "int", "float", "bool", "json"]
-            .into_iter()
+    if !node_ids.is_empty() && !graph.edges.is_empty() {
+        let mut in_degree: HashMap<u64, usize> = node_ids.iter().map(|&id| (id, 0)).collect();
+        let mut adjacency: HashMap<u64, Vec<u64>> = HashMap::new();
+
+        for edge in &graph.edges {
+            if node_ids.contains(&edge.from) && node_ids.contains(&edge.to) {
+                adjacency.entry(edge.from).or_default().push(edge.to);
+                *in_degree.entry(edge.to).or_insert(0) += 1;
+            }
+        }
+
+        let mut queue: VecDeque<u64> = in_degree
+            .iter()
+            .filter_map(|(&id, &deg)| if deg == 0 { Some(id) } else { None })
             .collect();
-        let mut param_names: HashSet<String> = HashSet::new();
-        for param in params {
-            let pname = param.get("name").and_then(Value::as_str).unwrap_or("");
-            let ptype = param.get("type_name").and_then(Value::as_str).unwrap_or("");
-            if pname.is_empty() {
-                errors.push("parameter with empty name".to_string());
+        let mut visited = 0usize;
+        while let Some(node_id) = queue.pop_front() {
+            visited += 1;
+            if let Some(neighbors) = adjacency.get(&node_id) {
+                for &neighbor in neighbors {
+                    if let Some(current) = in_degree.get_mut(&neighbor) {
+                        *current = current.saturating_sub(1);
+                        if *current == 0 {
+                            queue.push_back(neighbor);
+                        }
+                    }
+                }
             }
-            if !param_names.insert(pname.to_string()) {
-                errors.push(format!("duplicate parameter name '{pname}'"));
-            }
-            if !valid_types.contains(ptype) {
-                warnings.push(format!(
-                    "parameter '{pname}' has non-standard type_name '{ptype}'"
-                ));
-            }
+        }
+
+        if visited != node_ids.len() {
+            let cycle_nodes = node_ids.len() - visited;
+            errors.push(format!(
+                "graph contains a cycle ({cycle_nodes} nodes involved)"
+            ));
         }
     }
 
-    // Also attempt full Rust-side parse+validate for deeper checks
-    match ApxmGraph::from_json(graph_json) {
-        Ok(_) => {}
+    let valid_types: HashSet<&str> = ["str", "int", "float", "bool", "json"]
+        .into_iter()
+        .collect();
+    let mut param_names: HashSet<String> = HashSet::new();
+    for param in &graph.parameters {
+        if param.name.is_empty() {
+            errors.push("parameter with empty name".to_string());
+        }
+        if !param_names.insert(param.name.clone()) {
+            errors.push(format!("duplicate parameter name '{}'", param.name));
+        }
+        if !valid_types.contains(param.type_name.as_str()) {
+            warnings.push(format!(
+                "parameter '{}' has non-standard type_name '{}'",
+                param.name, param.type_name
+            ));
+        }
+    }
+
+    match graph.validate() {
+        Ok(()) => {}
         Err(e) => {
             let msg = e.to_string();
-            // Avoid duplicating errors we already caught above
             if !errors
                 .iter()
                 .any(|existing| msg.contains(&existing[..existing.len().min(30)]))

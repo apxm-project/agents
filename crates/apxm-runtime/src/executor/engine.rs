@@ -43,8 +43,6 @@ impl ExecutorEngine {
             "Starting DAG execution"
         );
 
-        // Use the dataflow scheduler for parallel execution when the DAG has
-        // enough nodes to benefit from concurrency.
         if dag.nodes.len() > 1 {
             match self.execute_dag_parallel(dag.clone()).await {
                 Ok(result) => return Ok(result),
@@ -54,7 +52,6 @@ impl ExecutorEngine {
                         error = %e,
                         "Dataflow scheduler failed, falling back to sequential execution"
                     );
-                    // Fall through to sequential execution
                 }
             }
         }
@@ -70,12 +67,9 @@ impl ExecutorEngine {
         let config = SchedulerConfig::default();
         let scheduler = DataflowScheduler::new(config);
 
-        // The scheduler expects an Arc<ExecutorEngine>. We create a temporary
-        // engine sharing the same context so the scheduler can call back into
-        // `execute_with_context`.
         let executor = Arc::new(ExecutorEngine::new(self.context.clone()));
 
-        let (results, stats, _scheduler_metrics) = scheduler
+        let (results, stats, _scheduler_metrics, _, _) = scheduler
             .execute(dag, executor, self.context.clone(), vec![])
             .await?;
 
