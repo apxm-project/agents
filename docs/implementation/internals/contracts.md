@@ -51,25 +51,39 @@ variant.  If the two tables disagree, operations are misidentified at runtime.
 | 22 | `Print` | `Print` | `ais.print` |
 | 23 | `Think` | `Think` | `ais.think` |
 | 24 | `Reason` | `Reason` | `ais.reason` |
+| 25–30 | *(reserved)* | *(reserved for Phase 1 extensions)* | — |
+| 31 | `Delegate` | `Delegate` | `ais.delegate` |
+| 32 | `Negotiate` | `Negotiate` | `ais.negotiate` |
+| 33 | `Nop` | `Nop` | `ais.nop` |
+| 34 | `Identity` | `Identity` | `ais.identity` |
+| 35 | `SpawnAgent` | `SpawnAgent` | `ais.spawn_agent` |
+| 36 | `RegisterCapability` | `RegisterCapability` | `ais.register_capability` |
+| 37 | `Autonomous` | `Autonomous` | `ais.autonomous` |
 
-### 1.2 Phase 1 Extensions (Rust-Only)
+### 1.2 Phase 1 Extensions (Rust-Only, indices 25–30 reserved)
 
 The following operations exist in the Rust `AISOperationType` enum, have
 runtime handlers in the dispatcher, but are **not yet wired** into the C++
-`OperationKind` enum (no wire index assigned).  They can only be created
-programmatically in Rust, not compiled from MLIR source:
+`OperationKind` enum (indices 25–30 reserved for them).  They can only be
+created programmatically in Rust, not compiled from MLIR source:
+
+| Rust `AISOperationType` | Reserved Index | Handler module |
+|-------------------------|----------------|----------------|
+| `UpdateGoal` | 25 | `handlers/update_goal.rs` |
+| `Guard` | 26 | `handlers/guard.rs` |
+| `Claim` | 27 | `handlers/claim.rs` |
+| `Pause` | 28 | `handlers/pause.rs` |
+| `Resume` | 29 | `handlers/resume.rs` |
+
+### 1.3 Rust-Only (no wire index)
+
+These ops have no wire index and cannot be emitted by the compiler:
 
 | Rust `AISOperationType` | Handler module |
 |-------------------------|----------------|
-| `UpdateGoal` | `handlers/update_goal.rs` |
-| `Guard` | `handlers/guard.rs` |
-| `Claim` | `handlers/claim.rs` |
-| `Pause` | `handlers/pause.rs` |
-| `Resume` | `handlers/resume.rs` |
-
-When these operations are added to the compiler, they must be assigned the next
-available indices (starting at 25) in both `OperationKind` and
-`from_wire_index()`.
+| `Agent` | *(structural, no handler)* |
+| `ConstStr` | `handlers/const_str.rs` |
+| `Yield` | *(region terminator, no handler)* |
 
 ---
 

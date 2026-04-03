@@ -75,7 +75,7 @@ mod tests {
         assert_eq!(peaks.load(Ordering::SeqCst), 1);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn different_sessions_can_run_in_parallel() {
         let lanes = Arc::new(SessionLaneGuard::new());
         let start = Instant::now();

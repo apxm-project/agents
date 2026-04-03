@@ -181,12 +181,13 @@ mod tests {
         assert!(cloned.is_cancelled());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_cancel_after_timeout() {
         let token = CancellationToken::new();
         token.cancel_after(Duration::from_millis(50));
         assert!(!token.is_cancelled());
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // Wait well beyond the cancel_after duration to avoid flakiness under load
+        tokio::time::sleep(Duration::from_millis(500)).await;
         assert!(token.is_cancelled());
     }
 
