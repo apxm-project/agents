@@ -31,6 +31,7 @@
 //! ```
 
 pub mod approval;
+pub mod bash;
 pub mod executor;
 pub mod flow_registry;
 pub mod interceptor;
@@ -70,7 +71,7 @@ pub struct CapabilitySystem {
 impl CapabilitySystem {
     /// Create a new capability system
     pub fn new() -> Self {
-        Self {
+        let system = Self {
             registry: Arc::new(CapabilityRegistry::new()),
             default_timeout: Duration::from_secs(30),
             aam: None,
@@ -78,7 +79,10 @@ impl CapabilitySystem {
             approval_store: Arc::new(ApprovalStore::new()),
             approval_channel: None,
             sandbox_registry: RwLock::new(None),
-        }
+        };
+        // Register built-in capabilities
+        let _ = system.register(Arc::new(bash::BashCapability::new()));
+        system
     }
 
     /// Create with custom default timeout
@@ -478,7 +482,10 @@ mod tests {
     #[tokio::test]
     async fn test_capability_system_creation() {
         let system = CapabilitySystem::new();
-        assert_eq!(system.list_capabilities().len(), 0);
+        // BashCapability is auto-registered as a built-in
+        assert!(system.list_capabilities().len() >= 1);
+        assert!(system.list_capabilities().iter().any(|c| c.name == "bash"),
+            "bash capability should be auto-registered");
     }
 
     #[tokio::test]

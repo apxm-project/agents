@@ -31,6 +31,7 @@ LD_LIBRARY_PATH = "{project}/target/release/lib:{project}/target/release"
 
 [paths]
 bin = ["{project}/bin", "{project}/target/release", "{home}/.cargo/bin"]
+lib = ["{project}/target/release/lib", "{environment}/lib"]
 
 [commands]
 build = { run = "cargo build -p apxm-cli --features driver,metrics --release", description = "Build APXM", skill = true, group = "Build & Test" }

@@ -284,11 +284,7 @@ async fn runtime_inv_node_with_sandbox_registry_configured() {
     let config = RuntimeConfig::in_memory();
     let mut runtime = Runtime::new(config).await.unwrap();
 
-    // Register the bash capability (which implements to_exec_request)
-    runtime
-        .capability_system()
-        .register(Arc::new(BashCapability::new()))
-        .unwrap();
+    // BashCapability is now auto-registered in CapabilitySystem::new() — skip manual registration.
 
     // Set up a sandbox registry with a counting backend to detect usage
     let call_count = Arc::new(AtomicU32::new(0));
@@ -334,8 +330,8 @@ async fn runtime_inv_node_with_sandbox_registry_configured() {
         .attributes
         .insert("capability".to_string(), Value::String("bash".to_string()));
     inv_node.attributes.insert(
-        "arg_command".to_string(),
-        Value::String("echo hello from sandbox test".to_string()),
+        "params_json".to_string(),
+        Value::String(r#"{"code": "echo hello from sandbox test"}"#.to_string()),
     );
 
     let dag = ExecutionDag {
