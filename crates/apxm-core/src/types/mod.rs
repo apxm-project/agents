@@ -4,11 +4,13 @@
 //! (`values`), compiler pipeline options (`compiler`), LLM model metadata
 //! (`models`), session/message types (`session`), provider specifications
 //! (`provider_spec`), typed identifiers (`identifiers`), intent routing
-//! (`intents`), and instruction configuration (`config`).
+//! (`intents`), backend configuration (`backend`), and instruction
+//! configuration (`config`).
 //!
 //! AIS operation types are re-exported from `apxm-ais` via `operations`.
 
 pub mod aam;
+pub mod backend;
 pub mod compiler;
 pub mod config;
 pub mod execution;
@@ -63,6 +65,7 @@ pub use operations::{AISOperation, AISOperationType, OperationCategory, validate
 pub use session::{Example, Message, MessageMetadata, MessageRole};
 pub use values::{Number, Token, TokenId, TokenStatus, Value};
 
+pub use backend::{BackendConfig, BackendType, DockerConfig, ModelConfig};
 pub use config::InstructionConfig;
 pub use provider_spec::{
     BUILTIN_PROVIDERS, BuiltinProviderSpec, ProviderProtocol, ProviderSpec,
