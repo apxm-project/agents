@@ -891,5 +891,18 @@ void ReasonOp::getCanonicalizationPatterns(RewritePatternSet &patterns, MLIRCont
   patterns.add<ReasonDedupContext>(context);
 }
 
+//===----------------------------------------------------------------------===//
+// New coordination/identity ops — stub verifiers
+// (full validation to be added in Phase 2 AcpCapability implementation)
+//===----------------------------------------------------------------------===//
+
+LogicalResult SpawnAgentOp::verify()       { return success(); }
+LogicalResult RegisterCapabilityOp::verify() { return success(); }
+LogicalResult AutonomousOp::verify()       { return success(); }
+LogicalResult DelegateOp::verify()         { return success(); }
+LogicalResult NegotiateOp::verify()        { return success(); }
+LogicalResult NopOp::verify()              { return success(); }
+LogicalResult IdentityOp::verify()         { return success(); }
+
 }  // namespace ais
 }  // namespace mlir

@@ -647,18 +647,18 @@ def AIS_CommunicateOp : AIS_Op<"communicate"> {
 
     Example:
     ```mlir
-    %ack = ais.communicate "agent_bob" (%data : !ais.token) : !ais.token
+    %ack = ais.communicate "hello" to "agent_bob" (%data : !ais.token) : !ais.token
     ```
   }];
   let arguments = (ins
+    StrAttr:$payload,
     StrAttr:$recipient,
     OptionalAttr<StrAttr>:$protocol,
-    OptionalAttr<StrAttr>:$payload,
     Variadic<AIS_AnyTokenHandleOrGoal>:$attachments
   );
   let results = (outs AIS_TokenType:$result);
   let assemblyFormat = [{
-    $recipient (`(` $attachments^ `:` type($attachments) `)`)? attr-dict `->` type($result)
+    $payload `to` $recipient (`(` $attachments^ `:` type($attachments) `)`)? attr-dict `:` type($result)
   }];
   let hasVerifier = 1;
 }
@@ -774,6 +774,105 @@ def AIS_ResumeOp : AIS_Op<"resume",
   let results = (outs AIS_TokenType:$result);
   let assemblyFormat = [{
     $checkpoint attr-dict `:` type($result)
+  }];
+  let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// Phase 2 Coordination ops (AcpCapability - stub implementations)
+//===----------------------------------------------------------------------===//
+
+def AIS_SpawnAgentOp : AIS_Op<"spawn_agent"> {
+  let summary = "Spawn an ACP agent subprocess";
+  let description = [{
+    Spawns a new agent at runtime. With 'profile' (e.g. 'claude', 'codex'),
+    launches a real ACP subprocess registered in the ProcessTable. The spawned
+    agent can then receive COMMUNICATE messages. Returns a token carrying the
+    agent name for use in downstream Control edges.
+  }];
+  let arguments = (ins
+    StrAttr:$child_agent,
+    OptionalAttr<StrAttr>:$profile,
+    OptionalAttr<StrAttr>:$mode,
+    OptionalAttr<StrAttr>:$model,
+    OptionalAttr<StrAttr>:$cwd
+  );
+  let results = (outs AIS_TokenType:$result);
+  let assemblyFormat = [{
+    $child_agent attr-dict `:` type($result)
+  }];
+  let hasVerifier = 1;
+}
+
+def AIS_RegisterCapabilityOp : AIS_Op<"register_capability"> {
+  let summary = "Register a new capability in the runtime registry";
+  let arguments = (ins
+    StrAttr:$capability_name,
+    OptionalAttr<StrAttr>:$description
+  );
+  let results = (outs AIS_TokenType:$result);
+  let assemblyFormat = [{
+    $capability_name attr-dict `:` type($result)
+  }];
+  let hasVerifier = 1;
+}
+
+def AIS_AutonomousOp : AIS_Op<"autonomous"> {
+  let summary = "Switch a sub-graph region to model-driven execution";
+  let arguments = (ins
+    OptionalAttr<StrAttr>:$strategy,
+    OptionalAttr<StrAttr>:$template_str
+  );
+  let results = (outs AIS_TokenType:$result);
+  let assemblyFormat = [{
+    attr-dict `:` type($result)
+  }];
+  let hasVerifier = 1;
+}
+
+def AIS_DelegateOp : AIS_Op<"delegate"> {
+  let summary = "Delegate a task to a sub-agent";
+  let arguments = (ins
+    StrAttr:$target,
+    OptionalAttr<StrAttr>:$task,
+    Variadic<AIS_TokenType>:$inputs
+  );
+  let results = (outs AIS_TokenType:$result);
+  let assemblyFormat = [{
+    $target (`(` $inputs^ `:` type($inputs) `)`)? attr-dict `:` type($result)
+  }];
+  let hasVerifier = 1;
+}
+
+def AIS_NegotiateOp : AIS_Op<"negotiate"> {
+  let summary = "Multi-agent negotiation protocol";
+  let arguments = (ins
+    StrAttr:$topic,
+    Variadic<AIS_TokenType>:$proposals
+  );
+  let results = (outs AIS_TokenType:$result);
+  let assemblyFormat = [{
+    $topic (`(` $proposals^ `:` type($proposals) `)`)? attr-dict `:` type($result)
+  }];
+  let hasVerifier = 1;
+}
+
+def AIS_NopOp : AIS_Op<"nop"> {
+  let summary = "No-op passthrough";
+  let arguments = (ins Variadic<AIS_TokenType>:$inputs);
+  let results = (outs AIS_TokenType:$result);
+  let assemblyFormat = [{
+    (`(` $inputs^ `:` type($inputs) `)`)? attr-dict `:` type($result)
+  }];
+  let hasVerifier = 1;
+}
+
+def AIS_IdentityOp : AIS_Op<"identity"> {
+  let summary = "Identity passthrough with AAM transition recording";
+  let arguments = (ins AIS_TokenType:$input);
+  let results = (outs AIS_TokenType:$result);
+  let assemblyFormat = [{
+    $input `:` type($input) attr-dict `->` type($result)
   }];
   let hasVerifier = 1;
 }

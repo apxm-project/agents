@@ -59,6 +59,13 @@ enum class OperationKind : uint32_t {
   Claim = 27,
   Pause = 28,
   Resume = 29,
+  Delegate = 31,
+  Negotiate = 32,
+  Nop = 33,
+  Identity = 34,
+  SpawnAgent = 35,
+  RegisterCapability = 36,
+  Autonomous = 37,
 };
 
 enum class DependencyKind : uint8_t {
@@ -372,6 +379,13 @@ std::optional<OperationKind> mapOperation(Operation *op) {
       .Case<ClaimOp>([](auto) { return OperationKind::Claim; })
       .Case<PauseOp>([](auto) { return OperationKind::Pause; })
       .Case<ResumeOp>([](auto) { return OperationKind::Resume; })
+      .Case<SpawnAgentOp>([](auto) { return OperationKind::SpawnAgent; })
+      .Case<RegisterCapabilityOp>([](auto) { return OperationKind::RegisterCapability; })
+      .Case<AutonomousOp>([](auto) { return OperationKind::Autonomous; })
+      .Case<DelegateOp>([](auto) { return OperationKind::Delegate; })
+      .Case<NegotiateOp>([](auto) { return OperationKind::Negotiate; })
+      .Case<NopOp>([](auto) { return OperationKind::Nop; })
+      .Case<IdentityOp>([](auto) { return OperationKind::Identity; })
       .Case<YieldOp>([](auto) {
         return std::nullopt;
       }) // Skip yield - it's a region terminator
@@ -571,6 +585,8 @@ LogicalResult emitNode(Operation *op, DagBuildState &state, ArtifactDag &dag) {
     StringRef emitKey = key;
     if (key == "parameters") emitKey = "params";
     if (key == "space") emitKey = "memory_tier";  // MLIR uses space, runtime expects memory_tier
+    if (key == "child_agent") emitKey = "agent_name";  // MLIR uses child_agent, runtime expects agent_name
+    if (key == "payload") emitKey = "message";  // CommunicateOp: MLIR uses payload, runtime expects message
     node.attributes.emplace_back(emitKey.str(),
                                  convertAttribute(named.getValue()));
   }
