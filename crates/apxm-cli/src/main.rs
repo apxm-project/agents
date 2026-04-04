@@ -1565,6 +1565,10 @@ async fn execute_command(
     let result = match linker.run_graph(&input, args, emitter).await {
         Ok(r) => r,
         Err(err) => {
+            // Finalize live.json as failed before returning so it doesn't stay "running".
+            if let Some(ref w) = writer {
+                let _ = w.finalize_live(false);
+            }
             eprintln!("{}", err);
             return Err(anyhow::anyhow!("Execution failed"));
         }
@@ -1698,10 +1702,19 @@ async fn run_command(
     )?;
 
     // Execute artifact with args + emitter
-    let result = runtime
+    let result = match runtime
         .execute_artifact_with_emitter(artifact, args, emitter)
         .await
-        .map_err(|e| anyhow::anyhow!("Execution failed: {}", e))?;
+    {
+        Ok(r) => r,
+        Err(e) => {
+            // Finalize live.json as failed before returning.
+            if let Some(ref w) = writer {
+                let _ = w.finalize_live(false);
+            }
+            return Err(anyhow::anyhow!("Execution failed: {}", e));
+        }
+    };
 
     // Build metrics JSON
     let metrics_json = serde_json::json!({

@@ -151,7 +151,45 @@ impl SessionOutputWriter {
 
         self.write_metrics(metrics_json)?;
         self.write_node_statuses(node_statuses)?;
+
+        // Write final live.json with correct completed/failed status.
+        // This is the definitive fix: live.json must not stay "running" after execution ends.
+        let live = serde_json::json!({
+            "status": status,
+            "current_node_id": null,
+            "completed": node_statuses.len(),
+            "total": node_statuses.len(),
+            "elapsed_ms": duration_ms,
+            "success": success,
+        });
+        let tmp_path = self.session_dir.join(".live.json.tmp");
+        json_pretty_write(&tmp_path, &live)?;
+        let live_path = self.session_dir.join(constants::session::files::LIVE);
+        fs::rename(&tmp_path, &live_path)?;
+
         Ok(())
+    }
+
+    /// Write final live.json with completed/failed status.
+    /// Call this on error paths where finalize() won't be reached.
+    pub fn finalize_live(&self, success: bool) -> io::Result<()> {
+        let status = if success {
+            constants::session::status::COMPLETED
+        } else {
+            constants::session::status::FAILED
+        };
+        let live = serde_json::json!({
+            "status": status,
+            "current_node_id": null,
+            "completed": null,
+            "total": null,
+            "elapsed_ms": null,
+            "success": success,
+        });
+        let tmp_path = self.session_dir.join(".live.json.tmp");
+        json_pretty_write(&tmp_path, &live)?;
+        let live_path = self.session_dir.join(constants::session::files::LIVE);
+        fs::rename(&tmp_path, &live_path)
     }
 
     /// Path where events should be written.
@@ -195,6 +233,7 @@ pub struct SessionEventEmitter {
     trace_id: Arc<str>,
     start_time: Instant,
     completed: AtomicU64,
+    total: AtomicU64,
     seq: AtomicU64,
 }
 
@@ -213,6 +252,7 @@ impl SessionEventEmitter {
             trace_id: Arc::from(trace_id),
             start_time: Instant::now(),
             completed: AtomicU64::new(0),
+            total: AtomicU64::new(0),
             seq: AtomicU64::new(0),
         };
 
@@ -233,15 +273,26 @@ impl SessionEventEmitter {
     }
 
     fn write_live(&self, current_node_id: Option<u64>) -> io::Result<()> {
+        self.write_live_with_status(current_node_id, constants::session::status::RUNNING, false)
+    }
+
+    fn write_live_with_status(
+        &self,
+        current_node_id: Option<u64>,
+        status: &str,
+        success: bool,
+    ) -> io::Result<()> {
         let completed = self.completed.load(Ordering::Relaxed);
+        let total = self.total.load(Ordering::Relaxed);
         let elapsed_ms = self.start_time.elapsed().as_millis();
 
-        // Always report "running" — the manifest handles final status after execution.
         let live = serde_json::json!({
-            "status": constants::session::status::RUNNING,
+            "status": status,
             "current_node_id": current_node_id,
             "completed": completed,
+            "total": if total > 0 { Some(total) } else { None::<u64> },
             "elapsed_ms": elapsed_ms,
+            "success": success,
         });
 
         // Atomic write: write to tmp, then rename
@@ -251,6 +302,21 @@ impl SessionEventEmitter {
         fs::rename(&tmp_path, &live_path)?;
 
         Ok(())
+    }
+
+    /// Call once at execution end to write the final live.json status.
+    pub fn finalize_live(&self, success: bool) -> io::Result<()> {
+        let status = if success {
+            constants::session::status::COMPLETED
+        } else {
+            constants::session::status::FAILED
+        };
+        self.write_live_with_status(None, status, success)
+    }
+
+    /// Set the total node count so live.json can report progress.
+    pub fn set_total_nodes(&self, total: u64) {
+        self.total.store(total, Ordering::Relaxed);
     }
 }
 
