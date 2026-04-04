@@ -497,6 +497,10 @@ pub mod extensions {
     pub const GRAPH: &str = "apxm";
     /// Compiled artifact extension.
     pub const ARTIFACT: &str = "apxmobj";
+    /// AIS DSL source file extension.
+    pub const AIS: &str = "ais";
+    /// Agent IR text format (canonical intermediate representation).
+    pub const AIR: &str = "air";
 }
 
 pub mod session {

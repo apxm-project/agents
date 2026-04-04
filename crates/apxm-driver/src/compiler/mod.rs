@@ -45,7 +45,7 @@ impl Compiler {
     /// Compile a graph file into a compiler module.
     pub fn compile(&self, path: &Path) -> Result<Module, DriverError> {
         let ext = path.extension().and_then(|ext| ext.to_str());
-        if matches!(ext, Some("mlir" | "ais")) {
+        if matches!(ext, Some("mlir")) {
             return Err(DriverError::Driver(
                 "Graph-only compile path requires ApxmGraph JSON/binary input".to_string(),
             ));
@@ -99,6 +99,13 @@ impl Compiler {
         let bytes = fs::read(path)?;
 
         match path.extension().and_then(|ext| ext.to_str()) {
+            Some("ais") => {
+                let source = std::str::from_utf8(&bytes)
+                    .map_err(|e| DriverError::Driver(format!("AIS file is not UTF-8: {e}")))?;
+                let path_str = path.to_str().unwrap_or("<unknown>");
+                Module::parse_dsl_graph(&self.context, source, path_str)
+                    .map_err(|e| DriverError::Driver(format!("AIS parse error: {e}")))
+            }
             Some(constants::extensions::GRAPH | "json") => std::str::from_utf8(&bytes)
                 .map_err(|e| DriverError::Driver(format!("Graph file is not UTF-8 JSON: {e}")))
                 .and_then(|text| {
@@ -108,5 +115,49 @@ impl Compiler {
             _ => ApxmGraph::from_bytes(&bytes)
                 .map_err(|e| DriverError::Driver(format!("Graph parse error: {e}"))),
         }
+    }
+
+    /// Emit canonical .air text IR for a graph.
+    /// Analogous to LLVM .ll — human-readable, diffable, debuggable.
+    pub fn emit_air(&self, graph: &ApxmGraph) -> String {
+        let mut out = String::new();
+        out.push_str("; Agent IR (.air) — canonical intermediate representation\n");
+        out.push_str(&format!("; graph: {}\n", graph.name));
+        for (k, v) in &graph.metadata {
+            out.push_str(&format!("; {}: {}\n", k, v));
+        }
+        out.push('\n');
+        if !graph.parameters.is_empty() {
+            for p in &graph.parameters {
+                out.push_str(&format!("; param %{}: {}\n", p.name, p.type_name));
+            }
+            out.push('\n');
+        }
+        for node in &graph.nodes {
+            let op = node.op.to_string().to_lowercase();
+            let mut attrs = vec![];
+            for (k, v) in &node.attributes {
+                if !k.starts_with('_') {
+                    attrs.push(format!("{} = {}", k, v));
+                }
+            }
+            let attr_str = if attrs.is_empty() {
+                String::new()
+            } else {
+                format!(" {{{}}}", attrs.join(", "))
+            };
+            out.push_str(&format!("  %{} = ais.{}{}\n", node.name, op, attr_str));
+        }
+        if !graph.edges.is_empty() {
+            out.push_str("\n  ; edges:\n");
+            for edge in &graph.edges {
+                let from = graph.nodes.iter().find(|n| n.id == edge.from)
+                    .map(|n| n.name.as_str()).unwrap_or("?");
+                let to = graph.nodes.iter().find(|n| n.id == edge.to)
+                    .map(|n| n.name.as_str()).unwrap_or("?");
+                out.push_str(&format!("  ; %{} -> %{} ({:?})\n", from, to, edge.dependency));
+            }
+        }
+        out
     }
 }
