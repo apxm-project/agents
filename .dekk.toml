@@ -24,6 +24,8 @@ cargo = { command = "cargo", version = ">=1.70" }
 python = { command = "python", version = ">=3.10" }
 
 [env]
+LLM_GATEWAY_KEY = "env:LLM_GATEWAY_KEY"
+
 MLIR_DIR = "{environment}/lib/cmake/mlir"
 LLVM_DIR = "{environment}/lib/cmake/llvm"
 APXM_HOME = "{project}"
