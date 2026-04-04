@@ -21,6 +21,19 @@ pub fn load_node_prompt(session_dir: &Path, node_id: u64, node_name: &str) -> Op
     std::fs::read_to_string(prompt_path).ok()
 }
 
+pub fn load_node_status(session_dir: &Path, node_id: u64, node_name: &str) -> Option<String> {
+    let status_path = session_dir
+        .join(session::files::NODES_DIR)
+        .join(session_node_dir_name(node_id, node_name))
+        .join(session::node::STATUS_JSON);
+    std::fs::read_to_string(status_path).ok()
+}
+
+pub fn load_graph_summary(session_dir: &Path) -> Option<String> {
+    let summary_path = session_dir.join("graph_summary.json");
+    std::fs::read_to_string(summary_path).ok()
+}
+
 pub fn estimate_tokens(text: &str) -> usize {
     let char_count = text.chars().count();
     if char_count == 0 {
