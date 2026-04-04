@@ -1,0 +1,36 @@
+{
+  "execution": {
+    "duration_ms": 1065060,
+    "nodes_executed": 19,
+    "nodes_failed": 0,
+    "status": "success"
+  },
+  "input": "examples/workflows/ultrathink-coder.apxm",
+  "link_phases": {
+    "compile_ms": 1.500091,
+    "runtime_ms": 1065061.332025
+  },
+  "llm": {
+    "avg_latency_ms": 30780,
+    "p50_latency_ms": 5572,
+    "p99_latency_ms": 109384,
+    "total_input_tokens": 23286,
+    "total_output_tokens": 26458,
+    "total_requests": 12
+  },
+  "optimization_level": "O1",
+  "scheduler": {
+    "avg_parallelism": 1.35,
+    "max_parallelism": 3,
+    "operations_executed": 19,
+    "operations_failed": 1,
+    "overhead_breakdown": {
+      "input_collection_us": 85.78584210526316,
+      "operation_dispatch_us": 0.0,
+      "ready_set_update_us": 0.0,
+      "token_routing_us": 75.89052631578947,
+      "work_stealing_us": 0.7515263157894737
+    },
+    "per_op_overhead_us": 162.42789473684212
+  }
+}
