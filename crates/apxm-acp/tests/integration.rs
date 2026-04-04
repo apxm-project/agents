@@ -18,6 +18,7 @@ fn mock_profile() -> AgentProfile {
         default_mode: None,
         default_model: None,
         system_prompt: None,
+        skip_preamble: false,
         capabilities: Vec::new(),
     }
 }
