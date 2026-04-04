@@ -12,7 +12,10 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 pub use budget::BudgetAllocator;
-pub use frame::{estimate_tokens, load_node_output, load_node_prompt, truncate_to_budget};
+pub use frame::{
+    estimate_tokens, load_graph_summary, load_node_output, load_node_prompt, load_node_status,
+    truncate_to_budget,
+};
 pub use policy::ScopeRules;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -189,11 +192,30 @@ impl ContextStack {
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("unknown");
-        format!(
+
+        let mut content = format!(
             "- Execution: {}\n- Session dir: {}",
             execution_id,
             self.session_dir.display()
-        )
+        );
+
+        // Include graph summary if available
+        if let Some(summary) = load_graph_summary(&self.session_dir) {
+            // Parse summary JSON to extract key fields
+            if let Ok(summary_json) = serde_json::from_str::<serde_json::Value>(&summary) {
+                if let Some(name) = summary_json.get("name").and_then(|v| v.as_str()) {
+                    content.push_str(&format!("\n- Graph: {}", name));
+                }
+                if let Some(node_count) = summary_json.get("node_count").and_then(|v| v.as_u64()) {
+                    content.push_str(&format!("\n- Nodes: {}", node_count));
+                }
+                if let Some(edge_count) = summary_json.get("edge_count").and_then(|v| v.as_u64()) {
+                    content.push_str(&format!("\n- Edges: {}", edge_count));
+                }
+            }
+        }
+
+        content
     }
 
     fn local_frame_content(&self, node_id: u64, profile: &str) -> Option<String> {
