@@ -102,6 +102,32 @@ When `--emit-session` is passed, APXM creates a session directory with:
 - `results.json` — all node outputs
 - `metrics.json` — execution metrics
 - `node_statuses.json` — per-node status
+- `nodes/<id>_<name>/` — per-node workspace with runtime artifacts and agent context
+
+Per-node workspaces look like:
+
+```text
+~/.apxm/sessions/<exec-id>/
+└── nodes/
+    ├── 01_spawn_architect/
+    │   ├── CLAUDE.md
+    │   ├── node.json
+    │   ├── live.json
+    │   ├── output.json
+    │   ├── status.json
+    │   ├── trace.ndjson
+    │   └── skills/
+    │       └── extend/
+    │           └── SKILL.md
+    ├── 06_architect_plan/
+    │   ├── prompt.txt
+    │   ├── response.txt
+    │   └── output.json
+    └── 09_coder_implements/
+        └── AGENTS.md
+```
+
+For `SPAWN_AGENT` nodes, if no explicit `cwd` attribute is set, APXM automatically uses the node workspace as the agent working directory. That lets spawned Claude/Codex-style agents read `CLAUDE.md` or `AGENTS.md` directly from their current workspace along with any copied skills and upstream outputs.
 
 ## Build
 
