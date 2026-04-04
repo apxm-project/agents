@@ -1,62 +1,79 @@
-use apxm_core::types::ModelInfo;
+//! Model definitions for Google Gemini.
+//!
+//! Uses a simple string-based newtype with a list of well-known models for documentation.
+//! Any model string is valid — validation happens at the API level.
+
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-/// Google Gemini models.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    Serialize,
-    Deserialize,
-    Default
-)]
-pub enum GoogleModel {
-    #[serde(rename = "gemini-2.5-flash")]
-    #[default]
-    Gemini2_5Flash,
-    #[serde(rename = "gemini-2.0-pro")]
-    Gemini2_0Pro,
-}
+/// Well-known Google Gemini models (for documentation/autocomplete hints).
+/// This list is NOT exhaustive — any model ID is valid.
+pub const WELL_KNOWN_MODELS: &[&str] = &[
+    "gemini-2.5-flash",
+    "gemini-2.0-pro",
+    "gemini-1.5-pro",
+    "gemini-1.5-flash",
+];
 
-impl GoogleModel {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            GoogleModel::Gemini2_5Flash => "gemini-2.5-flash",
-            GoogleModel::Gemini2_0Pro => "gemini-2.0-pro",
-        }
+/// A model identifier string (e.g. "gemini-2.5-flash").
+/// Any string is valid — validation happens at the backend API level.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ModelId(pub String);
+
+impl ModelId {
+    pub fn new(s: impl Into<String>) -> Self {
+        Self(s.into())
     }
 
-    pub fn all_models() -> &'static [GoogleModel] {
-        &[GoogleModel::Gemini2_5Flash, GoogleModel::Gemini2_0Pro]
-    }
-
-    /// Convert a GoogleModel variant into a canonical `ModelInfo`.
-    pub fn to_model_info(&self) -> ModelInfo {
-        match self {
-            GoogleModel::Gemini2_5Flash => ModelInfo {
-                id: self.as_str().to_string(),
-                name: "Gemini 2.5 Flash".to_string(),
-                context_window: 1_000_000,
-                supports_vision: true,
-                supports_functions: true,
-            },
-            GoogleModel::Gemini2_0Pro => ModelInfo {
-                id: self.as_str().to_string(),
-                name: "Gemini 2.0 Pro".to_string(),
-                context_window: 1_000_000,
-                supports_vision: true,
-                supports_functions: true,
-            },
-        }
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
 }
 
-impl fmt::Display for GoogleModel {
+impl fmt::Display for ModelId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.as_str())
+        write!(f, "{}", self.0)
+    }
+}
+
+impl From<&str> for ModelId {
+    fn from(s: &str) -> Self {
+        Self(s.to_string())
+    }
+}
+
+impl From<String> for ModelId {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
+impl Default for ModelId {
+    fn default() -> Self {
+        Self("gemini-2.5-flash".to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_model_id() {
+        let model = ModelId::from("gemini-2.5-flash");
+        assert_eq!(model.as_str(), "gemini-2.5-flash");
+        assert_eq!(model.to_string(), "gemini-2.5-flash");
+    }
+
+    #[test]
+    fn test_default() {
+        assert_eq!(ModelId::default().as_str(), "gemini-2.5-flash");
+    }
+
+    #[test]
+    fn test_any_string_valid() {
+        // New models should work without code changes
+        let future_model = ModelId::from("gemini-3.0-ultra");
+        assert_eq!(future_model.as_str(), "gemini-3.0-ultra");
     }
 }

@@ -319,10 +319,17 @@ impl LLMBackend for GoogleBackend {
     }
 
     async fn list_models(&self) -> Result<Vec<ModelInfo>> {
-        // Derive Google model metadata from the centralized enum helpers in models.rs.
-        Ok(crate::llm::backends::GoogleModel::all_models()
+        // Return well-known models as documentation hints.
+        // The API will accept any model ID — this list is not enforced.
+        Ok(crate::llm::backends::google::WELL_KNOWN_MODELS
             .iter()
-            .map(|m| m.to_model_info())
+            .map(|id| ModelInfo {
+                id: id.to_string(),
+                name: id.to_string(),
+                context_window: 1_000_000,
+                supports_vision: true,
+                supports_functions: true,
+            })
             .collect())
     }
 
