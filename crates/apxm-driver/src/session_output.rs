@@ -170,14 +170,30 @@ impl SessionOutputWriter {
         Ok(())
     }
 
-    /// Write final live.json with completed/failed status.
+    /// Write final live.json AND manifest with completed/failed status.
     /// Call this on error paths where finalize() won't be reached.
-    pub fn finalize_live(&self, success: bool) -> io::Result<()> {
+    /// Requires execution_id and graph_name so both files are consistent.
+    pub fn finalize_live(
+        &self,
+        success: bool,
+    ) -> io::Result<()> {
+        self.finalize_live_with_id(success, None, None)
+    }
+
+    /// Full error-path finalization with execution id and graph name for manifest.
+    pub fn finalize_live_with_id(
+        &self,
+        success: bool,
+        execution_id: Option<&str>,
+        graph_name: Option<&str>,
+    ) -> io::Result<()> {
         let status = if success {
             constants::session::status::COMPLETED
         } else {
             constants::session::status::FAILED
         };
+
+        // Write live.json
         let live = serde_json::json!({
             "status": status,
             "current_node_id": null,
@@ -189,7 +205,14 @@ impl SessionOutputWriter {
         let tmp_path = self.session_dir.join(".live.json.tmp");
         json_pretty_write(&tmp_path, &live)?;
         let live_path = self.session_dir.join(constants::session::files::LIVE);
-        fs::rename(&tmp_path, &live_path)
+        fs::rename(&tmp_path, &live_path)?;
+
+        // Also update manifest.json so it doesn't stay at "running"
+        if let Some(exec_id) = execution_id {
+            self.write_manifest(exec_id, graph_name, status, 0, 0, success)?;
+        }
+
+        Ok(())
     }
 
     /// Path where events should be written.
