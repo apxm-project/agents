@@ -17,6 +17,7 @@ use apxm_core::constants::runtime::belief_keys;
 use apxm_core::error::RuntimeError;
 use serde::de::Error;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 /// Structured reflection output
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,6 +36,25 @@ pub struct ReflectionOutput {
 
     /// Summary of reflection
     pub summary: String,
+}
+
+/// Load execution trace from the current session directory.
+/// Returns the trace as a formatted string, or an error if unavailable.
+fn load_execution_trace(ctx: &ExecutionContext) -> std::result::Result<String, String> {
+    // Try to find the trace file from session metadata
+    let session_dir = ctx.metadata.get("session_dir");
+
+    if let Some(dir) = session_dir {
+        let trace_path = PathBuf::from(dir).join("trace.ndjson");
+
+        if let Ok(content) = std::fs::read_to_string(&trace_path) {
+            return Ok(content);
+        } else {
+            return Err(format!("Trace file not found at {}", trace_path.display()));
+        }
+    }
+
+    Err("No execution trace or runtime history was provided (session_dir not available in context)".to_string())
 }
 
 /// Execute REFLECT operation - LLM-based reflection on execution history
@@ -56,7 +76,7 @@ pub struct ReflectionOutput {
 /// }
 /// ```
 pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -> Result<Value> {
-    // Get prompt from attribute or use default
+    // Get prompt and trace_query attributes
     let prompt = get_optional_string_attribute(node, graph_attrs::PROMPT)?
         .or_else(|| {
             get_optional_string_attribute(node, graph_attrs::TRACE_ID)
@@ -64,6 +84,8 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
                 .flatten()
         })
         .unwrap_or_default();
+
+    let trace_query = get_optional_string_attribute(node, graph_attrs::TRACE_QUERY)?;
 
     let model = get_optional_string_attribute(node, graph_attrs::MODEL)?;
     let limit = node
@@ -88,16 +110,24 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         String::new()
     };
 
-    // Get recent episodic history
-    let episodes = ctx.memory.query_episodes(&ctx.execution_id).await?;
-    let history_slice = episodes.iter().rev().take(limit).collect::<Vec<_>>();
+    // Get execution trace if trace_query is "last_execution"
+    let trace_text = if trace_query.as_deref() == Some("last_execution") {
+        load_execution_trace(ctx).unwrap_or_else(|e| {
+            tracing::warn!("Failed to load execution trace: {}", e);
+            String::new()
+        })
+    } else {
+        // Get recent episodic history from memory
+        let episodes = ctx.memory.query_episodes(&ctx.execution_id).await?;
+        let history_slice = episodes.iter().rev().take(limit).collect::<Vec<_>>();
+        history_slice
+            .iter()
+            .map(|e| format!("- {}: {}", e.event_type, e.payload))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
 
-    // Format history for LLM
-    let history_text = history_slice
-        .iter()
-        .map(|e| format!("- {}: {}", e.event_type, e.payload))
-        .collect::<Vec<_>>()
-        .join("\n");
+    let history_text = trace_text;
 
     // Build reflection prompt - use input context as primary content
     let effective_prompt = if !input_context.is_empty() {
@@ -113,10 +143,16 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     };
 
     // Build reflection prompt using apxm-prompts
+    let episode_count = if trace_query.as_deref() == Some("last_execution") {
+        0  // Trace doesn't have episode count
+    } else {
+        limit
+    };
+
     let prompt_context = serde_json::json!({
         "prompt": effective_prompt,
         "history": history_text,
-        "episode_count": history_slice.len(),
+        "episode_count": episode_count,
     });
 
     let history_section = if history_text.is_empty() {

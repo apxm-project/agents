@@ -84,6 +84,21 @@ impl SchedulerState {
             message: format!("Invalid scheduler config: {}", msg),
         })?;
 
+        // Build parameter substitution map ({{PARAM_NAME}} -> value) BEFORE consuming inputs
+        let param_map: HashMap<String, String> = dag
+            .metadata
+            .parameters
+            .iter()
+            .zip(&inputs)
+            .map(|(param, value)| {
+                let value_str = match value {
+                    Value::String(s) => s.clone(),
+                    v => format!("{}", v),
+                };
+                (param.name.clone(), value_str)
+            })
+            .collect();
+
         // Only compute input_map if we have inputs (zero-cost when empty)
         let input_map: Option<HashMap<TokenId, Value>> = if inputs.is_empty() {
             None
@@ -107,11 +122,25 @@ impl SchedulerState {
             Some(entry_tokens.into_iter().zip(inputs).collect())
         };
 
-        // Build node and priority maps
+        // Build node and priority maps with parameter substitution
         let nodes: Arc<DashMap<NodeId, Arc<Node>>> = Arc::new(
             dag.nodes
                 .iter()
-                .map(|n| (n.id, Arc::new(n.clone())))
+                .map(|n| {
+                    let mut node = n.clone();
+                    // Substitute {{PARAM_NAME}} in all string attributes
+                    if !param_map.is_empty() {
+                        for (_key, value) in node.attributes.iter_mut() {
+                            if let Value::String(s) = value {
+                                for (param_name, param_value) in &param_map {
+                                    let placeholder = format!("{{{{{}}}}}", param_name);
+                                    *s = s.replace(&placeholder, param_value);
+                                }
+                            }
+                        }
+                    }
+                    (n.id, Arc::new(node))
+                })
                 .collect(),
         );
 
