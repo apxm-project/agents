@@ -87,7 +87,7 @@ enum Commands {
     },
     /// Compile ApxmGraph to an artifact
     Compile {
-        /// Input graph file or directory (.apxm or binary)
+        /// Input graph file or directory (.ais source or .apxmobj artifact)
         input: PathBuf,
         /// Output artifact path
         #[arg(short, long)]
@@ -113,7 +113,7 @@ enum Commands {
     /// Compile and execute an ApxmGraph file through the runtime
     #[command(trailing_var_arg = true)]
     Execute {
-        /// Input graph file (.apxm or binary)
+        /// Input graph file (.ais source)
         input: PathBuf,
         /// Arguments to pass to the entry flow
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -180,7 +180,7 @@ enum Commands {
     },
     /// Validate an ApxmGraph file against the AIS contract
     Validate {
-        /// Input graph file (.apxm)
+        /// Input graph file (.ais source)
         input: PathBuf,
         /// Skip Tier 2 environment checks (registered backends, profiles, etc.)
         #[arg(long)]
@@ -188,7 +188,7 @@ enum Commands {
     },
     /// Analyze an ApxmGraph for parallelism, critical path, and execution phases
     Analyze {
-        /// Input graph file (.apxm)
+        /// Input graph file (.ais source)
         input: PathBuf,
     },
     /// Browse graph templates (starter patterns)
@@ -198,7 +198,7 @@ enum Commands {
     },
     /// Explain what a graph does in human-readable terms
     Explain {
-        /// Path to the ApxmGraph JSON file
+        /// Path to the graph file (.ais source)
         file: PathBuf,
     },
     /// Compose graph fragments (tasks)

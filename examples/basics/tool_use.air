@@ -1,0 +1,9 @@
+; Agent IR (.air) - canonical intermediate representation
+; graph: tool_use_graph
+; is_entry: True
+
+  %search = ais.inv {capability = "search", params_json = "{"query":"latest AI agent trends"}"}
+  %summary = ais.ask {template_str = "Summarize these findings: {0}"}
+
+  ; edges:
+  ;   %search -> %summary (Data)

@@ -1,0 +1,13 @@
+; Agent IR (.air) - canonical intermediate representation
+; graph: multi_flow_graph
+; is_entry: True
+
+  %topic = ais.ask {template_str = "What topic should we investigate?"}
+  %research = ais.think {template_str = "Research this topic thoroughly: {0}"}
+  %critique = ais.reason {template_str = "Critically evaluate this text for accuracy: {0}"}
+  %summary = ais.ask {template_str = "Provide a final summary of the investigation: {0}"}
+
+  ; edges:
+  ;   %topic -> %research (Data)
+  ;   %research -> %critique (Data)
+  ;   %critique -> %summary (Data)

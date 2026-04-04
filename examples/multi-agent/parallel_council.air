@@ -1,0 +1,28 @@
+; Agent IR (.air) - canonical intermediate representation
+; graph: parallel_research_council
+; is_entry: True
+
+  %question = ais.ask {template_str = "Define the research question: What are the best hardware cho..."}
+  %web_search = ais.inv {capability = "search_web", params_json = "{"query": "LLM inference hardware benchmarks 2026"}"}
+  %expert_analysis = ais.think {template_str = "As a hardware architect, analyze compute requirements for LL...", budget_tokens = "800"}
+  %critical_review = ais.reason {template_str = "Identify logical gaps, biases, and unstated assumptions in t..."}
+  %sync_results = ais.wait_all {tokens = ['{{node_2}}', '{{node_3}}', '{{node_4}}']}
+  %synthesize = ais.think {template_str = "Synthesize web search results, expert analysis, and critical...", budget_tokens = "1200"}
+  %fact_check = ais.verify {claim = "{{node_6}}", evidence = "{{node_2}}"}
+  %process_review = ais.reflect {trace_query = "last_execution", reflection_prompt = "Were any perspectives missed or underweighted in the synthes..."}
+  %merge_checks = ais.merge {tokens = ['{{node_7}}', '{{node_8}}']}
+  %final_report = ais.ask {template_str = "Produce a final executive report incorporating verified find..."}
+
+  ; edges:
+  ;   %question -> %web_search (Data)
+  ;   %question -> %expert_analysis (Data)
+  ;   %question -> %critical_review (Data)
+  ;   %web_search -> %sync_results (Data)
+  ;   %expert_analysis -> %sync_results (Data)
+  ;   %critical_review -> %sync_results (Data)
+  ;   %sync_results -> %synthesize (Data)
+  ;   %synthesize -> %fact_check (Data)
+  ;   %synthesize -> %process_review (Data)
+  ;   %fact_check -> %merge_checks (Control)
+  ;   %process_review -> %merge_checks (Effect)
+  ;   %merge_checks -> %final_report (Data)
