@@ -62,9 +62,7 @@ impl LLMRegistry {
     }
 
     /// Create a new registry with backend-specific rate limits.
-    pub fn with_rate_limits(
-        rate_limit_configs: HashMap<String, RateLimitConfig>,
-    ) -> Result<Self> {
+    pub fn with_rate_limits(rate_limit_configs: HashMap<String, RateLimitConfig>) -> Result<Self> {
         let rate_limiter = RateLimiter::new(rate_limit_configs, Arc::new(SystemClock))
             .map_err(|e| anyhow::anyhow!("Invalid rate limit config: {}", e))?;
 

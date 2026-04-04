@@ -57,16 +57,19 @@ pub async fn worker_loop(
             break;
         }
 
-        // Try to steal work (timed when metrics enabled)
-        let stolen = timed!(state.metrics, record_work_stealing, {
-            state.work_stealing.steal_next(&local_queue, worker_id)
-        });
+        // Try to steal work — only record timing on successful steals to avoid
+        // inflating work_stealing_us with idle spin time across all workers.
+        let steal_start = std::time::Instant::now();
+        let stolen = state.work_stealing.steal_next(&local_queue, worker_id);
         let Some(node_id) = stolen else {
             // No work available, yield
             tracing::trace!(worker = worker_id, "No work found, yielding");
             tokio::task::yield_now().await;
             continue;
         };
+
+        // Record work-stealing time only on successful steals
+        state.metrics.record_work_stealing(steal_start.elapsed());
 
         // Acquire concurrency permit (backpressure)
         let permit = match state.concurrency.acquire().await {

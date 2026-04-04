@@ -1,8 +1,8 @@
 //! Criterion benchmarks for vLLM graph-aware hints overhead.
 
-use apxm_backends::llm::backends::vllm::{ApxmGraphHints, GraphMetadata, NodeSpec};
 use apxm_backends::llm::backends::LLMRequest;
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use apxm_backends::llm::backends::vllm::{ApxmGraphHints, GraphMetadata, NodeSpec};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 
 fn bench_request_with_hints(c: &mut Criterion) {
     c.bench_function("llm_request_with_hints", |b| {

@@ -126,9 +126,7 @@ mod tests {
         let ctx = ExecutionContext::new(memory, llm_registry, capability_system, aam.clone());
 
         let node = make_verify_node_with_claim("value is positive", Some("The value is 42"));
-        let result = execute(&ctx, &node, vec![])
-            .await
-            .unwrap();
+        let result = execute(&ctx, &node, vec![]).await.unwrap();
         assert_eq!(result, Value::Bool(true));
 
         // Verify AAM recorded the result
@@ -182,9 +180,7 @@ mod tests {
         let ctx = ExecutionContext::new(memory, llm_registry, capability_system, aam.clone());
 
         let node = make_verify_node_with_claim("value is negative", Some("The value is 42"));
-        let result = execute(&ctx, &node, vec![])
-            .await
-            .unwrap();
+        let result = execute(&ctx, &node, vec![]).await.unwrap();
         assert_eq!(result, Value::Bool(false));
     }
 
@@ -234,9 +230,13 @@ mod tests {
 
         // No evidence attribute, should use input token 0 as evidence
         let node = make_verify_node_with_claim("data contains important information", None);
-        let result = execute(&ctx, &node, vec![Value::String("critical data here".to_string())])
-            .await
-            .unwrap();
+        let result = execute(
+            &ctx,
+            &node,
+            vec![Value::String("critical data here".to_string())],
+        )
+        .await
+        .unwrap();
         assert_eq!(result, Value::Bool(true));
     }
 }

@@ -159,11 +159,12 @@ fn context_stack_full_demand_paging() {
     }));
 
     // Should have local frame for node 3
-    assert!(assembly
-        .frames
-        .iter()
-        .any(|frame| matches!(frame.scope, ContextScope::Local)));
+    assert!(
+        assembly
+            .frames
+            .iter()
+            .any(|frame| matches!(frame.scope, ContextScope::Local))
+    );
 
     assert!(!assembly.truncated);
 }
-

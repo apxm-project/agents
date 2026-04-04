@@ -33,14 +33,8 @@ async fn test_apxm_graph_hints_serialization() {
 
 #[tokio::test]
 async fn test_apxm_graph_hints_roundtrip() {
-    let original = ApxmGraphHints::critical_path(
-        "graph-abc",
-        "exec-xyz",
-        5,
-        "plan",
-        vec![6, 7, 8],
-        45_000,
-    );
+    let original =
+        ApxmGraphHints::critical_path("graph-abc", "exec-xyz", 5, "plan", vec![6, 7, 8], 45_000);
 
     let json_str = serde_json::to_string(&original).expect("serialize");
     let deserialized: ApxmGraphHints = serde_json::from_str(&json_str).expect("deserialize");
@@ -50,7 +44,10 @@ async fn test_apxm_graph_hints_roundtrip() {
     assert_eq!(deserialized.execution_id, Some("exec-xyz".to_string()));
     assert_eq!(deserialized.node_id, Some(5));
     assert_eq!(deserialized.node_name, Some("plan".to_string()));
-    assert_eq!(deserialized.priority_class, Some("critical_path".to_string()));
+    assert_eq!(
+        deserialized.priority_class,
+        Some("critical_path".to_string())
+    );
     assert_eq!(deserialized.downstream_nodes, vec![6, 7, 8]);
     assert_eq!(deserialized.pin_policy.mode, "prefix");
     assert_eq!(deserialized.pin_policy.ttl_ms, Some(45_000));
@@ -117,14 +114,8 @@ fn test_graph_metadata_registration_shape() {
 #[test]
 fn test_backend_injects_apxm_hints_into_extra_body() {
     // Test that hints are properly injected into extra_body
-    let hints = ApxmGraphHints::critical_path(
-        "test-graph",
-        "test-exec",
-        1,
-        "test-node",
-        vec![2],
-        30_000,
-    );
+    let hints =
+        ApxmGraphHints::critical_path("test-graph", "test-exec", 1, "test-node", vec![2], 30_000);
 
     let request = LLMRequest::new("test prompt")
         .with_temperature(0.0)

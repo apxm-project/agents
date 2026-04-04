@@ -44,8 +44,8 @@ async fn test_rate_limit_allows_within_capacity() -> Result<(), Box<dyn std::err
 }
 
 #[tokio::test]
-async fn test_rate_limit_rejects_after_capacity_exhausted(
-) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_rate_limit_rejects_after_capacity_exhausted() -> Result<(), Box<dyn std::error::Error>>
+{
     let mut rate_limits = HashMap::new();
     rate_limits.insert(
         "test-backend".to_string(),
@@ -201,7 +201,10 @@ fn test_invalid_rate_limit_config_invalid_tokens_per_second() {
     let result = LLMRegistry::with_rate_limits(rate_limits);
     assert!(result.is_err());
     if let Err(e) = result {
-        assert!(e.to_string().contains("tokens_per_second must be finite and > 0"));
+        assert!(
+            e.to_string()
+                .contains("tokens_per_second must be finite and > 0")
+        );
     }
 }
 

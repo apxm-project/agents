@@ -30,9 +30,7 @@ pub struct DataflowScheduler {
 impl DataflowScheduler {
     /// Create a new dataflow scheduler.
     pub fn new(config: SchedulerConfig) -> Self {
-        Self {
-            config,
-        }
+        Self { config }
     }
 
     /// Execute a DAG to completion, optionally with input values.
@@ -80,13 +78,8 @@ impl DataflowScheduler {
         let metrics = Arc::new(MetricsCollector::new());
 
         // Build shared scheduler state
-        let (state, workers) = SchedulerState::new(
-            dag,
-            self.config.clone(),
-            metrics.clone(),
-            start,
-            inputs,
-        )?;
+        let (state, workers) =
+            SchedulerState::new(dag, self.config.clone(), metrics.clone(), start, inputs)?;
         // Project AAM goal priorities onto scheduler node priorities.
         // This bridges the two priority systems: compile-time node.metadata.priority
         // and runtime Goal.priority in the AAM.
