@@ -124,8 +124,7 @@ impl Linker {
             .map_err(|e| DriverError::Driver(format!("Graph parse error: {e}")))?;
 
         // Check cache using graph hash
-        let graph_json = graph.to_json().unwrap_or_default();
-        let hash = cache::graph_hash(&graph_json).ok();
+        let hash = cache::graph_hash(&graph).ok();
         if !self.no_cache
             && let Some(ref h) = hash
             && let Some(cached_bytes) = cache::load_cached(h)?
@@ -170,7 +169,7 @@ impl Linker {
         let is_json = input
             .extension()
             .and_then(|e| e.to_str())
-            .map(|e| e == constants::extensions::GRAPH || e == "json")
+            .map(|e| e == constants::extensions::GRAPH_LEGACY || e == "json")
             .unwrap_or(false);
 
         // Use graph-direct path when MLIR is unavailable or input is JSON
@@ -189,8 +188,7 @@ impl Linker {
         let graph = compiler.load_graph(input)?;
 
         // Try the artifact cache first.
-        let graph_json = graph.to_json().unwrap_or_default();
-        let hash = cache::graph_hash(&graph_json).ok();
+        let hash = cache::graph_hash(&graph).ok();
 
         if !self.no_cache
             && let Some(ref h) = hash

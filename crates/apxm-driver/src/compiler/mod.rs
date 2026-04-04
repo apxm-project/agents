@@ -110,7 +110,7 @@ impl Compiler {
                 ".air is the canonical IR text format (like LLVM .ll). \
                  Compile from .ais source with 'apxm compile' or run a .apxmobj artifact.".to_string()
             )),
-            Some(constants::extensions::GRAPH | "json") => std::str::from_utf8(&bytes)
+            Some(constants::extensions::GRAPH_LEGACY | "json") => std::str::from_utf8(&bytes)
                 .map_err(|e| DriverError::Driver(format!("Graph file is not UTF-8 JSON: {e}")))
                 .and_then(|text| {
                     ApxmGraph::from_json(text)

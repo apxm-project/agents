@@ -14,6 +14,7 @@ use apxm_core::types::SessionManifest;
 use apxm_core::types::values::Value;
 use apxm_events::payload::{EventPayload, OperationEndPayload, OperationStartPayload};
 use apxm_events::{ApxmEvent, EventSource};
+use apxm_graph::ApxmGraph;
 use apxm_runtime::ExecutionEventEmitter;
 
 use crate::context_assembler::{ContextAssembler, WorkspaceNodeMetadata};
@@ -29,6 +30,46 @@ fn json_pretty_write(path: &Path, value: &(impl serde::Serialize + ?Sized)) -> i
     let json =
         serde_json::to_string_pretty(value).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
     fs::write(path, json)
+}
+
+/// Simple .air emitter for session output (avoids circular dependency on Compiler).
+fn emit_air_simple(graph: &ApxmGraph) -> String {
+    let mut out = String::new();
+    out.push_str("; Agent IR (.air) — canonical intermediate representation\n");
+    out.push_str(&format!("; graph: {}\n", graph.name));
+    for (k, v) in &graph.metadata {
+        out.push_str(&format!("; {}: {}\n", k, v));
+    }
+    out.push('\n');
+    if !graph.parameters.is_empty() {
+        for p in &graph.parameters {
+            out.push_str(&format!("; param %{}: {}\n", p.name, p.type_name));
+        }
+        out.push('\n');
+    }
+    for node in &graph.nodes {
+        let op = node.op.to_string().to_lowercase();
+        let mut attrs = vec![];
+        for (k, v) in &node.attributes {
+            if !k.starts_with('_') {
+                attrs.push(format!("{} = {}", k, v));
+            }
+        }
+        let attr_str = if attrs.is_empty() {
+            String::new()
+        } else {
+            format!(" {}", attrs.join(", "))
+        };
+        out.push_str(&format!("  %{} = {}({}){}\n", node.id, op, node.name, attr_str));
+    }
+    if !graph.edges.is_empty() {
+        out.push('\n');
+        for edge in &graph.edges {
+            let dep = format!("{:?}", edge.dependency).to_lowercase();
+            out.push_str(&format!("  edge %{} -> %{} [{}]\n", edge.from, edge.to, dep));
+        }
+    }
+    out
 }
 
 /// Result key names used in session results JSON.
@@ -78,12 +119,14 @@ impl SessionOutputWriter {
         )
     }
 
-    /// Copy the input graph for reproducibility.
-    pub fn write_input_graph(&self, graph_json: &str) -> io::Result<()> {
+    /// Write the input graph in .air format for reproducibility.
+    pub fn write_input_graph(&self, graph: &ApxmGraph) -> io::Result<()> {
+        // Emit .air format using a simple inline emitter (to avoid circular dependency on Compiler)
+        let air_text = emit_air_simple(graph);
         fs::write(
             self.session_dir
                 .join(constants::session::files::INPUT_GRAPH),
-            graph_json,
+            air_text,
         )
     }
 
@@ -278,7 +321,7 @@ impl SessionEventEmitter {
     pub fn new(
         session_dir: &Path,
         trace_id: String,
-        input_graph_json: Option<&str>,
+        input_graph: Option<&ApxmGraph>,
         project_root: Option<&Path>,
     ) -> io::Result<Self> {
         let trace_path = session_dir.join(constants::session::files::TRACE);
@@ -287,22 +330,20 @@ impl SessionEventEmitter {
 
         let mut node_metadata = HashMap::new();
         let mut graph_edges = Vec::new();
-        if let Some(json) = input_graph_json
-            && let Ok(graph) = apxm_graph::ApxmGraph::from_json(json)
-        {
-            for node in graph.nodes {
+        if let Some(graph) = input_graph {
+            for node in &graph.nodes {
                 node_metadata.insert(
                     node.id,
                     WorkspaceNodeMetadata {
-                        name: node.name,
+                        name: node.name.clone(),
                         op_type: node.op,
-                        attributes: node.attributes,
+                        attributes: node.attributes.clone(),
                     },
                 );
             }
             graph_edges = graph
                 .edges
-                .into_iter()
+                .iter()
                 .map(|edge| (edge.from, edge.to))
                 .collect();
         }

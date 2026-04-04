@@ -1502,7 +1502,7 @@ fn load_graph_from_directory(dir: &std::path::Path) -> Result<apxm_graph::ApxmGr
             let path = entry.path();
             if matches!(
                 path.extension().and_then(|e| e.to_str()),
-                Some(apxm_core::constants::extensions::GRAPH | "json")
+                Some(apxm_core::constants::extensions::GRAPH_LEGACY | "json")
             ) {
                 let text = std::fs::read_to_string(&path)
                     .with_context(|| format!("Failed to read {}", path.display()))?;
@@ -1535,58 +1535,82 @@ fn load_graph_from_directory(dir: &std::path::Path) -> Result<apxm_graph::ApxmGr
     Ok(apxm_graph::ApxmGraph::merge(&name, &graphs))
 }
 
-/// Shared session setup: creates session dir, writes running manifest, creates emitter.
-/// Returns an Arc<SessionEventEmitter> so callers can call set_total_nodes() before execution.
+/// Convert an ExecutionDag back to an ApxmGraph for session output.
 #[cfg(feature = "driver")]
-fn graph_json_from_execution_dag(
+fn graph_from_execution_dag(
     dag: &apxm_core::types::execution::ExecutionDag,
-) -> Option<String> {
+) -> Option<apxm_graph::ApxmGraph> {
+    use apxm_graph::{GraphNode, GraphEdge, Parameter};
+    use std::collections::HashMap;
+
     let nodes = dag
         .nodes
         .iter()
-        .map(|node| {
-            serde_json::json!({
-                "id": node.id,
-                "name": node
-                    .metadata
-                    .name
-                    .clone()
-                    .unwrap_or_else(|| format!("node_{}", node.id)),
-                "op": serde_json::to_value(node.op_type).unwrap_or_default(),
-                "attributes": serde_json::to_value(&node.attributes).unwrap_or_default(),
-            })
+        .map(|node| GraphNode {
+            id: node.id,
+            name: node
+                .metadata
+                .name
+                .clone()
+                .unwrap_or_else(|| format!("node_{}", node.id)),
+            op: node.op_type,
+            attributes: node.attributes.clone(),
         })
         .collect::<Vec<_>>();
+
     let edges = dag
         .edges
         .iter()
-        .map(|edge| {
-            serde_json::json!({
-                "from": edge.from,
-                "to": edge.to,
-                "dependency": serde_json::to_value(&edge.dependency_type).unwrap_or_default(),
-            })
+        .map(|edge| GraphEdge {
+            from: edge.from,
+            to: edge.to,
+            dependency: edge.dependency_type.clone(),
         })
         .collect::<Vec<_>>();
+
     let parameters = dag
         .metadata
         .parameters
         .iter()
-        .map(|param| {
-            serde_json::json!({
-                "name": param.name,
-                "type_name": param.type_name,
-            })
+        .map(|param| Parameter {
+            name: param.name.clone(),
+            type_name: param.type_name.clone(),
         })
         .collect::<Vec<_>>();
-    serde_json::to_string(&serde_json::json!({
-        "name": dag.metadata.name.clone().unwrap_or_else(|| "artifact".to_string()),
-        "nodes": nodes,
-        "edges": edges,
-        "parameters": parameters,
-        "metadata": { "is_entry": dag.metadata.is_entry },
-    }))
-    .ok()
+
+    let mut metadata = HashMap::new();
+    if dag.metadata.is_entry {
+        metadata.insert(
+            "is_entry".to_string(),
+            apxm_core::types::values::Value::Bool(true),
+        );
+    }
+
+    Some(apxm_graph::ApxmGraph {
+        name: dag.metadata.name.clone().unwrap_or_else(|| "artifact".to_string()),
+        nodes,
+        edges,
+        parameters,
+        metadata,
+    })
+}
+
+#[cfg(feature = "driver")]
+fn load_graph_for_session(input: &std::path::Path) -> Result<apxm_graph::ApxmGraph> {
+    use apxm_driver::compiler::Compiler;
+
+    // Try to load via compiler first (handles .ais, .air, .apxm)
+    if let Ok(compiler) = Compiler::new() {
+        if let Ok(graph) = compiler.load_graph(input) {
+            return Ok(graph);
+        }
+    }
+
+    // Fallback: try to parse as JSON directly (.apxm legacy format)
+    let text = std::fs::read_to_string(input)
+        .context("Failed to read graph file")?;
+    apxm_graph::ApxmGraph::from_json(&text)
+        .map_err(|e| anyhow::anyhow!("Failed to parse graph: {}", e))
 }
 
 #[cfg(feature = "driver")]
@@ -1594,7 +1618,7 @@ fn setup_session(
     emit_session: &Option<Option<PathBuf>>,
     input: &std::path::Path,
     default_stem: &str,
-    input_graph_json: Option<&str>,
+    input_graph: Option<&apxm_graph::ApxmGraph>,
 ) -> Result<(
     Option<apxm_driver::session_output::SessionOutputWriter>,
     Option<std::sync::Arc<apxm_driver::session_output::SessionEventEmitter>>,
@@ -1638,13 +1662,8 @@ fn setup_session(
     )
     .context("Failed to write manifest")?;
 
-    if let Some(graph_json) = input_graph_json {
-        // Set total node count from graph JSON for live.json progress tracking
-        if let Ok(graph) = apxm_graph::ApxmGraph::from_json(graph_json) {
-            // We'll set this on the emitter after construction
-            let _ = graph.nodes.len(); // validated below
-        }
-        w.write_input_graph(graph_json)
+    if let Some(graph) = input_graph {
+        w.write_input_graph(graph)
             .context("Failed to write input graph")?;
     }
 
@@ -1655,36 +1674,33 @@ fn setup_session(
         SessionEventEmitter::new(
             w.session_dir(),
             exec_id.clone(),
-            input_graph_json,
+            input_graph,
             project_root.as_deref(),
         )
         .context("Failed to create session event emitter")?,
     );
 
     // Set total node count for progress tracking in live.json
-    if let Some(graph_json) = input_graph_json {
-        if let Ok(graph) = apxm_graph::ApxmGraph::from_json(graph_json) {
-            emitter.set_total_nodes(graph.nodes.len() as u64);
-        }
+    if let Some(graph) = input_graph {
+        emitter.set_total_nodes(graph.nodes.len() as u64);
     }
 
     Ok((Some(w), Some(emitter), Some(exec_id)))
 }
 
 #[cfg(feature = "driver")]
-fn context_stack_config_from_graph_json(
+fn context_stack_config_from_graph(
     session_dir: &std::path::Path,
-    graph_json: &str,
+    graph: &apxm_graph::ApxmGraph,
 ) -> Option<apxm_runtime::context_stack::ContextStackConfig> {
-    let graph = apxm_graph::ApxmGraph::from_json(graph_json).ok()?;
     let node_metadata = graph
         .nodes
-        .into_iter()
+        .iter()
         .map(|node| {
             (
                 node.id,
                 apxm_runtime::context_stack::NodeMetadata {
-                    name: node.name,
+                    name: node.name.clone(),
                     op_type: format!("{:?}", node.op),
                 },
             )
@@ -1692,7 +1708,7 @@ fn context_stack_config_from_graph_json(
         .collect::<std::collections::HashMap<_, _>>();
     let graph_edges = graph
         .edges
-        .into_iter()
+        .iter()
         .map(|edge| (edge.from, edge.to))
         .collect();
 
@@ -1724,20 +1740,20 @@ async fn execute_command(
             .collect_all_outputs = true;
     }
 
-    // Read input graph for session output
-    let input_graph_json = if emit_session.is_some() {
-        std::fs::read_to_string(&input).ok()
+    // Load input graph for session output
+    let input_graph = if emit_session.is_some() {
+        load_graph_for_session(&input).ok()
     } else {
         None
     };
 
     // Set up session output + live emitter BEFORE execution
     let (writer, emitter, execution_id) =
-        setup_session(&emit_session, &input, "graph", input_graph_json.as_deref())?;
+        setup_session(&emit_session, &input, "graph", input_graph.as_ref())?;
 
-    if let (Some(graph_json), Some(writer)) = (input_graph_json.as_deref(), writer.as_ref()) {
+    if let (Some(graph), Some(writer)) = (input_graph.as_ref(), writer.as_ref()) {
         linker_config.runtime_config.context_stack =
-            context_stack_config_from_graph_json(writer.session_dir(), graph_json);
+            context_stack_config_from_graph(writer.session_dir(), graph);
     }
 
     let linker = Linker::new(linker_config)
@@ -1920,8 +1936,8 @@ async fn run_command(
             .collect_all_outputs = true;
     }
 
-    let artifact_graph_json = if emit_session.is_some() {
-        artifact.entry_dag().and_then(graph_json_from_execution_dag)
+    let artifact_graph = if emit_session.is_some() {
+        artifact.entry_dag().and_then(graph_from_execution_dag)
     } else {
         None
     };
@@ -1931,12 +1947,12 @@ async fn run_command(
         &emit_session,
         &input,
         "artifact",
-        artifact_graph_json.as_deref(),
+        artifact_graph.as_ref(),
     )?;
 
-    if let (Some(graph_json), Some(writer)) = (artifact_graph_json.as_deref(), writer.as_ref()) {
+    if let (Some(graph), Some(writer)) = (artifact_graph.as_ref(), writer.as_ref()) {
         linker_config.runtime_config.context_stack =
-            context_stack_config_from_graph_json(writer.session_dir(), graph_json);
+            context_stack_config_from_graph(writer.session_dir(), graph);
     }
 
     let runtime = RuntimeExecutor::new(&linker_config)

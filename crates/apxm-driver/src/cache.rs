@@ -1,12 +1,12 @@
-//! File-based artifact cache keyed by SHA-256 of canonicalized graph JSON.
+//! File-based artifact cache keyed by BLAKE3 hash of graph binary representation.
 //!
 //! Cache location: `~/.cache/apxm/artifacts/<hash>.apxmobj`
 
-use sha2::{Digest, Sha256};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
 
+use apxm_graph::ApxmGraph;
 use crate::error::DriverError;
 
 /// Returns `true` when the cache is explicitly disabled via `APXM_NO_CACHE=1`.
@@ -16,17 +16,17 @@ pub fn cache_disabled() -> bool {
         .unwrap_or(false)
 }
 
-/// Compute SHA-256 hex digest of canonicalized (sorted-keys) graph JSON.
-pub fn graph_hash(graph_json: &str) -> Result<String, DriverError> {
-    // Re-parse and re-serialize with sorted keys for deterministic hashing
-    let value: serde_json::Value =
-        serde_json::from_str(graph_json).map_err(|e| DriverError::Driver(e.to_string()))?;
-    let canonical = serde_json::to_string(&value)
-        .map_err(|e| DriverError::Driver(format!("canonical JSON error: {e}")))?;
-
-    let mut hasher = Sha256::new();
-    hasher.update(canonical.as_bytes());
-    Ok(format!("{:x}", hasher.finalize()))
+/// Compute BLAKE3 hash of graph's JSON representation.
+///
+/// Uses JSON as the serialization format (not bincode) because ApxmGraph
+/// contains HashMap fields that don't have a stable iteration order with bincode.
+/// JSON serialization with serde_json guarantees alphabetic key sorting.
+pub fn graph_hash(graph: &ApxmGraph) -> Result<String, DriverError> {
+    // Serialize to JSON with sorted keys for deterministic hashing
+    let json = graph.to_json()
+        .map_err(|e| DriverError::Driver(e.to_string()))?;
+    let hash = blake3::hash(json.as_bytes());
+    Ok(hash.to_hex().to_string())
 }
 
 /// Return the cache directory, creating it if necessary.
@@ -68,11 +68,16 @@ mod tests {
 
     #[test]
     fn hash_is_deterministic() {
-        let json_a = r#"{"name":"test","nodes":[]}"#;
-        let json_b = r#"{"nodes":[],"name":"test"}"#;
-        // Both represent the same JSON object; serde_json::Value sorts keys
-        // alphabetically on serialization so they must hash identically.
-        assert_eq!(graph_hash(json_a).unwrap(), graph_hash(json_b).unwrap());
+        let graph_a = ApxmGraph {
+            name: "test".to_string(),
+            nodes: vec![],
+            edges: vec![],
+            parameters: vec![],
+            metadata: std::collections::HashMap::new(),
+        };
+        let graph_b = graph_a.clone();
+        // Identical graphs must produce identical hashes
+        assert_eq!(graph_hash(&graph_a).unwrap(), graph_hash(&graph_b).unwrap());
     }
 
     #[test]

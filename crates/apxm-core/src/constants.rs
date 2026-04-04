@@ -500,11 +500,8 @@ pub mod extensions {
     pub const AIS: &str = "ais";
     /// Compiled artifact extension.
     pub const ARTIFACT: &str = "apxmobj";
-    /// Legacy JSON graph format (kept for backward compatibility).
+    /// Legacy JSON graph format (only for reading old .apxm files).
     pub const GRAPH_LEGACY: &str = "apxm";
-    /// Alias kept for code that hasn't migrated yet.
-    #[deprecated(since = "0.2.0", note = "use AIR instead")]
-    pub const GRAPH: &str = "apxm";
 }
 
 pub mod session {
