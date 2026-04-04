@@ -198,7 +198,7 @@ async fn execute_plan_once(
 ) -> Result<Value> {
     let transition_label = TransitionLabel::operation(node.id, format!("{:?}", node.op_type));
     // Execute LLM request
-    let response = execute_llm_request(ctx, "PLAN", request).await?;
+    let response = execute_llm_request(ctx, node.id, "PLAN", request).await?;
 
     let content = response.content;
     tracing::info!(
@@ -413,7 +413,7 @@ fn parse_plan_output(content: &str) -> std::result::Result<Plan, serde_json::Err
 
 async fn generate_inner_plan(
     ctx: &ExecutionContext,
-    _node: &Node,
+    node: &Node,
     plan: &Plan,
     goal: &str,
     model_override: Option<&str>,
@@ -445,7 +445,7 @@ async fn generate_inner_plan(
         request = request.with_model(model_name.to_string());
     }
 
-    let response = execute_llm_request(ctx, "INNER_PLAN", &request).await?;
+    let response = execute_llm_request(ctx, node.id, "INNER_PLAN", &request).await?;
 
     let content = response.content;
     tracing::info!(

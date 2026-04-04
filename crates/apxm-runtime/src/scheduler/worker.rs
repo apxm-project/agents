@@ -352,13 +352,17 @@ async fn handle_success(event: &WorkerEvent<'_>, value: Value, attempts: u32) {
     #[cfg(feature = "metrics")]
     let routing_start = std::time::Instant::now();
 
-    publish_outputs(event.state, event.node_id, event.outputs, value).await;
+    publish_outputs(event.state, event.node_id, event.outputs, value.clone()).await;
 
     #[cfg(feature = "metrics")]
     event
         .state
         .metrics
         .record_token_routing(routing_start.elapsed());
+
+    if let Some(emitter) = &event.ctx.event_emitter {
+        emitter.emit_node_output(event.node_id, &value);
+    }
 
     // Mark operation as completed
     if let Some(mut op_state) = event.state.op_states.get_mut(&event.node_id) {
