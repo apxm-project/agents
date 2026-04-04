@@ -8,6 +8,7 @@ use apxm_core::constants::graph::{attrs as graph_attrs, metadata as graph_meta};
 use apxm_core::types::OptimizationLevel;
 use apxm_core::types::execution::{ExecutionDag, TaskDag};
 use apxm_core::types::{AISOperationType, DependencyType, Value};
+use apxm_core::utils::build::MlirEnvReport;
 use apxm_core::{log_debug, log_info};
 use apxm_graph::{ApxmGraph, GraphEdge, GraphNode, Parameter};
 use apxm_runtime::{InnerPlanLinker, RuntimeError};
@@ -21,6 +22,17 @@ pub struct CompilerInnerPlanLinker {
 
 impl CompilerInnerPlanLinker {
     pub fn new() -> Result<Self, RuntimeError> {
+        // Check MLIR availability first; if not ready, return an error so the
+        // caller can fall back to NoOpLinker (graph-direct mode).
+        let report = MlirEnvReport::detect();
+        report.apply_env();
+        if !report.is_ready() {
+            return Err(RuntimeError::State(format!(
+                "MLIR toolchain not available for inner-plan linker: {}",
+                report.summary()
+            )));
+        }
+
         let context = apxm_compiler::Context::new().map_err(|e| {
             RuntimeError::State(format!("Failed to initialize compiler context: {}", e))
         })?;
