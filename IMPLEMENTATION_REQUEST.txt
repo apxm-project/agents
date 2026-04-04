@@ -1,0 +1,33 @@
+Please provide the missing implementation inputs so a full coding brief can be synthesized in one pass.
+
+Required:
+1. The exact task to implement
+2. The three analyses, if they exist
+3. The relevant repository files or signatures
+
+Please include, if applicable:
+- ContextStack definitions and related files
+- MemoCache definitions and related files
+- Scheduler definitions and related files
+- Cargo.toml
+- Target module paths
+- Traits/interfaces involved
+- Expected behavior
+- Current failing tests or desired output
+
+Current status:
+- No coding task was provided
+- No technical conclusions were provided
+- No file paths or APIs were provided
+- Any implementation would be fabricated rather than synthesized
+
+Requested outcome once inputs are provided:
+- One unified implementation brief
+- Conflicts resolved with adversary scope taking precedence
+- Exact Rust file paths
+- Complete code blocks
+- Test cases
+- [RISK: ...] annotations
+- Ending sections:
+  - CONSERVATIVE APPROACH
+  - BOLD APPROACH
