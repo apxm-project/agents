@@ -16,6 +16,8 @@ pub mod sandbox;
 use sandbox::configure_sandbox_registry;
 mod inner_plan;
 use inner_plan::CompilerInnerPlanLinker;
+use apxm_core::utils::build::MlirEnvReport;
+use apxm_runtime::NoOpLinker;
 mod agents;
 use agents::configure_agent_registry;
 
@@ -48,8 +50,25 @@ impl RuntimeExecutor {
 
         runtime.set_instruction_config(config.apxm_config.instruction.clone());
 
-        let linker = Arc::new(CompilerInnerPlanLinker::new().map_err(DriverError::Runtime)?);
-        runtime.set_inner_plan_linker(linker);
+        // Use CompilerInnerPlanLinker when MLIR is available, otherwise fall back to
+        // NoOpLinker (graph-direct mode). Mirrors how Linker handles MLIR unavailability.
+        let report = MlirEnvReport::detect();
+        report.apply_env();
+        if report.is_ready() {
+            match CompilerInnerPlanLinker::new() {
+                Ok(linker) => {
+                    apxm_core::log_info!("driver", "MLIR inner-plan linker initialized");
+                    runtime.set_inner_plan_linker(Arc::new(linker));
+                }
+                Err(e) => {
+                    apxm_core::log_info!("driver", "MLIR inner-plan linker init failed ({}); using NoOp", e);
+                    runtime.set_inner_plan_linker(Arc::new(NoOpLinker));
+                }
+            }
+        } else {
+            apxm_core::log_info!("driver", "MLIR not available; using NoOp inner-plan linker (graph-direct mode)");
+            runtime.set_inner_plan_linker(Arc::new(NoOpLinker));
+        }
 
         Ok(Self { runtime })
     }
