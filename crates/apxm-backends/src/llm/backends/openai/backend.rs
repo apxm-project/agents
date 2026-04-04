@@ -247,6 +247,17 @@ impl OpenAIBackend {
             }
         }
 
+        // Merge in extra_body if provided (for vLLM extensions, etc.)
+        if let Some(extra) = &request.extra_body {
+            if let serde_json::Value::Object(extra_map) = extra {
+                if let serde_json::Value::Object(body_map) = &mut body {
+                    for (key, value) in extra_map {
+                        body_map.insert(key.clone(), value.clone());
+                    }
+                }
+            }
+        }
+
         body
     }
 
