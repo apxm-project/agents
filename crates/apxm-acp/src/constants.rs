@@ -151,7 +151,7 @@ pub mod timeouts {
     /// Timeout for session control requests (secs).
     pub const CONTROL_TIMEOUT_SECS: u64 = 10;
     /// Timeout for system preamble injection (secs).
-    pub const PREAMBLE_TIMEOUT_SECS: u64 = 30;
+    pub const PREAMBLE_TIMEOUT_SECS: u64 = 120;
 }
 
 pub mod terminal {
