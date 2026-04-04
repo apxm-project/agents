@@ -35,6 +35,7 @@ mod runtime;
 pub mod sandbox;
 pub mod scheduler;
 pub mod thread;
+pub mod workflow;
 pub mod workspace;
 
 pub use aam::{

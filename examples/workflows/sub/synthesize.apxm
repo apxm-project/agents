@@ -1,0 +1,31 @@
+{
+  "name": "synthesize",
+  "nodes": [
+    {
+      "id": 1,
+      "name": "synthesize_think",
+      "op": "THINK",
+      "attributes": {
+        "template_str": "You are a synthesis expert. Given these three perspectives:\n\nARCHITECTURE:\n{{ARCH}}\n\nRISKS & CONCERNS:\n{{ADVER}}\n\nIMPLEMENTATION:\n{{IMPL}}\n\nSynthesize these into a comprehensive plan that:\n1. Incorporates the best architectural ideas\n2. Addresses the identified risks\n3. Provides clear implementation guidance\n\nProvide a unified, actionable plan."
+      }
+    }
+  ],
+  "edges": [],
+  "parameters": [
+    {
+      "name": "ARCH",
+      "type_name": "str"
+    },
+    {
+      "name": "ADVER",
+      "type_name": "str"
+    },
+    {
+      "name": "IMPL",
+      "type_name": "str"
+    }
+  ],
+  "metadata": {
+    "is_entry": true
+  }
+}

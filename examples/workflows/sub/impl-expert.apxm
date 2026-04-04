@@ -1,0 +1,23 @@
+{
+  "name": "impl_expert",
+  "nodes": [
+    {
+      "id": 1,
+      "name": "impl_think",
+      "op": "THINK",
+      "attributes": {
+        "template_str": "You are an implementation expert. For this task: {{TASK}}\n\nProvide:\n1. Implementation approach\n2. Key algorithms or patterns\n3. Testing strategy\n4. Deployment considerations\n\nFocus on practical, actionable guidance."
+      }
+    }
+  ],
+  "edges": [],
+  "parameters": [
+    {
+      "name": "TASK",
+      "type_name": "str"
+    }
+  ],
+  "metadata": {
+    "is_entry": true
+  }
+}
