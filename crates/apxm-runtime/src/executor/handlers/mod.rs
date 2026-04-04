@@ -221,6 +221,7 @@ async fn execute_llm_request_streaming(
     let (router_decision, prepared_request) = if let Some(router) = &ctx.model_router {
         let decision = router
             .select_for_dispatch(request)
+            .await
             .map_err(|e| llm_error(ctx, phase, request, e))?;
 
         let mut req = request.clone();
