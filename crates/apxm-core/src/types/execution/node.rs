@@ -78,8 +78,10 @@ pub type NodeId = u64;
 /// defaults, so older payloads remain compatible.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct NodeMetadata {
-    /// Human-readable node name preserved from the source graph.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Human-readable node name from the source graph.
+    /// Runtime-only: never serialized to/from artifact binary format.
+    /// Set during DAG lowering from ApxmGraph and used by ContextStack/CWD routing.
+    #[serde(skip)]
     pub name: Option<String>,
     /// Priority for execution (higher = more important).
     /// Omitted from serialization when zero (the default).
@@ -228,7 +230,6 @@ mod tests {
         node.metadata.priority = 10;
         node.metadata.estimated_latency = Some(5000);
         node.metadata.task_source_id = Some(7);
-        node.metadata.name = Some("lookup".to_string());
 
         let json = serde_json::to_string(&node).expect("serialize");
         let restored: Node = serde_json::from_str(&json).expect("deserialize");
