@@ -258,6 +258,8 @@ pub struct SessionEventEmitter {
     completed: AtomicU64,
     total: AtomicU64,
     seq: AtomicU64,
+    /// Last node_id seen — preserved across writes so live.json shows current node.
+    current_node_id: std::sync::atomic::AtomicI64,
 }
 
 impl SessionEventEmitter {
@@ -277,6 +279,7 @@ impl SessionEventEmitter {
             completed: AtomicU64::new(0),
             total: AtomicU64::new(0),
             seq: AtomicU64::new(0),
+            current_node_id: std::sync::atomic::AtomicI64::new(-1),
         };
 
         // Write initial live.json
@@ -296,6 +299,10 @@ impl SessionEventEmitter {
     }
 
     fn write_live(&self, current_node_id: Option<u64>) -> io::Result<()> {
+        // Track the current node so periodic ticks can reference it.
+        if let Some(id) = current_node_id {
+            self.current_node_id.store(id as i64, Ordering::Relaxed);
+        }
         self.write_live_with_status(current_node_id, constants::session::status::RUNNING, false)
     }
 
@@ -307,6 +314,8 @@ impl SessionEventEmitter {
     ) -> io::Result<()> {
         let completed = self.completed.load(Ordering::Relaxed);
         let total = self.total.load(Ordering::Relaxed);
+        // Always use real wall-clock elapsed so live.json stays current even
+        // between events (e.g. during a long LLM call).
         let elapsed_ms = self.start_time.elapsed().as_millis();
 
         let live = serde_json::json!({
@@ -327,6 +336,14 @@ impl SessionEventEmitter {
         Ok(())
     }
 
+    /// Tick live.json with current wall-clock elapsed — call from a background thread
+    /// so elapsed_ms updates even during long LLM calls between op events.
+    pub fn tick(&self) {
+        let node_id = self.current_node_id.load(Ordering::Relaxed);
+        let current = if node_id >= 0 { Some(node_id as u64) } else { None };
+        let _ = self.write_live(current);
+    }
+
     /// Call once at execution end to write the final live.json status.
     pub fn finalize_live(&self, success: bool) -> io::Result<()> {
         let status = if success {
@@ -334,7 +351,23 @@ impl SessionEventEmitter {
         } else {
             constants::session::status::FAILED
         };
-        self.write_live_with_status(None, status, success)
+        // Preserve actual completed count and elapsed on error paths too.
+        let completed = self.completed.load(Ordering::Relaxed);
+        let total = self.total.load(Ordering::Relaxed);
+        let elapsed_ms = self.start_time.elapsed().as_millis();
+
+        let live = serde_json::json!({
+            "status": status,
+            "current_node_id": null,
+            "completed": completed,
+            "total": if total > 0 { Some(total) } else { None::<u64> },
+            "elapsed_ms": elapsed_ms,
+            "success": success,
+        });
+        let tmp_path = self.session_dir.join(".live.json.tmp");
+        json_pretty_write(&tmp_path, &live)?;
+        let live_path = self.session_dir.join(constants::session::files::LIVE);
+        fs::rename(&tmp_path, &live_path).map_err(Into::into)
     }
 
     /// Set the total node count so live.json can report progress.
