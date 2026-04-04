@@ -37,7 +37,9 @@ impl RuntimeExecutor {
 
         // Initialize ModelRouter after LLM backends are registered.
         // Loads ~/.apxm/models.toml and registers circuit breakers for each backend.
-        runtime.init_model_router(apxm_runtime::ModelRouterConfig::default());
+        runtime
+            .init_model_router(apxm_runtime::ModelRouterConfig::default())
+            .map_err(DriverError::Runtime)?;
 
         let sandbox_registry = configure_sandbox_registry();
         runtime.set_sandbox_registry(sandbox_registry);

@@ -242,10 +242,13 @@ impl Runtime {
     /// This is a convenience method for the driver — it creates the router
     /// with default config, loads `~/.apxm/models.toml`, and registers
     /// circuit breakers for all currently registered backends.
-    pub fn init_model_router(&mut self, config: ModelRouterConfig) {
-        let router = ModelRouter::new(Arc::clone(&self.llm_registry), config);
+    pub fn init_model_router(&mut self, config: ModelRouterConfig) -> Result<(), RuntimeError> {
+        let router = ModelRouter::new(Arc::clone(&self.llm_registry), config).map_err(|e| {
+            RuntimeError::State(format!("Failed to initialize model router: {}", e))
+        })?;
         self.model_router = Some(Arc::new(router));
         tracing::info!("ModelRouter initialized with circuit breakers");
+        Ok(())
     }
 
     /// Get a reference to the model router, if one is attached.
