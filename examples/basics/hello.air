@@ -1,0 +1,5 @@
+; Agent IR (.air) - canonical intermediate representation
+; graph: hello_graph
+; is_entry: True
+
+  %greeting = ais.ask {template_str = "Generate a friendly greeting for someone learning about AI a..."}

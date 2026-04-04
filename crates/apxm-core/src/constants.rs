@@ -493,20 +493,24 @@ pub mod llm {
 }
 
 pub mod extensions {
-    /// Graph source file extension.
-    pub const GRAPH: &str = "apxm";
-    /// Compiled artifact extension.
-    pub const ARTIFACT: &str = "apxmobj";
+    /// Agent IR text format — canonical intermediate representation (like LLVM .ll).
+    /// This is the primary authoring format for graph IR.
+    pub const AIR: &str = "air";
     /// AIS DSL source file extension.
     pub const AIS: &str = "ais";
-    /// Agent IR text format (canonical intermediate representation).
-    pub const AIR: &str = "air";
+    /// Compiled artifact extension.
+    pub const ARTIFACT: &str = "apxmobj";
+    /// Legacy JSON graph format (kept for backward compatibility).
+    pub const GRAPH_LEGACY: &str = "apxm";
+    /// Alias kept for code that hasn't migrated yet.
+    #[deprecated(since = "0.2.0", note = "use AIR instead")]
+    pub const GRAPH: &str = "apxm";
 }
 
 pub mod session {
     pub mod files {
         pub const MANIFEST: &str = "manifest.json";
-        pub const INPUT_GRAPH: &str = "input.apxm";
+        pub const INPUT_GRAPH: &str = "input.air";
         pub const RESULTS: &str = "results.json";
         pub const METRICS: &str = "metrics.json";
         pub const NODE_STATUSES: &str = "node_statuses.json";

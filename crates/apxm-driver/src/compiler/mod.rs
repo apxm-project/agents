@@ -45,9 +45,9 @@ impl Compiler {
     /// Compile a graph file into a compiler module.
     pub fn compile(&self, path: &Path) -> Result<Module, DriverError> {
         let ext = path.extension().and_then(|ext| ext.to_str());
-        if matches!(ext, Some("mlir")) {
+        if matches!(ext, Some("mlir" | "air")) {
             return Err(DriverError::Driver(
-                "Graph-only compile path requires ApxmGraph JSON/binary input".to_string(),
+                "Use 'apxm compile <file.ais>' to compile source to .apxmobj, or pass a .apxmobj artifact to 'apxm run'".to_string(),
             ));
         }
 
@@ -106,6 +106,10 @@ impl Compiler {
                 Module::parse_dsl_graph(&self.context, source, path_str)
                     .map_err(|e| DriverError::Driver(format!("AIS parse error: {e}")))
             }
+            Some("air") => Err(DriverError::Driver(
+                ".air is the canonical IR text format (like LLVM .ll). \
+                 Compile from .ais source with 'apxm compile' or run a .apxmobj artifact.".to_string()
+            )),
             Some(constants::extensions::GRAPH | "json") => std::str::from_utf8(&bytes)
                 .map_err(|e| DriverError::Driver(format!("Graph file is not UTF-8 JSON: {e}")))
                 .and_then(|text| {
