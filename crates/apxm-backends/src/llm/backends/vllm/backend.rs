@@ -181,7 +181,10 @@ impl GraphAwareVllmBackend {
         // Check if there are graph hints attached to the request
         if let Some(ref hints) = request.apxm_hints {
             let hints_json = serde_json::to_value(hints).unwrap_or_default();
-            let mut extra = request.extra_body.take().unwrap_or_default();
+            let mut extra = request
+                .extra_body
+                .take()
+                .unwrap_or_else(|| serde_json::json!({}));
             if let serde_json::Value::Object(ref mut map) = extra {
                 map.insert("apxm".to_string(), hints_json);
             }
