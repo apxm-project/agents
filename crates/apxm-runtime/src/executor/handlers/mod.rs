@@ -218,19 +218,20 @@ async fn execute_llm_request_streaming(
     let start = std::time::Instant::now();
 
     // When a ModelRouter is present, let it choose backend/model first.
-    let router_decision = ctx
-        .model_router
-        .as_ref()
-        .and_then(|r| r.select(request).ok());
-    let prepared_request = if let Some(ref decision) = router_decision {
+    let (router_decision, prepared_request) = if let Some(router) = &ctx.model_router {
+        let decision = router
+            .select_for_dispatch(request)
+            .map_err(|e| llm_error(ctx, phase, request, e))?;
+
         let mut req = request.clone();
         req.backend = Some(decision.backend.clone());
         if let Some(ref m) = decision.model {
             req.model = Some(m.clone());
         }
-        ctx.llm_registry.prepare_request(&req)
+
+        (Some(decision), ctx.llm_registry.prepare_request(&req))
     } else {
-        ctx.llm_registry.prepare_request(request)
+        (None, ctx.llm_registry.prepare_request(request))
     };
 
     let backend = ctx

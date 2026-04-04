@@ -4,6 +4,7 @@
 //! `LLMRegistry`. It adds:
 //!
 //! - **Circuit breakers** per backend (Closed → Open → HalfOpen)
+//! - **Per-backend rate limiting** with in-memory token buckets
 //! - **Policy-driven routing** (prefer tags, cost target, latency target)
 //! - **Config-driven model registry** (`~/.apxm/models.toml`)
 //! - **Automatic failover** to the next available backend
@@ -25,14 +26,18 @@
 //! 6. First available healthy backend
 
 pub mod health;
+pub mod rate_limit;
 pub mod registry;
 
 pub use health::{BackendHealth, CircuitBreakerConfig, CircuitBreakerRegistry, CircuitState};
+pub use rate_limit::{RateLimitConfig, RateLimitConfigError, RateLimitError};
 pub use registry::{ModelEntry, ModelRegistry, RoutingConfig};
 
+use self::rate_limit::{RateLimiter, SystemClock};
 use apxm_backends::{LLMRegistry, LLMRequest, LLMResponse};
 use apxm_core::types::AISOperationType;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Optimization target that influences model selection.
@@ -67,6 +72,9 @@ pub struct OperationPolicy {
 pub struct ModelRouterConfig {
     /// Circuit breaker settings.
     pub circuit_breaker: CircuitBreakerConfig,
+    /// Per-backend rate limits.
+    #[serde(skip, default)]
+    pub rate_limits: HashMap<String, RateLimitConfig>,
     /// Global routing target.
     pub target: RoutingTarget,
     /// Per-operation policies.
@@ -78,6 +86,7 @@ impl Default for ModelRouterConfig {
     fn default() -> Self {
         ModelRouterConfig {
             circuit_breaker: CircuitBreakerConfig::default(),
+            rate_limits: HashMap::new(),
             target: RoutingTarget::Balanced,
             operation_policies: Vec::new(),
         }
@@ -107,29 +116,17 @@ pub struct ModelRouter {
     model_registry: Arc<ModelRegistry>,
     /// Circuit breakers per backend.
     circuit_breakers: Arc<CircuitBreakerRegistry>,
+    /// In-memory token buckets per backend.
+    rate_limiter: Arc<RateLimiter<SystemClock>>,
     /// Router configuration.
     config: ModelRouterConfig,
 }
 
 impl ModelRouter {
     /// Create a new router backed by an existing `LLMRegistry`.
-    pub fn new(llm_registry: Arc<LLMRegistry>, config: ModelRouterConfig) -> Self {
-        let circuit_breakers =
-            Arc::new(CircuitBreakerRegistry::new(config.circuit_breaker.clone()));
-
-        // Pre-register circuit breakers for all currently known backends.
-        for name in llm_registry.backend_names() {
-            circuit_breakers.register(&name);
-        }
-
+    pub fn new(llm_registry: Arc<LLMRegistry>, config: ModelRouterConfig) -> anyhow::Result<Self> {
         let model_registry = Arc::new(ModelRegistry::load_from_default_path());
-
-        ModelRouter {
-            llm_registry,
-            model_registry,
-            circuit_breakers,
-            config,
-        }
+        Self::with_model_registry(llm_registry, model_registry, config)
     }
 
     /// Create with a pre-built `ModelRegistry` (useful for testing).
@@ -137,18 +134,25 @@ impl ModelRouter {
         llm_registry: Arc<LLMRegistry>,
         model_registry: Arc<ModelRegistry>,
         config: ModelRouterConfig,
-    ) -> Self {
+    ) -> anyhow::Result<Self> {
         let circuit_breakers =
             Arc::new(CircuitBreakerRegistry::new(config.circuit_breaker.clone()));
         for name in llm_registry.backend_names() {
             circuit_breakers.register(&name);
         }
-        ModelRouter {
+
+        let rate_limiter = Arc::new(RateLimiter::new(
+            config.rate_limits.clone(),
+            Arc::new(SystemClock),
+        )?);
+
+        Ok(ModelRouter {
             llm_registry,
             model_registry,
             circuit_breakers,
+            rate_limiter,
             config,
-        }
+        })
     }
 
     /// Select a backend + model for the given request, applying policy and circuit breakers.
@@ -252,6 +256,16 @@ impl ModelRouter {
         anyhow::bail!("ModelRouter: no available backend (all circuit breakers open)")
     }
 
+    /// Select a backend and consume one rate-limit token before dispatch.
+    pub(crate) fn select_for_dispatch(
+        &self,
+        request: &LLMRequest,
+    ) -> anyhow::Result<RoutingDecision> {
+        let decision = self.select(request)?;
+        self.rate_limiter.check_and_consume(&decision.backend)?;
+        Ok(decision)
+    }
+
     /// Record a successful LLM call to a backend.
     pub fn record_success(&self, backend: &str) {
         self.circuit_breakers.record_success(backend);
@@ -293,7 +307,7 @@ impl ModelRouter {
     /// Wraps `LLMRegistry::generate_with_backend` and records circuit-breaker
     /// outcomes automatically.
     pub async fn generate(&self, request: LLMRequest) -> anyhow::Result<LLMResponse> {
-        let decision = self.select(&request)?;
+        let decision = self.select_for_dispatch(&request)?;
         let backend_name = decision.backend.clone();
 
         // Apply resolved model to request if different.
@@ -351,12 +365,15 @@ impl ModelRouter {
 mod tests {
     use super::*;
     use apxm_backends::LLMRegistry;
+    use apxm_backends::llm::backends::MockLLMBackend;
     use registry::ModelEntry;
+    use std::collections::HashMap;
 
     fn make_router() -> ModelRouter {
         let llm_registry = Arc::new(LLMRegistry::new());
         let model_registry = Arc::new(ModelRegistry::new());
         ModelRouter::with_model_registry(llm_registry, model_registry, ModelRouterConfig::default())
+            .unwrap()
     }
 
     #[test]
@@ -385,7 +402,8 @@ mod tests {
             llm_registry,
             model_registry,
             ModelRouterConfig::default(),
-        );
+        )
+        .unwrap();
 
         // Register circuit breaker for the backend
         router.circuit_breakers.register("openai");
@@ -420,7 +438,8 @@ mod tests {
             ..Default::default()
         };
 
-        let router = ModelRouter::with_model_registry(llm_registry, model_registry, config.clone());
+        let router =
+            ModelRouter::with_model_registry(llm_registry, model_registry, config.clone()).unwrap();
 
         // Register the breaker and trip it
         router.circuit_breakers.register("backend-a");
@@ -467,5 +486,81 @@ mod tests {
         let decision = router.select(&request).unwrap();
         assert_eq!(decision.backend, "explicit");
         assert!(!decision.was_failover);
+    }
+
+    #[tokio::test]
+    async fn test_rate_limited_backend_fails_fast() {
+        let llm_registry = Arc::new(LLMRegistry::new());
+        llm_registry
+            .register("limited", MockLLMBackend::static_response("ok"))
+            .unwrap();
+
+        let mut rate_limits = HashMap::new();
+        rate_limits.insert(
+            "limited".to_string(),
+            RateLimitConfig {
+                capacity: 1,
+                tokens_per_second: 1.0,
+            },
+        );
+
+        let router = ModelRouter::with_model_registry(
+            llm_registry,
+            Arc::new(ModelRegistry::new()),
+            ModelRouterConfig {
+                rate_limits,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let request = LLMRequest::new("hello").with_backend("limited");
+        assert!(router.generate(request.clone()).await.is_ok());
+
+        let err = router.generate(request).await.unwrap_err();
+        assert_eq!(err.to_string(), "backend 'limited' is rate limited");
+    }
+
+    #[tokio::test]
+    async fn test_unconfigured_backend_remains_unlimited() {
+        let llm_registry = Arc::new(LLMRegistry::new());
+        llm_registry
+            .register("local", MockLLMBackend::static_response("ok"))
+            .unwrap();
+
+        let router = ModelRouter::with_model_registry(
+            llm_registry,
+            Arc::new(ModelRegistry::new()),
+            ModelRouterConfig::default(),
+        )
+        .unwrap();
+
+        let request = LLMRequest::new("hello").with_backend("local");
+        assert!(router.generate(request.clone()).await.is_ok());
+        assert!(router.generate(request).await.is_ok());
+    }
+
+    #[test]
+    fn test_invalid_rate_limit_config_is_rejected() {
+        let mut rate_limits = HashMap::new();
+        rate_limits.insert(
+            "broken".to_string(),
+            RateLimitConfig {
+                capacity: 0,
+                tokens_per_second: 1.0,
+            },
+        );
+
+        let err = ModelRouter::with_model_registry(
+            Arc::new(LLMRegistry::new()),
+            Arc::new(ModelRegistry::new()),
+            ModelRouterConfig {
+                rate_limits,
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(err.to_string(), "rate limit capacity must be > 0");
     }
 }
