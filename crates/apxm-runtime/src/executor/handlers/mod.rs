@@ -404,6 +404,13 @@ pub fn extract_json_from_markdown(content: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::aam::Aam;
+    use crate::capability::CapabilitySystem;
+    use crate::executor::events::ExecutionEventEmitter;
+    use crate::memory::{MemoryConfig, MemorySystem};
+    use apxm_backends::llm::backends::mock::MockLLMBackend;
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn test_finalize_pending_tool_call_valid_json() {
@@ -526,5 +533,78 @@ mod tests {
         assert_eq!(collected[0].args, serde_json::json!({"query": "rust"}));
         assert_eq!(collected[1].name, "read_file");
         assert_eq!(collected[1].args, serde_json::json!({"path": "main.rs"}));
+    }
+
+    #[derive(Default)]
+    struct RecordingEmitter {
+        events: Mutex<Vec<String>>,
+    }
+
+    impl RecordingEmitter {
+        fn snapshot(&self) -> Vec<String> {
+            self.events.lock().unwrap().clone()
+        }
+    }
+
+    impl ExecutionEventEmitter for RecordingEmitter {
+        fn emit_llm_token(&self, content: &str) {
+            self.events
+                .lock()
+                .unwrap()
+                .push(format!("token:global:{content}"));
+        }
+
+        fn emit_tool_start(&self, _name: &str, _args: &HashMap<String, Value>) {}
+
+        fn emit_tool_end(&self, _name: &str, _result: &Value) {}
+
+        fn emit_llm_prompt(&self, node_id: u64, prompt: &str) {
+            self.events
+                .lock()
+                .unwrap()
+                .push(format!("prompt:{node_id}:{prompt}"));
+        }
+
+        fn emit_llm_token_for_node(&self, node_id: u64, content: &str) {
+            self.events
+                .lock()
+                .unwrap()
+                .push(format!("token:{node_id}:{content}"));
+        }
+    }
+
+    #[tokio::test]
+    async fn execute_llm_request_emits_prompt_before_streamed_tokens() {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(apxm_backends::LLMRegistry::new());
+        llm_registry
+            .register("mock", MockLLMBackend::static_response("alpha beta"))
+            .unwrap();
+        llm_registry.set_default("mock").unwrap();
+
+        let emitter = Arc::new(RecordingEmitter::default());
+        let ctx = ExecutionContext::new(
+            memory,
+            llm_registry,
+            Arc::new(CapabilitySystem::new()),
+            Aam::new(),
+        )
+        .with_event_emitter(Some(emitter.clone()));
+
+        let response = execute_llm_request(&ctx, 7, "ask", &LLMRequest::new("plan this"))
+            .await
+            .unwrap();
+
+        assert_eq!(response.content, "alpha beta");
+
+        let events = emitter.snapshot();
+        assert!(!events.is_empty());
+        assert_eq!(events[0], "prompt:7:plan this");
+        assert!(events.iter().any(|event| event == "token:7:alpha "));
+        assert!(events.iter().any(|event| event == "token:7:beta "));
     }
 }
