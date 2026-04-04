@@ -503,6 +503,83 @@ pub struct CachedResponse {
     pub model: String,
 }
 
+/// Speculative execution handle for commit/rollback on MemoCache.
+///
+/// Tracks cache writes in a local overlay during speculative execution.
+/// On commit, flushes overlay to main cache. On rollback, discards overlay.
+pub struct SpeculativeHandle {
+    cache: Arc<MemoCache>,
+    overlay: HashMap<MemoKey, (String, usize, usize, String)>,
+}
+
+impl SpeculativeHandle {
+    /// Speculatively put an entry (stored in overlay, not in main cache yet).
+    pub fn put(
+        &mut self,
+        key: MemoKey,
+        content: String,
+        input_tokens: usize,
+        output_tokens: usize,
+        model: String,
+    ) {
+        self.overlay
+            .insert(key, (content, input_tokens, output_tokens, model));
+    }
+
+    /// Get from overlay first, then fall back to main cache.
+    pub fn get(&self, key: MemoKey) -> Option<CachedResponse> {
+        // Check overlay first
+        if let Some((content, input_tokens, output_tokens, model)) = self.overlay.get(&key) {
+            return Some(CachedResponse {
+                content: content.clone(),
+                input_tokens: *input_tokens,
+                output_tokens: *output_tokens,
+                model: model.clone(),
+            });
+        }
+
+        // Fall back to main cache
+        self.cache.get(key)
+    }
+
+    /// Commit the speculative writes to the main cache.
+    pub fn commit(self) {
+        for (key, (content, input_tokens, output_tokens, model)) in self.overlay {
+            self.cache.put(key, content, input_tokens, output_tokens, model);
+        }
+    }
+
+    /// Rollback (discard) the speculative writes.
+    pub fn rollback(self) {
+        // Simply drop the overlay without writing to main cache
+    }
+
+    /// Number of speculative entries in the overlay.
+    pub fn overlay_len(&self) -> usize {
+        self.overlay.len()
+    }
+}
+
+impl MemoCache {
+    /// Begin speculative execution with a local overlay.
+    pub fn begin_speculative(&self) -> SpeculativeHandle {
+        SpeculativeHandle {
+            cache: Arc::new(Self {
+                l1: Arc::clone(&self.l1),
+                #[cfg(feature = "sqlite")]
+                l2: self.l2.as_ref().map(Arc::clone),
+                ttl: self.ttl,
+                max_l1_entries: self.max_l1_entries,
+                l1_hits: Arc::clone(&self.l1_hits),
+                l2_hits: Arc::clone(&self.l2_hits),
+                misses: Arc::clone(&self.misses),
+                evictions: Arc::clone(&self.evictions),
+            }),
+            overlay: HashMap::new(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -654,5 +731,116 @@ mod tests {
         let deleted = cache.cleanup_l2().expect("cleanup");
         // Should delete at least one entry (might be 0 if async write hasn't completed)
         assert!(deleted <= 1);
+    }
+
+    #[test]
+    fn test_speculative_commit() {
+        let cache = MemoCache::new();
+        let key1 = MemoKey(100);
+        let key2 = MemoKey(200);
+
+        // Start speculative execution
+        let mut handle = cache.begin_speculative();
+
+        // Speculatively put entries
+        handle.put(key1, "spec1".to_string(), 10, 5, "m1".to_string());
+        handle.put(key2, "spec2".to_string(), 20, 10, "m2".to_string());
+
+        // Should be in overlay
+        assert_eq!(handle.overlay_len(), 2);
+
+        // Should be readable from handle
+        assert_eq!(handle.get(key1).unwrap().content, "spec1");
+        assert_eq!(handle.get(key2).unwrap().content, "spec2");
+
+        // But not in main cache yet
+        assert!(cache.get(key1).is_none());
+        assert!(cache.get(key2).is_none());
+
+        // Commit
+        handle.commit();
+
+        // Now in main cache
+        assert_eq!(cache.get(key1).unwrap().content, "spec1");
+        assert_eq!(cache.get(key2).unwrap().content, "spec2");
+    }
+
+    #[test]
+    fn test_speculative_rollback() {
+        let cache = MemoCache::new();
+        let key1 = MemoKey(300);
+        let key2 = MemoKey(400);
+
+        // Start speculative execution
+        let mut handle = cache.begin_speculative();
+
+        // Speculatively put entries
+        handle.put(key1, "spec1".to_string(), 10, 5, "m1".to_string());
+        handle.put(key2, "spec2".to_string(), 20, 10, "m2".to_string());
+
+        assert_eq!(handle.overlay_len(), 2);
+
+        // Rollback
+        handle.rollback();
+
+        // Nothing in main cache
+        assert!(cache.get(key1).is_none());
+        assert!(cache.get(key2).is_none());
+    }
+
+    #[test]
+    fn test_speculative_reads_from_main_cache() {
+        let cache = MemoCache::new();
+        let key1 = MemoKey(500);
+        let key2 = MemoKey(600);
+
+        // Put entry in main cache
+        cache.put(key1, "main1".to_string(), 5, 3, "m".to_string());
+
+        // Start speculative execution
+        let mut handle = cache.begin_speculative();
+
+        // Should read from main cache
+        assert_eq!(handle.get(key1).unwrap().content, "main1");
+
+        // Speculative write for key2
+        handle.put(key2, "spec2".to_string(), 10, 5, "m".to_string());
+
+        // Should read speculative key2
+        assert_eq!(handle.get(key2).unwrap().content, "spec2");
+
+        // Rollback - key2 should not be in main cache
+        handle.rollback();
+        assert!(cache.get(key2).is_none());
+
+        // But key1 should still be there
+        assert_eq!(cache.get(key1).unwrap().content, "main1");
+    }
+
+    #[test]
+    fn test_speculative_overlay_shadows_main() {
+        let cache = MemoCache::new();
+        let key = MemoKey(700);
+
+        // Put entry in main cache
+        cache.put(key, "original".to_string(), 5, 3, "m".to_string());
+
+        // Start speculative execution
+        let mut handle = cache.begin_speculative();
+
+        // Overwrite in overlay
+        handle.put(key, "shadowed".to_string(), 10, 5, "m2".to_string());
+
+        // Should read from overlay
+        assert_eq!(handle.get(key).unwrap().content, "shadowed");
+
+        // Main cache still has original
+        assert_eq!(cache.get(key).unwrap().content, "original");
+
+        // Commit
+        handle.commit();
+
+        // Now main cache has shadowed value
+        assert_eq!(cache.get(key).unwrap().content, "shadowed");
     }
 }
