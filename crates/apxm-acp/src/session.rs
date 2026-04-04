@@ -174,14 +174,17 @@ impl AcpSession {
         };
 
         // Inject AAM context as a system preamble (turn 0, doesn't increment turn_count)
-        if let Some(preamble) = crate::aam_bridge::render_system_prompt(aam_context) {
-            let system_text = match &profile.system_prompt {
-                Some(sp) => format!("{sp}\n\n{preamble}"),
-                None => preamble,
-            };
-            session.send_system_preamble(&system_text).await?;
-        } else if let Some(sp) = &profile.system_prompt {
-            session.send_system_preamble(sp).await?;
+        // Skip preamble for agents that read context from their cwd (e.g. AGENTS.md).
+        if !profile.skip_preamble {
+            if let Some(preamble) = crate::aam_bridge::render_system_prompt(aam_context) {
+                let system_text = match &profile.system_prompt {
+                    Some(sp) => format!("{sp}\n\n{preamble}"),
+                    None => preamble,
+                };
+                session.send_system_preamble(&system_text).await?;
+            } else if let Some(sp) = &profile.system_prompt {
+                session.send_system_preamble(sp).await?;
+            }
         }
 
         Ok(session)

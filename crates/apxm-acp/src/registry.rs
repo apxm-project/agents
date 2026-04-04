@@ -81,6 +81,10 @@ pub struct AgentProfile {
     pub default_model: Option<String>,
     #[serde(default)]
     pub system_prompt: Option<String>,
+    /// Skip the system preamble turn (turn 0). Use for agents that read context
+    /// from their cwd (AGENTS.md) instead of a preamble prompt.
+    #[serde(default)]
+    pub skip_preamble: bool,
     /// Capabilities provisioned to this agent (rendered as mcpServers on the ACP wire).
     #[serde(default)]
     pub capabilities: Vec<CapabilityServerConfig>,
@@ -180,6 +184,7 @@ impl AgentRegistry {
                     default_mode: None,
                     default_model: None,
                     system_prompt: None,
+                    skip_preamble: false,
                     capabilities: Vec::new(),
                 },
             );
@@ -343,6 +348,7 @@ mod tests {
             default_mode: None,
             default_model: None,
             system_prompt: None,
+            skip_preamble: false,
             capabilities: Vec::new(),
         };
         reg.registered.insert("custom".to_string(), profile);
@@ -376,6 +382,7 @@ mod tests {
             default_mode: None,
             default_model: None,
             system_prompt: None,
+            skip_preamble: false,
             capabilities: Vec::new(),
         };
         let toml_str = toml::to_string_pretty(&profile).unwrap();

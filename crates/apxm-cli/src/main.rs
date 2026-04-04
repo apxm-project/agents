@@ -553,6 +553,7 @@ async fn agent_command(action: AgentAction, json_output: bool) -> Result<()> {
                         default_mode: None,
                         default_model: None,
                         system_prompt: None,
+                        skip_preamble: false,
                         capabilities: Vec::new(),
                     }
                 }
