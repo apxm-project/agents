@@ -1825,6 +1825,11 @@ async fn execute_command(
         eprintln!("Warning: No output values");
     } else {
         for (key, value) in &result.execution.results {
+            // Skip printing null values (void operations like PRINT)
+            if matches!(value, apxm_core::types::values::Value::Null) {
+                continue;
+            }
+
             if result.execution.results.len() == 1 {
                 // Single result: print just the value
                 println!("{}", value);

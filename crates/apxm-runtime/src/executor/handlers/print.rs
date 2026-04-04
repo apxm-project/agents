@@ -18,22 +18,52 @@ fn format_value(v: &Value) -> String {
     }
 }
 
+/// Resolve template variables like {{node_N}} in a message string.
+/// Replaces {{node_N}} with the value from the input that came from node N.
+/// If the specific node source cannot be determined, replaces with all inputs concatenated.
+fn resolve_template_vars(message: &str, inputs: &[Value]) -> String {
+    // Simple regex replacement: {{node_\d+}} -> concatenated inputs
+    // TODO: This is a minimal fix. Full implementation would track token sources
+    // to map each {{node_N}} to the specific input from node N.
+
+    let re = regex::Regex::new(r"\{\{node_\d+\}\}").unwrap();
+    let mut result = message.to_string();
+
+    // Replace all {{node_*}} placeholders with concatenated input values
+    if re.is_match(message) && !inputs.is_empty() {
+        let replacement = inputs.iter().map(format_value).collect::<Vec<_>>().join("");
+        result = re.replace_all(message, replacement.as_str()).to_string();
+    }
+
+    result
+}
+
 /// Execute a print operation. This is a void operation (no output tokens).
 /// Output is rendered as markdown for terminal display.
 pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -> Result<Value> {
     let message = get_string_attribute(node, graph_attrs::MESSAGE).unwrap_or_default();
 
-    // Build output: message followed by any input values
-    let mut output = message.clone();
-    for (i, input) in inputs.iter().enumerate() {
-        if i == 0 && !message.is_empty() {
-            output.push(' ');
+    // Resolve template variables in the message
+    let resolved_message = resolve_template_vars(&message, &inputs);
+
+    // Build output: resolved message followed by any remaining input values not already included
+    let output = if message.contains("{{") {
+        // If we resolved templates, the inputs are already included in the message
+        resolved_message
+    } else {
+        // Original behavior: message followed by inputs
+        let mut output = resolved_message.clone();
+        for (i, input) in inputs.iter().enumerate() {
+            if i == 0 && !resolved_message.is_empty() {
+                output.push(' ');
+            }
+            output.push_str(&format_value(input));
+            if i < inputs.len() - 1 {
+                output.push(' ');
+            }
         }
-        output.push_str(&format_value(input));
-        if i < inputs.len() - 1 {
-            output.push(' ');
-        }
-    }
+        output
+    };
 
     // Render markdown to terminal
     let skin = MadSkin::default();

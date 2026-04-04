@@ -161,12 +161,12 @@ mod enabled {
                 }
             }
 
-            // Sample parallelism (don't lock on every call - sample every 16th)
-            if current > 1
-                && self
-                    .operations_executed
-                    .load(Ordering::Relaxed)
-                    .is_multiple_of(16)
+            // Sample parallelism periodically (every 4th operation to capture dynamics)
+            // Don't require current > 1 so we accurately track average (including sequential phases)
+            if self
+                .operations_executed
+                .load(Ordering::Relaxed)
+                .is_multiple_of(4)
                 && let Some(mut samples) = self.parallelism_samples.try_lock()
             {
                 samples.push(current);

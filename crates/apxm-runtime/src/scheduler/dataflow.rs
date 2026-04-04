@@ -25,7 +25,6 @@ type RuntimeResult<T> = Result<T, RuntimeError>;
 /// - Downstream consumers become ready when their inputs arrive
 pub struct DataflowScheduler {
     config: SchedulerConfig,
-    metrics: Arc<MetricsCollector>,
 }
 
 impl DataflowScheduler {
@@ -33,7 +32,6 @@ impl DataflowScheduler {
     pub fn new(config: SchedulerConfig) -> Self {
         Self {
             config,
-            metrics: Arc::new(MetricsCollector::new()),
         }
     }
 
@@ -77,11 +75,15 @@ impl DataflowScheduler {
         // Validate DAG cost budget early
         self.enforce_cost_budget(&dag)?;
 
+        // Create a new MetricsCollector for each execution to avoid accumulating
+        // metrics across multiple workflow runs (fix for work_stealing timer overflow)
+        let metrics = Arc::new(MetricsCollector::new());
+
         // Build shared scheduler state
         let (state, workers) = SchedulerState::new(
             dag,
             self.config.clone(),
-            self.metrics.clone(),
+            metrics.clone(),
             start,
             inputs,
         )?;
