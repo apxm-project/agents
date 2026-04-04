@@ -175,7 +175,10 @@ mod tests {
     #[test]
     fn test_backend_type_from_str() {
         assert_eq!("cloud".parse::<BackendType>().unwrap(), BackendType::Cloud);
-        assert_eq!("onprem".parse::<BackendType>().unwrap(), BackendType::OnPrem);
+        assert_eq!(
+            "onprem".parse::<BackendType>().unwrap(),
+            BackendType::OnPrem
+        );
         assert_eq!("local".parse::<BackendType>().unwrap(), BackendType::Local);
         assert!("unknown".parse::<BackendType>().is_err());
     }
@@ -241,19 +244,17 @@ mod tests {
             endpoint: None,
             api_key: Some("env:OPENAI_API_KEY".to_string()),
             headers: HashMap::new(),
-            models: vec![
-                ModelConfig {
-                    id: "gpt-4".to_string(),
-                    aliases: vec!["gpt4".to_string()],
-                    context_window: 8192,
-                    cost_per_1k_input: 0.03,
-                    cost_per_1k_output: 0.06,
-                    supports_vision: false,
-                    supports_functions: true,
-                    supports_thinking: false,
-                    tags: vec!["production".to_string()],
-                },
-            ],
+            models: vec![ModelConfig {
+                id: "gpt-4".to_string(),
+                aliases: vec!["gpt4".to_string()],
+                context_window: 8192,
+                cost_per_1k_input: 0.03,
+                cost_per_1k_output: 0.06,
+                supports_vision: false,
+                supports_functions: true,
+                supports_thinking: false,
+                tags: vec!["production".to_string()],
+            }],
             docker: None,
         };
 

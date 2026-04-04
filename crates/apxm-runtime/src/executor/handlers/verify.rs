@@ -30,7 +30,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         });
 
     let request = LLMRequest::new(verification_prompt).with_system_prompt(system_prompt);
-    let response = execute_llm_request(ctx, "VERIFY", &request).await?;
+    let response = execute_llm_request(ctx, node.id, "VERIFY", &request).await?;
 
     let is_verified = response.content.to_lowercase().contains("true");
 

@@ -100,6 +100,7 @@ pub mod graph {
         pub const MAX_TOOL_ITERATIONS: &str = "max_tool_iterations";
         // SPAWN_AGENT attributes
         pub const PROFILE: &str = "profile";
+        pub const NODE_NAME: &str = "node_name";
         pub const MODE: &str = "mode";
         pub const CWD: &str = "cwd";
         // Phase 2 coordination/identity/self-organization attributes
@@ -127,6 +128,7 @@ pub mod runtime {
         pub const PARENT_EXECUTION_ID: &str = "parent_execution_id";
         pub const SCOPE_ID: &str = "scope_id";
         pub const PARENT_SCOPE_ID: &str = "parent_scope_id";
+        pub const SESSION_DIR: &str = "session_dir";
         pub const DELEGATE_TASK_SPEC: &str = "delegate_task_spec";
         pub const DELEGATE_TARGET: &str = "delegate_target";
         pub const NEGOTIATE_PROPOSAL: &str = "negotiate_proposal";
@@ -484,6 +486,18 @@ pub mod session {
         pub const NODE_STATUSES: &str = "node_statuses.json";
         pub const TRACE: &str = "trace.ndjson";
         pub const LIVE: &str = "live.json";
+        pub const NODES_DIR: &str = "nodes";
+    }
+
+    pub mod node {
+        pub const NODE_JSON: &str = "node.json";
+        pub const LIVE_JSON: &str = "live.json";
+        pub const OUTPUT_JSON: &str = "output.json";
+        pub const STATUS_JSON: &str = "status.json";
+        pub const TRACE_NDJSON: &str = "trace.ndjson";
+        pub const PROMPT_TXT: &str = "prompt.txt";
+        pub const RESPONSE_TXT: &str = "response.txt";
+        pub const SKILLS_DIR: &str = "skills";
     }
 
     pub mod status {

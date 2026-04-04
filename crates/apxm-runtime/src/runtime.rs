@@ -1,5 +1,6 @@
 //! Runtime orchestrator - Main entry point for the APxM runtime
 
+use crate::model_router::{ModelRouter, ModelRouterConfig};
 use crate::{
     aam::Aam,
     capability::{CapabilitySystem, flow_registry::FlowRegistry},
@@ -12,6 +13,7 @@ use crate::{
 };
 use apxm_artifact::Artifact;
 use apxm_backends::LLMRegistry;
+use apxm_core::constants::runtime::metadata;
 use apxm_core::log_info;
 use apxm_core::{
     error::RuntimeError,
@@ -21,7 +23,6 @@ use apxm_core::{
     },
 };
 use apxm_sandbox::SandboxRegistry;
-use crate::model_router::{ModelRouter, ModelRouterConfig};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
 
@@ -155,6 +156,7 @@ impl Runtime {
         &self,
         session_id: Option<String>,
         event_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
+        session_dir: Option<String>,
     ) -> ExecutionContext {
         let mut ctx = ExecutionContext::new(
             Arc::clone(&self.memory),
@@ -171,6 +173,9 @@ impl Runtime {
         ctx.event_emitter = event_emitter;
         ctx.sandbox_registry = Arc::clone(&self.sandbox_registry);
         ctx.process_table = Arc::clone(&self.process_table);
+        if let Some(dir) = session_dir {
+            ctx.metadata.insert(metadata::SESSION_DIR.to_string(), dir);
+        }
         if let Some(ref router) = self.model_router {
             ctx.model_router = Some(Arc::clone(router));
         }
@@ -256,7 +261,7 @@ impl Runtime {
         self.llm_registry.metrics().reset();
 
         // Create execution context
-        let context = self.build_context(None, None);
+        let context = self.build_context(None, None, None);
 
         // Create executor
         let executor = Arc::new(ExecutorEngine::new(context.clone()));
@@ -319,7 +324,7 @@ impl Runtime {
         artifact: Artifact,
         args: Vec<String>,
     ) -> Result<RuntimeExecutionResult, RuntimeError> {
-        self.execute_artifact_with_session_and_emitter(artifact, args, None, None)
+        self.execute_artifact_with_session_and_emitter(artifact, args, None, None, None)
             .await
     }
 
@@ -330,7 +335,7 @@ impl Runtime {
         args: Vec<String>,
         session_id: Option<String>,
     ) -> Result<RuntimeExecutionResult, RuntimeError> {
-        self.execute_artifact_with_session_and_emitter(artifact, args, session_id, None)
+        self.execute_artifact_with_session_and_emitter(artifact, args, session_id, None, None)
             .await
     }
 
@@ -341,6 +346,7 @@ impl Runtime {
         args: Vec<String>,
         session_id: Option<String>,
         event_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
+        session_dir: Option<String>,
     ) -> Result<RuntimeExecutionResult, RuntimeError> {
         let _lane_permit = if let Some(ref sid) = session_id {
             Some(self.session_lane_guard.acquire(sid).await)
@@ -359,7 +365,7 @@ impl Runtime {
         #[cfg(feature = "metrics")]
         self.llm_registry.metrics().reset();
 
-        let context = self.build_context(session_id, event_emitter);
+        let context = self.build_context(session_id, event_emitter, session_dir);
         let executor = Arc::new(ExecutorEngine::new(context.clone()));
         let (results, stats, scheduler_metrics, all_outputs, node_output_map) = self
             .scheduler

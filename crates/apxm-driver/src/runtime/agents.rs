@@ -97,13 +97,12 @@ impl AgentSpawner for AcpAgentSpawner {
             "Spawning ACP agent subprocess"
         );
 
-        let mut session =
-            AcpSession::spawn(agent_name, &profile, cwd, aam_context)
-                .await
-                .map_err(|e| RuntimeError::Operation {
-                    op_type: apxm_core::types::operations::AISOperationType::SpawnAgent,
-                    message: format!("ACP spawn failed for '{}': {}", agent_name, e),
-                })?;
+        let mut session = AcpSession::spawn(agent_name, &profile, cwd, aam_context)
+            .await
+            .map_err(|e| RuntimeError::Operation {
+                op_type: apxm_core::types::operations::AISOperationType::SpawnAgent,
+                message: format!("ACP spawn failed for '{}': {}", agent_name, e),
+            })?;
 
         // Apply session controls if specified (or from profile defaults)
         if let Some(mode_id) = effective_mode {
@@ -155,11 +154,7 @@ impl AcpAgentPrompter {
 
 #[async_trait::async_trait]
 impl AgentPrompter for AcpAgentPrompter {
-    async fn prompt(
-        &self,
-        process: &AgentProcess,
-        message: &str,
-    ) -> Result<Value, RuntimeError> {
+    async fn prompt(&self, process: &AgentProcess, message: &str) -> Result<Value, RuntimeError> {
         use apxm_runtime::process::ProcessKind;
 
         let (session_arc, profile_name) = match &process.kind {
@@ -186,30 +181,30 @@ impl AgentPrompter for AcpAgentPrompter {
             .map(|p| p.permission_mode.clone())
             .unwrap_or_default();
 
-        let handler = CapabilityReverseHandler::new(
-            Arc::clone(&self.capability_system),
-            permission_mode,
-        );
+        let handler =
+            CapabilityReverseHandler::new(Arc::clone(&self.capability_system), permission_mode);
 
         // Lock the session and send the prompt
         let mut guard = session_arc.lock().await;
-        let session = guard
-            .downcast_mut::<AcpSession>()
-            .ok_or_else(|| RuntimeError::Operation {
-                op_type: apxm_core::types::operations::AISOperationType::Communicate,
-                message: format!(
-                    "Agent '{}' session has unexpected type (expected AcpSession)",
-                    process.name
-                ),
-            })?;
+        let session =
+            guard
+                .downcast_mut::<AcpSession>()
+                .ok_or_else(|| RuntimeError::Operation {
+                    op_type: apxm_core::types::operations::AISOperationType::Communicate,
+                    message: format!(
+                        "Agent '{}' session has unexpected type (expected AcpSession)",
+                        process.name
+                    ),
+                })?;
 
-        let result = session
-            .prompt(message, &handler)
-            .await
-            .map_err(|e| RuntimeError::Operation {
-                op_type: apxm_core::types::operations::AISOperationType::Communicate,
-                message: format!("ACP prompt to '{}' failed: {}", process.name, e),
-            })?;
+        let result =
+            session
+                .prompt(message, &handler)
+                .await
+                .map_err(|e| RuntimeError::Operation {
+                    op_type: apxm_core::types::operations::AISOperationType::Communicate,
+                    message: format!("ACP prompt to '{}' failed: {}", process.name, e),
+                })?;
 
         apxm_acp!(info,
             agent = %process.name,

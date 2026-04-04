@@ -725,7 +725,11 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         fields: &[
             OperationField::required("template_str", "Prompt template for the question"),
             OperationField::optional("temperature", "Sampling temperature (0.0-1.0)"),
-            OperationField::optional_ref("model", "LLM model override (uses config default)", ReferenceType::Model),
+            OperationField::optional_ref(
+                "model",
+                "LLM model override (uses config default)",
+                ReferenceType::Model,
+            ),
         ],
         needs_submission: true,
         min_inputs: 0,
@@ -748,7 +752,11 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             OperationField::required("template_str", "Prompt template for deep reasoning"),
             OperationField::optional("budget", "Token budget for extended thinking"),
             OperationField::optional("temperature", "Sampling temperature (0.0-1.0)"),
-            OperationField::optional_ref("model", "LLM model override (uses config default)", ReferenceType::Model),
+            OperationField::optional_ref(
+                "model",
+                "LLM model override (uses config default)",
+                ReferenceType::Model,
+            ),
         ],
         needs_submission: true,
         min_inputs: 0,
@@ -770,7 +778,11 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         fields: &[
             OperationField::required("template_str", "Prompt template for structured reasoning"),
             OperationField::optional("temperature", "Sampling temperature (0.0-1.0)"),
-            OperationField::optional_ref("model", "LLM model override (uses config default)", ReferenceType::Model),
+            OperationField::optional_ref(
+                "model",
+                "LLM model override (uses config default)",
+                ReferenceType::Model,
+            ),
             OperationField::optional("structured", "Enable structured JSON output"),
         ],
         needs_submission: true,
@@ -853,7 +865,11 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             r#"{"id": 2, "op": "INV", "attributes": {"capability": "web_search", "parameters": {"query": "{{node_1}}"}}}"#,
         ),
         fields: &[
-            OperationField::required_ref("capability", "Name of the capability/tool to invoke", ReferenceType::Capability),
+            OperationField::required_ref(
+                "capability",
+                "Name of the capability/tool to invoke",
+                ReferenceType::Capability,
+            ),
             OperationField::optional("parameters", "Parameters to pass to the tool"),
         ],
         needs_submission: true,
@@ -1383,7 +1399,11 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
                 "mode",
                 "Agent mode to set after spawn (e.g. 'architect', 'code')",
             ),
-            OperationField::optional_ref("model", "Model override (e.g. 'claude-sonnet-4')", ReferenceType::Model),
+            OperationField::optional_ref(
+                "model",
+                "Model override (e.g. 'claude-sonnet-4')",
+                ReferenceType::Model,
+            ),
             OperationField::optional(
                 "cwd",
                 "Working directory for the agent subprocess (defaults to current dir)",

@@ -105,8 +105,7 @@ impl DockerManager {
 
         // Mount model path if specified
         if let Some(model_path) = &docker_config.model_path {
-            cmd.arg("-v")
-                .arg(format!("{model_path}:/models:ro")); // Read-only mount
+            cmd.arg("-v").arg(format!("{model_path}:/models:ro")); // Read-only mount
         }
 
         // Add GPU support if tensor_parallel is specified
@@ -191,9 +190,7 @@ impl DockerManager {
             return Err(DockerError::DockerNotAvailable);
         }
 
-        let output = Command::new("docker")
-            .args(["rm", container_id])
-            .output()?;
+        let output = Command::new("docker").args(["rm", container_id]).output()?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -213,7 +210,14 @@ impl DockerManager {
 
         // Check if container exists and is running
         let output = Command::new("docker")
-            .args(["ps", "-a", "-f", &format!("name=^{backend_name}$"), "--format", "{{.Status}}"])
+            .args([
+                "ps",
+                "-a",
+                "-f",
+                &format!("name=^{backend_name}$"),
+                "--format",
+                "{{.Status}}",
+            ])
             .output()?;
 
         if !output.status.success() {

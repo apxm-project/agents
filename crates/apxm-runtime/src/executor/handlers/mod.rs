@@ -154,6 +154,7 @@ pub fn llm_error(
 
 pub async fn execute_llm_request(
     ctx: &ExecutionContext,
+    node_id: u64,
     phase: &str,
     request: &LLMRequest,
 ) -> Result<LLMResponse> {
@@ -161,8 +162,9 @@ pub async fn execute_llm_request(
     // emit token-by-token events. The default generate_stream() impl
     // just wraps generate() into a single Done chunk, so this is
     // backward compatible.
-    if ctx.event_emitter.is_some() {
-        return execute_llm_request_streaming(ctx, phase, request).await;
+    if let Some(emitter) = &ctx.event_emitter {
+        emitter.emit_llm_prompt(node_id, &request.prompt);
+        return execute_llm_request_streaming(ctx, node_id, phase, request).await;
     }
 
     #[cfg(feature = "metrics")]
@@ -205,6 +207,7 @@ struct PendingToolCall {
 /// with results appended to the final response's tool_calls list.
 async fn execute_llm_request_streaming(
     ctx: &ExecutionContext,
+    node_id: u64,
     phase: &str,
     request: &LLMRequest,
 ) -> Result<LLMResponse> {
@@ -215,7 +218,10 @@ async fn execute_llm_request_streaming(
     let start = std::time::Instant::now();
 
     // When a ModelRouter is present, let it choose backend/model first.
-    let router_decision = ctx.model_router.as_ref().and_then(|r| r.select(request).ok());
+    let router_decision = ctx
+        .model_router
+        .as_ref()
+        .and_then(|r| r.select(request).ok());
     let prepared_request = if let Some(ref decision) = router_decision {
         let mut req = request.clone();
         req.backend = Some(decision.backend.clone());
@@ -235,6 +241,7 @@ async fn execute_llm_request_streaming(
     let mut stream = backend.generate_stream(prepared_request.clone());
 
     let mut final_response: Option<LLMResponse> = None;
+    let mut emitted_text = false;
     // Tool call accumulation state for mid-stream interleaving
     let mut pending_tool_call: Option<PendingToolCall> = None;
     let mut streamed_tool_calls: Vec<apxm_core::types::ToolCall> = Vec::new();
@@ -249,7 +256,8 @@ async fn execute_llm_request_streaming(
                     streamed_tool_calls.push(finalize_pending_tool_call(tc));
                 }
                 if let Some(emitter) = &ctx.event_emitter {
-                    emitter.emit_llm_token(&token);
+                    emitter.emit_llm_token_for_node(node_id, &token);
+                    emitted_text = true;
                 }
             }
             StreamChunk::ToolCallStart { id, name } => {
@@ -282,7 +290,8 @@ async fn execute_llm_request_streaming(
             StreamChunk::Thought(thought) => {
                 // Extended thinking tokens — emit as LLM token for now
                 if let Some(emitter) = &ctx.event_emitter {
-                    emitter.emit_llm_token(&thought);
+                    emitter.emit_llm_token_for_node(node_id, &thought);
+                    emitted_text = true;
                 }
             }
             StreamChunk::Usage(_usage) => {
@@ -306,6 +315,12 @@ async fn execute_llm_request_streaming(
     // when the Done chunk has none.
     if !streamed_tool_calls.is_empty() && response.tool_calls.is_empty() {
         response.tool_calls = streamed_tool_calls;
+    }
+
+    if !emitted_text && !response.content.is_empty() {
+        if let Some(emitter) = &ctx.event_emitter {
+            emitter.emit_llm_token_for_node(node_id, &response.content);
+        }
     }
 
     #[cfg(feature = "metrics")]

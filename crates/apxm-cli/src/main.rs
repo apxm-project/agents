@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use apxm_core::utils::build::MlirEnvReport;
-use apxm_credentials::docker::{DockerManager, ContainerStatus};
+use apxm_credentials::docker::{ContainerStatus, DockerManager};
 #[cfg(feature = "driver")]
 use apxm_driver::compiler::Compiler;
 #[cfg(feature = "driver")]
@@ -34,8 +34,7 @@ fn initialize_tracing(level: &Option<String>) {
         },
     };
 
-    let filter =
-        EnvFilter::try_new(&filter_str).unwrap_or_else(|_| EnvFilter::new("apxm=info"));
+    let filter = EnvFilter::try_new(&filter_str).unwrap_or_else(|_| EnvFilter::new("apxm=info"));
 
     tracing_subscriber::registry()
         .with(filter)
@@ -509,7 +508,11 @@ async fn agent_command(action: AgentAction, json_output: bool) -> Result<()> {
                 src_w = max_source,
             );
             for (name, profile, from_template) in &list {
-                let source = if *from_template { sources::TEMPLATE } else { sources::CUSTOM };
+                let source = if *from_template {
+                    sources::TEMPLATE
+                } else {
+                    sources::CUSTOM
+                };
                 println!(
                     "  {:<name_w$}  {:<src_w$}  {}",
                     name.bold(),
@@ -558,9 +561,7 @@ async fn agent_command(action: AgentAction, json_output: bool) -> Result<()> {
                     let mut profile = reg
                         .get_template(&name)
                         .ok_or_else(|| {
-                            anyhow::anyhow!(
-                                "Unknown template '{name}'. Run: apxm agent templates"
-                            )
+                            anyhow::anyhow!("Unknown template '{name}'. Run: apxm agent templates")
                         })?
                         .clone();
                     // Apply overrides
@@ -613,7 +614,9 @@ async fn agent_command(action: AgentAction, json_output: bool) -> Result<()> {
                     print_status_line(&name, Status::Ok, "removed");
                 }
                 Ok(false) => {
-                    return Err(anyhow::anyhow!("Agent '{name}' not found. Run: apxm agent list"));
+                    return Err(anyhow::anyhow!(
+                        "Agent '{name}' not found. Run: apxm agent list"
+                    ));
                 }
                 Err(e) => {
                     return Err(anyhow::anyhow!("Failed to remove agent: {e}"));
@@ -712,17 +715,25 @@ async fn models_command(action: ModelsAction, json_output: bool) -> Result<()> {
             let models = registry.list();
 
             if json_output {
-                println!("{}", serde_json::to_string_pretty(&models.iter().map(|m| {
-                    serde_json::json!({
-                        "name": m.name,
-                        "backend": m.backend,
-                        "cost_per_1k_input": m.cost_per_1k_input,
-                        "cost_per_1k_output": m.cost_per_1k_output,
-                        "context_window": m.context_window,
-                        "tags": m.tags,
-                        "supports_thinking": m.supports_thinking,
-                    })
-                }).collect::<Vec<_>>())?);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(
+                        &models
+                            .iter()
+                            .map(|m| {
+                                serde_json::json!({
+                                    "name": m.name,
+                                    "backend": m.backend,
+                                    "cost_per_1k_input": m.cost_per_1k_input,
+                                    "cost_per_1k_output": m.cost_per_1k_output,
+                                    "context_window": m.context_window,
+                                    "tags": m.tags,
+                                    "supports_thinking": m.supports_thinking,
+                                })
+                            })
+                            .collect::<Vec<_>>()
+                    )?
+                );
                 return Ok(());
             }
 
@@ -750,11 +761,16 @@ async fn models_command(action: ModelsAction, json_output: bool) -> Result<()> {
                 println!("  {}{}", m.name.bold(), default_marker.dimmed());
                 println!("    Backend:        {}", m.backend);
                 if m.context_window > 0 {
-                    println!("    Context window: {} tokens", format_number(m.context_window));
+                    println!(
+                        "    Context window: {} tokens",
+                        format_number(m.context_window)
+                    );
                 }
                 if m.cost_per_1k_input > 0.0 || m.cost_per_1k_output > 0.0 {
-                    println!("    Cost:           ${:.4}/1k in, ${:.4}/1k out",
-                        m.cost_per_1k_input, m.cost_per_1k_output);
+                    println!(
+                        "    Cost:           ${:.4}/1k in, ${:.4}/1k out",
+                        m.cost_per_1k_input, m.cost_per_1k_output
+                    );
                 }
                 if !m.tags.is_empty() {
                     println!("    Tags:           {}", m.tags.join(", "));
@@ -854,7 +870,6 @@ fn format_number(n: usize) -> String {
     }
     result.chars().rev().collect()
 }
-
 
 fn tool_command(action: ToolAction, json_output: bool) -> Result<()> {
     match action {
@@ -1014,7 +1029,17 @@ async fn run_cli() -> Result<()> {
             opt_level,
             emit_metrics,
             emit_session,
-        } => execute_command(input, args, opt_level, cli.config, emit_metrics, emit_session).await,
+        } => {
+            execute_command(
+                input,
+                args,
+                opt_level,
+                cli.config,
+                emit_metrics,
+                emit_session,
+            )
+            .await
+        }
         Commands::Run {
             input,
             args,
@@ -1267,7 +1292,11 @@ fn compile_command(
 
     let out_path = output.unwrap_or_else(|| {
         if input.is_dir() {
-            input.join(format!("{}.{}", graph.name, apxm_core::constants::extensions::ARTIFACT))
+            input.join(format!(
+                "{}.{}",
+                graph.name,
+                apxm_core::constants::extensions::ARTIFACT
+            ))
         } else {
             input.with_extension(apxm_core::constants::extensions::ARTIFACT)
         }
@@ -1431,7 +1460,10 @@ fn load_graph_from_directory(dir: &std::path::Path) -> Result<apxm_graph::ApxmGr
         for entry in std::fs::read_dir(&search_dir)? {
             let entry = entry?;
             let path = entry.path();
-            if matches!(path.extension().and_then(|e| e.to_str()), Some(apxm_core::constants::extensions::GRAPH | "json")) {
+            if matches!(
+                path.extension().and_then(|e| e.to_str()),
+                Some(apxm_core::constants::extensions::GRAPH | "json")
+            ) {
                 let text = std::fs::read_to_string(&path)
                     .with_context(|| format!("Failed to read {}", path.display()))?;
                 if text.contains("\"nodes\"") {
@@ -1466,6 +1498,58 @@ fn load_graph_from_directory(dir: &std::path::Path) -> Result<apxm_graph::ApxmGr
 /// Shared session setup: creates session dir, writes running manifest, creates emitter.
 /// Returns an Arc<SessionEventEmitter> so callers can call set_total_nodes() before execution.
 #[cfg(feature = "driver")]
+fn graph_json_from_execution_dag(
+    dag: &apxm_core::types::execution::ExecutionDag,
+) -> Option<String> {
+    let nodes = dag
+        .nodes
+        .iter()
+        .map(|node| {
+            serde_json::json!({
+                "id": node.id,
+                "name": node
+                    .metadata
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| format!("node_{}", node.id)),
+                "op": serde_json::to_value(node.op_type).unwrap_or_default(),
+                "attributes": serde_json::to_value(&node.attributes).unwrap_or_default(),
+            })
+        })
+        .collect::<Vec<_>>();
+    let edges = dag
+        .edges
+        .iter()
+        .map(|edge| {
+            serde_json::json!({
+                "from": edge.from,
+                "to": edge.to,
+                "dependency": serde_json::to_value(&edge.dependency_type).unwrap_or_default(),
+            })
+        })
+        .collect::<Vec<_>>();
+    let parameters = dag
+        .metadata
+        .parameters
+        .iter()
+        .map(|param| {
+            serde_json::json!({
+                "name": param.name,
+                "type_name": param.type_name,
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::to_string(&serde_json::json!({
+        "name": dag.metadata.name.clone().unwrap_or_else(|| "artifact".to_string()),
+        "nodes": nodes,
+        "edges": edges,
+        "parameters": parameters,
+        "metadata": { "is_entry": dag.metadata.is_entry },
+    }))
+    .ok()
+}
+
+#[cfg(feature = "driver")]
 fn setup_session(
     emit_session: &Option<Option<PathBuf>>,
     input: &std::path::Path,
@@ -1493,7 +1577,10 @@ fn setup_session(
 
     let exec_id = format!(
         "{}-{}",
-        input.file_stem().and_then(|s| s.to_str()).unwrap_or(default_stem),
+        input
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(default_stem),
         chrono::Utc::now().format("%Y%m%dT%H%M%S")
     );
 
@@ -1502,14 +1589,14 @@ fn setup_session(
 
     let graph_name = input.file_stem().and_then(|s| s.to_str());
     w.write_manifest(
-            &exec_id,
-            graph_name,
-            apxm_core::constants::session::status::RUNNING,
-            0,
-            0,
-            false,
-        )
-        .context("Failed to write manifest")?;
+        &exec_id,
+        graph_name,
+        apxm_core::constants::session::status::RUNNING,
+        0,
+        0,
+        false,
+    )
+    .context("Failed to write manifest")?;
 
     if let Some(graph_json) = input_graph_json {
         // Set total node count from graph JSON for live.json progress tracking
@@ -1523,9 +1610,15 @@ fn setup_session(
 
     eprintln!("Session: {}", w.session_dir().display());
 
+    let project_root = std::env::current_dir().ok();
     let emitter = std::sync::Arc::new(
-        SessionEventEmitter::new(w.session_dir(), exec_id.clone())
-            .context("Failed to create session event emitter")?,
+        SessionEventEmitter::new(
+            w.session_dir(),
+            exec_id.clone(),
+            input_graph_json,
+            project_root.as_deref(),
+        )
+        .context("Failed to create session event emitter")?,
     );
 
     // Set total node count for progress tracking in live.json
@@ -1553,7 +1646,10 @@ async fn execute_command(
 
     // Enable all-outputs collection when session output is requested
     if emit_session.is_some() {
-        linker_config.runtime_config.scheduler_config.collect_all_outputs = true;
+        linker_config
+            .runtime_config
+            .scheduler_config
+            .collect_all_outputs = true;
     }
 
     let linker = Linker::new(linker_config)
@@ -1568,16 +1664,13 @@ async fn execute_command(
     };
 
     // Set up session output + live emitter BEFORE execution
-    let (writer, emitter, execution_id) = setup_session(
-        &emit_session,
-        &input,
-        "graph",
-        input_graph_json.as_deref(),
-    )?;
+    let (writer, emitter, execution_id) =
+        setup_session(&emit_session, &input, "graph", input_graph_json.as_deref())?;
 
     // Coerce Arc<SessionEventEmitter> → Arc<dyn ExecutionEventEmitter> for run_graph
-    let emitter_dyn: Option<std::sync::Arc<dyn apxm_runtime::ExecutionEventEmitter>> =
-        emitter.as_ref().map(|e| e.clone() as std::sync::Arc<dyn apxm_runtime::ExecutionEventEmitter>);
+    let emitter_dyn: Option<std::sync::Arc<dyn apxm_runtime::ExecutionEventEmitter>> = emitter
+        .as_ref()
+        .map(|e| e.clone() as std::sync::Arc<dyn apxm_runtime::ExecutionEventEmitter>);
 
     // Background ticker: updates live.json elapsed_ms every second so it stays
     // current even during long LLM calls between operation events.
@@ -1591,25 +1684,39 @@ async fn execute_command(
         })
     });
 
-    let result = match linker.run_graph(&input, args, emitter_dyn).await {
+    let result = match linker
+        .run_graph(
+            &input,
+            args,
+            emitter_dyn,
+            writer.as_ref().map(|w| w.session_dir()),
+        )
+        .await
+    {
         Ok(r) => r,
         Err(err) => {
             // Stop the ticker and finalize live.json + manifest as failed.
-            if let Some(h) = ticker_handle { h.abort(); }
+            if let Some(h) = ticker_handle {
+                h.abort();
+            }
             if let Some(ref w) = writer {
                 let exec_id = execution_id.as_deref();
                 let graph_name = input.file_stem().and_then(|s| s.to_str());
                 let _ = w.finalize_live_with_id(false, exec_id, graph_name);
             }
             // Also call emitter.finalize_live so elapsed/completed are preserved.
-            if let Some(ref e) = emitter { let _ = e.finalize_live(false); }
+            if let Some(ref e) = emitter {
+                let _ = e.finalize_live(false);
+            }
             eprintln!("{}", err);
             return Err(anyhow::anyhow!("Execution failed"));
         }
     };
 
     // Stop the background ticker now that execution is done.
-    if let Some(h) = ticker_handle { h.abort(); }
+    if let Some(h) = ticker_handle {
+        h.abort();
+    }
 
     // Emit metrics JSON if requested
     #[allow(unused_mut)]
@@ -1705,7 +1812,9 @@ async fn run_command(
     use apxm_driver::runtime::RuntimeExecutor;
 
     // Validate file extension
-    if input.extension().and_then(|e| e.to_str()) != Some(apxm_core::constants::extensions::ARTIFACT) {
+    if input.extension().and_then(|e| e.to_str())
+        != Some(apxm_core::constants::extensions::ARTIFACT)
+    {
         return Err(anyhow::anyhow!(
             "Expected .apxmobj artifact file. Use 'execute' command for graph source files."
         ));
@@ -1723,28 +1832,45 @@ async fn run_command(
 
     // Enable all-outputs collection when session output is requested
     if emit_session.is_some() {
-        linker_config.runtime_config.scheduler_config.collect_all_outputs = true;
+        linker_config
+            .runtime_config
+            .scheduler_config
+            .collect_all_outputs = true;
     }
 
     let runtime = RuntimeExecutor::new(&linker_config)
         .await
         .context("Failed to initialize runtime")?;
 
+    let artifact_graph_json = if emit_session.is_some() {
+        artifact.entry_dag().and_then(graph_json_from_execution_dag)
+    } else {
+        None
+    };
+
     // Set up session output + live emitter BEFORE execution
     let (writer, emitter, execution_id) = setup_session(
         &emit_session,
         &input,
         "artifact",
-        None,
+        artifact_graph_json.as_deref(),
     )?;
 
     // Coerce Arc<SessionEventEmitter> → Arc<dyn ExecutionEventEmitter>
-    let emitter_dyn: Option<std::sync::Arc<dyn apxm_runtime::ExecutionEventEmitter>> =
-        emitter.as_ref().map(|e| e.clone() as std::sync::Arc<dyn apxm_runtime::ExecutionEventEmitter>);
+    let emitter_dyn: Option<std::sync::Arc<dyn apxm_runtime::ExecutionEventEmitter>> = emitter
+        .as_ref()
+        .map(|e| e.clone() as std::sync::Arc<dyn apxm_runtime::ExecutionEventEmitter>);
 
     // Execute artifact with args + emitter
     let result = match runtime
-        .execute_artifact_with_emitter(artifact, args, emitter_dyn)
+        .execute_artifact_with_emitter(
+            artifact,
+            args,
+            emitter_dyn,
+            writer
+                .as_ref()
+                .map(|w| w.session_dir().to_string_lossy().to_string()),
+        )
         .await
     {
         Ok(r) => r,
@@ -1807,8 +1933,8 @@ async fn run_command(
 }
 
 async fn backend_command(action: BackendAction, json_output: bool) -> Result<()> {
-    use apxm_credentials::backend::BackendStore;
     use apxm_core::types::{BackendConfig, BackendType, ProviderProtocol};
+    use apxm_credentials::backend::BackendStore;
     use std::str::FromStr;
 
     let store = BackendStore::open().map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -1823,12 +1949,12 @@ async fn backend_command(action: BackendAction, json_output: bool) -> Result<()>
             header,
         } => {
             // Parse backend type
-            let backend_type = BackendType::from_str(&r#type)
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            let backend_type =
+                BackendType::from_str(&r#type).map_err(|e| anyhow::anyhow!("{e}"))?;
 
             // Parse protocol
-            let protocol = ProviderProtocol::from_str(&protocol)
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            let protocol =
+                ProviderProtocol::from_str(&protocol).map_err(|e| anyhow::anyhow!("{e}"))?;
 
             // Get API key if needed
             let api_key = if api_key.is_some() || backend_type == BackendType::Local {
@@ -1952,7 +2078,9 @@ async fn backend_command(action: BackendAction, json_output: bool) -> Result<()>
         }
         BackendAction::Migrate { yes } => {
             if !yes {
-                eprintln!("This will migrate credentials from ~/.apxm/credentials.toml to ~/.apxm/config.toml");
+                eprintln!(
+                    "This will migrate credentials from ~/.apxm/credentials.toml to ~/.apxm/config.toml"
+                );
                 eprint!("Continue? [y/N] ");
                 use std::io::{self, BufRead};
                 let mut line = String::new();
@@ -1963,7 +2091,9 @@ async fn backend_command(action: BackendAction, json_output: bool) -> Result<()>
                 }
             }
 
-            let count = store.migrate_from_credentials().map_err(|e| anyhow::anyhow!("{e}"))?;
+            let count = store
+                .migrate_from_credentials()
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
 
             if json_output {
                 println!("{{\"status\":\"ok\",\"migrated\":{count}}}");
@@ -1987,7 +2117,9 @@ async fn backend_command(action: BackendAction, json_output: bool) -> Result<()>
                 .map_err(|e| anyhow::anyhow!("Failed to start backend: {e}"))?;
 
             if json_output {
-                println!("{{\"status\":\"ok\",\"backend\":\"{name}\",\"container_id\":\"{container_id}\"}}");
+                println!(
+                    "{{\"status\":\"ok\",\"backend\":\"{name}\",\"container_id\":\"{container_id}\"}}"
+                );
             } else {
                 print_section_header("Backend Started");
                 print_status_line("Backend", Status::Ok, &name);
@@ -2055,7 +2187,10 @@ async fn backend_command(action: BackendAction, json_output: bool) -> Result<()>
                 .map_err(|e| anyhow::anyhow!("Failed to get logs: {e}"))?;
 
             if json_output {
-                println!("{{\"status\":\"ok\",\"backend\":\"{name}\",\"logs\":{}}}", serde_json::to_string(&logs)?);
+                println!(
+                    "{{\"status\":\"ok\",\"backend\":\"{name}\",\"logs\":{}}}",
+                    serde_json::to_string(&logs)?
+                );
             } else {
                 println!("{}", logs);
             }
@@ -2101,10 +2236,14 @@ async fn backend_command(action: BackendAction, json_output: bool) -> Result<()>
                 tags: tag,
             };
 
-            store.add_model(&backend, model).map_err(|e| anyhow::anyhow!("{e}"))?;
+            store
+                .add_model(&backend, model)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
 
             if json_output {
-                println!("{{\"status\":\"ok\",\"backend\":\"{backend}\",\"model\":\"{model_id}\"}}");
+                println!(
+                    "{{\"status\":\"ok\",\"backend\":\"{backend}\",\"model\":\"{model_id}\"}}"
+                );
             } else {
                 print_section_header("Model Added");
                 print_status_line("Backend", Status::Ok, &backend);
@@ -2409,7 +2548,11 @@ fn validate_command(input: PathBuf, json_output: bool, no_check_resources: bool)
         print_status_line(&input.display().to_string(), Status::Ok, "valid");
         if !warnings.is_empty() {
             for w in &warnings {
-                println!("  {} {}", apxm_core::constants::ui::icons::CAUTION.yellow(), w);
+                println!(
+                    "  {} {}",
+                    apxm_core::constants::ui::icons::CAUTION.yellow(),
+                    w
+                );
             }
         }
     } else {
@@ -2418,7 +2561,11 @@ fn validate_command(input: PathBuf, json_output: bool, no_check_resources: bool)
             println!("  {} {}", apxm_core::constants::ui::icons::FAILED.red(), e);
         }
         for w in &warnings {
-            println!("  {} {}", apxm_core::constants::ui::icons::CAUTION.yellow(), w);
+            println!(
+                "  {} {}",
+                apxm_core::constants::ui::icons::CAUTION.yellow(),
+                w
+            );
         }
         return Err(anyhow::anyhow!("{} error(s) found", errors.len()));
     }
@@ -2441,7 +2588,12 @@ struct GraphAnalysis<'a> {
 
 impl<'a> GraphAnalysis<'a> {
     fn from_graph(graph: &'a apxm_graph::ApxmGraph) -> Self {
-        let node_index: HashMap<u64, usize> = graph.nodes.iter().enumerate().map(|(i, n)| (n.id, i)).collect();
+        let node_index: HashMap<u64, usize> = graph
+            .nodes
+            .iter()
+            .enumerate()
+            .map(|(i, n)| (n.id, i))
+            .collect();
         let node_ids: HashSet<u64> = graph.nodes.iter().map(|n| n.id).collect();
         let edge_count = graph.edges.len();
 
@@ -2694,7 +2846,12 @@ fn analyze_command(input: PathBuf, json_output: bool) -> Result<()> {
             } else {
                 "(sequential)".dimmed().to_string()
             };
-            println!("  {} Phase {} {}", apxm_core::constants::ui::icons::STARTED.cyan(), i + 1, tag);
+            println!(
+                "  {} Phase {} {}",
+                apxm_core::constants::ui::icons::STARTED.cyan(),
+                i + 1,
+                tag
+            );
             for &id in layer {
                 println!(
                     "    {} {} {} [{}ms]",
@@ -2716,7 +2873,8 @@ fn analyze_command(input: PathBuf, json_output: bool) -> Result<()> {
         println!(
             "  {} Speedup: {:.2}x (sequential {}ms {} parallel {}ms)",
             apxm_core::constants::ui::icons::ROCKET,
-            speedup, sequential_ms,
+            speedup,
+            sequential_ms,
             apxm_core::constants::ui::icons::ARROW_RIGHT,
             parallel_ms
         );
@@ -2725,7 +2883,10 @@ fn analyze_command(input: PathBuf, json_output: bool) -> Result<()> {
             println!();
             println!("  {}", "Suggestions:".bold());
             for s in &suggestions {
-                println!("    {} {s}", apxm_core::constants::ui::icons::BULLET.dimmed());
+                println!(
+                    "    {} {s}",
+                    apxm_core::constants::ui::icons::BULLET.dimmed()
+                );
             }
         }
     }
@@ -2856,7 +3017,12 @@ fn explain_command(file: PathBuf, json_output: bool) -> Result<()> {
         );
         println!();
         println!("  {}", "Execution Flow:".bold().cyan());
-        println!("  {}", apxm_core::constants::ui::icons::HRULE_DOUBLE.repeat(15).dimmed());
+        println!(
+            "  {}",
+            apxm_core::constants::ui::icons::HRULE_DOUBLE
+                .repeat(15)
+                .dimmed()
+        );
 
         for (i, layer) in ga.phases.iter().enumerate() {
             println!();
@@ -3227,7 +3393,10 @@ fn ops_command(action: OpsAction, json_output: bool) -> Result<()> {
                             "  {}",
                             category_str(spec.category).to_uppercase().bold().cyan()
                         );
-                        println!("  {}", apxm_core::constants::ui::icons::HRULE.repeat(40).dimmed());
+                        println!(
+                            "  {}",
+                            apxm_core::constants::ui::icons::HRULE.repeat(40).dimmed()
+                        );
                     }
                     println!(
                         "  {:<18} {}  {}",
@@ -3293,7 +3462,10 @@ fn ops_command(action: OpsAction, json_output: bool) -> Result<()> {
                     spec.op_type.to_string().bold().cyan(),
                     spec.name.dimmed()
                 );
-                println!("  {}", apxm_core::constants::ui::icons::HRULE.repeat(50).dimmed());
+                println!(
+                    "  {}",
+                    apxm_core::constants::ui::icons::HRULE.repeat(50).dimmed()
+                );
                 println!("  {}", spec.description);
                 println!();
                 println!("  {}", spec.long_description);
@@ -3349,16 +3521,17 @@ fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> {
     let mlir_version = report.llvm_version.clone();
 
     // --- Backends ---
-    let (backend_count, backend_names): (usize, Vec<String>) = match apxm_credentials::BackendStore::open() {
-        Ok(store) => match store.list() {
-            Ok(backends) => {
-                let names: Vec<String> = backends.iter().map(|b| b.name.clone()).collect();
-                (names.len(), names)
-            }
+    let (backend_count, backend_names): (usize, Vec<String>) =
+        match apxm_credentials::BackendStore::open() {
+            Ok(store) => match store.list() {
+                Ok(backends) => {
+                    let names: Vec<String> = backends.iter().map(|b| b.name.clone()).collect();
+                    (names.len(), names)
+                }
+                Err(_) => (0, vec![]),
+            },
             Err(_) => (0, vec![]),
-        },
-        Err(_) => (0, vec![]),
-    };
+        };
 
     // --- Environment Variables ---
     let env_apxm_backend = env::var("APXM_BACKEND").ok();
@@ -3717,7 +3890,10 @@ fn print_status_line(label: &str, status: Status, value: &str) {
     use apxm_core::constants::ui;
     let (icon, status_str) = match status {
         Status::Ok => (ui::icons::SUCCESS.green(), ui::labels::OK.green().bold()),
-        Status::Warning => (ui::icons::WARNING.yellow(), ui::labels::WARN.yellow().bold()),
+        Status::Warning => (
+            ui::icons::WARNING.yellow(),
+            ui::labels::WARN.yellow().bold(),
+        ),
         Status::Error => (ui::icons::FAILED.red(), ui::labels::MISSING.red().bold()),
     };
     println!("  {} {:<14} [{}] {}", icon, label.bold(), status_str, value);
@@ -3731,11 +3907,15 @@ fn replay_command(session: PathBuf) -> Result<()> {
     let manifest_path = session.join(constants::session::files::MANIFEST);
     let manifest_text = std::fs::read_to_string(&manifest_path)
         .with_context(|| format!("Failed to read {}", manifest_path.display()))?;
-    let manifest: SessionManifest = serde_json::from_str(&manifest_text)
-        .context("Failed to parse manifest")?;
+    let manifest: SessionManifest =
+        serde_json::from_str(&manifest_text).context("Failed to parse manifest")?;
 
     let duration_secs = manifest.duration_ms as f64 / 1000.0;
-    let status_str = if manifest.success { "success" } else { "failed" };
+    let status_str = if manifest.success {
+        "success"
+    } else {
+        "failed"
+    };
 
     println!(
         "Session: {} ({} nodes, {:.1}s, {})",
@@ -3751,7 +3931,12 @@ fn replay_command(session: PathBuf) -> Result<()> {
             println!("  (no trace file found)");
             return Ok(());
         }
-        Err(e) => return Err(anyhow::anyhow!("Failed to open {}: {e}", trace_path.display())),
+        Err(e) => {
+            return Err(anyhow::anyhow!(
+                "Failed to open {}: {e}",
+                trace_path.display()
+            ));
+        }
     };
 
     // Read node names from the input graph (best-effort)
@@ -3759,9 +3944,7 @@ fn replay_command(session: PathBuf) -> Result<()> {
     let node_names: HashMap<u64, String> = std::fs::read_to_string(&input_path)
         .ok()
         .and_then(|text| apxm_graph::ApxmGraph::from_json(&text).ok())
-        .map(|graph| {
-            graph.nodes.iter().map(|n| (n.id, n.name.clone())).collect()
-        })
+        .map(|graph| graph.nodes.iter().map(|n| (n.id, n.name.clone())).collect())
         .unwrap_or_default();
 
     // Parse trace events and build timeline
@@ -3802,9 +3985,7 @@ fn replay_command(session: PathBuf) -> Result<()> {
         if first_timestamp.is_none() {
             first_timestamp = Some(ts);
         }
-        let elapsed_ms = (ts - first_timestamp.unwrap())
-            .num_milliseconds()
-            .max(0) as f64;
+        let elapsed_ms = (ts - first_timestamp.unwrap()).num_milliseconds().max(0) as f64;
 
         let resolve_name = |node_id: u64| {
             node_names
@@ -3853,7 +4034,10 @@ fn replay_command(session: PathBuf) -> Result<()> {
                 constants::ui::icons::STARTED,
                 constants::ui::labels::STARTED.to_string(),
             ),
-            EventKind::End { duration_ms, success } => {
+            EventKind::End {
+                duration_ms,
+                success,
+            } => {
                 let i = if *success {
                     constants::ui::icons::SUCCESS
                 } else {
@@ -3997,7 +4181,8 @@ mod tests {
             ],
             "parameters": [],
             "metadata": {}
-        })).unwrap()
+        }))
+        .unwrap()
     }
 
     fn fanout_graph() -> apxm_graph::ApxmGraph {
@@ -4016,7 +4201,8 @@ mod tests {
             ],
             "parameters": [],
             "metadata": {}
-        })).unwrap()
+        }))
+        .unwrap()
     }
 
     fn single_node_graph() -> apxm_graph::ApxmGraph {
@@ -4028,7 +4214,8 @@ mod tests {
             "edges": [],
             "parameters": [],
             "metadata": {}
-        })).unwrap()
+        }))
+        .unwrap()
     }
 
     #[test]
@@ -4207,9 +4394,8 @@ mod tests {
 
     #[test]
     fn graph_analysis_no_nodes_errors() {
-        let result = serde_json::from_value::<apxm_graph::ApxmGraph>(
-            serde_json::json!({"name": "empty"}),
-        );
+        let result =
+            serde_json::from_value::<apxm_graph::ApxmGraph>(serde_json::json!({"name": "empty"}));
         assert!(result.is_err());
     }
 }

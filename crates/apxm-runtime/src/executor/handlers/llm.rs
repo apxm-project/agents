@@ -695,7 +695,7 @@ async fn execute_llm_once(
     );
 
     // Execute LLM request through registry.
-    let response = execute_llm_request(ctx, mode_name, request).await?;
+    let response = execute_llm_request(ctx, node.id, mode_name, request).await?;
 
     charge_tokens(
         ctx,
@@ -727,9 +727,6 @@ async fn execute_llm_once(
     }
 
     let content = response.content;
-    if let Some(emitter) = &ctx.event_emitter {
-        emitter.emit_llm_token(&content);
-    }
 
     // Store in memoization cache if deterministic
     if let Some(key) = memo_key {
@@ -828,7 +825,7 @@ async fn execute_ask_with_tools(
         );
 
         // Execute LLM request
-        let response = execute_llm_request(ctx, "ASK", &current_request).await?;
+        let response = execute_llm_request(ctx, node.id, "ASK", &current_request).await?;
         charge_tokens(
             ctx,
             resolve_token_budget(ctx, node),
@@ -860,9 +857,6 @@ async fn execute_ask_with_tools(
 
         total_input_tokens += response.usage.input_tokens;
         total_output_tokens += response.usage.output_tokens;
-        if let Some(emitter) = &ctx.event_emitter {
-            emitter.emit_llm_token(&response.content);
-        }
 
         apxm_llm!(info,
             execution_id = %ctx.execution_id,

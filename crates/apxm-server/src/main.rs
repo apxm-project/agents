@@ -700,13 +700,16 @@ async fn main() -> anyhow::Result<()> {
                             .map(|url| serde_json::json!({ "base_url": url }));
                         match Provider::new(provider_id, api_key, config).await {
                             Ok(provider) => {
-                                if let Err(e) = runtime.llm_registry().register(&backend.name, provider) {
+                                if let Err(e) =
+                                    runtime.llm_registry().register(&backend.name, provider)
+                                {
                                     warn!(name = %backend.name, error = %e, "failed to register LLM backend");
                                     continue;
                                 }
                                 if let Some(model) = backend.models.first() {
-                                    if let Err(e) =
-                                        runtime.llm_registry().set_model_route(&model.id, &backend.name)
+                                    if let Err(e) = runtime
+                                        .llm_registry()
+                                        .set_model_route(&model.id, &backend.name)
                                     {
                                         warn!(name = %backend.name, model = %model.id, error = %e, "failed to route model to backend");
                                     }
@@ -1021,7 +1024,13 @@ async fn execute_stream(
     tokio::spawn(async move {
         let emitter = Arc::new(ChannelEventEmitter { tx: tx.clone() });
         match runtime
-            .execute_artifact_with_session_and_emitter(artifact, args, session_id, Some(emitter))
+            .execute_artifact_with_session_and_emitter(
+                artifact,
+                args,
+                session_id,
+                Some(emitter),
+                None,
+            )
             .await
         {
             Ok(result) => {

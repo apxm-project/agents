@@ -13,8 +13,8 @@ use apxm_core::types::ModelInfo;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio_stream::Stream;
 
 const DEFAULT_BASE_URL: &str = "http://localhost:8000";

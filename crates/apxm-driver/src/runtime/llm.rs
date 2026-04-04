@@ -42,7 +42,10 @@ pub async fn configure_llm_registry(
 
         let registration = unified_backend_to_registration(backend)?;
         registration.register(registry).await.map_err(|e| {
-            DriverError::Driver(format!("Failed to register backend '{}': {e}", backend.name))
+            DriverError::Driver(format!(
+                "Failed to register backend '{}': {e}",
+                backend.name
+            ))
         })?;
     }
 
@@ -114,7 +117,6 @@ pub async fn configure_llm_registry(
     Ok(())
 }
 
-
 /// Convert a unified BackendConfig to a BackendRegistration.
 fn unified_backend_to_registration(
     backend: &apxm_core::types::BackendConfig,
@@ -142,7 +144,7 @@ fn unified_backend_to_registration(
             return Err(DriverError::Driver(format!(
                 "Missing API key for backend '{}'. Set `api_key` or use `env:VAR`.",
                 backend.name
-            )))
+            )));
         }
     };
 
@@ -223,4 +225,3 @@ fn parse_operation_type(value: &str) -> Result<AISOperationType, DriverError> {
         ))
     })
 }
-

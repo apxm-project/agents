@@ -314,9 +314,6 @@ mod tests {
             Arc::new(SessionPool::new()),
         );
         assert_eq!(cap.metadata().name, cap_consts::ACP_CAPABILITY_NAME);
-        assert!(cap
-            .metadata()
-            .tags
-            .contains(&cap_args::AGENT.to_string()));
+        assert!(cap.metadata().tags.contains(&cap_args::AGENT.to_string()));
     }
 }

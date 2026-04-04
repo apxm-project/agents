@@ -290,8 +290,8 @@ struct LegacyCredential {
 
 /// Convert a legacy Credential (from credentials.toml) to a BackendConfig.
 fn credential_to_backend(name: &str, cred: LegacyCredential) -> BackendConfig {
-    use apxm_core::types::{BackendType, ModelConfig};
     use apxm_core::types::ProviderProtocol;
+    use apxm_core::types::{BackendType, ModelConfig};
     use std::collections::HashMap;
 
     // Infer protocol from provider string
@@ -355,8 +355,8 @@ fn credential_to_backend(name: &str, cred: LegacyCredential) -> BackendConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use apxm_core::types::{BackendType, DockerConfig, ModelConfig};
     use apxm_core::types::ProviderProtocol;
+    use apxm_core::types::{BackendType, DockerConfig, ModelConfig};
     use std::collections::HashMap;
     use tempfile::TempDir;
 
@@ -692,6 +692,9 @@ mod tests {
         };
         store.add_model("dup-model", model.clone()).unwrap();
         let result = store.add_model("dup-model", model);
-        assert!(matches!(result, Err(BackendError::ModelAlreadyExists { .. })));
+        assert!(matches!(
+            result,
+            Err(BackendError::ModelAlreadyExists { .. })
+        ));
     }
 }

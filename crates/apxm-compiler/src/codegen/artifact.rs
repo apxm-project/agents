@@ -6,7 +6,7 @@ use apxm_core::types::execution::{DagMetadata, ExecutionDag, FlowParameter};
 use apxm_core::types::values::{Number, Value};
 use apxm_core::types::{AISOperationType, DependencyType, Edge, Node, NodeMetadata};
 
-const WIRE_VERSION: u32 = 3;
+const WIRE_VERSION: u32 = 4;
 
 /// Parse multiple DAGs from wire format v3 (multi-DAG support)
 pub fn parse_wire_dags(bytes: &[u8]) -> Result<Vec<ExecutionDag>, CompilerError> {
@@ -143,6 +143,13 @@ fn read_node(reader: &mut BinaryReader) -> Result<Node, CompilerError> {
         output_tokens.push(reader.read_u64()?);
     }
 
+    let has_name = reader.read_bool()?;
+    let name = if has_name {
+        Some(reader.read_string()?)
+    } else {
+        None
+    };
+
     let priority = reader.read_u32()?;
     let has_latency = reader.read_bool()?;
     let estimated_latency = if has_latency {
@@ -158,6 +165,7 @@ fn read_node(reader: &mut BinaryReader) -> Result<Node, CompilerError> {
         input_tokens,
         output_tokens,
         metadata: NodeMetadata {
+            name,
             priority,
             estimated_latency,
             task_source_id: None,
@@ -301,6 +309,14 @@ fn write_node(w: &mut BinaryWriter, node: &Node) -> Result<(), CompilerError> {
     }
 
     // Metadata
+    match &node.metadata.name {
+        Some(name) => {
+            w.write_bool(true);
+            w.write_string(name);
+        }
+        None => w.write_bool(false),
+    }
+
     w.write_u32(node.metadata.priority);
     match node.metadata.estimated_latency {
         Some(lat) => {
@@ -535,6 +551,7 @@ mod tests {
                 input_tokens: vec![],
                 output_tokens: vec![100],
                 metadata: NodeMetadata {
+                    name: Some("test_inv".into()),
                     priority: 0,
                     estimated_latency: None,
                     task_source_id: None,
@@ -585,6 +602,7 @@ mod tests {
                     input_tokens: vec![],
                     output_tokens: vec![10],
                     metadata: NodeMetadata {
+                        name: Some("ask".into()),
                         priority: 5,
                         estimated_latency: Some(500_000),
                         task_source_id: None,
@@ -597,6 +615,7 @@ mod tests {
                     input_tokens: vec![10],
                     output_tokens: vec![20],
                     metadata: NodeMetadata {
+                        name: Some("merge".into()),
                         priority: 0,
                         estimated_latency: None,
                         task_source_id: None,
@@ -609,6 +628,7 @@ mod tests {
                     input_tokens: vec![20],
                     output_tokens: vec![],
                     metadata: NodeMetadata {
+                        name: Some("print".into()),
                         priority: 10,
                         estimated_latency: Some(100),
                         task_source_id: None,

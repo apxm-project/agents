@@ -4,9 +4,8 @@
 //! [`RegisteredProvider`] for extensible provider management.
 
 use crate::llm::backends::{
-    GraphAwareVllmBackend,
-    AnthropicBackend, GoogleBackend, LLMBackend, LLMRequest, LLMResponse, OllamaBackend,
-    OpenAIBackend,
+    AnthropicBackend, GoogleBackend, GraphAwareVllmBackend, LLMBackend, LLMRequest, LLMResponse,
+    OllamaBackend, OpenAIBackend,
 };
 use apxm_core::types::{ModelCapabilities, ModelInfo, ProviderProtocol, ProviderSpec};
 use async_trait::async_trait;
@@ -104,9 +103,9 @@ impl Provider {
             ProviderProtocol::Ollama => {
                 Ok(Provider::Ollama(OllamaBackend::new(api_key, config).await?))
             }
-            ProviderProtocol::Vllm => {
-                Ok(Provider::Vllm(GraphAwareVllmBackend::new(api_key, config).await?))
-            }
+            ProviderProtocol::Vllm => Ok(Provider::Vllm(
+                GraphAwareVllmBackend::new(api_key, config).await?,
+            )),
         }
     }
 

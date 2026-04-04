@@ -440,7 +440,7 @@ fn emit_node(
             } else {
                 labels
             };
-            let attrs = extra_attr_dict(&node.attributes, &[graph_attrs::CASE_LABELS]);
+            let attrs = extra_attr_dict_for_node(node, &[graph_attrs::CASE_LABELS]);
             let result = format!("%n{}", node.id);
 
             state.emit(format!(
@@ -483,7 +483,7 @@ fn emit_node(
 
             let label = get_string_attr(&node.attributes, &[graph_attrs::LABEL])
                 .unwrap_or_else(|| "loop".to_string());
-            let attrs = extra_attr_dict(&node.attributes, &[graph_attrs::LABEL]);
+            let attrs = extra_attr_dict_for_node(node, &[graph_attrs::LABEL]);
             let result = format!("%n{}", node.id);
 
             state.emit(format!(
@@ -504,7 +504,7 @@ fn emit_node(
             } else {
                 emit_const_token(state, "loop_state")
             };
-            let attrs = extra_attr_dict(&node.attributes, &[]);
+            let attrs = extra_attr_dict_for_node(node, &[]);
             let result = format!("%n{}", node.id);
 
             state.emit(format!(
@@ -537,7 +537,7 @@ fn emit_node(
         AISOperationType::Err => {
             let template = get_string_attr(&node.attributes, &[graph_attrs::RECOVERY_TEMPLATE])
                 .unwrap_or_else(|| "Recover from error".to_string());
-            let attrs = extra_attr_dict(&node.attributes, &[graph_attrs::RECOVERY_TEMPLATE]);
+            let attrs = extra_attr_dict_for_node(node, &[graph_attrs::RECOVERY_TEMPLATE]);
             let result = format!("%n{}", node.id);
 
             if let Some(input) = inputs.first() {
@@ -572,7 +572,7 @@ fn emit_node(
                 .map(|value| ensure_token(state, value))
                 .collect::<Result<Vec<_>, _>>()?;
             let result = format!("%n{}", node.id);
-            let attrs = extra_attr_dict(&node.attributes, &[]);
+            let attrs = extra_attr_dict_for_node(node, &[]);
 
             if tokens.is_empty() {
                 state.emit(format!("    {result} = ais.{op_name}{attrs} -> !ais.token"));
@@ -593,14 +593,14 @@ fn emit_node(
             }))
         }
         AISOperationType::Fence => {
-            let attrs = extra_attr_dict(&node.attributes, &[]);
+            let attrs = extra_attr_dict_for_node(node, &[]);
             state.emit(format!("    ais.fence{attrs}"));
             Ok(None)
         }
         AISOperationType::Plan => {
             let goal = get_string_attr(&node.attributes, &[graph_attrs::GOAL])
                 .unwrap_or_else(|| "goal".to_string());
-            let attrs = extra_attr_dict(&node.attributes, &[graph_attrs::GOAL]);
+            let attrs = extra_attr_dict_for_node(node, &[graph_attrs::GOAL]);
             let result = format!("%n{}", node.id);
             let context = format_context(&inputs, '(', ')');
 
@@ -763,14 +763,13 @@ fn emit_node(
             let target =
                 get_string_attr(&node.attributes, &[graph_attrs::TARGET, graph_attrs::LABEL])
                     .unwrap_or_else(|| "next".to_string());
-            let attrs =
-                extra_attr_dict(&node.attributes, &[graph_attrs::TARGET, graph_attrs::LABEL]);
+            let attrs = extra_attr_dict_for_node(node, &[graph_attrs::TARGET, graph_attrs::LABEL]);
 
             state.emit(format!("    ais.jump {}{}", quote_string(&target), attrs));
             Ok(None)
         }
         AISOperationType::Return => {
-            let attrs = extra_attr_dict(&node.attributes, &[]);
+            let attrs = extra_attr_dict_for_node(node, &[]);
 
             if let Some(input) = inputs.first() {
                 let token = ensure_token(state, input.clone())?;
@@ -975,7 +974,7 @@ fn emit_simple_op(
 ) -> Result<Option<MlirValueRef>, GraphError> {
     let primary = get_string_attr(&node.attributes, primary_keys)
         .unwrap_or_else(|| primary_default.to_string());
-    let attrs = extra_attr_dict(&node.attributes, consumed_keys);
+    let attrs = extra_attr_dict_for_node(node, consumed_keys);
     let result = format!("%n{}", node.id);
     let context = context_delimiters
         .map(|(open, close)| format_context(inputs, open, close))
@@ -1129,6 +1128,14 @@ fn value_to_string(value: &Value) -> Option<String> {
         Value::Null => Some(String::new()),
         Value::Token(id) => Some(id.to_string()),
     }
+}
+
+fn extra_attr_dict_for_node(node: &GraphNode, consumed: &[&str]) -> String {
+    let mut attributes = node.attributes.clone();
+    attributes
+        .entry(graph_attrs::NODE_NAME.to_string())
+        .or_insert_with(|| Value::String(node.name.clone()));
+    extra_attr_dict(&attributes, consumed)
 }
 
 fn extra_attr_dict(attributes: &HashMap<String, Value>, consumed: &[&str]) -> String {

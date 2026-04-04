@@ -21,8 +21,9 @@ use super::{
 use crate::aam::TransitionLabel;
 use apxm_core::apxm_op;
 use apxm_core::constants::graph::attrs as graph_attrs;
-use apxm_core::constants::runtime::{belief_keys, response_keys};
+use apxm_core::constants::runtime::{belief_keys, metadata, response_keys};
 use apxm_core::error::RuntimeError;
+use apxm_core::paths::session_node_dir_name;
 use apxm_core::types::aam::{AamContext, CapabilityProjection, GoalProjection};
 use apxm_core::types::goal::GoalStatus;
 use std::collections::HashMap;
@@ -102,9 +103,19 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
 
         let mode = get_optional_string_attribute(node, graph_attrs::MODE)?;
         let model = get_optional_string_attribute(node, graph_attrs::MODEL)?;
-        let cwd = get_optional_string_attribute(node, graph_attrs::CWD)?
-            .map(PathBuf::from)
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp")));
+        let cwd = if let Some(explicit_cwd) = get_optional_string_attribute(node, graph_attrs::CWD)?
+        {
+            PathBuf::from(explicit_cwd)
+        } else if let (Some(session_dir), Some(node_name)) = (
+            ctx.metadata.get(metadata::SESSION_DIR),
+            node.metadata.name.as_deref(),
+        ) {
+            PathBuf::from(session_dir)
+                .join(apxm_core::constants::session::files::NODES_DIR)
+                .join(session_node_dir_name(node.id, node_name))
+        } else {
+            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp"))
+        };
 
         // Project current AAM state into AamContext for the spawned agent
         let aam_context = project_aam_context(ctx);

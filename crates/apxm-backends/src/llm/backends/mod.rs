@@ -22,13 +22,13 @@ pub use google::{GoogleBackend, GoogleModel};
 pub use mock::{MockLLMBackend, MockResponse, RecordedCall};
 pub use ollama::{OllamaBackend, OllamaModel};
 pub use openai::{OpenAIBackend, OpenAIModel};
-pub use vllm::{GraphAwareVllmBackend, ApxmGraphHints, GraphMetadata, NodeSpec, PinPolicy};
 pub use request::{
     ContentPart, FunctionCall, GenerationConfig, LLMRequest, Message, RequestBuilder, Role,
     ToolChoice, ToolDefinition,
 };
 pub use response::{LLMResponse, TokenUsage};
 pub use traits::{LLMBackend, StreamChunk};
+pub use vllm::{ApxmGraphHints, GraphAwareVllmBackend, GraphMetadata, NodeSpec, PinPolicy};
 
 use apxm_core::types::ProviderProtocol;
 use std::sync::Arc;

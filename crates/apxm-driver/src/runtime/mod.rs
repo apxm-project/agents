@@ -15,9 +15,9 @@ use capabilities::configure_capability_registry;
 pub mod sandbox;
 use sandbox::configure_sandbox_registry;
 mod inner_plan;
-use inner_plan::CompilerInnerPlanLinker;
 use apxm_core::utils::build::MlirEnvReport;
 use apxm_runtime::NoOpLinker;
+use inner_plan::CompilerInnerPlanLinker;
 mod agents;
 use agents::configure_agent_registry;
 
@@ -42,11 +42,7 @@ impl RuntimeExecutor {
         let sandbox_registry = configure_sandbox_registry();
         runtime.set_sandbox_registry(sandbox_registry);
 
-        configure_agent_registry(
-            runtime.process_table(),
-            runtime.capability_system_arc(),
-        )
-        .await?;
+        configure_agent_registry(runtime.process_table(), runtime.capability_system_arc()).await?;
 
         runtime.set_instruction_config(config.apxm_config.instruction.clone());
 
@@ -61,12 +57,19 @@ impl RuntimeExecutor {
                     runtime.set_inner_plan_linker(Arc::new(linker));
                 }
                 Err(e) => {
-                    apxm_core::log_info!("driver", "MLIR inner-plan linker init failed ({}); using NoOp", e);
+                    apxm_core::log_info!(
+                        "driver",
+                        "MLIR inner-plan linker init failed ({}); using NoOp",
+                        e
+                    );
                     runtime.set_inner_plan_linker(Arc::new(NoOpLinker));
                 }
             }
         } else {
-            apxm_core::log_info!("driver", "MLIR not available; using NoOp inner-plan linker (graph-direct mode)");
+            apxm_core::log_info!(
+                "driver",
+                "MLIR not available; using NoOp inner-plan linker (graph-direct mode)"
+            );
             runtime.set_inner_plan_linker(Arc::new(NoOpLinker));
         }
 
@@ -113,9 +116,10 @@ impl RuntimeExecutor {
         artifact: Artifact,
         args: Vec<String>,
         emitter: Option<Arc<dyn ExecutionEventEmitter>>,
+        session_dir: Option<String>,
     ) -> Result<RuntimeExecutionResult, DriverError> {
         self.runtime
-            .execute_artifact_with_session_and_emitter(artifact, args, None, emitter)
+            .execute_artifact_with_session_and_emitter(artifact, args, None, emitter, session_dir)
             .await
             .map_err(DriverError::Runtime)
     }

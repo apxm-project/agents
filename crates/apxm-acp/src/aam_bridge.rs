@@ -67,8 +67,8 @@ pub fn render_session_params(
     cwd: &std::path::Path,
     capabilities: &[CapabilityServerConfig],
 ) -> serde_json::Value {
-    let mcp_servers_val = serde_json::to_value(capabilities)
-        .unwrap_or_else(|_| serde_json::Value::Array(vec![]));
+    let mcp_servers_val =
+        serde_json::to_value(capabilities).unwrap_or_else(|_| serde_json::Value::Array(vec![]));
     serde_json::json!({
         session_params::CWD: cwd.to_string_lossy(),
         (session_params::MCP_SERVERS): mcp_servers_val,
@@ -168,7 +168,11 @@ mod tests {
             env: Default::default(),
         }];
         let params = render_session_params(cwd, &caps);
-        let servers = params.get(session_params::MCP_SERVERS).unwrap().as_array().unwrap();
+        let servers = params
+            .get(session_params::MCP_SERVERS)
+            .unwrap()
+            .as_array()
+            .unwrap();
         assert_eq!(servers.len(), 1);
         assert_eq!(servers[0]["name"], "test-mcp");
     }

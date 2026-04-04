@@ -6,8 +6,8 @@ use tokio::process::{ChildStdin, ChildStdout};
 use apxm_core::apxm_acp;
 
 use crate::AcpError;
-use apxm_core::constants::jsonrpc;
 use crate::constants::json_rpc_errors;
+use apxm_core::constants::jsonrpc;
 
 /// A JSON-RPC 2.0 request (client→agent).
 #[derive(Debug, Serialize, Deserialize)]

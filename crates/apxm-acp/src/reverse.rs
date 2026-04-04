@@ -3,11 +3,11 @@ use std::sync::Arc;
 
 use apxm_core::apxm_acp;
 
-use apxm_core::constants::acp::{notification, reverse_params, reverse_response};
 use crate::AcpError;
 use crate::constants::{fields, methods, option_kinds, outcomes, tool_kinds, update_types};
 use crate::registry::PermissionMode;
 use crate::terminal::TerminalManager;
+use apxm_core::constants::acp::{notification, reverse_params, reverse_response};
 
 /// Trait for handling reverse requests and notifications from an ACP agent.
 #[async_trait]
@@ -250,7 +250,9 @@ impl CapabilityReverseHandler {
             PermissionMode::ApproveAll => find_option_id(options, option_kinds::ALLOW),
             PermissionMode::DenyAll => find_option_id(options, option_kinds::REJECT),
             PermissionMode::ApproveReads => {
-                let tool_kind = params[fields::TOOL_CALL][reverse_params::KIND].as_str().unwrap_or("");
+                let tool_kind = params[fields::TOOL_CALL][reverse_params::KIND]
+                    .as_str()
+                    .unwrap_or("");
                 if tool_kind == tool_kinds::READ || tool_kind == tool_kinds::SEARCH {
                     find_option_id(options, option_kinds::ALLOW)
                 } else {
@@ -309,12 +311,14 @@ impl ReverseHandler for CapabilityReverseHandler {
                 let update = &params[notification::UPDATE];
                 // ACP uses "sessionUpdate" as the discriminator key (not "type")
                 // and nests text under "content.text"
-                let update_kind = update[notification::SESSION_UPDATE].as_str()
+                let update_kind = update[notification::SESSION_UPDATE]
+                    .as_str()
                     .or_else(|| update[notification::TYPE].as_str()); // fallback for older protocol
                 match update_kind {
                     Some(t) if t == update_types::AGENT_MESSAGE_CHUNK => {
                         // Text is under content.text in the current ACP protocol
-                        let text = update[reverse_response::CONTENT][notification::TEXT].as_str()
+                        let text = update[reverse_response::CONTENT][notification::TEXT]
+                            .as_str()
                             .or_else(|| update[notification::TEXT].as_str()); // fallback
                         if let Some(text) = text {
                             self.response_text.lock().unwrap().push_str(text);
@@ -323,12 +327,16 @@ impl ReverseHandler for CapabilityReverseHandler {
                     Some(t) if t == update_types::USAGE_UPDATE => {
                         let mut usage = self.token_usage.lock().unwrap();
                         // Try standard field names first, then ACP-specific names
-                        if let Some(input) = update[fields::INPUT_TOKENS].as_u64()
-                            .or_else(|| update[notification::USED].as_u64()) {
+                        if let Some(input) = update[fields::INPUT_TOKENS]
+                            .as_u64()
+                            .or_else(|| update[notification::USED].as_u64())
+                        {
                             usage.0 = Some(input);
                         }
-                        if let Some(output) = update[fields::OUTPUT_TOKENS].as_u64()
-                            .or_else(|| update[notification::SIZE].as_u64()) {
+                        if let Some(output) = update[fields::OUTPUT_TOKENS]
+                            .as_u64()
+                            .or_else(|| update[notification::SIZE].as_u64())
+                        {
                             usage.1 = Some(output);
                         }
                     }
@@ -362,7 +370,10 @@ mod tests {
             ]
         });
         let result = handler.handle_request_permission(&params).unwrap();
-        assert_eq!(result[reverse_response::OUTCOME][fields::OPTION_ID], "allow_1");
+        assert_eq!(
+            result[reverse_response::OUTCOME][fields::OPTION_ID],
+            "allow_1"
+        );
     }
 
     #[test]
@@ -379,7 +390,10 @@ mod tests {
             ]
         });
         let result = handler.handle_request_permission(&params).unwrap();
-        assert_eq!(result[reverse_response::OUTCOME][fields::OPTION_ID], "reject_1");
+        assert_eq!(
+            result[reverse_response::OUTCOME][fields::OPTION_ID],
+            "reject_1"
+        );
     }
 
     #[test]
@@ -396,7 +410,10 @@ mod tests {
             ]
         });
         let result = handler.handle_request_permission(&params).unwrap();
-        assert_eq!(result[reverse_response::OUTCOME][fields::OPTION_ID], "allow_1");
+        assert_eq!(
+            result[reverse_response::OUTCOME][fields::OPTION_ID],
+            "allow_1"
+        );
     }
 
     #[test]
@@ -413,6 +430,9 @@ mod tests {
             ]
         });
         let result = handler.handle_request_permission(&params).unwrap();
-        assert_eq!(result[reverse_response::OUTCOME][fields::OPTION_ID], "reject_1");
+        assert_eq!(
+            result[reverse_response::OUTCOME][fields::OPTION_ID],
+            "reject_1"
+        );
     }
 }

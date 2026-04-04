@@ -129,6 +129,9 @@ impl ExecutorEngine {
                             results.insert(*output_token_id, value.clone());
                         }
                     }
+                    if let Some(emitter) = &self.context.event_emitter {
+                        emitter.emit_node_output(node.id, &value);
+                    }
 
                     // Mark as completed
                     {

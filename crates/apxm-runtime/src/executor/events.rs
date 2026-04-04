@@ -136,6 +136,11 @@ pub trait ExecutionEventEmitter: Send + Sync {
         _success: bool,
     ) {
     }
+    fn emit_node_output(&self, _node_id: u64, _value: &Value) {}
+    fn emit_llm_prompt(&self, _node_id: u64, _prompt: &str) {}
+    fn emit_llm_token_for_node(&self, _node_id: u64, content: &str) {
+        self.emit_llm_token(content);
+    }
 
     // ── Planning ────────────────────────────────────────────────────
     fn emit_plan_created(&self, _plan_id: &str, _steps: usize) {}
