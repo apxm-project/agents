@@ -161,14 +161,9 @@ mod enabled {
                 }
             }
 
-            // Sample parallelism periodically (every 4th operation to capture dynamics)
-            // Don't require current > 1 so we accurately track average (including sequential phases)
-            if self
-                .operations_executed
-                .load(Ordering::Relaxed)
-                .is_multiple_of(4)
-                && let Some(mut samples) = self.parallelism_samples.try_lock()
-            {
+            // Sample parallelism on every schedule event (captures true concurrency
+            // at each dispatch point, including parallel bursts)
+            if let Some(mut samples) = self.parallelism_samples.try_lock() {
                 samples.push(current);
             }
         }

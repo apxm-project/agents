@@ -134,7 +134,8 @@ impl WireNode {
             attributes,
             input_tokens: self.input_tokens,
             output_tokens: self.output_tokens,
-            metadata: NodeMetadata { name: None,
+            metadata: NodeMetadata {
+                name: None,
                 priority: self.metadata.priority,
                 estimated_latency: self.metadata.estimated_latency,
                 task_source_id: self.metadata.task_source_id,

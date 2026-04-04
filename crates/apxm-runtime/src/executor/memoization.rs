@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use dashmap::DashMap;
 
 #[cfg(feature = "sqlite")]
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
 const DEFAULT_TTL: Duration = Duration::from_secs(3600);
 const DEFAULT_MAX_L1_ENTRIES: usize = 1024;
@@ -107,10 +107,7 @@ impl SqliteMemoStore {
     }
 
     fn get(&self, key: MemoKey) -> Option<CachedResponse> {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .ok()?
-            .as_secs();
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs();
 
         let mut stmt = self
             .conn
@@ -464,11 +461,7 @@ impl MemoCache {
         let l1_entries = self.l1.read().len();
 
         #[cfg(feature = "sqlite")]
-        let l2_entries = self
-            .l2
-            .as_ref()
-            .map(|l2| l2.lock().count())
-            .unwrap_or(0);
+        let l2_entries = self.l2.as_ref().map(|l2| l2.lock().count()).unwrap_or(0);
         #[cfg(not(feature = "sqlite"))]
         let l2_entries = 0;
 
@@ -476,9 +469,7 @@ impl MemoCache {
             l1_hits: self.l1_hits.load(std::sync::atomic::Ordering::Relaxed),
             l2_hits: self.l2_hits.load(std::sync::atomic::Ordering::Relaxed),
             misses: self.misses.load(std::sync::atomic::Ordering::Relaxed),
-            evictions: self
-                .evictions
-                .load(std::sync::atomic::Ordering::Relaxed),
+            evictions: self.evictions.load(std::sync::atomic::Ordering::Relaxed),
             l1_entries,
             l2_entries,
         }
@@ -545,7 +536,8 @@ impl SpeculativeHandle {
     /// Commit the speculative writes to the main cache.
     pub fn commit(self) {
         for (key, (content, input_tokens, output_tokens, model)) in self.overlay {
-            self.cache.put(key, content, input_tokens, output_tokens, model);
+            self.cache
+                .put(key, content, input_tokens, output_tokens, model);
         }
     }
 

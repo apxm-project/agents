@@ -107,23 +107,21 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
         // agent can read its context files, while cwd stays at the project root
         // so the agent can build/test/commit normally.
         let node_workspace = if let Some(session_dir) = ctx.metadata.get(metadata::SESSION_DIR) {
-            let nodes_dir = PathBuf::from(session_dir)
-                .join(apxm_core::constants::session::files::NODES_DIR);
+            let nodes_dir =
+                PathBuf::from(session_dir).join(apxm_core::constants::session::files::NODES_DIR);
             let prefix = format!("{:02}_", node.id);
-            std::fs::read_dir(&nodes_dir)
-                .ok()
-                .and_then(|mut entries| {
-                    entries.find_map(|e| {
-                        let entry = e.ok()?;
-                        let name = entry.file_name();
-                        let name_str = name.to_str()?;
-                        if name_str.starts_with(&prefix) {
-                            Some(nodes_dir.join(name_str))
-                        } else {
-                            None
-                        }
-                    })
+            std::fs::read_dir(&nodes_dir).ok().and_then(|mut entries| {
+                entries.find_map(|e| {
+                    let entry = e.ok()?;
+                    let name = entry.file_name();
+                    let name_str = name.to_str()?;
+                    if name_str.starts_with(&prefix) {
+                        Some(nodes_dir.join(name_str))
+                    } else {
+                        None
+                    }
                 })
+            })
         } else {
             None
         };

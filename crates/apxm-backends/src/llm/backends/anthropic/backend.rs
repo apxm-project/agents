@@ -849,8 +849,16 @@ mod tests {
             .unwrap();
 
         assert_eq!(backend.extra_headers.len(), 2);
-        assert!(backend.extra_headers.contains(&("X-Test-Header".to_string(), "test-value".to_string())));
-        assert!(backend.extra_headers.contains(&("X-Custom".to_string(), "custom-value".to_string())));
+        assert!(
+            backend
+                .extra_headers
+                .contains(&("X-Test-Header".to_string(), "test-value".to_string()))
+        );
+        assert!(
+            backend
+                .extra_headers
+                .contains(&("X-Custom".to_string(), "custom-value".to_string()))
+        );
     }
 
     #[tokio::test]
@@ -871,8 +879,16 @@ mod tests {
             .unwrap();
 
         assert_eq!(backend.extra_headers.len(), 2);
-        assert!(backend.extra_headers.contains(&("X-From-Env".to_string(), "from-env".to_string())));
-        assert!(backend.extra_headers.contains(&("X-Literal".to_string(), "literal-value".to_string())));
+        assert!(
+            backend
+                .extra_headers
+                .contains(&("X-From-Env".to_string(), "from-env".to_string()))
+        );
+        assert!(
+            backend
+                .extra_headers
+                .contains(&("X-Literal".to_string(), "literal-value".to_string()))
+        );
 
         unsafe {
             std::env::remove_var("TEST_ANTHROPIC_HEADER");

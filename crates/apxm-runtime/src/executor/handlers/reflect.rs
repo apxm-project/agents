@@ -54,7 +54,10 @@ fn load_execution_trace(ctx: &ExecutionContext) -> std::result::Result<String, S
         }
     }
 
-    Err("No execution trace or runtime history was provided (session_dir not available in context)".to_string())
+    Err(
+        "No execution trace or runtime history was provided (session_dir not available in context)"
+            .to_string(),
+    )
 }
 
 /// Execute REFLECT operation - LLM-based reflection on execution history
@@ -144,7 +147,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
 
     // Build reflection prompt using apxm-prompts
     let episode_count = if trace_query.as_deref() == Some("last_execution") {
-        0  // Trace doesn't have episode count
+        0 // Trace doesn't have episode count
     } else {
         limit
     };
