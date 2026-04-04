@@ -24,6 +24,7 @@
 
 pub mod aam;
 pub mod capability;
+pub mod context_stack;
 pub mod executor;
 pub mod memory;
 pub mod model_router;
@@ -46,6 +47,9 @@ pub use capability::{
     CapabilitySystem,
     flow_registry::FlowRegistry,
     interceptor::{CapabilityInterceptor, InterceptDecision},
+};
+pub use context_stack::{
+    ContextAssembly, ContextFrame, ContextScope, ContextStack, ContextStackConfig,
 };
 pub use executor::{
     CancellationToken, ExecutionContext, ExecutionEvent, ExecutionEventEmitter, ExecutorEngine,

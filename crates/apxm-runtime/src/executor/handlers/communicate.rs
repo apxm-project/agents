@@ -23,6 +23,7 @@ use crate::aam::{ScopeSpec, TransitionLabel};
 use crate::executor::ExecutorEngine;
 use apxm_core::constants::communicate_protocols as comm_proto;
 use apxm_core::constants::graph::attrs as graph_attrs;
+use apxm_core::constants::runtime::context_stack as context_stack_consts;
 use apxm_core::constants::runtime::{belief_keys, metadata};
 use apxm_core::error::RuntimeError;
 
@@ -439,8 +440,29 @@ async fn execute_acp(
         label,
     );
 
+    let enriched_prompt = if let Some(ref stack) = ctx.context_stack {
+        let profile = node
+            .attributes
+            .get(graph_attrs::PROFILE)
+            .and_then(|value| value.as_str())
+            .unwrap_or(context_stack_consts::PROFILE_CLAUDE);
+        let assembly = stack.assemble(
+            node.id,
+            profile,
+            context_stack_consts::DEFAULT_PROMPT_BUDGET_TOKENS,
+        );
+
+        if assembly.frames.is_empty() {
+            prompt_text.clone()
+        } else {
+            format!("{}\n\n---\n\n{}", assembly, prompt_text)
+        }
+    } else {
+        prompt_text.clone()
+    };
+
     // Send prompt via the AgentPrompter trait
-    let response = prompter.prompt(&process, &prompt_text).await?;
+    let response = prompter.prompt(&process, &enriched_prompt).await?;
 
     // Extract plain text for downstream nodes; store full object in beliefs for observability
     let text_output = if let Value::Object(ref map) = response {
@@ -588,14 +610,18 @@ mod tests {
     use super::*;
     use crate::capability::CapabilitySystem;
     use crate::capability::flow_registry::FlowRegistry;
+    use crate::context_stack::{ContextStack, NodeMetadata as ContextNodeMetadata};
     use crate::memory::{MemoryConfig, MemorySystem};
+    use crate::process_table::AgentPrompter;
     use apxm_backends::LLMRegistry;
+    use apxm_core::paths::session_node_dir_name;
     use apxm_core::types::{
         execution::{ExecutionDag, NodeMetadata},
         operations::AISOperationType,
     };
     use std::collections::HashMap;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
+    use tempfile::tempdir;
 
     fn create_echo_dag() -> ExecutionDag {
         let mut const_node = apxm_core::types::execution::Node {
@@ -661,6 +687,129 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result, Value::String("ack from agent".to_string()));
+    }
+
+    struct RecordingPrompter {
+        prompts: Arc<Mutex<Vec<String>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl AgentPrompter for RecordingPrompter {
+        async fn prompt(
+            &self,
+            _process: &crate::process::AgentProcess,
+            message: &str,
+        ) -> Result<Value> {
+            self.prompts
+                .lock()
+                .expect("prompt lock")
+                .push(message.to_string());
+            Ok(Value::Object(HashMap::from([(
+                "text".to_string(),
+                Value::String(message.to_string()),
+            )])))
+        }
+    }
+
+    #[tokio::test]
+    async fn test_communicate_acp_prepends_context_stack_frames() {
+        let dir = tempdir().expect("tempdir");
+        let session_dir = dir.path().join("session");
+        let upstream_dir = session_dir
+            .join(apxm_core::constants::session::files::NODES_DIR)
+            .join(session_node_dir_name(1, "seed"));
+        std::fs::create_dir_all(&upstream_dir).expect("upstream dir");
+        std::fs::write(
+            upstream_dir.join(apxm_core::constants::session::node::OUTPUT_JSON),
+            "{\"result\":\"upstream data\"}",
+        )
+        .expect("output");
+
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(LLMRegistry::new());
+        let capability_system = Arc::new(CapabilitySystem::new());
+        let process_table = Arc::new(crate::process_table::ProcessTable::new());
+        process_table
+            .spawn_local("PeerAgent".to_string(), None)
+            .expect("spawn local process");
+
+        let prompts = Arc::new(Mutex::new(Vec::new()));
+        process_table
+            .set_agent_prompter(Arc::new(RecordingPrompter {
+                prompts: Arc::clone(&prompts),
+            }))
+            .await;
+
+        let context_stack = Arc::new(ContextStack::new(
+            session_dir.clone(),
+            Arc::new(HashMap::from([
+                (
+                    1,
+                    ContextNodeMetadata {
+                        name: "seed".to_string(),
+                        op_type: "ConstStr".to_string(),
+                    },
+                ),
+                (
+                    2,
+                    ContextNodeMetadata {
+                        name: "communicate_peer".to_string(),
+                        op_type: "Communicate".to_string(),
+                    },
+                ),
+            ])),
+            Arc::new(vec![(1, 2)]),
+        ));
+
+        let ctx = ExecutionContext::new(
+            memory,
+            llm_registry,
+            capability_system,
+            crate::aam::Aam::new(),
+        )
+        .with_context_stack(context_stack)
+        .with_process_table(process_table);
+
+        let mut node = apxm_core::types::execution::Node {
+            id: 2,
+            op_type: AISOperationType::Communicate,
+            attributes: HashMap::new(),
+            input_tokens: vec![],
+            output_tokens: vec![100],
+            metadata: NodeMetadata::default(),
+        };
+        node.attributes.insert(
+            graph_attrs::RECIPIENT.to_string(),
+            Value::String("PeerAgent".to_string()),
+        );
+        node.attributes.insert(
+            graph_attrs::PROTOCOL.to_string(),
+            Value::String(comm_proto::ACP.to_string()),
+        );
+        node.attributes.insert(
+            graph_attrs::PROFILE.to_string(),
+            Value::String("claude".to_string()),
+        );
+
+        let result = execute(
+            &ctx,
+            &node,
+            vec![Value::String("Respond to the user".to_string())],
+        )
+        .await
+        .unwrap();
+
+        let recorded = prompts.lock().expect("prompt lock");
+        assert_eq!(recorded.len(), 1);
+        assert!(recorded[0].contains("## Session"));
+        assert!(recorded[0].contains("## Upstream: seed (#1)"));
+        assert!(recorded[0].contains("upstream data"));
+        assert!(recorded[0].contains("Respond to the user"));
+        assert_eq!(result, Value::String(recorded[0].clone()));
     }
 
     #[tokio::test]
