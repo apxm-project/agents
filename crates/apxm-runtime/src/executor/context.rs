@@ -4,6 +4,7 @@ use crate::{
     aam::{Aam, ScopeSpec},
     capability::CapabilitySystem,
     capability::flow_registry::FlowRegistry,
+    context_stack::ContextStack,
     memory::MemorySystem,
     process_table::ProcessTable,
     workspace::ScopeRegistry,
@@ -93,6 +94,8 @@ pub struct ExecutionContext {
     /// Used by SPAWN_AGENT to register new processes and by COMMUNICATE with
     /// `protocol: "acp"` to look up recipient agents.
     pub process_table: Arc<ProcessTable>,
+    /// Optional demand-paged ContextStack for session-backed prompt assembly.
+    pub context_stack: Option<Arc<ContextStack>>,
     /// Optional ModelRouter for dynamic backend/model selection with circuit breakers.
     ///
     /// When set, the LLM handler delegates backend selection to the router
@@ -140,6 +143,7 @@ impl ExecutionContext {
             cancellation_token: CancellationToken::new(),
             sandbox_registry: Arc::new(SandboxRegistry::new()),
             process_table: Arc::new(ProcessTable::new()),
+            context_stack: None,
             model_router: None,
         }
     }
@@ -272,8 +276,15 @@ impl ExecutionContext {
             cancellation_token: self.cancellation_token.child(),
             sandbox_registry: Arc::clone(&self.sandbox_registry),
             process_table: Arc::clone(&self.process_table),
+            context_stack: self.context_stack.as_ref().map(Arc::clone),
             model_router: self.model_router.as_ref().map(Arc::clone),
         }
+    }
+
+    /// Attach a ContextStack for prompt enrichment.
+    pub fn with_context_stack(mut self, stack: Arc<ContextStack>) -> Self {
+        self.context_stack = Some(stack);
+        self
     }
 
     /// Set the process table for agent lifecycle management.

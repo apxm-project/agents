@@ -4,6 +4,7 @@ use crate::model_router::{ModelRouter, ModelRouterConfig};
 use crate::{
     aam::Aam,
     capability::{CapabilitySystem, flow_registry::FlowRegistry},
+    context_stack::ContextStack,
     executor::{
         ExecutionContext, ExecutionEventEmitter, ExecutorEngine, InnerPlanLinker, NoOpLinker,
     },
@@ -51,6 +52,9 @@ pub struct RuntimeConfig {
     pub scheduler_config: SchedulerConfig,
     /// Optional token budget (total across all LLM requests in one execution).
     pub token_budget: Option<u64>,
+    /// Optional session-backed context stack input for prompt enrichment.
+    #[serde(default)]
+    pub context_stack: Option<crate::context_stack::ContextStackConfig>,
 }
 
 impl RuntimeConfig {
@@ -60,6 +64,7 @@ impl RuntimeConfig {
             memory_config: MemoryConfig::in_memory_ltm(),
             scheduler_config: SchedulerConfig::default(),
             token_budget: None,
+            context_stack: None,
         }
     }
 
@@ -175,6 +180,9 @@ impl Runtime {
         ctx.process_table = Arc::clone(&self.process_table);
         if let Some(dir) = session_dir {
             ctx.metadata.insert(metadata::SESSION_DIR.to_string(), dir);
+        }
+        if let Some(ref context_stack) = self.config.context_stack {
+            ctx = ctx.with_context_stack(Arc::new(ContextStack::from_config(context_stack)));
         }
         if let Some(ref router) = self.model_router {
             ctx.model_router = Some(Arc::clone(router));

@@ -1,0 +1,347 @@
+//! Demand-paged prompt context assembled from session node workspaces.
+
+mod budget;
+mod frame;
+mod policy;
+
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::fmt;
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
+
+pub use budget::BudgetAllocator;
+pub use frame::{estimate_tokens, load_node_output, load_node_prompt, truncate_to_budget};
+pub use policy::ScopeRules;
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContextStackConfig {
+    pub session_dir: PathBuf,
+    #[serde(default)]
+    pub node_metadata: HashMap<u64, NodeMetadata>,
+    #[serde(default)]
+    pub graph_edges: Vec<(u64, u64)>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NodeMetadata {
+    pub name: String,
+    pub op_type: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct ContextStack {
+    session_dir: PathBuf,
+    node_metadata: Arc<HashMap<u64, NodeMetadata>>,
+    graph_edges: Arc<Vec<(u64, u64)>>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ContextAssembly {
+    pub frames: Vec<ContextFrame>,
+    pub total_estimated_tokens: usize,
+    pub truncated: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct ContextFrame {
+    pub scope: ContextScope,
+    pub node_id: Option<u64>,
+    pub node_name: Option<String>,
+    pub content: String,
+    pub token_estimate: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ContextScope {
+    Session,
+    Upstream(u64),
+    Local,
+}
+
+impl ContextStack {
+    pub fn new(
+        session_dir: PathBuf,
+        node_metadata: Arc<HashMap<u64, NodeMetadata>>,
+        graph_edges: Arc<Vec<(u64, u64)>>,
+    ) -> Self {
+        Self {
+            session_dir,
+            node_metadata,
+            graph_edges,
+        }
+    }
+
+    pub fn from_config(config: &ContextStackConfig) -> Self {
+        Self::new(
+            config.session_dir.clone(),
+            Arc::new(config.node_metadata.clone()),
+            Arc::new(config.graph_edges.clone()),
+        )
+    }
+
+    pub fn assemble(&self, node_id: u64, profile: &str, token_budget: usize) -> ContextAssembly {
+        let rules = ScopeRules::for_profile(profile);
+        let mut allocator = BudgetAllocator::new(token_budget);
+        let mut frames = Vec::new();
+        let mut truncated = false;
+
+        let session_content = self.session_frame_content();
+        self.push_frame(
+            &mut frames,
+            &mut allocator,
+            ContextScope::Session,
+            None,
+            None,
+            session_content,
+            rules.session_frame_budget,
+            &mut truncated,
+        );
+
+        if let Some(local_content) = self.local_frame_content(node_id, profile) {
+            let local_budget = allocator.remaining().min(estimate_tokens(&local_content));
+            self.push_frame(
+                &mut frames,
+                &mut allocator,
+                ContextScope::Local,
+                Some(node_id),
+                self.node_metadata
+                    .get(&node_id)
+                    .map(|meta| meta.name.clone()),
+                local_content,
+                local_budget,
+                &mut truncated,
+            );
+        }
+
+        let upstream_chain = self.upstream_chain(node_id, rules.upstream_depth);
+        for upstream_id in upstream_chain {
+            let Some(meta) = self.node_metadata.get(&upstream_id) else {
+                continue;
+            };
+            let Some(content) = self.upstream_frame_content(upstream_id, meta, &rules) else {
+                continue;
+            };
+
+            if !self.push_frame(
+                &mut frames,
+                &mut allocator,
+                ContextScope::Upstream(upstream_id),
+                Some(upstream_id),
+                Some(meta.name.clone()),
+                content,
+                rules.upstream_frame_budget,
+                &mut truncated,
+            ) {
+                break;
+            }
+        }
+
+        ContextAssembly {
+            total_estimated_tokens: frames.iter().map(|frame| frame.token_estimate).sum(),
+            frames,
+            truncated,
+        }
+    }
+
+    fn push_frame(
+        &self,
+        frames: &mut Vec<ContextFrame>,
+        allocator: &mut BudgetAllocator,
+        scope: ContextScope,
+        node_id: Option<u64>,
+        node_name: Option<String>,
+        content: String,
+        max_frame_budget: usize,
+        truncated: &mut bool,
+    ) -> bool {
+        let estimated = estimate_tokens(&content);
+        if estimated == 0 || max_frame_budget == 0 {
+            return !allocator.is_exhausted();
+        }
+
+        let requested = estimated.min(max_frame_budget);
+        let allocated = allocator.allocate(requested);
+        if allocated == 0 {
+            if !content.is_empty() {
+                *truncated = true;
+            }
+            return false;
+        }
+
+        let (content, frame_truncated) = truncate_to_budget(&content, allocated);
+        *truncated |= frame_truncated;
+        frames.push(ContextFrame {
+            scope,
+            node_id,
+            node_name,
+            token_estimate: estimate_tokens(&content),
+            content,
+        });
+
+        !allocator.is_exhausted()
+    }
+
+    fn session_frame_content(&self) -> String {
+        let execution_id = self
+            .session_dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("unknown");
+        format!(
+            "- Execution: {}\n- Session dir: {}",
+            execution_id,
+            self.session_dir.display()
+        )
+    }
+
+    fn local_frame_content(&self, node_id: u64, profile: &str) -> Option<String> {
+        let meta = self.node_metadata.get(&node_id)?;
+        Some(format!(
+            "- Node: {} (#{})\n- Operation: {}\n- Profile: {}",
+            meta.name, node_id, meta.op_type, profile
+        ))
+    }
+
+    fn upstream_frame_content(
+        &self,
+        node_id: u64,
+        meta: &NodeMetadata,
+        rules: &ScopeRules,
+    ) -> Option<String> {
+        let mut sections = Vec::new();
+
+        if rules.include_upstream_prompts
+            && let Some(prompt) = load_node_prompt(&self.session_dir, node_id, &meta.name)
+        {
+            sections.push(("Prompt", prompt));
+        }
+
+        if let Some(output) = load_node_output(&self.session_dir, node_id, &meta.name) {
+            sections.push(("Output", output));
+        }
+
+        if sections.is_empty() {
+            return None;
+        }
+
+        let mut content = format!("- Node: {}\n- Operation: {}\n", meta.name, meta.op_type);
+        for (label, text) in sections {
+            content.push_str("\n");
+            content.push_str("### ");
+            content.push_str(label);
+            content.push_str("\n");
+            content.push_str(&text);
+            content.push('\n');
+        }
+        Some(content.trim_end().to_string())
+    }
+
+    fn upstream_chain(&self, node_id: u64, max_depth: usize) -> Vec<u64> {
+        if max_depth == 0 {
+            return Vec::new();
+        }
+
+        let mut queue = VecDeque::from([(node_id, 0usize)]);
+        let mut seen = HashSet::from([node_id]);
+        let mut ordered = Vec::new();
+
+        while let Some((current, depth)) = queue.pop_front() {
+            if depth >= max_depth {
+                continue;
+            }
+
+            for &(from, to) in self.graph_edges.iter() {
+                if to != current || !seen.insert(from) {
+                    continue;
+                }
+                ordered.push(from);
+                queue.push_back((from, depth.saturating_add(1)));
+            }
+        }
+
+        ordered
+    }
+}
+
+impl fmt::Display for ContextAssembly {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut first = true;
+        for frame in &self.frames {
+            if !first {
+                writeln!(f)?;
+                writeln!(f)?;
+            }
+            first = false;
+
+            match frame.scope {
+                ContextScope::Session => writeln!(f, "## Session")?,
+                ContextScope::Local => writeln!(f, "## Local")?,
+                ContextScope::Upstream(node_id) => {
+                    let node_name = frame.node_name.as_deref().unwrap_or("unknown");
+                    writeln!(f, "## Upstream: {} (#{})", node_name, node_id)?;
+                }
+            }
+
+            write!(f, "{}", frame.content)?;
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn upstream_chain_returns_direct_dependencies_first() {
+        let stack = ContextStack::new(
+            PathBuf::from("/tmp"),
+            Arc::new(HashMap::new()),
+            Arc::new(vec![(1, 2), (2, 3)]),
+        );
+
+        assert_eq!(stack.upstream_chain(3, 10), vec![2, 1]);
+    }
+
+    #[test]
+    fn upstream_chain_respects_max_depth() {
+        let stack = ContextStack::new(
+            PathBuf::from("/tmp"),
+            Arc::new(HashMap::new()),
+            Arc::new(vec![(1, 2), (2, 3), (3, 4)]),
+        );
+
+        assert_eq!(stack.upstream_chain(4, 1), vec![3]);
+    }
+
+    #[test]
+    fn assembly_skips_missing_workspace_files() {
+        let dir = tempdir().expect("tempdir");
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            1,
+            NodeMetadata {
+                name: "missing".to_string(),
+                op_type: "ConstStr".to_string(),
+            },
+        );
+
+        let stack = ContextStack::new(
+            dir.path().to_path_buf(),
+            Arc::new(metadata),
+            Arc::new(vec![]),
+        );
+
+        let assembly = stack.assemble(1, "claude", 10_000);
+        assert!(
+            assembly
+                .frames
+                .iter()
+                .all(|frame| { !matches!(frame.scope, ContextScope::Upstream(_)) })
+        );
+    }
+}
