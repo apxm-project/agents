@@ -157,11 +157,30 @@ The closest analogies:
 - APXM is to Temporal as a typed language is to assembly — adds structure and semantics to durable execution
 - APXM's vLLM integration is what no one else has — GPU-aware agent scheduling at the hardware level
 
-### The risk
+### Static structure is a feature, not a limitation
 
-The compiler approach is powerful but it bets on static structure being the right primitive for agents. If the future is fully autonomous agents that write and modify their own graphs at runtime, then compilation becomes a liability (you can't compile what you don't know ahead of time).
+Meta Research (March 2026) published "Agentic Code Reasoning" (arxiv:2603.01896), introducing **semi-formal reasoning** — a structured prompting methodology that requires agents to explicitly state premises, trace execution paths, and derive formal conclusions before answering.
 
-The counter-bet: **most production agent work is structured**. The 20% of tasks that are truly autonomous can use the AUTONOMOUS op as an escape hatch while the 80% get compiled, optimized, and GPU-scheduled.
+Key results:
+- Patch equivalence accuracy: **78% → 88%** (curated), **93%** (real-world agent patches)
+- Code QA on RubberDuckBench: **87% accuracy**
+- Fault localization on Defects4J: **+5pp** Top-5 accuracy
+
+The core insight:
+
+> *"Unlike unstructured chain-of-thought, semi-formal reasoning acts as a certificate: the agent cannot skip cases or make unsupported claims."*
+
+This is exactly what APXM's typed instruction set enforces at the runtime level. When an agent runs inside an APXM graph:
+- VERIFY op = explicit certificate check before proceeding
+- REASON op = structured reasoning with belief/goal updates
+- The typed effect system = no implicit side effects, all transitions declared
+- WAIT_ALL gate = cannot proceed until all upstream evidence is collected
+
+**APXM implements semi-formal reasoning as a compiled execution model**, not just a prompting technique. Where Meta's approach requires the LLM to voluntarily follow a template, APXM enforces structure at the scheduler level — a node literally cannot execute until its input tokens are ready.
+
+The broader research direction confirms: **structure improves LLM reasoning reliability**. Static, compiled, typed workflows are not a constraint — they are the reliability mechanism.
+
+APXM's AUTONOMOUS op is the escape hatch for the 20% that genuinely needs dynamic execution.
 
 ---
 
@@ -177,3 +196,5 @@ The counter-bet: **most production agent work is structured**. The 20% of tasks 
 - SWE-bench multi-agent results: vibecoding.app/blog/multi-agent-vs-single-agent-coding
 - CodeChain self-revision (ICLR 2024): arxiv:2310.08992
 - Speculative decoding survey (ACL 2024): arxiv:2401.07851
+- Meta semi-formal reasoning / Agentic Code Reasoning (2026): arxiv:2603.01896
+- VentureBeat coverage: https://venturebeat.com/orchestration/metas-new-structured-prompting-technique-makes-llms-significantly-better-at
