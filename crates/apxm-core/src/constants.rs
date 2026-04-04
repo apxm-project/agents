@@ -142,6 +142,26 @@ pub mod runtime {
         pub const TARGET_FLOW: &str = "target_flow";
     }
 
+    pub mod context_stack {
+        pub const PROFILE_CLAUDE: &str = "claude";
+        pub const PROFILE_CODEX: &str = "codex";
+        pub const PROFILE_REVIEWER: &str = "reviewer";
+
+        pub const DEFAULT_PROMPT_BUDGET_TOKENS: usize = 16_000;
+        pub const DEFAULT_UPSTREAM_DEPTH: usize = 1;
+        pub const DEFAULT_UPSTREAM_FRAME_BUDGET_TOKENS: usize = 2_000;
+        pub const DEFAULT_SESSION_FRAME_BUDGET_TOKENS: usize = 200;
+
+        pub const CLAUDE_UPSTREAM_DEPTH: usize = 3;
+        pub const CLAUDE_UPSTREAM_FRAME_BUDGET_TOKENS: usize = 4_000;
+
+        pub const CODEX_UPSTREAM_DEPTH: usize = 2;
+        pub const CODEX_UPSTREAM_FRAME_BUDGET_TOKENS: usize = 3_000;
+
+        pub const REVIEWER_UPSTREAM_DEPTH: usize = usize::MAX;
+        pub const REVIEWER_UPSTREAM_FRAME_BUDGET_TOKENS: usize = 2_000;
+    }
+
     pub mod belief_keys {
         pub const STAGED_PREFIX: &str = "_stage:";
         pub const DELEGATE_PREFIX: &str = "_delegate:";
