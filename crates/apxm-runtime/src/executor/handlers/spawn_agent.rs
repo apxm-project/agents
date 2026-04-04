@@ -106,9 +106,10 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
         {
             PathBuf::from(explicit_cwd)
         } else if let Some(session_dir) = ctx.metadata.get(metadata::SESSION_DIR) {
-            // Use agent_name as node folder name since node.metadata.name isn't available
-            // from the compiled artifact. The SessionEventEmitter creates this folder.
-            let folder_name = format!("{:02}_{}", node.id, agent_name);
+            // Use node.metadata.name (set by lower_dag.rs from graph JSON) for the folder name.
+            // Falls back to agent_name if name is unavailable.
+            let node_name = node.metadata.name.as_deref().unwrap_or(&agent_name);
+            let folder_name = apxm_core::paths::session_node_dir_name(node.id, node_name);
             PathBuf::from(session_dir)
                 .join(apxm_core::constants::session::files::NODES_DIR)
                 .join(folder_name)
