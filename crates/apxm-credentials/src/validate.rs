@@ -115,18 +115,44 @@ async fn validate_anthropic(
     let api_key = require_api_key(name, backend)?;
     let url = format!("{base}/v1/messages");
 
-    let resp = client
+    // Use first registered model; fall back to a known Anthropic default.
+    let model = backend
+        .models
+        .first()
+        .map(|m| m.id.as_str())
+        .unwrap_or("claude-3-haiku-20240307");
+
+    let body = format!(
+        "{{\"model\":\"{}\",\"max_tokens\":1,\"messages\":[{{\"role\":\"user\",\"content\":\"hi\"}}]}}",
+        model
+    );
+
+    // Build request with standard Anthropic headers.
+    let mut req = client
         .post(&url)
         .header("x-api-key", api_key)
         .header("anthropic-version", "2023-06-01")
-        .header("content-type", "application/json")
-        .body(r#"{"model":"claude-3-haiku-20240307","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}"#)
+        .header("content-type", "application/json");
+
+    // Inject custom headers from backend config (e.g. X-Custom-Gateway-Key).
+    // Values prefixed with "env:" are resolved from environment variables.
+    for (k, v) in &backend.headers {
+        let resolved = if let Some(var) = v.strip_prefix("env:") {
+            std::env::var(var).unwrap_or_else(|_| v.clone())
+        } else {
+            v.clone()
+        };
+        req = req.header(k.as_str(), resolved);
+    }
+
+    let resp = req
+        .body(body)
         .send()
         .await
         .map_err(|e| validation_err(name, format!("Request failed: {e}")))?;
 
     if resp.status().is_success() || resp.status().as_u16() == 400 {
-        // 400 means auth worked but request was bad — key is valid
+        // 400 means auth worked but request payload was invalid — key is valid.
         Ok(format!("OK ({})", resp.status()))
     } else {
         Err(validation_err(name, format!("HTTP {}", resp.status())))
