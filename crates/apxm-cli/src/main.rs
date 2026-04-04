@@ -1633,6 +1633,38 @@ fn setup_session(
 }
 
 #[cfg(feature = "driver")]
+fn context_stack_config_from_graph_json(
+    session_dir: &std::path::Path,
+    graph_json: &str,
+) -> Option<apxm_runtime::context_stack::ContextStackConfig> {
+    let graph = apxm_graph::ApxmGraph::from_json(graph_json).ok()?;
+    let node_metadata = graph
+        .nodes
+        .into_iter()
+        .map(|node| {
+            (
+                node.id,
+                apxm_runtime::context_stack::NodeMetadata {
+                    name: node.name,
+                    op_type: format!("{:?}", node.op),
+                },
+            )
+        })
+        .collect::<std::collections::HashMap<_, _>>();
+    let graph_edges = graph
+        .edges
+        .into_iter()
+        .map(|edge| (edge.from, edge.to))
+        .collect();
+
+    Some(apxm_runtime::context_stack::ContextStackConfig {
+        session_dir: session_dir.to_path_buf(),
+        node_metadata,
+        graph_edges,
+    })
+}
+
+#[cfg(feature = "driver")]
 async fn execute_command(
     input: PathBuf,
     args: Vec<String>,
@@ -1653,10 +1685,6 @@ async fn execute_command(
             .collect_all_outputs = true;
     }
 
-    let linker = Linker::new(linker_config)
-        .await
-        .context("Failed to initialize runtime")?;
-
     // Read input graph for session output
     let input_graph_json = if emit_session.is_some() {
         std::fs::read_to_string(&input).ok()
@@ -1667,6 +1695,15 @@ async fn execute_command(
     // Set up session output + live emitter BEFORE execution
     let (writer, emitter, execution_id) =
         setup_session(&emit_session, &input, "graph", input_graph_json.as_deref())?;
+
+    if let (Some(graph_json), Some(writer)) = (input_graph_json.as_deref(), writer.as_ref()) {
+        linker_config.runtime_config.context_stack =
+            context_stack_config_from_graph_json(writer.session_dir(), graph_json);
+    }
+
+    let linker = Linker::new(linker_config)
+        .await
+        .context("Failed to initialize runtime")?;
 
     // Coerce Arc<SessionEventEmitter> → Arc<dyn ExecutionEventEmitter> for run_graph
     let emitter_dyn: Option<std::sync::Arc<dyn apxm_runtime::ExecutionEventEmitter>> = emitter
@@ -1839,10 +1876,6 @@ async fn run_command(
             .collect_all_outputs = true;
     }
 
-    let runtime = RuntimeExecutor::new(&linker_config)
-        .await
-        .context("Failed to initialize runtime")?;
-
     let artifact_graph_json = if emit_session.is_some() {
         artifact.entry_dag().and_then(graph_json_from_execution_dag)
     } else {
@@ -1856,6 +1889,15 @@ async fn run_command(
         "artifact",
         artifact_graph_json.as_deref(),
     )?;
+
+    if let (Some(graph_json), Some(writer)) = (artifact_graph_json.as_deref(), writer.as_ref()) {
+        linker_config.runtime_config.context_stack =
+            context_stack_config_from_graph_json(writer.session_dir(), graph_json);
+    }
+
+    let runtime = RuntimeExecutor::new(&linker_config)
+        .await
+        .context("Failed to initialize runtime")?;
 
     // Coerce Arc<SessionEventEmitter> → Arc<dyn ExecutionEventEmitter>
     let emitter_dyn: Option<std::sync::Arc<dyn apxm_runtime::ExecutionEventEmitter>> = emitter
