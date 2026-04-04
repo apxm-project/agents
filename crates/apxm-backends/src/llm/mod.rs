@@ -16,6 +16,7 @@ pub mod assembler;
 pub mod backends;
 #[cfg(feature = "metrics")]
 pub mod observability;
+pub mod rate_limit;
 #[cfg(not(feature = "metrics"))]
 pub mod observability {
     use apxm_core::types::TokenUsage;
@@ -146,6 +147,7 @@ pub use backends::{
 };
 pub use observability::{AggregatedMetrics, MetricsTracker, RequestMetrics, RequestTracer};
 pub use provider::{Provider, ProviderId, RegisteredProvider};
+pub use rate_limit::{RateLimitConfig, RateLimitConfigError, RateLimitError};
 pub use registration::{
     BackendFallback, BackendRegistration, ModelAliasRegistration, ModelRegistration,
     OperationRoute, RegistryPolicy,

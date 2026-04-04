@@ -69,6 +69,10 @@ pub use llm::{
     // Provider management
     Provider,
     ProviderId,
+    // Rate limiting
+    RateLimitConfig,
+    RateLimitConfigError,
+    RateLimitError,
     RegisteredProvider,
     RegistryPolicy,
     RequestBuilder,

@@ -6,6 +6,7 @@
 #[cfg(feature = "metrics")]
 use crate::llm::RequestMetrics;
 use crate::llm::backends::{LLMBackend, LLMRequest, LLMResponse};
+use crate::llm::rate_limit::{RateLimitConfig, RateLimiter, SystemClock};
 use anyhow::{Context as AnyhowContext, Result};
 use apxm_core::types::AISOperationType;
 #[cfg(feature = "metrics")]
@@ -50,12 +51,24 @@ pub struct LLMRegistry {
     /// Metrics tracker
     #[cfg(feature = "metrics")]
     metrics: crate::llm::MetricsTracker,
+    /// Rate limiter
+    rate_limiter: Arc<RateLimiter<SystemClock>>,
 }
 
 impl LLMRegistry {
     /// Create a new empty registry with default routing.
     pub fn new() -> Self {
-        LLMRegistry {
+        Self::with_rate_limits(HashMap::new()).expect("empty rate limit config should be valid")
+    }
+
+    /// Create a new registry with backend-specific rate limits.
+    pub fn with_rate_limits(
+        rate_limit_configs: HashMap<String, RateLimitConfig>,
+    ) -> Result<Self> {
+        let rate_limiter = RateLimiter::new(rate_limit_configs, Arc::new(SystemClock))
+            .map_err(|e| anyhow::anyhow!("Invalid rate limit config: {}", e))?;
+
+        Ok(LLMRegistry {
             backends: Arc::new(DashMap::new()),
             default_backend: Arc::new(parking_lot::RwLock::new(None)),
             default_model: Arc::new(parking_lot::RwLock::new(None)),
@@ -68,11 +81,15 @@ impl LLMRegistry {
             routing_strategy: RoutingStrategy::default(),
             #[cfg(feature = "metrics")]
             metrics: crate::llm::MetricsTracker::new(),
-        }
+            rate_limiter: Arc::new(rate_limiter),
+        })
     }
 
     /// Create registry with custom routing strategy.
     pub fn with_strategy(routing_strategy: RoutingStrategy) -> Self {
+        let rate_limiter =
+            RateLimiter::new(HashMap::new(), Arc::new(SystemClock)).expect("empty config is valid");
+
         LLMRegistry {
             backends: Arc::new(DashMap::new()),
             default_backend: Arc::new(parking_lot::RwLock::new(None)),
@@ -86,6 +103,7 @@ impl LLMRegistry {
             routing_strategy,
             #[cfg(feature = "metrics")]
             metrics: crate::llm::MetricsTracker::new(),
+            rate_limiter: Arc::new(rate_limiter),
         }
     }
 
@@ -335,6 +353,11 @@ impl LLMRegistry {
         if health == HealthStatus::Unhealthy {
             anyhow::bail!("Backend '{}' is unhealthy", backend_name);
         }
+
+        // Check rate limit before dispatching to backend
+        self.rate_limiter
+            .check_and_consume(backend_name)
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
 
         let start = Instant::now();
         let result = backend.generate(request).await;
