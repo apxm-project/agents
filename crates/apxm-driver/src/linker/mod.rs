@@ -174,12 +174,15 @@ impl Linker {
             .unwrap_or(false);
 
         // Use graph-direct path when MLIR is unavailable or input is JSON
+        // JSON/APXM graphs always use the pure-Rust graph-direct path for reliability.
+        // MLIR compilation is reserved for .ais and .mlir source files.
+        if is_json {
+            return self.compile_graph_direct(input);
+        }
+
         let Some(ref compiler) = self.compiler else {
-            if is_json {
-                return self.compile_graph_direct(input);
-            }
             return Err(DriverError::Driver(
-                "MLIR compiler required for non-JSON inputs (.ais, .mlir) but is not available.                  Run `dekk apxm build` to rebuild with MLIR support.".to_string(),
+                "MLIR compiler required for non-JSON inputs (.ais, .mlir) but is not available. Run `dekk apxm build` to rebuild with MLIR support.".to_string(),
             ));
         };
 

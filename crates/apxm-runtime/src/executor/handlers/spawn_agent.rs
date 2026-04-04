@@ -23,7 +23,6 @@ use apxm_core::apxm_op;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::constants::runtime::{belief_keys, metadata, response_keys};
 use apxm_core::error::RuntimeError;
-use apxm_core::paths::session_node_dir_name;
 use apxm_core::types::aam::{AamContext, CapabilityProjection, GoalProjection};
 use apxm_core::types::goal::GoalStatus;
 use std::collections::HashMap;
@@ -106,13 +105,13 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
         let cwd = if let Some(explicit_cwd) = get_optional_string_attribute(node, graph_attrs::CWD)?
         {
             PathBuf::from(explicit_cwd)
-        } else if let (Some(session_dir), Some(node_name)) = (
-            ctx.metadata.get(metadata::SESSION_DIR),
-            node.metadata.name.as_deref(),
-        ) {
+        } else if let Some(session_dir) = ctx.metadata.get(metadata::SESSION_DIR) {
+            // Use agent_name as node folder name since node.metadata.name isn't available
+            // from the compiled artifact. The SessionEventEmitter creates this folder.
+            let folder_name = format!("{:02}_{}", node.id, agent_name);
             PathBuf::from(session_dir)
                 .join(apxm_core::constants::session::files::NODES_DIR)
-                .join(session_node_dir_name(node.id, node_name))
+                .join(folder_name)
         } else {
             std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp"))
         };
