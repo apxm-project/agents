@@ -106,13 +106,31 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
         {
             PathBuf::from(explicit_cwd)
         } else if let Some(session_dir) = ctx.metadata.get(metadata::SESSION_DIR) {
-            // Use node.metadata.name (set by lower_dag.rs from graph JSON) for the folder name.
-            // Falls back to agent_name if name is unavailable.
-            let node_name = node.metadata.name.as_deref().unwrap_or(&agent_name);
-            let folder_name = apxm_core::paths::session_node_dir_name(node.id, node_name);
-            PathBuf::from(session_dir)
-                .join(apxm_core::constants::session::files::NODES_DIR)
-                .join(folder_name)
+            // Find the node workspace folder by scanning the nodes/ directory for a
+            // folder starting with the zero-padded node_id prefix.
+            // This avoids depending on NodeMetadata.name surviving artifact roundtrip.
+            let nodes_dir = PathBuf::from(session_dir)
+                .join(apxm_core::constants::session::files::NODES_DIR);
+            let prefix = format!("{:02}_", node.id);
+            let matched = std::fs::read_dir(&nodes_dir)
+                .ok()
+                .and_then(|mut entries| {
+                    entries.find_map(|e| {
+                        let entry = e.ok()?;
+                        let name = entry.file_name();
+                        let name_str = name.to_str()?;
+                        if name_str.starts_with(&prefix) {
+                            Some(nodes_dir.join(name_str))
+                        } else {
+                            None
+                        }
+                    })
+                });
+            matched.unwrap_or_else(|| {
+                // Fallback: folder hasn't been created yet, use node_name or agent_name
+                let node_name = node.metadata.name.as_deref().unwrap_or(&agent_name);
+                nodes_dir.join(apxm_core::paths::session_node_dir_name(node.id, node_name))
+            })
         } else {
             std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp"))
         };
