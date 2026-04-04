@@ -1464,6 +1464,7 @@ fn load_graph_from_directory(dir: &std::path::Path) -> Result<apxm_graph::ApxmGr
 }
 
 /// Shared session setup: creates session dir, writes running manifest, creates emitter.
+/// Returns an Arc<SessionEventEmitter> so callers can call set_total_nodes() before execution.
 #[cfg(feature = "driver")]
 fn setup_session(
     emit_session: &Option<Option<PathBuf>>,
@@ -1472,7 +1473,7 @@ fn setup_session(
     input_graph_json: Option<&str>,
 ) -> Result<(
     Option<apxm_driver::session_output::SessionOutputWriter>,
-    Option<std::sync::Arc<dyn apxm_runtime::ExecutionEventEmitter>>,
+    Option<std::sync::Arc<apxm_driver::session_output::SessionEventEmitter>>,
     Option<String>,
 )> {
     use apxm_core::paths::ApxmPaths;
@@ -1511,18 +1512,30 @@ fn setup_session(
         .context("Failed to write manifest")?;
 
     if let Some(graph_json) = input_graph_json {
+        // Set total node count from graph JSON for live.json progress tracking
+        if let Ok(graph) = apxm_graph::ApxmGraph::from_json(graph_json) {
+            // We'll set this on the emitter after construction
+            let _ = graph.nodes.len(); // validated below
+        }
         w.write_input_graph(graph_json)
             .context("Failed to write input graph")?;
     }
 
     eprintln!("Session: {}", w.session_dir().display());
 
-    let emitter = SessionEventEmitter::new(w.session_dir(), exec_id.clone())
-        .context("Failed to create session event emitter")?;
+    let emitter = std::sync::Arc::new(
+        SessionEventEmitter::new(w.session_dir(), exec_id.clone())
+            .context("Failed to create session event emitter")?,
+    );
 
-    let emitter: Option<std::sync::Arc<dyn apxm_runtime::ExecutionEventEmitter>> =
-        Some(std::sync::Arc::new(emitter));
-    Ok((Some(w), emitter, Some(exec_id)))
+    // Set total node count for progress tracking in live.json
+    if let Some(graph_json) = input_graph_json {
+        if let Ok(graph) = apxm_graph::ApxmGraph::from_json(graph_json) {
+            emitter.set_total_nodes(graph.nodes.len() as u64);
+        }
+    }
+
+    Ok((Some(w), Some(emitter), Some(exec_id)))
 }
 
 #[cfg(feature = "driver")]
@@ -1562,7 +1575,11 @@ async fn execute_command(
         input_graph_json.as_deref(),
     )?;
 
-    let result = match linker.run_graph(&input, args, emitter).await {
+    // Coerce Arc<SessionEventEmitter> → Arc<dyn ExecutionEventEmitter> for run_graph
+    let emitter_dyn: Option<std::sync::Arc<dyn apxm_runtime::ExecutionEventEmitter>> =
+        emitter.as_ref().map(|e| e.clone() as std::sync::Arc<dyn apxm_runtime::ExecutionEventEmitter>);
+
+    let result = match linker.run_graph(&input, args, emitter_dyn).await {
         Ok(r) => r,
         Err(err) => {
             // Finalize live.json as failed before returning so it doesn't stay "running".
@@ -1701,9 +1718,13 @@ async fn run_command(
         None,
     )?;
 
+    // Coerce Arc<SessionEventEmitter> → Arc<dyn ExecutionEventEmitter>
+    let emitter_dyn: Option<std::sync::Arc<dyn apxm_runtime::ExecutionEventEmitter>> =
+        emitter.as_ref().map(|e| e.clone() as std::sync::Arc<dyn apxm_runtime::ExecutionEventEmitter>);
+
     // Execute artifact with args + emitter
     let result = match runtime
-        .execute_artifact_with_emitter(artifact, args, emitter)
+        .execute_artifact_with_emitter(artifact, args, emitter_dyn)
         .await
     {
         Ok(r) => r,
