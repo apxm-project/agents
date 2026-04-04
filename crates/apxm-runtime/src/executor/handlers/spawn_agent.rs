@@ -102,17 +102,15 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
 
         let mode = get_optional_string_attribute(node, graph_attrs::MODE)?;
         let model = get_optional_string_attribute(node, graph_attrs::MODEL)?;
-        let cwd = if let Some(explicit_cwd) = get_optional_string_attribute(node, graph_attrs::CWD)?
-        {
-            PathBuf::from(explicit_cwd)
-        } else if let Some(session_dir) = ctx.metadata.get(metadata::SESSION_DIR) {
-            // Find the node workspace folder by scanning the nodes/ directory for a
-            // folder starting with the zero-padded node_id prefix.
-            // This avoids depending on NodeMetadata.name surviving artifact roundtrip.
+        // Determine node workspace folder for context files (AGENTS.md/CLAUDE.md).
+        // The node workspace path is passed as APXM_NODE_WORKSPACE env var so the
+        // agent can read its context files, while cwd stays at the project root
+        // so the agent can build/test/commit normally.
+        let node_workspace = if let Some(session_dir) = ctx.metadata.get(metadata::SESSION_DIR) {
             let nodes_dir = PathBuf::from(session_dir)
                 .join(apxm_core::constants::session::files::NODES_DIR);
             let prefix = format!("{:02}_", node.id);
-            let matched = std::fs::read_dir(&nodes_dir)
+            std::fs::read_dir(&nodes_dir)
                 .ok()
                 .and_then(|mut entries| {
                     entries.find_map(|e| {
@@ -125,18 +123,36 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
                             None
                         }
                     })
-                });
-            matched.unwrap_or_else(|| {
-                // Fallback: folder hasn't been created yet, use node_name or agent_name
-                let node_name = node.metadata.name.as_deref().unwrap_or(&agent_name);
-                nodes_dir.join(apxm_core::paths::session_node_dir_name(node.id, node_name))
-            })
+                })
         } else {
+            None
+        };
+
+        let cwd = if let Some(explicit_cwd) = get_optional_string_attribute(node, graph_attrs::CWD)?
+        {
+            PathBuf::from(explicit_cwd)
+        } else {
+            // Default: project root so agent can build/test/commit.
+            // Context files are in node_workspace (passed via env).
             std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp"))
         };
 
         // Project current AAM state into AamContext for the spawned agent
         let aam_context = project_aam_context(ctx);
+
+        // Build extra env for the agent subprocess.
+        // APXM_NODE_WORKSPACE points to the per-node context folder (AGENTS.md/CLAUDE.md).
+        // CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD tells claude-agent-acp to also
+        // read CLAUDE.md from the node workspace folder while running in the project root.
+        let mut extra_env = std::collections::HashMap::new();
+        if let Some(ref ws) = node_workspace {
+            let ws_str = ws.to_string_lossy().into_owned();
+            extra_env.insert("APXM_NODE_WORKSPACE".to_string(), ws_str.clone());
+            extra_env.insert(
+                "CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD".to_string(),
+                ws_str,
+            );
+        }
 
         let session = spawner
             .spawn_external(
@@ -146,6 +162,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
                 mode.as_deref(),
                 model.as_deref(),
                 &aam_context,
+                &extra_env,
             )
             .await?;
 

@@ -30,6 +30,7 @@ pub trait AgentSpawner: Send + Sync {
         mode: Option<&str>,
         model: Option<&str>,
         aam_context: &apxm_core::types::aam::AamContext,
+        extra_env: &std::collections::HashMap<String, String>,
     ) -> Result<Arc<tokio::sync::Mutex<dyn std::any::Any + Send + Sync>>, RuntimeError>;
 }
 
