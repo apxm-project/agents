@@ -53,9 +53,13 @@ termimad = "0.30"
 dirs = "5.0"
 toml = "0.9"
 
+# Persistent cache (use rusqlite 0.32 to match sqlx's libsqlite3-sys 0.28)
+rusqlite = { version = "0.32", features = ["bundled"], optional = true }
+
 [features]
-default = ["dashmap"]
+default = ["dashmap", "sqlite"]
 dashmap = ["dep:dashmap"]
+sqlite = ["dep:rusqlite"]
 metrics = ["apxm-backends/metrics"]
 # Compile out all tracing for zero overhead (propagates to apxm-core)
 no-trace = ["apxm-core/no-trace"]
