@@ -63,6 +63,7 @@ impl AgentSpawner for AcpAgentSpawner {
         mode: Option<&str>,
         model: Option<&str>,
         aam_context: &AamContext,
+        extra_env: &std::collections::HashMap<String, String>,
     ) -> Result<Arc<tokio::sync::Mutex<dyn std::any::Any + Send + Sync>>, RuntimeError> {
         let profile = self
             .registry
@@ -85,6 +86,13 @@ impl AgentSpawner for AcpAgentSpawner {
                 }
             })?
             .clone();
+
+        // Inject extra_env (e.g. APXM_NODE_WORKSPACE) into the profile env first
+        // so subsequent borrows use the final profile state.
+        let mut profile = profile;
+        for (k, v) in extra_env {
+            profile.env.insert(k.clone(), v.clone());
+        }
 
         // Apply profile defaults as fallbacks for mode/model
         let effective_mode = mode.or(profile.default_mode.as_deref());
