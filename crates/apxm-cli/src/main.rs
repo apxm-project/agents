@@ -1582,9 +1582,11 @@ async fn execute_command(
     let result = match linker.run_graph(&input, args, emitter_dyn).await {
         Ok(r) => r,
         Err(err) => {
-            // Finalize live.json as failed before returning so it doesn't stay "running".
+            // Finalize live.json + manifest as failed so neither stays at "running".
             if let Some(ref w) = writer {
-                let _ = w.finalize_live(false);
+                let exec_id = execution_id.as_deref();
+                let graph_name = input.file_stem().and_then(|s| s.to_str());
+                let _ = w.finalize_live_with_id(false, exec_id, graph_name);
             }
             eprintln!("{}", err);
             return Err(anyhow::anyhow!("Execution failed"));
@@ -1729,9 +1731,11 @@ async fn run_command(
     {
         Ok(r) => r,
         Err(e) => {
-            // Finalize live.json as failed before returning.
+            // Finalize live.json + manifest as failed.
             if let Some(ref w) = writer {
-                let _ = w.finalize_live(false);
+                let exec_id = execution_id.as_deref();
+                let graph_name = input.file_stem().and_then(|s| s.to_str());
+                let _ = w.finalize_live_with_id(false, exec_id, graph_name);
             }
             return Err(anyhow::anyhow!("Execution failed: {}", e));
         }
