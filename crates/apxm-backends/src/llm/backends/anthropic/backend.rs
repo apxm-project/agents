@@ -22,10 +22,27 @@ const DEFAULT_MODEL: &str = "claude-opus-4";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 
 /// Anthropic LLM backend.
+///
+/// Supports Anthropic's Claude API including on-premises endpoints.
+/// Extra headers (e.g. `X-Custom-Gateway-Key`) can be injected via the
+/// `extra_headers` config key:
+///
+/// ```toml
+/// [[backends]]
+/// name = "my-anthropic"
+/// protocol = "anthropic"
+/// endpoint = "https://llm.example.com/anthropic"
+/// api_key = "env:ANTHROPIC_API_KEY"
+///
+/// [backends.headers]
+/// X-Custom-Gateway-Key = "env:LLM_GATEWAY_KEY"
+/// ```
 pub struct AnthropicBackend {
     api_key: String,
     model: String,
     base_url: String,
+    /// Additional HTTP headers injected on every request.
+    extra_headers: Vec<(String, String)>,
     client: reqwest::Client,
 }
 
@@ -35,6 +52,13 @@ impl AnthropicBackend {
     }
 
     /// Create a new Anthropic backend.
+    ///
+    /// The optional `config` value may contain:
+    /// - `model` – override the default model name
+    /// - `base_url` – override the API base URL (enables on-premises endpoints)
+    /// - `extra_headers` – a JSON object whose keys/values become HTTP headers on every
+    ///   request.  Values prefixed with `"env:"` are resolved from environment variables
+    ///   at backend-creation time (e.g. `"env:LLM_GATEWAY_KEY"` → current env var).
     pub async fn new(api_key: &str, config: Option<serde_json::Value>) -> Result<Self> {
         let model = config
             .as_ref()
@@ -50,10 +74,32 @@ impl AnthropicBackend {
             .unwrap_or(DEFAULT_BASE_URL)
             .to_string();
 
+        // Parse optional extra_headers from config.
+        // Values prefixed with "env:" are read from environment variables.
+        let extra_headers: Vec<(String, String)> = config
+            .as_ref()
+            .and_then(|c| c.get("extra_headers"))
+            .and_then(|h| h.as_object())
+            .map(|obj| {
+                obj.iter()
+                    .filter_map(|(k, v)| {
+                        let raw = v.as_str()?;
+                        let resolved = if let Some(var_name) = raw.strip_prefix("env:") {
+                            std::env::var(var_name).unwrap_or_else(|_| raw.to_string())
+                        } else {
+                            raw.to_string()
+                        };
+                        Some((k.clone(), resolved))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
         Ok(AnthropicBackend {
             api_key: api_key.to_string(),
             model,
             base_url,
+            extra_headers,
             client: reqwest::Client::new(),
         })
     }
@@ -228,12 +274,19 @@ impl LLMBackend for AnthropicBackend {
             "Sending request to Anthropic"
         );
 
-        let response = self
+        let mut req_builder = self
             .client
             .post(&url)
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", ANTHROPIC_VERSION)
-            .header("Content-Type", "application/json")
+            .header("Content-Type", "application/json");
+
+        // Inject extra headers (e.g. on-premises X-Custom-Gateway-Key)
+        for (name, value) in &self.extra_headers {
+            req_builder = req_builder.header(name.as_str(), value.as_str());
+        }
+
+        let response = req_builder
             .json(&body)
             .send()
             .await
@@ -275,11 +328,17 @@ impl LLMBackend for AnthropicBackend {
                 "Sending streaming request to Anthropic"
             );
 
-            let response = self.client
+            let mut req_builder = self.client
                 .post(&url)
                 .header("x-api-key", &self.api_key)
                 .header("anthropic-version", ANTHROPIC_VERSION)
-                .header("Content-Type", "application/json")
+                .header("Content-Type", "application/json");
+
+            for (name, value) in &self.extra_headers {
+                req_builder = req_builder.header(name.as_str(), value.as_str());
+            }
+
+            let response = req_builder
                 .json(&body)
                 .send()
                 .await
@@ -658,6 +717,7 @@ mod tests {
             api_key: "test".to_string(),
             model: "claude-opus-4".to_string(),
             base_url: DEFAULT_BASE_URL.to_string(),
+            extra_headers: vec![],
             client: reqwest::Client::new(),
         };
 
@@ -679,6 +739,7 @@ mod tests {
             api_key: "test".to_string(),
             model: "claude-opus-4".to_string(),
             base_url: DEFAULT_BASE_URL.to_string(),
+            extra_headers: vec![],
             client: reqwest::Client::new(),
         };
 
@@ -729,6 +790,7 @@ mod tests {
             api_key: "test".to_string(),
             model: "claude-opus-4".to_string(),
             base_url: DEFAULT_BASE_URL.to_string(),
+            extra_headers: vec![],
             client: reqwest::Client::new(),
         };
 
@@ -770,6 +832,50 @@ mod tests {
                 assert_eq!(input["command"], "ls -la");
             }
             _ => panic!("Expected ToolUse block"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_extra_headers_are_parsed() {
+        let config = json!({
+            "extra_headers": {
+                "X-Test-Header": "test-value",
+                "X-Custom": "custom-value"
+            }
+        });
+
+        let backend = AnthropicBackend::new("test-key", Some(config))
+            .await
+            .unwrap();
+
+        assert_eq!(backend.extra_headers.len(), 2);
+        assert!(backend.extra_headers.contains(&("X-Test-Header".to_string(), "test-value".to_string())));
+        assert!(backend.extra_headers.contains(&("X-Custom".to_string(), "custom-value".to_string())));
+    }
+
+    #[tokio::test]
+    async fn test_extra_headers_env_resolution() {
+        unsafe {
+            std::env::set_var("TEST_ANTHROPIC_HEADER", "from-env");
+        }
+
+        let config = json!({
+            "extra_headers": {
+                "X-From-Env": "env:TEST_ANTHROPIC_HEADER",
+                "X-Literal": "literal-value"
+            }
+        });
+
+        let backend = AnthropicBackend::new("test-key", Some(config))
+            .await
+            .unwrap();
+
+        assert_eq!(backend.extra_headers.len(), 2);
+        assert!(backend.extra_headers.contains(&("X-From-Env".to_string(), "from-env".to_string())));
+        assert!(backend.extra_headers.contains(&("X-Literal".to_string(), "literal-value".to_string())));
+
+        unsafe {
+            std::env::remove_var("TEST_ANTHROPIC_HEADER");
         }
     }
 }
