@@ -64,6 +64,7 @@ pub mod graph {
         pub const TARGET: &str = "target";
         pub const PROTOCOL: &str = "protocol";
         pub const CONDITION: &str = "condition";
+        pub const EVIDENCE: &str = "evidence";
         pub const VALUE: &str = "value";
         pub const KEY: &str = "key";
         pub const QUEUE: &str = "queue";
