@@ -1,6 +1,6 @@
-use apxm_core::types::provider_spec::{ProviderProtocol, resolve_builtin_provider};
-use apxm_core::types::BackendConfig;
 use crate::BackendError;
+use apxm_core::types::BackendConfig;
+use apxm_core::types::provider_spec::{ProviderProtocol, resolve_builtin_provider};
 
 /// Validate a backend by making a minimal API call.
 ///
@@ -25,7 +25,9 @@ pub async fn validate_backend(backend: &BackendConfig) -> Result<String, Backend
 
     match backend.protocol {
         ProviderProtocol::OpenAI => validate_openai(&client, &backend.name, backend, base).await,
-        ProviderProtocol::Anthropic => validate_anthropic(&client, &backend.name, backend, base).await,
+        ProviderProtocol::Anthropic => {
+            validate_anthropic(&client, &backend.name, backend, base).await
+        }
         ProviderProtocol::Google => validate_google(&client, &backend.name, backend, base).await,
         ProviderProtocol::Ollama => validate_ollama(&client, &backend.name, backend, base).await,
         // vLLM uses OpenAI-compatible validation (same /v1/models endpoint)

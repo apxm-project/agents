@@ -26,10 +26,12 @@
 pub mod cache;
 pub mod compiler;
 pub mod config;
+pub mod context_assembler;
 pub mod error;
 pub mod linker;
 pub mod runtime;
 pub mod session_output;
+pub mod skill_resolver;
 
 // --- Config ---
 pub use config::{ApXmConfig, ChatConfig, ConfigError, ToolConfig};

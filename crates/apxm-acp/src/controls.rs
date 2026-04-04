@@ -1,7 +1,7 @@
-use apxm_core::constants::acp::set_session;
 use crate::AcpError;
 use crate::constants::{fields, methods};
 use crate::session::AcpSession;
+use apxm_core::constants::acp::set_session;
 
 /// Session control operations (mode, model, cancel).
 ///

@@ -115,3 +115,42 @@ impl ApxmPaths {
         self.ensure_subdir(SESSIONS_DIR)
     }
 }
+
+/// Build a stable per-node workspace directory name.
+pub fn session_node_dir_name(node_id: u64, node_name: &str) -> String {
+    let mut sanitized = String::with_capacity(node_name.len());
+    let mut last_was_separator = false;
+
+    for ch in node_name.chars() {
+        if ch.is_ascii_alphanumeric() {
+            sanitized.push(ch.to_ascii_lowercase());
+            last_was_separator = false;
+        } else if !last_was_separator {
+            sanitized.push('_');
+            last_was_separator = true;
+        }
+    }
+
+    let sanitized = sanitized.trim_matches('_');
+    let suffix = if sanitized.is_empty() {
+        "node"
+    } else {
+        sanitized
+    };
+
+    format!("{node_id:02}_{suffix}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::session_node_dir_name;
+
+    #[test]
+    fn session_node_dir_name_sanitizes_labels() {
+        assert_eq!(
+            session_node_dir_name(7, "Spawn Architect"),
+            "07_spawn_architect"
+        );
+        assert_eq!(session_node_dir_name(12, "!!!"), "12_node");
+    }
+}

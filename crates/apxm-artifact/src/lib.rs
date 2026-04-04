@@ -266,6 +266,7 @@ mod tests {
                 input_tokens: vec![],
                 output_tokens: vec![1],
                 metadata: apxm_core::types::NodeMetadata {
+                    name: Some("seed".into()),
                     priority: 0,
                     estimated_latency: None,
                     task_source_id: Some(42),
@@ -308,6 +309,7 @@ mod tests {
         let decoded_dag = decoded.dag().expect("test artifact should have a DAG");
         assert_eq!(decoded_dag.nodes.len(), dag.nodes.len());
         assert_eq!(decoded_dag.nodes[0].metadata.task_source_id, Some(42));
+        assert_eq!(decoded_dag.nodes[0].metadata.name.as_deref(), Some("seed"));
     }
 
     #[test]

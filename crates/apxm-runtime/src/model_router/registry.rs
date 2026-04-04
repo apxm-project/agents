@@ -207,13 +207,11 @@ impl ModelRegistry {
 
     /// Get the default model name (from config or first registered).
     pub fn default_model(&self) -> Option<String> {
-        self.defaults.read().model.clone().or_else(|| {
-            self.models
-                .read()
-                .values()
-                .next()
-                .map(|m| m.name.clone())
-        })
+        self.defaults
+            .read()
+            .model
+            .clone()
+            .or_else(|| self.models.read().values().next().map(|m| m.name.clone()))
     }
 
     /// Get the default backend name from config.
@@ -231,7 +229,11 @@ impl ModelRegistry {
         self.models
             .read()
             .values()
-            .min_by(|a, b| a.cost_per_1k_output.partial_cmp(&b.cost_per_1k_output).unwrap())
+            .min_by(|a, b| {
+                a.cost_per_1k_output
+                    .partial_cmp(&b.cost_per_1k_output)
+                    .unwrap()
+            })
             .cloned()
     }
 

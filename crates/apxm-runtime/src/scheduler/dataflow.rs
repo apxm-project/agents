@@ -129,7 +129,10 @@ impl DataflowScheduler {
         let results = state.collect_exit_values()?;
 
         let (all_outputs, node_output_map) = if self.config.collect_all_outputs {
-            (Some(state.collect_all_values()?), Some(state.node_output_map()))
+            (
+                Some(state.collect_all_values()?),
+                Some(state.node_output_map()),
+            )
         } else {
             (None, None)
         };
@@ -148,7 +151,13 @@ impl DataflowScheduler {
             "DAG execution completed"
         );
 
-        Ok((results, stats, scheduler_metrics, all_outputs, node_output_map))
+        Ok((
+            results,
+            stats,
+            scheduler_metrics,
+            all_outputs,
+            node_output_map,
+        ))
     }
 
     /// Apply runtime latency tier overrides to DAG nodes.
@@ -316,6 +325,7 @@ mod tests {
             input_tokens: vec![],
             output_tokens: vec![],
             metadata: NodeMetadata {
+                name: None,
                 priority: 0,
                 estimated_latency: Some(cost),
                 task_source_id: None,
@@ -334,6 +344,7 @@ mod tests {
             input_tokens: vec![],
             output_tokens: vec![],
             metadata: NodeMetadata {
+                name: None,
                 priority: 0,
                 estimated_latency: Some(cost),
                 task_source_id: None,

@@ -367,7 +367,10 @@ fn generate_bindings(
         }
     }
     if extra_clang_args.is_empty() {
-        log_info!("apxm-compiler-build", "WARNING: Could not find clang builtins (stddef.h). Bindgen may fail.");
+        log_info!(
+            "apxm-compiler-build",
+            "WARNING: Could not find clang builtins (stddef.h). Bindgen may fail."
+        );
     }
 
     let builder = bindgen::Builder::default()

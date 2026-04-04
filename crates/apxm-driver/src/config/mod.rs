@@ -113,7 +113,6 @@ pub struct BackendFallbackConfig {
     pub fallbacks: Vec<String>,
 }
 
-
 /// Tool-specific configuration overrides.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ToolConfig {

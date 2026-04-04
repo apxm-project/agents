@@ -810,13 +810,7 @@ fn tool_remove() {
     // Add then remove
     apxm()
         .env("HOME", tmp_home.path())
-        .args([
-            "tool",
-            "add",
-            "rm-tool",
-            "--description",
-            "To be removed",
-        ])
+        .args(["tool", "add", "rm-tool", "--description", "To be removed"])
         .output()
         .unwrap();
     let out = apxm()

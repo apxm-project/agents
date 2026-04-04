@@ -152,6 +152,7 @@ struct ArtifactValue {
 };
 
 struct ArtifactNodeMetadata {
+  std::optional<std::string> name;
   uint32_t priority = 0;
   std::optional<uint64_t> estimatedLatency;
 };
@@ -302,6 +303,10 @@ public:
     writeU64(node.outputTokens.size());
     for (uint64_t token : node.outputTokens)
       writeU64(token);
+
+    writeBool(node.metadata.name.has_value());
+    if (node.metadata.name)
+      writeString(*node.metadata.name);
 
     writeU32(node.metadata.priority);
     writeBool(node.metadata.estimatedLatency.has_value());
@@ -583,6 +588,12 @@ LogicalResult emitNode(Operation *op, DagBuildState &state, ArtifactDag &dag) {
 
   for (NamedAttribute named : op->getAttrs()) {
     StringRef key = named.getName().getValue();
+    if (key == "node_name") {
+      if (auto nameAttr = dyn_cast<StringAttr>(named.getValue()))
+        node.metadata.name = nameAttr.getValue().str();
+      continue;
+    }
+
     // Translate attribute names to match runtime expectations
     StringRef emitKey = key;
     if (key == "parameters") emitKey = "params";
@@ -724,9 +735,9 @@ LogicalResult ArtifactEmitter::emitModule(ModuleOp module) {
     dags.push_back(std::move(dag));
   }
 
-  // Serialize multi-DAG format (version 3)
+  // Serialize multi-DAG format (version 4)
   ArtifactSerializer serializer;
-  serializer.writeU32(3); // Wire format version 3 = multi-DAG
+  serializer.writeU32(4); // Wire format version 4 = multi-DAG + node names
   serializer.writeU64(dags.size());
   for (const auto &dag : dags) {
     serializer.writeDag(dag);

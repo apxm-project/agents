@@ -24,9 +24,9 @@ use std::time::Instant;
 
 use apxm_artifact::Artifact;
 use apxm_compiler::{Context as CompilerContext, Pipeline as CompilerPipeline};
+use apxm_core::constants::jsonrpc;
 use apxm_core::types::{AIS_OPERATIONS, OptimizationLevel};
 use apxm_graph::ApxmGraph;
-use apxm_core::constants::jsonrpc;
 use serde_json::{Value, json};
 
 const MCP_PROTOCOL_VERSION: &str = apxm_core::constants::protocols::MCP_VERSION;
@@ -303,7 +303,10 @@ fn tool_validate(args: Value) -> Result<String, String> {
 
     for node in &graph.nodes {
         if node.id == 0 {
-            errors.push(format!("node '{}' has invalid id (0 or missing)", node.name));
+            errors.push(format!(
+                "node '{}' has invalid id (0 or missing)",
+                node.name
+            ));
         }
         if !node_ids.insert(node.id) {
             errors.push(format!("duplicate node id {}", node.id));

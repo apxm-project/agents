@@ -113,6 +113,7 @@ impl From<&Node> for WireNode {
             input_tokens: node.input_tokens.clone(),
             output_tokens: node.output_tokens.clone(),
             metadata: WireNodeMetadata {
+                name: node.metadata.name.clone(),
                 priority: node.metadata.priority,
                 estimated_latency: node.metadata.estimated_latency,
                 task_source_id: node.metadata.task_source_id,
@@ -135,6 +136,7 @@ impl WireNode {
             input_tokens: self.input_tokens,
             output_tokens: self.output_tokens,
             metadata: NodeMetadata {
+                name: self.metadata.name,
                 priority: self.metadata.priority,
                 estimated_latency: self.metadata.estimated_latency,
                 task_source_id: self.metadata.task_source_id,
@@ -164,6 +166,8 @@ impl From<&Edge> for WireEdge {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WireNodeMetadata {
+    #[serde(default)]
+    pub name: Option<String>,
     pub priority: u32,
     pub estimated_latency: Option<u64>,
     #[serde(default)]

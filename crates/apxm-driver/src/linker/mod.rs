@@ -94,7 +94,11 @@ impl Linker {
                 Some(c)
             }
             Err(e) => {
-                log_info!("driver", "MLIR unavailable ({}); using graph-direct mode", e);
+                log_info!(
+                    "driver",
+                    "MLIR unavailable ({}); using graph-direct mode",
+                    e
+                );
                 None
             }
         };
@@ -226,6 +230,7 @@ impl Linker {
         input: &Path,
         args: Vec<String>,
         event_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
+        session_dir: Option<&Path>,
     ) -> Result<LinkResult, DriverError> {
         log_info!("driver", "Compiling graph {}", input.display());
         #[cfg(feature = "metrics")]
@@ -238,7 +243,12 @@ impl Linker {
         let runtime_start = std::time::Instant::now();
         let execution = self
             .runtime
-            .execute_artifact_with_emitter(artifact.clone(), args, event_emitter)
+            .execute_artifact_with_emitter(
+                artifact.clone(),
+                args,
+                event_emitter,
+                session_dir.map(|dir| dir.to_string_lossy().to_string()),
+            )
             .await?;
         #[cfg(feature = "metrics")]
         let runtime_time = runtime_start.elapsed();

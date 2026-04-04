@@ -173,7 +173,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
             tokio::time::sleep(tokio::time::Duration::from_millis(backoff_ms)).await;
         }
 
-        match execute_reflect_once(ctx, &request).await {
+        match execute_reflect_once(ctx, node, &request).await {
             Ok(value) => {
                 // Record reflection result in AAM
                 let label =
@@ -213,9 +213,13 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
 }
 
 /// Execute a single REFLECT attempt
-async fn execute_reflect_once(ctx: &ExecutionContext, request: &LLMRequest) -> Result<Value> {
+async fn execute_reflect_once(
+    ctx: &ExecutionContext,
+    node: &Node,
+    request: &LLMRequest,
+) -> Result<Value> {
     // Execute LLM request
-    let response = execute_llm_request(ctx, "REFLECT", request).await?;
+    let response = execute_llm_request(ctx, node.id, "REFLECT", request).await?;
 
     let content = response.content;
 

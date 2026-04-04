@@ -7,7 +7,6 @@ use apxm_core::apxm_acp;
 
 use crate::AcpError;
 use crate::auth;
-use apxm_core::constants::acp::client_capabilities as client_caps;
 use crate::constants::{
     args as cap_args, client, fields, methods, protocol, stop_reasons, timeouts, wire,
 };
@@ -15,6 +14,7 @@ use crate::content::ContentBlock;
 use crate::protocol::StdioTransport;
 use crate::registry::AgentProfile;
 use crate::reverse::{CapabilityReverseHandler, ReverseHandler};
+use apxm_core::constants::acp::client_capabilities as client_caps;
 
 /// Result of a prompt round-trip.
 #[derive(Debug, Clone)]
@@ -203,7 +203,10 @@ impl AcpSession {
         });
 
         let no_op = NoOpReverseHandler;
-        let id = self.transport()?.send_request(methods::SESSION_PROMPT, Some(params)).await?;
+        let id = self
+            .transport()?
+            .send_request(methods::SESSION_PROMPT, Some(params))
+            .await?;
         let timeout = Duration::from_secs(timeouts::PREAMBLE_TIMEOUT_SECS);
         let _ = tokio::time::timeout(timeout, self.transport()?.read_response(id, &no_op))
             .await
@@ -375,7 +378,11 @@ impl ReverseHandler for NoOpReverseHandler {
         method: &str,
         _params: serde_json::Value,
     ) -> Result<serde_json::Value, AcpError> {
-        apxm_acp!(warn, method = method, "reverse request during init phase — rejecting");
+        apxm_acp!(
+            warn,
+            method = method,
+            "reverse request during init phase — rejecting"
+        );
         Err(AcpError::Protocol(format!(
             "reverse request {method} not supported during initialization"
         )))

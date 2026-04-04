@@ -15,6 +15,7 @@ pub fn lower_to_execution_dag(graph: &ApxmGraph) -> Result<ExecutionDag, GraphEr
         .map(|graph_node| {
             let mut node = Node::new(graph_node.id, graph_node.op);
             node.attributes = graph_node.attributes.clone();
+            node.metadata.name = Some(graph_node.name.clone());
             node
         })
         .collect::<Vec<_>>();
@@ -50,7 +51,9 @@ pub fn lower_to_execution_dag(graph: &ApxmGraph) -> Result<ExecutionDag, GraphEr
         let param_tokens: Vec<u64> = {
             let base = synthetic_token;
             synthetic_token += graph.parameters.len() as u64;
-            (0..graph.parameters.len() as u64).map(|i| base + i).collect()
+            (0..graph.parameters.len() as u64)
+                .map(|i| base + i)
+                .collect()
         };
 
         for node in nodes.iter_mut() {

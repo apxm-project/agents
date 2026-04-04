@@ -260,17 +260,15 @@ mod tests {
         let meta = GraphMetadata::new("graph-xyz", "exec-456")
             .with_pin_ttl(60_000)
             .with_critical_path_length(4)
-            .with_nodes(vec![
-                NodeSpec {
-                    node_id: 0,
-                    node_name: Some("plan".to_string()),
-                    estimated_prompt_tokens: Some(500),
-                    downstream_nodes: vec![1, 2],
-                    priority_class: Some("critical_path".to_string()),
-                    reuse_group: None,
-                    is_critical_path: true,
-                },
-            ]);
+            .with_nodes(vec![NodeSpec {
+                node_id: 0,
+                node_name: Some("plan".to_string()),
+                estimated_prompt_tokens: Some(500),
+                downstream_nodes: vec![1, 2],
+                priority_class: Some("critical_path".to_string()),
+                reuse_group: None,
+                is_critical_path: true,
+            }]);
         assert_eq!(meta.graph_id, "graph-xyz");
         assert_eq!(meta.default_pin_ttl_ms, Some(60_000));
         assert_eq!(meta.critical_path_length, Some(4));

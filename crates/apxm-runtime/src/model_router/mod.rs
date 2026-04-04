@@ -356,11 +356,7 @@ mod tests {
     fn make_router() -> ModelRouter {
         let llm_registry = Arc::new(LLMRegistry::new());
         let model_registry = Arc::new(ModelRegistry::new());
-        ModelRouter::with_model_registry(
-            llm_registry,
-            model_registry,
-            ModelRouterConfig::default(),
-        )
+        ModelRouter::with_model_registry(llm_registry, model_registry, ModelRouterConfig::default())
     }
 
     #[test]
@@ -424,8 +420,7 @@ mod tests {
             ..Default::default()
         };
 
-        let router =
-            ModelRouter::with_model_registry(llm_registry, model_registry, config.clone());
+        let router = ModelRouter::with_model_registry(llm_registry, model_registry, config.clone());
 
         // Register the breaker and trip it
         router.circuit_breakers.register("backend-a");
