@@ -37,8 +37,8 @@ use self::rate_limit::{RateLimiter, SystemClock};
 use apxm_backends::{LLMRegistry, LLMRequest, LLMResponse};
 use apxm_core::types::AISOperationType;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 /// Optimization target that influences model selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -72,9 +72,12 @@ pub struct OperationPolicy {
 pub struct ModelRouterConfig {
     /// Circuit breaker settings.
     pub circuit_breaker: CircuitBreakerConfig,
-    /// Per-backend rate limits.
-    #[serde(skip, default)]
-    pub rate_limits: HashMap<String, RateLimitConfig>,
+    /// Optional global rate limit config (applied to all backends).
+    #[serde(default)]
+    pub rate_limit: Option<RateLimitConfig>,
+    /// If true, use per-backend keying only. If false, use per-backend-per-caller when caller is available.
+    #[serde(default)]
+    pub per_backend_only: bool,
     /// Global routing target.
     pub target: RoutingTarget,
     /// Per-operation policies.
@@ -86,7 +89,8 @@ impl Default for ModelRouterConfig {
     fn default() -> Self {
         ModelRouterConfig {
             circuit_breaker: CircuitBreakerConfig::default(),
-            rate_limits: HashMap::new(),
+            rate_limit: None,
+            per_backend_only: true,
             target: RoutingTarget::Balanced,
             operation_policies: Vec::new(),
         }
@@ -116,7 +120,7 @@ pub struct ModelRouter {
     model_registry: Arc<ModelRegistry>,
     /// Circuit breakers per backend.
     circuit_breakers: Arc<CircuitBreakerRegistry>,
-    /// In-memory token buckets per backend.
+    /// In-memory token buckets keyed by backend id.
     rate_limiter: Arc<RateLimiter<SystemClock>>,
     /// Router configuration.
     config: ModelRouterConfig,
@@ -141,10 +145,13 @@ impl ModelRouter {
             circuit_breakers.register(&name);
         }
 
-        let rate_limiter = Arc::new(RateLimiter::new(
-            config.rate_limits.clone(),
-            Arc::new(SystemClock),
-        )?);
+        let rate_limiter = Arc::new(RateLimiter::new(config.rate_limit.clone().unwrap_or(
+            RateLimitConfig {
+                capacity: 60,
+                refill_tokens: 60,
+                refill_interval: Duration::from_secs(60),
+            },
+        ))?);
 
         Ok(ModelRouter {
             llm_registry,
@@ -257,12 +264,27 @@ impl ModelRouter {
     }
 
     /// Select a backend and consume one rate-limit token before dispatch.
-    pub(crate) fn select_for_dispatch(
+    pub(crate) async fn select_for_dispatch(
         &self,
         request: &LLMRequest,
     ) -> anyhow::Result<RoutingDecision> {
         let decision = self.select(request)?;
-        self.rate_limiter.check_and_consume(&decision.backend)?;
+        let backend_id = &decision.backend;
+        let key = format!("backend:{}", backend_id);
+        self.rate_limiter.check(key).await?;
+        Ok(decision)
+    }
+
+    #[cfg(test)]
+    async fn select_for_dispatch_with_rate_limiter<C: rate_limit::Clock>(
+        &self,
+        request: &LLMRequest,
+        rate_limiter: &RateLimiter<C>,
+    ) -> anyhow::Result<RoutingDecision> {
+        let decision = self.select(request)?;
+        let backend_id = &decision.backend;
+        let key = format!("backend:{}", backend_id);
+        rate_limiter.check(key).await?;
         Ok(decision)
     }
 
@@ -307,7 +329,7 @@ impl ModelRouter {
     /// Wraps `LLMRegistry::generate_with_backend` and records circuit-breaker
     /// outcomes automatically.
     pub async fn generate(&self, request: LLMRequest) -> anyhow::Result<LLMResponse> {
-        let decision = self.select_for_dispatch(&request)?;
+        let decision = self.select_for_dispatch(&request).await?;
         let backend_name = decision.backend.clone();
 
         // Apply resolved model to request if different.
@@ -365,9 +387,33 @@ impl ModelRouter {
 mod tests {
     use super::*;
     use apxm_backends::LLMRegistry;
-    use apxm_backends::llm::backends::MockLLMBackend;
     use registry::ModelEntry;
-    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+
+    #[derive(Debug)]
+    struct TestClock {
+        now: Mutex<Instant>,
+    }
+
+    impl TestClock {
+        fn new(start: Instant) -> Self {
+            Self {
+                now: Mutex::new(start),
+            }
+        }
+
+        fn advance(&self, duration: Duration) {
+            let mut guard = self.now.lock().unwrap();
+            *guard += duration;
+        }
+    }
+
+    impl super::rate_limit::Clock for TestClock {
+        fn now(&self) -> Instant {
+            *self.now.lock().unwrap()
+        }
+    }
 
     fn make_router() -> ModelRouter {
         let llm_registry = Arc::new(LLMRegistry::new());
@@ -488,79 +534,175 @@ mod tests {
         assert!(!decision.was_failover);
     }
 
-    #[tokio::test]
-    async fn test_rate_limited_backend_fails_fast() {
-        let llm_registry = Arc::new(LLMRegistry::new());
-        llm_registry
-            .register("limited", MockLLMBackend::static_response("ok"))
-            .unwrap();
+    fn make_router_with_backends(backends: &[&str]) -> ModelRouter {
+        let router = make_router();
+        for backend in backends {
+            router.circuit_breakers.register(backend);
+        }
+        router
+    }
 
-        let mut rate_limits = HashMap::new();
-        rate_limits.insert(
-            "limited".to_string(),
+    #[tokio::test]
+    async fn test_request_allowed_when_under_limit() {
+        let router = make_router_with_backends(&["backend-a"]);
+        let clock = Arc::new(TestClock::new(Instant::now()));
+        let limiter = RateLimiter::with_clock(
             RateLimitConfig {
                 capacity: 1,
-                tokens_per_second: 1.0,
+                refill_tokens: 1,
+                refill_interval: Duration::from_secs(60),
             },
-        );
-
-        let router = ModelRouter::with_model_registry(
-            llm_registry,
-            Arc::new(ModelRegistry::new()),
-            ModelRouterConfig {
-                rate_limits,
-                ..Default::default()
-            },
+            clock,
         )
         .unwrap();
 
-        let request = LLMRequest::new("hello").with_backend("limited");
-        assert!(router.generate(request.clone()).await.is_ok());
+        let request = LLMRequest::new("hello").with_backend("backend-a");
+        let decision = router
+            .select_for_dispatch_with_rate_limiter(&request, &limiter)
+            .await
+            .unwrap();
 
-        let err = router.generate(request).await.unwrap_err();
-        assert_eq!(err.to_string(), "backend 'limited' is rate limited");
+        assert_eq!(decision.backend, "backend-a");
     }
 
     #[tokio::test]
-    async fn test_unconfigured_backend_remains_unlimited() {
-        let llm_registry = Arc::new(LLMRegistry::new());
-        llm_registry
-            .register("local", MockLLMBackend::static_response("ok"))
-            .unwrap();
-
-        let router = ModelRouter::with_model_registry(
-            llm_registry,
-            Arc::new(ModelRegistry::new()),
-            ModelRouterConfig::default(),
+    async fn test_request_rejected_when_over_limit() {
+        let router = make_router_with_backends(&["backend-a"]);
+        let clock = Arc::new(TestClock::new(Instant::now()));
+        let limiter = RateLimiter::with_clock(
+            RateLimitConfig {
+                capacity: 1,
+                refill_tokens: 1,
+                refill_interval: Duration::from_secs(60),
+            },
+            clock,
         )
         .unwrap();
 
-        let request = LLMRequest::new("hello").with_backend("local");
-        assert!(router.generate(request.clone()).await.is_ok());
-        assert!(router.generate(request).await.is_ok());
-    }
+        let request = LLMRequest::new("hello").with_backend("backend-a");
 
-    #[test]
-    fn test_invalid_rate_limit_config_is_rejected() {
-        let mut rate_limits = HashMap::new();
-        rate_limits.insert(
-            "broken".to_string(),
-            RateLimitConfig {
-                capacity: 0,
-                tokens_per_second: 1.0,
-            },
+        assert!(
+            router
+                .select_for_dispatch_with_rate_limiter(&request, &limiter)
+                .await
+                .is_ok()
         );
 
-        let err = ModelRouter::with_model_registry(
-            Arc::new(LLMRegistry::new()),
-            Arc::new(ModelRegistry::new()),
-            ModelRouterConfig {
-                rate_limits,
-                ..Default::default()
-            },
-        )
-        .unwrap_err();
+        let err = router
+            .select_for_dispatch_with_rate_limiter(&request, &limiter)
+            .await
+            .unwrap_err();
 
-        assert_eq!(err.to_string(), "rate limit capacity must be > 0");
+        assert_eq!(
+            err.downcast::<RateLimitError>().unwrap(),
+            RateLimitError::Exceeded {
+                key: "backend:backend-a".to_string(),
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn test_separate_backend_ids_use_separate_buckets() {
+        let router = make_router_with_backends(&["backend-a", "backend-b"]);
+        let clock = Arc::new(TestClock::new(Instant::now()));
+        let limiter = RateLimiter::with_clock(
+            RateLimitConfig {
+                capacity: 1,
+                refill_tokens: 1,
+                refill_interval: Duration::from_secs(60),
+            },
+            clock,
+        )
+        .unwrap();
+
+        let request_a = LLMRequest::new("hello").with_backend("backend-a");
+        let request_b = LLMRequest::new("hello").with_backend("backend-b");
+
+        assert!(
+            router
+                .select_for_dispatch_with_rate_limiter(&request_a, &limiter)
+                .await
+                .is_ok()
+        );
+        assert!(
+            router
+                .select_for_dispatch_with_rate_limiter(&request_b, &limiter)
+                .await
+                .is_ok()
+        );
+
+        let err_a = router
+            .select_for_dispatch_with_rate_limiter(&request_a, &limiter)
+            .await
+            .unwrap_err();
+        let err_b = router
+            .select_for_dispatch_with_rate_limiter(&request_b, &limiter)
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            err_a.downcast::<RateLimitError>().unwrap(),
+            RateLimitError::Exceeded {
+                key: "backend:backend-a".to_string(),
+            }
+        );
+        assert_eq!(
+            err_b.downcast::<RateLimitError>().unwrap(),
+            RateLimitError::Exceeded {
+                key: "backend:backend-b".to_string(),
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn test_refill_allows_requests_again_after_enough_time_passes() {
+        let router = make_router_with_backends(&["backend-a"]);
+        let clock = Arc::new(TestClock::new(Instant::now()));
+        let limiter = RateLimiter::with_clock(
+            RateLimitConfig {
+                capacity: 1,
+                refill_tokens: 1,
+                refill_interval: Duration::from_secs(5),
+            },
+            clock.clone(),
+        )
+        .unwrap();
+
+        let request = LLMRequest::new("hello").with_backend("backend-a");
+
+        assert!(
+            router
+                .select_for_dispatch_with_rate_limiter(&request, &limiter)
+                .await
+                .is_ok()
+        );
+        assert!(matches!(
+            router
+                .select_for_dispatch_with_rate_limiter(&request, &limiter)
+                .await
+                .unwrap_err()
+                .downcast::<RateLimitError>()
+                .unwrap(),
+            RateLimitError::Exceeded { .. }
+        ));
+
+        clock.advance(Duration::from_secs(4));
+        assert!(matches!(
+            router
+                .select_for_dispatch_with_rate_limiter(&request, &limiter)
+                .await
+                .unwrap_err()
+                .downcast::<RateLimitError>()
+                .unwrap(),
+            RateLimitError::Exceeded { .. }
+        ));
+
+        clock.advance(Duration::from_secs(1));
+        assert!(
+            router
+                .select_for_dispatch_with_rate_limiter(&request, &limiter)
+                .await
+                .is_ok()
+        );
     }
 }

@@ -1,15 +1,51 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use tokio::sync::Mutex;
 
-/// A source of time used for deterministic testing.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RateLimitConfig {
+    /// Maximum tokens a bucket can hold.
+    pub capacity: u32,
+    /// Number of tokens added every refill interval.
+    pub refill_tokens: u32,
+    /// How often tokens are refilled.
+    pub refill_interval: Duration,
+}
+
+impl RateLimitConfig {
+    pub fn validate(&self) -> Result<(), RateLimitConfigError> {
+        if self.capacity == 0 {
+            return Err(RateLimitConfigError::ZeroCapacity);
+        }
+        if self.refill_tokens == 0 {
+            return Err(RateLimitConfigError::ZeroRefillTokens);
+        }
+        if self.refill_interval.is_zero() {
+            return Err(RateLimitConfigError::ZeroRefillInterval);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum RateLimitConfigError {
+    #[error("rate limit capacity must be greater than zero")]
+    ZeroCapacity,
+    #[error("rate limit refill_tokens must be greater than zero")]
+    ZeroRefillTokens,
+    #[error("rate limit refill_interval must be greater than zero")]
+    ZeroRefillInterval,
+}
+
 pub trait Clock: Send + Sync + 'static {
     fn now(&self) -> Instant;
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub struct SystemClock;
 
 impl Clock for SystemClock {
@@ -18,331 +54,382 @@ impl Clock for SystemClock {
     }
 }
 
-#[derive(Debug)]
-pub struct ManualClock {
-    inner: Mutex<Instant>,
-}
-
-impl ManualClock {
-    pub fn new(start: Instant) -> Self {
-        Self {
-            inner: Mutex::new(start),
-        }
-    }
-
-    pub fn advance(&self, duration: Duration) {
-        let mut guard = self.inner.lock().expect("manual clock mutex poisoned");
-        *guard += duration;
-    }
-}
-
-impl Clock for ManualClock {
-    fn now(&self) -> Instant {
-        *self.inner.lock().expect("manual clock mutex poisoned")
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct RateLimitConfig {
-    /// Maximum burst size.
-    pub capacity: u32,
-    /// Refill rate in tokens per second.
-    pub tokens_per_second: f64,
-}
-
-impl RateLimitConfig {
-    pub fn validate(&self) -> Result<(), RateLimitConfigError> {
-        if self.capacity == 0 {
-            return Err(RateLimitConfigError::ZeroCapacity);
-        }
-        if !(self.tokens_per_second.is_finite()) || self.tokens_per_second <= 0.0 {
-            return Err(RateLimitConfigError::InvalidTokensPerSecond(
-                self.tokens_per_second,
-            ));
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug, Error, PartialEq)]
-pub enum RateLimitConfigError {
-    #[error("rate limit capacity must be > 0")]
-    ZeroCapacity,
-
-    #[error("tokens_per_second must be finite and > 0, got {0}")]
-    InvalidTokensPerSecond(f64),
-}
-
-#[derive(Debug, Error, PartialEq)]
-pub enum RateLimitError {
-    #[error("backend '{backend}' is rate limited")]
-    Limited { backend: String },
-}
-
 #[derive(Debug, Clone)]
-struct TokenBucket {
-    capacity: f64,
-    tokens: f64,
-    refill_rate_per_sec: f64,
+struct Bucket {
+    tokens: u32,
     last_refill: Instant,
 }
 
-impl TokenBucket {
-    fn new(config: &RateLimitConfig, now: Instant) -> Self {
+impl Bucket {
+    fn new(now: Instant, capacity: u32) -> Self {
         Self {
-            capacity: config.capacity as f64,
-            tokens: config.capacity as f64,
-            refill_rate_per_sec: config.tokens_per_second,
+            tokens: capacity,
             last_refill: now,
         }
     }
 
-    fn refill(&mut self, now: Instant) {
-        let elapsed = now.saturating_duration_since(self.last_refill);
-        let added = elapsed.as_secs_f64() * self.refill_rate_per_sec;
-        self.tokens = (self.tokens + added).min(self.capacity);
-        self.last_refill = now;
+    fn refill(&mut self, now: Instant, cfg: &RateLimitConfig) {
+        if now <= self.last_refill {
+            return;
+        }
+
+        let elapsed = now.duration_since(self.last_refill);
+        let interval_nanos = cfg.refill_interval.as_nanos();
+        if interval_nanos == 0 {
+            return;
+        }
+
+        let elapsed_nanos = elapsed.as_nanos();
+        let intervals = elapsed_nanos / interval_nanos;
+        if intervals == 0 {
+            return;
+        }
+
+        let added = intervals.saturating_mul(cfg.refill_tokens as u128);
+        let new_tokens = (self.tokens as u128).saturating_add(added);
+        self.tokens = new_tokens.min(cfg.capacity as u128) as u32;
+
+        let consumed_nanos = intervals.saturating_mul(interval_nanos);
+        let consumed_nanos_u64 = consumed_nanos.min(u64::MAX as u128) as u64;
+        self.last_refill += Duration::from_nanos(consumed_nanos_u64);
     }
 
-    fn try_consume(&mut self, now: Instant, amount: f64) -> bool {
-        self.refill(now);
-        if self.tokens >= amount {
-            self.tokens -= amount;
+    fn try_consume(&mut self, now: Instant, cfg: &RateLimitConfig, cost: u32) -> bool {
+        self.refill(now, cfg);
+
+        if self.tokens >= cost {
+            self.tokens -= cost;
             true
         } else {
             false
         }
     }
+}
 
-    #[cfg(test)]
-    fn available_tokens(&self, now: Instant) -> f64 {
-        let mut clone = self.clone();
-        clone.refill(now);
-        clone.tokens
-    }
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum RateLimitError {
+    #[error("invalid rate limit config: {0}")]
+    InvalidConfig(#[from] RateLimitConfigError),
+
+    #[error("request cost must be greater than zero")]
+    ZeroCost,
+
+    #[error("request cost {cost} exceeds bucket capacity {capacity}")]
+    CostExceedsCapacity { cost: u32, capacity: u32 },
+
+    #[error("rate limit exceeded for key '{key}'")]
+    Exceeded { key: String },
 }
 
 #[derive(Debug)]
-pub struct RateLimiter<C: Clock> {
+struct Inner {
+    buckets: HashMap<String, Bucket>,
+}
+
+#[derive(Debug)]
+pub struct RateLimiter<C: Clock = SystemClock> {
+    cfg: RateLimitConfig,
     clock: Arc<C>,
-    buckets: Mutex<HashMap<String, TokenBucket>>,
+    inner: Mutex<Inner>,
+}
+
+impl RateLimiter<SystemClock> {
+    pub fn new(cfg: RateLimitConfig) -> Result<Self, RateLimitError> {
+        Self::with_clock(cfg, Arc::new(SystemClock))
+    }
 }
 
 impl<C: Clock> RateLimiter<C> {
-    pub fn new(
-        configs: HashMap<String, RateLimitConfig>,
-        clock: Arc<C>,
-    ) -> Result<Self, RateLimitConfigError> {
-        let now = clock.now();
-        let mut buckets = HashMap::with_capacity(configs.len());
-
-        for (backend, config) in configs {
-            config.validate()?;
-            buckets.insert(backend, TokenBucket::new(&config, now));
-        }
-
+    pub fn with_clock(cfg: RateLimitConfig, clock: Arc<C>) -> Result<Self, RateLimitError> {
+        cfg.validate()?;
         Ok(Self {
+            cfg,
             clock,
-            buckets: Mutex::new(buckets),
+            inner: Mutex::new(Inner {
+                buckets: HashMap::new(),
+            }),
         })
     }
 
-    /// If backend has a configured bucket, enforce it.
-    /// If backend is unconfigured, allow by default.
-    pub fn check_and_consume(&self, backend: &str) -> Result<(), RateLimitError> {
-        let now = self.clock.now();
-        let mut guard = self.buckets.lock().expect("rate limiter mutex poisoned");
+    pub async fn check(&self, key: impl Into<String>) -> Result<(), RateLimitError> {
+        self.check_cost(key, 1).await
+    }
 
-        match guard.get_mut(backend) {
-            Some(bucket) => {
-                if bucket.try_consume(now, 1.0) {
-                    Ok(())
-                } else {
-                    Err(RateLimitError::Limited {
-                        backend: backend.to_string(),
-                    })
-                }
-            }
-            None => Ok(()),
+    pub async fn check_cost(
+        &self,
+        key: impl Into<String>,
+        cost: u32,
+    ) -> Result<(), RateLimitError> {
+        if cost == 0 {
+            return Err(RateLimitError::ZeroCost);
+        }
+
+        if cost > self.cfg.capacity {
+            return Err(RateLimitError::CostExceedsCapacity {
+                cost,
+                capacity: self.cfg.capacity,
+            });
+        }
+
+        let key = key.into();
+        let now = self.clock.now();
+        let mut guard = self.inner.lock().await;
+
+        let bucket = guard
+            .buckets
+            .entry(key.clone())
+            .or_insert_with(|| Bucket::new(now, self.cfg.capacity));
+
+        if bucket.try_consume(now, &self.cfg, cost) {
+            Ok(())
+        } else {
+            Err(RateLimitError::Exceeded { key })
         }
     }
 
-    #[cfg(test)]
-    fn available_tokens(&self, backend: &str) -> Option<f64> {
-        let now = self.clock.now();
-        let guard = self.buckets.lock().expect("rate limiter mutex poisoned");
-        guard.get(backend).map(|b| b.available_tokens(now))
+    pub fn config(&self) -> &RateLimitConfig {
+        &self.cfg
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
 
-    fn config(capacity: u32, tokens_per_second: f64) -> RateLimitConfig {
-        RateLimitConfig {
-            capacity,
-            tokens_per_second,
+    #[derive(Debug)]
+    struct TestClock {
+        now: Mutex<Instant>,
+    }
+
+    impl TestClock {
+        fn new(start: Instant) -> Self {
+            Self {
+                now: Mutex::new(start),
+            }
+        }
+
+        fn advance(&self, d: Duration) {
+            let mut guard = self.now.lock().unwrap();
+            *guard += d;
+        }
+    }
+
+    impl Clock for TestClock {
+        fn now(&self) -> Instant {
+            *self.now.lock().unwrap()
         }
     }
 
     #[test]
-    fn validates_good_config() {
-        let cfg = config(5, 2.0);
-        assert_eq!(cfg.validate(), Ok(()));
-    }
+    fn config_validation_rejects_zero_capacity() {
+        let cfg = RateLimitConfig {
+            capacity: 0,
+            refill_tokens: 1,
+            refill_interval: Duration::from_secs(1),
+        };
 
-    #[test]
-    fn rejects_zero_capacity() {
-        let cfg = config(0, 1.0);
-        assert_eq!(cfg.validate(), Err(RateLimitConfigError::ZeroCapacity));
-    }
-
-    #[test]
-    fn rejects_zero_tokens_per_second() {
-        let cfg = config(1, 0.0);
         assert_eq!(
-            cfg.validate(),
-            Err(RateLimitConfigError::InvalidTokensPerSecond(0.0))
+            cfg.validate().unwrap_err(),
+            RateLimitConfigError::ZeroCapacity
         );
     }
 
     #[test]
-    fn rejects_negative_tokens_per_second() {
-        let cfg = config(1, -2.0);
+    fn config_validation_rejects_zero_refill_tokens() {
+        let cfg = RateLimitConfig {
+            capacity: 1,
+            refill_tokens: 0,
+            refill_interval: Duration::from_secs(1),
+        };
+
         assert_eq!(
-            cfg.validate(),
-            Err(RateLimitConfigError::InvalidTokensPerSecond(-2.0))
+            cfg.validate().unwrap_err(),
+            RateLimitConfigError::ZeroRefillTokens
         );
     }
 
     #[test]
-    fn rejects_nan_tokens_per_second() {
-        let cfg = config(1, f64::NAN);
-        match cfg.validate() {
-            Err(RateLimitConfigError::InvalidTokensPerSecond(v)) => assert!(v.is_nan()),
-            other => panic!("unexpected result: {:?}", other),
-        }
-    }
+    fn config_validation_rejects_zero_refill_interval() {
+        let cfg = RateLimitConfig {
+            capacity: 1,
+            refill_tokens: 1,
+            refill_interval: Duration::ZERO,
+        };
 
-    #[test]
-    fn allows_requests_within_capacity() {
-        let start = Instant::now();
-        let clock = Arc::new(ManualClock::new(start));
-        let mut configs = HashMap::new();
-        configs.insert("openai".to_string(), config(3, 1.0));
-
-        let limiter = RateLimiter::new(configs, clock).unwrap();
-
-        assert_eq!(limiter.check_and_consume("openai"), Ok(()));
-        assert_eq!(limiter.check_and_consume("openai"), Ok(()));
-        assert_eq!(limiter.check_and_consume("openai"), Ok(()));
-    }
-
-    #[test]
-    fn rejects_when_capacity_exhausted() {
-        let start = Instant::now();
-        let clock = Arc::new(ManualClock::new(start));
-        let mut configs = HashMap::new();
-        configs.insert("anthropic".to_string(), config(2, 1.0));
-
-        let limiter = RateLimiter::new(configs, clock).unwrap();
-
-        assert_eq!(limiter.check_and_consume("anthropic"), Ok(()));
-        assert_eq!(limiter.check_and_consume("anthropic"), Ok(()));
         assert_eq!(
-            limiter.check_and_consume("anthropic"),
-            Err(RateLimitError::Limited {
-                backend: "anthropic".to_string()
-            })
+            cfg.validate().unwrap_err(),
+            RateLimitConfigError::ZeroRefillInterval
         );
     }
 
-    #[test]
-    fn refills_after_time_passes() {
-        let start = Instant::now();
-        let clock = Arc::new(ManualClock::new(start));
-        let mut configs = HashMap::new();
-        configs.insert("openai".to_string(), config(2, 1.0));
+    #[tokio::test]
+    async fn allows_requests_up_to_capacity() {
+        let clock = Arc::new(TestClock::new(Instant::now()));
+        let limiter = RateLimiter::with_clock(
+            RateLimitConfig {
+                capacity: 3,
+                refill_tokens: 1,
+                refill_interval: Duration::from_secs(10),
+            },
+            clock,
+        )
+        .unwrap();
 
-        let limiter = RateLimiter::new(configs, clock.clone()).unwrap();
+        assert!(limiter.check("backend:a").await.is_ok());
+        assert!(limiter.check("backend:a").await.is_ok());
+        assert!(limiter.check("backend:a").await.is_ok());
 
-        assert_eq!(limiter.check_and_consume("openai"), Ok(()));
-        assert_eq!(limiter.check_and_consume("openai"), Ok(()));
-        assert!(limiter.check_and_consume("openai").is_err());
+        assert_eq!(
+            limiter.check("backend:a").await.unwrap_err(),
+            RateLimitError::Exceeded {
+                key: "backend:a".to_string()
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn separate_keys_have_independent_buckets() {
+        let clock = Arc::new(TestClock::new(Instant::now()));
+        let limiter = RateLimiter::with_clock(
+            RateLimitConfig {
+                capacity: 1,
+                refill_tokens: 1,
+                refill_interval: Duration::from_secs(60),
+            },
+            clock,
+        )
+        .unwrap();
+
+        assert!(limiter.check("backend:a").await.is_ok());
+        assert!(limiter.check("backend:b").await.is_ok());
+
+        assert!(matches!(
+            limiter.check("backend:a").await,
+            Err(RateLimitError::Exceeded { .. })
+        ));
+        assert!(matches!(
+            limiter.check("backend:b").await,
+            Err(RateLimitError::Exceeded { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn refills_after_interval() {
+        let clock = Arc::new(TestClock::new(Instant::now()));
+        let limiter = RateLimiter::with_clock(
+            RateLimitConfig {
+                capacity: 2,
+                refill_tokens: 1,
+                refill_interval: Duration::from_secs(5),
+            },
+            clock.clone(),
+        )
+        .unwrap();
+
+        assert!(limiter.check("k").await.is_ok());
+        assert!(limiter.check("k").await.is_ok());
+        assert!(matches!(
+            limiter.check("k").await,
+            Err(RateLimitError::Exceeded { .. })
+        ));
+
+        clock.advance(Duration::from_secs(4));
+        assert!(matches!(
+            limiter.check("k").await,
+            Err(RateLimitError::Exceeded { .. })
+        ));
 
         clock.advance(Duration::from_secs(1));
-        assert_eq!(limiter.check_and_consume("openai"), Ok(()));
-        assert!(limiter.check_and_consume("openai").is_err());
+        assert!(limiter.check("k").await.is_ok());
+
+        assert!(matches!(
+            limiter.check("k").await,
+            Err(RateLimitError::Exceeded { .. })
+        ));
     }
 
-    #[test]
-    fn caps_refill_at_capacity() {
-        let start = Instant::now();
-        let clock = Arc::new(ManualClock::new(start));
-        let mut configs = HashMap::new();
-        configs.insert("openai".to_string(), config(3, 10.0));
+    #[tokio::test]
+    async fn refill_caps_at_capacity() {
+        let clock = Arc::new(TestClock::new(Instant::now()));
+        let limiter = RateLimiter::with_clock(
+            RateLimitConfig {
+                capacity: 3,
+                refill_tokens: 2,
+                refill_interval: Duration::from_secs(1),
+            },
+            clock.clone(),
+        )
+        .unwrap();
 
-        let limiter = RateLimiter::new(configs, clock.clone()).unwrap();
-
-        assert_eq!(limiter.check_and_consume("openai"), Ok(()));
-        assert_eq!(limiter.check_and_consume("openai"), Ok(()));
+        assert!(limiter.check("k").await.is_ok());
+        assert!(limiter.check("k").await.is_ok());
+        assert!(limiter.check("k").await.is_ok());
 
         clock.advance(Duration::from_secs(10));
 
-        let tokens = limiter.available_tokens("openai").unwrap();
-        assert!(tokens <= 3.0);
-        assert!(tokens > 2.9);
+        assert_eq!(limiter.check("k").await, Ok(()));
     }
 
-    #[test]
-    fn unknown_backend_is_unlimited_by_default() {
-        let start = Instant::now();
-        let clock = Arc::new(ManualClock::new(start));
-        let configs = HashMap::new();
+    #[tokio::test]
+    async fn zero_cost_is_rejected() {
+        let clock = Arc::new(TestClock::new(Instant::now()));
+        let limiter = RateLimiter::with_clock(
+            RateLimitConfig {
+                capacity: 3,
+                refill_tokens: 1,
+                refill_interval: Duration::from_secs(1),
+            },
+            clock,
+        )
+        .unwrap();
 
-        let limiter = RateLimiter::new(configs, clock).unwrap();
-
-        for _ in 0..100 {
-            assert_eq!(limiter.check_and_consume("unconfigured"), Ok(()));
-        }
+        assert_eq!(
+            limiter.check_cost("k", 0).await.unwrap_err(),
+            RateLimitError::ZeroCost
+        );
     }
 
-    #[test]
-    fn separate_backends_have_independent_buckets() {
-        let start = Instant::now();
-        let clock = Arc::new(ManualClock::new(start));
-        let mut configs = HashMap::new();
-        configs.insert("a".to_string(), config(1, 1.0));
-        configs.insert("b".to_string(), config(2, 1.0));
+    #[tokio::test]
+    async fn cost_exceeding_capacity_is_rejected() {
+        let clock = Arc::new(TestClock::new(Instant::now()));
+        let limiter = RateLimiter::with_clock(
+            RateLimitConfig {
+                capacity: 3,
+                refill_tokens: 1,
+                refill_interval: Duration::from_secs(1),
+            },
+            clock,
+        )
+        .unwrap();
 
-        let limiter = RateLimiter::new(configs, clock).unwrap();
-
-        assert_eq!(limiter.check_and_consume("a"), Ok(()));
-        assert!(limiter.check_and_consume("a").is_err());
-
-        assert_eq!(limiter.check_and_consume("b"), Ok(()));
-        assert_eq!(limiter.check_and_consume("b"), Ok(()));
-        assert!(limiter.check_and_consume("b").is_err());
+        assert_eq!(
+            limiter.check_cost("k", 4).await.unwrap_err(),
+            RateLimitError::CostExceedsCapacity {
+                cost: 4,
+                capacity: 3
+            }
+        );
     }
 
-    #[test]
-    fn fractional_refill_works() {
-        let start = Instant::now();
-        let clock = Arc::new(ManualClock::new(start));
-        let mut configs = HashMap::new();
-        configs.insert("x".to_string(), config(1, 2.0));
+    #[tokio::test]
+    async fn exact_cost_equal_to_capacity_is_allowed_once() {
+        let clock = Arc::new(TestClock::new(Instant::now()));
+        let limiter = RateLimiter::with_clock(
+            RateLimitConfig {
+                capacity: 5,
+                refill_tokens: 1,
+                refill_interval: Duration::from_secs(1),
+            },
+            clock,
+        )
+        .unwrap();
 
-        let limiter = RateLimiter::new(configs, clock.clone()).unwrap();
-
-        assert_eq!(limiter.check_and_consume("x"), Ok(()));
-        assert!(limiter.check_and_consume("x").is_err());
-
-        clock.advance(Duration::from_millis(400));
-        assert!(limiter.check_and_consume("x").is_err());
-
-        clock.advance(Duration::from_millis(100));
-        assert_eq!(limiter.check_and_consume("x"), Ok(()));
+        assert!(limiter.check_cost("k", 5).await.is_ok());
+        assert!(matches!(
+            limiter.check("k").await,
+            Err(RateLimitError::Exceeded { .. })
+        ));
     }
 }
