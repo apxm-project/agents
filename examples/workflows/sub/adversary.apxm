@@ -1,0 +1,23 @@
+{
+  "name": "adversary",
+  "nodes": [
+    {
+      "id": 1,
+      "name": "adversary_reason",
+      "op": "REASON",
+      "attributes": {
+        "template_str": "You are a critical thinker who identifies potential issues. For this task: {{TASK}}\n\nIdentify:\n1. Edge cases\n2. Security concerns\n3. Performance bottlenecks\n4. Failure modes\n\nBe specific and constructive."
+      }
+    }
+  ],
+  "edges": [],
+  "parameters": [
+    {
+      "name": "TASK",
+      "type_name": "str"
+    }
+  ],
+  "metadata": {
+    "is_entry": true
+  }
+}
