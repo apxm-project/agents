@@ -36,8 +36,6 @@ pub mod storage;
 pub use llm::{
     // Observability
     AggregatedMetrics,
-    // Backend traits and types
-    AnthropicModel,
     // Factory
     BackendFactory,
     BackendFallback,
@@ -48,7 +46,6 @@ pub use llm::{
     ErrorClass,
     FunctionCall,
     GenerationConfig,
-    GoogleModel,
     // Registry and health
     HealthMonitor,
     HealthStatus,
@@ -62,8 +59,6 @@ pub use llm::{
     MetricsTracker,
     ModelAliasRegistration,
     ModelRegistration,
-    OllamaModel,
-    OpenAIModel,
     OperationRoute,
     OutputParser,
     // Provider management

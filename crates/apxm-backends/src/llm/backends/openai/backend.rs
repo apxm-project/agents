@@ -573,10 +573,17 @@ impl LLMBackend for OpenAIBackend {
     }
 
     async fn list_models(&self) -> Result<Vec<ModelInfo>> {
-        // Derive model metadata from the centralized enum helpers in models.rs
-        Ok(crate::llm::backends::OpenAIModel::all_models()
+        // Return well-known models as documentation hints.
+        // The API will accept any model ID — this list is not enforced.
+        Ok(crate::llm::backends::openai::WELL_KNOWN_MODELS
             .iter()
-            .map(|m| m.to_model_info())
+            .map(|id| ModelInfo {
+                id: id.to_string(),
+                name: id.to_string(),
+                context_window: 128_000,
+                supports_vision: id.contains("4o") || id.contains("5") || id.contains("turbo"),
+                supports_functions: true,
+            })
             .collect())
     }
 

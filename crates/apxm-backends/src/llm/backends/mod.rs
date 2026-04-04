@@ -17,11 +17,11 @@ pub mod ollama;
 pub mod openai;
 pub mod vllm;
 
-pub use anthropic::{AnthropicBackend, AnthropicModel};
-pub use google::{GoogleBackend, GoogleModel};
+pub use anthropic::AnthropicBackend;
+pub use google::GoogleBackend;
 pub use mock::{MockLLMBackend, MockResponse, RecordedCall};
-pub use ollama::{OllamaBackend, OllamaModel};
-pub use openai::{OpenAIBackend, OpenAIModel};
+pub use ollama::OllamaBackend;
+pub use openai::OpenAIBackend;
 pub use request::{
     ContentPart, FunctionCall, GenerationConfig, LLMRequest, Message, RequestBuilder, Role,
     ToolChoice, ToolDefinition,

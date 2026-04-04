@@ -3,6 +3,16 @@
 //! Provides the `apxm` binary with subcommands for building, compiling,
 //! running agent workflows, environment setup (`install`, `doctor`), and
 //! LLM credential management (`register`).
+//!
+//! TODO(refactor): This file is 4449 lines. Split into commands/ modules:
+//! - commands/execute.rs — execute + run
+//! - commands/compile.rs — compile + decompile
+//! - commands/validate.rs — validate + explain + analyze
+//! - commands/backend.rs — backend add/list/test/remove/start/stop
+//! - commands/agent.rs — agent add/list/test/remove
+//! - commands/model.rs — models list/health
+//! - commands/workflow.rs — workflow commands
+//! Each file should be ≤400 lines. Keep main.rs as thin dispatcher (<100 lines).
 
 use std::path::PathBuf;
 
