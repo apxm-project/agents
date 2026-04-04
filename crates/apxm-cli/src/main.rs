@@ -1579,19 +1579,37 @@ async fn execute_command(
     let emitter_dyn: Option<std::sync::Arc<dyn apxm_runtime::ExecutionEventEmitter>> =
         emitter.as_ref().map(|e| e.clone() as std::sync::Arc<dyn apxm_runtime::ExecutionEventEmitter>);
 
+    // Background ticker: updates live.json elapsed_ms every second so it stays
+    // current even during long LLM calls between operation events.
+    let ticker_handle = emitter.as_ref().map(|e| {
+        let e = e.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                e.tick();
+            }
+        })
+    });
+
     let result = match linker.run_graph(&input, args, emitter_dyn).await {
         Ok(r) => r,
         Err(err) => {
-            // Finalize live.json + manifest as failed so neither stays at "running".
+            // Stop the ticker and finalize live.json + manifest as failed.
+            if let Some(h) = ticker_handle { h.abort(); }
             if let Some(ref w) = writer {
                 let exec_id = execution_id.as_deref();
                 let graph_name = input.file_stem().and_then(|s| s.to_str());
                 let _ = w.finalize_live_with_id(false, exec_id, graph_name);
             }
+            // Also call emitter.finalize_live so elapsed/completed are preserved.
+            if let Some(ref e) = emitter { let _ = e.finalize_live(false); }
             eprintln!("{}", err);
             return Err(anyhow::anyhow!("Execution failed"));
         }
     };
+
+    // Stop the background ticker now that execution is done.
+    if let Some(h) = ticker_handle { h.abort(); }
 
     // Emit metrics JSON if requested
     #[allow(unused_mut)]
