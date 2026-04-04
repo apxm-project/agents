@@ -1,0 +1,206 @@
+{
+  "name": "ultrathink-vs-single-benchmark",
+  "parameters": [
+    {"name": "TASK", "type_name": "str", "description": "The coding task to benchmark"}
+  ],
+  "nodes": [
+    {
+      "id": 1,
+      "name": "start_timer",
+      "op": "PRINT",
+      "attributes": {
+        "message": "=== BENCHMARK START ==="
+      }
+    },
+
+    {
+      "id": 2,
+      "name": "baseline_single_agent",
+      "op": "SPAWN_AGENT",
+      "attributes": {
+        "agent_name": "single_baseline",
+        "profile": "claude",
+        "cwd": "$APXM_HOME"
+      }
+    },
+
+    {
+      "id": 3,
+      "name": "run_baseline",
+      "op": "COMMUNICATE",
+      "attributes": {
+        "recipient": "single_baseline",
+        "protocol": "acp"
+      }
+    },
+
+    {
+      "id": 4,
+      "name": "ultrathink_architect",
+      "op": "THINK",
+      "attributes": {
+        "template_str": "ultrathink. You are a Rust systems architect. Read the APXM codebase at ~/projects/agents/apxm. Produce a detailed plan for: {{TASK}}\n\nInclude: affected crates, file paths, API design, integration points, risks.",
+        "budget": 8000
+      }
+    },
+
+    {
+      "id": 5,
+      "name": "ultrathink_adversary",
+      "op": "REASON",
+      "attributes": {
+        "template_str": "ultrathink. Find flaws in implementing this task BEFORE code is written: {{TASK}}\n\nIdentify: hidden complexity, API regrets, race conditions, edge cases, scope creep traps, minimal correct solution."
+      }
+    },
+
+    {
+      "id": 6,
+      "name": "ultrathink_impl",
+      "op": "THINK",
+      "attributes": {
+        "template_str": "ultrathink. You are a Rust implementation expert. For task: {{TASK}}\n\nProduce: complete Rust code blocks, unit tests, integration test approach, Cargo.toml changes, build command: dekk apxm build.",
+        "budget": 8000
+      }
+    },
+
+    {
+      "id": 7,
+      "name": "sync_planning",
+      "op": "WAIT_ALL",
+      "attributes": {
+        "tokens": ["{{node_4}}", "{{node_5}}", "{{node_6}}"]
+      }
+    },
+
+    {
+      "id": 8,
+      "name": "merge_plans",
+      "op": "MERGE",
+      "attributes": {
+        "strategy": "concat",
+        "tokens": ["{{node_4}}", "{{node_5}}", "{{node_6}}"]
+      }
+    },
+
+    {
+      "id": 9,
+      "name": "synthesize",
+      "op": "THINK",
+      "attributes": {
+        "template_str": "ultrathink. Synthesize these 3 expert analyses into ONE unified implementation plan. Resolve conflicts (adversary wins on scope). Include exact file paths, code, tests.\n\n{0}",
+        "budget": 10000
+      }
+    },
+
+    {
+      "id": 10,
+      "name": "spawn_ultrathink_impl",
+      "op": "SPAWN_AGENT",
+      "attributes": {
+        "agent_name": "ultrathink_coder",
+        "profile": "codex",
+        "cwd": "$APXM_HOME"
+      }
+    },
+
+    {
+      "id": 11,
+      "name": "run_ultrathink",
+      "op": "COMMUNICATE",
+      "attributes": {
+        "recipient": "ultrathink_coder",
+        "protocol": "acp"
+      }
+    },
+
+    {
+      "id": 12,
+      "name": "sync_both",
+      "op": "WAIT_ALL",
+      "attributes": {
+        "tokens": ["{{node_3}}", "{{node_11}}"]
+      }
+    },
+
+    {
+      "id": 13,
+      "name": "verify_baseline",
+      "op": "VERIFY",
+      "attributes": {
+        "claim": "Baseline single-agent implementation builds and tests pass",
+        "evidence": "{{node_3}}"
+      }
+    },
+
+    {
+      "id": 14,
+      "name": "verify_ultrathink",
+      "op": "VERIFY",
+      "attributes": {
+        "claim": "Ultrathink implementation builds and tests pass",
+        "evidence": "{{node_11}}"
+      }
+    },
+
+    {
+      "id": 15,
+      "name": "compare_results",
+      "op": "REFLECT",
+      "attributes": {
+        "trace_query": "last_execution",
+        "reflection_prompt": "Compare the two implementations:\n\n1. BASELINE (single Claude Code): {{node_3}}\n   Verification: {{node_13}}\n\n2. ULTRATHINK (parallel planning + codex): {{node_11}}\n   Verification: {{node_14}}\n\nEvaluate:\n- Which one successfully built?\n- Which one has better test coverage?\n- Which one is more maintainable?\n- Which one caught edge cases?\n- Total time comparison?\n\nDeclare WINNER and explain why."
+      }
+    },
+
+    {
+      "id": 16,
+      "name": "final_report",
+      "op": "PRINT",
+      "attributes": {
+        "message": "=== BENCHMARK COMPLETE ===\n\n{{node_15}}"
+      }
+    }
+  ],
+  "edges": [
+    {"from": 1, "to": 2, "dependency": "Control"},
+    {"from": 1, "to": 4, "dependency": "Control"},
+    {"from": 1, "to": 5, "dependency": "Control"},
+    {"from": 1, "to": 6, "dependency": "Control"},
+
+    {"from": 2, "to": 3, "dependency": "Data"},
+
+    {"from": 4, "to": 7, "dependency": "Data"},
+    {"from": 5, "to": 7, "dependency": "Data"},
+    {"from": 6, "to": 7, "dependency": "Data"},
+
+    {"from": 4, "to": 8, "dependency": "Data"},
+    {"from": 5, "to": 8, "dependency": "Data"},
+    {"from": 6, "to": 8, "dependency": "Data"},
+    {"from": 7, "to": 8, "dependency": "Control"},
+
+    {"from": 8, "to": 9, "dependency": "Data"},
+    {"from": 9, "to": 10, "dependency": "Data"},
+    {"from": 10, "to": 11, "dependency": "Data"},
+    {"from": 9, "to": 11, "dependency": "Data"},
+
+    {"from": 3, "to": 12, "dependency": "Data"},
+    {"from": 11, "to": 12, "dependency": "Data"},
+
+    {"from": 12, "to": 13, "dependency": "Data"},
+    {"from": 12, "to": 14, "dependency": "Data"},
+    {"from": 3, "to": 13, "dependency": "Data"},
+    {"from": 11, "to": 14, "dependency": "Data"},
+
+    {"from": 13, "to": 15, "dependency": "Data"},
+    {"from": 14, "to": 15, "dependency": "Data"},
+    {"from": 3, "to": 15, "dependency": "Data"},
+    {"from": 11, "to": 15, "dependency": "Data"},
+
+    {"from": 15, "to": 16, "dependency": "Data"}
+  ],
+  "metadata": {
+    "description": "Head-to-head benchmark: single Claude Code vs Ultrathink parallel workflow. Both attempt the same task, VERIFY gates check success, REFLECT compares quality.",
+    "pattern": "PARALLEL: [single-agent baseline] vs [3x THINK planning → MERGE → synthesize → codex impl] → WAIT_ALL → VERIFY both → REFLECT compare",
+    "measures": ["build success", "test coverage", "code quality", "edge case handling", "total time"]
+  }
+}
