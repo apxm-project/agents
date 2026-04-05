@@ -4,7 +4,6 @@
 //! speaks JSON-RPC 2.0 over stdio, and integrates with APXM's runtime systems.
 
 pub mod auth;
-pub mod capability;
 pub mod constants;
 pub mod content;
 pub mod controls;
@@ -13,15 +12,12 @@ pub mod protocol;
 pub mod registry;
 pub mod reverse;
 pub mod session;
-pub mod session_pool;
 pub mod terminal;
 
-pub use capability::AcpCapability;
 pub mod aam_bridge;
 
 pub use registry::{AgentProfile, AgentRegistry, CapabilityServerConfig, PermissionMode};
 pub use session::AcpSession;
-pub use session_pool::SessionPool;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AcpError {
