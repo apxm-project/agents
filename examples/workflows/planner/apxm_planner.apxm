@@ -1,0 +1,187 @@
+{
+  "name": "apxm_planner",
+  "parameters": [],
+  "nodes": [
+    {
+      "id": 1,
+      "name": "spawn_strategist",
+      "op": "SPAWN_AGENT",
+      "attributes": {"agent_name": "strategist", "profile": "claude", "mode": "architect"}
+    },
+    {
+      "id": 2,
+      "name": "spawn_skeptic",
+      "op": "SPAWN_AGENT",
+      "attributes": {"agent_name": "skeptic", "profile": "claude", "mode": "architect"}
+    },
+    {
+      "id": 3,
+      "name": "spawn_technologist",
+      "op": "SPAWN_AGENT",
+      "attributes": {"agent_name": "technologist", "profile": "claude", "mode": "architect"}
+    },
+    {
+      "id": 4,
+      "name": "spawn_marketeer",
+      "op": "SPAWN_AGENT",
+      "attributes": {"agent_name": "marketeer", "profile": "claude", "mode": "architect"}
+    },
+    {
+      "id": 5,
+      "name": "strategist_prompt",
+      "op": "CONST_STR",
+      "attributes": {"value": "STRATEGIST_PROMPT_PLACEHOLDER"}
+    },
+    {
+      "id": 6,
+      "name": "skeptic_prompt",
+      "op": "CONST_STR",
+      "attributes": {"value": "SKEPTIC_PROMPT_PLACEHOLDER"}
+    },
+    {
+      "id": 7,
+      "name": "technologist_prompt",
+      "op": "CONST_STR",
+      "attributes": {"value": "TECHNOLOGIST_PROMPT_PLACEHOLDER"}
+    },
+    {
+      "id": 8,
+      "name": "marketeer_prompt",
+      "op": "CONST_STR",
+      "attributes": {"value": "MARKETEER_PROMPT_PLACEHOLDER"}
+    },
+    {
+      "id": 9,
+      "name": "send_to_strategist",
+      "op": "COMMUNICATE",
+      "attributes": {"recipient": "strategist", "protocol": "acp"}
+    },
+    {
+      "id": 10,
+      "name": "send_to_skeptic",
+      "op": "COMMUNICATE",
+      "attributes": {"recipient": "skeptic", "protocol": "acp"}
+    },
+    {
+      "id": 11,
+      "name": "send_to_technologist",
+      "op": "COMMUNICATE",
+      "attributes": {"recipient": "technologist", "protocol": "acp"}
+    },
+    {
+      "id": 12,
+      "name": "send_to_marketeer",
+      "op": "COMMUNICATE",
+      "attributes": {"recipient": "marketeer", "protocol": "acp"}
+    },
+    {
+      "id": 13,
+      "name": "merge_analyses",
+      "op": "MERGE",
+      "attributes": {
+        "tokens": ["{{node_9}}", "{{node_10}}", "{{node_11}}", "{{node_12}}"],
+        "separator": "\n\n═══════════════════════════════════════════════════════════════\n\n"
+      }
+    },
+    {
+      "id": 14,
+      "name": "spawn_council",
+      "op": "SPAWN_AGENT",
+      "attributes": {"agent_name": "council", "profile": "claude", "mode": "architect"}
+    },
+    {
+      "id": 15,
+      "name": "council_synthesis_prompt",
+      "op": "THINK",
+      "attributes": {
+        "template_str": "COUNCIL SYNTHESIS:\n\nYou are the COUNCIL CHAIR. Synthesize the 4 analyst perspectives:\n\n{0}\n\n1. Where do they AGREE?\n2. Where do they DISAGREE?\n3. What TENSIONS exist?\n4. What KEY DECISIONS must be made?\n5. COUNCIL RECOMMENDATION?",
+        "budget": 3000
+      }
+    },
+    {
+      "id": 16,
+      "name": "send_synthesis_to_council",
+      "op": "COMMUNICATE",
+      "attributes": {"recipient": "council", "protocol": "acp"}
+    },
+    {
+      "id": 17,
+      "name": "adversarial_prompt",
+      "op": "CONST_STR",
+      "attributes": {"value": "Now apply ADVERSARIAL pressure. What would KILL this plan? What assumption, if wrong, invalidates everything? What competitor response would be fatal?"}
+    },
+    {
+      "id": 18,
+      "name": "send_adversarial_to_council",
+      "op": "COMMUNICATE",
+      "attributes": {"recipient": "council", "protocol": "acp"}
+    },
+    {
+      "id": 19,
+      "name": "spawn_chair",
+      "op": "SPAWN_AGENT",
+      "attributes": {"agent_name": "chair", "profile": "claude", "mode": "architect"}
+    },
+    {
+      "id": 20,
+      "name": "merge_for_chair",
+      "op": "MERGE",
+      "attributes": {
+        "tokens": ["{{node_13}}", "{{node_16}}", "{{node_18}}"],
+        "separator": "\n\n═══════════════════════════════════════════════════════════════\n\n"
+      }
+    },
+    {
+      "id": 21,
+      "name": "chair_decision_prompt",
+      "op": "THINK",
+      "attributes": {
+        "template_str": "CHAIR DECISION:\n\nYou have FRESH EYES. Package:\n{0}\n\n## DECISION: GO / NO-GO / PIVOT\n\n## 3 CONCRETE NEXT STEPS\n\n## THE ONE THING",
+        "budget": 3000
+      }
+    },
+    {
+      "id": 22,
+      "name": "send_to_chair",
+      "op": "COMMUNICATE",
+      "attributes": {"recipient": "chair", "protocol": "acp"}
+    },
+    {
+      "id": 23,
+      "name": "final_output",
+      "op": "PRINT",
+      "attributes": {"message": "═══════════════════════════════════════════════════════════════\n                    APXM PLANNER: FINAL DECISION\n═══════════════════════════════════════════════════════════════\n\n{{node_22}}"}
+    }
+  ],
+  "edges": [
+    {"from": 1, "to": 9, "dependency": "Control"},
+    {"from": 2, "to": 10, "dependency": "Control"},
+    {"from": 3, "to": 11, "dependency": "Control"},
+    {"from": 4, "to": 12, "dependency": "Control"},
+    {"from": 5, "to": 9, "dependency": "Data"},
+    {"from": 6, "to": 10, "dependency": "Data"},
+    {"from": 7, "to": 11, "dependency": "Data"},
+    {"from": 8, "to": 12, "dependency": "Data"},
+    {"from": 9, "to": 13, "dependency": "Data"},
+    {"from": 10, "to": 13, "dependency": "Data"},
+    {"from": 11, "to": 13, "dependency": "Data"},
+    {"from": 12, "to": 13, "dependency": "Data"},
+    {"from": 13, "to": 14, "dependency": "Control"},
+    {"from": 13, "to": 15, "dependency": "Data"},
+    {"from": 14, "to": 16, "dependency": "Control"},
+    {"from": 15, "to": 16, "dependency": "Data"},
+    {"from": 16, "to": 17, "dependency": "Control"},
+    {"from": 17, "to": 18, "dependency": "Data"},
+    {"from": 18, "to": 19, "dependency": "Control"},
+    {"from": 13, "to": 20, "dependency": "Data"},
+    {"from": 16, "to": 20, "dependency": "Data"},
+    {"from": 18, "to": 20, "dependency": "Data"},
+    {"from": 19, "to": 22, "dependency": "Control"},
+    {"from": 20, "to": 21, "dependency": "Data"},
+    {"from": 21, "to": 22, "dependency": "Data"},
+    {"from": 22, "to": 23, "dependency": "Data"}
+  ],
+  "metadata": {
+    "description": "Multi-perspective plan analysis: 4 parallel analysts → council synthesis → chair decision"
+  }
+}
