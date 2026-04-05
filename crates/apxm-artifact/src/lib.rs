@@ -309,7 +309,8 @@ mod tests {
         let decoded_dag = decoded.dag().expect("test artifact should have a DAG");
         assert_eq!(decoded_dag.nodes.len(), dag.nodes.len());
         assert_eq!(decoded_dag.nodes[0].metadata.task_source_id, Some(42));
-        assert_eq!(decoded_dag.nodes[0].metadata.name.as_deref(), Some("seed"));
+        // Note: name is marked #[serde(skip)] so it's not serialized (runtime-only field)
+        assert_eq!(decoded_dag.nodes[0].metadata.name, None);
     }
 
     #[test]
