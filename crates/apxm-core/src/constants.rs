@@ -501,10 +501,7 @@ pub mod extensions {
     pub const AIS: &str = "ais";
     /// Compiled artifact extension.
     pub const ARTIFACT: &str = "apxmobj";
-    /// Deprecated JSON graph format. Use .ais source files instead.
-    /// Kept only for internal tooling (decompile, legacy migration).
-    #[deprecated(note = "Use .ais source files. This format is no longer accepted as execute/compile input.")]
-    pub const GRAPH_LEGACY: &str = "apxm";
+    // .apxm format removed. Use .ais source files.
 }
 
 pub mod session {
