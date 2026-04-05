@@ -166,16 +166,52 @@ impl Linker {
     /// looked up in `~/.cache/apxm/artifacts/`.  On a cache hit the
     /// compilation step is skipped entirely.
     pub fn compile_graph(&self, input: &Path) -> Result<Artifact, DriverError> {
-        let is_json = input
+        let ext = input
             .extension()
             .and_then(|e| e.to_str())
-            .map(|e| e == constants::extensions::GRAPH_LEGACY || e == "json")
-            .unwrap_or(false);
+            .unwrap_or("");
 
-        // Use graph-direct path when MLIR is unavailable or input is JSON
-        // JSON/APXM graphs always use the pure-Rust graph-direct path for reliability.
-        // MLIR compilation is reserved for .ais and .mlir source files.
-        if is_json {
+        let is_json = ext == constants::extensions::GRAPH_LEGACY || ext == "json";
+
+        // Use graph-direct path for JSON/APXM graphs and AIS source files.
+        // Both formats parse to ApxmGraph via our fixed code paths; the graph-direct
+        // path avoids MLIR text serialization issues with special characters in strings.
+        // MLIR optimization passes are applied in compile-to-artifact mode separately.
+        if is_json || ext == "ais" {
+            if ext == "ais" {
+                // For .ais: use the compiler to parse DSL -> ApxmGraph, then compile directly.
+                if let Some(ref compiler) = self.compiler {
+                    if let Ok(graph) = compiler.load_graph(input) {
+                        let hash = cache::graph_hash(&graph).ok();
+                        if !self.no_cache
+                            && let Some(ref h) = hash
+                            && let Some(cached_bytes) = cache::load_cached(h)?
+                        {
+                            log_info!("driver", "cache hit (ais-direct) for graph hash {}", h);
+                            return Artifact::from_bytes(&cached_bytes)
+                                .map_err(|e| state_err(e.to_string()));
+                        }
+                        let dag = graph
+                            .to_execution_dag()
+                            .map_err(|e| DriverError::Driver(format!("Graph lowering error: {e}")))?;
+                        let module_name = input
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .map(|s| s.to_string());
+                        let metadata = ArtifactMetadata::new(module_name, env!("CARGO_PKG_VERSION"));
+                        let artifact = Artifact::new(metadata, vec![dag]);
+                        if !self.no_cache
+                            && let Some(ref h) = hash
+                        {
+                            if let Ok(artifact_bytes) = artifact.to_bytes() {
+                                let _ = cache::store_cached(h, &artifact_bytes);
+                            }
+                        }
+                        log_info!("driver", "ais-direct compilation complete");
+                        return Ok(artifact);
+                    }
+                }
+            }
             return self.compile_graph_direct(input);
         }
 
