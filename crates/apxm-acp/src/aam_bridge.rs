@@ -10,17 +10,30 @@ use crate::registry::CapabilityServerConfig;
 ///
 /// Returns `None` if all three dimensions (beliefs, goals, capabilities) are empty.
 pub fn render_system_prompt(ctx: &AamContext) -> Option<String> {
+    let system_prompt = ctx
+        .system_prompt
+        .as_deref()
+        .map(str::trim)
+        .filter(|text| !text.is_empty());
     let visible_beliefs: Vec<_> = ctx
         .beliefs
         .iter()
         .filter(|(k, _)| !k.starts_with(belief_keys::INTERNAL_PREFIX))
         .collect();
 
-    if visible_beliefs.is_empty() && ctx.goals.is_empty() && ctx.capabilities.is_empty() {
+    if system_prompt.is_none()
+        && visible_beliefs.is_empty()
+        && ctx.goals.is_empty()
+        && ctx.capabilities.is_empty()
+    {
         return None;
     }
 
     let mut sections = Vec::new();
+
+    if let Some(text) = system_prompt {
+        sections.push(text.to_string());
+    }
 
     if !visible_beliefs.is_empty() {
         let mut belief_lines = vec!["### Beliefs".to_string()];
@@ -84,6 +97,17 @@ mod tests {
     fn empty_context_returns_none() {
         let ctx = AamContext::default();
         assert!(render_system_prompt(&ctx).is_none());
+    }
+
+    #[test]
+    fn renders_system_prompt_without_structured_state() {
+        let mut ctx = AamContext::default();
+        ctx.system_prompt = Some("## Session\nExecution: exec-123".to_string());
+
+        let result = render_system_prompt(&ctx).unwrap();
+        assert!(result.contains("## Context (from APXM orchestrator)"));
+        assert!(result.contains("## Session"));
+        assert!(result.contains("exec-123"));
     }
 
     #[test]

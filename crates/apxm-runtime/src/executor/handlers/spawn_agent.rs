@@ -21,6 +21,7 @@ use super::{
 use crate::aam::TransitionLabel;
 use apxm_core::apxm_op;
 use apxm_core::constants::graph::attrs as graph_attrs;
+use apxm_core::constants::runtime::context_stack as context_stack_consts;
 use apxm_core::constants::runtime::{belief_keys, metadata, response_keys};
 use apxm_core::error::RuntimeError;
 use apxm_core::types::aam::{AamContext, CapabilityProjection, GoalProjection};
@@ -136,7 +137,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
         };
 
         // Project current AAM state into AamContext for the spawned agent
-        let aam_context = project_aam_context(ctx);
+        let aam_context = project_aam_context(ctx, node.id, profile_name);
 
         // Build extra env for the agent subprocess.
         // APXM_NODE_WORKSPACE points to the per-node context folder (AGENTS.md/CLAUDE.md).
@@ -247,7 +248,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
 ///
 /// Filters out internal beliefs (prefixed with `_`) and only includes active goals.
 /// Values are converted from the runtime `Value` type to `serde_json::Value`.
-fn project_aam_context(ctx: &ExecutionContext) -> AamContext {
+fn project_aam_context(ctx: &ExecutionContext, node_id: u64, profile: &str) -> AamContext {
     let beliefs: HashMap<String, serde_json::Value> = ctx
         .aam
         .beliefs()
@@ -277,11 +278,25 @@ fn project_aam_context(ctx: &ExecutionContext) -> AamContext {
         })
         .collect();
 
+    let system_prompt = ctx.context_stack.as_ref().and_then(|stack| {
+        let assembly = stack.assemble(
+            node_id,
+            profile,
+            context_stack_consts::DEFAULT_PROMPT_BUDGET_TOKENS,
+        );
+
+        if assembly.frames.is_empty() {
+            None
+        } else {
+            Some(assembly.to_string())
+        }
+    });
+
     AamContext {
         beliefs,
         goals,
         capabilities,
-        system_prompt: None, // profile.system_prompt handled in session.rs
+        system_prompt,
     }
 }
 
@@ -290,14 +305,18 @@ mod tests {
     use super::*;
     use crate::capability::CapabilitySystem;
     use crate::capability::flow_registry::FlowRegistry;
+    use crate::context_stack::{ContextStack, NodeMetadata as ContextNodeMetadata};
     use crate::memory::{MemoryConfig, MemorySystem};
     use apxm_backends::LLMRegistry;
     use apxm_core::constants::graph::attrs as graph_attrs;
     use apxm_core::constants::runtime::{belief_keys, response_keys};
+    use apxm_core::constants::session;
+    use apxm_core::paths::session_node_dir_name;
     use apxm_core::types::execution::NodeMetadata;
     use apxm_core::types::operations::AISOperationType;
     use std::collections::HashMap;
     use std::sync::Arc;
+    use tempfile::tempdir;
 
     fn make_spawn_node(agent_name: &str) -> apxm_core::types::execution::Node {
         let mut node = apxm_core::types::execution::Node {
@@ -491,5 +510,64 @@ mod tests {
             }
             _ => panic!("Expected Value::Object"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_project_aam_context_includes_context_stack_prompt() {
+        let dir = tempdir().expect("tempdir");
+        let session_dir = dir.path().join("session");
+        let upstream_dir = session_dir
+            .join(session::files::NODES_DIR)
+            .join(session_node_dir_name(1, "seed"));
+        std::fs::create_dir_all(&upstream_dir).expect("upstream dir");
+        std::fs::write(
+            upstream_dir.join(session::node::OUTPUT_JSON),
+            r#"{"result":"design context"}"#,
+        )
+        .expect("output");
+
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(LLMRegistry::new());
+        let capability_system = Arc::new(CapabilitySystem::new());
+
+        let mut node_metadata = HashMap::new();
+        node_metadata.insert(
+            1,
+            ContextNodeMetadata {
+                name: "seed".to_string(),
+                op_type: "ConstStr".to_string(),
+            },
+        );
+        node_metadata.insert(
+            2,
+            ContextNodeMetadata {
+                name: "spawn".to_string(),
+                op_type: "SpawnAgent".to_string(),
+            },
+        );
+
+        let context_stack = Arc::new(ContextStack::new(
+            session_dir,
+            Arc::new(node_metadata),
+            Arc::new(vec![(1, 2)]),
+        ));
+
+        let ctx = ExecutionContext::new(
+            memory,
+            llm_registry,
+            capability_system,
+            crate::aam::Aam::new(),
+        )
+        .with_context_stack(context_stack);
+
+        let projected = project_aam_context(&ctx, 2, context_stack_consts::PROFILE_CLAUDE);
+
+        let system_prompt = projected.system_prompt.expect("system_prompt");
+        assert!(system_prompt.contains("## Upstream: seed (#1)"));
+        assert!(system_prompt.contains("design context"));
     }
 }
