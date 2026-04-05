@@ -4,7 +4,6 @@ use std::path::Path;
 use std::sync::Arc;
 
 use apxm_artifact::Artifact;
-use apxm_core::constants;
 use apxm_core::error::runtime::RuntimeError;
 use apxm_core::log_info;
 use apxm_core::types::OptimizationLevel;
@@ -171,16 +170,7 @@ impl Linker {
             .and_then(|e| e.to_str())
             .unwrap_or("");
 
-        // .apxm JSON graph format is deprecated — use .ais source files instead.
-        if ext == constants::extensions::GRAPH_LEGACY || ext == "json" {
-            return Err(DriverError::Driver(
-                format!(
-                    ".apxm JSON graph format is no longer supported. \
-                     Migrate to .ais source (AIS DSL) and run: dekk apxm execute <file.ais>\n\
-                     See: examples/ for .ais workflow examples."
-                ),
-            ));
-        }
+
 
         // .air (AgentMate canonical IR) and .ais (source) use graph-direct execute.
         if ext == "ais" {

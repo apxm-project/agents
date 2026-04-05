@@ -1502,7 +1502,7 @@ fn load_graph_from_directory(dir: &std::path::Path) -> Result<apxm_graph::ApxmGr
             let path = entry.path();
             if matches!(
                 path.extension().and_then(|e| e.to_str()),
-                Some(apxm_core::constants::extensions::GRAPH_LEGACY | "json")
+                Some("json")  // .apxm removed; json kept for internal decompile only
             ) {
                 let text = std::fs::read_to_string(&path)
                     .with_context(|| format!("Failed to read {}", path.display()))?;

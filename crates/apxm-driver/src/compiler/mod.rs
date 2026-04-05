@@ -1,7 +1,6 @@
 //! Compiler wrapper used by the driver.
 
 use apxm_compiler::{Context, Module, Pipeline, PipelineDiagnostics};
-use apxm_core::constants;
 use apxm_core::types::{OptimizationLevel, PipelineConfig};
 use apxm_core::utils::build::MlirEnvReport;
 use apxm_graph::ApxmGraph;
@@ -115,11 +114,7 @@ impl Compiler {
                     ".air is an inspection format, not a compile input.                      Write .ais source files instead. AgentMate emits .ais.".to_string()
                 ))
             }
-            Some(constants::extensions::GRAPH_LEGACY | "json") => {
-                Err(DriverError::Driver(
-                    ".apxm JSON graph format is deprecated. Use .ais source files instead.".to_string()
-                ))
-            }
+
             _ => ApxmGraph::from_bytes(&bytes)
                 .map_err(|e| DriverError::Driver(format!("Graph parse error: {e}"))),
         }
