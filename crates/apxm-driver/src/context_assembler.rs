@@ -6,6 +6,7 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use apxm_core::agent_profile::AgentProfileRegistry;
 use apxm_core::constants;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::paths::session_node_dir_name;
@@ -74,7 +75,18 @@ impl ContextAssembler {
             .get(graph_attrs::PROFILE)
             .and_then(|v| v.as_str())
             .unwrap_or_default();
-        let role = infer_role(profile, &meta.name);
+        let reg = AgentProfileRegistry::new();
+        let agent_profile = reg.resolve(profile);
+        let role_desc = agent_profile
+            .map(|p| p.description.as_str())
+            .unwrap_or("Work within the provided workspace.");
+        let constraints: Vec<String> = agent_profile
+            .map(|p| p.constraints.clone())
+            .unwrap_or_default();
+        let skills_to_show: &[String] = agent_profile
+            .map(|p| p.allowed_skills.as_slice())
+            .filter(|s| !s.is_empty())
+            .unwrap_or(skill_names);
         let task = self.extract_task(meta, &upstream);
 
         let mut doc = String::new();
@@ -82,7 +94,7 @@ impl ContextAssembler {
         doc.push_str("## Task\n");
         doc.push_str(&task);
         doc.push_str("\n\n## Role\n");
-        doc.push_str(role_description(agent_label, role));
+        doc.push_str(role_desc);
         doc.push_str("\n\n");
 
         if !upstream.is_empty() {
@@ -92,9 +104,9 @@ impl ContextAssembler {
             }
         }
 
-        if !skill_names.is_empty() {
+        if !skills_to_show.is_empty() {
             doc.push_str("## Available Skills\n");
-            for skill in skill_names {
+            for skill in skills_to_show {
                 doc.push_str(&format!("- {}: see skills/{}/SKILL.md\n", skill, skill));
             }
             doc.push('\n');
@@ -107,7 +119,13 @@ impl ContextAssembler {
             self.project_root.display()
         ));
         doc.push_str("\n## Constraints\n");
-        doc.push_str(profile_constraints(role));
+        if constraints.is_empty() {
+            doc.push_str("- Work within the provided workspace.\n");
+        } else {
+            for c in &constraints {
+                doc.push_str(&format!("- {}\n", c));
+            }
+        }
         doc.push('\n');
         doc
     }
@@ -156,52 +174,6 @@ impl ContextAssembler {
             }
         }
         outputs
-    }
-}
-
-fn infer_role(profile: &str, node_name: &str) -> &'static str {
-    let lowered = node_name.to_ascii_lowercase();
-    if lowered.contains("architect") {
-        "Architect"
-    } else if lowered.contains("review") {
-        "Reviewer"
-    } else if lowered.contains("implement") || lowered.contains("coder") {
-        "Implementer"
-    } else if profile.eq_ignore_ascii_case("claude") || profile.eq_ignore_ascii_case("codex") {
-        "Agent"
-    } else {
-        "Worker"
-    }
-}
-
-fn role_description(agent_label: &str, role: &str) -> &'static str {
-    match (agent_label, role) {
-        ("Claude", "Architect") => {
-            "You are the design agent. Focus on architecture, interfaces, and execution strategy."
-        }
-        ("Codex", "Implementer") => {
-            "You are the implementation agent. Make concrete code changes that satisfy the provided design."
-        }
-        (_, "Reviewer") => {
-            "You are the review agent. Look for correctness issues, regressions, and missing coverage."
-        }
-        ("Claude", _) => "You are Claude operating inside an APXM node workspace.",
-        ("Codex", _) => "You are Codex operating inside an APXM node workspace.",
-        _ => "You are an APXM agent operating inside a node workspace.",
-    }
-}
-
-fn profile_constraints(role: &str) -> &'static str {
-    match role {
-        "Architect" => {
-            "- Stay at the design/interface level when the task is explicitly architectural.\n- Use upstream outputs as the source of truth for requirements."
-        }
-        "Reviewer" => {
-            "- Prioritize bugs, regressions, and missing tests.\n- Keep summaries brief after the findings."
-        }
-        _ => {
-            "- Work within the provided workspace.\n- Preserve existing project conventions unless the task requires a change."
-        }
     }
 }
 
