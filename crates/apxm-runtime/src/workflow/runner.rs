@@ -102,7 +102,7 @@ impl WorkflowRunner {
             "Starting workflow execution"
         );
 
-        let mut step_outputs: HashMap<String, String> = HashMap::new();
+        let step_outputs: HashMap<String, String> = HashMap::new();
         let mut step_results: HashMap<String, StepResult> = HashMap::new();
 
         // Create workflow session directory
@@ -151,13 +151,13 @@ impl WorkflowRunner {
                 }
 
                 // Resolve parameters using template resolution
-                let resolved_params: HashMap<String, String> = step
+                let _resolved_params: HashMap<String, String> = step
                     .params
                     .iter()
                     .map(|(k, v)| (k.clone(), template::resolve(v, &step_outputs, &args)))
                     .collect();
 
-                let step_session_dir = workflow_session_dir.join(&step.id);
+                let _step_session_dir = workflow_session_dir.join(&step.id);
                 let graph_path = self.base_dir.join(&step.path);
 
                 log_info!(
