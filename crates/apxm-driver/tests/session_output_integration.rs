@@ -11,7 +11,7 @@ use std::path::Path;
 use std::time::Duration;
 use tempfile::TempDir;
 
-fn make_graph_json(nodes: Vec<GraphNode>, edges: Vec<GraphEdge>) -> String {
+fn make_graph(nodes: Vec<GraphNode>, edges: Vec<GraphEdge>) -> ApxmGraph {
     ApxmGraph {
         name: "session-output".to_string(),
         nodes,
@@ -19,8 +19,6 @@ fn make_graph_json(nodes: Vec<GraphNode>, edges: Vec<GraphEdge>) -> String {
         parameters: Vec::new(),
         metadata: HashMap::new(),
     }
-    .to_json()
-    .expect("graph json")
 }
 
 fn make_node(
@@ -48,11 +46,11 @@ fn setup_project_root() -> TempDir {
     dir
 }
 
-fn make_emitter(session_dir: &Path, project_root: &Path, graph_json: &str) -> SessionEventEmitter {
+fn make_emitter(session_dir: &Path, project_root: &Path, graph: &ApxmGraph) -> SessionEventEmitter {
     SessionEventEmitter::new(
         session_dir,
         "exec-123".to_string(),
-        Some(graph_json),
+        Some(graph),
         Some(project_root),
     )
     .expect("session emitter")
@@ -62,7 +60,7 @@ fn make_emitter(session_dir: &Path, project_root: &Path, graph_json: &str) -> Se
 fn node_workspace_creation_writes_context_and_outputs() {
     let session_root = tempfile::tempdir().expect("session root");
     let project_root = setup_project_root();
-    let graph_json = make_graph_json(
+    let graph = make_graph(
         vec![
             make_node(1, "seed", AISOperationType::ConstStr, HashMap::new()),
             make_node(
@@ -96,7 +94,7 @@ fn node_workspace_creation_writes_context_and_outputs() {
         ],
     );
 
-    let emitter = make_emitter(session_root.path(), project_root.path(), &graph_json);
+    let emitter = make_emitter(session_root.path(), project_root.path(), &graph);
     emitter.set_total_nodes(3);
 
     emitter.emit_operation_start(1, "CONST_STR");
@@ -132,7 +130,7 @@ fn node_workspace_creation_writes_context_and_outputs() {
 fn llm_prompt_and_response_are_persisted() {
     let session_root = tempfile::tempdir().expect("session root");
     let project_root = setup_project_root();
-    let graph_json = make_graph_json(
+    let graph = make_graph(
         vec![make_node(
             1,
             "ask_plan",
@@ -142,7 +140,7 @@ fn llm_prompt_and_response_are_persisted() {
         Vec::new(),
     );
 
-    let emitter = make_emitter(session_root.path(), project_root.path(), &graph_json);
+    let emitter = make_emitter(session_root.path(), project_root.path(), &graph);
 
     emitter.emit_operation_start(1, "ASK");
     emitter.emit_llm_prompt(1, "Write the implementation plan");
@@ -172,7 +170,7 @@ fn llm_prompt_and_response_are_persisted() {
 fn spawn_agent_skill_resolution_copies_profile_and_operation_skills() {
     let session_root = tempfile::tempdir().expect("session root");
     let project_root = setup_project_root();
-    let graph_json = make_graph_json(
+    let graph = make_graph(
         vec![make_node(
             2,
             "spawn_architect",
@@ -185,7 +183,7 @@ fn spawn_agent_skill_resolution_copies_profile_and_operation_skills() {
         Vec::new(),
     );
 
-    let emitter = make_emitter(session_root.path(), project_root.path(), &graph_json);
+    let emitter = make_emitter(session_root.path(), project_root.path(), &graph);
     emitter.emit_operation_start(2, "SPAWN_AGENT");
 
     let skills_dir = session_root
