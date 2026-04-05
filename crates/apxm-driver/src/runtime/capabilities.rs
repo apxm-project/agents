@@ -17,12 +17,8 @@ pub fn configure_capability_registry(
         tracing::warn!("Failed to load user tools from ~/.apxm/tools.json: {}", e);
     }
 
-    // Register ACP capability for INV(acp) nodes
-    let session_pool = std::sync::Arc::new(apxm_acp::SessionPool::new());
-    let acp = apxm_acp::AcpCapability::new(std::sync::Arc::clone(&capability_system), session_pool);
-    capability_system
-        .register(std::sync::Arc::new(acp))
-        .map_err(DriverError::Runtime)?;
+    // NOTE: ACP agents are invoked via SPAWN_AGENT + COMMUNICATE, not INV_TOOL(capability="acp").
+    // The "acp" capability is intentionally NOT registered.
 
     Ok(())
 }
