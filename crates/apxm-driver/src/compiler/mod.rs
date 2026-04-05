@@ -45,9 +45,10 @@ impl Compiler {
     /// Compile a graph file into a compiler module.
     pub fn compile(&self, path: &Path) -> Result<Module, DriverError> {
         let ext = path.extension().and_then(|ext| ext.to_str());
+
         if matches!(ext, Some("mlir" | "air")) {
             return Err(DriverError::Driver(
-                "Use 'apxm compile <file.ais>' to compile source to .apxmobj, or pass a .apxmobj artifact to 'apxm run'".to_string(),
+                ".air is an inspection/debug format (like LLVM .ll dumps).                  It is not round-trip compilable. AgentMate should emit .ais source files.                  Use 'dekk apxm execute <file.ais>' instead.".to_string(),
             ));
         }
 
@@ -106,11 +107,14 @@ impl Compiler {
                 Module::parse_dsl_graph(&self.context, source, path_str)
                     .map_err(|e| DriverError::Driver(format!("AIS parse error: {e}")))
             }
-            Some("air") => Err(DriverError::Driver(
-                ".air is the canonical IR text format (like LLVM .ll). \
-                 Compile from .ais source with 'apxm compile' or run a .apxmobj artifact."
-                    .to_string(),
-            )),
+            Some("air") => {
+                // .air is the inspection/debug format (like LLVM .ll).
+                // It is not a round-trip input format — use .ais source files instead.
+                // AgentMate should emit .ais, not .air.
+                Err(DriverError::Driver(
+                    ".air is an inspection format, not a compile input.                      Write .ais source files instead. AgentMate emits .ais.".to_string()
+                ))
+            }
             Some(constants::extensions::GRAPH_LEGACY | "json") => {
                 Err(DriverError::Driver(
                     ".apxm JSON graph format is deprecated. Use .ais source files instead.".to_string()

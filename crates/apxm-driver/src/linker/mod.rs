@@ -182,7 +182,7 @@ impl Linker {
             ));
         }
 
-        // .ais source files use graph-direct path (GraphGen DSL -> ApxmGraph).
+        // .air (AgentMate canonical IR) and .ais (source) use graph-direct execute.
         if ext == "ais" {
             if ext == "ais" {
                 // For .ais: use the compiler to parse DSL -> ApxmGraph, then compile directly.
