@@ -132,7 +132,7 @@ def AIS_UMemOp : AIS_Op<"umem",
 // Capability Operations
 //===----------------------------------------------------------------------===//
 
-def AIS_InvOp : AIS_Op<"inv",
+def AIS_InvToolOp : AIS_Op<"inv_tool",
     [MemoryEffects<[MemRead<AIS_CapabilityResource>]>]> {
   let summary = "Invoke capability (tool/API)";
   let description = [{
@@ -140,7 +140,7 @@ def AIS_InvOp : AIS_Op<"inv",
 
     Example:
     ```mlir
-    %result = ais.inv "web_search" ("query": "MLIR compiler") : !ais.token
+    %result = ais.inv_tool "web_search" ("query": "MLIR compiler") : !ais.token
     ```
   }];
   let arguments = (ins

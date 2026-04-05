@@ -85,7 +85,7 @@ struct CapabilitySchedulingPass : impl::CapabilitySchedulingBase<CapabilitySched
     // Declarative operation annotation
     auto annotateOperation = [&](Operation* op) -> bool {
       return TypeSwitch<Operation*, bool>(op)
-          .Case<InvOp>([&](auto inv) {
+          .Case<InvToolOp>([&](auto inv) {
             annotateInvocation(inv);
             stats.invocations++;
             APXM_AIS_DEBUG("  INV: " << inv.getCapabilityAttr() << " -> tier="
@@ -139,7 +139,7 @@ struct CapabilitySchedulingPass : impl::CapabilitySchedulingBase<CapabilitySched
   }
 
 private:
-  void annotateInvocation(InvOp op) const {
+  void annotateInvocation(InvToolOp op) const {
     const AISTierKind tier = classifyCapabilityTier(op.getCapabilityAttr().getValue());
     const unsigned cost = baseCost + contextWeight;
 

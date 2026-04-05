@@ -54,7 +54,7 @@ static bool hasSideEffects(Operation *op) {
     return true;
 
   // Invocation calls external capabilities (side effects)
-  if (isa<InvOp>(op))
+  if (isa<InvToolOp>(op))
     return true;
 
   // Communication sends messages (side effects)

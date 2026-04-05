@@ -352,7 +352,7 @@ std::optional<OperationKind> mapOperation(Operation *op) {
       .Case<ConstStrOp>([](auto) { return OperationKind::ConstStr; })
       .Case<QMemOp>([](auto) { return OperationKind::QMem; })
       .Case<UMemOp>([](auto) { return OperationKind::UMem; })
-      .Case<InvOp>([](auto) { return OperationKind::Inv; })
+      .Case<InvToolOp>([](auto) { return OperationKind::Inv; })
       .Case<AskOp>([](auto) { return OperationKind::Ask; })
       .Case<ThinkOp>([](auto) { return OperationKind::Think; })
       .Case<ReasonOp>([](auto) { return OperationKind::Reason; })

@@ -56,7 +56,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     // Priority: 1) params_json attribute, 2) arg_* attributes, 3) positional inputs
     let mut args = HashMap::new();
 
-    // First, check for params_json attribute (from InvOp MLIR)
+    // First, check for params_json attribute (from InvToolOp MLIR)
     if let Some(params_json) = node
         .attributes
         .get(graph_attrs::PARAMS_JSON)
