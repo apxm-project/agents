@@ -54,6 +54,8 @@ pub fn validate_graph(graph: &ApxmGraph) -> Result<(), GraphError> {
     validate_token_space(graph)?;
     validate_agent_references(graph)?;
     validate_required_attributes(graph)?;
+    validate_node_refs(graph)?;
+    validate_agent_ordering(graph)?;
 
     Ok(())
 }
@@ -311,6 +313,158 @@ fn validate_required_attributes(graph: &ApxmGraph) -> Result<(), GraphError> {
             return Err(GraphError::Validation(format!(
                 "node '{}' (id={}, op={}) is missing required attribute '{}'.",
                 node.name, node.id, node.op, attr
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+/// Validate that {{node_X}} references in MERGE tokens, PRINT message,
+/// and CONST_STR value point to existing node IDs.
+///
+/// These are template refs resolved at runtime — catching bad refs early
+/// saves a confusing "node not found" or silent empty output at execution.
+fn validate_node_refs(graph: &ApxmGraph) -> Result<(), GraphError> {
+    use apxm_core::types::operations::AISOperationType;
+    use std::collections::HashSet;
+
+    let node_ids: HashSet<u64> = graph.nodes.iter().map(|n| n.id).collect();
+
+    /// Extract all {{node_N}} refs from a string, return the N values.
+    fn extract_node_refs(s: &str) -> Vec<u64> {
+        let mut refs = Vec::new();
+        let mut rest = s;
+        while let Some(start) = rest.find("{{node_") {
+            rest = &rest[start + 7..];
+            if let Some(end) = rest.find("}}") {
+                if let Ok(id) = rest[..end].trim().parse::<u64>() {
+                    refs.push(id);
+                }
+                rest = &rest[end + 2..];
+            } else {
+                break;
+            }
+        }
+        refs
+    }
+
+    for node in &graph.nodes {
+        // Check MERGE tokens attribute
+        if node.op == AISOperationType::Merge {
+            if let Some(tokens_val) = node.attributes.get("tokens") {
+                let tokens_str = serde_json::to_string(tokens_val).unwrap_or_default();
+                for ref_id in extract_node_refs(&tokens_str) {
+                    if !node_ids.contains(&ref_id) {
+                        return Err(GraphError::Validation(format!(
+                            "node '{}' (id={}, op=MERGE) tokens attribute references                              {{{{node_{}}}}} but no node with id {} exists in the graph.",
+                            node.name, node.id, ref_id, ref_id
+                        )));
+                    }
+                }
+            }
+        }
+
+        // Check PRINT message attribute
+        if node.op == AISOperationType::Print {
+            if let Some(msg_val) = node.attributes.get("message") {
+                let msg_str = msg_val.as_str().unwrap_or("").to_string();
+                for ref_id in extract_node_refs(&msg_str) {
+                    if !node_ids.contains(&ref_id) {
+                        return Err(GraphError::Validation(format!(
+                            "node '{}' (id={}, op=PRINT) message attribute references                              {{{{node_{}}}}} but no node with id {} exists in the graph.",
+                            node.name, node.id, ref_id, ref_id
+                        )));
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Validate that every COMMUNICATE(acp) node is reachable only AFTER
+/// the SPAWN_AGENT that spawns its recipient — i.e., there exists a path
+/// from the SPAWN_AGENT to the COMMUNICATE node in the DAG.
+///
+/// This catches graphs where COMMUNICATE appears to run in parallel with
+/// SPAWN_AGENT (race condition) rather than after it.
+fn validate_agent_ordering(graph: &ApxmGraph) -> Result<(), GraphError> {
+    use apxm_core::types::operations::AISOperationType;
+    use std::collections::{HashMap, HashSet, VecDeque};
+
+    // Map agent_name -> SPAWN_AGENT node id
+    let spawn_by_name: HashMap<String, u64> = graph
+        .nodes
+        .iter()
+        .filter(|n| n.op == AISOperationType::SpawnAgent)
+        .filter_map(|n| {
+            n.attributes
+                .get("agent_name")
+                .and_then(|v| v.as_str())
+                .map(|name| (name.to_string(), n.id))
+        })
+        .collect();
+
+    if spawn_by_name.is_empty() {
+        return Ok(());
+    }
+
+    // Build forward adjacency (edges: from -> to)
+    let mut adj: HashMap<u64, Vec<u64>> = HashMap::new();
+    for edge in &graph.edges {
+        adj.entry(edge.from).or_default().push(edge.to);
+    }
+
+    // For each COMMUNICATE(acp), check that a path exists from its
+    // SPAWN_AGENT to the COMMUNICATE node.
+    fn reachable(from: u64, to: u64, adj: &HashMap<u64, Vec<u64>>) -> bool {
+        let mut visited = HashSet::new();
+        let mut queue = VecDeque::new();
+        queue.push_back(from);
+        visited.insert(from);
+        while let Some(node) = queue.pop_front() {
+            if node == to {
+                return true;
+            }
+            if let Some(neighbors) = adj.get(&node) {
+                for &n in neighbors {
+                    if visited.insert(n) {
+                        queue.push_back(n);
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    for node in &graph.nodes {
+        if node.op != AISOperationType::Communicate {
+            continue;
+        }
+        let protocol = node
+            .attributes
+            .get("protocol")
+            .and_then(|v| v.as_str())
+            .unwrap_or("local");
+        if protocol != "acp" {
+            continue;
+        }
+        let recipient = match node.attributes.get("recipient").and_then(|v| v.as_str()) {
+            Some(s) => s.to_string(),
+            None => continue,
+        };
+        let spawn_id = match spawn_by_name.get(&recipient) {
+            Some(&id) => id,
+            None => continue, // Caught by validate_agent_references
+        };
+
+        // The SPAWN_AGENT must be able to reach the COMMUNICATE node
+        if !reachable(spawn_id, node.id, &adj) {
+            return Err(GraphError::Validation(format!(
+                "node '{}' (id={}, op=COMMUNICATE) with recipient '{}'                  is not reachable from its SPAWN_AGENT (id={}).                  Add a Control edge from SPAWN_AGENT {} to COMMUNICATE {}.                  Without it, the agent may not be spawned before the message is sent.",
+                node.name, node.id, recipient, spawn_id, spawn_id, node.id
             )));
         }
     }
