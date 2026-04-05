@@ -1,40 +1,72 @@
 {
   "name": "multi-turn-review",
-  "parameters": [{"name": "repo", "type_name": "str"}],
+  "parameters": [
+    {
+      "name": "repo",
+      "type_name": "str"
+    }
+  ],
   "nodes": [
     {
       "id": 1,
-      "name": "analyze",
-      "op": "INV",
+      "name": "spawn_reviewer",
+      "op": "SPAWN_AGENT",
       "attributes": {
-        "capability": "acp",
-        "params_json": "{\"agent\": \"claude\", \"prompt\": \"Analyze the codebase at {0} for potential issues\", \"session_handle\": \"reviewer\", \"mode\": \"architect\"}"
+        "agent_name": "reviewer",
+        "profile": "claude",
+        "cwd": "{{repo}}",
+        "mode": "architect"
       }
     },
     {
       "id": 2,
-      "name": "fix",
-      "op": "INV",
+      "name": "analyze",
+      "op": "COMMUNICATE",
       "attributes": {
-        "capability": "acp",
-        "params_json": "{\"agent\": \"claude\", \"prompt\": \"Now fix the top 3 issues you identified\", \"session_handle\": \"reviewer\", \"mode\": \"code\"}"
+        "recipient": "reviewer",
+        "protocol": "acp",
+        "message": "Analyze the codebase for potential issues"
       }
     },
     {
       "id": 3,
-      "name": "verify",
-      "op": "INV",
+      "name": "fix",
+      "op": "COMMUNICATE",
       "attributes": {
-        "capability": "acp",
-        "params_json": "{\"agent\": \"claude\", \"prompt\": \"Run the tests and verify your fixes work\", \"session_handle\": \"reviewer\"}"
+        "recipient": "reviewer",
+        "protocol": "acp",
+        "message": "Now fix the top 3 issues you identified"
+      }
+    },
+    {
+      "id": 4,
+      "name": "verify",
+      "op": "COMMUNICATE",
+      "attributes": {
+        "recipient": "reviewer",
+        "protocol": "acp",
+        "message": "Run the tests and verify your fixes work"
       }
     }
   ],
   "edges": [
-    {"from": 1, "to": 2, "dependency": "Data"},
-    {"from": 2, "to": 3, "dependency": "Data"}
+    {
+      "from": 1,
+      "to": 2,
+      "dependency": "Data"
+    },
+    {
+      "from": 2,
+      "to": 3,
+      "dependency": "Data"
+    },
+    {
+      "from": 3,
+      "to": 4,
+      "dependency": "Data"
+    }
   ],
   "metadata": {
-    "description": "Multi-turn review: analyze, fix, and verify using a shared ACP session"
+    "description": "Multi-turn review: spawn agent, then analyze/fix/verify via COMMUNICATE"
   }
 }
