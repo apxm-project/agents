@@ -99,7 +99,7 @@ pub mod args {
     pub const ARG1: &str = "arg1";
 }
 
-/// Keys for the result Value map returned from AcpCapability::execute().
+/// Keys for the structured ACP response values returned by runtime agent communication.
 pub mod result_keys {
     pub const TEXT: &str = "text";
     pub const AGENT: &str = "agent";
