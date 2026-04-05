@@ -194,3 +194,57 @@ The IR is a compiler-internal detail. Expose it for debugging, not for authoring
 4. **The `.apxmobj` format is already correct** — binary, magic bytes, BLAKE3, versioned. Keep it.
 
 The current JSON format is fine to keep as the human-readable IR. The addition of a binary IR format is the professional step — it's what makes APXM usable in production toolchains where parsing 10,000-node graphs from JSON is too slow.
+
+---
+
+## Current Implementation Status (2026-04-05)
+
+### What's implemented
+
+```
+.ais    → source language — WRITE THIS (human and AgentMate)
+.air    → inspection/debug dump — READ ONLY (output of 'emit-ir', not round-trip)
+.apxmobj → compiled binary artifact — EXECUTE THIS (output of 'compile')
+.apxm   → REMOVED (was legacy JSON graph format, no longer accepted)
+```
+
+### The pipeline
+
+```
+AgentMate (Rust/Python API) ──→ emits .ais source
+Human author               ──→ writes .ais source
+                                    │
+                                    ▼
+                          dekk apxm execute <file.ais>
+                          (GraphGen: DSL→ApxmGraph, graph-direct execution)
+                                    │
+                                    ▼
+                                  result
+```
+
+For compiled artifacts (production):
+```
+.ais → dekk apxm compile → .apxmobj → dekk apxm run → result
+```
+
+For inspection:
+```
+.ais → dekk apxm execute (internally emits .air to session dir for debugging)
+```
+
+### Why .air is output-only
+
+The `.air` format in examples/ is an abbreviated human-readable dump, not valid
+round-trip MLIR text. Full MLIR text requires module/function wrappers and
+type annotations that the abbreviated dump omits. Making `.air` a round-trip
+format requires either: (a) fixing `emit_air` to produce full valid MLIR, or
+(b) writing a `.air` → `ApxmGraph` parser. This is P2 work.
+
+### AgentMate's role
+
+AgentMate is the Clang to APXM's LLVM. It provides:
+- Rust builder API (`AgentBuilder`, `WorkflowBuilder`)
+- Python API (`@compile` decorator, `ag.ask()`, `ag.think()`)
+
+AgentMate should **emit `.ais` files** (not `.air`). The `.ais` DSL is the
+canonical input format. AgentMate is a frontend that makes writing `.ais` easier.
