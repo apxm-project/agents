@@ -486,9 +486,11 @@ fn materialize_graph_state(
 
         for &token_id in &node.output_tokens {
             if tokens.contains_key(&token_id) {
-                tracing::error!(
-                    "Duplicate producer: node {} (op={:?}) claims token {} which is already produced by another node. Node outputs: {:?}",
-                    node.id, node.op_type, token_id, node.output_tokens
+                tracing::debug!(
+                    node_id = node.id,
+                    token_id = token_id,
+                    node_outputs = ?node.output_tokens,
+                    "Duplicate producer detected"
                 );
                 return Err(RuntimeError::SchedulerDuplicateProducer { token_id });
             }
