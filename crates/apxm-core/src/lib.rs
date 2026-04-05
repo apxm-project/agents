@@ -10,6 +10,7 @@
 //! - **`constants`** -- Centralised string keys for graph attributes, inner-plan
 //!   payloads, and diagnostic modes so all front-ends and back-ends stay in sync.
 
+pub mod agent_profile;
 pub mod constants;
 pub mod error;
 pub mod logging;
