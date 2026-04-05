@@ -50,8 +50,8 @@ pub enum AISOperationType {
     Verify,
 
     // Tool Operations (3)
-    /// Invoke a capability (tool/function call).
-    Inv,
+    /// Invoke a tool/capability (NOT for agents — use SPAWN_AGENT).
+    InvTool,
     /// Execute code in sandbox.
     Exc,
     /// Print output to stdout.
@@ -153,7 +153,7 @@ impl fmt::Display for AISOperationType {
             AISOperationType::Reflect => write!(f, "REFLECT"),
             AISOperationType::Verify => write!(f, "VERIFY"),
             // Tools
-            AISOperationType::Inv => write!(f, "INV"),
+            AISOperationType::InvTool => write!(f, "INV_TOOL"),
             AISOperationType::Exc => write!(f, "EXC"),
             AISOperationType::Print => write!(f, "PRINT"),
             // Control Flow
@@ -215,7 +215,7 @@ impl std::str::FromStr for AISOperationType {
             "plan" => Ok(AISOperationType::Plan),
             "reflect" => Ok(AISOperationType::Reflect),
             "verify" => Ok(AISOperationType::Verify),
-            "inv" => Ok(AISOperationType::Inv),
+            "inv_tool" | "inv" => Ok(AISOperationType::InvTool),
             "exc" => Ok(AISOperationType::Exc),
             "print" => Ok(AISOperationType::Print),
             "jump" => Ok(AISOperationType::Jump),
@@ -264,7 +264,7 @@ impl AISOperationType {
             AISOperationType::Plan => "plan",
             AISOperationType::Reflect => "reflect",
             AISOperationType::Verify => "verify",
-            AISOperationType::Inv => "inv",
+            AISOperationType::InvTool => "inv_tool",
             AISOperationType::Exc => "exc",
             AISOperationType::Print => "print",
             AISOperationType::Jump => "jump",
@@ -309,7 +309,7 @@ impl AISOperationType {
         // Indices 0-24: original ops. 25-30: reserved for Phase 1 ISA (agent-05).
         // Indices 31-37: Phase 2 coordination/identity/self-organization ops.
         match index {
-            0 => Some(AISOperationType::Inv),
+            0 => Some(AISOperationType::InvTool),
             1 => Some(AISOperationType::Ask),
             2 => Some(AISOperationType::QMem),
             3 => Some(AISOperationType::UMem),
@@ -357,7 +357,7 @@ impl AISOperationType {
     /// This is the inverse of [`from_wire_index`].
     pub fn to_wire_index(self) -> Option<u32> {
         match self {
-            AISOperationType::Inv => Some(0),
+            AISOperationType::InvTool => Some(0),
             AISOperationType::Ask => Some(1),
             AISOperationType::QMem => Some(2),
             AISOperationType::UMem => Some(3),
@@ -408,7 +408,7 @@ impl AISOperationType {
             AISOperationType::Plan,
             AISOperationType::Reflect,
             AISOperationType::Verify,
-            AISOperationType::Inv,
+            AISOperationType::InvTool,
             AISOperationType::Exc,
             AISOperationType::Print,
             AISOperationType::Jump,
@@ -852,7 +852,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
     },
     // ========== Tool Operations (3) ==========
     OperationSpec {
-        op_type: AISOperationType::Inv,
+        op_type: AISOperationType::InvTool,
         name: "InvokeTool",
         category: OperationCategory::Tools,
         description: "Call external tool with structured params; store result",
@@ -862,7 +862,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             a JSON object. The tool's return value becomes this node's output token.",
         latency: OperationLatency::Medium,
         example_json: Some(
-            r#"{"id": 2, "op": "INV", "attributes": {"capability": "web_search", "parameters": {"query": "{{node_1}}"}}}"#,
+            r#"{"id": 2, "op": "INV_TOOL", "attributes": {"capability": "web_search", "parameters": {"query": "{{node_1}}"}}}"#,
         ),
         fields: &[
             OperationField::required_ref(
