@@ -474,25 +474,37 @@ fn materialize_graph_state(
     op_states: &DashMap<NodeId, OpState>,
     input_values: Option<&HashMap<TokenId, Value>>,
 ) -> RuntimeResult<()> {
+    // PASS 1: Register all output tokens (producers) first.
+    // This ensures that when we process input tokens, the producer's entry
+    // already exists and we won't create a spurious "pre-ready" state that
+    // then conflicts with the actual producer.
     for node in dag.nodes.iter() {
         op_states.insert(
             node.id,
             OpState::new_with_effects(operation_effects(&node.op_type)),
         );
 
-        // Outputs: must have a single producer.
         for &token_id in &node.output_tokens {
             if tokens.contains_key(&token_id) {
+                tracing::error!(
+                    "Duplicate producer: node {} (op={:?}) claims token {} which is already produced by another node. Node outputs: {:?}",
+                    node.id, node.op_type, token_id, node.output_tokens
+                );
                 return Err(RuntimeError::SchedulerDuplicateProducer { token_id });
             }
             tokens.insert(token_id, TokenState::new());
         }
+    }
 
-        // Inputs: use provided value if available, otherwise treat as pre-ready null.
+    // PASS 2: Register all input tokens (consumers).
+    // For tokens with a producer (from pass 1), we just add the consumer.
+    // For tokens without a producer (flow parameters), we create a pre-ready state.
+    for node in dag.nodes.iter() {
         for &token_id in &node.input_tokens {
             tokens
                 .entry(token_id)
                 .or_insert({
+                    // No producer for this token — it's a flow parameter or external input.
                     let mut ts = TokenState::new();
                     ts.ready = true;
                     ts.value = Some(
