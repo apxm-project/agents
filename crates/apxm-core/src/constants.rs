@@ -78,6 +78,7 @@ pub mod graph {
         pub const ON_FAIL: &str = "on_fail";
         pub const ERROR_MESSAGE: &str = "error_message";
         pub const STRATEGY: &str = "strategy";
+        pub const SEPARATOR: &str = "separator";
         pub const TIMEOUT_MS: &str = "timeout_ms";
         pub const BUDGET: &str = "budget";
         pub const MAX_RETRIES: &str = "max_retries";
