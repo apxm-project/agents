@@ -1,25 +1,28 @@
-// brief_analyzer.ais - apxm-designer v0.3
-// Analyze a plain-text app brief -> structured design manifest JSON
+// brief_analyzer.ais - apxm-designer v0.4
+// Analyze a vintage watch marketplace brief -> structured design manifest
 //
-// Usage: apxm execute examples/workflows/designer/brief_analyzer.ais
+// Pipeline: 3 sequential analyst agents -> ASK synthesis -> manifest
+//
+// Usage: dekk apxm execute examples/workflows/designer/brief_analyzer.ais
 
 agent BriefAnalyzer {
     @entry flow main() -> str {
+        // Phase 1: Entity analysis
         spawn_agent("entity_analyst", "claude", "$APXM_HOME") -> _eh
-        think("You are an Entity & State Machine Analyst.\n\nApp brief: vintage watch marketplace - sellers list watches, buyers browse/filter/favorite/message, sellers have dashboards, buyers make offers sellers accept/reject/counter.\n\nOutput ONLY JSON: {\"entities\":[...],\"user_roles\":[...],\"entity_states\":{...},\"state_transitions\":[...]}") -> entity_prompt
-        communicate("entity_analyst", "acp", entity_prompt) -> entity_json
+        communicate("entity_analyst", "acp", "You are an Entity and State Machine Analyst for app design.\n\nApp brief: vintage watch marketplace. Sellers list watches with photos and descriptions. Buyers browse, filter by brand/price/condition, save favorites, and message sellers. Sellers have a dashboard showing listings, messages, and sales stats. Buyers can make offers which sellers accept, reject, or counter.\n\nOutput ONLY a JSON object (no markdown): {\"entities\":[...],\"user_roles\":[...],\"entity_states\":{\"EntityName\":[\"state1\"]},\"state_transitions\":[...]}") -> entity_json
 
+        // Phase 2: Screen analysis
         spawn_agent("screen_analyst", "claude", "$APXM_HOME") -> _sh
-        think("You are a Screen & Navigation Analyst.\nEntity analysis:\n" + entity_json + "\n\nOutput ONLY JSON: {\"screens\":{...},\"shared_screens\":[...],\"screen_count\":N}") -> screen_prompt
-        communicate("screen_analyst", "acp", screen_prompt) -> screen_json
+        communicate("screen_analyst", "acp", "You are a Screen and Navigation Analyst for app design.\n\nYou have entity analysis data. Now produce a complete screen inventory for a vintage watch marketplace.\n\nOutput ONLY a JSON object: {\"screens\":{\"role/capability/screen\":[\"state1\",\"state2\"]},\"shared_screens\":[\"screens used by multiple roles\"],\"screen_count\":N}") -> screen_json
 
+        // Phase 3: Component analysis
         spawn_agent("component_analyst", "claude", "$APXM_HOME") -> _ch
-        think("You are a Component & Design System Analyst.\nScreen analysis:\n" + screen_json + "\n\nOutput ONLY JSON: {\"components\":[...],\"patterns\":[...],\"component_count\":N}") -> component_prompt
-        communicate("component_analyst", "acp", component_prompt) -> component_json
+        communicate("component_analyst", "acp", "You are a Component and Design System Analyst for app design.\n\nYou have screen analysis data. Now produce a complete component inventory for a vintage watch marketplace.\n\nOutput ONLY a JSON object: {\"components\":[{\"name\":\"X\",\"variants\":[\"a\",\"b\"],\"states\":[\"normal\",\"hover\"]}],\"patterns\":[\"recurring UI patterns\"],\"component_count\":N}") -> component_json
 
-        ask("Synthesize into design manifest JSON.\n\nENTITY:\n" + entity_json + "\n\nSCREEN:\n" + screen_json + "\n\nCOMPONENT:\n" + component_json + "\n\nOutput ONLY JSON: {\"summary\":\"...\",\"stats\":{\"entities\":N,\"screens\":N,\"screen_states\":N,\"components\":N,\"estimated_html_files\":N},\"critical_screens\":[...],\"verification_checklist\":[...],\"risks\":[...],\"go_signal\":\"GO\"}") -> manifest
+        // Phase 4: Synthesize manifest
+        ask("You are a design manifest synthesizer. Produce a structured design manifest for a vintage watch marketplace app.\n\nThe app has: sellers listing watches with photos, buyers browsing and filtering, messaging, offer negotiation, and seller dashboards.\n\nProduce ONLY this JSON structure (no markdown, no explanation):\n{\"summary\":\"one paragraph describing app scope\",\"stats\":{\"entities\":N,\"screens\":N,\"screen_states\":N,\"components\":N,\"estimated_html_files\":N},\"critical_screens\":[\"top 5 most complex screens\"],\"verification_checklist\":[\"empty states for all lists\",\"loading states for async ops\",\"error screens for all error paths\",\"every entity state has a screen state\"],\"risks\":[\"scope creep risks\"],\"go_signal\":\"GO\"}") -> manifest
 
-        print("=== APXM-DESIGNER MANIFEST ===\n\n" + manifest)
+        print("=== APXM-DESIGNER v0.4 MANIFEST ===\n\n" + manifest)
         return manifest
     }
 }
