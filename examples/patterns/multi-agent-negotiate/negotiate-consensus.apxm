@@ -61,7 +61,10 @@
       "name": "sync_initial",
       "op": "WAIT_ALL",
       "attributes": {
-        "tokens": ["{{node_4}}", "{{node_5}}"]
+        "tokens": [
+          "{{node_4}}",
+          "{{node_5}}"
+        ]
       }
     },
     {
@@ -86,7 +89,10 @@
       "op": "MERGE",
       "attributes": {
         "strategy": "concat",
-        "tokens": ["{{node_8}}", "{{node_5}}"]
+        "tokens": [
+          "{{node_8}}",
+          "{{node_5}}"
+        ]
       }
     },
     {
@@ -95,7 +101,10 @@
       "op": "MERGE",
       "attributes": {
         "strategy": "concat",
-        "tokens": ["{{node_9}}", "{{node_4}}"]
+        "tokens": [
+          "{{node_9}}",
+          "{{node_4}}"
+        ]
       }
     },
     {
@@ -121,7 +130,10 @@
       "name": "sync_counters",
       "op": "WAIT_ALL",
       "attributes": {
-        "tokens": ["{{node_12}}", "{{node_13}}"]
+        "tokens": [
+          "{{node_12}}",
+          "{{node_13}}"
+        ]
       }
     },
     {
@@ -157,49 +169,167 @@
       "id": 18,
       "name": "print_positions",
       "op": "PRINT",
-      "attributes": { "message": "=== INITIAL POSITIONS ===" }
+      "attributes": {
+        "message": "=== INITIAL POSITIONS ==="
+      }
     },
     {
       "id": 19,
       "name": "print_counters",
       "op": "PRINT",
-      "attributes": { "message": "=== COUNTER-ARGUMENTS ===" }
+      "attributes": {
+        "message": "=== COUNTER-ARGUMENTS ==="
+      }
     },
     {
       "id": 20,
       "name": "print_consensus",
       "op": "PRINT",
-      "attributes": { "message": "=== FINAL CONSENSUS ===" }
+      "attributes": {
+        "message": "=== FINAL CONSENSUS ==="
+      }
     }
   ],
   "edges": [
-    { "from": 1, "to": 4, "dependency": "Control" },
-    { "from": 2, "to": 5, "dependency": "Control" },
-    { "from": 3, "to": 4, "dependency": "Data" },
-    { "from": 3, "to": 5, "dependency": "Data" },
-    { "from": 4, "to": 7, "dependency": "Data" },
-    { "from": 5, "to": 7, "dependency": "Data" },
-    { "from": 4, "to": 6, "dependency": "Data" },
-    { "from": 5, "to": 6, "dependency": "Data" },
-    { "from": 7, "to": 18, "dependency": "Data" },
-    { "from": 8, "to": 10, "dependency": "Data" },
-    { "from": 5, "to": 10, "dependency": "Data" },
-    { "from": 9, "to": 11, "dependency": "Data" },
-    { "from": 4, "to": 11, "dependency": "Data" },
-    { "from": 10, "to": 12, "dependency": "Data" },
-    { "from": 11, "to": 13, "dependency": "Data" },
-    { "from": 12, "to": 14, "dependency": "Data" },
-    { "from": 13, "to": 14, "dependency": "Data" },
-    { "from": 14, "to": 19, "dependency": "Data" },
-    { "from": 7, "to": 15, "dependency": "Data" },
-    { "from": 14, "to": 15, "dependency": "Data" },
-    { "from": 15, "to": 20, "dependency": "Data" },
-    { "from": 15, "to": 16, "dependency": "Data" },
-    { "from": 16, "to": 17, "dependency": "Data" }
+    {
+      "from": 1,
+      "to": 4,
+      "dependency": "Control"
+    },
+    {
+      "from": 2,
+      "to": 5,
+      "dependency": "Control"
+    },
+    {
+      "from": 3,
+      "to": 4,
+      "dependency": "Data"
+    },
+    {
+      "from": 3,
+      "to": 5,
+      "dependency": "Data"
+    },
+    {
+      "from": 4,
+      "to": 7,
+      "dependency": "Data"
+    },
+    {
+      "from": 5,
+      "to": 7,
+      "dependency": "Data"
+    },
+    {
+      "from": 4,
+      "to": 6,
+      "dependency": "Data"
+    },
+    {
+      "from": 5,
+      "to": 6,
+      "dependency": "Data"
+    },
+    {
+      "from": 7,
+      "to": 18,
+      "dependency": "Data"
+    },
+    {
+      "from": 8,
+      "to": 10,
+      "dependency": "Data"
+    },
+    {
+      "from": 5,
+      "to": 10,
+      "dependency": "Data"
+    },
+    {
+      "from": 9,
+      "to": 11,
+      "dependency": "Data"
+    },
+    {
+      "from": 4,
+      "to": 11,
+      "dependency": "Data"
+    },
+    {
+      "from": 10,
+      "to": 12,
+      "dependency": "Data"
+    },
+    {
+      "from": 11,
+      "to": 13,
+      "dependency": "Data"
+    },
+    {
+      "from": 12,
+      "to": 14,
+      "dependency": "Data"
+    },
+    {
+      "from": 13,
+      "to": 14,
+      "dependency": "Data"
+    },
+    {
+      "from": 14,
+      "to": 19,
+      "dependency": "Data"
+    },
+    {
+      "from": 7,
+      "to": 15,
+      "dependency": "Data"
+    },
+    {
+      "from": 14,
+      "to": 15,
+      "dependency": "Data"
+    },
+    {
+      "from": 15,
+      "to": 20,
+      "dependency": "Data"
+    },
+    {
+      "from": 15,
+      "to": 16,
+      "dependency": "Data"
+    },
+    {
+      "from": 16,
+      "to": 17,
+      "dependency": "Data"
+    },
+    {
+      "from": 1,
+      "to": 12,
+      "dependency": "Control"
+    },
+    {
+      "from": 2,
+      "to": 13,
+      "dependency": "Control"
+    }
   ],
   "metadata": {
     "description": "2-agent negotiation: SPAWN two ACP agents, send them the same topic simultaneously, WAIT_ALL syncs initial positions, each agent counters the other's argument via COMMUNICATE, WAIT_ALL syncs counters, THINK synthesizes consensus, UMEM stores result, CHECKPOINT saves final state.",
-    "pattern": "spawn × 2 → communicate × 2 → wait-all → cross-counter × 2 → wait-all → think → umem → checkpoint",
-    "ops_demonstrated": ["SPAWN_AGENT", "COMMUNICATE", "CONST_STR", "MERGE", "WAIT_ALL", "CHECKPOINT", "THINK", "UMEM", "PRINT"]
+    "pattern": "spawn \u00d7 2 \u2192 communicate \u00d7 2 \u2192 wait-all \u2192 cross-counter \u00d7 2 \u2192 wait-all \u2192 think \u2192 umem \u2192 checkpoint",
+    "ops_demonstrated": [
+      "SPAWN_AGENT",
+      "COMMUNICATE",
+      "CONST_STR",
+      "MERGE",
+      "WAIT_ALL",
+      "CHECKPOINT",
+      "THINK",
+      "UMEM",
+      "PRINT"
+    ]
   }
 }
