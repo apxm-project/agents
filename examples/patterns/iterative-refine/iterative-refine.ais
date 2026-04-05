@@ -1,0 +1,27 @@
+// iterative-refine-unrolled.ais - converted from iterative-refine.apxm
+// Iterative self-refinement: 3 rounds of REFLECT → ASK with CHECKPOINTs after each version. Final VERIFY checks quality. UMEM persists the polished result. Note: LOOP_START/LOOP_END back-edges are not supported in the JSON graph format (use AIS source for true loops); this graph unrolls 3 iterations explicitly.
+//
+// Usage: dekk apxm execute examples/patterns/iterative-refine/iterative-refine.apxm
+
+agent IterativeRefineUnrolled {
+    @entry flow main() -> str {
+        ask("Write a concise technical explanation of how LLM inference works, targeting a software engineer audience. Be thorough but under 300 words.") -> initial_draft
+        print("=== DRAFT v0 (initial) ===" + "\n" + initial_draft)
+        // TODO: CHECKPOINT node 2 (checkpoint_v0)
+        // TODO: REFLECT node 3 (reflect_1)
+        ask("Improve this draft based on the critique below.\n\nOriginal draft:\n{{node_1}}\n\nCritique:\n{{node_3}}\n\nOutput only the improved draft." + "\n\n" + reflect_1 + "\n\n" + initial_draft) -> refine_1
+        print("=== DRAFT v1 (after reflect+refine #1) ===" + "\n" + refine_1)
+        // TODO: CHECKPOINT node 5 (checkpoint_v1)
+        // TODO: REFLECT node 6 (reflect_2)
+        ask("Improve this draft based on the second round of critique.\n\nRevised draft:\n{{node_4}}\n\nCritique:\n{{node_6}}\n\nOutput only the improved draft." + "\n\n" + reflect_2 + "\n\n" + refine_1) -> refine_2
+        print("=== DRAFT v2 (after reflect+refine #2) ===" + "\n" + refine_2)
+        // TODO: CHECKPOINT node 8 (checkpoint_v2)
+        // TODO: REFLECT node 9 (reflect_3)
+        ask("Apply the final polish to this draft.\n\nDraft:\n{{node_7}}\n\nFinal critique:\n{{node_9}}\n\nOutput the publication-ready version." + "\n\n" + reflect_3 + "\n\n" + refine_2) -> refine_3
+        // TODO: VERIFY node 11 (verify_final)
+        print("=== FINAL (after reflect+refine #3 + verify) ===" + "\n" + refine_3)
+        // TODO: CHECKPOINT node 12 (checkpoint_final)
+        update_memory("llm_inference_explanation_v3", checkpoint_final)
+        return refine_3
+    }
+}

@@ -1,0 +1,29 @@
+// ultrathink-coder.ais - converted from ultrathink-coder.apxm
+// Ultrathink coding workflow: parallel speculative planning + adversarial review + dual implementation race + verification + LTM cache. Structurally outperforms single Claude Code or Codex on complex tasks.
+//
+// Usage: dekk apxm execute examples/workflows/ultrathink-coder.apxm
+
+agent UltrathinkCoder {
+    @entry flow main() -> str {
+        query_memory("{{TASK}}") -> cache_check
+        think("ultrathink. You are a Rust systems architect reviewing the APXM project at ~/projects/agents/apxm.\n\nRead the relevant source files first. Then produce a detailed architectural plan:\n- Which crates are affected and why\n- Exact file paths to create or modify\n- Public API design (structs, traits, function signatures)\n- How it integrates with existing systems (ContextStack, MemoCache, Scheduler)\n- Potential architectural risks\n\nTask: {{TASK}}") -> think_architect
+        // TODO: REASON node 3 (think_adversary)
+        think("ultrathink. You are a Rust implementation expert focused on correctness and testability.\n\nFor this task, produce:\n- Complete Rust code blocks (not pseudocode) for the key structs and impls\n- Unit test cases covering happy path + error paths + edge cases\n- Integration test approach\n- Exact cargo.toml dependency additions needed\n- Build command: `dekk apxm build` (not bare cargo build)\n\nTask: {{TASK}}\n\nProject: ~/projects/agents/apxm") -> think_impl_expert
+        // wait_all (implicit via dataflow)
+        ask(think_architect + "" + think_adversary + "" + think_impl_expert) -> merge_plans
+        think("ultrathink. You have 3 expert analyses of the same coding task:\n1. Architect plan (what to build + API design)\n2. Adversary review (what will go wrong + what NOT to build)\n3. Implementation expert (exact code + tests)\n\nSynthesize into ONE unified implementation brief:\n- Resolve all conflicts (when architect and adversary disagree, adversary wins on scope)\n- Include exact file paths and complete Rust code blocks\n- Include test cases\n- Flag remaining uncertainty with [RISK: ...]\n- End with a CONSERVATIVE APPROACH section and a BOLD APPROACH section\n\nAll three analyses:\n{0}" + "\n\n" + merge_plans) -> synthesize
+        think("Extract the CONSERVATIVE APPROACH from this synthesis and format it as a precise instruction for a coding agent.\n\nRequirements:\n- Start with: cd ~/projects/agents/apxm\n- List exact files to create/edit with full content\n- End with: Run 'dekk apxm build'. Fix all errors. Run 'cargo test -p <affected_crate>'. Run 'git add -A && git commit -m feat: <description> (conservative)'\n- Be extremely precise — the agent executes this literally\n\nSynthesis:\n{0}" + "\n\n" + synthesize) -> format_conservative_prompt
+        think("Extract the BOLD APPROACH from this synthesis and format it as a precise instruction for a coding agent.\n\nRequirements:\n- Start with: cd ~/projects/agents/apxm\n- List exact files to create/edit with full content\n- End with: Run 'dekk apxm build'. Fix all errors. Run 'cargo test -p <affected_crate>'. Run 'git add -A && git commit -m feat: <description> (bold)'\n- Be extremely precise — the agent executes this literally\n\nSynthesis:\n{0}" + "\n\n" + synthesize) -> format_bold_prompt
+        // wait_all (implicit via dataflow)
+        spawn_agent("conservative_coder", "codex", "$APXM_HOME") -> _conservative_coder
+        spawn_agent("bold_coder", "claude", "$APXM_HOME") -> _bold_coder
+        communicate("conservative_coder", "acp", spawn_conservative) -> run_conservative
+        communicate("bold_coder", "acp", spawn_bold) -> run_bold
+        // wait_all (implicit via dataflow)
+        // TODO: VERIFY node 16 (verify)
+        // TODO: REFLECT node 17 (reflect_and_pick)
+        update_memory("{{TASK}}", reflect_and_pick)
+        print("=== ULTRATHINK COMPLETE ===\n\" + reflect_and_pick + \"")
+        return run_bold
+    }
+}
