@@ -60,13 +60,19 @@ fn emit_air_simple(graph: &ApxmGraph) -> String {
         } else {
             format!(" {}", attrs.join(", "))
         };
-        out.push_str(&format!("  %{} = {}({}){}\n", node.id, op, node.name, attr_str));
+        out.push_str(&format!(
+            "  %{} = {}({}){}\n",
+            node.id, op, node.name, attr_str
+        ));
     }
     if !graph.edges.is_empty() {
         out.push('\n');
         for edge in &graph.edges {
             let dep = format!("{:?}", edge.dependency).to_lowercase();
-            out.push_str(&format!("  edge %{} -> %{} [{}]\n", edge.from, edge.to, dep));
+            out.push_str(&format!(
+                "  edge %{} -> %{} [{}]\n",
+                edge.from, edge.to, dep
+            ));
         }
     }
     out

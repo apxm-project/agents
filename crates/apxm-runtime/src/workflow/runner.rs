@@ -1,6 +1,6 @@
 //! Workflow execution engine.
 
-use super::{def::GraphStep, template, topo, WorkflowDef};
+use super::{WorkflowDef, def::GraphStep, template, topo};
 use apxm_core::log_info;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -108,13 +108,11 @@ impl WorkflowRunner {
         // Create workflow session directory
         let paths = apxm_core::paths::ApxmPaths::discover()
             .map_err(|e| anyhow::anyhow!("Failed to discover APXM paths: {}", e))?;
-        let workflow_session_dir = paths
-            .sessions_dir()?
-            .join(format!(
-                "workflow-{}-{}",
-                self.def.name,
-                chrono::Utc::now().format("%Y%m%d-%H%M%S")
-            ));
+        let workflow_session_dir = paths.sessions_dir()?.join(format!(
+            "workflow-{}-{}",
+            self.def.name,
+            chrono::Utc::now().format("%Y%m%d-%H%M%S")
+        ));
         std::fs::create_dir_all(&workflow_session_dir)?;
 
         log_info!(

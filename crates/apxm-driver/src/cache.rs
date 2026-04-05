@@ -6,8 +6,8 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 
-use apxm_graph::ApxmGraph;
 use crate::error::DriverError;
+use apxm_graph::ApxmGraph;
 
 /// Returns `true` when the cache is explicitly disabled via `APXM_NO_CACHE=1`.
 pub fn cache_disabled() -> bool {
@@ -23,7 +23,8 @@ pub fn cache_disabled() -> bool {
 /// JSON serialization with serde_json guarantees alphabetic key sorting.
 pub fn graph_hash(graph: &ApxmGraph) -> Result<String, DriverError> {
     // Serialize to JSON with sorted keys for deterministic hashing
-    let json = graph.to_json()
+    let json = graph
+        .to_json()
         .map_err(|e| DriverError::Driver(e.to_string()))?;
     let hash = blake3::hash(json.as_bytes());
     Ok(hash.to_hex().to_string())

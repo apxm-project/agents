@@ -141,9 +141,9 @@ pub mod schema;
 // Re-export key public API types
 pub use assembler::{AssembledEvent, AssembledToolCall, StreamAssembler};
 pub use backends::{
-    BackendFactory, ContentPart, FunctionCall, GenerationConfig,
-    LLMBackend, LLMRequest, LLMResponse, Message, RequestBuilder, Role,
-    StreamChunk, TokenUsage, ToolChoice, ToolDefinition,
+    BackendFactory, ContentPart, FunctionCall, GenerationConfig, LLMBackend, LLMRequest,
+    LLMResponse, Message, RequestBuilder, Role, StreamChunk, TokenUsage, ToolChoice,
+    ToolDefinition,
 };
 pub use observability::{AggregatedMetrics, MetricsTracker, RequestMetrics, RequestTracer};
 pub use provider::{Provider, ProviderId, RegisteredProvider};
