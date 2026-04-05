@@ -194,19 +194,36 @@ impl AgentRegistry {
     }
 
     /// Look up a registered agent. Only registered agents are resolvable.
+    /// Look up an agent profile by name.
+    ///
+    /// Checks registered agents first (user-configured), then falls through
+    /// to built-in templates. This allows `claude`, `codex`, etc. to work
+    /// out of the box without requiring explicit `apxm agent add` registration.
     pub fn get(&self, name: &str) -> Option<&AgentProfile> {
-        self.registered.get(name)
+        self.registered.get(name).or_else(|| self.templates.get(name))
     }
 
-    /// List registered agents. The bool indicates whether the name matches a template.
+    /// List all agents: registered entries first (overrides), then any templates
+    /// not already overridden. The bool indicates whether the entry came from a template.
     pub fn list(&self) -> Vec<(String, &AgentProfile, bool)> {
-        self.registered
+        let mut entries: Vec<(String, &AgentProfile, bool)> = self
+            .registered
             .iter()
             .map(|(name, profile)| {
-                let from_template = self.templates.contains_key(name);
+                let from_template = self.templates.contains_key(name.as_str());
                 (name.clone(), profile, from_template)
             })
-            .collect()
+            .collect();
+
+        // Append templates not already overridden by a registered entry
+        for (name, profile) in &self.templates {
+            if !self.registered.contains_key(name.as_str()) {
+                entries.push((name.clone(), profile, true));
+            }
+        }
+
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        entries
     }
 
     /// Look up a built-in template by name.
