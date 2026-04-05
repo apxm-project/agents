@@ -108,7 +108,8 @@ impl Compiler {
             }
             Some("air") => Err(DriverError::Driver(
                 ".air is the canonical IR text format (like LLVM .ll). \
-                 Compile from .ais source with 'apxm compile' or run a .apxmobj artifact.".to_string()
+                 Compile from .ais source with 'apxm compile' or run a .apxmobj artifact."
+                    .to_string(),
             )),
             Some(constants::extensions::GRAPH_LEGACY | "json") => std::str::from_utf8(&bytes)
                 .map_err(|e| DriverError::Driver(format!("Graph file is not UTF-8 JSON: {e}")))
@@ -155,11 +156,22 @@ impl Compiler {
         if !graph.edges.is_empty() {
             out.push_str("\n  ; edges:\n");
             for edge in &graph.edges {
-                let from = graph.nodes.iter().find(|n| n.id == edge.from)
-                    .map(|n| n.name.as_str()).unwrap_or("?");
-                let to = graph.nodes.iter().find(|n| n.id == edge.to)
-                    .map(|n| n.name.as_str()).unwrap_or("?");
-                out.push_str(&format!("  ; %{} -> %{} ({:?})\n", from, to, edge.dependency));
+                let from = graph
+                    .nodes
+                    .iter()
+                    .find(|n| n.id == edge.from)
+                    .map(|n| n.name.as_str())
+                    .unwrap_or("?");
+                let to = graph
+                    .nodes
+                    .iter()
+                    .find(|n| n.id == edge.to)
+                    .map(|n| n.name.as_str())
+                    .unwrap_or("?");
+                out.push_str(&format!(
+                    "  ; %{} -> %{} ({:?})\n",
+                    from, to, edge.dependency
+                ));
             }
         }
         out

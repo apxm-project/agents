@@ -93,11 +93,7 @@ mod tests {
         let mut params = HashMap::new();
         params.insert("PARAM".to_string(), "param_val".to_string());
 
-        let result = resolve(
-            "{{PARAM}}, {{a.output}}, {{b.output}}",
-            &outputs,
-            &params,
-        );
+        let result = resolve("{{PARAM}}, {{a.output}}, {{b.output}}", &outputs, &params);
         assert_eq!(result, "param_val, val_a, val_b");
     }
 

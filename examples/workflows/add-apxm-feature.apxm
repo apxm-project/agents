@@ -29,23 +29,39 @@
         "budget": 6000
       }
     },
-
     {
       "id": 4,
       "name": "sync_plans",
       "op": "WAIT_ALL",
-      "attributes": {"tokens": ["{{node_1}}", "{{node_2}}", "{{node_3}}"]}
+      "attributes": {
+        "tokens": [
+          "{{node_1}}",
+          "{{node_2}}",
+          "{{node_3}}"
+        ]
+      }
     },
-
-    {"id": 5, "name": "print_plans_done", "op": "PRINT", "attributes": {"message": "=== 3 PLANS COLLECTED ==="}},
-
+    {
+      "id": 5,
+      "name": "print_plans_done",
+      "op": "PRINT",
+      "attributes": {
+        "message": "=== 3 PLANS COLLECTED ==="
+      }
+    },
     {
       "id": 6,
       "name": "all_plans",
       "op": "MERGE",
-      "attributes": {"strategy": "concat", "tokens": ["{{node_1}}", "{{node_2}}", "{{node_3}}"]}
+      "attributes": {
+        "strategy": "concat",
+        "tokens": [
+          "{{node_1}}",
+          "{{node_2}}",
+          "{{node_3}}"
+        ]
+      }
     },
-
     {
       "id": 7,
       "name": "synthesize_plan",
@@ -55,8 +71,14 @@
         "budget": 12000
       }
     },
-    {"id": 8, "name": "print_synthesis", "op": "PRINT", "attributes": {"message": "=== SYNTHESIZED PLAN ==="}},
-
+    {
+      "id": 8,
+      "name": "print_synthesis",
+      "op": "PRINT",
+      "attributes": {
+        "message": "=== SYNTHESIZED PLAN ==="
+      }
+    },
     {
       "id": 9,
       "name": "implement_prompt",
@@ -66,19 +88,24 @@
         "budget": 3000
       }
     },
-
     {
       "id": 10,
       "name": "implement",
       "op": "INV",
       "attributes": {
         "capability": "acp",
-        "params_json": "{\"agent\": \"codex\", \"prompt\": \"{{input_0}}\", \"cwd\": \"~/projects/agents/apxm\"}",
+        "params_json": "{\"agent\": \"codex\", \"prompt\": \"{{input_0}}\", \"cwd\": \"$APXM_HOME\"}",
         "timeout_ms": 1800000
       }
     },
-    {"id": 11, "name": "print_implement", "op": "PRINT", "attributes": {"message": "=== IMPLEMENTATION COMPLETE ==="}},
-
+    {
+      "id": 11,
+      "name": "print_implement",
+      "op": "PRINT",
+      "attributes": {
+        "message": "=== IMPLEMENTATION COMPLETE ==="
+      }
+    },
     {
       "id": 12,
       "name": "review_prompt",
@@ -88,47 +115,114 @@
         "budget": 3000
       }
     },
-
     {
       "id": 13,
       "name": "review",
       "op": "INV",
       "attributes": {
         "capability": "acp",
-        "params_json": "{\"agent\": \"claude\", \"prompt\": \"{{input_0}}\", \"cwd\": \"~/projects/agents/apxm\"}",
+        "params_json": "{\"agent\": \"claude\", \"prompt\": \"{{input_0}}\", \"cwd\": \"$APXM_HOME\"}",
         "timeout_ms": 900000
       }
     },
-
-    {"id": 14, "name": "print_final", "op": "PRINT", "attributes": {"message": "=== FEATURE COMPLETE ==="}}
+    {
+      "id": 14,
+      "name": "print_final",
+      "op": "PRINT",
+      "attributes": {
+        "message": "=== FEATURE COMPLETE ==="
+      }
+    }
   ],
   "edges": [
-    {"from": 1, "to": 4, "dependency": "Data"},
-    {"from": 2, "to": 4, "dependency": "Data"},
-    {"from": 3, "to": 4, "dependency": "Data"},
-
-    {"from": 4, "to": 5, "dependency": "Data"},
-    {"from": 1, "to": 6, "dependency": "Data"},
-    {"from": 2, "to": 6, "dependency": "Data"},
-    {"from": 3, "to": 6, "dependency": "Data"},
-
-    {"from": 6, "to": 7, "dependency": "Data"},
-    {"from": 7, "to": 8, "dependency": "Data"},
-
-    {"from": 7, "to": 9, "dependency": "Data"},
-    {"from": 9, "to": 10, "dependency": "Data"},
-    {"from": 10, "to": 11, "dependency": "Data"},
-
-    {"from": 10, "to": 12, "dependency": "Data"},
-    {"from": 12, "to": 13, "dependency": "Data"},
-    {"from": 13, "to": 14, "dependency": "Data"}
+    {
+      "from": 1,
+      "to": 4,
+      "dependency": "Data"
+    },
+    {
+      "from": 2,
+      "to": 4,
+      "dependency": "Data"
+    },
+    {
+      "from": 3,
+      "to": 4,
+      "dependency": "Data"
+    },
+    {
+      "from": 4,
+      "to": 5,
+      "dependency": "Data"
+    },
+    {
+      "from": 1,
+      "to": 6,
+      "dependency": "Data"
+    },
+    {
+      "from": 2,
+      "to": 6,
+      "dependency": "Data"
+    },
+    {
+      "from": 3,
+      "to": 6,
+      "dependency": "Data"
+    },
+    {
+      "from": 6,
+      "to": 7,
+      "dependency": "Data"
+    },
+    {
+      "from": 7,
+      "to": 8,
+      "dependency": "Data"
+    },
+    {
+      "from": 7,
+      "to": 9,
+      "dependency": "Data"
+    },
+    {
+      "from": 9,
+      "to": 10,
+      "dependency": "Data"
+    },
+    {
+      "from": 10,
+      "to": 11,
+      "dependency": "Data"
+    },
+    {
+      "from": 10,
+      "to": 12,
+      "dependency": "Data"
+    },
+    {
+      "from": 12,
+      "to": 13,
+      "dependency": "Data"
+    },
+    {
+      "from": 13,
+      "to": 14,
+      "dependency": "Data"
+    }
   ],
   "metadata": {
     "description": "Meta-workflow: 3 parallel THINK planning nodes (architectural, implementation, test-focused), WAIT_ALL sync, MERGE concat, THINK synthesis, THINK formats implementer prompt, INV(codex) implements, THINK formats reviewer prompt, INV(claude) reviews and fixes.",
-    "pattern": "think x3 (parallel) → wait-all → merge → think (synthesize) → think (format impl prompt) → inv(codex) → think (format review prompt) → inv(claude)",
-    "ops_demonstrated": ["THINK", "WAIT_ALL", "MERGE", "INV", "PRINT"],
+    "pattern": "think x3 (parallel) \u2192 wait-all \u2192 merge \u2192 think (synthesize) \u2192 think (format impl prompt) \u2192 inv(codex) \u2192 think (format review prompt) \u2192 inv(claude)",
+    "ops_demonstrated": [
+      "THINK",
+      "WAIT_ALL",
+      "MERGE",
+      "INV",
+      "PRINT"
+    ],
     "note": "THINK uses {0}=first-input positional substitution at runtime. INV(acp) uses {{input_0}} for the THINK-formatted prompt. Feature text is embedded directly in template_str by launch-feature.sh before execution.",
-    "usage": "Use launch-feature.sh to run — it substitutes {{FEATURE_REQUEST}} with the actual feature text before invoking dekk apxm execute.",
+    "usage": "Use launch-feature.sh to run \u2014 it substitutes {{FEATURE_REQUEST}} with the actual feature text before invoking dekk apxm execute.",
     "is_entry": true
   }
 }

@@ -1540,7 +1540,7 @@ fn load_graph_from_directory(dir: &std::path::Path) -> Result<apxm_graph::ApxmGr
 fn graph_from_execution_dag(
     dag: &apxm_core::types::execution::ExecutionDag,
 ) -> Option<apxm_graph::ApxmGraph> {
-    use apxm_graph::{GraphNode, GraphEdge, Parameter};
+    use apxm_graph::{GraphEdge, GraphNode, Parameter};
     use std::collections::HashMap;
 
     let nodes = dag
@@ -1587,7 +1587,11 @@ fn graph_from_execution_dag(
     }
 
     Some(apxm_graph::ApxmGraph {
-        name: dag.metadata.name.clone().unwrap_or_else(|| "artifact".to_string()),
+        name: dag
+            .metadata
+            .name
+            .clone()
+            .unwrap_or_else(|| "artifact".to_string()),
         nodes,
         edges,
         parameters,
@@ -1607,8 +1611,7 @@ fn load_graph_for_session(input: &std::path::Path) -> Result<apxm_graph::ApxmGra
     }
 
     // Fallback: try to parse as JSON directly (.apxm legacy format)
-    let text = std::fs::read_to_string(input)
-        .context("Failed to read graph file")?;
+    let text = std::fs::read_to_string(input).context("Failed to read graph file")?;
     apxm_graph::ApxmGraph::from_json(&text)
         .map_err(|e| anyhow::anyhow!("Failed to parse graph: {}", e))
 }
@@ -1943,12 +1946,8 @@ async fn run_command(
     };
 
     // Set up session output + live emitter BEFORE execution
-    let (writer, emitter, execution_id) = setup_session(
-        &emit_session,
-        &input,
-        "artifact",
-        artifact_graph.as_ref(),
-    )?;
+    let (writer, emitter, execution_id) =
+        setup_session(&emit_session, &input, "artifact", artifact_graph.as_ref())?;
 
     if let (Some(graph), Some(writer)) = (artifact_graph.as_ref(), writer.as_ref()) {
         linker_config.runtime_config.context_stack =
@@ -4196,7 +4195,10 @@ fn workflow_validate_command(file: PathBuf, json: bool) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&output)?);
     } else {
         if errors.is_empty() {
-            println!("{} Workflow is valid", apxm_core::constants::ui::icons::SUCCESS);
+            println!(
+                "{} Workflow is valid",
+                apxm_core::constants::ui::icons::SUCCESS
+            );
             println!("  Name: {}", def.name);
             println!("  Steps: {}", def.graphs.len());
             println!(
@@ -4208,7 +4210,10 @@ fn workflow_validate_command(file: PathBuf, json: bool) -> Result<()> {
                     .join(", ")
             );
         } else {
-            println!("{} Validation failed:", apxm_core::constants::ui::icons::FAILED);
+            println!(
+                "{} Validation failed:",
+                apxm_core::constants::ui::icons::FAILED
+            );
             for error in &errors {
                 println!("  - {}", error);
             }
@@ -4256,11 +4261,7 @@ fn workflow_analyze_command(file: PathBuf, json: bool) -> Result<()> {
         println!();
         println!("Execution plan:");
         for (i, phase) in phases.iter().enumerate() {
-            println!(
-                "  Phase {}: {} step(s) in parallel",
-                i,
-                phase.len()
-            );
+            println!("  Phase {}: {} step(s) in parallel", i, phase.len());
             for step_id in phase {
                 let step = def.graphs.iter().find(|s| &s.id == step_id).unwrap();
                 println!("    - {} ({})", step_id, step.path);
@@ -4326,13 +4327,11 @@ async fn workflow_run_command(file: PathBuf, args: Vec<String>) -> Result<()> {
 
     // Create workflow session directory
     let paths = apxm_core::paths::ApxmPaths::discover()?;
-    let workflow_session_dir = paths
-        .sessions_dir()?
-        .join(format!(
-            "workflow-{}-{}",
-            def.name,
-            chrono::Utc::now().format("%Y%m%d-%H%M%S")
-        ));
+    let workflow_session_dir = paths.sessions_dir()?.join(format!(
+        "workflow-{}-{}",
+        def.name,
+        chrono::Utc::now().format("%Y%m%d-%H%M%S")
+    ));
 
     println!("Session directory: {}", workflow_session_dir.display());
     println!();
@@ -4354,9 +4353,9 @@ async fn workflow_run_command(file: PathBuf, args: Vec<String>) -> Result<()> {
 
             // Check if any dependency failed → skip this step
             let should_skip = step.depends_on.iter().any(|dep| {
-                step_results
-                    .get(dep)
-                    .map_or(false, |r| r.status != apxm_runtime::workflow::StepStatus::Success)
+                step_results.get(dep).map_or(false, |r| {
+                    r.status != apxm_runtime::workflow::StepStatus::Success
+                })
             });
 
             if should_skip {
@@ -4389,7 +4388,12 @@ async fn workflow_run_command(file: PathBuf, args: Vec<String>) -> Result<()> {
 
             let graph_path = base_dir.join(&step.path);
 
-            println!("  {} Starting: {} ({})", apxm_core::constants::ui::icons::STARTED, step_id, graph_path.display());
+            println!(
+                "  {} Starting: {} ({})",
+                apxm_core::constants::ui::icons::STARTED,
+                step_id,
+                graph_path.display()
+            );
 
             let step_start = Instant::now();
 
@@ -4403,12 +4407,7 @@ async fn workflow_run_command(file: PathBuf, args: Vec<String>) -> Result<()> {
                 graph
                     .parameters
                     .iter()
-                    .map(|p| {
-                        resolved_params
-                            .get(&p.name)
-                            .cloned()
-                            .unwrap_or_default()
-                    })
+                    .map(|p| resolved_params.get(&p.name).cloned().unwrap_or_default())
                     .collect()
             };
 
@@ -4422,15 +4421,16 @@ async fn workflow_run_command(file: PathBuf, args: Vec<String>) -> Result<()> {
             match result {
                 Ok(link_result) => {
                     // Extract the final output value
-                    let output = link_result
-                        .execution
-                        .results
-                        .values()
-                        .last()
-                        .and_then(|v| match v {
-                            apxm_core::types::Value::String(s) => Some(s.clone()),
-                            _ => Some(v.to_string()),
-                        });
+                    let output =
+                        link_result
+                            .execution
+                            .results
+                            .values()
+                            .last()
+                            .and_then(|v| match v {
+                                apxm_core::types::Value::String(s) => Some(s.clone()),
+                                _ => Some(v.to_string()),
+                            });
 
                     println!(
                         "  {} Completed: {} ({:.1}s)",
