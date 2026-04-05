@@ -51,6 +51,7 @@ pub fn validate_graph(graph: &ApxmGraph) -> Result<(), GraphError> {
     validate_acyclic(graph)?;
     validate_parameters(graph)?;
     validate_providers(graph)?;
+    validate_token_space(graph)?;
 
     Ok(())
 }
@@ -114,6 +115,52 @@ fn validate_parameters(graph: &ApxmGraph) -> Result<(), GraphError> {
             )));
         }
     }
+    Ok(())
+}
+
+/// Validate that node IDs do not collide with edge-assigned token IDs.
+///
+/// The runtime assigns token IDs 1..=edge_count to edges. Node IDs in that
+/// range produce a "Duplicate producer" panic at runtime because the scheduler
+/// sees both the node's synthetic output token AND the edge token as producers
+/// for the same slot. This check catches the problem at graph load time.
+///
+/// Safe pattern: sequential node IDs starting at 1 — the runtime then assigns
+/// each edge its own unique token and node N's primary output token equals N.
+fn validate_token_space(graph: &ApxmGraph) -> Result<(), GraphError> {
+    let edge_count = graph.edges.len() as u64;
+    if edge_count == 0 {
+        return Ok(());
+    }
+
+    let mut sorted_ids: Vec<u64> = graph.nodes.iter().map(|n| n.id).collect();
+    sorted_ids.sort_unstable();
+
+    // Sequential 1..=N is always safe: each node's primary output token equals
+    // its own ID, which is exactly the edge token the lowering assigns.
+    let is_sequential = sorted_ids
+        .iter()
+        .enumerate()
+        .all(|(i, &id)| id == i as u64 + 1);
+
+    if is_sequential {
+        return Ok(());
+    }
+
+    // Non-sequential IDs: any node ID in [1, edge_count] is a potential conflict.
+    let colliding: Vec<u64> = sorted_ids
+        .iter()
+        .copied()
+        .filter(|&id| id >= 1 && id <= edge_count)
+        .collect();
+
+    if !colliding.is_empty() {
+        return Err(GraphError::Validation(format!(
+            "node ID(s) {:?} collide with edge token IDs [1..{}].              Token IDs are assigned 1..=edge_count per edge index, so              non-sequential node IDs must not fall in that range.              Fix: use sequential node IDs starting at 1, or assign all              node IDs above {} (the edge count).",
+            colliding, edge_count, edge_count
+        )));
+    }
+
     Ok(())
 }
 
