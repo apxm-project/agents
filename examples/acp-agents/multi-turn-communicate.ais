@@ -1,0 +1,18 @@
+// multi-turn-communicate.ais - converted from multi-turn-communicate.apxm
+// Multi-turn: spawn agent, analyze, fix, verify
+//
+// Usage: dekk apxm execute examples/acp-agents/multi-turn-communicate.apxm
+
+agent MultiTurnCommunicate {
+    @entry flow main() -> str {
+        spawn_agent("coder", "claude", "$APXM_HOME") -> _coder
+        ask("Analyze the codebase for potential bugs.") -> analyze_prompt
+        ask("Fix the most critical bug you found.") -> fix_prompt
+        ask("Verify the fix by running the test suite.") -> verify_prompt
+        communicate("coder", "acp", analyze_prompt) -> send_analyze
+        communicate("coder", "acp", fix_prompt) -> send_fix
+        communicate("coder", "acp", verify_prompt) -> send_verify
+        print("\" + send_verify + \"")
+        return send_verify
+    }
+}

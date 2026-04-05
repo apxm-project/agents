@@ -1,0 +1,30 @@
+// multi-agent-negotiate-consensus.ais - converted from negotiate-consensus.apxm
+// 2-agent negotiation: SPAWN two ACP agents, send them the same topic simultaneously, WAIT_ALL syncs initial positions, each agent counters the other's argument via COMMUNICATE, WAIT_ALL syncs counters, THINK synthesizes consensus, UMEM stores result, CHECKPOINT saves final state.
+//
+// Usage: dekk apxm execute examples/patterns/multi-agent-negotiate/negotiate-consensus.apxm
+
+agent MultiAgentNegotiateConsensus {
+    @entry flow main() -> str {
+        spawn_agent("claude_negotiator", "claude", "$APXM_HOME") -> _claude_negotiator
+        spawn_agent("codex_negotiator", "codex", "$APXM_HOME") -> _codex_negotiator
+        ask("What is the best approach for building a distributed task queue in Rust? Consider: (A) custom implementation using tokio + Redis, (B) using an existing library like lapin (AMQP/RabbitMQ), (C) using a cloud-managed queue (SQS/GCP Pub/Sub). Argue for your preferred approach with specific technical reasoning.") -> negotiation_topic
+        ask("Your negotiating partner proposed the following approach. Counter-argue or find common ground:\n\nPartner's position:\n") -> claude_counter_prefix
+        ask("Your negotiating partner proposed the following approach. Counter-argue or find common ground:\n\nPartner's position:\n") -> codex_counter_prefix
+        communicate("claude_negotiator", "acp", negotiation_topic) -> claude_initial
+        communicate("codex_negotiator", "acp", negotiation_topic) -> codex_initial
+        ask(codex_counter_prefix + "" + claude_initial) -> codex_counter_prompt
+        // wait_all (implicit via dataflow)
+        // TODO: CHECKPOINT node 6 (checkpoint_initial_positions)
+        ask(claude_counter_prefix + "" + codex_initial) -> claude_counter_prompt
+        communicate("codex_negotiator", "acp", codex_counter_prompt) -> codex_counter
+        print("=== INITIAL POSITIONS ===" + "\n" + sync_initial)
+        communicate("claude_negotiator", "acp", claude_counter_prompt) -> claude_counter
+        // wait_all (implicit via dataflow)
+        print("=== COUNTER-ARGUMENTS ===" + "\n" + sync_counters)
+        think("Two agents negotiated the best approach for a distributed task queue in Rust.\n\nInitial positions:\n{{node_7}}\n\nCounter-arguments and refinements:\n{{node_14}}\n\nSynthesize a final consensus recommendation. Where did they agree? What are the key trade-offs? What would you recommend for a production system?" + "\n\n" + sync_initial + "\n\n" + sync_counters) -> final_synthesis
+        print("=== FINAL CONSENSUS ===" + "\n" + final_synthesis)
+        update_memory("rust_task_queue_consensus", final_synthesis)
+        // TODO: CHECKPOINT node 17 (checkpoint_final)
+        return final_synthesis
+    }
+}

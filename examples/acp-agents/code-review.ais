@@ -1,0 +1,19 @@
+// code-review.ais - converted from code-review.apxm
+// Codex analyzes the spawn_agent handler, Claude reviews Codex's analysis. Sequential pipeline: Codex goes first, Claude gets the full context.
+//
+// Usage: dekk apxm execute examples/acp-agents/code-review.apxm
+
+agent CodeReview {
+    @entry flow main() -> str {
+        spawn_agent("coder", "codex", "$APXM_HOME") -> _coder
+        spawn_agent("reviewer", "claude", "$APXM_HOME") -> _reviewer
+        ask("Look at the file crates/apxm-runtime/src/executor/handlers/spawn_agent.rs in this codebase. Write a brief summary of what it does and identify one potential improvement or edge case that could be handled better. Keep your response under 200 words.") -> coding_task
+        ask("You are doing a code review. Here is Codex's analysis of the spawn_agent handler. Review it critically: is it accurate? Did it miss anything? Do you agree with the improvement? Be concise, under 150 words.\n\nCodex's analysis:\n") -> review_prefix
+        communicate("coder", "acp", coding_task) -> coder_analyzes
+        print("=== CODEX ANALYSIS ===" + "\n" + coder_analyzes)
+        ask(coder_analyzes + "" + review_prefix) -> build_review_prompt
+        communicate("reviewer", "acp", build_review_prompt) -> reviewer_critiques
+        print("=== CLAUDE REVIEW ===" + "\n" + reviewer_critiques)
+        return reviewer_critiques
+    }
+}

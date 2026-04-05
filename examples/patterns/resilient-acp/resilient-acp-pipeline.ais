@@ -1,0 +1,26 @@
+// resilient-acp-pipeline.ais - converted from resilient-acp-pipeline.apxm
+// Resilient ACP pipeline: GUARD validates input, primary Claude agent reviews code, CHECKPOINT saves state, VERIFY validates the review quality, BRANCH_ON_VALUE routes to fallback Codex if primary is insufficient, final ASK synthesizes both analyses.
+//
+// Usage: dekk apxm execute examples/patterns/resilient-acp/resilient-acp-pipeline.apxm
+
+agent ResilientAcpPipeline {
+    @entry flow main() -> str {
+        spawn_agent("primary", "claude", "$APXM_HOME") -> _primary
+        spawn_agent("fallback", "codex", "$APXM_HOME") -> _fallback
+        ask("Analyze the following Rust code for correctness, performance issues, and potential panics. Provide a structured report with severity levels (HIGH/MED/LOW):\n\nfn process_items(items: Vec<String>) -> Vec<usize> {\n    items.iter()\n        .map(|s| s.parse::<usize>().unwrap())\n        .filter(|n| *n > 0)\n        .collect()\n}") -> task_prompt
+        // TODO: GUARD node 4 (guard_input)
+        communicate("primary", "acp", guard_input) -> primary_analysis
+        print("=== PRIMARY AGENT ANALYSIS ===" + "\n" + primary_analysis)
+        // TODO: CHECKPOINT node 6 (checkpoint_after_primary)
+        // TODO: VERIFY node 7 (validate_primary)
+        print("=== VALIDATION RESULT ===" + "\n" + validate_primary)
+        // TODO: BRANCH_ON_VALUE node 8 (check_valid)
+        ask("Primary review was insufficient. Provide a thorough code review identifying all bugs, panics, and improvements:\n\n") -> fallback_prefix
+        ask(fallback_prefix + "" + task_prompt) -> build_fallback_prompt
+        communicate("fallback", "acp", build_fallback_prompt) -> fallback_analysis
+        ask("Produce a final consolidated code review. Primary analysis:\n{{node_5}}\n\nFallback analysis (if used):\n{{node_11}}\n\nMerge insights, remove duplicates, rank issues by severity." + "\n\n" + primary_analysis + "\n\n" + fallback_analysis) -> final_synthesis
+        // TODO: CHECKPOINT node 13 (checkpoint_final)
+        print("=== FINAL CONSOLIDATED REVIEW ===" + "\n" + checkpoint_final)
+        return final_synthesis
+    }
+}

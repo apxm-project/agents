@@ -1,0 +1,14 @@
+// spawn-communicate-basic.ais - converted from spawn-communicate-basic.apxm
+// Basic: spawn a Claude agent and send one message
+//
+// Usage: dekk apxm execute examples/acp-agents/spawn-communicate-basic.apxm
+
+agent SpawnCommunicateBasic {
+    @entry flow main() -> str {
+        spawn_agent("reviewer", "claude", "$APXM_HOME") -> _reviewer
+        ask("Review the current directory structure and suggest improvements.") -> review_prompt
+        communicate("reviewer", "acp", review_prompt) -> send_to_reviewer
+        print("\" + send_to_reviewer + \"")
+        return send_to_reviewer
+    }
+}

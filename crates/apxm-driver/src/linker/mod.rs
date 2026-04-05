@@ -171,13 +171,19 @@ impl Linker {
             .and_then(|e| e.to_str())
             .unwrap_or("");
 
-        let is_json = ext == constants::extensions::GRAPH_LEGACY || ext == "json";
+        // .apxm JSON graph format is deprecated — use .ais source files instead.
+        if ext == constants::extensions::GRAPH_LEGACY || ext == "json" {
+            return Err(DriverError::Driver(
+                format!(
+                    ".apxm JSON graph format is no longer supported. \
+                     Migrate to .ais source (AIS DSL) and run: dekk apxm execute <file.ais>\n\
+                     See: examples/ for .ais workflow examples."
+                ),
+            ));
+        }
 
-        // Use graph-direct path for JSON/APXM graphs and AIS source files.
-        // Both formats parse to ApxmGraph via our fixed code paths; the graph-direct
-        // path avoids MLIR text serialization issues with special characters in strings.
-        // MLIR optimization passes are applied in compile-to-artifact mode separately.
-        if is_json || ext == "ais" {
+        // .ais source files use graph-direct path (GraphGen DSL -> ApxmGraph).
+        if ext == "ais" {
             if ext == "ais" {
                 // For .ais: use the compiler to parse DSL -> ApxmGraph, then compile directly.
                 if let Some(ref compiler) = self.compiler {

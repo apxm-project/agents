@@ -1,0 +1,17 @@
+// full-sdlc.ais - converted from full-sdlc.apxm
+// Full SDLC: architect designs, coder implements, reviewer reviews
+//
+// Usage: dekk apxm execute examples/acp-agents/full-sdlc.apxm
+
+agent FullSdlc {
+    @entry flow main() -> str {
+        spawn_agent("architect", "claude", "$APXM_HOME") -> _architect
+        ask("Design a caching layer for the API. Provide the implementation plan.") -> design_prompt
+        communicate("architect", "acp", design_prompt) -> communicate_to_architect
+        spawn_agent("coder", "claude", "$APXM_HOME") -> _coder
+        communicate("coder", "acp", communicate_to_architect) -> communicate_to_coder
+        communicate("architect", "acp", communicate_to_coder) -> review_by_architect
+        print("\" + review_by_architect + \"")
+        return review_by_architect
+    }
+}
