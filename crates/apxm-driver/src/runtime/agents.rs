@@ -223,7 +223,7 @@ impl AgentPrompter for AcpAgentPrompter {
             "ACP COMMUNICATE prompt completed"
         );
 
-        // Build structured response (same keys as AcpCapability::execute)
+        // Build structured response using the shared ACP result keys
         let mut result_map = std::collections::HashMap::new();
         result_map.insert(result_keys::TEXT.to_string(), Value::String(result.text));
         result_map.insert(

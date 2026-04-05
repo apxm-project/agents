@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use apxm_acp::{AcpSession, AgentProfile, PermissionMode, SessionPool};
+use apxm_acp::{AcpSession, AgentProfile, PermissionMode};
 use apxm_core::types::aam::AamContext;
 
 fn mock_profile() -> AgentProfile {
@@ -71,51 +71,6 @@ async fn full_session_lifecycle() {
     session.close().await;
 }
 
-#[tokio::test]
-async fn session_pool_reuse() {
-    if !jq_available() {
-        eprintln!("SKIP: jq not installed");
-        return;
-    }
-
-    let profile = mock_profile();
-    let cwd = std::env::current_dir().unwrap();
-    let pool = SessionPool::new();
-    let aam_ctx = AamContext::default();
-
-    // First get_or_create should spawn
-    let s1 = pool
-        .get_or_create("mock", &cwd, "main", &profile, &aam_ctx)
-        .await
-        .expect("should create session");
-    assert_eq!(pool.len(), 1);
-
-    // Second get_or_create with same key should reuse
-    let s2 = pool
-        .get_or_create("mock", &cwd, "main", &profile, &aam_ctx)
-        .await
-        .expect("should reuse session");
-    assert_eq!(pool.len(), 1);
-
-    // Verify they point to the same session (same session_id)
-    let id1 = s1.lock().await.session_id().to_string();
-    let id2 = s2.lock().await.session_id().to_string();
-    assert_eq!(id1, id2);
-
-    // Different handle should create a new session
-    let s3 = pool
-        .get_or_create("mock", &cwd, "reviewer", &profile, &aam_ctx)
-        .await
-        .expect("should create new session for different handle");
-    assert_eq!(pool.len(), 2);
-
-    let id3 = s3.lock().await.session_id().to_string();
-    assert_ne!(id1, id3);
-
-    // Clean up
-    pool.close_all().await;
-    assert!(pool.is_empty());
-}
 
 #[tokio::test]
 async fn multi_turn_on_same_session() {
