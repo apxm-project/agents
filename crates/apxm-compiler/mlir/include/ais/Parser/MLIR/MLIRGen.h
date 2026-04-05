@@ -116,7 +116,7 @@ private:
 
   mlir::Value generateQMemOp(llvm::ArrayRef<std::unique_ptr<Expr>> args, mlir::Location loc);
   mlir::Value generateUMemOp(llvm::ArrayRef<std::unique_ptr<Expr>> args, mlir::Location loc);
-  mlir::Value generateInvOp(llvm::StringRef callee, llvm::ArrayRef<std::unique_ptr<Expr>> args,
+  mlir::Value generateInvToolOp(llvm::StringRef callee, llvm::ArrayRef<std::unique_ptr<Expr>> args,
                            mlir::Location loc);
   // LLM operations are now in MLIRGenOperations (ask, think, reason)
   mlir::Value generateReflectOp(llvm::ArrayRef<std::unique_ptr<Expr>> args, mlir::Location loc,

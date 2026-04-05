@@ -389,7 +389,7 @@ fn emit_node(
             );
             let result = format!("%n{}", node.id);
             state.emit(format!(
-                "    {result} = ais.inv {} ({}){} : !ais.token",
+                "    {result} = ais.inv_tool {} ({}){} : !ais.token",
                 quote_string(&capability),
                 quote_string(&params_json),
                 attrs

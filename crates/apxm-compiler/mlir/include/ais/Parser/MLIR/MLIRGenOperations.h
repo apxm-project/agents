@@ -51,7 +51,7 @@ private:
                                    mlir::Location loc);
   static mlir::Value generateUMemOp(MLIRGen &gen, llvm::ArrayRef<std::unique_ptr<Expr>> args,
                                    mlir::Location loc);
-  static mlir::Value generateInvOp(MLIRGen &gen, llvm::StringRef callee,
+  static mlir::Value generateInvToolOp(MLIRGen &gen, llvm::StringRef callee,
                                   llvm::ArrayRef<std::unique_ptr<Expr>> args,
                                   mlir::Location loc);
 

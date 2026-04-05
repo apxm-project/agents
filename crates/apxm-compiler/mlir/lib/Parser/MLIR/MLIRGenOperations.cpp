@@ -62,7 +62,7 @@ mlir::Value MLIRGenOperations::generateCallExpr(MLIRGen &gen, CallExpr *expr) {
   switch (kind) {
   case CallKind::QMem: return generateQMemOp(gen, expr->getArgs(), loc);
   case CallKind::UMem: return generateUMemOp(gen, expr->getArgs(), loc);
-  case CallKind::Invoke: return generateInvOp(gen, callee, expr->getArgs(), loc);
+  case CallKind::Invoke: return generateInvToolOp(gen, callee, expr->getArgs(), loc);
   case CallKind::Ask: return generateAskOp(gen, expr->getArgs(), loc);
   case CallKind::Think: return generateThinkOp(gen, expr->getArgs(), loc);
   case CallKind::Reason: return generateReasonOp(gen, expr->getArgs(), loc);
@@ -106,7 +106,7 @@ mlir::Value MLIRGenOperations::generateCallExpr(MLIRGen &gen, CallExpr *expr) {
   auto i64Type = gen.builder.getI64Type();
   auto tokenType = mlir::ais::TokenType::get(&gen.context, i64Type);
 
-  return gen.builder.create<mlir::ais::InvOp>(loc, tokenType, gen.builder.getStringAttr(callee),
+  return gen.builder.create<mlir::ais::InvToolOp>(loc, tokenType, gen.builder.getStringAttr(callee),
                                              gen.builder.getStringAttr(params));
 }
 
@@ -154,7 +154,7 @@ mlir::Value MLIRGenOperations::generateUMemOp(MLIRGen &gen, llvm::ArrayRef<std::
   return value;
 }
 
-mlir::Value MLIRGenOperations::generateInvOp(MLIRGen &gen, llvm::StringRef callee,
+mlir::Value MLIRGenOperations::generateInvToolOp(MLIRGen &gen, llvm::StringRef callee,
                                            llvm::ArrayRef<std::unique_ptr<Expr>> args,
                                            mlir::Location loc) {
   // If no args, use callee as capability name (e.g., `inv` -> capability="inv")
@@ -167,7 +167,7 @@ mlir::Value MLIRGenOperations::generateInvOp(MLIRGen &gen, llvm::StringRef calle
   auto i64Type = gen.builder.getI64Type();
   auto tokenType = mlir::ais::TokenType::get(&gen.context, i64Type);
 
-  return gen.builder.create<mlir::ais::InvOp>(loc, tokenType,
+  return gen.builder.create<mlir::ais::InvToolOp>(loc, tokenType,
                                             gen.builder.getStringAttr(capability),
                                             gen.builder.getStringAttr(params));
 }
