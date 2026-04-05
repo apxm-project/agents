@@ -1,5 +1,6 @@
 //! Profile-specific ContextStack scope rules.
 
+use apxm_core::agent_profile::AgentProfile;
 use apxm_core::constants::runtime::context_stack as context_stack_consts;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -11,28 +12,21 @@ pub struct ScopeRules {
 }
 
 impl ScopeRules {
+    /// Derive scope rules from a resolved AgentProfile.
+    pub fn from_agent_profile(profile: &AgentProfile) -> Self {
+        Self {
+            upstream_depth: profile.upstream_depth,
+            upstream_frame_budget: profile.upstream_frame_budget,
+            session_frame_budget:
+                apxm_core::constants::runtime::context_stack::DEFAULT_SESSION_FRAME_BUDGET_TOKENS,
+            include_upstream_prompts: profile.include_upstream_prompts,
+        }
+    }
+
     pub fn for_profile(profile: &str) -> Self {
-        if profile.eq_ignore_ascii_case(context_stack_consts::PROFILE_CLAUDE) {
-            Self {
-                upstream_depth: context_stack_consts::CLAUDE_UPSTREAM_DEPTH,
-                upstream_frame_budget: context_stack_consts::CLAUDE_UPSTREAM_FRAME_BUDGET_TOKENS,
-                session_frame_budget: context_stack_consts::DEFAULT_SESSION_FRAME_BUDGET_TOKENS,
-                include_upstream_prompts: false,
-            }
-        } else if profile.eq_ignore_ascii_case(context_stack_consts::PROFILE_CODEX) {
-            Self {
-                upstream_depth: context_stack_consts::CODEX_UPSTREAM_DEPTH,
-                upstream_frame_budget: context_stack_consts::CODEX_UPSTREAM_FRAME_BUDGET_TOKENS,
-                session_frame_budget: context_stack_consts::DEFAULT_SESSION_FRAME_BUDGET_TOKENS,
-                include_upstream_prompts: false,
-            }
-        } else if profile.eq_ignore_ascii_case(context_stack_consts::PROFILE_REVIEWER) {
-            Self {
-                upstream_depth: context_stack_consts::REVIEWER_UPSTREAM_DEPTH,
-                upstream_frame_budget: context_stack_consts::REVIEWER_UPSTREAM_FRAME_BUDGET_TOKENS,
-                session_frame_budget: context_stack_consts::DEFAULT_SESSION_FRAME_BUDGET_TOKENS,
-                include_upstream_prompts: true,
-            }
+        let reg = apxm_core::agent_profile::AgentProfileRegistry::new();
+        if let Some(p) = reg.resolve(profile) {
+            Self::from_agent_profile(p)
         } else {
             Self::default()
         }
@@ -56,17 +50,11 @@ mod tests {
 
     #[test]
     fn scope_rules_for_profiles_match_defaults() {
-        let claude = ScopeRules::for_profile("claude");
-        assert_eq!(
-            claude.upstream_depth,
-            context_stack_consts::CLAUDE_UPSTREAM_DEPTH
-        );
+        let architect = ScopeRules::for_profile("architect");
+        assert_eq!(architect.upstream_depth, 3);
 
-        let codex = ScopeRules::for_profile("codex");
-        assert_eq!(
-            codex.upstream_depth,
-            context_stack_consts::CODEX_UPSTREAM_DEPTH
-        );
+        let coder = ScopeRules::for_profile("coder");
+        assert_eq!(coder.upstream_depth, 2);
 
         let reviewer = ScopeRules::for_profile("reviewer");
         assert_eq!(reviewer.upstream_depth, usize::MAX);
