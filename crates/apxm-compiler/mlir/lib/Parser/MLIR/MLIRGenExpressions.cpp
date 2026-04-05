@@ -330,10 +330,24 @@ mlir::Value MLIRGenExpressions::generateExecuteExpr(MLIRGen &gen, ExecuteExpr *e
 }
 
 mlir::Value MLIRGenExpressions::generateCommunicateExpr(MLIRGen &gen, CommunicateExpr *expr) {
+  auto loc = gen.getLocation(expr->getLocation());
+  auto i64Type = gen.builder.getI64Type();
+  auto tokenType = mlir::ais::TokenType::get(&gen.context, i64Type);
+
+  // Resolve attachment expressions to SSA values (message payload + control deps)
   llvm::SmallVector<mlir::Value, 4> contextValues;
-  return MLIRGenOperations::generateCommunicateOp(gen, llvm::ArrayRef<std::unique_ptr<Expr>>{},
-                                                 gen.getLocation(expr->getLocation()),
-                                                 contextValues);
+  for (const auto &attach : expr->getAttachments()) {
+    if (auto val = gen.generateExpression(attach.get())) {
+      contextValues.push_back(val);
+    }
+  }
+
+  return gen.builder.create<mlir::ais::CommunicateOp>(
+      loc, tokenType,
+      gen.builder.getStringAttr(expr->getRecipient()),
+      gen.builder.getStringAttr(expr->getProtocol()),
+      /*payload=*/nullptr,
+      contextValues);
 }
 
 mlir::Value MLIRGenExpressions::generateWaitAllExpr(MLIRGen &gen, WaitAllExpr *expr) {

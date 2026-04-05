@@ -65,6 +65,11 @@ constexpr llvm::StringLiteral LABEL = "label";
 constexpr llvm::StringLiteral TRY_LABEL = "try_label";
 constexpr llvm::StringLiteral CATCH_LABEL = "catch_label";
 constexpr llvm::StringLiteral RECOVERY_TEMPLATE = "recovery_template";
+constexpr llvm::StringLiteral RECIPIENT = "recipient";
+constexpr llvm::StringLiteral PROTOCOL = "protocol";
+constexpr llvm::StringLiteral MESSAGE = "message";
+constexpr llvm::StringLiteral PROFILE = "profile";
+constexpr llvm::StringLiteral CWD = "cwd";
 } // namespace graph_attrs
 
 namespace graph_ops {
@@ -86,6 +91,9 @@ constexpr llvm::StringLiteral MERGE = "MERGE";
 constexpr llvm::StringLiteral WAIT_ALL = "WAIT_ALL";
 constexpr llvm::StringLiteral TRY_CATCH = "TRY_CATCH";
 constexpr llvm::StringLiteral ERR = "ERR";
+constexpr llvm::StringLiteral SPAWN_AGENT = "SPAWN_AGENT";
+constexpr llvm::StringLiteral COMMUNICATE = "COMMUNICATE";
+constexpr llvm::StringLiteral PRINT = "PRINT";
 } // namespace graph_ops
 
 struct ValueRef {
@@ -146,6 +154,9 @@ enum class CallKind {
   Verify,
   Merge,
   WaitAll,
+  SpawnAgent,
+  Communicate,
+  Print,
   Unknown,
 };
 
@@ -169,7 +180,18 @@ CallKind classifyCall(llvm::StringRef callee) {
       .Case("verify", CallKind::Verify)
       .Case("merge", CallKind::Merge)
       .Cases("wait", "wait_all", CallKind::WaitAll)
+      .Cases("spawn_agent", "spawn", CallKind::SpawnAgent)
+      .Cases("communicate", "talk", CallKind::Communicate)
+      .Case("print", CallKind::Print)
       .Default(CallKind::Unknown);
+}
+
+/// Extract a string literal value from an expression, or empty string.
+static std::string exprToString(const Expr *expr) {
+  if (auto *str = llvm::dyn_cast_or_null<StringLiteralExpr>(expr)) {
+    return str->getValue().str();
+  }
+  return "";
 }
 
 std::string normalizeMemorySpace(llvm::StringRef value) {
@@ -550,6 +572,70 @@ private:
     }
 
     case CallKind::Inv:
+    case CallKind::SpawnAgent: {
+      // spawn_agent("agent_name", "profile", "cwd") -> SPAWN_AGENT node
+      llvm::ArrayRef<std::unique_ptr<Expr>> spArgs = expr->getArgs();
+      std::string agentName = spArgs.size() > 0 ? exprToString(spArgs[0].get()) : "";
+      std::string profile   = spArgs.size() > 1 ? exprToString(spArgs[1].get()) : "";
+      std::string cwd       = spArgs.size() > 2 ? exprToString(spArgs[2].get()) : "";
+
+      llvm::json::Object attrs;
+      attrs[graph_attrs::AGENT_NAME.str()] = agentName;
+      if (!profile.empty()) attrs[graph_attrs::PROFILE.str()] = profile;
+      if (!cwd.empty())     attrs[graph_attrs::CWD.str()]     = cwd;
+
+      std::string nodeName = preferredName.empty() ? ("spawn_" + agentName) : preferredName.str();
+      uint64_t nodeId = addNode(nodeName, graph_ops::SPAWN_AGENT, std::move(attrs));
+      if (!attachDependencies(nodeId, {}, ctx))
+        return std::nullopt;
+      return ValueRef::node(nodeId);
+    }
+
+    case CallKind::Communicate: {
+      // communicate("recipient", "protocol", message_expr...) -> COMMUNICATE node
+      llvm::ArrayRef<std::unique_ptr<Expr>> commArgs = expr->getArgs();
+      std::string recipient = commArgs.size() > 0 ? exprToString(commArgs[0].get()) : "";
+      std::string protocol  = commArgs.size() > 1 ? exprToString(commArgs[1].get()) : "acp";
+
+      llvm::json::Object attrs;
+      attrs[graph_attrs::RECIPIENT.str()] = recipient;
+      attrs[graph_attrs::PROTOCOL.str()]  = protocol;
+
+      // args[2..] are data/control inputs
+      llvm::SmallVector<ValueRef, 4> commRefs;
+      for (size_t i = 2; i < commArgs.size(); ++i) {
+        auto value = requireValueRef(commArgs[i].get(), "communicate_input");
+        if (value) commRefs.push_back(*value);
+      }
+
+      std::string nodeName = preferredName.empty() ? ("comm_" + recipient) : preferredName.str();
+      uint64_t nodeId = addNode(nodeName, graph_ops::COMMUNICATE, std::move(attrs));
+      if (!attachDependencies(nodeId, commRefs, ctx))
+        return std::nullopt;
+      return ValueRef::node(nodeId);
+    }
+
+    case CallKind::Print: {
+      // print("message string") -> PRINT node
+      llvm::ArrayRef<std::unique_ptr<Expr>> printArgs = expr->getArgs();
+      std::string message = printArgs.size() > 0 ? exprToString(printArgs[0].get()) : "";
+
+      llvm::SmallVector<ValueRef, 4> printRefs;
+      for (size_t i = 1; i < printArgs.size(); ++i) {
+        auto value = requireValueRef(printArgs[i].get(), "print_input");
+        if (value) printRefs.push_back(*value);
+      }
+
+      llvm::json::Object attrs;
+      attrs[graph_attrs::MESSAGE.str()] = message;
+
+      std::string nodeName = preferredName.empty() ? "print" : preferredName.str();
+      uint64_t nodeId = addNode(nodeName, graph_ops::PRINT, std::move(attrs));
+      if (!attachDependencies(nodeId, printRefs, ctx))
+        return std::nullopt;
+      return ValueRef::node(nodeId);
+    }
+
     case CallKind::Unknown: {
       std::string capability;
       llvm::ArrayRef<std::unique_ptr<Expr>> args = expr->getArgs();
