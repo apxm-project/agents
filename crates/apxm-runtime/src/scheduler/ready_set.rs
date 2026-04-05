@@ -234,7 +234,7 @@ mod tests {
     fn create_test_node(id: NodeId, input_tokens: Vec<TokenId>) -> Node {
         Node {
             id,
-            op_type: AISOperationType::Inv,
+            op_type: AISOperationType::InvTool,
             attributes: HashMap::new(),
             input_tokens,
             output_tokens: vec![id as TokenId],

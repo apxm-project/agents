@@ -158,7 +158,7 @@ impl Node {
     /// ```
     /// use apxm_core::types::{Node, NodeIdType, AISOperationType};
     ///
-    /// let node = Node::new(1, AISOperationType::Inv);
+    /// let node = Node::new(1, AISOperationType::InvTool);
     /// assert_eq!(node.id, 1);
     /// ```
     pub fn new(id: NodeId, op_type: AISOperationType) -> Self {
@@ -211,7 +211,7 @@ mod tests {
         let node: Node = serde_json::from_str(json).expect("deserialize minimal node");
 
         assert_eq!(node.id, 10);
-        assert_eq!(node.op_type, AISOperationType::Inv);
+        assert_eq!(node.op_type, AISOperationType::InvTool);
         assert!(node.attributes.is_empty());
         assert!(node.input_tokens.is_empty());
         assert!(node.output_tokens.is_empty());

@@ -378,7 +378,7 @@ fn emit_node(
             ));
             Ok(None)
         }
-        AISOperationType::Inv => {
+        AISOperationType::InvTool => {
             let capability = get_string_attr(&node.attributes, &[graph_attrs::CAPABILITY])
                 .unwrap_or_else(|| "unknown_capability".to_string());
             let params_json = get_string_attr(&node.attributes, &[graph_attrs::PARAMS_JSON])

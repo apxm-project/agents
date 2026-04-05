@@ -131,7 +131,7 @@ pub fn validate_semantic(graph: &ApxmGraph, ctx: &SemanticContext) -> Vec<Error>
                     }
                 }
             }
-            AISOperationType::Inv => {
+            AISOperationType::InvTool => {
                 let cap_name = node
                     .attributes
                     .get(graph_attrs::CAPABILITY)
@@ -463,7 +463,7 @@ mod tests {
 
     #[test]
     fn e504_inv_placeholder_bounds() {
-        let mut inv = make_node(2, "inv", AISOperationType::Inv);
+        let mut inv = make_node(2, "inv", AISOperationType::InvTool);
         inv.attributes.insert(
             graph_attrs::CAPABILITY.to_string(),
             apxm_core::types::Value::String("bash".to_string()),
@@ -537,7 +537,7 @@ mod tests {
 
     #[test]
     fn e510_capability_not_registered() {
-        let mut inv = make_node(1, "inv", AISOperationType::Inv);
+        let mut inv = make_node(1, "inv", AISOperationType::InvTool);
         inv.attributes.insert(
             graph_attrs::CAPABILITY.to_string(),
             apxm_core::types::Value::String("unknown_tool".to_string()),
@@ -615,7 +615,7 @@ mod tests {
     #[test]
     fn inv_acp_capability_not_flagged_as_tool() {
         // INV(acp) should NOT trigger E510 since "acp" is a protocol dispatch shortcut
-        let mut inv = make_node(1, "inv", AISOperationType::Inv);
+        let mut inv = make_node(1, "inv", AISOperationType::InvTool);
         inv.attributes.insert(
             graph_attrs::CAPABILITY.to_string(),
             apxm_core::types::Value::String("acp".to_string()),

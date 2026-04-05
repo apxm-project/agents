@@ -324,7 +324,7 @@ async fn runtime_inv_node_with_sandbox_registry_configured() {
     // Create a DAG with an INV node that calls the bash capability
     let mut inv_node = Node {
         id: 1,
-        op_type: AISOperationType::Inv,
+        op_type: AISOperationType::InvTool,
         attributes: HashMap::new(),
         input_tokens: vec![],
         output_tokens: vec![100],

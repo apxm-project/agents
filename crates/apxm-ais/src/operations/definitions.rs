@@ -1595,7 +1595,7 @@ mod tests {
         // Spot-check key indices matching ArtifactEmitter.cpp OperationKind
         assert_eq!(
             AISOperationType::from_wire_index(0),
-            Some(AISOperationType::Inv)
+            Some(AISOperationType::InvTool)
         );
         assert_eq!(
             AISOperationType::from_wire_index(1),

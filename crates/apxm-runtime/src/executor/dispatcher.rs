@@ -71,7 +71,7 @@ impl OperationDispatcher {
             AISOperationType::Verify => verify::execute(ctx, node, inputs).await,
 
             // Invocation operations
-            AISOperationType::Inv => inv::execute(ctx, node, inputs).await,
+            AISOperationType::InvTool => inv_tool::execute(ctx, node, inputs).await,
 
             // Synchronization operations
             AISOperationType::WaitAll => wait_all::execute(ctx, node, inputs).await,

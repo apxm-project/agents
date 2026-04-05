@@ -199,7 +199,7 @@ mod tests {
     fn map_outputs_aligns_with_outer_outputs() {
         let mut dag = ExecutionDag::new();
 
-        let mut node = Node::new(1, AISOperationType::Inv);
+        let mut node = Node::new(1, AISOperationType::InvTool);
         node.output_tokens = vec![10, 11];
         dag.nodes.push(node);
 
@@ -214,7 +214,7 @@ mod tests {
     #[test]
     fn disable_output_binding_leaves_exit_tokens_unmapped() {
         let mut dag = ExecutionDag::new();
-        let mut node = Node::new(1, AISOperationType::Inv);
+        let mut node = Node::new(1, AISOperationType::InvTool);
         node.output_tokens = vec![10];
         dag.nodes.push(node);
 
