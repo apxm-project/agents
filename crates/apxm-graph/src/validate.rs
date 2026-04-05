@@ -293,11 +293,12 @@ fn validate_required_attributes(graph: &ApxmGraph) -> Result<(), GraphError> {
                 }
             }
             AISOperationType::Merge => {
-                if !node.attributes.contains_key("tokens") {
-                    Some("tokens")
-                } else {
-                    None
-                }
+                // 'tokens' attribute is required only when MERGE has no incoming
+                // Data edges (attribute-driven mode). When Data edges feed the MERGE,
+                // the runtime receives inputs via those edges and 'tokens' is optional.
+                // This allows both JSON (.apxm) attribute-driven MERGE and AIS DSL
+                // edge-driven MERGE to coexist.
+                None  // Edges provide inputs; tokens attr is advisory only
             }
             AISOperationType::InvTool => {
                 if !node.attributes.contains_key("capability") {

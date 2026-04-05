@@ -26,7 +26,7 @@ mlir::Value MLIRGenOperations::generateCallExpr(MLIRGen &gen, CallExpr *expr) {
   // Map callee to operation kind
   // LLM operations: ask/think/reason - three distinct ops for critical path analysis
   enum class CallKind {
-    QMem, UMem, Invoke, Ask, Think, Reason, Reflect, Plan, Verify, Execute, Communicate, WaitAll, Merge, Print, Unknown
+    QMem, UMem, Invoke, Ask, Think, Reason, Reflect, Plan, Verify, Execute, Communicate, WaitAll, Merge, Print, SpawnAgent, Unknown
   };
 
   CallKind kind = llvm::StringSwitch<CallKind>(callee)
@@ -44,6 +44,7 @@ mlir::Value MLIRGenOperations::generateCallExpr(MLIRGen &gen, CallExpr *expr) {
       .Cases("communicate", "talk", CallKind::Communicate)
       .Cases("wait_all", "wait", CallKind::WaitAll)
       .Case("merge", CallKind::Merge)
+      .Cases("spawn_agent", "spawn", CallKind::SpawnAgent)
       .Default(CallKind::Unknown);
 
   auto collectNonStringArgs = [&](llvm::ArrayRef<std::unique_ptr<Expr>> exprArgs,
@@ -93,6 +94,11 @@ mlir::Value MLIRGenOperations::generateCallExpr(MLIRGen &gen, CallExpr *expr) {
     llvm::SmallVector<mlir::Value, 4> args;
     if (!collectNonStringArgs(expr->getArgs(), args)) return nullptr;
     return generatePrintOp(gen, expr->getArgs(), loc, args);
+  }
+  case CallKind::SpawnAgent: {
+    llvm::SmallVector<mlir::Value, 4> args_vec;
+    if (!collectNonStringArgs(expr->getArgs(), args_vec)) return nullptr;
+    return generateSpawnAgentOp(gen, expr->getArgs(), loc, args_vec);
   }
   case CallKind::Unknown: break;
   }
@@ -353,6 +359,31 @@ mlir::Value MLIRGenOperations::generateCommunicateOp(MLIRGen &gen,
       loc, tokenType, gen.builder.getStringAttr(recipient),
       protocol.empty() ? nullptr : gen.builder.getStringAttr(protocol),
       /*payload=*/nullptr, contextArgs);
+}
+
+mlir::Value MLIRGenOperations::generateSpawnAgentOp(MLIRGen &gen,
+                                                   llvm::ArrayRef<std::unique_ptr<Expr>> args,
+                                                   mlir::Location loc,
+                                                   llvm::SmallVectorImpl<mlir::Value> &contextArgs) {
+  // spawn_agent("agent_name", "profile", "cwd")
+  // Positional string args: [0]=agent_name, [1]=profile (opt), [2]=cwd (opt)
+  llvm::StringRef agentName = args.size() > 0 ? extractStringArg(args[0].get()) : "";
+  llvm::StringRef profile   = args.size() > 1 ? extractStringArg(args[1].get()) : "";
+  llvm::StringRef cwd       = args.size() > 2 ? extractStringArg(args[2].get()) : "";
+
+  auto i64Type = gen.builder.getI64Type();
+  auto tokenType = mlir::ais::TokenType::get(&gen.context, i64Type);
+
+  mlir::StringAttr profileAttr = profile.empty() ? mlir::StringAttr{} : gen.builder.getStringAttr(profile);
+  mlir::StringAttr cwdAttr     = cwd.empty()     ? mlir::StringAttr{} : gen.builder.getStringAttr(cwd);
+
+  return gen.builder.create<mlir::ais::SpawnAgentOp>(
+      loc, tokenType,
+      gen.builder.getStringAttr(agentName),
+      profileAttr,
+      /*mode=*/mlir::StringAttr{},
+      /*model=*/mlir::StringAttr{},
+      cwdAttr);
 }
 
 mlir::Value MLIRGenOperations::generateWaitAllOp(MLIRGen &gen,
