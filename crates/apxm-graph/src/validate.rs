@@ -52,6 +52,8 @@ pub fn validate_graph(graph: &ApxmGraph) -> Result<(), GraphError> {
     validate_parameters(graph)?;
     validate_providers(graph)?;
     validate_token_space(graph)?;
+    validate_agent_references(graph)?;
+    validate_required_attributes(graph)?;
 
     Ok(())
 }
@@ -197,6 +199,118 @@ fn validate_providers(graph: &ApxmGraph) -> Result<(), GraphError> {
                 node.op,
                 provider_name,
                 valid.join(", ")
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+/// Validate that every COMMUNICATE recipient is spawned by a SPAWN_AGENT
+/// in the same graph, and that every SPAWN_AGENT has a unique agent_name.
+///
+/// Catches: typos in recipient names, missing SPAWN_AGENT nodes, and
+/// duplicate agent names that would cause session collisions at runtime.
+fn validate_agent_references(graph: &ApxmGraph) -> Result<(), GraphError> {
+    use apxm_core::types::operations::AISOperationType;
+
+    // Collect all agent names declared by SPAWN_AGENT nodes.
+    let mut spawned: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    for node in &graph.nodes {
+        if node.op != AISOperationType::SpawnAgent {
+            continue;
+        }
+        let name = match node.attributes.get("agent_name").and_then(|v| v.as_str()) {
+            Some(s) => s.to_string(),
+            None => continue, // Missing attribute caught by validate_required_attributes.
+        };
+        if let Some(prev_id) = spawned.insert(name.clone(), node.id) {
+            return Err(GraphError::Validation(format!(
+                "duplicate SPAWN_AGENT agent_name '{}': nodes {} and {} both declare it. \
+                 Each agent must have a unique name within the graph.",
+                name, prev_id, node.id
+            )));
+        }
+    }
+
+    // Every COMMUNICATE recipient must appear in spawned.
+    for node in &graph.nodes {
+        if node.op != AISOperationType::Communicate {
+            continue;
+        }
+        let recipient = match node.attributes.get("recipient").and_then(|v| v.as_str()) {
+            Some(s) => s.to_string(),
+            None => continue, // Missing attribute caught by validate_required_attributes.
+        };
+        if !spawned.contains_key(&recipient) {
+            let available: Vec<&str> = spawned.keys().map(|s| s.as_str()).collect();
+            let hint = if available.is_empty() {
+                "No SPAWN_AGENT nodes found in this graph.".to_string()
+            } else {
+                format!("Spawned agents in this graph: [{}].", available.join(", "))
+            };
+            return Err(GraphError::Validation(format!(
+                "node '{}' (id={}, op=COMMUNICATE) references recipient '{}' \
+                 which is not spawned by any SPAWN_AGENT in this graph. {}",
+                node.name, node.id, recipient, hint
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+/// Validate that required attributes are present on nodes that need them.
+///
+/// Catches missing attributes that would produce cryptic runtime errors
+/// (KeyError, missing field panics, etc.) well before execution starts.
+fn validate_required_attributes(graph: &ApxmGraph) -> Result<(), GraphError> {
+    use apxm_core::types::operations::AISOperationType;
+
+    for node in &graph.nodes {
+        let missing: Option<&str> = match node.op {
+            AISOperationType::SpawnAgent => {
+                if !node.attributes.contains_key("agent_name") {
+                    Some("agent_name")
+                } else {
+                    None
+                }
+            }
+            AISOperationType::Communicate => {
+                if !node.attributes.contains_key("recipient") {
+                    Some("recipient")
+                } else {
+                    None
+                }
+            }
+            AISOperationType::ConstStr => {
+                if !node.attributes.contains_key("value") {
+                    Some("value")
+                } else {
+                    None
+                }
+            }
+            AISOperationType::Merge => {
+                if !node.attributes.contains_key("tokens") {
+                    Some("tokens")
+                } else {
+                    None
+                }
+            }
+            AISOperationType::InvTool => {
+                if !node.attributes.contains_key("capability") {
+                    Some("capability")
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+
+        if let Some(attr) = missing {
+            return Err(GraphError::Validation(format!(
+                "node '{}' (id={}, op={}) is missing required attribute '{}'.",
+                node.name, node.id, node.op, attr
             )));
         }
     }
