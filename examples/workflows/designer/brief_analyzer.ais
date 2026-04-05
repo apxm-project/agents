@@ -1,0 +1,25 @@
+// brief_analyzer.ais - apxm-designer v0.3
+// Analyze a plain-text app brief -> structured design manifest JSON
+//
+// Usage: apxm execute examples/workflows/designer/brief_analyzer.ais
+
+agent BriefAnalyzer {
+    @entry flow main() -> str {
+        spawn_agent("entity_analyst", "claude", "$APXM_HOME") -> _eh
+        think("You are an Entity & State Machine Analyst.\n\nApp brief: vintage watch marketplace - sellers list watches, buyers browse/filter/favorite/message, sellers have dashboards, buyers make offers sellers accept/reject/counter.\n\nOutput ONLY JSON: {\"entities\":[...],\"user_roles\":[...],\"entity_states\":{...},\"state_transitions\":[...]}") -> entity_prompt
+        communicate("entity_analyst", "acp", entity_prompt) -> entity_json
+
+        spawn_agent("screen_analyst", "claude", "$APXM_HOME") -> _sh
+        think("You are a Screen & Navigation Analyst.\nEntity analysis:\n" + entity_json + "\n\nOutput ONLY JSON: {\"screens\":{...},\"shared_screens\":[...],\"screen_count\":N}") -> screen_prompt
+        communicate("screen_analyst", "acp", screen_prompt) -> screen_json
+
+        spawn_agent("component_analyst", "claude", "$APXM_HOME") -> _ch
+        think("You are a Component & Design System Analyst.\nScreen analysis:\n" + screen_json + "\n\nOutput ONLY JSON: {\"components\":[...],\"patterns\":[...],\"component_count\":N}") -> component_prompt
+        communicate("component_analyst", "acp", component_prompt) -> component_json
+
+        ask("Synthesize into design manifest JSON.\n\nENTITY:\n" + entity_json + "\n\nSCREEN:\n" + screen_json + "\n\nCOMPONENT:\n" + component_json + "\n\nOutput ONLY JSON: {\"summary\":\"...\",\"stats\":{\"entities\":N,\"screens\":N,\"screen_states\":N,\"components\":N,\"estimated_html_files\":N},\"critical_screens\":[...],\"verification_checklist\":[...],\"risks\":[...],\"go_signal\":\"GO\"}") -> manifest
+
+        print("=== APXM-DESIGNER MANIFEST ===\n\n" + manifest)
+        return manifest
+    }
+}

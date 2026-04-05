@@ -34,6 +34,10 @@ public:
   /// Public factory methods
   static mlir::Value generateVerifyOp(MLIRGen &gen, llvm::ArrayRef<std::unique_ptr<Expr>> args,
                                      mlir::Location loc);
+  static mlir::Value generateSpawnAgentOp(MLIRGen &gen,
+                                          llvm::ArrayRef<std::unique_ptr<Expr>> args,
+                                          mlir::Location loc,
+                                          llvm::SmallVectorImpl<mlir::Value> &contextArgs);
   static mlir::Value generateCommunicateOp(MLIRGen &gen,
                                           llvm::ArrayRef<std::unique_ptr<Expr>> args,
                                           mlir::Location loc,
