@@ -13,7 +13,7 @@ use apxm_core::paths::session_node_dir_name;
 use apxm_core::types::{AISOperationType, Value};
 
 #[derive(Clone, Debug)]
-pub(crate) struct WorkspaceNodeMetadata {
+pub struct WorkspaceNodeMetadata {
     pub name: String,
     pub op_type: AISOperationType,
     pub attributes: HashMap<String, Value>,
