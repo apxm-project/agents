@@ -164,12 +164,12 @@ mod tests {
     fn test_error_context_builder() {
         let ctx = ErrorContext::new()
             .with_operation_id(42)
-            .with_operation_type(AISOperationType::Inv)
+            .with_operation_type(AISOperationType::InvTool)
             .with_trace_id("trace-123".to_string())
             .with_metadata("key".to_string(), Value::String("value".to_string()));
 
         assert_eq!(ctx.operation_id, Some(42));
-        assert_eq!(ctx.operation_type, Some(AISOperationType::Inv));
+        assert_eq!(ctx.operation_type, Some(AISOperationType::InvTool));
         assert_eq!(ctx.trace_id, Some("trace-123".to_string()));
         assert_eq!(
             ctx.metadata.get("key"),

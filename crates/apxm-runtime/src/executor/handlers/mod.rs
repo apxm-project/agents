@@ -14,7 +14,7 @@ pub mod flow_call;
 pub mod guard;
 pub mod identity;
 pub mod inner_plan;
-pub mod inv;
+pub mod inv_tool;
 pub mod jump;
 pub mod llm; // Unified handler for Ask/Think/Reason operations
 pub mod loop_end;

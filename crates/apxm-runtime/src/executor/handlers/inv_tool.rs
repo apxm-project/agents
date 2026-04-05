@@ -1,4 +1,4 @@
-//! INV operation - Capability invocation with validation and timeout
+//! INV_TOOL operation - Capability invocation with validation and timeout
 //!
 //! Invokes registered capabilities/tools through the capability system.
 //! Provides automatic input validation, timeout enforcement, and error handling.
@@ -11,7 +11,7 @@ use apxm_core::constants::runtime::belief_keys;
 use apxm_core::error::RuntimeError;
 use std::collections::HashMap;
 
-/// Execute INV operation - Invoke a registered capability
+/// Execute INV_TOOL operation - Invoke a registered capability
 ///
 /// # Attributes
 ///
@@ -38,7 +38,7 @@ use std::collections::HashMap;
 /// # Example
 ///
 /// ```text
-/// INV(capability="echo", timeout_ms=5000) -> result
+/// INV_TOOL(capability="echo", timeout_ms=5000) -> result
 /// ```
 pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -> Result<Value> {
     let capability_name = get_string_attribute(node, graph_attrs::CAPABILITY)?;
@@ -49,7 +49,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         capability = %capability_name,
         inputs = inputs.len(),
         timeout_ms = timeout_ms,
-        "Executing INV operation"
+        "Executing INV_TOOL operation"
     );
 
     // Convert inputs to HashMap<String, Value>
@@ -89,7 +89,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     // Substitute {{input_N}} and {N} placeholders in string values with upstream inputs.
     // This allows params_json to reference upstream node outputs, e.g.:
     //   params_json: {"agent": "claude", "prompt": "{{input_0}}"}
-    // where input_0 is the first data-edge input to this INV node.
+    // where input_0 is the first data-edge input to this INV_TOOL node.
     if !inputs.is_empty() {
         for val in args.values_mut() {
             if let Value::String(s) = val {
@@ -201,7 +201,7 @@ mod tests {
 
         let mut node = Node {
             id: 1,
-            op_type: AISOperationType::Inv,
+            op_type: AISOperationType::InvTool,
             attributes: HashMap::new(),
             input_tokens: vec![],
             output_tokens: vec![100],
@@ -230,7 +230,7 @@ mod tests {
 
         let mut node = Node {
             id: 1,
-            op_type: AISOperationType::Inv,
+            op_type: AISOperationType::InvTool,
             attributes: HashMap::new(),
             input_tokens: vec![],
             output_tokens: vec![100],
@@ -252,7 +252,7 @@ mod tests {
 
         let mut node = Node {
             id: 1,
-            op_type: AISOperationType::Inv,
+            op_type: AISOperationType::InvTool,
             attributes: HashMap::new(),
             input_tokens: vec![],
             output_tokens: vec![100],

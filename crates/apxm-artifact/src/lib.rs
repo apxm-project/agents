@@ -261,7 +261,7 @@ mod tests {
         ExecutionDag {
             nodes: vec![Node {
                 id: 1,
-                op_type: AISOperationType::Inv,
+                op_type: AISOperationType::InvTool,
                 attributes: HashMap::new(),
                 input_tokens: vec![],
                 output_tokens: vec![1],

@@ -125,7 +125,7 @@ mod tests {
 
     #[test]
     fn operation_leaf_depth_zero() {
-        let wn = WorkflowNode::Operation(make_node(1, AISOperationType::Inv));
+        let wn = WorkflowNode::Operation(make_node(1, AISOperationType::InvTool));
         assert_eq!(wn.depth(), 0);
         assert!(wn.is_leaf());
         assert!(!wn.is_sub_workflow());
@@ -186,7 +186,7 @@ mod tests {
         let wn = WorkflowNode::SubWorkflow {
             name: "inner".into(),
             nodes: vec![
-                WorkflowNode::Operation(make_node(1, AISOperationType::Inv)),
+                WorkflowNode::Operation(make_node(1, AISOperationType::InvTool)),
                 WorkflowNode::FlowCall {
                     flow_name: "helper".into(),
                     inputs: vec![],
@@ -247,7 +247,7 @@ mod tests {
                             flow_name: "other".into(),
                             inputs: vec![],
                         },
-                        WorkflowNode::Operation(make_node(3, AISOperationType::Inv)),
+                        WorkflowNode::Operation(make_node(3, AISOperationType::InvTool)),
                     ],
                     edges: vec![],
                 },
@@ -282,7 +282,7 @@ mod tests {
                     name: "inner".into(),
                     nodes: vec![
                         WorkflowNode::Operation(make_node(2, AISOperationType::Think)),
-                        WorkflowNode::Operation(make_node(3, AISOperationType::Inv)),
+                        WorkflowNode::Operation(make_node(3, AISOperationType::InvTool)),
                     ],
                     edges: vec![],
                 },
@@ -334,7 +334,7 @@ mod tests {
     #[test]
     fn deeply_nested_stress() {
         // Build 50 levels of nesting to make sure recursion works
-        let mut current = WorkflowNode::Operation(make_node(1, AISOperationType::Inv));
+        let mut current = WorkflowNode::Operation(make_node(1, AISOperationType::InvTool));
         for i in 0..50 {
             current = WorkflowNode::SubWorkflow {
                 name: format!("level_{}", i),

@@ -215,7 +215,7 @@ impl BashCapability {
             write_paths,
             needs_network: self.needs_network(args),
             needs_process_spawn: true,
-            origin_op: Some(AISOperationType::Inv.to_string()),
+            origin_op: Some(AISOperationType::InvTool.to_string()),
             ..ExecRequest::default()
         })
     }

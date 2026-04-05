@@ -401,7 +401,7 @@ fn to_tablegen_name(op_type: AISOperationType) -> String {
         AISOperationType::Plan => "Plan",
         AISOperationType::Reflect => "Reflect",
         AISOperationType::Verify => "Verify",
-        AISOperationType::Inv => "Inv",
+        AISOperationType::InvTool => "InvTool",
         AISOperationType::Exc => "Exc",
         AISOperationType::Print => "Print",
         AISOperationType::Jump => "Jump",
@@ -540,7 +540,7 @@ fn derive_mlir_spec(base: &'static OperationSpec) -> MlirOperationSpec {
         ],
         Verify => &[MemoryEffect::MemRead(AISResource::Belief)],
         Plan => &[MemoryEffect::MemWrite(AISResource::Goal)],
-        Inv => &[MemoryEffect::MemRead(AISResource::Capability)],
+        InvTool => &[MemoryEffect::MemRead(AISResource::Capability)],
         _ => &[],
     };
 

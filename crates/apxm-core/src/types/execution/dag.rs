@@ -280,7 +280,7 @@ mod tests {
     #[test]
     fn test_add_duplicate_node() {
         let mut dag = ExecutionDag::new();
-        let node1 = Node::new(1, AISOperationType::Inv);
+        let node1 = Node::new(1, AISOperationType::InvTool);
         let node2 = Node::new(1, AISOperationType::Ask);
         dag.add_node(node1)
             .expect("initial node insertion should succeed");
@@ -299,7 +299,7 @@ mod tests {
     #[test]
     fn test_find_entry_nodes() {
         let mut dag = ExecutionDag::new();
-        dag.add_node(Node::new(1, AISOperationType::Inv))
+        dag.add_node(Node::new(1, AISOperationType::InvTool))
             .expect("node insertion should succeed");
         dag.add_node(Node::new(2, AISOperationType::Ask))
             .expect("node insertion should succeed");
@@ -312,7 +312,7 @@ mod tests {
     #[test]
     fn test_find_exit_nodes() {
         let mut dag = ExecutionDag::new();
-        dag.add_node(Node::new(1, AISOperationType::Inv))
+        dag.add_node(Node::new(1, AISOperationType::InvTool))
             .expect("node insertion should succeed");
         dag.add_node(Node::new(2, AISOperationType::Ask))
             .expect("node insertion should succeed");
@@ -325,7 +325,7 @@ mod tests {
     #[test]
     fn test_has_cycles() {
         let mut dag = ExecutionDag::new();
-        dag.add_node(Node::new(1, AISOperationType::Inv))
+        dag.add_node(Node::new(1, AISOperationType::InvTool))
             .expect("node insertion should succeed");
         dag.add_node(Node::new(2, AISOperationType::Ask))
             .expect("node insertion should succeed");
@@ -339,7 +339,7 @@ mod tests {
     #[test]
     fn test_validate_ok() {
         let mut dag = ExecutionDag::new();
-        let mut node1 = Node::new(1, AISOperationType::Inv);
+        let mut node1 = Node::new(1, AISOperationType::InvTool);
         node1.add_output_token(10);
         dag.add_node(node1).expect("node insertion should succeed");
         let mut node2 = Node::new(2, AISOperationType::Ask);
@@ -355,7 +355,7 @@ mod tests {
     #[test]
     fn test_validate_cycle() {
         let mut dag = ExecutionDag::new();
-        dag.add_node(Node::new(1, AISOperationType::Inv))
+        dag.add_node(Node::new(1, AISOperationType::InvTool))
             .expect("node insertion should succeed");
         dag.add_node(Node::new(2, AISOperationType::Ask))
             .expect("node insertion should succeed");
