@@ -1,42 +1,99 @@
 {
   "name": "parallel-review",
-  "parameters": [{"name": "question", "type_name": "str"}],
+  "parameters": [
+    {
+      "name": "question",
+      "type_name": "str"
+    }
+  ],
   "nodes": [
     {
       "id": 1,
-      "name": "ask_codex",
-      "op": "INV",
+      "name": "spawn_codex",
+      "op": "SPAWN_AGENT",
       "attributes": {
-        "capability": "acp",
-        "params_json": "{\"agent\": \"codex\", \"prompt\": \"Answer: {0}\"}",
-        "timeout_ms": 300000
+        "agent_name": "codex_agent",
+        "profile": "codex"
       }
     },
     {
       "id": 2,
-      "name": "ask_claude",
-      "op": "INV",
+      "name": "spawn_claude",
+      "op": "SPAWN_AGENT",
       "attributes": {
-        "capability": "acp",
-        "params_json": "{\"agent\": \"claude\", \"prompt\": \"Answer: {0}\"}",
-        "timeout_ms": 300000
+        "agent_name": "claude_agent",
+        "profile": "claude"
       }
     },
     {
       "id": 3,
+      "name": "ask_codex",
+      "op": "COMMUNICATE",
+      "attributes": {
+        "recipient": "codex_agent",
+        "protocol": "acp",
+        "message": "Answer: {{question}}"
+      }
+    },
+    {
+      "id": 4,
+      "name": "ask_claude",
+      "op": "COMMUNICATE",
+      "attributes": {
+        "recipient": "claude_agent",
+        "protocol": "acp",
+        "message": "Answer: {{question}}"
+      }
+    },
+    {
+      "id": 5,
+      "name": "wait_answers",
+      "op": "WAIT_ALL",
+      "attributes": {
+        "tokens": [
+          "{{node_3}}",
+          "{{node_4}}"
+        ]
+      }
+    },
+    {
+      "id": 6,
       "name": "compare",
       "op": "ASK",
       "attributes": {
-        "template_str": "Compare these answers:\nCodex: {0}\nClaude: {1}\nWhich is better and why?",
+        "template_str": "Compare these answers:\nCodex: {{node_3}}\nClaude: {{node_4}}\nWhich is better and why?",
         "model_policy": "fast"
       }
     }
   ],
   "edges": [
-    {"from": 1, "to": 3, "dependency": "Data"},
-    {"from": 2, "to": 3, "dependency": "Data"}
+    {
+      "from": 1,
+      "to": 3,
+      "dependency": "Data"
+    },
+    {
+      "from": 2,
+      "to": 4,
+      "dependency": "Data"
+    },
+    {
+      "from": 3,
+      "to": 5,
+      "dependency": "Data"
+    },
+    {
+      "from": 4,
+      "to": 5,
+      "dependency": "Data"
+    },
+    {
+      "from": 5,
+      "to": 6,
+      "dependency": "Data"
+    }
   ],
   "metadata": {
-    "description": "Ask two ACP agents the same question in parallel, then compare their answers"
+    "description": "Spawn two ACP agents in parallel, ask each, then compare"
   }
 }

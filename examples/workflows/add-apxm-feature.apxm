@@ -90,12 +90,22 @@
     },
     {
       "id": 10,
-      "name": "implement",
-      "op": "INV",
+      "name": "spawn_implementer",
+      "op": "SPAWN_AGENT",
       "attributes": {
-        "capability": "acp",
-        "params_json": "{\"agent\": \"codex\", \"prompt\": \"{{input_0}}\", \"cwd\": \"$APXM_HOME\"}",
-        "timeout_ms": 1800000
+        "agent_name": "implementer",
+        "profile": "codex",
+        "cwd": "$APXM_HOME"
+      }
+    },
+    {
+      "id": 15,
+      "name": "implement",
+      "op": "COMMUNICATE",
+      "attributes": {
+        "recipient": "implementer",
+        "protocol": "acp",
+        "message": "{{input_0}}"
       }
     },
     {
@@ -117,12 +127,22 @@
     },
     {
       "id": 13,
-      "name": "review",
-      "op": "INV",
+      "name": "spawn_reviewer",
+      "op": "SPAWN_AGENT",
       "attributes": {
-        "capability": "acp",
-        "params_json": "{\"agent\": \"claude\", \"prompt\": \"{{input_0}}\", \"cwd\": \"$APXM_HOME\"}",
-        "timeout_ms": 900000
+        "agent_name": "reviewer",
+        "profile": "claude",
+        "cwd": "$APXM_HOME"
+      }
+    },
+    {
+      "id": 16,
+      "name": "review",
+      "op": "COMMUNICATE",
+      "attributes": {
+        "recipient": "reviewer",
+        "protocol": "acp",
+        "message": "{{input_0}}"
       }
     },
     {
@@ -191,12 +211,22 @@
       "dependency": "Data"
     },
     {
-      "from": 10,
-      "to": 11,
+      "from": 9,
+      "to": 15,
       "dependency": "Data"
     },
     {
       "from": 10,
+      "to": 15,
+      "dependency": "Data"
+    },
+    {
+      "from": 15,
+      "to": 11,
+      "dependency": "Data"
+    },
+    {
+      "from": 15,
       "to": 12,
       "dependency": "Data"
     },
@@ -206,22 +236,33 @@
       "dependency": "Data"
     },
     {
+      "from": 12,
+      "to": 16,
+      "dependency": "Data"
+    },
+    {
       "from": 13,
+      "to": 16,
+      "dependency": "Data"
+    },
+    {
+      "from": 16,
       "to": 14,
       "dependency": "Data"
     }
   ],
   "metadata": {
-    "description": "Meta-workflow: 3 parallel THINK planning nodes (architectural, implementation, test-focused), WAIT_ALL sync, MERGE concat, THINK synthesis, THINK formats implementer prompt, INV(codex) implements, THINK formats reviewer prompt, INV(claude) reviews and fixes.",
-    "pattern": "think x3 (parallel) \u2192 wait-all \u2192 merge \u2192 think (synthesize) \u2192 think (format impl prompt) \u2192 inv(codex) \u2192 think (format review prompt) \u2192 inv(claude)",
+    "description": "Meta-workflow: 3 parallel THINK planning nodes (architectural, implementation, test-focused), WAIT_ALL sync, MERGE concat, THINK synthesis, THINK formats implementer prompt, SPAWN_AGENT+COMMUNICATE implement, THINK formats reviewer prompt, SPAWN_AGENT+COMMUNICATE review.",
+    "pattern": "think x3 (parallel) \u2192 wait-all \u2192 merge \u2192 think (synthesize) \u2192 think (format impl prompt) \u2192 spawn_agent+communicate (codex) \u2192 think (format review prompt) \u2192 spawn_agent+communicate (claude)",
     "ops_demonstrated": [
       "THINK",
       "WAIT_ALL",
       "MERGE",
-      "INV",
+      "SPAWN_AGENT",
+      "COMMUNICATE",
       "PRINT"
     ],
-    "note": "THINK uses {0}=first-input positional substitution at runtime. INV(acp) uses {{input_0}} for the THINK-formatted prompt. Feature text is embedded directly in template_str by launch-feature.sh before execution.",
+    "note": "THINK uses {0}=first-input positional substitution at runtime. COMMUNICATE uses {{input_0}} for the THINK-formatted prompt after SPAWN_AGENT creates the named ACP subprocess. Feature text is embedded directly in template_str by launch-feature.sh before execution.",
     "usage": "Use launch-feature.sh to run \u2014 it substitutes {{FEATURE_REQUEST}} with the actual feature text before invoking dekk apxm execute.",
     "is_entry": true
   }
