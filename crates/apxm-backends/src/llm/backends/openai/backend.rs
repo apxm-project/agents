@@ -367,10 +367,41 @@ impl LLMBackend for OpenAIBackend {
             anyhow::bail!("OpenAI API error (status {}): {}", status, error_text);
         }
 
-        let api_response: OpenAIResponse = response
+        // Parse raw JSON first to handle multiple response formats.
+        // The OpenAI-compatible gateway returns Claude responses in Anthropic format:
+        //   {"model": "...", "response": {"type": "text", "text": "..."}}
+        // Standard OpenAI format:
+        //   {"choices": [{"message": {"content": "..."}}]}
+        let raw: serde_json::Value = response
             .json()
             .await
-            .context("Failed to parse OpenAI response")?;
+            .context("Failed to parse LLM response JSON")?;
+
+        // Try to normalize OpenAI-compatible gateway Claude format to OpenAI format
+        let api_response = if raw.get("choices").is_some() {
+            // Standard OpenAI format
+            serde_json::from_value::<OpenAIResponse>(raw)
+                .context("Failed to parse OpenAI response")
+        } else if let Some(text) = raw.pointer("/response/text").and_then(|v| v.as_str()) {
+            // OpenAI-compatible gateway Claude format: {response: {type: text, text: "..."}}
+            let normalized = serde_json::json!({
+                "choices": [{"message": {"content": text}, "finish_reason": "stop"}],
+                "usage": raw.get("usage").cloned().unwrap_or(serde_json::json!({"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}))
+            });
+            serde_json::from_value::<OpenAIResponse>(normalized)
+                .context("Failed to normalize OpenAI-compatible gateway response")
+        } else if let Some(content) = raw.pointer("/choices/0/message/content").and_then(|v| v.as_str()) {
+            // Already correct but nested differently
+            let normalized = serde_json::json!({
+                "choices": [{"message": {"content": content}, "finish_reason": "stop"}],
+                "usage": raw.get("usage").cloned().unwrap_or(serde_json::json!({"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}))
+            });
+            serde_json::from_value::<OpenAIResponse>(normalized)
+                .context("Failed to normalize response")
+        } else {
+            // Unknown format — try standard parse and let it fail with useful context
+            Err(anyhow::anyhow!("Unrecognized LLM response format: {}", &raw.to_string()[..raw.to_string().len().min(200)]))
+        }?;
 
         self.parse_response(api_response, &model)
     }
