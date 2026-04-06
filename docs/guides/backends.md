@@ -128,7 +128,7 @@ The `protocol` field determines the HTTP wire format APXM uses to talk to the ba
 | `openai` | OpenAI Chat Completions API (also used by OpenRouter, Together, etc.) | ❌ |
 | `anthropic` | Anthropic Messages API | ❌ |
 | `google` | Google Gemini API | ❌ |
-| `ollama` | Ollama local API | ❌ |
+| `ollama` | Ollama local API | ✅ |
 | `vllm` | OpenAI-compatible + APXM graph extensions | ✅ |
 
 ### vLLM and Graph Hints
