@@ -67,7 +67,7 @@ def test_graph_edges():
 def test_spawn_and_communicate():
     """Test spawn_agent and communicate nodes."""
     from apxm import GraphRecorder
-    from apxm._generated.constants import OP_SPAWN_AGENT, OP_COMMUNICATE
+    from apxm.graph.constants import OP_SPAWN_AGENT, OP_COMMUNICATE
 
     g = GraphRecorder("spawn_test")
     spawn = g.spawn_agent("alice_spawn", agent_name="alice", profile="claude")
