@@ -218,6 +218,7 @@ dependencies = [
  "apxm-credentials",
  "apxm-driver",
  "apxm-events",
+ "apxm-frontend",
  "apxm-graph",
  "apxm-runtime",
  "chrono",
@@ -328,6 +329,17 @@ dependencies = [
  "serde_json",
  "tokio",
  "uuid",
+]
+
+[[package]]
+name = "apxm-frontend"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "apxm-acp",
+ "apxm-ais",
+ "apxm-core",
+ "serde_json",
 ]
 
 [[package]]

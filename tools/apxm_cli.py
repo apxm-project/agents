@@ -24,6 +24,7 @@ ensure_dekk_bootstrap()
 from dekk import Typer
 
 from scripts.build import register_commands as register_build
+from scripts.codegen import register_commands as register_codegen
 from scripts.compile import register_commands as register_compile
 from scripts.execute import register_commands as register_execute
 from scripts.install import register_commands as register_install
@@ -47,6 +48,7 @@ app = Typer(
 
 # Register top-level commands
 register_build(app)
+register_codegen(app)
 register_compile(app)
 register_execute(app)
 register_models(app)

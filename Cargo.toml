@@ -5,6 +5,7 @@ members = [
 	"crates/apxm-compiler",
 	"crates/apxm-driver",
 	"crates/apxm-server",
+	"crates/apxm-frontend/rust",
 	"crates/apxm-graph",
 	"crates/apxm-tools",
 	"crates/apxm-credentials",

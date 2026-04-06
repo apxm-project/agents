@@ -265,6 +265,40 @@ fn validate_invalid_json() {
     assert!(!out.status.success());
 }
 
+#[test]
+fn codegen_frontend_writes_generated_python_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = apxm()
+        .args([
+            "--json",
+            "codegen",
+            "frontend",
+            "--output-dir",
+            dir.path().to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(out.status.success());
+
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["target"], "frontend");
+
+    let files = v["files"].as_array().unwrap();
+    assert!(files.iter().any(|item| item == "__init__.py"));
+    assert!(files.iter().any(|item| item == "constants.py"));
+    assert!(files.iter().any(|item| item == "operations.py"));
+    assert!(files.iter().any(|item| item == "agents.py"));
+
+    let constants = std::fs::read_to_string(dir.path().join("constants.py")).unwrap();
+    let operations = std::fs::read_to_string(dir.path().join("operations.py")).unwrap();
+    let agents = std::fs::read_to_string(dir.path().join("agents.py")).unwrap();
+
+    assert!(constants.contains("MODEL: Final[str] = \"model\""));
+    assert!(operations.contains("SPAWN_AGENT: Final = OpSpec("));
+    assert!(agents.contains("claude: Final = AgentRef("));
+}
+
 // ─── analyze ────────────────────────────────────────────────────────────────
 
 #[test]
