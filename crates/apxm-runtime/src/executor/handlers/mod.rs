@@ -31,6 +31,7 @@ pub mod register_capability;
 pub mod resume; // Phase 1: RESUME
 pub mod return_op;
 pub mod spawn_agent;
+pub mod spawn_team;
 pub mod switch;
 pub mod try_catch;
 pub mod umem;

@@ -112,6 +112,7 @@ impl OperationDispatcher {
             AISOperationType::Nop => nop::execute(ctx, node, inputs).await,
             AISOperationType::Identity => identity::execute(ctx, node, inputs).await,
             AISOperationType::SpawnAgent => spawn_agent::execute(ctx, node, inputs).await,
+            AISOperationType::SpawnTeam => spawn_team::execute(ctx, node, inputs).await,
             AISOperationType::RegisterCapability => {
                 register_capability::execute(ctx, node, inputs).await
             }

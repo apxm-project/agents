@@ -118,6 +118,8 @@ pub enum AISOperationType {
     // Self-Organization Operations
     /// Spawn a new agent instance at runtime.
     SpawnAgent,
+    /// Spawn all members of a team (expands to N SPAWN_AGENT operations).
+    SpawnTeam,
     /// Register a new capability in the runtime registry.
     RegisterCapability,
 
@@ -187,6 +189,7 @@ impl fmt::Display for AISOperationType {
             AISOperationType::Identity => write!(f, "IDENTITY"),
             // Self-Organization
             AISOperationType::SpawnAgent => write!(f, "SPAWN_AGENT"),
+            AISOperationType::SpawnTeam => write!(f, "SPAWN_TEAM"),
             AISOperationType::RegisterCapability => write!(f, "REGISTER_CAPABILITY"),
             // Autonomous
             AISOperationType::Autonomous => write!(f, "AUTONOMOUS"),
@@ -241,6 +244,7 @@ impl std::str::FromStr for AISOperationType {
             "nop" => Ok(AISOperationType::Nop),
             "identity" => Ok(AISOperationType::Identity),
             "spawn_agent" => Ok(AISOperationType::SpawnAgent),
+            "spawn_team" => Ok(AISOperationType::SpawnTeam),
             "register_capability" => Ok(AISOperationType::RegisterCapability),
             "autonomous" => Ok(AISOperationType::Autonomous),
             "checkpoint" => Ok(AISOperationType::Checkpoint),
@@ -290,6 +294,7 @@ impl AISOperationType {
             AISOperationType::Nop => "nop",
             AISOperationType::Identity => "identity",
             AISOperationType::SpawnAgent => "spawn_agent",
+            AISOperationType::SpawnTeam => "spawn_team",
             AISOperationType::RegisterCapability => "register_capability",
             AISOperationType::Autonomous => "autonomous",
             AISOperationType::Checkpoint => "checkpoint",
@@ -344,6 +349,7 @@ impl AISOperationType {
             36 => Some(AISOperationType::RegisterCapability),
             37 => Some(AISOperationType::Autonomous),
             38 => Some(AISOperationType::Checkpoint),
+            39 => Some(AISOperationType::SpawnTeam),
             _ => None,
         }
     }
@@ -391,6 +397,7 @@ impl AISOperationType {
             AISOperationType::RegisterCapability => Some(36),
             AISOperationType::Autonomous => Some(37),
             AISOperationType::Checkpoint => Some(38),
+            AISOperationType::SpawnTeam => Some(39),
             // Ops without wire indices
             _ => None,
         }
@@ -434,6 +441,7 @@ impl AISOperationType {
             AISOperationType::Nop,
             AISOperationType::Identity,
             AISOperationType::SpawnAgent,
+            AISOperationType::SpawnTeam,
             AISOperationType::RegisterCapability,
             AISOperationType::Autonomous,
             AISOperationType::Checkpoint,
@@ -1410,6 +1418,30 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             ),
             OperationField::optional("capabilities", "List of capabilities for the new agent"),
             OperationField::optional("goals", "Initial goals for the new agent"),
+        ],
+        needs_submission: true,
+        min_inputs: 0,
+        produces_output: true,
+    },
+    OperationSpec {
+        op_type: AISOperationType::SpawnTeam,
+        name: "SpawnTeam",
+        category: OperationCategory::Coordination,
+        description: "Spawn all members of a team (expands to N SPAWN_AGENT operations)",
+        long_description: "Spawns all members of a named team definition from ~/.apxm/teams.toml. \
+            Each member is spawned with its configured role, profile, and optional system_prompt. \
+            Returns an object containing all spawned agent identifiers. Team definitions are loaded \
+            from the TeamRegistry at runtime.",
+        latency: OperationLatency::Medium,
+        example_json: Some(
+            r#"{"id": 1, "op": "SPAWN_TEAM", "attributes": {"team_name": "ultrathink", "cwd": "/path/to/project"}}"#,
+        ),
+        fields: &[
+            OperationField::required("team_name", "Name of the team to spawn (from ~/.apxm/teams.toml)"),
+            OperationField::optional(
+                "cwd",
+                "Working directory for all team member subprocesses (defaults to current dir)",
+            ),
         ],
         needs_submission: true,
         min_inputs: 0,

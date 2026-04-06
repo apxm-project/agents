@@ -23,6 +23,7 @@ pub mod graph {
 
     pub mod attrs {
         pub const AGENT_NAME: &str = "agent_name";
+        pub const TEAM_NAME: &str = "team_name";
         pub const FLOW_NAME: &str = "flow_name";
         pub const MODEL: &str = "model";
         pub const PROVIDER: &str = "provider";
@@ -232,6 +233,7 @@ pub mod runtime {
         pub const DESCRIPTION: &str = "description";
         pub const REGISTERED: &str = "registered";
         pub const NAME: &str = "name";
+        pub const TEAM_NAME: &str = "team_name";
         pub const SPAWNED_BY: &str = "spawned_by";
         pub const CAPABILITIES: &str = "capabilities";
         pub const GOALS: &str = "goals";

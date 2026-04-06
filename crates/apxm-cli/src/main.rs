@@ -168,9 +168,10 @@ enum Commands {
         #[command(subcommand)]
         action: AgentAction,
     },
-    /// Manage and inspect model definitions from ~/.apxm/models.toml
-    Models {
+    /// Manage agent teams from ~/.apxm/teams.toml
+    Team {
         #[command(subcommand)]
+        action: TeamAction,
     },
     /// Browse AIS operations (the agent instruction set)
     Ops {
@@ -443,13 +444,30 @@ enum AgentAction {
     Templates,
 }
 
-/// Actions for `apxm models`
-#[derive(Subcommand, Debug)]
-,
-    /// Show Chat-capable models sorted by health (from vendor endpoint)
-    Health,
-    /// Refresh docs/amd-models.md with current backend model data
-    Refresh,
+#[derive(Subcommand)]
+enum TeamAction {
+    /// List all defined teams
+    List,
+    /// Show members of a specific team
+    Show {
+        /// Team name to display
+        name: String,
+    },
+    /// Add a member to an existing team
+    Add {
+        /// Team name
+        #[arg(long)]
+        team: String,
+        /// Role/agent name for the new member
+        #[arg(long)]
+        role: String,
+        /// ACP profile for the member (e.g., "claude", "codex")
+        #[arg(long)]
+        profile: String,
+        /// Optional system prompt for this member
+        #[arg(long)]
+        system_prompt: Option<String>,
+    },
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
@@ -743,6 +761,91 @@ async fn agent_command(action: AgentAction, json_output: bool) -> Result<()> {
     Ok(())
 }
 
+fn team_command(action: TeamAction, json_output: bool) -> Result<()> {
+    use apxm_runtime::team::TeamRegistry;
+
+    match action {
+        TeamAction::List => {
+            let registry = TeamRegistry::load_from_default_path();
+            let teams = registry.list();
+
+            if json_output {
+                let team_list: Vec<serde_json::Value> = teams
+                    .iter()
+                    .map(|t| {
+                        serde_json::json!({
+                            "name": t.name,
+                            "description": t.description,
+                            "members": t.members.len(),
+                        })
+                    })
+                    .collect();
+                println!("{}", serde_json::to_string_pretty(&team_list)?);
+                return Ok(());
+            }
+
+            if teams.is_empty() {
+                println!("No teams defined in ~/.apxm/teams.toml.");
+                println!("Copy docs/examples/teams.toml to ~/.apxm/teams.toml to get started.");
+                return Ok(());
+            }
+
+            print_section_header("Agent Teams");
+            for team in &teams {
+                println!("  {} - {}", team.name.bold(), team.description);
+                println!("    Members: {}", team.members.len());
+                for member in &team.members {
+                    println!("      • {} ({})", member.role, member.profile);
+                }
+                println!();
+            }
+            println!("Use 'apxm team show <name>' to view full team configuration.");
+            Ok(())
+        }
+
+        TeamAction::Show { name } => {
+            let registry = TeamRegistry::load_from_default_path();
+            let team = registry.get(&name).ok_or_else(|| {
+                anyhow::anyhow!("Team '{}' not found. Use 'apxm team list' to see available teams.", name)
+            })?;
+
+            if json_output {
+                println!("{}", serde_json::to_string_pretty(&team)?);
+                return Ok(());
+            }
+
+            print_section_header(&format!("Team: {}", team.name));
+            println!("  Description: {}", team.description);
+            println!("\n  Members:");
+            for member in &team.members {
+                println!("\n    Role:    {}", member.role.bold());
+                println!("    Profile: {}", member.profile);
+                if let Some(ref prompt) = member.system_prompt {
+                    println!("    Prompt:  {}", prompt.lines().next().unwrap_or(""));
+                    if prompt.lines().count() > 1 {
+                        println!("             (+ {} more lines)", prompt.lines().count() - 1);
+                    }
+                }
+            }
+            println!();
+            Ok(())
+        }
+
+        TeamAction::Add {
+            team,
+            role,
+            profile,
+            system_prompt,
+        } => {
+            let mut registry = TeamRegistry::load_from_default_path();
+            registry.add_member(&team, role.clone(), profile.clone(), system_prompt)?;
+
+            println!("Added member '{}' (profile: {}) to team '{}'.", role, profile, team);
+            println!("Team definition saved to ~/.apxm/teams.toml");
+            Ok(())
+        }
+    }
+}
 
 
 fn format_number(n: usize) -> String {
@@ -938,6 +1041,7 @@ async fn run_cli() -> Result<()> {
         Commands::Backend { action } => backend_command(action, cli.json).await,
         Commands::Tool { action } => tool_command(action, cli.json),
         Commands::Agent { action } => agent_command(action, cli.json).await,
+        Commands::Team { action } => team_command(action, cli.json),
         Commands::Ops { action } => ops_command(action, cli.json),
         Commands::Validate {
             input,
@@ -962,6 +1066,7 @@ async fn run_cli_no_driver() -> Result<()> {
         Commands::Install => install_command(),
         Commands::Tool { action } => tool_command(action, cli.json),
         Commands::Agent { action } => agent_command(action, cli.json).await,
+        Commands::Team { action } => team_command(action, cli.json),
         Commands::Ops { action } => ops_command(action, cli.json),
         Commands::Validate {
             input,

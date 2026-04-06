@@ -984,6 +984,19 @@ fn emit_node(
                 Some(('(', ')')),
             )
         }
+        AISOperationType::SpawnTeam => {
+            // spawn_team also takes no data inputs — it expands to N spawn_agent calls
+            emit_simple_op(
+                state,
+                node,
+                &[], // always empty — spawn_team has no data inputs in MLIR
+                "spawn_team",
+                &[graph_attrs::TEAM_NAME, "name"],
+                "team",
+                &[graph_attrs::TEAM_NAME, "name"],
+                Some(('(', ')')),
+            )
+        }
         AISOperationType::RegisterCapability => emit_simple_op(
             state,
             node,
