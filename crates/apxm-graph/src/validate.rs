@@ -55,7 +55,11 @@ pub fn validate_graph(graph: &ApxmGraph) -> Result<(), GraphError> {
     validate_agent_references(graph)?;
     validate_required_attributes(graph)?;
     validate_node_refs(graph)?;
-    validate_agent_ordering(graph)?;
+    // Note: agent ordering (SPAWN_AGENT before COMMUNICATE) is validated
+    // at the semantic layer as E514 (warning). The graph-level check here
+    // was too strict — it required an explicit DAG edge, but the runtime's
+    // process table handles agent lifecycle independently of graph edges.
+    // validate_agent_ordering(graph)?;
 
     Ok(())
 }

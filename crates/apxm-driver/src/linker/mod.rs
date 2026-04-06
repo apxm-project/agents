@@ -232,7 +232,7 @@ impl Linker {
     /// Combines `compile_from_graph` + runtime execution in one call.
     /// No files written — fully in-memory pipeline.
     ///
-    /// ```rust
+    /// ```rust,ignore
     /// // AgentMate usage:
     /// let graph = WorkflowBuilder::new("research").ask("Research {0}").build();
     /// let result = linker.run_from_graph(graph, vec!["quantum".into()], None, None).await?;

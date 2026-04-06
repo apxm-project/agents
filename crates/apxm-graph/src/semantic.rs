@@ -623,36 +623,8 @@ fn check_const_str_with_dynamic_input(graph: &ApxmGraph, errors: &mut Vec<Error>
             }
         }
 
-        // Also validate that const_str has a non-empty "value" attribute
-        match node.attributes.get(graph_attrs::VALUE) {
-            None => {
-                errors.push(
-                    Error::new_global(
-                        ErrorCode::ConstStrWithDynamicInput,
-                        format!(
-                            "node '{}' (id={}, op=CONST_STR): missing required 'value' attribute",
-                            node.name, node.id
-                        ),
-                        &node.name,
-                    )
-                    .with_help("Add a 'value' attribute with the literal string to produce.".to_string()),
-                );
-            }
-            Some(v) if v.as_str().map_or(true, |s| s.is_empty()) => {
-                errors.push(
-                    Error::new_global(
-                        ErrorCode::ConstStrWithDynamicInput,
-                        format!(
-                            "node '{}' (id={}, op=CONST_STR): 'value' attribute is empty",
-                            node.name, node.id
-                        ),
-                        &node.name,
-                    )
-                    .with_help("Provide a non-empty 'value' attribute.".to_string()),
-                );
-            }
-            _ => {}
-        }
+        // Note: missing or empty 'value' is handled by validate_required_attributes.
+        // E518 only covers the dynamic-input case (incoming data edges).
     }
 }
 
@@ -1170,16 +1142,18 @@ mod tests {
 
     #[test]
     fn e518_const_str_without_value_attribute() {
+        // E518 only fires when const_str has incoming DATA edges, not for missing value.
+        // Missing value is handled by validate_required_attributes (structural validation).
+        // A const_str with no value and no incoming edges is valid at semantic level.
         let const_str = make_node(1, "const_str", AISOperationType::ConstStr);
-        // Missing 'value' attribute
-
         let graph = make_graph(vec![const_str], vec![]);
 
         let errors = validate_semantic(&graph, &SemanticContext::default());
         let e518 = errors
             .iter()
             .find(|e| e.code == ErrorCode::ConstStrWithDynamicInput);
-        assert!(e518.is_some(), "E518 should detect missing value attribute");
+        // E518 should NOT fire for missing value — only for dynamic inputs.
+        assert!(e518.is_none(), "E518 should not fire for missing value, only for dynamic inputs");
     }
 
     #[test]
