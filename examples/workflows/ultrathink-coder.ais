@@ -4,7 +4,7 @@
 // Usage: dekk apxm execute examples/workflows/ultrathink-coder.apxm
 
 agent UltrathinkCoder {
-    @entry flow main() -> str {
+    @entry flow main(TASK: str) -> str {
         query_memory("{{TASK}}") -> cache_check
         think("ultrathink. You are a Rust systems architect reviewing the APXM project at ~/projects/agents/apxm.\n\nRead the relevant source files first. Then produce a detailed architectural plan:\n- Which crates are affected and why\n- Exact file paths to create or modify\n- Public API design (structs, traits, function signatures)\n- How it integrates with existing systems (ContextStack, MemoCache, Scheduler)\n- Potential architectural risks\n\nTask: {{TASK}}") -> think_architect
         // TODO: REASON node 3 (think_adversary)

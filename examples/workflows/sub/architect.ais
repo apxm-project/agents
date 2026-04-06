@@ -3,7 +3,7 @@
 // Usage: dekk apxm execute examples/workflows/sub/architect.apxm
 
 agent Architect {
-    @entry flow main() -> str {
+    @entry flow main(TASK: str) -> str {
         think("You are a software architect. Design a high-level architecture for: {{TASK}}\n\nProvide:\n1. Key components\n2. Data flow\n3. Technology recommendations\n\nBe concise but thorough.") -> architect_think
         return architect_think
     }
