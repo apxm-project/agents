@@ -1,0 +1,86 @@
+// ais-writer.ais — Workflow that writes workflows
+//
+// Give it a plan/brief. It designs and WRITES the optimal .ais files to disk.
+// The output is runnable APXM infrastructure, not just a description.
+//
+// Pipeline:
+//   1. Analyst: understand the plan, identify phases + agents + data flow
+//   2. Architect: design the file structure and agent topology
+//   3. Skeptic: challenge the design, find minimum viable version
+//   4. Writer: generate complete .ais file content for each file
+//   5. Writer: save each .ais file to the output directory
+//   6. Summary: show what was created and how to run it
+//
+// Usage:
+//   dekk apxm execute examples/workflows/ais-writer/ais-writer.ais
+//
+// Configure: set PLAN and OUTPUT_DIR below before running.
+
+agent AISWriter {
+    @entry flow main() -> str {
+
+        // ── CONFIGURATION ─────────────────────────────────────────────────
+        // The plan to analyze. Paste your plan/brief here.
+        ask("clic-designer: AI-first commercial app builder on APXM. You describe an app. It produces a production-ready application for any tech stack. The innovation: enforced design phase before code. Phase 1 DISCOVER: 4 parallel specialists (entity analyst CLAUDE REASON produces entity_map.json, competitor analyst GEMINI produces competitor_analysis.json, IA+nav analyst CLAUDE THINK produces navigation_spec.json, design analyst GEMINI produces design_system.json). Then 3 rounds of Q&A with human. Then architect writes 6 spec artifacts while adversary challenges every assumption. Adversary wins scope disputes. Phase 2A COMMON PARTS: component_registry.json defines every component. Each component: CODEX conservative + CLAUDE bold, Claude picks winner. 2-stage verification before use. Phase 2B COMMON SCREENS: shared screens using verified components. Phase 2C FEATURE SCREENS: N screens x V variants all in parallel, each uses data-component placeholders. 2-STAGE VERIFICATION: Stage 1 Qwen3 reads ALL HTML in one pass checks refs and tokens. Stage 2 Playwright headless takes screenshots, Qwen-VL reviews all PNGs cross-screen. FIGMA EXPORT optional after verify passes. Phase 3A CONVERT: sub/component-widget.ais per component then sub/convert.ais per HTML file, both CODEX+CLAUDE pick winner. Phase 3B IMPLEMENT: CODEX backend parallel, CLAUDE wiring. Phase 4 TEST: stack tests, Qwen3 audit, CLAUDE quality gate. Entry points: create.ais add-feature.ais edit-screen.ais add-part.ais. Sub-workflows: sub/screen.ais sub/verify-structural.ais sub/verify-visual.ais sub/convert.ais sub/component-widget.ais sub/endpoint.ais. Output dir: examples/workflows/appbuilder") -> plan_and_dir
+
+        // ── Phase 1: Understand the plan ─────────────────────────────────
+        spawn_agent("analyst", "claude", "$APXM_HOME") -> _an
+
+        ask("Extract the output directory from this plan. Look for something like 'Output dir:' or a path like 'examples/workflows/X'. Return ONLY the directory path, nothing else. Plan: " + plan_and_dir) -> output_dir
+
+        ask("You are an APXM Workflow Analyst. Analyze this plan and produce a precise file manifest.\n\nPLAN:\n" + plan_and_dir + "\n\nProduce JSON with:\n- output_dir: the target directory\n- entry_files: [{name, purpose, flow_params, description}] - top-level .ais files users run directly\n- phase_files: [{name, purpose, agents_spawned, description}] - phases/ sub-directory files\n- sub_files: [{name, purpose, is_atomic, description}] - sub/ sub-directory reusable atomic workflows\n- agent_roster: [{name, profile, role, specialization}] - all unique agents across all files\n- data_flow: [{from, to, artifact, format}] - what data flows between phases\n\nOutput ONLY valid JSON.") -> manifest_prompt
+
+        communicate("analyst", "acp", manifest_prompt) -> manifest
+
+        // ── Phase 2: Design + skeptic review ─────────────────────────────
+        spawn_agent("architect", "claude", "$APXM_HOME") -> _arch
+        spawn_agent("skeptic",   "claude", "$APXM_HOME") -> _sk
+
+        ask("Design an APXM agent topology for this workflow. Manifest:\n" + manifest + "\n\nFor each agent in the roster, design:\n- Exact system prompt / specialization context (100-150 words)\n- What inputs they receive and in what format\n- What outputs they must produce and in what format\n- Any hard constraints (output ONLY JSON, be adversarial, etc)\n\nOutput JSON map of agent_name -> full_context_block.") -> topology_prompt
+
+        communicate("architect", "acp", topology_prompt) -> agent_contexts
+
+        ask("Challenge this workflow design as a skeptic.\n\nManifest:\n" + manifest + "\n\nAgent contexts:\n" + agent_contexts + "\n\nFind:\n1. Over-engineering: what can be removed without losing value?\n2. Missing: what critical piece is absent?\n3. Wrong order: any sequencing mistakes?\n4. Minimum viable: what is the smallest version that proves the concept?\n\nOutput JSON: {findings: [{issue, severity, fix}], minimum_viable_version: string, recommended_first_file: string}") -> skeptic_prompt
+
+        communicate("skeptic", "acp", skeptic_prompt) -> skeptic_review
+
+        // ── Phase 3: Write the .ais files ────────────────────────────────
+        spawn_agent("writer", "claude", "$APXM_HOME") -> _wr
+
+        // Write entry point files
+        ask("Write the entry point .ais files for this workflow.\n\nMANIFEST:\n" + manifest + "\n\nAGENT CONTEXTS:\n" + agent_contexts + "\n\nSKEPTIC:\n" + skeptic_review + "\n\nAIS RULES:\n- agent Name { @entry flow main() -> str { ... } }\n- spawn_agent(name, profile, cwd) -> handle\n- communicate(recipient, protocol, message) -> result (pass plain strings, no concat in communicate args)\n- ask(prompt + var + more) -> result (ask() CAN use string concat)\n- think(prompt) -> result\n- print(message)\n- return value\n- Profiles: claude, codex, qwen\n- Protocol: acp\n- IMPORTANT: never pass string concat directly to communicate() - use ask() to build the string first\n\nWrite COMPLETE runnable .ais files. Real prompts. No placeholders.\nOutput JSON map: {\"filename\": \"complete ais content\"}") -> entry_write_prompt
+
+        communicate("writer", "acp", entry_write_prompt) -> entry_files_json
+
+        // Write phase files
+        ask("Write the phases/ .ais files for this workflow.\n\nMANIFEST:\n" + manifest + "\n\nAGENT CONTEXTS:\n" + agent_contexts + "\n\nSame AIS rules as before. Same constraint: build strings with ask() before passing to communicate().\n\nOutput JSON map: {\"phases/filename\": \"complete ais content\"}") -> phases_write_prompt
+
+        communicate("writer", "acp", phases_write_prompt) -> phase_files_json
+
+        // Write sub-workflow files
+        ask("Write the sub/ atomic .ais files for this workflow.\n\nMANIFEST:\n" + manifest + "\n\nSub-workflows are atomic and reusable. Each does ONE thing well.\nSame AIS rules and constraints.\n\nOutput JSON map: {\"sub/filename\": \"complete ais content\"}") -> sub_write_prompt
+
+        communicate("writer", "acp", sub_write_prompt) -> sub_files_json
+
+        // Write agent profiles
+        ask("Write the agent context files for this workflow.\n\nAGENT CONTEXTS:\n" + agent_contexts + "\n\nFor each agent, write a focused AGENTS.md-style context block (150-250 words):\n- Role and purpose\n- Input format expected\n- Output format required\n- Domain expertise to bring\n- Hard constraints\n\nOutput JSON map: {\"agent_name\": \"context text\"}") -> profiles_write_prompt
+
+        communicate("writer", "acp", profiles_write_prompt) -> profiles_json
+
+        // ── Phase 4: Save files to disk ───────────────────────────────────
+        spawn_agent("file_writer", "claude", "$APXM_HOME") -> _fw
+
+        ask("I need to save these .ais files to disk. Generate a bash script that:\n1. Creates the directory structure\n2. Writes each file using heredoc syntax\n3. Prints each file as it is written\n\nOutput directory: " + output_dir + "\n\nFiles to write:\nENTRY FILES:\n" + entry_files_json + "\n\nPHASE FILES:\n" + phase_files_json + "\n\nSUB FILES:\n" + sub_files_json + "\n\nWrite a complete bash script. Use cat > filename << 'EOF' ... EOF syntax. Escape any $ or backticks inside heredocs.") -> save_script_prompt
+
+        communicate("file_writer", "acp", save_script_prompt) -> save_script
+
+        // Execute the save script
+        think("Extract just the bash script from this response (between ```bash and ``` if present, or the full content if it is already a script): " + save_script) -> clean_script
+
+        ask("The file-writing script has been generated. Here is a summary of what will be created:\n\nOUTPUT DIR: " + output_dir + "\n\nFILES:\n" + manifest + "\n\nSCRIPT (first 500 chars): " + clean_script + "\n\nFormat a final summary:\n## AIS-WRITER COMPLETE\n\n### What Was Designed\n[2-3 sentences about the workflow]\n\n### Files Created\n[list each file with one-line description]\n\n### How to Run\n```bash\n[exact commands]\n```\n\n### First Step\n[what to run first to see it working]") -> summary
+
+        print("AIS-WRITER COMPLETE\n\n" + summary + "\n\n--- GENERATED FILES ---\n\nEntry points:\n" + entry_files_json + "\n\nPhase workflows:\n" + phase_files_json + "\n\nSub-workflows:\n" + sub_files_json + "\n\nAgent profiles:\n" + profiles_json)
+
+        return summary
+    }
+}
