@@ -77,7 +77,10 @@ pub fn lower_to_mlir(graph: &ApxmGraph) -> Result<String, GraphError> {
 
     for node_id in &order {
         let node = nodes_by_id.get(node_id).ok_or_else(|| {
-            GraphError::Lowering(format!("node id {node_id} missing during lowering"))
+            GraphError::Lowering(format!(
+                "MLIR lowering internal error: node id {} not found in topological order (graph: '{}')",
+                node_id, graph.name
+            ))
         })?;
 
         let mut inputs = incoming_by_target
@@ -86,9 +89,15 @@ pub fn lower_to_mlir(graph: &ApxmGraph) -> Result<String, GraphError> {
             .flatten()
             .map(|source_id| {
                 produced_values.get(source_id).cloned().ok_or_else(|| {
+                    let source_name = nodes_by_id
+                        .get(source_id)
+                        .map(|n| n.name.as_str())
+                        .unwrap_or("unknown");
                     GraphError::Lowering(format!(
-                        "node {} references source {} with no produced value",
-                        node.id, source_id
+                        "MLIR lowering failed for node '{}' (id={}, op={}): \
+                         references source node '{}' (id={}) which has no produced SSA value. \
+                         This indicates the source node's MLIR emission did not produce an output.",
+                        node.name, node.id, node.op, source_name, source_id
                     ))
                 })
             })
@@ -234,9 +243,17 @@ fn topo_order(
     }
 
     if order.len() != nodes_by_id.len() {
-        return Err(GraphError::Lowering(
-            "topological ordering failed (graph may not be acyclic)".to_string(),
-        ));
+        let missing_count = nodes_by_id.len() - order.len();
+        return Err(GraphError::Lowering(format!(
+            "MLIR lowering failed: topological sort produced {} nodes but graph '{}' has {} nodes. \
+             {} node(s) unreachable (graph may contain cycles or disconnected components). \
+             Run 'apxm validate {}' to diagnose DAG structure.",
+            order.len(),
+            graph.name,
+            nodes_by_id.len(),
+            missing_count,
+            graph.name
+        )));
     }
 
     Ok(order)
