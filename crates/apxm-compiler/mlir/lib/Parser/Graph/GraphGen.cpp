@@ -439,6 +439,16 @@ private:
   }
 
   bool appendTemplateReference(const ValueRef &value, TemplateBuild &out) {
+    // Flow parameter refs: emit {{PARAM_NAME}} for runtime param_map substitution.
+    // This avoids a spurious data edge from the param token and correctly threads
+    // the flow parameter value through the template string at execution time.
+    if (value.kind == ValueRef::Kind::Param) {
+      out.text.append("{{");
+      out.text.append(value.paramName);
+      out.text.append("}}");
+      return true;
+    }
+    // Node output refs: use positional {N} placeholder with a data edge.
     size_t index = out.refs.size();
     out.text.append("{");
     out.text.append(std::to_string(index));
