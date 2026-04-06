@@ -30,6 +30,22 @@ use apxm_core::error::RuntimeError;
 /// Well-known flow names tried in order when looking up a recipient agent.
 const COMMUNICATE_FLOW_NAMES: &[&str] = &["communicate", "main"];
 
+fn message_from_attributes(node: &Node) -> Option<Value> {
+    get_string_attribute(node, graph_attrs::MESSAGE)
+        .ok()
+        .map(Value::String)
+        .or_else(|| {
+            get_string_attribute(node, graph_attrs::PROMPT)
+                .ok()
+                .map(Value::String)
+        })
+        .or_else(|| {
+            get_string_attribute(node, graph_attrs::TEMPLATE_STR)
+                .ok()
+                .map(Value::String)
+        })
+}
+
 pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -> Result<Value> {
     // Accept both the historical "target" attribute and the current "recipient"
     // emitted by the compiler.
@@ -46,9 +62,14 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
             .find(|v| matches!(v, Value::String(_)))
             .cloned()
             .or_else(|| inputs.first().cloned())
+            .or_else(|| message_from_attributes(node))
             .unwrap_or(Value::Null)
     } else {
-        inputs.first().cloned().unwrap_or(Value::Null)
+        inputs
+            .first()
+            .cloned()
+            .or_else(|| message_from_attributes(node))
+            .unwrap_or(Value::Null)
     };
 
     match protocol.as_str() {
@@ -417,6 +438,16 @@ async fn execute_acp(
             .map(|j| serde_json::to_string(&j).unwrap_or_default())
             .unwrap_or_default(),
     };
+
+    if prompt_text.trim().is_empty() {
+        return Err(RuntimeError::Operation {
+            op_type: node.op_type,
+            message: format!(
+                "COMMUNICATE(acp) to '{}' requires a non-empty message or string input",
+                recipient
+            ),
+        });
+    }
 
     // Record the outgoing message in AAM beliefs for observability
     let label = TransitionLabel::Custom(format!("communicate_acp:{}", recipient));
@@ -810,6 +841,120 @@ mod tests {
         assert!(recorded[0].contains("upstream data"));
         assert!(recorded[0].contains("Respond to the user"));
         assert_eq!(result, Value::String(recorded[0].clone()));
+    }
+
+    #[tokio::test]
+    async fn test_communicate_acp_uses_message_attribute_when_inputs_missing() {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(LLMRegistry::new());
+        let capability_system = Arc::new(CapabilitySystem::new());
+        let process_table = Arc::new(crate::process_table::ProcessTable::new());
+        process_table
+            .spawn_local("PeerAgent".to_string(), None)
+            .expect("spawn local process");
+
+        let prompts = Arc::new(Mutex::new(Vec::new()));
+        process_table
+            .set_agent_prompter(Arc::new(RecordingPrompter {
+                prompts: Arc::clone(&prompts),
+            }))
+            .await;
+
+        let ctx = ExecutionContext::new(
+            memory,
+            llm_registry,
+            capability_system,
+            crate::aam::Aam::new(),
+        )
+        .with_process_table(process_table);
+
+        let mut node = apxm_core::types::execution::Node {
+            id: 1,
+            op_type: AISOperationType::Communicate,
+            attributes: HashMap::new(),
+            input_tokens: vec![],
+            output_tokens: vec![100],
+            metadata: NodeMetadata::default(),
+        };
+        node.attributes.insert(
+            graph_attrs::RECIPIENT.to_string(),
+            Value::String("PeerAgent".to_string()),
+        );
+        node.attributes.insert(
+            graph_attrs::PROTOCOL.to_string(),
+            Value::String(comm_proto::ACP.to_string()),
+        );
+        node.attributes.insert(
+            graph_attrs::MESSAGE.to_string(),
+            Value::String("Respond from attribute".to_string()),
+        );
+
+        let result = execute(&ctx, &node, vec![]).await.unwrap();
+        assert_eq!(result, Value::String("Respond from attribute".to_string()));
+        let recorded = prompts.lock().expect("prompt lock");
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0], "Respond from attribute");
+    }
+
+    #[tokio::test]
+    async fn test_communicate_acp_rejects_empty_message() {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(LLMRegistry::new());
+        let capability_system = Arc::new(CapabilitySystem::new());
+        let process_table = Arc::new(crate::process_table::ProcessTable::new());
+        process_table
+            .spawn_local("PeerAgent".to_string(), None)
+            .expect("spawn local process");
+
+        let prompts = Arc::new(Mutex::new(Vec::new()));
+        process_table
+            .set_agent_prompter(Arc::new(RecordingPrompter {
+                prompts: Arc::clone(&prompts),
+            }))
+            .await;
+
+        let ctx = ExecutionContext::new(
+            memory,
+            llm_registry,
+            capability_system,
+            crate::aam::Aam::new(),
+        )
+        .with_process_table(process_table);
+
+        let mut node = apxm_core::types::execution::Node {
+            id: 1,
+            op_type: AISOperationType::Communicate,
+            attributes: HashMap::new(),
+            input_tokens: vec![],
+            output_tokens: vec![100],
+            metadata: NodeMetadata::default(),
+        };
+        node.attributes.insert(
+            graph_attrs::RECIPIENT.to_string(),
+            Value::String("PeerAgent".to_string()),
+        );
+        node.attributes.insert(
+            graph_attrs::PROTOCOL.to_string(),
+            Value::String(comm_proto::ACP.to_string()),
+        );
+
+        let error = execute(&ctx, &node, vec![])
+            .await
+            .expect_err("empty prompt should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("requires a non-empty message or string input")
+        );
+        assert!(prompts.lock().expect("prompt lock").is_empty());
     }
 
     #[tokio::test]

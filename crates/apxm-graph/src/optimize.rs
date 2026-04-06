@@ -106,10 +106,181 @@ impl ApxmGraph {
 
         Ok(self)
     }
+
+    /// Analyzes the graph DAG and computes parallelism metrics.
+    ///
+    /// This is a read-only pass that emits analysis results as metadata:
+    /// - `analysis.max_parallelism`: maximum concurrent node count
+    /// - `analysis.critical_path_length`: length of longest dependency chain
+    /// - `analysis.total_nodes`: total node count (for reference)
+    pub fn parallelism_analysis(&mut self) -> Result<&mut Self, GraphError> {
+        let analysis = compute_parallelism_metrics(self);
+
+        // Emit metrics as metadata
+        self.metadata.insert(
+            "analysis.max_parallelism".to_string(),
+            Value::Number((analysis.max_parallelism as i64).into()),
+        );
+        self.metadata.insert(
+            "analysis.critical_path_length".to_string(),
+            Value::Number((analysis.critical_path_length as i64).into()),
+        );
+        self.metadata.insert(
+            "analysis.total_nodes".to_string(),
+            Value::Number((self.nodes.len() as i64).into()),
+        );
+
+        Ok(self)
+    }
+
+    /// Folds CONST_STR nodes into downstream THINK/ASK templates.
+    ///
+    /// When a CONST_STR node is the sole input to a THINK/ASK node and the
+    /// template contains a `{0}` placeholder, inline the constant value
+    /// directly into the template and remove the CONST_STR node.
+    ///
+    /// This reduces graph size and simplifies execution.
+    pub fn constant_folding(&mut self) -> Result<&mut Self, GraphError> {
+        let mut to_remove = Vec::new();
+        let mut template_updates: Vec<(usize, String)> = Vec::new();
+
+        // Build adjacency map: node_id -> list of outgoing edges
+        let mut out_edges: HashMap<u64, Vec<u64>> = HashMap::new();
+        for edge in &self.edges {
+            out_edges.entry(edge.from).or_default().push(edge.to);
+        }
+
+        // Scan for foldable patterns
+        for (_idx, node) in self.nodes.iter().enumerate() {
+            if node.op != AISOperationType::ConstStr {
+                continue;
+            }
+
+            // Get the constant value
+            let const_value = match node.attributes.get(attrs::VALUE) {
+                Some(Value::String(s)) => s.clone(),
+                _ => continue,
+            };
+
+            // Check if this CONST_STR feeds exactly one downstream node
+            let downstream = match out_edges.get(&node.id) {
+                Some(targets) if targets.len() == 1 => targets[0],
+                _ => continue,
+            };
+
+            // Find the downstream node
+            let target_idx = match self.nodes.iter().position(|n| n.id == downstream) {
+                Some(i) => i,
+                None => continue,
+            };
+            let target = &self.nodes[target_idx];
+
+            // Only fold into THINK/ASK nodes
+            if !matches!(target.op, AISOperationType::Think | AISOperationType::Ask) {
+                continue;
+            }
+
+            // Check if template contains {0} placeholder
+            let template = match target.attributes.get(attrs::TEMPLATE_STR) {
+                Some(Value::String(s)) if s.contains("{0}") => s.clone(),
+                _ => continue,
+            };
+
+            // Inline the constant
+            let new_template = template.replace("{0}", &const_value);
+            template_updates.push((target_idx, new_template));
+            to_remove.push(node.id);
+        }
+
+        // Apply template updates
+        for (idx, new_template) in template_updates {
+            self.nodes[idx]
+                .attributes
+                .insert(attrs::TEMPLATE_STR.to_string(), Value::String(new_template));
+        }
+
+        // Remove folded CONST_STR nodes and their edges
+        self.nodes.retain(|n| !to_remove.contains(&n.id));
+        self.edges
+            .retain(|e| !to_remove.contains(&e.from) && !to_remove.contains(&e.to));
+
+        Ok(self)
+    }
+}
+
+#[derive(Debug)]
+struct ParallelismMetrics {
+    max_parallelism: usize,
+    critical_path_length: usize,
+}
+
+/// Compute parallelism metrics for a graph using level-based scheduling.
+fn compute_parallelism_metrics(graph: &ApxmGraph) -> ParallelismMetrics {
+    if graph.nodes.is_empty() {
+        return ParallelismMetrics {
+            max_parallelism: 0,
+            critical_path_length: 0,
+        };
+    }
+
+    // Build adjacency lists
+    let mut incoming: HashMap<u64, Vec<u64>> = HashMap::new();
+    let mut outgoing: HashMap<u64, Vec<u64>> = HashMap::new();
+
+    for edge in &graph.edges {
+        incoming.entry(edge.to).or_default().push(edge.from);
+        outgoing.entry(edge.from).or_default().push(edge.to);
+    }
+
+    // Compute longest path to each node (critical path)
+    let mut longest_path: HashMap<u64, usize> = HashMap::new();
+    let mut queue: Vec<u64> = graph
+        .nodes
+        .iter()
+        .filter(|n| !incoming.contains_key(&n.id))
+        .map(|n| n.id)
+        .collect();
+
+    for id in &queue {
+        longest_path.insert(*id, 1);
+    }
+
+    let mut visited = std::collections::HashSet::new();
+    while let Some(node_id) = queue.pop() {
+        if !visited.insert(node_id) {
+            continue;
+        }
+
+        let current_depth = *longest_path.get(&node_id).unwrap_or(&1);
+
+        if let Some(children) = outgoing.get(&node_id) {
+            for &child in children {
+                let new_depth = current_depth + 1;
+                let entry = longest_path.entry(child).or_insert(0);
+                *entry = (*entry).max(new_depth);
+                queue.push(child);
+            }
+        }
+    }
+
+    let critical_path_length = longest_path.values().max().copied().unwrap_or(0);
+
+    // Compute max parallelism via level sets
+    let mut levels: HashMap<usize, Vec<u64>> = HashMap::new();
+    for (id, depth) in &longest_path {
+        levels.entry(*depth).or_default().push(*id);
+    }
+
+    let max_parallelism = levels.values().map(|v| v.len()).max().unwrap_or(0);
+
+    ParallelismMetrics {
+        max_parallelism,
+        critical_path_length,
+    }
 }
 
 #[cfg(test)]
-mod tests {
+mod prompt_caching_memo_tests {
     use super::*;
     use crate::{GraphEdge, GraphNode};
     use apxm_core::types::DependencyType;
@@ -620,6 +791,420 @@ mod tests {
             Some(&Value::Bool(true))
         );
     }
+
+}
+
+
+#[cfg(test)]
+mod analysis_folding_tests {
+    use super::*;
+    use crate::{GraphEdge, GraphNode};
+    use apxm_core::types::{DependencyType, Number};
+
+    // -----------------------------------------------------------------------
+    // parallelism_analysis tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parallelism_analysis_linear_chain() {
+        let mut graph = ApxmGraph {
+            name: "linear".to_string(),
+            nodes: vec![
+                GraphNode {
+                    id: 1,
+                    name: "n1".into(),
+                    op: AISOperationType::Ask,
+                    attributes: HashMap::new(),
+                },
+                GraphNode {
+                    id: 2,
+                    name: "n2".into(),
+                    op: AISOperationType::Ask,
+                    attributes: HashMap::new(),
+                },
+                GraphNode {
+                    id: 3,
+                    name: "n3".into(),
+                    op: AISOperationType::Ask,
+                    attributes: HashMap::new(),
+                },
+            ],
+            edges: vec![
+                GraphEdge {
+                    from: 1,
+                    to: 2,
+                    dependency: DependencyType::Data,
+                },
+                GraphEdge {
+                    from: 2,
+                    to: 3,
+                    dependency: DependencyType::Data,
+                },
+            ],
+            parameters: vec![],
+            metadata: HashMap::new(),
+        };
+
+        graph.parallelism_analysis().unwrap();
+
+        assert_eq!(
+            graph.metadata.get("analysis.max_parallelism"),
+            Some(&Value::Number(Number::Integer(1)))
+        );
+        assert_eq!(
+            graph.metadata.get("analysis.critical_path_length"),
+            Some(&Value::Number(Number::Integer(3)))
+        );
+    }
+
+    #[test]
+    fn parallelism_analysis_fan_out() {
+        let mut graph = ApxmGraph {
+            name: "fanout".to_string(),
+            nodes: vec![
+                GraphNode {
+                    id: 1,
+                    name: "root".into(),
+                    op: AISOperationType::Ask,
+                    attributes: HashMap::new(),
+                },
+                GraphNode {
+                    id: 2,
+                    name: "branch1".into(),
+                    op: AISOperationType::Ask,
+                    attributes: HashMap::new(),
+                },
+                GraphNode {
+                    id: 3,
+                    name: "branch2".into(),
+                    op: AISOperationType::Ask,
+                    attributes: HashMap::new(),
+                },
+                GraphNode {
+                    id: 4,
+                    name: "branch3".into(),
+                    op: AISOperationType::Ask,
+                    attributes: HashMap::new(),
+                },
+            ],
+            edges: vec![
+                GraphEdge {
+                    from: 1,
+                    to: 2,
+                    dependency: DependencyType::Data,
+                },
+                GraphEdge {
+                    from: 1,
+                    to: 3,
+                    dependency: DependencyType::Data,
+                },
+                GraphEdge {
+                    from: 1,
+                    to: 4,
+                    dependency: DependencyType::Data,
+                },
+            ],
+            parameters: vec![],
+            metadata: HashMap::new(),
+        };
+
+        graph.parallelism_analysis().unwrap();
+
+        // 3 branches can run in parallel
+        assert_eq!(
+            graph.metadata.get("analysis.max_parallelism"),
+            Some(&Value::Number(Number::Integer(3)))
+        );
+        // Critical path: root -> any branch = 2
+        assert_eq!(
+            graph.metadata.get("analysis.critical_path_length"),
+            Some(&Value::Number(Number::Integer(2)))
+        );
+    }
+
+    #[test]
+    fn parallelism_analysis_empty_graph() {
+        let mut graph = ApxmGraph {
+            name: "empty".to_string(),
+            nodes: vec![],
+            edges: vec![],
+            parameters: vec![],
+            metadata: HashMap::new(),
+        };
+
+        graph.parallelism_analysis().unwrap();
+
+        assert_eq!(
+            graph.metadata.get("analysis.max_parallelism"),
+            Some(&Value::Number(Number::Integer(0)))
+        );
+        assert_eq!(
+            graph.metadata.get("analysis.critical_path_length"),
+            Some(&Value::Number(Number::Integer(0)))
+        );
+    }
+
+    #[test]
+    fn parallelism_analysis_complex_dag() {
+        // Diamond pattern: root -> (A, B) -> merge
+        let mut graph = ApxmGraph {
+            name: "diamond".to_string(),
+            nodes: vec![
+                GraphNode {
+                    id: 1,
+                    name: "root".into(),
+                    op: AISOperationType::Ask,
+                    attributes: HashMap::new(),
+                },
+                GraphNode {
+                    id: 2,
+                    name: "a".into(),
+                    op: AISOperationType::Ask,
+                    attributes: HashMap::new(),
+                },
+                GraphNode {
+                    id: 3,
+                    name: "b".into(),
+                    op: AISOperationType::Ask,
+                    attributes: HashMap::new(),
+                },
+                GraphNode {
+                    id: 4,
+                    name: "merge".into(),
+                    op: AISOperationType::Merge,
+                    attributes: HashMap::new(),
+                },
+            ],
+            edges: vec![
+                GraphEdge {
+                    from: 1,
+                    to: 2,
+                    dependency: DependencyType::Data,
+                },
+                GraphEdge {
+                    from: 1,
+                    to: 3,
+                    dependency: DependencyType::Data,
+                },
+                GraphEdge {
+                    from: 2,
+                    to: 4,
+                    dependency: DependencyType::Data,
+                },
+                GraphEdge {
+                    from: 3,
+                    to: 4,
+                    dependency: DependencyType::Data,
+                },
+            ],
+            parameters: vec![],
+            metadata: HashMap::new(),
+        };
+
+        graph.parallelism_analysis().unwrap();
+
+        // Max parallelism = 2 (A and B can run together)
+        assert_eq!(
+            graph.metadata.get("analysis.max_parallelism"),
+            Some(&Value::Number(Number::Integer(2)))
+        );
+        // Critical path: root -> A/B -> merge = 3
+        assert_eq!(
+            graph.metadata.get("analysis.critical_path_length"),
+            Some(&Value::Number(Number::Integer(3)))
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // constant_folding tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn constant_folding_folds_single_input() {
+        let mut graph = ApxmGraph {
+            name: "fold_test".to_string(),
+            nodes: vec![
+                GraphNode {
+                    id: 1,
+                    name: "const1".to_string(),
+                    op: AISOperationType::ConstStr,
+                    attributes: HashMap::from([(
+                        attrs::VALUE.to_string(),
+                        Value::String("hello world".into()),
+                    )]),
+                },
+                GraphNode {
+                    id: 2,
+                    name: "think1".to_string(),
+                    op: AISOperationType::Think,
+                    attributes: HashMap::from([(
+                        attrs::TEMPLATE_STR.to_string(),
+                        Value::String("Process: {0}".into()),
+                    )]),
+                },
+            ],
+            edges: vec![GraphEdge {
+                from: 1,
+                to: 2,
+                dependency: DependencyType::Data,
+            }],
+            parameters: vec![],
+            metadata: HashMap::new(),
+        };
+
+        graph.constant_folding().unwrap();
+
+        // CONST_STR node should be removed
+        assert_eq!(graph.nodes.len(), 1);
+        assert_eq!(graph.nodes[0].op, AISOperationType::Think);
+
+        // Template should be inlined
+        assert_eq!(
+            graph.nodes[0].attributes.get(attrs::TEMPLATE_STR),
+            Some(&Value::String("Process: hello world".into()))
+        );
+
+        // Edge should be removed
+        assert_eq!(graph.edges.len(), 0);
+    }
+
+    #[test]
+    fn constant_folding_ignores_multiple_outputs() {
+        let mut graph = ApxmGraph {
+            name: "multi_out".to_string(),
+            nodes: vec![
+                GraphNode {
+                    id: 1,
+                    name: "const1".to_string(),
+                    op: AISOperationType::ConstStr,
+                    attributes: HashMap::from([(
+                        attrs::VALUE.to_string(),
+                        Value::String("shared".into()),
+                    )]),
+                },
+                GraphNode {
+                    id: 2,
+                    name: "think1".to_string(),
+                    op: AISOperationType::Think,
+                    attributes: HashMap::from([(
+                        attrs::TEMPLATE_STR.to_string(),
+                        Value::String("A: {0}".into()),
+                    )]),
+                },
+                GraphNode {
+                    id: 3,
+                    name: "think2".to_string(),
+                    op: AISOperationType::Think,
+                    attributes: HashMap::from([(
+                        attrs::TEMPLATE_STR.to_string(),
+                        Value::String("B: {0}".into()),
+                    )]),
+                },
+            ],
+            edges: vec![
+                GraphEdge {
+                    from: 1,
+                    to: 2,
+                    dependency: DependencyType::Data,
+                },
+                GraphEdge {
+                    from: 1,
+                    to: 3,
+                    dependency: DependencyType::Data,
+                },
+            ],
+            parameters: vec![],
+            metadata: HashMap::new(),
+        };
+
+        graph.constant_folding().unwrap();
+
+        // Should NOT fold (CONST_STR has multiple consumers)
+        assert_eq!(graph.nodes.len(), 3);
+        assert_eq!(graph.edges.len(), 2);
+    }
+
+    #[test]
+    fn constant_folding_requires_placeholder() {
+        let mut graph = ApxmGraph {
+            name: "no_placeholder".to_string(),
+            nodes: vec![
+                GraphNode {
+                    id: 1,
+                    name: "const1".to_string(),
+                    op: AISOperationType::ConstStr,
+                    attributes: HashMap::from([(
+                        attrs::VALUE.to_string(),
+                        Value::String("value".into()),
+                    )]),
+                },
+                GraphNode {
+                    id: 2,
+                    name: "think1".to_string(),
+                    op: AISOperationType::Think,
+                    attributes: HashMap::from([(
+                        attrs::TEMPLATE_STR.to_string(),
+                        Value::String("No placeholder here".into()),
+                    )]),
+                },
+            ],
+            edges: vec![GraphEdge {
+                from: 1,
+                to: 2,
+                dependency: DependencyType::Data,
+            }],
+            parameters: vec![],
+            metadata: HashMap::new(),
+        };
+
+        graph.constant_folding().unwrap();
+
+        // Should NOT fold (no {0} in template)
+        assert_eq!(graph.nodes.len(), 2);
+    }
+
+    #[test]
+    fn constant_folding_only_targets_think_ask() {
+        let mut graph = ApxmGraph {
+            name: "wrong_target".to_string(),
+            nodes: vec![
+                GraphNode {
+                    id: 1,
+                    name: "const1".to_string(),
+                    op: AISOperationType::ConstStr,
+                    attributes: HashMap::from([(
+                        attrs::VALUE.to_string(),
+                        Value::String("value".into()),
+                    )]),
+                },
+                GraphNode {
+                    id: 2,
+                    name: "merge1".to_string(),
+                    op: AISOperationType::Merge,
+                    attributes: HashMap::new(),
+                },
+            ],
+            edges: vec![GraphEdge {
+                from: 1,
+                to: 2,
+                dependency: DependencyType::Data,
+            }],
+            parameters: vec![],
+            metadata: HashMap::new(),
+        };
+
+        graph.constant_folding().unwrap();
+
+        // Should NOT fold (target is not THINK/ASK)
+        assert_eq!(graph.nodes.len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{GraphEdge, GraphNode};
+    use apxm_core::types::DependencyType;
 
     // -----------------------------------------------------------------------
     // Combined passes
