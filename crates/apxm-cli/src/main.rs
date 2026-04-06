@@ -285,11 +285,6 @@ enum SessionAction {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Resume a failed or interrupted session
-    Resume {
-        /// Session ID or path
-        session: String,
-    },
 }
 
 #[derive(Subcommand)]
@@ -876,9 +871,10 @@ fn team_command(action: TeamAction, json_output: bool) -> Result<()> {
                 println!("\n    Role:    {}", member.role.bold());
                 println!("    Profile: {}", member.profile);
                 if let Some(ref prompt) = member.system_prompt {
+                    let line_count = prompt.lines().count();
                     println!("    Prompt:  {}", prompt.lines().next().unwrap_or(""));
-                    if prompt.lines().count() > 1 {
-                        println!("             (+ {} more lines)", prompt.lines().count() - 1);
+                    if line_count > 1 {
+                        println!("             (+ {} more lines)", line_count - 1);
                     }
                 }
             }
@@ -1107,7 +1103,7 @@ async fn run_cli() -> Result<()> {
         Commands::Explain { target } => explain_command(&target, cli.json),
         Commands::Task { action } => task_command(action, cli.json),
         Commands::Replay { session } => replay_command(session),
-        Commands::Session { action } => session_command(action, cli.json).await,
+        Commands::Session { action } => session_command(action, cli.json),
         Commands::Workflow { action } => workflow_command(action, cli.json).await,
     }
 }
@@ -1133,7 +1129,7 @@ async fn run_cli_no_driver() -> Result<()> {
         Commands::Explain { target } => explain_command(&target, cli.json),
         Commands::Task { action } => task_command(action, cli.json),
         Commands::Replay { session } => replay_command(session),
-        Commands::Session { action } => session_command_no_driver(action, cli.json),
+        Commands::Session { action } => session_command(action, cli.json),
         Commands::Workflow { action } => workflow_command_no_driver(action, cli.json),
         _ => Err(anyhow::anyhow!(
             "Command requires the `driver` feature. Re-run with: cargo run -p apxm-cli --features driver -- <command>"
@@ -2047,6 +2043,107 @@ async fn run_command(
     Ok(())
 }
 
+const DEFAULT_OLLAMA_ENDPOINT: &str = "http://localhost:11434";
+
+/// Fetch installed models from a running Ollama instance and register them.
+///
+/// Returns `(added, skipped)` counts. `existing` model IDs are skipped.
+fn ollama_model_caps(base_url: &str, model_name: &str) -> (bool, bool, usize) {
+    // Query /api/show for real capabilities — no hardcoding model family names.
+    // Returns (supports_functions, supports_vision, context_window).
+    let client = reqwest::blocking::Client::new();
+    let Ok(resp) = client
+        .post(&format!("{base_url}/api/show"))
+        .json(&serde_json::json!({"model": model_name}))
+        .send()
+    else {
+        return (false, false, 128000);
+    };
+    if !resp.status().is_success() {
+        return (false, false, 128000);
+    }
+    let Ok(json) = resp.json::<serde_json::Value>() else {
+        return (false, false, 128000);
+    };
+
+    // capabilities: ["completion", "tools", "vision", "thinking", ...]
+    let caps = json
+        .get("capabilities")
+        .and_then(|c| c.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let supports_functions = caps.iter().any(|c| c.as_str() == Some("tools"));
+    let supports_vision = caps.iter().any(|c| c.as_str() == Some("vision"));
+
+    // context_window from model_info — key ends with ".context_length"
+    let ctx_window = json
+        .get("model_info")
+        .and_then(|info| info.as_object())
+        .and_then(|obj| {
+            obj.iter()
+                .find(|(k, _)| k.ends_with(".context_length"))
+                .and_then(|(_, v)| v.as_u64())
+                .map(|n| n as usize)
+        })
+        .unwrap_or(128000);
+
+    (supports_functions, supports_vision, ctx_window)
+}
+
+fn sync_ollama_models(
+    store: &apxm_credentials::backend::BackendStore,
+    backend_name: &str,
+    base_url: &str,
+    existing: &std::collections::HashSet<String>,
+) -> Result<(usize, usize)> {
+    let resp = reqwest::blocking::get(&format!("{base_url}/api/tags"))
+        .map_err(|e| anyhow::anyhow!(
+            "Cannot reach Ollama at {base_url}: {e}\nMake sure it is running: ollama serve"
+        ))?;
+
+    if !resp.status().is_success() {
+        anyhow::bail!("Ollama API error ({}): {}", resp.status(), resp.text().unwrap_or_default());
+    }
+
+    let body: serde_json::Value = resp.json()
+        .map_err(|e| anyhow::anyhow!("Failed to parse Ollama response: {e}"))?;
+
+    let models_arr = body
+        .get("models")
+        .and_then(|m| m.as_array())
+        .ok_or_else(|| anyhow::anyhow!("Unexpected Ollama response format"))?;
+
+    let mut added = 0usize;
+    let mut skipped = 0usize;
+
+    for m in models_arr {
+        if let Some(model_name) = m.get("name").and_then(|n| n.as_str()) {
+            if existing.contains(model_name) {
+                skipped += 1;
+                continue;
+            }
+            let (supports_functions, supports_vision, ctx_window) =
+                ollama_model_caps(base_url, model_name);
+            let model = apxm_core::types::ModelConfig {
+                id: model_name.to_string(),
+                aliases: vec![],
+                context_window: ctx_window,
+                cost_per_1k_input: 0.0,
+                cost_per_1k_output: 0.0,
+                supports_vision,
+                supports_functions,
+                supports_thinking: false,
+                tags: vec!["local".to_string(), "ollama".to_string()],
+            };
+            store.add_model(backend_name, model).map_err(|e| anyhow::anyhow!("{e}"))?;
+            added += 1;
+        }
+    }
+
+    Ok((added, skipped))
+}
+
 async fn backend_command(action: BackendAction, json_output: bool) -> Result<()> {
     use apxm_core::types::{BackendConfig, BackendType, ProviderProtocol};
     use apxm_credentials::backend::BackendStore;
@@ -2077,9 +2174,9 @@ async fn backend_command(action: BackendAction, json_output: bool) -> Result<()>
                 BackendType::from_str(&r#type).map_err(|e| anyhow::anyhow!("{e}"))?
             };
 
-            // Ollama smart defaults: endpoint=http://localhost:11434
+            // Ollama smart defaults: endpoint
             let endpoint = if endpoint.is_none() && is_ollama {
-                Some("http://localhost:11434".to_string())
+                Some(DEFAULT_OLLAMA_ENDPOINT.to_string())
             } else {
                 endpoint
             };
@@ -2109,43 +2206,14 @@ async fn backend_command(action: BackendAction, json_output: bool) -> Result<()>
 
             store.add(backend).map_err(|e| anyhow::anyhow!("{e}"))?;
 
-            // For Ollama: auto-sync installed models after registration
-            let mut synced_count = 0usize;
-            if is_ollama {
-                let base = endpoint.as_deref().unwrap_or("http://localhost:11434");
-                if let Ok(resp) = reqwest::blocking::get(&format!("{}/api/tags", base)) {
-                    if resp.status().is_success() {
-                        if let Ok(body) = resp.json::<serde_json::Value>() {
-                            if let Some(arr) = body.get("models").and_then(|m| m.as_array()) {
-                                let supports_tools = |id: &str| {
-                                    let l = id.to_lowercase();
-                                    l.contains("llama3.1") || l.contains("llama3.2")
-                                        || l.contains("llama3.3") || l.contains("qwen2.5")
-                                        || l.contains("qwen3") || l.contains("mistral")
-                                        || l.contains("command-r")
-                                };
-                                for m in arr {
-                                    if let Some(n) = m.get("name").and_then(|v| v.as_str()) {
-                                        let model = apxm_core::types::ModelConfig {
-                                            id: n.to_string(),
-                                            aliases: vec![],
-                                            context_window: 128000,
-                                            cost_per_1k_input: 0.0,
-                                            cost_per_1k_output: 0.0,
-                                            supports_vision: false,
-                                            supports_functions: supports_tools(n),
-                                            supports_thinking: false,
-                                            tags: vec!["local".to_string(), "ollama".to_string()],
-                                        };
-                                        let _ = store.add_model(&name, model);
-                                        synced_count += 1;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            // For Ollama: best-effort auto-sync of installed models
+            let synced_count = if is_ollama {
+                let base = endpoint.as_deref().unwrap_or(DEFAULT_OLLAMA_ENDPOINT);
+                let empty = HashSet::new();
+                sync_ollama_models(&store, &name, base, &empty).map(|(added, _)| added).unwrap_or(0)
+            } else {
+                0
+            };
 
             if json_output {
                 println!("{{\"status\":\"ok\",\"backend\":\"{name}\",\"synced_models\":{synced_count}}}");
@@ -2398,60 +2466,12 @@ async fn backend_command(action: BackendAction, json_output: bool) -> Result<()>
 
             let base = endpoint
                 .or_else(|| backend_cfg.endpoint.clone())
-                .unwrap_or_else(|| "http://localhost:11434".to_string());
+                .unwrap_or_else(|| DEFAULT_OLLAMA_ENDPOINT.to_string());
 
-            let resp = reqwest::blocking::get(&format!("{}/api/tags", base))
-                .map_err(|e| anyhow::anyhow!(
-                    "Cannot reach Ollama at {}: {}\nMake sure it is running: ollama serve", base, e
-                ))?;
-
-            if !resp.status().is_success() {
-                anyhow::bail!("Ollama API error ({}): {}", resp.status(),
-                    resp.text().unwrap_or_default());
-            }
-
-            let body: serde_json::Value = resp.json()
-                .map_err(|e| anyhow::anyhow!("Failed to parse Ollama response: {e}"))?;
-
-            let models_arr = body
-                .get("models")
-                .and_then(|m| m.as_array())
-                .ok_or_else(|| anyhow::anyhow!("Unexpected Ollama response format"))?;
-
-            let supports_tools = |id: &str| {
-                let l = id.to_lowercase();
-                l.contains("llama3.1") || l.contains("llama3.2") || l.contains("llama3.3")
-                    || l.contains("qwen2.5") || l.contains("qwen3") || l.contains("mistral")
-                    || l.contains("command-r")
-            };
-
-            let existing: std::collections::HashSet<String> =
+            let existing: HashSet<String> =
                 backend_cfg.models.iter().map(|m| m.id.clone()).collect();
 
-            let mut added = 0usize;
-            let mut skipped = 0usize;
-
-            for m in models_arr {
-                if let Some(model_name) = m.get("name").and_then(|n| n.as_str()) {
-                    if existing.contains(model_name) {
-                        skipped += 1;
-                        continue;
-                    }
-                    let model = apxm_core::types::ModelConfig {
-                        id: model_name.to_string(),
-                        aliases: vec![],
-                        context_window: 128000,
-                        cost_per_1k_input: 0.0,
-                        cost_per_1k_output: 0.0,
-                        supports_vision: false,
-                        supports_functions: supports_tools(model_name),
-                        supports_thinking: false,
-                        tags: vec!["local".to_string(), "ollama".to_string()],
-                    };
-                    store.add_model(&name, model).map_err(|e| anyhow::anyhow!("{e}"))?;
-                    added += 1;
-                }
-            }
+            let (added, skipped) = sync_ollama_models(&store, &name, &base, &existing)?;
 
             if json_output {
                 println!("{{\"status\":\"ok\",\"backend\":\"{name}\",\"added\":{added},\"skipped\":{skipped}}}");
@@ -4404,26 +4424,12 @@ fn replay_command(session: PathBuf) -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "driver")]
-async fn session_command(action: SessionAction, json: bool) -> Result<()> {
+fn session_command(action: SessionAction, json: bool) -> Result<()> {
     match action {
         SessionAction::List { status, limit } => session_list_command(status, limit, json),
         SessionAction::Inspect { session } => session_inspect_command(session, json),
         SessionAction::Diff { session1, session2 } => session_diff_command(session1, session2, json),
         SessionAction::Clean { older_than, all, dry_run } => session_clean_command(older_than, all, dry_run),
-        SessionAction::Resume { session } => session_resume_command(session).await,
-    }
-}
-
-fn session_command_no_driver(action: SessionAction, json: bool) -> Result<()> {
-    match action {
-        SessionAction::List { status, limit } => session_list_command(status, limit, json),
-        SessionAction::Inspect { session } => session_inspect_command(session, json),
-        SessionAction::Diff { session1, session2 } => session_diff_command(session1, session2, json),
-        SessionAction::Clean { older_than, all, dry_run } => session_clean_command(older_than, all, dry_run),
-        _ => Err(anyhow::anyhow!(
-            "Session resume requires the `driver` feature"
-        )),
     }
 }
 
@@ -4835,11 +4841,6 @@ fn parse_duration(s: &str) -> Result<chrono::Duration> {
     } else {
         Err(anyhow::anyhow!("Invalid duration format. Use '7d' or '24h'"))
     }
-}
-
-#[cfg(feature = "driver")]
-async fn session_resume_command(_session_id: String) -> Result<()> {
-    Err(anyhow::anyhow!("Session resume not yet implemented. Coming soon!"))
 }
 
 #[cfg(feature = "driver")]
