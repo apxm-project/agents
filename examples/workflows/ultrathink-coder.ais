@@ -1,14 +1,8 @@
 // ultrathink-coder.ais
 // Ultrathink coding workflow: 3-way parallel planning + synthesis + implementation.
 //
-// KNOWN BUG: spawn_agent is incompatible with flow parameters (E900).
-// See: docs/bugs/compiler-spawn-agent-flow-params.md
-//
-// WORKAROUND: Task is passed via ASK node — the LLM is prompted with the
-// task description from ultrathink.sh via the session context.
-// Run via: ./ultrathink.sh "your task"  (script injects task into session)
-//
-// TODO: When bug is fixed, replace ask() with flow main(TASK: str) parameter.
+// Uses flow parameters to accept task description.
+// Run via: dekk apxm execute ultrathink-coder.ais -- "your task description"
 
 agent Thinkers {
     flow architect(task: str) -> str {
@@ -33,16 +27,13 @@ agent Thinkers {
 }
 
 agent UltrathinkCoder {
-    @entry flow main() -> str {
-        // BUG WORKAROUND: spawn_agent must come before other nodes
+    @entry flow main(TASK: str) -> str {
+        // spawn_agent at top — no longer conflicts with flow parameters after E511 fix
         spawn_agent("coder", "claude", "$APXM_HOME") -> _coder
 
-        // WORKAROUND: ask() the LLM — script caller must inject task via session
-        // TODO: replace with flow param when compiler bug is fixed
-        ask("State the exact coding task to implement for APXM. Be specific — include crate names, file paths, and what to build. Do not invent a task; use only the task provided in your context.") -> task
-
+        // Task received via flow parameter
         // Guard: ensure task is specific before proceeding
-        think("You received this task. If it is vague or a generic placeholder, stop and say INVALID TASK. Otherwise, repeat it verbatim as confirmation: " + task) -> task_verified
+        think("You received this task. If it is vague or a generic placeholder, stop and say INVALID TASK. Otherwise, repeat it verbatim as confirmation: {{TASK}}") -> task_verified
 
         Thinkers.architect(task_verified) -> arch_out
         Thinkers.adversary(task_verified) -> adv_out
@@ -56,7 +47,7 @@ agent UltrathinkCoder {
 
         think("Reflect: what was built? Did it compile? Which approach won? Summary for the engineer. Result: " + implementation_result) -> summary
 
-        update_memory(task, summary)
+        update_memory(task_verified, summary)
         print("=== ULTRATHINK COMPLETE ===\n" + summary)
         return summary
     }
