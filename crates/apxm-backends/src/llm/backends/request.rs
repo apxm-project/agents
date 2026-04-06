@@ -348,10 +348,34 @@ impl LLMRequest {
 
     /// Validate request parameters.
     pub fn validate(&self) -> anyhow::Result<()> {
-        if self.prompt.is_empty() && self.messages.is_empty() {
+        // Reject empty or whitespace-only prompts
+        let prompt_trimmed = self.prompt.trim();
+        if prompt_trimmed.is_empty() && self.messages.is_empty() {
             return Err(anyhow::anyhow!(
-                "Request must have a non-empty prompt or at least one message"
+                "Invalid task: request must have a non-empty prompt or at least one message"
             ));
+        }
+
+        // Reject explicit "INVALID TASK" marker (case-insensitive)
+        if prompt_trimmed.eq_ignore_ascii_case("INVALID TASK") {
+            return Err(anyhow::anyhow!(
+                "Invalid task: explicit INVALID TASK marker detected in prompt"
+            ));
+        }
+
+        // Check if all messages are empty (when messages are present)
+        if !self.messages.is_empty() {
+            let all_empty = self.messages.iter().all(|msg| {
+                msg.content.iter().all(|part| match part {
+                    ContentPart::Text { text } => text.trim().is_empty(),
+                    _ => false, // Images and tool calls are not considered empty
+                })
+            });
+            if all_empty {
+                return Err(anyhow::anyhow!(
+                    "Invalid task: all messages contain empty or whitespace-only content"
+                ));
+            }
         }
 
         if self.temperature < 0.0 || self.temperature > 2.0 {
@@ -528,17 +552,88 @@ mod tests {
     fn test_request_validation() {
         // Empty prompt with no messages should fail
         let req = LLMRequest::new("");
-        assert!(req.validate().is_err());
+        let err = req.validate().unwrap_err();
+        assert!(err.to_string().contains("Invalid task"));
+
+        // Whitespace-only prompt should fail
+        let req = LLMRequest::new("   \n\t  ");
+        let err = req.validate().unwrap_err();
+        assert!(err.to_string().contains("Invalid task"));
 
         // Empty prompt but with messages should pass
         let req = LLMRequest::from_messages(vec![Message::text(Role::User, "Hello")]);
         assert!(req.validate().is_ok());
 
+        // Temperature out of range should fail
         let req = LLMRequest {
             temperature: 3.0,
             ..LLMRequest::new("test")
         };
         assert!(req.validate().is_err());
+    }
+
+    #[test]
+    fn test_invalid_task_marker_rejection() {
+        // Exact match should fail
+        let req = LLMRequest::new("INVALID TASK");
+        let err = req.validate().unwrap_err();
+        assert!(err.to_string().contains("INVALID TASK marker"));
+
+        // Case-insensitive match should fail
+        let req = LLMRequest::new("invalid task");
+        let err = req.validate().unwrap_err();
+        assert!(err.to_string().contains("INVALID TASK marker"));
+
+        // Mixed case should fail
+        let req = LLMRequest::new("InVaLiD TaSk");
+        let err = req.validate().unwrap_err();
+        assert!(err.to_string().contains("INVALID TASK marker"));
+
+        // With surrounding whitespace should fail
+        let req = LLMRequest::new("  INVALID TASK  ");
+        let err = req.validate().unwrap_err();
+        assert!(err.to_string().contains("INVALID TASK marker"));
+
+        // Substring should pass (not exact match)
+        let req = LLMRequest::new("This is an INVALID TASK example");
+        assert!(req.validate().is_ok());
+    }
+
+    #[test]
+    fn test_empty_messages_validation() {
+        // All messages with empty text should fail
+        let messages = vec![
+            Message::text(Role::System, ""),
+            Message::text(Role::User, "   "),
+        ];
+        let req = LLMRequest::from_messages(messages);
+        let err = req.validate().unwrap_err();
+        assert!(err.to_string().contains("empty or whitespace-only"));
+
+        // At least one non-empty message should pass
+        let messages = vec![
+            Message::text(Role::System, ""),
+            Message::text(Role::User, "Hello"),
+        ];
+        let req = LLMRequest::from_messages(messages);
+        assert!(req.validate().is_ok());
+    }
+
+    #[test]
+    fn test_valid_task_passes_validation() {
+        // Simple non-empty prompt
+        let req = LLMRequest::new("Write a hello world program");
+        assert!(req.validate().is_ok());
+
+        // Non-empty message
+        let req = LLMRequest::from_messages(vec![
+            Message::text(Role::User, "Explain quantum computing"),
+        ]);
+        assert!(req.validate().is_ok());
+
+        // Mixed content (ensure robust validation)
+        let req = LLMRequest::new("  Some task with spaces  ");
+        assert!(req.validate().is_ok());
     }
 
     #[test]
