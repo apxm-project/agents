@@ -403,7 +403,7 @@ impl AISOperationType {
         }
     }
 
-    /// Get all operation types (40 total: 27 original + 5 phase-1 + 7 phase-2 + 1 durable execution).
+    /// Get all operation types (41 total: 27 original + 5 phase-1 + 7 phase-2 + 1 durable execution + 1 team).
     pub fn all_operations() -> &'static [AISOperationType] {
         &[
             AISOperationType::Agent,
@@ -1437,7 +1437,10 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             r#"{"id": 1, "op": "SPAWN_TEAM", "attributes": {"team_name": "ultrathink", "cwd": "/path/to/project"}}"#,
         ),
         fields: &[
-            OperationField::required("team_name", "Name of the team to spawn (from ~/.apxm/teams.toml)"),
+            OperationField::required(
+                "team_name",
+                "Name of the team to spawn (from ~/.apxm/teams.toml)",
+            ),
             OperationField::optional(
                 "cwd",
                 "Working directory for all team member subprocesses (defaults to current dir)",
@@ -1602,13 +1605,13 @@ mod tests {
     fn test_operation_counts() {
         assert_eq!(
             AIS_OPERATIONS.len(),
-            40,
-            "Expected 40 total operations (1 metadata + 37 public + 2 internal)"
+            41,
+            "Expected 41 total operations (1 metadata + 38 public + 2 internal)"
         );
         assert_eq!(
             AISOperationType::all_operations().len(),
-            40,
-            "Expected 40 total operation types"
+            41,
+            "Expected 41 total operation types"
         );
     }
 

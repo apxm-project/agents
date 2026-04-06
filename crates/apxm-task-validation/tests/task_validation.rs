@@ -1,4 +1,4 @@
-use apxm_task_validation::{is_actionable_task, validate_task, TaskValidationError};
+use apxm_task_validation::{TaskValidationError, is_actionable_task, validate_task};
 
 #[test]
 fn integration_accepts_realistic_task() {

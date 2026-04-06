@@ -68,7 +68,10 @@ impl BackendRegistration {
                 .iter()
                 .map(|(key, value)| (key.clone(), json!(value)))
                 .collect::<Map<String, JsonValue>>();
-            map.insert(config_keys::EXTRA_HEADERS.to_string(), JsonValue::Object(headers));
+            map.insert(
+                config_keys::EXTRA_HEADERS.to_string(),
+                JsonValue::Object(headers),
+            );
         }
 
         if map.is_empty() {

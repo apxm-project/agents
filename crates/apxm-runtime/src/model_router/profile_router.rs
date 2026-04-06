@@ -23,9 +23,9 @@
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 
-use super::registry::ModelRegistry;
-use super::ProfileRegistry;
 use super::ModelRouter;
+use super::ProfileRegistry;
+use super::registry::ModelRegistry;
 use anyhow::Result;
 
 /// Router that selects healthy models from profiles based on runtime circuit-breaker state.
@@ -123,11 +123,11 @@ impl<'a> ProfileRouter<'a> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::registry::ModelEntry;
+    use super::super::{ModelRouter, ModelRouterConfig};
     use super::*;
     use apxm_backends::LLMRegistry;
     use apxm_core::model_profiles::{ModelProfile, ProfileCandidate};
-    use super::super::registry::ModelEntry;
-    use super::super::{ModelRouter, ModelRouterConfig};
     use std::sync::Arc;
 
     fn make_test_setup() -> (Arc<ModelRouter>, Arc<ProfileRegistry>, Arc<ModelRegistry>) {
@@ -333,6 +333,11 @@ mod tests {
         let result = router.select_from_profile("unhealthy-profile");
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("No healthy candidates"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("No healthy candidates")
+        );
     }
 }

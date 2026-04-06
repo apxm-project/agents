@@ -3,8 +3,8 @@
 use apxm_compiler::{Context, Module, Pipeline, PipelineDiagnostics};
 use apxm_core::types::{OptimizationLevel, PipelineConfig};
 use apxm_core::utils::build::MlirEnvReport;
-use apxm_graph::semantic::{SemanticContext, validate_semantic};
 use apxm_graph::ApxmGraph;
+use apxm_graph::semantic::{SemanticContext, validate_semantic};
 use std::fs;
 use std::path::Path;
 
@@ -125,10 +125,8 @@ impl Compiler {
                 // parameterized flow) as clear diagnostics before MLIR lowering
                 // produces cryptic E900 internal errors.
                 let sem_errors = validate_semantic(&graph, &SemanticContext::default());
-                let hard_errors: Vec<_> = sem_errors
-                    .iter()
-                    .filter(|e| !e.code.is_warning())
-                    .collect();
+                let hard_errors: Vec<_> =
+                    sem_errors.iter().filter(|e| !e.code.is_warning()).collect();
                 if !hard_errors.is_empty() {
                     let messages: Vec<String> = hard_errors
                         .iter()

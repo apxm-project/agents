@@ -6,18 +6,7 @@ use crate::error::runtime::RuntimeError;
 use serde::{Deserialize, Serialize};
 
 /// Optimization level for compilation
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    Serialize,
-    Deserialize
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[repr(u8)]
 #[derive(Default)]
 pub enum OptimizationLevel {

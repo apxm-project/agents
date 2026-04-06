@@ -11,7 +11,9 @@ use crate::llm::backends::{ContentPart, LLMBackend, LLMRequest, LLMResponse, Rol
 use anyhow::{Context, Result};
 use apxm_core::constants::graph::attrs::{BASE_URL, MODEL};
 use apxm_core::constants::http::headers;
-use apxm_core::constants::llm::{api_paths, config_keys, message_keys, openai as openai_keys, roles, sse, tool_keys};
+use apxm_core::constants::llm::{
+    api_paths, config_keys, message_keys, openai as openai_keys, roles, sse, tool_keys,
+};
 use apxm_core::types::{FinishReason, ModelCapabilities, ModelInfo, TokenUsage, ToolCall};
 use async_trait::async_trait;
 use futures::StreamExt as _;
@@ -88,11 +90,12 @@ impl OpenAIBackend {
                 obj.iter()
                     .filter_map(|(k, v)| {
                         let raw = v.as_str()?;
-                        let resolved = if let Some(var_name) = raw.strip_prefix(config_keys::ENV_PREFIX) {
-                            std::env::var(var_name).unwrap_or_else(|_| raw.to_string())
-                        } else {
-                            raw.to_string()
-                        };
+                        let resolved =
+                            if let Some(var_name) = raw.strip_prefix(config_keys::ENV_PREFIX) {
+                                std::env::var(var_name).unwrap_or_else(|_| raw.to_string())
+                            } else {
+                                raw.to_string()
+                            };
                         Some((k.clone(), resolved))
                     })
                     .collect()
@@ -192,9 +195,12 @@ impl OpenAIBackend {
         // Some models (gpt-5, o1, o3, o4, reasoning models) only accept
         // the default temperature and reject custom values with a 400 error.
         // Detect these by model name prefix and skip the temperature field.
-        let is_reasoning_model = model.starts_with("o1") || model.starts_with("o3") ||
-            model.starts_with("o4") || model.starts_with("gpt-5") ||
-            model.contains("-codex") || model.contains("reasoning");
+        let is_reasoning_model = model.starts_with("o1")
+            || model.starts_with("o3")
+            || model.starts_with("o4")
+            || model.starts_with("gpt-5")
+            || model.contains("-codex")
+            || model.contains("reasoning");
 
         let mut body = if is_reasoning_model {
             json!({
@@ -382,8 +388,7 @@ impl LLMBackend for OpenAIBackend {
         // Try to normalize OpenAI-compatible gateway Claude format to OpenAI format
         let api_response = if raw.get("choices").is_some() {
             // Standard OpenAI format
-            serde_json::from_value::<OpenAIResponse>(raw)
-                .context("Failed to parse OpenAI response")
+            serde_json::from_value::<OpenAIResponse>(raw).context("Failed to parse OpenAI response")
         } else if let Some(text) = raw.pointer("/response/text").and_then(|v| v.as_str()) {
             // OpenAI-compatible gateway Claude format: {response: {type: text, text: "..."}}
             let normalized = serde_json::json!({
@@ -392,7 +397,10 @@ impl LLMBackend for OpenAIBackend {
             });
             serde_json::from_value::<OpenAIResponse>(normalized)
                 .context("Failed to normalize OpenAI-compatible gateway response")
-        } else if let Some(content) = raw.pointer("/choices/0/message/content").and_then(|v| v.as_str()) {
+        } else if let Some(content) = raw
+            .pointer("/choices/0/message/content")
+            .and_then(|v| v.as_str())
+        {
             // Already correct but nested differently
             let normalized = serde_json::json!({
                 "choices": [{"message": {"content": content}, "finish_reason": "stop"}],
@@ -402,7 +410,10 @@ impl LLMBackend for OpenAIBackend {
                 .context("Failed to normalize response")
         } else {
             // Unknown format — try standard parse and let it fail with useful context
-            Err(anyhow::anyhow!("Unrecognized LLM response format: {}", &raw.to_string()[..raw.to_string().len().min(200)]))
+            Err(anyhow::anyhow!(
+                "Unrecognized LLM response format: {}",
+                &raw.to_string()[..raw.to_string().len().min(200)]
+            ))
         }?;
 
         self.parse_response(api_response, &model)

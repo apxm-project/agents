@@ -1,9 +1,11 @@
-use super::{ExecutionContext, Node, Result, Value, get_optional_string_attribute, get_string_attribute};
+use super::{
+    ExecutionContext, Node, Result, Value, get_optional_string_attribute, get_string_attribute,
+};
+use crate::team::TeamRegistry;
 use apxm_core::apxm_op;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::constants::runtime::response_keys;
 use apxm_core::error::RuntimeError;
-use crate::team::TeamRegistry;
 use std::collections::HashMap;
 
 pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -> Result<Value> {
@@ -16,9 +18,16 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
         let hint = if available.is_empty() {
             "No teams defined in ~/.apxm/teams.toml".to_string()
         } else {
-            format!("Team '{}' not found. Available: {}", team_name, available.join(", "))
+            format!(
+                "Team '{}' not found. Available: {}",
+                team_name,
+                available.join(", ")
+            )
         };
-        RuntimeError::Operation { op_type: node.op_type, message: hint }
+        RuntimeError::Operation {
+            op_type: node.op_type,
+            message: hint,
+        }
     })?;
 
     apxm_op!(info,
@@ -80,10 +89,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
         response_keys::TEAM_NAME.to_string(),
         Value::String(team_name),
     );
-    result.insert(
-        response_keys::MEMBERS.to_string(),
-        Value::Object(spawned),
-    );
+    result.insert(response_keys::MEMBERS.to_string(), Value::Object(spawned));
 
     Ok(Value::Object(result))
 }

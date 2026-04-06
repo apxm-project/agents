@@ -44,8 +44,7 @@ pub(crate) fn require_string_arg<'a>(
 }
 
 /// Configuration for APxM standard tools.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct ToolsConfig {
     #[serde(default)]
     pub bash: BashConfig,

@@ -70,4 +70,3 @@ pub struct CompletedNodeInfo {
     /// Whether the node succeeded.
     pub status: String,
 }
-

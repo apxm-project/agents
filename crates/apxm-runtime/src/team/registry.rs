@@ -184,7 +184,9 @@ mod tests {
         let mut registry = TeamRegistry {
             teams: HashMap::new(),
         };
-        registry.teams.insert("ultrathink".to_string(), sample_team());
+        registry
+            .teams
+            .insert("ultrathink".to_string(), sample_team());
         let team = registry.get("ultrathink").unwrap();
         assert_eq!(team.name, "ultrathink");
         assert_eq!(team.members.len(), 3);

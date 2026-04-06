@@ -794,9 +794,7 @@ mod prompt_caching_memo_tests {
             Some(&Value::Bool(true))
         );
     }
-
 }
-
 
 #[cfg(test)]
 mod analysis_folding_tests {
