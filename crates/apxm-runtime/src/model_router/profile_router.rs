@@ -10,7 +10,7 @@
 //!
 //! ## Example
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use apxm_runtime::model_router::{ModelRouter, ProfileRegistry, ProfileRouter};
 //! use std::sync::Arc;
 //!

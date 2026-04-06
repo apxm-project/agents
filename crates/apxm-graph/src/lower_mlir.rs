@@ -964,16 +964,23 @@ fn emit_node(
             }
         }
         // Self-organization ops
-        AISOperationType::SpawnAgent => emit_simple_op(
-            state,
-            node,
-            &inputs,
-            "spawn_agent",
-            &[graph_attrs::AGENT_NAME, "name"],
-            "child_agent",
-            &[graph_attrs::AGENT_NAME, "name"],
-            Some(('(', ')')),
-        ),
+        AISOperationType::SpawnAgent => {
+            // spawn_agent never takes data inputs in MLIR — it is a standalone
+            // spawning op. The AIS DSL parser may add implicit sequential edges
+            // to it (when other nodes precede it in source order), but those edges
+            // carry no semantic meaning for spawn_agent's MLIR emission.
+            // Always emit with empty inputs to produce valid MLIR.
+            emit_simple_op(
+                state,
+                node,
+                &[], // always empty — spawn_agent has no data inputs in MLIR
+                "spawn_agent",
+                &[graph_attrs::AGENT_NAME, "name"],
+                "child_agent",
+                &[graph_attrs::AGENT_NAME, "name"],
+                Some(('(', ')')),
+            )
+        }
         AISOperationType::RegisterCapability => emit_simple_op(
             state,
             node,
