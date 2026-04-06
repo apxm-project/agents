@@ -227,6 +227,8 @@ impl Default for MockLLMBackend {
 #[async_trait]
 impl LLMBackend for MockLLMBackend {
     async fn generate(&self, request: LLMRequest) -> anyhow::Result<LLMResponse> {
+        request.validate()?;
+
         let effective_prompt = self.record_and_extract(&request);
 
         if let Some(ref err) = self.fail_with {
