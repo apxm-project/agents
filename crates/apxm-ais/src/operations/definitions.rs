@@ -1670,8 +1670,13 @@ mod tests {
             AISOperationType::from_wire_index(38),
             Some(AISOperationType::Checkpoint)
         );
+        // Team operations
+        assert_eq!(
+            AISOperationType::from_wire_index(39),
+            Some(AISOperationType::SpawnTeam)
+        );
         // Out-of-range returns None
-        assert_eq!(AISOperationType::from_wire_index(39), None);
+        assert_eq!(AISOperationType::from_wire_index(40), None);
         assert_eq!(AISOperationType::from_wire_index(u32::MAX), None);
     }
 
@@ -1713,15 +1718,24 @@ mod tests {
                 "from_wire_index(38) returned duplicate {op:?}"
             );
         }
+        // Team operations: 39
+        {
+            let op =
+                AISOperationType::from_wire_index(39).expect("wire index 39 should be SpawnTeam");
+            assert!(
+                seen.insert(op),
+                "from_wire_index(39) returned duplicate {op:?}"
+            );
+        }
         assert_eq!(
             seen.len(),
-            33,
-            "Expected 33 distinct wire-indexed operations (25 original + 7 phase-2 + 1 durable)"
+            34,
+            "Expected 34 distinct wire-indexed operations (25 original + 7 phase-2 + 1 durable + 1 team)"
         );
         assert_eq!(
-            AISOperationType::from_wire_index(39),
+            AISOperationType::from_wire_index(40),
             None,
-            "Index 39 should be out of range"
+            "Index 40 should be out of range"
         );
     }
 
@@ -1738,7 +1752,7 @@ mod tests {
             );
         }
         // Phase 2 ops: 31-38 (includes Checkpoint at 38)
-        for i in 31u32..39 {
+        for i in 31u32..40 {
             let op = AISOperationType::from_wire_index(i).unwrap();
             assert!(
                 all_ops.contains(&op),
