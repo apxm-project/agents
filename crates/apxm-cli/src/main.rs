@@ -196,10 +196,10 @@ enum Commands {
         #[command(subcommand)]
         action: TemplateAction,
     },
-    /// Explain what a graph does in human-readable terms
+    /// Explain what a graph does OR explain an error code
     Explain {
-        /// Path to the graph file (.ais source)
-        file: PathBuf,
+        /// Error code (e.g., E511) or path to graph file (.ais source)
+        target: String,
     },
     /// Compose graph fragments (tasks)
     Task {
@@ -1098,7 +1098,7 @@ async fn run_cli() -> Result<()> {
         } => validate_command(input, cli.json, no_check_resources),
         Commands::Analyze { input } => analyze_command(input, cli.json),
         Commands::Template { action } => template_command(action, cli.json),
-        Commands::Explain { file } => explain_command(file, cli.json),
+        Commands::Explain { target } => explain_command(&target, cli.json),
         Commands::Task { action } => task_command(action, cli.json),
         Commands::Replay { session } => replay_command(session),
         Commands::Workflow { action } => workflow_command(action, cli.json).await,
@@ -1123,7 +1123,7 @@ async fn run_cli_no_driver() -> Result<()> {
         } => validate_command(input, cli.json, no_check_resources),
         Commands::Analyze { input } => analyze_command(input, cli.json),
         Commands::Template { action } => template_command(action, cli.json),
-        Commands::Explain { file } => explain_command(file, cli.json),
+        Commands::Explain { target } => explain_command(&target, cli.json),
         Commands::Task { action } => task_command(action, cli.json),
         Commands::Replay { session } => replay_command(session),
         Commands::Workflow { action } => workflow_command_no_driver(action, cli.json),
@@ -3001,7 +3001,130 @@ fn analyze_command(input: PathBuf, json_output: bool) -> Result<()> {
     Ok(())
 }
 
-fn explain_command(file: PathBuf, json_output: bool) -> Result<()> {
+fn explain_command(target: &str, json_output: bool) -> Result<()> {
+    // Check if target looks like an error code (e.g., E511, e511, 511)
+    let trimmed = target.trim();
+    let is_error_code = trimmed.starts_with('E') || trimmed.starts_with('e') || trimmed.chars().all(|c| c.is_ascii_digit());
+
+    if is_error_code {
+        // Extract the numeric part
+        let code_str = if trimmed.starts_with('E') || trimmed.starts_with('e') {
+            &trimmed[1..]
+        } else {
+            trimmed
+        };
+
+        let code_num: u32 = code_str.parse()
+            .map_err(|_| anyhow::anyhow!("Invalid error code: {}", target))?;
+
+        let error_code = apxm_core::error::ErrorCode::from_u32(code_num)
+            .ok_or_else(|| anyhow::anyhow!("Unknown error code: E{}", code_num))?;
+
+        if json_output {
+            let output = serde_json::json!({
+                "code": error_code.as_str(),
+                "component": error_code.component(),
+                "is_warning": error_code.is_warning(),
+                "documentation_url": error_code.documentation_url(),
+            });
+            println!("{}", serde_json::to_string_pretty(&output)?);
+        } else {
+            println!("{}", "=".repeat(70).bright_cyan());
+            println!("{} {}", "Error Code:".bright_yellow(), error_code.as_str().bright_white().bold());
+            println!("{} {}", "Component:".bright_yellow(), error_code.component().bright_white());
+            println!("{} {}", "Severity:".bright_yellow(),
+                if error_code.is_warning() {
+                    "Warning".bright_yellow()
+                } else {
+                    "Error".bright_red()
+                });
+            println!("{}", "=".repeat(70).bright_cyan());
+            println!();
+
+            // Print description based on the error code
+            match error_code {
+                apxm_core::error::ErrorCode::SpawnAgentInParameterizedFlow => {
+                    println!("{}", "Description:".bright_blue().bold());
+                    println!("  spawn_agent cannot be used in a flow that declares parameters.");
+                    println!();
+                    println!("{}", "Why this fails:".bright_blue().bold());
+                    println!("  The MLIR lowering injects flow argument values into entry nodes");
+                    println!("  (nodes with no incoming edges), which corrupts spawn_agent's MLIR emission.");
+                    println!();
+                    println!("{}", "How to fix:".bright_green().bold());
+                    println!("  1. Remove parameters from the @entry flow and use ask() or const_str()");
+                    println!("     to receive input inside the flow body, OR");
+                    println!("  2. Move spawn_agent to a separate no-parameter @entry flow and");
+                    println!("     place the parameterized logic in a helper flow of another agent.");
+                    println!();
+                    println!("{}", "Example:".bright_blue().bold());
+                    println!("  {}", "Instead of:".dimmed());
+                    println!("    agent Test {{");
+                    println!("        @entry flow main(TASK: str) -> str {{");
+                    println!("            spawn_agent(\"coder\", \"claude\", \"...\") -> _coder");
+                    println!("            think(\"task: {{{{TASK}}}}\") -> result");
+                    println!("            return result");
+                    println!("        }}");
+                    println!("    }}");
+                    println!();
+                    println!("  {}", "Use:".bright_green());
+                    println!("    agent Test {{");
+                    println!("        @entry flow main() -> str {{");
+                    println!("            spawn_agent(\"coder\", \"claude\", \"...\") -> _coder");
+                    println!("            ask(\"What coding task should I implement?\") -> task");
+                    println!("            think(task) -> result");
+                    println!("            return result");
+                    println!("        }}");
+                    println!("    }}");
+                }
+                apxm_core::error::ErrorCode::DeadNode => {
+                    println!("{}", "Description:".bright_blue().bold());
+                    println!("  A node produces output that is never used (no path to return).");
+                    println!();
+                    println!("{}", "How to fix:".bright_green().bold());
+                    println!("  - Remove the node if it's not needed, OR");
+                    println!("  - Connect it to the graph's output path");
+                }
+                apxm_core::error::ErrorCode::MissingReturnValue => {
+                    println!("{}", "Description:".bright_blue().bold());
+                    println!("  Graph has no exit node (all nodes have outgoing edges).");
+                    println!();
+                    println!("{}", "How to fix:".bright_green().bold());
+                    println!("  Ensure at least one node has zero outgoing edges to serve as the return value.");
+                }
+                apxm_core::error::ErrorCode::CommunicateBeforeSpawn => {
+                    println!("{}", "Description:".bright_blue().bold());
+                    println!("  COMMUNICATE node has no path FROM its SPAWN_AGENT.");
+                    println!();
+                    println!("{}", "Why this is a problem:".bright_blue().bold());
+                    println!("  Without a dependency edge, COMMUNICATE may run in parallel with");
+                    println!("  (or before) SPAWN_AGENT, causing a race condition.");
+                    println!();
+                    println!("{}", "How to fix:".bright_green().bold());
+                    println!("  Add a Control or Data edge from SPAWN_AGENT to COMMUNICATE");
+                    println!("  to ensure correct ordering.");
+                }
+                apxm_core::error::ErrorCode::EmptyTemplate => {
+                    println!("{}", "Description:".bright_blue().bold());
+                    println!("  ASK/THINK/REASON node has an empty or whitespace-only template_str.");
+                    println!();
+                    println!("{}", "How to fix:".bright_green().bold());
+                    println!("  Provide a non-empty template string.");
+                }
+                _ => {
+                    println!("{}", "Description:".bright_blue().bold());
+                    println!("  See documentation for details.");
+                }
+            }
+            println!();
+            println!("{} {}", "Documentation:".bright_yellow(), error_code.documentation_url());
+        }
+
+        return Ok(());
+    }
+
+    // Otherwise, treat as a graph file path
+    let file = PathBuf::from(target);
     let content = std::fs::read_to_string(&file)
         .map_err(|e| anyhow::anyhow!("Failed to read {}: {e}", file.display()))?;
     let graph: apxm_graph::ApxmGraph = serde_json::from_str(&content)

@@ -300,6 +300,16 @@ pub enum ErrorCode {
     /// Use a no-parameter @entry flow and receive input via ask() instead,
     /// or restructure using a separate parameterized helper flow in another agent.
     SpawnAgentInParameterizedFlow = 511,
+    /// E512: Dead node detected (output never used)
+    DeadNode = 512,
+    /// E513: Missing return value (no exit node)
+    MissingReturnValue = 513,
+    /// E514: COMMUNICATE node runs before its SPAWN_AGENT
+    CommunicateBeforeSpawn = 514,
+    /// E515: Circular model_profile reference
+    CircularModelProfile = 515,
+    /// E516: Empty template string
+    EmptyTemplate = 516,
 
     // ========================================================================
     // Generic Errors (E900-E999)
@@ -394,6 +404,11 @@ impl ErrorCode {
             ErrorCode::ModelNotFound => "E509",
             ErrorCode::CapabilityNotRegistered => "E510",
             ErrorCode::SpawnAgentInParameterizedFlow => "E511",
+            ErrorCode::DeadNode => "E512",
+            ErrorCode::MissingReturnValue => "E513",
+            ErrorCode::CommunicateBeforeSpawn => "E514",
+            ErrorCode::CircularModelProfile => "E515",
+            ErrorCode::EmptyTemplate => "E516",
             ErrorCode::InternalError => "E900",
             ErrorCode::NotImplemented => "E901",
             ErrorCode::InvalidConfiguration => "E902",
@@ -430,6 +445,9 @@ impl ErrorCode {
                 | ErrorCode::InvAcpAgentNotRegistered
                 | ErrorCode::ModelNotFound
                 | ErrorCode::CapabilityNotRegistered
+                | ErrorCode::DeadNode
+                | ErrorCode::CommunicateBeforeSpawn
+                | ErrorCode::EmptyTemplate
         )
     }
 
@@ -510,6 +528,11 @@ impl ErrorCode {
             509 => Some(ErrorCode::ModelNotFound),
             510 => Some(ErrorCode::CapabilityNotRegistered),
             511 => Some(ErrorCode::SpawnAgentInParameterizedFlow),
+            512 => Some(ErrorCode::DeadNode),
+            513 => Some(ErrorCode::MissingReturnValue),
+            514 => Some(ErrorCode::CommunicateBeforeSpawn),
+            515 => Some(ErrorCode::CircularModelProfile),
+            516 => Some(ErrorCode::EmptyTemplate),
             900 => Some(ErrorCode::InternalError),
             901 => Some(ErrorCode::NotImplemented),
             902 => Some(ErrorCode::InvalidConfiguration),
