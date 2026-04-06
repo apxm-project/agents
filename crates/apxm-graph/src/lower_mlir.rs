@@ -1,4 +1,4 @@
-use crate::{ApxmGraph, GraphError, GraphNode};
+use crate::{ApxmGraph, GraphError, GraphNode, Parameter};
 use apxm_core::constants::graph::{attrs as graph_attrs, metadata as graph_meta};
 use apxm_core::types::AISOperationType;
 use apxm_core::types::{Number, Value};
@@ -38,6 +38,38 @@ impl LoweringState {
         self.next_temp += 1;
         format!("%{}_{}", prefix, self.next_temp)
     }
+}
+
+/// Check if a node uses any flow parameters in its template/prompt attributes.
+/// Returns true if the node contains `{{PARAM_NAME}}` patterns that match any
+/// parameter name in the flow.
+fn node_uses_flow_params(node: &GraphNode, params: &[Parameter]) -> bool {
+    if params.is_empty() {
+        return false;
+    }
+
+    // Check template_str, prompt, and template attributes for {{PARAM_NAME}} patterns
+    let template_attrs = [
+        graph_attrs::TEMPLATE_STR,
+        graph_attrs::PROMPT,
+        graph_attrs::TEMPLATE,
+    ];
+
+    for attr_name in &template_attrs {
+        if let Some(value) = node.attributes.get(*attr_name) {
+            if let Some(text) = value.as_str() {
+                // Check if any parameter name appears in {{...}} patterns
+                for param in params {
+                    let pattern = format!("{{{{{}}}}}", param.name);
+                    if text.contains(&pattern) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+
+    false
 }
 
 pub fn lower_to_mlir(graph: &ApxmGraph) -> Result<String, GraphError> {
@@ -103,7 +135,11 @@ pub fn lower_to_mlir(graph: &ApxmGraph) -> Result<String, GraphError> {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
-        if inputs.is_empty() && !arg_values.is_empty() {
+        // Inject flow parameters into entry nodes that actually use them in their templates.
+        // Only inject if the node references parameters like {{PARAM_NAME}} in its
+        // template_str/prompt/template attributes. This prevents malformed MLIR for nodes
+        // like spawn_agent that don't consume parameters.
+        if inputs.is_empty() && !arg_values.is_empty() && node_uses_flow_params(node, &graph.parameters) {
             inputs.extend(arg_values.clone());
         }
 
@@ -928,26 +964,16 @@ fn emit_node(
             }
         }
         // Self-organization ops
-        AISOperationType::SpawnAgent => {
-            // spawn_agent takes no data inputs — it is always an entry node.
-            // If the enclosing flow has parameters, the lowering injects %arg0..N
-            // into the first entry nodes' input list. Passing those to emit_simple_op
-            // with context_delimiters produces malformed MLIR (`ais.spawn_agent
-            // "name"(%arg0 : !ais.token)`) which the MLIR parser rejects with a
-            // cryptic E900. Strip any injected args here as a defensive measure;
-            // the semantic pass (E511) already rejects this combination before
-            // lowering is reached.
-            emit_simple_op(
-                state,
-                node,
-                &[], // always empty — spawn_agent has no meaningful data inputs
-                "spawn_agent",
-                &[graph_attrs::AGENT_NAME, "name"],
-                "child_agent",
-                &[graph_attrs::AGENT_NAME, "name"],
-                Some(('(', ')')),
-            )
-        }
+        AISOperationType::SpawnAgent => emit_simple_op(
+            state,
+            node,
+            &inputs,
+            "spawn_agent",
+            &[graph_attrs::AGENT_NAME, "name"],
+            "child_agent",
+            &[graph_attrs::AGENT_NAME, "name"],
+            Some(('(', ')')),
+        ),
         AISOperationType::RegisterCapability => emit_simple_op(
             state,
             node,
@@ -1690,5 +1716,95 @@ mod tests {
         assert!(mlir.contains("ais.update_goal \"g1\""));
         assert!(mlir.contains("ais.pause \"awaiting review\""));
         assert!(mlir.contains("ais.resume \"cp_1\""));
+    }
+
+    #[test]
+    fn spawn_agent_with_flow_params_compiles() {
+        // Test that spawn_agent now works in parameterized flows (E511 bug fix).
+        // The key is that spawn_agent should NOT receive %arg0 even if it's an entry node.
+        let mut spawn = GraphNode {
+            id: 1,
+            name: "spawn".to_string(),
+            op: AISOperationType::SpawnAgent,
+            attributes: HashMap::new(),
+        };
+        spawn.attributes.insert(
+            graph_attrs::AGENT_NAME.to_string(),
+            Value::String("coder".to_string()),
+        );
+        spawn.attributes.insert(
+            "profile".to_string(),
+            Value::String("claude".to_string()),
+        );
+        spawn.attributes.insert(
+            "cwd".to_string(),
+            Value::String("/tmp".to_string()),
+        );
+
+        // think node uses the TASK parameter
+        let mut think = GraphNode {
+            id: 2,
+            name: "think".to_string(),
+            op: AISOperationType::Think,
+            attributes: HashMap::new(),
+        };
+        think.attributes.insert(
+            graph_attrs::TEMPLATE_STR.to_string(),
+            Value::String("task: {0}".to_string()),
+        );
+
+        // communicate sends result to the spawned agent
+        let mut comm = GraphNode {
+            id: 3,
+            name: "comm".to_string(),
+            op: AISOperationType::Communicate,
+            attributes: HashMap::new(),
+        };
+        comm.attributes.insert(
+            graph_attrs::RECIPIENT.to_string(),
+            Value::String("coder".to_string()),
+        );
+        comm.attributes.insert(
+            graph_attrs::MESSAGE.to_string(),
+            Value::String("{0}".to_string()),
+        );
+
+        let mut graph = ApxmGraph {
+            name: "test".to_string(),
+            nodes: vec![spawn, think, comm],
+            edges: vec![
+                crate::GraphEdge {
+                    from: 1,
+                    to: 3,
+                    dependency: DependencyType::Control,  // spawn must happen before communicate
+                },
+                crate::GraphEdge {
+                    from: 2,
+                    to: 3,
+                    dependency: DependencyType::Data,  // think result goes to communicate
+                },
+            ],
+            parameters: Vec::new(),
+            metadata: HashMap::new(),
+        };
+        graph.parameters = vec![crate::Parameter {
+            name: "TASK".to_string(),
+            type_name: "str".to_string(),
+        }];
+
+        // This should NOT crash or produce malformed MLIR anymore.
+        // Previously, this combination would cause E900 with "expected ':'" parse error.
+        let mlir = lower_to_mlir(&graph).expect("spawn_agent with flow params should compile");
+
+        // Verify the key invariants:
+        // 1. Function should have parameter arg
+        assert!(mlir.contains("%arg0: !ais.token"), "MLIR should have parameter arg\n{}", mlir);
+        // 2. spawn_agent should be emitted WITHOUT receiving %arg0 in its context
+        // (previously the lowering injected %arg0 into spawn_agent's inputs, causing malformed MLIR)
+        assert!(mlir.contains("ais.spawn_agent \"coder\""), "MLIR should have spawn_agent\n{}", mlir);
+        assert!(!mlir.contains("ais.spawn_agent \"coder\"(%arg0"), "spawn_agent should NOT receive %arg0 in context\n{}", mlir);
+        // 3. The MLIR should be parseable (no E900 error)
+        assert!(mlir.contains("func.func @test"), "MLIR should have function definition\n{}", mlir);
+        assert!(mlir.contains("func.return"), "MLIR should have return\n{}", mlir);
     }
 }

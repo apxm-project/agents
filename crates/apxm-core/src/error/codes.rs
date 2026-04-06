@@ -292,14 +292,6 @@ pub enum ErrorCode {
     ModelNotFound = 509,
     /// E510: Capability not registered
     CapabilityNotRegistered = 510,
-    /// E511: spawn_agent used in a flow with parameters
-    ///
-    /// spawn_agent cannot be used in a flow that declares parameters because
-    /// the MLIR lowering injects flow argument values into the first nodes
-    /// with no incoming edges, which corrupts spawn_agent's MLIR emission.
-    /// Use a no-parameter @entry flow and receive input via ask() instead,
-    /// or restructure using a separate parameterized helper flow in another agent.
-    SpawnAgentInParameterizedFlow = 511,
     /// E512: Dead node detected (output never used)
     DeadNode = 512,
     /// E513: Missing return value (no exit node)
@@ -310,6 +302,10 @@ pub enum ErrorCode {
     CircularModelProfile = 515,
     /// E516: Empty template string
     EmptyTemplate = 516,
+    /// E517: Unchecked memory read (QMEM result used without fallback)
+    UncheckedMemoryRead = 517,
+    /// E518: const_str with dynamic input (should only take literals)
+    ConstStrWithDynamicInput = 518,
 
     // ========================================================================
     // Generic Errors (E900-E999)
@@ -403,12 +399,13 @@ impl ErrorCode {
             ErrorCode::BackendNotRegistered => "E508",
             ErrorCode::ModelNotFound => "E509",
             ErrorCode::CapabilityNotRegistered => "E510",
-            ErrorCode::SpawnAgentInParameterizedFlow => "E511",
             ErrorCode::DeadNode => "E512",
             ErrorCode::MissingReturnValue => "E513",
             ErrorCode::CommunicateBeforeSpawn => "E514",
             ErrorCode::CircularModelProfile => "E515",
             ErrorCode::EmptyTemplate => "E516",
+            ErrorCode::UncheckedMemoryRead => "E517",
+            ErrorCode::ConstStrWithDynamicInput => "E518",
             ErrorCode::InternalError => "E900",
             ErrorCode::NotImplemented => "E901",
             ErrorCode::InvalidConfiguration => "E902",
@@ -448,6 +445,7 @@ impl ErrorCode {
                 | ErrorCode::DeadNode
                 | ErrorCode::CommunicateBeforeSpawn
                 | ErrorCode::EmptyTemplate
+                | ErrorCode::UncheckedMemoryRead
         )
     }
 
@@ -527,12 +525,13 @@ impl ErrorCode {
             508 => Some(ErrorCode::BackendNotRegistered),
             509 => Some(ErrorCode::ModelNotFound),
             510 => Some(ErrorCode::CapabilityNotRegistered),
-            511 => Some(ErrorCode::SpawnAgentInParameterizedFlow),
             512 => Some(ErrorCode::DeadNode),
             513 => Some(ErrorCode::MissingReturnValue),
             514 => Some(ErrorCode::CommunicateBeforeSpawn),
             515 => Some(ErrorCode::CircularModelProfile),
             516 => Some(ErrorCode::EmptyTemplate),
+            517 => Some(ErrorCode::UncheckedMemoryRead),
+            518 => Some(ErrorCode::ConstStrWithDynamicInput),
             900 => Some(ErrorCode::InternalError),
             901 => Some(ErrorCode::NotImplemented),
             902 => Some(ErrorCode::InvalidConfiguration),

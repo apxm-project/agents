@@ -3043,40 +3043,6 @@ fn explain_command(target: &str, json_output: bool) -> Result<()> {
 
             // Print description based on the error code
             match error_code {
-                apxm_core::error::ErrorCode::SpawnAgentInParameterizedFlow => {
-                    println!("{}", "Description:".bright_blue().bold());
-                    println!("  spawn_agent cannot be used in a flow that declares parameters.");
-                    println!();
-                    println!("{}", "Why this fails:".bright_blue().bold());
-                    println!("  The MLIR lowering injects flow argument values into entry nodes");
-                    println!("  (nodes with no incoming edges), which corrupts spawn_agent's MLIR emission.");
-                    println!();
-                    println!("{}", "How to fix:".bright_green().bold());
-                    println!("  1. Remove parameters from the @entry flow and use ask() or const_str()");
-                    println!("     to receive input inside the flow body, OR");
-                    println!("  2. Move spawn_agent to a separate no-parameter @entry flow and");
-                    println!("     place the parameterized logic in a helper flow of another agent.");
-                    println!();
-                    println!("{}", "Example:".bright_blue().bold());
-                    println!("  {}", "Instead of:".dimmed());
-                    println!("    agent Test {{");
-                    println!("        @entry flow main(TASK: str) -> str {{");
-                    println!("            spawn_agent(\"coder\", \"claude\", \"...\") -> _coder");
-                    println!("            think(\"task: {{{{TASK}}}}\") -> result");
-                    println!("            return result");
-                    println!("        }}");
-                    println!("    }}");
-                    println!();
-                    println!("  {}", "Use:".bright_green());
-                    println!("    agent Test {{");
-                    println!("        @entry flow main() -> str {{");
-                    println!("            spawn_agent(\"coder\", \"claude\", \"...\") -> _coder");
-                    println!("            ask(\"What coding task should I implement?\") -> task");
-                    println!("            think(task) -> result");
-                    println!("            return result");
-                    println!("        }}");
-                    println!("    }}");
-                }
                 apxm_core::error::ErrorCode::DeadNode => {
                     println!("{}", "Description:".bright_blue().bold());
                     println!("  A node produces output that is never used (no path to return).");
