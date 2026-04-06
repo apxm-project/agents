@@ -1,0 +1,66 @@
+// sub/convert.ais — Convert ONE HTML file → framework screen code
+//
+// Deterministic conversion using component_registry.json mapping rules:
+//   data-component="alert-card" → AlertCard() [Flutter] / <AlertCard/> [React]
+//   data-action="navigate"      → context.push('/route/$id')
+//   data-action="modal"         → showDialog(...)
+//   var(--color-primary)        → Theme.of(context).colorScheme.primary
+//   aria-label="..."            → Semantics(label: '...')
+//   visible text                → context.l10n.key (extracted to ARB/i18n)
+//   dashboard-triage.html       → DashboardState.triage case
+//   dashboard-empty.html        → DashboardState.empty case
+//   dashboard.html              → DashboardState.loaded case
+//
+// Widgets must exist before running this (see sub/component-widget.ais)
+//
+// Inputs:
+//   html_file:    path to HTML file (relative to session_dir/screens/)
+//   session_dir:  session directory path
+//   stack:        framework (flutter/react/vue/swiftui)
+//
+// Output: session_dir/code/screens/{screen}.dart|tsx
+//
+// Called by: phases/implement.ais (converts all screens in parallel)
+
+agent HtmlConverter {
+    @entry flow main() -> str {
+
+        ask("HTML file path (relative to session_dir/screens/)") -> html_file
+        ask("Session directory path") -> session_dir
+        ask("Stack (flutter/react/vue/swiftui)") -> stack
+
+        // Read HTML and specs
+        bash("cat " + session_dir + "/screens/" + html_file) -> html_content
+        bash("cat " + session_dir + "/specs/component_registry.json") -> component_registry
+        bash("cat " + session_dir + "/specs/design_system.json") -> design_system
+        bash("cat " + session_dir + "/specs/navigation_spec.json") -> nav_spec
+
+        spawn_agent("codex_converter",  "codex",  "$APXM_HOME") -> _cc
+        spawn_agent("claude_converter", "claude", "$APXM_HOME") -> _clc
+        spawn_agent("judge",            "claude", "$APXM_HOME") -> _j
+
+        // Conservative conversion
+        ask("Convert this HTML file to " + stack + " code. HTML file: " + html_file + " Content: " + html_content + " Component registry (implementations): " + component_registry + " Design system: " + design_system + " Nav spec: " + nav_spec + " Stack: " + stack + " Apply rules DETERMINISTICALLY. data-component -> widget. data-action -> router call. CSS var -> theme ref. aria-label -> semantics. Extract all visible text to i18n keys. HTML filename variants -> state machine cases. Conservative implementation. Return JSON: {framework_file, code, i18n_entries: {key: english_text}, state_machine: {states[], transitions[]}, imports_needed[]}.") -> codex_convert_prompt
+        communicate("codex_converter", "acp", codex_convert_prompt) -> codex_output
+
+        // Bold conversion
+        ask("Convert this HTML file to " + stack + " code with polished implementation. Same file and rules. HTML: " + html_file + " Content: " + html_content + " Registry: " + component_registry + " Design: " + design_system + " Nav: " + nav_spec + " Stack: " + stack + " Same deterministic mapping but with better widget composition, cleaner state management patterns, richer animations. Return same JSON structure.") -> claude_convert_prompt
+        communicate("claude_converter", "acp", claude_convert_prompt) -> claude_output
+
+        // Pick winner
+        ask("Pick the better conversion. File: " + html_file + " Stack: " + stack + " Conservative: " + codex_output + " Bold: " + claude_output + " Criteria: code quality, state management clarity, widget composition, i18n completeness, accessibility. Return JSON: {winner, reason, framework_file, code, i18n_entries, state_machine, imports_needed}.") -> judge_prompt
+        communicate("judge", "acp", judge_prompt) -> winning_conversion
+
+        // Write converted code to session_dir
+        bash("mkdir -p " + session_dir + "/code/screens") -> _mkdir_screens
+        bash("echo '" + winning_conversion + "' | jq -r '.code' > " + session_dir + "/code/screens/" + html_file + ".dart") -> _write_code
+        bash("echo '" + winning_conversion + "' | jq -r '.i18n_entries' > " + session_dir + "/code/i18n/" + html_file + ".json") -> _write_i18n
+
+        // Summary
+        bash("ls -lh " + session_dir + "/code/screens/" + html_file + ".dart") -> screen_file
+        ask("Summarize conversion. HTML: " + html_file + " Framework file: " + screen_file + " Winner: " + winning_conversion + " Format: ## HTML CONVERTED\n### HTML File\n### Framework File\n### Winner\n### Reason\n### I18n Keys Extracted") -> summary
+
+        print("CONVERTED: " + html_file + " → " + stack + "\n\n" + summary)
+        return summary
+    }
+}

@@ -1,0 +1,55 @@
+// sub/sync-from-figma.ais — Optional round-trip: read designer changes from Figma, update HTML
+//
+// Reads designer changes from Figma, updates relevant HTML files in session_dir/screens/
+// Re-runs verify-structural after sync.
+//
+// Inputs:
+//   figma_file_id: Figma file key (from URL)
+//   session_dir:   session directory path
+//
+// Output: updated HTML files in session_dir/screens/, sync report
+//
+// Called by: user after designers make changes in Figma
+
+agent FigmaSyncer {
+    @entry flow main() -> str {
+
+        ask("Figma file key (from Figma URL)") -> figma_file_key
+        ask("Session directory path") -> session_dir
+
+        // Read current HTML files and specs
+        bash("find " + session_dir + "/screens/ -name '*.html'") -> current_screens
+        bash("cat " + session_dir + "/specs/component_registry.json") -> component_registry
+        bash("cat " + session_dir + "/specs/screen_manifest.json") -> screen_manifest
+
+        spawn_agent("figma_reader", "claude", "$APXM_HOME") -> _fr
+        spawn_agent("html_updater", "claude", "$APXM_HOME") -> _hu
+        spawn_agent("verifier",     "claude", "$APXM_HOME") -> _v
+
+        // ── Step 1: Read Figma changes ────────────────────────────────────
+        ask("Read design changes from Figma file. File key: " + figma_file_key + " Use Figma MCP to read all frames and components. Compare against screen manifest: " + screen_manifest + " and component registry: " + component_registry + " Identify changes: new screens, modified layouts, color/spacing/typography updates, new components. Return JSON: {modified_screens: [{screen_id, frame_id, changes[]}], modified_components: [{component_id, figma_component_id, changes[]}], design_token_updates: {colors, spacing, typography}}.") -> figma_prompt
+        communicate("figma_reader", "acp", figma_prompt) -> figma_changes
+
+        // ── Step 2: Update HTML files ─────────────────────────────────────
+        ask("Update HTML files based on Figma changes. Current screens: " + current_screens + " Figma changes: " + figma_changes + " For each modified screen: update HTML structure, layouts, CSS vars. For each modified component: update component HTML. For design token updates: update CSS custom properties. Preserve data-component attributes and navigation structure. Return JSON map of filepath -> updated_html_content.") -> update_prompt
+        communicate("html_updater", "acp", update_prompt) -> updated_html
+
+        // Write updated HTML to session_dir
+        bash("echo '" + updated_html + "' | jq -r 'to_entries[] | \"echo '\" + (.value | @sh) + \"' > " + session_dir + "/screens/\" + .key' | bash") -> _write_updated
+
+        // ── Step 3: Re-run structural verification ───────────────────────
+        bash("cat " + session_dir + "/specs/navigation_spec.json") -> nav_spec
+        ask("Re-verify updated HTML files. Files: " + updated_html + " Component registry: " + component_registry + " Manifest: " + screen_manifest + " Nav spec: " + nav_spec + " Check: all data-component values still valid, no broken nav links, design token references correct, all required variants still present. Return JSON: {results: [{file, status: PASS|WARN|FAIL, issues[]}], summary: {pass, warn, fail}}.") -> verify_prompt
+        communicate("verifier", "acp", verify_prompt) -> verification
+
+        // Write sync report
+        bash("echo '{\"figma_changes\": " + figma_changes + ", \"updated_files\": " + updated_html + ", \"verification\": " + verification + "}' > " + session_dir + "/figma_sync_report.json") -> _write_report
+
+        // Summary
+        bash("cat " + session_dir + "/figma_sync_report.json") -> sync_report
+        ask("Summarize Figma sync. Figma file: " + figma_file_key + " Session: " + session_dir + " Changes: " + figma_changes + " Updated: " + updated_html + " Verification: " + verification + " Format: ## FIGMA SYNC COMPLETE\n### Figma File\n### Session Directory\n### Screens Modified\n### Components Modified\n### Design Token Updates\n### Verification Status\n### Issues Found") -> summary
+
+        print("FIGMA SYNC COMPLETE\n\nSession: " + session_dir + "\n\n" + summary)
+        return summary
+    }
+}

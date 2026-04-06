@@ -4,4 +4,4 @@
 
 mod types;
 
-pub use types::{CompletedNodeInfo, Example, LiveSessionState, Message, MessageMetadata, MessageRole, NodeInfo, SessionManifest};
+pub use types::{CompletedNodeInfo, LiveSessionState, NodeInfo, SessionManifest};

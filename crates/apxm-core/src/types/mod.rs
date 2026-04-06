@@ -62,7 +62,7 @@ pub use operations::metadata::{
 };
 pub use operations::{AISOperation, AISOperationType, OperationCategory, validate_operation};
 
-pub use session::{CompletedNodeInfo, Example, LiveSessionState, Message, MessageMetadata, MessageRole, NodeInfo, SessionManifest};
+pub use session::{CompletedNodeInfo, LiveSessionState, NodeInfo, SessionManifest};
 pub use values::{Number, Token, TokenId, TokenStatus, Value};
 
 pub use backend::{BackendConfig, BackendType, DockerConfig, ModelConfig};

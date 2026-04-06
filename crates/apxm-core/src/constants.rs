@@ -234,6 +234,7 @@ pub mod runtime {
         pub const REGISTERED: &str = "registered";
         pub const NAME: &str = "name";
         pub const TEAM_NAME: &str = "team_name";
+        pub const MEMBERS: &str = "members";
         pub const SPAWNED_BY: &str = "spawned_by";
         pub const CAPABILITIES: &str = "capabilities";
         pub const GOALS: &str = "goals";
@@ -345,6 +346,14 @@ pub mod protocols {
     pub const A2A_VERSION: &str = "0.3";
 }
 
+pub mod a2a {
+    pub mod event_types {
+        pub const LLM_TOKEN: &str = "llm_token";
+        pub const TOOL_START: &str = "tool_start";
+        pub const TOOL_END: &str = "tool_end";
+    }
+}
+
 pub mod acp {
     pub mod session_params {
         pub const MCP_SERVERS: &str = "mcpServers";
@@ -406,6 +415,13 @@ pub mod jsonrpc {
     pub const ERROR: &str = "error";
     pub const JSONRPC: &str = "jsonrpc";
     pub const VERSION: &str = "2.0";
+
+    pub mod error_codes {
+        pub const PARSE_ERROR: i64 = -32700;
+        pub const METHOD_NOT_FOUND: i64 = -32601;
+        pub const INVALID_PARAMS: i64 = -32602;
+        pub const INTERNAL_ERROR: i64 = -32000;
+    }
 }
 
 /// COMMUNICATE operation protocol dispatch modes.
@@ -493,6 +509,52 @@ pub mod llm {
         pub const CHOICES: &str = "choices";
         pub const TEXT_DELTA: &str = "text_delta";
     }
+
+    pub mod api_paths {
+        pub const CHAT_COMPLETIONS: &str = "/chat/completions";
+        pub const MODELS: &str = "/models";
+        pub const MESSAGES: &str = "/messages";
+        pub const API_CHAT: &str = "/api/chat";
+        pub const API_TAGS: &str = "/api/tags";
+    }
+
+    pub mod anthropic_events {
+        pub const MESSAGE_START: &str = "message_start";
+        pub const CONTENT_BLOCK_START: &str = "content_block_start";
+        pub const CONTENT_BLOCK_DELTA: &str = "content_block_delta";
+        pub const CONTENT_BLOCK_STOP: &str = "content_block_stop";
+        pub const MESSAGE_DELTA: &str = "message_delta";
+        pub const MESSAGE_STOP: &str = "message_stop";
+        pub const ERROR: &str = "error";
+    }
+
+    pub mod sse {
+        pub const DATA_PREFIX: &str = "data: ";
+        pub const EVENT_PREFIX: &str = "event: ";
+        pub const DONE_MARKER: &str = "[DONE]";
+    }
+
+    pub mod config_keys {
+        pub const EXTRA_HEADERS: &str = "extra_headers";
+        pub const ENV_PREFIX: &str = "env:";
+    }
+
+    pub mod openai {
+        pub const TOP_P: &str = "top_p";
+        pub const FREQUENCY_PENALTY: &str = "frequency_penalty";
+        pub const PRESENCE_PENALTY: &str = "presence_penalty";
+        pub const STOP: &str = "stop";
+    }
+
+    pub mod google {
+        pub const USAGE_METADATA: &str = "usageMetadata";
+        pub const PROMPT_TOKEN_COUNT: &str = "promptTokenCount";
+        pub const CANDIDATES_TOKEN_COUNT: &str = "candidatesTokenCount";
+    }
+
+    pub mod ollama {
+        pub const NUM_PREDICT: &str = "num_predict";
+    }
 }
 
 pub mod extensions {
@@ -533,6 +595,9 @@ pub mod session {
         pub const RUNNING: &str = "running";
         pub const COMPLETED: &str = "completed";
         pub const FAILED: &str = "failed";
+        pub const PENDING: &str = "pending";
+        pub const RESUMED: &str = "resumed";
+        pub const SUBMITTED: &str = "submitted";
     }
 }
 
@@ -595,4 +660,9 @@ pub mod defaults {
     pub const DEFAULT_MAX_SPAWN_DEPTH: usize = 4;
     /// Maximum number of concurrent ACP sessions in the session pool.
     pub const DEFAULT_MAX_SESSIONS: usize = 16;
+
+    // LLM backend defaults
+    pub const DEFAULT_ANTHROPIC_MAX_TOKENS: usize = 4096;
+    pub const DEFAULT_GOOGLE_MAX_OUTPUT_TOKENS: usize = 2048;
+    pub const DEFAULT_GOOGLE_TOP_P: f64 = 0.95;
 }

@@ -78,13 +78,6 @@ fn emit_air_simple(graph: &ApxmGraph) -> String {
     out
 }
 
-/// Result key names used in session results JSON.
-mod result_keys {
-    pub const NODE_OUTPUTS: &str = "node_outputs";
-    pub const TOKEN_VALUES: &str = "token_values";
-    pub const EXIT_VALUES: &str = "exit_values";
-}
-
 impl SessionOutputWriter {
     /// Create a new writer, creating the session directory.
     pub fn new(base_dir: &Path, execution_id: &str) -> io::Result<Self> {
@@ -136,19 +129,18 @@ impl SessionOutputWriter {
         )
     }
 
-    /// Write all node outputs and token values.
-    pub fn write_results(
+    fn write_results(
         &self,
         all_outputs: &HashMap<u64, Value>,
         node_map: &HashMap<u64, Vec<u64>>,
         exit_values: &HashMap<u64, Value>,
     ) -> io::Result<()> {
         let results = serde_json::json!({
-            result_keys::NODE_OUTPUTS: node_map,
-            result_keys::TOKEN_VALUES: all_outputs.iter()
+            "node_outputs": node_map,
+            "token_values": all_outputs.iter()
                 .map(|(k, v)| (k.to_string(), serde_json::to_value(v).unwrap_or_default()))
                 .collect::<serde_json::Map<String, serde_json::Value>>(),
-            result_keys::EXIT_VALUES: exit_values.iter()
+            "exit_values": exit_values.iter()
                 .map(|(k, v)| (k.to_string(), serde_json::to_value(v).unwrap_or_default()))
                 .collect::<serde_json::Map<String, serde_json::Value>>(),
         });
@@ -158,16 +150,14 @@ impl SessionOutputWriter {
         )
     }
 
-    /// Write metrics JSON.
-    pub fn write_metrics(&self, metrics_json: &serde_json::Value) -> io::Result<()> {
+    fn write_metrics(&self, metrics_json: &serde_json::Value) -> io::Result<()> {
         json_pretty_write(
             &self.session_dir.join(constants::session::files::METRICS),
             metrics_json,
         )
     }
 
-    /// Write per-node execution statuses.
-    pub fn write_node_statuses(&self, statuses: &[apxm_core::types::NodeStatus]) -> io::Result<()> {
+    fn write_node_statuses(&self, statuses: &[apxm_core::types::NodeStatus]) -> io::Result<()> {
         json_pretty_write(
             &self
                 .session_dir
@@ -232,12 +222,6 @@ impl SessionOutputWriter {
 
     /// Write final live.json AND manifest with completed/failed status.
     /// Call this on error paths where finalize() won't be reached.
-    /// Requires execution_id and graph_name so both files are consistent.
-    pub fn finalize_live(&self, success: bool) -> io::Result<()> {
-        self.finalize_live_with_id(success, None, None)
-    }
-
-    /// Full error-path finalization with execution id and graph name for manifest.
     pub fn finalize_live_with_id(
         &self,
         success: bool,
@@ -274,10 +258,6 @@ impl SessionOutputWriter {
         Ok(())
     }
 
-    /// Path where events should be written.
-    pub fn events_path(&self) -> PathBuf {
-        self.session_dir.join(constants::session::files::TRACE)
-    }
 }
 
 /// Appends events as JSONL to a file.
@@ -325,7 +305,6 @@ pub struct SessionEventEmitter {
     context_assembler: Option<ContextAssembler>,
     running_nodes: Mutex<Vec<NodeInfo>>,
     completed_nodes: Mutex<Vec<CompletedNodeInfo>>,
-    node_start_times: Mutex<HashMap<u64, Instant>>,
 }
 
 impl SessionEventEmitter {
@@ -389,7 +368,6 @@ impl SessionEventEmitter {
             context_assembler,
             running_nodes: Mutex::new(Vec::new()),
             completed_nodes: Mutex::new(Vec::new()),
-            node_start_times: Mutex::new(HashMap::new()),
         };
 
         emitter.write_live(None)?;
@@ -509,15 +487,7 @@ impl SessionEventEmitter {
         if let Some(id) = current_node_id {
             self.current_node_id.store(id as i64, Ordering::Relaxed);
         }
-        self.write_live_with_status(current_node_id, constants::session::status::RUNNING, false)
-    }
 
-    fn write_live_with_status(
-        &self,
-        _current_node_id: Option<u64>,
-        status: &str,
-        success: bool,
-    ) -> io::Result<()> {
         let completed = self.completed.load(Ordering::Relaxed);
         let total = self.total.load(Ordering::Relaxed);
         let elapsed_ms = self.start_time.elapsed().as_millis();
@@ -534,13 +504,13 @@ impl SessionEventEmitter {
         };
 
         let live = LiveSessionState {
-            status: status.to_string(),
+            status: constants::session::status::RUNNING.to_string(),
             running_nodes,
             completed_nodes: recent_completed,
             completed: completed as usize,
             total: if total > 0 { Some(total as usize) } else { None },
             elapsed_ms,
-            success,
+            success: false,
             current_phase: None,
         };
 
@@ -689,9 +659,6 @@ impl ExecutionEventEmitter for SessionEventEmitter {
             };
             if let Ok(mut running) = self.running_nodes.lock() {
                 running.push(node_info);
-            }
-            if let Ok(mut start_times) = self.node_start_times.lock() {
-                start_times.insert(node_id, Instant::now());
             }
         }
 

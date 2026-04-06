@@ -1,0 +1,56 @@
+// sub/component-widget.ais — Generate framework widget for ONE component
+//
+// Generates the framework widget (Flutter/React/etc) for ONE component.
+// Must run BEFORE sub/convert.ais.
+//
+// CODEX writes conservative widget, CLAUDE writes bold, CLAUDE picks winner.
+//
+// Inputs:
+//   component_id: ID from component_registry.json
+//   session_dir:  session directory path
+//   stack:        framework (flutter/react/vue/swiftui)
+//
+// Output: session_dir/code/widgets/{component_id}.dart|tsx
+//
+// Called by: phases/implement.ais (generates all widgets in parallel)
+
+agent ComponentWidgetGenerator {
+    @entry flow main() -> str {
+
+        ask("Component ID") -> component_id
+        ask("Session directory path") -> session_dir
+        ask("Stack (flutter/react/vue/swiftui)") -> stack
+
+        // Read component HTML and specs
+        bash("cat " + session_dir + "/components/" + component_id + ".html") -> component_html
+        bash("cat " + session_dir + "/specs/component_registry.json") -> component_registry
+        bash("cat " + session_dir + "/specs/design_system.json") -> design_system
+
+        spawn_agent("codex_widget",  "codex",  "$APXM_HOME") -> _cw
+        spawn_agent("claude_widget", "claude", "$APXM_HOME") -> _clw
+        spawn_agent("judge",         "claude", "$APXM_HOME") -> _j
+
+        // Conservative widget
+        ask("Generate conservative " + stack + " widget for this component. Component ID: " + component_id + " HTML: " + component_html + " Registry: " + component_registry + " Design: " + design_system + " Stack: " + stack + " Map HTML structure to framework widgets. CSS vars -> theme refs. ARIA -> semantics. All states and variants from HTML. Conservative, semantic, accessible. Return framework code as string.") -> codex_prompt
+        communicate("codex_widget", "acp", codex_prompt) -> codex_code
+
+        // Bold widget
+        ask("Generate bold " + stack + " widget for this component. Component ID: " + component_id + " HTML: " + component_html + " Registry: " + component_registry + " Design: " + design_system + " Stack: " + stack + " Same mapping but with better composition, modern patterns, smoother animations, cleaner state management. Return framework code as string.") -> claude_prompt
+        communicate("claude_widget", "acp", claude_prompt) -> claude_code
+
+        // Pick winner
+        ask("Pick the better widget implementation. Component: " + component_id + " Stack: " + stack + " Conservative: " + codex_code + " Bold: " + claude_code + " Criteria: code quality, composability, state management, accessibility, maintainability. Return JSON: {winner: conservative|bold, reason, code}.") -> judge_prompt
+        communicate("judge", "acp", judge_prompt) -> winning_widget
+
+        // Write widget to session_dir
+        bash("mkdir -p " + session_dir + "/code/widgets") -> _mkdir
+        bash("echo '" + winning_widget + "' | jq -r '.code' > " + session_dir + "/code/widgets/" + component_id + ".dart") -> _write_widget
+
+        // Summary
+        bash("ls -lh " + session_dir + "/code/widgets/" + component_id + ".dart") -> widget_file
+        ask("Summarize widget generation. Component: " + component_id + " File: " + widget_file + " Winner: " + winning_widget + " Format: ## COMPONENT WIDGET GENERATED\n### Component ID\n### Winner\n### Reason\n### File Location") -> summary
+
+        print("COMPONENT WIDGET GENERATED: " + component_id + "\n\n" + summary)
+        return summary
+    }
+}

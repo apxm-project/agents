@@ -7,6 +7,7 @@ use crate::llm::LLMRegistry;
 use crate::llm::Provider;
 use anyhow::Result;
 use apxm_core::constants::graph::attrs::{BASE_URL, MODEL};
+use apxm_core::constants::llm::config_keys;
 use apxm_core::types::{AISOperationType, ModelInfo, ProviderProtocol};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value as JsonValue, json};
@@ -67,7 +68,7 @@ impl BackendRegistration {
                 .iter()
                 .map(|(key, value)| (key.clone(), json!(value)))
                 .collect::<Map<String, JsonValue>>();
-            map.insert("extra_headers".to_string(), JsonValue::Object(headers));
+            map.insert(config_keys::EXTRA_HEADERS.to_string(), JsonValue::Object(headers));
         }
 
         if map.is_empty() {
