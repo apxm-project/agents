@@ -171,7 +171,6 @@ enum Commands {
     /// Manage and inspect model definitions from ~/.apxm/models.toml
     Models {
         #[command(subcommand)]
-        action: ModelsAction,
     },
     /// Browse AIS operations (the agent instruction set)
     Ops {
@@ -446,11 +445,11 @@ enum AgentAction {
 
 /// Actions for `apxm models`
 #[derive(Subcommand, Debug)]
-enum ModelsAction {
-    /// List all models defined in ~/.apxm/models.toml
-    List,
-    /// Show circuit-breaker health for all registered LLM backends
+,
+    /// Show Chat-capable models sorted by health (from vendor endpoint)
     Health,
+    /// Refresh docs/amd-models.md with current backend model data
+    Refresh,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
@@ -744,158 +743,7 @@ async fn agent_command(action: AgentAction, json_output: bool) -> Result<()> {
     Ok(())
 }
 
-async fn models_command(action: ModelsAction, json_output: bool) -> Result<()> {
-    use apxm_runtime::model_router::ModelRegistry;
 
-    match action {
-        ModelsAction::List => {
-            let registry = ModelRegistry::load_from_default_path();
-            let models = registry.list();
-
-            if json_output {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(
-                        &models
-                            .iter()
-                            .map(|m| {
-                                serde_json::json!({
-                                    "name": m.name,
-                                    "backend": m.backend,
-                                    "cost_per_1k_input": m.cost_per_1k_input,
-                                    "cost_per_1k_output": m.cost_per_1k_output,
-                                    "context_window": m.context_window,
-                                    "tags": m.tags,
-                                    "supports_thinking": m.supports_thinking,
-                                })
-                            })
-                            .collect::<Vec<_>>()
-                    )?
-                );
-                return Ok(());
-            }
-
-            if models.is_empty() {
-                println!("No models defined. Create ~/.apxm/models.toml to add model definitions.");
-                println!();
-                println!("Example:");
-                println!("  [[models]]");
-                println!("  name = \"claude-sonnet-4-5\"");
-                println!("  backend = \"anthropic\"");
-                println!("  cost_per_1k_input = 0.003");
-                println!("  cost_per_1k_output = 0.015");
-                println!("  context_window = 200000");
-                println!("  tags = [\"production\"]");
-                return Ok(());
-            }
-
-            let default_model = registry.default_model();
-
-            println!("Models ({} defined):", models.len());
-            println!();
-            for m in &models {
-                let is_default = default_model.as_deref() == Some(&m.name);
-                let default_marker = if is_default { " [default]" } else { "" };
-                println!("  {}{}", m.name.bold(), default_marker.dimmed());
-                println!("    Backend:        {}", m.backend);
-                if m.context_window > 0 {
-                    println!(
-                        "    Context window: {} tokens",
-                        format_number(m.context_window)
-                    );
-                }
-                if m.cost_per_1k_input > 0.0 || m.cost_per_1k_output > 0.0 {
-                    println!(
-                        "    Cost:           ${:.4}/1k in, ${:.4}/1k out",
-                        m.cost_per_1k_input, m.cost_per_1k_output
-                    );
-                }
-                if !m.tags.is_empty() {
-                    println!("    Tags:           {}", m.tags.join(", "));
-                }
-                if m.supports_thinking {
-                    println!("    Thinking:       supported");
-                }
-                println!();
-            }
-
-            let routing = registry.routing();
-            if !routing.prefer_tags.is_empty() {
-                println!("Routing policy:");
-                println!("  Prefer tags:   {}", routing.prefer_tags.join(", "));
-                if !routing.fallback_tags.is_empty() {
-                    println!("  Fallback tags: {}", routing.fallback_tags.join(", "));
-                }
-            }
-        }
-
-        ModelsAction::Health => {
-            // Load backends from the backend store
-            let mut backend_names: Vec<String> = Vec::new();
-            if let Ok(store) = apxm_credentials::BackendStore::open()
-                && let Ok(backends) = store.list()
-            {
-                for backend in backends {
-                    backend_names.push(backend.name);
-                }
-            }
-
-            // Also include any model registry entries
-            let registry = ModelRegistry::load_from_default_path();
-            for m in registry.list() {
-                if !backend_names.contains(&m.backend) {
-                    backend_names.push(m.backend.clone());
-                }
-            }
-
-            if json_output {
-                let statuses: Vec<serde_json::Value> = backend_names.iter().map(|name| {
-                    serde_json::json!({
-                        "backend": name,
-                        "state": "Unknown",
-                        "note": "Circuit breaker state is per-process; use runtime metrics for live state"
-                    })
-                }).collect();
-                println!("{}", serde_json::to_string_pretty(&statuses)?);
-                return Ok(());
-            }
-
-            if backend_names.is_empty() {
-                println!("No backends registered. Run: apxm llm register");
-                return Ok(());
-            }
-
-            println!("LLM Backend Health:");
-            println!();
-            println!("  {:30} {}", "Backend".bold(), "Status".bold());
-            println!("  {}", "-".repeat(60));
-
-            // We can't read live circuit-breaker state from CLI (it's per-process).
-            // Show registered backends + note that live state is in the running runtime.
-            for name in &backend_names {
-                let status = "Registered (circuit breaker active at runtime)";
-                println!("  {:30} {}", name, status.dimmed());
-            }
-
-            println!();
-            println!("Note: Circuit breaker state (Closed/Open/HalfOpen) is tracked");
-            println!("      per-process within the running runtime. Use tracing logs");
-            println!("      (RUST_LOG=apxm_runtime=info) to observe live state changes.");
-            println!();
-
-            // Show models.toml routing config
-            let routing = registry.routing();
-            if !routing.prefer_tags.is_empty() {
-                println!("Routing policy (from ~/.apxm/models.toml):");
-                println!("  Prefer tags:   {}", routing.prefer_tags.join(", "));
-                if !routing.fallback_tags.is_empty() {
-                    println!("  Fallback tags: {}", routing.fallback_tags.join(", "));
-                }
-            }
-        }
-    }
-    Ok(())
-}
 
 fn format_number(n: usize) -> String {
     let s = n.to_string();
@@ -1090,7 +938,6 @@ async fn run_cli() -> Result<()> {
         Commands::Backend { action } => backend_command(action, cli.json).await,
         Commands::Tool { action } => tool_command(action, cli.json),
         Commands::Agent { action } => agent_command(action, cli.json).await,
-        Commands::Models { action } => models_command(action, cli.json).await,
         Commands::Ops { action } => ops_command(action, cli.json),
         Commands::Validate {
             input,
@@ -1115,7 +962,6 @@ async fn run_cli_no_driver() -> Result<()> {
         Commands::Install => install_command(),
         Commands::Tool { action } => tool_command(action, cli.json),
         Commands::Agent { action } => agent_command(action, cli.json).await,
-        Commands::Models { action } => models_command(action, cli.json).await,
         Commands::Ops { action } => ops_command(action, cli.json),
         Commands::Validate {
             input,

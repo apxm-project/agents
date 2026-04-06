@@ -61,6 +61,12 @@ static bool hasSideEffects(Operation *op) {
   if (isa<CommunicateOp>(op))
     return true;
 
+  // SpawnAgent creates child agents (side effect) — result is intentionally
+  // discarded in most flows (-> _name pattern). The agent handle is consumed
+  // via COMMUNICATE nodes, not direct data flow.
+  if (isa<SpawnAgentOp>(op))
+    return true;
+
   // Return transfers control flow (not a value producer warning candidate)
   if (isa<ReturnOp, func::ReturnOp>(op))
     return true;
