@@ -292,6 +292,14 @@ pub enum ErrorCode {
     ModelNotFound = 509,
     /// E510: Capability not registered
     CapabilityNotRegistered = 510,
+    /// E511: spawn_agent used in a flow with parameters
+    ///
+    /// spawn_agent cannot be used in a flow that declares parameters because
+    /// the MLIR lowering injects flow argument values into the first nodes
+    /// with no incoming edges, which corrupts spawn_agent's MLIR emission.
+    /// Use a no-parameter @entry flow and receive input via ask() instead,
+    /// or restructure using a separate parameterized helper flow in another agent.
+    SpawnAgentInParameterizedFlow = 511,
 
     // ========================================================================
     // Generic Errors (E900-E999)
@@ -385,6 +393,7 @@ impl ErrorCode {
             ErrorCode::BackendNotRegistered => "E508",
             ErrorCode::ModelNotFound => "E509",
             ErrorCode::CapabilityNotRegistered => "E510",
+            ErrorCode::SpawnAgentInParameterizedFlow => "E511",
             ErrorCode::InternalError => "E900",
             ErrorCode::NotImplemented => "E901",
             ErrorCode::InvalidConfiguration => "E902",
@@ -500,6 +509,7 @@ impl ErrorCode {
             508 => Some(ErrorCode::BackendNotRegistered),
             509 => Some(ErrorCode::ModelNotFound),
             510 => Some(ErrorCode::CapabilityNotRegistered),
+            511 => Some(ErrorCode::SpawnAgentInParameterizedFlow),
             900 => Some(ErrorCode::InternalError),
             901 => Some(ErrorCode::NotImplemented),
             902 => Some(ErrorCode::InvalidConfiguration),
