@@ -507,7 +507,8 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         }
     }
 
-    let mut request = LLMRequest::new(prompt.clone());
+    let mut request = LLMRequest::new(prompt.clone())
+        .with_operation_type(node.op_type);
 
     // Apply mode-specific configuration
     if mode == LlmMode::Think

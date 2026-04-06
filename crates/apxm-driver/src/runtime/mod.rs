@@ -36,9 +36,30 @@ impl RuntimeExecutor {
         configure_capability_registry(runtime.capability_system_arc(), &config.apxm_config)?;
 
         // Initialize ModelRouter after LLM backends are registered.
-        // Loads ~/.apxm/models.toml and registers circuit breakers for each backend.
+        // Populate operation_policies from config.chat.routing.operation_routes so
+        // the ModelRouter correctly routes ASK/THINK/etc. to their configured backends.
+        let router_operation_policies = config
+            .apxm_config
+            .chat
+            .routing
+            .operation_routes
+            .iter()
+            .filter_map(|(op_str, route)| {
+                let operation = op_str.parse::<apxm_core::types::AISOperationType>().ok()?;
+                Some(apxm_runtime::OperationPolicy {
+                    operation,
+                    model: route.model.clone(),
+                    backend: route.backend.clone(),
+                    target: apxm_runtime::RoutingTarget::Balanced,
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let mut router_config = apxm_runtime::ModelRouterConfig::default();
+        router_config.operation_policies = router_operation_policies;
+
         runtime
-            .init_model_router(apxm_runtime::ModelRouterConfig::default())
+            .init_model_router(router_config)
             .map_err(DriverError::Runtime)?;
 
         let sandbox_registry = configure_sandbox_registry();
