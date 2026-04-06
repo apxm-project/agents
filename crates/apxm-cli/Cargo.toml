@@ -29,6 +29,7 @@ apxm-acp = { path = "../apxm-acp" }
 apxm-runtime = { path = "../apxm-runtime" }
 rpassword = "7.0"
 chrono = "0.4"
+walkdir = "2.0"
 
 [dev-dependencies]
 tempfile = "3.0"
