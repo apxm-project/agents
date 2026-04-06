@@ -4610,8 +4610,10 @@ mod tests {
 
     #[test]
     fn find_op_spec_inv() {
-        let spec = find_op_spec("INV");
-        assert!(spec.is_some(), "INV should be a valid operation");
+        // The canonical name is INV_TOOL (to_string() on AISOperationType::InvTool).
+        // "INV" is the legacy .fromStr alias but not the Display name.
+        let spec = find_op_spec("INV_TOOL");
+        assert!(spec.is_some(), "INV_TOOL should be a valid operation");
     }
 
     #[test]
@@ -4627,7 +4629,7 @@ mod tests {
         let ask = find_op_spec("ASK").unwrap();
         assert_eq!(ask.category, OperationCategory::Reasoning);
 
-        let inv = find_op_spec("INV").unwrap();
+        let inv = find_op_spec("INV_TOOL").unwrap();
         assert_eq!(inv.category, OperationCategory::Tools);
     }
 
