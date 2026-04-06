@@ -70,10 +70,28 @@ impl<'ctx> Pipeline<'ctx> {
         }
 
         // Run graph-level optimization passes at O2+.
+        //
+        // Pass ordering:
+        // 1. constant_folding — fold CONST_STR into THINK/ASK templates (reduces node count)
+        // 2. prompt_caching — detect shared system prompts
+        // 3. memoization_hints — mark duplicate pure operations
+        // 4. parallelism_analysis — compute max parallelism & critical path (reads final graph shape)
+        //
+        // Rationale:
+        // - ConstantFolding runs first to simplify the graph before other analysis passes
+        // - ParallelismAnalysis runs last to see the final optimized graph structure
+        // - Model validation (if added) should run after constant folding since folded
+        //   templates change model references
         if matches!(
             self.config.opt_level,
             OptimizationLevel::O2 | OptimizationLevel::O3
         ) {
+            graph.constant_folding().map_err(|e| {
+                CompilerError::Unsupported(Box::new(ErrorBuilder::generic(
+                    ErrorCode::InternalError,
+                    format!("Constant folding pass failed: {e}"),
+                )))
+            })?;
             graph.prompt_caching().map_err(|e| {
                 CompilerError::Unsupported(Box::new(ErrorBuilder::generic(
                     ErrorCode::InternalError,
@@ -84,6 +102,12 @@ impl<'ctx> Pipeline<'ctx> {
                 CompilerError::Unsupported(Box::new(ErrorBuilder::generic(
                     ErrorCode::InternalError,
                     format!("Memoization hints pass failed: {e}"),
+                )))
+            })?;
+            graph.parallelism_analysis().map_err(|e| {
+                CompilerError::Unsupported(Box::new(ErrorBuilder::generic(
+                    ErrorCode::InternalError,
+                    format!("Parallelism analysis pass failed: {e}"),
                 )))
             })?;
         }
@@ -121,10 +145,28 @@ impl<'ctx> Pipeline<'ctx> {
         }
 
         // Run graph-level optimization passes at O2+.
+        //
+        // Pass ordering:
+        // 1. constant_folding — fold CONST_STR into THINK/ASK templates (reduces node count)
+        // 2. prompt_caching — detect shared system prompts
+        // 3. memoization_hints — mark duplicate pure operations
+        // 4. parallelism_analysis — compute max parallelism & critical path (reads final graph shape)
+        //
+        // Rationale:
+        // - ConstantFolding runs first to simplify the graph before other analysis passes
+        // - ParallelismAnalysis runs last to see the final optimized graph structure
+        // - Model validation (if added) should run after constant folding since folded
+        //   templates change model references
         if matches!(
             self.config.opt_level,
             OptimizationLevel::O2 | OptimizationLevel::O3
         ) {
+            graph.constant_folding().map_err(|e| {
+                CompilerError::Unsupported(Box::new(ErrorBuilder::generic(
+                    ErrorCode::InternalError,
+                    format!("Constant folding pass failed: {e}"),
+                )))
+            })?;
             graph.prompt_caching().map_err(|e| {
                 CompilerError::Unsupported(Box::new(ErrorBuilder::generic(
                     ErrorCode::InternalError,
@@ -135,6 +177,12 @@ impl<'ctx> Pipeline<'ctx> {
                 CompilerError::Unsupported(Box::new(ErrorBuilder::generic(
                     ErrorCode::InternalError,
                     format!("Memoization hints pass failed: {e}"),
+                )))
+            })?;
+            graph.parallelism_analysis().map_err(|e| {
+                CompilerError::Unsupported(Box::new(ErrorBuilder::generic(
+                    ErrorCode::InternalError,
+                    format!("Parallelism analysis pass failed: {e}"),
                 )))
             })?;
         }

@@ -27,6 +27,7 @@ from scripts.build import register_commands as register_build
 from scripts.compile import register_commands as register_compile
 from scripts.execute import register_commands as register_execute
 from scripts.install import register_commands as register_install
+from scripts.models import register_commands as register_models
 from scripts.run import register_commands as register_run
 from scripts.test import register_commands as register_test
 
@@ -48,6 +49,7 @@ app = Typer(
 register_build(app)
 register_compile(app)
 register_execute(app)
+register_models(app)
 register_run(app)
 register_test(app)
 register_install(app)
