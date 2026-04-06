@@ -1,0 +1,338 @@
+//! Profile Router — selects healthy model from profile candidates using circuit breakers.
+//!
+//! The ProfileRouter bridges semantic profiles and runtime health checks:
+//!
+//! 1. User specifies `model_profile` in graph node (e.g., "reasoning-tier")
+//! 2. ProfileRouter loads profile from ProfileRegistry
+//! 3. Iterates candidates by priority (1 → 2 → 3)
+//! 4. For each candidate, checks `ModelRouter.is_model_healthy()`
+//! 5. Returns first healthy candidate's model name
+//!
+//! ## Example
+//!
+//! ```rust,no_run
+//! use apxm_runtime::model_router::{ModelRouter, ProfileRegistry, ProfileRouter};
+//! use std::sync::Arc;
+//!
+//! let model_router = Arc::new(ModelRouter::new(/* ... */));
+//! let profile_registry = Arc::new(ProfileRegistry::load_from_default_path());
+//! let router = ProfileRouter::new(&profile_registry, &model_router);
+//!
+//! let model_name = router.select_from_profile("reasoning-tier")?;
+//! // Returns "claude-opus-4-6" if healthy, else "gpt-4o", etc.
+//! # Ok::<(), anyhow::Error>(())
+//! ```
+
+use super::registry::ModelRegistry;
+use super::ProfileRegistry;
+use super::ModelRouter;
+use anyhow::Result;
+
+/// Router that selects healthy models from profiles based on runtime circuit-breaker state.
+pub struct ProfileRouter<'a> {
+    profile_registry: &'a ProfileRegistry,
+    model_router: &'a ModelRouter,
+    model_registry: &'a ModelRegistry,
+}
+
+impl<'a> ProfileRouter<'a> {
+    /// Create a new profile router.
+    ///
+    /// # Arguments
+    /// * `profile_registry` - Registry of model profiles
+    /// * `model_router` - Model router with circuit-breaker state
+    pub fn new(
+        profile_registry: &'a ProfileRegistry,
+        model_router: &'a ModelRouter,
+        model_registry: &'a ModelRegistry,
+    ) -> Self {
+        ProfileRouter {
+            profile_registry,
+            model_router,
+            model_registry,
+        }
+    }
+
+    /// Select a healthy model from the given profile.
+    ///
+    /// Iterates candidates by priority (ascending: 1 → 2 → 3) and returns the first
+    /// model name whose backend has a healthy circuit breaker.
+    ///
+    /// # Arguments
+    /// * `profile_name` - Name of the profile to select from
+    ///
+    /// # Returns
+    /// * `Ok(String)` - Model name of the first healthy candidate
+    /// * `Err` - If profile not found or no candidates are healthy
+    ///
+    /// # Errors
+    /// Returns an error if:
+    /// - Profile does not exist in the registry
+    /// - Profile has no candidates
+    /// - All candidates' backends have open circuit breakers
+    pub fn select_from_profile(&self, profile_name: &str) -> Result<String> {
+        let profile = self
+            .profile_registry
+            .get(profile_name)
+            .ok_or_else(|| anyhow::anyhow!("Profile '{}' not found in registry", profile_name))?;
+
+        if !profile.has_candidates() {
+            anyhow::bail!("Profile '{}' has no candidates configured", profile_name);
+        }
+
+        // Iterate candidates by priority (sorted ascending: 1 → 2 → 3)
+        for candidate in profile.candidates_by_priority() {
+            // Check if the model exists in the model registry
+            if let Some(model_entry) = self.model_registry.get(&candidate.model) {
+                // Check if the backend is healthy via circuit breaker
+                if self.model_router.is_model_healthy(&candidate.model) {
+                    tracing::debug!(
+                        profile = %profile_name,
+                        model = %candidate.model,
+                        priority = candidate.priority,
+                        backend = %model_entry.backend,
+                        "Selected healthy candidate from profile"
+                    );
+                    return Ok(candidate.model.clone());
+                } else {
+                    tracing::debug!(
+                        profile = %profile_name,
+                        model = %candidate.model,
+                        priority = candidate.priority,
+                        backend = %model_entry.backend,
+                        "Skipping unhealthy candidate"
+                    );
+                }
+            } else {
+                tracing::warn!(
+                    profile = %profile_name,
+                    model = %candidate.model,
+                    priority = candidate.priority,
+                    "Candidate model not found in model registry"
+                );
+            }
+        }
+
+        anyhow::bail!(
+            "No healthy candidates available for profile '{}' (all {} candidates unavailable)",
+            profile_name,
+            profile.candidates.len()
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use apxm_backends::LLMRegistry;
+    use apxm_core::model_profiles::{ModelProfile, ProfileCandidate};
+    use super::super::registry::ModelEntry;
+    use super::super::{ModelRouter, ModelRouterConfig};
+    use std::sync::Arc;
+
+    fn make_test_setup() -> (Arc<ModelRouter>, Arc<ProfileRegistry>, Arc<ModelRegistry>) {
+        let llm_registry = Arc::new(LLMRegistry::new());
+        let model_registry = Arc::new(ModelRegistry::new());
+        let profile_registry = Arc::new(ProfileRegistry::new());
+
+        let model_router = Arc::new(
+            ModelRouter::with_model_registry(
+                llm_registry,
+                model_registry.clone(),
+                ModelRouterConfig::default(),
+            )
+            .unwrap(),
+        );
+
+        (model_router, profile_registry, model_registry)
+    }
+
+    #[test]
+    fn test_select_from_nonexistent_profile_fails() {
+        let (model_router, profile_registry, model_registry) = make_test_setup();
+        let router = ProfileRouter::new(&profile_registry, &model_router, &model_registry);
+
+        let result = router.select_from_profile("nonexistent");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not found"));
+    }
+
+    #[test]
+    fn test_select_from_empty_profile_fails() {
+        let (model_router, profile_registry, model_registry) = make_test_setup();
+        profile_registry.register(ModelProfile {
+            name: "empty-profile".to_string(),
+            description: "No candidates".to_string(),
+            tags: vec![],
+            min_context_window: None,
+            max_cost_per_1k_input: None,
+            candidates: vec![],
+        });
+
+        let router = ProfileRouter::new(&profile_registry, &model_router, &model_registry);
+        let result = router.select_from_profile("empty-profile");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("no candidates"));
+    }
+
+    #[test]
+    fn test_select_first_healthy_candidate() {
+        let (model_router, profile_registry, model_registry) = make_test_setup();
+
+        // Register models in model registry
+        model_registry.register(ModelEntry {
+            name: "model-a".to_string(),
+            backend: "backend-a".to_string(),
+            cost_per_1k_input: 0.0,
+            cost_per_1k_output: 0.0,
+            context_window: 128_000,
+            tags: vec![],
+            supports_thinking: false,
+            max_output_tokens: None,
+        });
+
+        model_registry.register(ModelEntry {
+            name: "model-b".to_string(),
+            backend: "backend-b".to_string(),
+            cost_per_1k_input: 0.0,
+            cost_per_1k_output: 0.0,
+            context_window: 128_000,
+            tags: vec![],
+            supports_thinking: false,
+            max_output_tokens: None,
+        });
+
+        // Register profile with candidates
+        profile_registry.register(ModelProfile {
+            name: "test-profile".to_string(),
+            description: "Test".to_string(),
+            tags: vec![],
+            min_context_window: None,
+            max_cost_per_1k_input: None,
+            candidates: vec![
+                ProfileCandidate {
+                    model: "model-a".to_string(),
+                    priority: 1,
+                },
+                ProfileCandidate {
+                    model: "model-b".to_string(),
+                    priority: 2,
+                },
+            ],
+        });
+
+        // Register circuit breakers (both healthy by default)
+        model_router.circuit_breakers.register("backend-a");
+        model_router.circuit_breakers.register("backend-b");
+
+        let router = ProfileRouter::new(&profile_registry, &model_router, &model_registry);
+        let selected = router.select_from_profile("test-profile").unwrap();
+
+        // Should select first candidate (priority 1)
+        assert_eq!(selected, "model-a");
+    }
+
+    #[test]
+    fn test_failover_to_second_candidate_when_first_unhealthy() {
+        let (model_router, profile_registry, model_registry) = make_test_setup();
+
+        // Register models
+        model_registry.register(ModelEntry {
+            name: "model-a".to_string(),
+            backend: "backend-a".to_string(),
+            cost_per_1k_input: 0.0,
+            cost_per_1k_output: 0.0,
+            context_window: 128_000,
+            tags: vec![],
+            supports_thinking: false,
+            max_output_tokens: None,
+        });
+
+        model_registry.register(ModelEntry {
+            name: "model-b".to_string(),
+            backend: "backend-b".to_string(),
+            cost_per_1k_input: 0.0,
+            cost_per_1k_output: 0.0,
+            context_window: 128_000,
+            tags: vec![],
+            supports_thinking: false,
+            max_output_tokens: None,
+        });
+
+        // Register profile
+        profile_registry.register(ModelProfile {
+            name: "failover-profile".to_string(),
+            description: "Test failover".to_string(),
+            tags: vec![],
+            min_context_window: None,
+            max_cost_per_1k_input: None,
+            candidates: vec![
+                ProfileCandidate {
+                    model: "model-a".to_string(),
+                    priority: 1,
+                },
+                ProfileCandidate {
+                    model: "model-b".to_string(),
+                    priority: 2,
+                },
+            ],
+        });
+
+        // Register circuit breakers and trip backend-a
+        model_router.circuit_breakers.register("backend-a");
+        model_router.circuit_breakers.register("backend-b");
+
+        // Trip backend-a's circuit breaker
+        for _ in 0..5 {
+            model_router.record_failure("backend-a");
+        }
+
+        let router = ProfileRouter::new(&profile_registry, &model_router, &model_registry);
+        let selected = router.select_from_profile("failover-profile").unwrap();
+
+        // Should failover to second candidate (priority 2)
+        assert_eq!(selected, "model-b");
+    }
+
+    #[test]
+    fn test_all_candidates_unhealthy_fails() {
+        let (model_router, profile_registry, model_registry) = make_test_setup();
+
+        // Register model
+        model_registry.register(ModelEntry {
+            name: "model-a".to_string(),
+            backend: "backend-a".to_string(),
+            cost_per_1k_input: 0.0,
+            cost_per_1k_output: 0.0,
+            context_window: 128_000,
+            tags: vec![],
+            supports_thinking: false,
+            max_output_tokens: None,
+        });
+
+        // Register profile
+        profile_registry.register(ModelProfile {
+            name: "unhealthy-profile".to_string(),
+            description: "All unhealthy".to_string(),
+            tags: vec![],
+            min_context_window: None,
+            max_cost_per_1k_input: None,
+            candidates: vec![ProfileCandidate {
+                model: "model-a".to_string(),
+                priority: 1,
+            }],
+        });
+
+        // Register and trip circuit breaker
+        model_router.circuit_breakers.register("backend-a");
+        for _ in 0..5 {
+            model_router.record_failure("backend-a");
+        }
+
+        let router = ProfileRouter::new(&profile_registry, &model_router, &model_registry);
+        let result = router.select_from_profile("unhealthy-profile");
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("No healthy candidates"));
+    }
+}
