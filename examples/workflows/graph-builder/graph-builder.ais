@@ -1,0 +1,141 @@
+// graph-builder.ais — Meta-workflow: builds APXM workflows from a goal
+//
+// Input:  A plain-English goal/dream (what you want to build or achieve)
+// Output: Complete .ais workflow infrastructure to accomplish that goal
+//
+// The graph-builder analyzes the goal, designs the optimal agent topology,
+// plans the data flow, and writes production-ready .ais files.
+//
+// Usage:
+//   Edit GOAL below, then:
+//   dekk apxm execute examples/workflows/graph-builder/graph-builder.ais
+
+agent GraphBuilder {
+    @entry flow main() -> str {
+
+        ask("What goal should I build a workflow for? Describe your dream or project.") -> goal
+
+        // ── Phase 1: Deep analysis of the goal ───────────────────────────
+        spawn_agent("strategist", "claude", "$APXM_HOME") -> _str
+        spawn_agent("architect",  "claude", "$APXM_HOME") -> _arch
+        spawn_agent("skeptic",    "claude", "$APXM_HOME") -> _sk
+
+        // Strategist: understand the problem space
+        communicate("strategist", "acp",
+            "You are a Workflow Strategist. Analyze this goal and identify the optimal approach.\n\n"
+            "GOAL: " + goal + "\n\n"
+            "Produce strategy.json:\n"
+            "- goal_type: what category of work is this? (app_builder/data_pipeline/research/code_generation/content/other)\n"
+            "- phases: list of phases in order, each with name, purpose, inputs[], outputs[], can_parallelize\n"
+            "- critical_path: the minimum sequence that must be sequential\n"
+            "- parallelization_opportunities: which work can run simultaneously\n"
+            "- verification_gates: where quality must be enforced before proceeding\n"
+            "- human_checkpoints: where human approval is needed\n"
+            "- estimated_complexity: simple/medium/complex\n\n"
+            "Output ONLY valid JSON.") -> strategy
+
+        // Architect: design the agent topology
+        communicate("architect", "acp",
+            "You are an Agent Topology Architect. Design the optimal agent structure for this workflow.\n\n"
+            "GOAL: " + goal + "\n\n"
+            "STRATEGY: " + strategy + "\n\n"
+            "Produce topology.json:\n"
+            "- agents: list of all agents needed, each with:\n"
+            "  - name: snake_case identifier\n"
+            "  - role: what this agent does\n"
+            "  - profile: claude/codex/qwen (pick best fit)\n"
+            "  - specialization: focused context/instructions for this agent\n"
+            "  - inputs: what data this agent receives\n"
+            "  - outputs: what artifacts this agent produces\n"
+            "  - calls: other agents this agent communicates with\n"
+            "- entry_points: top-level commands (create/run/verify/etc)\n"
+            "- sub_workflows: atomic reusable units\n"
+            "- data_artifacts: all JSON/file artifacts that flow between agents\n\n"
+            "Output ONLY valid JSON.") -> topology
+
+        // Skeptic: challenge the design
+        communicate("skeptic", "acp",
+            "You are a Workflow Skeptic. Challenge this design.\n\n"
+            "GOAL: " + goal + "\n\n"
+            "STRATEGY: " + strategy + "\n\n"
+            "TOPOLOGY: " + topology + "\n\n"
+            "Find problems:\n"
+            "- OVER-ENGINEERED: what can be simplified without losing value?\n"
+            "- MISSING: what critical agent/phase/artifact is absent?\n"
+            "- WRONG ORDER: any sequencing mistakes?\n"
+            "- BAD FIT: any agent assigned the wrong profile or wrong role?\n"
+            "- MINIMUM VIABLE: what is the smallest version that proves the concept?\n\n"
+            "Output skeptic_review.json with findings[] and minimum_viable_version description.") -> skeptic_review
+
+        // ── Phase 2: Generate the .ais files ─────────────────────────────
+        spawn_agent("ais_writer", "claude", "$APXM_HOME") -> _aw
+
+        // Write entry points and phases
+        communicate("ais_writer", "acp",
+            "You are an AIS DSL expert. Write the APXM workflow .ais files for this goal.\n\n"
+            "GOAL: " + goal + "\n\n"
+            "FINAL DESIGN (after skeptic review):\n"
+            "Strategy: " + strategy + "\n"
+            "Topology: " + topology + "\n"
+            "Skeptic feedback: " + skeptic_review + "\n\n"
+            "AIS SYNTAX REFERENCE:\n"
+            "agent Name {\n"
+            "  @entry flow main(param: type) -> type {\n"
+            "    spawn_agent(name, profile, cwd) -> handle\n"
+            "    communicate(recipient, protocol, message) -> result\n"
+            "    ask(prompt) -> result\n"
+            "    think(prompt) -> result\n"
+            "    print(message)\n"
+            "    return value\n"
+            "  }\n"
+            "}\n"
+            "Profiles: claude (reasoning/planning), codex (code generation), qwen (verification/large-context)\n"
+            "Protocols: acp (subprocess agent)\n"
+            "String concat: str1 + str2\n\n"
+            "Write COMPLETE, RUNNABLE .ais files. No placeholders. Real prompts.\n"
+            "For each file, include a clear // comment header explaining purpose and usage.\n\n"
+            "Output a JSON map: {\"filename.ais\": \"complete ais content\", ...}\n"
+            "Include: main entry, phase files, sub-workflow files.") -> ais_files
+
+        // Write agent profiles
+        communicate("ais_writer", "acp",
+            "Now write the agent specialization profiles for each agent in the topology.\n\n"
+            "TOPOLOGY: " + topology + "\n\n"
+            "For each agent, write a focused context block (100-200 words) that:\n"
+            "- Tells the agent exactly what role they play\n"
+            "- What their inputs are and what format to expect\n"
+            "- What their outputs must be and in what format\n"
+            "- Any domain expertise or perspective to adopt\n"
+            "- Constraints (e.g. output ONLY JSON, be adversarial, etc.)\n\n"
+            "Output a JSON map: {\"agent_name\": \"context block text\", ...}") -> profiles
+
+        // ── Phase 3: Final synthesis ──────────────────────────────────────
+        ask("Produce a complete, actionable summary of the graph-builder output.\n\n"
+            "GOAL: " + goal + "\n\n"
+            "AIS FILES GENERATED:\n" + ais_files + "\n\n"
+            "AGENT PROFILES:\n" + profiles + "\n\n"
+            "Format:\n"
+            "## WORKFLOW DESIGN: [goal name]\n\n"
+            "### What This Workflow Does\n"
+            "[2-3 sentences]\n\n"
+            "### Files to Create\n"
+            "[filename: one-line description, grouped by directory]\n\n"
+            "### How to Use It\n"
+            "[exact commands to run]\n\n"
+            "### Agent Roster\n"
+            "[agent: role + profile, one line each]\n\n"
+            "### Minimum Viable First Run\n"
+            "[exactly what to implement first to have something working]") -> summary
+
+        print("╔══════════════════════════════════════════════╗\n"
+            + "║      GRAPH-BUILDER — WORKFLOW DESIGNED       ║\n"
+            + "╚══════════════════════════════════════════════╝\n\n"
+            + summary + "\n\n"
+            + "━━━ GENERATED AIS FILES ━━━\n\n"
+            + ais_files + "\n\n"
+            + "━━━ AGENT PROFILES ━━━\n\n"
+            + profiles)
+
+        return summary
+    }
+}
