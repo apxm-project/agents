@@ -1,23 +1,22 @@
 # APXM Compiler Integration Guide
 
-*How AIS source files and AgentMate both feed into the same compiler infrastructure.*
+*How Python and JSON authoring flow into the same compiler infrastructure.*
 
 ---
 
 ## The Shared Core
 
-All frontends — whether `.ais` source files or AgentMate's Rust/Python builder APIs —
-compile to the same `ApxmGraph` and execute through the same dataflow runtime.
+All supported frontends compile to the same `ApxmGraph` and execute through the
+same dataflow runtime.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                        FRONTENDS                                │
 │                                                                 │
-│  .ais files          AgentMate Rust API    AgentMate Python API │
-│  (human-written)     (WorkflowBuilder)     (FlowModule)         │
+│  JSON graphs         Rust API              Python API           │
+│  (CLI / services)    (WorkflowBuilder)     (`apxm.graph`)       │
 │       │                     │                     │             │
-│       │ GraphGen             │ .build()            │ .to_graph() │
-│       │ (C++ DSL parser)     │                     │             │
+│       │ from_json()         │ .build()            │ .to_graph() │
 └───────┼─────────────────────┼─────────────────────┼─────────────┘
         │                     │                     │
         ▼                     ▼                     ▼
@@ -49,13 +48,12 @@ compile to the same `ApxmGraph` and execute through the same dataflow runtime.
 
 ## Integration Points by Frontend
 
-### 1. AIS Source Files (`.ais`)
+### 1. JSON Graph Files (`.json`)
 
 ```
-.ais file
+.json file
     → Linker::compile_graph(path)
-    → Compiler::load_graph(path)   [MLIR required]
-        → apxm_parse_dsl_to_graph_json()  [GraphGen C++]
+    → Compiler::load_graph(path)
         → ApxmGraph::from_json()
     → Linker::compile_from_graph(graph, name)
         → ApxmGraph::to_execution_dag()
@@ -65,11 +63,12 @@ compile to the same `ApxmGraph` and execute through the same dataflow runtime.
 
 **CLI usage:**
 ```bash
-dekk apxm execute examples/workflows/designer/brief_analyzer.ais
-dekk apxm compile examples/workflows/designer/brief_analyzer.ais  # → .apxmobj
+dekk apxm validate workflow.json
+dekk apxm compile workflow.json -o workflow.apxmobj
+dekk apxm execute workflow.json
 ```
 
-### 2. AgentMate Rust API
+### 2. Rust API
 
 ```rust
 // AgentMate builds the graph in memory — no files written
@@ -93,10 +92,10 @@ linker.runtime.execute_artifact(artifact, args, None).await?;
 **Key method on `Compiler`:**
 - `compile_graph(graph: &ApxmGraph) -> Module` — MLIR optimization pipeline
 
-### 3. AgentMate Python API
+### 3. Python API
 
 ```python
-import agentmate.graph as ag
+import apxm.graph as ag
 
 @ag.compile(opt_level=2)
 def research(g: ag.GraphRecorder, topic: str):
@@ -111,20 +110,21 @@ def research(g: ag.GraphRecorder, topic: str):
 result = await research("quantum computing")
 ```
 
-The PyO3 bridge (`am-py`) calls `Linker::run_from_graph` with the graph
+The Python bridge calls `Linker::run_from_graph` with the graph
 constructed from `FlowModule.to_graph()`.
 
 ---
 
 ## The Rule: Never Write Files for Programmatic Use
 
-**AgentMate should never serialize a graph to disk just to pass it to the compiler.**
+**Programmatic frontends should not serialize a graph to disk unless they are
+explicitly handing it to a file-based CLI or external tool.**
 
 ❌ Wrong:
 ```rust
 let json = graph.to_json()?;
-std::fs::write("/tmp/graph.apxm", &json)?;
-linker.run_graph(Path::new("/tmp/graph.apxm"), args).await?;
+std::fs::write("/tmp/graph.json", &json)?;
+dekk_apxm_execute("/tmp/graph.json");
 ```
 
 ✅ Right:
@@ -132,22 +132,19 @@ linker.run_graph(Path::new("/tmp/graph.apxm"), args).await?;
 linker.run_from_graph(graph, args, None, None).await?;
 ```
 
-The `.ais` → file path exists only for **human authoring**. Programmatic frontends
-use the in-memory APIs directly.
-
 ---
 
 ## Adding New Ops to the Compiler
 
 When a new op is added (e.g., `NEGOTIATE`, `DELEGATE`):
 
-1. **AIS DSL**: Add to `GraphGen::classifyCall()` in `GraphGen.cpp`
-2. **MLIR**: Add `AIS_NegotiateOp` to `AISOps.td`, implement in `AISOps.cpp`
-3. **Runtime**: Add handler in `crates/apxm-runtime/src/executor/handlers/`
-4. **Validation**: Add required attributes to `validate_required_attributes()` in `validate.rs`
-5. **AgentMate**: Add `g.negotiate(...)` to `WorkflowBuilder` and `GraphRecorder`
+1. **MLIR**: Add `AIS_NegotiateOp` to `AISOps.td`, implement in `AISOps.cpp`
+2. **Runtime**: Add handler in `crates/apxm-runtime/src/executor/handlers/`
+3. **Validation**: Add required attributes to `validate_required_attributes()` in `validate.rs`
+4. **Rust frontend**: Add the builder helper to `WorkflowBuilder`
+5. **Python frontend**: Add `g.negotiate(...)` to `GraphRecorder`
 
-All five frontends (AIS, Rust builder, Python builder, MLIR path, validate) share
+All frontends (JSON, Rust builder, Python builder, MLIR path, validate) share
 the same op definitions from `apxm-ais/src/operations/definitions.rs`.
 
 ---
@@ -156,7 +153,7 @@ the same op definitions from `apxm-ais/src/operations/definitions.rs`.
 
 | Format | Who produces it | Who consumes it | Round-trip? |
 |--------|----------------|----------------|-------------|
-| `.ais` | Humans, AgentMate | `Compiler::load_graph()` | ✅ yes |
-| `ApxmGraph` (in-memory) | WorkflowBuilder, FlowModule, GraphGen | `compile_from_graph()` | ✅ yes |
+| `.json` | Python frontend, services, humans | `Compiler::load_graph()` | ✅ yes |
+| `ApxmGraph` (in-memory) | WorkflowBuilder, FlowModule | `compile_from_graph()` | ✅ yes |
 | `.air` | `Compiler::emit_air()` | Humans (debug only) | ❌ output only |
 | `.apxmobj` | `compile_from_graph()`, MLIR pipeline | `Runtime::execute_artifact()` | ✅ yes |

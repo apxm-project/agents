@@ -120,7 +120,6 @@ impl Linker {
     /// `FlowModule`, etc.). No file I/O required — the graph is compiled entirely
     /// in memory via the pure-Rust `to_execution_dag()` path.
     ///
-    /// This is also what the `.ais` file path calls after parsing.
     pub fn compile_from_graph(
         &self,
         graph: ApxmGraph,
@@ -166,26 +165,9 @@ impl Linker {
     /// looked up in `~/.cache/apxm/artifacts/`.  On a cache hit the
     /// compilation step is skipped entirely.
     pub fn compile_graph(&self, input: &Path) -> Result<Artifact, DriverError> {
-        let ext = input.extension().and_then(|e| e.to_str()).unwrap_or("");
-
-        // .ais source files: parse DSL -> ApxmGraph -> compile_from_graph (in-memory).
-        if ext == "ais" {
-            if let Some(ref compiler) = self.compiler {
-                // Propagate the actual parse error so users know what went wrong
-                let graph = compiler
-                    .load_graph(input)
-                    .map_err(|e| DriverError::Driver(format!("AIS parse failed: {e}")))?;
-                let name = input.file_stem().and_then(|s| s.to_str()).map(String::from);
-                return self.compile_from_graph(graph, name);
-            }
-            return Err(DriverError::Driver(
-                "MLIR compiler not available. Run `dekk apxm build` to rebuild.".to_string(),
-            ));
-        }
-
         let Some(ref compiler) = self.compiler else {
             return Err(DriverError::Driver(
-                "MLIR compiler required for non-JSON inputs (.ais, .mlir) but is not available. Run `dekk apxm build` to rebuild with MLIR support.".to_string(),
+                "MLIR compiler required for non-JSON inputs but is not available. Run `dekk apxm build` to rebuild with MLIR support.".to_string(),
             ));
         };
 

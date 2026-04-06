@@ -4,77 +4,59 @@
 
 ```
 examples/
-├── basics/         Single-agent fundamentals (ASK, tool use)
-├── multi-agent/    Multi-agent coordination and councils (.ais format)
-├── acp-agents/     ACP protocol workflows (SPAWN + COMMUNICATE, INV)
-├── patterns/       Advanced graph patterns
-│   ├── iterative-refine/       Self-refinement loop
-│   ├── plan-fan-out/           Plan → parallel sections → synthesize
-│   ├── resilient-acp/          ACP pipeline with fallback agent
-│   ├── worker-pool/            Parallel workers claiming from a queue
-│   ├── memory-rag/             Memory-augmented RAG pipeline
-│   └── multi-agent-negotiate/  2-agent debate → consensus
-└── workflows/      Production meta-workflows
+├── python/         Authoring examples in the Python frontend
+├── basics/         Precompiled artifacts and `.air` snapshots
+├── multi-agent/    Precompiled council and coordination workflows
+├── acp-agents/     Precompiled ACP protocol workflows
+├── patterns/       Advanced graph patterns and artifacts
+└── workflows/      Production workflow artifacts
 ```
 
-## Basics
+## Python Authoring
 
 | File | Description |
 |------|-------------|
-| `basics/hello.ais` | Minimal agent with single ASK operation |
-| `basics/hello_graph.apxm` | Same agent in graph format |
-| `basics/tool_use.ais` | Tool/capability invocation patterns |
-| `basics/tool_use_graph.apxm` | Tool usage in graph format |
+| `python/basics/hello.py` | Minimal greeting workflow that emits graph JSON |
+| `python/basics/tool_use.py` | Capability registration and tool invocation |
+| `python/patterns/iterative-refine/iterative_refine.py` | Unrolled refinement loop |
+| `python/patterns/plan-fan-out/plan_fan_out.py` | Plan once, fan out, then synthesize |
 
-## Multi-Agent
+## Precompiled Artifacts
 
-| File | Description |
-|------|-------------|
-| `multi-agent/multi_flow.ais` | Cross-agent control flow and coordination |
-| `multi-agent/multi_flow_graph.apxm` | Multi-flow in graph format |
-| `multi-agent/multi_agent_communicate.ais` | Agent-to-agent communication via COMMUNICATE |
-| `multi-agent/parallel_council_graph.apxm` | Fan-out/fan-in council pattern |
-| `multi-agent/apxm_council.ais` | Council pattern with multiple experts |
-| `multi-agent/code_review_council.ais` | Code review workflow with councils |
+Compiled `.apxmobj` files are retained for larger workflows that have not been
+ported to first-party Python examples yet. `.air` files are debug snapshots only.
 
 ## ACP Agents
 
-Spawn+Communicate and INV-style ACP workflows. See `acp-agents/README.md`.
+Spawn+communicate and INV-style ACP workflows are available as `.apxmobj`
+artifacts under `examples/acp-agents/`.
 
 ## Patterns
 
-| Folder | Pattern | Key Ops |
-|--------|---------|---------|
-| `patterns/iterative-refine/` | Self-refinement loop (unrolled 3x) | `REFLECT`, `ASK`, `CHECKPOINT`, `VERIFY`, `UMEM` |
-| `patterns/plan-fan-out/` | Plan → parallel sections → synthesize | `PLAN`, `ASK x 3`, `WAIT_ALL`, `THINK`, `VERIFY`, `CHECKPOINT` |
-| `patterns/resilient-acp/` | ACP pipeline with fallback agent | `GUARD`, `SPAWN_AGENT`, `COMMUNICATE`, `CHECKPOINT`, `VERIFY`, `BRANCH_ON_VALUE` |
-| `patterns/worker-pool/` | Parallel workers claiming from a queue | `UPDATE_GOAL`, `CLAIM`, `GUARD`, `THINK x 3`, `WAIT_ALL`, `UMEM` |
-| `patterns/memory-rag/` | Memory-augmented RAG pipeline | `QMEM`, `FENCE`, `REASON`, `VERIFY`, `UMEM`, `CHECKPOINT` |
-| `patterns/multi-agent-negotiate/` | 2-agent debate → consensus synthesis | `SPAWN_AGENT x 2`, `COMMUNICATE`, `WAIT_ALL`, `THINK`, `UMEM` |
+See the Python pattern examples for authoring references, and the sibling
+artifact directories for runnable compiled workflows.
 
 ## Workflows
 
-| Folder | Description |
-|--------|-------------|
-| `workflows/` | 13-agent meta-workflow for building new APXM features |
+Large workflow directories now primarily contain compiled `.apxmobj` artifacts.
+The legacy DSL sources were removed as part of the Python frontend migration.
 
 ## Running Examples
 
 ```bash
-# Compile AIS source to binary
-apxm compile examples/basics/hello.ais -o hello.apxm
+# Emit a graph from Python
+PYTHONPATH=crates/apxm-frontend/python \
+  python3 examples/python/basics/hello.py > /tmp/hello.json
 
-# Execute the compiled binary
-apxm execute hello.apxm
+# Validate and execute the JSON graph
+dekk apxm validate /tmp/hello.json
+dekk apxm execute /tmp/hello.json
 
-# Compile from graph file
-apxm compile examples/basics/hello_graph.apxm -o hello.apxm
+# Compile to an artifact
+dekk apxm compile /tmp/hello.json -o /tmp/hello.apxmobj
 
-# Validate any graph before running
-apxm validate examples/patterns/plan-fan-out/plan-fan-out.apxm
-
-# Run a graph directly
-apxm execute examples/patterns/plan-fan-out/plan-fan-out.apxm
+# Run a precompiled artifact
+dekk apxm run examples/basics/hello.apxmobj
 ```
 
 See `docs/guides/getting-started.md` for detailed tutorials.

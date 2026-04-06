@@ -2,7 +2,7 @@
 
 APXM (Agent Programming eXecution Model) is a compiler and runtime for AI agent workflows — like LLVM for agent programs. It provides:
 
-- **AIS DSL** — A high-level language for writing agent programs
+- **Python frontend** — The primary authoring experience for workflows
 - **ApxmGraph IR** — Canonical intermediate representation (dataflow DAGs)
 - **Compiler** — Lowers to MLIR, optimizes, generates `.apxmobj` artifacts
 - **Runtime** — Parallel dataflow scheduler with memory tiers and LLM backends
@@ -112,28 +112,39 @@ See [Backend Setup](backends.md) for backend configuration, enterprise gateways,
 
 ### Write it
 
-Create `hello.ais`:
+Create `hello.py`:
 
-```ais
-agent HelloWorld {
-    @entry flow main() -> str {
-        ask("Generate a friendly greeting for someone learning about AI agents") -> greeting
-        return greeting
-    }
-}
+```python
+from apxm.graph import GraphRecorder, compile
+
+
+@compile
+def hello_world(g: GraphRecorder) -> dict:
+    greeting = g.ask(
+        "greeting",
+        "Generate a friendly greeting for someone learning about AI agents",
+    )
+    g.return_("output", source=greeting)
+    return g.to_graph().to_dict()
+```
+
+Emit the graph JSON:
+
+```bash
+PYTHONPATH=crates/apxm-frontend/python python3 hello.py > hello.json
 ```
 
 ### Run it
 
 ```bash
-apxm execute hello.ais
+dekk apxm execute hello.json
 ```
 
 What happens under the hood:
-1. AIS DSL is parsed into an AST
-2. AST is lowered to ApxmGraph JSON (canonical IR)
-3. Graph is compiled to MLIR and optimized
-4. Executable artifact is generated and run by the dataflow scheduler
+1. Python authoring code builds an `ApxmGraph`
+2. The graph is serialized as JSON (canonical frontend exchange format)
+3. The compiler lowers the graph to MLIR and optimizes it
+4. An executable artifact is generated and run by the dataflow scheduler
 5. The `ask` operation calls your configured LLM backend
 
 ### Compile and run separately
@@ -142,27 +153,30 @@ For production, separate compilation from execution:
 
 ```bash
 # Compile to artifact
-apxm compile hello.ais -o hello.apxmobj
+dekk apxm compile hello.json -o hello.apxmobj
 
 # Run the artifact (skips compilation)
-apxm run hello.apxmobj
+dekk apxm run hello.apxmobj
 ```
 
 Artifacts are portable, contain no source code, and can be distributed independently.
 
 ### With parameters
 
-```ais
-agent Researcher {
-    @entry flow main(topic: str) -> str {
-        ask("Research this topic: " + topic) -> findings
-        return findings
-    }
-}
+```python
+from apxm.graph import GraphRecorder, compile
+
+
+@compile
+def researcher(g: GraphRecorder, topic: str) -> dict:
+    findings = g.ask("findings", "Research this topic: {0}")
+    g.return_("output", source=findings)
+    return g.to_graph().to_dict()
 ```
 
 ```bash
-apxm execute researcher.ais "quantum computing"
+PYTHONPATH=crates/apxm-frontend/python python3 researcher.py > researcher.json
+dekk apxm execute researcher.json -- "quantum computing"
 ```
 
 ---
@@ -171,83 +185,80 @@ apxm execute researcher.ais "quantum computing"
 
 ### Multi-step reasoning
 
-```ais
-agent Analyst {
-    @entry flow main(topic: str) -> str {
-        ask("Key concepts in " + topic) -> concepts
-        think("Analyze in depth: " + concepts) -> analysis
-        reason("Synthesize: " + analysis) -> conclusion
-        return conclusion
-    }
-}
+```python
+@compile
+def analyst(g: GraphRecorder, topic: str) -> dict:
+    concepts = g.ask("concepts", "Key concepts in {0}")
+    analysis = g.think("analysis", "Analyze in depth: {0}")
+    conclusion = g.reason("conclusion", "Synthesize: {0}")
+    concepts >> analysis >> conclusion
+    g.return_("output", source=conclusion)
+    return g.to_graph().to_dict()
 ```
 
 ### Parallel expert council
 
-```ais
-agent Council {
-    @entry flow main(question: str) -> str {
-        // These three run in parallel automatically (no data dependencies)
-        ask("Expert 1: " + question) -> e1
-        ask("Expert 2: " + question) -> e2
-        ask("Expert 3: " + question) -> e3
-
-        // Synthesis waits for all three
-        ask("Synthesize: " + e1 + e2 + e3) -> result
-        return result
-    }
-}
+```python
+@compile
+def council(g: GraphRecorder, question: str) -> dict:
+    e1 = g.ask("expert_1", "Expert 1: {0}")
+    e2 = g.ask("expert_2", "Expert 2: {0}")
+    e3 = g.ask("expert_3", "Expert 3: {0}")
+    result = g.ask("result", "Synthesize: {0} {1} {2}")
+    e1 | result
+    e2 | result
+    e3 | result
+    g.return_("output", source=result)
+    return g.to_graph().to_dict()
 ```
 
 ### Multi-agent collaboration
 
-```ais
-agent Researcher {
-    flow research(topic: str) -> str {
-        think("Research: " + topic) -> findings
-        return findings
-    }
-}
-
-agent Coordinator {
-    @entry flow main() -> str {
-        ask("What topic?") -> topic
-        Researcher.research(topic) -> findings
-        ask("Summarize: " + findings) -> summary
-        return summary
-    }
-}
+```python
+@compile
+def coordinator(g: GraphRecorder, topic: str) -> dict:
+    researcher = g.spawn_agent("researcher", profile="claude")
+    findings = g.communicate("findings", recipient=researcher, protocol="acp", message="{0}")
+    summary = g.ask("summary", "Summarize: {0}")
+    findings >> summary
+    g.return_("output", source=summary)
+    return g.to_graph().to_dict()
 ```
 
 ### Tool use
 
-```ais
-agent ToolAgent {
-    capability search(query: str) -> str;
-    tools: [search]
-
-    @entry flow main() -> str {
-        ask("What should we research?") -> topic
-        search(topic) -> results
-        ask("Summarize: " + results) -> summary
-        return summary
-    }
-}
+```python
+@compile
+def tool_agent(g: GraphRecorder) -> dict:
+    register = g.register_capability(
+        "register_search",
+        capability_name="search",
+        description="Search capability for web queries",
+        parameters_schema={"type": "object", "properties": {"query": {"type": "string"}}},
+    )
+    topic = g.ask("topic", "What should we research?")
+    register >> topic
+    results = g.invoke("results", capability="search", params={"query": "{0}"})
+    topic | results
+    summary = g.ask("summary", "Summarize: {0}")
+    results | summary
+    g.return_("output", source=summary)
+    return g.to_graph().to_dict()
 ```
 
 ---
 
 ## Input Formats
 
-APXM supports three input formats:
+APXM supports three relevant formats:
 
 | Format | Extension | Best for |
 |--------|-----------|----------|
-| **AIS DSL** | `.ais` | Writing programs by hand (recommended) |
-| **ApxmGraph JSON** | `.json` | Programmatic generation, low-level control |
-| **Python API** | `.py` | Dynamic graph construction, integration |
+| **Python API** | `.py` | Primary workflow authoring experience |
+| **ApxmGraph JSON** | `.json` | Stable interchange format for CLI, services, and generated graphs |
+| **Artifact** | `.apxmobj` | Distribution and repeated execution |
 
-All formats compile to the same ApxmGraph IR before MLIR lowering.
+Python frontends emit `ApxmGraph` JSON before MLIR lowering. `.air` remains a debug-only inspection format.
 
 ---
 
@@ -263,7 +274,7 @@ For deeper understanding, see [PXM Foundations](../pxm/foundations.md).
 
 ## Next Steps
 
-1. **Explore examples** — `examples/basics/hello.ais`, `examples/multi-agent/apxm_council.ais`, `examples/multi-agent/multi_flow.ais`
+1. **Explore examples** — `examples/python/basics/hello.py`, `examples/python/basics/tool_use.py`, `examples/python/patterns/plan-fan-out/plan_fan_out.py`
 2. **CLI reference** — Run `apxm --help` for all commands and options
 3. **Backends** — [Backend Setup](backends.md) for backend configuration
 4. **Architecture** — [Architecture](../implementation/architecture.md) for system design

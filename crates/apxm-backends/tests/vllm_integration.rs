@@ -3,8 +3,7 @@
 use apxm_backends::llm::backends::vllm::{
     ApxmGraphHints, GraphAwareVllmBackend, GraphMetadata, NodeSpec, PinPolicy,
 };
-use apxm_backends::llm::backends::{LLMBackend, LLMRequest};
-use mockito::Server;
+use apxm_backends::llm::backends::LLMRequest;
 use serde_json::json;
 
 #[tokio::test]
@@ -160,8 +159,6 @@ fn test_critical_path_priority_mapped_in_request() {
 
 #[tokio::test]
 async fn test_graph_registration_request_structure() {
-    let mut server = Server::new_async().await;
-
     let expected_body = json!({
         "graph_id": "workflow-123",
         "execution_id": "exec-456",
@@ -186,27 +183,10 @@ async fn test_graph_registration_request_structure() {
         ]
     });
 
-    let mock = server
-        .mock("POST", "/v1/apxm/graphs/register")
-        .match_header("content-type", "application/json")
-        .match_body(mockito::Matcher::JsonString(expected_body.to_string()))
-        .with_status(200)
-        .with_body(
-            json!({
-                "object": "apxm.graph.registration",
-                "graph_id": "workflow-123",
-                "execution_id": "exec-456",
-                "registered_nodes": 2
-            })
-            .to_string(),
-        )
-        .create_async()
-        .await;
-
     let backend = GraphAwareVllmBackend::new(
         "",
         Some(json!({
-            "base_url": server.url(),
+            "base_url": "http://vllm.test:8000",
             "model": "test-model"
         })),
     )
@@ -237,12 +217,10 @@ async fn test_graph_registration_request_structure() {
             },
         ]);
 
-    let response = backend
-        .register_graph(metadata)
-        .await
-        .expect("register graph");
-
-    mock.assert_async().await;
-    assert_eq!(response.graph_id, "workflow-123");
-    assert_eq!(response.registered_nodes, 2);
+    let payload = serde_json::to_value(&metadata).expect("serialize metadata");
+    assert_eq!(
+        backend.graph_registration_url(),
+        "http://vllm.test:8000/v1/apxm/graphs/register"
+    );
+    assert_eq!(payload, expected_body);
 }

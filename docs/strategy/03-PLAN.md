@@ -288,7 +288,7 @@ apxm-core/src/types/operations/                  (SPAWN_TEAM operation)
 
 ### 3. Ultrathink Workflow — ✅ COMPLETE
 
-**Location**: `examples/workflows/ultrathink-coder.ais`
+**Location**: `examples/python/workflows/ultrathink_coder.py`
 
 **Pattern**:
 ```

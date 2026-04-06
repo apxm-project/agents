@@ -87,7 +87,7 @@ enum Commands {
     },
     /// Compile ApxmGraph to an artifact
     Compile {
-        /// Input graph file or directory (.ais source or .apxmobj artifact)
+        /// Input graph file or directory (.json graph or .apxmobj artifact)
         input: PathBuf,
         /// Output artifact path
         #[arg(short, long)]
@@ -113,7 +113,7 @@ enum Commands {
     /// Compile and execute an ApxmGraph file through the runtime
     #[command(trailing_var_arg = true)]
     Execute {
-        /// Input graph file (.ais source)
+        /// Input graph file (.json graph)
         input: PathBuf,
         /// Arguments to pass to the entry flow
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -180,7 +180,7 @@ enum Commands {
     },
     /// Validate an ApxmGraph file against the AIS contract
     Validate {
-        /// Input graph file (.ais source)
+        /// Input graph file (.json graph)
         input: PathBuf,
         /// Skip Tier 2 environment checks (registered backends, profiles, etc.)
         #[arg(long)]
@@ -188,7 +188,7 @@ enum Commands {
     },
     /// Analyze an ApxmGraph for parallelism, critical path, and execution phases
     Analyze {
-        /// Input graph file (.ais source)
+        /// Input graph file (.json graph)
         input: PathBuf,
     },
     /// Browse graph templates (starter patterns)
@@ -198,7 +198,7 @@ enum Commands {
     },
     /// Explain what a graph does OR explain an error code
     Explain {
-        /// Error code (e.g., E511) or path to graph file (.ais source)
+        /// Error code (e.g., E511) or path to graph file (.json graph)
         target: String,
     },
     /// Compose graph fragments (tasks)
@@ -1634,14 +1634,14 @@ fn graph_from_execution_dag(
 fn load_graph_for_session(input: &std::path::Path) -> Result<apxm_graph::ApxmGraph> {
     use apxm_driver::compiler::Compiler;
 
-    // Try to load via compiler first (handles .ais, .air, .apxm)
+    // Try to load via compiler first so .air gets its dedicated error message.
     if let Ok(compiler) = Compiler::new() {
         if let Ok(graph) = compiler.load_graph(input) {
             return Ok(graph);
         }
     }
 
-    // Fallback: try to parse as JSON directly (.apxm legacy format)
+    // Fallback: parse as JSON directly when the compiler is unavailable.
     let text = std::fs::read_to_string(input).context("Failed to read graph file")?;
     apxm_graph::ApxmGraph::from_json(&text)
         .map_err(|e| anyhow::anyhow!("Failed to parse graph: {}", e))

@@ -13,12 +13,9 @@ use apxm_artifact::{Artifact, ArtifactMetadata};
 use apxm_core::error::builder::ErrorBuilder;
 use apxm_core::error::codes::ErrorCode;
 use apxm_core::error::compiler::{CompilerError, Result};
-use apxm_graph::ApxmGraph;
-use std::ffi::{CStr, CString};
-use std::fs;
+use std::ffi::CString;
 use std::marker::PhantomData;
 use std::os::raw::c_char;
-use std::path::Path;
 use std::ptr;
 
 pub(crate) fn invalid_input_error(message: impl Into<String>) -> CompilerError {
@@ -58,54 +55,9 @@ impl Module {
         Ok(unsafe { Self::from_raw(raw) })
     }
 
-    /// Parses DSL by canonicalizing to ApxmGraph first, then lowering to MLIR.
-    pub fn parse_dsl(context: &Context, source: &str, filename: &str) -> Result<Self> {
-        let graph = Self::parse_dsl_graph(context, source, filename)?;
-        let mlir_text = graph
-            .to_mlir()
-            .map_err(|e| invalid_input_error(format!("Graph lowering failed: {e}")))?;
-        Self::parse(context, &mlir_text)
-    }
-
-    /// Parses DSL source and returns canonical graph payload as ApxmGraph.
-    pub fn parse_dsl_graph(context: &Context, source: &str, filename: &str) -> Result<ApxmGraph> {
-        let c_source = CString::new(source)
-            .map_err(|e| invalid_input_error(format!("Invalid DSL source: {}", e)))?;
-        let c_filename = CString::new(filename)
-            .map_err(|e| invalid_input_error(format!("Invalid filename: {}", e)))?;
-
-        let raw = ffi::handle_null_result(
-            unsafe {
-                ffi::apxm_parse_dsl_to_graph_json(
-                    context.as_ptr(),
-                    c_source.as_ptr(),
-                    c_filename.as_ptr(),
-                )
-            },
-            "DSL graph lowering",
-        )?;
-
-        let graph_json = unsafe { CStr::from_ptr(raw) }
-            .to_string_lossy()
-            .into_owned();
-        unsafe { ffi::apxm_string_free(raw) };
-
-        ApxmGraph::from_json(&graph_json)
-            .map_err(|e| invalid_input_error(format!("Invalid canonical graph from DSL: {e}")))
-    }
-
-    /// Parses the given DSL source file into a module.
-    pub fn parse_dsl_file(context: &Context, path: &Path) -> Result<Self> {
-        let source = fs::read_to_string(path).map_err(CompilerError::Io)?;
-        let path_str = path
-            .to_str()
-            .ok_or_else(|| invalid_input_error("Invalid path encoding".to_string()))?;
-        Self::parse_dsl(context, &source, path_str)
-    }
-
     /// Parses the given source file into a module.
-    pub fn parse_file(context: &Context, path: &Path) -> Result<Self> {
-        let source = fs::read_to_string(path).map_err(CompilerError::Io)?;
+    pub fn parse_file(context: &Context, path: &std::path::Path) -> Result<Self> {
+        let source = std::fs::read_to_string(path).map_err(CompilerError::Io)?;
         Self::parse(context, &source)
     }
 
@@ -158,7 +110,7 @@ impl Module {
             .map_err(|err| invalid_input_error(err.to_string()))
     }
 
-    pub fn generate_artifact_to_path<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+    pub fn generate_artifact_to_path<P: AsRef<std::path::Path>>(&self, path: P) -> Result<()> {
         let bytes = self.generate_artifact_bytes()?;
         std::fs::write(path, &bytes).map_err(CompilerError::Io)
     }
@@ -225,183 +177,5 @@ impl Drop for Module {
                 ffi::apxm_module_destroy(self.raw);
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::api::Context;
-    use apxm_core::types::AISOperationType;
-
-    #[test]
-    #[cfg_attr(not(feature = "mlir"), ignore = "requires MLIR installation")]
-    fn dsl_canonicalizes_to_graph_before_mlir() {
-        let context = Context::new().expect("create context");
-        let source = r#"
-            agent Hello {
-                @entry flow main() -> str {
-                    ask("hello world") -> result
-                    return result
-                }
-            }
-        "#;
-
-        let graph = Module::parse_dsl_graph(&context, source, "hello.ais").expect("graph parse");
-        assert_eq!(graph.name, "Hello_main");
-        assert_eq!(graph.nodes.len(), 1);
-        assert_eq!(graph.nodes[0].op, AISOperationType::Ask);
-    }
-
-    #[test]
-    #[cfg_attr(not(feature = "mlir"), ignore = "requires MLIR installation")]
-    fn dsl_module_parse_uses_graph_lowering_path() {
-        let context = Context::new().expect("create context");
-        let source = r#"
-            agent Hello {
-                @entry flow main() -> str {
-                    ask("hello world") -> result
-                    return result
-                }
-            }
-        "#;
-
-        let module = Module::parse_dsl(&context, source, "hello.ais").expect("dsl parse");
-        let text = module.to_string().expect("module stringify");
-        assert!(text.contains("ais.ask"));
-    }
-
-    #[test]
-    #[cfg_attr(not(feature = "mlir"), ignore = "requires MLIR installation")]
-    fn dsl_flow_calls_are_canonicalized_into_graph_nodes() {
-        let context = Context::new().expect("create context");
-        let source = r#"
-            agent Researcher {
-                flow research(topic: str) -> str {
-                    think("Research this topic thoroughly: " + topic) -> findings
-                    return findings
-                }
-            }
-
-            agent Coordinator {
-                @entry flow main() -> str {
-                    ask("What topic should we investigate?") -> topic
-                    Researcher.research(topic) -> findings
-                    ask("Summarize the findings") -> summary
-                    return summary
-                }
-            }
-        "#;
-
-        let graph = Module::parse_dsl_graph(&context, source, "multi.ais").expect("graph parse");
-        assert_eq!(graph.nodes.len(), 3);
-        assert_eq!(graph.nodes[0].op, AISOperationType::Ask);
-        assert_eq!(graph.nodes[1].op, AISOperationType::Think);
-        assert_eq!(graph.nodes[2].op, AISOperationType::Ask);
-    }
-
-    #[test]
-    #[cfg_attr(not(feature = "mlir"), ignore = "requires MLIR installation")]
-    fn dsl_structured_control_if_parallel_switch_lowers_through_graph() {
-        let context = Context::new().expect("create context");
-        let source = r#"
-            agent Router {
-                @entry flow main(style: str) -> str {
-                    if (style) {
-                        ask("formal style selected") -> branch_result
-                    } else {
-                        ask("casual style selected") -> branch_result
-                    }
-
-                    parallel {
-                        think("parallel branch A")
-                        think("parallel branch B")
-                    }
-
-                    switch style {
-                        case "formal" => ask("Use formal tone")
-                        case "casual" => ask("Use casual tone")
-                        default => ask("Use neutral tone")
-                    } -> routed
-
-                    ask("Final: " + routed) -> output
-                    return output
-                }
-            }
-        "#;
-
-        let graph =
-            Module::parse_dsl_graph(&context, source, "structured.ais").expect("graph parse");
-        assert!(
-            graph
-                .nodes
-                .iter()
-                .any(|node| node.op == AISOperationType::BranchOnValue)
-        );
-        assert!(
-            graph
-                .nodes
-                .iter()
-                .any(|node| node.op == AISOperationType::WaitAll)
-        );
-        assert!(
-            graph
-                .nodes
-                .iter()
-                .any(|node| node.op == AISOperationType::Switch)
-        );
-
-        let module = Module::parse_dsl(&context, source, "structured.ais").expect("dsl parse");
-        let mlir = module.to_string().expect("module stringify");
-        assert!(mlir.contains("ais.branch_on_value"));
-        assert!(mlir.contains("ais.wait_all"));
-        assert!(mlir.contains("ais.switch"));
-    }
-
-    #[test]
-    #[cfg_attr(not(feature = "mlir"), ignore = "requires MLIR installation")]
-    fn dsl_structured_control_loop_try_catch_lowers_through_graph() {
-        let context = Context::new().expect("create context");
-        let source = r#"
-            agent Controller {
-                @entry flow main(items: str) -> str {
-                    loop(item in items) {
-                        ask("Inspect item: " + item)
-                    }
-
-                    try {
-                        return ask("primary path")
-                    } catch {
-                        return ask("recovery path")
-                    }
-                }
-            }
-        "#;
-
-        let graph = Module::parse_dsl_graph(&context, source, "loop_try.ais").expect("graph parse");
-        assert!(
-            graph
-                .nodes
-                .iter()
-                .any(|node| node.op == AISOperationType::LoopStart)
-        );
-        assert!(
-            graph
-                .nodes
-                .iter()
-                .any(|node| node.op == AISOperationType::LoopEnd)
-        );
-        assert!(
-            graph
-                .nodes
-                .iter()
-                .any(|node| node.op == AISOperationType::TryCatch)
-        );
-
-        let module = Module::parse_dsl(&context, source, "loop_try.ais").expect("dsl parse");
-        let mlir = module.to_string().expect("module stringify");
-        assert!(mlir.contains("ais.loop_start"));
-        assert!(mlir.contains("ais.loop_end"));
-        assert!(mlir.contains("ais.try_catch"));
     }
 }

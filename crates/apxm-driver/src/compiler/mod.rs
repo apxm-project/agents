@@ -4,7 +4,6 @@ use apxm_compiler::{Context, Module, Pipeline, PipelineDiagnostics};
 use apxm_core::types::{OptimizationLevel, PipelineConfig};
 use apxm_core::utils::build::MlirEnvReport;
 use apxm_graph::ApxmGraph;
-use apxm_graph::semantic::{SemanticContext, validate_semantic};
 use std::fs;
 use std::path::Path;
 
@@ -48,12 +47,11 @@ impl Compiler {
 
         if matches!(ext, Some("mlir" | "air")) {
             return Err(DriverError::Driver(
-                ".air is an inspection/debug format (like LLVM .ll dumps).                  It is not round-trip compilable. AgentMate should emit .ais source files.                  Use 'dekk apxm execute <file.ais>' instead.".to_string(),
+                ".air is an inspection/debug format (like LLVM .ll dumps). It is not round-trip compilable. Use JSON graphs for compilation and execution instead.".to_string(),
             ));
         }
 
         let graph = self.load_graph(path)?;
-        // Semantic validation runs inside load_graph for .ais files.
         self.compile_graph(&graph)
     }
 
@@ -108,50 +106,15 @@ impl Compiler {
             .map_err(DriverError::Compiler)
     }
 
-    /// Load graph input (JSON or bincode) from disk.
+    /// Load graph input (JSON) from disk.
     pub fn load_graph(&self, path: &Path) -> Result<ApxmGraph, DriverError> {
         let bytes = fs::read(path)?;
 
         match path.extension().and_then(|ext| ext.to_str()) {
-            Some("ais") => {
-                let source = std::str::from_utf8(&bytes)
-                    .map_err(|e| DriverError::Driver(format!("AIS file is not UTF-8: {e}")))?;
-                let path_str = path.to_str().unwrap_or("<unknown>");
-                let graph = Module::parse_dsl_graph(&self.context, source, path_str)
-                    .map_err(|e| DriverError::Driver(format!("AIS parse error: {e}")))?;
-
-                // Run semantic validation immediately after AIS parsing.
-                // This surfaces incompatibilities (e.g. E511 spawn_agent in a
-                // parameterized flow) as clear diagnostics before MLIR lowering
-                // produces cryptic E900 internal errors.
-                let sem_errors = validate_semantic(&graph, &SemanticContext::default());
-                let hard_errors: Vec<_> =
-                    sem_errors.iter().filter(|e| !e.code.is_warning()).collect();
-                if !hard_errors.is_empty() {
-                    let messages: Vec<String> = hard_errors
-                        .iter()
-                        .map(|e| {
-                            let mut msg = format!("[{}] {}", e.code.as_str(), e.short_message());
-                            if let Some(help) = &e.help {
-                                msg.push_str(&format!("\n  help: {}", help));
-                            }
-                            msg
-                        })
-                        .collect();
-                    return Err(DriverError::Driver(format!(
-                        "Compilation error: {}",
-                        messages.join("\n")
-                    )));
-                }
-
-                Ok(graph)
-            }
             Some("air") => {
-                // .air is the inspection/debug format (like LLVM .ll).
-                // It is not a round-trip input format — use .ais source files instead.
-                // AgentMate should emit .ais, not .air.
                 Err(DriverError::Driver(
-                    ".air is an inspection format, not a compile input.                      Write .ais source files instead. AgentMate emits .ais.".to_string()
+                    ".air is an inspection format, not a compile input. Use a JSON graph instead."
+                        .to_string(),
                 ))
             }
 
