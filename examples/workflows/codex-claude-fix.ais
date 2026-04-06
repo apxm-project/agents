@@ -1,0 +1,23 @@
+// codex-claude-fix.ais
+// Codex analyzes APXM compiler deeply, Claude implements all fixes.
+// Both work in the same repo. Codex reads and reports, Claude writes and commits.
+//
+// Usage: dekk apxm execute examples/workflows/codex-claude-fix.ais
+
+agent CodexClaudeFix {
+    @entry flow main() -> str {
+        spawn_agent("codex_analyst", "codex", "$APXM_HOME") -> _codex
+        spawn_agent("claude_fixer",  "claude", "$APXM_HOME") -> _claude
+
+        // Codex: deep read of all compiler internals, find all issues
+        communicate("codex_analyst", "acp", "You are a Rust compiler engineer. Do a FULL deep analysis of the APXM compiler. Read ALL these files carefully:\n\ncrates/apxm-graph/src/lower_mlir.rs\ncrates/apxm-graph/src/semantic.rs\ncrates/apxm-graph/src/validate.rs\ncrates/apxm-graph/src/optimize.rs\ncrates/apxm-compiler/src/passes/mod.rs\ncrates/apxm-compiler/src/passes/validate_model_allowlist.rs\ncrates/apxm-compiler/src/passes/validate_model_profile.rs\ncrates/apxm-ais/src/operations/definitions.rs\ncrates/apxm-core/src/error/codes.rs\ncrates/apxm-runtime/src/executor/handlers/llm.rs\ncrates/apxm-runtime/src/executor/handlers/plan.rs\ncrates/apxm-runtime/src/executor/handlers/merge.rs\ncrates/apxm-runtime/src/model_router/mod.rs\ncrates/apxm-runtime/src/model_router/profile_router.rs\n\nAlso run: dekk apxm test\nAnd: bash /tmp/audit2.sh\n\nReport every issue you find:\n- Any Rust compile warnings\n- Any test failures\n- Any .ais files that fail to compile\n- Any semantic/validation checks that fire false positives\n- Any operations that behave inconsistently\n- Any missing error handling\n- Any TODO/unimplemented sections\n- Any performance issues in hot paths\n\nBe exhaustive. Use file:line references. This report goes to Claude for fixing.") -> codex_report
+
+        // Claude: read codex report + fix everything
+        communicate("claude_fixer", "acp", "You are a senior Rust engineer. Codex has done a deep analysis of the APXM compiler and found issues. Fix ALL of them.\n\nCODEX REPORT:\n" + codex_report + "\n\nFor each issue:\n1. Read the relevant file(s)\n2. Make the minimal correct fix\n3. Build: dekk apxm build (NEVER bare cargo build)\n4. Fix any new errors introduced\n5. Verify: dekk apxm test (must pass)\n6. Verify: bash /tmp/audit2.sh (must show 0 FAIL)\n\nWhen ALL issues are fixed:\n- Run final: dekk apxm test && bash /tmp/audit2.sh\n- Commit: git add -A && git commit -m 'fix(compiler): comprehensive fixes from codex+claude analysis'\n\nDo NOT skip any issue. Do NOT leave TODOs. If a fix is risky, document why in a code comment but still implement it.") -> claude_result
+
+        think("Summarize what codex found and what claude fixed:\n\nCODEX REPORT:\n" + codex_report + "\n\nCLAUDE RESULT:\n" + claude_result) -> summary
+
+        print("=== CODEX + CLAUDE ANALYSIS COMPLETE ===\n" + summary)
+        return summary
+    }
+}
