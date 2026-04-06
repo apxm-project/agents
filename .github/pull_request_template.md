@@ -1,6 +1,10 @@
-## Description
+## Summary
 
-<!-- Describe the changes made in this PR. -->
+Describe the concrete problem being solved.
+
+## Task Statement
+
+Provide the exact implementation task. Placeholder or invalid tasks such as `INVALID TASK` are not allowed.
 
 ## Related Issues
 
@@ -31,9 +35,9 @@
 - [ ] No commented or debug code without purpose
 - [ ] Changes reviewed by author
 
-## Affected Areas
+## Affected Crates / Modules
 
-<!-- What areas are affected? Check all that apply: -->
+<!-- What crates/modules are affected? Check all that apply: -->
 - [ ] `area/all`
 - [ ] `area/cli`
 - [ ] `area/compiler`
@@ -41,13 +45,24 @@
 - [ ] `area/runtime`
 - [ ] `area/docs`
 
-## Testing
+## Acceptance Criteria
+
+<!-- List specific criteria that define when this task is complete: -->
+- [ ] Criterion 1
+- [ ] Criterion 2
+
+## Test Plan
 
 <!-- Describe how this change was tested: -->
 - [ ] Unit tests
 - [ ] Integration tests
 - [ ] Manual testing
 - [ ] Other: <!-- specify -->
+
+## Repository Inspection
+
+<!-- Include relevant files inspected, especially if routing is involved: -->
+- `crates/apxm-runtime/src/model_router/` (if applicable)
 
 ## Breaking Changes
 
