@@ -55,6 +55,18 @@ impl Compiler {
         self.compile_graph(&graph)
     }
 
+    /// Validate model allowlist for a graph.
+    ///
+    /// This is a static validation that doesn't require a compiler context.
+    /// If `allowlist` is None, validation passes silently (backward compatible).
+    pub fn validate_model_allowlist(
+        graph: &ApxmGraph,
+        allowlist: Option<&Vec<String>>,
+    ) -> Result<(), DriverError> {
+        apxm_compiler::passes::validate_model_allowlist(graph, allowlist)
+            .map_err(DriverError::Compiler)
+    }
+
     /// Compile an in-memory graph by lowering to MLIR and running optimizer passes.
     pub fn compile_graph(&self, graph: &ApxmGraph) -> Result<Module, DriverError> {
         let pipeline = Pipeline::with_opt_level(&self.context, self.opt_level);

@@ -1285,6 +1285,11 @@ fn compile_command(
             .map_err(|e| anyhow::anyhow!("Failed to parse graph: {e}"))?
     };
 
+    // Validate model allowlist if configured
+    if let Ok(config) = ApXmConfig::load_default() {
+        Compiler::validate_model_allowlist(&graph, config.models.allowlist.as_ref())?;
+    }
+
     // When diagnostics are requested, use the per-pass metrics path.
     // Otherwise use the fast bulk-run path.
     let (module, pass_diagnostics) = if emit_diagnostics.is_some() {
