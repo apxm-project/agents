@@ -911,16 +911,26 @@ fn emit_node(
             }
         }
         // Self-organization ops
-        AISOperationType::SpawnAgent => emit_simple_op(
-            state,
-            node,
-            &inputs,
-            "spawn_agent",
-            &[graph_attrs::AGENT_NAME, "name"],
-            "child_agent",
-            &[graph_attrs::AGENT_NAME, "name"],
-            Some(('(', ')')),
-        ),
+        AISOperationType::SpawnAgent => {
+            // spawn_agent takes no data inputs — it is always an entry node.
+            // If the enclosing flow has parameters, the lowering injects %arg0..N
+            // into the first entry nodes' input list. Passing those to emit_simple_op
+            // with context_delimiters produces malformed MLIR (`ais.spawn_agent
+            // "name"(%arg0 : !ais.token)`) which the MLIR parser rejects with a
+            // cryptic E900. Strip any injected args here as a defensive measure;
+            // the semantic pass (E511) already rejects this combination before
+            // lowering is reached.
+            emit_simple_op(
+                state,
+                node,
+                &[], // always empty — spawn_agent has no meaningful data inputs
+                "spawn_agent",
+                &[graph_attrs::AGENT_NAME, "name"],
+                "child_agent",
+                &[graph_attrs::AGENT_NAME, "name"],
+                Some(('(', ')')),
+            )
+        }
         AISOperationType::RegisterCapability => emit_simple_op(
             state,
             node,

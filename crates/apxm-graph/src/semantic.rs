@@ -188,6 +188,9 @@ pub fn validate_semantic(graph: &ApxmGraph, ctx: &SemanticContext) -> Vec<Error>
     // E505: parameter/entry-node arity
     check_parameter_arity(graph, &mut errors);
 
+    // E511: spawn_agent in parameterized flow
+    check_spawn_agent_in_parameterized_flow(graph, &mut errors);
+
     errors
 }
 
@@ -250,6 +253,49 @@ fn check_placeholder_bounds(
                 ));
             }
         }
+    }
+}
+
+/// Check that spawn_agent is not used in a graph that has flow parameters.
+///
+/// When a graph declares parameters, the MLIR lowering injects `%arg0..N`
+/// as inputs to entry nodes (nodes with no incoming edges). spawn_agent
+/// is an entry node in most graphs, and its MLIR emitter does not expect
+/// these injected inputs — producing a cryptic E900 parse error.
+///
+/// This check surfaces the incompatibility as a clear E511 error with
+/// actionable guidance before lowering is attempted.
+fn check_spawn_agent_in_parameterized_flow(graph: &ApxmGraph, errors: &mut Vec<Error>) {
+    if graph.parameters.is_empty() {
+        return; // No parameters — no conflict possible.
+    }
+
+    let has_spawn = graph
+        .nodes
+        .iter()
+        .any(|n| n.op == AISOperationType::SpawnAgent);
+
+    if has_spawn {
+        let param_names: Vec<&str> = graph.parameters.iter().map(|p| p.name.as_str()).collect();
+        errors.push(
+            Error::new_global(
+                ErrorCode::SpawnAgentInParameterizedFlow,
+                format!(
+                    "graph '{}' uses spawn_agent but also declares flow parameters [{}]. \
+                     spawn_agent cannot be used in a flow with parameters.",
+                    graph.name,
+                    param_names.join(", ")
+                ),
+                &graph.name,
+            )
+            .with_help(
+                "Move the task input inside the flow body using ask() or const_str(), \
+                 or restructure so spawn_agent lives in a separate no-parameter @entry flow \
+                 and the parameterized logic lives in a helper flow of another agent. \
+                 See docs/bugs/compiler-spawn-agent-flow-params.md for details."
+                    .to_string(),
+            ),
+        );
     }
 }
 
@@ -639,5 +685,79 @@ mod tests {
         assert_eq!(max_placeholder_index("{abc}"), None);
         assert_eq!(max_placeholder_index("{}"), None);
         assert_eq!(max_placeholder_index("{10}"), Some(10));
+    }
+
+    // ── E511: spawn_agent in parameterized flow ────────────────────────────
+
+    #[test]
+    fn e511_spawn_agent_with_flow_params_is_error() {
+        
+
+        let mut spawn = make_node(1, "spawn", AISOperationType::SpawnAgent);
+        spawn.attributes.insert(
+            graph_attrs::AGENT_NAME.to_string(),
+            apxm_core::types::Value::String("coder".to_string()),
+        );
+
+        let mut graph = make_graph(vec![spawn], vec![]);
+        graph.parameters = vec![crate::Parameter {
+            name: "TASK".to_string(),
+            type_name: "str".to_string(),
+        }];
+
+        let errors = validate_semantic(&graph, &SemanticContext::default());
+        let e511 = errors
+            .iter()
+            .find(|e| e.code == ErrorCode::SpawnAgentInParameterizedFlow);
+        assert!(
+            e511.is_some(),
+            "expected E511 but got: {:?}",
+            errors.iter().map(|e| e.code.as_str()).collect::<Vec<_>>()
+        );
+        assert!(!e511.unwrap().code.is_warning(), "E511 should be a hard error");
+        // Help text should mention the workaround
+        let help = e511.unwrap().help.as_deref().unwrap_or("");
+        assert!(help.contains("ask()"), "help should mention ask() workaround");
+    }
+
+    #[test]
+    fn e511_not_triggered_without_params() {
+        let mut spawn = make_node(1, "spawn", AISOperationType::SpawnAgent);
+        spawn.attributes.insert(
+            graph_attrs::AGENT_NAME.to_string(),
+            apxm_core::types::Value::String("coder".to_string()),
+        );
+
+        let graph = make_graph(vec![spawn], vec![]);
+        // No parameters set — should not trigger E511.
+        let errors = validate_semantic(&graph, &SemanticContext::default());
+        let e511 = errors
+            .iter()
+            .find(|e| e.code == ErrorCode::SpawnAgentInParameterizedFlow);
+        assert!(e511.is_none(), "E511 should not fire when graph has no parameters");
+    }
+
+    #[test]
+    fn e511_not_triggered_without_spawn_agent() {
+        
+
+        let mut ask = make_node(1, "ask", AISOperationType::Ask);
+        ask.attributes.insert(
+            graph_attrs::TEMPLATE_STR.to_string(),
+            apxm_core::types::Value::String("hello".to_string()),
+        );
+
+        let mut graph = make_graph(vec![ask], vec![]);
+        graph.parameters = vec![crate::Parameter {
+            name: "TASK".to_string(),
+            type_name: "str".to_string(),
+        }];
+
+        // Has parameters but no spawn_agent — should not trigger E511.
+        let errors = validate_semantic(&graph, &SemanticContext::default());
+        let e511 = errors
+            .iter()
+            .find(|e| e.code == ErrorCode::SpawnAgentInParameterizedFlow);
+        assert!(e511.is_none(), "E511 should not fire when graph has no spawn_agent");
     }
 }
