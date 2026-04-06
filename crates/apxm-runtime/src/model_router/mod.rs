@@ -26,10 +26,14 @@
 //! 6. First available healthy backend
 
 pub mod health;
+pub mod profile_registry;
+pub mod profile_router;
 pub mod rate_limit;
 pub mod registry;
 
 pub use health::{BackendHealth, CircuitBreakerConfig, CircuitBreakerRegistry, CircuitState};
+pub use profile_registry::ProfileRegistry;
+pub use profile_router::ProfileRouter;
 pub use rate_limit::{RateLimitConfig, RateLimitConfigError, RateLimitError};
 pub use registry::{ModelEntry, ModelRegistry, RoutingConfig};
 
@@ -322,6 +326,23 @@ impl ModelRouter {
     /// Access the underlying LLM registry.
     pub fn llm_registry(&self) -> &LLMRegistry {
         &self.llm_registry
+    }
+
+    /// Check if a model is healthy (circuit breaker closed for its backend).
+    ///
+    /// Returns true if the model's backend has a closed circuit breaker,
+    /// false if open or model not found in registry.
+    ///
+    /// This is used by ProfileRouter to select healthy candidates.
+    pub fn is_model_healthy(&self, model_name: &str) -> bool {
+        // Look up the model in the registry to find its backend
+        if let Some(entry) = self.model_registry.get(model_name) {
+            // Check if the backend's circuit breaker is available
+            self.circuit_breakers.is_available(&entry.backend)
+        } else {
+            // Model not found in registry, consider it unavailable
+            false
+        }
     }
 
     /// Execute an LLM request using the router's selection logic.

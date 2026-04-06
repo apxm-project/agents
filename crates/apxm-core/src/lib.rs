@@ -14,6 +14,7 @@ pub mod agent_profile;
 pub mod constants;
 pub mod error;
 pub mod logging;
+pub mod model_profiles;
 pub mod paths;
 pub mod plan;
 pub mod types;
