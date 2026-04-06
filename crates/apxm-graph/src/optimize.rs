@@ -1018,6 +1018,125 @@ mod analysis_folding_tests {
         );
     }
 
+    #[test]
+    fn parallelism_analysis_multi_branch_accuracy() {
+        // Test complex DAG with multiple parallel branches of different lengths
+        // to verify critical path calculation is accurate
+        //
+        // Structure:
+        //   root (1) -> branch_a (2) -> merge (7)
+        //            -> branch_b1 (3) -> branch_b2 (4) -> branch_b3 (5) -> merge (7)
+        //            -> branch_c (6) -> merge (7)
+        //
+        // Expected:
+        //   Max parallelism = 3 (nodes 2, 3, 6 run in parallel)
+        //   Critical path = 5 (root -> b1 -> b2 -> b3 -> merge)
+        let mut graph = ApxmGraph {
+            name: "multi_branch".to_string(),
+            nodes: vec![
+                GraphNode {
+                    id: 1,
+                    name: "root".into(),
+                    op: AISOperationType::Ask,
+                    attributes: HashMap::new(),
+                },
+                GraphNode {
+                    id: 2,
+                    name: "branch_a".into(),
+                    op: AISOperationType::Ask,
+                    attributes: HashMap::new(),
+                },
+                GraphNode {
+                    id: 3,
+                    name: "branch_b1".into(),
+                    op: AISOperationType::Ask,
+                    attributes: HashMap::new(),
+                },
+                GraphNode {
+                    id: 4,
+                    name: "branch_b2".into(),
+                    op: AISOperationType::Ask,
+                    attributes: HashMap::new(),
+                },
+                GraphNode {
+                    id: 5,
+                    name: "branch_b3".into(),
+                    op: AISOperationType::Ask,
+                    attributes: HashMap::new(),
+                },
+                GraphNode {
+                    id: 6,
+                    name: "branch_c".into(),
+                    op: AISOperationType::Ask,
+                    attributes: HashMap::new(),
+                },
+                GraphNode {
+                    id: 7,
+                    name: "merge".into(),
+                    op: AISOperationType::Merge,
+                    attributes: HashMap::new(),
+                },
+            ],
+            edges: vec![
+                GraphEdge {
+                    from: 1,
+                    to: 2,
+                    dependency: DependencyType::Data,
+                },
+                GraphEdge {
+                    from: 1,
+                    to: 3,
+                    dependency: DependencyType::Data,
+                },
+                GraphEdge {
+                    from: 1,
+                    to: 6,
+                    dependency: DependencyType::Data,
+                },
+                GraphEdge {
+                    from: 3,
+                    to: 4,
+                    dependency: DependencyType::Data,
+                },
+                GraphEdge {
+                    from: 4,
+                    to: 5,
+                    dependency: DependencyType::Data,
+                },
+                GraphEdge {
+                    from: 2,
+                    to: 7,
+                    dependency: DependencyType::Data,
+                },
+                GraphEdge {
+                    from: 5,
+                    to: 7,
+                    dependency: DependencyType::Data,
+                },
+                GraphEdge {
+                    from: 6,
+                    to: 7,
+                    dependency: DependencyType::Data,
+                },
+            ],
+            parameters: vec![],
+            metadata: HashMap::new(),
+        };
+
+        graph.parallelism_analysis().unwrap();
+
+        // Max parallelism = 3 (2, 3, 6 can run in parallel)
+        assert_eq!(
+            graph.metadata.get("analysis.max_parallelism"),
+            Some(&Value::Number(Number::Integer(3)))
+        );
+        // Critical path: root -> b1 -> b2 -> b3 -> merge = 5
+        assert_eq!(
+            graph.metadata.get("analysis.critical_path_length"),
+            Some(&Value::Number(Number::Integer(5)))
+        );
+    }
+
     // -----------------------------------------------------------------------
     // constant_folding tests
     // -----------------------------------------------------------------------
