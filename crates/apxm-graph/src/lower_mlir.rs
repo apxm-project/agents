@@ -405,6 +405,8 @@ fn emit_node(
             }))
         }
         AISOperationType::UMem => {
+            let key = get_string_attr(&node.attributes, &[graph_attrs::KEY])
+                .unwrap_or_else(|| "default_key".to_string());
             let space = normalize_memory_space(
                 &get_string_attr(
                     &node.attributes,
@@ -414,7 +416,7 @@ fn emit_node(
             );
             let attrs = extra_attr_dict(
                 &node.attributes,
-                &[graph_attrs::SPACE, graph_attrs::MEMORY_TIER],
+                &[graph_attrs::KEY, graph_attrs::SPACE, graph_attrs::MEMORY_TIER],
             );
 
             let source = if let Some(input) = inputs.first() {
@@ -424,9 +426,10 @@ fn emit_node(
             };
 
             state.emit(format!(
-                "    ais.umem {} into {}{} : !ais.token",
+                "    ais.umem {} into {} key {}{} : !ais.token",
                 source.ssa,
                 quote_string(&space),
+                quote_string(&key),
                 attrs
             ));
             Ok(None)
@@ -1813,5 +1816,53 @@ mod tests {
         // 3. The MLIR should be parseable (no E900 error)
         assert!(mlir.contains("func.func @test"), "MLIR should have function definition\n{}", mlir);
         assert!(mlir.contains("func.return"), "MLIR should have return\n{}", mlir);
+    }
+
+    #[test]
+    fn umem_sets_key_attribute() {
+        // Test that UMEM nodes properly set the 'key' attribute in MLIR output
+        let mut umem = GraphNode {
+            id: 2,
+            name: "store".to_string(),
+            op: AISOperationType::UMem,
+            attributes: HashMap::new(),
+        };
+        umem.attributes.insert(
+            graph_attrs::KEY.to_string(),
+            Value::String("user_data".to_string()),
+        );
+        umem.attributes.insert(
+            graph_attrs::SPACE.to_string(),
+            Value::String("stm".to_string()),
+        );
+
+        let const_node = GraphNode {
+            id: 1,
+            name: "value".to_string(),
+            op: AISOperationType::ConstStr,
+            attributes: HashMap::from([(
+                graph_attrs::VALUE.to_string(),
+                Value::String("test_value".to_string()),
+            )]),
+        };
+
+        let graph = ApxmGraph {
+            name: "umem_test".to_string(),
+            nodes: vec![const_node, umem],
+            edges: vec![crate::GraphEdge {
+                from: 1,
+                to: 2,
+                dependency: DependencyType::Data,
+            }],
+            parameters: vec![],
+            metadata: HashMap::new(),
+        };
+
+        let mlir = lower_to_mlir(&graph).expect("UMEM graph should lower to MLIR");
+
+        // Verify that the UMEM operation includes the key attribute
+        assert!(mlir.contains("ais.umem"), "MLIR should contain umem operation\n{}", mlir);
+        assert!(mlir.contains("key \"user_data\""), "UMEM should set key attribute\n{}", mlir);
+        assert!(mlir.contains("into \"stm\""), "UMEM should set memory space\n{}", mlir);
     }
 }
