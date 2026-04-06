@@ -1,8 +1,14 @@
 // ultrathink-coder.ais
-// Ultrathink coding workflow: 3-way parallel speculative planning + synthesis +
-// implementation via Claude Code agent.
+// Ultrathink coding workflow: 3-way parallel planning + synthesis + implementation.
 //
-// Usage: dekk apxm execute examples/workflows/ultrathink-coder.ais
+// KNOWN BUG: spawn_agent is incompatible with flow parameters (E900).
+// See: docs/bugs/compiler-spawn-agent-flow-params.md
+//
+// WORKAROUND: Task is passed via ASK node — the LLM is prompted with the
+// task description from ultrathink.sh via the session context.
+// Run via: ./ultrathink.sh "your task"  (script injects task into session)
+//
+// TODO: When bug is fixed, replace ask() with flow main(TASK: str) parameter.
 
 agent Thinkers {
     flow architect(task: str) -> str {
@@ -11,38 +17,44 @@ agent Thinkers {
     }
 
     flow adversary(task: str) -> str {
-        think("ultrathink. You are an adversarial reviewer. What already exists that should NOT be re-implemented? Minimal viable change vs over-engineering? Top 3 failure modes? What NOT to build in v1? The ONE thing that breaks everything if done wrong? Be brutal. Adversary wins on scope disputes. Read crates/apxm-runtime/src/model_router/ before answering. Task: " + task) -> result
+        think("ultrathink. You are an adversarial reviewer. What already exists that should NOT be re-implemented? Minimal viable change vs over-engineering? Top 3 failure modes? What NOT to build in v1? The ONE thing that breaks everything? Be brutal. Adversary wins on scope. Read crates/apxm-runtime/src/model_router/ first. Task: " + task) -> result
         return result
     }
 
     flow impl_expert(task: str) -> str {
-        think("ultrathink. You are a Rust implementation expert focused on correctness. Produce: complete Rust structs and impl blocks (not pseudocode), unit tests covering happy path and error paths, exact Cargo.toml additions needed. Build command: dekk apxm build (not bare cargo). Read relevant source files first. Task: " + task) -> result
+        think("ultrathink. You are a Rust implementation expert. Produce: complete Rust structs and impl blocks (not pseudocode), unit tests for happy path and error paths, exact Cargo.toml additions. Build command: dekk apxm build. Read relevant source files first. Task: " + task) -> result
         return result
     }
 
-    flow synthesize(architect_out: str, adversary_out: str, impl_out: str) -> str {
-        think("ultrathink. Synthesize 3 expert analyses into ONE unified implementation brief. Adversary wins on scope disputes. Include exact file paths and complete Rust code blocks. Include test cases. Flag uncertainty with [RISK: ...]. End with CONSERVATIVE APPROACH section and BOLD APPROACH section. ARCHITECT: " + architect_out + " ADVERSARY: " + adversary_out + " IMPL EXPERT: " + impl_out) -> result
+    flow synthesize(arch: str, adv: str, impl_out: str) -> str {
+        think("ultrathink. Synthesize 3 expert analyses into ONE implementation brief. Adversary wins on scope. Exact file paths + complete Rust code blocks. Test cases. Flag uncertainty with [RISK]. End with CONSERVATIVE APPROACH and BOLD APPROACH sections. ARCHITECT: " + arch + " ADVERSARY: " + adv + " IMPL EXPERT: " + impl_out) -> result
         return result
     }
 }
 
 agent UltrathinkCoder {
     @entry flow main() -> str {
+        // BUG WORKAROUND: spawn_agent must come before other nodes
         spawn_agent("coder", "claude", "$APXM_HOME") -> _coder
 
-        ask("What coding task should ultrathink implement for APXM?") -> task
+        // WORKAROUND: ask() the LLM — script caller must inject task via session
+        // TODO: replace with flow param when compiler bug is fixed
+        ask("State the exact coding task to implement for APXM. Be specific — include crate names, file paths, and what to build. Do not invent a task; use only the task provided in your context.") -> task
 
-        Thinkers.architect(task) -> arch_out
-        Thinkers.adversary(task) -> adv_out
-        Thinkers.impl_expert(task) -> impl_out
+        // Guard: ensure task is specific before proceeding
+        think("You received this task. If it is vague or a generic placeholder, stop and say INVALID TASK. Otherwise, repeat it verbatim as confirmation: " + task) -> task_verified
+
+        Thinkers.architect(task_verified) -> arch_out
+        Thinkers.adversary(task_verified) -> adv_out
+        Thinkers.impl_expert(task_verified) -> impl_out
 
         Thinkers.synthesize(arch_out, adv_out, impl_out) -> synthesis
 
-        think("From this synthesis, write a precise coding agent instruction. Include the conservative approach first (minimal, safe) and then the bold approach (full vision). Start with: cd ~/projects/agents/apxm. List exact files with full content. End each approach with: dekk apxm build, fix all errors, run tests, git commit. Synthesis: " + synthesis) -> coding_prompt
+        think("Write a precise coding agent instruction from this synthesis. Conservative approach first (minimal, safe), bold approach second (full vision). Start with: cd ~/projects/agents/apxm. List exact files with full content. End with: dekk apxm build, fix errors, run tests, git commit. Synthesis: " + synthesis) -> coding_prompt
 
         communicate("coder", "acp", coding_prompt) -> implementation_result
 
-        think("Reflect: what was built? Did it compile successfully? Which approach won? Summarize clearly for the engineer. Implementation result: " + implementation_result) -> summary
+        think("Reflect: what was built? Did it compile? Which approach won? Summary for the engineer. Result: " + implementation_result) -> summary
 
         update_memory(task, summary)
         print("=== ULTRATHINK COMPLETE ===\n" + summary)
