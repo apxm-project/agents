@@ -187,11 +187,25 @@ impl OpenAIBackend {
             .map(Self::message_to_openai_json)
             .collect();
 
-        let mut body = json!({
-            "model": model,
-            "messages": messages,
-            "temperature": request.temperature,
-        });
+        // Some models (gpt-5, o1, o3, o4, reasoning models) only accept
+        // the default temperature and reject custom values with a 400 error.
+        // Detect these by model name prefix and skip the temperature field.
+        let is_reasoning_model = model.starts_with("o1") || model.starts_with("o3") ||
+            model.starts_with("o4") || model.starts_with("gpt-5") ||
+            model.contains("-codex") || model.contains("reasoning");
+
+        let mut body = if is_reasoning_model {
+            json!({
+                "model": model,
+                "messages": messages,
+            })
+        } else {
+            json!({
+                "model": model,
+                "messages": messages,
+                "temperature": request.temperature,
+            })
+        };
 
         // Add optional parameters
         if let Some(max_tokens) = request.max_tokens {
