@@ -5,7 +5,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-GRAPH="$SCRIPT_DIR/examples/workflows/ultrathink-coder.apxm"
+GRAPH="$SCRIPT_DIR/examples/workflows/ultrathink-coder.ais"
 
 if [ -z "$1" ]; then
   echo "Usage: $0 \"<task description>\""
@@ -28,9 +28,9 @@ echo ""
 
 cd "$SCRIPT_DIR"
 dekk apxm execute "$GRAPH" \
-  --param "TASK=$TASK" \
   --emit-session \
-  --emit-metrics /tmp/ultrathink-metrics.json
+  --emit-metrics /tmp/ultrathink-metrics.json \
+  -- "$TASK"
 
 echo ""
 echo "📊 Metrics saved to /tmp/ultrathink-metrics.json"
