@@ -10,7 +10,7 @@ use std::time::Instant;
 
 use apxm_core::constants;
 use apxm_core::paths::session_node_dir_name;
-use apxm_core::types::SessionManifest;
+use apxm_core::types::{CompletedNodeInfo, LiveSessionState, NodeInfo, SessionManifest};
 use apxm_core::types::values::Value;
 use apxm_events::payload::{EventPayload, OperationEndPayload, OperationStartPayload};
 use apxm_events::{ApxmEvent, EventSource};
@@ -212,15 +212,16 @@ impl SessionOutputWriter {
         self.write_node_statuses(node_statuses)?;
 
         // Write final live.json with correct completed/failed status.
-        // This is the definitive fix: live.json must not stay "running" after execution ends.
-        let live = serde_json::json!({
-            "status": status,
-            "current_node_id": null,
-            "completed": node_statuses.len(),
-            "total": node_statuses.len(),
-            "elapsed_ms": duration_ms,
-            "success": success,
-        });
+        let live = LiveSessionState {
+            status: status.to_string(),
+            running_nodes: Vec::new(),
+            completed_nodes: Vec::new(),
+            completed: node_statuses.len(),
+            total: Some(node_statuses.len()),
+            elapsed_ms: duration_ms,
+            success,
+            current_phase: None,
+        };
         let tmp_path = self.session_dir.join(".live.json.tmp");
         json_pretty_write(&tmp_path, &live)?;
         let live_path = self.session_dir.join(constants::session::files::LIVE);
@@ -250,14 +251,16 @@ impl SessionOutputWriter {
         };
 
         // Write live.json
-        let live = serde_json::json!({
-            "status": status,
-            "current_node_id": null,
-            "completed": null,
-            "total": null,
-            "elapsed_ms": null,
-            "success": success,
-        });
+        let live = LiveSessionState {
+            status: status.to_string(),
+            running_nodes: Vec::new(),
+            completed_nodes: Vec::new(),
+            completed: 0,
+            total: None,
+            elapsed_ms: 0,
+            success,
+            current_phase: None,
+        };
         let tmp_path = self.session_dir.join(".live.json.tmp");
         json_pretty_write(&tmp_path, &live)?;
         let live_path = self.session_dir.join(constants::session::files::LIVE);
@@ -320,6 +323,9 @@ pub struct SessionEventEmitter {
     node_llm_tokens: Mutex<HashMap<u64, Vec<String>>>,
     skill_resolver: Option<SkillResolver>,
     context_assembler: Option<ContextAssembler>,
+    running_nodes: Mutex<Vec<NodeInfo>>,
+    completed_nodes: Mutex<Vec<CompletedNodeInfo>>,
+    node_start_times: Mutex<HashMap<u64, Instant>>,
 }
 
 impl SessionEventEmitter {
@@ -381,6 +387,9 @@ impl SessionEventEmitter {
             node_llm_tokens: Mutex::new(HashMap::new()),
             skill_resolver,
             context_assembler,
+            running_nodes: Mutex::new(Vec::new()),
+            completed_nodes: Mutex::new(Vec::new()),
+            node_start_times: Mutex::new(HashMap::new()),
         };
 
         emitter.write_live(None)?;
@@ -505,7 +514,7 @@ impl SessionEventEmitter {
 
     fn write_live_with_status(
         &self,
-        current_node_id: Option<u64>,
+        _current_node_id: Option<u64>,
         status: &str,
         success: bool,
     ) -> io::Result<()> {
@@ -513,14 +522,27 @@ impl SessionEventEmitter {
         let total = self.total.load(Ordering::Relaxed);
         let elapsed_ms = self.start_time.elapsed().as_millis();
 
-        let live = serde_json::json!({
-            "status": status,
-            "current_node_id": current_node_id,
-            "completed": completed,
-            "total": if total > 0 { Some(total) } else { None::<u64> },
-            "elapsed_ms": elapsed_ms,
-            "success": success,
-        });
+        let running_nodes = if let Ok(guard) = self.running_nodes.lock() {
+            guard.clone()
+        } else {
+            Vec::new()
+        };
+        let recent_completed = if let Ok(guard) = self.completed_nodes.lock() {
+            guard.iter().rev().take(10).cloned().collect()
+        } else {
+            Vec::new()
+        };
+
+        let live = LiveSessionState {
+            status: status.to_string(),
+            running_nodes,
+            completed_nodes: recent_completed,
+            completed: completed as usize,
+            total: if total > 0 { Some(total as usize) } else { None },
+            elapsed_ms,
+            success,
+            current_phase: None,
+        };
 
         let tmp_path = self.session_dir.join(".live.json.tmp");
         json_pretty_write(&tmp_path, &live)?;
@@ -585,14 +607,16 @@ impl SessionEventEmitter {
         let total = self.total.load(Ordering::Relaxed);
         let elapsed_ms = self.start_time.elapsed().as_millis();
 
-        let live = serde_json::json!({
-            "status": status,
-            "current_node_id": null,
-            "completed": completed,
-            "total": if total > 0 { Some(total) } else { None::<u64> },
-            "elapsed_ms": elapsed_ms,
-            "success": success,
-        });
+        let live = LiveSessionState {
+            status: status.to_string(),
+            running_nodes: Vec::new(),
+            completed_nodes: Vec::new(),
+            completed: completed as usize,
+            total: if total > 0 { Some(total as usize) } else { None },
+            elapsed_ms,
+            success,
+            current_phase: None,
+        };
         let tmp_path = self.session_dir.join(".live.json.tmp");
         json_pretty_write(&tmp_path, &live)?;
         let live_path = self.session_dir.join(constants::session::files::LIVE);
@@ -656,6 +680,21 @@ impl ExecutionEventEmitter for SessionEventEmitter {
 
     fn emit_operation_start(&self, node_id: u64, op_type: &str) {
         self.ensure_node_workspace(node_id);
+
+        if let Some(meta) = self.node_metadata.get(&node_id) {
+            let node_info = NodeInfo {
+                id: node_id,
+                name: meta.name.clone(),
+                op: op_type.to_string(),
+            };
+            if let Ok(mut running) = self.running_nodes.lock() {
+                running.push(node_info);
+            }
+            if let Ok(mut start_times) = self.node_start_times.lock() {
+                start_times.insert(node_id, Instant::now());
+            }
+        }
+
         let payload = EventPayload::OperationStart(OperationStartPayload {
             node_id,
             op_type: op_type.to_string(),
@@ -673,6 +712,29 @@ impl ExecutionEventEmitter for SessionEventEmitter {
         success: bool,
     ) {
         self.completed.fetch_add(1, Ordering::Relaxed);
+
+        if let Ok(mut running) = self.running_nodes.lock() {
+            running.retain(|n| n.id != node_id);
+        }
+
+        if let Some(meta) = self.node_metadata.get(&node_id) {
+            let status = if success {
+                constants::session::status::COMPLETED
+            } else {
+                constants::session::status::FAILED
+            };
+            let completed_info = CompletedNodeInfo {
+                id: node_id,
+                name: meta.name.clone(),
+                op: op_type.to_string(),
+                duration_ms: duration.as_millis() as u64,
+                status: status.to_string(),
+            };
+            if let Ok(mut completed) = self.completed_nodes.lock() {
+                completed.push(completed_info);
+            }
+        }
+
         let payload = EventPayload::OperationEnd(OperationEndPayload {
             node_id,
             op_type: op_type.to_string(),
