@@ -1,39 +1,28 @@
-//! Team registry — load and manage team definitions from `~/.apxm/teams.toml`.
-
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-/// Individual team member definition.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TeamMember {
-    /// Role name (unique within the team).
     pub role: String,
-    /// ACP agent profile (e.g., "claude", "codex").
     pub profile: String,
-    /// Optional system prompt for this team member.
     #[serde(default)]
     pub system_prompt: Option<String>,
 }
 
-/// Team definition — a named group of agents with roles.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TeamDefinition {
-    /// Team name (unique identifier).
     pub name: String,
-    /// Human-readable description.
     pub description: String,
-    /// Team members (roles + profiles).
+    #[serde(alias = "member")]
     pub members: Vec<TeamMember>,
 }
 
-/// Registry of team definitions loaded from `~/.apxm/teams.toml`.
 pub struct TeamRegistry {
     teams: HashMap<String, TeamDefinition>,
 }
 
 impl TeamRegistry {
-    /// Load the team registry from the default path (`~/.apxm/teams.toml`).
     pub fn load_from_default_path() -> Self {
         let mut teams = HashMap::new();
 
@@ -52,17 +41,14 @@ impl TeamRegistry {
         Self { teams }
     }
 
-    /// Get a team definition by name.
     pub fn get(&self, name: &str) -> Option<&TeamDefinition> {
         self.teams.get(name)
     }
 
-    /// List all team definitions.
     pub fn list(&self) -> Vec<&TeamDefinition> {
         self.teams.values().collect()
     }
 
-    /// Add a team member to an existing team and persist to disk.
     pub fn add_member(
         &mut self,
         team_name: &str,
@@ -167,6 +153,21 @@ mod tests {
         let parsed: TeamsFile = toml::from_str(&toml_str).unwrap();
         assert_eq!(parsed.team.len(), 1);
         assert_eq!(parsed.team[0].name, "ultrathink");
+    }
+
+    #[test]
+    fn teams_file_with_member_alias() {
+        let toml_str = r#"
+            name = "test"
+            description = "test team"
+
+            [[member]]
+            role = "dev"
+            profile = "claude"
+        "#;
+        let parsed: TeamDefinition = toml::from_str(toml_str).unwrap();
+        assert_eq!(parsed.members.len(), 1);
+        assert_eq!(parsed.members[0].role, "dev");
     }
 
     #[test]

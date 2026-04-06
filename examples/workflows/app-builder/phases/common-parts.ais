@@ -1,0 +1,69 @@
+// phases/common-parts.ais — Phase 2A: COMMON PARTS
+//
+// Generates the component library from component_registry.json.
+// Every reusable component is defined here ONCE before any screen uses it.
+// Components are verified before screens.
+//
+// For each component in component_registry.json:
+//   CODEX (conservative) + CLAUDE (bold) → Claude picks winner → 2-stage verify
+//
+// Inputs: session_dir (reads from specs/, writes to components/)
+// Output: session_dir/components/*.html + verification results
+//
+// Usage (called by create.ais):
+//   Receives session_dir as parameter
+
+agent CommonPartsBuilder {
+    @entry flow main() -> str {
+
+        ask("Session directory path") -> session_dir
+
+        // Read specs from session_dir
+        bash("cat " + session_dir + "/specs/component_registry.json") -> component_registry
+        bash("cat " + session_dir + "/specs/design_system.json") -> design_system
+
+        // Spawn agents
+        spawn_agent("codex_gen",  "codex",  "$APXM_HOME") -> _cg
+        spawn_agent("claude_gen", "claude", "$APXM_HOME") -> _clg
+        spawn_agent("judge",      "claude", "$APXM_HOME") -> _j
+        spawn_agent("verifier",   "claude", "$APXM_HOME") -> _v
+
+        // Generate components (conservative + bold in parallel)
+        ask("You are CODEX — conservative implementer. Generate HTML for ALL components with semantic, accessible implementation. Component registry: " + component_registry + " Design system: " + design_system + " Rules: CSS custom properties only (no hex), semantic HTML5, BEM-style classes with component id prefix, ARIA on interactive elements, self-contained CSS. For each component, show all variants and states. Return JSON map of component_id -> html_content.") -> codex_gen_prompt
+        communicate("codex_gen", "acp", codex_gen_prompt) -> codex_components
+
+        ask("You are CLAUDE — bold implementer. Generate HTML for ALL components with modern, polished, visually rich implementation. Component registry: " + component_registry + " Design system: " + design_system + " Rules: same CSS var requirement, semantic HTML, ARIA — but use modern CSS (grid, custom properties, transitions, micro-animations). Return JSON map of component_id -> html_content.") -> claude_gen_prompt
+        communicate("claude_gen", "acp", claude_gen_prompt) -> claude_components
+
+        // Judge picks winner per component
+        ask("Compare conservative vs bold for each component. Conservative: " + codex_components + " Bold: " + claude_components + " Pick better implementation for commercial app. Criteria: visual quality, accessibility, maintainability, state clarity. Return JSON map of component_id -> {winner: conservative|bold, reason, html_content}.") -> judge_prompt
+        communicate("judge", "acp", judge_prompt) -> winning_components
+
+        // Write components to session_dir (instruct judge to write files directly)
+        bash("mkdir -p " + session_dir + "/components") -> _mkdir
+
+        // Re-prompt judge to write component files directly
+        ask("Write the winning components as HTML files directly to " + session_dir + "/components/ using bash. Winning components: " + winning_components + " For each component in the winning_components map, write .value.html_content to " + session_dir + "/components/{component_id}.html. Return list of files written.") -> write_prompt
+        communicate("judge", "acp", write_prompt) -> files_written
+
+        // Stage 1 structural verification
+        bash("cat " + session_dir + "/specs/component_registry.json") -> registry_for_verify
+        ask("Verify all component HTML files in " + session_dir + "/components/ pass structural requirements. Registry: " + registry_for_verify + " Check each: all required states present, data-component attribute set, ARIA labels on interactive elements, no hardcoded hex colors (only CSS vars), self-contained CSS, no external dependencies. Write verification results directly to " + session_dir + "/components/verification.json using bash. Schema: {results: [{component_id, status: PASS|WARN|FAIL, issues[]}], summary: {pass, warn, fail}}. Return file path when done.") -> verify_prompt
+        communicate("verifier", "acp", verify_prompt) -> verification_written
+
+        // Update state.json
+        bash("jq '.phases.common_parts = {status: \"complete\", timestamp: \"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'\"}' " + session_dir + "/state.json > " + session_dir + "/state.json.tmp && mv " + session_dir + "/state.json.tmp " + session_dir + "/state.json") -> _update_state
+
+        // ── Live tracking output ──────────────────────────────────────────
+        bash("echo '--- PHASE 2A COMMON PARTS COMPLETE ---' && jq . " + session_dir + "/state.json") -> phase_status
+        print("PHASE STATUS:\n" + phase_status)
+
+        // Summary
+        bash("ls -lh " + session_dir + "/components/") -> components_listing
+        bash("cat " + session_dir + "/components/verification.json") -> verification_results
+        ask("Summarize Phase 2A results. Session: " + session_dir + " Components: " + components_listing + " Verification: " + verification_results + " Format: ## PHASE 2A COMPLETE\n### Session Directory\n### Components Generated (list with PASS/WARN/FAIL)\n### Issues Found\n### Ready for Phase 2B") -> summary
+
+        print("PHASE 2A COMMON PARTS COMPLETE\n\nSession: " + session_dir + "\n\n" + summary)
+        return summary
+    }
+}

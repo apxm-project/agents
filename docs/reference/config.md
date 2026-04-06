@@ -63,44 +63,13 @@ X-Custom-Gateway-Key = "env:KEY"
 name = "ollama"
 type = "local"
 protocol = "ollama"
-# api_key not needed for local Ollama
-endpoint = "http://localhost:11434"  # default, can omit
+endpoint = "http://localhost:11434"
 
 [[backends.models]]
 id = "llama3.3"
 aliases = ["llama", "local-fast"]
 context_window = 128000
-supports_functions = true   # llama3.1+ supports tool calling
-
-[[backends.models]]
-id = "qwen2.5:72b"
-aliases = ["qwen", "local-large"]
-context_window = 128000
 supports_functions = true
-
-# Optional: Ollama runtime options
-[backends.options]
-num_ctx = "128000"    # context window (overrides model default)
-num_gpu = "1"         # GPU layers to offload
-temperature = "0.8"
-```
-
-#### Routing to Ollama
-
-```toml
-[chat.routing.operation_routes.ask]
-backend = "ollama"
-model = "llama3.3"
-
-[chat.routing.operation_routes.think]
-backend = "ollama"
-model = "qwen2.5:72b"
-```
-
-#### Auto-discover installed models
-
-```bash
-apxm backend list-models ollama
 ```
 
 ### Example: Cloud Backend

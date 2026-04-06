@@ -224,6 +224,7 @@ dependencies = [
  "clap",
  "colored",
  "dirs 5.0.1",
+ "reqwest",
  "rpassword",
  "serde",
  "serde_json",

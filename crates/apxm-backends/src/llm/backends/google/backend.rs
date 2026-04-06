@@ -6,6 +6,9 @@ use crate::llm::backends::traits::StreamChunk;
 use crate::llm::backends::{LLMBackend, LLMRequest, LLMResponse, Role};
 use anyhow::{Context, Result};
 use apxm_core::constants::graph::attrs::{BASE_URL, MODEL};
+use apxm_core::constants::http::headers;
+use apxm_core::constants::llm::{google as google_keys, roles, sse};
+use apxm_core::constants::defaults;
 use apxm_core::types::{FinishReason, ModelCapabilities, ModelInfo, TokenUsage};
 use apxm_core::{log_debug, log_error};
 use async_trait::async_trait;
@@ -72,7 +75,7 @@ impl GoogleBackend {
             .filter(|m| m.role != Role::System)
             .map(|msg| {
                 let role = match msg.role {
-                    Role::User | Role::Tool => "user",
+                    Role::User | Role::Tool => roles::USER,
                     Role::Assistant => "model",
                     Role::System => unreachable!(),
                 };
@@ -99,8 +102,8 @@ impl GoogleBackend {
             "contents": contents,
             "generationConfig": {
                 "temperature": request.temperature,
-                "maxOutputTokens": request.max_tokens.unwrap_or(2048),
-                "topP": request.top_p.unwrap_or(0.95),
+                "maxOutputTokens": request.max_tokens.unwrap_or(defaults::DEFAULT_GOOGLE_MAX_OUTPUT_TOKENS),
+                "topP": request.top_p.unwrap_or(defaults::DEFAULT_GOOGLE_TOP_P),
                 "stopSequences": request.stop_sequences,
             }
         });
@@ -158,8 +161,8 @@ impl LLMBackend for GoogleBackend {
         let response = self
             .client
             .post(&url)
-            .header("Content-Type", "application/json")
-            .header("x-goog-api-key", &self.api_key)
+            .header(headers::CONTENT_TYPE, headers::CONTENT_TYPE_JSON)
+            .header(headers::X_GOOG_API_KEY, &self.api_key)
             .json(&body)
             .send()
             .await
@@ -211,8 +214,8 @@ impl LLMBackend for GoogleBackend {
 
             let response = self.client
                 .post(&url)
-                .header("Content-Type", "application/json")
-                .header("x-goog-api-key", &self.api_key)
+                .header(headers::CONTENT_TYPE, headers::CONTENT_TYPE_JSON)
+                .header(headers::X_GOOG_API_KEY, &self.api_key)
                 .json(&body)
                 .send()
                 .await
@@ -247,7 +250,7 @@ impl LLMBackend for GoogleBackend {
                         continue;
                     }
 
-                    if let Some(data) = line.strip_prefix("data: ") {
+                    if let Some(data) = line.strip_prefix(sse::DATA_PREFIX) {
                         if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
                             // Extract text from candidates[].content.parts[].text
                             if let Some(candidates) = parsed["candidates"].as_array() {
@@ -266,10 +269,10 @@ impl LLMBackend for GoogleBackend {
                             }
 
                             // Extract usage metadata if present.
-                            if let Some(usage_meta) = parsed.get("usageMetadata") {
-                                let input = usage_meta["promptTokenCount"]
+                            if let Some(usage_meta) = parsed.get(google_keys::USAGE_METADATA) {
+                                let input = usage_meta[google_keys::PROMPT_TOKEN_COUNT]
                                     .as_u64().unwrap_or(0) as usize;
-                                let output = usage_meta["candidatesTokenCount"]
+                                let output = usage_meta[google_keys::CANDIDATES_TOKEN_COUNT]
                                     .as_u64().unwrap_or(0) as usize;
                                 if input > 0 || output > 0 {
                                     last_usage = TokenUsage::new(input, output);
@@ -306,7 +309,7 @@ impl LLMBackend for GoogleBackend {
         let response = self
             .client
             .get(&url)
-            .header("x-goog-api-key", &self.api_key)
+            .header(headers::X_GOOG_API_KEY, &self.api_key)
             .send()
             .await
             .context("Failed to connect to Google")?;

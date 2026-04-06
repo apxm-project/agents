@@ -1,0 +1,66 @@
+// phases/test.ais — Phase 4: TEST
+//
+// Stack tests + quality gate.
+// Run tests, state-coverage audit, quality gate.
+// Update state.json with test results.
+//
+// Inputs: session_dir (reads from code/, writes test results to session_dir/)
+// Output: session_dir/test_results.json, session_dir/coverage.json, session_dir/quality_report.json
+//
+// Usage (called by create.ais):
+//   Receives session_dir and stack as parameters
+
+agent Tester {
+    @entry flow main() -> str {
+
+        ask("Session directory path") -> session_dir
+        ask("Stack (flutter/react/vue/swiftui)") -> stack
+
+        // Read code from session_dir
+        bash("find " + session_dir + "/code/ -type f") -> all_code_files
+        bash("cat " + session_dir + "/specs/entity_map.json") -> entity_map
+        bash("cat " + session_dir + "/specs/product_spec.json") -> product_spec
+
+        // ── Step 1: Run stack tests ───────────────────────────────────────
+        spawn_agent("test_runner", "claude", "$APXM_HOME") -> _tr
+
+        ask("Run " + stack + " tests for this app. Session dir: " + session_dir + " Code files: " + all_code_files + " Generate and run unit tests, widget/component tests, integration tests per stack conventions. For Flutter: flutter test. For React: jest/vitest. Return JSON: {total_tests, passed, failed, skipped, execution_time_ms, failures: [{test_name, error}]}.") -> test_prompt
+        communicate("test_runner", "acp", test_prompt) -> test_results
+
+        // Write test results
+        bash("echo '" + test_results + "' > " + session_dir + "/test_results.json") -> _write_tests
+
+        // ── Step 2: State-coverage audit ──────────────────────────────────
+        spawn_agent("coverage_auditor", "claude", "$APXM_HOME") -> _ca
+
+        ask("Audit state coverage for this app. Entity map: " + entity_map + " Test results: " + test_results + " Code files: " + all_code_files + " For every entity state in entity_map, check if tests cover that state. For every state transition, check if tested. Report missing coverage. Return JSON: {entity_coverage: [{entity, total_states, tested_states, missing_states[]}], transition_coverage: [{entity, total_transitions, tested_transitions, missing_transitions[]}], overall_coverage_pct}.") -> coverage_prompt
+        communicate("coverage_auditor", "acp", coverage_prompt) -> coverage_results
+
+        // Write coverage results
+        bash("echo '" + coverage_results + "' > " + session_dir + "/coverage.json") -> _write_coverage
+
+        // ── Step 3: Quality gate ──────────────────────────────────────────
+        spawn_agent("quality_gate", "claude", "$APXM_HOME") -> _qg
+
+        ask("Quality gate for this app. Test results: " + test_results + " Coverage: " + coverage_results + " Product spec: " + product_spec + " Code files: " + all_code_files + " Stack: " + stack + " Evaluate: all tests passing? Coverage >80%? All MVP features implemented? No critical security issues? Code quality acceptable? Return JSON: {verdict: PASS|FAIL, overall_quality_score: 0-100, checks: [{name, status: PASS|FAIL, details}], blockers: [], recommendations: []}.") -> quality_prompt
+        communicate("quality_gate", "acp", quality_prompt) -> quality_results
+
+        // Write quality report
+        bash("echo '" + quality_results + "' > " + session_dir + "/quality_report.json") -> _write_quality
+
+        // Update state.json
+        bash("jq '.phases.test = {status: \"complete\", timestamp: \"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'\"}' " + session_dir + "/state.json > " + session_dir + "/state.json.tmp && mv " + session_dir + "/state.json.tmp " + session_dir + "/state.json") -> _update_state
+
+        // ── Live tracking output ──────────────────────────────────────────
+        bash("echo '--- PHASE 4 TEST COMPLETE ---' && jq . " + session_dir + "/state.json") -> phase_status
+        print("PHASE STATUS:\n" + phase_status)
+
+        // Summary
+        bash("cat " + session_dir + "/test_results.json") -> test_summary
+        bash("cat " + session_dir + "/quality_report.json") -> quality_summary
+        ask("Summarize Phase 4 test results. Session: " + session_dir + " Tests: " + test_summary + " Quality: " + quality_summary + " Coverage: " + coverage_results + " Format: ## PHASE 4 COMPLETE\n### Session Directory\n### Test Results (passed/failed/total)\n### Coverage (overall %)\n### Quality Verdict (PASS/FAIL)\n### Blockers\n### Recommendations\n### App Ready for Deployment") -> summary
+
+        print("PHASE 4 TEST COMPLETE\n\nSession: " + session_dir + "\n\n" + summary)
+        return summary
+    }
+}

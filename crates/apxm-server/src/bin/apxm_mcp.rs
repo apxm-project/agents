@@ -34,10 +34,10 @@ const SERVER_NAME: &str = "apxm-mcp-server";
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 // JSON-RPC error codes
-const PARSE_ERROR: i64 = -32700;
-const METHOD_NOT_FOUND: i64 = -32601;
-const INVALID_PARAMS: i64 = -32602;
-const _INTERNAL_ERROR: i64 = -32000;
+const PARSE_ERROR: i64 = apxm_core::constants::jsonrpc::error_codes::PARSE_ERROR;
+const METHOD_NOT_FOUND: i64 = apxm_core::constants::jsonrpc::error_codes::METHOD_NOT_FOUND;
+const INVALID_PARAMS: i64 = apxm_core::constants::jsonrpc::error_codes::INVALID_PARAMS;
+const _INTERNAL_ERROR: i64 = apxm_core::constants::jsonrpc::error_codes::INTERNAL_ERROR;
 
 fn main() {
     let stdin = io::stdin();

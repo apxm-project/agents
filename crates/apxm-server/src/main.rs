@@ -577,7 +577,7 @@ impl ExecutionEventEmitter for ChannelEventEmitter {
     fn emit_llm_token(&self, content: &str) {
         let _ = self
             .tx
-            .try_send(serde_json::json!({ "type": "llm_token", "content": content }));
+            .try_send(serde_json::json!({ "type": apxm_core::constants::a2a::event_types::LLM_TOKEN, "content": content }));
     }
 
     fn emit_tool_start(&self, name: &str, args: &HashMap<String, Value>) {
@@ -592,7 +592,7 @@ impl ExecutionEventEmitter for ChannelEventEmitter {
             })
             .collect::<serde_json::Map<String, JsonValue>>();
         let _ = self.tx.try_send(serde_json::json!({
-            "type": "tool_start",
+            "type": apxm_core::constants::a2a::event_types::TOOL_START,
             "name": name,
             "args": args
         }));
@@ -603,7 +603,7 @@ impl ExecutionEventEmitter for ChannelEventEmitter {
             .to_json()
             .unwrap_or_else(|_| JsonValue::String(result.to_string()));
         let _ = self.tx.try_send(serde_json::json!({
-            "type": "tool_end",
+            "type": apxm_core::constants::a2a::event_types::TOOL_END,
             "name": name,
             "result": result_json
         }));
@@ -968,7 +968,7 @@ async fn a2a_jsonrpc(
                     serde_json::json!({
                         "id": task_id,
                         "factId": fact_id,
-                        "status": { "state": "submitted" },
+                        "status": { "state": apxm_core::constants::session::status::SUBMITTED },
                         "message": message,
                     }),
                 ),
@@ -2219,7 +2219,7 @@ async fn create_checkpoint(
     Json(serde_json::json!({
         "ok": true,
         "checkpoint_id": id,
-        "status": "pending",
+        "status": apxm_core::constants::session::status::PENDING,
         "resume_url": format!("/v1/checkpoints/{}/resume", id)
     }))
 }
@@ -2253,7 +2253,7 @@ async fn resume_checkpoint(
     Ok(Json(serde_json::json!({
         "ok": true,
         "checkpoint_id": cp.id,
-        "status": "resumed",
+        "status": apxm_core::constants::session::status::RESUMED,
         "human_input": cp.human_input,
         "resumed_at_ms": cp.resumed_at_ms
     })))
@@ -2435,7 +2435,7 @@ mod tests {
                 "jsonrpc": "2.0",
                 "id": 1,
                 "method": "initialize",
-                "params": { "protocolVersion": "2024-11-05" }
+                "params": { "protocolVersion": apxm_core::constants::protocols::MCP_VERSION }
             }),
         )
         .await;

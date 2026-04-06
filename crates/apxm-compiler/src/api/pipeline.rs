@@ -46,93 +46,31 @@ impl<'ctx> Pipeline<'ctx> {
         self.process_module(module)
     }
 
-    /// Compile a graph input by lowering to textual MLIR first.
-    ///
-    /// At O2 and above, graph-level optimization passes (prompt caching and
-    /// memoization hints) are applied *before* MLIR lowering so that the
-    /// hint attributes are visible in the generated IR.
-    ///
-    /// If a profile path is configured, the profile is loaded and applied
-    /// to the graph before MLIR lowering (at any optimization level).
     pub fn compile_graph(&self, graph: &ApxmGraph) -> Result<Module> {
-        let mut graph = graph.clone();
-
-        // Apply profile-guided annotations if a profile is configured.
-        if let Some(ref profile_path) = self.config.profile_path {
-            let profile = crate::passes::profile::ExecutionProfile::load_from_file(profile_path)
-                .map_err(|e| {
-                    CompilerError::Unsupported(Box::new(ErrorBuilder::generic(
-                        ErrorCode::InternalError,
-                        format!("Failed to load profile: {e}"),
-                    )))
-                })?;
-            profile.apply_to_graph(&mut graph, self.config.token_budget);
-        }
-
-        // Run graph-level optimization passes at O2+.
-        //
-        // Pass ordering:
-        // 1. constant_folding — fold CONST_STR into THINK/ASK templates (reduces node count)
-        // 2. prompt_caching — detect shared system prompts
-        // 3. memoization_hints — mark duplicate pure operations
-        // 4. parallelism_analysis — compute max parallelism & critical path (reads final graph shape)
-        //
-        // Rationale:
-        // - ConstantFolding runs first to simplify the graph before other analysis passes
-        // - ParallelismAnalysis runs last to see the final optimized graph structure
-        // - Model validation (if added) should run after constant folding since folded
-        //   templates change model references
-        if matches!(
-            self.config.opt_level,
-            OptimizationLevel::O2 | OptimizationLevel::O3
-        ) {
-            graph.constant_folding().map_err(|e| {
-                CompilerError::Unsupported(Box::new(ErrorBuilder::generic(
-                    ErrorCode::InternalError,
-                    format!("Constant folding pass failed: {e}"),
-                )))
-            })?;
-            graph.prompt_caching().map_err(|e| {
-                CompilerError::Unsupported(Box::new(ErrorBuilder::generic(
-                    ErrorCode::InternalError,
-                    format!("Prompt caching pass failed: {e}"),
-                )))
-            })?;
-            graph.memoization_hints().map_err(|e| {
-                CompilerError::Unsupported(Box::new(ErrorBuilder::generic(
-                    ErrorCode::InternalError,
-                    format!("Memoization hints pass failed: {e}"),
-                )))
-            })?;
-            graph.parallelism_analysis().map_err(|e| {
-                CompilerError::Unsupported(Box::new(ErrorBuilder::generic(
-                    ErrorCode::InternalError,
-                    format!("Parallelism analysis pass failed: {e}"),
-                )))
-            })?;
-        }
-
-        let mlir_text = graph.to_mlir().map_err(|e| {
-            CompilerError::Unsupported(Box::new(ErrorBuilder::generic(
-                ErrorCode::InternalError,
-                format!("Graph lowering failed: {e}"),
-            )))
-        })?;
-        let module = Module::parse(self.context, &mlir_text)?;
+        let module = self.lower_graph(graph)?;
         self.process_module(module)
     }
 
     /// Compile a graph and collect per-pass diagnostics.
-    ///
-    /// Each pass is executed individually so that timing and op-count deltas
-    /// are recorded in the returned [`PipelineDiagnostics`].
     pub fn compile_graph_with_diagnostics(
         &self,
         graph: &ApxmGraph,
     ) -> Result<(Module, PipelineDiagnostics)> {
+        let module = self.lower_graph(graph)?;
+        self.process_module_with_diagnostics(module)
+    }
+
+    /// Apply profile annotations and graph-level optimization passes, then
+    /// lower to MLIR and parse into a Module.
+    ///
+    /// Pass ordering at O2+:
+    /// 1. constant_folding -- fold CONST_STR into THINK/ASK templates
+    /// 2. prompt_caching -- detect shared system prompts
+    /// 3. memoization_hints -- mark duplicate pure operations
+    /// 4. parallelism_analysis -- compute max parallelism & critical path
+    fn lower_graph(&self, graph: &ApxmGraph) -> Result<Module> {
         let mut graph = graph.clone();
 
-        // Apply profile-guided annotations if a profile is configured.
         if let Some(ref profile_path) = self.config.profile_path {
             let profile = crate::passes::profile::ExecutionProfile::load_from_file(profile_path)
                 .map_err(|e| {
@@ -144,47 +82,11 @@ impl<'ctx> Pipeline<'ctx> {
             profile.apply_to_graph(&mut graph, self.config.token_budget);
         }
 
-        // Run graph-level optimization passes at O2+.
-        //
-        // Pass ordering:
-        // 1. constant_folding — fold CONST_STR into THINK/ASK templates (reduces node count)
-        // 2. prompt_caching — detect shared system prompts
-        // 3. memoization_hints — mark duplicate pure operations
-        // 4. parallelism_analysis — compute max parallelism & critical path (reads final graph shape)
-        //
-        // Rationale:
-        // - ConstantFolding runs first to simplify the graph before other analysis passes
-        // - ParallelismAnalysis runs last to see the final optimized graph structure
-        // - Model validation (if added) should run after constant folding since folded
-        //   templates change model references
         if matches!(
             self.config.opt_level,
             OptimizationLevel::O2 | OptimizationLevel::O3
         ) {
-            graph.constant_folding().map_err(|e| {
-                CompilerError::Unsupported(Box::new(ErrorBuilder::generic(
-                    ErrorCode::InternalError,
-                    format!("Constant folding pass failed: {e}"),
-                )))
-            })?;
-            graph.prompt_caching().map_err(|e| {
-                CompilerError::Unsupported(Box::new(ErrorBuilder::generic(
-                    ErrorCode::InternalError,
-                    format!("Prompt caching pass failed: {e}"),
-                )))
-            })?;
-            graph.memoization_hints().map_err(|e| {
-                CompilerError::Unsupported(Box::new(ErrorBuilder::generic(
-                    ErrorCode::InternalError,
-                    format!("Memoization hints pass failed: {e}"),
-                )))
-            })?;
-            graph.parallelism_analysis().map_err(|e| {
-                CompilerError::Unsupported(Box::new(ErrorBuilder::generic(
-                    ErrorCode::InternalError,
-                    format!("Parallelism analysis pass failed: {e}"),
-                )))
-            })?;
+            Self::run_graph_passes(&mut graph)?;
         }
 
         let mlir_text = graph.to_mlir().map_err(|e| {
@@ -193,8 +95,25 @@ impl<'ctx> Pipeline<'ctx> {
                 format!("Graph lowering failed: {e}"),
             )))
         })?;
-        let module = Module::parse(self.context, &mlir_text)?;
-        self.process_module_with_diagnostics(module)
+        Module::parse(self.context, &mlir_text)
+    }
+
+    fn run_graph_passes(graph: &mut ApxmGraph) -> Result<()> {
+        macro_rules! run_pass {
+            ($graph:expr, $pass:ident, $label:literal) => {
+                $graph.$pass().map_err(|e| {
+                    CompilerError::Unsupported(Box::new(ErrorBuilder::generic(
+                        ErrorCode::InternalError,
+                        format!(concat!($label, " pass failed: {}"), e),
+                    )))
+                })?
+            };
+        }
+        run_pass!(graph, constant_folding, "Constant folding");
+        run_pass!(graph, prompt_caching, "Prompt caching");
+        run_pass!(graph, memoization_hints, "Memoization hints");
+        run_pass!(graph, parallelism_analysis, "Parallelism analysis");
+        Ok(())
     }
 
     fn process_module(&self, module: Module) -> Result<Module> {

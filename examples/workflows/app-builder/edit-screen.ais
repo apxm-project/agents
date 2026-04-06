@@ -1,0 +1,42 @@
+// edit-screen.ais — Regenerate one screen + re-verify + re-convert
+//
+// Targets a single screen path. Re-runs sub/screen.ais on it,
+// then Stage 1 + Stage 2 verification, then sub/convert.ais.
+// Does not touch any other screens.
+//
+// Usage:
+//   dekk apxm execute examples/workflows/appbuilder/edit-screen.ais
+
+agent ScreenEditor {
+    @entry flow main() -> str {
+
+        ask("Screen path to edit (e.g. seller/home/dashboard)") -> screen_path
+        ask("Project directory") -> project_dir
+        ask("What to change (describe the edit in plain language)") -> edit_description
+
+        spawn_agent("screen_gen", "claude", "$APXM_HOME") -> _sg
+        spawn_agent("verifier",   "claude", "$APXM_HOME") -> _v
+        spawn_agent("converter",  "claude", "$APXM_HOME") -> _c
+
+        // Load current screen + context
+        ask("Load the current state of screen: " + screen_path + " from project: " + project_dir + " Return: current HTML content for all variants, screen definition from manifest, available components, design system.") -> load_prompt
+        communicate("screen_gen", "acp", load_prompt) -> screen_context
+
+        // Regenerate with the requested edit
+        ask("Regenerate screen with this change. Screen: " + screen_path + " Current: " + screen_context + " Requested edit: " + edit_description + " Keep everything else the same. Apply the edit to all relevant variants. Return JSON map of variant_file -> updated_html_content.") -> regen_prompt
+        communicate("screen_gen", "acp", regen_prompt) -> updated_screen
+
+        // Verify
+        ask("Verify the updated screen structurally. Screen: " + screen_path + " Updated HTML: " + updated_screen + " Context: " + screen_context + " Check all refs, components, destinations, color usage. Return pass/warn/fail per file.") -> verify_prompt
+        communicate("verifier", "acp", verify_prompt) -> verification
+
+        // Convert
+        ask("Convert updated screen to framework code. Screen: " + screen_path + " Updated HTML: " + updated_screen + " Project: " + project_dir + " Apply deterministic conversion rules from component_registry. Return updated framework file content.") -> convert_prompt
+        communicate("converter", "acp", convert_prompt) -> converted
+
+        ask("Summarize screen edit. Screen: " + screen_path + " Edit: " + edit_description + " Verification: " + verification + " Format: ## SCREEN UPDATED: " + screen_path + "\n### What Changed\n### Verification Status\n### Framework File Updated") -> summary
+
+        print("SCREEN UPDATED\n\n" + summary)
+        return summary
+    }
+}

@@ -1,0 +1,26 @@
+// sub/verify-structural.ais — Atomic: Stage 1 structural verification
+//
+// Qwen3 reads ALL HTML files + ALL JSON artifacts in one pass.
+// Catches broken component refs, bad destinations, missing variants,
+// hardcoded colors, cross-screen inconsistencies.
+//
+// Called by: phases/common-parts.ais, phases/feature-screens.ais, edit-screen.ais
+
+agent StructuralVerifier {
+    @entry flow main() -> str {
+
+        ask("HTML files to verify (JSON map of filepath -> html_content)") -> html_files
+        ask("component_registry.json content") -> component_registry
+        ask("screen_manifest.json content") -> screen_manifest
+        ask("navigation_spec.json content") -> nav_spec
+
+        spawn_agent("qwen_auditor", "claude", "$APXM_HOME") -> _qa
+
+        ask("You are a structural HTML auditor with access to the full app context. Verify these HTML files against all specs.\n\nHTML FILES:\n" + html_files + "\n\nCOMPONENT REGISTRY:\n" + component_registry + "\n\nSCREEN MANIFEST:\n" + screen_manifest + "\n\nNAVIGATION SPEC:\n" + nav_spec + "\n\nFor every HTML file check:\n1. Every data-component value exists in component_registry\n2. Every data-destination points to a real screen in manifest or nav_spec\n3. All required variants exist per screen (check manifest generates[])\n4. No hardcoded hex colors (only CSS custom properties)\n5. No inline nav markup\n6. All interactive elements have aria-label or aria-labelledby\n\nCross-file checks:\n7. Same component used for same concept everywhere\n8. Consistent overflow thresholds across screens\n9. Empty states exist for all screens that show lists\n\nReturn JSON:\n{results: [{file, status: PASS|WARN|FAIL, issues[{check, line_hint, fix}]}], cross_file_issues[{issue, files_affected[], fix}], summary: {pass, warn, fail, total}}") -> audit_prompt
+
+        communicate("qwen_auditor", "acp", audit_prompt) -> audit_results
+
+        print("STRUCTURAL VERIFICATION COMPLETE\n\n" + audit_results)
+        return audit_results
+    }
+}

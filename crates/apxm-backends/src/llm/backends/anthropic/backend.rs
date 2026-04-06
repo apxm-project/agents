@@ -8,6 +8,8 @@ use crate::llm::backends::traits::StreamChunk;
 use crate::llm::backends::{ContentPart, LLMBackend, LLMRequest, LLMResponse, Role, ToolChoice};
 use anyhow::{Context, Result};
 use apxm_core::constants::graph::attrs::{BASE_URL, MODEL};
+use apxm_core::constants::http::headers;
+use apxm_core::constants::llm::{anthropic_events, api_paths, config_keys, message_keys, roles, sse, tool_keys};
 use apxm_core::log_debug;
 use apxm_core::types::{FinishReason, ModelCapabilities, ModelInfo, TokenUsage, ToolCall};
 use async_trait::async_trait;
@@ -78,13 +80,13 @@ impl AnthropicBackend {
         // Values prefixed with "env:" are read from environment variables.
         let extra_headers: Vec<(String, String)> = config
             .as_ref()
-            .and_then(|c| c.get("extra_headers"))
+            .and_then(|c| c.get(config_keys::EXTRA_HEADERS))
             .and_then(|h| h.as_object())
             .map(|obj| {
                 obj.iter()
                     .filter_map(|(k, v)| {
                         let raw = v.as_str()?;
-                        let resolved = if let Some(var_name) = raw.strip_prefix("env:") {
+                        let resolved = if let Some(var_name) = raw.strip_prefix(config_keys::ENV_PREFIX) {
                             std::env::var(var_name).unwrap_or_else(|_| raw.to_string())
                         } else {
                             raw.to_string()
@@ -133,9 +135,9 @@ impl AnthropicBackend {
     /// Convert a structured Message to Anthropic JSON format.
     fn message_to_anthropic_json(msg: &crate::llm::backends::Message) -> serde_json::Value {
         let role = match msg.role {
-            Role::User | Role::Tool => "user",
-            Role::Assistant => "assistant",
-            Role::System => "user",
+            Role::User | Role::Tool => roles::USER,
+            Role::Assistant => roles::ASSISTANT,
+            Role::System => roles::USER,
         };
 
         if msg.role == Role::Tool
@@ -178,7 +180,7 @@ impl AnthropicBackend {
         let mut body = json!({
             "model": model,
             "messages": conversation_messages,
-            "max_tokens": request.max_tokens.unwrap_or(4096),
+            "max_tokens": request.max_tokens.unwrap_or(apxm_core::constants::defaults::DEFAULT_ANTHROPIC_MAX_TOKENS),
             "temperature": request.temperature,
         });
 
@@ -209,11 +211,11 @@ impl AnthropicBackend {
                     })
                 })
                 .collect();
-            body["tools"] = json!(anthropic_tools);
+            body[tool_keys::TOOLS] = json!(anthropic_tools);
 
             // Add tool_choice if specified
             if let Some(choice) = &request.tool_choice {
-                body["tool_choice"] = match choice {
+                body[tool_keys::TOOL_CHOICE] = match choice {
                     ToolChoice::Auto => json!({"type": "auto"}),
                     ToolChoice::None => json!({"type": "none"}),
                     ToolChoice::Required => json!({"type": "any"}),
@@ -265,7 +267,7 @@ impl LLMBackend for AnthropicBackend {
 
         let model = self.request_model(&request).to_string();
         let body = self.build_request_body(&request);
-        let url = format!("{}/messages", self.base_url);
+        let url = format!("{}{}", self.base_url, api_paths::MESSAGES);
 
         log_debug!(
             "models::anthropic",
@@ -277,9 +279,9 @@ impl LLMBackend for AnthropicBackend {
         let mut req_builder = self
             .client
             .post(&url)
-            .header("x-api-key", &self.api_key)
-            .header("anthropic-version", ANTHROPIC_VERSION)
-            .header("Content-Type", "application/json");
+            .header(headers::X_API_KEY, &self.api_key)
+            .header(headers::ANTHROPIC_VERSION, ANTHROPIC_VERSION)
+            .header(headers::CONTENT_TYPE, headers::CONTENT_TYPE_JSON);
 
         // Inject extra headers (e.g. on-premises X-Custom-Gateway-Key)
         for (name, value) in &self.extra_headers {
@@ -317,9 +319,9 @@ impl LLMBackend for AnthropicBackend {
             request.validate()?;
             let model = self.request_model(&request).to_string();
             let mut body = self.build_request_body(&request);
-            body["stream"] = json!(true);
+            body[message_keys::STREAM] = json!(true);
 
-            let url = format!("{}/messages", self.base_url);
+            let url = format!("{}{}", self.base_url, api_paths::MESSAGES);
 
             log_debug!(
                 "models::anthropic",
@@ -330,9 +332,9 @@ impl LLMBackend for AnthropicBackend {
 
             let mut req_builder = self.client
                 .post(&url)
-                .header("x-api-key", &self.api_key)
-                .header("anthropic-version", ANTHROPIC_VERSION)
-                .header("Content-Type", "application/json");
+                .header(headers::X_API_KEY, &self.api_key)
+                .header(headers::ANTHROPIC_VERSION, ANTHROPIC_VERSION)
+                .header(headers::CONTENT_TYPE, headers::CONTENT_TYPE_JSON);
 
             for (name, value) in &self.extra_headers {
                 req_builder = req_builder.header(name.as_str(), value.as_str());
@@ -373,9 +375,9 @@ impl LLMBackend for AnthropicBackend {
                     let mut data_str = String::new();
 
                     for line in block.lines() {
-                        if let Some(et) = line.strip_prefix("event: ") {
+                        if let Some(et) = line.strip_prefix(sse::EVENT_PREFIX) {
                             event_type = et.trim().to_string();
-                        } else if let Some(d) = line.strip_prefix("data: ") {
+                        } else if let Some(d) = line.strip_prefix(sse::DATA_PREFIX) {
                             data_str = d.trim().to_string();
                         }
                     }
@@ -385,7 +387,7 @@ impl LLMBackend for AnthropicBackend {
                     }
 
                     match event_type.as_str() {
-                        "message_start" => {
+                        anthropic_events::MESSAGE_START => {
                             if let Ok(payload) = serde_json::from_str::<MessageStartPayload>(&data_str) {
                                 if let Some(msg) = payload.message {
                                     if let Some(usage) = msg.usage {
@@ -394,7 +396,7 @@ impl LLMBackend for AnthropicBackend {
                                 }
                             }
                         }
-                        "content_block_start" => {
+                        anthropic_events::CONTENT_BLOCK_START => {
                             if let Ok(payload) = serde_json::from_str::<ContentBlockStartPayload>(&data_str) {
                                 if let Some(block) = payload.content_block {
                                     match block {
@@ -419,7 +421,7 @@ impl LLMBackend for AnthropicBackend {
                                 }
                             }
                         }
-                        "content_block_delta" => {
+                        anthropic_events::CONTENT_BLOCK_DELTA => {
                             if let Ok(payload) = serde_json::from_str::<ContentBlockDeltaPayload>(&data_str) {
                                 if let Some(delta) = payload.delta {
                                     match delta {
@@ -454,7 +456,7 @@ impl LLMBackend for AnthropicBackend {
                                 }
                             }
                         }
-                        "content_block_stop" => {
+                        anthropic_events::CONTENT_BLOCK_STOP => {
                             if !current_tool_id.is_empty() {
                                 let args: serde_json::Value = serde_json::from_str(&current_tool_input)
                                     .unwrap_or(json!({}));
@@ -468,14 +470,14 @@ impl LLMBackend for AnthropicBackend {
                                 current_tool_input.clear();
                             }
                         }
-                        "message_delta" => {
+                        anthropic_events::MESSAGE_DELTA => {
                             if let Ok(payload) = serde_json::from_str::<MessageDeltaPayload>(&data_str) {
                                 if let Some(usage) = payload.usage {
                                     output_tokens = usage.output_tokens as usize;
                                 }
                             }
                         }
-                        "message_stop" => {
+                        anthropic_events::MESSAGE_STOP => {
                             let finish_reason = if !tool_calls.is_empty() {
                                 FinishReason::ToolUse
                             } else {
@@ -497,7 +499,7 @@ impl LLMBackend for AnthropicBackend {
                             yield StreamChunk::Done(resp);
                             return;
                         }
-                        "error" => {
+                        anthropic_events::ERROR => {
                             if let Ok(payload) = serde_json::from_str::<StreamErrorPayload>(&data_str) {
                                 let msg = payload.error
                                     .and_then(|e| e.message)

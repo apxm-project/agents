@@ -1,0 +1,101 @@
+// phases/implement.ais — Phase 3C: IMPLEMENT
+//
+// Backend + wiring after conversion.
+// CODEX generates backend endpoints (N endpoint groups in parallel).
+// CLAUDE wires routing, state management, DI, auth guards, i18n.
+//
+// Inputs: session_dir (reads from specs/ and code/, writes to code/)
+// Output: session_dir/code/backend/, session_dir/code/routing/, etc.
+//
+// Usage (called by create.ais):
+//   Receives session_dir, stack, backend as parameters
+
+agent Implementer {
+    @entry flow main() -> str {
+
+        ask("Session directory path") -> session_dir
+        ask("Stack (flutter/react/vue/swiftui)") -> stack
+        ask("Backend (go/node/python/rust)") -> backend
+
+        // Read specs and converted code from session_dir
+        bash("cat " + session_dir + "/specs/entity_map.json") -> entity_map
+        bash("cat " + session_dir + "/specs/product_spec.json") -> product_spec
+        bash("cat " + session_dir + "/specs/navigation_spec.json") -> nav_spec
+        bash("find " + session_dir + "/code/screens/ -name '*.dart'") -> screen_files
+        bash("find " + session_dir + "/code/widgets/ -name '*.dart'") -> widget_files
+
+        // ── Step 1: Generate backend endpoints ───────────────────────────
+        spawn_agent("backend_gen", "codex", "$APXM_HOME") -> _bg
+
+        ask("Generate backend endpoints for this app. Backend: " + backend + " Entity map: " + entity_map + " Product spec: " + product_spec + " Generate REST/GraphQL endpoints for all entities, CRUD operations, auth, business logic per use case. Conservative, production-ready implementation with error handling, validation, auth middleware. Return JSON map of endpoint_group -> code.") -> backend_prompt
+        communicate("backend_gen", "acp", backend_prompt) -> backend_code
+
+        // Write backend code
+        bash("mkdir -p " + session_dir + "/code/backend") -> _mkdir_backend
+        bash("echo '" + backend_code + "' | jq -r 'to_entries[] | \"echo '\" + (.value | @sh) + \"' > " + session_dir + "/code/backend/\" + .key + \".go\"' | bash") -> _write_backend
+
+        // ── Step 2: Wire routing ──────────────────────────────────────────
+        spawn_agent("router", "claude", "$APXM_HOME") -> _router
+
+        ask("Wire routing for " + stack + " app. Nav spec: " + nav_spec + " Screen files: " + screen_files + " Generate route definitions, nested navigation, deep linking setup, route guards per nav spec. Return routing code as string.") -> routing_prompt
+        communicate("router", "acp", routing_prompt) -> routing_code
+
+        // Write routing code
+        bash("mkdir -p " + session_dir + "/code/routing") -> _mkdir_routing
+        bash("echo '" + routing_code + "' > " + session_dir + "/code/routing/routes.dart") -> _write_routing
+
+        // ── Step 3: State management ──────────────────────────────────────
+        spawn_agent("state_manager", "claude", "$APXM_HOME") -> _sm
+
+        ask("Generate state management setup for " + stack + ". Entity map: " + entity_map + " Screen files: " + screen_files + " Generate providers/stores/controllers for all entities, global state, local screen state. Use best practices for " + stack + " (Riverpod/Provider for Flutter, Redux/Zustand for React). Return code as string.") -> state_prompt
+        communicate("state_manager", "acp", state_prompt) -> state_code
+
+        // Write state management code
+        bash("mkdir -p " + session_dir + "/code/state") -> _mkdir_state
+        bash("echo '" + state_code + "' > " + session_dir + "/code/state/providers.dart") -> _write_state
+
+        // ── Step 4: Dependency injection ──────────────────────────────────
+        spawn_agent("di_wirer", "claude", "$APXM_HOME") -> _di
+
+        ask("Generate dependency injection setup for " + stack + ". Backend endpoints available in session_dir/code/backend/. Wire API clients, repositories, services. Use GetIt for Flutter, DI container pattern for React. Return code as string.") -> di_prompt
+        communicate("di_wirer", "acp", di_prompt) -> di_code
+
+        // Write DI code
+        bash("mkdir -p " + session_dir + "/code/di") -> _mkdir_di
+        bash("echo '" + di_code + "' > " + session_dir + "/code/di/injection.dart") -> _write_di
+
+        // ── Step 5: Auth guards ───────────────────────────────────────────
+        spawn_agent("auth_guard", "claude", "$APXM_HOME") -> _ag
+
+        ask("Generate auth guards for " + stack + ". Nav spec: " + nav_spec + " Entity map (user_roles): " + entity_map + " Protect routes per user role, redirect unauthenticated users, permission checks. Return code as string.") -> auth_prompt
+        communicate("auth_guard", "acp", auth_prompt) -> auth_code
+
+        // Write auth code
+        bash("mkdir -p " + session_dir + "/code/auth") -> _mkdir_auth
+        bash("echo '" + auth_code + "' > " + session_dir + "/code/auth/guards.dart") -> _write_auth
+
+        // ── Step 6: i18n setup ────────────────────────────────────────────
+        spawn_agent("i18n_wirer", "claude", "$APXM_HOME") -> _i18n
+
+        ask("Generate i18n setup for " + stack + ". Read all i18n JSON files from session_dir/code/i18n/. Merge into single ARB/i18n config. Generate language switching logic. Return code as string.") -> i18n_prompt
+        communicate("i18n_wirer", "acp", i18n_prompt) -> i18n_code
+
+        // Write i18n code
+        bash("mkdir -p " + session_dir + "/code/i18n") -> _mkdir_i18n
+        bash("echo '" + i18n_code + "' > " + session_dir + "/code/i18n/l10n.dart") -> _write_i18n
+
+        // Update state.json
+        bash("jq '.phases.implement = {status: \"complete\", timestamp: \"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'\"}' " + session_dir + "/state.json > " + session_dir + "/state.json.tmp && mv " + session_dir + "/state.json.tmp " + session_dir + "/state.json") -> _update_state
+
+        // ── Live tracking output ──────────────────────────────────────────
+        bash("echo '--- PHASE 3C IMPLEMENT COMPLETE ---' && jq . " + session_dir + "/state.json") -> phase_status
+        print("PHASE STATUS:\n" + phase_status)
+
+        // Summary
+        bash("find " + session_dir + "/code/ -type f | wc -l") -> code_file_count
+        ask("Summarize Phase 3C implementation. Session: " + session_dir + " Code files: " + code_file_count + " Backend: " + backend + " Stack: " + stack + " Format: ## PHASE 3C COMPLETE\n### Session Directory\n### Backend Endpoints Generated\n### Routing Wired\n### State Management Setup\n### DI Container Configured\n### Auth Guards Added\n### I18n Configured\n### Ready for Phase 4") -> summary
+
+        print("PHASE 3C IMPLEMENT COMPLETE\n\nSession: " + session_dir + "\n\n" + summary)
+        return summary
+    }
+}

@@ -10,6 +10,8 @@ use crate::llm::backends::traits::StreamChunk;
 use crate::llm::backends::{ContentPart, LLMBackend, LLMRequest, LLMResponse, Role, ToolChoice};
 use anyhow::{Context, Result};
 use apxm_core::constants::graph::attrs::{BASE_URL, MODEL};
+use apxm_core::constants::http::headers;
+use apxm_core::constants::llm::{api_paths, config_keys, message_keys, openai as openai_keys, roles, sse, tool_keys};
 use apxm_core::types::{FinishReason, ModelCapabilities, ModelInfo, TokenUsage, ToolCall};
 use async_trait::async_trait;
 use futures::StreamExt as _;
@@ -80,13 +82,13 @@ impl OpenAIBackend {
         // Values prefixed with "env:" are read from environment variables.
         let extra_headers: Vec<(String, String)> = config
             .as_ref()
-            .and_then(|c| c.get("extra_headers"))
+            .and_then(|c| c.get(config_keys::EXTRA_HEADERS))
             .and_then(|h| h.as_object())
             .map(|obj| {
                 obj.iter()
                     .filter_map(|(k, v)| {
                         let raw = v.as_str()?;
-                        let resolved = if let Some(var_name) = raw.strip_prefix("env:") {
+                        let resolved = if let Some(var_name) = raw.strip_prefix(config_keys::ENV_PREFIX) {
                             std::env::var(var_name).unwrap_or_else(|_| raw.to_string())
                         } else {
                             raw.to_string()
@@ -109,10 +111,10 @@ impl OpenAIBackend {
     /// Convert a structured Message to OpenAI JSON format.
     fn message_to_openai_json(msg: &crate::llm::backends::Message) -> serde_json::Value {
         let role = match msg.role {
-            Role::System => "system",
-            Role::User => "user",
-            Role::Assistant => "assistant",
-            Role::Tool => "tool",
+            Role::System => roles::SYSTEM,
+            Role::User => roles::USER,
+            Role::Assistant => roles::ASSISTANT,
+            Role::Tool => roles::TOOL,
         };
         let mut obj = json!({ "role": role });
 
@@ -161,7 +163,7 @@ impl OpenAIBackend {
             .collect();
 
         if !tool_call_parts.is_empty() {
-            obj["tool_calls"] = json!(tool_call_parts);
+            obj[tool_keys::TOOL_CALLS] = json!(tool_call_parts);
         }
 
         if image_parts.is_empty() {
@@ -209,23 +211,23 @@ impl OpenAIBackend {
 
         // Add optional parameters
         if let Some(max_tokens) = request.max_tokens {
-            body["max_tokens"] = json!(max_tokens);
+            body[message_keys::MAX_TOKENS] = json!(max_tokens);
         }
 
         if let Some(top_p) = request.top_p {
-            body["top_p"] = json!(top_p);
+            body[openai_keys::TOP_P] = json!(top_p);
         }
 
         if let Some(freq_penalty) = request.frequency_penalty {
-            body["frequency_penalty"] = json!(freq_penalty);
+            body[openai_keys::FREQUENCY_PENALTY] = json!(freq_penalty);
         }
 
         if let Some(pres_penalty) = request.presence_penalty {
-            body["presence_penalty"] = json!(pres_penalty);
+            body[openai_keys::PRESENCE_PENALTY] = json!(pres_penalty);
         }
 
         if !request.stop_sequences.is_empty() {
-            body["stop"] = json!(request.stop_sequences);
+            body[openai_keys::STOP] = json!(request.stop_sequences);
         }
 
         // Add tools if provided
@@ -245,11 +247,11 @@ impl OpenAIBackend {
                     })
                 })
                 .collect();
-            body["tools"] = json!(openai_tools);
+            body[tool_keys::TOOLS] = json!(openai_tools);
 
             // Add tool_choice if specified
             if let Some(choice) = &request.tool_choice {
-                body["tool_choice"] = match choice {
+                body[tool_keys::TOOL_CHOICE] = match choice {
                     ToolChoice::Auto => json!("auto"),
                     ToolChoice::None => json!("none"),
                     ToolChoice::Required => json!("required"),
@@ -333,7 +335,7 @@ impl LLMBackend for OpenAIBackend {
 
         let model = self.request_model(&request).to_string();
         let body = self.build_request_body(&request);
-        let url = format!("{}/chat/completions", self.base_url);
+        let url = format!("{}{}", self.base_url, api_paths::CHAT_COMPLETIONS);
 
         tracing::debug!(
             model = %model,
@@ -344,8 +346,8 @@ impl LLMBackend for OpenAIBackend {
         let mut req_builder = self
             .client
             .post(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("Content-Type", "application/json");
+            .header(headers::AUTHORIZATION, format!("Bearer {}", self.api_key))
+            .header(headers::CONTENT_TYPE, headers::CONTENT_TYPE_JSON);
 
         // Inject extra headers (e.g. on-premises X-Custom-Gateway-Key)
         for (name, value) in &self.extra_headers {
@@ -414,9 +416,9 @@ impl LLMBackend for OpenAIBackend {
             request.validate()?;
             let model = self.request_model(&request).to_string();
             let mut body = self.build_request_body(&request);
-            body["stream"] = json!(true);
+            body[message_keys::STREAM] = json!(true);
 
-            let url = format!("{}/chat/completions", self.base_url);
+            let url = format!("{}{}", self.base_url, api_paths::CHAT_COMPLETIONS);
 
             tracing::debug!(
                 model = %model,
@@ -426,8 +428,8 @@ impl LLMBackend for OpenAIBackend {
 
             let mut req_builder = self.client
                 .post(&url)
-                .header("Authorization", format!("Bearer {}", self.api_key))
-                .header("Content-Type", "application/json");
+                .header(headers::AUTHORIZATION, format!("Bearer {}", self.api_key))
+                .header(headers::CONTENT_TYPE, headers::CONTENT_TYPE_JSON);
 
             for (name, value) in &self.extra_headers {
                 req_builder = req_builder.header(name.as_str(), value.as_str());
@@ -459,8 +461,8 @@ impl LLMBackend for OpenAIBackend {
                         continue;
                     }
 
-                    if let Some(data) = line.strip_prefix("data: ") {
-                        if data.trim() == "[DONE]" {
+                    if let Some(data) = line.strip_prefix(sse::DATA_PREFIX) {
+                        if data.trim() == sse::DONE_MARKER {
                             // Build final response.
                             let tool_calls: Vec<ToolCall> = tool_calls_map.values()
                                 .map(|(id, name, args)| {
@@ -585,12 +587,12 @@ impl LLMBackend for OpenAIBackend {
     }
 
     async fn health_check(&self) -> Result<()> {
-        let url = format!("{}/models", self.base_url);
+        let url = format!("{}{}", self.base_url, api_paths::MODELS);
 
         let mut req_builder = self
             .client
             .get(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key));
+            .header(headers::AUTHORIZATION, format!("Bearer {}", self.api_key));
 
         for (name, value) in &self.extra_headers {
             req_builder = req_builder.header(name.as_str(), value.as_str());

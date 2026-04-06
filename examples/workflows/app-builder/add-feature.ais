@@ -1,0 +1,46 @@
+// add-feature.ais — Add a feature to an existing project
+//
+// Reads existing .apxm-designer/state.json to understand current project state.
+// Runs delta manifest (only new/changed screens), then phases 2C + 3 + 4.
+// Does NOT re-run discover or re-generate existing verified screens.
+//
+// Usage:
+//   dekk apxm execute examples/workflows/appbuilder/add-feature.ais
+
+agent FeatureAdder {
+    @entry flow main() -> str {
+
+        ask("Feature description (e.g. Add a review and rating system)") -> feature_desc
+        ask("Project directory (e.g. ./my-marketplace)") -> project_dir
+
+        spawn_agent("delta_analyst", "claude", "$APXM_HOME") -> _da
+        spawn_agent("screen_gen",    "claude", "$APXM_HOME") -> _sg
+        spawn_agent("verifier",      "claude", "$APXM_HOME") -> _v
+        spawn_agent("converter",     "claude", "$APXM_HOME") -> _c
+
+        // Read existing project state
+        ask("Read the existing project state from: " + project_dir + "/.apxm-designer/state.json and screen_manifest.json. Return JSON with: existing_screens[], existing_components[], stack, backend, product_spec summary.") -> read_state_prompt
+        communicate("delta_analyst", "acp", read_state_prompt) -> project_state
+
+        // Analyze what new screens/components the feature needs
+        ask("Analyze what new screens and components are needed for this feature. Feature: " + feature_desc + " Existing project: " + project_state + " Identify: new screens needed, new components needed, existing screens that need new variants, interaction changes. Produce delta_manifest.json with the same structure as screen_manifest.json but only containing NEW or CHANGED items.") -> delta_prompt
+        communicate("delta_analyst", "acp", delta_prompt) -> delta_manifest
+
+        // Generate new screens (Phase 2C delta)
+        ask("Generate the new screens from this delta manifest. Delta: " + delta_manifest + " Project state: " + project_state + " Same rules as Phase 2C: data-component placeholders, CSS vars, web+mobile, all variants. Return JSON map of filepath -> html_content.") -> gen_prompt
+        communicate("screen_gen", "acp", gen_prompt) -> new_screens
+
+        // Verify new screens
+        ask("Verify new screens structurally. Check against existing + new component registry. New screens: " + new_screens + " Project state: " + project_state + " Return JSON with pass/warn/fail per file.") -> verify_prompt
+        communicate("verifier", "acp", verify_prompt) -> verification
+
+        // Convert new screens
+        ask("Convert new screens to framework code. New screens: " + new_screens + " Stack from project: " + project_state + " Apply same deterministic conversion rules. Return JSON: {converted_files: {file: code}, i18n_entries: {key: text}}.") -> convert_prompt
+        communicate("converter", "acp", convert_prompt) -> converted
+
+        ask("Summarize add-feature run. Feature: " + feature_desc + " Delta: " + delta_manifest + " Verification: " + verification + " Converted: " + converted + " Format: ## FEATURE ADDED: [feature name]\n### New Screens\n### New Components\n### Verification Results\n### Framework Files Created\n### How to Test") -> summary
+
+        print("FEATURE ADDED\n\n" + summary)
+        return summary
+    }
+}
