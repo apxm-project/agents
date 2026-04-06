@@ -341,8 +341,8 @@ enum BackendAction {
     Add {
         /// Backend name (e.g., "openai", "local-vllm")
         name: String,
-        /// Backend type (cloud, onprem, local)
-        #[arg(long)]
+        /// Backend type (cloud, onprem, local). For Ollama, defaults to "local".
+        #[arg(long, default_value = "")]
         r#type: String,
         /// Protocol (openai, anthropic, google, ollama, vllm)
         #[arg(long)]
@@ -400,6 +400,14 @@ enum BackendAction {
     Restart {
         /// Backend name
         name: String,
+    },
+    /// Sync installed Ollama models into a registered backend
+    SyncModels {
+        /// Backend name
+        name: String,
+        /// Override Ollama endpoint (default: use backend's registered endpoint)
+        #[arg(long)]
+        endpoint: Option<String>,
     },
     /// Add a model to an existing backend
     AddModel {
@@ -2055,16 +2063,29 @@ async fn backend_command(action: BackendAction, json_output: bool) -> Result<()>
             api_key,
             header,
         } => {
-            // Parse backend type
-            let backend_type =
-                BackendType::from_str(&r#type).map_err(|e| anyhow::anyhow!("{e}"))?;
-
-            // Parse protocol
+            // Parse protocol first (needed for Ollama smart defaults)
             let protocol =
                 ProviderProtocol::from_str(&protocol).map_err(|e| anyhow::anyhow!("{e}"))?;
+            let is_ollama = protocol == ProviderProtocol::Ollama;
 
-            // Get API key if needed
-            let api_key = if api_key.is_some() || backend_type == BackendType::Local {
+            // Ollama smart defaults: type=local if not specified
+            let backend_type = if r#type.is_empty() && is_ollama {
+                BackendType::Local
+            } else if r#type.is_empty() {
+                anyhow::bail!("--type is required (cloud, onprem, or local)");
+            } else {
+                BackendType::from_str(&r#type).map_err(|e| anyhow::anyhow!("{e}"))?
+            };
+
+            // Ollama smart defaults: endpoint=http://localhost:11434
+            let endpoint = if endpoint.is_none() && is_ollama {
+                Some("http://localhost:11434".to_string())
+            } else {
+                endpoint
+            };
+
+            // API key not needed for Ollama or local backends
+            let api_key = if api_key.is_some() || backend_type == BackendType::Local || is_ollama {
                 api_key
             } else {
                 eprint!("Enter API key for {name} (or press Enter to skip): ");
@@ -2079,7 +2100,7 @@ async fn backend_command(action: BackendAction, json_output: bool) -> Result<()>
                 name: name.clone(),
                 backend_type,
                 protocol,
-                endpoint,
+                endpoint: endpoint.clone(),
                 api_key,
                 headers,
                 models: vec![],
@@ -2088,14 +2109,59 @@ async fn backend_command(action: BackendAction, json_output: bool) -> Result<()>
 
             store.add(backend).map_err(|e| anyhow::anyhow!("{e}"))?;
 
+            // For Ollama: auto-sync installed models after registration
+            let mut synced_count = 0usize;
+            if is_ollama {
+                let base = endpoint.as_deref().unwrap_or("http://localhost:11434");
+                if let Ok(resp) = reqwest::blocking::get(&format!("{}/api/tags", base)) {
+                    if resp.status().is_success() {
+                        if let Ok(body) = resp.json::<serde_json::Value>() {
+                            if let Some(arr) = body.get("models").and_then(|m| m.as_array()) {
+                                let supports_tools = |id: &str| {
+                                    let l = id.to_lowercase();
+                                    l.contains("llama3.1") || l.contains("llama3.2")
+                                        || l.contains("llama3.3") || l.contains("qwen2.5")
+                                        || l.contains("qwen3") || l.contains("mistral")
+                                        || l.contains("command-r")
+                                };
+                                for m in arr {
+                                    if let Some(n) = m.get("name").and_then(|v| v.as_str()) {
+                                        let model = apxm_core::types::ModelConfig {
+                                            id: n.to_string(),
+                                            aliases: vec![],
+                                            context_window: 128000,
+                                            cost_per_1k_input: 0.0,
+                                            cost_per_1k_output: 0.0,
+                                            supports_vision: false,
+                                            supports_functions: supports_tools(n),
+                                            supports_thinking: false,
+                                            tags: vec!["local".to_string(), "ollama".to_string()],
+                                        };
+                                        let _ = store.add_model(&name, model);
+                                        synced_count += 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             if json_output {
-                println!("{{\"status\":\"ok\",\"backend\":\"{name}\"}}");
+                println!("{{\"status\":\"ok\",\"backend\":\"{name}\",\"synced_models\":{synced_count}}}");
             } else {
                 print_section_header("Backend Registered");
                 print_status_line("Name", Status::Ok, &name);
                 print_status_line("Type", Status::Ok, &format!("{backend_type}"));
                 print_status_line("Protocol", Status::Ok, &format!("{protocol}"));
                 print_status_line("Store", Status::Ok, &store.path().display().to_string());
+                if is_ollama {
+                    if synced_count > 0 {
+                        print_status_line("Models synced", Status::Ok, &format!("{synced_count} installed models registered"));
+                    } else {
+                        print_status_line("Models", Status::Warning, "Ollama not reachable — run: apxm backend sync-models after starting Ollama");
+                    }
+                }
             }
         }
         BackendAction::List { format } => {
@@ -2315,6 +2381,93 @@ async fn backend_command(action: BackendAction, json_output: bool) -> Result<()>
             } else {
                 print_section_header("Backend Restarted");
                 print_status_line("Backend", Status::Ok, &name);
+            }
+        }
+        BackendAction::SyncModels { name, endpoint } => {
+            let backend_cfg = store
+                .get(&name)
+                .map_err(|e| anyhow::anyhow!("{e}"))?
+                .ok_or_else(|| anyhow::anyhow!("Backend '{}' not found", name))?;
+
+            if backend_cfg.protocol != ProviderProtocol::Ollama {
+                anyhow::bail!(
+                    "sync-models only works for Ollama backends. '{}' uses protocol '{}'.",
+                    name, backend_cfg.protocol
+                );
+            }
+
+            let base = endpoint
+                .or_else(|| backend_cfg.endpoint.clone())
+                .unwrap_or_else(|| "http://localhost:11434".to_string());
+
+            let resp = reqwest::blocking::get(&format!("{}/api/tags", base))
+                .map_err(|e| anyhow::anyhow!(
+                    "Cannot reach Ollama at {}: {}\nMake sure it is running: ollama serve", base, e
+                ))?;
+
+            if !resp.status().is_success() {
+                anyhow::bail!("Ollama API error ({}): {}", resp.status(),
+                    resp.text().unwrap_or_default());
+            }
+
+            let body: serde_json::Value = resp.json()
+                .map_err(|e| anyhow::anyhow!("Failed to parse Ollama response: {e}"))?;
+
+            let models_arr = body
+                .get("models")
+                .and_then(|m| m.as_array())
+                .ok_or_else(|| anyhow::anyhow!("Unexpected Ollama response format"))?;
+
+            let supports_tools = |id: &str| {
+                let l = id.to_lowercase();
+                l.contains("llama3.1") || l.contains("llama3.2") || l.contains("llama3.3")
+                    || l.contains("qwen2.5") || l.contains("qwen3") || l.contains("mistral")
+                    || l.contains("command-r")
+            };
+
+            let existing: std::collections::HashSet<String> =
+                backend_cfg.models.iter().map(|m| m.id.clone()).collect();
+
+            let mut added = 0usize;
+            let mut skipped = 0usize;
+
+            for m in models_arr {
+                if let Some(model_name) = m.get("name").and_then(|n| n.as_str()) {
+                    if existing.contains(model_name) {
+                        skipped += 1;
+                        continue;
+                    }
+                    let model = apxm_core::types::ModelConfig {
+                        id: model_name.to_string(),
+                        aliases: vec![],
+                        context_window: 128000,
+                        cost_per_1k_input: 0.0,
+                        cost_per_1k_output: 0.0,
+                        supports_vision: false,
+                        supports_functions: supports_tools(model_name),
+                        supports_thinking: false,
+                        tags: vec!["local".to_string(), "ollama".to_string()],
+                    };
+                    store.add_model(&name, model).map_err(|e| anyhow::anyhow!("{e}"))?;
+                    added += 1;
+                }
+            }
+
+            if json_output {
+                println!("{{\"status\":\"ok\",\"backend\":\"{name}\",\"added\":{added},\"skipped\":{skipped}}}");
+            } else {
+                print_section_header("Ollama Models Synced");
+                print_status_line("Backend", Status::Ok, &name);
+                print_status_line("Endpoint", Status::Ok, &base);
+                if added > 0 {
+                    print_status_line("Added", Status::Ok, &format!("{added} new models"));
+                }
+                if skipped > 0 {
+                    print_status_line("Skipped", Status::Warning, &format!("{skipped} already registered"));
+                }
+                if added == 0 && skipped == 0 {
+                    println!("  No models found. Install one with: ollama pull llama3.3");
+                }
             }
         }
         BackendAction::AddModel {
