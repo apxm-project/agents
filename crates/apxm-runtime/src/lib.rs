@@ -34,6 +34,7 @@ pub mod process_table;
 mod runtime;
 pub mod sandbox;
 pub mod scheduler;
+pub mod team;
 pub mod thread;
 pub mod workflow;
 pub mod workspace;

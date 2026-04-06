@@ -427,6 +427,7 @@ fn to_tablegen_name(op_type: AISOperationType) -> String {
         AISOperationType::Nop => "Nop",
         AISOperationType::Identity => "Identity",
         AISOperationType::SpawnAgent => "SpawnAgent",
+        AISOperationType::SpawnTeam => "SpawnTeam",
         AISOperationType::RegisterCapability => "RegisterCapability",
         AISOperationType::Autonomous => "Autonomous",
         AISOperationType::Checkpoint => "Checkpoint",
