@@ -97,11 +97,17 @@ pub fn validate_semantic(graph: &ApxmGraph, ctx: &SemanticContext) -> Vec<Error>
         // --- Tier 1: op-specific checks ---
         match node.op {
             AISOperationType::Ask | AISOperationType::Think | AISOperationType::Reason => {
-                // E501: template placeholder bounds
+                // E501: template placeholder bounds.
+                // Entry nodes (no incoming edges) in parameterized flows receive
+                // flow args injected by the MLIR lowering as additional inputs.
+                // Include those in the effective input count to avoid false positives.
+                let is_entry_node = edge_count == 0;
+                let injected_params = if is_entry_node { graph.parameters.len() } else { 0 };
+                let effective_inputs = edge_count + injected_params;
                 check_placeholder_bounds(
                     node,
                     graph_attrs::TEMPLATE_STR,
-                    edge_count,
+                    effective_inputs,
                     ErrorCode::TemplatePlaceholderBounds,
                     &mut errors,
                 );

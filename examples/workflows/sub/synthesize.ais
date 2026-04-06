@@ -1,10 +1,9 @@
-// synthesize.ais - converted from synthesize.apxm
-//
-// Usage: dekk apxm execute examples/workflows/sub/synthesize.apxm
+// synthesize.ais
+// Usage: called with architect, adversary, impl_expert outputs as args
 
 agent Synthesize {
-    @entry flow main(TASK: str) -> str {
-        think("You are a synthesis expert. Given these three perspectives:\n\nARCHITECTURE:\n{{ARCH}}\n\nRISKS & CONCERNS:\n{{ADVER}}\n\nIMPLEMENTATION:\n{{IMPL}}\n\nSynthesize these into a comprehensive plan that:\n1. Incorporates the best architectural ideas\n2. Addresses the identified risks\n3. Provides clear implementation guidance\n\nProvide a unified, actionable plan.") -> synthesize_think
+    @entry flow main(ARCH: str, ADVER: str, IMPL: str) -> str {
+        think("You are a synthesis expert. Given these three perspectives:\n\nARCHITECTURE:\n{{ARCH}}\n\nRISKS & CONCERNS:\n{{ADVER}}\n\nIMPLEMENTATION:\n{{IMPL}}\n\nSynthesize into a comprehensive plan:\n1. Best architectural ideas\n2. How risks are mitigated\n3. Clear implementation guidance\n\nProvide a unified, actionable plan.") -> synthesize_think
         return synthesize_think
     }
 }

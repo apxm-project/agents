@@ -1,0 +1,26 @@
+// quad-agent-compiler.ais
+// Spawn 4 parallel Claude Code agents each implementing a distinct compiler enhancement.
+//
+// Usage: dekk apxm execute examples/workflows/quad-agent-compiler.ais
+
+agent CompilerOrchestrator {
+    @entry flow main() -> str {
+        // Spawn all 4 agents first (compiler requirement)
+        spawn_agent("agent1", "claude", "$APXM_HOME") -> _a1
+        spawn_agent("agent2", "claude", "$APXM_HOME") -> _a2
+        spawn_agent("agent3", "claude", "$APXM_HOME") -> _a3
+        spawn_agent("agent4", "claude", "$APXM_HOME") -> _a4
+
+        // Dispatch tasks directly with inline instructions
+        communicate("agent1", "acp", "Read the file /tmp/agent1-task.txt using bash and implement exactly what it says. Start: bash cat /tmp/agent1-task.txt. Then read all referenced source files. Implement everything. Use dekk apxm build to verify. Commit when done.") -> result1
+        communicate("agent2", "acp", "Read the file /tmp/agent2-task.txt using bash and implement exactly what it says. Start: bash cat /tmp/agent2-task.txt. Then read all referenced source files. Implement everything. Use dekk apxm build to verify. Commit when done.") -> result2
+        communicate("agent3", "acp", "Read the file /tmp/agent3-task.txt using bash and implement exactly what it says. Start: bash cat /tmp/agent3-task.txt. Then read all referenced source files. Implement everything. Use dekk apxm build to verify. Commit when done.") -> result3
+        communicate("agent4", "acp", "Read the file /tmp/agent4-task.txt using bash and implement exactly what it says. Start: bash cat /tmp/agent4-task.txt. Then read all referenced source files. Implement everything. Use dekk apxm build to verify. Commit when done.") -> result4
+
+        // Synthesize
+        think("Four compiler enhancement agents completed. Summarize results. AGENT1 (ModelProfile): " + result1 + " AGENT2 (Diagnostics): " + result2 + " AGENT3 (Flow Param Fix): " + result3 + " AGENT4 (Passes+CLI): " + result4) -> summary
+
+        print("=== COMPILER ENHANCEMENT COMPLETE ===\n" + summary)
+        return summary
+    }
+}

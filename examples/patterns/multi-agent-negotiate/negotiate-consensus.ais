@@ -1,30 +1,23 @@
-// multi-agent-negotiate-consensus.ais - converted from negotiate-consensus.apxm
-// 2-agent negotiation: SPAWN two ACP agents, send them the same topic simultaneously, WAIT_ALL syncs initial positions, each agent counters the other's argument via COMMUNICATE, WAIT_ALL syncs counters, THINK synthesizes consensus, UMEM stores result, CHECKPOINT saves final state.
+// negotiate-consensus.ais
+// Two agents negotiate to reach consensus on a technical decision.
 //
-// Usage: dekk apxm execute examples/patterns/multi-agent-negotiate/negotiate-consensus.apxm
+// Usage: dekk apxm execute examples/patterns/multi-agent-negotiate/negotiate-consensus.ais
 
-agent MultiAgentNegotiateConsensus {
+agent NegotiateConsensus {
     @entry flow main() -> str {
-        spawn_agent("claude_negotiator", "claude", "$APXM_HOME") -> _claude_negotiator
-        spawn_agent("codex_negotiator", "codex", "$APXM_HOME") -> _codex_negotiator
-        ask("What is the best approach for building a distributed task queue in Rust? Consider: (A) custom implementation using tokio + Redis, (B) using an existing library like lapin (AMQP/RabbitMQ), (C) using a cloud-managed queue (SQS/GCP Pub/Sub). Argue for your preferred approach with specific technical reasoning.") -> negotiation_topic
-        ask("Your negotiating partner proposed the following approach. Counter-argue or find common ground:\n\nPartner's position:\n") -> claude_counter_prefix
-        ask("Your negotiating partner proposed the following approach. Counter-argue or find common ground:\n\nPartner's position:\n") -> codex_counter_prefix
-        communicate("claude_negotiator", "acp", negotiation_topic) -> claude_initial
-        communicate("codex_negotiator", "acp", negotiation_topic) -> codex_initial
-        ask(codex_counter_prefix + "" + claude_initial) -> codex_counter_prompt
-        // wait_all (implicit via dataflow)
-        // TODO: CHECKPOINT node 6 (checkpoint_initial_positions)
-        ask(claude_counter_prefix + "" + codex_initial) -> claude_counter_prompt
-        communicate("codex_negotiator", "acp", codex_counter_prompt) -> codex_counter
-        print("=== INITIAL POSITIONS ===" + "\n" + sync_initial)
-        communicate("claude_negotiator", "acp", claude_counter_prompt) -> claude_counter
-        // wait_all (implicit via dataflow)
-        print("=== COUNTER-ARGUMENTS ===" + "\n" + sync_counters)
-        think("Two agents negotiated the best approach for a distributed task queue in Rust.\n\nInitial positions:\n{{node_7}}\n\nCounter-arguments and refinements:\n{{node_14}}\n\nSynthesize a final consensus recommendation. Where did they agree? What are the key trade-offs? What would you recommend for a production system?" + "\n\n" + sync_initial + "\n\n" + sync_counters) -> final_synthesis
-        print("=== FINAL CONSENSUS ===" + "\n" + final_synthesis)
-        update_memory("rust_task_queue_consensus", final_synthesis)
-        // TODO: CHECKPOINT node 17 (checkpoint_final)
-        return final_synthesis
+        spawn_agent("agent_a", "claude", "$APXM_HOME") -> _a
+        spawn_agent("agent_b", "claude", "$APXM_HOME") -> _b
+
+        ask("What technical architecture decision should we negotiate? Describe a specific choice with trade-offs.") -> topic
+
+        communicate("agent_a", "acp", "You are Agent A. Propose your preferred solution for: " + topic + ". Be specific about your recommendation and why.") -> proposal_a
+        communicate("agent_b", "acp", "You are Agent B. Propose your preferred solution for: " + topic + ". Be specific about your recommendation and why.") -> proposal_b
+
+        communicate("agent_a", "acp", "Agent B proposed: " + proposal_b + "\n\nRespond: do you agree, partially agree, or disagree? What compromise can you offer?") -> response_a
+        communicate("agent_b", "acp", "Agent A proposed: " + proposal_a + " and responded: " + response_a + "\n\nCan you reach consensus? State the agreed solution.") -> consensus
+
+        think("Two agents negotiated. Summarize the final consensus:\n\nPROPOSAL A:\n" + proposal_a + "\n\nPROPOSAL B:\n" + proposal_b + "\n\nCONSENSUS:\n" + consensus) -> summary
+        print("=== CONSENSUS ===\n" + summary)
+        return summary
     }
 }
