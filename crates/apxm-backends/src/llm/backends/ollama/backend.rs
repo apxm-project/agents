@@ -1,14 +1,20 @@
 //! Ollama backend implementation (local models).
 //!
 //! Implements the LLMBackend trait for Ollama's local model API.
+//! Uses /api/chat for full support of system prompts, multi-turn conversations,
+//! streaming, and tool calling (for models that support it like llama3.1+, qwen2.5).
 
+use crate::llm::backends::traits::StreamChunk;
 use crate::llm::backends::{LLMBackend, LLMRequest, LLMResponse, Role};
 use anyhow::{Context, Result};
 use apxm_core::constants::graph::attrs::{BASE_URL, MODEL};
-use apxm_core::types::{FinishReason, ModelCapabilities, ModelInfo, TokenUsage};
+use apxm_core::types::{FinishReason, ModelCapabilities, ModelInfo, TokenUsage, ToolCall};
 use async_trait::async_trait;
+use futures::StreamExt as _;
 use serde::Deserialize;
 use serde_json::json;
+use std::pin::Pin;
+use tokio_stream::Stream;
 
 const DEFAULT_BASE_URL: &str = "http://localhost:11434";
 const DEFAULT_MODEL: &str = "gpt-oss:120b-cloud";
@@ -122,23 +128,31 @@ impl OllamaBackend {
         })
     }
 
-    /// Build request body for Ollama API.
+    /// Convert a structured Message to Ollama JSON format.
+    fn message_to_ollama_json(msg: &crate::llm::backends::Message) -> serde_json::Value {
+        let role = match msg.role {
+            Role::System => "system",
+            Role::User => "user",
+            Role::Assistant => "assistant",
+            Role::Tool => "tool",
+        };
+
+        json!({
+            "role": role,
+            "content": msg.text_content()
+        })
+    }
+
+    /// Build request body for Ollama /api/chat endpoint.
     fn build_request_body(&self, request: &LLMRequest) -> serde_json::Value {
         let model = self.request_model(request);
-        let prompt = request
+
+        // Convert messages to Ollama format
+        let messages: Vec<serde_json::Value> = request
             .resolved_messages()
             .iter()
-            .map(|msg| {
-                let label = match msg.role {
-                    Role::System => "System",
-                    Role::User => "User",
-                    Role::Assistant => "Assistant",
-                    Role::Tool => "Tool",
-                };
-                format!("{}: {}", label, msg.text_content())
-            })
-            .collect::<Vec<_>>()
-            .join("\n\n");
+            .map(Self::message_to_ollama_json)
+            .collect();
 
         // Start with configured Ollama options
         let mut options = serde_json::Value::Object(self.ollama_options.clone());
@@ -154,40 +168,80 @@ impl OllamaBackend {
             options["top_p"] = json!(top_p);
         }
 
-        let body = json!({
+        let mut body = json!({
             "model": model,
-            "prompt": prompt,
+            "messages": messages,
             "stream": false,
             "options": options
         });
 
+        // Add tools if provided (OpenAI-style format)
+        if let Some(tools) = &request.tools
+            && !tools.is_empty()
+        {
+            let ollama_tools: Vec<serde_json::Value> = tools
+                .iter()
+                .map(|t| {
+                    json!({
+                        "type": "function",
+                        "function": {
+                            "name": t.name,
+                            "description": t.description,
+                            "parameters": t.parameters
+                        }
+                    })
+                })
+                .collect();
+            body["tools"] = json!(ollama_tools);
+        }
+
         tracing::debug!(
             options = %options,
-            "Building Ollama request"
+            "Building Ollama /api/chat request"
         );
 
         body
     }
 
-    /// Parse Ollama API response.
-    fn parse_response(&self, response: OllamaResponse, model: &str) -> Result<LLMResponse> {
+    /// Parse Ollama /api/chat response.
+    fn parse_response(&self, response: OllamaChatResponse, model: &str) -> Result<LLMResponse> {
         // Ollama uses approximate token counts
         let input_tokens = response.prompt_eval_count.unwrap_or(0);
         let output_tokens = response.eval_count.unwrap_or(0);
 
         let usage = TokenUsage::new(input_tokens, output_tokens);
-        let finish_reason = if response.done {
+
+        // Extract content from message
+        let content = response.message.content.clone();
+
+        // Parse tool calls if present
+        let tool_calls: Vec<ToolCall> = response
+            .message
+            .tool_calls
+            .as_ref()
+            .map(|calls| {
+                calls
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, tc)| {
+                        // Ollama uses OpenAI-style tool calls
+                        let id = format!("call_{}", idx);
+                        ToolCall::new(id, tc.function.name.clone(), tc.function.arguments.clone())
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // Determine finish reason
+        let finish_reason = if !tool_calls.is_empty() {
+            FinishReason::ToolUse
+        } else if response.done {
             FinishReason::Stop
         } else {
             FinishReason::Unknown
         };
 
-        Ok(LLMResponse::new(
-            response.response,
-            model,
-            usage,
-            finish_reason,
-        ))
+        Ok(LLMResponse::new(content, model, usage, finish_reason).with_tool_calls(tool_calls))
     }
 }
 
@@ -198,12 +252,12 @@ impl LLMBackend for OllamaBackend {
 
         let model = self.request_model(&request).to_string();
         let body = self.build_request_body(&request);
-        let url = format!("{}/api/generate", self.base_url);
+        let url = format!("{}/api/chat", self.base_url);
 
         tracing::debug!(
             model = %model,
             url = %url,
-            "Sending request to Ollama"
+            "Sending request to Ollama /api/chat"
         );
 
         let response = self
@@ -224,12 +278,147 @@ impl LLMBackend for OllamaBackend {
             anyhow::bail!("Ollama API error (status {}): {}", status, error_text);
         }
 
-        let api_response: OllamaResponse = response
+        let api_response: OllamaChatResponse = response
             .json()
             .await
             .context("Failed to parse Ollama response")?;
 
         self.parse_response(api_response, &model)
+    }
+
+    fn generate_stream(
+        &self,
+        request: LLMRequest,
+    ) -> Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send + '_>> {
+        Box::pin(async_stream::try_stream! {
+            request.validate()?;
+            let model = self.request_model(&request).to_string();
+            let mut body = self.build_request_body(&request);
+            body["stream"] = json!(true);
+
+            let url = format!("{}/api/chat", self.base_url);
+
+            tracing::debug!(
+                model = %model,
+                url = %url,
+                "Sending streaming request to Ollama /api/chat"
+            );
+
+            let response = self.client
+                .post(&url)
+                .header("Content-Type", "application/json")
+                .json(&body)
+                .send()
+                .await
+                .context("Failed to send streaming request to Ollama")?
+                .error_for_status()
+                .map_err(|e| anyhow::anyhow!("Ollama API error: {}", e))?;
+
+            let mut stream = response.bytes_stream();
+            let mut buffer = String::new();
+            let mut full_content = String::new();
+            let mut last_usage = TokenUsage::new(0, 0);
+            let mut tool_calls_map: std::collections::HashMap<usize, (String, serde_json::Value)> =
+                std::collections::HashMap::new();
+
+            while let Some(chunk_result) = stream.next().await {
+                let chunk = chunk_result.context("Stream read error")?;
+                buffer.push_str(&String::from_utf8_lossy(&chunk));
+
+                // Process NDJSON lines (each line is a complete JSON object)
+                while let Some(line_end) = buffer.find('\n') {
+                    let line = buffer[..line_end].trim().to_string();
+                    buffer.drain(..line_end + 1);
+
+                    if line.is_empty() {
+                        continue;
+                    }
+
+                    if let Ok(parsed) = serde_json::from_str::<OllamaChatStreamChunk>(&line) {
+                        // Update token usage if present
+                        if let Some(prompt_count) = parsed.prompt_eval_count {
+                            if let Some(eval_count) = parsed.eval_count {
+                                last_usage = TokenUsage::new(prompt_count, eval_count);
+                                yield StreamChunk::Usage(last_usage.clone());
+                            }
+                        }
+
+                        // Process message content
+                        if let Some(ref content) = parsed.message.content {
+                            if !content.is_empty() {
+                                full_content.push_str(content);
+                                yield StreamChunk::Token(content.to_string());
+                            }
+                        }
+
+                        // Process tool calls
+                        if let Some(ref tc_arr) = parsed.message.tool_calls {
+                            for (idx, tc) in tc_arr.iter().enumerate() {
+                                // Check if this is a new tool call
+                                if !tool_calls_map.contains_key(&idx) {
+                                    tool_calls_map.insert(
+                                        idx,
+                                        (tc.function.name.clone(), tc.function.arguments.clone()),
+                                    );
+                                    yield StreamChunk::ToolCallStart {
+                                        id: format!("call_{}", idx),
+                                        name: tc.function.name.clone(),
+                                    };
+                                }
+                            }
+                        }
+
+                        // Check if done
+                        if parsed.done {
+                            // Build final response
+                            let tool_calls: Vec<ToolCall> = tool_calls_map.iter()
+                                .map(|(idx, (name, args))| {
+                                    ToolCall::new(format!("call_{}", idx), name.clone(), args.clone())
+                                })
+                                .collect();
+
+                            let finish_reason = if !tool_calls.is_empty() {
+                                FinishReason::ToolUse
+                            } else {
+                                FinishReason::Stop
+                            };
+
+                            let resp = LLMResponse::new(
+                                full_content.clone(),
+                                &model,
+                                last_usage.clone(),
+                                finish_reason,
+                            ).with_tool_calls(tool_calls);
+
+                            yield StreamChunk::Done(resp);
+                            return;
+                        }
+                    }
+                }
+            }
+
+            // Stream ended without done=true -- emit what we have
+            let tool_calls: Vec<ToolCall> = tool_calls_map.iter()
+                .map(|(idx, (name, args))| {
+                    ToolCall::new(format!("call_{}", idx), name.clone(), args.clone())
+                })
+                .collect();
+
+            let finish_reason = if !tool_calls.is_empty() {
+                FinishReason::ToolUse
+            } else {
+                FinishReason::Stop
+            };
+
+            let resp = LLMResponse::new(
+                full_content,
+                &model,
+                last_usage,
+                finish_reason,
+            ).with_tool_calls(tool_calls);
+
+            yield StreamChunk::Done(resp);
+        })
     }
 
     fn name(&self) -> &str {
@@ -276,12 +465,21 @@ impl LLMBackend for OllamaBackend {
         let models = tags
             .models
             .into_iter()
-            .map(|m| ModelInfo {
-                id: m.name.clone(),
-                name: m.name,
-                context_window: 4096,
-                supports_vision: false,
-                supports_functions: false,
+            .map(|m| {
+                // Models like llama3.1, qwen2.5, etc. support tool calling
+                let supports_functions = m.name.contains("llama3.1")
+                    || m.name.contains("llama3.2")
+                    || m.name.contains("llama3.3")
+                    || m.name.contains("qwen2.5")
+                    || m.name.contains("mistral");
+
+                ModelInfo {
+                    id: m.name.clone(),
+                    name: m.name,
+                    context_window: 128_000,
+                    supports_vision: false,
+                    supports_functions,
+                }
             })
             .collect();
 
@@ -292,20 +490,62 @@ impl LLMBackend for OllamaBackend {
         ModelCapabilities {
             streaming: true,
             vision: false,
-            functions: false,
+            functions: true,
             batch: false,
             fine_tuning: false,
         }
     }
 }
 
-// Ollama API response types
+// Ollama /api/chat response types
 #[derive(Debug, Deserialize)]
-struct OllamaResponse {
-    response: String,
+struct OllamaChatResponse {
+    message: OllamaMessage,
     done: bool,
+    #[serde(default)]
     prompt_eval_count: Option<usize>,
+    #[serde(default)]
     eval_count: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OllamaMessage {
+    role: String,
+    content: String,
+    #[serde(default)]
+    tool_calls: Option<Vec<OllamaToolCall>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OllamaToolCall {
+    function: OllamaFunction,
+}
+
+#[derive(Debug, Deserialize)]
+struct OllamaFunction {
+    name: String,
+    arguments: serde_json::Value,
+}
+
+// Ollama streaming chunk (NDJSON format)
+#[derive(Debug, Deserialize)]
+struct OllamaChatStreamChunk {
+    message: OllamaStreamMessage,
+    done: bool,
+    #[serde(default)]
+    prompt_eval_count: Option<usize>,
+    #[serde(default)]
+    eval_count: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OllamaStreamMessage {
+    #[serde(default)]
+    role: Option<String>,
+    #[serde(default)]
+    content: Option<String>,
+    #[serde(default)]
+    tool_calls: Option<Vec<OllamaToolCall>>,
 }
 
 #[derive(Debug, Deserialize)]
