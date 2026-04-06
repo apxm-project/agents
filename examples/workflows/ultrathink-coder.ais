@@ -33,7 +33,8 @@ agent UltrathinkCoder {
 
         // Task received via flow parameter
         // Guard: ensure task is specific before proceeding
-        think("You received this task. If it is vague or a generic placeholder, stop and say INVALID TASK. Otherwise, repeat it verbatim as confirmation: {{TASK}}") -> task_verified
+        // Task comes via flow param {{TASK}} - pass directly to planners
+        ask("Confirm task received: {{TASK}}") -> task_verified
 
         Thinkers.architect(task_verified) -> arch_out
         Thinkers.adversary(task_verified) -> adv_out
