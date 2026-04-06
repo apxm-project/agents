@@ -18,7 +18,6 @@ def brief_analyzer(g: GraphRecorder):
     # Phase 1: Entity analysis
     entity_analyst = g.spawn(
         "entity_analyst",
-        agent_name="entity_analyst",
         profile="claude",
         cwd=cwd
     )
@@ -35,7 +34,6 @@ def brief_analyzer(g: GraphRecorder):
     # Phase 2: Screen analysis
     screen_analyst = g.spawn(
         "screen_analyst",
-        agent_name="screen_analyst",
         profile="claude",
         cwd=cwd
     )
@@ -49,7 +47,6 @@ def brief_analyzer(g: GraphRecorder):
     # Phase 3: Component analysis
     component_analyst = g.spawn(
         "component_analyst",
-        agent_name="component_analyst",
         profile="claude",
         cwd=cwd
     )

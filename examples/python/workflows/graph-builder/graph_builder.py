@@ -76,7 +76,7 @@ def graph_builder(g: GraphRecorder):
 
     # Phase 2: Generate Python workflow files
     workflow_writer = g.spawn(
-        "workflow_writer", agent_name="workflow_writer", profile="claude", cwd=cwd
+        "workflow_writer", profile="claude", cwd=cwd
     )
 
     workflow_prompt = g.ask(
