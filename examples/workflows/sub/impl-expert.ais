@@ -3,7 +3,7 @@
 // Usage: dekk apxm execute examples/workflows/sub/impl-expert.apxm
 
 agent ImplExpert {
-    @entry flow main() -> str {
+    @entry flow main(TASK: str) -> str {
         think("You are an implementation expert. For this task: {{TASK}}\n\nProvide:\n1. Implementation approach\n2. Key algorithms or patterns\n3. Testing strategy\n4. Deployment considerations\n\nFocus on practical, actionable guidance.") -> impl_think
         return impl_think
     }

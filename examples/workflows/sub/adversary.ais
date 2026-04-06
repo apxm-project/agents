@@ -3,7 +3,7 @@
 // Usage: dekk apxm execute examples/workflows/sub/adversary.apxm
 
 agent Adversary {
-    @entry flow main() -> str {
+    @entry flow main(TASK: str) -> str {
         // TODO: REASON node 1 (adversary_reason)
         return ""
     }
