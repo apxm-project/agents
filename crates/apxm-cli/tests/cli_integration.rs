@@ -3,7 +3,9 @@
 //! Tests the validate, analyze, ops, and template subcommands by invoking the
 //! binary and checking stdout/stderr/exit-code.
 
+use std::collections::BTreeMap;
 use std::io::Write;
+use std::path::Path;
 use std::process::Command;
 
 fn apxm() -> Command {
@@ -18,6 +20,21 @@ fn write_tmp_graph(content: &str) -> tempfile::NamedTempFile {
     f.write_all(content.as_bytes()).unwrap();
     f.flush().unwrap();
     f
+}
+
+fn read_generated_snapshot(dir: &Path) -> BTreeMap<String, String> {
+    let mut snapshot = BTreeMap::new();
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        if path.is_file() {
+            snapshot.insert(
+                entry.file_name().to_string_lossy().into_owned(),
+                std::fs::read_to_string(path).unwrap(),
+            );
+        }
+    }
+    snapshot
 }
 
 // ─── Valid graphs ───────────────────────────────────────────────────────────
@@ -771,6 +788,42 @@ fn task_merge_file_not_found() {
         .output()
         .unwrap();
     assert!(!out.status.success());
+}
+
+// ─── codegen ───────────────────────────────────────────────────────────────
+
+#[test]
+fn codegen_frontend_is_idempotent() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let output_dir = temp_dir.path().join("_generated");
+    let output_dir_str = output_dir.to_str().unwrap();
+
+    let first = apxm()
+        .args(["--json", "codegen", "frontend", "--output-dir", output_dir_str])
+        .output()
+        .unwrap();
+    assert!(first.status.success());
+    let first_json: serde_json::Value = serde_json::from_slice(&first.stdout).unwrap();
+    assert_eq!(first_json["target"], "frontend");
+    assert_eq!(first_json["output_dir"], output_dir_str);
+
+    let first_snapshot = read_generated_snapshot(&output_dir);
+    assert_eq!(first_snapshot.len(), 4);
+    assert!(first_snapshot.contains_key("__init__.py"));
+    assert!(first_snapshot.contains_key("agents.py"));
+    assert!(first_snapshot.contains_key("constants.py"));
+    assert!(first_snapshot.contains_key("operations.py"));
+
+    let second = apxm()
+        .args(["--json", "codegen", "frontend", "--output-dir", output_dir_str])
+        .output()
+        .unwrap();
+    assert!(second.status.success());
+    let second_json: serde_json::Value = serde_json::from_slice(&second.stdout).unwrap();
+    let second_snapshot = read_generated_snapshot(&output_dir);
+
+    assert_eq!(first_json, second_json);
+    assert_eq!(first_snapshot, second_snapshot);
 }
 
 // ─── tool ──────────────────────────────────────────────────────────────────
