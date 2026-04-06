@@ -16,6 +16,15 @@ use thiserror::Error;
 
 pub(crate) type Result<T> = std::result::Result<T, ConfigError>;
 
+/// Model governance configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ModelsConfig {
+    /// Optional allowlist of approved model names.
+    /// If set, the compiler will reject graphs using models not in this list.
+    #[serde(default)]
+    pub allowlist: Option<Vec<String>>,
+}
+
 /// Application configuration loaded from TOML files.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
@@ -33,6 +42,10 @@ pub struct ApXmConfig {
     /// System prompts for LLM operations (ask, think, reason, plan, reflect).
     #[serde(default)]
     pub instruction: InstructionConfig,
+
+    /// Model governance configuration.
+    #[serde(default)]
+    pub models: ModelsConfig,
 }
 
 /// Configuration for the chat/runtime surface.
