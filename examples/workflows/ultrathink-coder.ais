@@ -47,7 +47,6 @@ agent UltrathinkCoder {
 
         think("Reflect: what was built? Did it compile? Which approach won? Summary for the engineer. Result: " + implementation_result) -> summary
 
-        update_memory("ultrathink_last_result", summary)
         print("=== ULTRATHINK COMPLETE ===\n" + summary)
         return summary
     }
