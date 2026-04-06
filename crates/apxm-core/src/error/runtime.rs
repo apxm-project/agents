@@ -125,6 +125,21 @@ pub enum RuntimeError {
     /// State error.
     #[error("State error: {0}")]
     State(String),
+
+    /// Missing task context in model router request.
+    #[error("Missing task context: {message}")]
+    MissingTaskContext {
+        /// Primary error message.
+        message: String,
+        /// Metadata fields that were present but insufficient.
+        metadata: std::collections::BTreeMap<String, String>,
+        /// Fields that were checked for task context.
+        checked_fields: Vec<String>,
+        /// Suggested recovery sources.
+        recovery_sources: Vec<String>,
+        /// Whether upstream hydration was attempted.
+        hydration_attempted: bool,
+    },
 }
 
 impl RuntimeError {

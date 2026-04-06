@@ -25,10 +25,12 @@
 //! 5. Default model/backend from `DefaultsConfig`
 //! 6. First available healthy backend
 
+pub mod context_validation;
 pub mod health;
 pub mod rate_limit;
 pub mod registry;
 
+pub use context_validation::{has_task_context, validate_task_context};
 pub use health::{BackendHealth, CircuitBreakerConfig, CircuitBreakerRegistry, CircuitState};
 pub use rate_limit::{RateLimitConfig, RateLimitConfigError, RateLimitError};
 pub use registry::{ModelEntry, ModelRegistry, RoutingConfig};
@@ -83,6 +85,9 @@ pub struct ModelRouterConfig {
     /// Per-operation policies.
     #[serde(default)]
     pub operation_policies: Vec<OperationPolicy>,
+    /// If true, validate that requests contain sufficient task context.
+    #[serde(default)]
+    pub validate_task_context: bool,
 }
 
 impl Default for ModelRouterConfig {
@@ -93,6 +98,7 @@ impl Default for ModelRouterConfig {
             per_backend_only: true,
             target: RoutingTarget::Balanced,
             operation_policies: Vec::new(),
+            validate_task_context: false,
         }
     }
 }
@@ -167,6 +173,11 @@ impl ModelRouter {
     /// Returns a `RoutingDecision` describing the chosen backend/model.
     /// Returns an error if no backend is available.
     pub fn select(&self, request: &LLMRequest) -> anyhow::Result<RoutingDecision> {
+        // 0. Validate task context if enabled.
+        if self.config.validate_task_context {
+            context_validation::validate_task_context(request)?;
+        }
+
         // 1. Explicit backend in request → honour it if the breaker allows.
         if let Some(ref backend) = request.backend {
             if self.circuit_breakers.is_available(backend) {
