@@ -15,6 +15,7 @@ members = [
 	"crates/apxm-events",
 	"crates/apxm-sandbox",
 	"crates/apxm-acp",
+	"crates/apxm-task-validation",
 ]
 
 resolver = "3"
