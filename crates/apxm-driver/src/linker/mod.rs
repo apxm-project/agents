@@ -169,14 +169,14 @@ impl Linker {
         // .ais source files: parse DSL -> ApxmGraph -> compile_from_graph (in-memory).
         if ext == "ais" {
             if let Some(ref compiler) = self.compiler {
-                if let Ok(graph) = compiler.load_graph(input) {
-                    let name = input.file_stem().and_then(|s| s.to_str()).map(String::from);
-                    return self.compile_from_graph(graph, name);
-                }
+                // Propagate the actual parse error so users know what went wrong
+                let graph = compiler.load_graph(input)
+                    .map_err(|e| DriverError::Driver(format!("AIS parse failed: {e}")))?;
+                let name = input.file_stem().and_then(|s| s.to_str()).map(String::from);
+                return self.compile_from_graph(graph, name);
             }
-            // MLIR unavailable — .ais requires the compiler
             return Err(DriverError::Driver(
-                "MLIR compiler required to parse .ais source files. Run `dekk apxm build`.".to_string(),
+                "MLIR compiler not available. Run `dekk apxm build` to rebuild.".to_string(),
             ));
         }
 
