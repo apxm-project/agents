@@ -113,22 +113,21 @@ impl Linker {
 
     /// Compile a JSON graph directly to an Artifact without going through MLIR.
     ///
-    /// Uses `ApxmGraph::to_execution_dag()` which is pure Rust and always available.
-    /// This path is used when MLIR is unavailable or the input is a plain JSON graph.
-    fn compile_graph_direct(&self, input: &Path) -> Result<Artifact, DriverError> {
-        let bytes = std::fs::read(input)?;
-        let text = std::str::from_utf8(&bytes)
-            .map_err(|e| DriverError::Driver(format!("Graph file is not valid UTF-8: {e}")))?;
-        let graph = ApxmGraph::from_json(text)
-            .map_err(|e| DriverError::Driver(format!("Graph parse error: {e}")))?;
-
-        // Check cache using graph hash
+    /// Compile an in-memory `ApxmGraph` directly to an executable artifact.
+    ///
+    /// This is the primary integration point for AgentMate and any other frontend
+    /// that constructs graphs programmatically (Rust `WorkflowBuilder`, Python
+    /// `FlowModule`, etc.). No file I/O required — the graph is compiled entirely
+    /// in memory via the pure-Rust `to_execution_dag()` path.
+    ///
+    /// This is also what the `.ais` file path calls after parsing.
+    pub fn compile_from_graph(&self, graph: ApxmGraph, name: Option<String>) -> Result<Artifact, DriverError> {
         let hash = cache::graph_hash(&graph).ok();
         if !self.no_cache
             && let Some(ref h) = hash
             && let Some(cached_bytes) = cache::load_cached(h)?
         {
-            log_info!("driver", "cache hit (direct) for graph hash {}", h);
+            log_info!("driver", "cache hit (graph) for graph hash {}", h);
             return Artifact::from_bytes(&cached_bytes).map_err(|e| state_err(e.to_string()));
         }
 
@@ -136,14 +135,9 @@ impl Linker {
             .to_execution_dag()
             .map_err(|e| DriverError::Driver(format!("Graph lowering error: {e}")))?;
 
-        let module_name = input
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .map(|s| s.to_string());
-        let metadata = ArtifactMetadata::new(module_name, env!("CARGO_PKG_VERSION"));
+        let metadata = ArtifactMetadata::new(name.or_else(|| Some(graph.name.clone())), env!("CARGO_PKG_VERSION"));
         let artifact = Artifact::new(metadata, vec![dag]);
 
-        // Store serialized artifact in cache
         if !self.no_cache
             && let Some(ref h) = hash
         {
@@ -172,43 +166,18 @@ impl Linker {
 
 
 
-        // .air (AgentMate canonical IR) and .ais (source) use graph-direct execute.
+        // .ais source files: parse DSL -> ApxmGraph -> compile_from_graph (in-memory).
         if ext == "ais" {
-            if ext == "ais" {
-                // For .ais: use the compiler to parse DSL -> ApxmGraph, then compile directly.
-                if let Some(ref compiler) = self.compiler {
-                    if let Ok(graph) = compiler.load_graph(input) {
-                        let hash = cache::graph_hash(&graph).ok();
-                        if !self.no_cache
-                            && let Some(ref h) = hash
-                            && let Some(cached_bytes) = cache::load_cached(h)?
-                        {
-                            log_info!("driver", "cache hit (ais-direct) for graph hash {}", h);
-                            return Artifact::from_bytes(&cached_bytes)
-                                .map_err(|e| state_err(e.to_string()));
-                        }
-                        let dag = graph
-                            .to_execution_dag()
-                            .map_err(|e| DriverError::Driver(format!("Graph lowering error: {e}")))?;
-                        let module_name = input
-                            .file_stem()
-                            .and_then(|s| s.to_str())
-                            .map(|s| s.to_string());
-                        let metadata = ArtifactMetadata::new(module_name, env!("CARGO_PKG_VERSION"));
-                        let artifact = Artifact::new(metadata, vec![dag]);
-                        if !self.no_cache
-                            && let Some(ref h) = hash
-                        {
-                            if let Ok(artifact_bytes) = artifact.to_bytes() {
-                                let _ = cache::store_cached(h, &artifact_bytes);
-                            }
-                        }
-                        log_info!("driver", "ais-direct compilation complete");
-                        return Ok(artifact);
-                    }
+            if let Some(ref compiler) = self.compiler {
+                if let Ok(graph) = compiler.load_graph(input) {
+                    let name = input.file_stem().and_then(|s| s.to_str()).map(String::from);
+                    return self.compile_from_graph(graph, name);
                 }
             }
-            return self.compile_graph_direct(input);
+            // MLIR unavailable — .ais requires the compiler
+            return Err(DriverError::Driver(
+                "MLIR compiler required to parse .ais source files. Run `dekk apxm build`.".to_string(),
+            ));
         }
 
         let Some(ref compiler) = self.compiler else {
@@ -255,6 +224,56 @@ impl Linker {
             )));
         }
         Ok(artifact)
+    }
+
+    /// Execute an in-memory `ApxmGraph` directly.
+    ///
+    /// Primary entry point for AgentMate and other programmatic frontends.
+    /// Combines `compile_from_graph` + runtime execution in one call.
+    /// No files written — fully in-memory pipeline.
+    ///
+    /// ```rust
+    /// // AgentMate usage:
+    /// let graph = WorkflowBuilder::new("research").ask("Research {0}").build();
+    /// let result = linker.run_from_graph(graph, vec!["quantum".into()], None, None).await?;
+    /// ```
+    pub async fn run_from_graph(
+        &self,
+        graph: ApxmGraph,
+        args: Vec<String>,
+        event_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
+        session_dir: Option<&Path>,
+    ) -> Result<LinkResult, DriverError> {
+        let name = Some(graph.name.clone());
+        #[cfg(feature = "metrics")]
+        let compile_start = std::time::Instant::now();
+        let artifact = self.compile_from_graph(graph, name)?;
+        #[cfg(feature = "metrics")]
+        let compile_time = compile_start.elapsed();
+
+        #[cfg(feature = "metrics")]
+        let runtime_start = std::time::Instant::now();
+        let execution = self
+            .runtime
+            .execute_artifact_with_emitter(
+                artifact.clone(),
+                args,
+                event_emitter,
+                session_dir.map(|dir| dir.to_string_lossy().to_string()),
+            )
+            .await?;
+        #[cfg(feature = "metrics")]
+        let runtime_time = runtime_start.elapsed();
+
+        Ok(LinkResult {
+            artifact,
+            execution,
+            #[cfg(feature = "metrics")]
+            metrics: LinkMetrics {
+                compile_time,
+                runtime_time,
+            },
+        })
     }
 
     /// Compile graph input and execute with entry arguments.
