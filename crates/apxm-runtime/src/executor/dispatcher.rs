@@ -187,7 +187,7 @@ mod tests {
         // match and CONTRACTS.md accordingly.
         assert_eq!(
             AISOperationType::all_operations().len(),
-            40,
+            41,
             "AISOperationType variant count changed — update dispatcher and CONTRACTS.md"
         );
     }
