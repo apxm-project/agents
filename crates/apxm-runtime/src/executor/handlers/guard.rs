@@ -64,7 +64,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         label,
     );
 
-    if passed {
+    let result = if passed {
         tracing::debug!(
             execution_id = %ctx.execution_id,
             condition = %condition,
@@ -85,7 +85,16 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
                 message: error_message,
             }),
         }
+    };
+
+    // Emit node output for session recording
+    if let Ok(ref value) = result {
+        if let Some(emitter) = &ctx.event_emitter {
+            emitter.emit_node_output(node.id, value);
+        }
     }
+
+    result
 }
 
 /// Evaluate a simple condition expression against a value.

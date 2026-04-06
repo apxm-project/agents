@@ -139,7 +139,14 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         "DELEGATE completed successfully"
     );
 
-    Ok(Value::Object(result_obj))
+    let result = Value::Object(result_obj);
+
+    // Emit node output for session recording
+    if let Some(emitter) = &ctx.event_emitter {
+        emitter.emit_node_output(node.id, &result);
+    }
+
+    Ok(result)
 }
 
 #[cfg(test)]

@@ -2,13 +2,20 @@
 
 use super::{ExecutionContext, Node, Result, Value, get_input};
 
-pub async fn execute(_ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -> Result<Value> {
+pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -> Result<Value> {
     // FENCE ensures ordering - pass through first input or Null
-    if !inputs.is_empty() {
-        Ok(get_input(node, &inputs, 0)?)
+    let result = if !inputs.is_empty() {
+        get_input(node, &inputs, 0)?
     } else {
-        Ok(Value::Null)
+        Value::Null
+    };
+
+    // Emit node output for session recording
+    if let Some(emitter) = &ctx.event_emitter {
+        emitter.emit_node_output(node.id, &result);
     }
+
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -72,4 +79,5 @@ mod tests {
         let result = execute(&ctx, &node, vec![]).await.unwrap();
         assert_eq!(result, Value::Null);
     }
+
 }

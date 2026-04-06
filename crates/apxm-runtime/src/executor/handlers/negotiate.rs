@@ -173,7 +173,14 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
         "NEGOTIATE completed"
     );
 
-    Ok(Value::Object(result))
+    let result_value = Value::Object(result);
+
+    // Emit node output for session recording
+    if let Some(emitter) = &ctx.event_emitter {
+        emitter.emit_node_output(node.id, &result_value);
+    }
+
+    Ok(result_value)
 }
 
 #[cfg(test)]
