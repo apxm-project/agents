@@ -3,9 +3,6 @@ file(GLOB APXM_CAPI_SOURCES CONFIGURE_DEPENDS
   ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp
 )
 
-# Add parser sources that were collected by Parser/CMakeLists.txt
-list(APPEND APXM_CAPI_SOURCES ${APXM_PARSER_SOURCES})
-
 # Add artifact conversion sources
 file(GLOB APXM_ARTIFACT_CONVERSION_SOURCES CONFIGURE_DEPENDS
   ${APXM_MLIR_DIR}/lib/Dialect/AIS/Conversion/Artifact/*.cpp
@@ -18,7 +15,6 @@ add_library(apxm_compiler_c SHARED ${APXM_CAPI_SOURCES})
 target_compile_definitions(apxm_compiler_c
   PRIVATE
   APXM_CAPI_INTERNAL
-  APXM_HAS_CPP_DSL=1
 )
 
 target_include_directories(apxm_compiler_c
@@ -44,11 +40,6 @@ target_link_libraries(apxm_compiler_c
   MLIRSupport
   MLIRTransforms
 )
-
-# Link optional libraries if they exist
-if(TARGET APXMParser)
-  target_link_libraries(apxm_compiler_c PRIVATE APXMParser)
-endif()
 
 if(APXM_RUNTIME_RPATHS)
   set_target_properties(apxm_compiler_c

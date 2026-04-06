@@ -117,13 +117,18 @@ impl GraphAwareVllmBackend {
         format!("exec-{}-{}", timestamp, counter)
     }
 
+    /// Return the registration endpoint used for graph metadata uploads.
+    pub fn graph_registration_url(&self) -> String {
+        format!("{}/v1/apxm/graphs/register", self.base_url)
+    }
+
     /// Register a graph with the vLLM server for scheduling hints.
     ///
     /// Call this once per graph execution before sending individual node
     /// requests. The server stores the metadata and uses it for KV-cache
     /// pinning decisions.
     pub async fn register_graph(&self, metadata: GraphMetadata) -> Result<GraphRegisterResponse> {
-        let url = format!("{}/v1/apxm/graphs/register", self.base_url);
+        let url = self.graph_registration_url();
         let response = self
             .client
             .post(&url)

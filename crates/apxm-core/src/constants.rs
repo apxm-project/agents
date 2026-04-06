@@ -561,11 +561,10 @@ pub mod extensions {
     /// Agent IR text format — canonical intermediate representation (like LLVM .ll).
     /// This is the primary authoring format for graph IR.
     pub const AIR: &str = "air";
-    /// AIS DSL source file extension.
-    pub const AIS: &str = "ais";
     /// Compiled artifact extension.
     pub const ARTIFACT: &str = "apxmobj";
-    // .apxm format removed. Use .ais source files.
+    /// JSON graph source file extension.
+    pub const JSON: &str = "json";
 }
 
 pub mod session {

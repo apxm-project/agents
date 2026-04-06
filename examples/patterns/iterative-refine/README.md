@@ -12,7 +12,9 @@
 
 ## Note on LOOP_START / LOOP_END
 
-The graph format enforces DAG structure (no back-edges), so true loops are only available in the `.ais` source format. This graph unrolls 3 iterations explicitly — the clearest way to show the reflect/refine pattern.
+The graph format enforces DAG structure (no back-edges), so iterative refinement
+is modeled by explicitly unrolling the loop. This example uses 3 rounds because
+it keeps the pattern clear while staying in the JSON/Python graph model.
 
 ## Running
 

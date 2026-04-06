@@ -77,7 +77,7 @@ mod tests {
 
     #[test]
     fn test_as_error() -> Result<(), Box<dyn std::error::Error>> {
-        let span = Span::new("test.ais".to_string(), 5, 10, 1);
+        let span = Span::new("test.json".to_string(), 5, 10, 1);
         let err = Error::new(ErrorCode::UnexpectedToken, "Test error".to_string(), span);
         let error = CompileError::Parse(Box::new(err));
 
@@ -91,7 +91,7 @@ mod tests {
 
     #[test]
     fn test_pretty_print() {
-        let span = Span::new("test.ais".to_string(), 1, 5, 3);
+        let span = Span::new("test.json".to_string(), 1, 5, 3);
         let error = Error::new(
             ErrorCode::ExpectedExpression,
             "expected expression".to_string(),

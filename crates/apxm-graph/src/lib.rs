@@ -1,11 +1,11 @@
-//! APXM Graph — canonical intermediate representation between AIS DSL and MLIR.
+//! APXM Graph — canonical intermediate representation between authoring frontends and MLIR.
 //!
 //! `ApxmGraph` is the single exchange format that the compiler front-end
 //! produces and the runtime executor consumes.  It sits between the human-
-//! authored AIS DSL and the MLIR dialect:
+//! authored JSON/Python frontends and the MLIR dialect:
 //!
 //! ```text
-//! AIS DSL  ──→  ApxmGraph (JSON)  ──→  AIS MLIR dialect  ──→  .apxmobj
+//! Python / JSON  ──→  ApxmGraph (JSON)  ──→  AIS MLIR dialect  ──→  .apxmobj
 //! ```
 //!
 //! # Key types

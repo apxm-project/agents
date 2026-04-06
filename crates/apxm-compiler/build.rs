@@ -517,21 +517,6 @@ pub mod bindings_inner {
     pub unsafe fn apxm_module_to_string(_m: *mut ApxmModule) -> *mut c_char { std::ptr::null_mut() }
     pub unsafe fn apxm_module_destroy(_m: *mut ApxmModule) {}
 
-    // ── DSL parsing ────────────────────────────────────────────────────────
-    pub unsafe fn apxm_parse_dsl(
-        _ctx: *mut ApxmCompilerContext, _src: *const c_char,
-    ) -> *mut ApxmModule { std::ptr::null_mut() }
-    pub unsafe fn apxm_parse_dsl_file(
-        _ctx: *mut ApxmCompilerContext, _path: *const c_char,
-    ) -> *mut ApxmModule { std::ptr::null_mut() }
-    /// Returns allocated JSON string (caller frees with apxm_string_free), or null on failure.
-    pub unsafe fn apxm_parse_dsl_to_graph_json(
-        _ctx: *mut ApxmCompilerContext, _src: *const c_char, _filename: *const c_char,
-    ) -> *mut c_char { std::ptr::null_mut() }
-    pub unsafe fn apxm_parse_dsl_file_to_graph_json(
-        _ctx: *mut ApxmCompilerContext, _path: *const c_char,
-    ) -> *mut c_char { std::ptr::null_mut() }
-
     // ── Pass manager ───────────────────────────────────────────────────────
     pub unsafe fn apxm_pass_manager_create(
         _ctx: *mut ApxmCompilerContext,

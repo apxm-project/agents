@@ -1,9 +1,0 @@
-// synthesize.ais
-// Usage: called with architect, adversary, impl_expert outputs as args
-
-agent Synthesize {
-    @entry flow main(ARCH: str, ADVER: str, IMPL: str) -> str {
-        think("You are a synthesis expert. Given these three perspectives:\n\nARCHITECTURE:\n{{ARCH}}\n\nRISKS & CONCERNS:\n{{ADVER}}\n\nIMPLEMENTATION:\n{{IMPL}}\n\nSynthesize into a comprehensive plan:\n1. Best architectural ideas\n2. How risks are mitigated\n3. Clear implementation guidance\n\nProvide a unified, actionable plan.") -> synthesize_think
-        return synthesize_think
-    }
-}

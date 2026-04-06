@@ -102,7 +102,8 @@ class ApxmGraph:
         The .air format is the Agent Intermediate Representation:
         human-readable, SSA-style, diffable — analogous to LLVM's .ll format.
 
-        All frontends (Python, Rust, .ais) emit .air as the canonical IR.
+        All supported authoring frontends (Python and JSON-backed tooling) emit .air as
+        the canonical IR.
         The APXM compiler consumes .air and produces .apxmobj artifacts.
 
         Example output:

@@ -4,7 +4,7 @@ MLIR-based compiler for the Agent Instruction Set (AIS) dialect.
 
 ## Overview
 
-`apxm-compiler` compiles AIS programs through an MLIR-based pipeline. It consists of:
+`apxm-compiler` compiles APXM graphs through an MLIR-based pipeline. It consists of:
 - **Rust FFI layer** (`src/`) - Safe Rust wrappers around C++ MLIR code
 - **C++/MLIR dialect** (`mlir/`) - AIS dialect definition, passes, and code generation
 
@@ -12,7 +12,7 @@ The compiler normalizes frontend inputs into canonical `ApxmGraph`, lowers to AI
 
 ## Responsibilities
 
-- Parse AIS DSL or graph JSON into a canonical graph/module
+- Parse graph JSON or MLIR into a canonical graph/module
 - Run the pass pipeline (normalize, schedule, fuse, lower)
 - Emit artifacts or Rust source for execution
 
@@ -31,20 +31,15 @@ by `apxm-driver`. Operation metadata is shared via `apxm-ais`.
 │  ├── api/                 │  ├── include/ais/               │
 │  │   ├── context.rs       │  │   ├── Dialect/AIS/IR/        │
 │  │   ├── module.rs        │  │   ├── CAPI/                  │
-│  │   └── pipeline.rs      │  │   └── Parser/                │
+│  │   └── pipeline.rs      │  │   └── Common/                │
 │  ├── codegen/             │  └── lib/                       │
 │  │   ├── artifact.rs      │      ├── Dialect/AIS/           │
-│  │   ├── emitter.rs       │      ├── CAPI/                  │
-│  │   └── operations/      │      └── Parser/                │
+│  │   ├── emitter.rs       │      └── CAPI/                  │
+│  │   └── operations/      │                                 │
 │  └── ffi/                 │                                 │
 │      └── bindings         │                                 │
 └─────────────────────────────────────────────────────────────┘
 ```
-
-## DSL Front End
-
-The AIS DSL front end (lexer, parser, AST, GraphGen) is documented in
-`crates/apxm-compiler/dsl/README.md`.
 
 ## TableGen Source
 
@@ -54,7 +49,7 @@ back the AIS MLIR dialect. See `crates/apxm-ais/README.md`.
 ## Key Types
 
 - `Context` - Compiler context managing MLIR state
-- `Module` - Compiled module (can parse DSL or MLIR)
+- `Module` - Compiled module (can parse MLIR)
 - `Pipeline` - Configurable pass pipeline
 - `PassManager` - Pass registration and execution
 
@@ -66,15 +61,11 @@ use apxm_compiler::{Context, Module};
 // Initialize compiler
 let context = Context::new()?;
 
-// Parse DSL source
-let source = r#"
-    agent TestAgent {
-        flow main {
-            rsn("Analyze the input") -> result
-        }
-    }
-"#;
-let module = Module::parse_dsl(&context, source, "test.ais")?;
+// Lower a graph into MLIR and optimize it
+let graph = apxm_graph::ApxmGraph::from_json(
+    r#"{"name":"test","nodes":[],"edges":[],"parameters":[],"metadata":{}}"#,
+)?;
+let module = apxm_compiler::Pipeline::new(&context).compile_graph(&graph)?;
 
 // Generate artifact
 let artifact_bytes = module.generate_artifact_bytes()?;
@@ -123,14 +114,13 @@ The build process (orchestrated by `build.rs`):
 ## Building
 
 ```bash
-# Ensure conda environment is active
-cargo build -p apxm-compiler
+dekk apxm build --compiler
 ```
 
 ## Testing
 
 ```bash
-cargo test -p apxm-compiler
+dekk apxm test --compiler
 ```
 
 ## Directory Structure
