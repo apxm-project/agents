@@ -175,8 +175,11 @@ impl ApxmGraph {
             };
             let target = &self.nodes[target_idx];
 
-            // Only fold into THINK/ASK nodes
-            if !matches!(target.op, AISOperationType::Think | AISOperationType::Ask) {
+            // Only fold into THINK/ASK/REASON nodes (all support template_str)
+            if !matches!(
+                target.op,
+                AISOperationType::Think | AISOperationType::Ask | AISOperationType::Reason
+            ) {
                 continue;
             }
 
@@ -1161,6 +1164,51 @@ mod analysis_folding_tests {
 
         // Should NOT fold (no {0} in template)
         assert_eq!(graph.nodes.len(), 2);
+    }
+
+    #[test]
+    fn constant_folding_works_with_reason() {
+        let mut graph = ApxmGraph {
+            name: "fold_reason".to_string(),
+            nodes: vec![
+                GraphNode {
+                    id: 1,
+                    name: "const1".to_string(),
+                    op: AISOperationType::ConstStr,
+                    attributes: HashMap::from([(
+                        attrs::VALUE.to_string(),
+                        Value::String("analyze this".into()),
+                    )]),
+                },
+                GraphNode {
+                    id: 2,
+                    name: "reason1".to_string(),
+                    op: AISOperationType::Reason,
+                    attributes: HashMap::from([(
+                        attrs::TEMPLATE_STR.to_string(),
+                        Value::String("Reason about: {0}".into()),
+                    )]),
+                },
+            ],
+            edges: vec![GraphEdge {
+                from: 1,
+                to: 2,
+                dependency: DependencyType::Data,
+            }],
+            parameters: vec![],
+            metadata: HashMap::new(),
+        };
+
+        graph.constant_folding().unwrap();
+
+        // CONST_STR should be folded into REASON
+        assert_eq!(graph.nodes.len(), 1);
+        assert_eq!(graph.nodes[0].op, AISOperationType::Reason);
+        assert_eq!(
+            graph.nodes[0].attributes.get(attrs::TEMPLATE_STR),
+            Some(&Value::String("Reason about: analyze this".into()))
+        );
+        assert_eq!(graph.edges.len(), 0);
     }
 
     #[test]
