@@ -1,26 +1,20 @@
-// worker-pool-claim.ais - converted from worker-pool.apxm
-// Worker pool pattern: UPDATE_GOAL sets intent, 3 parallel CLAIM nodes atomically pull tasks from a shared queue, GUARD skips empty claims, THINK workers process in parallel, CHECKPOINT saves intermediate state, WAIT_ALL syncs, ASK aggregates, UMEM persists to LTM, UPDATE_GOAL marks done.
+// worker-pool-parallel.ais
+// 3 parallel workers process tasks concurrently, then aggregate results.
 //
-// Usage: dekk apxm execute examples/patterns/worker-pool/worker-pool.apxm
+// Usage: dekk apxm execute examples/patterns/worker-pool/worker-pool.ais
 
-agent WorkerPoolClaim {
+agent WorkerPoolParallel {
     @entry flow main() -> str {
-        // TODO: UPDATE_GOAL node 1 (set_goal)
-        // TODO: CLAIM node 2 (claim_task_a)
-        // TODO: CLAIM node 3 (claim_task_b)
-        // TODO: CLAIM node 4 (claim_task_c)
-        // TODO: GUARD node 5 (guard_a)
-        // TODO: GUARD node 6 (guard_b)
-        // TODO: GUARD node 7 (guard_c)
-        think("You are Worker A. Perform a deep analysis of this task:\n{{node_5}}\n\nProvide: (1) key findings, (2) confidence score 0-1, (3) recommended next action." + "\n\n" + guard_a) -> worker_a
-        think("You are Worker B. Perform a deep analysis of this task:\n{{node_6}}\n\nProvide: (1) key findings, (2) confidence score 0-1, (3) recommended next action." + "\n\n" + guard_b) -> worker_b
-        think("You are Worker C. Perform a deep analysis of this task:\n{{node_7}}\n\nProvide: (1) key findings, (2) confidence score 0-1, (3) recommended next action." + "\n\n" + guard_c) -> worker_c
-        // TODO: CHECKPOINT node 11 (checkpoint_workers)
-        // wait_all (implicit via dataflow)
-        ask("Three workers processed tasks from a shared queue. Aggregate their findings:\n\n{{node_12}}\n\nOutput a ranked summary: which tasks had the highest confidence findings, and what actions should be prioritized?" + "\n\n" + checkpoint_workers + "\n\n" + sync_workers) -> aggregate
+        ask("List 3 distinct technical tasks for analysis. Format as:\nTASK A: [description]\nTASK B: [description]\nTASK C: [description]") -> task_list
+
+        think("You are Worker A. From this task list, perform deep analysis of TASK A:\n" + task_list + "\n\nProvide: (1) key findings, (2) confidence score 0-1, (3) recommended next action.") -> worker_a
+        think("You are Worker B. From this task list, perform deep analysis of TASK B:\n" + task_list + "\n\nProvide: (1) key findings, (2) confidence score 0-1, (3) recommended next action.") -> worker_b
+        think("You are Worker C. From this task list, perform deep analysis of TASK C:\n" + task_list + "\n\nProvide: (1) key findings, (2) confidence score 0-1, (3) recommended next action.") -> worker_c
+
+        think("Three workers processed parallel tasks. Aggregate their findings:\n\nWORKER A:\n" + worker_a + "\n\nWORKER B:\n" + worker_b + "\n\nWORKER C:\n" + worker_c + "\n\nRanked summary: highest confidence findings and priority actions.") -> aggregate
+
         update_memory("worker_pool_aggregate", aggregate)
-        print("=== WORKER POOL AGGREGATE RESULTS ===" + "\n" + aggregate)
-        // TODO: UPDATE_GOAL node 15 (update_goal_done)
+        print("=== WORKER POOL RESULTS ===\n" + aggregate)
         return aggregate
     }
 }

@@ -1,26 +1,20 @@
-// memory-rag-pipeline.ais - converted from memory-rag-pipeline.apxm
-// Memory-augmented RAG pipeline: QMEM recalls from LTM + episodic, FENCE orders reads, GUARD branches on memory availability, REASON answers with or without context, VERIFY validates the answer, UMEM persists new knowledge + episodic trace, FENCE orders writes, CHECKPOINT saves session state.
+// memory-rag-pipeline.ais
+// Memory-augmented RAG: recall from LTM, answer with or without context.
 //
-// Usage: dekk apxm execute examples/patterns/memory-rag/memory-rag-pipeline.apxm
+// Usage: dekk apxm execute examples/patterns/memory-rag/memory-rag-pipeline.ais
 
 agent MemoryRagPipeline {
     @entry flow main() -> str {
         ask("What are the trade-offs between Rust async runtimes: Tokio vs async-std vs smol?") -> query
-        query_memory("rust async runtimes") -> recall_ltm
-        query_memory("previous rust async discussions") -> recall_episodic
-        update_memory("session_rust_async_query", query)
-        // TODO: FENCE node 4 (fence_reads)
-        // merge (single input)
-        print("=== MEMORY RECALL RESULTS ===" + "\n" + fence_reads)
-        // TODO: GUARD node 6 (guard_has_memory)
-        // TODO: REASON node 7 (answer_with_context)
-        // TODO: REASON node 8 (answer_cold)
-        // TODO: VERIFY node 9 (verify_answer)
-        print("=== ANSWER ===" + "\n" + answer_with_context)
-        print("=== VERIFICATION ===" + "\n" + verify_answer)
-        update_memory("rust_async_runtimes_comparison", verify_answer)
-        // TODO: FENCE node 12 (fence_writes)
-        // TODO: CHECKPOINT node 13 (checkpoint_session)
-        return fence_reads
+        query_memory("rust async runtimes comparison") -> recall_ltm
+
+        think("Answer this question, using the memory recall as context if relevant.\n\nQUESTION:\n" + query + "\n\nMEMORY RECALL:\n" + recall_ltm + "\n\nProvide a thorough, accurate answer.") -> answer
+
+        think("Verify this answer is accurate, complete, and balanced.\n\nQUESTION:\n" + query + "\n\nANSWER:\n" + answer + "\n\nIs this correct? Any important omissions or errors?") -> verification
+
+        update_memory("rust_async_runtimes_comparison", answer)
+        print("=== ANSWER ===\n" + answer)
+        print("=== VERIFICATION ===\n" + verification)
+        return answer
     }
 }

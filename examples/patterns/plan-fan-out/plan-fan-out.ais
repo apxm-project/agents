@@ -1,22 +1,19 @@
-// plan-then-parallelize.ais - converted from plan-fan-out.apxm
-// PLAN decomposes a goal into 3 sections, parallel ASK nodes write each section, WAIT_ALL syncs them, THINK assembles the final post, VERIFY checks quality, CHECKPOINT saves the result.
+// plan-then-parallelize.ais
+// PLAN decomposes a goal, parallel ASK nodes write each section, THINK assembles.
 //
-// Usage: dekk apxm execute examples/patterns/plan-fan-out/plan-fan-out.apxm
+// Usage: dekk apxm execute examples/patterns/plan-fan-out/plan-fan-out.ais
 
 agent PlanThenParallelize {
     @entry flow main() -> str {
-        ask("Write a comprehensive technical blog post about Rust async programming") -> goal
-        // TODO: PLAN node 2 (plan_steps)
-        print("=== PLAN ===" + "\n" + plan_steps)
-        ask("Based on this plan:\n{{node_2}}\n\nWrite section 1: Core async concepts in Rust (async/await, Futures, Pin). Target 250 words, technical but accessible." + "\n\n" + plan_steps) -> section_concepts
-        ask("Based on this plan:\n{{node_2}}\n\nWrite section 2: Tokio runtime internals (work-stealing scheduler, I/O driver, task spawning). Target 250 words, technical depth." + "\n\n" + plan_steps) -> section_tokio
-        ask("Based on this plan:\n{{node_2}}\n\nWrite section 3: Common pitfalls and patterns (blocking in async, cancellation, select!, join!). Target 250 words with code examples." + "\n\n" + plan_steps) -> section_pitfalls
-        // wait_all (implicit via dataflow)
-        think("You have three independently written sections for a blog post:\n\n{{node_6}}\n\nAssemble them into a polished, cohesive blog post. Add an intro paragraph and a conclusion. Fix any inconsistencies between sections. Output the complete post." + "\n\n" + sync_sections) -> assemble
-        // TODO: VERIFY node 8 (verify_quality)
-        print("=== ASSEMBLED BLOG POST ===" + "\n" + assemble)
-        print("=== QUALITY VERIFICATION ===" + "\n" + verify_quality)
-        // TODO: CHECKPOINT node 9 (checkpoint_post)
+        ask("You are a technical content planner. Create a 3-part outline for a blog post about Rust async programming. Format as:\nPART 1: [title and 2-sentence summary]\nPART 2: [title and 2-sentence summary]\nPART 3: [title and 2-sentence summary]") -> plan_steps
+
+        ask("Based on this plan:\n" + plan_steps + "\n\nWrite section 1: Core async concepts in Rust (async/await, Futures, Pin). Target 250 words, technical but accessible.") -> section_concepts
+        ask("Based on this plan:\n" + plan_steps + "\n\nWrite section 2: Tokio runtime internals (work-stealing scheduler, I/O driver, task spawning). Target 250 words, technical depth.") -> section_tokio
+        ask("Based on this plan:\n" + plan_steps + "\n\nWrite section 3: Common pitfalls and patterns (blocking in async, cancellation, select!, join!). Target 250 words with code examples.") -> section_pitfalls
+
+        think("You have three independently written sections for a blog post about Rust async:\n\nSECTION 1:\n" + section_concepts + "\n\nSECTION 2:\n" + section_tokio + "\n\nSECTION 3:\n" + section_pitfalls + "\n\nAssemble into a polished, cohesive blog post. Add an intro paragraph and a conclusion. Fix any inconsistencies between sections. Output the complete post.") -> assemble
+
+        print("=== ASSEMBLED BLOG POST ===\n" + assemble)
         return assemble
     }
 }
