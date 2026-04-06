@@ -316,8 +316,9 @@ mod tests {
             claude.session_create_timeout_ms,
             timeouts::CLAUDE_SESSION_TIMEOUT_MS
         );
-        // Templates are NOT resolvable via get()
-        assert!(reg.get("claude").is_none());
+        // Templates ARE resolvable via get() — they work out of the box
+        // without requiring explicit `apxm agent add` registration.
+        assert!(reg.get("claude").is_some());
     }
 
     #[test]
@@ -338,7 +339,12 @@ mod tests {
     fn list_returns_empty_without_registrations() {
         let reg = empty_registry();
         let list = reg.list();
-        assert!(list.is_empty());
+        // list() includes templates so agents work out of the box.
+        // An empty registry still has all 16 built-in templates.
+        assert!(!list.is_empty());
+        assert_eq!(list.len(), 16);
+        // All entries are from templates (none registered)
+        assert!(list.iter().all(|(_, _, from_template)| *from_template));
     }
 
     #[test]
@@ -348,9 +354,12 @@ mod tests {
         reg.registered.insert("claude".to_string(), profile);
         assert!(reg.get("claude").is_some());
         let list = reg.list();
-        assert_eq!(list.len(), 1);
-        // The bool indicates it came from a template
-        assert!(list[0].2);
+        // All 16 templates + claude override = still 16 total (override replaces template slot)
+        assert_eq!(list.len(), 16);
+        // claude entry should be marked as from_template=true since it was based on one
+        let claude_entry = list.iter().find(|(name, _, _)| name == "claude");
+        assert!(claude_entry.is_some());
+        assert!(claude_entry.unwrap().2);
     }
 
     #[test]
@@ -371,9 +380,12 @@ mod tests {
         reg.registered.insert("custom".to_string(), profile);
         assert!(reg.get("custom").is_some());
         let list = reg.list();
-        assert_eq!(list.len(), 1);
-        // Custom agent is NOT from a template
-        assert!(!list[0].2);
+        // 16 built-in templates + 1 custom registered agent = 17
+        assert_eq!(list.len(), 17);
+        // Find the custom entry and verify it is NOT from a template
+        let custom_entry = list.iter().find(|(name, _, _)| name == "custom");
+        assert!(custom_entry.is_some());
+        assert!(!custom_entry.unwrap().2);
     }
 
     #[test]
@@ -383,7 +395,9 @@ mod tests {
         reg.registered.insert("claude".to_string(), profile);
         assert!(reg.get("claude").is_some());
         reg.registered.remove("claude");
-        assert!(reg.get("claude").is_none());
+        // After removing the registered override, get() still resolves via
+        // the built-in template (claude works out of the box).
+        assert!(reg.get("claude").is_some());
         // Template still exists
         assert!(reg.get_template("claude").is_some());
     }
