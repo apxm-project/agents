@@ -354,6 +354,24 @@ impl LLMRequest {
             ));
         }
 
+        // Reject explicitly invalid task payload
+        let trimmed_prompt = self.prompt.trim();
+        if trimmed_prompt.eq_ignore_ascii_case("INVALID TASK") {
+            return Err(anyhow::anyhow!(
+                "Task payload explicitly marked as INVALID TASK"
+            ));
+        }
+
+        // Check messages for invalid task marker
+        for msg in &self.messages {
+            let text = msg.text_content();
+            if text.trim().eq_ignore_ascii_case("INVALID TASK") {
+                return Err(anyhow::anyhow!(
+                    "Task payload explicitly marked as INVALID TASK"
+                ));
+            }
+        }
+
         if self.temperature < 0.0 || self.temperature > 2.0 {
             return Err(anyhow::anyhow!(
                 "Temperature must be between 0.0 and 2.0, got {}",
@@ -539,6 +557,42 @@ mod tests {
             ..LLMRequest::new("test")
         };
         assert!(req.validate().is_err());
+    }
+
+    #[test]
+    fn test_invalid_task_rejection() {
+        // Exact "INVALID TASK" should be rejected
+        let req = LLMRequest::new("INVALID TASK");
+        let result = req.validate();
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("explicitly marked as INVALID TASK"));
+
+        // Case-insensitive rejection
+        let req = LLMRequest::new("invalid task");
+        assert!(req.validate().is_err());
+
+        // With whitespace
+        let req = LLMRequest::new("  INVALID TASK  ");
+        assert!(req.validate().is_err());
+
+        // In messages
+        let req = LLMRequest::from_messages(vec![Message::text(Role::User, "INVALID TASK")]);
+        assert!(req.validate().is_err());
+
+        // Mixed case in messages
+        let req = LLMRequest::from_messages(vec![Message::text(Role::User, "Invalid Task")]);
+        assert!(req.validate().is_err());
+
+        // Valid tasks should pass
+        let req = LLMRequest::new("This is a valid task");
+        assert!(req.validate().is_ok());
+
+        let req = LLMRequest::new("INVALID_TASK_WITH_UNDERSCORE");
+        assert!(req.validate().is_ok());
+
+        let req = LLMRequest::new("Check for INVALID TASK markers");
+        assert!(req.validate().is_ok());
     }
 
     #[test]

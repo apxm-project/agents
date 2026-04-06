@@ -125,6 +125,13 @@ pub enum RuntimeError {
     /// State error.
     #[error("State error: {0}")]
     State(String),
+
+    /// Invalid task error (task payload rejected at validation boundary).
+    #[error("Invalid task: {reason}")]
+    InvalidTask {
+        /// Reason why the task is invalid.
+        reason: String,
+    },
 }
 
 impl RuntimeError {
