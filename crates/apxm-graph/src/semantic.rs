@@ -102,7 +102,11 @@ pub fn validate_semantic(graph: &ApxmGraph, ctx: &SemanticContext) -> Vec<Error>
                 // flow args injected by the MLIR lowering as additional inputs.
                 // Include those in the effective input count to avoid false positives.
                 let is_entry_node = edge_count == 0;
-                let injected_params = if is_entry_node { graph.parameters.len() } else { 0 };
+                let injected_params = if is_entry_node {
+                    graph.parameters.len()
+                } else {
+                    0
+                };
                 let effective_inputs = edge_count + injected_params;
                 check_placeholder_bounds(
                     node,
@@ -273,7 +277,6 @@ fn check_placeholder_bounds(
         }
     }
 }
-
 
 fn check_parameter_arity(graph: &ApxmGraph, errors: &mut Vec<Error>) {
     if graph.parameters.is_empty() {
@@ -960,7 +963,10 @@ mod tests {
 
         let errors = validate_semantic(&graph, &SemanticContext::default());
         let e512 = errors.iter().find(|e| e.code == ErrorCode::DeadNode);
-        assert!(e512.is_none(), "E512 should not trigger for valid connected graph");
+        assert!(
+            e512.is_none(),
+            "E512 should not trigger for valid connected graph"
+        );
     }
 
     #[test]
@@ -983,15 +989,17 @@ mod tests {
         let node2 = make_node(2, "ask", AISOperationType::Ask);
 
         // Circular graph: both nodes have outgoing edges
-        let graph = make_graph(
-            vec![node1, node2],
-            vec![data_edge(1, 2), data_edge(2, 1)],
-        );
+        let graph = make_graph(vec![node1, node2], vec![data_edge(1, 2), data_edge(2, 1)]);
 
         let errors = validate_semantic(&graph, &SemanticContext::default());
-        let e513 = errors.iter().find(|e| e.code == ErrorCode::MissingReturnValue);
+        let e513 = errors
+            .iter()
+            .find(|e| e.code == ErrorCode::MissingReturnValue);
         assert!(e513.is_some(), "E513 should detect missing return value");
-        assert!(!e513.unwrap().code.is_warning(), "E513 should be a hard error");
+        assert!(
+            !e513.unwrap().code.is_warning(),
+            "E513 should be a hard error"
+        );
     }
 
     #[test]
@@ -1002,8 +1010,13 @@ mod tests {
         let graph = make_graph(vec![node1, node2], vec![data_edge(1, 2)]);
 
         let errors = validate_semantic(&graph, &SemanticContext::default());
-        let e513 = errors.iter().find(|e| e.code == ErrorCode::MissingReturnValue);
-        assert!(e513.is_none(), "E513 should not fire when graph has exit node");
+        let e513 = errors
+            .iter()
+            .find(|e| e.code == ErrorCode::MissingReturnValue);
+        assert!(
+            e513.is_none(),
+            "E513 should not fire when graph has exit node"
+        );
     }
 
     // ── E514: COMMUNICATE before SPAWN ordering ───────────────────────────
@@ -1033,7 +1046,10 @@ mod tests {
         let e514 = errors
             .iter()
             .find(|e| e.code == ErrorCode::CommunicateBeforeSpawn);
-        assert!(e514.is_some(), "E514 should detect COMMUNICATE before SPAWN");
+        assert!(
+            e514.is_some(),
+            "E514 should detect COMMUNICATE before SPAWN"
+        );
         assert!(e514.unwrap().code.is_warning(), "E514 should be a warning");
     }
 
@@ -1069,7 +1085,10 @@ mod tests {
         let e514 = errors
             .iter()
             .find(|e| e.code == ErrorCode::CommunicateBeforeSpawn);
-        assert!(e514.is_none(), "E514 should not fire when Control edge exists");
+        assert!(
+            e514.is_none(),
+            "E514 should not fire when Control edge exists"
+        );
     }
 
     // ── E516: Empty template string ────────────────────────────────────────
@@ -1153,7 +1172,10 @@ mod tests {
             .iter()
             .find(|e| e.code == ErrorCode::ConstStrWithDynamicInput);
         // E518 should NOT fire for missing value — only for dynamic inputs.
-        assert!(e518.is_none(), "E518 should not fire for missing value, only for dynamic inputs");
+        assert!(
+            e518.is_none(),
+            "E518 should not fire for missing value, only for dynamic inputs"
+        );
     }
 
     #[test]

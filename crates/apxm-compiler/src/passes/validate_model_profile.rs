@@ -9,8 +9,8 @@
 //! model health — that's the runtime ProfileRouter's job.
 
 use apxm_core::error::compiler::{CompilerError, Result};
-use apxm_core::error::{Error, ErrorCode};
 use apxm_core::error::span::Span;
+use apxm_core::error::{Error, ErrorCode};
 use apxm_graph::ApxmGraph;
 use std::collections::{HashMap, HashSet};
 
@@ -158,7 +158,10 @@ mod tests {
         let mut nodes = Vec::new();
         for (i, profile) in profile_names.iter().enumerate() {
             let mut attributes = HashMap::new();
-            attributes.insert("model_profile".to_string(), Value::String(profile.to_string()));
+            attributes.insert(
+                "model_profile".to_string(),
+                Value::String(profile.to_string()),
+            );
 
             nodes.push(GraphNode {
                 id: (i + 1) as u64,
@@ -185,7 +188,12 @@ mod tests {
 
         let result = validate_model_profile(&graph, &profiles, &models, None);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not found in registry"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("not found in registry")
+        );
     }
 
     #[test]
@@ -265,10 +273,12 @@ mod tests {
 
         let result = validate_model_profile(&graph, &profiles, &models, None);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("not found in model registry"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("not found in model registry")
+        );
     }
 
     #[test]

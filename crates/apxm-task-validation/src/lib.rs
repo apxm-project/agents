@@ -1,5 +1,5 @@
-use thiserror::Error;
 use serde_json;
+use thiserror::Error;
 
 /// A validated task description that is safe to pass deeper into planning
 /// or implementation pipelines.

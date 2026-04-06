@@ -10,8 +10,8 @@ use std::time::Instant;
 
 use apxm_core::constants;
 use apxm_core::paths::session_node_dir_name;
-use apxm_core::types::{CompletedNodeInfo, LiveSessionState, NodeInfo, SessionManifest};
 use apxm_core::types::values::Value;
+use apxm_core::types::{CompletedNodeInfo, LiveSessionState, NodeInfo, SessionManifest};
 use apxm_events::payload::{EventPayload, OperationEndPayload, OperationStartPayload};
 use apxm_events::{ApxmEvent, EventSource};
 use apxm_graph::ApxmGraph;
@@ -257,7 +257,6 @@ impl SessionOutputWriter {
 
         Ok(())
     }
-
 }
 
 /// Appends events as JSONL to a file.
@@ -508,7 +507,11 @@ impl SessionEventEmitter {
             running_nodes,
             completed_nodes: recent_completed,
             completed: completed as usize,
-            total: if total > 0 { Some(total as usize) } else { None },
+            total: if total > 0 {
+                Some(total as usize)
+            } else {
+                None
+            },
             elapsed_ms,
             success: false,
             current_phase: None,
@@ -582,7 +585,11 @@ impl SessionEventEmitter {
             running_nodes: Vec::new(),
             completed_nodes: Vec::new(),
             completed: completed as usize,
-            total: if total > 0 { Some(total as usize) } else { None },
+            total: if total > 0 {
+                Some(total as usize)
+            } else {
+                None
+            },
             elapsed_ms,
             success,
             current_phase: None,

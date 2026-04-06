@@ -71,7 +71,6 @@ async fn full_session_lifecycle() {
     session.close().await;
 }
 
-
 #[tokio::test]
 async fn multi_turn_on_same_session() {
     if !jq_available() {

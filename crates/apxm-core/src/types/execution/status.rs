@@ -5,8 +5,7 @@
 use crate::types::NodeId;
 
 /// Operation execution status.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum OpStatus {
     /// Operation is waiting for dependencies.
     Pending,
@@ -21,8 +20,7 @@ pub enum OpStatus {
 }
 
 /// Status information for a single node.
-#[derive(Debug, Clone)]
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct NodeStatus {
     /// Node identifier.
     pub node_id: NodeId,
@@ -41,8 +39,7 @@ pub struct NodeStatus {
 }
 
 /// Execution statistics for a completed DAG.
-#[derive(Debug, Clone)]
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ExecutionStats {
     /// Total number of successfully executed nodes.
     pub executed_nodes: usize,

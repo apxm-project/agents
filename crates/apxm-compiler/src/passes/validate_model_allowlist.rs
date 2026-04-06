@@ -7,8 +7,8 @@
 //! Does NOT query external APIs or check model health — that's the runtime ModelRouter's job.
 
 use apxm_core::error::compiler::{CompilerError, Result};
-use apxm_core::error::{Error, ErrorCode};
 use apxm_core::error::span::Span;
+use apxm_core::error::{Error, ErrorCode};
 use apxm_graph::ApxmGraph;
 use std::collections::{HashMap, HashSet};
 
@@ -24,10 +24,7 @@ use std::collections::{HashMap, HashSet};
 ///
 /// # Errors
 /// Returns an error listing ALL violations, not just the first one.
-pub fn validate_model_allowlist(
-    graph: &ApxmGraph,
-    allowlist: Option<&Vec<String>>,
-) -> Result<()> {
+pub fn validate_model_allowlist(graph: &ApxmGraph, allowlist: Option<&Vec<String>>) -> Result<()> {
     // If no allowlist is configured, skip validation (backward compatible)
     let Some(allowed_models) = allowlist else {
         return Ok(());
@@ -163,10 +160,7 @@ mod tests {
     #[test]
     fn test_model_in_allowlist_passes() {
         let graph = make_test_graph(vec!["claude-opus-4-6"]);
-        let allowlist = vec![
-            "claude-opus-4-6".to_string(),
-            "gpt-4o".to_string(),
-        ];
+        let allowlist = vec!["claude-opus-4-6".to_string(), "gpt-4o".to_string()];
         let result = validate_model_allowlist(&graph, Some(&allowlist));
         assert!(result.is_ok());
     }
@@ -186,10 +180,7 @@ mod tests {
     #[test]
     fn test_model_not_in_allowlist_fails() {
         let graph = make_test_graph(vec!["claude-opus-5"]);
-        let allowlist = vec![
-            "claude-opus-4-6".to_string(),
-            "gpt-4o".to_string(),
-        ];
+        let allowlist = vec!["claude-opus-4-6".to_string(), "gpt-4o".to_string()];
         let result = validate_model_allowlist(&graph, Some(&allowlist));
         assert!(result.is_err());
 
@@ -201,10 +192,7 @@ mod tests {
     #[test]
     fn test_multiple_violations_all_reported() {
         let graph = make_test_graph(vec!["claude-opus-5", "gpt-5", "claude-opus-5"]);
-        let allowlist = vec![
-            "claude-opus-4-6".to_string(),
-            "gpt-4o".to_string(),
-        ];
+        let allowlist = vec!["claude-opus-4-6".to_string(), "gpt-4o".to_string()];
         let result = validate_model_allowlist(&graph, Some(&allowlist));
         assert!(result.is_err());
 

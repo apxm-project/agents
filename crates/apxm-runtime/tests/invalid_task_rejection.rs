@@ -81,7 +81,10 @@ async fn test_registry_propagates_validation_error() {
     // Test that LLMRegistry propagates validation errors (even though wrapped)
     let llm_registry = LLMRegistry::new();
     llm_registry
-        .register("mock", MockLLMBackend::static_response("should not execute"))
+        .register(
+            "mock",
+            MockLLMBackend::static_response("should not execute"),
+        )
         .unwrap();
     llm_registry.set_default("mock").unwrap();
 
@@ -106,7 +109,10 @@ async fn test_model_router_propagates_validation_error() {
 
     let llm_registry = Arc::new(LLMRegistry::new());
     llm_registry
-        .register("mock", MockLLMBackend::static_response("should not execute"))
+        .register(
+            "mock",
+            MockLLMBackend::static_response("should not execute"),
+        )
         .unwrap();
     llm_registry.set_default("mock").unwrap();
 

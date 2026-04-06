@@ -139,7 +139,10 @@ pub fn lower_to_mlir(graph: &ApxmGraph) -> Result<String, GraphError> {
         // Only inject if the node references parameters like {{PARAM_NAME}} in its
         // template_str/prompt/template attributes. This prevents malformed MLIR for nodes
         // like spawn_agent that don't consume parameters.
-        if inputs.is_empty() && !arg_values.is_empty() && node_uses_flow_params(node, &graph.parameters) {
+        if inputs.is_empty()
+            && !arg_values.is_empty()
+            && node_uses_flow_params(node, &graph.parameters)
+        {
             inputs.extend(arg_values.clone());
         }
 
@@ -416,7 +419,11 @@ fn emit_node(
             );
             let attrs = extra_attr_dict(
                 &node.attributes,
-                &[graph_attrs::KEY, graph_attrs::SPACE, graph_attrs::MEMORY_TIER],
+                &[
+                    graph_attrs::KEY,
+                    graph_attrs::SPACE,
+                    graph_attrs::MEMORY_TIER,
+                ],
             );
 
             let source = if let Some(input) = inputs.first() {
@@ -1519,10 +1526,22 @@ mod tests {
 
         let mlir = lower_to_mlir(&graph).expect("graph lowers to mlir");
         // Assertions use partial matches — extra attrs like {node_name = ...} may appear.
-        assert!(mlir.contains("ais.loop_start %n1 as \"loop_items\""), "actual mlir:\n{}", mlir);
-        assert!(mlir.contains("!ais.token -> !ais.token"), "actual mlir:\n{}", mlir);
+        assert!(
+            mlir.contains("ais.loop_start %n1 as \"loop_items\""),
+            "actual mlir:\n{}",
+            mlir
+        );
+        assert!(
+            mlir.contains("!ais.token -> !ais.token"),
+            "actual mlir:\n{}",
+            mlir
+        );
         assert!(mlir.contains("ais.loop_end %n2"), "actual mlir:\n{}", mlir);
-        assert!(mlir.contains("ais.try_catch \"try_a\" -> \"catch_a\""), "actual mlir:\n{}", mlir);
+        assert!(
+            mlir.contains("ais.try_catch \"try_a\" -> \"catch_a\""),
+            "actual mlir:\n{}",
+            mlir
+        );
         assert!(mlir.contains("ais.err"), "actual mlir:\n{}", mlir);
         assert!(mlir.contains("with \"fallback\""), "actual mlir:\n{}", mlir);
     }
@@ -1542,14 +1561,8 @@ mod tests {
                             graph_attrs::AGENT_NAME.to_string(),
                             Value::String("agent_b".to_string()),
                         ),
-                        (
-                            "profile".to_string(),
-                            Value::String("claude".to_string()),
-                        ),
-                        (
-                            "cwd".to_string(),
-                            Value::String("/tmp".to_string()),
-                        ),
+                        ("profile".to_string(), Value::String("claude".to_string())),
+                        ("cwd".to_string(), Value::String("/tmp".to_string())),
                     ]),
                 },
                 GraphNode {
@@ -1755,14 +1768,12 @@ mod tests {
             graph_attrs::AGENT_NAME.to_string(),
             Value::String("coder".to_string()),
         );
-        spawn.attributes.insert(
-            "profile".to_string(),
-            Value::String("claude".to_string()),
-        );
-        spawn.attributes.insert(
-            "cwd".to_string(),
-            Value::String("/tmp".to_string()),
-        );
+        spawn
+            .attributes
+            .insert("profile".to_string(), Value::String("claude".to_string()));
+        spawn
+            .attributes
+            .insert("cwd".to_string(), Value::String("/tmp".to_string()));
 
         // think node uses the TASK parameter
         let mut think = GraphNode {
@@ -1799,12 +1810,12 @@ mod tests {
                 crate::GraphEdge {
                     from: 1,
                     to: 3,
-                    dependency: DependencyType::Control,  // spawn must happen before communicate
+                    dependency: DependencyType::Control, // spawn must happen before communicate
                 },
                 crate::GraphEdge {
                     from: 2,
                     to: 3,
-                    dependency: DependencyType::Data,  // think result goes to communicate
+                    dependency: DependencyType::Data, // think result goes to communicate
                 },
             ],
             parameters: Vec::new(),
@@ -1821,14 +1832,34 @@ mod tests {
 
         // Verify the key invariants:
         // 1. Function should have parameter arg
-        assert!(mlir.contains("%arg0: !ais.token"), "MLIR should have parameter arg\n{}", mlir);
+        assert!(
+            mlir.contains("%arg0: !ais.token"),
+            "MLIR should have parameter arg\n{}",
+            mlir
+        );
         // 2. spawn_agent should be emitted WITHOUT receiving %arg0 in its context
         // (previously the lowering injected %arg0 into spawn_agent's inputs, causing malformed MLIR)
-        assert!(mlir.contains("ais.spawn_agent \"coder\""), "MLIR should have spawn_agent\n{}", mlir);
-        assert!(!mlir.contains("ais.spawn_agent \"coder\"(%arg0"), "spawn_agent should NOT receive %arg0 in context\n{}", mlir);
+        assert!(
+            mlir.contains("ais.spawn_agent \"coder\""),
+            "MLIR should have spawn_agent\n{}",
+            mlir
+        );
+        assert!(
+            !mlir.contains("ais.spawn_agent \"coder\"(%arg0"),
+            "spawn_agent should NOT receive %arg0 in context\n{}",
+            mlir
+        );
         // 3. The MLIR should be parseable (no E900 error)
-        assert!(mlir.contains("func.func @test"), "MLIR should have function definition\n{}", mlir);
-        assert!(mlir.contains("func.return"), "MLIR should have return\n{}", mlir);
+        assert!(
+            mlir.contains("func.func @test"),
+            "MLIR should have function definition\n{}",
+            mlir
+        );
+        assert!(
+            mlir.contains("func.return"),
+            "MLIR should have return\n{}",
+            mlir
+        );
     }
 
     #[test]
@@ -1874,8 +1905,20 @@ mod tests {
         let mlir = lower_to_mlir(&graph).expect("UMEM graph should lower to MLIR");
 
         // Verify that the UMEM operation includes the key attribute
-        assert!(mlir.contains("ais.umem"), "MLIR should contain umem operation\n{}", mlir);
-        assert!(mlir.contains("key \"user_data\""), "UMEM should set key attribute\n{}", mlir);
-        assert!(mlir.contains("into \"stm\""), "UMEM should set memory space\n{}", mlir);
+        assert!(
+            mlir.contains("ais.umem"),
+            "MLIR should contain umem operation\n{}",
+            mlir
+        );
+        assert!(
+            mlir.contains("key \"user_data\""),
+            "UMEM should set key attribute\n{}",
+            mlir
+        );
+        assert!(
+            mlir.contains("into \"stm\""),
+            "UMEM should set memory space\n{}",
+            mlir
+        );
     }
 }

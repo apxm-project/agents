@@ -79,5 +79,4 @@ mod tests {
         let result = execute(&ctx, &node, vec![]).await.unwrap();
         assert_eq!(result, Value::Null);
     }
-
 }

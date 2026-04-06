@@ -13,18 +13,7 @@ use std::time::Duration;
 ///
 /// Host applications report their isolation level via
 /// [`SandboxCapabilities::isolation_level`].
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    Serialize,
-    Deserialize
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum IsolationLevel {
     /// No isolation — trust the process. Dev/testing only.

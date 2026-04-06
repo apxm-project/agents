@@ -8,8 +8,8 @@ pub async fn execute(_ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -
         .unwrap_or_else(|| "array".to_string());
 
     // Optional separator for concat (default: empty string for backward compat)
-    let separator = get_optional_string_attribute(node, graph_attrs::SEPARATOR)?
-        .unwrap_or_default();
+    let separator =
+        get_optional_string_attribute(node, graph_attrs::SEPARATOR)?.unwrap_or_default();
 
     match strategy.as_str() {
         "array" => Ok(Value::Array(inputs)),
@@ -18,13 +18,14 @@ pub async fn execute(_ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -
             let parts: Vec<String> = inputs
                 .iter()
                 .map(|v| {
-                    v.as_string()
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| {
-                            v.to_json()
-                                .map(|j| serde_json::to_string_pretty(&j).unwrap_or_else(|_| format!("{:?}", j)))
-                                .unwrap_or_else(|_| format!("{:?}", v))
-                        })
+                    v.as_string().map(|s| s.to_string()).unwrap_or_else(|| {
+                        v.to_json()
+                            .map(|j| {
+                                serde_json::to_string_pretty(&j)
+                                    .unwrap_or_else(|_| format!("{:?}", j))
+                            })
+                            .unwrap_or_else(|_| format!("{:?}", v))
+                    })
                 })
                 .collect();
             Ok(Value::String(parts.join(&separator)))

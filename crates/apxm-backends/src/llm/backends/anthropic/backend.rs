@@ -9,7 +9,9 @@ use crate::llm::backends::{ContentPart, LLMBackend, LLMRequest, LLMResponse, Rol
 use anyhow::{Context, Result};
 use apxm_core::constants::graph::attrs::{BASE_URL, MODEL};
 use apxm_core::constants::http::headers;
-use apxm_core::constants::llm::{anthropic_events, api_paths, config_keys, message_keys, roles, sse, tool_keys};
+use apxm_core::constants::llm::{
+    anthropic_events, api_paths, config_keys, message_keys, roles, sse, tool_keys,
+};
 use apxm_core::log_debug;
 use apxm_core::types::{FinishReason, ModelCapabilities, ModelInfo, TokenUsage, ToolCall};
 use async_trait::async_trait;
@@ -86,11 +88,12 @@ impl AnthropicBackend {
                 obj.iter()
                     .filter_map(|(k, v)| {
                         let raw = v.as_str()?;
-                        let resolved = if let Some(var_name) = raw.strip_prefix(config_keys::ENV_PREFIX) {
-                            std::env::var(var_name).unwrap_or_else(|_| raw.to_string())
-                        } else {
-                            raw.to_string()
-                        };
+                        let resolved =
+                            if let Some(var_name) = raw.strip_prefix(config_keys::ENV_PREFIX) {
+                                std::env::var(var_name).unwrap_or_else(|_| raw.to_string())
+                            } else {
+                                raw.to_string()
+                            };
                         Some((k.clone(), resolved))
                     })
                     .collect()
