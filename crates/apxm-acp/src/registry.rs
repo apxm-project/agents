@@ -193,6 +193,11 @@ impl AgentRegistry {
         templates
     }
 
+    /// Return the deterministic built-in template set without loading user config.
+    pub fn builtin_templates() -> BTreeMap<String, AgentProfile> {
+        Self::build_templates()
+    }
+
     /// Look up a registered agent. Only registered agents are resolvable.
     /// Look up an agent profile by name.
     ///
@@ -200,7 +205,9 @@ impl AgentRegistry {
     /// to built-in templates. This allows `claude`, `codex`, etc. to work
     /// out of the box without requiring explicit `apxm agent add` registration.
     pub fn get(&self, name: &str) -> Option<&AgentProfile> {
-        self.registered.get(name).or_else(|| self.templates.get(name))
+        self.registered
+            .get(name)
+            .or_else(|| self.templates.get(name))
     }
 
     /// List all agents: registered entries first (overrides), then any templates

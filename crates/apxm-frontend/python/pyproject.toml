@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "apxm"
+version = "0.0.1"
+description = "Python frontend for APXM workflows"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+authors = [{ name = "APXM Contributors" }]
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+[tool.setuptools.package-data]
+apxm = ["py.typed"]

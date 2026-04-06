@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 apxm-core = { path = "../apxm-core" }
+apxm-frontend = { path = "../apxm-frontend/rust" }
 apxm-driver = { path = "../apxm-driver", optional = true }
 apxm-artifact = { path = "../apxm-artifact", optional = true }
 apxm-graph = { path = "../apxm-graph" }

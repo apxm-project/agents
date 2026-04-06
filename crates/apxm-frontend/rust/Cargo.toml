@@ -1,0 +1,11 @@
+[package]
+name = "apxm-frontend"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow = "1.0"
+apxm-acp = { path = "../../apxm-acp" }
+apxm-ais = { path = "../../apxm-ais" }
+apxm-core = { path = "../../apxm-core" }
+serde_json = "1.0"

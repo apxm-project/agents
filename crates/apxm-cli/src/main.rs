@@ -206,6 +206,11 @@ enum Commands {
         #[command(subcommand)]
         action: TaskAction,
     },
+    /// Generate frontend assets from Rust-owned registries
+    Codegen {
+        #[command(subcommand)]
+        action: CodegenAction,
+    },
     /// Replay a session trace as a timeline
     Replay {
         /// Session directory path
@@ -247,6 +252,16 @@ enum TaskAction {
         /// Output file (defaults to stdout with --json, or <name>.json)
         #[arg(long, short)]
         output: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+enum CodegenAction {
+    /// Generate the Python frontend bindings into apxm/_generated
+    Frontend {
+        /// Output directory for generated Python files
+        #[arg(long)]
+        output_dir: Option<PathBuf>,
     },
 }
 
@@ -856,7 +871,10 @@ fn team_command(action: TeamAction, json_output: bool) -> Result<()> {
         TeamAction::Show { name } => {
             let registry = TeamRegistry::load_from_default_path();
             let team = registry.get(&name).ok_or_else(|| {
-                anyhow::anyhow!("Team '{}' not found. Use 'apxm team list' to see available teams.", name)
+                anyhow::anyhow!(
+                    "Team '{}' not found. Use 'apxm team list' to see available teams.",
+                    name
+                )
             })?;
 
             if json_output {
@@ -891,13 +909,15 @@ fn team_command(action: TeamAction, json_output: bool) -> Result<()> {
             let mut registry = TeamRegistry::load_from_default_path();
             registry.add_member(&team, role.clone(), profile.clone(), system_prompt)?;
 
-            println!("Added member '{}' (profile: {}) to team '{}'.", role, profile, team);
+            println!(
+                "Added member '{}' (profile: {}) to team '{}'.",
+                role, profile, team
+            );
             println!("Team definition saved to ~/.apxm/teams.toml");
             Ok(())
         }
     }
 }
-
 
 fn format_number(n: usize) -> String {
     let s = n.to_string();
@@ -1102,6 +1122,7 @@ async fn run_cli() -> Result<()> {
         Commands::Template { action } => template_command(action, cli.json),
         Commands::Explain { target } => explain_command(&target, cli.json),
         Commands::Task { action } => task_command(action, cli.json),
+        Commands::Codegen { action } => codegen_command(action, cli.json),
         Commands::Replay { session } => replay_command(session),
         Commands::Session { action } => session_command(action, cli.json),
         Commands::Workflow { action } => workflow_command(action, cli.json).await,
@@ -1128,6 +1149,7 @@ async fn run_cli_no_driver() -> Result<()> {
         Commands::Template { action } => template_command(action, cli.json),
         Commands::Explain { target } => explain_command(&target, cli.json),
         Commands::Task { action } => task_command(action, cli.json),
+        Commands::Codegen { action } => codegen_command(action, cli.json),
         Commands::Replay { session } => replay_command(session),
         Commands::Session { action } => session_command(action, cli.json),
         Commands::Workflow { action } => workflow_command_no_driver(action, cli.json),
@@ -1511,7 +1533,7 @@ fn load_graph_from_directory(dir: &std::path::Path) -> Result<apxm_graph::ApxmGr
             let path = entry.path();
             if matches!(
                 path.extension().and_then(|e| e.to_str()),
-                Some("json")  // .apxm removed; json kept for internal decompile only
+                Some("json") // .apxm removed; json kept for internal decompile only
             ) {
                 let text = std::fs::read_to_string(&path)
                     .with_context(|| format!("Failed to read {}", path.display()))?;
@@ -2097,16 +2119,22 @@ fn sync_ollama_models(
     base_url: &str,
     existing: &std::collections::HashSet<String>,
 ) -> Result<(usize, usize)> {
-    let resp = reqwest::blocking::get(&format!("{base_url}/api/tags"))
-        .map_err(|e| anyhow::anyhow!(
+    let resp = reqwest::blocking::get(&format!("{base_url}/api/tags")).map_err(|e| {
+        anyhow::anyhow!(
             "Cannot reach Ollama at {base_url}: {e}\nMake sure it is running: ollama serve"
-        ))?;
+        )
+    })?;
 
     if !resp.status().is_success() {
-        anyhow::bail!("Ollama API error ({}): {}", resp.status(), resp.text().unwrap_or_default());
+        anyhow::bail!(
+            "Ollama API error ({}): {}",
+            resp.status(),
+            resp.text().unwrap_or_default()
+        );
     }
 
-    let body: serde_json::Value = resp.json()
+    let body: serde_json::Value = resp
+        .json()
         .map_err(|e| anyhow::anyhow!("Failed to parse Ollama response: {e}"))?;
 
     let models_arr = body
@@ -2136,7 +2164,9 @@ fn sync_ollama_models(
                 supports_thinking: false,
                 tags: vec!["local".to_string(), "ollama".to_string()],
             };
-            store.add_model(backend_name, model).map_err(|e| anyhow::anyhow!("{e}"))?;
+            store
+                .add_model(backend_name, model)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
             added += 1;
         }
     }
@@ -2210,13 +2240,17 @@ async fn backend_command(action: BackendAction, json_output: bool) -> Result<()>
             let synced_count = if is_ollama {
                 let base = endpoint.as_deref().unwrap_or(DEFAULT_OLLAMA_ENDPOINT);
                 let empty = HashSet::new();
-                sync_ollama_models(&store, &name, base, &empty).map(|(added, _)| added).unwrap_or(0)
+                sync_ollama_models(&store, &name, base, &empty)
+                    .map(|(added, _)| added)
+                    .unwrap_or(0)
             } else {
                 0
             };
 
             if json_output {
-                println!("{{\"status\":\"ok\",\"backend\":\"{name}\",\"synced_models\":{synced_count}}}");
+                println!(
+                    "{{\"status\":\"ok\",\"backend\":\"{name}\",\"synced_models\":{synced_count}}}"
+                );
             } else {
                 print_section_header("Backend Registered");
                 print_status_line("Name", Status::Ok, &name);
@@ -2225,9 +2259,17 @@ async fn backend_command(action: BackendAction, json_output: bool) -> Result<()>
                 print_status_line("Store", Status::Ok, &store.path().display().to_string());
                 if is_ollama {
                     if synced_count > 0 {
-                        print_status_line("Models synced", Status::Ok, &format!("{synced_count} installed models registered"));
+                        print_status_line(
+                            "Models synced",
+                            Status::Ok,
+                            &format!("{synced_count} installed models registered"),
+                        );
                     } else {
-                        print_status_line("Models", Status::Warning, "Ollama not reachable — run: apxm backend sync-models after starting Ollama");
+                        print_status_line(
+                            "Models",
+                            Status::Warning,
+                            "Ollama not reachable — run: apxm backend sync-models after starting Ollama",
+                        );
                     }
                 }
             }
@@ -2460,7 +2502,8 @@ async fn backend_command(action: BackendAction, json_output: bool) -> Result<()>
             if backend_cfg.protocol != ProviderProtocol::Ollama {
                 anyhow::bail!(
                     "sync-models only works for Ollama backends. '{}' uses protocol '{}'.",
-                    name, backend_cfg.protocol
+                    name,
+                    backend_cfg.protocol
                 );
             }
 
@@ -2474,7 +2517,9 @@ async fn backend_command(action: BackendAction, json_output: bool) -> Result<()>
             let (added, skipped) = sync_ollama_models(&store, &name, &base, &existing)?;
 
             if json_output {
-                println!("{{\"status\":\"ok\",\"backend\":\"{name}\",\"added\":{added},\"skipped\":{skipped}}}");
+                println!(
+                    "{{\"status\":\"ok\",\"backend\":\"{name}\",\"added\":{added},\"skipped\":{skipped}}}"
+                );
             } else {
                 print_section_header("Ollama Models Synced");
                 print_status_line("Backend", Status::Ok, &name);
@@ -2483,7 +2528,11 @@ async fn backend_command(action: BackendAction, json_output: bool) -> Result<()>
                     print_status_line("Added", Status::Ok, &format!("{added} new models"));
                 }
                 if skipped > 0 {
-                    print_status_line("Skipped", Status::Warning, &format!("{skipped} already registered"));
+                    print_status_line(
+                        "Skipped",
+                        Status::Warning,
+                        &format!("{skipped} already registered"),
+                    );
                 }
                 if added == 0 && skipped == 0 {
                     println!("  No models found. Install one with: ollama pull llama3.3");
@@ -3177,7 +3226,9 @@ fn analyze_command(input: PathBuf, json_output: bool) -> Result<()> {
 fn explain_command(target: &str, json_output: bool) -> Result<()> {
     // Check if target looks like an error code (e.g., E511, e511, 511)
     let trimmed = target.trim();
-    let is_error_code = trimmed.starts_with('E') || trimmed.starts_with('e') || trimmed.chars().all(|c| c.is_ascii_digit());
+    let is_error_code = trimmed.starts_with('E')
+        || trimmed.starts_with('e')
+        || trimmed.chars().all(|c| c.is_ascii_digit());
 
     if is_error_code {
         // Extract the numeric part
@@ -3187,7 +3238,8 @@ fn explain_command(target: &str, json_output: bool) -> Result<()> {
             trimmed
         };
 
-        let code_num: u32 = code_str.parse()
+        let code_num: u32 = code_str
+            .parse()
             .map_err(|_| anyhow::anyhow!("Invalid error code: {}", target))?;
 
         let error_code = apxm_core::error::ErrorCode::from_u32(code_num)
@@ -3203,14 +3255,25 @@ fn explain_command(target: &str, json_output: bool) -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&output)?);
         } else {
             println!("{}", "=".repeat(70).bright_cyan());
-            println!("{} {}", "Error Code:".bright_yellow(), error_code.as_str().bright_white().bold());
-            println!("{} {}", "Component:".bright_yellow(), error_code.component().bright_white());
-            println!("{} {}", "Severity:".bright_yellow(),
+            println!(
+                "{} {}",
+                "Error Code:".bright_yellow(),
+                error_code.as_str().bright_white().bold()
+            );
+            println!(
+                "{} {}",
+                "Component:".bright_yellow(),
+                error_code.component().bright_white()
+            );
+            println!(
+                "{} {}",
+                "Severity:".bright_yellow(),
                 if error_code.is_warning() {
                     "Warning".bright_yellow()
                 } else {
                     "Error".bright_red()
-                });
+                }
+            );
             println!("{}", "=".repeat(70).bright_cyan());
             println!();
 
@@ -3229,7 +3292,9 @@ fn explain_command(target: &str, json_output: bool) -> Result<()> {
                     println!("  Graph has no exit node (all nodes have outgoing edges).");
                     println!();
                     println!("{}", "How to fix:".bright_green().bold());
-                    println!("  Ensure at least one node has zero outgoing edges to serve as the return value.");
+                    println!(
+                        "  Ensure at least one node has zero outgoing edges to serve as the return value."
+                    );
                 }
                 apxm_core::error::ErrorCode::CommunicateBeforeSpawn => {
                     println!("{}", "Description:".bright_blue().bold());
@@ -3245,7 +3310,9 @@ fn explain_command(target: &str, json_output: bool) -> Result<()> {
                 }
                 apxm_core::error::ErrorCode::EmptyTemplate => {
                     println!("{}", "Description:".bright_blue().bold());
-                    println!("  ASK/THINK/REASON node has an empty or whitespace-only template_str.");
+                    println!(
+                        "  ASK/THINK/REASON node has an empty or whitespace-only template_str."
+                    );
                     println!();
                     println!("{}", "How to fix:".bright_green().bold());
                     println!("  Provide a non-empty template string.");
@@ -3256,7 +3323,11 @@ fn explain_command(target: &str, json_output: bool) -> Result<()> {
                 }
             }
             println!();
-            println!("{} {}", "Documentation:".bright_yellow(), error_code.documentation_url());
+            println!(
+                "{} {}",
+                "Documentation:".bright_yellow(),
+                error_code.documentation_url()
+            );
         }
 
         return Ok(());
@@ -4232,6 +4303,43 @@ fn task_command(action: TaskAction, json_output: bool) -> Result<()> {
     }
 }
 
+fn codegen_command(action: CodegenAction, json_output: bool) -> Result<()> {
+    match action {
+        CodegenAction::Frontend { output_dir } => {
+            let output_dir = output_dir.unwrap_or_else(default_frontend_codegen_dir);
+            apxm_frontend::write_generated_python(&output_dir)?;
+
+            let mut files: Vec<String> = apxm_frontend::render_generated_python()
+                .into_iter()
+                .map(|(name, _)| name.to_string())
+                .collect();
+            files.sort();
+
+            if json_output {
+                let output = serde_json::json!({
+                    "target": "frontend",
+                    "output_dir": output_dir.display().to_string(),
+                    "files": files,
+                });
+                println!("{}", serde_json::to_string_pretty(&output)?);
+            } else {
+                println!("Generated frontend bindings:");
+                println!("  target: frontend");
+                println!("  output: {}", output_dir.display());
+                for file in files {
+                    println!("  - {file}");
+                }
+            }
+
+            Ok(())
+        }
+    }
+}
+
+fn default_frontend_codegen_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../crates/apxm-frontend/python/apxm/_generated")
+}
+
 fn print_section_header(title: &str) {
     use apxm_core::constants::ui;
     println!();
@@ -4428,8 +4536,14 @@ fn session_command(action: SessionAction, json: bool) -> Result<()> {
     match action {
         SessionAction::List { status, limit } => session_list_command(status, limit, json),
         SessionAction::Inspect { session } => session_inspect_command(session, json),
-        SessionAction::Diff { session1, session2 } => session_diff_command(session1, session2, json),
-        SessionAction::Clean { older_than, all, dry_run } => session_clean_command(older_than, all, dry_run),
+        SessionAction::Diff { session1, session2 } => {
+            session_diff_command(session1, session2, json)
+        }
+        SessionAction::Clean {
+            older_than,
+            all,
+            dry_run,
+        } => session_clean_command(older_than, all, dry_run),
     }
 }
 
@@ -4478,19 +4592,22 @@ fn session_list_command(status_filter: Option<String>, limit: usize, json: bool)
     let sessions: Vec<_> = sessions.into_iter().take(limit).collect();
 
     if json {
-        let output: Vec<_> = sessions.iter().map(|(m, p, s)| {
-            serde_json::json!({
-                "execution_id": m.execution_id,
-                "graph_name": m.graph_name,
-                "timestamp": m.timestamp,
-                "status": m.status,
-                "duration_ms": m.duration_ms,
-                "node_count": m.node_count,
-                "success": m.success,
-                "path": p.display().to_string(),
-                "size_bytes": s,
+        let output: Vec<_> = sessions
+            .iter()
+            .map(|(m, p, s)| {
+                serde_json::json!({
+                    "execution_id": m.execution_id,
+                    "graph_name": m.graph_name,
+                    "timestamp": m.timestamp,
+                    "status": m.status,
+                    "duration_ms": m.duration_ms,
+                    "node_count": m.node_count,
+                    "success": m.success,
+                    "path": p.display().to_string(),
+                    "size_bytes": s,
+                })
             })
-        }).collect();
+            .collect();
         println!("{}", serde_json::to_string_pretty(&output)?);
     } else {
         if sessions.is_empty() {
@@ -4590,7 +4707,10 @@ fn session_inspect_command(session_id: String, json: bool) -> Result<()> {
             println!("Node details:");
             for (info, status) in &node_info {
                 let id = info.get("id").and_then(|v| v.as_u64()).unwrap_or(0);
-                let name = info.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
+                let name = info
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
                 let op = info.get("op").and_then(|v| v.as_str()).unwrap_or("unknown");
                 println!("  {} | {} | {}", id, name, op);
                 if let Some(s) = &status {
@@ -4688,12 +4808,26 @@ fn session_diff_command(session1_id: String, session2_id: String, json: bool) ->
         println!("{}", serde_json::to_string_pretty(&output)?);
     } else {
         println!("Comparing sessions:");
-        println!("  Session 1: {} ({:.2}s, {})", manifest1.execution_id, manifest1.duration_ms as f64 / 1000.0, manifest1.status);
-        println!("  Session 2: {} ({:.2}s, {})", manifest2.execution_id, manifest2.duration_ms as f64 / 1000.0, manifest2.status);
+        println!(
+            "  Session 1: {} ({:.2}s, {})",
+            manifest1.execution_id,
+            manifest1.duration_ms as f64 / 1000.0,
+            manifest1.status
+        );
+        println!(
+            "  Session 2: {} ({:.2}s, {})",
+            manifest2.execution_id,
+            manifest2.duration_ms as f64 / 1000.0,
+            manifest2.status
+        );
         println!();
 
         let duration_diff = (manifest2.duration_ms as i64) - (manifest1.duration_ms as i64);
-        println!("Total duration diff: {:+.2}s ({:+}ms)", duration_diff as f64 / 1000.0, duration_diff);
+        println!(
+            "Total duration diff: {:+.2}s ({:+}ms)",
+            duration_diff as f64 / 1000.0,
+            duration_diff
+        );
         println!();
 
         if !changed_nodes.is_empty() {
@@ -4707,7 +4841,8 @@ fn session_diff_command(session1_id: String, session2_id: String, json: bool) ->
         if !timing_diffs.is_empty() {
             println!("Nodes with significant timing changes:");
             for (node_id, d1, d2, diff) in &timing_diffs {
-                println!("  Node {}: {:.2}s → {:.2}s ({:+.2}s)",
+                println!(
+                    "  Node {}: {:.2}s → {:.2}s ({:+.2}s)",
                     node_id,
                     *d1 as f64 / 1000.0,
                     *d2 as f64 / 1000.0,
@@ -4753,7 +4888,7 @@ fn load_node_timings(session_path: &Path) -> Result<HashMap<u64, u64>> {
             if let Ok(status) = serde_json::from_str::<serde_json::Value>(&text) {
                 if let (Some(node_json), Some(duration)) = (
                     std::fs::read_to_string(path.join(constants::session::node::NODE_JSON)).ok(),
-                    status.get("duration_ms").and_then(|v| v.as_u64())
+                    status.get("duration_ms").and_then(|v| v.as_u64()),
                 ) {
                     if let Ok(node_info) = serde_json::from_str::<serde_json::Value>(&node_json) {
                         if let Some(id) = node_info.get("id").and_then(|v| v.as_u64()) {
@@ -4779,7 +4914,9 @@ fn session_clean_command(older_than: Option<String>, all: bool, dry_run: bool) -
     } else if let Some(ref duration_str) = older_than {
         Some(parse_duration(duration_str)?)
     } else {
-        return Err(anyhow::anyhow!("Must specify --older-than <duration> or --all"));
+        return Err(anyhow::anyhow!(
+            "Must specify --older-than <duration> or --all"
+        ));
     };
 
     let mut to_delete = Vec::new();
@@ -4839,7 +4976,9 @@ fn parse_duration(s: &str) -> Result<chrono::Duration> {
         let hours: i64 = hours_str.parse()?;
         Ok(chrono::Duration::hours(hours))
     } else {
-        Err(anyhow::anyhow!("Invalid duration format. Use '7d' or '24h'"))
+        Err(anyhow::anyhow!(
+            "Invalid duration format. Use '7d' or '24h'"
+        ))
     }
 }
 
