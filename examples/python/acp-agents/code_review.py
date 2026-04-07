@@ -35,7 +35,7 @@ def code_review(g: GraphRecorder):
     # Claude reviews Codex's analysis
     review_prompt = g.ask(
         "build_review_prompt",
-        "You are doing a code review. Here is Codex's analysis of the spawn_agent handler. "
+        template="You are doing a code review. Here is Codex's analysis of the spawn_agent handler. "
         "Review it critically: is it accurate? Did it miss anything? Do you agree with the "
         "improvement? Be concise, under 150 words.\n\nCodex's analysis:\n{0}"
     )

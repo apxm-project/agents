@@ -39,7 +39,7 @@ def plan_feature_workflow(g: GraphRecorder):
     # Step 1: Architect produces initial plan
     architect_task = g.const_(
         "architect_task",
-        """You are the APXM architect. Create an implementation plan for this feature:
+        value="""You are the APXM architect. Create an implementation plan for this feature:
 
 Feature: {0}
 
@@ -71,7 +71,7 @@ Keep under 500 words.
     # Step 2: Gap analysis — what's missing vs what exists
     gap_analysis = g.think(
         "gap_analysis",
-        """Analyze what's missing vs what exists:
+        template="""Analyze what's missing vs what exists:
 
 Feature: {0}
 Initial plan: {1}
@@ -95,7 +95,7 @@ Output a structured gap analysis with:
 - Missing pieces (critical vs nice-to-have)
 """
     )
-    g.const_("feature_for_gap", "{0}") | gap_analysis
+    g.const_("feature_for_gap", value="{0}") | gap_analysis
     architect.get_last_node() | gap_analysis
     print1 >> gap_analysis
 
@@ -105,7 +105,7 @@ Output a structured gap analysis with:
     # Step 3: Risk analysis — what could go wrong
     risk_analysis = g.think(
         "risk_analysis",
-        """Identify risks and mitigation strategies:
+        template="""Identify risks and mitigation strategies:
 
 Feature: {0}
 Initial plan: {1}
@@ -132,7 +132,7 @@ For each risk, provide:
 - Mitigation strategy
 """
     )
-    g.const_("feature_for_risk", "{0}") | risk_analysis
+    g.const_("feature_for_risk", value="{0}") | risk_analysis
     architect.get_last_node() | risk_analysis
     print1 >> risk_analysis
 
@@ -142,7 +142,7 @@ For each risk, provide:
     # Step 4: Crate ordering — bottom-up dependency order
     crate_ordering = g.think(
         "crate_ordering",
-        """Determine the order to modify crates based on dependencies:
+        template="""Determine the order to modify crates based on dependencies:
 
 Initial plan: {0}
 
@@ -184,7 +184,7 @@ Output the implementation order:
     # Step 6: Final plan with everything integrated
     final_plan = g.think(
         "final_plan",
-        """Create the final implementation plan:
+        template="""Create the final implementation plan:
 
 Initial plan: {0}
 Gap analysis: {1}

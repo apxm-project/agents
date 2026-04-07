@@ -43,7 +43,7 @@ def add_op_workflow(g: GraphRecorder):
     # Step 1: Architect analyzes and creates implementation plan
     architect_task = g.const_(
         "architect_task",
-        """You are the architect for APXM. You need to create an implementation plan
+        value="""You are the architect for APXM. You need to create an implementation plan
 for adding a new AIS operation to the APXM codebase.
 
 Operation name: {0}
@@ -77,7 +77,7 @@ Keep the plan under 400 words but be specific about attribute names and types.
     # Step 2: Build implementation prompts for parallel execution
     compiler_prompt = g.ask(
         "build_compiler_prompt",
-        """Based on this plan, implement the compiler-side changes:
+        template="""Based on this plan, implement the compiler-side changes:
 
 Plan:
 {0}
@@ -102,7 +102,7 @@ Only modify what's necessary — don't refactor surrounding code.
 
     runtime_prompt = g.ask(
         "build_runtime_prompt",
-        """Based on this plan, implement the runtime-side changes:
+        template="""Based on this plan, implement the runtime-side changes:
 
 Plan:
 {0}
@@ -148,7 +148,7 @@ Follow APXM conventions: use apxm-core types, proper error handling with context
 
     review_task = g.ask(
         "build_review_task",
-        """Review both implementations and verify they work together:
+        template="""Review both implementations and verify they work together:
 
 Compiler implementation:
 {0}
@@ -189,7 +189,7 @@ If tests fail, suggest fixes.
     # Final synthesis
     final = g.think(
         "synthesis",
-        """Synthesize the add-op workflow results:
+        template="""Synthesize the add-op workflow results:
 
 Plan: {0}
 Compiler impl: {1}

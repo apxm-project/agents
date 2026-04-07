@@ -38,7 +38,7 @@ def autofix_workflow(g: GraphRecorder):
     # Step 1: Run validation
     validate_task = g.const_(
         "validate_task",
-        """Run the APXM autofix validation for scope: examples/python
+        value="""Run the APXM autofix validation for scope: examples/python
 
 Execute:
   python3 scripts/apxm-autofix.py --scope examples/python --report-only
@@ -56,7 +56,7 @@ Report the full output (it will show validation results, task files created in /
     # Step 2: Classify failures into clusters
     classify = g.think(
         "classify_failures",
-        """Analyze the autofix validation output and classify failures:
+        template="""Analyze the autofix validation output and classify failures:
 
 Validation output from validator:
 {0}
@@ -105,7 +105,7 @@ If status is "pass", output {{"status": "pass", "clusters": []}}.
     # Build fix prompts for each cluster type
     fix_import_task = g.ask(
         "build_fix_import_task",
-        """Fix import errors from the classification:
+        template="""Fix import errors from the classification:
 
 Classification: {0}
 
@@ -127,7 +127,7 @@ Report what you fixed and verification results.
 
     fix_mlir_task = g.ask(
         "build_fix_mlir_task",
-        """Fix MLIR parse errors from the classification:
+        template="""Fix MLIR parse errors from the classification:
 
 Classification: {0}
 
@@ -149,7 +149,7 @@ Report what you fixed and verification results.
 
     fix_compile_task = g.ask(
         "build_fix_compile_task",
-        """Fix compile errors from the classification:
+        template="""Fix compile errors from the classification:
 
 Classification: {0}
 
@@ -204,7 +204,7 @@ Report what you fixed and verification results.
 
     verify_task = g.const_(
         "verify_task",
-        """Run final verification of all fixes:
+        value="""Run final verification of all fixes:
 
 Execute:
   python3 scripts/apxm-autofix.py --scope examples/python --verify-only
@@ -223,7 +223,7 @@ Report the results (pass/fail counts, any remaining issues).
     # Step 7: Generate final report
     report = g.think(
         "generate_report",
-        """Generate autofix report:
+        template="""Generate autofix report:
 
 Initial validation: {0}
 Classification: {1}

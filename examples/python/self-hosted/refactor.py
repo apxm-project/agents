@@ -41,7 +41,7 @@ def refactor_workflow(g: GraphRecorder):
     # Step 1: Analyzer reads the code and identifies opportunities
     analyzer_task = g.const_(
         "analyzer_task",
-        """You are the code analyzer for APXM. Analyze this refactoring request:
+        value="""You are the code analyzer for APXM. Analyze this refactoring request:
 
 Target: {0}
 Goal: {1}
@@ -84,7 +84,7 @@ Keep under 500 words but be specific about file paths and identifiers.
     # Step 2: Implementer does the refactoring
     implementer_task = g.ask(
         "build_implementer_task",
-        """Based on this analysis, implement the refactoring:
+        template="""Based on this analysis, implement the refactoring:
 
 Analysis: {0}
 
@@ -119,7 +119,7 @@ Be methodical. If something doesn't compile, fix it before moving on.
     # Step 3: Test runner verifies nothing broke
     test_task = g.ask(
         "build_test_task",
-        """Verify the refactoring didn't break anything:
+        template="""Verify the refactoring didn't break anything:
 
 Changes: {0}
 
@@ -165,7 +165,7 @@ Keep iterating until all tests pass.
     # Step 4: Summary
     summary = g.think(
         "refactoring_summary",
-        """Summarize the refactoring:
+        template="""Summarize the refactoring:
 
 Analysis: {0}
 Implementation: {1}

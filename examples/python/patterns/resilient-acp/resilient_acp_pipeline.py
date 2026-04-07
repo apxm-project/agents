@@ -21,12 +21,12 @@ def resilient_acp(g: GraphRecorder):
     # Define and format task
     task_description = g.ask(
         "task_description",
-        "Describe a complex coding task that requires careful implementation."
+        template="Describe a complex coding task that requires careful implementation."
     )
 
     formatted_task = g.think(
         "formatted_task",
-        "Format this as a precise coding instruction for an agent:\n{0}"
+        template="Format this as a precise coding instruction for an agent:\n{0}"
     )
     task_description | formatted_task
 
@@ -41,7 +41,7 @@ def resilient_acp(g: GraphRecorder):
     # Review and summarize result
     summary = g.think(
         "summary",
-        "Review the worker's result and summarize what was accomplished:\n{0}"
+        template="Review the worker's result and summarize what was accomplished:\n{0}"
     )
     worker_comm | summary
 

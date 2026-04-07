@@ -27,7 +27,7 @@ def planner(g: GraphRecorder):
     # Get plan name
     plan_name = g.ask(
         "plan_name",
-        "What strategic plan or product idea should the council analyze? Be specific."
+        template="What strategic plan or product idea should the council analyze? Be specific."
     )
 
     # Four parallel analyst streams
@@ -58,7 +58,7 @@ def planner(g: GraphRecorder):
     # Synthesize all 4 reports
     council_prompt = g.think(
         "council_prompt",
-        "EXPERT COUNCIL CHAIR. Synthesize 4 analyst reports:\n\n"
+        template="EXPERT COUNCIL CHAIR. Synthesize 4 analyst reports:\n\n"
         "STRATEGIST:\n{0}\n\nSKEPTIC:\n{1}\n\nTECHNOLOGIST:\n{2}\n\nMARKETEER:\n{3}\n\n"
         "Structure:\n## CONVERGENCE\n## DIVERGENCE\n## TENSIONS\n## KEY DECISIONS\n## COUNCIL VERDICT"
     )
@@ -81,7 +81,7 @@ def planner(g: GraphRecorder):
     # Chair makes final decision
     chair_prompt = g.think(
         "chair_prompt",
-        "CHAIR with fresh eyes. Full package:\n\n"
+        template="CHAIR with fresh eyes. Full package:\n\n"
         "STRATEGIST:\n{0}\n\nSKEPTIC:\n{1}\n\nCOUNCIL:\n{2}\n\nADVERSARIAL:\n{3}\n\n"
         "Decide:\n## DECISION (GO/NO-GO/PIVOT)\n## THE WEDGE\n## 3 NEXT STEPS\n## THE ONE THING"
     )

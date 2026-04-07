@@ -20,7 +20,7 @@ def adversary(g: GraphRecorder, task: str):
     """
     adversary_reason = g.reason(
         "adversary_reason",
-        "ultrathink. You are an adversarial reviewer. Your job is to find what will go wrong "
+        template="ultrathink. You are an adversarial reviewer. Your job is to find what will go wrong "
         "and what is over-engineered. For this task:\n"
         "- What already exists that should NOT be re-implemented?\n"
         "- What is the minimal viable change vs over-engineering?\n"

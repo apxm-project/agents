@@ -20,7 +20,7 @@ def negotiate_consensus(g: GraphRecorder):
     # Define negotiation topic
     topic = g.ask(
         "topic",
-        "What technical architecture decision should we negotiate? "
+        template="What technical architecture decision should we negotiate? "
         "Describe a specific choice with trade-offs."
     )
 
@@ -63,7 +63,7 @@ def negotiate_consensus(g: GraphRecorder):
     # Summarize the negotiation
     summary = g.think(
         "summary",
-        "Two agents negotiated. Summarize the final consensus:\n\n"
+        template="Two agents negotiated. Summarize the final consensus:\n\n"
         "PROPOSAL A:\n{0}\n\nPROPOSAL B:\n{1}\n\nCONSENSUS:\n{2}"
     )
     proposal_a_comm | summary

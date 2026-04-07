@@ -13,7 +13,7 @@ def plan_then_parallelize(g: GraphRecorder):
     # Planning phase
     plan_steps = g.ask(
         "plan_steps",
-        "You are a technical content planner. Create a 3-part outline for a blog post "
+        template="You are a technical content planner. Create a 3-part outline for a blog post "
         "about Rust async programming. Format as:\n"
         "PART 1: [title and 2-sentence summary]\n"
         "PART 2: [title and 2-sentence summary]\n"
@@ -23,7 +23,7 @@ def plan_then_parallelize(g: GraphRecorder):
     # Parallel execution phase - three sections written independently
     section_concepts = g.ask(
         "section_concepts",
-        "Based on this plan:\n{0}\n\n"
+        template="Based on this plan:\n{0}\n\n"
         "Write section 1: Core async concepts in Rust (async/await, Futures, Pin). "
         "Target 250 words, technical but accessible."
     )
@@ -31,7 +31,7 @@ def plan_then_parallelize(g: GraphRecorder):
 
     section_tokio = g.ask(
         "section_tokio",
-        "Based on this plan:\n{0}\n\n"
+        template="Based on this plan:\n{0}\n\n"
         "Write section 2: Tokio runtime internals (work-stealing scheduler, I/O driver, "
         "task spawning). Target 250 words, technical depth."
     )
@@ -39,7 +39,7 @@ def plan_then_parallelize(g: GraphRecorder):
 
     section_pitfalls = g.ask(
         "section_pitfalls",
-        "Based on this plan:\n{0}\n\n"
+        template="Based on this plan:\n{0}\n\n"
         "Write section 3: Common pitfalls and patterns (blocking in async, cancellation, "
         "select!, join!). Target 250 words with code examples."
     )
@@ -48,7 +48,7 @@ def plan_then_parallelize(g: GraphRecorder):
     # Assembly phase - merge all sections
     assemble = g.think(
         "assemble",
-        "You have three independently written sections for a blog post about Rust async:\n\n"
+        template="You have three independently written sections for a blog post about Rust async:\n\n"
         "SECTION 1:\n{0}\n\nSECTION 2:\n{1}\n\nSECTION 3:\n{2}\n\n"
         "Assemble into a polished, cohesive blog post. Add an intro paragraph and a conclusion. "
         "Fix any inconsistencies between sections. Output the complete post."
