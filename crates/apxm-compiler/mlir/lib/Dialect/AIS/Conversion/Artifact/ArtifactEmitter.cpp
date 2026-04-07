@@ -29,7 +29,7 @@ namespace {
 // Operation kinds for artifact serialization
 // LLM ops (Ask/Think/Reason) are markers for runtime config lookup
 enum class OperationKind : uint32_t {
-  Inv = 0,
+  InvTool = 0,
   Ask = 1,     // LOW latency LLM op (was Rsn)
   QMem = 2,
   UMem = 3,
@@ -42,7 +42,7 @@ enum class OperationKind : uint32_t {
   Reflect = 10,
   Verify = 11,
   Err = 12,
-  ReturnOp = 13,
+  Return = 13,
   Jump = 14,
   BranchOnValue = 15,
   LoopStart = 16,
@@ -67,6 +67,7 @@ enum class OperationKind : uint32_t {
   RegisterCapability = 36,
   Autonomous = 37,
   Checkpoint = 38,
+  SpawnTeam = 39,
 };
 
 enum class DependencyKind : uint8_t {
@@ -158,7 +159,7 @@ struct ArtifactNodeMetadata {
 
 struct ArtifactNode {
   uint64_t id = 0;
-  OperationKind opType = OperationKind::Inv;
+  OperationKind opType = OperationKind::InvTool;
   std::vector<std::pair<std::string, ArtifactValue>> attributes;
   std::vector<uint64_t> inputTokens;
   std::vector<uint64_t> outputTokens;
@@ -352,7 +353,7 @@ std::optional<OperationKind> mapOperation(Operation *op) {
       .Case<ConstStrOp>([](auto) { return OperationKind::ConstStr; })
       .Case<QMemOp>([](auto) { return OperationKind::QMem; })
       .Case<UMemOp>([](auto) { return OperationKind::UMem; })
-      .Case<InvToolOp>([](auto) { return OperationKind::Inv; })
+      .Case<InvToolOp>([](auto) { return OperationKind::InvTool; })
       .Case<AskOp>([](auto) { return OperationKind::Ask; })
       .Case<ThinkOp>([](auto) { return OperationKind::Think; })
       .Case<ReasonOp>([](auto) { return OperationKind::Reason; })
@@ -366,8 +367,8 @@ std::optional<OperationKind> mapOperation(Operation *op) {
       .Case<FenceOp>([](auto) { return OperationKind::Fence; })
       .Case<CommunicateOp>([](auto) { return OperationKind::Communicate; })
       .Case<ErrOp>([](auto) { return OperationKind::Err; })
-      .Case<ReturnOp>([](auto) { return OperationKind::ReturnOp; })
-      .Case<func::ReturnOp>([](auto) { return OperationKind::ReturnOp; })
+      .Case<ReturnOp>([](auto) { return OperationKind::Return; })
+      .Case<func::ReturnOp>([](auto) { return OperationKind::Return; })
       .Case<JumpOp>([](auto) { return OperationKind::Jump; })
       .Case<BranchOnValueOp>([](auto) { return OperationKind::BranchOnValue; })
       .Case<LoopStartOp>([](auto) { return OperationKind::LoopStart; })
@@ -381,6 +382,7 @@ std::optional<OperationKind> mapOperation(Operation *op) {
       .Case<PauseOp>([](auto) { return OperationKind::Pause; })
       .Case<ResumeOp>([](auto) { return OperationKind::Resume; })
       .Case<SpawnAgentOp>([](auto) { return OperationKind::SpawnAgent; })
+      .Case<SpawnTeamOp>([](auto) { return OperationKind::SpawnTeam; })
       .Case<RegisterCapabilityOp>([](auto) { return OperationKind::RegisterCapability; })
       .Case<AutonomousOp>([](auto) { return OperationKind::Autonomous; })
       .Case<DelegateOp>([](auto) { return OperationKind::Delegate; })
@@ -643,9 +645,9 @@ LogicalResult emitNode(Operation *op, DagBuildState &state, ArtifactDag &dag) {
   }
 
   // Special handling for Return operations: create synthetic output token
-  // ReturnOp is a terminator so it has no SSA results, but we need output_tokens
+  // Return is a terminator so it has no SSA results, but we need output_tokens
   // for the runtime to collect results from exit nodes
-  if (node.opType == OperationKind::ReturnOp && node.outputTokens.empty() &&
+  if (node.opType == OperationKind::Return && node.outputTokens.empty() &&
       !node.inputTokens.empty()) {
     // Create a synthetic output token ID for the return value
     uint64_t syntheticTokenId = state.nextTokenId++;

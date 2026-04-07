@@ -395,6 +395,7 @@ fn validate_node_refs(graph: &ApxmGraph) -> Result<(), GraphError> {
 ///
 /// This catches graphs where COMMUNICATE appears to run in parallel with
 /// SPAWN_AGENT (race condition) rather than after it.
+#[allow(dead_code)] // Planned validation - not yet wired into main validation pipeline
 fn validate_agent_ordering(graph: &ApxmGraph) -> Result<(), GraphError> {
     use apxm_core::types::operations::AISOperationType;
     use std::collections::{HashMap, HashSet, VecDeque};
