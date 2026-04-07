@@ -622,6 +622,8 @@ class GraphRecorder:
             name = self._auto_name("return")
         node = self._add_node(name, graph_keys.OP_RETURN, _normalize_attributes(attributes))
         if source is not None:
+            if hasattr(source, "get_last_node"):
+                source = source.get_last_node()
             source | node
         return node
 
@@ -779,6 +781,8 @@ class GraphRecorder:
         attrs.update(_normalize_attributes(attributes))
         node = self._add_node(name, graph_keys.OP_GUARD, attrs)
         if source is not None:
+            if hasattr(source, "get_last_node"):
+                source = source.get_last_node()
             source | node
         return node
 
@@ -899,6 +903,8 @@ class GraphRecorder:
             name = self._auto_name("yield")
         node = self._add_node(name, graph_keys.OP_YIELD, _normalize_attributes(attributes))
         if source is not None:
+            if hasattr(source, "get_last_node"):
+                source = source.get_last_node()
             source | node
         return node
 
