@@ -23,22 +23,32 @@ class AgentHandle:
         """Send a message to the spawned agent via COMMUNICATE node.
 
         Returns self for method chaining.
+
+        The message can contain {var_name} references which will be auto-wired
+        to NodeRef variables in the caller's scope.
         """
         self._msg_counter += 1
         node_name = f"{self._agent_name}_msg_{self._msg_counter}"
+
+        # Auto-wire: resolve {var_name} to NodeRef
+        resolved_message, auto_refs = self._recorder._resolve_template_refs(message)
 
         comm_node = self._recorder._add_node(
             node_name,
             graph_keys.OP_COMMUNICATE,
             {
                 c.RECIPIENT: self._agent_name,
-                c.MESSAGE: message,
+                c.MESSAGE: resolved_message,
                 **attributes,
             },
         )
 
         # Create control edge from previous node to this communicate node
         self._last_node >> comm_node
+
+        # Create auto-wire data edges
+        for ref in auto_refs:
+            ref | comm_node
 
         self._last_node = comm_node
         return self

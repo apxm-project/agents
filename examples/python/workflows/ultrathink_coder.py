@@ -14,6 +14,9 @@ import os
 def ultrathink_coder(g: GraphRecorder, task: str):
     """Ultrathink coding workflow with parallel analysis and synthesis.
 
+    Demonstrates the new auto-wiring API: {var_name} in templates automatically
+    creates data edges from the referenced node.
+
     Parameters
     ----------
     task : str
@@ -24,80 +27,58 @@ def ultrathink_coder(g: GraphRecorder, task: str):
     # Spawn the coder agent
     coder = g.spawn("coder", profile="claude", cwd=cwd)
 
-    # Verify task received
-    task_verified = g.ask("task_verified", template="Confirm task received: {task}")
+    # Verify task received (compile parameter {task} is NOT auto-wired)
+    task_ok = g.ask("Confirm task received: {task}")
 
-    # Three parallel planning perspectives
-    arch_out = g.think(
-        "arch_out",
-        template="ultrathink. You are a Rust systems architect for the APXM project at ~/projects/agents/apxm. "
+    # Three parallel planning perspectives (auto-wired from {task_ok})
+    arch = g.think(
+        "ultrathink. You are a Rust systems architect for the APXM project at ~/projects/agents/apxm. "
         "Read relevant source files first. Produce: which crates affected, exact file paths to create or modify, "
         "public API design (structs, traits, function signatures), integration with existing systems "
-        "(ContextStack, MemoCache, Scheduler, ModelRouter), and architectural risks. Task: {0}"
+        "(ContextStack, MemoCache, Scheduler, ModelRouter), and architectural risks. Task: {task_ok}"
     )
-    task_verified | arch_out
 
-    adv_out = g.think(
-        "adv_out",
-        template="ultrathink. You are an adversarial reviewer. What already exists that should NOT be re-implemented? "
+    adv = g.think(
+        "ultrathink. You are an adversarial reviewer. What already exists that should NOT be re-implemented? "
         "Minimal viable change vs over-engineering? Top 3 failure modes? What NOT to build in v1? "
         "The ONE thing that breaks everything? Be brutal. Adversary wins on scope. "
-        "Read crates/apxm-runtime/src/model_router/ first. Task: {0}"
+        "Read crates/apxm-runtime/src/model_router/ first. Task: {task_ok}"
     )
-    task_verified | adv_out
 
-    impl_out = g.think(
-        "impl_out",
-        template="ultrathink. You are a Rust implementation expert. Produce: complete Rust structs and impl blocks "
+    impl_ = g.think(
+        "ultrathink. You are a Rust implementation expert. Produce: complete Rust structs and impl blocks "
         "(not pseudocode), unit tests for happy path and error paths, exact Cargo.toml additions. "
-        "Build command: dekk apxm build. Read relevant source files first. Task: {0}"
+        "Build command: dekk apxm build. Read relevant source files first. Task: {task_ok}"
     )
-    task_verified | impl_out
 
-    # Synthesize the three perspectives
+    # Synthesize the three perspectives (auto-wired: {arch}→{0}, {adv}→{1}, {impl_}→{2})
     synthesis = g.think(
-        "synthesis",
-        template="ultrathink. Synthesize 3 expert analyses into ONE implementation brief. Adversary wins on scope. "
+        "ultrathink. Synthesize 3 expert analyses into ONE implementation brief. Adversary wins on scope. "
         "Exact file paths + complete Rust code blocks. Test cases. Flag uncertainty with [RISK]. "
         "End with CONSERVATIVE APPROACH and BOLD APPROACH sections. "
-        "ARCHITECT: {0} ADVERSARY: {1} IMPL EXPERT: {2}"
+        "ARCHITECT: {arch} ADVERSARY: {adv} IMPL EXPERT: {impl_}"
     )
-    arch_out | synthesis
-    adv_out | synthesis
-    impl_out | synthesis
 
-    # Format as coding prompt
-    coding_prompt = g.think(
-        "coding_prompt",
-        template="Write a precise coding agent instruction from this synthesis. Conservative approach first "
+    # Format as coding prompt (auto-wired from {synthesis})
+    prompt = g.think(
+        "Write a precise coding agent instruction from this synthesis. Conservative approach first "
         "(minimal, safe), bold approach second (full vision). Start with: cd ~/projects/agents/apxm. "
         "List exact files with full content. End with: dekk apxm build, fix errors, run tests, git commit. "
-        "Synthesis: {0}"
+        "Synthesis: {synthesis}"
     )
-    synthesis | coding_prompt
 
-    # Send to coder
-    implementation_result = g.communicate(
-        "implementation_result",
-        target_agent="coder",
-        message="{0}"
-    )
-    coding_prompt | implementation_result
+    # Send to coder (auto-wired from {prompt})
+    result = coder.ask("{prompt}")
 
-    # Reflect on results
+    # Reflect on results (auto-wired from {result})
     summary = g.think(
-        "summary",
-        template="Reflect: what was built? Did it compile? Which approach won? "
-        "Summary for the engineer. Result: {0}"
+        "Reflect: what was built? Did it compile? Which approach won? "
+        "Summary for the engineer. Result: {result}"
     )
-    implementation_result | summary
 
-    # Print and return
-    output = g.print_("output", message="=== ULTRATHINK COMPLETE ===\n{0}")
-    summary | output
-
-    g.return_("result", source=output)
-    
+    # Print and return (auto-wired from {summary})
+    g.print("=== ULTRATHINK COMPLETE ===\n{summary}")
+    g.done(summary)
 
 
 if __name__ == "__main__":
