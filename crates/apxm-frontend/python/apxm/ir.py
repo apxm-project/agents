@@ -279,11 +279,12 @@ class ApxmGraph:
         void_ops = {"UMEM", "PRINT", "FENCE", "JUMP", "TRY_CATCH", "PAUSE", "RETURN"}
         return op.upper() in void_ops
 
-    def _emit_mlir_op(self, node: GraphNode, ssa_name: str, inputs: list[str]) -> str:
-        """Emit MLIR assembly for a single operation."""
-        op = node.op.upper()
-        attrs = node.attributes
+    def _emit_op_fallback(self, op: str, ssa_name: str, attrs: dict[str, Any], inputs: list[str]) -> str:
+        """Fallback MLIR emission using hardcoded patterns.
 
+        This function contains the original hardcoded emission logic and serves as
+        a safety net when auto-generated emitters are not available.
+        """
         # Helper to format context/inputs
         def fmt_context(bracket_style: str = "[]") -> str:
             if not inputs:
@@ -522,6 +523,32 @@ class ApxmGraph:
         else:
             # Fallback: generic op
             return f"{ssa_name} = ais.{op.lower()} : !ais.token"
+
+    def _emit_op(self, op: str, ssa_name: str, attrs: dict[str, Any], inputs: list[str]) -> str:
+        """Dispatch to auto-generated emitters if available, otherwise use fallback.
+
+        This function tries to import and use auto-generated emitters from
+        apxm._generated.emission first. If that module doesn't exist or the
+        specific op emitter is not available, it falls back to the hardcoded
+        emission logic in _emit_op_fallback.
+        """
+        try:
+            from apxm._generated.emission import EMITTERS
+            if op in EMITTERS:
+                return EMITTERS[op](ssa_name, attrs, inputs)
+        except (ImportError, KeyError, AttributeError):
+            pass
+
+        # Fallback to hardcoded emission
+        return self._emit_op_fallback(op, ssa_name, attrs, inputs)
+
+    def _emit_mlir_op(self, node: GraphNode, ssa_name: str, inputs: list[str]) -> str:
+        """Emit MLIR assembly for a single operation.
+
+        Delegates to _emit_op which tries auto-generated emitters first,
+        then falls back to hardcoded patterns.
+        """
+        return self._emit_op(node.op.upper(), ssa_name, node.attributes, inputs)
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "ApxmGraph":
