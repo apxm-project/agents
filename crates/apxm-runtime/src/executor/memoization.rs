@@ -13,6 +13,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use apxm_core::types::operations::AISOperationType;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "dashmap")]
@@ -259,15 +260,52 @@ impl MemoCache {
         system_prompt: Option<&str>,
         model: Option<&str>,
         temperature: f64,
+        tools: Option<&[String]>,
+        output_schema: Option<&str>,
     ) -> Option<MemoKey> {
-        if temperature != 0.0 {
+        // Only cache deterministic calls
+        if temperature > 0.0 {
             return None;
         }
         let mut hasher = DefaultHasher::new();
         prompt.hash(&mut hasher);
         system_prompt.unwrap_or("").hash(&mut hasher);
         model.unwrap_or("default").hash(&mut hasher);
+
+        // Hash tools if present
+        if let Some(tools) = tools {
+            for tool in tools {
+                tool.hash(&mut hasher);
+            }
+        }
+
+        // Hash output schema if present
+        if let Some(schema) = output_schema {
+            schema.hash(&mut hasher);
+        }
+
         Some(MemoKey(hasher.finish()))
+    }
+
+    /// Get TTL (in seconds) for a specific AIS operation type.
+    ///
+    /// Different operations have different stability characteristics:
+    /// - Ask: 1 hour (user queries, context-dependent)
+    /// - Think: 24 hours (deep reasoning, more stable)
+    /// - Reason: 7 days (structured reasoning, highly stable)
+    /// - Plan: 24 hours (planning outputs, moderately stable)
+    /// - Reflect: 24 hours (reflective analysis, moderately stable)
+    /// - Verify: 24 hours (verification results, moderately stable)
+    pub fn ttl_for_op(op: &AISOperationType) -> u64 {
+        match op {
+            AISOperationType::Ask => 3600,       // 1 hour
+            AISOperationType::Think => 86400,    // 24 hours
+            AISOperationType::Reason => 604800,  // 7 days
+            AISOperationType::Plan => 86400,     // 24 hours
+            AISOperationType::Reflect => 86400,  // 24 hours
+            AISOperationType::Verify => 86400,   // 24 hours
+            _ => 3600,                           // default 1 hour
+        }
     }
 
     pub fn get(&self, key: MemoKey) -> Option<CachedResponse> {
@@ -343,6 +381,20 @@ impl MemoCache {
         output_tokens: usize,
         model: String,
     ) {
+        self.put_with_ttl(key, content, input_tokens, output_tokens, model, None);
+    }
+
+    /// Put an entry with a custom TTL (in seconds).
+    /// If `ttl_secs` is None, uses the default TTL.
+    pub fn put_with_ttl(
+        &self,
+        key: MemoKey,
+        content: String,
+        input_tokens: usize,
+        output_tokens: usize,
+        model: String,
+        ttl_secs: Option<u64>,
+    ) {
         // Write to L1 immediately
         self.put_l1_only(
             key,
@@ -358,11 +410,16 @@ impl MemoCache {
             let l2 = Arc::clone(l2);
             let content = content.clone();
             let model = model.clone();
+            let ttl = ttl_secs.map(Duration::from_secs).unwrap_or(self.ttl);
 
             // Spawn a blocking task to write to SQLite
             std::thread::spawn(move || {
                 let mut store = l2.lock();
+                // Update store TTL temporarily for this write
+                let original_ttl = store.ttl;
+                store.ttl = ttl;
                 let _ = store.put(key, content, input_tokens, output_tokens, model);
+                store.ttl = original_ttl;
             });
         }
     }
@@ -578,34 +635,34 @@ mod tests {
 
     #[test]
     fn test_compute_key_deterministic() {
-        let key = MemoCache::compute_key("hello", Some("system"), Some("gpt-4"), 0.0);
+        let key = MemoCache::compute_key("hello", Some("system"), Some("gpt-4"), 0.0, None, None);
         assert!(key.is_some());
     }
 
     #[test]
     fn test_compute_key_non_deterministic() {
-        let key = MemoCache::compute_key("hello", Some("system"), Some("gpt-4"), 0.7);
+        let key = MemoCache::compute_key("hello", Some("system"), Some("gpt-4"), 0.7, None, None);
         assert!(key.is_none());
     }
 
     #[test]
     fn test_same_inputs_same_key() {
-        let k1 = MemoCache::compute_key("prompt", Some("sys"), Some("m"), 0.0).unwrap();
-        let k2 = MemoCache::compute_key("prompt", Some("sys"), Some("m"), 0.0).unwrap();
+        let k1 = MemoCache::compute_key("prompt", Some("sys"), Some("m"), 0.0, None, None).unwrap();
+        let k2 = MemoCache::compute_key("prompt", Some("sys"), Some("m"), 0.0, None, None).unwrap();
         assert_eq!(k1, k2);
     }
 
     #[test]
     fn test_different_inputs_different_key() {
-        let k1 = MemoCache::compute_key("prompt_a", None, None, 0.0).unwrap();
-        let k2 = MemoCache::compute_key("prompt_b", None, None, 0.0).unwrap();
+        let k1 = MemoCache::compute_key("prompt_a", None, None, 0.0, None, None).unwrap();
+        let k2 = MemoCache::compute_key("prompt_b", None, None, 0.0, None, None).unwrap();
         assert_ne!(k1, k2);
     }
 
     #[test]
     fn test_put_and_get_l1_only() {
         let cache = MemoCache::new();
-        let key = MemoCache::compute_key("prompt", None, None, 0.0).unwrap();
+        let key = MemoCache::compute_key("prompt", None, None, 0.0, None, None).unwrap();
 
         cache.put(key, "response".to_string(), 10, 5, "gpt-4".to_string());
 
@@ -625,7 +682,7 @@ mod tests {
     #[test]
     fn test_ttl_expiry() {
         let cache = MemoCache::new().with_ttl(Duration::from_millis(1));
-        let key = MemoCache::compute_key("prompt", None, None, 0.0).unwrap();
+        let key = MemoCache::compute_key("prompt", None, None, 0.0, None, None).unwrap();
 
         cache.put(key, "response".to_string(), 10, 5, "gpt-4".to_string());
         std::thread::sleep(Duration::from_millis(5));
@@ -651,7 +708,7 @@ mod tests {
     #[test]
     fn test_stats() {
         let cache = MemoCache::new();
-        let key = MemoCache::compute_key("p", None, None, 0.0).unwrap();
+        let key = MemoCache::compute_key("p", None, None, 0.0, None, None).unwrap();
 
         cache.get(key); // miss
         cache.put(key, "r".to_string(), 1, 1, "m".to_string());
@@ -672,7 +729,7 @@ mod tests {
         let db_path = dir.path().join("memo.db");
 
         let cache = MemoCache::new_with_sqlite(&db_path).expect("create cache");
-        let key = MemoCache::compute_key("two-tier", None, None, 0.0).unwrap();
+        let key = MemoCache::compute_key("two-tier", None, None, 0.0, None, None).unwrap();
 
         // Put in cache (goes to L1 and L2)
         cache.put(
@@ -710,7 +767,7 @@ mod tests {
             .expect("create cache")
             .with_ttl(Duration::from_millis(1));
 
-        let key = MemoCache::compute_key("expire", None, None, 0.0).unwrap();
+        let key = MemoCache::compute_key("expire", None, None, 0.0, None, None).unwrap();
         cache.put(key, "expired".to_string(), 1, 1, "m".to_string());
 
         // Give async write time to complete
@@ -834,5 +891,115 @@ mod tests {
 
         // Now main cache has shadowed value
         assert_eq!(cache.get(key).unwrap().content, "shadowed");
+    }
+
+    #[test]
+    fn test_tools_affect_cache_key() {
+        // Same prompt, different tools should produce different keys
+        let tools1 = vec!["tool_a".to_string(), "tool_b".to_string()];
+        let tools2 = vec!["tool_c".to_string()];
+
+        let k1 = MemoCache::compute_key("prompt", None, None, 0.0, Some(&tools1), None).unwrap();
+        let k2 = MemoCache::compute_key("prompt", None, None, 0.0, Some(&tools2), None).unwrap();
+        let k3 = MemoCache::compute_key("prompt", None, None, 0.0, None, None).unwrap();
+
+        // All three should be different
+        assert_ne!(k1, k2);
+        assert_ne!(k1, k3);
+        assert_ne!(k2, k3);
+    }
+
+    #[test]
+    fn test_output_schema_affects_cache_key() {
+        // Same prompt, different output schemas should produce different keys
+        let schema1 = r#"{"type": "object", "properties": {"answer": {"type": "string"}}}"#;
+        let schema2 = r#"{"type": "object", "properties": {"result": {"type": "number"}}}"#;
+
+        let k1 = MemoCache::compute_key("prompt", None, None, 0.0, None, Some(schema1)).unwrap();
+        let k2 = MemoCache::compute_key("prompt", None, None, 0.0, None, Some(schema2)).unwrap();
+        let k3 = MemoCache::compute_key("prompt", None, None, 0.0, None, None).unwrap();
+
+        // All three should be different
+        assert_ne!(k1, k2);
+        assert_ne!(k1, k3);
+        assert_ne!(k2, k3);
+    }
+
+    #[test]
+    fn test_tools_and_schema_both_affect_cache_key() {
+        // Combination of tools and schema should affect key
+        let tools = vec!["tool_a".to_string()];
+        let schema = r#"{"type": "object"}"#;
+
+        let k1 = MemoCache::compute_key("p", None, None, 0.0, Some(&tools), Some(schema)).unwrap();
+        let k2 = MemoCache::compute_key("p", None, None, 0.0, Some(&tools), None).unwrap();
+        let k3 = MemoCache::compute_key("p", None, None, 0.0, None, Some(schema)).unwrap();
+        let k4 = MemoCache::compute_key("p", None, None, 0.0, None, None).unwrap();
+
+        // All four should be different
+        assert_ne!(k1, k2);
+        assert_ne!(k1, k3);
+        assert_ne!(k1, k4);
+        assert_ne!(k2, k3);
+        assert_ne!(k2, k4);
+        assert_ne!(k3, k4);
+    }
+
+    #[test]
+    fn test_ttl_for_op() {
+        // Test per-op TTL values
+        assert_eq!(MemoCache::ttl_for_op(&AISOperationType::Ask), 3600);
+        assert_eq!(MemoCache::ttl_for_op(&AISOperationType::Think), 86400);
+        assert_eq!(MemoCache::ttl_for_op(&AISOperationType::Reason), 604800);
+        assert_eq!(MemoCache::ttl_for_op(&AISOperationType::Plan), 86400);
+        assert_eq!(MemoCache::ttl_for_op(&AISOperationType::Reflect), 86400);
+        assert_eq!(MemoCache::ttl_for_op(&AISOperationType::Verify), 86400);
+
+        // Default for other ops
+        assert_eq!(MemoCache::ttl_for_op(&AISOperationType::ConstStr), 3600);
+    }
+
+    #[test]
+    #[cfg(feature = "sqlite")]
+    fn test_put_with_custom_ttl() {
+        use tempfile::tempdir;
+
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("memo.db");
+
+        let cache = MemoCache::new_with_sqlite(&db_path).expect("create cache");
+        let key = MemoCache::compute_key("test", None, None, 0.0, None, None).unwrap();
+
+        // Put with a custom TTL of 1ms
+        cache.put_with_ttl(
+            key,
+            "response".to_string(),
+            10,
+            5,
+            "gpt-4".to_string(),
+            Some(1), // 1 second TTL
+        );
+
+        // Give async write time to complete
+        std::thread::sleep(Duration::from_millis(50));
+
+        // Should be in L1 immediately
+        assert!(cache.get(key).is_some());
+
+        // Create new cache (clears L1)
+        let cache2 = MemoCache::new_with_sqlite(&db_path).expect("create cache2");
+
+        // Should be in L2
+        assert!(cache2.get(key).is_some());
+
+        // Wait for expiry
+        std::thread::sleep(Duration::from_secs(2));
+
+        // Create third cache (clears L1 again)
+        let cache3 = MemoCache::new_with_sqlite(&db_path).expect("create cache3");
+
+        // Should be expired in L2 now
+        // Note: L2 checks expiry on get()
+        assert!(cache3.get(key).is_none());
     }
 }
