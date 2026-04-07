@@ -87,6 +87,8 @@ def planner(g: GraphRecorder):
     )
     strategist.get_last_node() | chair_prompt
     skeptic.get_last_node() | chair_prompt
+    # Connect both council outputs: synthesis (line 72) and adversarial (line 75-79)
+    council.get_last_node() | chair_prompt
     council.get_last_node() | chair_prompt
 
     chair.ask("{0}")

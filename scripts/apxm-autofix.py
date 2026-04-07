@@ -112,8 +112,8 @@ def find_python_examples(scope: Path | None = None) -> list[Path]:
 
     examples = []
     for py_file in search_root.rglob("*.py"):
-        # Skip __pycache__ and test files
-        if "__pycache__" in str(py_file) or py_file.name.startswith("test_"):
+        # Skip __pycache__, test files, and __init__.py
+        if "__pycache__" in str(py_file) or py_file.name.startswith("test_") or py_file.name == "__init__.py":
             continue
         examples.append(py_file)
 

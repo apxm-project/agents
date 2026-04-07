@@ -115,6 +115,8 @@ def graph_builder(g: GraphRecorder):
         "### Agent Roster (agent: role + profile)\n### Minimum Viable First Run (what to build first)"
     )
     mission | summary
+    # Connect both workflow_writer outputs: workflow files (line 95) and profiles (line 107)
+    workflow_writer.get_last_node() | summary
     workflow_writer.get_last_node() | summary
 
     # Print and return
