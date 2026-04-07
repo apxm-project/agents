@@ -39,7 +39,7 @@ def parallel_agents(g: GraphRecorder):
     # Merge the analyses
     merge_analyses = g.ask(
         "merge_analyses",
-        template="Compare and synthesize these two analyses:\n\nClaude:\n{claude_analysis}\n\nCodex:\n{codex_analysis}"
+        "Compare and synthesize these two analyses:\n\nClaude:\n{claude_analysis}\n\nCodex:\n{codex_analysis}"
     )
 
     # Print and return

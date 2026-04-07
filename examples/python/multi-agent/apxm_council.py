@@ -14,20 +14,20 @@ def council_agent(g: GraphRecorder):
     """Multi-expert council with parallel analysis and synthesis."""
     question = g.ask(
         "question",
-        template="What topic should we analyze? Provide a clear question about hardware or AI inference."
+        "What topic should we analyze? Provide a clear question about hardware or AI inference."
     )
 
     # Three parallel expert opinions
-    expert1 = g.ask("expert1", template="You are a hardware architect. Answer concisely: {question}")
+    expert1 = g.ask("expert1", "You are a hardware architect. Answer concisely: {question}")
 
-    expert2 = g.ask("expert2", template="You are a performance engineer. Answer concisely: {question}")
+    expert2 = g.ask("expert2", "You are a performance engineer. Answer concisely: {question}")
 
-    expert3 = g.ask("expert3", template="You are a TCO analyst. Answer concisely: {question}")
+    expert3 = g.ask("expert3", "You are a TCO analyst. Answer concisely: {question}")
 
     # Synthesize all expert opinions
     synthesis = g.think(
         "synthesis",
-        template="Three experts reviewed the question.\n\n"
+        "Three experts reviewed the question.\n\n"
         "Hardware architect: {expert1}\nPerformance engineer: {expert2}\nTCO analyst: {expert3}\n\n"
         "Synthesize a definitive, balanced answer:"
     )

@@ -19,26 +19,26 @@ def code_review_council(g: GraphRecorder, code: str):
     # Parallel reviews from three perspectives
     security_review = g.ask(
         "security_review",
-        template="You are a security reviewer. Review this code for vulnerabilities:\n\n{code}\n\n"
+        "You are a security reviewer. Review this code for vulnerabilities:\n\n{code}\n\n"
         "Identify all security issues with severity ratings."
     )
 
     perf_review = g.ask(
         "perf_review",
-        template="You are a performance reviewer. Review this code for efficiency:\n\n{code}\n\n"
+        "You are a performance reviewer. Review this code for efficiency:\n\n{code}\n\n"
         "Identify performance bottlenecks and optimization opportunities."
     )
 
     maint_review = g.ask(
         "maint_review",
-        template="You are a maintainability reviewer. Review this code for clarity:\n\n{code}\n\n"
+        "You are a maintainability reviewer. Review this code for clarity:\n\n{code}\n\n"
         "Assess readability, structure, and long-term maintainability."
     )
 
     # Synthesize verdict
     verdict = g.think(
         "verdict",
-        template="Three reviewers assessed this code:\n\n"
+        "Three reviewers assessed this code:\n\n"
         "Security:\n{security_review}\n\nPerformance:\n{perf_review}\n\nMaintainability:\n{maint_review}\n\n"
         "Synthesize a final verdict with priority issues and concrete fixes:"
     )

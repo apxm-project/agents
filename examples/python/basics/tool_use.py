@@ -18,14 +18,14 @@ def tool_agent(g: GraphRecorder):
         parameters_schema={"type": "object", "properties": {"query": {"type": "string"}}}
     )
 
-    topic = g.ask("ask_topic", template="What topic should we research?")
+    topic = g.ask("ask_topic", "What topic should we research?")
     register >> topic
 
     # Invoke the search tool
     results = g.invoke("search_results", capability="search", params={"query": "{topic}"})
 
     # Summarize findings
-    summary = g.ask("summarize", template="Summarize these findings: {results}")
+    summary = g.ask("summarize", "Summarize these findings: {results}")
 
     g.done(summary)
     

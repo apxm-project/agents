@@ -18,7 +18,7 @@ def architect(g: GraphRecorder, task: str):
     """
     architect_think = g.think(
         "architect_think",
-        template="You are a software architect. Design a high-level architecture for: {task}\n\n"
+        "You are a software architect. Design a high-level architecture for: {task}\n\n"
         "Provide:\n"
         "1. Key components\n"
         "2. Data flow\n"

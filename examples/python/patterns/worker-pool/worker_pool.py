@@ -15,7 +15,7 @@ def worker_pool_parallel(g: GraphRecorder):
     # Define task list
     task_list = g.ask(
         "task_list",
-        template="List 3 distinct technical tasks for analysis. Format as:\n"
+        "List 3 distinct technical tasks for analysis. Format as:\n"
         "TASK A: [description]\n"
         "TASK B: [description]\n"
         "TASK C: [description]"
@@ -24,26 +24,26 @@ def worker_pool_parallel(g: GraphRecorder):
     # Three parallel workers
     worker_a = g.think(
         "worker_a",
-        template="You are Worker A. From this task list, perform deep analysis of TASK A:\n{task_list}\n\n"
+        "You are Worker A. From this task list, perform deep analysis of TASK A:\n{task_list}\n\n"
         "Provide: (1) key findings, (2) confidence score 0-1, (3) recommended next action."
     )
 
     worker_b = g.think(
         "worker_b",
-        template="You are Worker B. From this task list, perform deep analysis of TASK B:\n{task_list}\n\n"
+        "You are Worker B. From this task list, perform deep analysis of TASK B:\n{task_list}\n\n"
         "Provide: (1) key findings, (2) confidence score 0-1, (3) recommended next action."
     )
 
     worker_c = g.think(
         "worker_c",
-        template="You are Worker C. From this task list, perform deep analysis of TASK C:\n{task_list}\n\n"
+        "You are Worker C. From this task list, perform deep analysis of TASK C:\n{task_list}\n\n"
         "Provide: (1) key findings, (2) confidence score 0-1, (3) recommended next action."
     )
 
     # Aggregate results
     aggregate = g.think(
         "aggregate",
-        template="Three workers processed parallel tasks. Aggregate their findings:\n\n"
+        "Three workers processed parallel tasks. Aggregate their findings:\n\n"
         "WORKER A:\n{worker_a}\n\nWORKER B:\n{worker_b}\n\nWORKER C:\n{worker_c}\n\n"
         "Ranked summary: highest confidence findings and priority actions."
     )

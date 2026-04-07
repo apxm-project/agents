@@ -60,7 +60,7 @@ Output a JSON strategy with priority_order and cluster_groups.
     # Step 2: Implementer works on highest priority cluster
     implement_task = g.ask(
         "build_implement_task",
-        template="""Based on this strategy, work on the highest priority cluster.
+        """Based on this strategy, work on the highest priority cluster.
 
 Read the task file from /tmp/autofix-tasks/ for that cluster.
 Follow the fix instructions carefully.
@@ -83,7 +83,7 @@ Strategy:
     # Step 3: Reviewer validates the fixes
     review_task = g.ask(
         "build_review_task",
-        template="""Review the implementation and verify quality.
+        """Review the implementation and verify quality.
 
 Check:
 1. Did all validations pass?
