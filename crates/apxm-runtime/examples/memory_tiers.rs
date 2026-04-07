@@ -47,6 +47,8 @@ async fn main() -> anyhow::Result<()> {
             "user_login".to_string(),
             Value::String("User logged in at 10:30".to_string()),
             "exec_001".to_string(),
+            None,
+            None,
         )
         .await?;
 

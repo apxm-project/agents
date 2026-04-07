@@ -297,6 +297,7 @@ name = "apxm-driver"
 version = "0.1.0"
 dependencies = [
  "apxm-acp",
+ "apxm-ais",
  "apxm-artifact",
  "apxm-backends",
  "apxm-compiler",

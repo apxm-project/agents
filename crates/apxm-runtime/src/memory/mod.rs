@@ -19,6 +19,7 @@ pub use stm::ShortTermMemory;
 
 use apxm_core::constants::memory as mem_const;
 use apxm_core::error::RuntimeError;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 type Result<T> = std::result::Result<T, RuntimeError>;
@@ -218,9 +219,11 @@ impl MemorySystem {
         event_type: String,
         payload: apxm_core::types::values::Value,
         execution_id: String,
+        node_id: Option<u64>,
+        session_dir: Option<PathBuf>,
     ) -> Result<String> {
         self.episodic
-            .record(event_type, payload, execution_id)
+            .record(event_type, payload, execution_id, node_id, session_dir)
             .await
     }
 
@@ -230,8 +233,10 @@ impl MemorySystem {
         execution_id: String,
         event_type: &str,
         payload: apxm_core::types::values::Value,
+        node_id: Option<u64>,
+        session_dir: Option<PathBuf>,
     ) -> Result<String> {
-        self.record_episode(event_type.to_string(), payload, execution_id)
+        self.record_episode(event_type.to_string(), payload, execution_id, node_id, session_dir)
             .await
     }
 
@@ -327,6 +332,8 @@ mod tests {
                 "test_event".to_string(),
                 Value::String("event_data".to_string()),
                 "exec_123".to_string(),
+                None,
+                None,
             )
             .await?;
 

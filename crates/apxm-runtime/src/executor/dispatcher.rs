@@ -149,6 +149,8 @@ impl OperationDispatcher {
                         format!("operation_completed:{:?}", node.op_type),
                         _value.clone(),
                         ctx.execution_id.clone(),
+                        Some(node.id),
+                        None, // session_dir not available in dispatcher context
                     )
                     .await
                     .ok(); // Ignore episodic recording errors
@@ -166,6 +168,8 @@ impl OperationDispatcher {
                         format!("operation_failed:{:?}", node.op_type),
                         Value::String(e.to_string()),
                         ctx.execution_id.clone(),
+                        Some(node.id),
+                        None, // session_dir not available in dispatcher context
                     )
                     .await
                     .ok();

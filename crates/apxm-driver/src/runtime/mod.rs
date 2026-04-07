@@ -167,4 +167,11 @@ impl RuntimeExecutor {
     pub fn capability_system(&self) -> &apxm_runtime::capability::CapabilitySystem {
         self.runtime.capability_system()
     }
+
+    /// Get memory system reference
+    ///
+    /// Provides access to the memory system for integration with session output
+    pub fn memory_system(&self) -> Arc<apxm_runtime::memory::MemorySystem> {
+        self.runtime.memory_system_arc()
+    }
 }

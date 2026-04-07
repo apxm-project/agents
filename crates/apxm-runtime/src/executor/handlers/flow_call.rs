@@ -101,6 +101,8 @@ async fn execute_impl(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -
             format!("flow_call:{}:{}", agent_name, flow_name),
             call_request.clone(),
             ctx.execution_id.clone(),
+            Some(node.id),
+            None, // session_dir not available in handler context
         )
         .await
         .ok();

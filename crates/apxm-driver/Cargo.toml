@@ -7,6 +7,7 @@ description = "APxM Driver - Configuration, linker, and orchestration for compil
 
 [dependencies]
 # Core dependencies
+apxm-ais = { path = "../apxm-ais" }
 apxm-core = { path = "../apxm-core" }
 apxm-compiler = { path = "../apxm-compiler" }
 apxm-runtime = { path = "../apxm-runtime" }
