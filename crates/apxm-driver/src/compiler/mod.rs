@@ -1,7 +1,7 @@
 //! Compiler wrapper used by the driver.
 
 use apxm_compiler::{Context, Module, Pipeline, PipelineDiagnostics};
-use apxm_core::types::{OptimizationLevel, PipelineConfig, Value};
+use apxm_core::types::{OptimizationLevel, PipelineConfig};
 use apxm_core::utils::build::MlirEnvReport;
 use apxm_graph::ApxmGraph;
 use std::fs;
@@ -49,6 +49,13 @@ impl Compiler {
             return Err(DriverError::Driver(
                 ".mlir is a low-level format emitted by the compiler. Use .apxm or .air for compilation.".to_string(),
             ));
+        }
+
+        // .air files are already MLIR text — parse directly, bypass graph loading
+        if matches!(ext, Some("air")) {
+            let air_text = fs::read_to_string(path)?;
+            let pipeline = Pipeline::with_opt_level(&self.context, self.opt_level);
+            return pipeline.compile(&air_text).map_err(DriverError::Compiler);
         }
 
         let graph = self.load_graph(path)?;
@@ -124,64 +131,13 @@ impl Compiler {
     }
 
     /// Emit canonical .air text IR for a graph.
-    /// Analogous to LLVM .ll — human-readable, diffable, debuggable.
-    pub fn emit_air(&self, graph: &ApxmGraph) -> String {
-        let mut out = String::new();
-        out.push_str("; Agent IR (.air) — canonical intermediate representation\n");
-        out.push_str(&format!("; graph: {}\n", graph.name));
-        for (k, v) in &graph.metadata {
-            // Format metadata values without quotes for better readability
-            let val_str = match v {
-                Value::String(s) => s.clone(),
-                Value::Bool(b) => b.to_string(),
-                Value::Number(n) => n.to_string(),
-                _ => format!("{}", v),
-            };
-            out.push_str(&format!("; {}: {}\n", k, val_str));
-        }
-        out.push('\n');
-        if !graph.parameters.is_empty() {
-            for p in &graph.parameters {
-                out.push_str(&format!("; param %{}: {}\n", p.name, p.type_name));
-            }
-            out.push('\n');
-        }
-        for node in &graph.nodes {
-            let op = node.op.to_string().to_lowercase();
-            let mut attrs = vec![];
-            for (k, v) in &node.attributes {
-                if !k.starts_with('_') {
-                    attrs.push(format!("{} = {}", k, v));
-                }
-            }
-            let attr_str = if attrs.is_empty() {
-                String::new()
-            } else {
-                format!(" {{{}}}", attrs.join(", "))
-            };
-            out.push_str(&format!("  %{} = ais.{}{}\n", node.name, op, attr_str));
-        }
-        if !graph.edges.is_empty() {
-            out.push_str("\n  ; edges:\n");
-            for edge in &graph.edges {
-                let from = graph
-                    .nodes
-                    .iter()
-                    .find(|n| n.id == edge.from)
-                    .map(|n| n.name.as_str())
-                    .unwrap_or("?");
-                let to = graph
-                    .nodes
-                    .iter()
-                    .find(|n| n.id == edge.to)
-                    .map(|n| n.name.as_str())
-                    .unwrap_or("?");
-                out.push_str(&format!(
-                    "  ; %{} -> %{} ({:?})\n",
-                    from, to, edge.dependency
-                ));
-            }
-        }
-        out
+    ///
+    /// This produces valid MLIR text (the AIS dialect) that can be re-compiled.
+    /// Analogous to LLVM .ll — human-readable, diffable, debuggable, and round-trippable.
+    pub fn emit_air(&self, graph: &ApxmGraph) -> Result<String, DriverError> {
+        // Lower the graph to MLIR text — the .air format IS valid MLIR
+        graph.to_mlir().map_err(|e| {
+            DriverError::Driver(format!("Failed to generate .air (MLIR) text: {}", e))
+        })
     }
 }

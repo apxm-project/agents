@@ -1011,6 +1011,100 @@ fn parse_opt_level(level: u8) -> apxm_core::types::OptimizationLevel {
     }
 }
 
+fn is_python_graph_input(input: &Path) -> bool {
+    input.extension().and_then(|ext| ext.to_str()) == Some("py")
+}
+
+fn emit_air_from_python(input: &Path) -> Result<tempfile::NamedTempFile> {
+    use std::io::Write;
+
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let python_frontend = repo_root.join("crates/apxm-frontend/python");
+
+    let mut pythonpath_entries = vec![python_frontend, repo_root];
+    if let Some(parent) = input.parent() {
+        pythonpath_entries.push(parent.to_path_buf());
+    }
+    if let Some(existing) = env::var_os("PYTHONPATH") {
+        pythonpath_entries.extend(env::split_paths(&existing));
+    }
+
+    let pythonpath = env::join_paths(pythonpath_entries)
+        .context("Failed to build PYTHONPATH for APXM Python frontend")?;
+    let mut output = None;
+    for candidate in ["python3", "python"] {
+        match std::process::Command::new(candidate)
+            .arg(input)
+            .env("PYTHONPATH", &pythonpath)
+            .output()
+        {
+            Ok(result) => {
+                output = Some(result);
+                break;
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(err) => {
+                return Err(anyhow::anyhow!(
+                    "Failed to run Python workflow {} with {}: {}",
+                    input.display(),
+                    candidate,
+                    err
+                ));
+            }
+        }
+    }
+
+    let output = output.ok_or_else(|| {
+        anyhow::anyhow!("Python interpreter not found on PATH (tried python3, python)")
+    })?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow::anyhow!(
+            "Python workflow {} failed: {}",
+            input.display(),
+            stderr.trim()
+        ));
+    }
+
+    let air = String::from_utf8(output.stdout)
+        .with_context(|| format!("Python workflow {} did not emit valid UTF-8", input.display()))?;
+    let trimmed = air.trim();
+    if trimmed.is_empty() {
+        return Err(anyhow::anyhow!(
+            "Python workflow {} produced no .air output",
+            input.display()
+        ));
+    }
+    if !(trimmed.starts_with(';') || trimmed.starts_with('%')) {
+        return Err(anyhow::anyhow!(
+            "Python workflow {} did not emit recognizable .air text on stdout",
+            input.display()
+        ));
+    }
+
+    let mut tmp = tempfile::Builder::new()
+        .suffix(".air")
+        .tempfile()
+        .context("Failed to create temporary .air file")?;
+    tmp.write_all(air.as_bytes())
+        .context("Failed to write emitted .air to temporary file")?;
+    tmp.flush()
+        .context("Failed to flush temporary .air file")?;
+    Ok(tmp)
+}
+
+fn prepare_graph_input(
+    input: &Path,
+) -> Result<(PathBuf, Option<tempfile::NamedTempFile>)> {
+    if is_python_graph_input(input) {
+        let tmp = emit_air_from_python(input)?;
+        return Ok((tmp.path().to_path_buf(), Some(tmp)));
+    }
+
+    Ok((input.to_path_buf(), None))
+}
+
 fn category_str(cat: apxm_core::types::OperationCategory) -> &'static str {
     use apxm_core::types::OperationCategory;
     match cat {
@@ -1299,6 +1393,11 @@ fn compile_command(
     use apxm_core::types::PipelineConfig;
 
     let opt = parse_opt_level(opt_level);
+    let (graph_input, _python_air) = if input.is_dir() {
+        (input.clone(), None)
+    } else {
+        prepare_graph_input(&input)?
+    };
 
     let compile_start = std::time::Instant::now();
     let compiler = Compiler::with_opt_level(opt).context("Failed to initialize compiler")?;
@@ -1307,7 +1406,7 @@ fn compile_command(
         load_graph_from_directory(&input)?
     } else {
         compiler
-            .load_graph(&input)
+            .load_graph(&graph_input)
             .map_err(|e| anyhow::anyhow!("Failed to parse graph: {e}"))?
     };
 
@@ -1765,6 +1864,7 @@ async fn execute_command(
     let apxm_config = load_config(config).context("Failed to load configuration")?;
     let opt = parse_opt_level(opt_level);
     let mut linker_config = LinkerConfig::from_apxm_config(apxm_config).with_opt_level(opt);
+    let (graph_input, _python_air) = prepare_graph_input(&input)?;
 
     // Enable all-outputs collection when session output is requested
     if emit_session.is_some() {
@@ -1776,7 +1876,7 @@ async fn execute_command(
 
     // Load input graph for session output
     let input_graph = if emit_session.is_some() {
-        load_graph_for_session(&input).ok()
+        load_graph_for_session(&graph_input).ok()
     } else {
         None
     };
@@ -1813,7 +1913,7 @@ async fn execute_command(
 
     let result = match linker
         .run_graph(
-            &input,
+            &graph_input,
             args,
             emitter_dyn,
             writer.as_ref().map(|w| w.session_dir()),
@@ -2689,6 +2789,17 @@ fn validate_command(input: PathBuf, json_output: bool, no_check_resources: bool)
     let mut errors: Vec<String> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
 
+    // Check file extension - .air files are MLIR text, not graphs
+    let is_air = input.extension().and_then(|e| e.to_str()) == Some("air");
+
+    if is_air {
+        return Err(anyhow::anyhow!(
+            ".air files are MLIR text, not graphs.\n\
+             Validation is performed by compilation: use `apxm compile {}` to validate.",
+            input.display()
+        ));
+    }
+
     let raw: RawGraph = serde_json::from_str(&content)
         .map_err(|e| anyhow::anyhow!("Invalid JSON in {}: {e}", input.display()))?;
 
@@ -2828,7 +2939,9 @@ fn validate_command(input: PathBuf, json_output: bool, no_check_resources: bool)
     let mut semantic_warnings: Vec<String> = Vec::new();
     #[cfg(feature = "driver")]
     {
-        match apxm_graph::ApxmGraph::from_json(&content) {
+        let parse_result = apxm_graph::ApxmGraph::from_json(&content);
+
+        match parse_result {
             Ok(graph) => {
                 // Semantic validation: Tier 1 always, Tier 2 unless --no-check-resources
                 let ctx = if no_check_resources {
