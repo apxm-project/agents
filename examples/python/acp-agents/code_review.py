@@ -60,4 +60,4 @@ def code_review(g: GraphRecorder):
 
 if __name__ == "__main__":
     import json
-    print(json.dumps(code_review._graph.to_dict(), indent=2))
+    print(code_review._graph.to_air())

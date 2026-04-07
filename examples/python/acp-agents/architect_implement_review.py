@@ -74,4 +74,4 @@ def architect_implement_review(g: GraphRecorder):
 
 if __name__ == "__main__":
     import json
-    print(json.dumps(architect_implement_review._graph.to_dict(), indent=2))
+    print(architect_implement_review._graph.to_air())

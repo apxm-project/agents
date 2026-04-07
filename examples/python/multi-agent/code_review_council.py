@@ -56,4 +56,4 @@ def code_review_council(g: GraphRecorder, code: str):
 
 if __name__ == "__main__":
     import json
-    print(json.dumps(code_review_council._graph.to_dict(), indent=2))
+    print(code_review_council._graph.to_air())

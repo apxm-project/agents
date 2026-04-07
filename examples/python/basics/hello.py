@@ -20,4 +20,4 @@ def hello_world(g: GraphRecorder):
 
 if __name__ == "__main__":
     import json
-    print(json.dumps(hello_world._graph.to_dict(), indent=2))
+    print(hello_world._graph.to_air())

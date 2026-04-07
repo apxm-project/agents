@@ -35,4 +35,4 @@ def tool_agent(g: GraphRecorder):
 
 if __name__ == "__main__":
     import json
-    print(json.dumps(tool_agent._graph.to_dict(), indent=2))
+    print(tool_agent._graph.to_air())

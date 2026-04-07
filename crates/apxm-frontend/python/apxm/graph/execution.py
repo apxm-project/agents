@@ -134,6 +134,28 @@ def _find_apxm_binary() -> str:
     )
 
 
+def _build_graph_text(graph: ApxmGraph, graph_format: str) -> str:
+    if graph_format == "air":
+        return graph.to_air()
+    if graph_format == "json":
+        return graph.to_json(indent=2)
+    raise ValueError(f"unsupported graph format '{graph_format}'")
+
+
+def _fallback_retry_reason(stderr: str) -> bool:
+    lowered = stderr.lower()
+    return any(
+        marker in lowered
+        for marker in (
+            ".air is an inspection",
+            "not a compile input",
+            "round-trip compilable",
+            "use json graphs for compilation and execution instead",
+            "use a json graph instead",
+        )
+    )
+
+
 class CompiledFlow:
     __slots__ = ("_graph", "mode", "_opt_level", "_compiled_native", "_registered_tools")
 
@@ -204,10 +226,15 @@ class CompiledFlow:
             return False
 
         builder_cls = getattr(native, "WorkflowBuilder", None)
-        if builder_cls is None or not hasattr(builder_cls, "from_graph_json"):
+        if builder_cls is None:
             return False
 
-        builder = builder_cls.from_graph_json(self._graph.to_json(indent=0))
+        if hasattr(builder_cls, "from_graph_air"):
+            builder = builder_cls.from_graph_air(self._graph.to_air())
+        elif hasattr(builder_cls, "from_graph_json"):
+            builder = builder_cls.from_graph_json(self._graph.to_json(indent=0))
+        else:
+            return False
 
         for tool in self._registered_tools:
             schema = tool.schema() if callable(tool.schema) else tool.schema
@@ -238,44 +265,62 @@ class CompiledFlow:
         for node in self._graph.nodes:
             yield {"event": "node_started", "node_id": node.id, "name": node.name}
 
-        cmd, tmp_path = self._build_subprocess_cmd(apxm_bin, args)
-        try:
-            proc = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
-            )
+        attempted_formats = ("air", "json")
+        for graph_format in attempted_formats:
+            cmd, tmp_path = self._build_subprocess_cmd(apxm_bin, args, graph_format=graph_format)
+            try:
+                proc = subprocess.Popen(
+                    cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+                )
 
-            for line in proc.stdout:  # type: ignore[union-attr]
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    parsed = json.loads(line)
-                    yield {"event": "output", "data": parsed}
-                except json.JSONDecodeError:
-                    yield {"event": "output", "data": line}
+                for line in proc.stdout:  # type: ignore[union-attr]
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        parsed = json.loads(line)
+                        yield {"event": "output", "data": parsed}
+                    except json.JSONDecodeError:
+                        yield {"event": "output", "data": line}
 
-            proc.wait()
-
-            for node in self._graph.nodes:
-                yield {"event": "node_completed", "node_id": node.id, "name": node.name}
-
-            if proc.returncode != 0:
+                proc.wait()
                 stderr = proc.stderr.read() if proc.stderr else ""  # type: ignore[union-attr]
-                yield {"event": "error", "message": f"apxm exit {proc.returncode}: {stderr.strip()}"}
-                return
 
-            yield {"event": "result", "data": None}
-        finally:
-            os.unlink(tmp_path)
+                if (
+                    proc.returncode != 0
+                    and graph_format == "air"
+                    and _fallback_retry_reason(stderr)
+                ):
+                    continue
+
+                if proc.returncode != 0:
+                    yield {
+                        "event": "error",
+                        "message": f"apxm exit {proc.returncode}: {stderr.strip()}",
+                    }
+                    return
+
+                for node in self._graph.nodes:
+                    yield {"event": "node_completed", "node_id": node.id, "name": node.name}
+
+                yield {"event": "result", "data": None}
+                return
+            finally:
+                os.unlink(tmp_path)
 
     def _build_subprocess_cmd(
-        self, apxm_or_dekk: str, args: tuple[Any, ...]
+        self,
+        apxm_or_dekk: str,
+        args: tuple[Any, ...],
+        *,
+        graph_format: str = "air",
     ) -> tuple[list[str], str]:
-        graph_json = self._graph.to_json(indent=2)
+        graph_text = _build_graph_text(self._graph, graph_format)
+        suffix = f".{graph_format}"
         with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".apxm", delete=False
+            mode="w", suffix=suffix, delete=False, encoding="utf-8"
         ) as tmp:
-            tmp.write(graph_json)
+            tmp.write(graph_text)
             tmp_path = tmp.name
 
         if Path(apxm_or_dekk).name == "dekk":
@@ -289,25 +334,38 @@ class CompiledFlow:
 
     def _fallback_subprocess(self, *args: Any) -> Any:
         apxm_bin = _find_apxm_binary()
-        cmd, tmp_path = self._build_subprocess_cmd(apxm_bin, args)
+        last_error: RuntimeError | None = None
 
-        try:
-            result = subprocess.run(
-                cmd, capture_output=True, text=True, check=False
+        for graph_format in ("air", "json"):
+            cmd, tmp_path = self._build_subprocess_cmd(
+                apxm_bin, args, graph_format=graph_format
             )
 
-            if result.returncode != 0:
-                stderr = result.stderr.strip()
-                raise RuntimeError(
-                    f"apxm execute failed (exit {result.returncode}): {stderr}"
+            try:
+                result = subprocess.run(
+                    cmd, capture_output=True, text=True, check=False
                 )
 
-            stdout = result.stdout.strip()
-            if not stdout:
-                return None
-            try:
-                return json.loads(stdout)
-            except json.JSONDecodeError:
-                return stdout
-        finally:
-            os.unlink(tmp_path)
+                if result.returncode != 0:
+                    stderr = result.stderr.strip()
+                    if graph_format == "air" and _fallback_retry_reason(stderr):
+                        continue
+                    raise RuntimeError(
+                        f"apxm execute failed (exit {result.returncode}): {stderr}"
+                    )
+
+                stdout = result.stdout.strip()
+                if not stdout:
+                    return None
+                try:
+                    return json.loads(stdout)
+                except json.JSONDecodeError:
+                    return stdout
+            except RuntimeError as exc:
+                last_error = exc
+            finally:
+                os.unlink(tmp_path)
+
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("apxm execute failed before producing output")

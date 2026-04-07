@@ -64,4 +64,4 @@ def memory_rag_pipeline(g: GraphRecorder):
 
 if __name__ == "__main__":
     import json
-    print(json.dumps(memory_rag_pipeline._graph.to_dict(), indent=2))
+    print(memory_rag_pipeline._graph.to_air())

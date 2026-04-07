@@ -51,12 +51,11 @@ impl Compiler {
             ));
         }
 
-        // .air files use custom text format — parse to ApxmGraph, then compile
+        // .air files are already MLIR text — parse directly, bypass graph loading
         if matches!(ext, Some("air")) {
             let air_text = fs::read_to_string(path)?;
-            let graph = ApxmGraph::from_air(&air_text)
-                .map_err(|e| DriverError::Driver(format!(".air parse error: {e}")))?;
-            return self.compile_graph(&graph);
+            let pipeline = Pipeline::with_opt_level(&self.context, self.opt_level);
+            return pipeline.compile(&air_text).map_err(DriverError::Compiler);
         }
 
         let graph = self.load_graph(path)?;
@@ -114,13 +113,16 @@ impl Compiler {
             .map_err(DriverError::Compiler)
     }
 
-    /// Load graph input (JSON or .air) from disk.
+    /// Load graph input (JSON/apxm) from disk.
+    ///
+    /// .air files are NOT graphs — they are MLIR text and should be compiled via
+    /// compile() directly, not loaded as ApxmGraph.
     pub fn load_graph(&self, path: &Path) -> Result<ApxmGraph, DriverError> {
         match path.extension().and_then(|ext| ext.to_str()) {
             Some("air") => {
-                let text = fs::read_to_string(path)?;
-                ApxmGraph::from_air(&text)
-                    .map_err(|e| DriverError::Driver(format!(".air parse error: {e}")))
+                Err(DriverError::Driver(
+                    ".air is MLIR text, not a graph. Use compile() to parse it directly.".to_string()
+                ))
             }
 
             _ => {

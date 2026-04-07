@@ -78,4 +78,4 @@ def iterative_refine_unrolled(g: GraphRecorder):
 
 if __name__ == "__main__":
     import json
-    print(json.dumps(iterative_refine_unrolled._graph.to_dict(), indent=2))
+    print(iterative_refine_unrolled._graph.to_air())

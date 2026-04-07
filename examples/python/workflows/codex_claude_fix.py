@@ -76,4 +76,4 @@ def codex_claude_fix(g: GraphRecorder):
 
 if __name__ == "__main__":
     import json
-    print(json.dumps(codex_claude_fix._graph.to_dict(), indent=2))
+    print(codex_claude_fix._graph.to_air())

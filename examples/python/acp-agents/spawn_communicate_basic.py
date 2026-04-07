@@ -31,4 +31,4 @@ def spawn_communicate_basic(g: GraphRecorder):
 
 if __name__ == "__main__":
     import json
-    print(json.dumps(spawn_communicate_basic._graph.to_dict(), indent=2))
+    print(spawn_communicate_basic._graph.to_air())

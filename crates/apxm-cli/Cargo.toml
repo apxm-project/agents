@@ -32,9 +32,9 @@ rpassword = "7.0"
 chrono = "0.4"
 reqwest = { version = "0.12", features = ["json", "rustls-tls", "blocking"], default-features = false }
 walkdir = "2.0"
+tempfile = "3.0"
 
 [dev-dependencies]
-tempfile = "3.0"
 serde_json = "1.0"
 
 [features]

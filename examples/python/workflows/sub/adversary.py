@@ -36,4 +36,4 @@ def adversary(g: GraphRecorder, task: str):
 
 if __name__ == "__main__":
     import json
-    print(json.dumps(adversary._graph.to_dict(), indent=2))
+    print(adversary._graph.to_air())

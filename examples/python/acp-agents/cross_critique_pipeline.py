@@ -85,4 +85,4 @@ def cross_critique_pipeline(g: GraphRecorder):
 
 if __name__ == "__main__":
     import json
-    print(json.dumps(cross_critique_pipeline._graph.to_dict(), indent=2))
+    print(cross_critique_pipeline._graph.to_air())

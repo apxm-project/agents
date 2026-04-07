@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, is_dataclass
 import json
 from typing import Any
 
@@ -9,6 +9,28 @@ from apxm._generated import operations
 
 
 _DEPENDENCY_TYPES = {"Data", "Effect", "Control"}
+
+
+def _normalize_air_value(value: Any) -> Any:
+    if hasattr(value, "to_dict") and callable(value.to_dict):
+        return _normalize_air_value(value.to_dict())
+    if is_dataclass(value):
+        return _normalize_air_value(asdict(value))
+    if isinstance(value, tuple):
+        return [_normalize_air_value(item) for item in value]
+    if isinstance(value, list):
+        return [_normalize_air_value(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _normalize_air_value(item) for key, item in value.items()}
+    return value
+
+
+def _air_literal(value: Any) -> str:
+    normalized = _normalize_air_value(value)
+    try:
+        return json.dumps(normalized, ensure_ascii=False, allow_nan=False)
+    except (TypeError, ValueError):
+        return json.dumps(str(normalized), ensure_ascii=False)
 
 
 @dataclass(slots=True)
@@ -128,7 +150,7 @@ class ApxmGraph:
         lines.append("; Agent IR (.air) - canonical intermediate representation")
         lines.append(f"; graph: {self.name}")
         for k, v in self.metadata.items():
-            lines.append(f"; {k}: {v}")
+            lines.append(f"; {k}: {_air_literal(v)}")
 
         # Parameters
         if self.parameters:
@@ -150,12 +172,7 @@ class ApxmGraph:
             if attrs:
                 attr_parts = []
                 for k, v in attrs.items():
-                    if isinstance(v, str):
-                        # Truncate long strings for readability
-                        display = v[:60] + "..." if len(v) > 60 else v
-                        attr_parts.append(f'{k} = "{display}"')
-                    else:
-                        attr_parts.append(f"{k} = {v}")
+                    attr_parts.append(f"{k} = {_air_literal(v)}")
                 attr_str = f" {{{', '.join(attr_parts)}}}"
             else:
                 attr_str = ""

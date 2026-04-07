@@ -69,4 +69,4 @@ def worker_pool_parallel(g: GraphRecorder):
 
 if __name__ == "__main__":
     import json
-    print(json.dumps(worker_pool_parallel._graph.to_dict(), indent=2))
+    print(worker_pool_parallel._graph.to_air())

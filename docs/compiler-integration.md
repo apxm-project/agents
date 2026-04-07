@@ -1,6 +1,6 @@
 # APXM Compiler Integration Guide
 
-*How Python and JSON authoring flow into the same compiler infrastructure.*
+*How Python, `.air`, and JSON authoring flow into the same compiler infrastructure.*
 
 ---
 
@@ -16,7 +16,7 @@ same dataflow runtime.
 │  JSON graphs         Rust API              Python API           │
 │  (CLI / services)    (WorkflowBuilder)     (`apxm.graph`)       │
 │       │                     │                     │             │
-│       │ from_json()         │ .build()            │ .to_graph() │
+│       │ from_json()         │ .build()            │ .to_air()   │
 └───────┼─────────────────────┼─────────────────────┼─────────────┘
         │                     │                     │
         ▼                     ▼                     ▼
@@ -68,6 +68,9 @@ dekk apxm compile workflow.json -o workflow.apxmobj
 dekk apxm execute workflow.json
 ```
 
+JSON remains supported as a compatibility path. The canonical file handoff from the Python
+frontend is now `.air`.
+
 ### 2. Rust API
 
 ```rust
@@ -106,7 +109,10 @@ def research(g: ag.GraphRecorder, topic: str):
     s >> report
     return report
 
-# Python produces ApxmGraph JSON, Rust side calls compile_from_graph
+# Python produces canonical .air text for file-based handoff
+print(research._graph.to_air())
+
+# The programmatic bridge still passes the in-memory graph to Rust
 result = await research("quantum computing")
 ```
 
@@ -153,7 +159,7 @@ the same op definitions from `apxm-ais/src/operations/definitions.rs`.
 
 | Format | Who produces it | Who consumes it | Round-trip? |
 |--------|----------------|----------------|-------------|
-| `.json` | Python frontend, services, humans | `Compiler::load_graph()` | ✅ yes |
+| `.air` | Python frontend, humans | Rust `.air` parser / compiler input | ✅ yes |
+| `.json` | Services, humans, compatibility tooling | `Compiler::load_graph()` | ✅ yes |
 | `ApxmGraph` (in-memory) | WorkflowBuilder, FlowModule | `compile_from_graph()` | ✅ yes |
-| `.air` | `Compiler::emit_air()` | Humans (debug only) | ❌ output only |
 | `.apxmobj` | `compile_from_graph()`, MLIR pipeline | `Runtime::execute_artifact()` | ✅ yes |

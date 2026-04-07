@@ -8,12 +8,17 @@ All examples use the Python frontend (`apxm.graph`). See [python/README.md](pyth
 cd crates/apxm-frontend/python
 export PYTHONPATH="$PWD:$PYTHONPATH"
 
-# Run an example
-python3 ../../examples/python/basics/hello.py
+# Emit canonical .air from a Python workflow
+python3 ../../examples/python/basics/hello.py > ../../examples/python/basics/hello.air
 
-# Execute through the CLI (compiles Python → JSON → runtime)
-apxm execute examples/python/basics/hello.py
+# Execute the Python file directly through the CLI
+apxm execute ../../examples/python/basics/hello.py
+
+# Or hand the emitted .air file to the compiler/runtime
+apxm execute ../../examples/python/basics/hello.air
 ```
+`examples/python/*.py` now emit `.air` by default when run directly, and the CLI execute path
+accepts `.py` inputs by running Python, capturing that `.air`, and feeding it to the compiler.
 
 ## Structure
 

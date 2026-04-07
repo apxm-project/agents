@@ -29,7 +29,7 @@ def main():
     print(f"Nodes: {len(graph.nodes)}")
     print(f"Edges: {len(graph.edges)}")
     print()
-    print(graph.to_json(indent=2))
+    print(graph.to_air())
 
 
 if __name__ == "__main__":

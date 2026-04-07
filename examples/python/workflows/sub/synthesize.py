@@ -39,4 +39,4 @@ def synthesize(g: GraphRecorder, arch: str, adver: str, impl: str):
 
 if __name__ == "__main__":
     import json
-    print(json.dumps(synthesize._graph.to_dict(), indent=2))
+    print(synthesize._graph.to_air())

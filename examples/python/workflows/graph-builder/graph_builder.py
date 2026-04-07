@@ -83,7 +83,7 @@ def graph_builder(g: GraphRecorder):
         "workflow_prompt",
         "Build a prompt for an APXM Python frontend expert to write complete workflow source files. "
         "Goal: {0}. Strategy: {1}. Topology: {2}. Skeptic feedback: {3}. "
-        "Use the Python frontend as the authoring format and assume JSON graphs will be emitted for CLI execution. "
+        "Use the Python frontend as the authoring format and assume canonical .air will be emitted for CLI execution. "
         "Ask for a JSON map of filename -> complete_python_content for all entry, phase, and sub-workflow files."
     )
     mission | workflow_prompt
@@ -127,4 +127,4 @@ def graph_builder(g: GraphRecorder):
 
 if __name__ == "__main__":
     import json
-    print(json.dumps(graph_builder._graph.to_dict(), indent=2))
+    print(graph_builder._graph.to_air())

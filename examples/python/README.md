@@ -11,7 +11,7 @@ API provides:
 - **@compile decorator**: Automatic graph generation with parameter derivation
 - **GraphRecorder**: Fluent API for building workflows
 - **AgentHandle & Team**: Sugar for spawn + communicate chains
-- **JSON/AIR export**: Workflows compile to standard graph JSON
+- **`.air` export**: Workflows emit canonical Agent IR text, with JSON retained as a utility
 
 ## Structure
 
@@ -93,11 +93,11 @@ from examples.python.basics.hello import hello_world
 # Get the compiled graph
 graph = hello_world._graph
 
-# Export to JSON
-print(graph.to_json(indent=2))
-
-# Export to AIR format
+# Export to canonical AIR format
 print(graph.to_air())
+
+# JSON remains available as a utility
+print(graph.to_json(indent=2))
 ```
 
 ## API Patterns
@@ -107,7 +107,7 @@ print(graph.to_air())
 ```python
 from apxm.graph import compile, GraphRecorder
 
-@compile
+@compile()
 def my_workflow(g: GraphRecorder, param: str) -> dict:
     """Docstring becomes workflow description."""
     # Build graph
@@ -116,7 +116,8 @@ def my_workflow(g: GraphRecorder, param: str) -> dict:
     node1 | node2  # Data edge
 
     g.return_("result", source=node2)
-    return g.to_graph().to_dict()
+
+print(my_workflow._graph.to_air())
 ```
 
 ### Agent Spawn + Communicate
@@ -185,33 +186,20 @@ results = team.merge("results")
 
 ## Validation
 
-All converted examples produce valid graph JSON:
+All converted examples emit parser-safe `.air`:
 
 ```bash
 # Verify an example
 python3 -c "
 import sys; sys.path.insert(0, 'crates/apxm-frontend/python')
 from examples.python.basics.hello import hello_world
-import json
-graph = hello_world._graph.to_dict()
-print(json.dumps(graph, indent=2))
+print(hello_world._graph.to_air())
 "
-```
-
-Expected output structure:
-```json
-{
-  "name": "hello_world",
-  "nodes": [...],
-  "edges": [...],
-  "parameters": [],
-  "metadata": {"is_entry": true}
-}
 ```
 
 ## Next Steps
 
-- **Execute workflows**: Use `apxm execute <graph.json>` to run compiled graphs
+- **Execute workflows**: Use `apxm execute workflow.py` directly, or emit `.air` with `python3 ... > workflow.air` and pass that file to the CLI
 - **Combine patterns**: Import and compose multiple examples
 - **Build custom workflows**: Use these as templates for your own agent workflows
 
