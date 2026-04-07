@@ -401,14 +401,14 @@ fn emit_node(
                 .map(|value| format!(" limit {value}"))
                 .unwrap_or_default();
 
+            // Emit enum attribute for space: <stm>, <ltm>, or <episodic>
             state.emit(format!(
-                "    {result} = ais.qmem {} stage {} in {}{}{} : !ais.handle<{}>",
+                "    {result} = ais.qmem {} stage {} in <{}>{}{} : !ais.handle",
                 quote_string(&query),
                 quote_string(&sid),
-                quote_string(&space),
+                space, // emit as enum value in angle brackets
                 limit_str,
-                attrs,
-                space
+                attrs
             ));
             Ok(Some(MlirValueRef {
                 ssa: result,
@@ -416,8 +416,7 @@ fn emit_node(
             }))
         }
         AISOperationType::UMem => {
-            let key = get_string_attr(&node.attributes, &[graph_attrs::KEY])
-                .unwrap_or_else(|| "default_key".to_string());
+            let key = get_string_attr(&node.attributes, &[graph_attrs::KEY]);
             let space = normalize_memory_space(
                 &get_string_attr(
                     &node.attributes,
@@ -440,20 +439,23 @@ fn emit_node(
                 emit_const_token(state, "memory")
             };
 
-            // Build attr-dict with key attribute
-            // extra_attr_dict returns either "" or " {k=v, ...}" (with leading space)
-            let full_attrs = if attrs.is_empty() {
-                format!(" {{key = {}}}", quote_string(&key))
-            } else {
-                // attrs is " {k=v, ...}" - strip leading space and outer braces
-                let inner_attrs = attrs.trim().trim_start_matches('{').trim_end_matches('}');
-                format!(" {{key = {}, {}}}", quote_string(&key), inner_attrs)
+            // Build attr-dict with optional key attribute
+            // key is now an optional argument in the op definition
+            let full_attrs = match (key.as_ref(), attrs.as_str()) {
+                (Some(k), "") => format!(" {{key = {}}}", quote_string(k)),
+                (Some(k), a) => {
+                    // attrs is " {k=v, ...}" - strip leading space and outer braces
+                    let inner = a.trim().trim_start_matches('{').trim_end_matches('}');
+                    format!(" {{key = {}, {}}}", quote_string(k), inner)
+                }
+                (None, a) => a.to_string(),
             };
 
+            // Emit enum attribute for space: <stm>, <ltm>, or <episodic>
             state.emit(format!(
-                "    ais.umem {} into {}{} : !ais.token",
+                "    ais.umem {} into <{}>{} : !ais.token",
                 source.ssa,
-                quote_string(&space),
+                space, // emit as enum value in angle brackets
                 full_attrs
             ));
             Ok(None)
@@ -1933,8 +1935,8 @@ mod tests {
             mlir
         );
         assert!(
-            mlir.contains("into \"stm\""),
-            "UMEM should set memory space\n{}",
+            mlir.contains("into <stm>"),
+            "UMEM should set memory space as enum <stm>\n{}",
             mlir
         );
     }

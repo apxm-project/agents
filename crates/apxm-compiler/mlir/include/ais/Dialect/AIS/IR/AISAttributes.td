@@ -62,6 +62,19 @@ def AISIntentAttr : AIS_I32EnumAttr<"intent", AISIntentKind> {
   let cppClassName = "AISIntentAttr";
 }
 
+// Memory space classification for AAM (Agent Abstract Machine) memory tiers.
+def AISMemorySpaceKind : AIS_I32Enum<"AISMemorySpaceKind",
+    "AAM memory space classification",
+    [
+      I32EnumAttrCase<"stm", 0, "stm">,
+      I32EnumAttrCase<"ltm", 1, "ltm">,
+      I32EnumAttrCase<"episodic", 2, "episodic">
+    ]>;
+
+def AISMemorySpaceAttr : AIS_I32EnumAttr<"memory_space", AISMemorySpaceKind> {
+  let cppClassName = "AISMemorySpaceAttr";
+}
+
 // Relative cost used by the scheduler.
 def AISEstimatedCostAttr : AttrDef<AIS_Dialect, "estimated_cost"> {
   let summary = "Estimated relative cost (heuristic)";

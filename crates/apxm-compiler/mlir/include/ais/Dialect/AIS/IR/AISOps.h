@@ -17,6 +17,7 @@
 #define APXM_AIS_OPS_H
 
 #include "ais/Dialect/AIS/IR/AISTypes.h"
+#include "ais/Dialect/AIS/IR/AISAttributes.h"
 #include "mlir/Bytecode/BytecodeOpInterface.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/OpDefinition.h"
