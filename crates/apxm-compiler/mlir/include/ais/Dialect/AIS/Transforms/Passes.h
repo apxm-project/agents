@@ -54,6 +54,15 @@ std::unique_ptr<Pass> createCondenseOpsPass();
 /// Create UnconsumedValueWarning pass - warn about unused operation results
 std::unique_ptr<Pass> createUnconsumedValueWarningPass();
 
+/// Create TemplateSpecialization pass - specialize templates with constant inputs
+std::unique_ptr<Pass> createTemplateSpecializationPass();
+
+/// Create DeadContextElimination pass - remove unused context inputs
+std::unique_ptr<Pass> createDeadContextEliminationPass();
+
+/// Create SchemaNarrowing pass - narrow output schemas based on usage
+std::unique_ptr<Pass> createSchemaNarrowingPass();
+
 //===----------------------------------------------------------------------===//
 // Pass Registration
 //===----------------------------------------------------------------------===//

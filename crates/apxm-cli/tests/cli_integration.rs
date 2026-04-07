@@ -808,10 +808,11 @@ fn codegen_frontend_is_idempotent() {
     assert_eq!(first_json["output_dir"], output_dir_str);
 
     let first_snapshot = read_generated_snapshot(&output_dir);
-    assert_eq!(first_snapshot.len(), 4);
+    assert_eq!(first_snapshot.len(), 5);
     assert!(first_snapshot.contains_key("__init__.py"));
     assert!(first_snapshot.contains_key("agents.py"));
     assert!(first_snapshot.contains_key("constants.py"));
+    assert!(first_snapshot.contains_key("emission.py"));
     assert!(first_snapshot.contains_key("operations.py"));
 
     let second = apxm()
