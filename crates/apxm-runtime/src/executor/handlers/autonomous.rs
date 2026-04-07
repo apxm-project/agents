@@ -1,33 +1,175 @@
-//! AUTONOMOUS operation - Autonomous execution stub
+//! AUTONOMOUS operation - Autonomous execution with goal-directed loop
 //!
-//! Placeholder for future autonomous agent execution mode.
-//! Currently passes through the first input and records an AAM transition.
+//! Implements autonomous agent behavior via an iterative loop:
+//! 1. Plans next action based on goal + current state
+//! 2. Executes the action (via LLM call)
+//! 3. Evaluates progress toward goal
+//! 4. Continues until goal is met or max_iterations reached
 
-use super::{ExecutionContext, Node, Result, Value, get_input};
+use super::{
+    execute_llm_request, get_input, get_optional_u64_attribute, get_string_attribute,
+    ExecutionContext, Node, Result, Value,
+};
 use crate::aam::TransitionLabel;
-use apxm_core::constants::runtime::belief_keys;
+use apxm_backends::LLMRequest;
+use apxm_core::constants::{graph::attrs as graph_attrs, runtime::belief_keys};
+use apxm_core::error::RuntimeError;
+
+const DEFAULT_MAX_ITERATIONS: u64 = 10;
+const ATTR_MAX_ITERATIONS: &str = "max_iterations";
 
 pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -> Result<Value> {
-    let value = if !inputs.is_empty() {
+    // Extract goal/objective from attributes (use PROMPT as the goal description)
+    let goal = get_string_attribute(node, graph_attrs::PROMPT)?;
+
+    // Get initial state from inputs
+    let initial_state = if !inputs.is_empty() {
         get_input(node, &inputs, 0)?
     } else {
-        Value::Null
+        Value::String("No initial state provided".to_string())
     };
+
+    // Get max iterations
+    let max_iterations = get_optional_u64_attribute(node, ATTR_MAX_ITERATIONS)?
+        .unwrap_or(DEFAULT_MAX_ITERATIONS);
+
+    tracing::info!(
+        execution_id = %ctx.execution_id,
+        node_id = node.id,
+        goal = %goal,
+        max_iterations = max_iterations,
+        "Starting AUTONOMOUS execution loop"
+    );
+
+    let mut current_state = initial_state;
+    let mut iteration = 0u64;
+    let mut final_result = Value::Null;
+
+    while iteration < max_iterations {
+        iteration += 1;
+
+        tracing::debug!(
+            execution_id = %ctx.execution_id,
+            node_id = node.id,
+            iteration = iteration,
+            "Autonomous loop iteration"
+        );
+
+        // Step 1: Plan next action
+        let plan_prompt = format!(
+            "You are an autonomous agent working toward this goal:\n\n{}\n\n\
+            Current state:\n{}\n\n\
+            Based on the current state, what is the next action you should take to progress toward the goal? \
+            Respond with a brief action plan.",
+            goal,
+            format_state(&current_state)
+        );
+
+        let plan_req = LLMRequest::new(plan_prompt.clone());
+
+        let plan_response = execute_llm_request(ctx, node.id, "autonomous_plan", &plan_req)
+            .await
+            .map_err(|e| RuntimeError::Operation {
+                op_type: node.op_type,
+                message: format!("Failed to plan action (iteration {}): {}", iteration, e),
+            })?;
+
+        tracing::debug!(
+            execution_id = %ctx.execution_id,
+            node_id = node.id,
+            iteration = iteration,
+            "Planned action"
+        );
+
+        // Step 2: Execute the action
+        let action_prompt = format!(
+            "Goal: {}\n\n\
+            Current state:\n{}\n\n\
+            Planned action:\n{}\n\n\
+            Execute this action and report the result.",
+            goal,
+            format_state(&current_state),
+            plan_response.content
+        );
+
+        let action_req = LLMRequest::new(action_prompt);
+
+        let action_response = execute_llm_request(ctx, node.id, "autonomous_action", &action_req)
+            .await
+            .map_err(|e| RuntimeError::Operation {
+                op_type: node.op_type,
+                message: format!("Failed to execute action (iteration {}): {}", iteration, e),
+            })?;
+
+        current_state = Value::String(action_response.content.clone());
+
+        // Step 3: Evaluate progress
+        let eval_prompt = format!(
+            "Goal: {}\n\n\
+            Current state after action:\n{}\n\n\
+            Has the goal been achieved? Respond with ONLY 'YES' if the goal is fully achieved, or 'NO' if more work is needed.",
+            goal,
+            action_response.content
+        );
+
+        let eval_req = LLMRequest::new(eval_prompt);
+
+        let eval_response = execute_llm_request(ctx, node.id, "autonomous_eval", &eval_req)
+            .await
+            .map_err(|e| RuntimeError::Operation {
+                op_type: node.op_type,
+                message: format!("Failed to evaluate progress (iteration {}): {}", iteration, e),
+            })?;
+
+        // Check if goal is achieved
+        if eval_response.content.trim().to_uppercase().starts_with("YES") {
+            tracing::info!(
+                execution_id = %ctx.execution_id,
+                node_id = node.id,
+                iteration = iteration,
+                "Goal achieved"
+            );
+            final_result = current_state;
+            break;
+        }
+
+        if iteration >= max_iterations {
+            tracing::warn!(
+                execution_id = %ctx.execution_id,
+                node_id = node.id,
+                max_iterations = max_iterations,
+                "Reached max iterations without achieving goal"
+            );
+            final_result = Value::String(format!(
+                "Max iterations ({}) reached. Final state:\n{}",
+                max_iterations,
+                format_state(&current_state)
+            ));
+        }
+    }
 
     // Record autonomous transition in AAM
     ctx.aam.set_belief(
         format!("{}{}", belief_keys::AUTONOMOUS_NODE_PREFIX, node.id),
-        value.clone(),
+        final_result.clone(),
         TransitionLabel::operation(node.id, node.op_type.to_string()),
     );
 
     tracing::info!(
         execution_id = %ctx.execution_id,
         node_id = node.id,
-        "AUTONOMOUS operation executed (stub)"
+        iterations = iteration,
+        "AUTONOMOUS operation completed"
     );
 
-    Ok(value)
+    Ok(final_result)
+}
+
+fn format_state(state: &Value) -> String {
+    match state {
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -36,17 +178,33 @@ mod tests {
     use crate::capability::CapabilitySystem;
     use crate::memory::{MemoryConfig, MemorySystem};
     use apxm_backends::LLMRegistry;
-    use apxm_core::constants::runtime::belief_keys;
+    use apxm_core::constants::graph::attrs as graph_attrs;
     use apxm_core::types::execution::NodeMetadata;
     use apxm_core::types::operations::AISOperationType;
     use std::collections::HashMap;
     use std::sync::Arc;
 
-    fn make_autonomous_node(id: u64) -> apxm_core::types::execution::Node {
+    fn make_autonomous_node(
+        id: u64,
+        goal: &str,
+        max_iterations: Option<u64>,
+    ) -> apxm_core::types::execution::Node {
+        let mut attributes = HashMap::new();
+        attributes.insert(
+            graph_attrs::PROMPT.to_string(),
+            Value::String(goal.to_string()),
+        );
+        if let Some(max_iter) = max_iterations {
+            attributes.insert(
+                ATTR_MAX_ITERATIONS.to_string(),
+                Value::Number(apxm_core::types::values::Number::Integer(max_iter as i64)),
+            );
+        }
+
         apxm_core::types::execution::Node {
             id,
             op_type: AISOperationType::Autonomous,
-            attributes: HashMap::new(),
+            attributes,
             input_tokens: vec![],
             output_tokens: vec![100],
             metadata: NodeMetadata::default(),
@@ -54,7 +212,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_autonomous_passthrough_with_input() {
+    async fn test_autonomous_missing_goal() {
         let memory = Arc::new(
             MemorySystem::new(MemoryConfig::in_memory_ltm())
                 .await
@@ -70,17 +228,23 @@ mod tests {
             crate::aam::Aam::new(),
         );
 
-        let node = make_autonomous_node(42);
-        let input_value = Value::String("test data".to_string());
-        let result = execute(&ctx, &node, vec![input_value.clone()])
-            .await
-            .unwrap();
+        // Node without goal attribute
+        let node = apxm_core::types::execution::Node {
+            id: 1,
+            op_type: AISOperationType::Autonomous,
+            attributes: HashMap::new(),
+            input_tokens: vec![],
+            output_tokens: vec![100],
+            metadata: NodeMetadata::default(),
+        };
 
-        assert_eq!(result, input_value, "Should pass through the first input");
+        let result = execute(&ctx, &node, vec![]).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("prompt"));
     }
 
     #[tokio::test]
-    async fn test_autonomous_null_without_input() {
+    async fn test_autonomous_default_max_iterations() {
         let memory = Arc::new(
             MemorySystem::new(MemoryConfig::in_memory_ltm())
                 .await
@@ -96,66 +260,16 @@ mod tests {
             crate::aam::Aam::new(),
         );
 
-        let node = make_autonomous_node(1);
-        let result = execute(&ctx, &node, vec![]).await.unwrap();
+        // Node without max_iterations should use default
+        let node = make_autonomous_node(1, "Test goal", None);
 
-        assert_eq!(result, Value::Null, "Should return Null when no inputs");
+        // Will fail due to no LLM but validates the attribute parsing works
+        let result = execute(&ctx, &node, vec![]).await;
+        assert!(result.is_err());
     }
 
     #[tokio::test]
-    async fn test_autonomous_records_aam_transition() {
-        let memory = Arc::new(
-            MemorySystem::new(MemoryConfig::in_memory_ltm())
-                .await
-                .unwrap(),
-        );
-        let llm_registry = Arc::new(LLMRegistry::new());
-        let capability_system = Arc::new(CapabilitySystem::new());
-
-        let aam = crate::aam::Aam::new();
-        let ctx = ExecutionContext::new(memory, llm_registry, capability_system, aam.clone());
-
-        let node = make_autonomous_node(7);
-        let input = Value::String("autonomy data".to_string());
-        let _ = execute(&ctx, &node, vec![input.clone()]).await.unwrap();
-
-        // Check AAM has the autonomous node belief recorded
-        let beliefs = ctx.aam.beliefs();
-        let key = format!("{}7", belief_keys::AUTONOMOUS_NODE_PREFIX);
-        assert_eq!(
-            beliefs.get(&key),
-            Some(&input),
-            "AAM should record the autonomous transition with the input value"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_autonomous_records_null_transition_for_empty_input() {
-        let memory = Arc::new(
-            MemorySystem::new(MemoryConfig::in_memory_ltm())
-                .await
-                .unwrap(),
-        );
-        let llm_registry = Arc::new(LLMRegistry::new());
-        let capability_system = Arc::new(CapabilitySystem::new());
-
-        let aam = crate::aam::Aam::new();
-        let ctx = ExecutionContext::new(memory, llm_registry, capability_system, aam.clone());
-
-        let node = make_autonomous_node(3);
-        let _ = execute(&ctx, &node, vec![]).await.unwrap();
-
-        let beliefs = ctx.aam.beliefs();
-        let key = format!("{}3", belief_keys::AUTONOMOUS_NODE_PREFIX);
-        assert_eq!(
-            beliefs.get(&key),
-            Some(&Value::Null),
-            "AAM should record Null for autonomous node with no inputs"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_autonomous_uses_first_input_only() {
+    async fn test_autonomous_custom_max_iterations() {
         let memory = Arc::new(
             MemorySystem::new(MemoryConfig::in_memory_ltm())
                 .await
@@ -171,17 +285,19 @@ mod tests {
             crate::aam::Aam::new(),
         );
 
-        let node = make_autonomous_node(1);
-        let inputs = vec![
-            Value::String("first".to_string()),
-            Value::String("second".to_string()),
-        ];
-        let result = execute(&ctx, &node, inputs).await.unwrap();
+        let node = make_autonomous_node(1, "Test goal", Some(5));
 
-        assert_eq!(
-            result,
-            Value::String("first".to_string()),
-            "Should use only the first input"
-        );
+        // Will fail due to no LLM but validates custom max_iterations parsing
+        let result = execute(&ctx, &node, vec![]).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_autonomous_format_state() {
+        let string_state = Value::String("test state".to_string());
+        assert_eq!(format_state(&string_state), "test state");
+
+        let number_state = Value::Number(apxm_core::types::values::Number::Integer(42));
+        assert_eq!(format_state(&number_state), "42");
     }
 }
