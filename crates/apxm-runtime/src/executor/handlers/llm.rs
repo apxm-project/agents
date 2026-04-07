@@ -21,7 +21,6 @@ use super::{
     ExecutionContext, Node, Result, Value, execute_llm_request, get_optional_string_attribute,
     get_optional_u64_attribute, get_string_attribute,
     inner_plan::{InnerPlanOptions, execute_inner_plan},
-    warmup,
 };
 use crate::aam::{Goal as AamGoal, GoalId, GoalStatus, TransitionLabel};
 use crate::executor::memoization::ResponseCache;
