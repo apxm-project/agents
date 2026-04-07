@@ -3,4 +3,4 @@ pub mod backend;
 pub mod graph_meta;
 
 pub use backend::GraphAwareVllmBackend;
-pub use graph_meta::{ApxmGraphHints, GraphMetadata, NodeSpec, PinPolicy};
+pub use graph_meta::{ApxmGraphHints, CompilerHints, GraphMetadata, NodeSpec, PinPolicy};

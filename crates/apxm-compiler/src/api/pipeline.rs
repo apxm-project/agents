@@ -80,7 +80,7 @@ impl<'ctx> Pipeline<'ctx> {
             self.config.opt_level,
             OptimizationLevel::O2 | OptimizationLevel::O3
         ) {
-            Self::run_graph_passes(&mut graph)?;
+            Self::run_graph_passes(&mut graph, &self.config)?;
         }
 
         let mlir_text = graph.to_mlir().map_err(|e| {
@@ -92,7 +92,7 @@ impl<'ctx> Pipeline<'ctx> {
         Module::parse(self.context, &mlir_text)
     }
 
-    fn run_graph_passes(graph: &mut ApxmGraph) -> Result<()> {
+    fn run_graph_passes(graph: &mut ApxmGraph, config: &PipelineConfig) -> Result<()> {
         macro_rules! run_pass {
             ($graph:expr, $pass:ident, $label:literal) => {
                 $graph.$pass().map_err(|e| {
@@ -103,10 +103,18 @@ impl<'ctx> Pipeline<'ctx> {
                 })?
             };
         }
+
+        // Set optimization target in graph metadata for passes to use
+        graph.metadata.insert(
+            "optimization.target".to_string(),
+            apxm_core::types::Value::String(config.target.to_string().into()),
+        );
+
         run_pass!(graph, constant_folding, "Constant folding");
         run_pass!(graph, prompt_caching, "Prompt caching");
         run_pass!(graph, memoization_hints, "Memoization hints");
         run_pass!(graph, parallelism_analysis, "Parallelism analysis");
+        run_pass!(graph, vllm_priority_hints, "vLLM priority hints");
         Ok(())
     }
 

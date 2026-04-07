@@ -55,6 +55,9 @@ pub struct RuntimeConfig {
     /// Optional session-backed context stack input for prompt enrichment.
     #[serde(default)]
     pub context_stack: Option<crate::context_stack::ContextStackConfig>,
+    /// Warmup configuration for shared-prefix optimization.
+    #[serde(default)]
+    pub warmup_config: crate::executor::WarmupConfig,
 }
 
 impl RuntimeConfig {
@@ -65,6 +68,7 @@ impl RuntimeConfig {
             scheduler_config: SchedulerConfig::default(),
             token_budget: None,
             context_stack: None,
+            warmup_config: crate::executor::WarmupConfig::default(),
         }
     }
 

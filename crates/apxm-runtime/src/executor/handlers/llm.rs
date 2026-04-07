@@ -21,9 +21,11 @@ use super::{
     ExecutionContext, Node, Result, Value, execute_llm_request, get_optional_string_attribute,
     get_optional_u64_attribute, get_string_attribute,
     inner_plan::{InnerPlanOptions, execute_inner_plan},
+    warmup,
 };
 use crate::aam::{Goal as AamGoal, GoalId, GoalStatus, TransitionLabel};
 use crate::executor::memoization::ResponseCache;
+use apxm_backends::llm::backends::vllm::{ApxmGraphHints, CompilerHints, PinPolicy};
 use apxm_backends::{LLMRequest, ToolChoice, ToolDefinition};
 use apxm_core::InnerPlanPayload;
 use apxm_core::apxm_llm;
@@ -557,6 +559,39 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
             request = request.with_tools(tools).with_tool_choice(ToolChoice::Auto);
         }
     }
+
+    // Build APXM graph hints for vLLM scheduling (Phase 0+1)
+    // Get priority from node metadata and map to priority_class
+    let priority_value = node.metadata.priority as i32;
+    let priority_class = match priority_value {
+        0..=2 => "critical_path",
+        3..=7 => "normal",
+        _ => "speculative",
+    };
+
+    let node_name = node.metadata.name.clone().unwrap_or_else(|| format!("node_{}", node.id));
+    let hints = ApxmGraphHints {
+        schema_version: 1,
+        graph_id: Some(ctx.execution_id.clone()),
+        execution_id: Some(ctx.execution_id.clone()),
+        node_id: Some(node.id as u32),
+        node_name: Some(node_name),
+        priority_class: Some(priority_class.to_string()),
+        downstream_nodes: Vec::new(), // Not available in handler context - Phase 2
+        reuse_group: None,             // Could be set by compiler pass - Phase 2
+        pin_policy: PinPolicy::none(), // No pinning in Phase 0+1
+        compiler_hints: CompilerHints::default(), // Phase 2
+    };
+    request = request.with_apxm_hints(hints);
+
+    // Add tracing for observability
+    apxm_llm!(debug,
+        execution_id = %ctx.execution_id,
+        node_id = node.id,
+        priority = priority_value,
+        priority_class = priority_class,
+        "Built APXM graph hints for vLLM scheduling"
+    );
 
     // Execute with retries
     let mut last_error = None;
