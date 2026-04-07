@@ -400,16 +400,15 @@ fn emit_node(
             let limit_str = limit
                 .map(|value| format!(" limit {value}"))
                 .unwrap_or_default();
-            let handle_type = format!("!ais.handle<{space}>");
 
             state.emit(format!(
-                "    {result} = ais.qmem {} stage {} in {}{}{} : {}",
+                "    {result} = ais.qmem {} stage {} in {}{}{} : !ais.handle<{}>",
                 quote_string(&query),
                 quote_string(&sid),
                 quote_string(&space),
                 limit_str,
                 attrs,
-                handle_type
+                space
             ));
             Ok(Some(MlirValueRef {
                 ssa: result,
@@ -441,12 +440,21 @@ fn emit_node(
                 emit_const_token(state, "memory")
             };
 
+            // Build attr-dict with key attribute
+            // extra_attr_dict returns either "" or " {k=v, ...}" (with leading space)
+            let full_attrs = if attrs.is_empty() {
+                format!(" {{key = {}}}", quote_string(&key))
+            } else {
+                // attrs is " {k=v, ...}" - strip leading space and outer braces
+                let inner_attrs = attrs.trim().trim_start_matches('{').trim_end_matches('}');
+                format!(" {{key = {}, {}}}", quote_string(&key), inner_attrs)
+            };
+
             state.emit(format!(
-                "    ais.umem {} into {} key {}{} : !ais.token",
+                "    ais.umem {} into {}{} : !ais.token",
                 source.ssa,
                 quote_string(&space),
-                quote_string(&key),
-                attrs
+                full_attrs
             ));
             Ok(None)
         }
@@ -1913,15 +1921,15 @@ mod tests {
 
         let mlir = lower_to_mlir(&graph).expect("UMEM graph should lower to MLIR");
 
-        // Verify that the UMEM operation includes the key attribute
+        // Verify that the UMEM operation includes the key attribute in attr-dict format
         assert!(
             mlir.contains("ais.umem"),
             "MLIR should contain umem operation\n{}",
             mlir
         );
         assert!(
-            mlir.contains("key \"user_data\""),
-            "UMEM should set key attribute\n{}",
+            mlir.contains("{key = \"user_data\"}"),
+            "UMEM should set key attribute in attr-dict\n{}",
             mlir
         );
         assert!(
