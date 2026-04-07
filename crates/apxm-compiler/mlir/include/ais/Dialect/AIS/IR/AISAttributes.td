@@ -30,7 +30,7 @@ class AIS_I32Enum<string name, string description, list<I32EnumAttrCase> cases>
 class AIS_I32EnumAttr<string mnemonic, AIS_I32Enum enumInfo>
     : EnumAttr<AIS_Dialect, enumInfo, mnemonic> {
   let cppNamespace = "::mlir::ais";
-  let assemblyFormat = "`<` $value `>`";
+  let assemblyFormat = "$value";
 }
 
 // Tier classification for capabilities and reasoning ops.

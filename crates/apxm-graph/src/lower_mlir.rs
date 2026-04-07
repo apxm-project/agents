@@ -401,14 +401,15 @@ fn emit_node(
                 .map(|value| format!(" limit {value}"))
                 .unwrap_or_default();
 
-            // Emit enum attribute for space: <stm>, <ltm>, or <episodic>
+            // Emit enum attribute for space: stm, ltm, or episodic (bare keyword)
             state.emit(format!(
-                "    {result} = ais.qmem {} stage {} in <{}>{}{} : !ais.handle",
+                "    {result} = ais.qmem {} stage {} in {}{}{} : !ais.handle<{}>",
                 quote_string(&query),
                 quote_string(&sid),
-                space, // emit as enum value in angle brackets
+                space, // emit as bare enum keyword
                 limit_str,
-                attrs
+                attrs,
+                space // emit memory space in handle type parameter
             ));
             Ok(Some(MlirValueRef {
                 ssa: result,
@@ -451,11 +452,11 @@ fn emit_node(
                 (None, a) => a.to_string(),
             };
 
-            // Emit enum attribute for space: <stm>, <ltm>, or <episodic>
+            // Emit enum attribute for space: stm, ltm, or episodic (bare keyword)
             state.emit(format!(
-                "    ais.umem {} into <{}>{} : !ais.token",
+                "    ais.umem {} into {}{} : !ais.token",
                 source.ssa,
-                space, // emit as enum value in angle brackets
+                space, // emit as bare enum keyword
                 full_attrs
             ));
             Ok(None)
@@ -1935,8 +1936,8 @@ mod tests {
             mlir
         );
         assert!(
-            mlir.contains("into <stm>"),
-            "UMEM should set memory space as enum <stm>\n{}",
+            mlir.contains("into stm"),
+            "UMEM should set memory space as enum keyword stm\n{}",
             mlir
         );
     }
