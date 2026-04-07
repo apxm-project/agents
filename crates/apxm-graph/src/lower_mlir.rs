@@ -1,5 +1,6 @@
 use crate::{ApxmGraph, GraphError, GraphNode, Parameter};
 use apxm_core::constants::graph::{attrs as graph_attrs, metadata as graph_meta};
+use apxm_core::constants::mlir::types as mlir_types;
 use apxm_core::types::AISOperationType;
 use apxm_core::types::{Number, Value};
 use std::collections::{BTreeSet, HashMap};
@@ -347,12 +348,7 @@ fn emit_node(
             }))
         }
         AISOperationType::Ask | AISOperationType::Think | AISOperationType::Reason => {
-            let op_name = match node.op {
-                AISOperationType::Ask => "ask",
-                AISOperationType::Think => "think",
-                AISOperationType::Reason => "reason",
-                _ => unreachable!(),
-            };
+            let op_name = node.op.mlir_mnemonic();
             let template = get_non_empty_template(&node.attributes);
             let result = format!("%n{}", node.id);
             let attrs = extra_attr_dict(
@@ -361,10 +357,11 @@ fn emit_node(
             );
             let context = format_context(&inputs, '[', ']');
             state.emit(format!(
-                "    {result} = ais.{op_name} {}{}{} : !ais.token",
+                "    {result} = ais.{op_name} {}{}{} : {}",
                 quote_string(&template),
                 context,
-                attrs
+                attrs,
+                mlir_types::TOKEN
             ));
             Ok(Some(MlirValueRef {
                 ssa: result,
@@ -645,11 +642,7 @@ fn emit_node(
             }))
         }
         AISOperationType::WaitAll | AISOperationType::Merge => {
-            let op_name = match node.op {
-                AISOperationType::WaitAll => "wait_all",
-                AISOperationType::Merge => "merge",
-                _ => unreachable!(),
-            };
+            let op_name = node.op.mlir_mnemonic();
             let tokens = inputs
                 .into_iter()
                 .map(|value| ensure_token(state, value))
@@ -658,16 +651,16 @@ fn emit_node(
             let attrs = extra_attr_dict_for_node(node, &[]);
 
             if tokens.is_empty() {
-                state.emit(format!("    {result} = ais.{op_name}{attrs} -> !ais.token"));
+                state.emit(format!("    {result} = ais.{op_name}{attrs} -> {}", mlir_types::TOKEN));
             } else {
                 let operands = tokens
                     .iter()
                     .map(|token| token.ssa.clone())
                     .collect::<Vec<_>>()
                     .join(", ");
-                let types = vec!["!ais.token"; tokens.len()].join(", ");
+                let types = vec![mlir_types::TOKEN; tokens.len()].join(", ");
                 state.emit(format!(
-                    "    {result} = ais.{op_name} {operands} : {types}{attrs} -> !ais.token"
+                    "    {result} = ais.{op_name} {operands} : {types}{attrs} -> {}", mlir_types::TOKEN
                 ));
             }
             Ok(Some(MlirValueRef {
@@ -702,7 +695,6 @@ fn emit_node(
             state,
             node,
             &inputs,
-            "reflect",
             &[graph_attrs::TRACE_ID, graph_attrs::TRACE],
             graph_attrs::TRACE,
             &[graph_attrs::TRACE_ID, graph_attrs::TRACE],
@@ -825,7 +817,6 @@ fn emit_node(
             state,
             node,
             &inputs,
-            "negotiate",
             &[graph_attrs::PROPOSAL, graph_attrs::TEMPLATE_STR],
             "{0}",
             &[graph_attrs::PROPOSAL, graph_attrs::TEMPLATE_STR],
@@ -836,7 +827,6 @@ fn emit_node(
             state,
             node,
             &inputs,
-            "flow_call",
             &[graph_attrs::FLOW_NAME, "flow", graph_attrs::TARGET],
             "unknown_flow",
             &[graph_attrs::FLOW_NAME, "flow", graph_attrs::TARGET],
@@ -870,7 +860,6 @@ fn emit_node(
             state,
             node,
             &inputs,
-            "exc",
             &[graph_attrs::CODE, "script"],
             "",
             &[graph_attrs::CODE, "script"],
@@ -909,7 +898,6 @@ fn emit_node(
             state,
             node,
             &inputs,
-            "agent",
             &[graph_attrs::AGENT_NAME, "name"],
             "agent",
             &[graph_attrs::AGENT_NAME, "name"],
@@ -920,7 +908,6 @@ fn emit_node(
             state,
             node,
             &inputs,
-            "update_goal",
             &[graph_attrs::GOAL_ID, graph_attrs::GOAL],
             "goal",
             &[graph_attrs::GOAL_ID, graph_attrs::GOAL],
@@ -930,7 +917,6 @@ fn emit_node(
             state,
             node,
             &inputs,
-            "guard",
             &[graph_attrs::CONDITION, graph_attrs::TEMPLATE_STR],
             "true",
             &[graph_attrs::CONDITION, graph_attrs::TEMPLATE_STR],
@@ -964,7 +950,6 @@ fn emit_node(
             state,
             node,
             &inputs,
-            "pause",
             &[graph_attrs::MESSAGE, graph_attrs::CHECKPOINT],
             "paused",
             &[graph_attrs::MESSAGE, graph_attrs::CHECKPOINT],
@@ -974,7 +959,6 @@ fn emit_node(
             state,
             node,
             &inputs,
-            "resume",
             &[graph_attrs::CHECKPOINT, graph_attrs::CHECKPOINT_ID],
             "latest",
             &[graph_attrs::CHECKPOINT, graph_attrs::CHECKPOINT_ID],
@@ -1004,7 +988,6 @@ fn emit_node(
                 state,
                 node,
                 &[], // always empty — spawn_agent has no data inputs in MLIR
-                "spawn_agent",
                 &[graph_attrs::AGENT_NAME, "name"],
                 "child_agent",
                 &[graph_attrs::AGENT_NAME, "name"],
@@ -1017,7 +1000,6 @@ fn emit_node(
                 state,
                 node,
                 &[], // always empty — spawn_team has no data inputs in MLIR
-                "spawn_team",
                 &[graph_attrs::TEAM_NAME, "name"],
                 "team",
                 &[graph_attrs::TEAM_NAME, "name"],
@@ -1028,7 +1010,6 @@ fn emit_node(
             state,
             node,
             &inputs,
-            "register_capability",
             &[graph_attrs::CAPABILITY_NAME, graph_attrs::CAPABILITY],
             "capability",
             &[graph_attrs::CAPABILITY_NAME, graph_attrs::CAPABILITY],
@@ -1039,7 +1020,6 @@ fn emit_node(
             state,
             node,
             &inputs,
-            "autonomous",
             &[graph_attrs::STRATEGY, graph_attrs::TEMPLATE_STR],
             "default",
             &[graph_attrs::STRATEGY, graph_attrs::TEMPLATE_STR],
@@ -1050,7 +1030,6 @@ fn emit_node(
             state,
             node,
             &inputs,
-            "checkpoint",
             &[graph_attrs::CHECKPOINT_ID],
             "checkpoint",
             &[graph_attrs::CHECKPOINT_ID],
@@ -1063,18 +1042,18 @@ fn emit_node(
 ///
 /// Used by many match arms that follow the same pattern: extract a single primary
 /// string attribute, build context from inputs, and emit a single MLIR line returning
-/// a token value.
+/// a token value. The op name is derived from node.op.mlir_mnemonic().
 #[allow(clippy::too_many_arguments)]
 fn emit_simple_op(
     state: &mut LoweringState,
     node: &GraphNode,
     inputs: &[MlirValueRef],
-    op_name: &str,
     primary_keys: &[&str],
     primary_default: &str,
     consumed_keys: &[&str],
     context_delimiters: Option<(char, char)>,
 ) -> Result<Option<MlirValueRef>, GraphError> {
+    let op_name = node.op.mlir_mnemonic();
     let primary = get_string_attr(&node.attributes, primary_keys)
         .unwrap_or_else(|| primary_default.to_string());
     let attrs = extra_attr_dict_for_node(node, consumed_keys);
@@ -1084,10 +1063,11 @@ fn emit_simple_op(
         .unwrap_or_default();
 
     state.emit(format!(
-        "    {result} = ais.{op_name} {}{}{} : !ais.token",
+        "    {result} = ais.{op_name} {}{}{} : {}",
         quote_string(&primary),
         context,
-        attrs
+        attrs,
+        mlir_types::TOKEN
     ));
     Ok(Some(MlirValueRef {
         ssa: result,

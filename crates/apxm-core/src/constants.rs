@@ -641,6 +641,16 @@ pub mod ui {
     }
 }
 
+pub mod mlir {
+    /// MLIR type strings used in AIS dialect lowering.
+    pub mod types {
+        /// Token type (!ais.token).
+        pub const TOKEN: &str = "!ais.token";
+        /// Goal type (!ais.goal<0>).
+        pub const GOAL: &str = "!ais.goal<0>";
+    }
+}
+
 pub mod defaults {
     pub const DEFAULT_SERVER_URL: &str = "http://127.0.0.1:18800";
     pub const DEFAULT_TIMEOUT_MS: u64 = 30_000;
