@@ -2789,19 +2789,30 @@ fn validate_command(input: PathBuf, json_output: bool, no_check_resources: bool)
     let mut errors: Vec<String> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
 
-    // Check file extension - .air files are MLIR text, not graphs
+    // Check file extension - .air files need to be parsed differently
     let is_air = input.extension().and_then(|e| e.to_str()) == Some("air");
 
-    if is_air {
-        return Err(anyhow::anyhow!(
-            ".air files are MLIR text, not graphs.\n\
-             Validation is performed by compilation: use `apxm compile {}` to validate.",
-            input.display()
-        ));
-    }
-
-    let raw: RawGraph = serde_json::from_str(&content)
-        .map_err(|e| anyhow::anyhow!("Invalid JSON in {}: {e}", input.display()))?;
+    let raw: RawGraph = if is_air {
+        // Parse .air format into ApxmGraph, then serialize back to JSON for validation
+        #[cfg(feature = "driver")]
+        {
+            let graph = apxm_graph::ApxmGraph::from_air(&content)
+                .map_err(|e| anyhow::anyhow!("Failed to parse .air file {}: {e}", input.display()))?;
+            let json = graph.to_json()
+                .map_err(|e| anyhow::anyhow!("Failed to serialize graph: {e}"))?;
+            serde_json::from_str(&json)
+                .map_err(|e| anyhow::anyhow!("Internal error serializing graph: {e}"))?
+        }
+        #[cfg(not(feature = "driver"))]
+        {
+            return Err(anyhow::anyhow!(
+                "Driver feature required to validate .air files. Build with --features driver."
+            ));
+        }
+    } else {
+        serde_json::from_str(&content)
+            .map_err(|e| anyhow::anyhow!("Invalid JSON in {}: {e}", input.display()))?
+    };
 
     if raw.name.is_empty() {
         errors.push("graph name must not be empty".to_string());
@@ -2939,7 +2950,11 @@ fn validate_command(input: PathBuf, json_output: bool, no_check_resources: bool)
     let mut semantic_warnings: Vec<String> = Vec::new();
     #[cfg(feature = "driver")]
     {
-        let parse_result = apxm_graph::ApxmGraph::from_json(&content);
+        let parse_result = if is_air {
+            apxm_graph::ApxmGraph::from_air(&content)
+        } else {
+            apxm_graph::ApxmGraph::from_json(&content)
+        };
 
         match parse_result {
             Ok(graph) => {
