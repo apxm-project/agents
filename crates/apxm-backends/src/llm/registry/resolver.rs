@@ -10,6 +10,7 @@ use apxm_core::types::AISOperationType;
 use dashmap::DashMap;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 /// Routing strategy determines how backends are selected.
@@ -54,6 +55,7 @@ pub fn resolve(
     default_backend: &Arc<RwLock<Option<String>>>,
     health_monitor: &HealthMonitor,
     strategy: &RoutingStrategy,
+    round_robin_counter: &Arc<AtomicUsize>,
 ) -> Result<String> {
     // Priority 1: Explicit backend selection
     if let Some(ref backend_name) = criteria.backend {
@@ -91,7 +93,7 @@ pub fn resolve(
     }
 
     // Priority 5: Select based on strategy
-    select_by_strategy(backends, health_monitor, strategy)
+    select_by_strategy(backends, health_monitor, strategy, round_robin_counter)
 }
 
 /// Find a backend that supports the given model.
@@ -116,6 +118,7 @@ fn select_by_strategy(
     backends: &Arc<DashMap<String, Arc<dyn LLMBackend>>>,
     health_monitor: &HealthMonitor,
     strategy: &RoutingStrategy,
+    round_robin_counter: &Arc<AtomicUsize>,
 ) -> Result<String> {
     if backends.is_empty() {
         anyhow::bail!("No backends registered");
@@ -123,7 +126,7 @@ fn select_by_strategy(
 
     match strategy {
         RoutingStrategy::FirstHealthy => select_first_healthy(backends, health_monitor),
-        RoutingStrategy::RoundRobin => select_round_robin(backends, health_monitor),
+        RoutingStrategy::RoundRobin => select_round_robin(backends, health_monitor, round_robin_counter),
         RoutingStrategy::LowLatency => select_low_latency(backends, health_monitor),
     }
 }
@@ -161,12 +164,30 @@ fn select_first_healthy(
     }
 }
 
-/// Select backend using round-robin (simplified: just pick first healthy).
+/// Select backend using round-robin across healthy backends.
 fn select_round_robin(
     backends: &Arc<DashMap<String, Arc<dyn LLMBackend>>>,
     health_monitor: &HealthMonitor,
+    counter: &Arc<AtomicUsize>,
 ) -> Result<String> {
-    select_first_healthy(backends, health_monitor)
+    // Collect healthy backends
+    let healthy: Vec<String> = backends
+        .iter()
+        .filter(|entry| {
+            let status = health_monitor.status(entry.key());
+            status == HealthStatus::Healthy || status == HealthStatus::Unknown
+        })
+        .map(|entry| entry.key().clone())
+        .collect();
+
+    if healthy.is_empty() {
+        // Fall back to first_healthy logic (which includes degraded backends)
+        return select_first_healthy(backends, health_monitor);
+    }
+
+    // Atomic round-robin selection
+    let idx = counter.fetch_add(1, Ordering::Relaxed) % healthy.len();
+    Ok(healthy[idx].clone())
 }
 
 /// Select backend with lowest average latency.

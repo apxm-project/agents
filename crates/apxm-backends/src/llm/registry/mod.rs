@@ -5,14 +5,17 @@
 
 #[cfg(feature = "metrics")]
 use crate::llm::RequestMetrics;
-use crate::llm::backends::{LLMBackend, LLMRequest, LLMResponse};
+use crate::llm::backends::{LLMBackend, LLMRequest, LLMResponse, StreamChunk};
 use crate::llm::rate_limit::{RateLimitConfig, RateLimiter, SystemClock};
 use anyhow::{Context as AnyhowContext, Result};
 use apxm_core::types::AISOperationType;
 #[cfg(feature = "metrics")]
 use apxm_core::types::TokenUsage;
 use dashmap::DashMap;
+use futures::stream::{Stream, StreamExt};
 use std::collections::HashMap;
+use std::pin::Pin;
+use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -53,6 +56,8 @@ pub struct LLMRegistry {
     metrics: crate::llm::MetricsTracker,
     /// Rate limiter
     rate_limiter: Arc<RateLimiter<SystemClock>>,
+    /// Round-robin counter for RoutingStrategy::RoundRobin
+    round_robin_counter: Arc<AtomicUsize>,
 }
 
 impl LLMRegistry {
@@ -80,6 +85,7 @@ impl LLMRegistry {
             #[cfg(feature = "metrics")]
             metrics: crate::llm::MetricsTracker::new(),
             rate_limiter: Arc::new(rate_limiter),
+            round_robin_counter: Arc::new(AtomicUsize::new(0)),
         })
     }
 
@@ -102,6 +108,7 @@ impl LLMRegistry {
             #[cfg(feature = "metrics")]
             metrics: crate::llm::MetricsTracker::new(),
             rate_limiter: Arc::new(rate_limiter),
+            round_robin_counter: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -352,9 +359,12 @@ impl LLMRegistry {
             anyhow::bail!("Backend '{}' is unhealthy", backend_name);
         }
 
+        // Estimate token cost from max_tokens (defaults to 1.0 for backward compatibility)
+        let estimated_cost = request.max_tokens.map(|t| t as f64).unwrap_or(1.0);
+
         // Check rate limit before dispatching to backend
         self.rate_limiter
-            .check_and_consume(backend_name)
+            .check_and_consume(backend_name, estimated_cost)
             .map_err(|e| anyhow::anyhow!("{}", e))?;
 
         let start = Instant::now();
@@ -418,6 +428,97 @@ impl LLMRegistry {
         Ok(backend)
     }
 
+    /// Generate streaming response with fallback on first-chunk error.
+    ///
+    /// Tries primary backend stream. If the first chunk errors, drops the stream
+    /// and retries with the fallback backend. Once the first chunk succeeds,
+    /// commits to that backend (no mid-stream switching).
+    pub fn generate_stream_with_fallback<'a>(
+        &'a self,
+        request: &'a LLMRequest,
+    ) -> Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send + 'a>> {
+        Box::pin(async_stream::try_stream! {
+            let backend_name = match self.resolve_backend(request) {
+                Ok(name) => name,
+                Err(e) => {
+                    Err(e)?;
+                    return;
+                }
+            };
+
+            let backend = match self.backends.get(&backend_name) {
+                Some(b) => b.clone(),
+                None => {
+                    Err(anyhow::anyhow!("Backend '{}' not found", backend_name))?;
+                    return;
+                }
+            };
+
+            // Try primary backend stream
+            let mut stream = backend.generate_stream(request.clone());
+
+            match stream.next().await {
+                Some(Ok(first_chunk)) => {
+                    // First chunk succeeded, commit to this stream
+                    yield first_chunk;
+
+                    // Stream remaining chunks
+                    while let Some(chunk) = stream.next().await {
+                        yield chunk?;
+                    }
+                }
+                Some(Err(e)) => {
+                    // First chunk failed, try fallback
+                    tracing::warn!("Primary backend '{}' streaming failed: {}. Attempting fallback.", backend_name, e);
+                    self.health_monitor.record_failure(&backend_name, std::time::Duration::from_secs(0));
+
+                    // Get fallback backends from fallback chain
+                    let mut fallback_succeeded = false;
+                    if let Some(fallback_chain) = self.fallback_chains.get(&backend_name) {
+                        for fallback_name in fallback_chain.value() {
+                            if let Some(fallback_backend) = self.backends.get(fallback_name) {
+                                let health = self.health_monitor.status(fallback_name);
+                                if health == HealthStatus::Unhealthy {
+                                    continue;
+                                }
+
+                                tracing::info!("Retrying with fallback backend: {}", fallback_name);
+                                let mut fallback_stream = fallback_backend.generate_stream(request.clone());
+
+                                match fallback_stream.next().await {
+                                    Some(Ok(first_chunk)) => {
+                                        yield first_chunk;
+                                        while let Some(chunk) = fallback_stream.next().await {
+                                            yield chunk?;
+                                        }
+                                        fallback_succeeded = true;
+                                        break;
+                                    }
+                                    Some(Err(fe)) => {
+                                        tracing::warn!("Fallback backend '{}' also failed: {}", fallback_name, fe);
+                                        self.health_monitor.record_failure(fallback_name, std::time::Duration::from_secs(0));
+                                        continue;
+                                    }
+                                    None => {
+                                        tracing::warn!("Fallback backend '{}' returned empty stream", fallback_name);
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if !fallback_succeeded {
+                        Err(anyhow::anyhow!("All backends failed for streaming request: {}", e))?;
+                    }
+                }
+                None => {
+                    Err(anyhow::anyhow!("Backend '{}' returned empty stream", backend_name))?;
+                }
+            }
+        })
+    }
+
     /// Resolve the backend name that would handle this request after policy normalization.
     pub fn resolve_backend_name(&self, request: &LLMRequest) -> Result<String> {
         let prepared = self.prepare_request(request);
@@ -435,6 +536,7 @@ impl LLMRegistry {
             &self.default_backend,
             &self.health_monitor,
             &self.routing_strategy,
+            &self.round_robin_counter,
         )
     }
 

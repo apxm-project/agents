@@ -414,6 +414,10 @@ impl Runtime {
         Arc::clone(&self.capability_system)
     }
 
+    pub fn memory_system_arc(&self) -> Arc<MemorySystem> {
+        Arc::clone(&self.memory)
+    }
+
     pub fn aam(&self) -> &Aam {
         &self.aam
     }
@@ -432,6 +436,16 @@ impl Runtime {
 
     pub fn process_table_arc(&self) -> Arc<ProcessTable> {
         Arc::clone(&self.process_table)
+    }
+
+    /// Gracefully shut down the runtime, closing all agent processes.
+    ///
+    /// This method should be called when execution completes to ensure
+    /// all ACP sessions are properly terminated. Without this, agent
+    /// processes may leak.
+    pub fn shutdown(&self) {
+        tracing::info!("Runtime shutting down, closing all agent processes");
+        self.process_table.close_all();
     }
 }
 
