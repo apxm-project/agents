@@ -79,4 +79,4 @@ def brief_analyzer(g: GraphRecorder):
 
 if __name__ == "__main__":
     import json
-    print(json.dumps(brief_analyzer._graph.to_dict(), indent=2))
+    print(brief_analyzer._graph.to_air())

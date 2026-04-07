@@ -144,6 +144,47 @@ def test_graph_to_json():
     assert data["parameters"][0]["name"] == "input"
 
 
+def test_graph_to_air_preserves_full_literals():
+    """Test .air serialization keeps full parser-safe attribute literals."""
+    from apxm import GraphRecorder
+
+    long_prompt = (
+        'Line 1 says "hello".\n'
+        "Line 2 keeps going past sixty characters to verify the emitter never truncates values."
+    )
+    schema = {
+        "type": "object",
+        "properties": {
+            "topic": {"type": "string"},
+            "enabled": True,
+            "thresholds": [1, 2.5, False],
+        },
+    }
+
+    g = GraphRecorder("air_test")
+    g.ask(
+        "emit",
+        long_prompt,
+        enabled=True,
+        retries=3,
+        ratio=0.75,
+        tags=["alpha", "beta", False],
+        config=schema,
+    )
+
+    air = g.to_air()
+
+    assert 'template_str = "Line 1 says \\"hello\\".\\nLine 2 keeps going past sixty characters to verify the emitter never truncates values."' in air
+    assert "enabled = true" in air
+    assert "retries = 3" in air
+    assert "ratio = 0.75" in air
+    assert 'tags = ["alpha", "beta", false]' in air
+    assert (
+        'config = {"type": "object", "properties": {"topic": {"type": "string"}, '
+        '"enabled": true, "thresholds": [1, 2.5, false]}}'
+    ) in air
+
+
 def test_graph_validation():
     """Test graph validation."""
     from apxm import GraphRecorder, validate_graph

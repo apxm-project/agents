@@ -31,7 +31,7 @@ class AgentHandle:
             node_name,
             graph_keys.OP_COMMUNICATE,
             {
-                c.TARGET: self._agent_name,
+                c.RECIPIENT: self._agent_name,
                 c.MESSAGE: message,
                 **attributes,
             },

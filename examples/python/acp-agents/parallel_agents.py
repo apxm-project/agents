@@ -49,4 +49,4 @@ def parallel_agents(g: GraphRecorder):
 
 if __name__ == "__main__":
     import json
-    print(json.dumps(parallel_agents._graph.to_dict(), indent=2))
+    print(parallel_agents._graph.to_air())

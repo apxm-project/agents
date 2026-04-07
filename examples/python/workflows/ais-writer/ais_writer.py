@@ -79,7 +79,7 @@ def ais_writer(g: GraphRecorder):
     entry_write_prompt = g.ask(
         "entry_write_prompt",
         "Write entry point APXM Python workflow files. Manifest: {0}. Agent contexts: {1}. Skeptic: {2}. "
-        "Use the Python frontend and target JSON graph emission for execution. "
+        "Use the Python frontend and target canonical .air emission for execution. "
         "Output JSON map: filename -> complete_python_content."
     )
     manifest_comm | entry_write_prompt
@@ -108,4 +108,4 @@ def ais_writer(g: GraphRecorder):
 
 if __name__ == "__main__":
     import json
-    print(json.dumps(ais_writer._graph.to_dict(), indent=2))
+    print(ais_writer._graph.to_air())

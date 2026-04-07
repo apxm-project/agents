@@ -54,4 +54,4 @@ def coordinator_main(g: GraphRecorder):
 if __name__ == "__main__":
     import json
     # Print the coordinator workflow
-    print(json.dumps(coordinator_main._graph.to_dict(), indent=2))
+    print(coordinator_main._graph.to_air())

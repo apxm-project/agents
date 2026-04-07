@@ -424,7 +424,7 @@ class GraphRecorder:
     ) -> NodeRef:
         """Send a message to another agent (COMMUNICATE)."""
         attrs: dict[str, Any] = {
-            graph_keys.TARGET: target_agent,
+            graph_keys.RECIPIENT: target_agent,
             graph_keys.MESSAGE: message,
         }
         if protocol is not None:

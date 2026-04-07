@@ -55,4 +55,4 @@ def resilient_acp(g: GraphRecorder):
 
 if __name__ == "__main__":
     import json
-    print(json.dumps(resilient_acp._graph.to_dict(), indent=2))
+    print(resilient_acp._graph.to_air())

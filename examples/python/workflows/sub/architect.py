@@ -32,4 +32,4 @@ def architect(g: GraphRecorder, task: str):
 
 if __name__ == "__main__":
     import json
-    print(json.dumps(architect._graph.to_dict(), indent=2))
+    print(architect._graph.to_air())

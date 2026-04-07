@@ -106,4 +106,4 @@ def planner(g: GraphRecorder):
 
 if __name__ == "__main__":
     import json
-    print(json.dumps(planner._graph.to_dict(), indent=2))
+    print(planner._graph.to_air())

@@ -67,4 +67,4 @@ def plan_then_parallelize(g: GraphRecorder):
 
 if __name__ == "__main__":
     import json
-    print(json.dumps(plan_then_parallelize._graph.to_dict(), indent=2))
+    print(plan_then_parallelize._graph.to_air())

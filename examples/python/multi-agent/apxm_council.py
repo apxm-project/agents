@@ -48,4 +48,4 @@ def council_agent(g: GraphRecorder):
 
 if __name__ == "__main__":
     import json
-    print(json.dumps(council_agent._graph.to_dict(), indent=2))
+    print(council_agent._graph.to_air())

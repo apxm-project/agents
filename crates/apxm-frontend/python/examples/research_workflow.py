@@ -6,7 +6,7 @@ This example demonstrates:
 - Named parameter placeholders ({topic} syntax)
 - AgentHandle sugar for spawn().ask() chaining
 - Team sugar for workflow-local teams
-- Graph serialization to JSON
+- Graph serialization to canonical .air
 """
 
 from apxm import GraphRecorder, compile
@@ -63,14 +63,8 @@ def main():
     print(f"Edges: {len(graph.edges)}")
     print()
 
-    # Print graph as JSON
-    print("JSON Representation:")
-    print("=" * 60)
-    print(graph.to_json(indent=2))
-
-    # Print as .air format
-    print()
-    print("AIR (Agent Intermediate Representation):")
+    # Print graph as canonical .air
+    print("AIR Representation:")
     print("=" * 60)
     print(graph.to_air())
 

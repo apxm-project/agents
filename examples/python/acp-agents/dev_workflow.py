@@ -82,4 +82,4 @@ def apxm_dev_workflow(g: GraphRecorder):
 
 if __name__ == "__main__":
     import json
-    print(json.dumps(apxm_dev_workflow._graph.to_dict(), indent=2))
+    print(apxm_dev_workflow._graph.to_air())

@@ -128,21 +128,27 @@ def hello_world(g: GraphRecorder) -> dict:
     return g.to_graph().to_dict()
 ```
 
-Emit the graph JSON:
+Emit the canonical `.air` IR:
 
 ```bash
-PYTHONPATH=crates/apxm-frontend/python python3 hello.py > hello.json
+PYTHONPATH=crates/apxm-frontend/python python3 hello.py > hello.air
 ```
 
 ### Run it
 
 ```bash
-dekk apxm execute hello.json
+dekk apxm execute hello.air
+```
+
+You can also execute the Python workflow directly:
+
+```bash
+dekk apxm execute hello.py
 ```
 
 What happens under the hood:
 1. Python authoring code builds an `ApxmGraph`
-2. The graph is serialized as JSON (canonical frontend exchange format)
+2. The graph is serialized as `.air` (the canonical frontend exchange format)
 3. The compiler lowers the graph to MLIR and optimizes it
 4. An executable artifact is generated and run by the dataflow scheduler
 5. The `ask` operation calls your configured LLM backend
@@ -153,7 +159,7 @@ For production, separate compilation from execution:
 
 ```bash
 # Compile to artifact
-dekk apxm compile hello.json -o hello.apxmobj
+dekk apxm compile hello.air -o hello.apxmobj
 
 # Run the artifact (skips compilation)
 dekk apxm run hello.apxmobj
@@ -255,10 +261,11 @@ APXM supports three relevant formats:
 | Format | Extension | Best for |
 |--------|-----------|----------|
 | **Python API** | `.py` | Primary workflow authoring experience |
-| **ApxmGraph JSON** | `.json` | Stable interchange format for CLI, services, and generated graphs |
+| **Agent IR** | `.air` | Canonical text IR for CLI handoff, diffs, and generated graphs |
+| **ApxmGraph JSON** | `.json` | Utility/debug export and compatibility tooling |
 | **Artifact** | `.apxmobj` | Distribution and repeated execution |
 
-Python frontends emit `ApxmGraph` JSON before MLIR lowering. `.air` remains a debug-only inspection format.
+Python frontends emit `.air` before MLIR lowering. JSON remains available as a utility export.
 
 ---
 

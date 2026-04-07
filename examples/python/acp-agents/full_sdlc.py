@@ -40,4 +40,4 @@ def full_sdlc(g: GraphRecorder):
 
 if __name__ == "__main__":
     import json
-    print(json.dumps(full_sdlc._graph.to_dict(), indent=2))
+    print(full_sdlc._graph.to_air())

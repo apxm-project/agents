@@ -80,4 +80,4 @@ def negotiate_consensus(g: GraphRecorder):
 
 if __name__ == "__main__":
     import json
-    print(json.dumps(negotiate_consensus._graph.to_dict(), indent=2))
+    print(negotiate_consensus._graph.to_air())

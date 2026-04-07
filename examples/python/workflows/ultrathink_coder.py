@@ -102,4 +102,4 @@ def ultrathink_coder(g: GraphRecorder, task: str):
 
 if __name__ == "__main__":
     import json
-    print(json.dumps(ultrathink_coder._graph.to_dict(), indent=2))
+    print(ultrathink_coder._graph.to_air())

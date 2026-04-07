@@ -48,4 +48,4 @@ def pipeline(g: GraphRecorder):
 
 if __name__ == "__main__":
     import json
-    print(json.dumps(pipeline._graph.to_dict(), indent=2))
+    print(pipeline._graph.to_air())

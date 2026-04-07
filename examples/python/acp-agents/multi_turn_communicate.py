@@ -33,4 +33,4 @@ def multi_turn_communicate(g: GraphRecorder):
 
 if __name__ == "__main__":
     import json
-    print(json.dumps(multi_turn_communicate._graph.to_dict(), indent=2))
+    print(multi_turn_communicate._graph.to_air())
