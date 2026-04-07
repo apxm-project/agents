@@ -49,11 +49,67 @@ impl std::fmt::Display for OptimizationLevel {
     }
 }
 
+/// Optimization target for compilation - what to optimize for
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OptimizationTarget {
+    /// Minimize end-to-end latency (more fusion, parallel scheduling)
+    Latency,
+    /// Minimize LLM API cost (more CSE, model substitution)
+    Cost,
+    /// Minimize token usage (context compression, dead context elimination)
+    Tokens,
+    /// Maximize parallel execution (aggressive scheduling)
+    Parallelism,
+    /// Balanced optimization (default)
+    Balanced,
+}
+
+impl Default for OptimizationTarget {
+    fn default() -> Self {
+        Self::Balanced
+    }
+}
+
+impl std::str::FromStr for OptimizationTarget {
+    type Err = RuntimeError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "latency" => Ok(Self::Latency),
+            "cost" => Ok(Self::Cost),
+            "tokens" => Ok(Self::Tokens),
+            "parallelism" | "parallel" => Ok(Self::Parallelism),
+            "balanced" => Ok(Self::Balanced),
+            _ => Err(RuntimeError::Serialization(format!(
+                "Invalid optimization target: {}. Valid targets: latency, cost, tokens, parallelism, balanced",
+                s
+            ))),
+        }
+    }
+}
+
+impl std::fmt::Display for OptimizationTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Latency => write!(f, "latency"),
+            Self::Cost => write!(f, "cost"),
+            Self::Tokens => write!(f, "tokens"),
+            Self::Parallelism => write!(f, "parallelism"),
+            Self::Balanced => write!(f, "balanced"),
+        }
+    }
+}
+
 /// Pipeline configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PipelineConfig {
     /// Optimization level
     pub opt_level: OptimizationLevel,
+
+    /// Optimization target - what to optimize for
+    #[serde(default)]
+    pub target: OptimizationTarget,
 
     /// Verify module before and after passes
     pub verify: bool,
@@ -82,6 +138,7 @@ impl Default for PipelineConfig {
     fn default() -> Self {
         Self {
             opt_level: OptimizationLevel::O2,
+            target: OptimizationTarget::Balanced,
             verify: true,
             no_cse_llm: false,
             profile_path: None,
@@ -95,6 +152,7 @@ impl PipelineConfig {
     pub fn development() -> Self {
         Self {
             opt_level: OptimizationLevel::O0,
+            target: OptimizationTarget::Balanced,
             verify: true,
             no_cse_llm: false,
             profile_path: None,
@@ -106,6 +164,7 @@ impl PipelineConfig {
     pub fn production() -> Self {
         Self {
             opt_level: OptimizationLevel::O3,
+            target: OptimizationTarget::Balanced,
             verify: false,
             no_cse_llm: false,
             profile_path: None,
@@ -116,6 +175,12 @@ impl PipelineConfig {
     /// Builder: Set optimization level
     pub fn with_opt_level(mut self, level: OptimizationLevel) -> Self {
         self.opt_level = level;
+        self
+    }
+
+    /// Builder: Set optimization target
+    pub fn with_target(mut self, target: OptimizationTarget) -> Self {
+        self.target = target;
         self
     }
 
@@ -151,6 +216,36 @@ mod tests {
             OptimizationLevel::O3
         );
         assert!("invalid".parse::<OptimizationLevel>().is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn test_opt_target_from_str() -> Result<(), RuntimeError> {
+        assert_eq!(
+            "latency".parse::<OptimizationTarget>()?,
+            OptimizationTarget::Latency
+        );
+        assert_eq!(
+            "cost".parse::<OptimizationTarget>()?,
+            OptimizationTarget::Cost
+        );
+        assert_eq!(
+            "tokens".parse::<OptimizationTarget>()?,
+            OptimizationTarget::Tokens
+        );
+        assert_eq!(
+            "parallelism".parse::<OptimizationTarget>()?,
+            OptimizationTarget::Parallelism
+        );
+        assert_eq!(
+            "parallel".parse::<OptimizationTarget>()?,
+            OptimizationTarget::Parallelism
+        );
+        assert_eq!(
+            "balanced".parse::<OptimizationTarget>()?,
+            OptimizationTarget::Balanced
+        );
+        assert!("invalid".parse::<OptimizationTarget>().is_err());
         Ok(())
     }
 }

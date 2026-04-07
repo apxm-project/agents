@@ -98,6 +98,9 @@ enum Commands {
         /// Optimization level (0 = no optimizations, 1-3 = increasing optimization)
         #[arg(short = 'O', long = "opt-level", default_value = "1")]
         opt_level: u8,
+        /// Optimization target: latency, cost, tokens, parallelism, balanced
+        #[arg(long, default_value = "balanced")]
+        target: String,
         /// Skip CSE for LLM operations (useful with non-zero temperature)
         #[arg(long)]
         no_cse_llm: bool,
@@ -1178,8 +1181,9 @@ async fn run_cli() -> Result<()> {
             output,
             emit_diagnostics,
             opt_level,
+            target,
             no_cse_llm,
-        } => compile_command(input, output, emit_diagnostics, opt_level, no_cse_llm),
+        } => compile_command(input, output, emit_diagnostics, opt_level, target, no_cse_llm),
         Commands::Decompile { artifact, output } => decompile_command(artifact, output),
         Commands::Execute {
             input,
@@ -1391,12 +1395,15 @@ fn compile_command(
     output: Option<PathBuf>,
     emit_diagnostics: Option<PathBuf>,
     opt_level: u8,
+    target: String,
     no_cse_llm: bool,
 ) -> Result<()> {
     use apxm_core::constants::diagnostics;
-    use apxm_core::types::PipelineConfig;
+    use apxm_core::types::{OptimizationTarget, PipelineConfig};
 
     let opt = parse_opt_level(opt_level);
+    let opt_target: OptimizationTarget = target.parse()
+        .with_context(|| format!("Invalid optimization target: {}", target))?;
     let (graph_input, _python_air) = if input.is_dir() {
         (input.clone(), None)
     } else {
@@ -1467,28 +1474,23 @@ fn compile_command(
     // When diagnostics are requested, use the per-pass metrics path.
     // Otherwise use the fast bulk-run path.
     let (module, pass_diagnostics) = if emit_diagnostics.is_some() {
-        if no_cse_llm {
-            let config = PipelineConfig {
-                opt_level: opt,
-                verify: true,
-                no_cse_llm: true,
-                ..Default::default()
-            };
-            let (m, d) = compiler
-                .compile_graph_with_config_and_diagnostics(&graph, config)
-                .map_err(|e| anyhow::anyhow!("Failed to compile graph: {e}"))?;
-            (m, Some(d))
-        } else {
-            let (m, d) = compiler
-                .compile_graph_with_diagnostics(&graph)
-                .map_err(|e| anyhow::anyhow!("Failed to compile graph: {e}"))?;
-            (m, Some(d))
-        }
-    } else if no_cse_llm {
         let config = PipelineConfig {
             opt_level: opt,
+            target: opt_target,
             verify: true,
-            no_cse_llm: true,
+            no_cse_llm,
+            ..Default::default()
+        };
+        let (m, d) = compiler
+            .compile_graph_with_config_and_diagnostics(&graph, config)
+            .map_err(|e| anyhow::anyhow!("Failed to compile graph: {e}"))?;
+        (m, Some(d))
+    } else if no_cse_llm || opt_target != OptimizationTarget::Balanced {
+        let config = PipelineConfig {
+            opt_level: opt,
+            target: opt_target,
+            verify: true,
+            no_cse_llm,
             ..Default::default()
         };
         let m = compiler
