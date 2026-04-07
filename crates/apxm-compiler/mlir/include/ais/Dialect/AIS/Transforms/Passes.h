@@ -63,6 +63,9 @@ std::unique_ptr<Pass> createDeadContextEliminationPass();
 /// Create SchemaNarrowing pass - narrow output schemas based on usage
 std::unique_ptr<Pass> createSchemaNarrowingPass();
 
+/// Create PromptCanonicalization pass - reorder prompts for shared-prefix reuse
+std::unique_ptr<Pass> createPromptCanonicalizationPass();
+
 //===----------------------------------------------------------------------===//
 // Pass Registration
 //===----------------------------------------------------------------------===//

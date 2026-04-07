@@ -226,4 +226,33 @@ def SchemaNarrowing : Pass<"schema-narrowing", "mlir::ModuleOp"> {
   let constructor = "mlir::ais::createSchemaNarrowingPass()";
 }
 
+def PromptCanonicalization : Pass<"prompt-canonicalization", "mlir::ModuleOp"> {
+  let summary = "Reorder prompts to maximize shared-prefix reuse for vLLM caching";
+  let description = [{
+    Identifies groups of LLM operations that share common upstream context and
+    reorders their template strings so shared context appears FIRST, followed
+    by operation-specific instructions.
+
+    Example transformation:
+      Before:
+        %a = ais.ask "As security reviewer, review: {0}" [%diff]
+        %b = ais.ask "As style reviewer, review: {0}" [%diff]
+
+      After:
+        %a = ais.ask "{0}\n---\nReview focus: security" [%diff]
+             {ais.shared_prefix_group = "diff_review", ais.warmup_candidate = true}
+        %b = ais.ask "{0}\n---\nReview focus: style" [%diff]
+             {ais.shared_prefix_group = "diff_review"}
+
+    This enables vLLM's prefix caching to reuse expensive shared context across
+    multiple operations, reducing repeated prefill work. The pass emits:
+    - ais.shared_prefix_group: Identifies operations sharing a prefix
+    - ais.shared_prefix_est_tokens: Estimated shared token count
+    - ais.warmup_candidate: Marks first op in group for warmup prefill
+
+    See docs/strategy/09-VLLM-GRAPH-AWARENESS.md section 5.3.
+  }];
+  let constructor = "mlir::ais::createPromptCanonicalizationPass()";
+}
+
 #endif // APXM_AIS_PASSES

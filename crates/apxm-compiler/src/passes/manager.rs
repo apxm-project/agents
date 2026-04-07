@@ -103,6 +103,10 @@ impl<'ctx> PassManager<'ctx> {
         self.add_pass("schema-narrowing")
     }
 
+    pub fn prompt_canonicalization(&mut self) -> Result<&mut Self> {
+        self.add_pass("prompt-canonicalization")
+    }
+
     pub fn run(&self, module: &Module) -> Result<()> {
         ffi::handle_bool_result(
             unsafe { ffi::apxm_pass_manager_run(self.raw, module.as_ptr()) },
