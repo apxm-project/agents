@@ -12,6 +12,7 @@ pub use codegen::{
     write_generated_python,
 };
 pub use registry::{
-    FrontendAgentTemplate, FrontendConstant, FrontendOperationSpec, agent_templates,
-    graph_attr_constants, graph_metadata_constants, operation_specs,
+    FrontendAgentTemplate, FrontendConstant, FrontendEmissionSpec, FrontendOperationSpec,
+    agent_templates, emission_specs, graph_attr_constants, graph_metadata_constants,
+    operation_specs,
 };

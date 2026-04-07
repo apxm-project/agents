@@ -27,6 +27,17 @@ pub struct FrontendAgentTemplate {
     pub default_model: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FrontendEmissionSpec {
+    pub op: String,
+    pub mlir_mnemonic: String,
+    pub primary_attr: Option<String>,
+    pub context_style: String,
+    pub result_type: String,
+    pub positional_attrs: Vec<String>,
+    pub keywords: Vec<String>,
+}
+
 pub fn graph_metadata_constants() -> Vec<FrontendConstant> {
     vec![
         FrontendConstant {
@@ -456,6 +467,37 @@ pub fn agent_templates() -> Vec<FrontendAgentTemplate> {
             command: profile.command,
             default_mode: profile.default_mode,
             default_model: profile.default_model,
+        })
+        .collect()
+}
+
+pub fn emission_specs() -> Vec<FrontendEmissionSpec> {
+    get_all_operations()
+        .map(|spec| {
+            let context_style = match spec.emission.context_style {
+                apxm_ais::ContextStyle::Bracketed => "Bracketed",
+                apxm_ais::ContextStyle::Parenthesized => "Parenthesized",
+                apxm_ais::ContextStyle::None => "None",
+            };
+            let result_type = match spec.emission.result_type {
+                apxm_ais::MlirResultType::Token => "Token",
+                apxm_ais::MlirResultType::Handle => "Handle",
+                apxm_ais::MlirResultType::Void => "Void",
+            };
+            FrontendEmissionSpec {
+                op: spec.op_type.to_string(),
+                mlir_mnemonic: spec.op_type.mlir_mnemonic().to_string(),
+                primary_attr: spec.emission.primary_attr.map(|s| s.to_string()),
+                context_style: context_style.to_string(),
+                result_type: result_type.to_string(),
+                positional_attrs: spec
+                    .emission
+                    .positional_attrs
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect(),
+                keywords: spec.emission.keywords.iter().map(|s| s.to_string()).collect(),
+            }
         })
         .collect()
 }

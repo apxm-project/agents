@@ -48,8 +48,9 @@ pub use aam::{AAM, Beliefs, Capabilities, Goal, GoalId, GoalStatus, Goals};
 pub use memory::MemoryTier;
 pub use operations::tablegen::generate_tablegen;
 pub use operations::{
-    AIS_OPERATIONS, AISOperationType, OperationCategory, OperationField, OperationLatency,
-    OperationSpec, get_all_operations, get_operation_spec,
+    AIS_OPERATIONS, AISOperationType, ContextStyle, MlirEmissionSpec, MlirResultType,
+    OperationCategory, OperationField, OperationLatency, OperationSpec, get_all_operations,
+    get_operation_spec,
 };
 pub use types::Value;
 pub use validation::{
