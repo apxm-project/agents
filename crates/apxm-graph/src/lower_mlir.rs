@@ -165,49 +165,58 @@ pub fn lower_to_mlir(graph: &ApxmGraph) -> Result<String, GraphError> {
         .map(|node| node.id)
         .collect::<Vec<_>>();
 
-    let mut return_candidates = exit_ids
+    // Check if the graph has an explicit RETURN node (which is a terminator)
+    let has_return_node = graph
+        .nodes
         .iter()
-        .filter_map(|id| produced_values.get(id).cloned())
-        .collect::<Vec<_>>();
+        .any(|node| node.op == AISOperationType::Return);
 
-    if return_candidates.is_empty() {
-        for node_id in order.iter().rev() {
-            if let Some(value) = produced_values.get(node_id) {
-                return_candidates.push(value.clone());
-                break;
+    // Only emit func.return if there's no explicit RETURN node (which already terminates)
+    if !has_return_node {
+        let mut return_candidates = exit_ids
+            .iter()
+            .filter_map(|id| produced_values.get(id).cloned())
+            .collect::<Vec<_>>();
+
+        if return_candidates.is_empty() {
+            for node_id in order.iter().rev() {
+                if let Some(value) = produced_values.get(node_id) {
+                    return_candidates.push(value.clone());
+                    break;
+                }
             }
         }
-    }
 
-    let return_value = if return_candidates.is_empty() {
-        emit_const_token(&mut state, "result")
-    } else {
-        let token_values = return_candidates
-            .into_iter()
-            .map(|value| ensure_token(&mut state, value))
-            .collect::<Result<Vec<_>, _>>()?;
-
-        if token_values.len() == 1 {
-            token_values.into_iter().next().unwrap()
+        let return_value = if return_candidates.is_empty() {
+            emit_const_token(&mut state, "result")
         } else {
-            let output = state.fresh_value("ret_merge");
-            let operands = token_values
-                .iter()
-                .map(|value| value.ssa.clone())
-                .collect::<Vec<_>>()
-                .join(", ");
-            let types = vec!["!ais.token"; token_values.len()].join(", ");
-            state.emit(format!(
-                "    {output} = ais.merge {operands} : {types} -> !ais.token"
-            ));
-            MlirValueRef {
-                ssa: output,
-                ty: MlirValueType::Token,
-            }
-        }
-    };
+            let token_values = return_candidates
+                .into_iter()
+                .map(|value| ensure_token(&mut state, value))
+                .collect::<Result<Vec<_>, _>>()?;
 
-    state.emit(format!("    func.return {} : !ais.token", return_value.ssa));
+            if token_values.len() == 1 {
+                token_values.into_iter().next().unwrap()
+            } else {
+                let output = state.fresh_value("ret_merge");
+                let operands = token_values
+                    .iter()
+                    .map(|value| value.ssa.clone())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let types = vec!["!ais.token"; token_values.len()].join(", ");
+                state.emit(format!(
+                    "    {output} = ais.merge {operands} : {types} -> !ais.token"
+                ));
+                MlirValueRef {
+                    ssa: output,
+                    ty: MlirValueType::Token,
+                }
+            }
+        };
+
+        state.emit(format!("    func.return {} : !ais.token", return_value.ssa));
+    }
 
     let function_name = sanitize_symbol_name(&graph.name);
     let args = graph
@@ -837,7 +846,7 @@ fn emit_node(
             if let Some(input) = inputs.first() {
                 let token = ensure_token(state, input.clone())?;
                 state.emit(format!(
-                    "    ais.return {} : !ais.token{}",
+                    "    ais.return {}{} : !ais.token",
                     token.ssa, attrs
                 ));
             } else {
@@ -1228,7 +1237,7 @@ fn extra_attr_dict(attributes: &HashMap<String, Value>, consumed: &[&str]) -> St
             if consumed.contains(&key.as_str()) || !is_valid_attr_name(key) {
                 return None;
             }
-            Some(format!("{key} = {}", value_to_mlir_attr(value)))
+            Some(format!("{} = {}", quote_string(key), value_to_mlir_attr(value)))
         })
         .collect::<Vec<_>>();
 
@@ -1404,8 +1413,8 @@ mod tests {
         };
 
         let mlir = lower_to_mlir(&graph).expect("graph lowers to mlir");
-        assert!(mlir.contains("tools_enabled = true"));
-        assert!(mlir.contains("tools = [\"bash\", \"read\"]"));
+        assert!(mlir.contains("\"tools_enabled\" = true"));
+        assert!(mlir.contains("\"tools\" = [\"bash\", \"read\"]"));
     }
 
     #[test]

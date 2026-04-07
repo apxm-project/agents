@@ -133,10 +133,10 @@ impl Compiler {
 
     /// Emit canonical .air text IR for a graph.
     ///
-    /// This produces valid MLIR text (the AIS dialect) that can be re-compiled.
+    /// This produces MLIR text (the AIS dialect) that can be re-compiled.
     /// Analogous to LLVM .ll — human-readable, diffable, debuggable, and round-trippable.
     pub fn emit_air(&self, graph: &ApxmGraph) -> Result<String, DriverError> {
-        // Lower the graph to MLIR text — the .air format IS valid MLIR
+        // Lower the graph to MLIR text format
         graph.to_mlir().map_err(|e| {
             DriverError::Driver(format!("Failed to generate .air (MLIR) text: {}", e))
         })

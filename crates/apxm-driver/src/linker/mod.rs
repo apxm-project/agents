@@ -172,7 +172,7 @@ impl Linker {
             ));
         };
 
-        // For .air files, use compiler.compile() which goes directly to MLIR parsing
+        // For .air files, use compiler.compile() which parses .air → ApxmGraph → MLIR
         let ext = input.extension().and_then(|ext| ext.to_str());
         if matches!(ext, Some("air")) {
             let module = compiler.compile(input)?;
