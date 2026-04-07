@@ -38,18 +38,18 @@ TASK_PROMPT=$(cat "$TASK_FILE")
 # --permission-mode bypassPermissions: Allow agent to make file changes
 # --print: Output results to stdout
 #
-# Note: This assumes 'claude-code' is available in PATH
+# Note: This assumes 'claude' is available in PATH
 # Adjust the command based on actual Claude Code CLI interface
 
-if command -v claude-code &> /dev/null; then
-    claude-code \
+if command -v claude &> /dev/null; then
+    claude \
         --permission-mode bypassPermissions \
         --print \
         "$TASK_PROMPT" 2>&1 | tee "$LOG_FILE"
 
     EXIT_CODE=${PIPESTATUS[0]}
 else
-    echo "Error: 'claude-code' command not found in PATH" >&2
+    echo "Error: 'claude' command not found in PATH" >&2
     echo "" >&2
     echo "Please install Claude Code or manually run:" >&2
     echo "  cat $TASK_FILE" >&2
