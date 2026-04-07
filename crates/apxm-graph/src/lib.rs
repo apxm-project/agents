@@ -29,7 +29,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use thiserror::Error;
 
-pub mod air_parser;
 mod lower_dag;
 mod lower_mlir;
 mod optimize;
@@ -94,12 +93,6 @@ impl ApxmGraph {
 
     pub fn from_bytes(input: &[u8]) -> Result<Self, GraphError> {
         let graph = serde_json::from_slice::<Self>(input)?;
-        graph.validate()?;
-        Ok(graph)
-    }
-
-    pub fn from_air(input: &str) -> Result<Self, GraphError> {
-        let graph = air_parser::parse_air(input)?;
         graph.validate()?;
         Ok(graph)
     }

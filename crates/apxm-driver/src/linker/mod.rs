@@ -158,6 +158,7 @@ impl Linker {
 
     /// Compile graph input into an executable artifact.
     ///
+    /// For .air inputs, parses as MLIR text directly (bypasses graph loading + lowering).
     /// For JSON graph inputs, uses the graph-direct path (pure Rust, no MLIR) when
     /// the MLIR compiler is unavailable. Falls back to full MLIR compilation otherwise.
     ///
@@ -170,6 +171,26 @@ impl Linker {
                 "MLIR compiler required for non-JSON inputs but is not available. Run `dekk apxm build` to rebuild with MLIR support.".to_string(),
             ));
         };
+
+        // For .air files, use compiler.compile() which goes directly to MLIR parsing
+        let ext = input.extension().and_then(|ext| ext.to_str());
+        if matches!(ext, Some("air")) {
+            let module = compiler.compile(input)?;
+            let artifact_bytes = module.generate_artifact_bytes()?;
+            let artifact =
+                Artifact::from_bytes(&artifact_bytes).map_err(|e| state_err(e.to_string()))?;
+
+            let dag = artifact
+                .dag()
+                .ok_or_else(|| state_err("Artifact contains no DAGs"))?;
+            if let Err(err) = dag.validate() {
+                return Err(state_err(format!(
+                    "Artifact DAG validation failed: {}",
+                    err
+                )));
+            }
+            return Ok(artifact);
+        }
 
         let graph = compiler.load_graph(input)?;
 
