@@ -5,17 +5,41 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "apxm"
 version = "0.0.1"
-description = "Python frontend for APXM workflows"
+description = "Python frontend for APXM graph construction, AIR emission, and workflow execution"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
 authors = [{ name = "APXM Contributors" }]
+keywords = ["apxm", "workflows", "graphs", "agents", "mlir"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Code Generators",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
 dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/randreshg/apxm"
+Repository = "https://github.com/randreshg/apxm"
+Issues = "https://github.com/randreshg/apxm/issues"
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0", "pytest-asyncio>=0.21"]
 
 [tool.setuptools.packages.find]
 where = ["."]
+include = ["apxm", "apxm.*"]
 
 [tool.setuptools.package-data]
 apxm = ["py.typed"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-# Re-export core graph types and functions
+from . import _generated
 from .config import (
     AgentConfig,
     BashConfig,
@@ -15,42 +15,33 @@ from .decorators import compile
 from .execution import CompiledFlow, ExecutionMode, WorkflowCheckpoint, validate_graph
 from .ir import ApxmGraph, GraphEdge, GraphNode, Parameter
 from .module import FlowModule
+from .providers import ProviderSpec, list_providers, resolve_provider
 from .proxy import GraphRecorder, NodeRef
 from .sugar import AgentHandle, Team
 
-# Re-export providers module
-from .providers import ProviderSpec, list_providers, resolve_provider
-
-# Re-export generated modules
-from . import _generated
-
 __all__ = [
-    # Submodules
     "_generated",
-    # Graph types
-    "AgentConfig",
-    "AgentHandle",
     "ApxmGraph",
-    "BashConfig",
-    "CompiledFlow",
-    "ExecutionMode",
-    "FlowModule",
-    "GraphEdge",
     "GraphNode",
+    "GraphEdge",
+    "Parameter",
     "GraphRecorder",
     "NodeRef",
-    "Parameter",
+    "compile",
+    "CompiledFlow",
+    "ExecutionMode",
+    "AgentConfig",
+    "ToolsConfig",
+    "AgentHandle",
+    "BashConfig",
+    "FlowModule",
+    "ProviderSpec",
     "ReadConfig",
     "SearchWebConfig",
     "Team",
-    "ToolsConfig",
     "WorkflowCheckpoint",
     "WriteConfig",
-    # Functions
-    "compile",
-    "validate_graph",
-    # Providers
-    "ProviderSpec",
     "list_providers",
     "resolve_provider",
+    "validate_graph",
 ]
