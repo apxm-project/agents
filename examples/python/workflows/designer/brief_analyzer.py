@@ -6,7 +6,7 @@ Pipeline: 3 sequential analyst agents -> synthesis -> manifest
 Usage: python3 -m examples.python.workflows.designer.brief_analyzer
 """
 
-from apxm.graph import compile, GraphRecorder
+from apxm import compile, GraphRecorder
 from apxm._generated.agents import claude
 import os
 

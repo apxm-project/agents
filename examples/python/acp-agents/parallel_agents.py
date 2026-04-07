@@ -4,7 +4,7 @@
 Usage: python3 -m examples.python.acp-agents.parallel_agents
 """
 
-from apxm.graph import compile, GraphRecorder
+from apxm import compile, GraphRecorder
 from apxm._generated.agents import claude, codex
 import os
 

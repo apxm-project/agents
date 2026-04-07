@@ -17,7 +17,7 @@ Usage:
 """
 
 import os
-from apxm.graph import compile, GraphRecorder
+from apxm import compile, GraphRecorder
 from apxm._generated.agents import claude, codex
 
 

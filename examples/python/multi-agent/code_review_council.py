@@ -4,7 +4,7 @@
 Usage: python3 -m examples.python.multi-agent.code_review_council
 """
 
-from apxm.graph import compile, GraphRecorder
+from apxm import compile, GraphRecorder
 
 
 @compile()

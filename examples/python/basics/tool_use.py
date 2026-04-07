@@ -4,7 +4,7 @@
 Usage: python3 -m examples.python.basics.tool_use
 """
 
-from apxm.graph import compile, GraphRecorder
+from apxm import compile, GraphRecorder
 
 
 @compile()

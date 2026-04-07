@@ -6,7 +6,7 @@ Give it a dream. It designs and writes the optimal APXM workflow to achieve it.
 Usage: python3 -m examples.python.workflows.graph-builder.graph_builder
 """
 
-from apxm.graph import compile, GraphRecorder
+from apxm import compile, GraphRecorder
 from apxm._generated.agents import claude
 import os
 

@@ -4,7 +4,7 @@
 Usage: python3 -m examples.python.patterns.multi-agent-negotiate.negotiate_consensus
 """
 
-from apxm.graph import compile, GraphRecorder
+from apxm import compile, GraphRecorder
 from apxm._generated.agents import claude
 import os
 

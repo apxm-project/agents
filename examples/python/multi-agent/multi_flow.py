@@ -8,7 +8,7 @@ cross-flow calls like "Researcher.research(topic)".
 Usage: python3 -m examples.python.multi-agent.multi_flow
 """
 
-from apxm.graph import compile, GraphRecorder
+from apxm import compile, GraphRecorder
 
 
 @compile()

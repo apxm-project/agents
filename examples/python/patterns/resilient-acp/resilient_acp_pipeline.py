@@ -6,7 +6,7 @@ Spawn agent, send task, handle result.
 Usage: python3 -m examples.python.patterns.resilient-acp.resilient_acp_pipeline
 """
 
-from apxm.graph import compile, GraphRecorder
+from apxm import compile, GraphRecorder
 from apxm._generated.agents import claude
 import os
 

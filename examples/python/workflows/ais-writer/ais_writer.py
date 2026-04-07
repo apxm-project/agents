@@ -6,7 +6,7 @@ Give it a plan/brief. It designs and writes APXM Python workflow files.
 Usage: python3 examples/python/workflows/ais-writer/ais_writer.py
 """
 
-from apxm.graph import compile, GraphRecorder
+from apxm import compile, GraphRecorder
 from apxm._generated.agents import claude
 import os
 

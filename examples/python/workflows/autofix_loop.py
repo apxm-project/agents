@@ -16,7 +16,7 @@ Usage:
     dekk apxm execute examples/python/workflows/autofix_loop.air --emit-session
 """
 
-from apxm.graph import compile, GraphRecorder, AgentConfig
+from apxm import compile, GraphRecorder, AgentConfig
 from apxm._generated.agents import claude, codex
 
 

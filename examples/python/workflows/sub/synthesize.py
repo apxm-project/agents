@@ -4,7 +4,7 @@
 Usage: python3 -m examples.python.workflows.sub.synthesize
 """
 
-from apxm.graph import compile, GraphRecorder
+from apxm import compile, GraphRecorder
 
 
 @compile()

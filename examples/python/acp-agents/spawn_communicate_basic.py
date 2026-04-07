@@ -4,7 +4,7 @@
 Usage: python3 -m examples.python.acp-agents.spawn_communicate_basic
 """
 
-from apxm.graph import compile, GraphRecorder
+from apxm import compile, GraphRecorder
 from apxm._generated.agents import claude
 import os
 
