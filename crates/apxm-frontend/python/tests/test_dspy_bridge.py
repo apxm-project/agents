@@ -120,9 +120,10 @@ def test_optimize_template_stub_mode():
     bridge = ApxmDspyBridge(lm_config=None)
     result = bridge.optimize_template(template, examples)
 
-    # In stub mode (lm=None), should return original template
-    # If DSPy is available, it might still run optimization with mock LM
-    assert template in result  # Original template should be in result
+    # In stub mode (lm=None), DSPy can still extract few-shot examples from labeled data
+    # The optimized prompt should include the examples and the question placeholder
+    assert "{{question}}" in result  # Variable placeholder should be in result
+    assert "Example" in result or "question:" in result  # Should have examples or structure
 
 
 def test_load_training_data_from_list():
@@ -297,6 +298,61 @@ def test_template_without_variables():
 
     # Should return original when no variables found
     assert result == template
+
+
+def test_real_optimization_with_demos():
+    """Test that DSPy actually extracts few-shot demos."""
+    template = "Classify sentiment: {{text}}"
+    examples = [
+        {"inputs": {"text": "This is amazing!"}, "output": "positive"},
+        {"inputs": {"text": "This is terrible."}, "output": "negative"},
+        {"inputs": {"text": "It's okay."}, "output": "neutral"},
+    ]
+
+    bridge = ApxmDspyBridge(lm_config=None)
+    config = OptimizationConfig(
+        max_labeled_demos=3,
+        max_bootstrapped_demos=0,  # Only use labeled demos
+        verbose=False,
+    )
+
+    result = bridge.optimize_template(template, examples, config)
+
+    # Optimized prompt should include few-shot examples
+    assert "Example" in result
+    assert "{{text}}" in result  # Should preserve the variable placeholder
+    # Should include some of the training examples
+    assert ("amazing" in result or "terrible" in result or "okay" in result)
+
+
+def test_extract_optimized_prompt():
+    """Test the _extract_optimized_prompt helper."""
+    bridge = ApxmDspyBridge(lm_config=None)
+
+    # Create a mock predictor with demos
+    class MockPredictor:
+        def __init__(self):
+            self.demos = []
+            self.extended_signature = None
+
+    # Create a mock demo
+    class MockDemo:
+        def __init__(self):
+            self.question = "What is 2+2?"
+            self.answer = "4"
+
+    predictor = MockPredictor()
+    predictor.demos = [MockDemo()]
+
+    original_template = "Answer: {{question}}"
+    input_vars = ["question"]
+
+    result = bridge._extract_optimized_prompt(predictor, original_template, input_vars)
+
+    # Should include the demo
+    assert "Example" in result
+    assert "What is 2+2?" in result
+    assert "{{question}}" in result  # Should preserve placeholder
 
 
 if __name__ == "__main__":
