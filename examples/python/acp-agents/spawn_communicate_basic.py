@@ -5,27 +5,28 @@ Usage: python3 -m examples.python.acp-agents.spawn_communicate_basic
 """
 
 from apxm.graph import compile, GraphRecorder
+from apxm._generated.agents import claude
 import os
 
 
 @compile()
 def spawn_communicate_basic(g: GraphRecorder):
     """Spawn Claude agent and send a review request."""
-    # Spawn Claude agent
+    # Spawn Claude agent with typed profile
     reviewer = g.spawn(
         "reviewer",
-        profile="claude",
+        profile=claude,
         cwd=os.environ.get("APXM_HOME", os.getcwd())
     )
 
     # Send message using AgentHandle sugar
     reviewer.ask("Review the current directory structure and suggest improvements.")
 
-    # Print and return the response
-    output = g.print_("output", message="{0}")
+    # Print and return the response (auto-named)
+    output = g.print_(message="{0}")
     reviewer.get_last_node() | output
 
-    g.return_("result", source=output)
+    g.return_(source=output)
     
 
 

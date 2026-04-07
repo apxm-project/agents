@@ -11,10 +11,9 @@ from apxm.graph import compile, GraphRecorder
 def hello_world(g: GraphRecorder):
     """Simple greeting workflow."""
     greeting = g.ask(
-        "greeting",
-        "Generate a friendly greeting for someone learning about AI agents"
+        template="Generate a friendly greeting for someone learning about AI agents"
     )
-    g.return_("output", source=greeting)
+    g.return_(source=greeting)
     
 
 

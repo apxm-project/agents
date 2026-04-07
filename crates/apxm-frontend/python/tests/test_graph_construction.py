@@ -9,7 +9,7 @@ def test_simple_graph():
     from apxm import GraphRecorder
 
     g = GraphRecorder("simple_test")
-    ask_node = g.ask("query", "What is {0}?")
+    ask_node = g.ask("query", template="What is {0}?")
 
     graph = g.to_graph()
 
@@ -27,7 +27,7 @@ def test_graph_with_params():
     g = GraphRecorder("with_params")
     g.param("topic", "str")
     g.param("depth", "int")
-    ask_node = g.ask("query", "Research {0} with depth {1}")
+    ask_node = g.ask("query", template="Research {0} with depth {1}")
 
     graph = g.to_graph()
 
@@ -43,9 +43,9 @@ def test_graph_edges():
     from apxm import GraphRecorder
 
     g = GraphRecorder("edges_test")
-    a = g.ask("step1", "Do A")
-    b = g.ask("step2", "Do B")
-    c = g.ask("step3", "Do C")
+    a = g.ask("step1", template="Do A")
+    b = g.ask("step2", template="Do B")
+    c = g.ask("step3", template="Do C")
 
     # Control edge
     a >> b
@@ -131,7 +131,7 @@ def test_graph_to_json():
 
     g = GraphRecorder("json_test")
     g.param("input", "str")
-    g.ask("process", "Process {0}")
+    g.ask("process", template="Process {0}")
 
     graph = g.to_graph()
     json_str = graph.to_json()
@@ -164,7 +164,7 @@ def test_graph_to_air_preserves_full_literals():
     g = GraphRecorder("air_test")
     g.ask(
         "emit",
-        long_prompt,
+        template=long_prompt,
         enabled=True,
         retries=3,
         ratio=0.75,
@@ -190,7 +190,7 @@ def test_graph_validation():
     from apxm import GraphRecorder, validate_graph
 
     g = GraphRecorder("valid_graph")
-    g.ask("test", "Test query")
+    g.ask("test", template="Test query")
 
     graph = g.to_graph()
     errors = validate_graph(graph)
