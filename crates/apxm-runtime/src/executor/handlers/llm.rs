@@ -645,13 +645,36 @@ async fn execute_llm_once(
         return execute_ask_with_tools(ctx, node, request).await;
     }
 
+    // Check nocache attribute to skip caching entirely
+    let nocache = node
+        .attributes
+        .get("nocache")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
     // Check memoization cache for deterministic (temperature=0) calls
-    let memo_key = ResponseCache::compute_key(
-        &request.prompt,
-        request.system_prompt.as_deref(),
-        request.model.as_deref(),
-        request.temperature,
-    );
+    let memo_key = if nocache {
+        None
+    } else {
+        // Extract tool names if present
+        let tools_list: Option<Vec<String>> = request
+            .tools
+            .as_ref()
+            .map(|tools| tools.iter().map(|t| t.name.clone()).collect());
+
+        // Get output schema if present
+        let output_schema = output_schema_from_node(node)?;
+        let output_schema_str = output_schema.as_ref().map(|s| s.to_string());
+
+        ResponseCache::compute_key(
+            &request.prompt,
+            request.system_prompt.as_deref(),
+            request.model.as_deref(),
+            request.temperature,
+            tools_list.as_deref(),
+            output_schema_str.as_deref(),
+        )
+    };
     if let Some(key) = memo_key
         && let Some(cached) = ctx.response_cache.get(key)
     {
@@ -730,12 +753,19 @@ async fn execute_llm_once(
 
     // Store in memoization cache if deterministic
     if let Some(key) = memo_key {
-        ctx.response_cache.put(
+        // Use per-op TTL based on operation type
+        let ttl = request
+            .operation_type
+            .as_ref()
+            .map(|op| ResponseCache::ttl_for_op(op));
+
+        ctx.response_cache.put_with_ttl(
             key,
             content.clone(),
             response.usage.input_tokens,
             response.usage.output_tokens,
             response.model.clone(),
+            ttl,
         );
     }
 
