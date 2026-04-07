@@ -5,6 +5,7 @@ Usage: python3 -m examples.python.acp-agents.dev_workflow
 """
 
 from apxm.graph import compile, GraphRecorder
+from apxm._generated.agents import claude, codex
 import os
 
 
@@ -14,12 +15,12 @@ def apxm_dev_workflow(g: GraphRecorder):
     cwd = os.environ.get("APXM_HOME", os.getcwd())
 
     # Spawn agents
-    architect = g.spawn("architect", profile="claude", cwd=cwd)
-    coder = g.spawn("coder", profile="codex", cwd=cwd)
+    architect = g.spawn("architect", profile=claude, cwd=cwd)
+    coder = g.spawn("coder", profile=codex, cwd=cwd)
 
     # Define the task
-    task = (
-        "Add a CHECKPOINT operation to the AIS instruction set at wire index 38. "
+    task = g.text(
+        value="Add a CHECKPOINT operation to the AIS instruction set at wire index 38. "
         "Follow the exact pattern of the existing Pause op in: "
         "(1) crates/apxm-ais/src/operations/definitions.rs - add the enum variant, all match arms, and OperationSpec. "
         "(2) crates/apxm-runtime/src/executor/handlers/checkpoint.rs - create stub handler. "
@@ -31,52 +32,51 @@ def apxm_dev_workflow(g: GraphRecorder):
     # Architect plans
     architect_prompt = g.ask(
         "build_architect_prompt",
-        template="{0}\n\nYou are the lead architect for APXM. Produce a detailed, file-by-file implementation plan for this task."
+        template="{task}\n\nYou are the lead architect for APXM. Produce a detailed, file-by-file implementation plan for this task."
     )
-    task_node = g.const_("task", value=task)
-    task_node | architect_prompt
 
-    architect.ask("{0}")
-    architect_prompt | architect.get_last_node()
+    architect.ask("{architect_prompt}")
+
+    # Get architect's last node for later use
+    architect_plan = architect.get_last_node()
 
     # Print architect's plan
-    print1 = g.print_("print_plan", message="=== ARCHITECT PLAN ===\n{0}")
-    architect.get_last_node() | print1
+    print1 = g.print("=== ARCHITECT PLAN ===\n{architect_plan}")
 
     # Coder implements
     coder_prompt = g.ask(
         "build_coder_prompt",
         template="Implement exactly what the architect planned below. Make the changes in the codebase. "
         "Then run: cargo test --workspace --exclude apxm-compiler 2>&1 | tail -10. "
-        "Report what you changed and test results.\n\nPlan:\n{0}"
+        "Report what you changed and test results.\n\nPlan:\n{architect_plan}"
     )
-    architect.get_last_node() | coder_prompt
     print1 >> coder_prompt
 
-    coder.ask("{0}")
-    coder_prompt | coder.get_last_node()
+    coder.ask("{coder_prompt}")
+
+    # Get coder's last node
+    coder_impl = coder.get_last_node()
 
     # Print coder's implementation
-    print2 = g.print_("print_impl", message="=== CODER IMPLEMENTATION ===\n{0}")
-    coder.get_last_node() | print2
+    print2 = g.print("=== CODER IMPLEMENTATION ===\n{coder_impl}")
 
     # Architect reviews
     review_prompt = g.ask(
         "build_review_prompt",
         template="Review Codex's implementation. Does it match your plan? Any bugs or missing pieces? "
-        "Ship it or iterate?\n\nCodex's report:\n{0}"
+        "Ship it or iterate?\n\nCodex's report:\n{coder_impl}"
     )
-    coder.get_last_node() | review_prompt
     print2 >> review_prompt
 
-    architect.ask("{0}")
-    review_prompt | architect.get_last_node()
+    architect.ask("{review_prompt}")
+
+    # Get final architect review
+    architect_review = architect.get_last_node()
 
     # Print final review
-    print3 = g.print_("print_review", message="=== ARCHITECT REVIEW ===\n{0}")
-    architect.get_last_node() | print3
+    print3 = g.print("=== ARCHITECT REVIEW ===\n{architect_review}")
 
-    g.return_("result", source=print3)
+    g.done(print3)
     
 
 

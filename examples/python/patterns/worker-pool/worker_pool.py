@@ -24,46 +24,38 @@ def worker_pool_parallel(g: GraphRecorder):
     # Three parallel workers
     worker_a = g.think(
         "worker_a",
-        template="You are Worker A. From this task list, perform deep analysis of TASK A:\n{0}\n\n"
+        template="You are Worker A. From this task list, perform deep analysis of TASK A:\n{task_list}\n\n"
         "Provide: (1) key findings, (2) confidence score 0-1, (3) recommended next action."
     )
-    task_list | worker_a
 
     worker_b = g.think(
         "worker_b",
-        template="You are Worker B. From this task list, perform deep analysis of TASK B:\n{0}\n\n"
+        template="You are Worker B. From this task list, perform deep analysis of TASK B:\n{task_list}\n\n"
         "Provide: (1) key findings, (2) confidence score 0-1, (3) recommended next action."
     )
-    task_list | worker_b
 
     worker_c = g.think(
         "worker_c",
-        template="You are Worker C. From this task list, perform deep analysis of TASK C:\n{0}\n\n"
+        template="You are Worker C. From this task list, perform deep analysis of TASK C:\n{task_list}\n\n"
         "Provide: (1) key findings, (2) confidence score 0-1, (3) recommended next action."
     )
-    task_list | worker_c
 
     # Aggregate results
     aggregate = g.think(
         "aggregate",
         template="Three workers processed parallel tasks. Aggregate their findings:\n\n"
-        "WORKER A:\n{0}\n\nWORKER B:\n{1}\n\nWORKER C:\n{2}\n\n"
+        "WORKER A:\n{worker_a}\n\nWORKER B:\n{worker_b}\n\nWORKER C:\n{worker_c}\n\n"
         "Ranked summary: highest confidence findings and priority actions."
     )
-    worker_a | aggregate
-    worker_b | aggregate
-    worker_c | aggregate
 
     # Store in memory
-    mem = g.update_memory("store_aggregate", data="{0}", key="worker_pool_aggregate")
-    aggregate | mem
+    mem = g.update_memory("store_aggregate", data="{aggregate}", key="worker_pool_aggregate")
 
     # Print and return
-    output = g.print_("output", message="=== WORKER POOL RESULTS ===\n{0}")
-    aggregate | output
+    output = g.print("=== WORKER POOL RESULTS ===\n{aggregate}")
     mem >> output
 
-    g.return_("result", source=output)
+    g.done(output)
     
 
 

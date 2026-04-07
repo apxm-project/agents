@@ -18,6 +18,7 @@ Usage:
 
 import os
 from apxm.graph import compile, GraphRecorder
+from apxm._generated.agents import claude, codex
 
 
 @compile()
@@ -34,14 +35,12 @@ def refactor_workflow(g: GraphRecorder):
     cwd = os.environ.get("APXM_HOME", os.getcwd())
 
     # Spawn agents
-    analyzer = g.spawn("analyzer", profile="claude", cwd=cwd)
-    implementer = g.spawn("implementer", profile="codex", cwd=cwd)
-    test_runner = g.spawn("test_runner", profile="claude", cwd=cwd)
+    analyzer = g.spawn("analyzer", profile=claude, cwd=cwd)
+    implementer = g.spawn("implementer", profile=codex, cwd=cwd)
+    test_runner = g.spawn("test_runner", profile=claude, cwd=cwd)
 
     # Step 1: Analyzer reads the code and identifies opportunities
-    analyzer_task = g.const_(
-        "analyzer_task",
-        value="""You are the code analyzer for APXM. Analyze this refactoring request:
+    analyzer_task = g.text(value="""You are the code analyzer for APXM. Analyze this refactoring request:
 
 Target: {0}
 Goal: {1}
@@ -78,7 +77,7 @@ Keep under 500 words but be specific about file paths and identifiers.
     analyzer.ask("{0}")
     analyzer_task | analyzer.get_last_node()
 
-    print1 = g.print_("print_analysis", message="=== REFACTORING ANALYSIS ===\n{0}")
+    print1 = g.print("=== REFACTORING ANALYSIS ===\n{0}")
     analyzer.get_last_node() | print1
 
     # Step 2: Implementer does the refactoring
@@ -113,7 +112,7 @@ Be methodical. If something doesn't compile, fix it before moving on.
     implementer.ask("{0}")
     implementer_task | implementer.get_last_node()
 
-    print2 = g.print_("print_implementation", message="=== REFACTORING CHANGES ===\n{0}")
+    print2 = g.print("=== REFACTORING CHANGES ===\n{0}")
     implementer.get_last_node() | print2
 
     # Step 3: Test runner verifies nothing broke
@@ -159,7 +158,7 @@ Keep iterating until all tests pass.
     test_runner.ask("{0}")
     test_task | test_runner.get_last_node()
 
-    print3 = g.print_("print_test_results", message="=== TEST RESULTS ===\n{0}")
+    print3 = g.print("=== TEST RESULTS ===\n{0}")
     test_runner.get_last_node() | print3
 
     # Step 4: Summary
@@ -191,10 +190,10 @@ If status is incomplete or failed, list remaining issues.
     test_runner.get_last_node() | summary
     print3 >> summary
 
-    print4 = g.print_("print_summary", message="=== REFACTORING SUMMARY ===\n{0}")
+    print4 = g.print("=== REFACTORING SUMMARY ===\n{0}")
     summary | print4
 
-    g.return_("result", source=print4)
+    g.done(print4)
 
 
 if __name__ == "__main__":

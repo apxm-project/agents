@@ -18,6 +18,7 @@ Usage:
 
 import os
 from apxm.graph import compile, GraphRecorder
+from apxm._generated.agents import claude, codex
 
 
 @compile()
@@ -35,15 +36,13 @@ def add_op_workflow(g: GraphRecorder):
     cwd = os.environ.get("APXM_HOME", os.getcwd())
 
     # Spawn agents
-    architect = g.spawn("architect", profile="claude", cwd=cwd)
-    compiler_dev = g.spawn("compiler_dev", profile="claude", cwd=cwd)
-    runtime_dev = g.spawn("runtime_dev", profile="codex", cwd=cwd)
-    reviewer = g.spawn("reviewer", profile="claude", cwd=cwd)
+    architect = g.spawn("architect", profile=claude, cwd=cwd)
+    compiler_dev = g.spawn("compiler_dev", profile=claude, cwd=cwd)
+    runtime_dev = g.spawn("runtime_dev", profile=codex, cwd=cwd)
+    reviewer = g.spawn("reviewer", profile=claude, cwd=cwd)
 
     # Step 1: Architect analyzes and creates implementation plan
-    architect_task = g.const_(
-        "architect_task",
-        value="""You are the architect for APXM. You need to create an implementation plan
+    architect_task = g.text(value="""You are the architect for APXM. You need to create an implementation plan
 for adding a new AIS operation to the APXM codebase.
 
 Operation name: {0}
@@ -71,7 +70,7 @@ Keep the plan under 400 words but be specific about attribute names and types.
     architect.ask("{0}")
     architect_task | architect.get_last_node()
 
-    print1 = g.print_("print_plan", message="=== ARCHITECT PLAN ===\n{0}")
+    print1 = g.print("=== ARCHITECT PLAN ===\n{0}")
     architect.get_last_node() | print1
 
     # Step 2: Build implementation prompts for parallel execution
@@ -135,10 +134,10 @@ Follow APXM conventions: use apxm-core types, proper error handling with context
     runtime_dev.ask("{0}")
     runtime_prompt | runtime_dev.get_last_node()
 
-    print2 = g.print_("print_compiler_impl", message="=== COMPILER IMPL ===\n{0}")
+    print2 = g.print("=== COMPILER IMPL ===\n{0}")
     compiler_dev.get_last_node() | print2
 
-    print3 = g.print_("print_runtime_impl", message="=== RUNTIME IMPL ===\n{0}")
+    print3 = g.print("=== RUNTIME IMPL ===\n{0}")
     runtime_dev.get_last_node() | print3
 
     # Step 4: Wait for both to complete, then review
@@ -183,7 +182,7 @@ If tests fail, suggest fixes.
     reviewer.ask("{0}")
     review_task | reviewer.get_last_node()
 
-    print4 = g.print_("print_review", message="=== REVIEW ===\n{0}")
+    print4 = g.print("=== REVIEW ===\n{0}")
     reviewer.get_last_node() | print4
 
     # Final synthesis
@@ -209,10 +208,10 @@ Summary:
     reviewer.get_last_node() | final
     print4 >> final
 
-    print5 = g.print_("print_final", message="=== FINAL SUMMARY ===\n{0}")
+    print5 = g.print("=== FINAL SUMMARY ===\n{0}")
     final | print5
 
-    g.return_("result", source=print5)
+    g.done(print5)
 
 
 if __name__ == "__main__":

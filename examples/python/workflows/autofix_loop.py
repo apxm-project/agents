@@ -17,6 +17,7 @@ Usage:
 """
 
 from apxm.graph import compile, GraphRecorder, AgentConfig
+from apxm._generated.agents import claude, codex
 
 
 @compile()
@@ -30,12 +31,12 @@ def autofix_loop(g: GraphRecorder):
     cwd = os.environ.get("APXM_HOME", os.getcwd())
 
     # Spawn agents
-    architect = g.spawn("architect", profile="claude", cwd=cwd)
-    implementer = g.spawn("implementer", profile="codex", cwd=cwd)
-    reviewer = g.spawn("reviewer", profile="claude", cwd=cwd)
+    architect = g.spawn("architect", profile=claude, cwd=cwd)
+    implementer = g.spawn("implementer", profile=codex, cwd=cwd)
+    reviewer = g.spawn("reviewer", profile=claude, cwd=cwd)
 
     # Step 1: Architect analyzes the autofix report
-    analyze_task = g.const_("analyze_task",
+    analyze_task = g.text(
         value="""Analyze APXM validation failures and create a fix strategy.
 
 Run the autofix validation:
@@ -51,11 +52,10 @@ Determine:
 Output a JSON strategy with priority_order and cluster_groups.
 """)
 
-    architect.ask("{0}")
-    analyze_task | architect.get_last_node()
+    architect.ask("{analyze_task}")
+    strategy = architect.get_last_node()
 
-    print1 = g.print_("print_strategy", message="=== STRATEGY ===\n{0}")
-    architect.get_last_node() | print1
+    print1 = g.print("=== STRATEGY ===\n{strategy}")
 
     # Step 2: Implementer works on highest priority cluster
     implement_task = g.ask(
@@ -70,17 +70,15 @@ Run verification: python3 scripts/apxm-autofix.py --verify-only
 Report what you changed and verification results.
 
 Strategy:
-{0}
+{strategy}
 """
     )
-    architect.get_last_node() | implement_task
     print1 >> implement_task
 
-    implementer.ask("{0}")
-    implement_task | implementer.get_last_node()
+    implementer.ask("{implement_task}")
+    implementation = implementer.get_last_node()
 
-    print2 = g.print_("print_implementation", message="=== IMPLEMENTATION ===\n{0}")
-    implementer.get_last_node() | print2
+    print2 = g.print("=== IMPLEMENTATION ===\n{implementation}")
 
     # Step 3: Reviewer validates the fixes
     review_task = g.ask(
@@ -99,24 +97,21 @@ If any issues remain, output: {{"status": "iterate", "issues": [...]}}
 If everything passes, output: {{"status": "success"}}
 
 Implementation:
-{0}
+{implementation}
 """
     )
-    implementer.get_last_node() | review_task
     print2 >> review_task
 
-    reviewer.ask("{0}")
-    review_task | reviewer.get_last_node()
+    reviewer.ask("{review_task}")
+    review = reviewer.get_last_node()
 
-    print3 = g.print_("print_review", message="=== REVIEW ===\n{0}")
-    reviewer.get_last_node() | print3
+    print3 = g.print("=== REVIEW ===\n{review}")
 
     # Final report
-    final = g.merge("final_report", architect.get_last_node(),
-                   implementer.get_last_node(), reviewer.get_last_node())
+    final = g.merge("final_report", strategy, implementation, review)
     print3 >> final
 
-    g.return_("output", source=final)
+    g.done(final)
 
 
 if __name__ == "__main__":

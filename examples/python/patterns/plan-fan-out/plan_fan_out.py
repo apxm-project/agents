@@ -23,45 +23,38 @@ def plan_then_parallelize(g: GraphRecorder):
     # Parallel execution phase - three sections written independently
     section_concepts = g.ask(
         "section_concepts",
-        template="Based on this plan:\n{0}\n\n"
+        template="Based on this plan:\n{plan_steps}\n\n"
         "Write section 1: Core async concepts in Rust (async/await, Futures, Pin). "
         "Target 250 words, technical but accessible."
     )
-    plan_steps | section_concepts
 
     section_tokio = g.ask(
         "section_tokio",
-        template="Based on this plan:\n{0}\n\n"
+        template="Based on this plan:\n{plan_steps}\n\n"
         "Write section 2: Tokio runtime internals (work-stealing scheduler, I/O driver, "
         "task spawning). Target 250 words, technical depth."
     )
-    plan_steps | section_tokio
 
     section_pitfalls = g.ask(
         "section_pitfalls",
-        template="Based on this plan:\n{0}\n\n"
+        template="Based on this plan:\n{plan_steps}\n\n"
         "Write section 3: Common pitfalls and patterns (blocking in async, cancellation, "
         "select!, join!). Target 250 words with code examples."
     )
-    plan_steps | section_pitfalls
 
     # Assembly phase - merge all sections
     assemble = g.think(
         "assemble",
         template="You have three independently written sections for a blog post about Rust async:\n\n"
-        "SECTION 1:\n{0}\n\nSECTION 2:\n{1}\n\nSECTION 3:\n{2}\n\n"
+        "SECTION 1:\n{section_concepts}\n\nSECTION 2:\n{section_tokio}\n\nSECTION 3:\n{section_pitfalls}\n\n"
         "Assemble into a polished, cohesive blog post. Add an intro paragraph and a conclusion. "
         "Fix any inconsistencies between sections. Output the complete post."
     )
-    section_concepts | assemble
-    section_tokio | assemble
-    section_pitfalls | assemble
 
     # Print output
-    output = g.print_("final_post", message="=== ASSEMBLED BLOG POST ===\n{0}")
-    assemble | output
+    output = g.print("=== ASSEMBLED BLOG POST ===\n{assemble}")
 
-    g.return_("result", source=output)
+    g.done(output)
     
 
 

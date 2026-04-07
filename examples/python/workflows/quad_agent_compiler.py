@@ -5,6 +5,7 @@ Usage: python3 -m examples.python.workflows.quad_agent_compiler
 """
 
 from apxm.graph import compile, GraphRecorder
+from apxm._generated.agents import claude, codex
 import os
 
 
@@ -18,10 +19,10 @@ def compiler_orchestrator(g: GraphRecorder):
 
     # Spawn all 4 agents using Team sugar
     team = g.team("compiler_team")
-    a1 = team.add("agent1", profile="claude", cwd=cwd)
-    a2 = team.add("agent2", profile="claude", cwd=cwd)
-    a3 = team.add("agent3", profile="claude", cwd=cwd)
-    a4 = team.add("agent4", profile="claude", cwd=cwd)
+    a1 = team.add("agent1", profile=claude, cwd=cwd)
+    a2 = team.add("agent2", profile=claude, cwd=cwd)
+    a3 = team.add("agent3", profile=claude, cwd=cwd)
+    a4 = team.add("agent4", profile=claude, cwd=cwd)
 
     # Dispatch tasks in parallel
     a1.ask(

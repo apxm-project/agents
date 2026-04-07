@@ -22,14 +22,12 @@ def tool_agent(g: GraphRecorder):
     register >> topic
 
     # Invoke the search tool
-    results = g.invoke("search_results", capability="search", params={"query": "{0}"})
-    topic | results
+    results = g.invoke("search_results", capability="search", params={"query": "{topic}"})
 
     # Summarize findings
-    summary = g.ask("summarize", template="Summarize these findings: {0}")
-    results | summary
+    summary = g.ask("summarize", template="Summarize these findings: {results}")
 
-    g.return_("output", source=summary)
+    g.done(summary)
     
 
 

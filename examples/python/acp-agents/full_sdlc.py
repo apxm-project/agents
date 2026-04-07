@@ -5,6 +5,7 @@ Usage: python3 -m examples.python.acp-agents.full_sdlc
 """
 
 from apxm.graph import compile, GraphRecorder
+from apxm._generated.agents import claude
 import os
 
 
@@ -14,27 +15,30 @@ def full_sdlc(g: GraphRecorder):
     cwd = os.environ.get("APXM_HOME", os.getcwd())
 
     # Spawn architect
-    architect = g.spawn("architect", profile="claude", cwd=cwd)
+    architect = g.spawn("architect", profile=claude, cwd=cwd)
 
     # Design phase
     architect.ask("Design a caching layer for the API. Provide the implementation plan.")
 
     # Spawn coder
-    coder = g.spawn("coder", profile="claude", cwd=cwd)
+    coder = g.spawn("coder", profile=claude, cwd=cwd)
+
+    # Get architect's design
+    architect_design = architect.get_last_node()
 
     # Implementation phase - coder receives architect's design
-    coder_comm = g.communicate("communicate_to_coder", target_agent="coder", message="{0}")
-    architect.get_last_node() | coder_comm
+    coder_comm = g.communicate("communicate_to_coder", target_agent="coder", message="{architect_design}")
 
     # Review phase - architect reviews coder's implementation
-    architect.ask("Review this implementation: {0}")
-    coder_comm | architect.get_last_node()
+    architect.ask("Review this implementation: {coder_comm}")
+
+    # Get final review
+    final_review = architect.get_last_node()
 
     # Print and return final review
-    output = g.print_("output", message="{0}")
-    architect.get_last_node() | output
+    output = g.print("{final_review}")
 
-    g.return_("result", source=output)
+    g.done(output)
     
 
 

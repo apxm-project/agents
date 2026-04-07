@@ -7,6 +7,7 @@ Usage: python3 examples/python/workflows/ais-writer/ais_writer.py
 """
 
 from apxm.graph import compile, GraphRecorder
+from apxm._generated.agents import claude
 import os
 
 
@@ -27,82 +28,68 @@ def ais_writer(g: GraphRecorder):
     )
 
     # Phase 1: Analyze the plan
-    analyst = g.spawn("analyst", profile="claude", cwd=cwd)
+    analyst = g.spawn("analyst", profile=claude, cwd=cwd)
 
     output_dir = g.ask(
         "output_dir",
-        template="Extract the output directory from this plan. Return ONLY the directory path. Plan: {0}"
+        template="Extract the output directory from this plan. Return ONLY the directory path. Plan: {plan_and_dir}"
     )
-    plan_and_dir | output_dir
 
     manifest_prompt = g.ask(
         "manifest_prompt",
         template="You are an APXM Workflow Analyst. Analyze this plan and produce a precise file manifest. "
         "Produce JSON with: output_dir, entry_files, phase_files, sub_files, agent_roster, data_flow. "
-        "Plan: {0}"
+        "Plan: {plan_and_dir}"
     )
-    plan_and_dir | manifest_prompt
 
-    manifest_comm = g.communicate("manifest", target_agent="analyst", message="{0}")
-    manifest_prompt | manifest_comm
+    manifest_comm = g.communicate("manifest", target_agent="analyst", message="{manifest_prompt}")
 
     # Phase 2: Design + skeptic review
-    architect = g.spawn("architect", profile="claude", cwd=cwd)
-    skeptic = g.spawn("skeptic", profile="claude", cwd=cwd)
+    architect = g.spawn("architect", profile=claude, cwd=cwd)
+    skeptic = g.spawn("skeptic", profile=claude, cwd=cwd)
 
     topology_prompt = g.ask(
         "topology_prompt",
-        template="Design an APXM agent topology for this workflow. Manifest: {0}. "
+        template="Design an APXM agent topology for this workflow. Manifest: {manifest_comm}. "
         "For each agent, design: system prompt, inputs, outputs, constraints. "
         "Output JSON map of agent_name -> full_context_block."
     )
-    manifest_comm | topology_prompt
 
-    agent_contexts = g.communicate("agent_contexts", target_agent="architect", message="{0}")
-    topology_prompt | agent_contexts
+    agent_contexts = g.communicate("agent_contexts", target_agent="architect", message="{topology_prompt}")
 
     skeptic_prompt = g.ask(
         "skeptic_prompt",
-        template="Challenge this workflow design. Manifest: {0}. Agent contexts: {1}. "
+        template="Challenge this workflow design. Manifest: {manifest_comm}. Agent contexts: {agent_contexts}. "
         "Find: over-engineering, missing pieces, wrong order, minimum viable. "
         "Output JSON with findings and recommended_first_file."
     )
-    manifest_comm | skeptic_prompt
-    agent_contexts | skeptic_prompt
 
-    skeptic_review = g.communicate("skeptic_review", target_agent="skeptic", message="{0}")
-    skeptic_prompt | skeptic_review
+    skeptic_review = g.communicate("skeptic_review", target_agent="skeptic", message="{skeptic_prompt}")
 
     # Phase 3: Write Python workflow files
-    writer = g.spawn("writer", profile="claude", cwd=cwd)
+    writer = g.spawn("writer", profile=claude, cwd=cwd)
 
     entry_write_prompt = g.ask(
         "entry_write_prompt",
-        template="Write entry point APXM Python workflow files. Manifest: {0}. Agent contexts: {1}. Skeptic: {2}. "
+        template="Write entry point APXM Python workflow files. Manifest: {manifest_comm}. Agent contexts: {agent_contexts}. Skeptic: {skeptic_review}. "
         "Use the Python frontend and target canonical .air emission for execution. "
         "Output JSON map: filename -> complete_python_content."
     )
-    manifest_comm | entry_write_prompt
-    agent_contexts | entry_write_prompt
-    skeptic_review | entry_write_prompt
 
-    writer.ask("{0}")
-    entry_write_prompt | writer.get_last_node()
+    writer.ask("{entry_write_prompt}")
+    writer_result = writer.get_last_node()
 
     # Phase 4: Generate summary
     summary = g.ask(
         "summary",
         template="Format a final summary: ## WORKFLOW-WRITER COMPLETE\n### What Was Designed\n"
         "### Files Created\n### How to Run\n### First Step. "
-        "Based on output dir: {0} and files: {1}"
+        "Based on output dir: {output_dir} and files: {writer_result}"
     )
-    output_dir | summary
-    writer.get_last_node() | summary
 
-    output = g.print_("output", message="WORKFLOW-WRITER COMPLETE\n\n{0}")
-    summary | output
+    output = g.print("WORKFLOW-WRITER COMPLETE\n\n{summary}")
 
-    g.return_("result", source=output)
+    g.done(output)
     
 
 

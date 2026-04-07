@@ -5,6 +5,7 @@ Usage: python3 -m examples.python.acp-agents.parallel_agents
 """
 
 from apxm.graph import compile, GraphRecorder
+from apxm._generated.agents import claude, codex
 import os
 
 
@@ -16,13 +17,13 @@ def parallel_agents(g: GraphRecorder):
     # Spawn two agents in parallel
     claude_analyst = g.spawn(
         "claude_analyst",
-        profile="claude",
+        profile=claude,
         cwd=cwd
     )
 
     codex_analyst = g.spawn(
         "codex_analyst",
-        profile="codex",
+        profile=codex,
         cwd=cwd
     )
 
@@ -31,19 +32,20 @@ def parallel_agents(g: GraphRecorder):
     claude_analyst.ask(prompt)
     codex_analyst.ask(prompt)
 
+    # Get analyses
+    claude_analysis = claude_analyst.get_last_node()
+    codex_analysis = codex_analyst.get_last_node()
+
     # Merge the analyses
     merge_analyses = g.ask(
         "merge_analyses",
-        template="Compare and synthesize these two analyses:\n\nClaude:\n{0}\n\nCodex:\n{1}"
+        template="Compare and synthesize these two analyses:\n\nClaude:\n{claude_analysis}\n\nCodex:\n{codex_analysis}"
     )
-    claude_analyst.get_last_node() | merge_analyses
-    codex_analyst.get_last_node() | merge_analyses
 
     # Print and return
-    output = g.print_("output", message="{0}")
-    merge_analyses | output
+    output = g.print("{merge_analyses}")
 
-    g.return_("result", source=output)
+    g.done(output)
     
 
 

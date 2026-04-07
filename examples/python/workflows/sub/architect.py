@@ -26,7 +26,7 @@ def architect(g: GraphRecorder, task: str):
         "Be concise but thorough."
     )
 
-    g.return_("result", source=architect_think)
+    g.done(architect_think)
     
 
 

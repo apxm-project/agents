@@ -25,40 +25,33 @@ def memory_rag_pipeline(g: GraphRecorder):
     answer = g.think(
         "answer",
         template="Answer this question, using the memory recall as context if relevant.\n\n"
-        "QUESTION:\n{0}\n\nMEMORY RECALL:\n{1}\n\n"
+        "QUESTION:\n{query}\n\nMEMORY RECALL:\n{recall_ltm}\n\n"
         "Provide a thorough, accurate answer."
     )
-    query | answer
-    recall_ltm | answer
 
     # Verify the answer
     verification = g.think(
         "verification",
         template="Verify this answer is accurate, complete, and balanced.\n\n"
-        "QUESTION:\n{0}\n\nANSWER:\n{1}\n\n"
+        "QUESTION:\n{query}\n\nANSWER:\n{answer}\n\n"
         "Is this correct? Any important omissions or errors?"
     )
-    query | verification
-    answer | verification
 
     # Store the answer in memory
     mem = g.update_memory(
         "store_answer",
-        data="{0}",
+        data="{answer}",
         key="rust_async_runtimes_comparison"
     )
-    answer | mem
 
     # Print outputs
-    print1 = g.print_("print_answer", message="=== ANSWER ===\n{0}")
-    answer | print1
+    print1 = g.print("=== ANSWER ===\n{answer}")
 
-    print2 = g.print_("print_verification", message="=== VERIFICATION ===\n{0}")
-    verification | print2
+    print2 = g.print("=== VERIFICATION ===\n{verification}")
     print1 >> print2
     mem >> print2
 
-    g.return_("result", source=print2)
+    g.done(print2)
     
 
 

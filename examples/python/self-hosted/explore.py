@@ -21,6 +21,7 @@ Usage:
 
 import os
 from apxm.graph import compile, GraphRecorder
+from apxm._generated.agents import claude, codex
 
 
 @compile()
@@ -35,16 +36,14 @@ def explore_workflow(g: GraphRecorder):
     cwd = os.environ.get("APXM_HOME", os.getcwd())
 
     # Spawn 5 agents with different personas
-    architect = g.spawn("architect", profile="claude", cwd=cwd)
-    adversary = g.spawn("adversary", profile="claude", cwd=cwd)
-    implementer = g.spawn("implementer", profile="codex", cwd=cwd)
-    researcher = g.spawn("researcher", profile="claude", cwd=cwd)
-    user_advocate = g.spawn("user_advocate", profile="claude", cwd=cwd)
+    architect = g.spawn("architect", profile=claude, cwd=cwd)
+    adversary = g.spawn("adversary", profile=claude, cwd=cwd)
+    implementer = g.spawn("implementer", profile=codex, cwd=cwd)
+    researcher = g.spawn("researcher", profile=claude, cwd=cwd)
+    user_advocate = g.spawn("user_advocate", profile=claude, cwd=cwd)
 
     # All 5 get the same question, different perspectives
-    architect_prompt = g.const_(
-        "architect_prompt",
-        value="""You are the APXM systems architect. Answer this question from a systems design perspective:
+    architect_prompt = g.text(value="""You are the APXM systems architect. Answer this question from a systems design perspective:
 
 Question: {0}
 
@@ -58,9 +57,7 @@ Be specific and reference actual APXM components. Keep under 300 words.
 """
     )
 
-    adversary_prompt = g.const_(
-        "adversary_prompt",
-        value="""You are the adversary. Your job is to find problems with the proposed idea:
+    adversary_prompt = g.text(value="""You are the adversary. Your job is to find problems with the proposed idea:
 
 Question: {0}
 
@@ -76,9 +73,7 @@ Be brutally honest. If it's a bad idea, say so. Keep under 300 words.
 """
     )
 
-    implementer_prompt = g.const_(
-        "implementer_prompt",
-        value="""You are the implementer. Answer this question with concrete Rust code:
+    implementer_prompt = g.text(value="""You are the implementer. Answer this question with concrete Rust code:
 
 Question: {0}
 
@@ -92,9 +87,7 @@ Focus on *how* it would actually be built in Rust. Keep under 300 words.
 """
     )
 
-    researcher_prompt = g.const_(
-        "researcher_prompt",
-        value="""You are the researcher. Answer this question based on what the industry and literature say:
+    researcher_prompt = g.text(value="""You are the researcher. Answer this question based on what the industry and literature say:
 
 Question: {0}
 
@@ -109,9 +102,7 @@ Cite examples from real systems. Keep under 300 words.
 """
     )
 
-    user_advocate_prompt = g.const_(
-        "user_advocate_prompt",
-        value="""You are the user advocate. Answer this question from the user's perspective:
+    user_advocate_prompt = g.text(value="""You are the user advocate. Answer this question from the user's perspective:
 
 Question: {0}
 
@@ -143,19 +134,19 @@ Think about real-world workflow authors using APXM. Keep under 300 words.
     user_advocate_prompt | user_advocate.get_last_node()
 
     # Print each perspective
-    print_arch = g.print_("print_architect", message="=== ARCHITECT ===\n{0}")
+    print_arch = g.print("=== ARCHITECT ===\n{0}")
     architect.get_last_node() | print_arch
 
-    print_adv = g.print_("print_adversary", message="=== ADVERSARY ===\n{0}")
+    print_adv = g.print("=== ADVERSARY ===\n{0}")
     adversary.get_last_node() | print_adv
 
-    print_impl = g.print_("print_implementer", message="=== IMPLEMENTER ===\n{0}")
+    print_impl = g.print("=== IMPLEMENTER ===\n{0}")
     implementer.get_last_node() | print_impl
 
-    print_res = g.print_("print_researcher", message="=== RESEARCHER ===\n{0}")
+    print_res = g.print("=== RESEARCHER ===\n{0}")
     researcher.get_last_node() | print_res
 
-    print_user = g.print_("print_user_advocate", message="=== USER ADVOCATE ===\n{0}")
+    print_user = g.print("=== USER ADVOCATE ===\n{0}")
     user_advocate.get_last_node() | print_user
 
     # Wait for all to complete
@@ -206,7 +197,7 @@ Give a clear, definitive answer. Keep under 400 words.
     user_advocate.get_last_node() | synthesis
     wait >> synthesis
 
-    print_synth = g.print_("print_synthesis", message="=== SYNTHESIS ===\n{0}")
+    print_synth = g.print("=== SYNTHESIS ===\n{0}")
     synthesis | print_synth
 
     # Action plan: extract concrete next steps
@@ -233,10 +224,10 @@ Output a structured action plan ready for execution. Keep under 300 words.
     synthesis | action_plan
     print_synth >> action_plan
 
-    print_plan = g.print_("print_action_plan", message="=== ACTION PLAN ===\n{0}")
+    print_plan = g.print("=== ACTION PLAN ===\n{0}")
     action_plan | print_plan
 
-    g.return_("result", source=print_plan)
+    g.done(print_plan)
 
 
 if __name__ == "__main__":

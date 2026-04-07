@@ -27,7 +27,7 @@ def impl_expert(g: GraphRecorder, task: str):
         "Focus on practical, actionable guidance."
     )
 
-    g.return_("result", source=impl_think)
+    g.done(impl_think)
     
 
 

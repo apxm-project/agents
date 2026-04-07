@@ -7,6 +7,7 @@ Usage: python3 -m examples.python.acp-agents.code_review
 """
 
 from apxm.graph import compile, GraphRecorder
+from apxm._generated.agents import claude, codex
 import os
 
 
@@ -16,8 +17,8 @@ def code_review(g: GraphRecorder):
     cwd = os.environ.get("APXM_HOME", os.getcwd())
 
     # Spawn both agents
-    coder = g.spawn("coder", profile="codex", cwd=cwd)
-    reviewer = g.spawn("reviewer", profile="claude", cwd=cwd)
+    coder = g.spawn("coder", profile=codex, cwd=cwd)
+    reviewer = g.spawn("reviewer", profile=claude, cwd=cwd)
 
     # Codex analyzes the code
     coding_task = (
@@ -28,33 +29,32 @@ def code_review(g: GraphRecorder):
     )
     coder.ask(coding_task)
 
+    # Get coder's last node for reference
+    codex_analysis = coder.get_last_node()
+
     # Print Codex's analysis
-    print1 = g.print_("print_codex", message="=== CODEX ANALYSIS ===\n{0}")
-    coder.get_last_node() | print1
+    print1 = g.print("=== CODEX ANALYSIS ===\n{codex_analysis}")
 
     # Claude reviews Codex's analysis
     review_prompt = g.ask(
         "build_review_prompt",
         template="You are doing a code review. Here is Codex's analysis of the spawn_agent handler. "
         "Review it critically: is it accurate? Did it miss anything? Do you agree with the "
-        "improvement? Be concise, under 150 words.\n\nCodex's analysis:\n{0}"
+        "improvement? Be concise, under 150 words.\n\nCodex's analysis:\n{codex_analysis}"
     )
-    coder.get_last_node() | review_prompt
 
     # Send to Claude
     reviewer_critiques = g.communicate(
         "reviewer_critiques",
         target_agent="reviewer",
-        message="{0}"
+        message="{review_prompt}"
     )
-    review_prompt | reviewer_critiques
     print1 >> reviewer_critiques
 
     # Print Claude's review
-    print2 = g.print_("print_claude", message="=== CLAUDE REVIEW ===\n{0}")
-    reviewer_critiques | print2
+    print2 = g.print("=== CLAUDE REVIEW ===\n{reviewer_critiques}")
 
-    g.return_("result", source=print2)
+    g.done(print2)
     
 
 

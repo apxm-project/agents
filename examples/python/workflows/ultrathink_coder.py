@@ -7,6 +7,7 @@ Usage: python3 -m examples.python.workflows.ultrathink_coder
 """
 
 from apxm.graph import compile, GraphRecorder
+from apxm._generated.agents import claude, codex
 import os
 
 
@@ -25,7 +26,7 @@ def ultrathink_coder(g: GraphRecorder, task: str):
     cwd = os.environ.get("APXM_HOME", os.getcwd())
 
     # Spawn the coder agent
-    coder = g.spawn("coder", profile="claude", cwd=cwd)
+    coder = g.spawn("coder", profile=claude, cwd=cwd)
 
     # Verify task received (compile parameter {task} is NOT auto-wired)
     task_ok = g.ask("Confirm task received: {task}")

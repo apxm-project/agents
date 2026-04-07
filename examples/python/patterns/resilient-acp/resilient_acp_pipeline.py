@@ -7,6 +7,7 @@ Usage: python3 -m examples.python.patterns.resilient-acp.resilient_acp_pipeline
 """
 
 from apxm.graph import compile, GraphRecorder
+from apxm._generated.agents import claude
 import os
 
 
@@ -16,7 +17,7 @@ def resilient_acp(g: GraphRecorder):
     cwd = os.environ.get("APXM_HOME", os.getcwd())
 
     # Spawn worker agent
-    worker = g.spawn("worker", profile="claude", cwd=cwd)
+    worker = g.spawn("worker", profile=claude, cwd=cwd)
 
     # Define and format task
     task_description = g.ask(
@@ -26,30 +27,26 @@ def resilient_acp(g: GraphRecorder):
 
     formatted_task = g.think(
         "formatted_task",
-        template="Format this as a precise coding instruction for an agent:\n{0}"
+        template="Format this as a precise coding instruction for an agent:\n{task_description}"
     )
-    task_description | formatted_task
 
     # Send to worker
     worker_comm = g.communicate(
         "worker_result",
         target_agent="worker",
-        message="{0}"
+        message="{formatted_task}"
     )
-    formatted_task | worker_comm
 
     # Review and summarize result
     summary = g.think(
         "summary",
-        template="Review the worker's result and summarize what was accomplished:\n{0}"
+        template="Review the worker's result and summarize what was accomplished:\n{worker_comm}"
     )
-    worker_comm | summary
 
     # Print and return
-    output = g.print_("output", message="=== RESULT ===\n{0}")
-    summary | output
+    output = g.print("=== RESULT ===\n{summary}")
 
-    g.return_("result", source=output)
+    g.done(output)
     
 
 

@@ -5,6 +5,7 @@ Usage: python3 -m examples.python.acp-agents.cross_critique
 """
 
 from apxm.graph import compile, GraphRecorder
+from apxm._generated.agents import claude, codex
 import os
 
 
@@ -14,8 +15,8 @@ def cross_critique(g: GraphRecorder):
     cwd = os.environ.get("APXM_HOME", os.getcwd())
 
     # Spawn two agents
-    agent_a = g.spawn("agent_a", profile="claude", cwd=cwd)
-    agent_b = g.spawn("agent_b", profile="codex", cwd=cwd)
+    agent_a = g.spawn("agent_a", profile=claude, cwd=cwd)
+    agent_b = g.spawn("agent_b", profile=codex, cwd=cwd)
 
     # Both agents propose designs (parallel)
     design_prompt = "Propose a design for a REST API for a todo application."
@@ -26,7 +27,7 @@ def cross_critique(g: GraphRecorder):
     agent_a.ask("Review this alternative design: {0}")
     agent_b.ask("Review this alternative design: {0}")
 
-    # Connect cross-critique edges
+    # Get critique nodes
     agent_b_last = agent_b.get_last_node()
     agent_a_last = agent_a.get_last_node()
 
@@ -50,16 +51,13 @@ def cross_critique(g: GraphRecorder):
     # Merge critiques
     merge_critiques = g.ask(
         "merge_critiques",
-        template="Synthesize these two critiques:\n\nA's critique of B:\n{0}\n\nB's critique of A:\n{1}"
+        template="Synthesize these two critiques:\n\nA's critique of B:\n{agent_a_last}\n\nB's critique of A:\n{agent_b_last}"
     )
-    agent_a_last | merge_critiques
-    agent_b_last | merge_critiques
 
     # Print and return
-    output = g.print_("output", message="{0}")
-    merge_critiques | output
+    output = g.print("{merge_critiques}")
 
-    g.return_("result", source=output)
+    g.done(output)
     
 
 

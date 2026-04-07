@@ -19,6 +19,7 @@ Usage:
 
 import os
 from apxm.graph import compile, GraphRecorder
+from apxm._generated.agents import claude, codex
 
 
 @compile()
@@ -33,12 +34,10 @@ def autofix_workflow(g: GraphRecorder):
     cwd = os.environ.get("APXM_HOME", os.getcwd())
 
     # Spawn agents
-    validator = g.spawn("validator", profile="claude", cwd=cwd)
+    validator = g.spawn("validator", profile=claude, cwd=cwd)
 
     # Step 1: Run validation
-    validate_task = g.const_(
-        "validate_task",
-        value="""Run the APXM autofix validation for scope: examples/python
+    validate_task = g.text(value="""Run the APXM autofix validation for scope: examples/python
 
 Execute:
   python3 scripts/apxm-autofix.py --scope examples/python --report-only
@@ -50,7 +49,7 @@ Report the full output (it will show validation results, task files created in /
     validator.ask("{0}")
     validate_task | validator.get_last_node()
 
-    print1 = g.print_("print_validation", message="=== VALIDATION OUTPUT ===\n{0}")
+    print1 = g.print("=== VALIDATION OUTPUT ===\n{0}")
     validator.get_last_node() | print1
 
     # Step 2: Classify failures into clusters
@@ -90,7 +89,7 @@ If status is "pass", output {{"status": "pass", "clusters": []}}.
     validator.get_last_node() | classify
     print1 >> classify
 
-    print2 = g.print_("print_classification", message="=== FAILURE CLASSIFICATION ===\n{0}")
+    print2 = g.print("=== FAILURE CLASSIFICATION ===\n{0}")
     classify | print2
 
     # Step 3: Branch on whether there are failures
@@ -98,9 +97,9 @@ If status is "pass", output {{"status": "pass", "clusters": []}}.
     # For this simplified version, we'll just spawn fixers regardless.
 
     # Step 4: Spawn parallel fixers (simplified to 3 fixers for common error types)
-    fixer1 = g.spawn("fixer_import", profile="claude", cwd=cwd)
-    fixer2 = g.spawn("fixer_mlir", profile="claude", cwd=cwd)
-    fixer3 = g.spawn("fixer_compile", profile="claude", cwd=cwd)
+    fixer1 = g.spawn("fixer_import", profile=claude, cwd=cwd)
+    fixer2 = g.spawn("fixer_mlir", profile=claude, cwd=cwd)
+    fixer3 = g.spawn("fixer_compile", profile=claude, cwd=cwd)
 
     # Build fix prompts for each cluster type
     fix_import_task = g.ask(
@@ -179,13 +178,13 @@ Report what you fixed and verification results.
     fixer3.ask("{0}")
     fix_compile_task | fixer3.get_last_node()
 
-    print3 = g.print_("print_fix_import", message="=== IMPORT FIXES ===\n{0}")
+    print3 = g.print("=== IMPORT FIXES ===\n{0}")
     fixer1.get_last_node() | print3
 
-    print4 = g.print_("print_fix_mlir", message="=== MLIR FIXES ===\n{0}")
+    print4 = g.print("=== MLIR FIXES ===\n{0}")
     fixer2.get_last_node() | print4
 
-    print5 = g.print_("print_fix_compile", message="=== COMPILE FIXES ===\n{0}")
+    print5 = g.print("=== COMPILE FIXES ===\n{0}")
     fixer3.get_last_node() | print5
 
     # Step 5: Wait for all fixers to complete
@@ -200,11 +199,9 @@ Report what you fixed and verification results.
     print5 >> wait
 
     # Step 6: Run final verification
-    verifier = g.spawn("verifier", profile="claude", cwd=cwd)
+    verifier = g.spawn("verifier", profile=claude, cwd=cwd)
 
-    verify_task = g.const_(
-        "verify_task",
-        value="""Run final verification of all fixes:
+    verify_task = g.text(value="""Run final verification of all fixes:
 
 Execute:
   python3 scripts/apxm-autofix.py --scope examples/python --verify-only
@@ -217,7 +214,7 @@ Report the results (pass/fail counts, any remaining issues).
     verify_task | verifier.get_last_node()
     wait >> verifier.get_last_node()
 
-    print6 = g.print_("print_verification", message="=== VERIFICATION OUTPUT ===\n{0}")
+    print6 = g.print("=== VERIFICATION OUTPUT ===\n{0}")
     verifier.get_last_node() | print6
 
     # Step 7: Generate final report
@@ -254,10 +251,10 @@ If status is partial or failed, list remaining issues and suggested next steps.
     verifier.get_last_node() | report
     print6 >> report
 
-    print7 = g.print_("print_report", message="=== AUTOFIX REPORT ===\n{0}")
+    print7 = g.print("=== AUTOFIX REPORT ===\n{0}")
     report | print7
 
-    g.return_("result", source=print7)
+    g.done(print7)
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@ Usage: python3 -m examples.python.workflows.planner.apxm_planner
 """
 
 from apxm.graph import compile, GraphRecorder
+from apxm._generated.agents import claude
 import os
 
 
@@ -17,12 +18,12 @@ def planner(g: GraphRecorder):
 
     # Spawn all agents
     team = g.team("planning_council")
-    strategist = team.add("strategist", profile="claude", cwd=cwd)
-    skeptic = team.add("skeptic", profile="claude", cwd=cwd)
-    technologist = team.add("technologist", profile="claude", cwd=cwd)
-    marketeer = team.add("marketeer", profile="claude", cwd=cwd)
-    council = g.spawn("council", profile="claude", cwd=cwd)
-    chair = g.spawn("chair", profile="claude", cwd=cwd)
+    strategist = team.add("strategist", profile=claude, cwd=cwd)
+    skeptic = team.add("skeptic", profile=claude, cwd=cwd)
+    technologist = team.add("technologist", profile=claude, cwd=cwd)
+    marketeer = team.add("marketeer", profile=claude, cwd=cwd)
+    council = g.spawn("council", profile=claude, cwd=cwd)
+    chair = g.spawn("chair", profile=claude, cwd=cwd)
 
     # Get plan name
     plan_name = g.ask(
@@ -32,44 +33,42 @@ def planner(g: GraphRecorder):
 
     # Four parallel analyst streams
     strategist.ask(
-        "STRATEGIST analyzing: {0}. Cover WHY NOW, THE GAP, THE MOAT, THE WEDGE, LONG-TERM. "
+        "STRATEGIST analyzing: {plan_name}. Cover WHY NOW, THE GAP, THE MOAT, THE WEDGE, LONG-TERM. "
         "400-600 words with headers."
     )
-    plan_name | strategist.get_last_node()
 
     skeptic.ask(
-        "SKEPTIC analyzing: {0}. Find HARDEST PART, MISSING PIECES, SCOPE TRAP, FATAL RISK, "
+        "SKEPTIC analyzing: {plan_name}. Find HARDEST PART, MISSING PIECES, SCOPE TRAP, FATAL RISK, "
         "HONEST TIMELINE. 400-600 words."
     )
-    plan_name | skeptic.get_last_node()
 
     technologist.ask(
-        "TECHNOLOGIST analyzing: {0}. Assess APXM FIT, EXTERNAL DEPS, BUILD ORDER, "
+        "TECHNOLOGIST analyzing: {plan_name}. Assess APXM FIT, EXTERNAL DEPS, BUILD ORDER, "
         "INCREMENTAL v0.1, GAPS. 400-600 words."
     )
-    plan_name | technologist.get_last_node()
 
     marketeer.ask(
-        "MARKETEER analyzing: {0}. Find THE BUYER, THE PAIN, THE SWITCH, FIRST 10 CUSTOMERS, "
+        "MARKETEER analyzing: {plan_name}. Find THE BUYER, THE PAIN, THE SWITCH, FIRST 10 CUSTOMERS, "
         "PRICING MODEL. 400-600 words."
     )
-    plan_name | marketeer.get_last_node()
+
+    # Get all analyst results
+    strategist_result = strategist.get_last_node()
+    skeptic_result = skeptic.get_last_node()
+    technologist_result = technologist.get_last_node()
+    marketeer_result = marketeer.get_last_node()
 
     # Synthesize all 4 reports
     council_prompt = g.think(
         "council_prompt",
         template="EXPERT COUNCIL CHAIR. Synthesize 4 analyst reports:\n\n"
-        "STRATEGIST:\n{0}\n\nSKEPTIC:\n{1}\n\nTECHNOLOGIST:\n{2}\n\nMARKETEER:\n{3}\n\n"
+        "STRATEGIST:\n{strategist_result}\n\nSKEPTIC:\n{skeptic_result}\n\nTECHNOLOGIST:\n{technologist_result}\n\nMARKETEER:\n{marketeer_result}\n\n"
         "Structure:\n## CONVERGENCE\n## DIVERGENCE\n## TENSIONS\n## KEY DECISIONS\n## COUNCIL VERDICT"
     )
-    strategist.get_last_node() | council_prompt
-    skeptic.get_last_node() | council_prompt
-    technologist.get_last_node() | council_prompt
-    marketeer.get_last_node() | council_prompt
 
     # Council synthesizes
-    council.ask("{0}")
-    council_prompt | council.get_last_node()
+    council.ask("{council_prompt}")
+    council_synthesis = council.get_last_node()
 
     # Adversarial stress test
     council.ask(
@@ -77,32 +76,23 @@ def planner(g: GraphRecorder):
         "2) What could a large tech co ship in 6 months that makes this irrelevant? "
         "3) Final verdict?"
     )
+    adversarial = council.get_last_node()
 
     # Chair makes final decision
     chair_prompt = g.think(
         "chair_prompt",
         template="CHAIR with fresh eyes. Full package:\n\n"
-        "STRATEGIST:\n{0}\n\nSKEPTIC:\n{1}\n\nCOUNCIL:\n{2}\n\nADVERSARIAL:\n{3}\n\n"
+        "STRATEGIST:\n{strategist_result}\n\nSKEPTIC:\n{skeptic_result}\n\nCOUNCIL:\n{council_synthesis}\n\nADVERSARIAL:\n{adversarial}\n\n"
         "Decide:\n## DECISION (GO/NO-GO/PIVOT)\n## THE WEDGE\n## 3 NEXT STEPS\n## THE ONE THING"
     )
-    strategist.get_last_node() | chair_prompt
-    skeptic.get_last_node() | chair_prompt
-    # Connect both council outputs: synthesis (line 72) and adversarial (line 75-79)
-    council.get_last_node() | chair_prompt
-    council.get_last_node() | chair_prompt
 
-    chair.ask("{0}")
-    chair_prompt | chair.get_last_node()
+    chair.ask("{chair_prompt}")
+    chair_decision = chair.get_last_node()
 
     # Print and return
-    output = g.print_(
-        "output",
-        message="=== APXM PLANNER DECISION: {0} ===\n\n{1}"
-    )
-    plan_name | output
-    chair.get_last_node() | output
+    output = g.print("=== APXM PLANNER DECISION: {plan_name} ===\n\n{chair_decision}")
 
-    g.return_("result", source=output)
+    g.done(output)
     
 
 

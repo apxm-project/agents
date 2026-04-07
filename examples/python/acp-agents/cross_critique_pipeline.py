@@ -8,6 +8,7 @@ Usage: python3 -m examples.python.acp-agents.cross_critique_pipeline
 """
 
 from apxm.graph import compile, GraphRecorder
+from apxm._generated.agents import claude, codex
 import os
 
 
@@ -17,8 +18,8 @@ def cross_critique_pipeline(g: GraphRecorder):
     cwd = os.environ.get("APXM_HOME", os.getcwd())
 
     # Spawn agents
-    agent_a = g.spawn("agent_a", profile="claude", cwd=cwd)
-    agent_b = g.spawn("agent_b", profile="codex", cwd=cwd)
+    agent_a = g.spawn("agent_a", profile=claude, cwd=cwd)
+    agent_b = g.spawn("agent_b", profile=codex, cwd=cwd)
 
     # Parallel proposals
     question = (
@@ -29,57 +30,47 @@ def cross_critique_pipeline(g: GraphRecorder):
     agent_a.ask(question)
     agent_b.ask(question)
 
+    # Get proposals for later use
+    claude_proposal = agent_a.get_last_node()
+    codex_proposal = agent_b.get_last_node()
+
     # Print parallel proposals
-    print1 = g.print_(
-        "print_proposals",
-        message="=== PROPOSALS (parallel) ===\nClaude:\n{0}\n\nCodex:\n{1}"
-    )
-    agent_a.get_last_node() | print1
-    agent_b.get_last_node() | print1
+    print1 = g.print("=== PROPOSALS (parallel) ===\nClaude:\n{claude_proposal}\n\nCodex:\n{codex_proposal}")
 
     # Cross-critiques: A critiques B, B critiques A
     codex_critique_prompt = g.ask(
         "build_codex_critique",
         template="Critique the following feature proposal from Claude for the APXM project. "
         "Is it feasible? Is it truly the most impactful? What's missing? Under 100 words.\n\n"
-        "Claude's proposal:\n{0}"
+        "Claude's proposal:\n{claude_proposal}"
     )
-    agent_a.get_last_node() | codex_critique_prompt
     print1 >> codex_critique_prompt
 
     claude_critique_prompt = g.ask(
         "build_claude_critique",
         template="Critique the following feature proposal from Codex for the APXM project. "
         "Is it feasible? Is it truly the most impactful? What's missing? Under 100 words.\n\n"
-        "Codex's proposal:\n{0}"
+        "Codex's proposal:\n{codex_proposal}"
     )
-    agent_b.get_last_node() | claude_critique_prompt
     print1 >> claude_critique_prompt
 
     # Send cross-critiques
     codex_critiques = g.communicate(
         "codex_critiques_claude",
         target_agent="agent_b",
-        message="{0}"
+        message="{codex_critique_prompt}"
     )
-    codex_critique_prompt | codex_critiques
 
     claude_critiques = g.communicate(
         "claude_critiques_codex",
         target_agent="agent_a",
-        message="{0}"
+        message="{claude_critique_prompt}"
     )
-    claude_critique_prompt | claude_critiques
 
     # Print critiques
-    print2 = g.print_(
-        "print_critiques",
-        message="=== CRITIQUES ===\nCodex critiques Claude:\n{0}\n\nClaude critiques Codex:\n{1}"
-    )
-    codex_critiques | print2
-    claude_critiques | print2
+    print2 = g.print("=== CRITIQUES ===\nCodex critiques Claude:\n{codex_critiques}\n\nClaude critiques Codex:\n{claude_critiques}")
 
-    g.return_("result", source=print2)
+    g.done(print2)
     
 
 
