@@ -130,6 +130,32 @@ impl ApxmGraph {
             Value::Number((self.nodes.len() as i64).into()),
         );
 
+        // Set per-node priorities based on critical path analysis
+        for node in &mut self.nodes {
+            let longest_path = analysis.longest_path.get(&node.id).copied().unwrap_or(0);
+
+            // Priority assignment strategy:
+            // - Critical path nodes (depth near critical_path_length) → 90 (Critical)
+            // - High fan-out nodes → 70 (High)
+            // - Default → 30 (Normal)
+
+            let is_on_critical_path = longest_path >= analysis.critical_path_length.saturating_sub(1);
+            let fan_out = analysis.fan_out.get(&node.id).copied().unwrap_or(0);
+
+            let priority = if is_on_critical_path {
+                90 // Critical priority
+            } else if fan_out >= 3 {
+                70 // High priority for high fan-out nodes
+            } else {
+                30 // Normal priority
+            };
+
+            node.attributes.insert(
+                attrs::PRIORITY.to_string(),
+                Value::Number(priority.into()),
+            );
+        }
+
         Ok(self)
     }
 
@@ -215,6 +241,8 @@ impl ApxmGraph {
 struct ParallelismMetrics {
     max_parallelism: usize,
     critical_path_length: usize,
+    longest_path: HashMap<u64, usize>,
+    fan_out: HashMap<u64, usize>,
 }
 
 /// Compute parallelism metrics for a graph using level-based scheduling.
@@ -223,6 +251,8 @@ fn compute_parallelism_metrics(graph: &ApxmGraph) -> ParallelismMetrics {
         return ParallelismMetrics {
             max_parallelism: 0,
             critical_path_length: 0,
+            longest_path: HashMap::new(),
+            fan_out: HashMap::new(),
         };
     }
 
@@ -233,6 +263,12 @@ fn compute_parallelism_metrics(graph: &ApxmGraph) -> ParallelismMetrics {
     for edge in &graph.edges {
         incoming.entry(edge.to).or_default().push(edge.from);
         outgoing.entry(edge.from).or_default().push(edge.to);
+    }
+
+    // Compute fan-out for each node
+    let mut fan_out: HashMap<u64, usize> = HashMap::new();
+    for (node_id, children) in &outgoing {
+        fan_out.insert(*node_id, children.len());
     }
 
     // Compute longest path to each node (critical path)
@@ -279,6 +315,8 @@ fn compute_parallelism_metrics(graph: &ApxmGraph) -> ParallelismMetrics {
     ParallelismMetrics {
         max_parallelism,
         critical_path_length,
+        longest_path,
+        fan_out,
     }
 }
 
