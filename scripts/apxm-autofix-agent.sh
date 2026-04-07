@@ -1,10 +1,29 @@
 #!/usr/bin/env bash
 # apxm-autofix-agent.sh - Spawn Claude Code agent for autofix task
 #
-# Usage:
+# DEPRECATED: This script is deprecated. Use the APXM runtime instead:
+#   python3 scripts/apxm-autofix.py --auto-fix
+#   OR
+#   dekk apxm execute .agents/skills/autofix/autofix_workflow.air --emit-session -- "SCOPE"
+#
+# Usage (legacy):
 #   bash scripts/apxm-autofix-agent.sh /tmp/autofix-tasks/cluster-attr_mismatch.txt
 
 set -euo pipefail
+
+echo "=========================================="
+echo "⚠️  WARNING: This script is deprecated"
+echo "=========================================="
+echo ""
+echo "Recommended approach:"
+echo "  python3 scripts/apxm-autofix.py --auto-fix"
+echo ""
+echo "Or directly via APXM runtime:"
+echo "  dekk apxm execute .agents/skills/autofix/autofix_workflow.air --emit-session -- \"examples/python\""
+echo ""
+echo "Continuing with legacy direct Claude invocation..."
+echo "=========================================="
+echo ""
 
 if [ $# -ne 1 ]; then
     echo "Usage: $0 <task-file>" >&2

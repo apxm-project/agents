@@ -516,9 +516,90 @@ def main() -> int:
 
     # Auto-fix mode (Phase 2)
     if args.auto_fix and clusters:
-        print("\n🤖 AUTO-FIX MODE (spawning agents...)")
-        # TODO: Implement auto-spawn logic
-        print("  (Not implemented yet - use manual commands above)")
+        print("\n🤖 AUTO-FIX MODE (spawning agents via APXM runtime...)")
+
+        # Determine scope argument
+        scope_arg = str(args.scope) if args.scope else "examples/python"
+
+        # Invoke autofix workflow through APXM runtime
+        workflow_path = project_root / ".agents" / "skills" / "autofix" / "autofix_workflow.air"
+
+        if not workflow_path.exists():
+            print(f"Error: Workflow not found at {workflow_path}", file=sys.stderr)
+            print("Run: dekk apxm compile .agents/skills/autofix/autofix_workflow.py", file=sys.stderr)
+            return 1
+
+        print(f"\nExecuting workflow: {workflow_path}")
+        print(f"Scope: {scope_arg}")
+        print()
+
+        # Execute the workflow
+        try:
+            result = subprocess.run(
+                [
+                    "dekk", "apxm", "execute",
+                    str(workflow_path),
+                    "--emit-session",
+                    "--",
+                    scope_arg
+                ],
+                timeout=600,  # 10 minute timeout for agent execution
+            )
+
+            if result.returncode != 0:
+                print(f"\n✗ Workflow execution failed with exit code {result.returncode}", file=sys.stderr)
+                return result.returncode
+
+        except subprocess.TimeoutExpired:
+            print("\n✗ Workflow execution timeout (10 minutes)", file=sys.stderr)
+            return 1
+        except Exception as e:
+            print(f"\n✗ Workflow execution error: {e}", file=sys.stderr)
+            return 1
+
+        # Re-run verification to check results
+        print("\n" + "=" * 80)
+        print("VERIFICATION (after autofix)")
+        print("=" * 80)
+
+        verify_examples = find_python_examples(args.scope)
+        verify_results = []
+        for i, example in enumerate(verify_examples, 1):
+            rel_path = example.relative_to(project_root)
+            print(f"[{i}/{len(verify_examples)}] Verifying {rel_path}...", end=" ")
+            sys.stdout.flush()
+
+            result = validate_example(example, project_root)
+            verify_results.append(result)
+
+            if result.passed:
+                print("✓ PASS")
+            else:
+                print(f"✗ FAIL ({result.error_type})")
+
+        # Print verification summary
+        verify_clusters = cluster_failures(verify_results)
+        print_summary(verify_results, verify_clusters)
+
+        # Report what changed
+        initial_failures = sum(1 for r in results if not r.passed)
+        final_failures = sum(1 for r in verify_results if not r.passed)
+        fixed_count = initial_failures - final_failures
+
+        print("\n" + "=" * 80)
+        print("AUTOFIX SUMMARY")
+        print("=" * 80)
+        print(f"Initial failures: {initial_failures}")
+        print(f"Final failures: {final_failures}")
+        print(f"Fixed: {fixed_count}")
+
+        if final_failures == 0:
+            print("\n✓ All issues resolved!")
+        elif fixed_count > 0:
+            print(f"\n⚠ Partial success: {fixed_count} issues fixed, {final_failures} remaining")
+        else:
+            print("\n✗ No issues were fixed")
+        print("=" * 80)
 
     # Return non-zero if any failures
     return 1 if clusters else 0
