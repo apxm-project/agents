@@ -1,7 +1,7 @@
 //! Compiler wrapper used by the driver.
 
 use apxm_compiler::{Context, Module, Pipeline, PipelineDiagnostics};
-use apxm_core::types::{OptimizationLevel, PipelineConfig};
+use apxm_core::types::{OptimizationLevel, PipelineConfig, Value};
 use apxm_core::utils::build::MlirEnvReport;
 use apxm_graph::ApxmGraph;
 use std::fs;
@@ -45,9 +45,9 @@ impl Compiler {
     pub fn compile(&self, path: &Path) -> Result<Module, DriverError> {
         let ext = path.extension().and_then(|ext| ext.to_str());
 
-        if matches!(ext, Some("mlir" | "air")) {
+        if matches!(ext, Some("mlir")) {
             return Err(DriverError::Driver(
-                ".air is an inspection/debug format (like LLVM .ll dumps). It is not round-trip compilable. Use JSON graphs for compilation and execution instead.".to_string(),
+                ".mlir is a low-level format emitted by the compiler. Use .apxm or .air for compilation.".to_string(),
             ));
         }
 
@@ -106,20 +106,20 @@ impl Compiler {
             .map_err(DriverError::Compiler)
     }
 
-    /// Load graph input (JSON) from disk.
+    /// Load graph input (JSON or .air) from disk.
     pub fn load_graph(&self, path: &Path) -> Result<ApxmGraph, DriverError> {
-        let bytes = fs::read(path)?;
-
         match path.extension().and_then(|ext| ext.to_str()) {
             Some("air") => {
-                Err(DriverError::Driver(
-                    ".air is an inspection format, not a compile input. Use a JSON graph instead."
-                        .to_string(),
-                ))
+                let text = fs::read_to_string(path)?;
+                ApxmGraph::from_air(&text)
+                    .map_err(|e| DriverError::Driver(format!(".air parse error: {e}")))
             }
 
-            _ => ApxmGraph::from_bytes(&bytes)
-                .map_err(|e| DriverError::Driver(format!("Graph parse error: {e}"))),
+            _ => {
+                let bytes = fs::read(path)?;
+                ApxmGraph::from_bytes(&bytes)
+                    .map_err(|e| DriverError::Driver(format!("Graph parse error: {e}")))
+            }
         }
     }
 
@@ -130,7 +130,14 @@ impl Compiler {
         out.push_str("; Agent IR (.air) — canonical intermediate representation\n");
         out.push_str(&format!("; graph: {}\n", graph.name));
         for (k, v) in &graph.metadata {
-            out.push_str(&format!("; {}: {}\n", k, v));
+            // Format metadata values without quotes for better readability
+            let val_str = match v {
+                Value::String(s) => s.clone(),
+                Value::Bool(b) => b.to_string(),
+                Value::Number(n) => n.to_string(),
+                _ => format!("{}", v),
+            };
+            out.push_str(&format!("; {}: {}\n", k, val_str));
         }
         out.push('\n');
         if !graph.parameters.is_empty() {
