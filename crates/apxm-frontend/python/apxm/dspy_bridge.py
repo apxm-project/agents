@@ -26,12 +26,12 @@ from typing import Any, Dict, List, Optional, Union
 try:
     import dspy
     from dspy import Example
-    from dspy.teleprompt import BootstrapFewShot
+    from dspy.teleprompt import BootstrapFewShot, LabeledFewShot
     DSPY_AVAILABLE = True
 except ImportError:
     DSPY_AVAILABLE = False
     logging.warning(
-        "DSPy not installed. Install with: pip install dspy\n"
+        "DSPy not installed. Install with: pip install dspy-ai\n"
         "DSPy optimization will be skipped."
     )
 
@@ -39,12 +39,13 @@ except ImportError:
 @dataclass
 class OptimizationConfig:
     """Configuration for DSPy optimization."""
-    optimizer: str = "bootstrap_fewshot"  # bootstrap_fewshot, mipro_v2, copro
+    optimizer: str = "bootstrap_fewshot"  # bootstrap_fewshot, labeled_fewshot, mipro_v2, copro
     max_bootstrapped_demos: int = 5
     max_labeled_demos: int = 10
     num_trials: int = 10
     metric_threshold: float = 0.5
     verbose: bool = False
+    fallback_to_labeled: bool = True  # If bootstrap fails, fall back to labeled fewshot
 
 
 class ApxmDspyBridge:
@@ -94,20 +95,20 @@ class ApxmDspyBridge:
 
     def optimize_graph(
         self,
-        graph: Dict[str, Any],
+        graph: Union[Dict[str, Any], Any],
         training_data: Optional[List[Dict[str, Any]]] = None,
         config: Optional[OptimizationConfig] = None,
-    ) -> Dict[str, Any]:
+    ) -> Union[Dict[str, Any], Any]:
         """
         Optimize all LLM templates in an APXM graph.
 
         Args:
-            graph: APXM graph dict with 'nodes' and 'edges' keys
+            graph: APXM graph dict with 'nodes' and 'edges' keys, or ApxmGraph object
             training_data: List of training examples (DSPy format or session results)
             config: Optimization configuration
 
         Returns:
-            Optimized graph with updated template_str attributes
+            Optimized graph with updated template_str attributes (same type as input)
         """
         if not DSPY_AVAILABLE or self.lm is None:
             logging.info("DSPy not available, returning graph unchanged")
@@ -116,10 +117,17 @@ class ApxmDspyBridge:
         if config is None:
             config = OptimizationConfig()
 
+        # Convert ApxmGraph to dict if needed
+        is_apxm_graph = hasattr(graph, 'to_dict')
+        if is_apxm_graph:
+            graph_dict = graph.to_dict()
+        else:
+            graph_dict = graph
+
         # Extract LLM nodes (ASK, THINK, REASON)
         llm_ops = {"ASK", "THINK", "REASON"}
         llm_nodes = [
-            node for node in graph.get("nodes", [])
+            node for node in graph_dict.get("nodes", [])
             if node.get("op") in llm_ops
         ]
 
@@ -137,7 +145,8 @@ class ApxmDspyBridge:
         logging.info(f"Optimizing {len(llm_nodes)} LLM nodes with {len(training_data)} examples")
 
         # Optimize each node's template
-        optimized_graph = graph.copy()
+        import copy
+        optimized_graph = copy.deepcopy(graph_dict)
         for i, node in enumerate(optimized_graph.get("nodes", [])):
             if node.get("op") not in llm_ops:
                 continue
@@ -171,7 +180,13 @@ class ApxmDspyBridge:
                 logging.error(f"Failed to optimize node {node_id}: {e}")
                 continue
 
-        return optimized_graph
+        # Return optimized graph in same format as input
+        if is_apxm_graph:
+            # Import ApxmGraph to reconstruct
+            from apxm.ir import ApxmGraph
+            return ApxmGraph.from_dict(optimized_graph)
+        else:
+            return optimized_graph
 
     def optimize_template(
         self,
@@ -188,7 +203,7 @@ class ApxmDspyBridge:
             config: Optimization configuration
 
         Returns:
-            Optimized template string
+            Optimized template string with learned instructions and few-shot examples
         """
         if not DSPY_AVAILABLE or self.lm is None:
             return template
@@ -214,14 +229,36 @@ class ApxmDspyBridge:
             return template
 
         # Create a simple DSPy signature from the template
-        # Extract variables from template (e.g., {{question}}, {{context}})
+        # Extract variables from template (e.g., {{question}}, {{context}}, {{0}}, {{1}})
         import re
         var_pattern = r'\{\{(\w+)\}\}'
-        input_vars = list(set(re.findall(var_pattern, template)))
+        template_vars = re.findall(var_pattern, template)
 
-        if not input_vars:
+        if not template_vars:
             logging.warning("No input variables found in template")
             return template
+
+        # Determine if we have positional ({{0}}, {{1}}) or named ({{question}}) placeholders
+        is_positional = all(v.isdigit() for v in template_vars)
+
+        # Get input variable names from examples
+        example_input_keys = list(dspy_examples[0].__dict__.get('_input_keys', set()))
+        if not example_input_keys and hasattr(dspy_examples[0], '__dict__'):
+            # Fallback: get all keys except 'answer'
+            example_input_keys = [k for k in dspy_examples[0].__dict__.keys()
+                                  if k not in {'answer', '_input_keys', '_demos'}]
+
+        if not example_input_keys:
+            logging.warning("No input keys found in examples")
+            return template
+
+        # Build signature using example input keys
+        if is_positional:
+            # For positional templates like "{{0}}, {{1}}", use example keys in order
+            input_vars = example_input_keys[:len(set(template_vars))]
+        else:
+            # For named templates, use the template variable names
+            input_vars = list(set(template_vars))
 
         # Build signature string: "input1, input2 -> answer"
         signature_str = ", ".join(input_vars) + " -> answer"
@@ -247,27 +284,140 @@ class ApxmDspyBridge:
         # Run optimizer
         try:
             if config.optimizer == "bootstrap_fewshot":
-                optimizer = BootstrapFewShot(
-                    metric=simple_metric,
-                    max_bootstrapped_demos=config.max_bootstrapped_demos,
-                    max_labeled_demos=config.max_labeled_demos,
-                )
+                try:
+                    optimizer = BootstrapFewShot(
+                        metric=simple_metric,
+                        max_bootstrapped_demos=config.max_bootstrapped_demos,
+                        max_labeled_demos=config.max_labeled_demos,
+                    )
+                    optimized_predictor = optimizer.compile(
+                        predictor,
+                        trainset=dspy_examples[:min(len(dspy_examples), 20)],  # Limit for speed
+                    )
+                except Exception as bootstrap_error:
+                    # Bootstrap requires API calls - if no API key, fall back to labeled
+                    if config.fallback_to_labeled and ("api_key" in str(bootstrap_error).lower() or
+                                                       "authentication" in str(bootstrap_error).lower()):
+                        logging.info("BootstrapFewShot requires API key, falling back to LabeledFewShot")
+                        config.optimizer = "labeled_fewshot"
+                    else:
+                        raise
+
+            if config.optimizer == "labeled_fewshot":
+                # LabeledFewShot doesn't need API calls - just uses provided examples
+                optimizer = LabeledFewShot(k=config.max_labeled_demos)
                 optimized_predictor = optimizer.compile(
                     predictor,
-                    trainset=dspy_examples[:min(len(dspy_examples), 20)],  # Limit for speed
+                    trainset=dspy_examples[:min(len(dspy_examples), 20)],
                 )
-            else:
+            elif config.optimizer not in {"bootstrap_fewshot"}:
                 logging.warning(f"Optimizer {config.optimizer} not yet implemented, using original")
                 return template
 
-            # Extract the optimized prompt from the predictor
-            # For now, return the original template annotated with DSPy context
-            # In a full implementation, we'd extract the learned instructions
-            return template + " (DSPy-optimized)"
+            # Extract the optimized prompt from the compiled predictor
+            # DSPy stores demos and instructions in the predictor's state
+            optimized_template = self._extract_optimized_prompt(
+                optimized_predictor.predictor,
+                template,
+                input_vars
+            )
+
+            return optimized_template
 
         except Exception as e:
             logging.error(f"DSPy optimization failed: {e}")
+            import traceback
+            if config.verbose:
+                traceback.print_exc()
             return template
+
+    def _extract_optimized_prompt(
+        self,
+        predictor: Any,
+        original_template: str,
+        input_vars: List[str],
+    ) -> str:
+        """
+        Extract optimized prompt from a compiled DSPy predictor.
+
+        DSPy stores optimized prompts in the predictor's demos and extended_signature.
+        We extract these and format them as an APXM template.
+
+        Args:
+            predictor: DSPy Predict module (after optimization)
+            original_template: Original template string
+            input_vars: List of input variable names
+
+        Returns:
+            Optimized template with instructions and few-shot examples
+        """
+        try:
+            # Get few-shot demos from the optimized predictor
+            demos = getattr(predictor, 'demos', [])
+
+            # Get extended signature (contains learned instructions)
+            extended_sig = getattr(predictor, 'extended_signature', None)
+            if extended_sig:
+                # DSPy adds instructions to the signature
+                instructions = getattr(extended_sig, 'instructions', '')
+            else:
+                instructions = ''
+
+            # Build optimized prompt
+            parts = []
+
+            # Add learned instructions if available
+            if instructions:
+                parts.append(instructions.strip())
+                parts.append('')  # Blank line
+
+            # Add few-shot examples if available
+            if demos:
+                parts.append('Examples:')
+                for i, demo in enumerate(demos[:5], 1):  # Limit to 5 examples
+                    parts.append(f'Example {i}:')
+                    # Format input variables
+                    for j, var in enumerate(input_vars):
+                        value = getattr(demo, var, None)
+                        if value:
+                            parts.append(f'  {var}: {value}')
+                    # Format output
+                    answer = getattr(demo, 'answer', None)
+                    if answer:
+                        parts.append(f'  answer: {answer}')
+                    parts.append('')  # Blank line between examples
+
+            # Add the task prompt with placeholders
+            # Check if original template uses positional ({{0}}) or named ({{var}}) placeholders
+            import re
+            template_vars = re.findall(r'\{\{(\w+)\}\}', original_template)
+            is_positional = all(v.isdigit() for v in template_vars) if template_vars else False
+
+            parts.append('Now complete the following:')
+            if is_positional:
+                # Use positional placeholders to match original template
+                for i, var in enumerate(input_vars):
+                    parts.append(f'{var}: {{{{{i}}}}}')
+            else:
+                # Use named placeholders
+                for var in input_vars:
+                    parts.append(f'{var}: {{{{{var}}}}}')
+            parts.append('answer:')
+
+            optimized = '\n'.join(parts)
+
+            # If we got nothing from DSPy, return original
+            if not instructions and not demos:
+                logging.warning("No learned instructions or demos found in optimized predictor")
+                return original_template
+
+            return optimized
+
+        except Exception as e:
+            logging.warning(f"Failed to extract optimized prompt: {e}")
+            import traceback
+            traceback.print_exc()
+            return original_template
 
 
 def profile_to_examples(session_dir: Union[str, Path]) -> List[Dict[str, Any]]:
@@ -359,11 +509,30 @@ def load_training_data(data_path: Union[str, Path]) -> List[Dict[str, Any]]:
 
 # CLI interface for standalone usage
 def main():
-    """Command-line interface for DSPy optimization."""
+    """
+    Command-line interface for DSPy optimization.
+
+    Example usage:
+        # Optimize with explicit training data
+        python3 -m apxm.dspy_bridge workflow.apxm --training-data examples.json -o optimized.apxm
+
+        # Optimize using session results
+        python3 -m apxm.dspy_bridge workflow.apxm --session-dir ~/.apxm/sessions/abc123 -o optimized.apxm
+
+        # Use LabeledFewShot (no API key required)
+        python3 -m apxm.dspy_bridge workflow.apxm --training-data examples.json --optimizer labeled_fewshot
+    """
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Optimize APXM graph templates using DSPy"
+        description="Optimize APXM graph templates using DSPy",
+        epilog="""
+Examples:
+  %(prog)s workflow.apxm --training-data examples.json -o optimized.apxm
+  %(prog)s workflow.apxm --session-dir ~/.apxm/sessions/abc123 --verbose
+  %(prog)s workflow.apxm --training-data examples.json --optimizer labeled_fewshot
+        """,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("graph", help="Path to APXM graph file (.apxm or .json)")
     parser.add_argument(
@@ -376,13 +545,19 @@ def main():
     )
     parser.add_argument(
         "--output", "-o",
-        help="Output path for optimized graph (default: stdout)",
+        help="Output path for optimized graph (default: <graph>_optimized.apxm)",
     )
     parser.add_argument(
         "--optimizer",
         default="bootstrap_fewshot",
-        choices=["bootstrap_fewshot", "mipro_v2", "copro"],
-        help="DSPy optimizer to use",
+        choices=["bootstrap_fewshot", "labeled_fewshot", "mipro_v2", "copro"],
+        help="DSPy optimizer to use (default: bootstrap_fewshot)",
+    )
+    parser.add_argument(
+        "--max-demos",
+        type=int,
+        default=5,
+        help="Maximum number of few-shot demos to include (default: 5)",
     )
     parser.add_argument(
         "--verbose", "-v",
@@ -421,20 +596,37 @@ def main():
     # Optimize graph
     config = OptimizationConfig(
         optimizer=args.optimizer,
+        max_labeled_demos=args.max_demos,
+        max_bootstrapped_demos=args.max_demos,
         verbose=args.verbose,
     )
 
     bridge = ApxmDspyBridge()
     optimized_graph = bridge.optimize_graph(graph, training_data, config)
 
+    # Ensure we have a dict for JSON serialization
+    if hasattr(optimized_graph, 'to_dict'):
+        optimized_dict = optimized_graph.to_dict()
+    else:
+        optimized_dict = optimized_graph
+
     # Write output
     if args.output:
         output_path = Path(args.output)
-        with open(output_path, "w") as f:
-            json.dump(optimized_graph, f, indent=2)
-        logging.info(f"Optimized graph written to {output_path}")
     else:
-        print(json.dumps(optimized_graph, indent=2))
+        # Default: add _optimized suffix
+        input_path = Path(args.graph)
+        output_path = input_path.parent / f"{input_path.stem}_optimized{input_path.suffix}"
+
+    with open(output_path, "w") as f:
+        json.dump(optimized_dict, f, indent=2)
+
+    print(f"✓ Optimized graph written to {output_path}")
+    print(f"  Training examples: {len(training_data)}")
+    print(f"  Optimizer: {config.optimizer}")
+    llm_nodes = sum(1 for n in optimized_dict.get("nodes", [])
+                   if n.get("op") in {"ASK", "THINK", "REASON"})
+    print(f"  LLM nodes optimized: {llm_nodes}")
 
     return 0
 

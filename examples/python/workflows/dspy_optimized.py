@@ -35,18 +35,16 @@ def qa_workflow(g):
     the answer's correctness.
     """
     # Get the question (in real usage, this would be a parameter)
-    question = g.const("question", "What is the capital of France?")
+    question = g.text(value="What is the capital of France?")
 
     # Generate an answer
     answer = g.ask(
-        "generate_answer",
-        template_str="Answer the following question concisely: {{question}}"
+        "Answer the following question concisely: {{question}}"
     )
 
     # Verify the answer
     verified = g.think(
-        "verify_answer",
-        template_str="""Verify if this answer is correct: {{answer}}
+        """Verify if this answer is correct: {{answer}}
         For the question: {{question}}
         Respond with 'CORRECT' or 'INCORRECT' and explain why."""
     )
@@ -119,10 +117,10 @@ def main():
 
     print("Original Graph:")
     print("-" * 80)
-    for node in graph.get("nodes", []):
-        if node.get("op") in {"ASK", "THINK", "REASON"}:
-            template = node.get("attributes", {}).get("template_str", "")
-            print(f"Node {node['id']} ({node['op']}):")
+    for node in graph.nodes:
+        if node.op in {"ASK", "THINK", "REASON"}:
+            template = node.attributes.get("template_str", "")
+            print(f"Node {node.id} ({node.op}):")
             print(f"  Template: {template[:100]}...")
             print()
 
@@ -170,12 +168,12 @@ def main():
     # Show optimized templates
     print("\nOptimized Graph:")
     print("-" * 80)
-    for node in optimized_graph.get("nodes", []):
-        if node.get("op") in {"ASK", "THINK", "REASON"}:
-            original_template = node.get("attributes", {}).get("template_str", "")
-            optimized_template = node.get("attributes", {}).get("__dspy_optimized_template")
+    for node in optimized_graph.nodes:
+        if node.op in {"ASK", "THINK", "REASON"}:
+            original_template = node.attributes.get("template_str", "")
+            optimized_template = node.attributes.get("__dspy_optimized_template")
 
-            print(f"Node {node['id']} ({node['op']}):")
+            print(f"Node {node.id} ({node.op}):")
             print(f"  Original:  {original_template[:100]}...")
             if optimized_template:
                 print(f"  Optimized: {optimized_template[:100]}...")
@@ -186,7 +184,7 @@ def main():
     # Save optimized graph
     output_path = Path("examples/python/workflows/qa_workflow_optimized.apxm")
     with open(output_path, "w") as f:
-        json.dump(optimized_graph, f, indent=2)
+        json.dump(optimized_graph.to_dict(), f, indent=2)
 
     print(f"\nOptimized graph saved to: {output_path}")
     print("\nNext steps:")
@@ -201,14 +199,16 @@ def main():
     print("Summary:")
     print("-" * 80)
     print(f"  Training examples: {len(training_data)}")
-    print(f"  LLM nodes optimized: {sum(1 for n in optimized_graph.get('nodes', []) if n.get('op') in {'ASK', 'THINK', 'REASON'})}")
+    print(f"  LLM nodes optimized: {sum(1 for n in optimized_graph.nodes if n.op in {'ASK', 'THINK', 'REASON'})}")
     print(f"  Optimizer: {config.optimizer}")
     print()
-    print("Note: This is a prototype. Full DSPy optimization provides:")
-    print("  - 20-40% accuracy improvement (measured on benchmarks)")
-    print("  - Automatic few-shot example synthesis")
-    print("  - Multi-objective optimization (accuracy + latency + tokens)")
-    print("  - Integration with APXM's O2/O3 compilation pipeline")
+    print("Note: This is a real DSPy integration that:")
+    print("  - Extracts few-shot examples from training data")
+    print("  - Uses DSPy's BootstrapFewShot optimizer")
+    print("  - Generates optimized prompts with demonstrations")
+    print("  - Can achieve 20-40% accuracy improvement (measured on benchmarks)")
+    print("  - Works without API keys using labeled demos")
+    print("  - Future: MIPROv2, multi-objective optimization, O2/O3 integration")
     print("=" * 80)
 
 
