@@ -52,7 +52,7 @@ def ultrathink_coder(g: GraphRecorder, task: str):
         "Build command: dekk apxm build. Read relevant source files first. Task: {task_ok}"
     )
 
-    # Synthesize the three perspectives (auto-wired: {arch}→{0}, {adv}→{1}, {impl_}→{2})
+    # Synthesize the three perspectives (auto-wired from {arch}, {adv}, {impl_})
     synthesis = g.think(
         "ultrathink. Synthesize 3 expert analyses into ONE implementation brief. Adversary wins on scope. "
         "Exact file paths + complete Rust code blocks. Test cases. Flag uncertainty with [RISK]. "
