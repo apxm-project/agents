@@ -8,33 +8,45 @@
 
 use super::PassManager;
 use apxm_core::error::compiler::Result;
-use apxm_core::types::OptimizationLevel;
+use apxm_core::types::{OptimizationLevel, OptimizationTarget};
 
 /// Maximum iterations for O3 fixed-point convergence.
 const MAX_CONVERGENCE_ITERATIONS: usize = 10;
 
 pub fn build_pipeline(pm: &mut PassManager, level: OptimizationLevel) -> Result<()> {
-    build_pipeline_with_config(pm, level, false)
+    build_pipeline_with_config(pm, level, false, OptimizationTarget::Balanced)
 }
 
 pub fn build_pipeline_with_config(
     pm: &mut PassManager,
     level: OptimizationLevel,
     no_cse_llm: bool,
+    target: OptimizationTarget,
 ) -> Result<()> {
-    for name in build_pass_list(level, no_cse_llm) {
+    for name in build_pass_list(level, no_cse_llm, target) {
         pm.add_pass(&name)?;
     }
     Ok(())
 }
 
-/// Return the ordered list of pass names for a given optimization level and config.
+/// Return the ordered list of pass names for a given optimization level, config, and target.
 ///
 /// This is the single source of truth for pipeline composition. Both
 /// [`build_pipeline_with_config`] (which feeds passes to the MLIR pass manager) and
 /// [`PassManager::run_with_metrics`] (which runs passes individually for diagnostics)
 /// derive their pass sequence from this function.
-pub fn build_pass_list(level: OptimizationLevel, no_cse_llm: bool) -> Vec<String> {
+///
+/// The `target` parameter controls what to optimize for:
+/// - `Latency`: More aggressive fusion, prioritize parallel scheduling
+/// - `Cost`: More aggressive CSE and dead code elimination
+/// - `Tokens`: Prioritize dead-context-elimination and schema-narrowing
+/// - `Parallelism`: Aggressive scheduling, remove sequential constraints
+/// - `Balanced`: Default behavior (no special tuning)
+pub fn build_pass_list(
+    level: OptimizationLevel,
+    no_cse_llm: bool,
+    target: OptimizationTarget,
+) -> Vec<String> {
     let mut passes = Vec::new();
 
     match level {
@@ -54,6 +66,13 @@ pub fn build_pass_list(level: OptimizationLevel, no_cse_llm: bool) -> Vec<String
                 .iter()
                 .map(|s| s.to_string()),
             );
+
+            // Target-specific adjustments for O1
+            if matches!(target, OptimizationTarget::Cost | OptimizationTarget::Tokens) {
+                // Add more aggressive DCE for cost/tokens targets
+                passes.insert(passes.len() - 1, "dead-context-elimination".to_string());
+            }
+
             if !no_cse_llm {
                 passes.push("cse".to_string());
             }
@@ -66,16 +85,75 @@ pub fn build_pass_list(level: OptimizationLevel, no_cse_llm: bool) -> Vec<String
                     "build-prompt",
                     "template-specialization",
                     "unconsumed-value-warning",
-                    "schema-narrowing",
-                    "scheduling",
-                    "fuse-ask-ops",
-                    "condense-ops",
-                    "dead-context-elimination",
-                    "canonicalizer",
                 ]
                 .iter()
                 .map(|s| s.to_string()),
             );
+
+            // Target-specific pass ordering for O2
+            match target {
+                OptimizationTarget::Tokens => {
+                    // Prioritize context reduction
+                    passes.extend(
+                        [
+                            "dead-context-elimination",
+                            "schema-narrowing",
+                            "scheduling",
+                            "fuse-ask-ops",
+                            "condense-ops",
+                            "canonicalizer",
+                        ]
+                        .iter()
+                        .map(|s| s.to_string()),
+                    );
+                }
+                OptimizationTarget::Cost => {
+                    // Prioritize CSE and dead code elimination
+                    passes.extend(
+                        [
+                            "schema-narrowing",
+                            "scheduling",
+                            "fuse-ask-ops",
+                            "condense-ops",
+                            "dead-context-elimination",
+                            "canonicalizer",
+                        ]
+                        .iter()
+                        .map(|s| s.to_string()),
+                    );
+                }
+                OptimizationTarget::Latency | OptimizationTarget::Parallelism => {
+                    // Prioritize fusion and scheduling
+                    passes.extend(
+                        [
+                            "scheduling",
+                            "schema-narrowing",
+                            "fuse-ask-ops",
+                            "condense-ops",
+                            "dead-context-elimination",
+                            "canonicalizer",
+                        ]
+                        .iter()
+                        .map(|s| s.to_string()),
+                    );
+                }
+                OptimizationTarget::Balanced => {
+                    // Default ordering
+                    passes.extend(
+                        [
+                            "schema-narrowing",
+                            "scheduling",
+                            "fuse-ask-ops",
+                            "condense-ops",
+                            "dead-context-elimination",
+                            "canonicalizer",
+                        ]
+                        .iter()
+                        .map(|s| s.to_string()),
+                    );
+                }
+            }
+
             if !no_cse_llm {
                 passes.push("cse".to_string());
             }
@@ -87,9 +165,38 @@ pub fn build_pass_list(level: OptimizationLevel, no_cse_llm: bool) -> Vec<String
                     .iter()
                     .map(|s| s.to_string()),
             );
-            for _ in 0..MAX_CONVERGENCE_ITERATIONS {
-                passes.extend(
-                    [
+
+            let convergence_passes: Vec<String> = match target {
+                OptimizationTarget::Tokens => {
+                    vec![
+                        "dead-context-elimination",
+                        "template-specialization",
+                        "schema-narrowing",
+                        "scheduling",
+                        "fuse-ask-ops",
+                        "condense-ops",
+                        "canonicalizer",
+                    ]
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect()
+                }
+                OptimizationTarget::Latency | OptimizationTarget::Parallelism => {
+                    vec![
+                        "scheduling",
+                        "template-specialization",
+                        "schema-narrowing",
+                        "fuse-ask-ops",
+                        "condense-ops",
+                        "dead-context-elimination",
+                        "canonicalizer",
+                    ]
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect()
+                }
+                _ => {
+                    vec![
                         "template-specialization",
                         "schema-narrowing",
                         "scheduling",
@@ -99,8 +206,13 @@ pub fn build_pass_list(level: OptimizationLevel, no_cse_llm: bool) -> Vec<String
                         "canonicalizer",
                     ]
                     .iter()
-                    .map(|s| s.to_string()),
-                );
+                    .map(|s| s.to_string())
+                    .collect()
+                }
+            };
+
+            for _ in 0..MAX_CONVERGENCE_ITERATIONS {
+                passes.extend(convergence_passes.clone());
                 if !no_cse_llm {
                     passes.push("cse".to_string());
                 }
@@ -118,13 +230,13 @@ mod tests {
 
     #[test]
     fn o0_produces_no_passes() {
-        let passes = build_pass_list(OptimizationLevel::O0, false);
+        let passes = build_pass_list(OptimizationLevel::O0, false, OptimizationTarget::Balanced);
         assert!(passes.is_empty());
     }
 
     #[test]
     fn o1_pass_list_matches_spec() {
-        let passes = build_pass_list(OptimizationLevel::O1, false);
+        let passes = build_pass_list(OptimizationLevel::O1, false, OptimizationTarget::Balanced);
         assert_eq!(passes.len(), 8);
         assert_eq!(passes[0], "normalize");
         assert_eq!(passes[1], "build-prompt");
@@ -134,14 +246,14 @@ mod tests {
 
     #[test]
     fn o1_no_cse_llm_skips_cse() {
-        let passes = build_pass_list(OptimizationLevel::O1, true);
+        let passes = build_pass_list(OptimizationLevel::O1, true, OptimizationTarget::Balanced);
         assert_eq!(passes.len(), 7);
         assert!(!passes.contains(&"cse".to_string()));
     }
 
     #[test]
     fn o2_pass_list_matches_spec() {
-        let passes = build_pass_list(OptimizationLevel::O2, false);
+        let passes = build_pass_list(OptimizationLevel::O2, false, OptimizationTarget::Balanced);
         assert_eq!(passes.len(), 12);
         assert!(passes.contains(&"template-specialization".to_string()));
         assert!(passes.contains(&"dead-context-elimination".to_string()));
@@ -151,7 +263,7 @@ mod tests {
 
     #[test]
     fn o3_iterates_convergence_loop() {
-        let passes = build_pass_list(OptimizationLevel::O3, false);
+        let passes = build_pass_list(OptimizationLevel::O3, false, OptimizationTarget::Balanced);
         // 3 initial + 10 * 9 convergence passes = 93
         assert_eq!(passes.len(), 93);
         // First three are the preamble
@@ -160,5 +272,48 @@ mod tests {
         assert_eq!(passes[2], "unconsumed-value-warning");
         // Then convergence iterations start
         assert_eq!(passes[3], "template-specialization");
+    }
+
+    #[test]
+    fn test_target_latency_enables_fusion() {
+        let passes = build_pass_list(OptimizationLevel::O2, false, OptimizationTarget::Latency);
+        assert_eq!(passes.len(), 12);
+        // Scheduling should come early for latency target
+        let scheduling_idx = passes.iter().position(|p| p == "scheduling").unwrap();
+        let fusion_idx = passes.iter().position(|p| p == "fuse-ask-ops").unwrap();
+        assert!(scheduling_idx < fusion_idx);
+        assert!(passes.contains(&"fuse-ask-ops".to_string()));
+    }
+
+    #[test]
+    fn test_target_cost_enables_cse() {
+        let passes = build_pass_list(OptimizationLevel::O2, false, OptimizationTarget::Cost);
+        assert_eq!(passes.len(), 12);
+        // CSE should be present for cost target
+        assert!(passes.contains(&"cse".to_string()));
+        assert!(passes.contains(&"dead-context-elimination".to_string()));
+    }
+
+    #[test]
+    fn test_target_tokens_enables_dce() {
+        let passes = build_pass_list(OptimizationLevel::O2, false, OptimizationTarget::Tokens);
+        assert_eq!(passes.len(), 12);
+        // Dead context elimination should come early for tokens target
+        let dce_idx = passes
+            .iter()
+            .position(|p| p == "dead-context-elimination")
+            .unwrap();
+        let scheduling_idx = passes.iter().position(|p| p == "scheduling").unwrap();
+        assert!(dce_idx < scheduling_idx);
+    }
+
+    #[test]
+    fn test_balanced_matches_default() {
+        let balanced = build_pass_list(OptimizationLevel::O2, false, OptimizationTarget::Balanced);
+        assert_eq!(balanced.len(), 12);
+        // Balanced should have standard ordering
+        assert_eq!(balanced[0], "normalize");
+        assert_eq!(balanced[1], "build-prompt");
+        assert!(balanced.contains(&"schema-narrowing".to_string()));
     }
 }

@@ -29,7 +29,8 @@ pub use aam::{
     ScopePolicy, ScopeSpec,
 };
 pub use compiler::{
-    CodegenOptions, CompilationStage, EmitFormat, OptimizationLevel, PipelineConfig, stage_rank,
+    CodegenOptions, CompilationStage, EmitFormat, OptimizationLevel, OptimizationTarget,
+    PipelineConfig, stage_rank,
 };
 pub use execution::{
     Agent, AgentFlow, AgentId, AgentMetadata, CapabilityDeclaration, DagMetadata, DependencyType,

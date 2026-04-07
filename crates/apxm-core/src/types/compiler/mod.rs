@@ -8,6 +8,6 @@ mod passes;
 mod stages;
 
 pub use codegen::CodegenOptions;
-pub use optimization::{OptimizationLevel, PipelineConfig};
+pub use optimization::{OptimizationLevel, OptimizationTarget, PipelineConfig};
 pub use passes::{PassCategory, PassInfo};
 pub use stages::{CompilationStage, EmitFormat, stage_rank};

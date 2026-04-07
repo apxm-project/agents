@@ -134,7 +134,11 @@ impl<'ctx> Pipeline<'ctx> {
         }
 
         let pm = PassManager::new(self.context)?;
-        let pass_names = build_pass_list(self.config.opt_level, self.config.no_cse_llm);
+        let pass_names = build_pass_list(
+            self.config.opt_level,
+            self.config.no_cse_llm,
+            self.config.target,
+        );
         let diagnostics = pm.run_with_metrics(&module, &pass_names)?;
 
         if self.config.verify {
