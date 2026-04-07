@@ -567,6 +567,11 @@ pub mod extensions {
     pub const JSON: &str = "json";
 }
 
+pub mod cache {
+    /// SQLite cache database filename.
+    pub const DB_FILE: &str = "cache.db";
+}
+
 pub mod session {
     pub mod files {
         pub const MANIFEST: &str = "manifest.json";
