@@ -18,16 +18,18 @@ def memory_rag_pipeline(g: GraphRecorder):
         "What are the trade-offs between Rust async runtimes: Tokio vs async-std vs smol?"
     )
 
-    # Recall from memory
+    # Recall from memory (the runtime will make context available via AAM)
     recall_ltm = g.query_memory("recall_ltm", query="rust async runtimes comparison")
 
     # Generate answer using memory context
+    # The runtime provides memory context through AAM, so we don't need to wire recall_ltm
     answer = g.think(
         "answer",
-        "Answer this question, using the memory recall as context if relevant.\n\n"
-        "QUESTION:\n{query}\n\nMEMORY RECALL:\n{recall_ltm}\n\n"
-        "Provide a thorough, accurate answer."
+        "Answer this question, using any relevant context from memory.\n\n"
+        "QUESTION:\n{query}\n\n"
+        "Provide a thorough, accurate answer about Rust async runtimes."
     )
+    recall_ltm >> answer  # Control dependency to ensure memory is queried first
 
     # Verify the answer
     verification = g.think(
@@ -40,9 +42,10 @@ def memory_rag_pipeline(g: GraphRecorder):
     # Store the answer in memory
     mem = g.update_memory(
         "store_answer",
-        data="{answer}",
+        data=answer,
         key="rust_async_runtimes_comparison"
     )
+    answer | mem
 
     # Print outputs
     print1 = g.print("=== ANSWER ===\n{answer}")

@@ -184,7 +184,8 @@ def validate_example(file_path: Path, project_root: Path, verbose: bool = False)
         air_file = Path(f.name)
 
     try:
-        # Try to compile the .air file
+        # Compile the .air file (now valid MLIR that goes directly to Module::parse())
+        # Successful compilation means the .air is valid
         result = subprocess.run(
             ["dekk", "apxm", "compile", str(air_file), "-o", f"{air_file}.apxmobj"],
             capture_output=True,
@@ -193,27 +194,7 @@ def validate_example(file_path: Path, project_root: Path, verbose: bool = False)
         )
 
         if result.returncode != 0:
-            # Validation errors are in stdout, summary is in stderr
-            error_msg = result.stdout + "\n" + result.stderr
-            error_type = classify_error(error_msg)
-            return ValidationResult(
-                file_path=file_path,
-                passed=False,
-                error_type=error_type,
-                error_message=error_msg,
-                air_output=air_output,
-            )
-
-        # Step 5: Validate the .air file
-        result = subprocess.run(
-            ["dekk", "apxm", "validate", str(air_file)],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-
-        if result.returncode != 0:
-            # Validation errors are in stdout, summary is in stderr
+            # Compilation errors are in stdout and stderr
             error_msg = result.stdout + "\n" + result.stderr
             error_type = classify_error(error_msg)
             return ValidationResult(
