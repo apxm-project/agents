@@ -1402,6 +1402,51 @@ fn compile_command(
     let compile_start = std::time::Instant::now();
     let compiler = Compiler::with_opt_level(opt).context("Failed to initialize compiler")?;
 
+    // Check if this is a new-format .air file (valid MLIR)
+    let is_new_air = if !input.is_dir() && graph_input.extension().and_then(|e| e.to_str()) == Some("air") {
+        if let Ok(text) = std::fs::read_to_string(&graph_input) {
+            text.trim_start().starts_with("module") || text.trim_start().starts_with("func.func")
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    // For new .air format (valid MLIR), compile directly without ApxmGraph
+    if is_new_air {
+        // NEW PATH: .air file is valid MLIR — compile directly
+        // (no-cse-llm and diagnostics are graph-level optimizations, not applicable here)
+        let module = compiler
+            .compile(&graph_input)
+            .map_err(|e| anyhow::anyhow!("Failed to compile MLIR: {e}"))?;
+        let compile_time = compile_start.elapsed();
+
+        let artifact_start = std::time::Instant::now();
+        let bytes = module
+            .generate_artifact_bytes()
+            .context("Failed to generate artifact")?;
+        let artifact_time = artifact_start.elapsed();
+
+        let out_path = output.unwrap_or_else(|| {
+            graph_input.with_extension(apxm_core::constants::extensions::ARTIFACT)
+        });
+        std::fs::write(&out_path, &bytes)
+            .with_context(|| format!("Failed to write {}", out_path.display()))?;
+
+        println!(
+            "{} Compiled to {}",
+            apxm_core::constants::ui::icons::SUCCESS,
+            out_path.display()
+        );
+        println!("  Compilation: {:?}", compile_time);
+        println!("  Artifact generation: {:?}", artifact_time);
+        println!("  Artifact size: {} bytes", bytes.len());
+
+        return Ok(());
+    }
+
+    // OLD PATH: ApxmGraph-based compilation
     let graph = if input.is_dir() {
         load_graph_from_directory(&input)?
     } else {

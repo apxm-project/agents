@@ -51,12 +51,22 @@ impl Compiler {
             ));
         }
 
-        // .air files use custom text format — parse to ApxmGraph, then compile
+        // .air files: try direct MLIR parse first (new format), fallback to custom parser (old format)
         if matches!(ext, Some("air")) {
             let air_text = fs::read_to_string(path)?;
-            let graph = ApxmGraph::from_air(&air_text)
-                .map_err(|e| DriverError::Driver(format!(".air parse error: {e}")))?;
-            return self.compile_graph(&graph);
+
+            // Detect format: new .air files start with "module {", old ones with "; Agent IR"
+            if air_text.trim_start().starts_with("module") || air_text.trim_start().starts_with("func.func") {
+                // New format: valid MLIR — parse directly
+                let module = Module::parse(&self.context, &air_text)
+                    .map_err(|e| DriverError::Driver(format!("MLIR parse error in .air file: {e}")))?;
+                return Ok(module);
+            } else {
+                // Old format: custom .air text — parse to ApxmGraph, then compile
+                let graph = ApxmGraph::from_air(&air_text)
+                    .map_err(|e| DriverError::Driver(format!(".air parse error: {e}")))?;
+                return self.compile_graph(&graph);
+            }
         }
 
         let graph = self.load_graph(path)?;
@@ -115,10 +125,24 @@ impl Compiler {
     }
 
     /// Load graph input (JSON or .air) from disk.
+    ///
+    /// NOTE: New .air files (valid MLIR) should use compile() directly, which parses
+    /// them as MLIR without converting to ApxmGraph. This method only handles old-format
+    /// .air files and JSON files that need to be converted to ApxmGraph.
     pub fn load_graph(&self, path: &Path) -> Result<ApxmGraph, DriverError> {
         match path.extension().and_then(|ext| ext.to_str()) {
             Some("air") => {
                 let text = fs::read_to_string(path)?;
+
+                // New .air files (valid MLIR) cannot be converted back to ApxmGraph
+                // — they should go through compile() instead
+                if text.trim_start().starts_with("module") || text.trim_start().starts_with("func.func") {
+                    return Err(DriverError::Driver(
+                        "This .air file uses the new MLIR format and cannot be loaded as ApxmGraph. \
+                         Use compile() directly instead of load_graph().".to_string()
+                    ));
+                }
+
                 ApxmGraph::from_air(&text)
                     .map_err(|e| DriverError::Driver(format!(".air parse error: {e}")))
             }
