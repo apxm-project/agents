@@ -45,8 +45,8 @@ def add_op_workflow(g: GraphRecorder):
     architect_task = g.text(value="""You are the architect for APXM. You need to create an implementation plan
 for adding a new AIS operation to the APXM codebase.
 
-Operation name: {0}
-Description: {1}
+Operation name: {op_name}
+Description: {op_description}
 
 Read the following files to understand the pattern:
 - crates/apxm-ais/src/definitions.rs (AISOperationType enum)
@@ -67,11 +67,10 @@ Keep the plan under 400 words but be specific about attribute names and types.
 """
     )
 
-    architect.ask("{0}")
-    architect_task | architect.get_last_node()
+    architect.ask("{architect_task}")
 
-    print1 = g.print("=== ARCHITECT PLAN ===\n{0}")
-    architect.get_last_node() | print1
+    print1 = g.print("=== ARCHITECT PLAN ===\n{architect_plan}")
+    architect_plan = architect.get_last_node()
 
     # Step 2: Build implementation prompts for parallel execution
     compiler_prompt = g.ask(
@@ -79,7 +78,7 @@ Keep the plan under 400 words but be specific about attribute names and types.
         template="""Based on this plan, implement the compiler-side changes:
 
 Plan:
-{0}
+{architect_plan}
 
 You need to modify:
 1. crates/apxm-ais/src/definitions.rs
@@ -96,15 +95,13 @@ Make sure the wire index matches the plan. Use the same attribute names.
 Only modify what's necessary — don't refactor surrounding code.
 """
     )
-    architect.get_last_node() | compiler_prompt
-    print1 >> compiler_prompt
 
     runtime_prompt = g.ask(
         "build_runtime_prompt",
         template="""Based on this plan, implement the runtime-side changes:
 
 Plan:
-{0}
+{architect_plan}
 
 You need to:
 1. Create crates/apxm-runtime/src/executor/handlers/<op_name>.rs
@@ -124,24 +121,19 @@ You need to:
 Follow APXM conventions: use apxm-core types, proper error handling with context.
 """
     )
-    architect.get_last_node() | runtime_prompt
-    print1 >> runtime_prompt
 
     # Step 3: Both devs work in parallel
-    compiler_dev.ask("{0}")
-    compiler_prompt | compiler_dev.get_last_node()
+    compiler_dev.ask("{compiler_prompt}")
+    compiler_impl = compiler_dev.get_last_node()
 
-    runtime_dev.ask("{0}")
-    runtime_prompt | runtime_dev.get_last_node()
+    runtime_dev.ask("{runtime_prompt}")
+    runtime_impl = runtime_dev.get_last_node()
 
-    print2 = g.print("=== COMPILER IMPL ===\n{0}")
-    compiler_dev.get_last_node() | print2
-
-    print3 = g.print("=== RUNTIME IMPL ===\n{0}")
-    runtime_dev.get_last_node() | print3
+    print2 = g.print("=== COMPILER IMPL ===\n{compiler_impl}")
+    print3 = g.print("=== RUNTIME IMPL ===\n{runtime_impl}")
 
     # Step 4: Wait for both to complete, then review
-    wait = g.wait_all("wait_implementations", compiler_dev.get_last_node(), runtime_dev.get_last_node())
+    wait = g.wait_all("wait_implementations", compiler_impl, runtime_impl)
     print2 >> wait
     print3 >> wait
 
@@ -150,10 +142,10 @@ Follow APXM conventions: use apxm-core types, proper error handling with context
         template="""Review both implementations and verify they work together:
 
 Compiler implementation:
-{0}
+{compiler_impl}
 
 Runtime implementation:
-{1}
+{runtime_impl}
 
 Check:
 1. Wire index consistency across all files
@@ -175,25 +167,22 @@ Report:
 If tests fail, suggest fixes.
 """
     )
-    compiler_dev.get_last_node() | review_task
-    runtime_dev.get_last_node() | review_task
     wait >> review_task
 
-    reviewer.ask("{0}")
-    review_task | reviewer.get_last_node()
+    reviewer.ask("{review_task}")
+    review_result = reviewer.get_last_node()
 
-    print4 = g.print("=== REVIEW ===\n{0}")
-    reviewer.get_last_node() | print4
+    print4 = g.print("=== REVIEW ===\n{review_result}")
 
     # Final synthesis
     final = g.think(
         "synthesis",
         template="""Synthesize the add-op workflow results:
 
-Plan: {0}
-Compiler impl: {1}
-Runtime impl: {2}
-Review: {3}
+Plan: {architect_plan}
+Compiler impl: {compiler_impl}
+Runtime impl: {runtime_impl}
+Review: {review_result}
 
 Summary:
 - Operation name and wire index
@@ -202,14 +191,9 @@ Summary:
 - Next steps (if any)
 """
     )
-    architect.get_last_node() | final
-    compiler_dev.get_last_node() | final
-    runtime_dev.get_last_node() | final
-    reviewer.get_last_node() | final
     print4 >> final
 
-    print5 = g.print("=== FINAL SUMMARY ===\n{0}")
-    final | print5
+    print5 = g.print("=== FINAL SUMMARY ===\n{final}")
 
     g.done(print5)
 
