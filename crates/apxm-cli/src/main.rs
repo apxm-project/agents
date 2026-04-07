@@ -919,6 +919,7 @@ fn team_command(action: TeamAction, json_output: bool) -> Result<()> {
     }
 }
 
+#[allow(dead_code)] // Planned for human-readable metrics formatting
 fn format_number(n: usize) -> String {
     let s = n.to_string();
     let mut result = String::new();
@@ -1011,10 +1012,12 @@ fn parse_opt_level(level: u8) -> apxm_core::types::OptimizationLevel {
     }
 }
 
+#[allow(dead_code)] // Python frontend integration - not yet wired to compile/execute commands
 fn is_python_graph_input(input: &Path) -> bool {
     input.extension().and_then(|ext| ext.to_str()) == Some("py")
 }
 
+#[allow(dead_code)] // Python frontend integration - not yet wired to compile/execute commands
 fn emit_air_from_python(input: &Path) -> Result<tempfile::NamedTempFile> {
     use std::io::Write;
 
@@ -1094,6 +1097,7 @@ fn emit_air_from_python(input: &Path) -> Result<tempfile::NamedTempFile> {
     Ok(tmp)
 }
 
+#[allow(dead_code)] // Python frontend integration - not yet wired to compile/execute commands
 fn prepare_graph_input(
     input: &Path,
 ) -> Result<(PathBuf, Option<tempfile::NamedTempFile>)> {
@@ -2210,11 +2214,13 @@ async fn run_command(
     Ok(())
 }
 
+#[allow(dead_code)] // Ollama integration - reserved for future use
 const DEFAULT_OLLAMA_ENDPOINT: &str = "http://localhost:11434";
 
 /// Fetch installed models from a running Ollama instance and register them.
 ///
 /// Returns `(added, skipped)` counts. `existing` model IDs are skipped.
+#[allow(dead_code)] // Ollama integration - not yet wired to backend commands
 fn ollama_model_caps(base_url: &str, model_name: &str) -> (bool, bool, usize) {
     // Query /api/show for real capabilities — no hardcoding model family names.
     // Returns (supports_functions, supports_vision, context_window).
@@ -2258,6 +2264,7 @@ fn ollama_model_caps(base_url: &str, model_name: &str) -> (bool, bool, usize) {
     (supports_functions, supports_vision, ctx_window)
 }
 
+#[allow(dead_code)] // Ollama integration - not yet wired to backend commands
 fn sync_ollama_models(
     store: &apxm_credentials::backend::BackendStore,
     backend_name: &str,
@@ -2319,6 +2326,7 @@ fn sync_ollama_models(
     Ok((added, skipped))
 }
 
+#[allow(dead_code)] // Backend CLI - planned replacement for current implementation
 async fn backend_command(action: BackendAction, json_output: bool) -> Result<()> {
     use apxm_core::types::{BackendConfig, BackendType, ProviderProtocol};
     use apxm_credentials::backend::BackendStore;
@@ -5166,8 +5174,6 @@ async fn workflow_command(action: WorkflowAction, json: bool) -> Result<()> {
 
 #[cfg(not(feature = "driver"))]
 fn workflow_command_no_driver(action: WorkflowAction, json: bool) -> Result<()> {
-    use apxm_runtime::workflow::WorkflowDef;
-
     match action {
         WorkflowAction::Validate { file } => workflow_validate_command(file, json),
         WorkflowAction::Analyze { file } => workflow_analyze_command(file, json),

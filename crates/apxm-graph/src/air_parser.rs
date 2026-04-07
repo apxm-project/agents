@@ -13,7 +13,6 @@ pub fn parse_air(input: &str) -> Result<ApxmGraph, GraphError> {
 }
 
 struct AirParser<'a> {
-    input: &'a str,
     lines: Vec<&'a str>,
     line_num: usize,
 }
@@ -22,7 +21,6 @@ impl<'a> AirParser<'a> {
     fn new(input: &'a str) -> Self {
         let lines: Vec<&str> = input.lines().collect();
         Self {
-            input,
             lines,
             line_num: 0,
         }

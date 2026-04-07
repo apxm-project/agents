@@ -1,0 +1,331 @@
+#!/usr/bin/env python3
+"""audit.py - APXM Project Audit Workflow
+
+Self-hosted workflow that audits the APXM project for issues.
+
+Graph structure:
+- spawn architect (claude)
+- exc: run build check (dekk apxm build 2>&1)
+- exc: run test check (cargo test --workspace --quiet 2>&1)
+- exc: run autofix check (python3 scripts/apxm-autofix.py --report-only)
+- exc: run policy check (python3 scripts/apxm-policy-check.py)
+- exc: count TODOs/FIXMEs/stubs
+- exc: check for missing ops in artifact emitter
+- think: synthesize audit report
+- think: generate actionable recommendations
+
+Usage:
+    PYTHONPATH=crates/apxm-frontend/python python3 examples/python/self-hosted/audit.py > /tmp/audit.air
+    dekk apxm compile /tmp/audit.air -o /tmp/audit.apxmobj
+    dekk apxm execute /tmp/audit.air "full"
+"""
+
+import os
+from apxm.graph import compile, GraphRecorder
+from apxm._generated.agents import claude
+
+
+@compile()
+def audit(g: GraphRecorder):
+    """Audit the APXM project for issues.
+
+    Parameters:
+        scope (str): Audit scope - "full" (default), "build", "test", "examples", "policy"
+    """
+    g.param("scope", "str")
+
+    cwd = os.environ.get("APXM_HOME", os.getcwd())
+
+    # Spawn architect agent
+    architect = g.spawn("architect", profile=claude, cwd=cwd)
+
+    # Step 1: Run build check
+    build_task = g.text(value="""Run APXM build and capture warnings/errors:
+
+Execute:
+  dekk apxm build 2>&1
+
+Parse the output and report:
+- Build status (success/failure)
+- Number of warnings by type (dead_code, unused_imports, etc.)
+- Number of errors (if any)
+- Critical issues (if any)
+
+Output JSON:
+{
+  "status": "clean" | "warnings" | "errors",
+  "warnings": {
+    "dead_code": N,
+    "unused_imports": N,
+    "other": N
+  },
+  "errors": [],
+  "total_warnings": N,
+  "total_errors": N
+}
+"""
+    )
+
+    architect.ask("{build_task}")
+    build_result = architect.get_last_node()
+
+    print1 = g.print("=== BUILD STATUS ===\n{build_result}")
+
+    # Step 2: Run test check
+    test_task = g.text(value="""Run APXM test suite and report results:
+
+Execute:
+  cargo test --workspace --quiet 2>&1
+
+Parse the output and report:
+- Test status (all pass/some failures)
+- Number of tests run
+- Number of tests passed
+- Number of tests failed
+- Failed test names (if any)
+
+Output JSON:
+{
+  "status": "pass" | "fail",
+  "total": N,
+  "passed": N,
+  "failed": N,
+  "failed_tests": ["test1", "test2", ...]
+}
+"""
+    )
+
+    print1 >> test_task
+    architect.ask("{test_task}")
+    test_result = architect.get_last_node()
+
+    print2 = g.print("=== TEST STATUS ===\n{test_result}")
+
+    # Step 3: Run autofix check
+    autofix_task = g.text(value="""Run APXM autofix validation and report:
+
+Execute:
+  PYTHONPATH=crates/apxm-frontend/python python3 scripts/apxm-autofix.py --report-only
+
+Parse the output and report:
+- Validation status (all pass/some failures)
+- Number of examples validated
+- Number of examples passed
+- Number of examples failed
+- Failure types (import_error, mlir_parse_error, compile_error, etc.)
+
+Output JSON:
+{
+  "status": "pass" | "fail",
+  "total": N,
+  "passed": N,
+  "failed": N,
+  "failures_by_type": {
+    "import_error": N,
+    "mlir_parse_error": N,
+    "compile_error": N
+  }
+}
+"""
+    )
+
+    print2 >> autofix_task
+    architect.ask("{autofix_task}")
+    autofix_result = architect.get_last_node()
+
+    print3 = g.print("=== AUTOFIX STATUS ===\n{autofix_result}")
+
+    # Step 4: Run policy check
+    policy_task = g.text(value="""Run APXM policy checks and report violations:
+
+Execute:
+  python3 scripts/apxm-policy-check.py
+
+Parse the output and report:
+- Policy status (clean/violations)
+- Number of violations by category
+- Critical violations (if any)
+
+Output JSON:
+{
+  "status": "clean" | "violations",
+  "violations": {
+    "category1": N,
+    "category2": N
+  },
+  "total_violations": N,
+  "critical": []
+}
+"""
+    )
+
+    print3 >> policy_task
+    architect.ask("{policy_task}")
+    policy_result = architect.get_last_node()
+
+    print4 = g.print("=== POLICY STATUS ===\n{policy_result}")
+
+    # Step 5: Count TODOs/FIXMEs/stubs
+    todo_task = g.text(value="""Count TODOs, FIXMEs, and stub handlers in runtime and compiler:
+
+Execute:
+  grep -r "TODO\\|FIXME" crates/apxm-runtime crates/apxm-compiler --include="*.rs" | wc -l
+  grep -r "stub\\|unimplemented" crates/apxm-runtime/src/executor/handlers --include="*.rs" | wc -l
+
+Report:
+- Total TODOs/FIXMEs
+- Total stub handlers
+- High-priority items (if marked as such)
+
+Output JSON:
+{
+  "todos_fixmes": N,
+  "stub_handlers": N,
+  "high_priority": []
+}
+"""
+    )
+
+    print4 >> todo_task
+    architect.ask("{todo_task}")
+    todo_result = architect.get_last_node()
+
+    print5 = g.print("=== TODO/STUB STATUS ===\n{todo_result}")
+
+    # Step 6: Check for missing ops in artifact emitter
+    missing_ops_task = g.text(value="""Check for missing AIS operations in artifact emitter:
+
+Compare:
+1. AIS operations defined in crates/apxm-ais/src/operations/definitions.rs (AISOperationType enum)
+2. Operations mapped in crates/apxm-compiler/mlir/lib/Dialect/AIS/Conversion/Artifact/ArtifactEmitter.cpp (mapOperation function)
+
+Report any operations defined in Rust but missing from the C++ emitter.
+
+Execute:
+  grep "^\\s*[A-Z][a-zA-Z]*," crates/apxm-ais/src/operations/definitions.rs | wc -l
+  grep "Case<.*Op>" crates/apxm-compiler/mlir/lib/Dialect/AIS/Conversion/Artifact/ArtifactEmitter.cpp | wc -l
+
+Output JSON:
+{
+  "total_ops": N,
+  "mapped_ops": N,
+  "missing_ops": ["Op1", "Op2", ...],
+  "status": "complete" | "incomplete"
+}
+"""
+    )
+
+    print5 >> missing_ops_task
+    architect.ask("{missing_ops_task}")
+    missing_ops_result = architect.get_last_node()
+
+    print6 = g.print("=== MISSING OPS STATUS ===\n{missing_ops_result}")
+
+    # Step 7: Synthesize audit report
+    synthesize = g.think(
+        "synthesize_report",
+        """Synthesize comprehensive audit report from all checks:
+
+Build status: {build_result}
+Test status: {test_result}
+Autofix status: {autofix_result}
+Policy status: {policy_result}
+TODO/Stub status: {todo_result}
+Missing ops status: {missing_ops_result}
+
+Generate structured audit report:
+
+# APXM Project Audit Report
+
+## Summary
+- Overall status: <CLEAN/WARNINGS/ISSUES/CRITICAL>
+- Scope: <scope from param>
+- Timestamp: <current date>
+
+## Build Health
+- Status: <clean/warnings/errors>
+- Total warnings: N
+- Total errors: N
+- Details: <summary>
+
+## Test Coverage
+- Status: <pass/fail>
+- Tests run: N
+- Tests passed: N
+- Tests failed: N
+- Failed tests: <list if any>
+
+## Example Validation
+- Status: <pass/fail>
+- Examples validated: N
+- Examples passed: N
+- Examples failed: N
+- Failure types: <breakdown>
+
+## Policy Compliance
+- Status: <clean/violations>
+- Total violations: N
+- Violations by category: <breakdown>
+- Critical violations: <list if any>
+
+## Code Quality
+- TODOs/FIXMEs: N
+- Stub handlers: N
+- High-priority items: <list if any>
+
+## Completeness
+- Total AIS ops: N
+- Mapped ops: N
+- Missing ops: <list if any>
+
+## Overall Assessment
+<2-3 sentence summary of project health>
+"""
+    )
+    print6 >> synthesize
+
+    print7 = g.print("=== AUDIT REPORT ===\n{synthesize}")
+
+    # Step 8: Generate actionable recommendations
+    recommend = g.think(
+        "generate_recommendations",
+        """Generate actionable recommendations ranked by impact and effort:
+
+Audit report: {synthesize}
+
+For each issue category (build warnings, test failures, policy violations, etc.):
+1. Rank by impact (CRITICAL/HIGH/MEDIUM/LOW)
+2. Estimate effort (TRIVIAL/SMALL/MEDIUM/LARGE)
+3. Suggest concrete next steps
+
+Output recommendations sorted by (impact, effort):
+
+# Actionable Recommendations
+
+## Critical (do now)
+- [ ] <item> - <why critical> - <effort estimate> - <concrete steps>
+
+## High Priority (this week)
+- [ ] <item> - <why important> - <effort estimate> - <concrete steps>
+
+## Medium Priority (this month)
+- [ ] <item> - <why needed> - <effort estimate> - <concrete steps>
+
+## Low Priority (backlog)
+- [ ] <item> - <why nice-to-have> - <effort estimate> - <concrete steps>
+
+## Suggested Focus Areas
+1. <area 1>: <rationale>
+2. <area 2>: <rationale>
+3. <area 3>: <rationale>
+"""
+    )
+    print7 >> recommend
+
+    print8 = g.print("=== RECOMMENDATIONS ===\n{recommend}")
+
+    g.done(print8)
+
+
+if __name__ == "__main__":
+    print(audit._graph.to_air())
