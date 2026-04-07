@@ -177,8 +177,8 @@ RETURN: Final = OpSpec(
     name="Return",
     category="control_flow",
     description="Return from subgraph with result token",
-    required_fields=("token",),
-    optional_fields=(),
+    required_fields=(),
+    optional_fields=("token",),
     produces_output=True,
 )
 
@@ -207,8 +207,8 @@ MERGE: Final = OpSpec(
     name="Merge",
     category="synchronization",
     description="Sync parallel paths; aggregate tokens into one",
-    required_fields=("tokens",),
-    optional_fields=(),
+    required_fields=(),
+    optional_fields=("tokens",),
     produces_output=True,
 )
 
@@ -227,8 +227,8 @@ WAIT_ALL: Final = OpSpec(
     name="WaitAll",
     category="synchronization",
     description="Block until all specified tokens are available",
-    required_fields=("tokens",),
-    optional_fields=(),
+    required_fields=(),
+    optional_fields=("tokens",),
     produces_output=True,
 )
 

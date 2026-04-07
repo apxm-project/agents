@@ -995,12 +995,12 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         name: "Return",
         category: OperationCategory::ControlFlow,
         description: "Return from subgraph with result token",
-        long_description: "Returns a value from a subgraph or flow. The token attribute \
-            specifies which node's output to return. Used as the terminal node in flows \
-            invoked via FLOW_CALL.",
+        long_description: "Returns a value from a subgraph or flow. The token is provided \
+            via an incoming Data edge in the MLIR dialect. The optional token attribute \
+            allows JSON-based graphs to specify the source via {{node_N}} template syntax.",
         latency: OperationLatency::None,
         example_json: Some(r#"{"id": 6, "op": "RETURN", "attributes": {"token": "{{node_5}}"}}"#),
-        fields: &[OperationField::required("token", "Result token to return")],
+        fields: &[OperationField::optional("token", "Result token reference (optional, resolved from edges)")],
         needs_submission: false,
         min_inputs: 1,
         produces_output: true,
@@ -1056,15 +1056,16 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         category: OperationCategory::Synchronization,
         description: "Sync parallel paths; aggregate tokens into one",
         long_description: "Waits for multiple parallel branches to complete and combines \
-            their output tokens into a single aggregated result. Used after parallel \
-            FLOW_CALL or fan-out patterns to collect results before further processing.",
+            their output tokens into a single aggregated result. Inputs are provided via \
+            incoming Data edges in the MLIR dialect. The optional tokens attribute allows \
+            JSON-based graphs to specify sources via {{node_N}} template syntax.",
         latency: OperationLatency::None,
         example_json: Some(
             r#"{"id": 6, "op": "MERGE", "attributes": {"tokens": ["{{node_3}}", "{{node_4}}", "{{node_5}}"]}}"#,
         ),
-        fields: &[OperationField::required(
+        fields: &[OperationField::optional(
             "tokens",
-            "List of tokens to merge",
+            "Token references to merge (optional, resolved from edges)",
         )],
         needs_submission: true,
         min_inputs: 1,
@@ -1095,12 +1096,13 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         description: "Block until all specified tokens are available",
         long_description: "Blocks execution until all listed input tokens are ready. Unlike \
             MERGE, it does not combine the tokens — it simply acts as a synchronization barrier. \
-            Commonly used before a node that needs all its inputs but doesn't need them merged.",
+            Inputs are provided via incoming Data edges in the MLIR dialect. The optional tokens \
+            attribute allows JSON-based graphs to specify sources via {{node_N}} template syntax.",
         latency: OperationLatency::None,
         example_json: Some(
             r#"{"id": 5, "op": "WAIT_ALL", "attributes": {"tokens": ["{{node_2}}", "{{node_3}}"]}}"#,
         ),
-        fields: &[OperationField::required("tokens", "Tokens to wait for")],
+        fields: &[OperationField::optional("tokens", "Token references to wait for (optional, resolved from edges)")],
         needs_submission: true,
         min_inputs: 1,
         produces_output: true,
