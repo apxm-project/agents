@@ -13,15 +13,18 @@ import os
 
 @compile()
 def codex_claude_fix(g: GraphRecorder):
-    """Codex analysis followed by Claude fixes."""
+    """Codex analysis followed by Claude fixes.
+
+    Demonstrates the new auto-wiring API with AgentHandle and cleaner syntax.
+    """
     cwd = os.environ.get("APXM_HOME", os.getcwd())
 
     # Spawn agents
-    codex_analyst = g.spawn("codex_analyst", profile="codex", cwd=cwd)
-    claude_fixer = g.spawn("claude_fixer", profile="claude", cwd=cwd)
+    codex = g.spawn("codex_analyst", profile="codex", cwd=cwd)
+    claude = g.spawn("claude_fixer", profile="claude", cwd=cwd)
 
     # Codex deep analysis
-    codex_analyst.ask(
+    report = codex.ask(
         "You are a Rust compiler engineer. Do a FULL deep analysis of the APXM compiler. "
         "Read ALL these files carefully:\n\n"
         "crates/apxm-graph/src/lower_mlir.rs\n"
@@ -38,11 +41,10 @@ def codex_claude_fix(g: GraphRecorder):
         "TODO/unimplemented sections, performance issues. Be exhaustive with file:line references."
     )
 
-    # Claude fixes everything
-    claude_prompt = g.ask(
-        "build_claude_prompt",
-        template="You are a senior Rust engineer. Codex has done a deep analysis of the APXM compiler and "
-        "found issues. Fix ALL of them.\n\nCODEX REPORT:\n{0}\n\n"
+    # Claude fixes everything (auto-wired from {report})
+    prompt = g.ask(
+        "You are a senior Rust engineer. Codex has done a deep analysis of the APXM compiler and "
+        "found issues. Fix ALL of them.\n\nCODEX REPORT:\n{report}\n\n"
         "For each issue:\n"
         "1. Read the relevant file(s)\n"
         "2. Make the minimal correct fix\n"
@@ -52,26 +54,19 @@ def codex_claude_fix(g: GraphRecorder):
         "When ALL issues are fixed, commit:\n"
         "git add -A && git commit -m 'fix(compiler): comprehensive fixes from codex+claude analysis'"
     )
-    codex_analyst.get_last_node() | claude_prompt
 
-    claude_result = g.communicate("claude_result", target_agent="claude_fixer", message="{0}")
-    claude_prompt | claude_result
+    # Send to Claude (auto-wired from {prompt})
+    result = claude.ask("{prompt}")
 
-    # Summarize
+    # Summarize (auto-wired from {report} and {result})
     summary = g.think(
-        "summary",
-        template="Summarize what codex found and what claude fixed:\n\n"
-        "CODEX REPORT:\n{0}\n\nCLAUDE RESULT:\n{1}"
+        "Summarize what codex found and what claude fixed:\n\n"
+        "CODEX REPORT:\n{report}\n\nCLAUDE RESULT:\n{result}"
     )
-    codex_analyst.get_last_node() | summary
-    claude_result | summary
 
-    # Print and return
-    output = g.print_("output", message="=== CODEX + CLAUDE ANALYSIS COMPLETE ===\n{0}")
-    summary | output
-
-    g.return_("result", source=output)
-    
+    # Print and return (auto-wired from {summary})
+    g.print("=== CODEX + CLAUDE ANALYSIS COMPLETE ===\n{summary}")
+    g.done(summary)
 
 
 if __name__ == "__main__":

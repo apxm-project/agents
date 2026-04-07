@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
+import inspect
 import json
+import re
 from typing import Any, Iterable
 
 from apxm._generated import constants as c
@@ -42,6 +44,8 @@ class GraphRecorder:
             if metadata is not None
             else {graph_keys.IS_ENTRY: True}
         )
+        # Track parameter names for auto-wiring resolution
+        self._param_names: set[str] = set()
 
     def _auto_name(self, op_type: str) -> str:
         """Generate a unique name based on operation type and counter."""
@@ -53,6 +57,7 @@ class GraphRecorder:
         if any(param.name == name for param in self._parameters):
             raise ValueError(f"parameter '{name}' already exists")
         self._parameters.append(Parameter(name=name, type_name=type_name))
+        self._param_names.add(name)
         return self
 
     def add_edge(self, from_ref: NodeRef, to_ref: NodeRef, dependency: str = "Data") -> None:
@@ -60,56 +65,174 @@ class GraphRecorder:
             GraphEdge(from_id=from_ref._node_id, to_id=to_ref._node_id, dependency=dependency)
         )
 
+    def _resolve_template_refs(self, template: str) -> tuple[str, list[NodeRef]]:
+        """Replace {var_name} with {N} and collect auto-wire edges.
+
+        Looks up variable names in the caller's local scope. If a variable
+        holds a NodeRef or AgentHandle, auto-creates a data edge and replaces
+        the template placeholder with a positional index.
+
+        Skips:
+        - Compile parameters (e.g., {task} in a @compile flow)
+        - Already-positional refs (e.g., {0}, {1})
+
+        Returns:
+            Tuple of (resolved_template, list_of_NodeRefs_to_wire)
+        """
+        # Get caller's locals (2 frames back: this method -> calling method -> user code)
+        caller_frame = inspect.currentframe()
+        if caller_frame is None:
+            return template, []
+
+        caller_locals: dict[str, Any] = {}
+        try:
+            # Go up 2 frames: _resolve_template_refs -> ask/think/etc -> user code
+            if caller_frame.f_back and caller_frame.f_back.f_back:
+                caller_locals = caller_frame.f_back.f_back.f_locals
+        finally:
+            del caller_frame
+
+        refs: list[NodeRef] = []
+
+        def replacer(match: re.Match[str]) -> str:
+            var_name = match.group(1)
+
+            # Skip compile parameter names
+            if var_name in self._param_names:
+                return match.group(0)
+
+            # Skip already-positional {0}, {1}, etc.
+            if var_name.isdigit():
+                return match.group(0)
+
+            # Look up in caller locals
+            val = caller_locals.get(var_name)
+
+            # Handle NodeRef
+            if isinstance(val, NodeRef):
+                idx = len(refs)
+                refs.append(val)
+                return f"{{{idx}}}"
+
+            # Handle AgentHandle (has get_last_node method)
+            if hasattr(val, 'get_last_node') and callable(val.get_last_node):
+                idx = len(refs)
+                refs.append(val.get_last_node())
+                return f"{{{idx}}}"
+
+            # Not found or not a node reference - leave as-is
+            return match.group(0)
+
+        resolved = re.sub(r'\{(\w+)\}', replacer, template)
+        return resolved, refs
+
     def ask(
         self,
-        name: str | None = None,
+        name_or_template: str | None = None,
+        /,
         *,
+        name: str | None = None,
         template: str | None = None,
         agent: AgentConfig | None = None,
         **attributes: Any,
     ) -> NodeRef:
+        # Heuristic: if first positional arg contains {, it's a template
+        if name_or_template is not None:
+            if '{' in name_or_template:
+                template = name_or_template
+            else:
+                name = name_or_template
+
         if name is None:
             name = self._auto_name("ask")
         if template is None:
             raise ValueError("ask() missing required keyword argument: 'template'")
-        attrs = {graph_keys.TEMPLATE_STR: template}
+
+        # Auto-wire: resolve {var_name} to NodeRef
+        resolved_template, auto_refs = self._resolve_template_refs(template)
+
+        attrs = {graph_keys.TEMPLATE_STR: resolved_template}
         attrs.update(_compose_system_prompt(agent, "ask"))
         attrs.update(_normalize_attributes(attributes))
-        return self._add_node(name, graph_keys.OP_ASK, attrs)
+        node = self._add_node(name, graph_keys.OP_ASK, attrs)
+
+        # Create auto-wire edges
+        for ref in auto_refs:
+            ref | node
+
+        return node
 
     def think(
         self,
-        name: str | None = None,
+        name_or_template: str | None = None,
+        /,
         *,
+        name: str | None = None,
         template: str | None = None,
         agent: AgentConfig | None = None,
         **attributes: Any,
     ) -> NodeRef:
+        # Heuristic: if first positional arg contains {, it's a template
+        if name_or_template is not None:
+            if '{' in name_or_template:
+                template = name_or_template
+            else:
+                name = name_or_template
+
         if name is None:
             name = self._auto_name("think")
         if template is None:
             raise ValueError("think() missing required keyword argument: 'template'")
-        attrs = {graph_keys.TEMPLATE_STR: template}
+
+        # Auto-wire: resolve {var_name} to NodeRef
+        resolved_template, auto_refs = self._resolve_template_refs(template)
+
+        attrs = {graph_keys.TEMPLATE_STR: resolved_template}
         attrs.update(_compose_system_prompt(agent, "think"))
         attrs.update(_normalize_attributes(attributes))
-        return self._add_node(name, graph_keys.OP_THINK, attrs)
+        node = self._add_node(name, graph_keys.OP_THINK, attrs)
+
+        # Create auto-wire edges
+        for ref in auto_refs:
+            ref | node
+
+        return node
 
     def reason(
         self,
-        name: str | None = None,
+        name_or_template: str | None = None,
+        /,
         *,
+        name: str | None = None,
         template: str | None = None,
         agent: AgentConfig | None = None,
         **attributes: Any,
     ) -> NodeRef:
+        # Heuristic: if first positional arg contains {, it's a template
+        if name_or_template is not None:
+            if '{' in name_or_template:
+                template = name_or_template
+            else:
+                name = name_or_template
+
         if name is None:
             name = self._auto_name("reason")
         if template is None:
             raise ValueError("reason() missing required keyword argument: 'template'")
-        attrs = {graph_keys.TEMPLATE_STR: template}
+
+        # Auto-wire: resolve {var_name} to NodeRef
+        resolved_template, auto_refs = self._resolve_template_refs(template)
+
+        attrs = {graph_keys.TEMPLATE_STR: resolved_template}
         attrs.update(_compose_system_prompt(agent, "reason"))
         attrs.update(_normalize_attributes(attributes))
-        return self._add_node(name, graph_keys.OP_REASON, attrs)
+        node = self._add_node(name, graph_keys.OP_REASON, attrs)
+
+        # Create auto-wire edges
+        for ref in auto_refs:
+            ref | node
+
+        return node
 
     def query_memory(
         self,
@@ -414,15 +537,40 @@ class GraphRecorder:
         attrs.update(_normalize_attributes(attributes))
         return self._add_node(name, graph_keys.OP_EXC, attrs)
 
-    def print_(self, name: str | None = None, *, message: str | None = None, **attributes: Any) -> NodeRef:
+    def print_(
+        self,
+        name_or_message: str | None = None,
+        /,
+        *,
+        name: str | None = None,
+        message: str | None = None,
+        **attributes: Any,
+    ) -> NodeRef:
         """Print output to stdout (PRINT)."""
+        # Heuristic: if first positional arg contains {, it's a message
+        if name_or_message is not None:
+            if '{' in name_or_message:
+                message = name_or_message
+            else:
+                name = name_or_message
+
         if name is None:
             name = self._auto_name("print")
         if message is None:
             raise ValueError("print_() missing required keyword argument: 'message'")
-        attrs: dict[str, Any] = {graph_keys.MESSAGE: message}
+
+        # Auto-wire: resolve {var_name} to NodeRef
+        resolved_message, auto_refs = self._resolve_template_refs(message)
+
+        attrs: dict[str, Any] = {graph_keys.MESSAGE: resolved_message}
         attrs.update(_normalize_attributes(attributes))
-        return self._add_node(name, graph_keys.OP_PRINT, attrs)
+        node = self._add_node(name, graph_keys.OP_PRINT, attrs)
+
+        # Create auto-wire edges
+        for ref in auto_refs:
+            ref | node
+
+        return node
 
     # Alias - 'print' is fine as a method name (just not as a function name)
     print = print_
@@ -473,6 +621,15 @@ class GraphRecorder:
         if source is not None:
             source | node
         return node
+
+    def done(
+        self,
+        source: NodeRef | None = None,
+        name: str | None = None,
+        **attributes: Any,
+    ) -> NodeRef:
+        """Alias for return_() - cleaner name for workflow completion."""
+        return self.return_(name=name, source=source, **attributes)
 
     def flow_call(
         self,
@@ -539,28 +696,47 @@ class GraphRecorder:
 
     def communicate(
         self,
-        name: str | None = None,
+        name_or_message: str | None = None,
+        /,
         *,
+        name: str | None = None,
         target_agent: str | None = None,
         message: str | None = None,
         protocol: str | None = None,
         **attributes: Any,
     ) -> NodeRef:
         """Send a message to another agent (COMMUNICATE)."""
+        # Heuristic: if first positional arg contains {, it's a message
+        if name_or_message is not None:
+            if '{' in name_or_message:
+                message = name_or_message
+            else:
+                name = name_or_message
+
         if name is None:
             name = self._auto_name("communicate")
         if target_agent is None:
             raise ValueError("communicate() missing required keyword argument: 'target_agent'")
         if message is None:
             raise ValueError("communicate() missing required keyword argument: 'message'")
+
+        # Auto-wire: resolve {var_name} to NodeRef
+        resolved_message, auto_refs = self._resolve_template_refs(message)
+
         attrs: dict[str, Any] = {
             graph_keys.RECIPIENT: target_agent,
-            graph_keys.MESSAGE: message,
+            graph_keys.MESSAGE: resolved_message,
         }
         if protocol is not None:
             attrs[graph_keys.PROTOCOL] = protocol
         attrs.update(_normalize_attributes(attributes))
-        return self._add_node(name, graph_keys.OP_COMMUNICATE, attrs)
+        node = self._add_node(name, graph_keys.OP_COMMUNICATE, attrs)
+
+        # Create auto-wire edges
+        for ref in auto_refs:
+            ref | node
+
+        return node
 
     def update_goal(
         self,
