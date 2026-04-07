@@ -497,6 +497,43 @@ impl ReferenceType {
     }
 }
 
+/// MLIR emission configuration for code generation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MlirEmissionSpec {
+    /// Primary attribute name (e.g., "template_str" for ASK).
+    pub primary_attr: Option<&'static str>,
+    /// Context style for operand lists.
+    pub context_style: ContextStyle,
+    /// MLIR result type.
+    pub result_type: MlirResultType,
+    /// Positional attributes (e.g., ["recipient"] for COMMUNICATE).
+    pub positional_attrs: &'static [&'static str],
+    /// Keyword arguments for the operation (e.g., ["to"] for COMMUNICATE).
+    pub keywords: &'static [&'static str],
+}
+
+/// Context style for MLIR emission.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextStyle {
+    /// Bracketed context: [...].
+    Bracketed,
+    /// Parenthesized context: (...).
+    Parenthesized,
+    /// No context.
+    None,
+}
+
+/// MLIR result type for operations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MlirResultType {
+    /// Returns a token (!ais.token).
+    Token,
+    /// Returns a handle (!ais.handle).
+    Handle,
+    /// No return value (void).
+    Void,
+}
+
 /// A field in an operation specification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OperationField {
@@ -629,6 +666,8 @@ pub struct OperationSpec {
     pub min_inputs: u32,
     /// Whether operation produces output tokens.
     pub produces_output: bool,
+    /// MLIR emission configuration for code generation.
+    pub emission: MlirEmissionSpec,
 }
 
 impl OperationSpec {
@@ -642,6 +681,37 @@ impl OperationSpec {
         self.fields.iter().filter(|f| f.required)
     }
 }
+
+// ============================================================================
+// MLIR Emission Helpers
+// ============================================================================
+
+/// Standard emission spec: Token result, bracketed context, no primary attr.
+const EMISSION_TOKEN_BRACKETED: MlirEmissionSpec = MlirEmissionSpec {
+    primary_attr: None,
+    context_style: ContextStyle::Bracketed,
+    result_type: MlirResultType::Token,
+    positional_attrs: &[],
+    keywords: &[],
+};
+
+/// Standard emission spec: Void result, no context.
+const EMISSION_VOID_NONE: MlirEmissionSpec = MlirEmissionSpec {
+    primary_attr: None,
+    context_style: ContextStyle::None,
+    result_type: MlirResultType::Void,
+    positional_attrs: &[],
+    keywords: &[],
+};
+
+/// Standard emission spec: Handle result, parenthesized context.
+const EMISSION_HANDLE_PAREN: MlirEmissionSpec = MlirEmissionSpec {
+    primary_attr: None,
+    context_style: ContextStyle::Parenthesized,
+    result_type: MlirResultType::Handle,
+    positional_attrs: &[],
+    keywords: &[],
+};
 
 // ============================================================================
 // Operation Registry
@@ -672,6 +742,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: false,
         min_inputs: 0,
         produces_output: false,
+        emission: EMISSION_VOID_NONE,
     },
     // ========== Memory Operations (2) ==========
     OperationSpec {
@@ -694,6 +765,13 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: true,
         min_inputs: 0,
         produces_output: true,
+        emission: MlirEmissionSpec {
+            primary_attr: Some("query"),
+            context_style: ContextStyle::Bracketed,
+            result_type: MlirResultType::Token,
+            positional_attrs: &[],
+            keywords: &["space"],
+        },
     },
     OperationSpec {
         op_type: AISOperationType::UMem,
@@ -715,6 +793,13 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: true,
         min_inputs: 0,
         produces_output: true,
+        emission: MlirEmissionSpec {
+            primary_attr: Some("key"),
+            context_style: ContextStyle::Parenthesized,
+            result_type: MlirResultType::Token,
+            positional_attrs: &[],
+            keywords: &["space"],
+        },
     },
     // ========== LLM Operations (3) ==========
     OperationSpec {
@@ -742,6 +827,13 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: true,
         min_inputs: 0,
         produces_output: true,
+        emission: MlirEmissionSpec {
+            primary_attr: Some("template_str"),
+            context_style: ContextStyle::Bracketed,
+            result_type: MlirResultType::Token,
+            positional_attrs: &[],
+            keywords: &["temperature", "model"],
+        },
     },
     OperationSpec {
         op_type: AISOperationType::Think,
@@ -769,6 +861,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: true,
         min_inputs: 0,
         produces_output: true,
+        emission: EMISSION_TOKEN_BRACKETED,
     },
     OperationSpec {
         op_type: AISOperationType::Reason,
@@ -796,6 +889,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: true,
         min_inputs: 0,
         produces_output: true,
+        emission: EMISSION_TOKEN_BRACKETED,
     },
     // ========== Planning & Analysis Operations (3) ==========
     OperationSpec {
@@ -817,6 +911,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: true,
         min_inputs: 0,
         produces_output: true,
+        emission: EMISSION_TOKEN_BRACKETED,
     },
     OperationSpec {
         op_type: AISOperationType::Reflect,
@@ -837,6 +932,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: true,
         min_inputs: 0,
         produces_output: true,
+        emission: EMISSION_TOKEN_BRACKETED,
     },
     OperationSpec {
         op_type: AISOperationType::Verify,
@@ -857,6 +953,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: true,
         min_inputs: 0,
         produces_output: true,
+        emission: EMISSION_TOKEN_BRACKETED,
     },
     // ========== Tool Operations (3) ==========
     OperationSpec {
@@ -883,6 +980,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: true,
         min_inputs: 0,
         produces_output: true,
+        emission: EMISSION_TOKEN_BRACKETED,
     },
     OperationSpec {
         op_type: AISOperationType::Exc,
@@ -902,6 +1000,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: true,
         min_inputs: 0,
         produces_output: true,
+        emission: EMISSION_TOKEN_BRACKETED,
     },
     OperationSpec {
         op_type: AISOperationType::Print,
@@ -919,6 +1018,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: true,
         min_inputs: 0,
         produces_output: true,
+        emission: EMISSION_TOKEN_BRACKETED,
     },
     // ========== Control Flow Operations (7) ==========
     OperationSpec {
@@ -935,6 +1035,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: false,
         min_inputs: 0,
         produces_output: false,
+        emission: EMISSION_TOKEN_BRACKETED,
     },
     OperationSpec {
         op_type: AISOperationType::BranchOnValue,
@@ -957,6 +1058,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: false,
         min_inputs: 1,
         produces_output: false,
+        emission: EMISSION_TOKEN_BRACKETED,
     },
     OperationSpec {
         op_type: AISOperationType::LoopStart,
@@ -975,6 +1077,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: false,
         min_inputs: 1,
         produces_output: false,
+        emission: EMISSION_TOKEN_BRACKETED,
     },
     OperationSpec {
         op_type: AISOperationType::LoopEnd,
@@ -989,6 +1092,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: false,
         min_inputs: 0,
         produces_output: false,
+        emission: EMISSION_TOKEN_BRACKETED,
     },
     OperationSpec {
         op_type: AISOperationType::Return,
@@ -1004,6 +1108,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: false,
         min_inputs: 1,
         produces_output: true,
+        emission: EMISSION_TOKEN_BRACKETED,
     },
     OperationSpec {
         op_type: AISOperationType::Switch,
@@ -1026,6 +1131,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: false,
         min_inputs: 1,
         produces_output: true,
+        emission: EMISSION_TOKEN_BRACKETED,
     },
     OperationSpec {
         op_type: AISOperationType::FlowCall,
@@ -1048,6 +1154,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: true,
         min_inputs: 0,
         produces_output: true,
+        emission: EMISSION_TOKEN_BRACKETED,
     },
     // ========== Synchronization Operations (3) ==========
     OperationSpec {
@@ -1070,6 +1177,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: true,
         min_inputs: 1,
         produces_output: true,
+        emission: EMISSION_TOKEN_BRACKETED,
     },
     OperationSpec {
         op_type: AISOperationType::Fence,
@@ -1088,6 +1196,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: true,
         min_inputs: 0,
         produces_output: false,
+        emission: EMISSION_TOKEN_BRACKETED,
     },
     OperationSpec {
         op_type: AISOperationType::WaitAll,
@@ -1106,6 +1215,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: true,
         min_inputs: 1,
         produces_output: true,
+        emission: EMISSION_TOKEN_BRACKETED,
     },
     // ========== Error Handling Operations (2) ==========
     OperationSpec {
@@ -1127,6 +1237,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: true,
         min_inputs: 0,
         produces_output: true,
+        emission: EMISSION_TOKEN_BRACKETED,
     },
     OperationSpec {
         op_type: AISOperationType::Err,
@@ -1147,6 +1258,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: true,
         min_inputs: 0,
         produces_output: true,
+        emission: EMISSION_TOKEN_BRACKETED,
     },
     // ========== Communication Operations (1) ==========
     OperationSpec {
@@ -1173,6 +1285,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: true,
         min_inputs: 0,
         produces_output: true,
+        emission: EMISSION_TOKEN_BRACKETED,
     },
     // ========== Phase 1 ISA Extensions (5) ==========
     OperationSpec {
@@ -1199,6 +1312,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: false,
         min_inputs: 0,
         produces_output: true,
+        emission: EMISSION_TOKEN_BRACKETED,
     },
     OperationSpec {
         op_type: AISOperationType::Guard,
@@ -1224,6 +1338,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: false,
         min_inputs: 1,
         produces_output: true,
+        emission: EMISSION_TOKEN_BRACKETED,
     },
     OperationSpec {
         op_type: AISOperationType::Claim,
@@ -1247,6 +1362,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: true,
         min_inputs: 0,
         produces_output: true,
+        emission: EMISSION_TOKEN_BRACKETED,
     },
     OperationSpec {
         op_type: AISOperationType::Pause,
@@ -1278,6 +1394,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: true,
         min_inputs: 0,
         produces_output: true,
+        emission: EMISSION_TOKEN_BRACKETED,
     },
     OperationSpec {
         op_type: AISOperationType::Resume,
@@ -1306,6 +1423,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: true,
         min_inputs: 0,
         produces_output: true,
+        emission: EMISSION_TOKEN_BRACKETED,
     },
     // ========== Coordination Operations (Phase 2) ==========
     OperationSpec {
@@ -1327,6 +1445,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: true,
         min_inputs: 0,
         produces_output: true,
+        emission: EMISSION_TOKEN_BRACKETED,
     },
     OperationSpec {
         op_type: AISOperationType::Negotiate,
@@ -1351,6 +1470,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: true,
         min_inputs: 0,
         produces_output: true,
+        emission: EMISSION_TOKEN_BRACKETED,
     },
     // ========== Identity Operations (2) ==========
     OperationSpec {
@@ -1367,6 +1487,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: false,
         min_inputs: 0,
         produces_output: true,
+        emission: EMISSION_TOKEN_BRACKETED,
     },
     OperationSpec {
         op_type: AISOperationType::Identity,
@@ -1382,6 +1503,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: false,
         min_inputs: 0,
         produces_output: true,
+        emission: EMISSION_TOKEN_BRACKETED,
     },
     // ========== Self-Organization Operations (2) ==========
     OperationSpec {
@@ -1424,6 +1546,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: true,
         min_inputs: 0,
         produces_output: true,
+        emission: EMISSION_TOKEN_BRACKETED,
     },
     OperationSpec {
         op_type: AISOperationType::SpawnTeam,
@@ -1451,6 +1574,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: true,
         min_inputs: 0,
         produces_output: true,
+        emission: EMISSION_TOKEN_BRACKETED,
     },
     OperationSpec {
         op_type: AISOperationType::RegisterCapability,
@@ -1475,6 +1599,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: true,
         min_inputs: 0,
         produces_output: true,
+        emission: EMISSION_TOKEN_BRACKETED,
     },
     // ========== Autonomous Execution (stub) ==========
     OperationSpec {
@@ -1496,6 +1621,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: true,
         min_inputs: 0,
         produces_output: true,
+        emission: EMISSION_TOKEN_BRACKETED,
     },
     // ========== Durable Execution (1) ==========
     OperationSpec {
@@ -1526,6 +1652,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: false,
         min_inputs: 1,
         produces_output: true,
+        emission: EMISSION_TOKEN_BRACKETED,
     },
     // ========== Internal Operations (2) ==========
     OperationSpec {
@@ -1545,6 +1672,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: false,
         min_inputs: 0,
         produces_output: true,
+        emission: EMISSION_TOKEN_BRACKETED,
     },
     OperationSpec {
         op_type: AISOperationType::Yield,
@@ -1562,6 +1690,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: false,
         min_inputs: 1,
         produces_output: true,
+        emission: EMISSION_TOKEN_BRACKETED,
     },
 ];
 

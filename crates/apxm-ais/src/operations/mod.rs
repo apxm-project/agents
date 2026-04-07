@@ -13,6 +13,7 @@ pub mod tablegen;
 
 pub use category::OperationCategory;
 pub use definitions::{
-    AIS_OPERATIONS, AISOperationType, OperationField, OperationLatency, OperationSpec,
-    ReferenceType, get_all_operations, get_operation_spec,
+    AIS_OPERATIONS, AISOperationType, ContextStyle, MlirEmissionSpec, MlirResultType,
+    OperationField, OperationLatency, OperationSpec, ReferenceType, get_all_operations,
+    get_operation_spec,
 };
