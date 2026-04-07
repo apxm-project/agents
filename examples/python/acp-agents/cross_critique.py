@@ -23,30 +23,17 @@ def cross_critique(g: GraphRecorder):
     agent_a.ask(design_prompt)
     agent_b.ask(design_prompt)
 
+    # Get proposal nodes (they are the current last nodes before critique)
+    a_proposal = agent_a.get_last_node()
+    b_proposal = agent_b.get_last_node()
+
     # Cross-critique: A reviews B's proposal, B reviews A's proposal
-    agent_a.ask("Review this alternative design: {0}")
-    agent_b.ask("Review this alternative design: {0}")
+    agent_a.ask("Review this alternative design: {b_proposal}")
+    agent_b.ask("Review this alternative design: {a_proposal}")
 
     # Get critique nodes
     agent_b_last = agent_b.get_last_node()
     agent_a_last = agent_a.get_last_node()
-
-    # Get proposal nodes (second-to-last before critique)
-    # We need to manually wire this since we're doing cross-critique
-    # Let's use communicate nodes for clarity
-    a_proposal_to_b = g.communicate(
-        "a_proposal_to_b",
-        target_agent="agent_b",
-        message="{0}"
-    )
-    agent_a.get_spawn_node() | a_proposal_to_b
-
-    b_proposal_to_a = g.communicate(
-        "b_proposal_to_a",
-        target_agent="agent_a",
-        message="{0}"
-    )
-    agent_b.get_spawn_node() | b_proposal_to_a
 
     # Merge critiques
     merge_critiques = g.ask(

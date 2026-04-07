@@ -42,8 +42,8 @@ def refactor_workflow(g: GraphRecorder):
     # Step 1: Analyzer reads the code and identifies opportunities
     analyzer_task = g.text(value="""You are the code analyzer for APXM. Analyze this refactoring request:
 
-Target: {0}
-Goal: {1}
+Target: {target}
+Goal: {goal}
 
 Read the target code:
 - If it's a crate name, read the crate's src/ directory
@@ -74,18 +74,17 @@ Keep under 500 words but be specific about file paths and identifiers.
 """
     )
 
-    analyzer.ask("{0}")
-    analyzer_task | analyzer.get_last_node()
+    analyzer.ask("{analyzer_task}")
+    analysis = analyzer.get_last_node()
 
-    print1 = g.print("=== REFACTORING ANALYSIS ===\n{0}")
-    analyzer.get_last_node() | print1
+    print1 = g.print("=== REFACTORING ANALYSIS ===\n{analysis}")
 
     # Step 2: Implementer does the refactoring
     implementer_task = g.ask(
         "build_implementer_task",
         template="""Based on this analysis, implement the refactoring:
 
-Analysis: {0}
+Analysis: {analysis}
 
 Follow the step-by-step plan. For each step:
 1. Make the change
@@ -106,21 +105,19 @@ After all changes:
 Be methodical. If something doesn't compile, fix it before moving on.
 """
     )
-    analyzer.get_last_node() | implementer_task
     print1 >> implementer_task
 
-    implementer.ask("{0}")
-    implementer_task | implementer.get_last_node()
+    implementer.ask("{implementer_task}")
+    impl_result = implementer.get_last_node()
 
-    print2 = g.print("=== REFACTORING CHANGES ===\n{0}")
-    implementer.get_last_node() | print2
+    print2 = g.print("=== REFACTORING CHANGES ===\n{impl_result}")
 
     # Step 3: Test runner verifies nothing broke
     test_task = g.ask(
         "build_test_task",
         template="""Verify the refactoring didn't break anything:
 
-Changes: {0}
+Changes: {impl_result}
 
 Run the test suite:
 
@@ -152,23 +149,21 @@ If there are failures:
 Keep iterating until all tests pass.
 """
     )
-    implementer.get_last_node() | test_task
     print2 >> test_task
 
-    test_runner.ask("{0}")
-    test_task | test_runner.get_last_node()
+    test_runner.ask("{test_task}")
+    test_result = test_runner.get_last_node()
 
-    print3 = g.print("=== TEST RESULTS ===\n{0}")
-    test_runner.get_last_node() | print3
+    print3 = g.print("=== TEST RESULTS ===\n{test_result}")
 
     # Step 4: Summary
     summary = g.think(
         "refactoring_summary",
         template="""Summarize the refactoring:
 
-Analysis: {0}
-Implementation: {1}
-Test results: {2}
+Analysis: {analysis}
+Implementation: {impl_result}
+Test results: {test_result}
 
 Summary:
 - Target: <what was refactored>
@@ -185,13 +180,9 @@ Summary:
 If status is incomplete or failed, list remaining issues.
 """
     )
-    analyzer.get_last_node() | summary
-    implementer.get_last_node() | summary
-    test_runner.get_last_node() | summary
     print3 >> summary
 
-    print4 = g.print("=== REFACTORING SUMMARY ===\n{0}")
-    summary | print4
+    print4 = g.print("=== REFACTORING SUMMARY ===\n{summary}")
 
     g.done(print4)
 

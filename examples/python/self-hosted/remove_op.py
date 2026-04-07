@@ -34,7 +34,7 @@ def remove_op_workflow(g: GraphRecorder):
     # Step 1: Analyze impact
     impact_analysis = g.think(
         "impact_analysis",
-        template="""Analyze the impact of removing operation: {0}
+        template="""Analyze the impact of removing operation: {op_name}
 
 Check:
 1. Where is this operation defined?
@@ -62,8 +62,7 @@ Output a structured removal plan:
 """
     )
 
-    print1 = g.print("=== IMPACT ANALYSIS ===\n{0}")
-    impact_analysis | print1
+    print1 = g.print("=== IMPACT ANALYSIS ===\n{impact_analysis}")
 
     # Spawn agents
     compiler_dev = g.spawn("compiler_dev", profile=claude, cwd=cwd)
@@ -75,7 +74,7 @@ Output a structured removal plan:
         "build_compiler_task",
         template="""Remove operation from the compiler:
 
-Analysis: {0}
+Analysis: {impact_analysis}
 
 Remove from:
 1. crates/apxm-ais/src/definitions.rs
@@ -95,14 +94,13 @@ Be careful:
 - Update any operation count constants if they exist
 """
     )
-    impact_analysis | compiler_task
     print1 >> compiler_task
 
     runtime_task = g.ask(
         "build_runtime_task",
         template="""Remove operation from the runtime:
 
-Analysis: {0}
+Analysis: {impact_analysis}
 
 Remove from:
 1. crates/apxm-runtime/src/executor/handlers/<op>.rs
@@ -119,24 +117,20 @@ Remove from:
 Be thorough but careful — don't break adjacent code.
 """
     )
-    impact_analysis | runtime_task
     print1 >> runtime_task
 
     # Step 3: Both devs work in parallel
-    compiler_dev.ask("{0}")
-    compiler_task | compiler_dev.get_last_node()
+    compiler_dev.ask("{compiler_task}")
+    compiler_removal = compiler_dev.get_last_node()
 
-    runtime_dev.ask("{0}")
-    runtime_task | runtime_dev.get_last_node()
+    runtime_dev.ask("{runtime_task}")
+    runtime_removal = runtime_dev.get_last_node()
 
-    print2 = g.print("=== COMPILER REMOVAL ===\n{0}")
-    compiler_dev.get_last_node() | print2
-
-    print3 = g.print("=== RUNTIME REMOVAL ===\n{0}")
-    runtime_dev.get_last_node() | print3
+    print2 = g.print("=== COMPILER REMOVAL ===\n{compiler_removal}")
+    print3 = g.print("=== RUNTIME REMOVAL ===\n{runtime_removal}")
 
     # Step 4: Verify nothing broke
-    wait = g.wait_all("wait_removals", compiler_dev.get_last_node(), runtime_dev.get_last_node())
+    wait = g.wait_all("wait_removals", compiler_removal, runtime_removal)
     print2 >> wait
     print3 >> wait
 
@@ -144,8 +138,8 @@ Be thorough but careful — don't break adjacent code.
         "build_verify_task",
         template="""Verify the removal was clean:
 
-Compiler changes: {0}
-Runtime changes: {1}
+Compiler changes: {compiler_removal}
+Runtime changes: {runtime_removal}
 
 Run the verification steps:
 
@@ -170,25 +164,22 @@ Report:
 If there are failures, identify what was missed and suggest fixes.
 """
     )
-    compiler_dev.get_last_node() | verify_task
-    runtime_dev.get_last_node() | verify_task
     wait >> verify_task
 
-    verifier.ask("{0}")
-    verify_task | verifier.get_last_node()
+    verifier.ask("{verify_task}")
+    verification = verifier.get_last_node()
 
-    print4 = g.print("=== VERIFICATION ===\n{0}")
-    verifier.get_last_node() | print4
+    print4 = g.print("=== VERIFICATION ===\n{verification}")
 
     # Final summary
     final = g.think(
         "removal_summary",
         template="""Generate removal summary:
 
-Impact analysis: {0}
-Compiler changes: {1}
-Runtime changes: {2}
-Verification: {3}
+Impact analysis: {impact_analysis}
+Compiler changes: {compiler_removal}
+Runtime changes: {runtime_removal}
+Verification: {verification}
 
 Summary:
 - Operation removed: <name>
@@ -200,14 +191,9 @@ Summary:
 - Status: <complete/needs-fixes>
 """
     )
-    impact_analysis | final
-    compiler_dev.get_last_node() | final
-    runtime_dev.get_last_node() | final
-    verifier.get_last_node() | final
     print4 >> final
 
-    print5 = g.print("=== REMOVAL SUMMARY ===\n{0}")
-    final | print5
+    print5 = g.print("=== REMOVAL SUMMARY ===\n{final}")
 
     g.done(print5)
 

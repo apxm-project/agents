@@ -46,11 +46,10 @@ Report the full output (it will show validation results, task files created in /
 """
     )
 
-    validator.ask("{0}")
-    validate_task | validator.get_last_node()
+    validator.ask("{validate_task}")
+    validate_result = validator.get_last_node()
 
-    print1 = g.print("=== VALIDATION OUTPUT ===\n{0}")
-    validator.get_last_node() | print1
+    print1 = g.print("=== VALIDATION OUTPUT ===\n{validate_result}")
 
     # Step 2: Classify failures into clusters
     classify = g.think(
@@ -58,7 +57,7 @@ Report the full output (it will show validation results, task files created in /
         template="""Analyze the autofix validation output and classify failures:
 
 Validation output from validator:
-{0}
+{validate_result}
 
 Parse the output and create failure clusters:
 1. Group by error type (import_error, mlir_parse_error, compile_error, etc.)
@@ -86,11 +85,9 @@ Output JSON:
 If status is "pass", output {{"status": "pass", "clusters": []}}.
 """
     )
-    validator.get_last_node() | classify
     print1 >> classify
 
-    print2 = g.print("=== FAILURE CLASSIFICATION ===\n{0}")
-    classify | print2
+    print2 = g.print("=== FAILURE CLASSIFICATION ===\n{classify}")
 
     # Step 3: Branch on whether there are failures
     # Note: In a real implementation, we'd use BRANCH_ON_VALUE to conditionally execute.
@@ -106,7 +103,7 @@ If status is "pass", output {{"status": "pass", "clusters": []}}.
         "build_fix_import_task",
         template="""Fix import errors from the classification:
 
-Classification: {0}
+Classification: {classify}
 
 If there are import_error failures:
 1. Read the task file from /tmp/autofix-tasks/import_error.md
@@ -121,14 +118,13 @@ If there are no import_error failures, output "No import errors to fix".
 Report what you fixed and verification results.
 """
     )
-    classify | fix_import_task
     print2 >> fix_import_task
 
     fix_mlir_task = g.ask(
         "build_fix_mlir_task",
         template="""Fix MLIR parse errors from the classification:
 
-Classification: {0}
+Classification: {classify}
 
 If there are mlir_parse_error failures:
 1. Read the task file from /tmp/autofix-tasks/mlir_parse_error.md
@@ -143,14 +139,13 @@ If there are no mlir_parse_error failures, output "No MLIR errors to fix".
 Report what you fixed and verification results.
 """
     )
-    classify | fix_mlir_task
     print2 >> fix_mlir_task
 
     fix_compile_task = g.ask(
         "build_fix_compile_task",
         template="""Fix compile errors from the classification:
 
-Classification: {0}
+Classification: {classify}
 
 If there are compile_error failures:
 1. Read the task file from /tmp/autofix-tasks/compile_error.md
@@ -165,34 +160,28 @@ If there are no compile_error failures, output "No compile errors to fix".
 Report what you fixed and verification results.
 """
     )
-    classify | fix_compile_task
     print2 >> fix_compile_task
 
     # All fixers work in parallel
-    fixer1.ask("{0}")
-    fix_import_task | fixer1.get_last_node()
+    fixer1.ask("{fix_import_task}")
+    import_fixes = fixer1.get_last_node()
 
-    fixer2.ask("{0}")
-    fix_mlir_task | fixer2.get_last_node()
+    fixer2.ask("{fix_mlir_task}")
+    mlir_fixes = fixer2.get_last_node()
 
-    fixer3.ask("{0}")
-    fix_compile_task | fixer3.get_last_node()
+    fixer3.ask("{fix_compile_task}")
+    compile_fixes = fixer3.get_last_node()
 
-    print3 = g.print("=== IMPORT FIXES ===\n{0}")
-    fixer1.get_last_node() | print3
-
-    print4 = g.print("=== MLIR FIXES ===\n{0}")
-    fixer2.get_last_node() | print4
-
-    print5 = g.print("=== COMPILE FIXES ===\n{0}")
-    fixer3.get_last_node() | print5
+    print3 = g.print("=== IMPORT FIXES ===\n{import_fixes}")
+    print4 = g.print("=== MLIR FIXES ===\n{mlir_fixes}")
+    print5 = g.print("=== COMPILE FIXES ===\n{compile_fixes}")
 
     # Step 5: Wait for all fixers to complete
     wait = g.wait_all(
         "wait_all_fixers",
-        fixer1.get_last_node(),
-        fixer2.get_last_node(),
-        fixer3.get_last_node()
+        import_fixes,
+        mlir_fixes,
+        compile_fixes
     )
     print3 >> wait
     print4 >> wait
@@ -210,24 +199,23 @@ Report the results (pass/fail counts, any remaining issues).
 """
     )
 
-    verifier.ask("{0}")
-    verify_task | verifier.get_last_node()
-    wait >> verifier.get_last_node()
+    wait >> verify_task
+    verifier.ask("{verify_task}")
+    verify_result = verifier.get_last_node()
 
-    print6 = g.print("=== VERIFICATION OUTPUT ===\n{0}")
-    verifier.get_last_node() | print6
+    print6 = g.print("=== VERIFICATION OUTPUT ===\n{verify_result}")
 
     # Step 7: Generate final report
     report = g.think(
         "generate_report",
         template="""Generate autofix report:
 
-Initial validation: {0}
-Classification: {1}
-Import fixes: {2}
-MLIR fixes: {3}
-Compile fixes: {4}
-Final verification: {5}
+Initial validation: {validate_result}
+Classification: {classify}
+Import fixes: {import_fixes}
+MLIR fixes: {mlir_fixes}
+Compile fixes: {compile_fixes}
+Final verification: {verify_result}
 
 Report:
 - Scope: examples/python
@@ -243,16 +231,9 @@ Report:
 If status is partial or failed, list remaining issues and suggested next steps.
 """
     )
-    validator.get_last_node() | report
-    classify | report
-    fixer1.get_last_node() | report
-    fixer2.get_last_node() | report
-    fixer3.get_last_node() | report
-    verifier.get_last_node() | report
     print6 >> report
 
-    print7 = g.print("=== AUTOFIX REPORT ===\n{0}")
-    report | print7
+    print7 = g.print("=== AUTOFIX REPORT ===\n{report}")
 
     g.done(print7)
 
