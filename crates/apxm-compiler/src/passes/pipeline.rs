@@ -83,6 +83,7 @@ pub fn build_pass_list(
                 [
                     "normalize",
                     "build-prompt",
+                    "prompt-canonicalization",
                     "template-specialization",
                     "unconsumed-value-warning",
                 ]
@@ -161,7 +162,7 @@ pub fn build_pass_list(
         }
         OptimizationLevel::O3 => {
             passes.extend(
-                ["normalize", "build-prompt", "unconsumed-value-warning"]
+                ["normalize", "build-prompt", "prompt-canonicalization", "unconsumed-value-warning"]
                     .iter()
                     .map(|s| s.to_string()),
             );
@@ -254,7 +255,8 @@ mod tests {
     #[test]
     fn o2_pass_list_matches_spec() {
         let passes = build_pass_list(OptimizationLevel::O2, false, OptimizationTarget::Balanced);
-        assert_eq!(passes.len(), 12);
+        assert_eq!(passes.len(), 13);
+        assert!(passes.contains(&"prompt-canonicalization".to_string()));
         assert!(passes.contains(&"template-specialization".to_string()));
         assert!(passes.contains(&"dead-context-elimination".to_string()));
         assert!(passes.contains(&"schema-narrowing".to_string()));
@@ -264,20 +266,21 @@ mod tests {
     #[test]
     fn o3_iterates_convergence_loop() {
         let passes = build_pass_list(OptimizationLevel::O3, false, OptimizationTarget::Balanced);
-        // 3 initial + 10 * 9 convergence passes = 93
-        assert_eq!(passes.len(), 93);
-        // First three are the preamble
+        // 4 initial + 10 * 9 convergence passes = 94
+        assert_eq!(passes.len(), 94);
+        // First four are the preamble
         assert_eq!(passes[0], "normalize");
         assert_eq!(passes[1], "build-prompt");
-        assert_eq!(passes[2], "unconsumed-value-warning");
+        assert_eq!(passes[2], "prompt-canonicalization");
+        assert_eq!(passes[3], "unconsumed-value-warning");
         // Then convergence iterations start
-        assert_eq!(passes[3], "template-specialization");
+        assert_eq!(passes[4], "template-specialization");
     }
 
     #[test]
     fn test_target_latency_enables_fusion() {
         let passes = build_pass_list(OptimizationLevel::O2, false, OptimizationTarget::Latency);
-        assert_eq!(passes.len(), 12);
+        assert_eq!(passes.len(), 13);
         // Scheduling should come early for latency target
         let scheduling_idx = passes.iter().position(|p| p == "scheduling").unwrap();
         let fusion_idx = passes.iter().position(|p| p == "fuse-ask-ops").unwrap();
@@ -288,7 +291,7 @@ mod tests {
     #[test]
     fn test_target_cost_enables_cse() {
         let passes = build_pass_list(OptimizationLevel::O2, false, OptimizationTarget::Cost);
-        assert_eq!(passes.len(), 12);
+        assert_eq!(passes.len(), 13);
         // CSE should be present for cost target
         assert!(passes.contains(&"cse".to_string()));
         assert!(passes.contains(&"dead-context-elimination".to_string()));
@@ -297,7 +300,7 @@ mod tests {
     #[test]
     fn test_target_tokens_enables_dce() {
         let passes = build_pass_list(OptimizationLevel::O2, false, OptimizationTarget::Tokens);
-        assert_eq!(passes.len(), 12);
+        assert_eq!(passes.len(), 13);
         // Dead context elimination should come early for tokens target
         let dce_idx = passes
             .iter()
@@ -310,10 +313,11 @@ mod tests {
     #[test]
     fn test_balanced_matches_default() {
         let balanced = build_pass_list(OptimizationLevel::O2, false, OptimizationTarget::Balanced);
-        assert_eq!(balanced.len(), 12);
+        assert_eq!(balanced.len(), 13);
         // Balanced should have standard ordering
         assert_eq!(balanced[0], "normalize");
         assert_eq!(balanced[1], "build-prompt");
+        assert_eq!(balanced[2], "prompt-canonicalization");
         assert!(balanced.contains(&"schema-narrowing".to_string()));
     }
 }
