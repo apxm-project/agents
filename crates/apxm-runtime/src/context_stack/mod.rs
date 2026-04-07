@@ -33,11 +33,13 @@ pub struct NodeMetadata {
     pub op_type: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ContextStack {
     session_dir: PathBuf,
     node_metadata: Arc<HashMap<u64, NodeMetadata>>,
     graph_edges: Arc<Vec<(u64, u64)>>,
+    memory: Option<Arc<crate::memory::MemorySystem>>,
+    execution_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -73,7 +75,19 @@ impl ContextStack {
             session_dir,
             node_metadata,
             graph_edges,
+            memory: None,
+            execution_id: None,
         }
+    }
+
+    pub fn with_memory(
+        mut self,
+        memory: Arc<crate::memory::MemorySystem>,
+        execution_id: String,
+    ) -> Self {
+        self.memory = Some(memory);
+        self.execution_id = Some(execution_id);
+        self
     }
 
     pub fn from_config(config: &ContextStackConfig) -> Self {
@@ -242,6 +256,42 @@ impl ContextStack {
 
         if let Some(output) = load_node_output(&self.session_dir, node_id, &meta.name) {
             sections.push(("Output", output));
+        }
+
+        // Also query memory for additional context
+        if let (Some(memory), Some(exec_id)) = (&self.memory, &self.execution_id) {
+            // Query STM for node-specific context
+            let rt = tokio::runtime::Handle::try_current().ok()?;
+            let scope_key = format!("node:{}", node_id);
+            if let Ok(Some(stm_value)) = rt.block_on(memory.read_scoped(
+                crate::memory::MemorySpace::Stm,
+                exec_id,
+                &scope_key,
+            )) {
+                // Convert value to string representation
+                sections.push(("STM Context", format!("{:?}", stm_value)));
+            }
+
+            // Query episodic memory for node-related events
+            if let Ok(entries) = rt.block_on(memory.query_episodes(exec_id)) {
+                let node_events: Vec<_> = entries
+                    .iter()
+                    .filter(|e| {
+                        // Filter events that might be related to this node
+                        e.event_type.contains(&meta.name) || e.event_type.contains(&meta.op_type)
+                    })
+                    .take(3) // Limit to most recent 3 events
+                    .collect();
+
+                if !node_events.is_empty() {
+                    let episodic_text = node_events
+                        .iter()
+                        .map(|e| format!("- {}: {:?}", e.event_type, e.payload))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    sections.push(("Recent Events", episodic_text));
+                }
+            }
         }
 
         if sections.is_empty() {

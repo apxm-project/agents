@@ -318,6 +318,40 @@ impl ModelRouter {
         tracing::info!(backend = %backend, "Circuit breaker manually reset");
     }
 
+    /// Sync health status from LLM registry's health monitor to circuit breakers.
+    ///
+    /// Queries the backends' health monitor and trips/resets circuit breakers
+    /// based on health status. Should be called periodically or after significant
+    /// operations to keep circuit breakers in sync with backend health.
+    pub fn sync_health(&self) {
+        use apxm_backends::HealthStatus;
+
+        for backend_name in self.llm_registry.backend_names() {
+            let health_status = self.llm_registry.backend_health(&backend_name);
+
+            match health_status {
+                HealthStatus::Unhealthy => {
+                    // Backend is unhealthy, ensure circuit breaker reflects this
+                    if self.circuit_breakers.is_available(&backend_name) {
+                        tracing::warn!(
+                            backend = %backend_name,
+                            "Health monitor reports unhealthy status, recording failure in circuit breaker"
+                        );
+                        self.circuit_breakers.record_failure(&backend_name);
+                    }
+                }
+                HealthStatus::Healthy => {
+                    // Backend is healthy, ensure circuit is not tripped due to stale failures
+                    // Note: We don't force-close circuits here to avoid bypassing the
+                    // circuit breaker's own logic (e.g., half-open state, probe requests)
+                }
+                HealthStatus::Degraded | HealthStatus::Unknown => {
+                    // Degraded or unknown: don't change circuit state
+                }
+            }
+        }
+    }
+
     /// Access the underlying model registry.
     pub fn model_registry(&self) -> &ModelRegistry {
         &self.model_registry

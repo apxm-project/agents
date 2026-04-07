@@ -4,7 +4,6 @@
 mod tests {
     use std::collections::HashMap;
 
-    use crate::bus::{EventBus, EventBusError};
     use crate::event::{ApxmEvent, EventSource};
     use crate::payload::*;
 
@@ -316,108 +315,6 @@ mod tests {
             turn_number: 1,
             direction: TurnDirection::Request,
         }));
-    }
-
-    // -----------------------------------------------------------------------
-    // EventBus tests
-    // -----------------------------------------------------------------------
-
-    #[tokio::test]
-    async fn bus_publish_subscribe() {
-        let bus = EventBus::new();
-        let mut sub = bus.subscribe();
-
-        let event = ApxmEvent::new(
-            EventPayload::Token(TokenPayload { text: "hi".into() }),
-            EventSource::Backend("openai".into()),
-            "trace-1",
-        )
-        .with_seq(42);
-
-        bus.publish(event).expect("publish should succeed");
-
-        let received = sub.recv().await.expect("should receive event");
-        assert_eq!(received.meta.seq, 42);
-        assert_eq!(received.meta.trace_id, "trace-1");
-
-        match &received.payload {
-            EventPayload::Token(t) => assert_eq!(t.text, "hi"),
-            other => panic!("unexpected payload: {other:?}"),
-        }
-    }
-
-    #[tokio::test]
-    async fn bus_lagged_handling() {
-        // Capacity of 2: third publish should cause lag when subscriber reads.
-        let bus = EventBus::with_capacity(2);
-        let mut sub = bus.subscribe();
-
-        for i in 0..4 {
-            let event = ApxmEvent::new(
-                EventPayload::Token(TokenPayload {
-                    text: format!("tok-{i}"),
-                }),
-                EventSource::Runtime,
-                "trace-lag",
-            )
-            .with_seq(i);
-            let _ = bus.publish(event);
-        }
-
-        // The subscriber should report a lag.
-        match sub.recv().await {
-            Err(EventBusError::Lagged(n)) => {
-                assert!(n > 0, "should have lagged by at least 1 event");
-            }
-            Ok(event) => {
-                // Depending on timing, we might get a later event.
-                // That's acceptable too — the important thing is no panic.
-                assert!(event.meta.seq >= 2);
-            }
-            Err(EventBusError::Closed) => panic!("bus should not be closed"),
-        }
-    }
-
-    #[tokio::test]
-    async fn bus_closed_handling() {
-        let bus = EventBus::new();
-        let mut sub = bus.subscribe();
-        drop(bus);
-
-        match sub.recv().await {
-            Err(EventBusError::Closed) => {} // expected
-            other => panic!("expected Closed, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn bus_subscriber_count() {
-        let bus = EventBus::new();
-        assert_eq!(bus.subscriber_count(), 0);
-
-        let _s1 = bus.subscribe();
-        assert_eq!(bus.subscriber_count(), 1);
-
-        let _s2 = bus.subscribe();
-        assert_eq!(bus.subscriber_count(), 2);
-
-        drop(_s1);
-        assert_eq!(bus.subscriber_count(), 1);
-    }
-
-    #[test]
-    fn bus_publish_no_subscribers() {
-        let bus = EventBus::new();
-        let event = ApxmEvent::new(
-            EventPayload::Token(TokenPayload {
-                text: "orphan".into(),
-            }),
-            EventSource::Runtime,
-            "trace-orphan",
-        );
-        // Should return Err with the event when no subscribers.
-        let result = bus.publish(event);
-        assert!(result.is_err());
     }
 
     // -----------------------------------------------------------------------

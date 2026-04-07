@@ -557,6 +557,8 @@ async fn record_event(
             ctx.execution_id.clone(),
             event_type,
             Value::Object(fields.into_iter().collect()),
+            Some(node_id),
+            None, // session_dir not available in worker context
         )
         .await;
 }

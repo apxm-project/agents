@@ -6,11 +6,13 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use apxm_ais::types::Number;
 use apxm_core::agent_profile::AgentProfileRegistry;
 use apxm_core::constants;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::paths::session_node_dir_name;
 use apxm_core::types::{AISOperationType, Value};
+use apxm_runtime::memory::MemorySystem;
 
 #[derive(Clone, Debug)]
 pub struct WorkspaceNodeMetadata {
@@ -25,6 +27,7 @@ pub struct ContextAssembler {
     project_root: PathBuf,
     node_metadata: Arc<HashMap<u64, WorkspaceNodeMetadata>>,
     graph_edges: Arc<Vec<(u64, u64)>>,
+    memory: Option<Arc<MemorySystem>>,
 }
 
 impl ContextAssembler {
@@ -41,7 +44,13 @@ impl ContextAssembler {
             project_root,
             node_metadata,
             graph_edges,
+            memory: None,
         }
+    }
+
+    pub fn with_memory(mut self, memory: Arc<MemorySystem>) -> Self {
+        self.memory = Some(memory);
+        self
     }
 
     pub fn assemble_claude_md(
@@ -102,6 +111,12 @@ impl ContextAssembler {
             for (name, output) in upstream {
                 doc.push_str(&format!("### {}\n{}\n\n", name, truncate(&output, 2000)));
             }
+        }
+
+        if let Some(history) = self.load_episodic_history(profile) {
+            doc.push_str("## Agent History\n");
+            doc.push_str(&history);
+            doc.push_str("\n\n");
         }
 
         if !skills_to_show.is_empty() {
@@ -174,6 +189,59 @@ impl ContextAssembler {
             }
         }
         outputs
+    }
+
+    fn load_episodic_history(&self, _profile: &str) -> Option<String> {
+        let memory = self.memory.as_ref()?;
+
+        // Query episodic memory for recent entries from this execution
+        let rt = tokio::runtime::Handle::try_current().ok()?;
+        let entries = rt
+            .block_on(memory.query_episodes(&self.execution_id))
+            .ok()?;
+
+        if entries.is_empty() {
+            return None;
+        }
+
+        let mut history = String::new();
+        history.push_str("Previous execution patterns for this session:\n");
+
+        // Aggregate statistics by event type
+        let mut event_counts: HashMap<String, usize> = HashMap::new();
+        let mut operation_stats: HashMap<String, Vec<f64>> = HashMap::new();
+
+        for entry in &entries {
+            *event_counts.entry(entry.event_type.clone()).or_insert(0) += 1;
+
+            // Extract operation timing if available
+            if entry.event_type.starts_with("operation_completed:") {
+                if let Value::Object(ref map) = entry.payload {
+                    if let Some(Value::Number(Number::Float(duration))) = map.get("duration_ms") {
+                        operation_stats
+                            .entry(entry.event_type.clone())
+                            .or_default()
+                            .push(*duration);
+                    }
+                }
+            }
+        }
+
+        // Report top event types
+        let mut event_vec: Vec<_> = event_counts.into_iter().collect();
+        event_vec.sort_by(|a, b| b.1.cmp(&a.1));
+
+        for (event_type, count) in event_vec.iter().take(5) {
+            history.push_str(&format!("  - {}: {} occurrences\n", event_type, count));
+
+            // Add average duration if available
+            if let Some(durations) = operation_stats.get(event_type) {
+                let avg = durations.iter().sum::<f64>() / durations.len() as f64;
+                history.push_str(&format!("    avg response time: {:.1}ms\n", avg));
+            }
+        }
+
+        Some(history)
     }
 }
 

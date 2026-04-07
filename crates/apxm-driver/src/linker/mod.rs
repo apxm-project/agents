@@ -321,4 +321,9 @@ impl Linker {
             },
         })
     }
+
+    /// Get a reference to the runtime executor
+    pub fn runtime_executor(&self) -> &RuntimeExecutor {
+        &self.runtime
+    }
 }

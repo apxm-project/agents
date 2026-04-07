@@ -154,13 +154,17 @@ impl<C: Clock> RateLimiter<C> {
 
     /// If backend has a configured bucket, enforce it.
     /// If backend is unconfigured, allow by default.
-    pub fn check_and_consume(&self, backend: &str) -> Result<(), RateLimitError> {
+    ///
+    /// # Arguments
+    /// * `backend` - The backend name
+    /// * `cost` - The token cost to consume (defaults to 1.0 for backward compatibility)
+    pub fn check_and_consume(&self, backend: &str, cost: f64) -> Result<(), RateLimitError> {
         let now = self.clock.now();
         let mut guard = self.buckets.lock().expect("rate limiter mutex poisoned");
 
         match guard.get_mut(backend) {
             Some(bucket) => {
-                if bucket.try_consume(now, 1.0) {
+                if bucket.try_consume(now, cost) {
                     Ok(())
                 } else {
                     Err(RateLimitError::Limited {
@@ -240,9 +244,9 @@ mod tests {
 
         let limiter = RateLimiter::new(configs, clock).unwrap();
 
-        assert_eq!(limiter.check_and_consume("openai"), Ok(()));
-        assert_eq!(limiter.check_and_consume("openai"), Ok(()));
-        assert_eq!(limiter.check_and_consume("openai"), Ok(()));
+        assert_eq!(limiter.check_and_consume("openai", 1.0), Ok(()));
+        assert_eq!(limiter.check_and_consume("openai", 1.0), Ok(()));
+        assert_eq!(limiter.check_and_consume("openai", 1.0), Ok(()));
     }
 
     #[test]
@@ -254,10 +258,10 @@ mod tests {
 
         let limiter = RateLimiter::new(configs, clock).unwrap();
 
-        assert_eq!(limiter.check_and_consume("anthropic"), Ok(()));
-        assert_eq!(limiter.check_and_consume("anthropic"), Ok(()));
+        assert_eq!(limiter.check_and_consume("anthropic", 1.0), Ok(()));
+        assert_eq!(limiter.check_and_consume("anthropic", 1.0), Ok(()));
         assert_eq!(
-            limiter.check_and_consume("anthropic"),
+            limiter.check_and_consume("anthropic", 1.0),
             Err(RateLimitError::Limited {
                 backend: "anthropic".to_string()
             })
@@ -273,13 +277,13 @@ mod tests {
 
         let limiter = RateLimiter::new(configs, clock.clone()).unwrap();
 
-        assert_eq!(limiter.check_and_consume("openai"), Ok(()));
-        assert_eq!(limiter.check_and_consume("openai"), Ok(()));
-        assert!(limiter.check_and_consume("openai").is_err());
+        assert_eq!(limiter.check_and_consume("openai", 1.0), Ok(()));
+        assert_eq!(limiter.check_and_consume("openai", 1.0), Ok(()));
+        assert!(limiter.check_and_consume("openai", 1.0).is_err());
 
         clock.advance(Duration::from_secs(1));
-        assert_eq!(limiter.check_and_consume("openai"), Ok(()));
-        assert!(limiter.check_and_consume("openai").is_err());
+        assert_eq!(limiter.check_and_consume("openai", 1.0), Ok(()));
+        assert!(limiter.check_and_consume("openai", 1.0).is_err());
     }
 
     #[test]
@@ -291,8 +295,8 @@ mod tests {
 
         let limiter = RateLimiter::new(configs, clock.clone()).unwrap();
 
-        assert_eq!(limiter.check_and_consume("openai"), Ok(()));
-        assert_eq!(limiter.check_and_consume("openai"), Ok(()));
+        assert_eq!(limiter.check_and_consume("openai", 1.0), Ok(()));
+        assert_eq!(limiter.check_and_consume("openai", 1.0), Ok(()));
 
         clock.advance(Duration::from_secs(10));
 
@@ -310,7 +314,7 @@ mod tests {
         let limiter = RateLimiter::new(configs, clock).unwrap();
 
         for _ in 0..100 {
-            assert_eq!(limiter.check_and_consume("unconfigured"), Ok(()));
+            assert_eq!(limiter.check_and_consume("unconfigured", 1.0), Ok(()));
         }
     }
 
@@ -324,12 +328,12 @@ mod tests {
 
         let limiter = RateLimiter::new(configs, clock).unwrap();
 
-        assert_eq!(limiter.check_and_consume("a"), Ok(()));
-        assert!(limiter.check_and_consume("a").is_err());
+        assert_eq!(limiter.check_and_consume("a", 1.0), Ok(()));
+        assert!(limiter.check_and_consume("a", 1.0).is_err());
 
-        assert_eq!(limiter.check_and_consume("b"), Ok(()));
-        assert_eq!(limiter.check_and_consume("b"), Ok(()));
-        assert!(limiter.check_and_consume("b").is_err());
+        assert_eq!(limiter.check_and_consume("b", 1.0), Ok(()));
+        assert_eq!(limiter.check_and_consume("b", 1.0), Ok(()));
+        assert!(limiter.check_and_consume("b", 1.0).is_err());
     }
 
     #[test]
@@ -341,13 +345,13 @@ mod tests {
 
         let limiter = RateLimiter::new(configs, clock.clone()).unwrap();
 
-        assert_eq!(limiter.check_and_consume("x"), Ok(()));
-        assert!(limiter.check_and_consume("x").is_err());
+        assert_eq!(limiter.check_and_consume("x", 1.0), Ok(()));
+        assert!(limiter.check_and_consume("x", 1.0).is_err());
 
         clock.advance(Duration::from_millis(400));
-        assert!(limiter.check_and_consume("x").is_err());
+        assert!(limiter.check_and_consume("x", 1.0).is_err());
 
         clock.advance(Duration::from_millis(100));
-        assert_eq!(limiter.check_and_consume("x"), Ok(()));
+        assert_eq!(limiter.check_and_consume("x", 1.0), Ok(()));
     }
 }

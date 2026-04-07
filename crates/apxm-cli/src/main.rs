@@ -1970,6 +1970,11 @@ async fn execute_command(
         .await
         .context("Failed to initialize runtime")?;
 
+    // Set memory system on emitter so context assembler can query episodic history
+    if let Some(ref e) = emitter {
+        e.set_memory(linker.runtime_executor().memory_system());
+    }
+
     // Coerce Arc<SessionEventEmitter> → Arc<dyn ExecutionEventEmitter> for run_graph
     let emitter_dyn: Option<std::sync::Arc<dyn apxm_runtime::ExecutionEventEmitter>> = emitter
         .as_ref()
@@ -2067,6 +2072,14 @@ async fn execute_command(
         let exec_id = execution_id.as_deref().unwrap_or("unknown");
         let stats = &result.execution.stats;
 
+        // Query episodic entries for this execution
+        let episodic_entries = linker
+            .runtime_executor()
+            .memory_system()
+            .query_episodes(exec_id)
+            .await
+            .ok();
+
         writer
             .finalize(
                 exec_id,
@@ -2079,6 +2092,7 @@ async fn execute_command(
                 &result.execution.results,
                 &metrics_json,
                 &stats.node_statuses,
+                episodic_entries.as_deref(),
             )
             .context("Failed to finalize session")?;
 
@@ -2220,6 +2234,13 @@ async fn run_command(
         let exec_id = execution_id.as_deref().unwrap_or("unknown");
         let stats = &result.stats;
 
+        // Query episodic entries for this execution
+        let episodic_entries = runtime
+            .memory_system()
+            .query_episodes(exec_id)
+            .await
+            .ok();
+
         writer
             .finalize(
                 exec_id,
@@ -2232,6 +2253,7 @@ async fn run_command(
                 &result.results,
                 &metrics_json,
                 &stats.node_statuses,
+                episodic_entries.as_deref(),
             )
             .context("Failed to finalize session")?;
 

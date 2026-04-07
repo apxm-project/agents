@@ -166,6 +166,18 @@ impl SessionOutputWriter {
         )
     }
 
+    fn write_episodic_entries(&self, entries: &[apxm_runtime::memory::EpisodicEntry]) -> io::Result<()> {
+        let path = self.session_dir.join("episodic.ndjson");
+        let mut file = BufWriter::new(fs::File::create(&path)?);
+        for entry in entries {
+            let line = serde_json::to_string(entry)
+                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            writeln!(file, "{}", line)?;
+        }
+        file.flush()?;
+        Ok(())
+    }
+
     /// Finalize session after execution: write manifest, results, metrics, node statuses.
     pub fn finalize(
         &self,
@@ -179,6 +191,7 @@ impl SessionOutputWriter {
         exit_values: &HashMap<u64, Value>,
         metrics_json: &serde_json::Value,
         node_statuses: &[apxm_core::types::NodeStatus],
+        episodic_entries: Option<&[apxm_runtime::memory::EpisodicEntry]>,
     ) -> io::Result<()> {
         let status = if success {
             constants::session::status::COMPLETED
@@ -200,6 +213,11 @@ impl SessionOutputWriter {
 
         self.write_metrics(metrics_json)?;
         self.write_node_statuses(node_statuses)?;
+
+        // Export episodic entries for this execution
+        if let Some(entries) = episodic_entries {
+            self.write_episodic_entries(entries)?;
+        }
 
         // Write final live.json with correct completed/failed status.
         let live = LiveSessionState {
@@ -301,7 +319,7 @@ pub struct SessionEventEmitter {
     node_traces: Mutex<HashMap<u64, FileEventSink>>,
     node_llm_tokens: Mutex<HashMap<u64, Vec<String>>>,
     skill_resolver: Option<SkillResolver>,
-    context_assembler: Option<ContextAssembler>,
+    context_assembler: parking_lot::Mutex<Option<ContextAssembler>>,
     running_nodes: Mutex<Vec<NodeInfo>>,
     completed_nodes: Mutex<Vec<CompletedNodeInfo>>,
 }
@@ -364,13 +382,22 @@ impl SessionEventEmitter {
             node_traces: Mutex::new(HashMap::new()),
             node_llm_tokens: Mutex::new(HashMap::new()),
             skill_resolver,
-            context_assembler,
+            context_assembler: parking_lot::Mutex::new(context_assembler),
             running_nodes: Mutex::new(Vec::new()),
             completed_nodes: Mutex::new(Vec::new()),
         };
 
         emitter.write_live(None)?;
         Ok(emitter)
+    }
+
+    /// Update the memory system reference in the context assembler
+    pub fn set_memory(&self, memory: Arc<apxm_runtime::memory::MemorySystem>) {
+        if let Some(mut assembler_opt) = self.context_assembler.try_lock() {
+            if let Some(assembler) = assembler_opt.take() {
+                *assembler_opt = Some(assembler.with_memory(memory));
+            }
+        }
     }
 
     fn node_workspace_dir(&self, node_id: u64) -> Option<PathBuf> {
@@ -455,7 +482,7 @@ impl SessionEventEmitter {
             }
         }
 
-        if let Some(assembler) = &self.context_assembler {
+        if let Some(assembler) = self.context_assembler.lock().as_ref() {
             if let Some(profile) = meta
                 .attributes
                 .get(constants::graph::attrs::PROFILE)

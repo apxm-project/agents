@@ -343,13 +343,18 @@ impl CapabilitySystem {
                         let _ = backend.destroy_session(session).await;
                         Ok(exec_result_to_value(exec_result))
                     } else {
-                        // No available backend, fall back to direct execution
-                        tracing::warn!(capability = %name, "no sandbox backend available, executing directly");
-                        capability.execute(args).await
+                        // Capability requires sandbox but registry is empty
+                        return Err(RuntimeError::Capability {
+                            capability: name.to_string(),
+                            message: "Capability requires sandbox execution but no sandbox backend is available".to_string(),
+                        });
                     }
                 } else {
-                    // No sandbox registry configured, execute directly
-                    capability.execute(args).await
+                    // Capability requires sandbox but no registry configured
+                    return Err(RuntimeError::Capability {
+                        capability: name.to_string(),
+                        message: "Capability requires sandbox execution but sandbox registry is not configured".to_string(),
+                    });
                 }
             } else {
                 // Capability doesn't need sandbox, execute directly

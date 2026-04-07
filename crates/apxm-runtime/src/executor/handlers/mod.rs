@@ -392,6 +392,8 @@ async fn record_llm_event(
             ctx.execution_id.clone(),
             "llm_call",
             Value::Object(fields.into_iter().collect()),
+            None, // node_id not available in this context
+            None, // session_dir not available in this context
         )
         .await;
 }
