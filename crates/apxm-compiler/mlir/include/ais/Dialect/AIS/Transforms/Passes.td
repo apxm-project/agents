@@ -163,4 +163,67 @@ def UnconsumedValueWarning : Pass<"unconsumed-value-warning", "mlir::ModuleOp"> 
   let constructor = "mlir::ais::createUnconsumedValueWarningPass()";
 }
 
+//===----------------------------------------------------------------------===//
+// O2+ Optimization Passes
+//===----------------------------------------------------------------------===//
+
+def TemplateSpecialization : Pass<"template-specialization", "mlir::ModuleOp"> {
+  let summary = "Specialize template strings with known constant inputs";
+  let description = [{
+    When a template string like "Analyze {0}" is used with a known constant
+    input, this pass specializes the template at compile time by substituting
+    the constant value directly into the template string.
+
+    Example transformation:
+      %const = ais.const_str "user_input_here"
+      %r = ais.ask "Analyze {0}" [%const : !ais.token]
+
+    Becomes:
+      %r = ais.ask "Analyze user_input_here" []
+
+    This eliminates runtime template interpolation and reduces context overhead.
+    Only applies when ALL template placeholders can be resolved to constants.
+  }];
+  let constructor = "mlir::ais::createTemplateSpecializationPass()";
+}
+
+def DeadContextElimination : Pass<"dead-context-elimination", "mlir::ModuleOp"> {
+  let summary = "Remove context inputs that are never referenced in templates";
+  let description = [{
+    Analyzes template strings to identify which placeholders are actually used,
+    then removes unused context inputs from the operation.
+
+    Example transformation:
+      %r = ais.ask "Use {0} and {2}" [%a, %b, %c : !ais.token]
+
+    Becomes:
+      %r = ais.ask "Use {0} and {1}" [%a, %c : !ais.token]
+
+    The placeholder indices are renumbered to maintain correctness. This pass
+    reduces token costs by eliminating unused context that would otherwise be
+    sent to the LLM.
+
+    This is particularly effective after fusion passes which may concatenate
+    templates that don't use all inherited context.
+  }];
+  let constructor = "mlir::ais::createDeadContextEliminationPass()";
+}
+
+def SchemaNarrowing : Pass<"schema-narrowing", "mlir::ModuleOp"> {
+  let summary = "Narrow output schemas based on actual usage patterns";
+  let description = [{
+    When an output_schema attribute is set on a node, this pass propagates
+    schema constraints to downstream consumers and narrows overly broad schemas
+    based on how the output is actually used.
+
+    Example: If a REASON operation specifies it returns {name, age, address}
+    but downstream operations only access 'name' and 'age', the schema can be
+    narrowed to {name, age}, reducing token overhead in the LLM response.
+
+    This pass performs data-flow analysis to track which fields are accessed
+    and removes unused fields from output_schema attributes.
+  }];
+  let constructor = "mlir::ais::createSchemaNarrowingPass()";
+}
+
 #endif // APXM_AIS_PASSES
