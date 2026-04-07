@@ -11,7 +11,8 @@ use crate::{
 };
 use apxm_backends::LLMRegistry;
 use apxm_core::InstructionConfig;
-use apxm_core::constants::runtime::metadata;
+use apxm_core::constants::{cache, runtime::metadata};
+use apxm_core::paths::ApxmPaths;
 use apxm_core::types::Agent;
 use apxm_sandbox::SandboxRegistry;
 use std::sync::Arc;
@@ -119,6 +120,27 @@ impl ExecutionContext {
         let mut metadata_map = std::collections::HashMap::new();
         metadata_map.insert(metadata::SCOPE_ID.to_string(), scope_id.clone());
 
+        // Initialize persistent SQLite cache at ~/.apxm/cache/cache.db
+        let response_cache = match ApxmPaths::discover()
+            .and_then(|paths| paths.cache_dir())
+            .map(|cache_dir| cache_dir.join(cache::DB_FILE))
+        {
+            #[cfg(feature = "sqlite")]
+            Ok(db_path) => match ResponseCache::new_with_sqlite(&db_path) {
+                Ok(cache) => Arc::new(cache),
+                Err(e) => {
+                    tracing::warn!("Failed to initialize SQLite cache at {:?}: {}. Falling back to L1-only cache.", db_path, e);
+                    Arc::new(ResponseCache::new())
+                }
+            },
+            #[cfg(not(feature = "sqlite"))]
+            Ok(_) => Arc::new(ResponseCache::new()),
+            Err(e) => {
+                tracing::warn!("Failed to resolve cache directory: {}. Using L1-only cache.", e);
+                Arc::new(ResponseCache::new())
+            }
+        };
+
         Self {
             execution_id,
             session_id: None,
@@ -139,7 +161,7 @@ impl ExecutionContext {
             consumed_tokens: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             event_emitter: None,
             token_accountant: Arc::new(TokenAccountant::new()),
-            response_cache: Arc::new(ResponseCache::new()),
+            response_cache,
             cancellation_token: CancellationToken::new(),
             sandbox_registry: Arc::new(SandboxRegistry::new()),
             process_table: Arc::new(ProcessTable::new()),
