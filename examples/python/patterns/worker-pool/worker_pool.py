@@ -49,7 +49,8 @@ def worker_pool_parallel(g: GraphRecorder):
     )
 
     # Store in memory
-    mem = g.update_memory("store_aggregate", data="{aggregate}", key="worker_pool_aggregate")
+    mem = g.update_memory("store_aggregate", data=aggregate, key="worker_pool_aggregate")
+    aggregate | mem
 
     # Print and return
     output = g.print("=== WORKER POOL RESULTS ===\n{aggregate}")

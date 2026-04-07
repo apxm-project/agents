@@ -150,7 +150,9 @@ class ApxmGraph:
         outgoing: dict[int, list[int]] = {nid: [] for nid in node_ids}
         for edge in self.edges:
             if edge.from_id in incoming and edge.to_id in incoming:
-                incoming[edge.to_id].append(edge.from_id)
+                # Only include Data edges as inputs (Control/Effect are for sequencing only)
+                if edge.dependency == "Data":
+                    incoming[edge.to_id].append(edge.from_id)
                 outgoing[edge.from_id].append(edge.to_id)
 
         # Map node_id -> node

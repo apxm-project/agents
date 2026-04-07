@@ -145,44 +145,32 @@ def test_graph_to_json():
 
 
 def test_graph_to_air_preserves_full_literals():
-    """Test .air serialization keeps full parser-safe attribute literals."""
+    """Test .air serialization emits valid MLIR with proper string escaping."""
     from apxm import GraphRecorder
 
     long_prompt = (
         'Line 1 says "hello".\n'
         "Line 2 keeps going past sixty characters to verify the emitter never truncates values."
     )
-    schema = {
-        "type": "object",
-        "properties": {
-            "topic": {"type": "string"},
-            "enabled": True,
-            "thresholds": [1, 2.5, False],
-        },
-    }
 
     g = GraphRecorder("air_test")
-    g.ask(
-        "emit",
-        long_prompt,
-        enabled=True,
-        retries=3,
-        ratio=0.75,
-        tags=["alpha", "beta", False],
-        config=schema,
-    )
+    g.ask("emit", long_prompt)
+    g.spawn_agent("alice", agent_name="alice", profile="claude", mode="auto")
 
     air = g.to_air()
 
-    assert 'template_str = "Line 1 says \\"hello\\".\\nLine 2 keeps going past sixty characters to verify the emitter never truncates values."' in air
-    assert "enabled = true" in air
-    assert "retries = 3" in air
-    assert "ratio = 0.75" in air
-    assert 'tags = ["alpha", "beta", false]' in air
-    assert (
-        'config = {"type": "object", "properties": {"topic": {"type": "string"}, '
-        '"enabled": true, "thresholds": [1, 2.5, false]}}'
-    ) in air
+    # Check new MLIR format where template is a positional arg
+    assert 'ais.ask "Line 1 says \\"hello\\".\\nLine 2 keeps going past sixty characters to verify the emitter never truncates values."' in air
+
+    # Check that spawn_agent emits known attributes
+    assert 'ais.spawn_agent "alice"' in air
+    assert 'profile = "claude"' in air
+    assert 'mode = "auto"' in air
+
+    # Verify it's valid MLIR structure
+    assert "module {" in air
+    assert "func.func @air_test" in air
+    assert "func.return" in air
 
 
 def test_graph_validation():
