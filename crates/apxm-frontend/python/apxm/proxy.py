@@ -134,6 +134,9 @@ class GraphRecorder:
         name: str | None = None,
         template: str | None = None,
         agent: AgentConfig | None = None,
+        model: str | None = None,
+        provider: str | None = None,
+        backend: str | None = None,
         **attributes: Any,
     ) -> NodeRef:
         # Support three calling styles:
@@ -159,6 +162,12 @@ class GraphRecorder:
         resolved_template, auto_refs = self._resolve_template_refs(template)
 
         attrs = {graph_keys.TEMPLATE_STR: resolved_template}
+        if model is not None:
+            attrs[graph_keys.MODEL] = model
+        if provider is not None:
+            attrs[graph_keys.PROVIDER] = provider
+        if backend is not None:
+            attrs[graph_keys.BACKEND] = backend
         attrs.update(_compose_system_prompt(agent, "ask"))
         attrs.update(_normalize_attributes(attributes))
         node = self._add_node(name, graph_keys.OP_ASK, attrs)
@@ -177,6 +186,9 @@ class GraphRecorder:
         name: str | None = None,
         template: str | None = None,
         agent: AgentConfig | None = None,
+        model: str | None = None,
+        provider: str | None = None,
+        backend: str | None = None,
         **attributes: Any,
     ) -> NodeRef:
         # Support three calling styles (same as ask)
@@ -195,6 +207,12 @@ class GraphRecorder:
         resolved_template, auto_refs = self._resolve_template_refs(template)
 
         attrs = {graph_keys.TEMPLATE_STR: resolved_template}
+        if model is not None:
+            attrs[graph_keys.MODEL] = model
+        if provider is not None:
+            attrs[graph_keys.PROVIDER] = provider
+        if backend is not None:
+            attrs[graph_keys.BACKEND] = backend
         attrs.update(_compose_system_prompt(agent, "think"))
         attrs.update(_normalize_attributes(attributes))
         node = self._add_node(name, graph_keys.OP_THINK, attrs)
@@ -213,6 +231,9 @@ class GraphRecorder:
         name: str | None = None,
         template: str | None = None,
         agent: AgentConfig | None = None,
+        model: str | None = None,
+        provider: str | None = None,
+        backend: str | None = None,
         **attributes: Any,
     ) -> NodeRef:
         # Support three calling styles (same as ask)
@@ -231,6 +252,12 @@ class GraphRecorder:
         resolved_template, auto_refs = self._resolve_template_refs(template)
 
         attrs = {graph_keys.TEMPLATE_STR: resolved_template}
+        if model is not None:
+            attrs[graph_keys.MODEL] = model
+        if provider is not None:
+            attrs[graph_keys.PROVIDER] = provider
+        if backend is not None:
+            attrs[graph_keys.BACKEND] = backend
         attrs.update(_compose_system_prompt(agent, "reason"))
         attrs.update(_normalize_attributes(attributes))
         node = self._add_node(name, graph_keys.OP_REASON, attrs)
@@ -375,22 +402,34 @@ class GraphRecorder:
             name = self._auto_name("fence")
         return self._add_node(name, graph_keys.OP_FENCE, _normalize_attributes(attributes))
 
-    def plan(self, name: str | None = None, *, goal: str | None = None, agent: AgentConfig | None = None, **attributes: Any) -> NodeRef:
+    def plan(self, name: str | None = None, *, goal: str | None = None, agent: AgentConfig | None = None, model: str | None = None, provider: str | None = None, backend: str | None = None, **attributes: Any) -> NodeRef:
         if name is None:
             name = self._auto_name("plan")
         if goal is None:
             raise ValueError("plan() missing required keyword argument: 'goal'")
         attrs = {graph_keys.GOAL: goal}
+        if model is not None:
+            attrs[graph_keys.MODEL] = model
+        if provider is not None:
+            attrs[graph_keys.PROVIDER] = provider
+        if backend is not None:
+            attrs[graph_keys.BACKEND] = backend
         attrs.update(_compose_system_prompt(agent, "plan"))
         attrs.update(_normalize_attributes(attributes))
         return self._add_node(name, graph_keys.OP_PLAN, attrs)
 
-    def reflect(self, name: str | None = None, *, trace_id: str | None = None, agent: AgentConfig | None = None, **attributes: Any) -> NodeRef:
+    def reflect(self, name: str | None = None, *, trace_id: str | None = None, agent: AgentConfig | None = None, model: str | None = None, provider: str | None = None, backend: str | None = None, **attributes: Any) -> NodeRef:
         if name is None:
             name = self._auto_name("reflect")
         if trace_id is None:
             raise ValueError("reflect() missing required keyword argument: 'trace_id'")
         attrs = {graph_keys.TRACE_ID: trace_id}
+        if model is not None:
+            attrs[graph_keys.MODEL] = model
+        if provider is not None:
+            attrs[graph_keys.PROVIDER] = provider
+        if backend is not None:
+            attrs[graph_keys.BACKEND] = backend
         attrs.update(_compose_system_prompt(agent, "reflect"))
         attrs.update(_normalize_attributes(attributes))
         return self._add_node(name, graph_keys.OP_REFLECT, attrs)
@@ -402,6 +441,9 @@ class GraphRecorder:
         claim: str | None = None,
         evidence: str | None = None,
         agent: AgentConfig | None = None,
+        model: str | None = None,
+        provider: str | None = None,
+        backend: str | None = None,
         **attributes: Any,
     ) -> NodeRef:
         if name is None:
@@ -410,6 +452,12 @@ class GraphRecorder:
             raise ValueError("verify() missing required keyword argument: 'claim'")
         condition = claim if evidence is None else f"Claim: {claim}\nEvidence: {evidence}"
         attrs = {graph_keys.CONDITION: condition}
+        if model is not None:
+            attrs[graph_keys.MODEL] = model
+        if provider is not None:
+            attrs[graph_keys.PROVIDER] = provider
+        if backend is not None:
+            attrs[graph_keys.BACKEND] = backend
         attrs.update(_compose_system_prompt(agent, "verify"))
         attrs.update(_normalize_attributes(attributes))
         return self._add_node(name, graph_keys.OP_VERIFY, attrs)

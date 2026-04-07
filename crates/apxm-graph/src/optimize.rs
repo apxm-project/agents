@@ -159,6 +159,107 @@ impl ApxmGraph {
         Ok(self)
     }
 
+    /// Computes vLLM-specific priority hints for graph-aware scheduling.
+    ///
+    /// Maps APXM graph analysis to vLLM's integer priority scale (lower = more urgent):
+    /// - Critical-path, user-visible: 0
+    /// - Critical-path, non-interactive: 2
+    /// - Normal: 5
+    /// - Speculative: 10
+    /// - Best-effort background: 15
+    ///
+    /// The priority is stored as a node attribute `vllm_priority` and can be
+    /// influenced by the optimization target (`--target latency|cost|parallelism`).
+    ///
+    /// This pass should run after `parallelism_analysis` to leverage critical path data.
+    pub fn vllm_priority_hints(&mut self) -> Result<&mut Self, GraphError> {
+        // First ensure we have the analysis data
+        let analysis = compute_parallelism_metrics(self);
+
+        // Determine if we're optimizing for latency (default), cost, or parallelism
+        // For now, default to latency optimization; later we'll read from metadata
+        let target: &str = self
+            .metadata
+            .get("optimization.target")
+            .and_then(|v| {
+                if let Value::String(s) = v {
+                    Some(s.as_str())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or("latency");
+
+        for node in &mut self.nodes {
+            let longest_path = analysis.longest_path.get(&node.id).copied().unwrap_or(0);
+            let is_on_critical_path =
+                longest_path >= analysis.critical_path_length.saturating_sub(1);
+
+            // Determine if node is user-visible (Ask/Think ops are typically user-visible)
+            let is_user_visible = matches!(
+                node.op,
+                AISOperationType::Ask | AISOperationType::Think | AISOperationType::Reason
+            );
+
+            // Check if node is speculative (nodes with attributes hinting at speculation)
+            let is_speculative = node
+                .attributes
+                .get("speculative")
+                .and_then(|v| {
+                    if let Value::Bool(b) = v {
+                        Some(*b)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(false);
+
+            // Map to vLLM priority scale based on strategy doc section 5.2
+            let vllm_priority = match target {
+                "latency" => {
+                    // Aggressive critical path prioritization
+                    if is_speculative {
+                        10 // Speculative work
+                    } else if is_on_critical_path && is_user_visible {
+                        0 // Critical-path, user-visible
+                    } else if is_on_critical_path {
+                        2 // Critical-path, non-interactive
+                    } else {
+                        5 // Normal
+                    }
+                }
+                "cost" => {
+                    // Don't prioritize - let vLLM batch efficiently
+                    // Everything gets equal priority
+                    5
+                }
+                "parallelism" => {
+                    // All nodes get equal priority
+                    5
+                }
+                _ => {
+                    // Default: same as latency
+                    if is_speculative {
+                        10
+                    } else if is_on_critical_path && is_user_visible {
+                        0
+                    } else if is_on_critical_path {
+                        2
+                    } else {
+                        5
+                    }
+                }
+            };
+
+            node.attributes.insert(
+                "vllm_priority".to_string(),
+                Value::Number(vllm_priority.into()),
+            );
+        }
+
+        Ok(self)
+    }
+
     /// Folds CONST_STR nodes into downstream THINK/ASK templates.
     ///
     /// When a CONST_STR node is the sole input to a THINK/ASK node and the
