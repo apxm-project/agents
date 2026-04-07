@@ -38,8 +38,8 @@ Any frontend can emit AIS graphs:
 ```
 Source                Frontend           IR            Optimizer         Backend
 -----------          ----------         --------      -----------       --------
-Python SDK           agentmate-py       AIS Graph     MLIR passes       A-PXM Runtime
-Rust SDK             agentmate-rs       AIS Graph     MLIR passes       A-PXM Runtime
+Python SDK           apxm (Python)       AIS Graph     MLIR passes       A-PXM Runtime
+Rust SDK             apxm (Rust)       AIS Graph     MLIR passes       A-PXM Runtime
 AIS DSL              AIS parser         AIS Graph     MLIR passes       A-PXM Runtime
 LangGraph adapter    lg-to-ais          AIS Graph     MLIR passes       A-PXM Runtime
 CrewAI adapter       crew-to-ais        AIS Graph     MLIR passes       A-PXM Runtime
