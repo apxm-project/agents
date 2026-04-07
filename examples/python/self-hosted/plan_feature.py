@@ -20,6 +20,7 @@ Usage:
 
 import os
 from apxm.graph import compile, GraphRecorder
+from apxm._generated.agents import claude, codex
 
 
 @compile()
@@ -34,12 +35,10 @@ def plan_feature_workflow(g: GraphRecorder):
     cwd = os.environ.get("APXM_HOME", os.getcwd())
 
     # Spawn architect
-    architect = g.spawn("architect", profile="claude", cwd=cwd)
+    architect = g.spawn("architect", profile=claude, cwd=cwd)
 
     # Step 1: Architect produces initial plan
-    architect_task = g.const_(
-        "architect_task",
-        value="""You are the APXM architect. Create an implementation plan for this feature:
+    architect_task = g.text(value="""You are the APXM architect. Create an implementation plan for this feature:
 
 Feature: {0}
 
@@ -65,7 +64,7 @@ Keep under 500 words.
     architect.ask("{0}")
     architect_task | architect.get_last_node()
 
-    print1 = g.print_("print_initial_plan", message="=== INITIAL PLAN ===\n{0}")
+    print1 = g.print("=== INITIAL PLAN ===\n{0}")
     architect.get_last_node() | print1
 
     # Step 2: Gap analysis — what's missing vs what exists
@@ -99,7 +98,7 @@ Output a structured gap analysis with:
     architect.get_last_node() | gap_analysis
     print1 >> gap_analysis
 
-    print2 = g.print_("print_gap_analysis", message="=== GAP ANALYSIS ===\n{0}")
+    print2 = g.print("=== GAP ANALYSIS ===\n{0}")
     gap_analysis | print2
 
     # Step 3: Risk analysis — what could go wrong
@@ -136,7 +135,7 @@ For each risk, provide:
     architect.get_last_node() | risk_analysis
     print1 >> risk_analysis
 
-    print3 = g.print_("print_risk_analysis", message="=== RISK ANALYSIS ===\n{0}")
+    print3 = g.print("=== RISK ANALYSIS ===\n{0}")
     risk_analysis | print3
 
     # Step 4: Crate ordering — bottom-up dependency order
@@ -166,7 +165,7 @@ Output the implementation order:
     architect.get_last_node() | crate_ordering
     print1 >> crate_ordering
 
-    print4 = g.print_("print_crate_ordering", message="=== CRATE ORDERING ===\n{0}")
+    print4 = g.print("=== CRATE ORDERING ===\n{0}")
     crate_ordering | print4
 
     # Step 5: Merge all analyses
@@ -234,10 +233,10 @@ Keep the plan actionable and specific. Include file paths and function names.
     crate_ordering | final_plan
     merge >> final_plan
 
-    print5 = g.print_("print_final_plan", message="=== FINAL PLAN ===\n{0}")
+    print5 = g.print("=== FINAL PLAN ===\n{0}")
     final_plan | print5
 
-    g.return_("result", source=print5)
+    g.done(print5)
 
 
 if __name__ == "__main__":

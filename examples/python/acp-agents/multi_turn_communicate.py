@@ -5,6 +5,7 @@ Usage: python3 -m examples.python.acp-agents.multi_turn_communicate
 """
 
 from apxm.graph import compile, GraphRecorder
+from apxm._generated.agents import claude
 import os
 
 
@@ -14,7 +15,7 @@ def multi_turn_communicate(g: GraphRecorder):
     # Spawn coder agent
     coder = g.spawn(
         "coder",
-        profile="claude",
+        profile=claude,
         cwd=os.environ.get("APXM_HOME", os.getcwd())
     )
 
@@ -23,11 +24,13 @@ def multi_turn_communicate(g: GraphRecorder):
     coder.ask("Fix the most critical bug you found.")
     coder.ask("Verify the fix by running the test suite.")
 
-    # Print final result
-    output = g.print_("output", message="{0}")
-    coder.get_last_node() | output
+    # Get final result
+    verification = coder.get_last_node()
 
-    g.return_("result", source=output)
+    # Print final result
+    output = g.print("{verification}")
+
+    g.done(output)
     
 
 

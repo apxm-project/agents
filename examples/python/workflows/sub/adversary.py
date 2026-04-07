@@ -30,7 +30,7 @@ def adversary(g: GraphRecorder, task: str):
         "Be brutal. Adversary wins on scope disputes. Task: {task}"
     )
 
-    g.return_("result", source=adversary_reason)
+    g.done(adversary_reason)
     
 
 

@@ -19,53 +19,43 @@ def iterative_refine_unrolled(g: GraphRecorder):
     # Round 1: Reflect and refine (auto-named "think", "ask_1")
     reflect_1 = g.think(
         template="Critique this draft. What is unclear, imprecise, or missing? "
-        "Be specific and constructive.\n\nDraft:\n{0}"
+        "Be specific and constructive.\n\nDraft:\n{initial_draft}"
     )
-    initial_draft | reflect_1
 
     refine_1 = g.ask(
         template="Improve this draft based on the critique below.\n\n"
-        "Original draft:\n{0}\n\nCritique:\n{1}\n\n"
+        "Original draft:\n{initial_draft}\n\nCritique:\n{reflect_1}\n\n"
         "Output only the improved draft."
     )
-    initial_draft | refine_1
-    reflect_1 | refine_1
 
     # Round 2: Reflect and refine (auto-named "think_1", "ask_2")
     reflect_2 = g.think(
         template="Critique this revised draft. What still needs improvement? "
-        "Look for technical accuracy and clarity.\n\nDraft:\n{0}"
+        "Look for technical accuracy and clarity.\n\nDraft:\n{refine_1}"
     )
-    refine_1 | reflect_2
 
     refine_2 = g.ask(
         template="Improve this draft based on the second round of critique.\n\n"
-        "Revised draft:\n{0}\n\nCritique:\n{1}\n\n"
+        "Revised draft:\n{refine_1}\n\nCritique:\n{reflect_2}\n\n"
         "Output only the improved draft."
     )
-    refine_1 | refine_2
-    reflect_2 | refine_2
 
     # Round 3: Final polish (auto-named "think_2", "ask_3")
     reflect_3 = g.think(
-        template="Final critique before publication. Check for: technical accuracy, template="
-        "flow, clarity, conciseness.\n\nDraft:\n{0}"
+        template="Final critique before publication. Check for: technical accuracy, "
+        "flow, clarity, conciseness.\n\nDraft:\n{refine_2}"
     )
-    refine_2 | reflect_3
 
     refine_3 = g.ask(
         template="Apply the final polish to this draft.\n\n"
-        "Draft:\n{0}\n\nFinal critique:\n{1}\n\n"
+        "Draft:\n{refine_2}\n\nFinal critique:\n{reflect_3}\n\n"
         "Output the publication-ready version."
     )
-    refine_2 | refine_3
-    reflect_3 | refine_3
 
     # Print final result (auto-named "print")
-    output = g.print_(message="=== FINAL REFINED DRAFT ===\n{0}")
-    refine_3 | output
+    output = g.print("=== FINAL REFINED DRAFT ===\n{refine_3}")
 
-    g.return_(source=output)
+    g.done(output)
     
 
 

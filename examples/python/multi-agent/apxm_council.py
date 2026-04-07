@@ -18,31 +18,24 @@ def council_agent(g: GraphRecorder):
     )
 
     # Three parallel expert opinions
-    expert1 = g.ask("expert1", template="You are a hardware architect. Answer concisely: {0}")
-    question | expert1
+    expert1 = g.ask("expert1", template="You are a hardware architect. Answer concisely: {question}")
 
-    expert2 = g.ask("expert2", template="You are a performance engineer. Answer concisely: {0}")
-    question | expert2
+    expert2 = g.ask("expert2", template="You are a performance engineer. Answer concisely: {question}")
 
-    expert3 = g.ask("expert3", template="You are a TCO analyst. Answer concisely: {0}")
-    question | expert3
+    expert3 = g.ask("expert3", template="You are a TCO analyst. Answer concisely: {question}")
 
     # Synthesize all expert opinions
     synthesis = g.think(
         "synthesis",
         template="Three experts reviewed the question.\n\n"
-        "Hardware architect: {0}\nPerformance engineer: {1}\nTCO analyst: {2}\n\n"
+        "Hardware architect: {expert1}\nPerformance engineer: {expert2}\nTCO analyst: {expert3}\n\n"
         "Synthesize a definitive, balanced answer:"
     )
-    expert1 | synthesis
-    expert2 | synthesis
-    expert3 | synthesis
 
     # Print and return
-    output = g.print_("output", message="{0}")
-    synthesis | output
+    output = g.print("{synthesis}")
 
-    g.return_("result", source=output)
+    g.done(output)
     
 
 

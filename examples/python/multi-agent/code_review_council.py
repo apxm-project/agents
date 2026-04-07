@@ -39,18 +39,14 @@ def code_review_council(g: GraphRecorder, code: str):
     verdict = g.think(
         "verdict",
         template="Three reviewers assessed this code:\n\n"
-        "Security:\n{0}\n\nPerformance:\n{1}\n\nMaintainability:\n{2}\n\n"
+        "Security:\n{security_review}\n\nPerformance:\n{perf_review}\n\nMaintainability:\n{maint_review}\n\n"
         "Synthesize a final verdict with priority issues and concrete fixes:"
     )
-    security_review | verdict
-    perf_review | verdict
-    maint_review | verdict
 
     # Print and return
-    output = g.print_("output", message="{0}")
-    verdict | output
+    output = g.print("{verdict}")
 
-    g.return_("result", source=output)
+    g.done(output)
     
 
 

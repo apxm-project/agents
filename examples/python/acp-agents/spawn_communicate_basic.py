@@ -22,11 +22,13 @@ def spawn_communicate_basic(g: GraphRecorder):
     # Send message using AgentHandle sugar
     reviewer.ask("Review the current directory structure and suggest improvements.")
 
-    # Print and return the response (auto-named)
-    output = g.print_(message="{0}")
-    reviewer.get_last_node() | output
+    # Get reviewer response
+    review = reviewer.get_last_node()
 
-    g.return_(source=output)
+    # Print and return the response (auto-named)
+    output = g.print("{review}")
+
+    g.done(output)
     
 
 

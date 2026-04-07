@@ -7,6 +7,7 @@ Usage: python3 -m examples.python.workflows.designer.brief_analyzer
 """
 
 from apxm.graph import compile, GraphRecorder
+from apxm._generated.agents import claude
 import os
 
 
@@ -18,7 +19,7 @@ def brief_analyzer(g: GraphRecorder):
     # Phase 1: Entity analysis
     entity_analyst = g.spawn(
         "entity_analyst",
-        profile="claude",
+        profile=claude,
         cwd=cwd
     )
     entity_analyst.ask(
@@ -34,7 +35,7 @@ def brief_analyzer(g: GraphRecorder):
     # Phase 2: Screen analysis
     screen_analyst = g.spawn(
         "screen_analyst",
-        profile="claude",
+        profile=claude,
         cwd=cwd
     )
     screen_analyst.ask(
@@ -47,7 +48,7 @@ def brief_analyzer(g: GraphRecorder):
     # Phase 3: Component analysis
     component_analyst = g.spawn(
         "component_analyst",
-        profile="claude",
+        profile=claude,
         cwd=cwd
     )
     component_analyst.ask(
@@ -70,10 +71,9 @@ def brief_analyzer(g: GraphRecorder):
     )
 
     # Print and return
-    output = g.print_("output", message="=== APXM-DESIGNER v0.4 MANIFEST ===\n\n{0}")
-    manifest | output
+    output = g.print("=== APXM-DESIGNER v0.4 MANIFEST ===\n\n{manifest}")
 
-    g.return_("result", source=output)
+    g.done(output)
     
 
 

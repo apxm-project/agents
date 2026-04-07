@@ -17,6 +17,7 @@ Usage:
 
 import os
 from apxm.graph import compile, GraphRecorder
+from apxm._generated.agents import claude, codex
 
 
 @compile()
@@ -61,13 +62,13 @@ Output a structured removal plan:
 """
     )
 
-    print1 = g.print_("print_analysis", message="=== IMPACT ANALYSIS ===\n{0}")
+    print1 = g.print("=== IMPACT ANALYSIS ===\n{0}")
     impact_analysis | print1
 
     # Spawn agents
-    compiler_dev = g.spawn("compiler_dev", profile="claude", cwd=cwd)
-    runtime_dev = g.spawn("runtime_dev", profile="codex", cwd=cwd)
-    verifier = g.spawn("verifier", profile="claude", cwd=cwd)
+    compiler_dev = g.spawn("compiler_dev", profile=claude, cwd=cwd)
+    runtime_dev = g.spawn("runtime_dev", profile=codex, cwd=cwd)
+    verifier = g.spawn("verifier", profile=claude, cwd=cwd)
 
     # Step 2: Build removal prompts
     compiler_task = g.ask(
@@ -128,10 +129,10 @@ Be thorough but careful — don't break adjacent code.
     runtime_dev.ask("{0}")
     runtime_task | runtime_dev.get_last_node()
 
-    print2 = g.print_("print_compiler_removal", message="=== COMPILER REMOVAL ===\n{0}")
+    print2 = g.print("=== COMPILER REMOVAL ===\n{0}")
     compiler_dev.get_last_node() | print2
 
-    print3 = g.print_("print_runtime_removal", message="=== RUNTIME REMOVAL ===\n{0}")
+    print3 = g.print("=== RUNTIME REMOVAL ===\n{0}")
     runtime_dev.get_last_node() | print3
 
     # Step 4: Verify nothing broke
@@ -176,7 +177,7 @@ If there are failures, identify what was missed and suggest fixes.
     verifier.ask("{0}")
     verify_task | verifier.get_last_node()
 
-    print4 = g.print_("print_verification", message="=== VERIFICATION ===\n{0}")
+    print4 = g.print("=== VERIFICATION ===\n{0}")
     verifier.get_last_node() | print4
 
     # Final summary
@@ -205,10 +206,10 @@ Summary:
     verifier.get_last_node() | final
     print4 >> final
 
-    print5 = g.print_("print_summary", message="=== REMOVAL SUMMARY ===\n{0}")
+    print5 = g.print("=== REMOVAL SUMMARY ===\n{0}")
     final | print5
 
-    g.return_("result", source=print5)
+    g.done(print5)
 
 
 if __name__ == "__main__":

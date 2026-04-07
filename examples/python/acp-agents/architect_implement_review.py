@@ -32,8 +32,10 @@ def architect_implement_review(g: GraphRecorder):
     )
     architect.ask(design_prompt)
 
-    print1 = g.print_(message="=== ARCHITECT DESIGN ===\n{0}")
-    architect.get_last_node() | print1
+    # Get architect's design
+    architect_design = architect.get_last_node()
+
+    print1 = g.print("=== ARCHITECT DESIGN ===\n{architect_design}")
 
     # Stage 2: Coder implements
     implement_prompt = g.ask(
@@ -41,33 +43,30 @@ def architect_implement_review(g: GraphRecorder):
         "1. Rust handler: crates/apxm-runtime/src/executor/handlers/checkpoint.rs\n"
         "2. TableGen op: the def AIS_CheckpointOp block for AISOps.td\n"
         "Keep it compilable. Base it on how spawn_agent.rs and AISOps.td are structured in this repo.\n\n"
-        "Design spec:\n{0}"
+        "Design spec:\n{architect_design}"
     )
-    architect.get_last_node() | implement_prompt
     print1 >> implement_prompt
 
-    coder_comm = g.communicate(target_agent="coder", message="{0}")
-    implement_prompt | coder_comm
+    coder_comm = g.communicate(target_agent="coder", message="{implement_prompt}")
 
-    print2 = g.print_(message="=== CODER IMPLEMENTATION ===\n{0}")
-    coder_comm | print2
+    print2 = g.print("=== CODER IMPLEMENTATION ===\n{coder_comm}")
 
     # Stage 3: Architect reviews
     review_prompt = g.ask(
         template="Review the following stub implementation from Codex for the CHECKPOINT op you designed. "
         "Does it match your spec? What's correct, what's wrong, and what would you change? Be specific.\n\n"
-        "Codex's implementation:\n{0}"
+        "Codex's implementation:\n{coder_comm}"
     )
-    coder_comm | review_prompt
     print2 >> review_prompt
 
-    architect.ask("{0}")
-    review_prompt | architect.get_last_node()
+    architect.ask("{review_prompt}")
 
-    print3 = g.print_(message="=== ARCHITECT REVIEW ===\n{0}")
-    architect.get_last_node() | print3
+    # Get final review
+    final_review = architect.get_last_node()
 
-    g.return_(source=print3)
+    print3 = g.print("=== ARCHITECT REVIEW ===\n{final_review}")
+
+    g.done(print3)
     
 
 

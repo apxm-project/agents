@@ -33,7 +33,7 @@ def synthesize(g: GraphRecorder, arch: str, adver: str, impl: str):
         "Provide a unified, actionable plan."
     )
 
-    g.return_("result", source=synthesize_think)
+    g.done(synthesize_think)
     
 
 

@@ -8,6 +8,7 @@ Usage: python3 -m examples.python.workflows.codex_claude_fix
 """
 
 from apxm.graph import compile, GraphRecorder
+from apxm._generated.agents import claude, codex
 import os
 
 
@@ -20,8 +21,8 @@ def codex_claude_fix(g: GraphRecorder):
     cwd = os.environ.get("APXM_HOME", os.getcwd())
 
     # Spawn agents
-    codex = g.spawn("codex_analyst", profile="codex", cwd=cwd)
-    claude = g.spawn("claude_fixer", profile="claude", cwd=cwd)
+    codex = g.spawn("codex_analyst", profile=codex, cwd=cwd)
+    claude = g.spawn("claude_fixer", profile=claude, cwd=cwd)
 
     # Codex deep analysis
     report = codex.ask(
