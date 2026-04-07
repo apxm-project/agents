@@ -6,7 +6,7 @@ Recall from LTM, answer with context, verify, and store.
 Usage: python3 -m examples.python.patterns.memory-rag.memory_rag_pipeline
 """
 
-from apxm.graph import compile, GraphRecorder
+from apxm import compile, GraphRecorder
 
 
 @compile()

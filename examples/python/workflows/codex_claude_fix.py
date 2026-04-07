@@ -7,7 +7,7 @@ Both work in the same repo. Codex reads and reports, Claude writes and commits.
 Usage: python3 -m examples.python.workflows.codex_claude_fix
 """
 
-from apxm.graph import compile, GraphRecorder
+from apxm import compile, GraphRecorder
 from apxm._generated.agents import claude as claude_profile, codex as codex_profile
 import os
 

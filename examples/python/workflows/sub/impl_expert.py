@@ -4,7 +4,7 @@
 Usage: python3 -m examples.python.workflows.sub.impl_expert
 """
 
-from apxm.graph import compile, GraphRecorder
+from apxm import compile, GraphRecorder
 
 
 @compile()

@@ -6,7 +6,7 @@
 Usage: python3 -m examples.python.workflows.planner.apxm_planner
 """
 
-from apxm.graph import compile, GraphRecorder
+from apxm import compile, GraphRecorder
 from apxm._generated.agents import claude
 import os
 

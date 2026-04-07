@@ -6,7 +6,7 @@ Demonstrates: spawn_agent + communicate(acp) for two-agent pipeline
 Usage: python3 -m examples.python.multi-agent.multi_agent_communicate
 """
 
-from apxm.graph import compile, GraphRecorder
+from apxm import compile, GraphRecorder
 from apxm._generated.agents import claude
 import os
 

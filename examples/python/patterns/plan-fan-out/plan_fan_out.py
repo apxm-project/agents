@@ -4,7 +4,7 @@
 Usage: python3 -m examples.python.patterns.plan-fan-out.plan_fan_out
 """
 
-from apxm.graph import compile, GraphRecorder
+from apxm import compile, GraphRecorder
 
 
 @compile()

@@ -6,7 +6,7 @@ Sequential pipeline: Codex goes first, Claude gets the full context.
 Usage: python3 -m examples.python.acp-agents.code_review
 """
 
-from apxm.graph import compile, GraphRecorder
+from apxm import compile, GraphRecorder
 from apxm._generated.agents import claude, codex
 import os
 

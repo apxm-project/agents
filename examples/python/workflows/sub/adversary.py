@@ -6,7 +6,7 @@ Finds what will go wrong and what is over-engineered.
 Usage: python3 -m examples.python.workflows.sub.adversary
 """
 
-from apxm.graph import compile, GraphRecorder
+from apxm import compile, GraphRecorder
 
 
 @compile()

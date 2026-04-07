@@ -4,7 +4,7 @@
 Usage: python3 -m examples.python.patterns.iterative-refine.iterative_refine
 """
 
-from apxm.graph import compile, GraphRecorder
+from apxm import compile, GraphRecorder
 
 
 @compile()

@@ -6,7 +6,7 @@ Three parallel ASK ops -> synthesis via THINK -> final verdict
 Usage: python3 -m examples.python.multi-agent.apxm_council
 """
 
-from apxm.graph import compile, GraphRecorder
+from apxm import compile, GraphRecorder
 
 
 @compile()

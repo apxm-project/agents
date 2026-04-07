@@ -7,7 +7,7 @@ Claude reviews it. Each stage receives the previous output as context.
 Usage: python3 -m examples.python.acp-agents.architect_implement_review
 """
 
-from apxm.graph import compile, GraphRecorder
+from apxm import compile, GraphRecorder
 from apxm._generated.agents import claude, codex
 import os
 

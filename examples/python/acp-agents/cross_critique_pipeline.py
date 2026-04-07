@@ -7,7 +7,7 @@ True diamond dataflow with cross-agent context passing.
 Usage: python3 -m examples.python.acp-agents.cross_critique_pipeline
 """
 
-from apxm.graph import compile, GraphRecorder
+from apxm import compile, GraphRecorder
 from apxm._generated.agents import claude, codex
 import os
 

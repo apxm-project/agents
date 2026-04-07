@@ -6,7 +6,7 @@ Workers process tasks in parallel, then aggregate results.
 Usage: python3 -m examples.python.patterns.worker-pool.worker_pool
 """
 
-from apxm.graph import compile, GraphRecorder
+from apxm import compile, GraphRecorder
 
 
 @compile()
