@@ -97,6 +97,13 @@ remove = { run = "apxm agent remove", description = "Remove agent" }
 test = { run = "apxm agent test", description = "Test agent" }
 templates = { run = "apxm agent templates", description = "List built-in templates" }
 
+[commands.cache]
+description = "Manage the MemoCache (response memoization)"
+group = "Configuration"
+stats = { run = "apxm cache stats", description = "Show cache statistics" }
+clear = { run = "apxm cache clear", description = "Clear all cached entries" }
+export = { run = "apxm cache export", description = "Export cache to JSON" }
+
 [install]
 wrap = { name = "apxm", target = "target/release/apxm" }
 
