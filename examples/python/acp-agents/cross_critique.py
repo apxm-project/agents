@@ -38,7 +38,7 @@ def cross_critique(g: GraphRecorder):
     # Merge critiques
     merge_critiques = g.ask(
         "merge_critiques",
-        template="Synthesize these two critiques:\n\nA's critique of B:\n{agent_a_last}\n\nB's critique of A:\n{agent_b_last}"
+        "Synthesize these two critiques:\n\nA's critique of B:\n{agent_a_last}\n\nB's critique of A:\n{agent_b_last}"
     )
 
     # Print and return

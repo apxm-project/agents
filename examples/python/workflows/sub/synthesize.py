@@ -22,7 +22,7 @@ def synthesize(g: GraphRecorder, arch: str, adver: str, impl: str):
     """
     synthesize_think = g.think(
         "synthesize_think",
-        template="You are a synthesis expert. Given these three perspectives:\n\n"
+        "You are a synthesis expert. Given these three perspectives:\n\n"
         "ARCHITECTURE:\n{arch}\n\n"
         "RISKS & CONCERNS:\n{adver}\n\n"
         "IMPLEMENTATION:\n{impl}\n\n"

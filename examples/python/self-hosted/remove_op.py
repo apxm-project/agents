@@ -34,7 +34,7 @@ def remove_op_workflow(g: GraphRecorder):
     # Step 1: Analyze impact
     impact_analysis = g.think(
         "impact_analysis",
-        template="""Analyze the impact of removing operation: {op_name}
+        """Analyze the impact of removing operation: {op_name}
 
 Check:
 1. Where is this operation defined?
@@ -72,7 +72,7 @@ Output a structured removal plan:
     # Step 2: Build removal prompts
     compiler_task = g.ask(
         "build_compiler_task",
-        template="""Remove operation from the compiler:
+        """Remove operation from the compiler:
 
 Analysis: {impact_analysis}
 
@@ -98,7 +98,7 @@ Be careful:
 
     runtime_task = g.ask(
         "build_runtime_task",
-        template="""Remove operation from the runtime:
+        """Remove operation from the runtime:
 
 Analysis: {impact_analysis}
 
@@ -136,7 +136,7 @@ Be thorough but careful — don't break adjacent code.
 
     verify_task = g.ask(
         "build_verify_task",
-        template="""Verify the removal was clean:
+        """Verify the removal was clean:
 
 Compiler changes: {compiler_removal}
 Runtime changes: {runtime_removal}
@@ -174,7 +174,7 @@ If there are failures, identify what was missed and suggest fixes.
     # Final summary
     final = g.think(
         "removal_summary",
-        template="""Generate removal summary:
+        """Generate removal summary:
 
 Impact analysis: {impact_analysis}
 Compiler changes: {compiler_removal}

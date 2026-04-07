@@ -82,7 +82,7 @@ Keep under 500 words but be specific about file paths and identifiers.
     # Step 2: Implementer does the refactoring
     implementer_task = g.ask(
         "build_implementer_task",
-        template="""Based on this analysis, implement the refactoring:
+        """Based on this analysis, implement the refactoring:
 
 Analysis: {analysis}
 
@@ -115,7 +115,7 @@ Be methodical. If something doesn't compile, fix it before moving on.
     # Step 3: Test runner verifies nothing broke
     test_task = g.ask(
         "build_test_task",
-        template="""Verify the refactoring didn't break anything:
+        """Verify the refactoring didn't break anything:
 
 Changes: {impl_result}
 
@@ -159,7 +159,7 @@ Keep iterating until all tests pass.
     # Step 4: Summary
     summary = g.think(
         "refactoring_summary",
-        template="""Summarize the refactoring:
+        """Summarize the refactoring:
 
 Analysis: {analysis}
 Implementation: {impl_result}

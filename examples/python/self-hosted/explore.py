@@ -158,7 +158,7 @@ Think about real-world workflow authors using APXM. Keep under 300 words.
     # Synthesis: merge all 5 perspectives, adversary wins on scope
     synthesis = g.think(
         "synthesis",
-        template="""Synthesize the 5 perspectives on this question:
+        """Synthesize the 5 perspectives on this question:
 
 Question: {question}
 
@@ -186,7 +186,7 @@ Give a clear, definitive answer. Keep under 400 words.
     # Action plan: extract concrete next steps
     action_plan = g.think(
         "action_plan",
-        template="""Based on the synthesis, extract concrete next steps:
+        """Based on the synthesis, extract concrete next steps:
 
 Synthesis: {synthesis}
 

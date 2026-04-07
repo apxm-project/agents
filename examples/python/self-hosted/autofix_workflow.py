@@ -54,7 +54,7 @@ Report the full output (it will show validation results, task files created in /
     # Step 2: Classify failures into clusters
     classify = g.think(
         "classify_failures",
-        template="""Analyze the autofix validation output and classify failures:
+        """Analyze the autofix validation output and classify failures:
 
 Validation output from validator:
 {validate_result}
@@ -101,7 +101,7 @@ If status is "pass", output {{"status": "pass", "clusters": []}}.
     # Build fix prompts for each cluster type
     fix_import_task = g.ask(
         "build_fix_import_task",
-        template="""Fix import errors from the classification:
+        """Fix import errors from the classification:
 
 Classification: {classify}
 
@@ -122,7 +122,7 @@ Report what you fixed and verification results.
 
     fix_mlir_task = g.ask(
         "build_fix_mlir_task",
-        template="""Fix MLIR parse errors from the classification:
+        """Fix MLIR parse errors from the classification:
 
 Classification: {classify}
 
@@ -143,7 +143,7 @@ Report what you fixed and verification results.
 
     fix_compile_task = g.ask(
         "build_fix_compile_task",
-        template="""Fix compile errors from the classification:
+        """Fix compile errors from the classification:
 
 Classification: {classify}
 
@@ -208,7 +208,7 @@ Report the results (pass/fail counts, any remaining issues).
     # Step 7: Generate final report
     report = g.think(
         "generate_report",
-        template="""Generate autofix report:
+        """Generate autofix report:
 
 Initial validation: {validate_result}
 Classification: {classify}

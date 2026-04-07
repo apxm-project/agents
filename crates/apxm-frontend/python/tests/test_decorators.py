@@ -9,7 +9,7 @@ def test_compile_decorator_basic():
 
     @compile()
     def simple_workflow(g: GraphRecorder):
-        g.ask("step1", template="Do something")
+        g.ask("step1", "Do something")
 
     # Verify the decorated function has the right metadata
     assert hasattr(simple_workflow, "_graph")
@@ -25,7 +25,7 @@ def test_compile_with_typed_params():
 
     @compile()
     def research_workflow(g: GraphRecorder, topic: str):
-        g.ask("research", template=f"Research {{topic}}")
+        g.ask("research", f"Research {{topic}}")
 
     graph = research_workflow._graph
 
@@ -46,7 +46,7 @@ def test_compile_with_multiple_params():
 
     @compile()
     def multi_param_workflow(g: GraphRecorder, topic: str, depth: int, threshold: float):
-        g.ask("process", template=f"Process {{topic}} at depth {{depth}} with threshold {{threshold}}")
+        g.ask("process", f"Process {{topic}} at depth {{depth}} with threshold {{threshold}}")
 
     graph = multi_param_workflow._graph
 
@@ -64,7 +64,7 @@ def test_named_placeholder_conversion():
 
     @compile()
     def placeholder_workflow(g: GraphRecorder, subject: str, action: str):
-        g.ask("task", template=f"The {{subject}} will {{action}}")
+        g.ask("task", f"The {{subject}} will {{action}}")
 
     graph = placeholder_workflow._graph
     node = graph.nodes[0]

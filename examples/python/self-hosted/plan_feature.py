@@ -69,7 +69,7 @@ Keep under 500 words.
     # Step 2: Gap analysis — what's missing vs what exists
     gap_analysis = g.think(
         "gap_analysis",
-        template="""Analyze what's missing vs what exists:
+        """Analyze what's missing vs what exists:
 
 Feature: {feature}
 Initial plan: {initial_plan}
@@ -100,7 +100,7 @@ Output a structured gap analysis with:
     # Step 3: Risk analysis — what could go wrong
     risk_analysis = g.think(
         "risk_analysis",
-        template="""Identify risks and mitigation strategies:
+        """Identify risks and mitigation strategies:
 
 Feature: {feature}
 Initial plan: {initial_plan}
@@ -134,7 +134,7 @@ For each risk, provide:
     # Step 4: Crate ordering — bottom-up dependency order
     crate_ordering = g.think(
         "crate_ordering",
-        template="""Determine the order to modify crates based on dependencies:
+        """Determine the order to modify crates based on dependencies:
 
 Initial plan: {initial_plan}
 
@@ -174,7 +174,7 @@ Output the implementation order:
     # Step 6: Final plan with everything integrated
     final_plan = g.think(
         "final_plan",
-        template="""Create the final implementation plan:
+        """Create the final implementation plan:
 
 Initial plan: {initial_plan}
 Gap analysis: {gap_analysis}

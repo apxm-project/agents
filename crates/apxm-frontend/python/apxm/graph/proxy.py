@@ -129,24 +129,31 @@ class GraphRecorder:
     def ask(
         self,
         name_or_template: str | None = None,
-        /,
+        template_arg: str | None = None,
         *,
         name: str | None = None,
         template: str | None = None,
         agent: AgentConfig | None = None,
         **attributes: Any,
     ) -> NodeRef:
-        # Heuristic: if first positional arg contains {, it's a template
-        if name_or_template is not None:
-            if '{' in name_or_template:
-                template = name_or_template
-            else:
-                name = name_or_template
+        # Support three calling styles:
+        # 1. g.ask("template") - auto-named, template is first arg (most common)
+        # 2. g.ask("name", "template") - explicit name and template as positional args
+        # 3. g.ask(name="name", template="template") - keyword args (backward compat)
+
+        if template_arg is not None:
+            # Two positional args: name and template
+            name = name_or_template
+            template = template_arg
+        elif name_or_template is not None:
+            # One positional arg: assume it's a template (most common case)
+            # Names are typically short identifiers, templates are sentences/prompts
+            template = name_or_template
 
         if name is None:
             name = self._auto_name("ask")
         if template is None:
-            raise ValueError("ask() missing required keyword argument: 'template'")
+            raise ValueError("ask() missing required argument: template")
 
         # Auto-wire: resolve {var_name} to NodeRef
         resolved_template, auto_refs = self._resolve_template_refs(template)
@@ -165,24 +172,24 @@ class GraphRecorder:
     def think(
         self,
         name_or_template: str | None = None,
-        /,
+        template_arg: str | None = None,
         *,
         name: str | None = None,
         template: str | None = None,
         agent: AgentConfig | None = None,
         **attributes: Any,
     ) -> NodeRef:
-        # Heuristic: if first positional arg contains {, it's a template
-        if name_or_template is not None:
-            if '{' in name_or_template:
-                template = name_or_template
-            else:
-                name = name_or_template
+        # Support three calling styles (same as ask)
+        if template_arg is not None:
+            name = name_or_template
+            template = template_arg
+        elif name_or_template is not None:
+            template = name_or_template
 
         if name is None:
             name = self._auto_name("think")
         if template is None:
-            raise ValueError("think() missing required keyword argument: 'template'")
+            raise ValueError("think() missing required argument: template")
 
         # Auto-wire: resolve {var_name} to NodeRef
         resolved_template, auto_refs = self._resolve_template_refs(template)
@@ -201,24 +208,24 @@ class GraphRecorder:
     def reason(
         self,
         name_or_template: str | None = None,
-        /,
+        template_arg: str | None = None,
         *,
         name: str | None = None,
         template: str | None = None,
         agent: AgentConfig | None = None,
         **attributes: Any,
     ) -> NodeRef:
-        # Heuristic: if first positional arg contains {, it's a template
-        if name_or_template is not None:
-            if '{' in name_or_template:
-                template = name_or_template
-            else:
-                name = name_or_template
+        # Support three calling styles (same as ask)
+        if template_arg is not None:
+            name = name_or_template
+            template = template_arg
+        elif name_or_template is not None:
+            template = name_or_template
 
         if name is None:
             name = self._auto_name("reason")
         if template is None:
-            raise ValueError("reason() missing required keyword argument: 'template'")
+            raise ValueError("reason() missing required argument: template")
 
         # Auto-wire: resolve {var_name} to NodeRef
         resolved_template, auto_refs = self._resolve_template_refs(template)
@@ -537,7 +544,7 @@ class GraphRecorder:
         attrs.update(_normalize_attributes(attributes))
         return self._add_node(name, graph_keys.OP_EXC, attrs)
 
-    def print_(
+    def print(
         self,
         name_or_message: str | None = None,
         /,
@@ -557,7 +564,7 @@ class GraphRecorder:
         if name is None:
             name = self._auto_name("print")
         if message is None:
-            raise ValueError("print_() missing required keyword argument: 'message'")
+            raise ValueError("print() missing required keyword argument: 'message'")
 
         # Auto-wire: resolve {var_name} to NodeRef
         resolved_message, auto_refs = self._resolve_template_refs(message)
@@ -571,9 +578,6 @@ class GraphRecorder:
             ref | node
 
         return node
-
-    # Alias - 'print' is fine as a method name (just not as a function name)
-    print = print_
 
     def jump(self, name: str | None = None, *, label: str | None = None, **attributes: Any) -> NodeRef:
         """Unconditional jump to a labeled instruction (JUMP)."""
@@ -607,11 +611,10 @@ class GraphRecorder:
             name = self._auto_name("loop_end")
         return self._add_node(name, graph_keys.OP_LOOP_END, _normalize_attributes(attributes))
 
-    def return_(
+    def done(
         self,
-        name: str | None = None,
-        *,
         source: NodeRef | None = None,
+        name: str | None = None,
         **attributes: Any,
     ) -> NodeRef:
         """Return from subgraph with a result token (RETURN)."""
@@ -621,15 +624,6 @@ class GraphRecorder:
         if source is not None:
             source | node
         return node
-
-    def done(
-        self,
-        source: NodeRef | None = None,
-        name: str | None = None,
-        **attributes: Any,
-    ) -> NodeRef:
-        """Alias for return_() - cleaner name for workflow completion."""
-        return self.return_(name=name, source=source, **attributes)
 
     def flow_call(
         self,
@@ -884,16 +878,6 @@ class GraphRecorder:
             attrs["capabilities"] = _normalize_value(capabilities)
         attrs.update(_normalize_attributes(attributes))
         return self._add_node(name, graph_keys.OP_AGENT, attrs)
-
-    def const_(self, name: str | None = None, *, value: Any = None, **attributes: Any) -> NodeRef:
-        """String constant, compiler internal (CONST_STR). DEPRECATED: Use text() or string() instead."""
-        if name is None:
-            name = self._auto_name("const_str")
-        if value is None:
-            raise ValueError("const_() missing required keyword argument: 'value'")
-        attrs = {graph_keys.VALUE: _normalize_value(value)}
-        attrs.update(_normalize_attributes(attributes))
-        return self._add_node(name, graph_keys.OP_CONST_STR, attrs)
 
     def text(self, name: str | None = None, *, value: Any = None, **attributes: Any) -> NodeRef:
         """String constant (CONST_STR)."""

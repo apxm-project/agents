@@ -40,7 +40,7 @@ def cross_critique_pipeline(g: GraphRecorder):
     # Cross-critiques: A critiques B, B critiques A
     codex_critique_prompt = g.ask(
         "build_codex_critique",
-        template="Critique the following feature proposal from Claude for the APXM project. "
+        "Critique the following feature proposal from Claude for the APXM project. "
         "Is it feasible? Is it truly the most impactful? What's missing? Under 100 words.\n\n"
         "Claude's proposal:\n{claude_proposal}"
     )
@@ -48,7 +48,7 @@ def cross_critique_pipeline(g: GraphRecorder):
 
     claude_critique_prompt = g.ask(
         "build_claude_critique",
-        template="Critique the following feature proposal from Codex for the APXM project. "
+        "Critique the following feature proposal from Codex for the APXM project. "
         "Is it feasible? Is it truly the most impactful? What's missing? Under 100 words.\n\n"
         "Codex's proposal:\n{codex_proposal}"
     )

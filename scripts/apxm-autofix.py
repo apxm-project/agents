@@ -510,10 +510,6 @@ def main() -> int:
         task_files = write_task_files(clusters, project_root, args.task_dir)
 
         print(f"\nTask files written to: {args.task_dir}")
-        print("\nTo spawn agents manually:")
-        for task_file in task_files:
-            print(f"  bash scripts/apxm-autofix-agent.sh {task_file}")
-
     # Auto-fix mode (Phase 2)
     if args.auto_fix and clusters:
         print("\n🤖 AUTO-FIX MODE (spawning agents via APXM runtime...)")

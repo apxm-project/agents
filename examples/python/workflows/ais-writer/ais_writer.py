@@ -19,7 +19,7 @@ def ais_writer(g: GraphRecorder):
     # Define the plan
     plan_and_dir = g.ask(
         "plan_and_dir",
-        template="clic-designer: AI-first commercial app builder on APXM. Enforced design phase before code. "
+        "clic-designer: AI-first commercial app builder on APXM. Enforced design phase before code. "
         "Phase 1 DISCOVER: 4 parallel specialists. Phase 2A COMMON PARTS: component registry. "
         "Phase 2B COMMON SCREENS: shared screens. Phase 2C FEATURE SCREENS: N screens x V variants. "
         "2-STAGE VERIFICATION: Qwen3 structural + Playwright visual. Phase 3A CONVERT: component widgets. "
@@ -32,12 +32,12 @@ def ais_writer(g: GraphRecorder):
 
     output_dir = g.ask(
         "output_dir",
-        template="Extract the output directory from this plan. Return ONLY the directory path. Plan: {plan_and_dir}"
+        "Extract the output directory from this plan. Return ONLY the directory path. Plan: {plan_and_dir}"
     )
 
     manifest_prompt = g.ask(
         "manifest_prompt",
-        template="You are an APXM Workflow Analyst. Analyze this plan and produce a precise file manifest. "
+        "You are an APXM Workflow Analyst. Analyze this plan and produce a precise file manifest. "
         "Produce JSON with: output_dir, entry_files, phase_files, sub_files, agent_roster, data_flow. "
         "Plan: {plan_and_dir}"
     )
@@ -50,7 +50,7 @@ def ais_writer(g: GraphRecorder):
 
     topology_prompt = g.ask(
         "topology_prompt",
-        template="Design an APXM agent topology for this workflow. Manifest: {manifest_comm}. "
+        "Design an APXM agent topology for this workflow. Manifest: {manifest_comm}. "
         "For each agent, design: system prompt, inputs, outputs, constraints. "
         "Output JSON map of agent_name -> full_context_block."
     )
@@ -59,7 +59,7 @@ def ais_writer(g: GraphRecorder):
 
     skeptic_prompt = g.ask(
         "skeptic_prompt",
-        template="Challenge this workflow design. Manifest: {manifest_comm}. Agent contexts: {agent_contexts}. "
+        "Challenge this workflow design. Manifest: {manifest_comm}. Agent contexts: {agent_contexts}. "
         "Find: over-engineering, missing pieces, wrong order, minimum viable. "
         "Output JSON with findings and recommended_first_file."
     )
@@ -71,7 +71,7 @@ def ais_writer(g: GraphRecorder):
 
     entry_write_prompt = g.ask(
         "entry_write_prompt",
-        template="Write entry point APXM Python workflow files. Manifest: {manifest_comm}. Agent contexts: {agent_contexts}. Skeptic: {skeptic_review}. "
+        "Write entry point APXM Python workflow files. Manifest: {manifest_comm}. Agent contexts: {agent_contexts}. Skeptic: {skeptic_review}. "
         "Use the Python frontend and target canonical .air emission for execution. "
         "Output JSON map: filename -> complete_python_content."
     )
@@ -82,7 +82,7 @@ def ais_writer(g: GraphRecorder):
     # Phase 4: Generate summary
     summary = g.ask(
         "summary",
-        template="Format a final summary: ## WORKFLOW-WRITER COMPLETE\n### What Was Designed\n"
+        "Format a final summary: ## WORKFLOW-WRITER COMPLETE\n### What Was Designed\n"
         "### Files Created\n### How to Run\n### First Step. "
         "Based on output dir: {output_dir} and files: {writer_result}"
     )

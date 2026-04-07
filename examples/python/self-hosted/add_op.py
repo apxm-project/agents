@@ -75,7 +75,7 @@ Keep the plan under 400 words but be specific about attribute names and types.
     # Step 2: Build implementation prompts for parallel execution
     compiler_prompt = g.ask(
         "build_compiler_prompt",
-        template="""Based on this plan, implement the compiler-side changes:
+        """Based on this plan, implement the compiler-side changes:
 
 Plan:
 {architect_plan}
@@ -98,7 +98,7 @@ Only modify what's necessary — don't refactor surrounding code.
 
     runtime_prompt = g.ask(
         "build_runtime_prompt",
-        template="""Based on this plan, implement the runtime-side changes:
+        """Based on this plan, implement the runtime-side changes:
 
 Plan:
 {architect_plan}
@@ -139,7 +139,7 @@ Follow APXM conventions: use apxm-core types, proper error handling with context
 
     review_task = g.ask(
         "build_review_task",
-        template="""Review both implementations and verify they work together:
+        """Review both implementations and verify they work together:
 
 Compiler implementation:
 {compiler_impl}
@@ -177,7 +177,7 @@ If tests fail, suggest fixes.
     # Final synthesis
     final = g.think(
         "synthesis",
-        template="""Synthesize the add-op workflow results:
+        """Synthesize the add-op workflow results:
 
 Plan: {architect_plan}
 Compiler impl: {compiler_impl}
