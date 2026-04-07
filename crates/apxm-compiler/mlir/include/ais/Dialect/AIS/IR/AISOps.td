@@ -39,6 +39,7 @@
 
 include "ais/Dialect/AIS/IR/AISDialect.td"
 include "ais/Dialect/AIS/IR/AISTypes.td"
+include "ais/Dialect/AIS/IR/AISAttributes.td"
 include "mlir/IR/CommonTypeConstraints.td"
 include "mlir/Interfaces/ControlFlowInterfaces.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
@@ -91,13 +92,14 @@ def AIS_QMemOp : AIS_Op<"qmem",
 
     Example:
     ```mlir
-    %handle = ais.qmem "find facts about topic X" stage "belief_db" in "ltm" : !ais.handle
+    %handle = ais.qmem "find facts about topic X" stage "belief_db" in stm : !ais.handle
+    %handle = ais.qmem "find facts" stage "db" in ltm limit 10 : !ais.handle
     ```
   }];
   let arguments = (ins
     StrAttr:$query,
     StrAttr:$sid,
-    StrAttr:$space,
+    AISMemorySpaceAttr:$space,
     OptionalAttr<I64Attr>:$limit
   );
   let results = (outs AIS_HandleType:$result);
@@ -115,12 +117,14 @@ def AIS_UMemOp : AIS_Op<"umem",
 
     Example:
     ```mlir
-    ais.umem %token into "ltm" : !ais.token
+    ais.umem %token into stm {key = "fact_123"} : !ais.token
+    ais.umem %data into ltm : !ais.token
     ```
   }];
   let arguments = (ins
     AIS_TokenType:$value,
-    StrAttr:$space
+    AISMemorySpaceAttr:$space,
+    OptionalAttr<StrAttr>:$key
   );
   let assemblyFormat = [{
     $value `into` $space attr-dict `:` type($value)
@@ -831,6 +835,28 @@ def AIS_SpawnAgentOp : AIS_Op<"spawn_agent"> {
   let results = (outs AIS_TokenType:$result);
   let assemblyFormat = [{
     $child_agent attr-dict `:` type($result)
+  }];
+  let hasVerifier = 1;
+}
+
+def AIS_SpawnTeamOp : AIS_Op<"spawn_team"> {
+  let summary = "Spawn all members of a team";
+  let description = [{
+    Spawns all members of a team, expanding to N SPAWN_AGENT operations.
+    This is a convenience op for multi-agent coordination patterns.
+
+    Example:
+    ```mlir
+    %team = ais.spawn_team "research_team" : !ais.token
+    ```
+  }];
+  let arguments = (ins
+    StrAttr:$team_name,
+    OptionalAttr<StrAttr>:$profile
+  );
+  let results = (outs AIS_TokenType:$result);
+  let assemblyFormat = [{
+    $team_name attr-dict `:` type($result)
   }];
   let hasVerifier = 1;
 }

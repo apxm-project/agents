@@ -63,21 +63,14 @@ LogicalResult QMemOp::verify() {
   if (getSid().empty())
     return emitOpError("sid must be non-empty");
 
-  // Check space attribute is valid
-  StringRef space = getSpace();
-  if (space != apxm::constants::memory::STM && space != apxm::constants::memory::LTM &&
-      space != apxm::constants::memory::EPISODIC)
-    return emitOpError("space must be 'stm', 'ltm', or 'episodic'");
+  // Space is now a typed enum attribute - validation happens at parse time
+  // No need to check string values
 
   // Check result is HandleType
   if (failed(verifyType<HandleType>(*this, getResult(), "result must be !ais.handle type")))
     return failure();
 
-  // Check memory space consistency if specified
-  auto handleType = llvm::cast<HandleType>(getResult().getType());
-  auto expectedSpace = symbolizeMemorySpace(space);
-  if (expectedSpace && handleType.getSpace() != *expectedSpace)
-    return emitOpError("result handle space does not match operation space attribute");
+  // Note: Handle type no longer carries space parameter, so no consistency check needed
 
   if (auto limit = getLimit()) {
     if (*limit <= 0)
@@ -92,11 +85,8 @@ LogicalResult QMemOp::verify() {
 //===----------------------------------------------------------------------===//
 
 LogicalResult UMemOp::verify() {
-  // Check space attribute is valid
-  StringRef space = getSpace();
-  if (space != apxm::constants::memory::STM && space != apxm::constants::memory::LTM &&
-      space != apxm::constants::memory::EPISODIC)
-    return emitOpError("space must be 'stm', 'ltm', or 'episodic'");
+  // Space is now a typed enum attribute - validation happens at parse time
+  // No need to check string values
 
   // Check value operand is TokenType
   if (failed(verifyType<TokenType>(*this, getValue(), "value operand must be !ais.token type")))
@@ -897,6 +887,7 @@ void ReasonOp::getCanonicalizationPatterns(RewritePatternSet &patterns, MLIRCont
 //===----------------------------------------------------------------------===//
 
 LogicalResult SpawnAgentOp::verify()       { return success(); }
+LogicalResult SpawnTeamOp::verify()        { return success(); }
 LogicalResult RegisterCapabilityOp::verify() { return success(); }
 LogicalResult AutonomousOp::verify()       { return success(); }
 LogicalResult DelegateOp::verify()         { return success(); }
