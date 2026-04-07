@@ -60,7 +60,7 @@ def brief_analyzer(g: GraphRecorder):
     # Phase 4: Synthesize manifest
     manifest = g.ask(
         "manifest",
-        "You are a design manifest synthesizer. Produce a structured design manifest for a vintage watch "
+        template="You are a design manifest synthesizer. Produce a structured design manifest for a vintage watch "
         "marketplace app. The app has: sellers listing watches with photos, buyers browsing and filtering, "
         "messaging, offer negotiation, and seller dashboards.\n\n"
         "Produce ONLY this JSON structure (no markdown, no explanation):\n"

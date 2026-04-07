@@ -41,7 +41,7 @@ def codex_claude_fix(g: GraphRecorder):
     # Claude fixes everything
     claude_prompt = g.ask(
         "build_claude_prompt",
-        "You are a senior Rust engineer. Codex has done a deep analysis of the APXM compiler and "
+        template="You are a senior Rust engineer. Codex has done a deep analysis of the APXM compiler and "
         "found issues. Fix ALL of them.\n\nCODEX REPORT:\n{0}\n\n"
         "For each issue:\n"
         "1. Read the relevant file(s)\n"
@@ -60,7 +60,7 @@ def codex_claude_fix(g: GraphRecorder):
     # Summarize
     summary = g.think(
         "summary",
-        "Summarize what codex found and what claude fixed:\n\n"
+        template="Summarize what codex found and what claude fixed:\n\n"
         "CODEX REPORT:\n{0}\n\nCLAUDE RESULT:\n{1}"
     )
     codex_analyst.get_last_node() | summary

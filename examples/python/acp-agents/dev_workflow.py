@@ -31,9 +31,9 @@ def apxm_dev_workflow(g: GraphRecorder):
     # Architect plans
     architect_prompt = g.ask(
         "build_architect_prompt",
-        "{0}\n\nYou are the lead architect for APXM. Produce a detailed, file-by-file implementation plan for this task."
+        template="{0}\n\nYou are the lead architect for APXM. Produce a detailed, file-by-file implementation plan for this task."
     )
-    task_node = g.const_("task", task)
+    task_node = g.const_("task", value=task)
     task_node | architect_prompt
 
     architect.ask("{0}")
@@ -46,7 +46,7 @@ def apxm_dev_workflow(g: GraphRecorder):
     # Coder implements
     coder_prompt = g.ask(
         "build_coder_prompt",
-        "Implement exactly what the architect planned below. Make the changes in the codebase. "
+        template="Implement exactly what the architect planned below. Make the changes in the codebase. "
         "Then run: cargo test --workspace --exclude apxm-compiler 2>&1 | tail -10. "
         "Report what you changed and test results.\n\nPlan:\n{0}"
     )
@@ -63,7 +63,7 @@ def apxm_dev_workflow(g: GraphRecorder):
     # Architect reviews
     review_prompt = g.ask(
         "build_review_prompt",
-        "Review Codex's implementation. Does it match your plan? Any bugs or missing pieces? "
+        template="Review Codex's implementation. Does it match your plan? Any bugs or missing pieces? "
         "Ship it or iterate?\n\nCodex's report:\n{0}"
     )
     coder.get_last_node() | review_prompt

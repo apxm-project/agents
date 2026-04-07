@@ -36,7 +36,7 @@ def autofix_loop(g: GraphRecorder):
 
     # Step 1: Architect analyzes the autofix report
     analyze_task = g.const_("analyze_task",
-        """Analyze APXM validation failures and create a fix strategy.
+        value="""Analyze APXM validation failures and create a fix strategy.
 
 Run the autofix validation:
   python3 scripts/apxm-autofix.py
@@ -60,7 +60,7 @@ Output a JSON strategy with priority_order and cluster_groups.
     # Step 2: Implementer works on highest priority cluster
     implement_task = g.ask(
         "build_implement_task",
-        """Based on this strategy, work on the highest priority cluster.
+        template="""Based on this strategy, work on the highest priority cluster.
 
 Read the task file from /tmp/autofix-tasks/ for that cluster.
 Follow the fix instructions carefully.
@@ -85,7 +85,7 @@ Strategy:
     # Step 3: Reviewer validates the fixes
     review_task = g.ask(
         "build_review_task",
-        """Review the implementation and verify quality.
+        template="""Review the implementation and verify quality.
 
 Check:
 1. Did all validations pass?

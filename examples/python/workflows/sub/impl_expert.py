@@ -18,7 +18,7 @@ def impl_expert(g: GraphRecorder, task: str):
     """
     impl_think = g.think(
         "impl_think",
-        "You are an implementation expert. For this task: {task}\n\n"
+        template="You are an implementation expert. For this task: {task}\n\n"
         "Provide:\n"
         "1. Implementation approach\n"
         "2. Key algorithms or patterns\n"

@@ -34,7 +34,7 @@ def parallel_agents(g: GraphRecorder):
     # Merge the analyses
     merge_analyses = g.ask(
         "merge_analyses",
-        "Compare and synthesize these two analyses:\n\nClaude:\n{0}\n\nCodex:\n{1}"
+        template="Compare and synthesize these two analyses:\n\nClaude:\n{0}\n\nCodex:\n{1}"
     )
     claude_analyst.get_last_node() | merge_analyses
     codex_analyst.get_last_node() | merge_analyses

@@ -424,6 +424,9 @@ class GraphRecorder:
         attrs.update(_normalize_attributes(attributes))
         return self._add_node(name, graph_keys.OP_PRINT, attrs)
 
+    # Alias - 'print' is fine as a method name (just not as a function name)
+    print = print_
+
     def jump(self, name: str | None = None, *, label: str | None = None, **attributes: Any) -> NodeRef:
         """Unconditional jump to a labeled instruction (JUMP)."""
         if name is None:
@@ -849,6 +852,9 @@ class GraphRecorder:
             attrs["goals"] = _normalize_value(goals)
         attrs.update(_normalize_attributes(attributes))
         return self._add_node(name, graph_keys.OP_SPAWN_AGENT, attrs)
+
+    # Shorthand alias
+    spawn = spawn_agent
 
     def register_capability(
         self,

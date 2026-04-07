@@ -44,7 +44,7 @@ def explore_workflow(g: GraphRecorder):
     # All 5 get the same question, different perspectives
     architect_prompt = g.const_(
         "architect_prompt",
-        """You are the APXM systems architect. Answer this question from a systems design perspective:
+        value="""You are the APXM systems architect. Answer this question from a systems design perspective:
 
 Question: {0}
 
@@ -60,7 +60,7 @@ Be specific and reference actual APXM components. Keep under 300 words.
 
     adversary_prompt = g.const_(
         "adversary_prompt",
-        """You are the adversary. Your job is to find problems with the proposed idea:
+        value="""You are the adversary. Your job is to find problems with the proposed idea:
 
 Question: {0}
 
@@ -78,7 +78,7 @@ Be brutally honest. If it's a bad idea, say so. Keep under 300 words.
 
     implementer_prompt = g.const_(
         "implementer_prompt",
-        """You are the implementer. Answer this question with concrete Rust code:
+        value="""You are the implementer. Answer this question with concrete Rust code:
 
 Question: {0}
 
@@ -94,7 +94,7 @@ Focus on *how* it would actually be built in Rust. Keep under 300 words.
 
     researcher_prompt = g.const_(
         "researcher_prompt",
-        """You are the researcher. Answer this question based on what the industry and literature say:
+        value="""You are the researcher. Answer this question based on what the industry and literature say:
 
 Question: {0}
 
@@ -111,7 +111,7 @@ Cite examples from real systems. Keep under 300 words.
 
     user_advocate_prompt = g.const_(
         "user_advocate_prompt",
-        """You are the user advocate. Answer this question from the user's perspective:
+        value="""You are the user advocate. Answer this question from the user's perspective:
 
 Question: {0}
 
@@ -176,7 +176,7 @@ Think about real-world workflow authors using APXM. Keep under 300 words.
     # Synthesis: merge all 5 perspectives, adversary wins on scope
     synthesis = g.think(
         "synthesis",
-        """Synthesize the 5 perspectives on this question:
+        template="""Synthesize the 5 perspectives on this question:
 
 Question: {0}
 
@@ -198,7 +198,7 @@ Give a clear, definitive answer. Keep under 400 words.
 """
     )
     # Wire all 6 inputs (question + 5 perspectives)
-    g.const_("question_for_synthesis", "{0}") | synthesis
+    g.const_("question_for_synthesis", value="{0}") | synthesis
     architect.get_last_node() | synthesis
     adversary.get_last_node() | synthesis
     implementer.get_last_node() | synthesis
@@ -212,7 +212,7 @@ Give a clear, definitive answer. Keep under 400 words.
     # Action plan: extract concrete next steps
     action_plan = g.think(
         "action_plan",
-        """Based on the synthesis, extract concrete next steps:
+        template="""Based on the synthesis, extract concrete next steps:
 
 Synthesis: {0}
 

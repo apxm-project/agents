@@ -51,7 +51,7 @@ def compiler_orchestrator(g: GraphRecorder):
     # Synthesize results
     summary = g.think(
         "summary",
-        "Four compiler enhancement agents completed. Summarize results. "
+        template="Four compiler enhancement agents completed. Summarize results. "
         "AGENT1 (ModelProfile): {0} AGENT2 (Diagnostics): {1} "
         "AGENT3 (Flow Param Fix): {2} AGENT4 (Passes+CLI): {3}"
     )

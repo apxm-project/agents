@@ -12,7 +12,7 @@ def iterative_refine_unrolled(g: GraphRecorder):
     """Iterative refinement workflow with 3 rounds of critique and improvement."""
     # Initial draft (auto-named "ask")
     initial_draft = g.ask(
-        template="Write a concise technical explanation of how LLM inference works, "
+        template="Write a concise technical explanation of how LLM inference works, template="
         "targeting a software engineer audience. Be thorough but under 300 words."
     )
 
@@ -48,7 +48,7 @@ def iterative_refine_unrolled(g: GraphRecorder):
 
     # Round 3: Final polish (auto-named "think_2", "ask_3")
     reflect_3 = g.think(
-        template="Final critique before publication. Check for: technical accuracy, "
+        template="Final critique before publication. Check for: technical accuracy, template="
         "flow, clarity, conciseness.\n\nDraft:\n{0}"
     )
     refine_2 | reflect_3

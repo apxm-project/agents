@@ -15,7 +15,7 @@ def memory_rag_pipeline(g: GraphRecorder):
     # User query
     query = g.ask(
         "query",
-        "What are the trade-offs between Rust async runtimes: Tokio vs async-std vs smol?"
+        template="What are the trade-offs between Rust async runtimes: Tokio vs async-std vs smol?"
     )
 
     # Recall from memory
@@ -24,7 +24,7 @@ def memory_rag_pipeline(g: GraphRecorder):
     # Generate answer using memory context
     answer = g.think(
         "answer",
-        "Answer this question, using the memory recall as context if relevant.\n\n"
+        template="Answer this question, using the memory recall as context if relevant.\n\n"
         "QUESTION:\n{0}\n\nMEMORY RECALL:\n{1}\n\n"
         "Provide a thorough, accurate answer."
     )
@@ -34,7 +34,7 @@ def memory_rag_pipeline(g: GraphRecorder):
     # Verify the answer
     verification = g.think(
         "verification",
-        "Verify this answer is accurate, complete, and balanced.\n\n"
+        template="Verify this answer is accurate, complete, and balanced.\n\n"
         "QUESTION:\n{0}\n\nANSWER:\n{1}\n\n"
         "Is this correct? Any important omissions or errors?"
     )
