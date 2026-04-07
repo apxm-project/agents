@@ -66,13 +66,20 @@ class Team:
     def add(
         self,
         agent_name: str,
-        profile: str | None = None,
+        profile: str | Any | None = None,
         mode: str | None = None,
         model: str | None = None,
         cwd: str | None = None,
         **attributes: Any,
     ) -> AgentHandle:
         """Add an agent to the team by spawning it.
+
+        Args:
+            agent_name: Name of the agent instance
+            profile: Agent profile (string name or AgentRef object from apxm._generated.agents)
+            mode: Agent mode
+            model: Model name
+            cwd: Working directory
 
         Returns an AgentHandle for method chaining.
         """
@@ -122,7 +129,7 @@ class Team:
 def _spawn_with_handle(
     self: GraphRecorder,
     agent_name: str,
-    profile: str | None = None,
+    profile: str | Any | None = None,
     mode: str | None = None,
     model: str | None = None,
     cwd: str | None = None,
@@ -131,6 +138,13 @@ def _spawn_with_handle(
     """Spawn an agent and return an AgentHandle for method chaining.
 
     This is sugar over spawn_agent() that returns an AgentHandle instead of NodeRef.
+
+    Args:
+        agent_name: Name of the agent instance
+        profile: Agent profile (string name or AgentRef object from apxm._generated.agents)
+        mode: Agent mode
+        model: Model name
+        cwd: Working directory
     """
     spawn_node = self.spawn_agent(
         agent_name,
