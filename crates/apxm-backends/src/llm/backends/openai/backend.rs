@@ -269,6 +269,21 @@ impl OpenAIBackend {
             }
         }
 
+        // Add vLLM priority if present in APXM hints (Phase 0+1)
+        if let Some(hints) = &request.apxm_hints {
+            if let Some(priority_class) = &hints.priority_class {
+                // Map priority_class to vLLM integer priority
+                // Lower numbers = higher priority in vLLM
+                let priority = match priority_class.as_str() {
+                    "critical_path" => 0,
+                    "normal" => 5,
+                    "speculative" => 10,
+                    _ => 5,
+                };
+                body["priority"] = json!(priority);
+            }
+        }
+
         // Merge in extra_body if provided (for vLLM extensions, etc.)
         if let Some(extra) = &request.extra_body {
             if let serde_json::Value::Object(extra_map) = extra {

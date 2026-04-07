@@ -22,6 +22,7 @@ pub use dag_splicer::{DagSplicer, NoOpSplicer};
 pub use dispatcher::OperationDispatcher;
 pub use engine::{ExecutionResult, ExecutorEngine};
 pub use events::{ExecutionEvent, ExecutionEventEmitter};
+pub use handlers::warmup::{WarmupConfig, WarmupMetrics};
 pub use inner_plan_linker::{InnerPlanLinker, NoOpLinker};
 pub use memoization::ResponseCache;
 pub use token_accounting::TokenAccountant;

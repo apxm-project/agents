@@ -124,6 +124,16 @@ pub mod graph {
         pub const CACHED_SYSTEM_PROMPT: &str = "cached_system_prompt";
         /// Memoization hint: this pure operation duplicates an earlier one.
         pub const MEMOIZABLE: &str = "memoizable";
+
+        // vLLM graph-aware optimization attributes (from docs/strategy/09-VLLM-GRAPH-AWARENESS.md)
+        /// Warmup candidate: node should trigger a prefix cache warmup request.
+        pub const WARMUP_CANDIDATE: &str = "warmup_candidate";
+        /// Estimated shared prefix tokens for warmup gating.
+        pub const SHARED_PREFIX_EST_TOKENS: &str = "shared_prefix_est_tokens";
+        /// Downstream nodes that depend on this node's output.
+        pub const DOWNSTREAM_NODES: &str = "downstream_nodes";
+        /// Shared prefix reuse group identifier.
+        pub const REUSE_GROUP: &str = "reuse_group";
     }
 }
 
