@@ -75,8 +75,8 @@ Source Language    Frontend         IR          Optimizer       Backend
 C                Clang             LLVM IR     LLVM passes     x86/ARM
 Rust             rustc             LLVM IR     LLVM passes     x86/ARM
 
-Python API       agentmate-py      ApxmGraph   AIS passes      APXM Runtime
-Rust API         agentmate-rs      ApxmGraph   AIS passes      APXM Runtime
+Python API       apxm (Python)      ApxmGraph   AIS passes      APXM Runtime
+Rust API         apxm (Rust)      ApxmGraph   AIS passes      APXM Runtime
 AIS DSL          AIS parser        ApxmGraph   AIS passes      APXM Runtime
 ```
 

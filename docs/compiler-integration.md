@@ -71,7 +71,7 @@ dekk apxm execute workflow.json
 ### 2. Rust API
 
 ```rust
-// AgentMate builds the graph in memory — no files written
+// APXM Frontend builds the graph in memory — no files written
 let graph = WorkflowBuilder::new("research")
     .ask("research", "Research: {topic}")
     .think("synthesize", "Synthesize findings: {0}", budget_tokens: 2000)

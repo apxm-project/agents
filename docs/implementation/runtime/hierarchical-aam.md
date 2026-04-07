@@ -563,16 +563,16 @@ The file tree naturally supports the "condense a workflow into a tool" pattern.
 
 ---
 
-## Diagram 10: The .agentmate/ Directory — Already Halfway There
+## Diagram 10: The .apxm/ Directory — Already Halfway There
 
-> **Note:** This diagram refers to the `.agentmate/` structure from an external
-> project (agentmate), not the APXM runtime itself. It is included for
+> **Note:** This diagram refers to the `.apxm/` structure from an external
+> project (apxm frontend), not the APXM runtime itself. It is included for
 > comparison purposes only.
 
 ```
- CURRENT .agentmate/ STRUCTURE:          WHAT IT MAPS TO IN AAM:
+ CURRENT .apxm/ STRUCTURE:          WHAT IT MAPS TO IN AAM:
 
- .agentmate/
+ .apxm/
  ├── config.toml                         Agent configuration (model, provider)
  │   provider = "anthropic"              └── NOT part of AAM (meta-config)
  │   model = "claude-sonnet-4-20250514"
@@ -601,7 +601,7 @@ The file tree naturally supports the "condense a workflow into a tool" pattern.
 
  WHAT'S MISSING TO MAKE IT A FULL AAM:
 
- .agentmate/
+ .apxm/
  ├── config.toml                         (existing — meta-config)
  ├── .env                                (existing — credentials)
  │
@@ -647,7 +647,7 @@ The file tree naturally supports the "condense a workflow into a tool" pattern.
 | 7 | Scoped Transitions | δ(AAM_scope, Instr) → AAM_scope' with isolation |
 | 8 | Goal Tree = Dir Tree | Directory nesting IS goal decomposition |
 | 9 | Condensation | Replace a directory of files with a single tool definition |
-| 10 | .agentmate/ Gap | Current structure is halfway there — needs beliefs/, goals/, tools/ |
+| 10 | .apxm/ Gap | Current structure is halfway there — needs beliefs/, goals/, tools/ |
 | 11 | Runtime Control Plane | Defines who materializes/manages scope folders and state projection |
 | 12 | Company Scope Overlay | Shows shared context + local isolation across company/team/agent/workflow/run |
 | 13 | Cache Plane + Epochs | Deterministic invalidation and single-flight dedupe for scale |

@@ -1,3 +1,5 @@
+# ⚠️ COMPLETED — All phases implemented as of April 6, 2026
+
 # Plan: `apxm-frontend`
 
 ## Objective
