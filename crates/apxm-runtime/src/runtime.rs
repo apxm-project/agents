@@ -3,6 +3,7 @@
 use crate::model_router::{ModelRouter, ModelRouterConfig};
 use crate::{
     aam::Aam,
+    agent_pool::AgentPool,
     capability::{CapabilitySystem, flow_registry::FlowRegistry},
     context_stack::ContextStack,
     executor::{
@@ -104,6 +105,8 @@ pub struct Runtime {
     process_table: Arc<ProcessTable>,
     /// Optional ModelRouter for dynamic backend/model selection with circuit breakers.
     model_router: Option<Arc<ModelRouter>>,
+    /// Agent warm pool for reusing spawned agent sessions.
+    agent_pool: Arc<AgentPool>,
 }
 
 impl Runtime {
@@ -142,6 +145,11 @@ impl Runtime {
             );
         }
 
+        // Initialize agent pool with reasonable defaults:
+        // - max 4 idle sessions per profile
+        // - 5 minute idle timeout before reclaiming
+        let agent_pool = Arc::new(AgentPool::new(4, std::time::Duration::from_secs(300)));
+
         log_info!("runtime", "APxM Runtime initialized successfully");
 
         Ok(Self {
@@ -158,6 +166,7 @@ impl Runtime {
             sandbox_registry: Arc::new(SandboxRegistry::new()),
             process_table: Arc::new(ProcessTable::new()),
             model_router: None,
+            agent_pool,
         })
     }
 
@@ -182,6 +191,7 @@ impl Runtime {
         ctx.event_emitter = event_emitter;
         ctx.sandbox_registry = Arc::clone(&self.sandbox_registry);
         ctx.process_table = Arc::clone(&self.process_table);
+        ctx.agent_pool = Arc::clone(&self.agent_pool);
         if let Some(dir) = session_dir {
             ctx.metadata.insert(metadata::SESSION_DIR.to_string(), dir);
         }
@@ -450,6 +460,22 @@ impl Runtime {
     pub fn shutdown(&self) {
         tracing::info!("Runtime shutting down, closing all agent processes");
         self.process_table.close_all();
+
+        // Shut down the agent pool asynchronously
+        let pool = Arc::clone(&self.agent_pool);
+        tokio::spawn(async move {
+            pool.shutdown().await;
+        });
+    }
+
+    /// Get a reference to the agent pool.
+    pub fn agent_pool(&self) -> &AgentPool {
+        &self.agent_pool
+    }
+
+    /// Get an Arc reference to the agent pool.
+    pub fn agent_pool_arc(&self) -> Arc<AgentPool> {
+        Arc::clone(&self.agent_pool)
     }
 }
 

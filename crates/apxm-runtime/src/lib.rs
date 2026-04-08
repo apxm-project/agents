@@ -23,6 +23,7 @@
 //! ```
 
 pub mod aam;
+pub mod agent_pool;
 pub mod capability;
 pub mod context_stack;
 pub mod executor;
@@ -45,6 +46,7 @@ pub use aam::{
     effects::{AamComponent, OperationEffects, operation_effects},
     session::SessionManager,
 };
+pub use agent_pool::{AgentPool, PoolStats, ProfileStats};
 pub use capability::{
     CapabilitySystem,
     flow_registry::FlowRegistry,

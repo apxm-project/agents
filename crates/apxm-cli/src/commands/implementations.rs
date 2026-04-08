@@ -1563,6 +1563,9 @@ pub async fn execute_command(
         }
     }
 
+    // Gracefully shutdown runtime to close all agent processes
+    linker.shutdown();
+
     Ok(())
 }
 
@@ -1723,6 +1726,9 @@ pub async fn run_command(
             }
         }
     }
+
+    // Gracefully shutdown runtime to close all agent processes
+    runtime.shutdown();
 
     Ok(())
 }

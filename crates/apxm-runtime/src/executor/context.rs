@@ -2,6 +2,7 @@
 
 use crate::{
     aam::{Aam, ScopeSpec},
+    agent_pool::AgentPool,
     capability::CapabilitySystem,
     capability::flow_registry::FlowRegistry,
     context_stack::ContextStack,
@@ -102,6 +103,12 @@ pub struct ExecutionContext {
     /// When set, the LLM handler delegates backend selection to the router
     /// instead of going directly to `llm_registry`. Set via `with_model_router`.
     pub model_router: Option<Arc<ModelRouter>>,
+    /// Agent warm pool for reusing spawned agent sessions.
+    ///
+    /// Used by SPAWN_AGENT to check for existing warm sessions before spawning
+    /// new processes. When an agent is closed, the session can be released back
+    /// to the pool for reuse.
+    pub agent_pool: Arc<AgentPool>,
 }
 
 impl ExecutionContext {
@@ -167,6 +174,7 @@ impl ExecutionContext {
             process_table: Arc::new(ProcessTable::new()),
             context_stack: None,
             model_router: None,
+            agent_pool: Arc::new(AgentPool::new(4, std::time::Duration::from_secs(300))),
         }
     }
 
@@ -300,6 +308,7 @@ impl ExecutionContext {
             process_table: Arc::clone(&self.process_table),
             context_stack: self.context_stack.as_ref().map(Arc::clone),
             model_router: self.model_router.as_ref().map(Arc::clone),
+            agent_pool: Arc::clone(&self.agent_pool),
         }
     }
 

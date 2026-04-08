@@ -326,4 +326,13 @@ impl Linker {
     pub fn runtime_executor(&self) -> &RuntimeExecutor {
         &self.runtime
     }
+
+    /// Gracefully shut down the runtime, closing all agent processes.
+    ///
+    /// This method should be called when execution completes to ensure
+    /// all ACP sessions are properly terminated. Without this, agent
+    /// processes may leak.
+    pub fn shutdown(&self) {
+        self.runtime.shutdown();
+    }
 }
