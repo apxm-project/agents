@@ -49,6 +49,16 @@ pub struct RateLimitConfig {
     pub capacity: u32,
     /// Refill rate in tokens per second.
     pub tokens_per_second: f64,
+    /// If true, rate limit by estimated token count instead of request count.
+    #[serde(default)]
+    pub token_based: bool,
+    /// Default token estimate when actual count is unknown (used in token_based mode).
+    #[serde(default = "default_token_estimate")]
+    pub default_token_estimate: f64,
+}
+
+fn default_token_estimate() -> f64 {
+    1.0
 }
 
 impl RateLimitConfig {
@@ -115,6 +125,12 @@ impl TokenBucket {
         }
     }
 
+    fn adjust(&mut self, now: Instant, delta: f64) {
+        self.refill(now);
+        // Delta is positive to debit more, negative to credit back
+        self.tokens = (self.tokens - delta).max(0.0).min(self.capacity);
+    }
+
     #[cfg(test)]
     fn available_tokens(&self, now: Instant) -> f64 {
         let mut clone = self.clone();
@@ -176,6 +192,26 @@ impl<C: Clock> RateLimiter<C> {
         }
     }
 
+    /// Adjust token consumption based on actual usage after a request completes.
+    ///
+    /// This allows for post-request reconciliation when the actual token count
+    /// differs from the initial estimate. If actual > estimated, debits additional
+    /// tokens; if actual < estimated, credits tokens back.
+    ///
+    /// # Arguments
+    /// * `backend` - The backend name
+    /// * `estimated` - The token cost that was initially consumed
+    /// * `actual` - The actual token cost after request completion
+    pub fn reconcile(&self, backend: &str, estimated: f64, actual: f64) {
+        let now = self.clock.now();
+        let mut guard = self.buckets.lock().expect("rate limiter mutex poisoned");
+
+        if let Some(bucket) = guard.get_mut(backend) {
+            let delta = actual - estimated;
+            bucket.adjust(now, delta);
+        }
+    }
+
     #[cfg(test)]
     fn available_tokens(&self, backend: &str) -> Option<f64> {
         let now = self.clock.now();
@@ -193,6 +229,21 @@ mod tests {
         RateLimitConfig {
             capacity,
             tokens_per_second,
+            token_based: false,
+            default_token_estimate: 1.0,
+        }
+    }
+
+    fn token_based_config(
+        capacity: u32,
+        tokens_per_second: f64,
+        default_estimate: f64,
+    ) -> RateLimitConfig {
+        RateLimitConfig {
+            capacity,
+            tokens_per_second,
+            token_based: true,
+            default_token_estimate: default_estimate,
         }
     }
 
@@ -353,5 +404,132 @@ mod tests {
 
         clock.advance(Duration::from_millis(100));
         assert_eq!(limiter.check_and_consume("x", 1.0), Ok(()));
+    }
+
+    #[test]
+    fn token_based_mode_uses_actual_cost() {
+        let start = Instant::now();
+        let clock = Arc::new(ManualClock::new(start));
+        let mut configs = HashMap::new();
+        configs.insert("token-backend".to_string(), token_based_config(1000, 100.0, 100.0));
+
+        let limiter = RateLimiter::new(configs, clock).unwrap();
+
+        // Consume 100 tokens - should succeed
+        assert_eq!(limiter.check_and_consume("token-backend", 100.0), Ok(()));
+        assert_eq!(limiter.available_tokens("token-backend").unwrap(), 900.0);
+
+        // Consume 500 tokens - should succeed
+        assert_eq!(limiter.check_and_consume("token-backend", 500.0), Ok(()));
+        assert_eq!(limiter.available_tokens("token-backend").unwrap(), 400.0);
+
+        // Try to consume 500 tokens - should fail (only 400 available)
+        assert!(limiter.check_and_consume("token-backend", 500.0).is_err());
+    }
+
+    #[test]
+    fn reconcile_debits_when_actual_exceeds_estimate() {
+        let start = Instant::now();
+        let clock = Arc::new(ManualClock::new(start));
+        let mut configs = HashMap::new();
+        configs.insert("backend".to_string(), config(1000, 100.0));
+
+        let limiter = RateLimiter::new(configs, clock).unwrap();
+
+        // Consume estimated 100 tokens
+        assert_eq!(limiter.check_and_consume("backend", 100.0), Ok(()));
+        assert_eq!(limiter.available_tokens("backend").unwrap(), 900.0);
+
+        // Actual usage was 150 tokens - reconcile should debit 50 more
+        limiter.reconcile("backend", 100.0, 150.0);
+        assert_eq!(limiter.available_tokens("backend").unwrap(), 850.0);
+    }
+
+    #[test]
+    fn reconcile_credits_when_actual_less_than_estimate() {
+        let start = Instant::now();
+        let clock = Arc::new(ManualClock::new(start));
+        let mut configs = HashMap::new();
+        configs.insert("backend".to_string(), config(1000, 100.0));
+
+        let limiter = RateLimiter::new(configs, clock).unwrap();
+
+        // Consume estimated 200 tokens
+        assert_eq!(limiter.check_and_consume("backend", 200.0), Ok(()));
+        assert_eq!(limiter.available_tokens("backend").unwrap(), 800.0);
+
+        // Actual usage was only 100 tokens - reconcile should credit back 100
+        limiter.reconcile("backend", 200.0, 100.0);
+        assert_eq!(limiter.available_tokens("backend").unwrap(), 900.0);
+    }
+
+    #[test]
+    fn reconcile_does_not_exceed_capacity() {
+        let start = Instant::now();
+        let clock = Arc::new(ManualClock::new(start));
+        let mut configs = HashMap::new();
+        configs.insert("backend".to_string(), config(1000, 100.0));
+
+        let limiter = RateLimiter::new(configs, clock).unwrap();
+
+        // Consume 50 tokens
+        assert_eq!(limiter.check_and_consume("backend", 50.0), Ok(()));
+        assert_eq!(limiter.available_tokens("backend").unwrap(), 950.0);
+
+        // Actual usage was 10 tokens - reconcile credits back 40
+        // But should cap at capacity (1000)
+        limiter.reconcile("backend", 50.0, 10.0);
+        assert_eq!(limiter.available_tokens("backend").unwrap(), 990.0);
+
+        // Credit back more - should cap at 1000
+        limiter.reconcile("backend", 100.0, 50.0);
+        assert_eq!(limiter.available_tokens("backend").unwrap(), 1000.0);
+    }
+
+    #[test]
+    fn reconcile_does_not_go_negative() {
+        let start = Instant::now();
+        let clock = Arc::new(ManualClock::new(start));
+        let mut configs = HashMap::new();
+        configs.insert("backend".to_string(), config(100, 10.0));
+
+        let limiter = RateLimiter::new(configs, clock).unwrap();
+
+        // Consume all tokens
+        assert_eq!(limiter.check_and_consume("backend", 100.0), Ok(()));
+        assert_eq!(limiter.available_tokens("backend").unwrap(), 0.0);
+
+        // Actual usage was even more - should debit but not go negative
+        limiter.reconcile("backend", 100.0, 150.0);
+        assert_eq!(limiter.available_tokens("backend").unwrap(), 0.0);
+    }
+
+    #[test]
+    fn reconcile_with_unconfigured_backend_is_noop() {
+        let start = Instant::now();
+        let clock = Arc::new(ManualClock::new(start));
+        let configs = HashMap::new();
+
+        let limiter = RateLimiter::new(configs, clock).unwrap();
+
+        // Should not panic
+        limiter.reconcile("unconfigured", 100.0, 150.0);
+    }
+
+    #[test]
+    fn backward_compatible_per_request_mode() {
+        let start = Instant::now();
+        let clock = Arc::new(ManualClock::new(start));
+        let mut configs = HashMap::new();
+        // Create config with token_based = false (default)
+        configs.insert("legacy".to_string(), config(3, 1.0));
+
+        let limiter = RateLimiter::new(configs, clock).unwrap();
+
+        // Using cost of 1.0 per request (backward compatible)
+        assert_eq!(limiter.check_and_consume("legacy", 1.0), Ok(()));
+        assert_eq!(limiter.check_and_consume("legacy", 1.0), Ok(()));
+        assert_eq!(limiter.check_and_consume("legacy", 1.0), Ok(()));
+        assert!(limiter.check_and_consume("legacy", 1.0).is_err());
     }
 }

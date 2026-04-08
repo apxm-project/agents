@@ -390,6 +390,10 @@ impl LLMRegistry {
 
         match result {
             Ok(response) => {
+                // Reconcile rate limit based on actual token usage
+                let actual_cost = response.usage.total_tokens as f64;
+                self.rate_limiter.reconcile(backend_name, estimated_cost, actual_cost);
+
                 // Record success
                 self.health_monitor.record_success(backend_name, latency);
                 Ok(response)
@@ -667,6 +671,33 @@ mod tests {
         let backend_name = registry.resolve_backend_name(&request)?;
 
         assert_eq!(backend_name, "primary");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_rate_limiting_with_token_based_config() -> Result<(), Box<dyn std::error::Error>>
+    {
+        use crate::llm::rate_limit::RateLimitConfig;
+        use std::collections::HashMap;
+
+        let mut rate_limits = HashMap::new();
+        rate_limits.insert(
+            "test".to_string(),
+            RateLimitConfig {
+                capacity: 1000,
+                tokens_per_second: 100.0,
+                token_based: true,
+                default_token_estimate: 100.0,
+            },
+        );
+
+        let registry = LLMRegistry::with_rate_limits(rate_limits)?;
+        let backend = Provider::OpenAI(OpenAIBackend::new("test-key", None).await?);
+        registry.register("test", backend)?;
+
+        // This test verifies that the registry accepts token-based rate limit configs
+        // Actual behavior is tested in rate_limit.rs
+        assert!(registry.get_backend("test").is_some());
         Ok(())
     }
 }
