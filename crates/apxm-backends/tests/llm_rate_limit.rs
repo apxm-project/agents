@@ -13,6 +13,8 @@ async fn test_rate_limit_allows_within_capacity() -> Result<(), Box<dyn std::err
         RateLimitConfig {
             capacity: 3,
             tokens_per_second: 1.0,
+            token_based: false,
+            default_token_estimate: 1.0,
         },
     );
 
@@ -52,6 +54,8 @@ async fn test_rate_limit_rejects_after_capacity_exhausted() -> Result<(), Box<dy
         RateLimitConfig {
             capacity: 2,
             tokens_per_second: 1.0,
+            token_based: false,
+            default_token_estimate: 1.0,
         },
     );
 
@@ -122,6 +126,8 @@ async fn test_independent_backend_rate_limits() -> Result<(), Box<dyn std::error
         RateLimitConfig {
             capacity: 1,
             tokens_per_second: 1.0,
+            token_based: false,
+            default_token_estimate: 1.0,
         },
     );
     rate_limits.insert(
@@ -129,6 +135,8 @@ async fn test_independent_backend_rate_limits() -> Result<(), Box<dyn std::error
         RateLimitConfig {
             capacity: 2,
             tokens_per_second: 1.0,
+            token_based: false,
+            default_token_estimate: 1.0,
         },
     );
 
@@ -177,6 +185,8 @@ fn test_invalid_rate_limit_config_zero_capacity() {
         RateLimitConfig {
             capacity: 0,
             tokens_per_second: 1.0,
+            token_based: false,
+            default_token_estimate: 1.0,
         },
     );
 
@@ -195,6 +205,8 @@ fn test_invalid_rate_limit_config_invalid_tokens_per_second() {
         RateLimitConfig {
             capacity: 10,
             tokens_per_second: 0.0,
+            token_based: false,
+            default_token_estimate: 1.0,
         },
     );
 
@@ -213,6 +225,8 @@ async fn test_rate_limit_config_serialization() -> Result<(), Box<dyn std::error
     let config = RateLimitConfig {
         capacity: 5,
         tokens_per_second: 2.5,
+        token_based: false,
+        default_token_estimate: 1.0,
     };
 
     // Serialize to JSON
