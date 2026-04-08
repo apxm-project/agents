@@ -248,6 +248,26 @@ and optimize execution order."#,
     ),
 ]);
 
+/// Assign execution priority based on critical path analysis.
+pub const ASSIGN_PRIORITY: PassSpec = PassSpec::new(
+    "assign-priority",
+    "AssignPriority",
+    "Assign execution priority based on critical path analysis",
+    r#"Performs DAG analysis to compute the critical path and assigns priority
+attributes to each AIS operation for the runtime scheduler.
+
+Priority levels:
+- 90 (Critical): Operations on or near the critical path
+- 70 (High): Operations with high fan-out (3+ consumers)
+- 30 (Normal): All other operations
+
+The priority attribute is stored as an IntegerAttr and later extracted by
+the ArtifactEmitter into node.metadata.priority, which the runtime scheduler
+uses to assign work to the 4-level priority queue (Critical/High/Normal/Low)."#,
+    PassCategory::Transform,
+    "mlir::ais::createAssignPriorityPass()",
+);
+
 /// Fuse ask ops pass - merges adjacent ask operations.
 pub const FUSE_ASK_OPS: PassSpec = PassSpec::new(
     "fuse-ask-ops",
@@ -430,6 +450,7 @@ pub const AIS_PASSES: &[&PassSpec] = &[
     &NORMALIZE,
     &BUILD_PROMPT,
     &SCHEDULING,
+        &ASSIGN_PRIORITY,
     &FUSE_ASK_OPS,
     &CONDENSE_OPS,
     &UNCONSUMED_VALUE_WARNING,
@@ -445,6 +466,7 @@ pub const ALL_PASSES: &[&PassSpec] = &[
     &NORMALIZE,
     &BUILD_PROMPT,
     &SCHEDULING,
+    &ASSIGN_PRIORITY,
     &FUSE_ASK_OPS,
     &CONDENSE_OPS,
     &UNCONSUMED_VALUE_WARNING,

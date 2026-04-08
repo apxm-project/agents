@@ -644,6 +644,16 @@ LogicalResult emitNode(Operation *op, DagBuildState &state, ArtifactDag &dag) {
     state.producerNodeIds.insert({result, node.id});
   }
 
+  // Extract priority from attributes to metadata
+  for (const auto &[key, val] : node.attributes) {
+    if (key == "priority") {
+      if (val.kind == ArtifactValue::Kind::Integer) {
+        node.metadata.priority = static_cast<uint32_t>(val.intValue);
+      }
+      break;
+    }
+  }
+
   // Special handling for Return operations: create synthetic output token
   // Return is a terminator so it has no SSA results, but we need output_tokens
   // for the runtime to collect results from exit nodes
