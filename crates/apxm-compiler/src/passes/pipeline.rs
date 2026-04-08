@@ -5,6 +5,22 @@
 //!   O1 - Basic: normalize, build-prompt, scheduling, fusion, canonicalization, CSE, DCE
 //!   O2 - Standard: O1 + template specialization, dead context elimination, schema narrowing, condense-ops
 //!   O3 - Aggressive: O2 passes iterated to fixed-point convergence
+//!
+//! ## Optimization Heuristics
+//!
+//! The pipeline uses [`OptimizationHeuristics`] to guide pass decisions based on the
+//! optimization target. Different targets produce different fusion budgets, context
+//! limits, and quality guards:
+//!
+//! - **Latency**: Aggressive fusion (8000 tokens), large context (32k), no quality guards
+//! - **Cost**: Conservative fusion (4000 tokens), moderate context (16k), quality guards enabled
+//! - **Tokens**: Minimal fusion (2000 tokens), aggressive context reduction (8k), quality guards enabled
+//! - **Parallelism**: Moderate fusion (6000 tokens), large context (24k), no quality guards
+//! - **Balanced**: Default (5000 tokens), moderate context (20k), quality guards enabled
+//!
+//! NOTE: Currently, the C++ FuseAskOps pass uses a default maxTemplateTokens of 2000.
+//! To make this target-aware, we need to extend the FFI to accept pass options.
+//! For now, the heuristics framework is in place and documented for future use.
 
 use super::PassManager;
 use apxm_core::error::compiler::Result;
@@ -42,6 +58,12 @@ pub fn build_pipeline_with_config(
 /// - `Tokens`: Prioritize dead-context-elimination and schema-narrowing
 /// - `Parallelism`: Aggressive scheduling, remove sequential constraints
 /// - `Balanced`: Default behavior (no special tuning)
+///
+/// ## Optimization Heuristics
+///
+/// The pipeline uses target-specific heuristics (see [`super::heuristics::OptimizationHeuristics`])
+/// to guide pass decisions. For example, the `Latency` target allows more aggressive fusion with
+/// larger token budgets, while the `Tokens` target is more conservative to minimize context.
 pub fn build_pass_list(
     level: OptimizationLevel,
     no_cse_llm: bool,

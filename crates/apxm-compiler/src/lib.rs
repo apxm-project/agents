@@ -24,8 +24,9 @@ pub mod passes;
 
 pub use api::{Context, Module, Pipeline};
 pub use passes::{
-    ExecutionProfile, NodeProfile, PassManager, PassMetrics, PipelineDiagnostics, ProfileError,
-    find_pass, get_pass_count, get_pass_info, list_passes,
+    ExecutionProfile, NodeProfile, OptimizationHeuristics, PassManager, PassMetrics,
+    PipelineDiagnostics, ProfileError, estimate_tokens, find_pass, get_pass_count,
+    get_pass_info, list_passes,
 };
 
 pub use apxm_core::error::compiler::{CompilerError, Result};
