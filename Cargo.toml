@@ -7,6 +7,7 @@ members = [
 	"crates/apxm-server",
 	"crates/apxm-frontend/rust",
 	"crates/apxm-graph",
+	"crates/apxm-gui",
 	"crates/apxm-tools",
 	"crates/apxm-credentials",
 	"crates/apxm-core",
