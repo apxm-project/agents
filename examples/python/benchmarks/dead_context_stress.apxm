@@ -1,0 +1,108 @@
+{
+  "name": "dead_context_stress",
+  "nodes": [
+    {
+      "id": 1,
+      "name": "context_database",
+      "op": "CONST_STR",
+      "attributes": {
+        "value": "DATABASE SCHEMA CONTEXT (1000 tokens):\n\nTables: users, posts, comments, likes, followers, sessions, notifications\n- users: id, username, email, password_hash, created_at, updated_at, is_verified, profile_data\n- posts: id, user_id, title, content, created_at, updated_at, view_count, is_published, tags\n- comments: id, post_id, user_id, content, created_at, is_edited, parent_comment_id\n- likes: id, user_id, post_id, created_at (composite unique on user_id + post_id)\n- followers: id, follower_id, following_id, created_at (composite unique)\n- sessions: id, user_id, token, expires_at, created_at, last_activity\n- notifications: id, user_id, type, content, is_read, created_at\n\nIndexes: users.email (unique), posts.user_id, posts.created_at, comments.post_id,\nlikes.post_id, followers.follower_id, followers.following_id, sessions.token (unique)\n\nForeign keys: All user_id fields reference users.id, post_id references posts.id"
+      }
+    },
+    {
+      "id": 2,
+      "name": "context_api_docs",
+      "op": "CONST_STR",
+      "attributes": {
+        "value": "API DOCUMENTATION CONTEXT (1000 tokens):\n\nEndpoints:\nGET /api/users/:id - Fetch user profile (auth optional)\nPOST /api/users - Create new user (requires: username, email, password)\nPUT /api/users/:id - Update user (requires auth, owner only)\nDELETE /api/users/:id - Delete user (requires auth, owner only)\n\nGET /api/posts - List posts (supports: limit, offset, user_id, tag filters)\nGET /api/posts/:id - Fetch single post (includes: post data, author, comment count)\nPOST /api/posts - Create post (requires auth, params: title, content, tags)\nPUT /api/posts/:id - Update post (requires auth, owner only)\nDELETE /api/posts/:id - Delete post (requires auth, owner only)\n\nGET /api/comments?post_id=:id - List comments for post (paginated)\nPOST /api/comments - Create comment (requires auth, params: post_id, content)\nDELETE /api/comments/:id - Delete comment (requires auth, owner/admin)\n\nPOST /api/likes - Toggle like (requires auth, params: post_id, idempotent)\nGET /api/likes?post_id=:id - Get like count and user likes\n\nPOST /api/auth/login - Login (params: email, password, returns: token)\nPOST /api/auth/logout - Logout (requires auth, invalidates token)\nPOST /api/auth/refresh - Refresh session token (requires valid token)"
+      }
+    },
+    {
+      "id": 3,
+      "name": "context_environment",
+      "op": "CONST_STR",
+      "attributes": {
+        "value": "ENVIRONMENT CONFIGURATION CONTEXT (1000 tokens):\n\nProduction:\n- DATABASE_URL: postgres://prod-db.internal:5432/app_production\n- REDIS_URL: redis://prod-cache.internal:6379/0\n- API_BASE_URL: https://api.example.com\n- FRONTEND_URL: https://www.example.com\n- JWT_SECRET: <secret-from-vault>\n- JWT_EXPIRY: 86400 (24 hours)\n- SESSION_TIMEOUT: 1800 (30 minutes)\n- BCRYPT_ROUNDS: 12\n- RATE_LIMIT_WINDOW: 900 (15 minutes)\n- RATE_LIMIT_MAX: 5\n- FILE_UPLOAD_MAX_SIZE: 10485760 (10MB)\n- CORS_ORIGINS: https://www.example.com,https://admin.example.com\n- LOG_LEVEL: warn\n- SENTRY_DSN: <configured>\n\nStaging:\n- DATABASE_URL: postgres://staging-db.internal:5432/app_staging\n- REDIS_URL: redis://staging-cache.internal:6379/0\n- API_BASE_URL: https://api-staging.example.com\n- FRONTEND_URL: https://staging.example.com\n- JWT_EXPIRY: 3600 (1 hour for testing)\n- LOG_LEVEL: info\n\nDevelopment:\n- DATABASE_URL: postgres://localhost:5432/app_dev\n- REDIS_URL: redis://localhost:6379/0\n- API_BASE_URL: http://localhost:8000\n- FRONTEND_URL: http://localhost:3000\n- JWT_SECRET: dev-secret-not-for-production\n- LOG_LEVEL: debug"
+      }
+    },
+    {
+      "id": 4,
+      "name": "context_metrics",
+      "op": "CONST_STR",
+      "attributes": {
+        "value": "PERFORMANCE METRICS CONTEXT (1000 tokens):\n\nLast 7 days (production):\n- Total requests: 14,285,392\n- Average response time: 145ms (p50), 320ms (p95), 890ms (p99)\n- Error rate: 0.23% (32,876 errors)\n- Cache hit rate: 87.3%\n- Database query time: 12ms (p50), 45ms (p95), 120ms (p99)\n- Redis latency: 1.2ms (p50), 3.5ms (p95), 8.2ms (p99)\n\nEndpoint breakdown:\n- GET /api/posts: 8,342,112 requests, 98ms p50, 245ms p95\n- GET /api/posts/:id: 3,129,845 requests, 52ms p50, 134ms p95\n- POST /api/auth/login: 412,334 requests, 185ms p50, 420ms p95 (bcrypt cost)\n- GET /api/users/:id: 1,834,221 requests, 45ms p50, 112ms p95\n- POST /api/posts: 234,112 requests, 210ms p50, 580ms p95\n\nError breakdown:\n- 401 Unauthorized: 18,234 (invalid/expired tokens)\n- 429 Rate Limited: 8,123 (exceeded 5 login attempts)\n- 500 Internal Server: 4,892 (database connection pool exhaustion)\n- 503 Service Unavailable: 1,627 (Redis connection failures)\n\nResource utilization:\n- CPU: 42% average, 78% peak\n- Memory: 3.2GB / 8GB\n- Database connections: 45 / 100 pool size\n- Active sessions: 12,334 concurrent users"
+      }
+    },
+    {
+      "id": 5,
+      "name": "context_security_audit",
+      "op": "CONST_STR",
+      "attributes": {
+        "value": "SECURITY AUDIT CONTEXT (1000 tokens):\n\nRecent vulnerability scan (2024-04-01):\n- SQL Injection: PASS (parameterized queries, ORM usage)\n- XSS: PASS (output encoding, CSP headers)\n- CSRF: PASS (token validation on state-changing operations)\n- Authentication: PASS (bcrypt hashing, secure session tokens)\n- Authorization: PASS (role-based checks on protected endpoints)\n- Rate Limiting: PARTIAL (not distributed, single-instance only)\n- Session Management: PARTIAL (no session fixation protection)\n\nDependency scan:\n- 3 HIGH severity issues in transitive dependencies\n- 12 MEDIUM severity issues (mostly outdated packages)\n- Recommendations: upgrade jsonwebtoken 8.5 \u2192 9.0, bcrypt 4.0 \u2192 5.1\n\nCompliance checklist (SOC2):\n- Encryption at rest: PASS (database volume encryption)\n- Encryption in transit: PASS (TLS 1.3 enforced)\n- Audit logging: PASS (all auth events logged)\n- Access controls: PASS (least privilege, role separation)\n- Password policy: PASS (min 12 chars, complexity requirements)\n- MFA: NOT IMPLEMENTED (planned for Q3)\n- Backup/recovery: PASS (daily backups, tested restore)\n\nPenetration test findings (2024-03-15):\n- Token refresh race condition (MEDIUM) - in remediation\n- Session cleanup database lock (LOW) - scheduled fix\n- Rate limiter not clustered (MEDIUM) - architecture change needed"
+      }
+    },
+    {
+      "id": 6,
+      "name": "analysis",
+      "op": "THINK",
+      "attributes": {
+        "template_str": "{0}\n\nBased on the database schema above, what are the main entities in this system?\nList the top 3 entities and their relationships in 2-3 sentences.\n\n(Note: This prompt only uses the FIRST context input {0}, ignoring {1}-{4})"
+      }
+    },
+    {
+      "id": 7,
+      "name": "print",
+      "op": "PRINT",
+      "attributes": {
+        "message": "=== DEAD CONTEXT ELIMINATION STRESS TEST ===\n\nAnalysis:\n{0}\n\nThis workflow created 5 large context chunks (~1000 tokens each).\nThe downstream 'analysis' node only uses {{0}} in its template.\n\nO0: All 5 contexts sent to LLM (~5000 tokens)\nO2 with DeadContextElimination: Only {{0}} sent (~1000 tokens)\nToken savings: ~80% reduction in input tokens"
+      }
+    },
+    {
+      "id": 8,
+      "name": "return",
+      "op": "RETURN",
+      "attributes": {}
+    }
+  ],
+  "edges": [
+    {
+      "from": 1,
+      "to": 6,
+      "dependency": "Data"
+    },
+    {
+      "from": 2,
+      "to": 6,
+      "dependency": "Data"
+    },
+    {
+      "from": 3,
+      "to": 6,
+      "dependency": "Data"
+    },
+    {
+      "from": 4,
+      "to": 6,
+      "dependency": "Data"
+    },
+    {
+      "from": 5,
+      "to": 6,
+      "dependency": "Data"
+    },
+    {
+      "from": 6,
+      "to": 7,
+      "dependency": "Data"
+    },
+    {
+      "from": 7,
+      "to": 8,
+      "dependency": "Data"
+    }
+  ],
+  "parameters": [],
+  "metadata": {
+    "is_entry": true
+  }
+}
