@@ -174,9 +174,15 @@ struct FuseAskOpsPass : impl::FuseAskOpsBase<FuseAskOpsPass> {
       uint64_t scanned = 0;
       uint64_t fusedDirect = 0;      // Direct ask->ask fusion
       uint64_t fusedMergeChain = 0;  // Fusion through merge chains
+      uint64_t skippedBudget = 0;    // Skipped due to token budget
     } stats;
 
     SmallVector<Operation*> opsToErase;
+
+    // Token estimation helper (chars / 4)
+    auto estimateTokens = [](StringRef text) -> size_t {
+      return text.size() / 4;
+    };
 
     // Single-pass fusion with clear termination conditions
     module.walk([&](AskOp consumer) {
@@ -190,6 +196,21 @@ struct FuseAskOpsPass : impl::FuseAskOpsBase<FuseAskOpsPass> {
       if (directProducer != consumer.getOperands().end()) {
         // Direct fusion path
         AskOp producer = (*directProducer).getDefiningOp<AskOp>();
+
+        // Check token budget before fusing
+        if (maxTemplateTokens > 0) {
+          size_t producerTokens = estimateTokens(producer.getTemplateStrAttr().getValue());
+          size_t consumerTokens = estimateTokens(consumer.getTemplateStrAttr().getValue());
+          size_t fusedTokens = producerTokens + consumerTokens;
+
+          if (fusedTokens > maxTemplateTokens) {
+            APXM_AIS_DEBUG("  Skipping fusion: estimated " << fusedTokens
+                          << " tokens > limit " << maxTemplateTokens);
+            stats.skippedBudget++;
+            return WalkResult::advance();
+          }
+        }
+
         APXM_AIS_DEBUG("  Direct fusion: [" << producer.getTemplateStrAttr() << "] + ["
                                             << consumer.getTemplateStrAttr() << "]");
 
@@ -237,6 +258,26 @@ struct FuseAskOpsPass : impl::FuseAskOpsBase<FuseAskOpsPass> {
         // Check if operand comes from a merge chain containing an AskOp
         if (auto trace = traceToAskProducer(operand, consumer)) {
           AskOp producer = trace->producer;
+
+          // Check token budget before fusing
+          if (maxTemplateTokens > 0) {
+            size_t producerTokens = estimateTokens(producer.getTemplateStrAttr().getValue());
+            size_t consumerTokens = estimateTokens(consumer.getTemplateStrAttr().getValue());
+            // Add string parts tokens
+            size_t stringTokens = 0;
+            for (const auto& str : trace->stringParts) {
+              stringTokens += estimateTokens(str);
+            }
+            size_t fusedTokens = producerTokens + consumerTokens + stringTokens;
+
+            if (fusedTokens > maxTemplateTokens) {
+              APXM_AIS_DEBUG("  Skipping merge chain fusion: estimated " << fusedTokens
+                            << " tokens > limit " << maxTemplateTokens);
+              stats.skippedBudget++;
+              return WalkResult::advance();
+            }
+          }
+
           APXM_AIS_DEBUG("  Merge chain fusion: [" << producer.getTemplateStrAttr()
                          << "] + " << trace->stringParts.size() << " strings + ["
                          << consumer.getTemplateStrAttr() << "]");
@@ -303,7 +344,10 @@ struct FuseAskOpsPass : impl::FuseAskOpsBase<FuseAskOpsPass> {
     APXM_AIS_INFO("Scanned " << stats.scanned << " ASK ops, fused "
                   << stats.fusedDirect << " direct + "
                   << stats.fusedMergeChain << " merge chains = "
-                  << totalFused << " total");
+                  << totalFused << " total"
+                  << (stats.skippedBudget > 0
+                      ? " (skipped " + std::to_string(stats.skippedBudget) + " due to token budget)"
+                      : ""));
     APXM_AIS_DEBUG_FOOTER(FuseAskOps);
   }
 };

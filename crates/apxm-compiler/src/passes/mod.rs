@@ -10,6 +10,7 @@
 //! - [`PassMetrics`] / [`PipelineDiagnostics`]: Per-pass timing and change tracking
 //! - Registry functions: Pass management
 
+pub mod heuristics;
 mod manager;
 pub mod metrics;
 mod pipeline;
@@ -18,6 +19,7 @@ mod registry;
 pub mod validate_model_allowlist;
 pub mod validate_model_profile;
 
+pub use heuristics::{estimate_tokens, OptimizationHeuristics};
 pub use manager::PassManager;
 pub use metrics::{PassMetrics, PipelineDiagnostics};
 pub use pipeline::{build_pass_list, build_pipeline};
