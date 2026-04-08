@@ -97,6 +97,44 @@ pub struct SchedulerConfig {
 
     #[serde(default)]
     pub collect_all_outputs: bool,
+
+    /// Token pipelining configuration (research feature).
+    ///
+    /// Enables streaming producer output to downstream consumer before
+    /// producer completes. Currently only supports ASK→ASK chains.
+    ///
+    /// Default: disabled
+    #[serde(default)]
+    pub pipeline: PipelineConfig,
+}
+
+/// Configuration for token pipelining (Phase 4 research feature).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PipelineConfig {
+    /// Enable token pipelining.
+    ///
+    /// Default: false (research feature)
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Minimum tokens to accumulate before starting downstream request.
+    ///
+    /// Default: 100
+    #[serde(default = "default_min_tokens")]
+    pub min_tokens: usize,
+}
+
+impl Default for PipelineConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            min_tokens: default_min_tokens(),
+        }
+    }
+}
+
+fn default_min_tokens() -> usize {
+    100
 }
 
 impl Default for SchedulerConfig {
@@ -113,6 +151,7 @@ impl Default for SchedulerConfig {
             queue_capacity: default_queue_capacity(),
             latency_tiers: LatencyTierConfig::default(),
             collect_all_outputs: false,
+            pipeline: PipelineConfig::default(),
         }
     }
 }

@@ -14,6 +14,7 @@ mod events;
 mod handlers;
 pub mod inner_plan_linker;
 pub mod memoization;
+pub mod pipeline;
 pub mod token_accounting;
 
 pub use cancellation::CancellationToken;
