@@ -84,7 +84,8 @@ impl SchedulerState {
             message: format!("Invalid scheduler config: {}", msg),
         })?;
 
-        // Build parameter substitution map ({{PARAM_NAME}} -> value) BEFORE consuming inputs
+        // Build parameter substitution maps BEFORE consuming inputs
+        // Named map: {{PARAM_NAME}} -> value
         let param_map: HashMap<String, String> = dag
             .metadata
             .parameters
@@ -96,6 +97,15 @@ impl SchedulerState {
                     v => format!("{}", v),
                 };
                 (param.name.clone(), value_str)
+            })
+            .collect();
+
+        // Positional map: {0}, {1}, ... -> value
+        let positional_map: Vec<String> = inputs
+            .iter()
+            .map(|value| match value {
+                Value::String(s) => s.clone(),
+                v => format!("{}", v),
             })
             .collect();
 
@@ -128,12 +138,18 @@ impl SchedulerState {
                 .iter()
                 .map(|n| {
                     let mut node = n.clone();
-                    // Substitute {{PARAM_NAME}} in all string attributes
-                    if !param_map.is_empty() {
+                    // Substitute both {{PARAM_NAME}} and {0}, {1}, ... in all string attributes
+                    if !param_map.is_empty() || !positional_map.is_empty() {
                         for (_key, value) in node.attributes.iter_mut() {
                             if let Value::String(s) = value {
+                                // Substitute named {{PARAM_NAME}} placeholders
                                 for (param_name, param_value) in &param_map {
                                     let placeholder = format!("{{{{{}}}}}", param_name);
+                                    *s = s.replace(&placeholder, param_value);
+                                }
+                                // Substitute positional {0}, {1}, ... placeholders
+                                for (i, param_value) in positional_map.iter().enumerate() {
+                                    let placeholder = format!("{{{}}}", i);
                                     *s = s.replace(&placeholder, param_value);
                                 }
                             }
