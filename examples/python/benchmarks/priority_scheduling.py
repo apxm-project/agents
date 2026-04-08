@@ -121,7 +121,7 @@ def priority_scheduling(g: GraphRecorder):
 
     # The critical path result is what the user sees immediately
     user_output = g.print(
-        "=== USER-VISIBLE OUTPUT (Critical Path) ===\n\n"
+        message="=== USER-VISIBLE OUTPUT (Critical Path) ===\n\n"
         "{0}\n\n"
         "This is the CRITICAL PATH result that the user sees.\n"
         "With priority scheduling, this should complete FIRST,\n"
@@ -131,7 +131,7 @@ def priority_scheduling(g: GraphRecorder):
 
     # Background report (less urgent, can complete later)
     bg_output = g.print(
-        "=== BACKGROUND ANALYTICS (Low Priority) ===\n\n"
+        message="=== BACKGROUND ANALYTICS (Low Priority) ===\n\n"
         "Naming conventions: {0}\n\n"
         "Authentication: {1}\n\n"
         "Database choice: {2}\n\n"
@@ -145,7 +145,7 @@ def priority_scheduling(g: GraphRecorder):
     all_done = g.wait_all("all_done", user_output, bg_output)
 
     final_output = g.print(
-        "=== PRIORITY SCHEDULING STRESS TEST ===\n\n"
+        message="=== PRIORITY SCHEDULING STRESS TEST ===\n\n"
         "Critical path (ask→think→reason→final): COMPLETED\n"
         "Background tasks (5 parallel speculative nodes): COMPLETED\n\n"
         "O0: All 9 nodes scheduled with equal priority (random order)\n"

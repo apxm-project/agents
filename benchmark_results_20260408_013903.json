@@ -1,0 +1,70 @@
+{
+  "cse_stress": {
+    "O0": {
+      "wall_time_ms": 13957.045078277588,
+      "execution": {
+        "duration_ms": 13252,
+        "nodes_executed": 10,
+        "nodes_failed": 0,
+        "status": "success"
+      },
+      "input": "/home/raherrer/projects/agents/apxm/examples/python/benchmarks/cse_stress.apxmobj",
+      "scheduler": {
+        "avg_parallelism": 1.9,
+        "max_parallelism": 3,
+        "operations_executed": 10,
+        "operations_failed": 0,
+        "overhead_breakdown": {
+          "input_collection_us": 17.3431,
+          "operation_dispatch_us": 0.0,
+          "ready_set_update_us": 0.0,
+          "token_routing_us": 35.678,
+          "work_stealing_us": 0.9189
+        },
+        "per_op_overhead_us": 53.94
+      },
+      "manifest": {
+        "execution_id": "cse_stress-20260408T013837",
+        "graph_name": "cse_stress",
+        "timestamp": "2026-04-08T01:38:51.049963838+00:00",
+        "status": "completed",
+        "duration_ms": 13252,
+        "node_count": 10,
+        "success": true
+      }
+    },
+    "O2": {
+      "wall_time_ms": 12213.748931884766,
+      "execution": {
+        "duration_ms": 11505,
+        "nodes_executed": 7,
+        "nodes_failed": 0,
+        "status": "success"
+      },
+      "input": "/home/raherrer/projects/agents/apxm/examples/python/benchmarks/cse_stress.apxmobj",
+      "scheduler": {
+        "avg_parallelism": 1.5714285714285714,
+        "max_parallelism": 3,
+        "operations_executed": 7,
+        "operations_failed": 0,
+        "overhead_breakdown": {
+          "input_collection_us": 8.908857142857142,
+          "operation_dispatch_us": 0.0,
+          "ready_set_update_us": 0.0,
+          "token_routing_us": 15.705285714285713,
+          "work_stealing_us": 1.066142857142857
+        },
+        "per_op_overhead_us": 25.680285714285713
+      },
+      "manifest": {
+        "execution_id": "cse_stress-20260408T013851",
+        "graph_name": "cse_stress",
+        "timestamp": "2026-04-08T01:39:03.627488567+00:00",
+        "status": "completed",
+        "duration_ms": 11505,
+        "node_count": 7,
+        "success": true
+      }
+    }
+  }
+}

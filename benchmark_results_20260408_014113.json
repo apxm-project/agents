@@ -1,0 +1,70 @@
+{
+  "priority_scheduling": {
+    "O0": {
+      "wall_time_ms": 24638.156175613403,
+      "execution": {
+        "duration_ms": 24004,
+        "nodes_executed": 18,
+        "nodes_failed": 0,
+        "status": "success"
+      },
+      "input": "/home/raherrer/projects/agents/apxm/examples/python/benchmarks/priority_scheduling.apxmobj",
+      "scheduler": {
+        "avg_parallelism": 2.611111111111111,
+        "max_parallelism": 6,
+        "operations_executed": 18,
+        "operations_failed": 0,
+        "overhead_breakdown": {
+          "input_collection_us": 11.82161111111111,
+          "operation_dispatch_us": 0.0,
+          "ready_set_update_us": 0.0,
+          "token_routing_us": 19.305166666666665,
+          "work_stealing_us": 1.0602222222222222
+        },
+        "per_op_overhead_us": 32.187
+      },
+      "manifest": {
+        "execution_id": "priority_scheduling-20260408T014020",
+        "graph_name": "priority_scheduling",
+        "timestamp": "2026-04-08T01:40:45.255445668+00:00",
+        "status": "completed",
+        "duration_ms": 24004,
+        "node_count": 18,
+        "success": true
+      }
+    },
+    "O2": {
+      "wall_time_ms": 27256.68430328369,
+      "execution": {
+        "duration_ms": 26279,
+        "nodes_executed": 15,
+        "nodes_failed": 0,
+        "status": "success"
+      },
+      "input": "/home/raherrer/projects/agents/apxm/examples/python/benchmarks/priority_scheduling.apxmobj",
+      "scheduler": {
+        "avg_parallelism": 2.8,
+        "max_parallelism": 6,
+        "operations_executed": 15,
+        "operations_failed": 0,
+        "overhead_breakdown": {
+          "input_collection_us": 12.139933333333333,
+          "operation_dispatch_us": 0.0,
+          "ready_set_update_us": 0.0,
+          "token_routing_us": 33.188,
+          "work_stealing_us": 0.9554666666666667
+        },
+        "per_op_overhead_us": 46.2834
+      },
+      "manifest": {
+        "execution_id": "priority_scheduling-20260408T014046",
+        "graph_name": "priority_scheduling",
+        "timestamp": "2026-04-08T01:41:13.019724386+00:00",
+        "status": "completed",
+        "duration_ms": 26279,
+        "node_count": 15,
+        "success": true
+      }
+    }
+  }
+}

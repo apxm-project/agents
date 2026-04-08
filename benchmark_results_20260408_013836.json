@@ -1,0 +1,70 @@
+{
+  "fusion_stress": {
+    "O0": {
+      "wall_time_ms": 57129.68945503235,
+      "execution": {
+        "duration_ms": 56429,
+        "nodes_executed": 24,
+        "nodes_failed": 0,
+        "status": "success"
+      },
+      "input": "/home/raherrer/projects/agents/apxm/examples/python/benchmarks/fusion_stress.apxmobj",
+      "scheduler": {
+        "avg_parallelism": 1.0416666666666667,
+        "max_parallelism": 2,
+        "operations_executed": 24,
+        "operations_failed": 0,
+        "overhead_breakdown": {
+          "input_collection_us": 22.453875,
+          "operation_dispatch_us": 0.0,
+          "ready_set_update_us": 0.0,
+          "token_routing_us": 37.769083333333334,
+          "work_stealing_us": 2.24075
+        },
+        "per_op_overhead_us": 62.46370833333333
+      },
+      "manifest": {
+        "execution_id": "fusion_stress-20260408T013642",
+        "graph_name": "fusion_stress",
+        "timestamp": "2026-04-08T01:37:39.780689266+00:00",
+        "status": "completed",
+        "duration_ms": 56429,
+        "node_count": 24,
+        "success": true
+      }
+    },
+    "O2": {
+      "wall_time_ms": 56349.33352470398,
+      "execution": {
+        "duration_ms": 55433,
+        "nodes_executed": 22,
+        "nodes_failed": 0,
+        "status": "success"
+      },
+      "input": "/home/raherrer/projects/agents/apxm/examples/python/benchmarks/fusion_stress.apxmobj",
+      "scheduler": {
+        "avg_parallelism": 1.0454545454545454,
+        "max_parallelism": 2,
+        "operations_executed": 22,
+        "operations_failed": 0,
+        "overhead_breakdown": {
+          "input_collection_us": 22.634545454545453,
+          "operation_dispatch_us": 0.0,
+          "ready_set_update_us": 0.0,
+          "token_routing_us": 47.50759090909091,
+          "work_stealing_us": 0.8847272727272727
+        },
+        "per_op_overhead_us": 71.02686363636363
+      },
+      "manifest": {
+        "execution_id": "fusion_stress-20260408T013740",
+        "graph_name": "fusion_stress",
+        "timestamp": "2026-04-08T01:38:36.230101519+00:00",
+        "status": "completed",
+        "duration_ms": 55433,
+        "node_count": 22,
+        "success": true
+      }
+    }
+  }
+}

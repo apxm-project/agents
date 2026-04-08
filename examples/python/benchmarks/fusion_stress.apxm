@@ -1,0 +1,303 @@
+{
+  "name": "fusion_stress",
+  "nodes": [
+    {
+      "id": 1,
+      "name": "initial_ask",
+      "op": "ASK",
+      "attributes": {
+        "template_str": "What is the capital of France? Answer in one word."
+      }
+    },
+    {
+      "id": 2,
+      "name": "ask_0",
+      "op": "ASK",
+      "attributes": {
+        "template_str": "{0} Based on this, what is a famous landmark in that city? Answer in 3-4 words (iteration 0)."
+      }
+    },
+    {
+      "id": 3,
+      "name": "think_0",
+      "op": "THINK",
+      "attributes": {
+        "template_str": "{0} Elaborate on why this landmark is historically significant. Provide 2-3 sentences (iteration 0)."
+      }
+    },
+    {
+      "id": 4,
+      "name": "ask_1",
+      "op": "ASK",
+      "attributes": {
+        "template_str": "{0} Based on this, what is a famous landmark in that city? Answer in 3-4 words (iteration 1)."
+      }
+    },
+    {
+      "id": 5,
+      "name": "think_1",
+      "op": "THINK",
+      "attributes": {
+        "template_str": "{0} Elaborate on why this landmark is historically significant. Provide 2-3 sentences (iteration 1)."
+      }
+    },
+    {
+      "id": 6,
+      "name": "ask_2",
+      "op": "ASK",
+      "attributes": {
+        "template_str": "{0} Based on this, what is a famous landmark in that city? Answer in 3-4 words (iteration 2)."
+      }
+    },
+    {
+      "id": 7,
+      "name": "think_2",
+      "op": "THINK",
+      "attributes": {
+        "template_str": "{0} Elaborate on why this landmark is historically significant. Provide 2-3 sentences (iteration 2)."
+      }
+    },
+    {
+      "id": 8,
+      "name": "ask_3",
+      "op": "ASK",
+      "attributes": {
+        "template_str": "{0} Based on this, what is a famous landmark in that city? Answer in 3-4 words (iteration 3)."
+      }
+    },
+    {
+      "id": 9,
+      "name": "think_3",
+      "op": "THINK",
+      "attributes": {
+        "template_str": "{0} Elaborate on why this landmark is historically significant. Provide 2-3 sentences (iteration 3)."
+      }
+    },
+    {
+      "id": 10,
+      "name": "ask_4",
+      "op": "ASK",
+      "attributes": {
+        "template_str": "{0} Based on this, what is a famous landmark in that city? Answer in 3-4 words (iteration 4)."
+      }
+    },
+    {
+      "id": 11,
+      "name": "think_4",
+      "op": "THINK",
+      "attributes": {
+        "template_str": "{0} Elaborate on why this landmark is historically significant. Provide 2-3 sentences (iteration 4)."
+      }
+    },
+    {
+      "id": 12,
+      "name": "ask_5",
+      "op": "ASK",
+      "attributes": {
+        "template_str": "{0} Based on this, what is a famous landmark in that city? Answer in 3-4 words (iteration 5)."
+      }
+    },
+    {
+      "id": 13,
+      "name": "think_5",
+      "op": "THINK",
+      "attributes": {
+        "template_str": "{0} Elaborate on why this landmark is historically significant. Provide 2-3 sentences (iteration 5)."
+      }
+    },
+    {
+      "id": 14,
+      "name": "ask_6",
+      "op": "ASK",
+      "attributes": {
+        "template_str": "{0} Based on this, what is a famous landmark in that city? Answer in 3-4 words (iteration 6)."
+      }
+    },
+    {
+      "id": 15,
+      "name": "think_6",
+      "op": "THINK",
+      "attributes": {
+        "template_str": "{0} Elaborate on why this landmark is historically significant. Provide 2-3 sentences (iteration 6)."
+      }
+    },
+    {
+      "id": 16,
+      "name": "ask_7",
+      "op": "ASK",
+      "attributes": {
+        "template_str": "{0} Based on this, what is a famous landmark in that city? Answer in 3-4 words (iteration 7)."
+      }
+    },
+    {
+      "id": 17,
+      "name": "think_7",
+      "op": "THINK",
+      "attributes": {
+        "template_str": "{0} Elaborate on why this landmark is historically significant. Provide 2-3 sentences (iteration 7)."
+      }
+    },
+    {
+      "id": 18,
+      "name": "ask_8",
+      "op": "ASK",
+      "attributes": {
+        "template_str": "{0} Based on this, what is a famous landmark in that city? Answer in 3-4 words (iteration 8)."
+      }
+    },
+    {
+      "id": 19,
+      "name": "think_8",
+      "op": "THINK",
+      "attributes": {
+        "template_str": "{0} Elaborate on why this landmark is historically significant. Provide 2-3 sentences (iteration 8)."
+      }
+    },
+    {
+      "id": 20,
+      "name": "ask_9",
+      "op": "ASK",
+      "attributes": {
+        "template_str": "{0} Based on this, what is a famous landmark in that city? Answer in 3-4 words (iteration 9)."
+      }
+    },
+    {
+      "id": 21,
+      "name": "think_9",
+      "op": "THINK",
+      "attributes": {
+        "template_str": "{0} Elaborate on why this landmark is historically significant. Provide 2-3 sentences (iteration 9)."
+      }
+    },
+    {
+      "id": 22,
+      "name": "print",
+      "op": "PRINT",
+      "attributes": {
+        "message": "=== FUSION STRESS TEST RESULT ===\n\nFinal elaboration:\n{0}\n\nThis workflow executed 10 ask\u2192think pairs.\nO0: 20 separate LLM calls\nO2 with FuseAskOps: ~10 fused LLM calls"
+      }
+    },
+    {
+      "id": 23,
+      "name": "return",
+      "op": "RETURN",
+      "attributes": {}
+    }
+  ],
+  "edges": [
+    {
+      "from": 1,
+      "to": 2,
+      "dependency": "Data"
+    },
+    {
+      "from": 2,
+      "to": 3,
+      "dependency": "Data"
+    },
+    {
+      "from": 3,
+      "to": 4,
+      "dependency": "Data"
+    },
+    {
+      "from": 4,
+      "to": 5,
+      "dependency": "Data"
+    },
+    {
+      "from": 5,
+      "to": 6,
+      "dependency": "Data"
+    },
+    {
+      "from": 6,
+      "to": 7,
+      "dependency": "Data"
+    },
+    {
+      "from": 7,
+      "to": 8,
+      "dependency": "Data"
+    },
+    {
+      "from": 8,
+      "to": 9,
+      "dependency": "Data"
+    },
+    {
+      "from": 9,
+      "to": 10,
+      "dependency": "Data"
+    },
+    {
+      "from": 10,
+      "to": 11,
+      "dependency": "Data"
+    },
+    {
+      "from": 11,
+      "to": 12,
+      "dependency": "Data"
+    },
+    {
+      "from": 12,
+      "to": 13,
+      "dependency": "Data"
+    },
+    {
+      "from": 13,
+      "to": 14,
+      "dependency": "Data"
+    },
+    {
+      "from": 14,
+      "to": 15,
+      "dependency": "Data"
+    },
+    {
+      "from": 15,
+      "to": 16,
+      "dependency": "Data"
+    },
+    {
+      "from": 16,
+      "to": 17,
+      "dependency": "Data"
+    },
+    {
+      "from": 17,
+      "to": 18,
+      "dependency": "Data"
+    },
+    {
+      "from": 18,
+      "to": 19,
+      "dependency": "Data"
+    },
+    {
+      "from": 19,
+      "to": 20,
+      "dependency": "Data"
+    },
+    {
+      "from": 20,
+      "to": 21,
+      "dependency": "Data"
+    },
+    {
+      "from": 21,
+      "to": 22,
+      "dependency": "Data"
+    },
+    {
+      "from": 22,
+      "to": 23,
+      "dependency": "Data"
+    }
+  ],
+  "parameters": [],
+  "metadata": {
+    "is_entry": true
+  }
+}
