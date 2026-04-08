@@ -340,3 +340,18 @@ For deeper understanding, see [PXM Foundations](../pxm/foundations.md).
 2. **CLI reference** — Run `apxm --help` for all commands and options
 3. **Backends** — [Backend Setup](backends.md) for backend configuration
 4. **Architecture** — [Architecture](../implementation/architecture.md) for system design
+
+---
+
+## Real-World Performance
+
+APXM's compiler optimizations and runtime scheduler deliver measurable speedups in production scenarios:
+
+**vLLM on vendor GPU** (April 2026):
+- **1.51x speedup** with O2 optimization vs O0 baseline
+- **70% prefix cache hit rate** on shared context patterns
+- **4,368 tokens saved** through PromptCanonicalization pass
+
+See [docs/benchmarks/VLLM-LIVE-RESULTS.md](../benchmarks/VLLM-LIVE-RESULTS.md) for full report and methodology.
+
+The combination of APXM's compiler passes and vLLM's prefix caching creates multiplicative performance gains for graph workflows with shared context patterns — exactly the scenario that agent systems encounter in real deployments.
