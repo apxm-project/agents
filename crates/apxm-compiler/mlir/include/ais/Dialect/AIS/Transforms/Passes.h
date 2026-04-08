@@ -66,6 +66,9 @@ std::unique_ptr<Pass> createSchemaNarrowingPass();
 /// Create PromptCanonicalization pass - reorder prompts for shared-prefix reuse
 std::unique_ptr<Pass> createPromptCanonicalizationPass();
 
+/// Create AssignPriority pass - assign execution priority based on critical path
+std::unique_ptr<Pass> createAssignPriorityPass();
+
 //===----------------------------------------------------------------------===//
 // Pass Registration
 //===----------------------------------------------------------------------===//

@@ -140,6 +140,27 @@ def CondenseOps : Pass<"condense-ops", "mlir::ModuleOp"> {
   let constructor = "mlir::ais::createCondenseOpsPass()";
 }
 
+def AssignPriority : Pass<"assign-priority", "mlir::ModuleOp"> {
+  let summary = "Assign execution priority based on critical path analysis";
+  let description = [{
+    Performs DAG analysis to compute the critical path and assigns priority
+    attributes to each AIS operation for the runtime scheduler.
+
+    Priority levels:
+    - 90 (Critical): Operations on or near the critical path
+    - 70 (High): Operations with high fan-out (3+ consumers)
+    - 30 (Normal): All other operations
+
+    The priority attribute is stored as an IntegerAttr and later extracted by
+    the ArtifactEmitter into node.metadata.priority, which the runtime scheduler
+    uses to assign work to the 4-level priority queue (Critical/High/Normal/Low).
+
+    This pass ensures priority is set even for .air files that bypass Rust
+    graph passes, making priority available regardless of the input format.
+  }];
+  let constructor = "mlir::ais::createAssignPriorityPass()";
+}
+
 //===----------------------------------------------------------------------===//
 // Analysis/Warning Passes
 //===----------------------------------------------------------------------===//
