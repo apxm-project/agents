@@ -38,6 +38,7 @@ pub mod umem;
 pub mod update_goal;
 pub mod verify;
 pub mod wait_all;
+#[allow(dead_code)]
 pub mod warmup;
 
 use super::{ExecutionContext, Result};

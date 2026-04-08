@@ -705,6 +705,7 @@ const EMISSION_VOID_NONE: MlirEmissionSpec = MlirEmissionSpec {
 };
 
 /// Standard emission spec: Handle result, parenthesized context.
+#[allow(dead_code)]
 const EMISSION_HANDLE_PAREN: MlirEmissionSpec = MlirEmissionSpec {
     primary_attr: None,
     context_style: ContextStyle::Parenthesized,
