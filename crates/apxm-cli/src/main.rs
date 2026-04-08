@@ -104,6 +104,9 @@ enum Commands {
         /// Skip CSE for LLM operations (useful with non-zero temperature)
         #[arg(long)]
         no_cse_llm: bool,
+        /// Profile-guided optimization: path to execution profile JSON
+        #[arg(long)]
+        profile: Option<PathBuf>,
     },
     /// Decompile an artifact back to graph JSON
     Decompile {
@@ -131,6 +134,9 @@ enum Commands {
         /// Emit session output folder with all node results, events, metrics
         #[arg(long)]
         emit_session: Option<Option<PathBuf>>,
+        /// Emit execution profile JSON for profile-guided optimization
+        #[arg(long)]
+        emit_profile: Option<PathBuf>,
     },
     /// Run a pre-compiled artifact (.apxmobj)
     Run {
@@ -145,6 +151,9 @@ enum Commands {
         /// Emit session output folder with all node results, events, metrics
         #[arg(long)]
         emit_session: Option<Option<PathBuf>>,
+        /// Emit execution profile JSON for profile-guided optimization
+        #[arg(long)]
+        emit_profile: Option<PathBuf>,
     },
     /// Diagnose compiler/runtime dependencies
     Doctor,
@@ -1206,7 +1215,8 @@ async fn run_cli() -> Result<()> {
             opt_level,
             target,
             no_cse_llm,
-        } => compile_command(input, output, emit_diagnostics, opt_level, target, no_cse_llm),
+            profile,
+        } => compile_command(input, output, emit_diagnostics, opt_level, target, no_cse_llm, profile),
         Commands::Decompile { artifact, output } => decompile_command(artifact, output),
         Commands::Execute {
             input,
@@ -1214,6 +1224,7 @@ async fn run_cli() -> Result<()> {
             opt_level,
             emit_metrics,
             emit_session,
+            emit_profile,
         } => {
             execute_command(
                 input,
@@ -1222,6 +1233,7 @@ async fn run_cli() -> Result<()> {
                 cli.config,
                 emit_metrics,
                 emit_session,
+                emit_profile,
             )
             .await
         }
@@ -1230,7 +1242,8 @@ async fn run_cli() -> Result<()> {
             args,
             emit_metrics,
             emit_session,
-        } => run_command(input, args, cli.config, emit_metrics, emit_session).await,
+            emit_profile,
+        } => run_command(input, args, cli.config, emit_metrics, emit_session, emit_profile).await,
         Commands::Doctor => doctor_command(cli.config, cli.json),
         Commands::Activate { shell } => activate_command(&shell),
         Commands::Install => install_command(),
@@ -1422,6 +1435,7 @@ fn compile_command(
     opt_level: u8,
     target: String,
     no_cse_llm: bool,
+    profile: Option<PathBuf>,
 ) -> Result<()> {
     use apxm_core::constants::diagnostics;
     use apxm_core::types::{OptimizationTarget, PipelineConfig};
@@ -1504,18 +1518,20 @@ fn compile_command(
             target: opt_target,
             verify: true,
             no_cse_llm,
+            profile_path: profile.clone(),
             ..Default::default()
         };
         let (m, d) = compiler
             .compile_graph_with_config_and_diagnostics(&graph, config)
             .map_err(|e| anyhow::anyhow!("Failed to compile graph: {e}"))?;
         (m, Some(d))
-    } else if no_cse_llm || opt_target != OptimizationTarget::Balanced {
+    } else if no_cse_llm || opt_target != OptimizationTarget::Balanced || profile.is_some() {
         let config = PipelineConfig {
             opt_level: opt,
             target: opt_target,
             verify: true,
             no_cse_llm,
+            profile_path: profile.clone(),
             ..Default::default()
         };
         let m = compiler
@@ -1928,6 +1944,94 @@ fn context_stack_config_from_graph(
     })
 }
 
+/// Extract execution profile from session output for PGO.
+///
+/// Reads node_statuses.json and input.air to build an ExecutionProfile that maps
+/// node names to performance statistics (latency, tokens, error rate).
+#[cfg(feature = "driver")]
+fn extract_profile_from_session(
+    session_dir: &std::path::Path,
+    graph_name: &str,
+) -> Result<apxm_compiler::passes::profile::ExecutionProfile> {
+    use apxm_compiler::passes::profile::{ExecutionProfile, NodeProfile};
+    use serde::Deserialize;
+    use std::collections::HashMap;
+
+    // Read node_statuses.json for timing data
+    #[derive(Deserialize)]
+    struct NodeStatus {
+        node_id: u32,
+        status: String,
+        duration_ms: u64,
+        #[serde(default)]
+        retries: u32,
+        last_error: Option<String>,
+    }
+
+    let statuses_path = session_dir.join("node_statuses.json");
+    let statuses_data = std::fs::read_to_string(&statuses_path)
+        .with_context(|| format!("Failed to read {}", statuses_path.display()))?;
+    let statuses: Vec<NodeStatus> = serde_json::from_str(&statuses_data)
+        .with_context(|| "Failed to parse node_statuses.json")?;
+
+    // Read input.air to map node_id → node_name
+    // AIR format: %1 = ask(node_1) ...
+    let air_path = session_dir.join("input.air");
+    let air_content = std::fs::read_to_string(&air_path)
+        .with_context(|| format!("Failed to read {}", air_path.display()))?;
+
+    let mut id_to_name: HashMap<u32, String> = HashMap::new();
+    for line in air_content.lines() {
+        // Parse lines like: "  %1 = ask(node_1) ..."
+        if let Some(rest) = line.trim_start().strip_prefix('%') {
+            if let Some((id_str, rest)) = rest.split_once('=') {
+                let id: u32 = id_str.trim().parse().unwrap_or(0);
+                // Extract node name from operation(node_name)
+                if let Some(paren_start) = rest.find('(') {
+                    if let Some(paren_end) = rest[paren_start + 1..].find(')') {
+                        let name = &rest[paren_start + 1..paren_start + 1 + paren_end];
+                        id_to_name.insert(id, name.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    // Build profile from statuses
+    let mut profile = ExecutionProfile::default();
+    profile.execution_count = 1;
+
+    for status in statuses {
+        let node_name = id_to_name
+            .get(&status.node_id)
+            .cloned()
+            .unwrap_or_else(|| format!("node_{}", status.node_id));
+
+        let error_rate = if status.last_error.is_some() {
+            1.0
+        } else {
+            0.0
+        };
+
+        // For now, we don't track tokens per node (would need per-node metrics).
+        // Use 0 as placeholder — future enhancement to parse node output for token counts.
+        let avg_tokens = 0;
+
+        profile.node_stats.insert(
+            node_name,
+            NodeProfile {
+                avg_latency_ms: status.duration_ms,
+                p99_latency_ms: status.duration_ms, // No p99 yet, use avg
+                call_count: 1 + status.retries as u64,
+                avg_tokens,
+                error_rate,
+            },
+        );
+    }
+
+    Ok(profile)
+}
+
 #[cfg(feature = "driver")]
 async fn execute_command(
     input: PathBuf,
@@ -1936,6 +2040,7 @@ async fn execute_command(
     config: Option<PathBuf>,
     emit_metrics: Option<PathBuf>,
     emit_session: Option<Option<PathBuf>>,
+    emit_profile: Option<PathBuf>,
 ) -> Result<()> {
     let apxm_config = load_config(config).context("Failed to load configuration")?;
     let opt = parse_opt_level(opt_level);
@@ -2097,6 +2202,25 @@ async fn execute_command(
             .context("Failed to finalize session")?;
 
         eprintln!("Session complete: {}", writer.session_dir().display());
+
+        // Extract and emit execution profile if requested
+        if let Some(profile_path) = emit_profile {
+            let graph_name = input
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("unknown");
+            match extract_profile_from_session(writer.session_dir(), graph_name) {
+                Ok(profile) => {
+                    profile
+                        .save_to_file(&profile_path)
+                        .with_context(|| format!("Failed to save profile to {}", profile_path.display()))?;
+                    eprintln!("Wrote profile to {}", profile_path.display());
+                }
+                Err(e) => {
+                    eprintln!("Warning: Failed to extract profile: {}", e);
+                }
+            }
+        }
     }
 
     // Print workflow outputs
@@ -2129,6 +2253,7 @@ async fn run_command(
     config: Option<PathBuf>,
     emit_metrics: Option<PathBuf>,
     emit_session: Option<Option<PathBuf>>,
+    emit_profile: Option<PathBuf>,
 ) -> Result<()> {
     use apxm_artifact::Artifact;
     use apxm_driver::runtime::RuntimeExecutor;
@@ -2258,6 +2383,25 @@ async fn run_command(
             .context("Failed to finalize session")?;
 
         eprintln!("Session complete: {}", writer.session_dir().display());
+
+        // Extract and emit execution profile if requested
+        if let Some(profile_path) = emit_profile {
+            let graph_name = input
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("unknown");
+            match extract_profile_from_session(writer.session_dir(), graph_name) {
+                Ok(profile) => {
+                    profile
+                        .save_to_file(&profile_path)
+                        .with_context(|| format!("Failed to save profile to {}", profile_path.display()))?;
+                    eprintln!("Wrote profile to {}", profile_path.display());
+                }
+                Err(e) => {
+                    eprintln!("Warning: Failed to extract profile: {}", e);
+                }
+            }
+        }
     }
 
     Ok(())
