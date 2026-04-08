@@ -51,7 +51,9 @@ done
 
 # 6. Run Rust tests
 echo "=== Running Rust Tests ==="
-cargo test --workspace --quiet 2>&1 | grep "test result" | tail -1 || FAILED=1
+TEST_OUTPUT=$(cargo test --workspace --quiet 2>&1)
+echo "$TEST_OUTPUT" | grep "test result" | tail -1
+echo "$TEST_OUTPUT" | grep -q "test result.*FAILED" && FAILED=1 || true
 
 if [ $FAILED -eq 0 ]; then
   echo "=== CI Complete: SUCCESS ==="
