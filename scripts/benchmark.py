@@ -47,6 +47,36 @@ BENCHMARKS = {
         "description": "Tests per-node model/backend routing",
         "metrics": ["duration_ms", "cost_estimate"],
     },
+    "fusion_stress": {
+        "file": "examples/python/benchmarks/fusion_stress.py",
+        "description": "Tests FuseAskOps pass (10 sequential ask→think pairs)",
+        "metrics": ["duration_ms", "llm_call_count"],
+    },
+    "cse_stress": {
+        "file": "examples/python/benchmarks/cse_stress.py",
+        "description": "Tests Common Subexpression Elimination (3 identical prompts)",
+        "metrics": ["duration_ms", "unique_llm_calls", "cache_hit_rate"],
+    },
+    "dead_context_stress": {
+        "file": "examples/python/benchmarks/dead_context_stress.py",
+        "description": "Tests DeadContextElimination (5 contexts, only {0} used)",
+        "metrics": ["duration_ms", "input_tokens", "token_savings_pct"],
+    },
+    "prefix_fanout_large": {
+        "file": "examples/python/benchmarks/prefix_fanout_large.py",
+        "description": "Tests PromptCanonicalization (8-way fanout, 4k shared prefix)",
+        "metrics": ["duration_ms", "prefill_tokens", "cache_hit_rate"],
+    },
+    "priority_scheduling": {
+        "file": "examples/python/benchmarks/priority_scheduling.py",
+        "description": "Tests priority scheduling (critical path vs background)",
+        "metrics": ["duration_ms", "critical_path_latency"],
+    },
+    "memo_cache_stress": {
+        "file": "examples/python/benchmarks/memo_cache_stress.py",
+        "description": "Tests MemoCache effectiveness (repeated prompts)",
+        "metrics": ["duration_ms", "llm_calls", "cache_hit_rate"],
+    },
 }
 
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -157,6 +187,8 @@ def execute_artifact(
     artifact_file: Path,
     emit_session: bool = True,
     target: Optional[str] = None,
+    use_mock: bool = False,
+    mock_latency: int = 500,
 ) -> Optional[Dict]:
     """Execute compiled artifact and return metrics."""
     print(f"  Executing artifact...", end=" ", flush=True)
@@ -170,6 +202,12 @@ def execute_artifact(
         if target:
             cmd.extend(["--target", target])
 
+        # Set up environment for mock backend
+        env = dict(os.environ)
+        if use_mock:
+            env["APXM_MOCK_BACKEND"] = "1"
+            env["APXM_MOCK_LATENCY_MS"] = str(mock_latency)
+
         start_time = time.time()
         result = subprocess.run(
             cmd,
@@ -177,6 +215,7 @@ def execute_artifact(
             text=True,
             timeout=300,  # 5 minutes max
             cwd=PROJECT_ROOT,
+            env=env,
         )
         wall_time_ms = (time.time() - start_time) * 1000
 
@@ -224,11 +263,15 @@ def run_benchmark(
     config: Dict,
     opt_levels: List[int],
     targets: Optional[List[str]] = None,
+    use_mock: bool = False,
+    mock_latency: int = 500,
 ) -> Dict[str, Dict]:
     """Run a single benchmark with multiple configurations."""
     print(f"\n{'='*60}")
     print(f"Benchmark: {name}")
     print(f"Description: {config['description']}")
+    if use_mock:
+        print(f"Mode: MOCK (latency={mock_latency}ms)")
     print(f"{'='*60}")
 
     benchmark_file = PROJECT_ROOT / config["file"]
@@ -254,13 +297,22 @@ def run_benchmark(
             for target in targets:
                 key = f"O{opt}-{target}"
                 print(f"  Configuration: {key}")
-                metrics = execute_artifact(artifact, target=target)
+                metrics = execute_artifact(
+                    artifact,
+                    target=target,
+                    use_mock=use_mock,
+                    mock_latency=mock_latency,
+                )
                 if metrics:
                     results[key] = metrics
         else:
             key = f"O{opt}"
             print(f"  Configuration: {key}")
-            metrics = execute_artifact(artifact)
+            metrics = execute_artifact(
+                artifact,
+                use_mock=use_mock,
+                mock_latency=mock_latency,
+            )
             if metrics:
                 results[key] = metrics
 
@@ -367,6 +419,17 @@ def main():
         type=Path,
         help="Write results to file (default: stdout)",
     )
+    parser.add_argument(
+        "--mock",
+        action="store_true",
+        help="Use mock LLM backend for reproducible benchmarks",
+    )
+    parser.add_argument(
+        "--mock-latency",
+        type=int,
+        default=500,
+        help="Mock backend latency in milliseconds (default: 500)",
+    )
 
     args = parser.parse_args()
 
@@ -406,7 +469,14 @@ def main():
     all_results = {}
     for name in benchmarks_to_run:
         config = BENCHMARKS[name]
-        results = run_benchmark(name, config, opt_levels, targets)
+        results = run_benchmark(
+            name,
+            config,
+            opt_levels,
+            targets,
+            use_mock=args.mock,
+            mock_latency=args.mock_latency,
+        )
         all_results[name] = results
 
     # Format and output results
