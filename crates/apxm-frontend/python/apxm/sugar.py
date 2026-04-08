@@ -39,6 +39,7 @@ class AgentHandle:
             {
                 c.RECIPIENT: self._agent_name,
                 c.MESSAGE: resolved_message,
+                c.PROTOCOL: "acp",  # AgentHandle always communicates via ACP protocol
                 **attributes,
             },
         )
