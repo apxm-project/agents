@@ -341,7 +341,7 @@ impl CapabilitySystem {
                             }
                         };
                         let _ = backend.destroy_session(session).await;
-                        Ok(exec_result_to_value(exec_result))
+                        return Ok(exec_result_to_value(exec_result));
                     } else {
                         // Capability requires sandbox but registry is empty
                         return Err(RuntimeError::Capability {
@@ -579,5 +579,251 @@ mod tests {
             .await
             .expect("invoke should succeed");
         assert!(called.load(Ordering::SeqCst));
+    }
+
+    // Mock capability that declares it needs sandboxing via to_exec_request()
+    struct MockSandboxedCapability {
+        metadata: CapabilityMetadata,
+        executed_directly: Arc<AtomicBool>,
+    }
+
+    impl MockSandboxedCapability {
+        fn new(executed_directly: Arc<AtomicBool>) -> Self {
+            Self {
+                metadata: CapabilityMetadata::new(
+                    "mock_sandboxed",
+                    "Mock capability that requires sandbox",
+                    serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "command": {
+                                "type": "string"
+                            }
+                        },
+                        "required": ["command"]
+                    }),
+                ),
+                executed_directly,
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl executor::CapabilityExecutor for MockSandboxedCapability {
+        async fn execute(&self, _args: HashMap<String, Value>) -> CapabilityResult<Value> {
+            // This should NOT be called when sandbox is available
+            self.executed_directly.store(true, Ordering::SeqCst);
+            Ok(Value::String("executed_directly".to_string()))
+        }
+
+        fn metadata(&self) -> &CapabilityMetadata {
+            &self.metadata
+        }
+
+        fn to_exec_request(&self, args: &HashMap<String, Value>) -> Option<apxm_sandbox::ExecRequest> {
+            let command = args.get("command")?.as_str()?.to_string();
+            Some(apxm_sandbox::ExecRequest {
+                min_isolation: apxm_sandbox::IsolationLevel::OsLevel,
+                program: "/bin/echo".to_string(),
+                args: vec![command],
+                timeout: std::time::Duration::from_secs(10),
+                ..Default::default()
+            })
+        }
+    }
+
+    // Mock capability that does NOT need sandboxing (to_exec_request returns None)
+    struct MockDirectCapability {
+        metadata: CapabilityMetadata,
+        executed_directly: Arc<AtomicBool>,
+    }
+
+    impl MockDirectCapability {
+        fn new(executed_directly: Arc<AtomicBool>) -> Self {
+            Self {
+                metadata: CapabilityMetadata::new(
+                    "mock_direct",
+                    "Mock capability that doesn't need sandbox",
+                    serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "value": {
+                                "type": "string"
+                            }
+                        },
+                        "required": ["value"]
+                    }),
+                ),
+                executed_directly,
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl executor::CapabilityExecutor for MockDirectCapability {
+        async fn execute(&self, args: HashMap<String, Value>) -> CapabilityResult<Value> {
+            // This SHOULD be called for non-sandboxed capabilities
+            self.executed_directly.store(true, Ordering::SeqCst);
+            let value = args.get("value")
+                .and_then(|v| v.as_str())
+                .unwrap_or("default");
+            Ok(Value::String(format!("direct:{}", value)))
+        }
+
+        fn metadata(&self) -> &CapabilityMetadata {
+            &self.metadata
+        }
+
+        fn to_exec_request(&self, _args: &HashMap<String, Value>) -> Option<apxm_sandbox::ExecRequest> {
+            None  // Doesn't need sandbox
+        }
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_routing_with_registry() {
+        let system = CapabilitySystem::new();
+        let executed_directly = Arc::new(AtomicBool::new(false));
+        let capability = Arc::new(MockSandboxedCapability::new(Arc::clone(&executed_directly)));
+
+        system.register(capability).unwrap();
+
+        // Set up a sandbox registry with a mock backend
+        let mut registry = SandboxRegistry::new();
+        let backend = Arc::new(apxm_sandbox::DefaultBackend::new(
+            apxm_sandbox::SandboxCapabilities {
+                isolation_level: apxm_sandbox::IsolationLevel::OsLevel,
+                supports_filesystem_restriction: false,
+                supports_network_restriction: false,
+                supports_syscall_filtering: false,
+                supports_resource_limits: false,
+                name: "test-backend".to_string(),
+                version: "1.0".to_string(),
+            },
+            |_req| async {
+                Ok(apxm_sandbox::ExecResult {
+                    success: true,
+                    exit_code: Some(0),
+                    stdout: "test output".to_string(),
+                    stderr: String::new(),
+                    duration: std::time::Duration::from_millis(10),
+                    timed_out: false,
+                })
+            },
+        ));
+        registry.register(backend);
+        system.set_sandbox_registry(Arc::new(registry));
+
+        // Invoke the capability
+        let mut args = HashMap::new();
+        args.insert("command".to_string(), Value::String("test".to_string()));
+        let result = system.invoke("mock_sandboxed", args).await;
+
+        // Should succeed via sandbox routing
+        assert!(result.is_ok(), "Sandbox routing should succeed: {:?}", result);
+        // execute() method should NOT have been called
+        assert!(!executed_directly.load(Ordering::SeqCst),
+                "Capability execute() should not be called when sandbox is available");
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_routing_without_registry() {
+        let system = CapabilitySystem::new();
+        let executed_directly = Arc::new(AtomicBool::new(false));
+        let capability = Arc::new(MockSandboxedCapability::new(Arc::clone(&executed_directly)));
+
+        system.register(capability).unwrap();
+
+        // Do NOT set up a sandbox registry
+
+        // Invoke the capability
+        let mut args = HashMap::new();
+        args.insert("command".to_string(), Value::String("test".to_string()));
+        let result = system.invoke("mock_sandboxed", args).await;
+
+        // Should fail because capability requires sandbox but no registry configured
+        assert!(result.is_err(), "Should error when sandbox required but not configured");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("sandbox") || err_msg.contains("not configured"),
+                "Error should mention sandbox/configuration: {}", err_msg);
+
+        // execute() method should NOT have been called
+        assert!(!executed_directly.load(Ordering::SeqCst),
+                "Capability execute() should not be called when sandbox is required");
+    }
+
+    #[tokio::test]
+    async fn test_direct_execution_for_non_sandboxed_capability() {
+        let system = CapabilitySystem::new();
+        let executed_directly = Arc::new(AtomicBool::new(false));
+        let capability = Arc::new(MockDirectCapability::new(Arc::clone(&executed_directly)));
+
+        system.register(capability).unwrap();
+
+        // Even with a sandbox registry, non-sandboxed capabilities should execute directly
+        let mut registry = SandboxRegistry::new();
+        let backend = Arc::new(apxm_sandbox::DefaultBackend::new(
+            apxm_sandbox::SandboxCapabilities {
+                isolation_level: apxm_sandbox::IsolationLevel::OsLevel,
+                supports_filesystem_restriction: false,
+                supports_network_restriction: false,
+                supports_syscall_filtering: false,
+                supports_resource_limits: false,
+                name: "test-backend".to_string(),
+                version: "1.0".to_string(),
+            },
+            |_req| async {
+                Ok(apxm_sandbox::ExecResult {
+                    success: true,
+                    exit_code: Some(0),
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    duration: std::time::Duration::from_millis(10),
+                    timed_out: false,
+                })
+            },
+        ));
+        registry.register(backend);
+        system.set_sandbox_registry(Arc::new(registry));
+
+        // Invoke the capability
+        let mut args = HashMap::new();
+        args.insert("value".to_string(), Value::String("test".to_string()));
+        let result = system.invoke("mock_direct", args).await;
+
+        // Should succeed via direct execution
+        assert!(result.is_ok(), "Direct execution should succeed");
+        assert_eq!(result.unwrap().as_str(), Some("direct:test"));
+
+        // execute() method SHOULD have been called
+        assert!(executed_directly.load(Ordering::SeqCst),
+                "Capability execute() should be called for non-sandboxed capabilities");
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_routing_with_empty_registry() {
+        let system = CapabilitySystem::new();
+        let executed_directly = Arc::new(AtomicBool::new(false));
+        let capability = Arc::new(MockSandboxedCapability::new(Arc::clone(&executed_directly)));
+
+        system.register(capability).unwrap();
+
+        // Set up an EMPTY sandbox registry (no backends registered)
+        let registry = SandboxRegistry::new();
+        system.set_sandbox_registry(Arc::new(registry));
+
+        // Invoke the capability
+        let mut args = HashMap::new();
+        args.insert("command".to_string(), Value::String("test".to_string()));
+        let result = system.invoke("mock_sandboxed", args).await;
+
+        // Should fail because capability requires sandbox but no backend available
+        assert!(result.is_err(), "Should error when sandbox required but registry is empty");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("sandbox") || err_msg.contains("backend") || err_msg.contains("available"),
+                "Error should mention sandbox/backend availability: {}", err_msg);
+
+        // execute() method should NOT have been called
+        assert!(!executed_directly.load(Ordering::SeqCst),
+                "Capability execute() should not be called when sandbox is required");
     }
 }

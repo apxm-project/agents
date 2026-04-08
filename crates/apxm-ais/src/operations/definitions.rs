@@ -1,7 +1,7 @@
 //! AIS Operation Definitions - Single Source of Truth
 //!
-//! This module contains the complete specification for all 40 AIS operations
-//! (37 public + 1 metadata + 2 internal). Both the compiler and runtime use
+//! This module contains the complete specification for all 41 AIS operations
+//! (38 public + 1 metadata + 2 internal). Both the compiler and runtime use
 //! these definitions to ensure consistent semantics.
 
 use super::category::OperationCategory;
@@ -14,9 +14,9 @@ use std::fmt;
 
 /// Represents all AIS operation types.
 ///
-/// This enum is the canonical list of operations (40 total):
+/// This enum is the canonical list of operations (41 total):
 /// - 1 metadata operation (AgentOp)
-/// - 37 public operations
+/// - 38 public operations
 /// - 2 internal operations (ConstStr, Yield)
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -705,14 +705,6 @@ const EMISSION_VOID_NONE: MlirEmissionSpec = MlirEmissionSpec {
 };
 
 /// Standard emission spec: Handle result, parenthesized context.
-#[allow(dead_code)]
-const EMISSION_HANDLE_PAREN: MlirEmissionSpec = MlirEmissionSpec {
-    primary_attr: None,
-    context_style: ContextStyle::Parenthesized,
-    result_type: MlirResultType::Handle,
-    positional_attrs: &[],
-    keywords: &[],
-};
 
 // ============================================================================
 // Operation Registry
