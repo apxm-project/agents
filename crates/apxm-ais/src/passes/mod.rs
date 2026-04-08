@@ -311,6 +311,79 @@ emission, as a diagnostic aid rather than a transformation."#,
     "mlir::ais::createUnconsumedValueWarningPass()",
 );
 
+/// TemplateSpecialization pass - specializes templates with constant inputs.
+pub const TEMPLATE_SPECIALIZATION: PassSpec = PassSpec::new(
+    "template-specialization",
+    "TemplateSpecialization",
+    "Specialize templates with constant inputs",
+    r#"Identifies LLM operations with constant context inputs and folds them
+into the template string at compile time. This reduces runtime token usage
+by eliminating redundant context passing.
+
+Example transformation:
+  ask("{0}", [const("System: Be helpful")]) -> ask("System: Be helpful")
+
+This pass is particularly effective for:
+- System prompts and instructions
+- Fixed preambles and formatting
+- Constant configuration values"#,
+    PassCategory::Optimization,
+    "mlir::ais::createTemplateSpecializationPass()",
+);
+
+/// DeadContextElimination pass - removes unused context inputs.
+pub const DEAD_CONTEXT_ELIMINATION: PassSpec = PassSpec::new(
+    "dead-context-elimination",
+    "DeadContextElimination",
+    "Remove unused context inputs from templates",
+    r#"Analyzes template strings to identify context placeholders that are never
+referenced and removes the corresponding context operands.
+
+Example transformation:
+  ask("Question: {0}", [user_input, unused_context])
+    -> ask("Question: {0}", [user_input])
+
+This reduces token usage and simplifies the graph by eliminating dead data flow."#,
+    PassCategory::Optimization,
+    "mlir::ais::createDeadContextEliminationPass()",
+);
+
+/// SchemaNarrowing pass - narrows output schemas based on usage.
+pub const SCHEMA_NARROWING: PassSpec = PassSpec::new(
+    "schema-narrowing",
+    "SchemaNarrowing",
+    "Narrow output schemas based on actual usage",
+    r#"Analyzes how operation results are consumed and tightens output schema
+constraints to only include fields that are actually used downstream.
+
+This reduces token usage in structured output scenarios by avoiding
+generation of unnecessary fields.
+
+Example: If only the 'summary' field of a JSON response is used, the schema
+is narrowed to only request that field."#,
+    PassCategory::Optimization,
+    "mlir::ais::createSchemaNarrowingPass()",
+);
+
+/// PromptCanonicalization pass - reorders prompts for shared-prefix reuse.
+pub const PROMPT_CANONICALIZATION: PassSpec = PassSpec::new(
+    "prompt-canonicalization",
+    "PromptCanonicalization",
+    "Reorder prompts to maximize shared-prefix KV-cache reuse",
+    r#"Analyzes prompt templates across the graph and canonicalizes them to
+maximize KV-cache sharing in vLLM/inference engines that support prefix caching.
+
+This includes:
+- Extracting common prompt prefixes
+- Reordering context inputs to align prompts
+- Normalizing formatting for cache-friendliness
+
+When combined with vLLM's automatic prefix caching, this can dramatically
+reduce token processing by reusing cached prefixes across requests."#,
+    PassCategory::Optimization,
+    "mlir::ais::createPromptCanonicalizationPass()",
+);
+
 // ============================================================================
 // Built-in MLIR Passes (not generated, just registered)
 // ============================================================================
@@ -360,6 +433,10 @@ pub const AIS_PASSES: &[&PassSpec] = &[
     &FUSE_ASK_OPS,
     &CONDENSE_OPS,
     &UNCONSUMED_VALUE_WARNING,
+    &TEMPLATE_SPECIALIZATION,
+    &DEAD_CONTEXT_ELIMINATION,
+    &SCHEMA_NARROWING,
+    &PROMPT_CANONICALIZATION,
 ];
 
 /// All passes including built-in MLIR passes.
@@ -371,6 +448,10 @@ pub const ALL_PASSES: &[&PassSpec] = &[
     &FUSE_ASK_OPS,
     &CONDENSE_OPS,
     &UNCONSUMED_VALUE_WARNING,
+    &TEMPLATE_SPECIALIZATION,
+    &DEAD_CONTEXT_ELIMINATION,
+    &SCHEMA_NARROWING,
+    &PROMPT_CANONICALIZATION,
     // Built-in MLIR
     &CANONICALIZER,
     &CSE,
@@ -415,6 +496,10 @@ mod tests {
         assert!(find_pass_by_name("build-prompt").is_some());
         assert!(find_pass_by_name("fuse-ask-ops").is_some());
         assert!(find_pass_by_name("condense-ops").is_some());
+        assert!(find_pass_by_name("template-specialization").is_some());
+        assert!(find_pass_by_name("dead-context-elimination").is_some());
+        assert!(find_pass_by_name("schema-narrowing").is_some());
+        assert!(find_pass_by_name("prompt-canonicalization").is_some());
         assert!(find_pass_by_name("canonicalizer").is_some());
         assert!(find_pass_by_name("nonexistent").is_none());
     }
