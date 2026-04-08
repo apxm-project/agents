@@ -17,7 +17,6 @@ from .ir import ApxmGraph, GraphEdge, GraphNode, Parameter
 from .module import FlowModule
 from .providers import ProviderSpec, list_providers, resolve_provider
 from .proxy import GraphRecorder, NodeRef
-from .quality import QualityEvaluator, QualityReport, FusionCandidate, compare_optimizations
 from .sugar import AgentHandle, Team
 
 __all__ = [
@@ -45,8 +44,4 @@ __all__ = [
     "list_providers",
     "resolve_provider",
     "validate_graph",
-    "QualityEvaluator",
-    "QualityReport",
-    "FusionCandidate",
-    "compare_optimizations",
 ]
