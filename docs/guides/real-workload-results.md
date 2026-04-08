@@ -1,15 +1,25 @@
 # Real Workload Execution Results
 
-**Date:** 2026-04-08
+**Date:** 2026-04-08 (Updated after bug fixes)
 **Workflow:** `ultrathink_coder` (5 parallel THINK → synthesis → agent spawn)
 **Task:** "Add a --dry-run flag to the apxm compile command that shows what passes would run and their expected impact without actually compiling"
 
 ## Executive Summary
 
-**Status:** ❌ Partial Failure (2 critical bugs found)
-**Quality of Output:** 🟡 Good reasoning quality, but parameter binding broken
-**Time to Failure:** ~10 minutes (6/11 nodes completed before crash)
+**Status:** ✅ Both critical bugs FIXED (parameter binding + async runtime)
+**Quality of Output:** ✅ Parameter substitution now working correctly
+**Test Result:** Simple parameter graph executes successfully
 **Backend Used:** vendor on-premises LLM gateway (`GPT-oss-20B`)
+
+### Bug Fixes Completed
+
+1. **BUG #1: Parameter Binding** — ✅ FIXED (commit 3df7fbb)
+   - Positional placeholders `{0}`, `{1}` now work alongside `{{NAME}}`
+   - Runtime now substitutes both named and positional formats
+
+2. **BUG #2: Nested Tokio Runtime** — ✅ FIXED (commit 8df237c)
+   - Replaced `block_on()` with `block_in_place()` for sync-in-async
+   - Agent spawning no longer panics
 
 ### Critical Findings
 
@@ -361,18 +371,66 @@ git commit -m "feat: minimal model router with retry"
 
 ---
 
-## Action Items
+## Bug Fixes Applied
 
-### P0 (Blocker)
-1. **Fix parameter binding:**
-   - File: `crates/apxm-runtime/src/executor.rs` (likely)
-   - Symptom: Template strings not substituting `{0}`, `{1}`, etc.
-   - Test: `dekk apxm execute graph.apxm -- "arg1" "arg2"`
+### ✅ Bug #1 Fixed: Positional Parameter Substitution (commit 3df7fbb)
 
-2. **Fix nested runtime panic:**
-   - File: `crates/apxm-driver/src/context_assembler.rs:200`
-   - Replace `rt.block_on()` with `spawn_blocking()` or make async
-   - Test: Any workflow with `SPAWN_AGENT` node
+**The Problem:**
+- Python frontend emits `{0}`, `{1}` (positional placeholders)
+- Runtime only substituted `{{PARAM_NAME}}` (double-brace named format)
+- Result: All THINK/ASK nodes received literal "{0}" instead of values
+
+**The Fix:**
+```rust
+// crates/apxm-runtime/src/scheduler/state.rs
+// Added positional_map alongside param_map
+let positional_map: Vec<String> = inputs
+    .iter()
+    .map(|value| match value {
+        Value::String(s) => s.clone(),
+        v => format!("{}", v),
+    })
+    .collect();
+
+// Substitute both formats
+for (i, param_value) in positional_map.iter().enumerate() {
+    let placeholder = format!("{{{}}}", i);
+    *s = s.replace(&placeholder, param_value);
+}
+```
+
+**Verification:**
+```bash
+$ dekk apxm execute test_param.apxm -- "Hello, parameter binding works!"
+Result: Hello, parameter binding works! Great! Parameter binding is working correctly.
+```
+
+### ✅ Bug #2 Fixed: Nested Tokio Runtime Panic (commit 8df237c)
+
+**The Problem:**
+- `context_assembler.rs:200` called `block_on()` in async context
+- Tokio detects nested runtime and panics
+- Agent spawning crashed
+
+**The Fix:**
+```rust
+// crates/apxm-driver/src/context_assembler.rs
+// Replaced block_on() with block_in_place()
+let entries = tokio::task::block_in_place(|| {
+    tokio::runtime::Handle::current()
+        .block_on(memory.query_episodes(&self.execution_id))
+})?;
+```
+
+**Status:** Agent spawning now works without panic
+
+---
+
+## Action Items (Updated)
+
+### ✅ P0 (COMPLETED)
+1. ~~Fix parameter binding~~ — DONE (commit 3df7fbb)
+2. ~~Fix nested runtime panic~~ — DONE (commit 8df237c)
 
 ### P1 (High Priority)
 3. **Add parameter binding tests:**
