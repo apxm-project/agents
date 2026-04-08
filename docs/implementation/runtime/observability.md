@@ -1,6 +1,6 @@
 # Observability
 
-APXM provides three observability layers -- structured tracing, a typed event system, and feature-gated metrics collection -- that can be independently enabled or disabled with zero overhead when off.
+APXM provides three observability layers -- structured tracing, a typed event system, and feature-gated metrics collection -- that can be independently enabled or disabled with zero overhead when off. For user-facing debugging instructions, see the [Debugging Guide](../../guides/debugging.md).
 
 ## Tracing
 
@@ -162,3 +162,9 @@ When `--emit-session <dir>` is specified, each execution writes a folder:
 ```
 
 This folder is self-contained: replaying or auditing an execution requires only the session folder contents.
+
+## Related Documentation
+
+- [Debugging Guide](../../guides/debugging.md) -- user-facing guide: `--trace` flag, `RUST_LOG` filters, session replay
+- [Sessions](sessions.md) -- AAM checkpoints, SessionManager, ProcessTable, ACP lifecycle
+- [Dataflow Scheduler](dataflow-scheduler.md) -- scheduler internals that produce the metrics captured here

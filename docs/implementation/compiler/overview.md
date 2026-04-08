@@ -49,7 +49,7 @@ The optimizer runs a configurable sequence of MLIR passes. The pass list depends
 
 \* CSE is skipped when the `--no-cse-llm` flag is set (useful for non-zero temperature workflows).
 
-See [Optimization Passes](optimization-passes.md) for detailed descriptions of each pass.
+See [Optimization Passes](../../optimization/passes.md) for detailed descriptions of each pass.
 
 ## Stage 4: Artifact Emit
 
@@ -96,6 +96,13 @@ apxm compile workflow.apxm -o workflow.apxmobj --emit-diagnostics diag.json
 ```
 
 ---
+
+## Related Documentation
+
+- [Compiler Integration](../compiler-integration.md) -- how JSON, Rust, and Python frontends feed this pipeline
+- [Optimization Passes](../../optimization/passes.md) -- detailed descriptions of every MLIR pass
+- [Artifact Format](artifact-format.md) -- `.apxmobj` binary layout
+- [Graph JSON Format](../../reference/graph-format.md) -- canonical graph schema consumed by Stage 1
 
 ## References
 

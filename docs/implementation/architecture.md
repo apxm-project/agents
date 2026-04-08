@@ -1,14 +1,12 @@
-# Architecture
+# Implementation Architecture
 
-A-PXM is composed of a compiler and a runtime. The compiler transforms AIS
-graphs into optimized execution plans via MLIR. The runtime executes them using
-a dataflow scheduler that automatically extracts parallelism from dependencies.
+A-PXM is composed of a compiler and a runtime. The compiler transforms AIS graphs into optimized execution plans via MLIR. The runtime executes them using a dataflow scheduler that automatically extracts parallelism from dependencies.
 
 ## Pipeline
 
 ```
- Graph JSON ──▶ Compiler ──▶ .apxmobj Artifact ──▶ Runtime ──▶ Results
-                  │                                    │
+ Graph JSON --> Compiler --> .apxmobj Artifact --> Runtime --> Results
+                  |                                    |
             lower to MLIR                        dataflow scheduler
             optimize (fuse, CSE, DCE)            token-based firing
             emit binary artifact                 LLM / Tool / Memory executors
@@ -21,14 +19,17 @@ a dataflow scheduler that automatically extracts parallelism from dependencies.
 | Document | Covers |
 |----------|--------|
 | [PXM Foundations](../pxm/foundations.md) | Dataflow semantics, token model, codelet/threaded execution |
+| [Agent Abstract Machine](../pxm/aam.md) | Formal AAM definition, state model, memory hierarchy |
+| [Hierarchical AAM](../design/hierarchical-aam.md) | Nested agent scoping diagrams, file-tree-as-AAM design |
 
 ### Compiler
 
 | Document | Covers |
 |----------|--------|
 | [Compiler Overview](compiler/overview.md) | Frontend normalization, MLIR lowering, emit pipeline |
-| [Optimization Passes](compiler/optimization-passes.md) | FuseAskOps, CSE, dead-code elimination |
+| [Optimization Passes](../optimization/passes.md) | FuseAskOps, CSE, dead-code elimination, and all other passes |
 | [Artifact Format](compiler/artifact-format.md) | `.apxmobj` binary layout, versioning, schema |
+| [Compiler Integration](compiler-integration.md) | How JSON, Rust, and Python frontends share the compiler |
 
 ### Runtime
 
@@ -40,9 +41,7 @@ a dataflow scheduler that automatically extracts parallelism from dependencies.
 | [Multi-Agent](runtime/multi-agent.md) | Agent model, FlowRegistry, FLOW_CALL |
 | [Observability](runtime/observability.md) | Event system, MetricsCollector, tracing, --emit-metrics, --emit-session |
 | [Sessions](runtime/sessions.md) | AAM checkpoints, SessionManager, ProcessTable, ACP lifecycle |
-| [Hierarchical AAM](runtime/hierarchical-aam.md) | Nested agent scoping and delegation *(ScopeRegistry, WorkspaceManager, GoalTree implemented)* |
-| [Pluggable Sandbox](pluggable-sandbox-design.md) | SandboxBackend trait, IsolationLevel, SecurityManifest |
-| [Host Integration](host-integration-guide.md) | Codex & Gemini integration, AAM deep dive |
+| [Host Integration](host-integration.md) | Codex and Gemini integration, pluggable backend interfaces |
 
 ### AIS Operations
 
@@ -52,7 +51,7 @@ The `ais/` directory documents every operation category:
 [Tool](ais/tool-ops.md) |
 [Control-flow](ais/control-flow.md) |
 [Sync](ais/sync-ops.md) |
-[Coordination](ais/coordination-ops.md) |
+[Utility and Error](ais/utility-ops.md) |
 [Communication](ais/communication.md)
 
 ### Contracts & Internals
@@ -60,4 +59,12 @@ The `ais/` directory documents every operation category:
 | Document | Covers |
 |----------|--------|
 | [Contracts](internals/contracts.md) | Op-kind indices, wire format, sync rules |
-| [Graph JSON Contract](internals/graph-json-contract.md) | Canonical graph schema, edge types, parameters |
+| [Graph JSON Format](../reference/graph-format.md) | Canonical graph schema, edge types, parameters |
+
+### Guides
+
+| Document | Covers |
+|----------|--------|
+| [Debugging](../guides/debugging.md) | Tracing flags, RUST_LOG filters, session replay |
+| [Backends](../guides/backends.md) | Backend configuration and management |
+| [Multi-Agent](../guides/multi-agent.md) | Multi-agent workflow patterns |

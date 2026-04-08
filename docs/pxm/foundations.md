@@ -7,19 +7,19 @@ description: "Why agent workflows need a formal execution model, and how A-PXM s
 
 ## From Von Neumann to Agents
 
-Computing history reveals a recurring pattern. A new computational paradigm emerges, practitioners build ad-hoc solutions that work well enough at small scale, and then the paradigm hits an opacity wall -- the runtime cannot see what the program is doing, so it cannot optimize, verify, or schedule it. The breakthrough comes when someone defines a **formal execution model**: a contract between programs and machines that makes computation visible to tooling. After that, a compiler+runtime ecosystem follows, and the paradigm scales.
+Computing history reveals a recurring pattern. A new computational paradigm emerges, practitioners build ad-hoc solutions that work at small scale, and then the paradigm hits an opacity wall -- the runtime cannot see what the program is doing, so it cannot optimize, verify, or schedule it. The breakthrough comes when someone defines a **formal execution model**: a contract between programs and machines that makes computation visible to tooling. After that, a compiler+runtime ecosystem follows, and the paradigm scales. (For the full historical narrative, see [history.md](history.md).)
 
-Von Neumann formalized sequential computation (1945): one program counter, one memory, deterministic fetch-decode-execute. That model enabled assemblers, linkers, and eventually the entire systems programming stack. Dataflow formalized parallel computation (Manchester, 1985; MIT Tagged-Token): operations fire when operands arrive, and the graph structure itself is the scheduling specification. CUDA formalized GPU computation (2007): a hierarchy of threads, blocks, and grids mapped onto SIMT hardware, giving programmers a portable abstraction over massively parallel devices. In every case, the formal model was what unlocked the compiler and runtime infrastructure -- without it, optimization was guesswork and correctness was hope.
+Von Neumann formalized sequential computation (1945): one program counter, one memory, deterministic fetch-decode-execute. That model enabled assemblers, linkers, and the entire systems programming stack. Dataflow formalized parallel computation (Manchester, 1985; MIT Tagged-Token): operations fire when operands arrive, and the graph structure itself is the scheduling specification. CUDA formalized GPU computation (2007): a hierarchy of threads, blocks, and grids mapped onto SIMT hardware, giving programmers a portable abstraction over massively parallel devices. In every case, the formal model unlocked the compiler and runtime infrastructure.
 
-Agentic AI is at the ad-hoc stage now. Workflows are opaque Python scripts. The runtime cannot see dependencies, cannot verify correctness, cannot optimize cost. A-PXM is the formal execution model for agent computation -- the contract that makes agent workflows visible to compilers, runtimes, and auditing tools, just as prior models did for their respective paradigms.
+Agentic AI is at the ad-hoc stage now. Workflows are opaque Python scripts. The runtime cannot see dependencies, cannot verify correctness, cannot optimize cost. A-PXM is the formal execution model for agent computation.
 
 ## The Problem: Opaque Agent Workflows
 
-In 1977, John Backus described the **von Neumann bottleneck**: conventional programming languages force programs through a narrow sequential channel, hiding structure from tools and making optimization impossible. The problem was not just sequentiality -- it was **opacity**. The runtime could not see what the program was doing, so it could not help.
+In 1977, John Backus described the **von Neumann bottleneck**: conventional programming languages force programs through a narrow sequential channel, hiding structure from tools and making optimization impossible. The problem was not just sequentiality -- it was **opacity**.
 
-Agentic AI frameworks today suffer from an analogous pathology. We call it the **agentic von Neumann bottleneck**: workflows execute as opaque Python scripts -- "call-at-a-time" chains where every operation is a black-box function call. The runtime has no visibility into what operations exist, how they relate to each other, or what state they touch.
+Agentic AI frameworks today suffer from an analogous pathology. We call it the **agentic von Neumann bottleneck**: workflows execute as opaque Python scripts -- "call-at-a-time" chains where every operation is a black-box function call. The runtime has no visibility into what operations exist, how they relate, or what state they touch.
 
-Put more bluntly: most agent development today operates at the **wrong abstraction layer**. Developers wire together API calls, prompt templates, and tool invocations inside imperative code -- the same level of abstraction as the LLM calls themselves. This insight aligns with the file-tree architecture argument (Quantum Quill Lyceum, 2025) -- that agent state should be organized as hierarchical directories navigable by both humans and AI. When a workflow is a folder, a task is a sub-folder, and components are files (prompts, tools, data), the architecture becomes modular and future-proof: if a big model provider ships a capability that replaces an entire workflow, you condense that folder into a single tool definition and the rest of the system is unaffected. The problem is not that current tools are bad; it is that the abstraction layer they occupy conflates execution structure with implementation detail, making optimization, composition, and adaptation impossible. A-PXM addresses this by lifting the abstraction to a formal execution model where the structure is visible to tooling.
+Most agent development today operates at the **wrong abstraction layer**. Developers wire together API calls, prompt templates, and tool invocations inside imperative code -- the same level of abstraction as the LLM calls themselves. The problem is not that current tools are bad; it is that the abstraction layer they occupy conflates execution structure with implementation detail, making optimization, composition, and adaptation impossible.
 
 ```python
 # Current frameworks: every step is an opaque function call
@@ -34,7 +34,7 @@ summary = llm.ask(result_a, result_b)    # Implicit dependencies everywhere.
 
 **1. No optimization is possible.** The runtime cannot fuse redundant LLM calls, eliminate dead operations, or schedule independent work concurrently. Every optimization that LLVM does for machine code -- CSE, DCE, fusion, reordering -- is impossible when the program is opaque Python.
 
-**2. No verification is possible.** Type errors, missing dependencies, unreachable operations, and malformed state transitions only surface at runtime -- often after expensive LLM calls have already been made. There is no compile-time analysis because there is nothing to compile.
+**2. No verification is possible.** Type errors, missing dependencies, unreachable operations, and malformed state transitions only surface at runtime -- often after expensive LLM calls have already been made.
 
 **3. No auditing is possible.** When an agent produces a wrong answer, tracing the root cause requires reading Python stack traces and log files. There is no formal execution trace, no state transition history, no way to replay or inspect the agent's reasoning path.
 
@@ -57,47 +57,49 @@ Solving the agentic von Neumann bottleneck requires making agent workflows **vis
 2. **Explicit dependencies**: data edges declaring which operations depend on which results, enabling both analysis and automatic scheduling.
 3. **Explicit effects**: side effects (LLM calls, tool invocations, memory writes) as first-class operations with typed inputs and outputs, not opaque function calls.
 
-A-PXM provides all three through the Agent Abstract Machine (state), the Agent Instruction Set (typed operations), and dataflow execution (dependency-driven scheduling).
+A-PXM provides all three through the [Agent Abstract Machine](aam.md) (state), the [Agent Instruction Set](ais.md) (typed operations), and dataflow execution (dependency-driven [scheduling](scheduling.md)).
 
 ---
 
 ## A-PXM: A Program Execution Model
 
-A-PXM is not a framework, not just a compiler, and not just a runtime. It is a **Program Execution Model** -- a formal specification of how agent programs are represented, optimized, and executed. It is composed of a compiler (compile-time half) and a runtime (execution-time half), working together as a unified system.
+A-PXM is not a framework, not just a compiler, and not just a runtime. It is a **Program Execution Model** -- a formal specification of how agent programs are represented, optimized, and executed.
 
-The key insight is that A-PXM defines the **ISA contract** for agent computation. In hardware, the ISA (Instruction Set Architecture) is the stable boundary between software and silicon: from the software side, any number of languages and compilers can target it; from the hardware side, any number of microarchitectures can implement it. LLVM IR achieved the same decoupling for compilers -- any frontend (C, Rust, Swift) emits LLVM IR, and any backend (x86, ARM, RISC-V) consumes it. The IR is the contract that lets both sides evolve independently.
+### The ISA Contract
 
-A-PXM's Agent Instruction Set (AIS) is that contract for agents. From the software side, any framework, DSL, or API can emit AIS graphs. From the backend side, any runtime -- local, distributed, cloud-native -- can execute them. The contract is what enables the ecosystem:
+The key insight is that A-PXM defines the **ISA contract** for agent computation. In hardware, the ISA (Instruction Set Architecture) is the stable boundary between software and silicon: from the software side, any number of languages and compilers can target it; from the hardware side, any number of microarchitectures can implement it. LLVM IR achieved the same decoupling for compilers -- any frontend (C, Rust, Swift) emits LLVM IR, and any backend (x86, ARM, RISC-V) consumes it.
+
+A-PXM's [Agent Instruction Set (AIS)](ais.md) is that contract for agents:
 
 ```
 Source Language    Frontend         IR          Optimizer       Backend
-─────────────    ─────────         ──          ─────────       ───────
+--------------    --------         --          ---------       -------
 C                Clang             LLVM IR     LLVM passes     x86/ARM
 Rust             rustc             LLVM IR     LLVM passes     x86/ARM
 
-Python API       apxm (Python)      ApxmGraph   AIS passes      APXM Runtime
+Python API       apxm (Python)    ApxmGraph   AIS passes      APXM Runtime
 Rust API         apxm (Rust)      ApxmGraph   AIS passes      APXM Runtime
-AIS DSL          AIS parser        ApxmGraph   AIS passes      APXM Runtime
+AIS DSL          AIS parser       ApxmGraph   AIS passes      APXM Runtime
 ```
 
-Multiple frontends emit a common IR. The compiler optimizes it. The runtime executes it. Framework authors focus on developer experience; the execution model handles correctness, optimization, and scheduling. No frontend needs to know about scheduling. No runtime needs to know about syntax. The AIS contract separates these concerns permanently.
+Multiple frontends emit a common IR. The [compiler](../implementation/compiler/overview.md) optimizes it. The [runtime](../implementation/runtime/dataflow-scheduler.md) executes it. Framework authors focus on developer experience; the execution model handles correctness, optimization, and scheduling. No frontend needs to know about scheduling. No runtime needs to know about syntax. The AIS contract separates these concerns permanently.
 
 ### The Agentic Software Stack
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  Application Layer                                      │
-│  CrewAI  |  LangGraph  |  AgentMate  |  Custom          │
-├─────────────────────────────────────────────────────────┤
-│  A-PXM Layer                                            │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
-│  │  AIS IR       │→│  Compiler    │→│  Runtime      │  │
-│  │  (typed ops)  │  │  (MLIR)      │  │  (dataflow)  │  │
-│  └──────────────┘  └──────────────┘  └──────────────┘  │
-├─────────────────────────────────────────────────────────┤
-│  Foundation Layer                                       │
-│  LLM APIs  |  Tool APIs  |  Memory Stores               │
-└─────────────────────────────────────────────────────────┘
++-----------------------------------------------------------+
+|  Application Layer                                         |
+|  CrewAI  |  LangGraph  |  AgentMate  |  Custom             |
++-----------------------------------------------------------+
+|  A-PXM Layer                                               |
+|  +----------------+  +----------------+  +----------------+ |
+|  |  AIS IR         |->|  Compiler     |->|  Runtime       | |
+|  |  (typed ops)    |  |  (MLIR)       |  |  (dataflow)    | |
+|  +----------------+  +----------------+  +----------------+ |
++-----------------------------------------------------------+
+|  Foundation Layer                                          |
+|  LLM APIs  |  Tool APIs  |  Memory Stores                  |
++-----------------------------------------------------------+
 ```
 
 ### A Concrete Example
@@ -134,14 +136,14 @@ agent ProposalReview {
 The developer writes sequential-looking code. The compiler sees a dataflow graph:
 
 ```
-context ──┬── financial ──┐
-          ├── legal       ├── synthesis
-          ├── technical   │
-          ├── market      │
-          └── risk ──────┘
+context --+-- financial --+
+          |-- legal       |
+          |-- technical   +-- synthesis
+          |-- market      |
+          +-- risk -------+
 ```
 
-The five analyses depend only on `context`, not on each other. The compiler can verify this statically. The runtime can schedule them based on available resources. The execution trace records every state transition. If the synthesis hallucinates, the full provenance chain is available for audit.
+The five analyses depend only on `context`, not on each other. The compiler verifies this statically. The runtime schedules them based on available resources. The execution trace records every state transition.
 
 This is not primarily about speed. It is about **making the workflow visible** -- to the compiler for optimization, to the runtime for scheduling, to the developer for debugging, and to the organization for auditing.
 
@@ -149,27 +151,24 @@ This is not primarily about speed. It is about **making the workflow visible** -
 
 ## The Five Separations
 
-A-PXM achieves visibility by cleanly separating five concerns that current frameworks entangle. Each separation has deep roots in program execution model research.
+A-PXM achieves visibility by cleanly separating five concerns that current frameworks entangle. Each separation has deep roots in program execution model research. The deep dives ([compute](compute.md), [memory](memory.md), [scheduling](scheduling.md)) explore each separation in comparative detail.
 
 ### 1. Compute
 
-**What operations run.**
+**What operations run.** See [compute.md](compute.md) for the full comparative analysis.
 
 | Model | How Compute Is Defined | Limitation |
 |-------|----------------------|------------|
 | Von Neumann | Instructions fetched by program counter | Sequential; independent ops cannot overlap |
-| Dataflow (Manchester, MIT Tagged-Token) | Operations fire when all operands arrive | No program counter; automatic concurrency. Too fine-grained for general programs |
-| LLVM IR / SSA | Typed operations, each value defined once | Enables optimization but still sequentially scheduled |
-| Actor Model (Erlang, Akka) | Message-driven actors, no shared state | Untyped messages; no compile-time analysis |
+| Dataflow | Operations fire when all operands arrive | Too fine-grained for general programs |
+| LLVM IR / SSA | Typed operations, each value defined once | Still sequentially scheduled |
+| Actor Model | Message-driven actors, no shared state | Untyped messages; no compile-time analysis |
 
 In A-PXM, compute = **typed AIS operations** (ASK, THINK, REASON, INV, PLAN, REFLECT, VERIFY, ...). Each is a node in a dataflow graph with typed inputs/outputs, explicit data edges, and latency annotations. The developer declares *what* to compute; the system decides *when* and *where*.
 
-**Unlike von Neumann**: operations are never artificially sequenced.
-**Unlike actors**: operations have typed signatures and explicit dependency edges.
-
 ### 2. Memory
 
-**Where knowledge lives.**
+**Where knowledge lives.** See [memory.md](memory.md) for the full comparative analysis.
 
 | Model | Memory Organization | Limitation |
 |-------|-------------------|------------|
@@ -180,17 +179,17 @@ In A-PXM, compute = **typed AIS operations** (ASK, THINK, REASON, INV, PLAN, REF
 
 A-PXM provides a **three-tier memory hierarchy** matching how agents use context:
 
-| Tier | Purpose | Backing | Access | Analogy |
-|------|---------|---------|--------|---------|
-| **STM** | Working memory (current session) | In-memory key-value store | ~us | L1 cache |
-| **LTM** | Persistent knowledge | SQLite + FTS5 + vectors | ~ms | Main memory |
-| **Episodic** | Execution history (for reflection) | Append-only log | ~ms | Disk archive |
+| Tier | Purpose | Access | Analogy |
+|------|---------|--------|---------|
+| **STM** | Working memory (current session) | ~us | L1 cache |
+| **LTM** | Persistent knowledge | ~ms | Main memory |
+| **Episodic** | Execution history (for reflection) | ~ms | Disk archive |
 
 Memory access is through first-class AIS instructions: `QMEM` (read), `UMEM` (write), `FENCE` (barrier). Tiers have semantic meaning, not just speed differences.
 
 ### 3. State
 
-**What the agent knows, wants, and can do.**
+**What the agent knows, wants, and can do.** See [aam.md](aam.md) for the full formal definition.
 
 | Model | What Is "State" | Limitation |
 |-------|----------------|------------|
@@ -207,37 +206,30 @@ AAM = (B, G, C)
   C: Capabilities -- Map<Name, Signature>   -- what it can do
 ```
 
-Every AIS instruction is a deterministic state transition: `δ(AAM, Instr) → AAM'`. State is typed, inspectable, and compiler-verifiable -- unlike BDI which remains conceptual, or actors where state is opaque.
+Every AIS instruction is a deterministic state transition: `d(AAM, Instr) -> AAM'`. State is typed, inspectable, and compiler-verifiable.
 
 ### 4. Optimization
 
-**Making workflows faster and cheaper.**
+**Making workflows faster and cheaper.** See [optimization passes](../optimization/passes.md) for the current pass inventory.
 
-| Model | Optimization Approach | Key Passes |
-|-------|---------------------|------------|
-| LLVM/GCC | SSA-based pass pipeline | CSE, DCE, inlining, constant folding |
-| XLA/TVM/Triton | Graph-level ML optimization | Operator fusion, memory planning |
-| JIT (JVM, V8) | Profile-guided speculation | Hot path optimization |
+| Model | Optimization Approach |
+|-------|-----------------------|
+| LLVM/GCC | SSA-based pass pipeline (CSE, DCE, inlining, constant folding) |
+| XLA/TVM/Triton | Graph-level ML optimization (operator fusion, memory planning) |
+| JIT (JVM, V8) | Profile-guided speculation |
 
-A-PXM uses **MLIR** as its compiler infrastructure:
-
-| Pass | What It Does | Impact |
-|------|-------------|--------|
-| **FuseAskOps** | Merges producer-consumer ASK chains into one API call | Fewer API calls, lower cost |
-| **CSE** | Eliminates duplicate LLM calls with identical inputs | Saves $ and latency |
-| **DCE** | Removes operations whose outputs are never consumed | Leaner graphs |
-| **Canonicalization** | Normalizes graph patterns | Enables further passes |
+A-PXM uses **MLIR** as its compiler infrastructure. The current pass pipeline is documented in [optimization/passes.md](../optimization/passes.md).
 
 **Why this matters more than traditional compilation:** In traditional compilers, optimizing away one instruction saves nanoseconds. In A-PXM, optimizing away one LLM call saves **seconds and dollars**. The economic return on agent-level optimization is orders of magnitude higher.
 
 ### 5. Scheduling
 
-**When and where operations execute.**
+**When and where operations execute.** See [scheduling.md](scheduling.md) for the full comparative analysis.
 
 | Model | How Execution Order Is Determined | Parallelism Discovery |
 |-------|----------------------------------|----------------------|
 | Von Neumann | Program counter (sequential) | None |
-| Dataflow (Manchester) | Operations fire when all tokens arrive | Automatic from graph |
+| Dataflow | Operations fire when all tokens arrive | Automatic from graph |
 | Task-Based (Cilk, Tokio) | Work-stealing over task DAGs | Explicit via spawn/async |
 | Petri Nets | Transitions fire when input places have tokens | Automatic from net |
 
@@ -248,31 +240,31 @@ A-PXM's scheduler is a **token-counting dataflow machine**:
 3. Counter reaches zero -> operation fires
 4. **O(1) readiness detection** -- no graph traversal
 
-The DAG structure IS the scheduling specification. No `async`, no `await`, no `Promise.all`. The scheduler also provides work stealing, priority-based dispatch, and per-session lane guards.
+The DAG structure IS the scheduling specification. No `async`, no `await`, no `Promise.all`.
 
 ---
 
 ## Summary
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│                        A-PXM Stack                               │
-├──────────────────────────────────────────────────────────────────┤
-│  COMPUTE        AIS operations (ASK, THINK, REASON, INV, ...)   │
-│                 Typed nodes in a dataflow graph                   │
-│                                                                   │
-│  MEMORY         Three-tier hierarchy (STM / LTM / Episodic)     │
-│                 First-class QMEM/UMEM/FENCE instructions         │
-│                                                                   │
-│  STATE          AAM = (Beliefs, Goals, Capabilities)             │
-│                 Typed, inspectable, compiler-verifiable           │
-│                                                                   │
-│  OPTIMIZATION   MLIR-based pass pipeline                         │
-│                 FuseAskOps, CSE, DCE, Canonicalization           │
-│                                                                   │
-│  SCHEDULING     Token-counting dataflow, O(1) readiness          │
-│                 Dependency-driven execution                       │
-└──────────────────────────────────────────────────────────────────┘
++------------------------------------------------------------------+
+|                        A-PXM Stack                                |
++------------------------------------------------------------------+
+|  COMPUTE        AIS operations (ASK, THINK, REASON, INV, ...)    |
+|                 Typed nodes in a dataflow graph                    |
+|                                                                    |
+|  MEMORY         Three-tier hierarchy (STM / LTM / Episodic)      |
+|                 First-class QMEM/UMEM/FENCE instructions          |
+|                                                                    |
+|  STATE          AAM = (Beliefs, Goals, Capabilities)              |
+|                 Typed, inspectable, compiler-verifiable            |
+|                                                                    |
+|  OPTIMIZATION   MLIR-based pass pipeline                          |
+|                 See optimization/passes.md                         |
+|                                                                    |
+|  SCHEDULING     Token-counting dataflow, O(1) readiness           |
+|                 Dependency-driven execution                        |
++------------------------------------------------------------------+
 ```
 
 Each concern is isolated, typed, and independently evolvable. This separation is what makes agent workflows **visible** to tooling -- enabling the compiler to optimize, the runtime to schedule, the developer to debug, and the organization to audit.
@@ -282,12 +274,13 @@ Each concern is isolated, typed, and independently evolvable. This separation is
 ## Further Reading
 
 - [AAM: Agent Abstract Machine](aam.md) -- formal state model
+- [Agent Instruction Set](ais.md) -- the typed operation taxonomy
 - [Compute in PXMs](compute.md) -- deep dive on compute separation
 - [Memory in PXMs](memory.md) -- deep dive on memory separation
 - [Scheduling in PXMs](scheduling.md) -- deep dive on scheduling separation
-- [Agent Instruction Set](ais.md) -- the typed operation taxonomy
-- [Hierarchical AAM](../implementation/runtime/hierarchical-aam.md) -- scoped state for multi-agent systems (TODO)
-- [History: From Von Neumann to Agents](history.md) -- how computing history repeats at the agentic scale
+- [History: From Von Neumann to Agents](history.md) -- how computing history repeats
+- [Hierarchical AAM](../design/hierarchical-aam.md) -- scoped state for multi-agent systems
+- [Optimization Passes](../optimization/passes.md) -- compiler pass inventory
 
 ---
 
