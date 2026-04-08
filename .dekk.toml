@@ -49,6 +49,7 @@ execute = { run = "apxm execute", description = "Compile and execute a graph", s
 run = { run = "apxm run", description = "Run a pre-compiled .apxmobj artifact", skill = true, group = "Compilation" }
 decompile = { run = "apxm decompile", description = "Reverse-map artifact back to graph JSON", group = "Compilation" }
 
+gui = { run = "apxm gui", description = "Launch the web-based GUI dashboard", skill = true, group = "Authoring" }
 view = { run = "python tools/scripts/view.py", description = "Open interactive graph visualizer", skill = true, group = "Authoring" }
 validate = { run = "apxm validate", description = "Validate graph against AIS contract", skill = true, group = "Authoring" }
 analyze = { run = "apxm analyze", description = "Analyze parallelism and critical path", group = "Authoring" }
@@ -123,12 +124,11 @@ run = "cargo build -p apxm-server --release"
 default = true
 
 [[install.components]]
-name = "graph-viewer"
-label = "Graph Visualizer"
-description = "Interactive web-based DAG visualizer (requires Node.js)"
-run = "cd tools/graph-viewer && npm install && npm run build"
+name = "gui"
+label = "GUI Dashboard"
+description = "Interactive web-based dashboard for graph visualization, session replay, and live execution monitoring"
+run = "cargo build -p apxm-gui --release"
 default = false
-requires = ["npm"]
 
 [[install.components]]
 name = "vllm"

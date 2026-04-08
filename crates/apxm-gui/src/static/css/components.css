@@ -1,0 +1,1014 @@
+/* ============================================================
+   APXM Dashboard — Component Styles
+   Extends style.css with live execution, Gantt chart,
+   thinking viewer, and workspace viewer components.
+   ============================================================ */
+
+/* --- Shared Variables (extend base) --- */
+
+:root {
+  --accent-orange: #f0883e;
+  --accent-teal: #39d2c0;
+}
+
+/* ============================================================
+   1. Live Execution View
+   ============================================================ */
+
+.live-container {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  height: 100%;
+  gap: 1px;
+  background: var(--border);
+}
+
+.live-graph {
+  grid-row: 1;
+  grid-column: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  position: relative;
+}
+
+.live-output {
+  grid-row: 1;
+  grid-column: 2;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  overflow-y: auto;
+  padding: 12px 16px;
+}
+
+.live-feed {
+  grid-row: 2;
+  grid-column: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  overflow-y: auto;
+  padding: 8px 12px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.live-metrics {
+  grid-row: 2;
+  grid-column: 2;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  overflow-y: auto;
+  padding: 12px 16px;
+}
+
+/* --- Live Indicator --- */
+
+.live-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.live-indicator::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.live-indicator.active {
+  color: var(--accent-green);
+}
+
+.live-indicator.active::before {
+  background: var(--accent-green);
+  animation: pulse-live 1.5s ease-in-out infinite;
+}
+
+.live-indicator.inactive {
+  color: var(--text-secondary);
+}
+
+@keyframes pulse-live {
+  0%, 100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 rgba(63, 185, 80, 0.4);
+  }
+  50% {
+    opacity: 0.6;
+    box-shadow: 0 0 0 4px rgba(63, 185, 80, 0);
+  }
+}
+
+/* --- Node Execution States --- */
+
+.node-running {
+  animation: pulse-running 1.5s ease-in-out infinite;
+}
+
+.node-completed {
+  border: 2px solid var(--accent-green) !important;
+  box-shadow: 0 0 8px rgba(63, 185, 80, 0.25);
+}
+
+.node-failed {
+  border: 2px solid var(--accent-red) !important;
+  box-shadow: 0 0 8px rgba(248, 81, 73, 0.25);
+}
+
+.node-pending {
+  border: 2px dashed var(--text-secondary) !important;
+  opacity: 0.5;
+}
+
+/* SVG-specific node states */
+.node-rect.node-running {
+  stroke-width: 2.5;
+  animation: pulse-running-svg 1.5s ease-in-out infinite;
+}
+
+.node-rect.node-completed {
+  stroke: var(--accent-green);
+  stroke-width: 2;
+  filter: drop-shadow(0 0 4px rgba(63, 185, 80, 0.3));
+}
+
+.node-rect.node-failed {
+  stroke: var(--accent-red);
+  stroke-width: 2;
+  filter: drop-shadow(0 0 4px rgba(248, 81, 73, 0.3));
+}
+
+.node-rect.node-pending {
+  stroke: var(--text-secondary);
+  stroke-width: 1.5;
+  stroke-dasharray: 6 3;
+  opacity: 0.5;
+}
+
+@keyframes pulse-running-svg {
+  0%, 100% {
+    stroke: var(--accent-blue);
+    filter: drop-shadow(0 0 3px rgba(88, 166, 255, 0.3));
+  }
+  50% {
+    stroke: #ffffff;
+    filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.2));
+  }
+}
+
+/* --- Token Stream --- */
+
+.token-stream {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-primary);
+  background: var(--bg);
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 12px 16px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.token-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1.1em;
+  background: var(--text-primary);
+  vertical-align: text-bottom;
+  margin-left: 1px;
+  animation: blink-cursor 1s step-end infinite;
+}
+
+/* --- Live Feed Events --- */
+
+.live-feed-item {
+  display: flex;
+  gap: 8px;
+  padding: 3px 0;
+  border-bottom: 1px solid rgba(48, 54, 61, 0.4);
+  animation: slide-in 0.2s ease-out;
+}
+
+.live-feed-item:last-child {
+  border-bottom: none;
+}
+
+.live-feed-time {
+  color: var(--text-secondary);
+  font-size: 10px;
+  flex-shrink: 0;
+  min-width: 60px;
+}
+
+.live-feed-msg {
+  color: var(--text-primary);
+  font-size: 11px;
+  word-break: break-word;
+}
+
+/* --- Live Metrics Counters --- */
+
+.live-metric-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.live-metric-row:last-child {
+  border-bottom: none;
+}
+
+.live-metric-label {
+  color: var(--text-secondary);
+}
+
+.live-metric-value {
+  color: var(--text-primary);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.live-metric-value.updating {
+  animation: fade-in 0.3s ease-out;
+}
+
+/* ============================================================
+   2. Gantt Chart
+   ============================================================ */
+
+.gantt-container {
+  width: 100%;
+  height: 100%;
+  overflow-x: auto;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: row;
+  position: relative;
+  background: var(--bg);
+}
+
+.gantt-labels {
+  width: 200px;
+  min-width: 200px;
+  flex-shrink: 0;
+  position: sticky;
+  left: 0;
+  z-index: 5;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+}
+
+.gantt-label {
+  height: 32px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  font-size: 11px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-bottom: 1px solid rgba(48, 54, 61, 0.4);
+}
+
+.gantt-label:nth-child(even) {
+  background: rgba(255, 255, 255, 0.01);
+}
+
+.gantt-chart {
+  flex: 1;
+  position: relative;
+  min-width: 0;
+}
+
+.gantt-row {
+  height: 32px;
+  position: relative;
+  border-bottom: 1px solid rgba(48, 54, 61, 0.4);
+}
+
+.gantt-row:nth-child(even) {
+  background: rgba(255, 255, 255, 0.01);
+}
+
+.gantt-bar {
+  position: absolute;
+  top: 4px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: filter var(--transition);
+}
+
+.gantt-bar:hover {
+  filter: brightness(1.2);
+  z-index: 2;
+}
+
+/* Category fills for gantt bars */
+.gantt-bar.cat-reasoning  { background: rgba(88, 166, 255, 0.35); border: 1px solid var(--accent-blue); }
+.gantt-bar.cat-tool       { background: rgba(63, 185, 80, 0.35);  border: 1px solid var(--accent-green); }
+.gantt-bar.cat-control    { background: rgba(210, 153, 34, 0.35); border: 1px solid var(--accent-yellow); }
+.gantt-bar.cat-io         { background: rgba(248, 81, 73, 0.35);  border: 1px solid var(--accent-red); }
+.gantt-bar.cat-agent      { background: rgba(188, 140, 255, 0.35); border: 1px solid var(--accent-purple); }
+.gantt-bar.cat-data       { background: rgba(139, 148, 158, 0.25); border: 1px solid var(--text-secondary); }
+
+.gantt-bar.failed {
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(248, 81, 73, 0.3),
+    rgba(248, 81, 73, 0.3) 4px,
+    rgba(248, 81, 73, 0.1) 4px,
+    rgba(248, 81, 73, 0.1) 8px
+  );
+  border: 1px solid var(--accent-red);
+}
+
+.gantt-bar.running {
+  animation: grow-bar 0.5s ease-out;
+  border-right-width: 2px;
+  border-right-style: solid;
+}
+
+/* --- Gantt Axis & Grid --- */
+
+.gantt-axis {
+  position: sticky;
+  bottom: 0;
+  height: 28px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  font-size: 10px;
+  color: var(--text-secondary);
+  z-index: 3;
+}
+
+.gantt-axis-tick {
+  position: absolute;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.gantt-axis-tick::before {
+  content: '';
+  display: block;
+  width: 1px;
+  height: 6px;
+  background: var(--text-secondary);
+  margin-bottom: 2px;
+}
+
+.gantt-grid {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.03);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* --- Gantt Parallelism Overlay --- */
+
+.gantt-parallelism {
+  position: relative;
+  height: 48px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.gantt-parallelism-fill {
+  position: absolute;
+  bottom: 0;
+  background: rgba(88, 166, 255, 0.15);
+  border-top: 1px solid rgba(88, 166, 255, 0.3);
+}
+
+/* --- Gantt Now Line --- */
+
+.gantt-now-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent-red);
+  z-index: 4;
+  pointer-events: none;
+}
+
+.gantt-now-line::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -1px;
+  width: 4px;
+  height: 100%;
+  background: repeating-linear-gradient(
+    to bottom,
+    var(--accent-red) 0,
+    var(--accent-red) 4px,
+    transparent 4px,
+    transparent 8px
+  );
+  animation: fade-in 0.3s ease-out;
+}
+
+.gantt-now-line::after {
+  content: 'NOW';
+  position: absolute;
+  top: -18px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--accent-red);
+  letter-spacing: 0.5px;
+}
+
+/* --- Gantt Tooltip --- */
+
+.gantt-tooltip {
+  position: absolute;
+  padding: 8px 12px;
+  background: var(--surface-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 11px;
+  color: var(--text-primary);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+  z-index: 100;
+  white-space: nowrap;
+  max-width: 320px;
+}
+
+.gantt-tooltip-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.gantt-tooltip-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 10px;
+  color: var(--text-secondary);
+  padding: 1px 0;
+}
+
+.gantt-tooltip-row span:last-child {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+/* ============================================================
+   3. Thinking / Reasoning View
+   ============================================================ */
+
+.thinking-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 12px 16px;
+  overflow-y: auto;
+  height: 100%;
+  background: var(--bg);
+}
+
+/* --- Thinking Card --- */
+
+.thinking-card {
+  background: var(--surface-elevated);
+  border-left: 3px solid var(--text-secondary);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  padding: 12px 16px;
+  margin-bottom: 8px;
+  transition: max-height 0.3s ease, background var(--transition);
+}
+
+.thinking-card:hover {
+  background: #1f2738;
+}
+
+.thinking-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  gap: 8px;
+  user-select: none;
+}
+
+.thinking-header::after {
+  content: '';
+  display: inline-block;
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid var(--text-secondary);
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
+}
+
+.thinking-card.collapsed .thinking-header::after {
+  transform: rotate(-90deg);
+}
+
+.thinking-body {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  margin-top: 8px;
+  overflow: hidden;
+  transition: max-height 0.3s ease, opacity 0.2s ease;
+}
+
+.thinking-card.collapsed .thinking-body {
+  max-height: 0;
+  opacity: 0;
+  margin-top: 0;
+}
+
+.thinking-summary {
+  font-weight: 600;
+  color: var(--text-primary);
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.thinking-meta {
+  font-size: 10px;
+  color: var(--text-secondary);
+  display: flex;
+  gap: 12px;
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(48, 54, 61, 0.5);
+}
+
+.thinking-meta span {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.thinking-keyword {
+  background: rgba(88, 166, 255, 0.15);
+  border-radius: 2px;
+  padding: 0 3px;
+}
+
+/* --- Tool Card --- */
+
+.tool-card {
+  background: rgba(63, 185, 80, 0.05);
+  border-left: 3px solid var(--accent-green);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  padding: 12px 16px;
+  margin-bottom: 8px;
+}
+
+.tool-card .tool-name {
+  font-weight: 700;
+  color: var(--accent-green);
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.tool-card .tool-args {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-primary);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin-bottom: 6px;
+}
+
+.tool-card .tool-result {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  overflow: hidden;
+  transition: max-height 0.3s ease;
+}
+
+.tool-card .tool-result.collapsed {
+  max-height: 0;
+}
+
+.tool-card .tool-result-toggle {
+  font-size: 10px;
+  color: var(--accent-green);
+  cursor: pointer;
+  margin-top: 4px;
+  user-select: none;
+}
+
+.tool-card .tool-result-toggle:hover {
+  text-decoration: underline;
+}
+
+/* --- Output Card --- */
+
+.output-card {
+  background: rgba(88, 166, 255, 0.05);
+  border-left: 3px solid var(--accent-blue);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  padding: 12px 16px;
+  margin-bottom: 8px;
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* --- Thinking Timeline --- */
+
+.thinking-timeline {
+  display: flex;
+  flex-direction: row;
+  height: 40px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  margin-bottom: 12px;
+}
+
+.thinking-timeline-segment {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.7);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  overflow: hidden;
+  white-space: nowrap;
+  transition: flex-basis 0.3s ease;
+}
+
+.thinking-timeline-segment.seg-think {
+  background: var(--text-secondary);
+}
+
+.thinking-timeline-segment.seg-tool {
+  background: var(--accent-green);
+}
+
+.thinking-timeline-segment.seg-output {
+  background: var(--accent-blue);
+}
+
+/* ============================================================
+   4. Workspace Viewer
+   ============================================================ */
+
+.workspace-container {
+  display: grid;
+  grid-template-columns: 250px 1fr;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* --- File Tree Sidebar --- */
+
+.workspace-tree {
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  padding: 8px 0;
+}
+
+.file-tree {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.file-tree .file-tree {
+  padding-left: 16px;
+}
+
+.file-item {
+  display: flex;
+  align-items: center;
+  padding: 4px 8px 4px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-primary);
+  transition: background var(--transition);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-item:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.file-item.active {
+  background: rgba(88, 166, 255, 0.15);
+  border-left: 2px solid var(--accent-blue);
+  padding-left: 10px;
+}
+
+.file-item .file-icon {
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 6px;
+  flex-shrink: 0;
+  font-size: 12px;
+}
+
+.file-item .file-size {
+  margin-left: auto;
+  padding-left: 8px;
+  font-size: 10px;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.dir-item {
+  display: flex;
+  align-items: center;
+  padding: 4px 8px 4px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  transition: background var(--transition);
+  user-select: none;
+}
+
+.dir-item:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.dir-item .dir-arrow {
+  display: inline-block;
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 5px solid var(--text-secondary);
+  margin-right: 6px;
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
+}
+
+.dir-item.expanded .dir-arrow {
+  transform: rotate(90deg);
+}
+
+/* --- File Viewer --- */
+
+.workspace-viewer {
+  background: var(--bg);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.file-content {
+  flex: 1;
+  padding: 16px;
+  overflow: auto;
+}
+
+.file-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.file-header-name {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.file-header-size {
+  color: var(--text-secondary);
+  font-size: 11px;
+  margin-left: 12px;
+}
+
+.file-header-actions {
+  display: flex;
+  gap: 6px;
+}
+
+/* --- Code Display with Line Numbers --- */
+
+.code-display {
+  display: flex;
+  flex-direction: row;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.line-numbers {
+  width: 40px;
+  min-width: 40px;
+  text-align: right;
+  color: var(--text-secondary);
+  border-right: 1px solid var(--border);
+  padding: 0 8px 0 0;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.line-numbers span {
+  display: block;
+}
+
+.code-content {
+  flex: 1;
+  padding-left: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-primary);
+  overflow-x: auto;
+}
+
+/* --- Prompt / Response Blocks --- */
+
+.prompt-block {
+  border-left: 3px solid var(--accent-blue);
+  background: rgba(88, 166, 255, 0.05);
+  padding: 12px;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  margin-bottom: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.response-block {
+  border-left: 3px solid var(--accent-green);
+  background: rgba(63, 185, 80, 0.05);
+  padding: 12px;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  margin-bottom: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* --- JSON Syntax Highlighting --- */
+
+.json-key     { color: #79c0ff; }
+.json-string  { color: #a5d6ff; }
+.json-number  { color: #d29922; }
+.json-boolean { color: #bc8cff; }
+.json-null    { color: #8b949e; }
+.json-bracket { color: #e6edf3; }
+
+/* --- TOML Syntax Highlighting --- */
+
+.toml-section { color: #58a6ff; font-weight: 600; }
+.toml-key     { color: #e6edf3; }
+.toml-string  { color: #a5d6ff; }
+.toml-comment { color: #8b949e; font-style: italic; }
+.toml-bracket { color: #bc8cff; }
+
+/* --- Markdown Rendering --- */
+
+.md-h1,
+.md-h2,
+.md-h3 {
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 4px;
+  margin-bottom: 8px;
+}
+
+.md-h1 { font-size: 18px; font-weight: 700; }
+.md-h2 { font-size: 15px; font-weight: 600; }
+.md-h3 { font-size: 13px; font-weight: 600; }
+
+.md-code {
+  background: var(--surface);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.md-code-block {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.6;
+  overflow-x: auto;
+  white-space: pre;
+  margin: 8px 0;
+}
+
+.md-bold {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.md-list {
+  padding-left: 20px;
+  margin: 4px 0;
+}
+
+.md-list li {
+  margin-bottom: 2px;
+}
+
+/* ============================================================
+   5. Shared Animations
+   ============================================================ */
+
+@keyframes pulse-running {
+  0%, 100% {
+    border-color: var(--accent-blue);
+    box-shadow: 0 0 4px rgba(88, 166, 255, 0.3);
+  }
+  50% {
+    border-color: #ffffff;
+    box-shadow: 0 0 8px rgba(255, 255, 255, 0.15);
+  }
+}
+
+@keyframes grow-bar {
+  from {
+    transform: scaleX(0);
+    transform-origin: left center;
+  }
+  to {
+    transform: scaleX(1);
+    transform-origin: left center;
+  }
+}
+
+@keyframes blink-cursor {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0; }
+}
+
+@keyframes slide-in {
+  from {
+    transform: translateX(16px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
