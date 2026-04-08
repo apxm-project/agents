@@ -98,17 +98,17 @@ def apxm_showcase(g: GraphRecorder):
     )
 
     # Phase 4: Synthesis with context
-    # Demonstrates: complex data dependencies, context from multiple sources
+    # Demonstrates: complex data dependencies, memory context from AAM
     synthesis = g.think(
         "synthesis",
-        "Synthesize these analyses into executive summary:\n\n"
+        "Synthesize these analyses into executive summary (use any relevant historical context from memory):\n\n"
         "ARCHITECTURE:\n{arch}\n\n"
         "SECURITY:\n{security}\n\n"
         "PERFORMANCE:\n{performance}\n\n"
-        "HISTORICAL CONTEXT:\n{recalled}\n\n"
         "Create a cohesive 500-word executive summary highlighting key insights, "
         "trade-offs, and recommendations."
     )
+    recalled >> synthesis  # Control dependency to ensure memory is queried first
     store_arch >> synthesis  # Control dependency for memory
 
     # Phase 5: Agent implementation

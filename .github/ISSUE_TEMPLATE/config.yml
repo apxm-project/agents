@@ -1,8 +1,0 @@
-blank_issues_enabled: true
-contact_links:
-  - name: 💬 Questions and Discussions
-    url: https://github.com/miguelcsx/apxm/discussions
-    about: For general questions, ideas, or discussions about the project
-  - name: 📚 Documentation
-    url: https://github.com/miguelcsx/apxm#readme
-    about: Check the project documentation
