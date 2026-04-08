@@ -195,10 +195,12 @@ impl ContextAssembler {
         let memory = self.memory.as_ref()?;
 
         // Query episodic memory for recent entries from this execution
-        let rt = tokio::runtime::Handle::try_current().ok()?;
-        let entries = rt
-            .block_on(memory.query_episodes(&self.execution_id))
-            .ok()?;
+        // Use block_in_place to avoid nested runtime panic when called from async context
+        let handle = tokio::runtime::Handle::try_current().ok()?;
+        let entries = tokio::task::block_in_place(|| {
+            handle.block_on(memory.query_episodes(&self.execution_id))
+        })
+        .ok()?;
 
         if entries.is_empty() {
             return None;
