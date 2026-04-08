@@ -39,8 +39,9 @@ lib = ["{project}/target/release/lib", "{environment}/lib"]
 [commands]
 build = { run = "cargo build -p apxm-cli --features driver,metrics --release", description = "Build APXM", skill = true, group = "Build & Test" }
 build-dialect = { run = "cmake --build $(find target/release/build -name 'Makefile' -path '*/apxm-compiler*/out/build/Makefile' | head -1 | xargs dirname) --target AISIRIncGen && cmake --build $(find target/release/build -name 'Makefile' -path '*/apxm-compiler*/out/build/Makefile' | head -1 | xargs dirname) && cargo build -p apxm-cli --features driver,metrics --release", description = "Rebuild MLIR dialect (TableGen + C++ + Rust) after editing .td or .cpp files", skill = true, group = "Build & Test" }
-test = { run = "cargo test --workspace --exclude apxm-compiler", description = "Run tests", skill = true, group = "Build & Test" }
+test = { run = "cargo test --workspace --exclude apxm-compiler --exclude apxm-cli", description = "Run tests", skill = true, group = "Build & Test" }
 test-all = { run = "cargo test --workspace", description = "All tests (requires MLIR)", group = "Build & Test" }
+test-cli = { run = "cargo test -p apxm-cli --features driver,metrics --release", description = "Run CLI tests with driver (preserves MLIR-linked binary)", group = "Build & Test" }
 clean = { run = "cargo clean", description = "Clean", group = "Build & Test" }
 
 compile = { run = "apxm compile", description = "Compile graph to .apxmobj artifact", skill = true, group = "Compilation" }
