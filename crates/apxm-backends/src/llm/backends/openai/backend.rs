@@ -884,4 +884,153 @@ mod tests {
         assert_eq!(body["tool_choice"]["type"], "function");
         assert_eq!(body["tool_choice"]["function"]["name"], "bash");
     }
+
+    #[test]
+    fn test_build_request_body_with_vllm_priority() {
+        use crate::llm::backends::vllm::ApxmGraphHints;
+
+        let backend = OpenAIBackend {
+            api_key: "test".to_string(),
+            model: "gpt-4".to_string(),
+            base_url: DEFAULT_BASE_URL.to_string(),
+            extra_headers: vec![],
+            client: reqwest::Client::new(),
+        };
+
+        // Test critical_path priority
+        let hints = ApxmGraphHints::critical_path(
+            "graph-123",
+            "exec-456",
+            5,
+            "reason-node",
+            vec![6, 7],
+            30_000,
+        );
+        let request = LLMRequest::new("Analyze").with_apxm_hints(hints);
+        let body = backend.build_request_body(&request);
+
+        assert_eq!(body["priority"], 0, "critical_path should map to priority 0");
+
+        // Test normal priority
+        let mut hints = ApxmGraphHints::default();
+        hints.priority_class = Some("normal".to_string());
+        let request = LLMRequest::new("Analyze").with_apxm_hints(hints);
+        let body = backend.build_request_body(&request);
+
+        assert_eq!(body["priority"], 5, "normal should map to priority 5");
+
+        // Test speculative priority
+        let mut hints = ApxmGraphHints::default();
+        hints.priority_class = Some("speculative".to_string());
+        let request = LLMRequest::new("Analyze").with_apxm_hints(hints);
+        let body = backend.build_request_body(&request);
+
+        assert_eq!(body["priority"], 10, "speculative should map to priority 10");
+    }
+
+    #[test]
+    fn test_build_request_body_with_vllm_metadata_in_extra_body() {
+        use crate::llm::backends::vllm::ApxmGraphHints;
+
+        let backend = OpenAIBackend {
+            api_key: "test".to_string(),
+            model: "meta-llama/Llama-3.1-8B-Instruct".to_string(),
+            base_url: DEFAULT_BASE_URL.to_string(),
+            extra_headers: vec![],
+            client: reqwest::Client::new(),
+        };
+
+        // Create APXM hints
+        let hints = ApxmGraphHints::critical_path(
+            "dag-abc-123",
+            "exec-xyz-789",
+            12,
+            "planner",
+            vec![13, 14],
+            30_000,
+        );
+
+        // Serialize hints to JSON and add to extra_body (like vLLM backend does)
+        let hints_json = serde_json::to_value(&hints).unwrap();
+        let extra_body = json!({
+            "apxm": hints_json
+        });
+
+        let request = LLMRequest::new("Plan the architecture")
+            .with_apxm_hints(hints.clone())
+            .with_extra_body(extra_body);
+
+        let body = backend.build_request_body(&request);
+
+        // Verify priority field is set at top level
+        assert_eq!(body["priority"], 0);
+
+        // Verify extra_body.apxm contains full metadata
+        assert!(body.get("apxm").is_some(), "Should have apxm field in body");
+        let apxm_meta = &body["apxm"];
+
+        assert_eq!(apxm_meta["schema_version"], 1);
+        assert_eq!(apxm_meta["graph_id"], "dag-abc-123");
+        assert_eq!(apxm_meta["execution_id"], "exec-xyz-789");
+        assert_eq!(apxm_meta["node_id"], 12);
+        assert_eq!(apxm_meta["node_name"], "planner");
+        assert_eq!(apxm_meta["priority_class"], "critical_path");
+        assert_eq!(apxm_meta["downstream_nodes"], json!([13, 14]));
+        assert_eq!(apxm_meta["pin_policy"]["mode"], "prefix");
+        assert_eq!(apxm_meta["pin_policy"]["ttl_ms"], 30_000);
+    }
+
+    #[test]
+    fn test_vllm_request_structure_matches_spec() {
+        use crate::llm::backends::vllm::ApxmGraphHints;
+
+        let backend = OpenAIBackend {
+            api_key: "test".to_string(),
+            model: "meta-llama/Llama-3.1-8B-Instruct".to_string(),
+            base_url: DEFAULT_BASE_URL.to_string(),
+            extra_headers: vec![],
+            client: reqwest::Client::new(),
+        };
+
+        let hints = ApxmGraphHints::critical_path(
+            "graph-id",
+            "exec-id",
+            12,
+            "node-name",
+            vec![],
+            30_000,
+        );
+
+        let hints_json = serde_json::to_value(&hints).unwrap();
+        let extra_body = json!({"apxm": hints_json});
+
+        let request = LLMRequest::new("Hello")
+            .with_apxm_hints(hints)
+            .with_extra_body(extra_body);
+
+        let body = backend.build_request_body(&request);
+
+        // Verify the structure matches the task specification:
+        // {
+        //   "model": "...",
+        //   "messages": [...],
+        //   "priority": 2,
+        //   "apxm": {
+        //     "schema_version": 1,
+        //     "graph_id": "...",
+        //     "node_id": 12,
+        //     "priority_class": "critical_path"
+        //   }
+        // }
+
+        assert!(body.get("model").is_some());
+        assert!(body.get("messages").is_some());
+        assert_eq!(body["priority"], 0); // critical_path = 0
+
+        let apxm = &body["apxm"];
+        assert_eq!(apxm["schema_version"], 1);
+        assert_eq!(apxm["graph_id"], "graph-id");
+        assert_eq!(apxm["node_id"], 12);
+        assert_eq!(apxm["priority_class"], "critical_path");
+    }
 }

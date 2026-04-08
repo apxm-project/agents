@@ -396,4 +396,113 @@ mod tests {
         assert!(json.contains("test-graph"));
         assert!(json.contains("registered_nodes"));
     }
+
+    #[tokio::test]
+    async fn test_inject_hints_into_extra_body() {
+        use crate::llm::backends::vllm::ApxmGraphHints;
+        use crate::llm::backends::LLMRequest;
+
+        let backend = GraphAwareVllmBackend::new(
+            "test-key",
+            Some(serde_json::json!({"base_url": "http://localhost:8000"})),
+        )
+        .await
+        .unwrap();
+
+        let hints = ApxmGraphHints::critical_path(
+            "graph-test",
+            "exec-test",
+            42,
+            "test-node",
+            vec![43, 44],
+            60_000,
+        );
+
+        let request = LLMRequest::new("Test prompt").with_apxm_hints(hints.clone());
+
+        let injected = backend.inject_hints(request);
+
+        // Verify extra_body has apxm field
+        assert!(injected.extra_body.is_some());
+        let extra = injected.extra_body.unwrap();
+        assert!(extra.get("apxm").is_some());
+
+        // Verify the serialized hints
+        let apxm = &extra["apxm"];
+        assert_eq!(apxm["schema_version"], 1);
+        assert_eq!(apxm["graph_id"], "graph-test");
+        assert_eq!(apxm["execution_id"], "exec-test");
+        assert_eq!(apxm["node_id"], 42);
+        assert_eq!(apxm["node_name"], "test-node");
+        assert_eq!(apxm["priority_class"], "critical_path");
+        assert_eq!(apxm["downstream_nodes"], serde_json::json!([43, 44]));
+    }
+
+    #[tokio::test]
+    async fn test_inject_hints_preserves_existing_extra_body() {
+        use crate::llm::backends::vllm::ApxmGraphHints;
+        use crate::llm::backends::LLMRequest;
+
+        let backend = GraphAwareVllmBackend::new(
+            "test-key",
+            Some(serde_json::json!({"base_url": "http://localhost:8000"})),
+        )
+        .await
+        .unwrap();
+
+        let hints = ApxmGraphHints::parallel("graph-1", "exec-1", 10, "parallel-node");
+
+        // Create request with existing extra_body
+        let existing_extra = serde_json::json!({
+            "custom_field": "custom_value",
+            "another_field": 123
+        });
+
+        let request = LLMRequest::new("Test")
+            .with_apxm_hints(hints)
+            .with_extra_body(existing_extra);
+
+        let injected = backend.inject_hints(request);
+
+        let extra = injected.extra_body.unwrap();
+
+        // Verify both existing fields and new apxm field are present
+        assert_eq!(extra["custom_field"], "custom_value");
+        assert_eq!(extra["another_field"], 123);
+        assert!(extra.get("apxm").is_some());
+        assert_eq!(extra["apxm"]["node_id"], 10);
+    }
+
+    #[tokio::test]
+    async fn test_inject_hints_skips_if_already_present() {
+        use crate::llm::backends::vllm::ApxmGraphHints;
+        use crate::llm::backends::LLMRequest;
+
+        let backend = GraphAwareVllmBackend::new(
+            "test-key",
+            Some(serde_json::json!({"base_url": "http://localhost:8000"})),
+        )
+        .await
+        .unwrap();
+
+        let hints = ApxmGraphHints::default();
+
+        // Create request with apxm already in extra_body
+        let existing_extra = serde_json::json!({
+            "apxm": {
+                "already": "present"
+            }
+        });
+
+        let request = LLMRequest::new("Test")
+            .with_apxm_hints(hints)
+            .with_extra_body(existing_extra.clone());
+
+        let injected = backend.inject_hints(request);
+
+        let extra = injected.extra_body.unwrap();
+
+        // Verify original apxm is preserved (not overwritten)
+        assert_eq!(extra["apxm"]["already"], "present");
+    }
 }
