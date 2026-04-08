@@ -115,17 +115,19 @@ See [Backend Setup](backends.md) for backend configuration, enterprise gateways,
 Create `hello.py`:
 
 ```python
-from apxm.graph import GraphRecorder, compile
+from apxm import compile, GraphRecorder
 
 
-@compile
-def hello_world(g: GraphRecorder) -> dict:
-    greeting = g.ask(
-        "greeting",
-        "Generate a friendly greeting for someone learning about AI agents",
-    )
-    g.return_("output", source=greeting)
-    return g.to_graph().to_dict()
+@compile()
+def hello_world(g: GraphRecorder):
+    """Simple greeting workflow."""
+    greeting = g.ask("Generate a friendly greeting for someone learning about AI agents")
+    g.print("Greeting: {greeting}")
+    g.done(greeting)
+
+
+if __name__ == "__main__":
+    print(hello_world._graph.to_air())
 ```
 
 Emit the canonical `.air` IR:
@@ -170,19 +172,28 @@ Artifacts are portable, contain no source code, and can be distributed independe
 ### With parameters
 
 ```python
-from apxm.graph import GraphRecorder, compile
+from apxm import compile, GraphRecorder
 
 
-@compile
-def researcher(g: GraphRecorder, topic: str) -> dict:
-    findings = g.ask("findings", "Research this topic: {0}")
-    g.return_("output", source=findings)
-    return g.to_graph().to_dict()
+@compile()
+def researcher(g: GraphRecorder, topic: str):
+    """Research a topic."""
+    g.param("topic", "str")
+
+    findings = g.ask("Research this topic: {topic}")
+    summary = g.think("Summarize key insights: {findings}")
+
+    g.print("=== Research on {topic} ===\n{summary}")
+    g.done(summary)
+
+
+if __name__ == "__main__":
+    print(researcher._graph.to_air())
 ```
 
 ```bash
-PYTHONPATH=crates/apxm-frontend/python python3 researcher.py > researcher.json
-dekk apxm execute researcher.json -- "quantum computing"
+PYTHONPATH=crates/apxm-frontend/python python3 researcher.py > researcher.air
+dekk apxm execute researcher.air -- "quantum computing"
 ```
 
 ---
@@ -192,64 +203,108 @@ dekk apxm execute researcher.json -- "quantum computing"
 ### Multi-step reasoning
 
 ```python
-@compile
-def analyst(g: GraphRecorder, topic: str) -> dict:
-    concepts = g.ask("concepts", "Key concepts in {0}")
-    analysis = g.think("analysis", "Analyze in depth: {0}")
-    conclusion = g.reason("conclusion", "Synthesize: {0}")
+from apxm import compile, GraphRecorder
+
+
+@compile()
+def analyst(g: GraphRecorder, topic: str):
+    """Deep analysis workflow."""
+    g.param("topic", "str")
+
+    concepts = g.ask("Key concepts in {topic}")
+    analysis = g.think("Analyze in depth: {concepts}")
+    conclusion = g.reason("Synthesize findings: {analysis}")
+
     concepts >> analysis >> conclusion
-    g.return_("output", source=conclusion)
-    return g.to_graph().to_dict()
+
+    g.print("=== Analysis of {topic} ===\n{conclusion}")
+    g.done(conclusion)
 ```
 
 ### Parallel expert council
 
 ```python
-@compile
-def council(g: GraphRecorder, question: str) -> dict:
-    e1 = g.ask("expert_1", "Expert 1: {0}")
-    e2 = g.ask("expert_2", "Expert 2: {0}")
-    e3 = g.ask("expert_3", "Expert 3: {0}")
-    result = g.ask("result", "Synthesize: {0} {1} {2}")
-    e1 | result
-    e2 | result
-    e3 | result
-    g.return_("output", source=result)
-    return g.to_graph().to_dict()
+from apxm import compile, GraphRecorder
+
+
+@compile()
+def council(g: GraphRecorder, question: str):
+    """Multi-expert consensus."""
+    g.param("question", "str")
+
+    e1 = g.ask("Expert 1 perspective: {question}")
+    e2 = g.ask("Expert 2 perspective: {question}")
+    e3 = g.ask("Expert 3 perspective: {question}")
+
+    # All experts feed into synthesis
+    synthesis = g.think("Synthesize expert opinions: {e1}\n{e2}\n{e3}")
+    e1 | synthesis
+    e2 | synthesis
+    e3 | synthesis
+
+    g.print("=== Council Decision ===\n{synthesis}")
+    g.done(synthesis)
 ```
 
 ### Multi-agent collaboration
 
 ```python
-@compile
-def coordinator(g: GraphRecorder, topic: str) -> dict:
-    researcher = g.spawn_agent("researcher", profile="claude")
-    findings = g.communicate("findings", recipient=researcher, protocol="acp", message="{0}")
-    summary = g.ask("summary", "Summarize: {0}")
-    findings >> summary
-    g.return_("output", source=summary)
-    return g.to_graph().to_dict()
+from apxm import compile, GraphRecorder
+from apxm._generated.agents import claude
+
+
+@compile()
+def coordinator(g: GraphRecorder, task: str):
+    """Spawn and coordinate with external agent."""
+    g.param("task", "str")
+
+    # Spawn Claude agent
+    researcher = g.spawn("researcher", profile=claude)
+
+    # Delegate task to agent
+    researcher.ask("Research this topic: {task}")
+    findings = researcher.get_last_node()
+
+    # Process agent output
+    summary = g.think("Summarize these findings: {findings}")
+
+    g.print("=== Research Summary ===\n{summary}")
+    g.done(summary)
 ```
 
 ### Tool use
 
 ```python
-@compile
-def tool_agent(g: GraphRecorder) -> dict:
-    register = g.register_capability(
-        "register_search",
+from apxm import compile, GraphRecorder
+
+
+@compile()
+def tool_agent(g: GraphRecorder):
+    """Tool invocation workflow."""
+    # Register capability
+    search = g.register_capability(
         capability_name="search",
         description="Search capability for web queries",
-        parameters_schema={"type": "object", "properties": {"query": {"type": "string"}}},
+        parameters_schema={
+            "type": "object",
+            "properties": {"query": {"type": "string"}}
+        },
     )
-    topic = g.ask("topic", "What should we research?")
-    register >> topic
-    results = g.invoke("results", capability="search", params={"query": "{0}"})
+
+    # Decide what to search
+    topic = g.ask("What topic should we research?")
+    search >> topic
+
+    # Invoke tool
+    results = g.invoke(capability="search", params={"query": "{topic}"})
     topic | results
-    summary = g.ask("summary", "Summarize: {0}")
+
+    # Summarize results
+    summary = g.think("Summarize these search results: {results}")
     results | summary
-    g.return_("output", source=summary)
-    return g.to_graph().to_dict()
+
+    g.print("=== Search Results ===\n{summary}")
+    g.done(summary)
 ```
 
 ---
