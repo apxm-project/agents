@@ -76,6 +76,57 @@ impl From<&AISOperationType> for LlmMode {
 /// Can be overridden per-node via the `max_tool_iterations` attribute.
 const DEFAULT_MAX_TOOL_ITERATIONS: usize = 10;
 
+/// Token pipeline for streaming producer → consumer (Phase 4 research).
+///
+/// Enables overlapping producer completion with downstream prefill by
+/// streaming tokens as they're generated.
+#[derive(Debug)]
+pub struct TokenPipeline {
+    /// Producer node ID
+    pub producer_node_id: u64,
+    /// Consumer node ID
+    pub consumer_node_id: u64,
+    /// Accumulated tokens from producer
+    pub buffer: Vec<String>,
+    /// Whether consumer has been started
+    pub consumer_started: bool,
+    /// Minimum tokens before starting consumer
+    pub min_tokens_before_start: usize,
+}
+
+impl TokenPipeline {
+    /// Create a new token pipeline
+    pub fn new(producer_id: u64, consumer_id: u64, min_tokens: usize) -> Self {
+        Self {
+            producer_node_id: producer_id,
+            consumer_node_id: consumer_id,
+            buffer: Vec::new(),
+            consumer_started: false,
+            min_tokens_before_start: min_tokens,
+        }
+    }
+
+    /// Add a token to the buffer
+    pub fn push_token(&mut self, token: String) {
+        self.buffer.push(token);
+    }
+
+    /// Check if we have enough tokens to start the consumer
+    pub fn can_start_consumer(&self) -> bool {
+        !self.consumer_started && self.buffer.len() >= self.min_tokens_before_start
+    }
+
+    /// Get the current buffered content
+    pub fn get_content(&self) -> String {
+        self.buffer.join("")
+    }
+
+    /// Mark consumer as started
+    pub fn mark_consumer_started(&mut self) {
+        self.consumer_started = true;
+    }
+}
+
 fn resolve_system_prompt(ctx: &ExecutionContext, node: &Node, mode: LlmMode) -> Result<String> {
     let (config_instruction, template_name, fallback) = match mode {
         LlmMode::Ask => (

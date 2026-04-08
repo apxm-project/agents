@@ -10,6 +10,8 @@
 //!   ASK/THINK nodes and mark subsequent uses with `cached_system_prompt`.
 //! - [`ApxmGraph::memoization_hints`] — detect duplicate pure operations
 //!   with identical attributes and mark subsequent duplicates with `memoizable`.
+//! - [`ApxmGraph::pipeline_detection`] — detect ASK→ASK chains eligible for
+//!   token pipelining and mark them with `pipeline_candidate`.
 
 use crate::{ApxmGraph, GraphError};
 use apxm_core::constants::graph::attrs;
@@ -333,6 +335,125 @@ impl ApxmGraph {
         self.nodes.retain(|n| !to_remove.contains(&n.id));
         self.edges
             .retain(|e| !to_remove.contains(&e.from) && !to_remove.contains(&e.to));
+
+        Ok(self)
+    }
+
+    /// Detect ASK→ASK chains eligible for token pipelining (Phase 4 research).
+    ///
+    /// Marks pairs of adjacent LLM nodes with single data edge where:
+    /// - Producer is ASK/THINK/REASON (pure LLM op)
+    /// - Consumer is ASK/THINK/REASON (pure LLM op)
+    /// - Single data dependency edge between them
+    /// - Neither has tools or structured output
+    /// - Template contains {0} placeholder for context injection
+    ///
+    /// Marked nodes get `pipeline_candidate: true` attribute.
+    pub fn pipeline_detection(&mut self) -> Result<&mut Self, GraphError> {
+        // Build adjacency maps
+        let mut out_edges: HashMap<u64, Vec<u64>> = HashMap::new();
+        let mut in_edges: HashMap<u64, Vec<u64>> = HashMap::new();
+        for edge in &self.edges {
+            out_edges.entry(edge.from).or_default().push(edge.to);
+            in_edges.entry(edge.to).or_default().push(edge.from);
+        }
+
+        // Helper to check if node is a pure LLM op (no tools, no structured output)
+        let is_pure_llm = |node: &crate::GraphNode| -> bool {
+            // Only ASK/THINK/REASON are LLM ops
+            if !matches!(
+                node.op,
+                AISOperationType::Ask | AISOperationType::Think | AISOperationType::Reason
+            ) {
+                return false;
+            }
+
+            // Check for tools attribute
+            if let Some(Value::String(tools)) = node.attributes.get("tools") {
+                if !tools.is_empty() && tools != "[]" {
+                    return false;
+                }
+            }
+
+            // Check for schema/structured output
+            if node.attributes.contains_key("schema") {
+                return false;
+            }
+
+            true
+        };
+
+        // Find pipeline candidates
+        let mut candidates = Vec::new();
+        for node in &self.nodes {
+            // Check if this node is a pure LLM op
+            if !is_pure_llm(node) {
+                continue;
+            }
+
+            // Check if it has exactly one downstream consumer
+            let downstream = match out_edges.get(&node.id) {
+                Some(targets) if targets.len() == 1 => targets[0],
+                _ => continue,
+            };
+
+            // Find downstream node
+            let consumer = match self.nodes.iter().find(|n| n.id == downstream) {
+                Some(n) => n,
+                None => continue,
+            };
+
+            // Check if consumer is also a pure LLM op
+            if !is_pure_llm(consumer) {
+                continue;
+            }
+
+            // Check if consumer has exactly one upstream producer (this node)
+            let upstream_count = in_edges.get(&consumer.id).map(|v| v.len()).unwrap_or(0);
+            if upstream_count != 1 {
+                continue;
+            }
+
+            // Check if consumer template has {0} placeholder for context
+            let has_placeholder = consumer
+                .attributes
+                .get(attrs::TEMPLATE_STR)
+                .and_then(|v| {
+                    if let Value::String(s) = v {
+                        Some(s.contains("{0}"))
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(false);
+
+            if !has_placeholder {
+                continue;
+            }
+
+            // This is a valid pipeline candidate
+            candidates.push((node.id, consumer.id));
+        }
+
+        // Mark candidates
+        for (producer_id, consumer_id) in candidates {
+            if let Some(producer) = self.nodes.iter_mut().find(|n| n.id == producer_id) {
+                producer
+                    .attributes
+                    .insert("pipeline_candidate".to_string(), Value::Bool(true));
+                producer
+                    .attributes
+                    .insert("pipeline_consumer_id".to_string(), Value::Number((consumer_id as i64).into()));
+            }
+            if let Some(consumer) = self.nodes.iter_mut().find(|n| n.id == consumer_id) {
+                consumer
+                    .attributes
+                    .insert("pipeline_candidate".to_string(), Value::Bool(true));
+                consumer
+                    .attributes
+                    .insert("pipeline_producer_id".to_string(), Value::Number((producer_id as i64).into()));
+            }
+        }
 
         Ok(self)
     }
