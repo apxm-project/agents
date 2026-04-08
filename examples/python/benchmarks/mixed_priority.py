@@ -89,4 +89,4 @@ def mixed_priority(g: GraphRecorder):
 
 if __name__ == "__main__":
     # Output the graph as JSON
-    print(mixed_priority._graph.to_air())
+    print(mixed_priority._graph.to_json())

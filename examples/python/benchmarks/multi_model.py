@@ -92,6 +92,13 @@ def multi_model(g: GraphRecorder):
     # Final report
     final_output = g.merge(
         "final_output",
+        triage,
+        extracted_data,
+        solution,
+        customer_response
+    )
+
+    output = g.print(
         "=== MULTI-MODEL ROUTING BENCHMARK ===\n\n"
         "TRIAGE (Fast Model):\n{triage}\n\n"
         "---\n\n"
@@ -99,13 +106,13 @@ def multi_model(g: GraphRecorder):
         "---\n\n"
         "SOLUTION (Powerful Model - Quality):\n{solution}\n\n"
         "---\n\n"
-        "CUSTOMER RESPONSE (Fast Model - Formatting):\n{customer_response}\n"
+        "CUSTOMER RESPONSE (Fast Model - Formatting):\n{customer_response}"
     )
 
-    output = g.print(final_output)
-    g.done(output)
+    output >> final_output
+    g.done(final_output)
 
 
 if __name__ == "__main__":
     # Output the graph as JSON
-    print(multi_model._graph.to_air())
+    print(multi_model._graph.to_json())

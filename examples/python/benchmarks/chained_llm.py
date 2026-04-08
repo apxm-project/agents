@@ -66,4 +66,4 @@ def chained_llm(g: GraphRecorder):
 
 if __name__ == "__main__":
     # Output the graph as JSON
-    print(chained_llm._graph.to_air())
+    print(chained_llm._graph.to_json())
