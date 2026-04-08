@@ -26,88 +26,37 @@ use super::memoization::ResponseCache;
 use super::token_accounting::TokenAccountant;
 use crate::model_router::ModelRouter;
 
-/// Execution context passed to all operation handlers
-///
-/// Provides access to:
-/// - Memory system (STM, LTM, Episodic)
-/// - LLM registry for reasoning operations
-/// - Capability system for tool invocation
-/// - Inner plan linker for compiling graph payloads during execution
-/// - DAG splicer for dynamic inner/outer plan unification
-/// - Flow registry for cross-agent flow calls
-/// - Instruction config for system prompts
-/// - Execution metadata (ID, session, etc.)
+/// Execution context passed to all operation handlers.
 #[derive(Clone)]
 pub struct ExecutionContext {
-    /// Unique execution ID for tracing
     pub execution_id: String,
-    /// Optional session ID for multi-turn interactions
     pub session_id: Option<String>,
-    /// Memory system (3-tier)
     pub memory: Arc<MemorySystem>,
-    /// LLM registry for reasoning operations
     pub llm_registry: Arc<LLMRegistry>,
-    /// Capability system for tool invocation
     pub capability_system: Arc<CapabilitySystem>,
-    /// Agent Abstract Machine state handle
     pub aam: Aam,
-    /// Scope identifier for hierarchical AAM execution.
     pub scope_id: String,
-    /// Shared registry of active hierarchical scopes.
     pub scope_registry: Arc<ScopeRegistry>,
-    /// Inner plan linker for compiling graph payloads from LLMs
     pub inner_plan_linker: Arc<dyn InnerPlanLinker>,
-    /// DAG splicer for dynamic inner/outer plan unification
     pub dag_splicer: Arc<dyn DagSplicer>,
-    /// Flow registry for cross-agent flow calls
     pub flow_registry: Arc<FlowRegistry>,
-    /// The currently active agent for this execution context.
     pub current_agent: Option<Arc<Agent>>,
-    /// System prompts for LLM operations (from config)
     pub instruction_config: InstructionConfig,
-    /// Start time of execution (for timing)
     pub start_time: std::time::Instant,
-    /// Custom metadata
     pub metadata: std::collections::HashMap<String, String>,
-    /// Optional global token budget for this execution.
     pub token_budget: Option<u64>,
-    /// Total consumed tokens across LLM requests in this execution.
     pub consumed_tokens: Arc<std::sync::atomic::AtomicU64>,
-    /// Optional execution event emitter.
     pub event_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
-    /// Token accountant for per-node/flow/agent token tracking.
     pub token_accountant: Arc<TokenAccountant>,
-    /// Response cache for deterministic LLM call memoization.
     pub response_cache: Arc<ResponseCache>,
-    /// Cancellation token for cooperative cancellation / timeouts.
     pub cancellation_token: CancellationToken,
-    /// Sandbox registry for tool execution isolation.
-    ///
-    /// Host applications register their [`SandboxBackend`](apxm_sandbox::SandboxBackend)
-    /// implementations here. The runtime queries the registry when executing
-    /// INV/tool nodes to find the appropriate isolation backend.
-    ///
-    /// LLM operations (ASK, THINK, REASON, etc.) bypass the sandbox entirely —
-    /// they are HTTP calls that don't need process isolation.
+    /// Only used for INV/tool nodes; LLM operations bypass sandboxing.
     pub sandbox_registry: Arc<SandboxRegistry>,
-    /// Process table for agent lifecycle management.
-    ///
-    /// Tracks all live agent processes (local and external ACP subprocesses).
-    /// Used by SPAWN_AGENT to register new processes and by COMMUNICATE with
-    /// `protocol: "acp"` to look up recipient agents.
+    /// Tracks live agent processes (local + ACP). Used by SPAWN_AGENT and COMMUNICATE.
     pub process_table: Arc<ProcessTable>,
-    /// Optional demand-paged ContextStack for session-backed prompt assembly.
     pub context_stack: Option<Arc<ContextStack>>,
-    /// Optional ModelRouter for dynamic backend/model selection with circuit breakers.
-    ///
-    /// When set, the LLM handler delegates backend selection to the router
-    /// instead of going directly to `llm_registry`. Set via `with_model_router`.
+    /// When set, LLM handler delegates backend selection here instead of `llm_registry`.
     pub model_router: Option<Arc<ModelRouter>>,
-    /// Agent warm pool for reusing spawned agent sessions.
-    ///
-    /// Used by SPAWN_AGENT to check for existing warm sessions before spawning
-    /// new processes. When an agent is closed, the session can be released back
-    /// to the pool for reuse.
     pub agent_pool: Arc<AgentPool>,
 }
 

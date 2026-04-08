@@ -14,10 +14,7 @@ type RegistryResult<T> = Result<T, RuntimeError>;
 /// Thread-safe registry for storing and looking up capabilities.
 /// Uses DashMap for lock-free concurrent access.
 pub struct CapabilityRegistry {
-    /// Registered capabilities
     capabilities: Arc<DashMap<String, Arc<dyn CapabilityExecutor>>>,
-
-    /// Compiled JSON schemas for validation
     schemas: Arc<DashMap<String, Arc<JsonSchema>>>,
 }
 
@@ -30,19 +27,7 @@ impl CapabilityRegistry {
         }
     }
 
-    /// Register a capability
-    ///
-    /// Compiles the capability's JSON schema and stores it for validation.
-    ///
-    /// # Arguments
-    ///
-    /// * `capability` - Capability implementation to register
-    ///
-    /// # Errors
-    ///
-    /// Returns error if:
-    /// - Capability with same name already exists
-    /// - JSON schema is invalid
+    /// Register a capability, compiling its JSON schema for validation.
     pub fn register(&self, capability: Arc<dyn CapabilityExecutor>) -> RegistryResult<()> {
         let metadata = capability.metadata();
         let name = metadata.name.clone();
@@ -71,30 +56,14 @@ impl CapabilityRegistry {
         Ok(())
     }
 
-    /// Get a capability by name
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - Name of the capability to retrieve
-    ///
-    /// # Returns
-    ///
-    /// Arc to the capability executor if found, None otherwise
+    /// Get a capability by name.
     pub fn get(&self, name: &str) -> Option<Arc<dyn CapabilityExecutor>> {
         self.capabilities
             .get(name)
             .map(|entry| Arc::clone(entry.value()))
     }
 
-    /// Get the compiled schema for a capability
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - Name of the capability
-    ///
-    /// # Returns
-    ///
-    /// Reference to the compiled JSON schema if found
+    /// Get the compiled schema for a capability.
     pub fn get_schema(&self, name: &str) -> Option<Arc<JsonSchema>> {
         self.schemas
             .get(name)
@@ -122,15 +91,7 @@ impl CapabilityRegistry {
             .collect()
     }
 
-    /// Unregister a capability
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - Name of the capability to remove
-    ///
-    /// # Returns
-    ///
-    /// true if capability was removed, false if it wasn't registered
+    /// Unregister a capability.
     pub fn unregister(&self, name: &str) -> bool {
         let cap_removed = self.capabilities.remove(name).is_some();
         let schema_removed = self.schemas.remove(name).is_some();

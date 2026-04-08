@@ -4,21 +4,6 @@
 //! Both the compiler and runtime depend on this crate to ensure consistent operation
 //! semantics across the entire system.
 //!
-//! ## Architecture
-//!
-//! ```text
-//!                     ┌─────────────┐
-//!                     │   apxm-ais  │  ← Single Source of Truth
-//!                     │  (41 ops)   │
-//!                     └──────┬──────┘
-//!                            │
-//!               ┌────────────┼────────────┐
-//!               ▼            │            ▼
-//!       ┌───────────────┐    │    ┌───────────────┐
-//!       │ apxm-compiler │    │    │ apxm-runtime  │
-//!       └───────────────┘    │    └───────────────┘
-//! ```
-//!
 //! ## Operations (41 total)
 //!
 //! | Category | Operations |

@@ -21,20 +21,7 @@ pub type LinkResult = Result<ExecutionDag, RuntimeError>;
 /// - Linker returns validated DAG to runtime
 #[async_trait]
 pub trait InnerPlanLinker: Send + Sync {
-    /// Link inner plan graph payload into an ExecutionDAG
-    ///
-    /// # Arguments
-    ///
-    /// * `graph_payload` - The ApxmGraph JSON payload from the LLM
-    /// * `source_name` - Name for error reporting (e.g., "inner_plan_<execution_id>")
-    ///
-    /// # Returns
-    ///
-    /// A validated ExecutionDAG ready for splicing
-    ///
-    /// # Errors
-    ///
-    /// Returns RuntimeError::Compiler if parsing/validation fails
+    /// Link inner plan graph payload into an ExecutionDAG.
     async fn link_inner_plan(&self, graph_payload: &str, source_name: &str) -> LinkResult;
 
     /// Link a structured inner-plan task DAG into an ExecutionDAG.

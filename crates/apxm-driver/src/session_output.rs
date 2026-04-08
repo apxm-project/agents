@@ -11,7 +11,7 @@ use std::time::Instant;
 use apxm_core::constants;
 use apxm_core::paths::session_node_dir_name;
 use apxm_core::types::values::Value;
-use apxm_core::types::{CompletedNodeInfo, LiveSessionState, NodeInfo, SessionManifest};
+use apxm_core::types::{CompletedNodeInfo, LiveSessionState, NodeInfo, SessionManifest, SessionStatus};
 use apxm_events::payload::{EventPayload, OperationEndPayload, OperationStartPayload};
 use apxm_events::{ApxmEvent, EventSource};
 use apxm_graph::ApxmGraph;
@@ -91,14 +91,11 @@ impl SessionOutputWriter {
         &self.session_dir
     }
 
-    /// Write the execution manifest with the given status/duration/node_count.
-    /// Use `status = constants::session::status::RUNNING` before execution,
-    /// and `COMPLETED`/`FAILED` after.
     pub fn write_manifest(
         &self,
         execution_id: &str,
         graph_name: Option<&str>,
-        status: &str,
+        status: SessionStatus,
         duration_ms: u128,
         node_count: usize,
         success: bool,
@@ -107,7 +104,7 @@ impl SessionOutputWriter {
             execution_id: execution_id.to_string(),
             graph_name: graph_name.map(|s| s.to_string()),
             timestamp: chrono::Utc::now().to_rfc3339(),
-            status: status.to_string(),
+            status,
             duration_ms,
             node_count,
             success,
@@ -194,9 +191,9 @@ impl SessionOutputWriter {
         episodic_entries: Option<&[apxm_runtime::memory::EpisodicEntry]>,
     ) -> io::Result<()> {
         let status = if success {
-            constants::session::status::COMPLETED
+            SessionStatus::Completed
         } else {
-            constants::session::status::FAILED
+            SessionStatus::Failed
         };
         self.write_manifest(
             execution_id,
@@ -221,7 +218,7 @@ impl SessionOutputWriter {
 
         // Write final live.json with correct completed/failed status.
         let live = LiveSessionState {
-            status: status.to_string(),
+            status,
             running_nodes: Vec::new(),
             completed_nodes: Vec::new(),
             completed: node_statuses.len(),
@@ -247,14 +244,14 @@ impl SessionOutputWriter {
         graph_name: Option<&str>,
     ) -> io::Result<()> {
         let status = if success {
-            constants::session::status::COMPLETED
+            SessionStatus::Completed
         } else {
-            constants::session::status::FAILED
+            SessionStatus::Failed
         };
 
         // Write live.json
         let live = LiveSessionState {
-            status: status.to_string(),
+            status,
             running_nodes: Vec::new(),
             completed_nodes: Vec::new(),
             completed: 0,
@@ -451,7 +448,7 @@ impl SessionEventEmitter {
         );
 
         let live = serde_json::json!({
-            "status": constants::session::status::RUNNING,
+            "status": SessionStatus::Running,
             "started_at_ms": self.start_time.elapsed().as_millis(),
             "elapsed_ms": 0,
         });
@@ -511,7 +508,7 @@ impl SessionEventEmitter {
 
     fn write_live(&self, current_node_id: Option<u64>) -> io::Result<()> {
         if let Some(id) = current_node_id {
-            self.current_node_id.store(id as i64, Ordering::Relaxed);
+            self.current_node_id.store(id.min(i64::MAX as u64) as i64, Ordering::Relaxed);
         }
 
         let completed = self.completed.load(Ordering::Relaxed);
@@ -530,7 +527,7 @@ impl SessionEventEmitter {
         };
 
         let live = LiveSessionState {
-            status: constants::session::status::RUNNING.to_string(),
+            status: SessionStatus::Running,
             running_nodes,
             completed_nodes: recent_completed,
             completed: completed as usize,
@@ -556,13 +553,13 @@ impl SessionEventEmitter {
             return;
         };
         let status = serde_json::json!({
-            "status": if success { constants::session::status::COMPLETED } else { constants::session::status::FAILED },
+            "status": if success { SessionStatus::Completed } else { SessionStatus::Failed },
             "duration_ms": duration.as_millis(),
             "retries": 0,
             "error": if success { serde_json::Value::Null } else { serde_json::Value::String("operation failed".to_string()) },
         });
         let live = serde_json::json!({
-            "status": if success { constants::session::status::COMPLETED } else { constants::session::status::FAILED },
+            "status": if success { SessionStatus::Completed } else { SessionStatus::Failed },
             "duration_ms": duration.as_millis(),
         });
         let _ = json_pretty_write(
@@ -599,16 +596,16 @@ impl SessionEventEmitter {
 
     pub fn finalize_live(&self, success: bool) -> io::Result<()> {
         let status = if success {
-            constants::session::status::COMPLETED
+            SessionStatus::Completed
         } else {
-            constants::session::status::FAILED
+            SessionStatus::Failed
         };
         let completed = self.completed.load(Ordering::Relaxed);
         let total = self.total.load(Ordering::Relaxed);
         let elapsed_ms = self.start_time.elapsed().as_millis();
 
         let live = LiveSessionState {
-            status: status.to_string(),
+            status,
             running_nodes: Vec::new(),
             completed_nodes: Vec::new(),
             completed: completed as usize,
@@ -720,16 +717,16 @@ impl ExecutionEventEmitter for SessionEventEmitter {
 
         if let Some(meta) = self.node_metadata.get(&node_id) {
             let status = if success {
-                constants::session::status::COMPLETED
+                SessionStatus::Completed
             } else {
-                constants::session::status::FAILED
+                SessionStatus::Failed
             };
             let completed_info = CompletedNodeInfo {
                 id: node_id,
                 name: meta.name.clone(),
                 op: op_type.to_string(),
                 duration_ms: duration.as_millis() as u64,
-                status: status.to_string(),
+                status,
             };
             if let Ok(mut completed) = self.completed_nodes.lock() {
                 completed.push(completed_info);

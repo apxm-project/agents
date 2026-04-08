@@ -605,14 +605,6 @@ pub mod session {
         pub const SKILLS_DIR: &str = "skills";
     }
 
-    pub mod status {
-        pub const RUNNING: &str = "running";
-        pub const COMPLETED: &str = "completed";
-        pub const FAILED: &str = "failed";
-        pub const PENDING: &str = "pending";
-        pub const RESUMED: &str = "resumed";
-        pub const SUBMITTED: &str = "submitted";
-    }
 }
 
 pub mod ui {

@@ -1,32 +1,4 @@
-//! Agent warm pool for reusing spawned agent sessions across operations.
-//!
-//! The `AgentPool` maintains a pool of idle agent sessions that can be reused
-//! instead of spawning new processes for every SPAWN_AGENT operation. This
-//! significantly reduces the overhead of agent spawning, especially when
-//! workflows frequently spawn and close agents.
-//!
-//! # Architecture
-//!
-//! - Sessions are keyed by agent profile name (e.g., "claude", "codex")
-//! - Each profile has its own pool with a configurable maximum idle count
-//! - Sessions are reclaimed after a configurable idle timeout
-//! - The pool automatically closes sessions on shutdown
-//!
-//! # Usage
-//!
-//! ```rust,ignore
-//! let pool = AgentPool::new(4, Duration::from_secs(300));
-//!
-//! // Try to acquire an existing session
-//! if let Some(session) = pool.acquire("claude").await {
-//!     // Reuse the session
-//! } else {
-//!     // No warm session available, spawn a new one
-//! }
-//!
-//! // Release back to the pool when done
-//! pool.release("claude", session);
-//! ```
+//! Agent warm pool for reusing spawned agent sessions across SPAWN_AGENT operations.
 
 use dashmap::DashMap;
 use std::sync::Arc;
@@ -43,13 +15,8 @@ pub struct AgentPool {
     idle_timeout: Duration,
 }
 
-/// A pooled agent session with lifecycle metadata.
 struct PooledSession {
-    /// Type-erased session handle (concrete type: Arc<Mutex<AcpSession>>).
     session: Arc<Mutex<dyn std::any::Any + Send + Sync>>,
-    /// When this session was originally created.
-    created_at: Instant,
-    /// When this session was last used.
     last_used: Instant,
 }
 
@@ -69,9 +36,6 @@ impl AgentPool {
     }
 
     /// Try to acquire a warm session for the given profile.
-    ///
-    /// Returns `Some(session)` if a warm session is available, or `None` if
-    /// the pool is empty and a new session must be spawned.
     pub async fn acquire(&self, profile: &str) -> Option<Arc<Mutex<dyn std::any::Any + Send + Sync>>> {
         let mut entry = self.pools.entry(profile.to_string()).or_default();
         let pool = entry.value_mut();
@@ -101,10 +65,7 @@ impl AgentPool {
         None
     }
 
-    /// Release a session back to the pool.
-    ///
-    /// If the pool is already at capacity for this profile, the session is
-    /// dropped (closed) instead of being pooled.
+    /// Release a session back to the pool. Drops if at capacity.
     pub fn release(&self, profile: &str, session: Arc<Mutex<dyn std::any::Any + Send + Sync>>) {
         let mut entry = self.pools.entry(profile.to_string()).or_default();
         let pool = entry.value_mut();
@@ -120,11 +81,9 @@ impl AgentPool {
             return;
         }
 
-        let now = Instant::now();
         pool.push(PooledSession {
             session,
-            created_at: now,
-            last_used: now,
+            last_used: Instant::now(),
         });
 
         tracing::debug!(
@@ -135,9 +94,6 @@ impl AgentPool {
     }
 
     /// Clean up expired sessions from all pools.
-    ///
-    /// This should be called periodically (e.g., every 60 seconds) to reclaim
-    /// idle sessions that have exceeded the timeout.
     pub async fn cleanup_idle(&self) {
         let mut total_cleaned = 0;
 
@@ -174,9 +130,6 @@ impl AgentPool {
     }
 
     /// Shut down the pool, closing all warm sessions.
-    ///
-    /// This should be called when the runtime is shutting down to ensure
-    /// all pooled agent processes are properly terminated.
     pub async fn shutdown(&self) {
         let mut total_closed = 0;
 

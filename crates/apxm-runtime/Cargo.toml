@@ -32,7 +32,6 @@ jsonschema = "0.18"
 
 # Observability
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["fmt"] }
 
 # HTTP client (for COMMUNICATE HTTP/A2A dispatch)
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }

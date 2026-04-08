@@ -238,8 +238,10 @@ impl ContextAssembler {
 
             // Add average duration if available
             if let Some(durations) = operation_stats.get(event_type) {
-                let avg = durations.iter().sum::<f64>() / durations.len() as f64;
-                history.push_str(&format!("    avg response time: {:.1}ms\n", avg));
+                if !durations.is_empty() {
+                    let avg = durations.iter().sum::<f64>() / durations.len() as f64;
+                    history.push_str(&format!("    avg response time: {:.1}ms\n", avg));
+                }
             }
         }
 
