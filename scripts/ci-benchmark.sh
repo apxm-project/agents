@@ -2,11 +2,13 @@
 # Automated benchmark regression check
 # Exit 1 if any benchmark regresses beyond threshold
 
-set -e
+# Don't exit on first error - collect all results
+set +e
 cd "$(dirname "$0")/.."
 source ~/.cargo/env
 export PYTHONPATH=crates/apxm-frontend/python
 
+FAILED=0
 echo "=== APXM CI Benchmark Suite ==="
 
 # 1. Build
@@ -24,7 +26,7 @@ python3 scripts/apxm-policy-check.py 2>&1 | tail -3
 
 # 4. Run Python tests
 echo "=== Running Python Tests ==="
-cd crates/apxm-frontend/python && PYTHONPATH=. python3 -m pytest tests/ -q 2>&1
+cd crates/apxm-frontend/python && PYTHONPATH=. python3 -m pytest tests/ -q 2>&1 || FAILED=1
 cd - > /dev/null
 
 # 5. Compile all benchmarks at O0 and O2
@@ -49,6 +51,12 @@ done
 
 # 6. Run Rust tests
 echo "=== Running Rust Tests ==="
-cargo test --workspace --quiet 2>&1 | grep "test result" | tail -5
+cargo test --workspace --quiet 2>&1 | grep "test result" | tail -1 || FAILED=1
 
-echo "=== CI Complete ==="
+if [ $FAILED -eq 0 ]; then
+  echo "=== CI Complete: SUCCESS ==="
+  exit 0
+else
+  echo "=== CI Complete: SOME TESTS FAILED ==="
+  exit 1
+fi
