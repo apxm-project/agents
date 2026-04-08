@@ -258,8 +258,12 @@ class ApxmGraph:
         for attr_name in template_attrs:
             if attr_name in node.attributes:
                 text = str(node.attributes[attr_name])
+                # Check for positional placeholders {0}, {1}, ..., {N-1}
+                for i in range(len(self.parameters)):
+                    if f"{{{i}}}" in text:
+                        return True
+                # Also check for named {{PARAM_NAME}} pattern
                 for param in self.parameters:
-                    # Check for {{PARAM_NAME}} pattern
                     if f"{{{{{param.name}}}}}" in text:
                         return True
         return False
