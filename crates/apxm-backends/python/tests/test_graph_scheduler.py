@@ -188,7 +188,7 @@ def test_create_pin():
     assert pin.expiry_ts > time.time()
 
     # Check internal state
-    assert (("g1", 1) in scheduler.active_pins
+    assert ("g1", 1) in scheduler.active_pins
     assert "shared-prefix" in scheduler.pins_by_reuse_group
     assert scheduler.metrics["active_pins"] == 1
     assert scheduler.metrics["pinned_blocks"] == 3

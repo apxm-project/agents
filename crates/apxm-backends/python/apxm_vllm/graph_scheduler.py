@@ -212,6 +212,84 @@ class GraphAwareScheduler:
 
             return False, 0
 
+    def pin_prefix(
+        self,
+        graph_id: str,
+        node_id: int,
+        reuse_group: Optional[str],
+        ttl_ms: int,
+    ) -> dict:
+        """Pin KV-cache blocks for prefix reuse.
+
+        This is a higher-level API for creating pins. It's called after
+        an LLM request completes to pin its KV-cache for downstream reuse.
+
+        Args:
+            graph_id: Graph identifier
+            node_id: Node identifier
+            reuse_group: Optional semantic reuse group
+            ttl_ms: Time-to-live in milliseconds
+
+        Returns:
+            Pin creation response dict with handle details
+        """
+        # For now, we use a placeholder request_id and empty block_ids
+        # In production, this would come from vLLM's actual KV-cache blocks
+        request_id = f"req-{graph_id}-{node_id}-{int(time.time() * 1000)}"
+
+        # TODO: When integrated with real vLLM, get actual block IDs from request
+        block_ids: List[int] = []
+
+        pin = self.create_pin(
+            request_id=request_id,
+            graph_id=graph_id,
+            node_id=node_id,
+            reuse_group=reuse_group,
+            ttl_ms=ttl_ms,
+            block_ids=block_ids,
+        )
+
+        return {
+            "object": "apxm.pin.created",
+            "graph_id": graph_id,
+            "node_id": node_id,
+            "reuse_group": reuse_group,
+            "request_id": request_id,
+            "ttl_ms": ttl_ms,
+            "expiry_ts": pin.expiry_ts,
+        }
+
+    def check_pin(self, graph_id: str, reuse_group: Optional[str]) -> dict:
+        """Check if a matching pin exists for prefix reuse.
+
+        Args:
+            graph_id: Graph identifier
+            reuse_group: Reuse group to check
+
+        Returns:
+            Dict with exists flag and pin details if found
+        """
+        pin = self.find_reusable_pin(graph_id, None, reuse_group)
+
+        if pin:
+            return {
+                "object": "apxm.pin.check",
+                "exists": True,
+                "graph_id": graph_id,
+                "node_id": pin.node_id,
+                "reuse_group": pin.reuse_group,
+                "request_id": pin.request_id,
+                "expiry_ts": pin.expiry_ts,
+                "consumed": pin.consumed,
+            }
+
+        return {
+            "object": "apxm.pin.check",
+            "exists": False,
+            "graph_id": graph_id,
+            "reuse_group": reuse_group,
+        }
+
     def create_pin(
         self,
         request_id: str,
@@ -404,6 +482,30 @@ class GraphAwareScheduler:
         """
         with self._lock:
             return self.metrics.copy()
+
+    def get_pin_stats(self) -> dict:
+        """Get detailed pin statistics.
+
+        Returns:
+            Dict with pin statistics including hit ratio
+        """
+        with self._lock:
+            total_lookups = self.metrics["pin_hits"] + self.metrics["pin_misses"]
+            hit_ratio = (
+                self.metrics["pin_hits"] / total_lookups if total_lookups > 0 else 0.0
+            )
+
+            return {
+                "object": "apxm.pins.stats",
+                "active_pins": self.metrics["active_pins"],
+                "pinned_blocks": self.metrics["pinned_blocks"],
+                "pin_hits": self.metrics["pin_hits"],
+                "pin_misses": self.metrics["pin_misses"],
+                "pin_hit_ratio": hit_ratio,
+                "pin_expirations": self.metrics["pin_expirations"],
+                "memory_pressure_releases": self.metrics["memory_pressure_releases"],
+                "total_lookups": total_lookups,
+            }
 
     def apply_memory_pressure_policy(self, kv_usage_pct: float) -> int:
         """Apply memory pressure policy and release non-critical pins if needed.

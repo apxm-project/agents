@@ -37,6 +37,42 @@ pub struct GraphReleaseResponse {
     pub released_blocks: u32,
 }
 
+/// Request for `POST /v1/apxm/pins`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PinCreateRequest {
+    pub graph_id: String,
+    pub node_id: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reuse_group: Option<String>,
+    pub ttl_ms: u64,
+}
+
+/// Response from `POST /v1/apxm/pins`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PinCreateResponse {
+    pub object: String,
+    pub graph_id: String,
+    pub node_id: u32,
+    pub reuse_group: Option<String>,
+    pub request_id: String,
+    pub ttl_ms: u64,
+    pub expiry_ts: f64,
+}
+
+/// Response from `GET /v1/apxm/pins/stats`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PinStatsResponse {
+    pub object: String,
+    pub active_pins: u64,
+    pub pinned_blocks: u64,
+    pub pin_hits: u64,
+    pub pin_misses: u64,
+    pub pin_hit_ratio: f64,
+    pub pin_expirations: u64,
+    pub memory_pressure_releases: u64,
+    pub total_lookups: u64,
+}
+
 /// Graph-aware vLLM backend.
 ///
 /// Wraps an OpenAI-compatible vLLM server and injects APXM graph hints into
@@ -174,6 +210,68 @@ impl GraphAwareVllmBackend {
             .context("Failed to parse graph release response")
     }
 
+    /// Pin KV-cache blocks for prefix reuse.
+    ///
+    /// Call this after an LLM request completes to pin its KV-cache for
+    /// downstream nodes. The pin will be automatically released when consumed,
+    /// when TTL expires, or when the graph is released.
+    pub async fn pin_prefix(
+        &self,
+        graph_id: &str,
+        node_id: u32,
+        reuse_group: Option<&str>,
+        ttl_ms: u64,
+    ) -> Result<PinCreateResponse> {
+        let url = format!("{}/v1/apxm/pins", self.base_url);
+        let request = PinCreateRequest {
+            graph_id: graph_id.to_string(),
+            node_id,
+            reuse_group: reuse_group.map(|s| s.to_string()),
+            ttl_ms,
+        };
+
+        let response = self
+            .client
+            .post(&url)
+            .json(&request)
+            .send()
+            .await
+            .context("Failed to send pin creation request")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("Pin creation failed: {} - {}", status, body);
+        }
+
+        response
+            .json()
+            .await
+            .context("Failed to parse pin creation response")
+    }
+
+    /// Get pin statistics from the vLLM server.
+    pub async fn get_pin_stats(&self) -> Result<PinStatsResponse> {
+        let url = format!("{}/v1/apxm/pins/stats", self.base_url);
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .context("Failed to send pin stats request")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("Pin stats request failed: {} - {}", status, body);
+        }
+
+        response
+            .json()
+            .await
+            .context("Failed to parse pin stats response")
+    }
+
     /// Inject APXM hints into a request if present.
     fn inject_hints(&self, mut request: LLMRequest) -> LLMRequest {
         // Check if request already has APXM hints in extra_body
@@ -203,8 +301,24 @@ impl GraphAwareVllmBackend {
 #[async_trait]
 impl LLMBackend for GraphAwareVllmBackend {
     async fn generate(&self, request: LLMRequest) -> Result<LLMResponse> {
-        let request = self.inject_hints(request);
-        self.inner.generate(request).await
+        let injected_request = self.inject_hints(request.clone());
+        let response = self.inner.generate(injected_request).await?;
+
+        // Phase 3: Pin KV-cache if pin_policy.mode == "prefix"
+        if let Some(hints) = &request.apxm_hints {
+            if hints.pin_policy.mode == "prefix" {
+                // Extract graph_id, node_id, reuse_group, and ttl_ms
+                if let (Some(graph_id), Some(node_id)) = (&hints.graph_id, hints.node_id) {
+                    let reuse_group = hints.reuse_group.as_deref();
+                    let ttl_ms = hints.pin_policy.ttl_ms.unwrap_or(30_000) as u64;
+
+                    // Call pin_prefix API (fire and forget - don't fail the request)
+                    let _ = self.pin_prefix(graph_id, node_id, reuse_group, ttl_ms).await;
+                }
+            }
+        }
+
+        Ok(response)
     }
 
     fn generate_stream(

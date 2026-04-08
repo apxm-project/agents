@@ -70,6 +70,41 @@ class MetricsResponse(BaseModel):
     metrics: dict
 
 
+class PinCreateRequest(BaseModel):
+    """Request body for POST /v1/apxm/pins."""
+
+    graph_id: str
+    node_id: int
+    reuse_group: Optional[str] = None
+    ttl_ms: int = 30_000
+
+
+class PinCreateResponse(BaseModel):
+    """Response for pin creation."""
+
+    object: str = "apxm.pin.created"
+    graph_id: str
+    node_id: int
+    reuse_group: Optional[str]
+    request_id: str
+    ttl_ms: int
+    expiry_ts: float
+
+
+class PinStatsResponse(BaseModel):
+    """Response for pin statistics endpoint."""
+
+    object: str = "apxm.pins.stats"
+    active_pins: int
+    pinned_blocks: int
+    pin_hits: int
+    pin_misses: int
+    pin_hit_ratio: float
+    pin_expirations: int
+    memory_pressure_releases: int
+    total_lookups: int
+
+
 def create_apxm_app(scheduler: Optional[GraphAwareScheduler] = None) -> FastAPI:
     """Create FastAPI app with APXM graph management endpoints.
 
@@ -197,6 +232,58 @@ def create_apxm_app(scheduler: Optional[GraphAwareScheduler] = None) -> FastAPI:
         """
         metrics = scheduler.get_metrics()
         return MetricsResponse(metrics=metrics)
+
+    @app.post(
+        "/v1/apxm/pins",
+        response_model=PinCreateResponse,
+        status_code=status.HTTP_201_CREATED,
+    )
+    async def create_pin(request: PinCreateRequest) -> PinCreateResponse:
+        """Create a KV-cache pin for prefix reuse.
+
+        Call this after an LLM request completes to pin its KV-cache blocks
+        for downstream reuse within a TTL.
+
+        Request body example:
+        ```json
+        {
+          "graph_id": "dag-123",
+          "node_id": 5,
+          "reuse_group": "pr-diff:shared-prefix",
+          "ttl_ms": 30000
+        }
+        ```
+
+        The pin will be automatically released when:
+        - A downstream request consumes it
+        - TTL expires
+        - Graph is released (DELETE /v1/apxm/graphs/{graph_id})
+        - Memory pressure policy triggers cleanup
+        """
+        result = scheduler.pin_prefix(
+            graph_id=request.graph_id,
+            node_id=request.node_id,
+            reuse_group=request.reuse_group,
+            ttl_ms=request.ttl_ms,
+        )
+        return PinCreateResponse(**result)
+
+    @app.get("/v1/apxm/pins/stats", response_model=PinStatsResponse)
+    async def get_pin_stats() -> PinStatsResponse:
+        """Get detailed pin statistics.
+
+        Returns:
+        - active_pins: Current number of active pins
+        - pinned_blocks: Current number of pinned KV blocks
+        - pin_hits: Successful prefix reuse (cumulative)
+        - pin_misses: Failed prefix lookups (cumulative)
+        - pin_hit_ratio: Ratio of hits to total lookups
+        - pin_expirations: Pins expired due to TTL (cumulative)
+        - memory_pressure_releases: Pins released under pressure (cumulative)
+        - total_lookups: Total pin lookup attempts
+        """
+        stats = scheduler.get_pin_stats()
+        return PinStatsResponse(**stats)
 
     @app.get("/health")
     async def health_check():
