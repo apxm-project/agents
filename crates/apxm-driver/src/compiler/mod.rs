@@ -57,9 +57,10 @@ impl Compiler {
 
             // Detect format: new .air files start with "module {", old ones with "; Agent IR"
             if air_text.trim_start().starts_with("module") || air_text.trim_start().starts_with("func.func") {
-                // New format: valid MLIR — parse directly
-                let module = Module::parse(&self.context, &air_text)
-                    .map_err(|e| DriverError::Driver(format!("MLIR parse error in .air file: {e}")))?;
+                // New format: valid MLIR — parse and run optimization pipeline
+                let pipeline = Pipeline::with_opt_level(&self.context, self.opt_level);
+                let module = pipeline.compile(&air_text)
+                    .map_err(|e| DriverError::Compiler(e))?;
                 return Ok(module);
             } else {
                 // Old format: custom .air text — parse to ApxmGraph, then compile
