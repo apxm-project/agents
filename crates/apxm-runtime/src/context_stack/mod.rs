@@ -261,19 +261,24 @@ impl ContextStack {
         // Also query memory for additional context
         if let (Some(memory), Some(exec_id)) = (&self.memory, &self.execution_id) {
             // Query STM for node-specific context
-            let rt = tokio::runtime::Handle::try_current().ok()?;
+            // Use block_in_place to avoid nested runtime panic when called from async context
+            let handle = tokio::runtime::Handle::try_current().ok()?;
             let scope_key = format!("node:{}", node_id);
-            if let Ok(Some(stm_value)) = rt.block_on(memory.read_scoped(
-                crate::memory::MemorySpace::Stm,
-                exec_id,
-                &scope_key,
-            )) {
+            if let Ok(Some(stm_value)) = tokio::task::block_in_place(|| {
+                handle.block_on(memory.read_scoped(
+                    crate::memory::MemorySpace::Stm,
+                    exec_id,
+                    &scope_key,
+                ))
+            }) {
                 // Convert value to string representation
                 sections.push(("STM Context", format!("{:?}", stm_value)));
             }
 
             // Query episodic memory for node-related events
-            if let Ok(entries) = rt.block_on(memory.query_episodes(exec_id)) {
+            if let Ok(entries) = tokio::task::block_in_place(|| {
+                handle.block_on(memory.query_episodes(exec_id))
+            }) {
                 let node_events: Vec<_> = entries
                     .iter()
                     .filter(|e| {
