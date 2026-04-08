@@ -190,6 +190,17 @@ pub enum Commands {
         #[command(subcommand)]
         action: CacheAction,
     },
+    /// Launch the web-based GUI dashboard
+    Gui {
+        /// Graph file to open on startup (.apxm)
+        file: Option<PathBuf>,
+        /// Port to listen on (default: 18801)
+        #[arg(long, short, default_value = "18801")]
+        port: u16,
+        /// Open browser automatically
+        #[arg(long)]
+        open: bool,
+    },
 }
 
 #[derive(Subcommand)]
