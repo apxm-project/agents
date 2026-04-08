@@ -128,39 +128,19 @@ fn is_default_metadata(m: &NodeMetadata) -> bool {
 ///   deserialize without error.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Node {
-    /// Unique identifier for the node.
     pub id: NodeId,
-    /// The type of operation this node represents.
     pub op_type: AISOperationType,
-    /// Attributes/parameters for this operation.
-    /// Omitted from serialization when empty.
     #[serde(default, skip_serializing_if = "is_empty_map")]
     pub attributes: HashMap<String, Value>,
-    /// Token IDs that serve as inputs to this node.
-    /// Omitted from serialization when empty.
     #[serde(default, skip_serializing_if = "is_empty_vec")]
     pub input_tokens: Vec<TokenId>,
-    /// Token IDs that serve as outputs from this node.
-    /// Omitted from serialization when empty.
     #[serde(default, skip_serializing_if = "is_empty_vec")]
     pub output_tokens: Vec<TokenId>,
-    /// Metadata for scheduling and optimization.
-    /// Omitted from serialization when all fields are at their defaults.
     #[serde(default, skip_serializing_if = "is_default_metadata")]
     pub metadata: NodeMetadata,
 }
 
 impl Node {
-    /// Creates a new node with default metadata.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use apxm_core::types::{Node, NodeIdType, AISOperationType};
-    ///
-    /// let node = Node::new(1, AISOperationType::InvTool);
-    /// assert_eq!(node.id, 1);
-    /// ```
     pub fn new(id: NodeId, op_type: AISOperationType) -> Self {
         Node {
             id,
@@ -172,27 +152,23 @@ impl Node {
         }
     }
 
-    /// Adds an inptut token to this node.
     pub fn add_input_token(&mut self, token_id: TokenId) {
         self.input_tokens.push(token_id);
     }
 
-    /// Adds an output token to this node.
     pub fn add_output_token(&mut self, token_id: TokenId) {
         self.output_tokens.push(token_id);
     }
 
-    /// Sets an attribute for this node.
     pub fn set_attribute(&mut self, key: String, value: Value) {
         self.attributes.insert(key, value);
     }
 
-    /// Gets and attribute value by key.
     pub fn get_attribute(&self, key: &str) -> Option<&Value> {
         self.attributes.get(key)
     }
 
-    /// Validates the node's operation against its metadata.
+    /// Validates attributes against the AIS op contract.
     pub fn validate(&self) -> Result<(), crate::types::ValidationError> {
         validate_operation(self.op_type, &self.attributes)
     }

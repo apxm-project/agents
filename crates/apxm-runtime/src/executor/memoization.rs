@@ -116,7 +116,7 @@ impl SqliteMemoStore {
             .ok()?;
 
         let result = stmt
-            .query_row(params![key.0 as i64], |row| {
+            .query_row(params![key.0.min(i64::MAX as u64) as i64], |row| {
                 let content: String = row.get(0)?;
                 let model: String = row.get(1)?;
                 let input_tokens: i64 = row.get(2)?;
@@ -125,14 +125,16 @@ impl SqliteMemoStore {
                 let ttl_secs: i64 = row.get(5)?;
 
                 // Check if entry is expired
-                if now - (inserted_at as u64) > (ttl_secs as u64) {
+                let inserted_at_u64 = u64::try_from(inserted_at).unwrap_or(0);
+                let ttl_secs_u64 = u64::try_from(ttl_secs).unwrap_or(0);
+                if now - inserted_at_u64 > ttl_secs_u64 {
                     return Err(rusqlite::Error::QueryReturnedNoRows);
                 }
 
                 Ok(CachedResponse {
                     content,
-                    input_tokens: input_tokens as usize,
-                    output_tokens: output_tokens as usize,
+                    input_tokens: usize::try_from(input_tokens).unwrap_or(0),
+                    output_tokens: usize::try_from(output_tokens).unwrap_or(0),
                     model,
                 })
             })
@@ -157,13 +159,13 @@ impl SqliteMemoStore {
         self.conn.execute(
             "INSERT OR REPLACE INTO memo_cache (key, content, model, input_tokens, output_tokens, inserted_at, ttl_secs) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
-                key.0 as i64,
+                key.0.min(i64::MAX as u64) as i64,
                 content,
                 model,
-                input_tokens as i64,
-                output_tokens as i64,
-                now as i64,
-                self.ttl.as_secs() as i64,
+                input_tokens.min(i64::MAX as usize) as i64,
+                output_tokens.min(i64::MAX as usize) as i64,
+                now.min(i64::MAX as u64) as i64,
+                self.ttl.as_secs().min(i64::MAX as u64) as i64,
             ],
         )?;
 
@@ -186,7 +188,7 @@ impl SqliteMemoStore {
 
         let deleted = self.conn.execute(
             "DELETE FROM memo_cache WHERE inserted_at + ttl_secs < ?1",
-            params![now as i64],
+            params![now.min(i64::MAX as u64) as i64],
         )?;
 
         Ok(deleted)

@@ -1,17 +1,4 @@
-//! Error handling for APXM Core.
-//!
-//! This module contains all error types used in the core crate.
-//! Error types include compile-time, runtime, and security errors.
-//!
-//! # Error System
-//!
-//! The system uses [`Error`] with:
-//! - Error codes (E001, E002, etc.)
-//! - Source location information
-//! - Error suggestions
-//! - Context information
-//!
-//! All specific error types wrap `Error` for consistency.
+//! Error types, codes, and helpers for APXM.
 
 /// Error type with full context (like Rust compiler errors).
 pub mod api;

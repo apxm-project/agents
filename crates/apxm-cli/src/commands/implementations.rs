@@ -385,19 +385,6 @@ pub fn team_command(action: TeamAction, json_output: bool) -> Result<()> {
     }
 }
 
-#[allow(dead_code)] // Planned for human-readable metrics formatting
-fn format_number(n: usize) -> String {
-    let s = n.to_string();
-    let mut result = String::new();
-    for (i, c) in s.chars().rev().enumerate() {
-        if i > 0 && i % 3 == 0 {
-            result.push(',');
-        }
-        result.push(c);
-    }
-    result.chars().rev().collect()
-}
-
 pub fn tool_command(action: ToolAction, json_output: bool) -> Result<()> {
     match action {
         ToolAction::List => {
@@ -1199,7 +1186,7 @@ fn setup_session(
     w.write_manifest(
         &exec_id,
         graph_name,
-        apxm_core::constants::session::status::RUNNING,
+        apxm_core::types::SessionStatus::Running,
         0,
         0,
         false,
@@ -1845,7 +1832,6 @@ fn sync_ollama_models(
     Ok((added, skipped))
 }
 
-#[allow(dead_code)] // Backend CLI - planned replacement for current implementation
 pub async fn backend_command(action: BackendAction, json_output: bool) -> Result<()> {
     use apxm_core::types::{BackendConfig, BackendType, ProviderProtocol};
     use apxm_credentials::backend::BackendStore;
@@ -4278,7 +4264,7 @@ pub fn session_list_command(status_filter: Option<String>, limit: usize, json: b
         if let Ok(text) = std::fs::read_to_string(&manifest_path) {
             if let Ok(manifest) = serde_json::from_str::<SessionManifest>(&text) {
                 if let Some(ref filter) = status_filter {
-                    if manifest.status != *filter {
+                    if manifest.status.as_str() != filter.as_str() {
                         continue;
                     }
                 }
@@ -4319,9 +4305,9 @@ pub fn session_list_command(status_filter: Option<String>, limit: usize, json: b
         for (manifest, path, size) in &sessions {
             let duration_secs = manifest.duration_ms as f64 / 1000.0;
             let size_mb = *size as f64 / 1_000_000.0;
-            let status_icon = match manifest.status.as_str() {
-                "completed" if manifest.success => constants::ui::icons::SUCCESS,
-                "failed" => constants::ui::icons::FAILED,
+            let status_icon = match manifest.status {
+                apxm_core::types::SessionStatus::Completed if manifest.success => constants::ui::icons::SUCCESS,
+                apxm_core::types::SessionStatus::Failed => constants::ui::icons::FAILED,
                 _ => constants::ui::icons::INFO,
             };
             println!(

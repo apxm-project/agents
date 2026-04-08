@@ -968,7 +968,7 @@ async fn a2a_jsonrpc(
                     serde_json::json!({
                         "id": task_id,
                         "factId": fact_id,
-                        "status": { "state": apxm_core::constants::session::status::SUBMITTED },
+                        "status": { "state": apxm_core::types::SessionStatus::Submitted },
                         "message": message,
                     }),
                 ),
@@ -2219,7 +2219,7 @@ async fn create_checkpoint(
     Json(serde_json::json!({
         "ok": true,
         "checkpoint_id": id,
-        "status": apxm_core::constants::session::status::PENDING,
+        "status": apxm_core::types::SessionStatus::Pending,
         "resume_url": format!("/v1/checkpoints/{}/resume", id)
     }))
 }
@@ -2253,7 +2253,7 @@ async fn resume_checkpoint(
     Ok(Json(serde_json::json!({
         "ok": true,
         "checkpoint_id": cp.id,
-        "status": apxm_core::constants::session::status::RESUMED,
+        "status": apxm_core::types::SessionStatus::Resumed,
         "human_input": cp.human_input,
         "resumed_at_ms": cp.resumed_at_ms
     })))

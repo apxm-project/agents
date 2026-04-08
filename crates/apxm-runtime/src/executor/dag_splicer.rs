@@ -20,58 +20,21 @@ pub type SpliceResult = Result<HashMap<TokenId, TokenId>, RuntimeError>;
 /// outer plan DAG.
 #[async_trait]
 pub trait DagSplicer: Send + Sync {
-    /// Splice an inner DAG into the live execution
-    ///
-    /// # Arguments
-    ///
-    /// * `inner_dag` - The inner DAG to splice in
-    /// * `token_connections` - Mapping from inner DAG input tokens to outer DAG output tokens
-    ///
-    /// # Returns
-    ///
-    /// Mapping from original inner DAG token IDs to remapped token IDs
-    ///
-    /// # Errors
-    ///
-    /// Returns error if splicing fails (e.g., invalid token connections)
+    /// Splice an inner DAG into the live execution.
     async fn splice_dag(
         &self,
         inner_dag: ExecutionDag,
         token_connections: HashMap<TokenId, TokenId>,
     ) -> SpliceResult;
 
-    /// Mark tokens as delegated to a spliced sub-DAG
+    /// Mark tokens as delegated to a spliced sub-DAG.
     ///
-    /// When a token is marked as delegated by a node, that node's publish
-    /// will be skipped, allowing the spliced sub-DAG to produce the actual value.
-    ///
-    /// # Arguments
-    ///
-    /// * `delegator_node_id` - The node that is delegating (e.g., the Switch node)
-    /// * `token_ids` - The tokens to mark as delegated
+    /// The delegator node's publish is skipped; the spliced sub-DAG produces the actual value.
     fn mark_tokens_delegated(&self, delegator_node_id: u64, token_ids: &[TokenId]);
 
-    /// Condense a sub-DAG into a single replacement node.
+    /// Condense a sub-DAG into a single replacement node (reverse of `splice_dag`).
     ///
-    /// This is the reverse of `splice_dag`: it takes a set of node IDs that form
-    /// a connected sub-graph, removes them, and inserts a single replacement node.
-    /// External edges (edges crossing the boundary of the sub-graph) are reconnected
-    /// to the replacement node.
-    ///
-    /// # Arguments
-    ///
-    /// * `node_ids` - The set of nodes to condense (must all exist in the DAG)
-    /// * `replacement` - The single node that replaces the sub-graph
-    ///
-    /// # Returns
-    ///
-    /// `Ok(())` on success, or a `RuntimeError` if condensation fails.
-    ///
-    /// # Errors
-    ///
-    /// Returns error if:
-    /// - Any node in `node_ids` does not exist
-    /// - The operation is not supported in this context
+    /// Removes the given nodes and inserts a replacement, reconnecting external edges.
     async fn condense_subdag(
         &self,
         node_ids: &[NodeId],

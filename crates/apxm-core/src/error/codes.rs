@@ -26,247 +26,189 @@ pub enum ErrorCode {
     // Parser Errors (E001-E099)
     // ========================================================================
     /// E001: Unexpected token
-    /// Example: `expected ';' but found '}'`
     UnexpectedToken = 1,
 
     /// E002: Expected expression
-    /// Example: `expected expression after '='`
     ExpectedExpression = 2,
 
     /// E003: Expected identifier
-    /// Example: `expected variable name in let binding`
     ExpectedIdentifier = 3,
 
     /// E004: Invalid number literal
-    /// Example: `invalid number: '123abc'`
     InvalidNumberLiteral = 4,
 
     /// E005: Invalid string literal
-    /// Example: `unterminated string literal`
     InvalidStringLiteral = 5,
 
     /// E006: Unknown keyword
-    /// Example: `unknown keyword 'unknown_keyword'`
     UnknownKeyword = 6,
 
     /// E007: Missing closing brace
-    /// Example: `expected '}' to close '{' at line 5`
     MissingClosingBrace = 7,
 
     /// E008: Missing closing parenthesis
-    /// Example: `expected ')' to close '(' at line 10`
     MissingClosingParen = 8,
 
     /// E009: Missing closing bracket
-    /// Example: `expected ']' to close '[' at line 15`
     MissingClosingBracket = 9,
 
     /// E010: Duplicate declaration
-    /// Example: `'variable_name' declared twice`
     DuplicateDeclaration = 10,
 
     /// E011: Expected type annotation
-    /// Example: `expected type after ':' in let binding`
     ExpectedTypeAnnotation = 11,
 
     /// E012: Invalid memory tier
-    /// Example: `'invalid_tier' is not a valid memory tier (use STM, LTM, or Episodic)`
     InvalidMemoryTier = 12,
 
     /// E013: Expected event type
-    /// Example: `expected event type in 'on' handler`
     ExpectedEventType = 13,
 
     /// E014: Expected capability name
-    /// Example: `expected capability name in capability declaration`
     ExpectedCapabilityName = 14,
 
     /// E015: Expected flow name
-    /// Example: `expected flow name in flow declaration`
     ExpectedFlowName = 15,
 
     /// E016: Expected belief name
-    /// Example: `expected belief name in beliefs block`
     ExpectedBeliefName = 16,
 
     /// E017: Expected goal name
-    /// Example: `expected goal name in goals list`
     ExpectedGoalName = 17,
 
     /// E018: Expected agent name
-    /// Example: `expected agent name after 'agent' keyword`
     ExpectedAgentName = 18,
 
     /// E019: Expected memory name
-    /// Example: `expected memory store name in memory declaration`
     ExpectedMemoryName = 19,
 
     /// E020: Invalid operator
-    /// Example: `'++' is not a valid operator`
     InvalidOperator = 20,
 
     /// E021: Expected function name
-    /// Example: `expected function name before '('`
     ExpectedFunctionName = 21,
 
     /// E022: Expected member name
-    /// Example: `expected member name after '.'`
     ExpectedMemberName = 22,
 
     /// E023: Expected array index
-    /// Example: `expected index expression in '[]'`
     ExpectedArrayIndex = 23,
 
     /// E024: Expected parameter
-    /// Example: `expected parameter in function call`
     ExpectedParameter = 24,
 
     /// E025: Expected return value
-    /// Example: `expected return value after 'return' keyword`
     ExpectedReturnValue = 25,
 
     /// E026: Expected condition
-    /// Example: `expected condition in 'if' statement`
     ExpectedCondition = 26,
 
     /// E027: Expected loop variable
-    /// Example: `expected loop variable in 'loop' statement`
     ExpectedLoopVariable = 27,
 
     /// E028: Expected collection
-    /// Example: `expected collection in 'loop' statement`
     ExpectedCollection = 28,
 
     /// E029: Expected code string
-    /// Example: `expected code string in exec() call`
     ExpectedCodeString = 29,
 
     /// E030: Expected trace ID
-    /// Example: `expected trace ID in reflect() call`
     ExpectedTraceId = 30,
 
     /// E031: Expected goal string
-    /// Example: `expected goal string in plan() call`
     ExpectedGoalString = 31,
 
     /// E032: Expected template string
-    /// Example: `expected template string in verify() call`
     ExpectedTemplateString = 32,
 
     /// E033: Expected recipient
-    /// Example: `expected recipient in talk() call`
     ExpectedRecipient = 33,
 
     /// E034: Syntax error
-    /// Example: `syntax error in expression`
     SyntaxError = 34,
 
     // ========================================================================
     // Type Errors (E101-E199)
     // ========================================================================
     /// E101: Type mismatch
-    /// Example: `expected 'string' but found 'number'`
     TypeMismatch = 101,
 
     /// E102: Undefined variable
-    /// Example: `variable 'x' is not defined`
     UndefinedVariable = 102,
 
     /// E103: Invalid type annotation
-    /// Example: `'unknown_type' is not a valid type`
     InvalidTypeAnnotation = 103,
 
     /// E104: Type inference failed
-    /// Example: `cannot infer type for expression`
     TypeInferenceFailed = 104,
 
     /// E105: Type not found
-    /// Example: `type 'CustomType' is not defined`
     TypeNotFound = 105,
 
     /// E106: Invalid type conversion
-    /// Example: `cannot convert 'number' to 'string'`
     InvalidTypeConversion = 106,
 
     /// E107: Type annotation required
-    /// Example: `type annotation required for this expression`
     TypeAnnotationRequired = 107,
 
     // ========================================================================
     // MLIR/Verification Errors (E201-E299)
     // ========================================================================
     /// E201: MLIR verification failed
-    /// Example: `operation 'ais.inv' has invalid operands`
     MLIRVerificationFailed = 201,
 
     /// E202: Invalid operation
-    /// Example: `operation 'ais.unknown' is not defined`
     InvalidOperation = 202,
 
     /// E203: DAG cycle detected
-    /// Example: `circular dependency detected in execution graph`
     DagCycleDetected = 203,
 
     /// E204: Missing required operand
-    /// Example: `operation 'ais.rsn' requires at least one context operand`
     MissingRequiredOperand = 204,
 
     /// E205: Invalid operand type
-    /// Example: `operand type 'number' is not valid for operation 'ais.inv'`
     InvalidOperandType = 205,
 
     /// E206: Operation not found
-    /// Example: `operation 'custom_op' is not registered`
     OperationNotFound = 206,
 
     /// E207: Invalid operation result
-    /// Example: `operation result type does not match expected type`
     InvalidOperationResult = 207,
 
     // ========================================================================
     // Optimization Errors (E301-E399)
     // ========================================================================
     /// E301: Pass execution failed
-    /// Example: `pass 'normalize' failed: internal error`
     PassExecutionFailed = 301,
 
     /// E302: Optimization conflict
-    /// Example: `cannot apply 'fuse-ask-ops' and 'scheduling' together`
     OptimizationConflict = 302,
 
     /// E303: Pass not found
-    /// Example: `pass 'unknown_pass' is not registered`
     PassNotFound = 303,
 
     /// E304: Pass dependency failed
-    /// Example: `required pass 'dependency-analysis' failed before 'normalize'`
     PassDependencyFailed = 304,
 
     // ========================================================================
     // Runtime Errors (E401-E499)
     // ========================================================================
     /// E401: Scheduler error
-    /// Example: `scheduler failed to execute operation`
     SchedulerError = 401,
 
     /// E402: Operation execution failed
-    /// Example: `operation 'ais.inv' failed: capability not found`
     OperationExecutionFailed = 402,
 
     /// E403: Timeout
-    /// Example: `operation timed out after 30s`
     Timeout = 403,
 
     /// E404: Capability not found
-    /// Example: `capability 'search_web' is not registered`
     CapabilityNotFound = 404,
 
     /// E405: Memory access error
-    /// Example: `cannot access memory store 'invalid_store'`
     MemoryAccessError = 405,
 
     /// E406: LLM backend error
-    /// Example: `LLM backend 'openai' returned an error`
     LLMBackendError = 406,
 
     // ========================================================================
@@ -311,19 +253,15 @@ pub enum ErrorCode {
     // Generic Errors (E900-E999)
     // ========================================================================
     /// E900: Internal error
-    /// Example: `internal compiler error: please report this bug`
     InternalError = 900,
 
     /// E901: Not implemented
-    /// Example: `feature 'X' is not yet implemented`
     NotImplemented = 901,
 
     /// E902: Invalid configuration
-    /// Example: `invalid compiler configuration: 'option' is not valid`
     InvalidConfiguration = 902,
 
     /// E903: IO error
-    /// Example: `failed to read file: permission denied`
     IoError = 903,
 }
 

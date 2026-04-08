@@ -49,9 +49,6 @@ impl fmt::Display for SourceLocation {
 }
 
 /// Error context for attaching additional information to errors.
-///
-/// This struct allows errors to carry contextual information such as operation IDs,
-/// trace IDs, and user information for better debugging and observability.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ErrorContext {
     /// Operation identifier where the error occurred.
@@ -110,17 +107,6 @@ impl Default for ErrorContext {
 }
 
 /// Chains multiple errors into a formatted string.
-///
-/// This function formats a chain of errors, showing the error hierarchy
-/// from the root cause to the most recent error.
-///
-/// # Arguments
-///
-/// * `errors` - A vector of boxed errors to chain together
-///
-/// # Returns
-///
-/// A formatted string representing the error chain.
 pub fn chain_errors(errors: Vec<Box<dyn std::error::Error>>) -> String {
     if let Some(result) = errors
         .iter()
@@ -134,17 +120,6 @@ pub fn chain_errors(errors: Vec<Box<dyn std::error::Error>>) -> String {
 }
 
 /// Formats a single error with its context.
-///
-/// This function formats an error along with any attached context information,
-/// providing a detailed error message for debugging.
-///
-/// # Arguments
-///
-/// * `errors` - The error to format
-///
-/// # Returns
-///
-/// A formated string with error message and context.
 pub fn format_error(error: &dyn std::error::Error) -> String {
     std::iter::successors(Some(error), |e| e.source())
         .enumerate()

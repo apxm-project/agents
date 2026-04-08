@@ -12,19 +12,12 @@ use std::time::{Duration, Instant};
 /// Metrics for a single request.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RequestMetrics {
-    /// Backend used for the request
     pub backend: String,
-    /// Model used
     pub model: String,
-    /// Request latency
     pub latency: Duration,
-    /// Token usage
     pub usage: TokenUsage,
-    /// Whether the request succeeded
     pub success: bool,
-    /// Number of retry attempts
     pub retry_count: usize,
-    /// Timestamp
     pub timestamp: std::time::SystemTime,
 }
 
@@ -53,23 +46,14 @@ impl RequestMetrics {
 /// Aggregated metrics for analysis.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AggregatedMetrics {
-    /// Total requests
     pub total_requests: usize,
-    /// Successful requests
     pub successful_requests: usize,
-    /// Failed requests
     pub failed_requests: usize,
-    /// Total input tokens
     pub total_input_tokens: usize,
-    /// Total output tokens
     pub total_output_tokens: usize,
-    /// Average latency
     pub average_latency: Duration,
-    /// P50 latency
     pub p50_latency: Duration,
-    /// P99 latency
     pub p99_latency: Duration,
-    /// Total retries
     pub total_retries: usize,
 }
 
@@ -80,11 +64,8 @@ pub struct MetricsTracker {
 }
 
 struct MetricsTrackerInner {
-    /// All request metrics
     requests: Vec<RequestMetrics>,
-    /// Per-backend metrics
     backend_metrics: DashMap<String, Vec<RequestMetrics>>,
-    /// Per-model metrics
     model_metrics: DashMap<String, Vec<RequestMetrics>>,
 }
 

@@ -141,7 +141,7 @@ impl Value {
                 }
             }
             Value::Number(Number::Float(f)) => {
-                if *f >= 0.0 {
+                if f.is_finite() && *f >= 0.0 && *f <= u64::MAX as f64 {
                     Some(*f as u64)
                 } else {
                     None
