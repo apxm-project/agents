@@ -85,7 +85,7 @@ mod tests {
         assert!(is_pure_llm_op(&AISOperationType::Ask));
         assert!(is_pure_llm_op(&AISOperationType::Think));
         assert!(is_pure_llm_op(&AISOperationType::Reason));
-        assert!(!is_pure_llm_op(&AISOperationType::QMEM));
-        assert!(!is_pure_llm_op(&AISOperationType::Inv));
+        assert!(!is_pure_llm_op(&AISOperationType::QMem));
+        assert!(!is_pure_llm_op(&AISOperationType::InvTool));
     }
 }

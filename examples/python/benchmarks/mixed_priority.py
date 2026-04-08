@@ -17,9 +17,9 @@ def mixed_priority(g: GraphRecorder):
     """Critical path + background speculative work."""
 
     # Critical path: user-facing query
-    user_query = g.const_str(
+    user_query = g.text(
         "user_query",
-        "What are the top 3 programming languages for web development in 2026?"
+        value="What are the top 3 programming languages for web development in 2026?"
     )
 
     # CRITICAL PATH - should get highest priority
