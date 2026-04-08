@@ -1,0 +1,50 @@
+[
+  {
+    "inputs": {
+      "question": "What is microservices architecture?"
+    },
+    "output": "Microservices architecture is a design approach where applications are composed of small, independent services that communicate over well-defined APIs. Each microservice handles a specific business capability, can be developed and deployed independently, and typically owns its own database. This architecture enables better scalability (scale services independently), resilience (failures are isolated), and team autonomy (different teams can work on different services). However, it introduces complexity in distributed system coordination, monitoring, and data consistency."
+  },
+  {
+    "inputs": {
+      "question": "How does caching improve system performance?"
+    },
+    "output": "Caching improves performance by storing frequently accessed data in fast-access memory layers (RAM, SSD) closer to the application, reducing expensive operations like database queries or API calls. It works on the principle of temporal locality (recently accessed data is likely to be accessed again) and spatial locality (nearby data is likely to be accessed together). Effective caching strategies include: 1) Multi-level caching (L1/L2/CDN), 2) Cache invalidation policies (TTL, write-through, write-back), 3) Cache warming for predictable access patterns, and 4) Distributed caching for horizontal scaling."
+  },
+  {
+    "inputs": {
+      "question": "Design a URL shortening service similar to bit.ly. What are the key components?"
+    },
+    "output": "A URL shortening service requires four key components: 1) A hash generation service that creates unique short codes from long URLs, using algorithms like Base62 encoding or MD5 hashing with collision detection. 2) A high-performance key-value database (like Redis or DynamoDB) to store URL mappings with fast lookup times. 3) A redirect service that handles HTTP redirects from short URLs to original URLs with minimal latency. 4) An analytics layer to track click metrics, geographic data, and referrer information for each shortened URL."
+  },
+  {
+    "inputs": {
+      "question": "What is the CAP theorem?"
+    },
+    "output": "The CAP theorem states that in a distributed data system, you can only guarantee two of the following three properties: Consistency (all nodes see the same data), Availability (system remains operational even if nodes fail), and Partition tolerance (system continues despite network partitions). Real-world systems typically choose CP (sacrifice availability during partitions) or AP (sacrifice consistency during partitions), since partition tolerance is non-negotiable in distributed systems."
+  },
+  {
+    "inputs": {
+      "question": "Explain the difference between SQL and NoSQL databases"
+    },
+    "output": "SQL databases are relational, use structured schemas with tables and rows, support ACID transactions, and use SQL for querying. They excel at complex queries and relationships but can be harder to scale horizontally. NoSQL databases (document, key-value, column-family, graph) are schema-flexible, scale horizontally more easily, and sacrifice some consistency guarantees for performance and availability. Choose SQL for transactional systems requiring complex queries and strong consistency; choose NoSQL for high-scale, high-availability systems with simpler access patterns."
+  },
+  {
+    "inputs": {
+      "question": "What is event-driven architecture?"
+    },
+    "output": "Event-driven architecture (EDA) is a pattern where components communicate by emitting and consuming events asynchronously. Producers emit events when state changes occur, and consumers react to those events without direct coupling. Key benefits include loose coupling (components don't know about each other), scalability (add consumers without changing producers), and resilience (event queues buffer during outages). Common implementations use message brokers like Kafka, RabbitMQ, or cloud-native event buses."
+  },
+  {
+    "inputs": {
+      "question": "What is a load balancer and how does it work?"
+    },
+    "output": "A load balancer distributes incoming network traffic across multiple backend servers to improve availability and performance. It uses algorithms like round-robin, least connections, or IP hash to route requests. Modern load balancers provide health checks (route traffic only to healthy servers), SSL termination, session persistence, and autoscaling integration. They can be hardware appliances, software (NGINX, HAProxy), or cloud-managed (AWS ELB, GCP Load Balancer)."
+  },
+  {
+    "inputs": {
+      "question": "Explain REST API design principles"
+    },
+    "output": "REST (Representational State Transfer) APIs follow principles: 1) Resource-based URLs (/users/123, not /getUser?id=123), 2) HTTP verbs for actions (GET for read, POST for create, PUT/PATCH for update, DELETE for remove), 3) Stateless communication (each request contains all needed information), 4) Standard status codes (200 OK, 404 Not Found, 500 Server Error), 5) JSON/XML for data representation, and 6) HATEOAS for discoverability. Well-designed REST APIs are intuitive, consistent, and easy to version."
+  }
+]

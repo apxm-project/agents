@@ -166,17 +166,6 @@ class QualityEvaluator:
         Returns:
             List of FusionCandidates sorted by quality_drop (highest first)
         """
-        # Extract LLM nodes that could be fused
-        graph_dict = graph if isinstance(graph, dict) else graph.to_dict()
-        llm_ops = {"ASK", "THINK", "REASON"}
-        llm_nodes = [
-            node for node in graph_dict.get("nodes", [])
-            if node.get("op") in llm_ops
-        ]
-
-        if not llm_nodes:
-            return []
-
         # Compute overall quality drop
         avg_o0 = sum(self.metric(ex, out) for ex, out in zip(training_data, o0_outputs)) / len(training_data)
         avg_o2 = sum(self.metric(ex, out) for ex, out in zip(training_data, o2_outputs)) / len(training_data)
@@ -192,6 +181,17 @@ class QualityEvaluator:
                 fusion.quality_drop = quality_drop / len(fusion_list)  # Distribute blame evenly
                 risky.append(fusion)
             return sorted(risky, key=lambda f: f.quality_drop, reverse=True)
+
+        # Extract LLM nodes that could be fused
+        graph_dict = graph if isinstance(graph, dict) else graph.to_dict()
+        llm_ops = {"ASK", "THINK", "REASON"}
+        llm_nodes = [
+            node for node in graph_dict.get("nodes", [])
+            if node.get("op") in llm_ops
+        ]
+
+        if not llm_nodes:
+            return []  # No LLM nodes to analyze
 
         # Fallback: extract potential fusions from graph edges
         risky = []
@@ -225,18 +225,7 @@ class QualityEvaluator:
         """
         expected = example.get("output", "")
 
-        # Try DSPy metrics first
-        if DSPY_AVAILABLE:
-            try:
-                # Use answer_exact_match if available
-                mock_example = type('Example', (), {'answer': expected})()
-                mock_prediction = type('Prediction', (), {'answer': output})()
-                return float(metrics.answer_exact_match(mock_example, mock_prediction))
-            except Exception:
-                # Fall through to token overlap
-                pass
-
-        # Fallback: token overlap similarity
+        # Use token overlap similarity (better than exact match for partial credit)
         if not expected or not output:
             return 0.0
 

@@ -216,6 +216,8 @@ impl OptimizationHeuristics {
                 max_context_tokens: context_window,
                 enable_quality_guard: false,
                 profile: None,
+                quality_profile: None,
+                skip_fusions: HashSet::new(),
             },
             OptimizationTarget::Cost => Self {
                 target,
@@ -224,6 +226,8 @@ impl OptimizationHeuristics {
                 max_context_tokens: context_window / 2,
                 enable_quality_guard: true,
                 profile: None,
+                quality_profile: None,
+                skip_fusions: HashSet::new(),
             },
             OptimizationTarget::Tokens => Self {
                 target,
@@ -232,6 +236,8 @@ impl OptimizationHeuristics {
                 max_context_tokens: context_window / 4,
                 enable_quality_guard: true,
                 profile: None,
+                quality_profile: None,
+                skip_fusions: HashSet::new(),
             },
             OptimizationTarget::Parallelism => Self {
                 target,
@@ -240,6 +246,8 @@ impl OptimizationHeuristics {
                 max_context_tokens: context_window * 3 / 4,
                 enable_quality_guard: false,
                 profile: None,
+                quality_profile: None,
+                skip_fusions: HashSet::new(),
             },
             OptimizationTarget::Balanced => Self {
                 target,
@@ -248,6 +256,8 @@ impl OptimizationHeuristics {
                 max_context_tokens: context_window / 2,
                 enable_quality_guard: true,
                 profile: None,
+                quality_profile: None,
+                skip_fusions: HashSet::new(),
             },
         }
     }
@@ -262,6 +272,8 @@ impl OptimizationHeuristics {
                 max_context_tokens: 32000,        // Large context OK
                 enable_quality_guard: false,      // Latency > quality
                 profile: None,
+                quality_profile: None,
+                skip_fusions: HashSet::new(),
             },
             OptimizationTarget::Cost => Self {
                 target,
@@ -270,6 +282,8 @@ impl OptimizationHeuristics {
                 max_context_tokens: 16000,        // Moderate context
                 enable_quality_guard: true,       // Quality matters for cost
                 profile: None,
+                quality_profile: None,
+                skip_fusions: HashSet::new(),
             },
             OptimizationTarget::Tokens => Self {
                 target,
@@ -278,6 +292,8 @@ impl OptimizationHeuristics {
                 max_context_tokens: 8000,         // Aggressive context reduction
                 enable_quality_guard: true,       // Preserve quality
                 profile: None,
+                quality_profile: None,
+                skip_fusions: HashSet::new(),
             },
             OptimizationTarget::Parallelism => Self {
                 target,
@@ -286,6 +302,8 @@ impl OptimizationHeuristics {
                 max_context_tokens: 24000,
                 enable_quality_guard: false,      // Parallelism > quality
                 profile: None,
+                quality_profile: None,
+                skip_fusions: HashSet::new(),
             },
             OptimizationTarget::Balanced => Self {
                 target,
@@ -294,6 +312,8 @@ impl OptimizationHeuristics {
                 max_context_tokens: 20000,
                 enable_quality_guard: true,
                 profile: None,
+                quality_profile: None,
+                skip_fusions: HashSet::new(),
             },
         }
     }
@@ -373,6 +393,35 @@ impl OptimizationHeuristics {
     pub fn with_profile(mut self, profile: ExecutionProfile) -> Self {
         self.profile = Some(profile);
         self
+    }
+
+    /// Load and apply quality profile from DSPy evaluation
+    ///
+    /// This populates the skip_fusions set with risky fusions identified by DSPy.
+    pub fn with_quality_profile(mut self, profile_path: &PathBuf) -> Result<Self, std::io::Error> {
+        let profile = QualityProfile::load(profile_path)?;
+
+        // Add risky fusions to skip list
+        for risky in &profile.risky_fusions {
+            self.skip_fusions.insert((
+                risky.producer.clone(),
+                risky.consumer.clone(),
+            ));
+        }
+
+        self.quality_profile = Some(profile);
+        Ok(self)
+    }
+
+    /// Add a fusion to the skip list
+    pub fn skip_fusion(mut self, producer_id: String, consumer_id: String) -> Self {
+        self.skip_fusions.insert((producer_id, consumer_id));
+        self
+    }
+
+    /// Check if a specific fusion should be skipped based on quality profile
+    pub fn should_skip_fusion(&self, producer_id: &str, consumer_id: &str) -> bool {
+        self.skip_fusions.contains(&(producer_id.to_string(), consumer_id.to_string()))
     }
 
     /// Get the maximum fused template tokens for this configuration
