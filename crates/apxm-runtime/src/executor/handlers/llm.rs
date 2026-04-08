@@ -81,6 +81,7 @@ const DEFAULT_MAX_TOOL_ITERATIONS: usize = 10;
 /// Enables overlapping producer completion with downstream prefill by
 /// streaming tokens as they're generated.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct TokenPipeline {
     /// Producer node ID
     pub producer_node_id: u64,
@@ -94,6 +95,7 @@ pub struct TokenPipeline {
     pub min_tokens_before_start: usize,
 }
 
+#[allow(dead_code)]
 impl TokenPipeline {
     /// Create a new token pipeline
     pub fn new(producer_id: u64, consumer_id: u64, min_tokens: usize) -> Self {

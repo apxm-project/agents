@@ -1951,7 +1951,7 @@ fn context_stack_config_from_graph(
 #[cfg(feature = "driver")]
 fn extract_profile_from_session(
     session_dir: &std::path::Path,
-    graph_name: &str,
+    _graph_name: &str,
 ) -> Result<apxm_compiler::passes::profile::ExecutionProfile> {
     use apxm_compiler::passes::profile::{ExecutionProfile, NodeProfile};
     use serde::Deserialize;
@@ -1961,6 +1961,7 @@ fn extract_profile_from_session(
     #[derive(Deserialize)]
     struct NodeStatus {
         node_id: u32,
+        #[allow(dead_code)]
         status: String,
         duration_ms: u64,
         #[serde(default)]
