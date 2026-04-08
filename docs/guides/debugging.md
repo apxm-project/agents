@@ -11,17 +11,17 @@ apxm --trace debug execute graph.apxm
 apxm --trace trace agent test claude
 ```
 
-### Via `RUST_LOG` (selective, works with dekk)
+### Via `RUST_LOG` (selective)
 
 ```bash
 # ACP protocol messages only
-RUST_LOG=apxm::acp=debug dekk apxm agent test claude
+RUST_LOG=apxm::acp=debug apxm agent test claude
 
 # Multiple subsystems at different levels
-RUST_LOG=apxm::acp=debug,apxm::ops=trace dekk apxm execute graph.apxm
+RUST_LOG=apxm::acp=debug,apxm::ops=trace apxm execute graph.apxm
 
 # Everything at trace level
-RUST_LOG=apxm=trace dekk apxm execute graph.apxm
+RUST_LOG=apxm=trace apxm execute graph.apxm
 ```
 
 ## Tracing Targets
@@ -41,8 +41,7 @@ Each subsystem has a dedicated macro and target for filtering:
 ## Example: Debugging an ACP Agent
 
 ```bash
-# See the full JSON-RPC handshake
-RUST_LOG=apxm::acp=debug dekk apxm agent test claude
+RUST_LOG=apxm::acp=debug apxm agent test claude
 ```
 
 Output:
@@ -54,7 +53,7 @@ DEBUG apxm::acp: <- ok id=2
 INFO  apxm::acp: session established agent="claude" session_id=...
 ```
 
-If something fails, you'll see the error with full detail:
+If something fails, the error appears with full detail:
 ```
 WARN  apxm::acp: <- error id=2 code=-32602 msg=Invalid params data={...}
 ```
@@ -62,19 +61,30 @@ WARN  apxm::acp: <- error id=2 code=-32602 msg=Invalid params data={...}
 ## Example: Debugging Graph Execution
 
 ```bash
-# Scheduler + operation tracing
-RUST_LOG=apxm::ops=debug,apxm::scheduler=info dekk apxm execute graph.apxm
+RUST_LOG=apxm::ops=debug,apxm::scheduler=info apxm execute graph.apxm
 ```
+
+This shows each operation as it dispatches and completes, along with scheduler-level events (worker starts, ready-queue depth, work-stealing events).
+
+## Session Tracing
+
+For full execution traces persisted to disk, use `--emit-session`:
+
+```bash
+apxm execute graph.apxm --emit-session
+```
+
+This creates a session directory with per-node workspaces, an NDJSON event stream, and a live progress snapshot. See [Session Output](../implementation/runtime/sessions.md) for the directory layout.
 
 ## Metrics
 
-Runtime metrics are separate from tracing, enabled via the `metrics` feature:
+Runtime metrics are separate from tracing, enabled via `--emit-metrics`:
 
 ```bash
-dekk apxm execute graph.apxm --emit-metrics metrics.json
+apxm execute graph.apxm --emit-metrics metrics.json
 ```
 
-Metrics include scheduler overhead (ns), parallelism, work stealing, and per-operation timing.
+Metrics include scheduler overhead (ns), parallelism, work stealing, and per-operation timing. See [Runtime Observability](../implementation/runtime/observability.md) for the full metrics schema.
 
 ## Zero-Overhead Builds
 
@@ -95,4 +105,14 @@ apxm_acp!(debug, method = %method, id = id, "-> request");
 apxm_acp!(warn, code = err.code, msg = %err.message, "<- error");
 ```
 
-The macros follow `tracing` conventions: first arg is level (`trace`, `debug`, `info`, `warn`, `error`), then structured fields, then message string.
+The macros follow `tracing` conventions: first argument is level (`trace`, `debug`, `info`, `warn`, `error`), then structured fields, then message string.
+
+---
+
+## See Also
+
+- [Session Output](../implementation/runtime/sessions.md) -- Session directory layout and replay
+- [Runtime Observability](../implementation/runtime/observability.md) -- Metrics schema and collection
+- [Dataflow Scheduler](../implementation/runtime/dataflow-scheduler.md) -- Scheduler internals traced by `apxm::scheduler`
+- [AIS: Communication Ops](../implementation/ais/communication.md) -- ACP protocol details traced by `apxm::acp`
+- [Getting Started](../getting-started/installation.md) -- `apxm doctor` for environment diagnostics

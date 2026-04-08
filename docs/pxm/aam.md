@@ -7,6 +7,8 @@ description: "The formal state model underpinning every A-PXM agent: Beliefs, Go
 
 The AAM defines **what an agent is** at any point in time. It is the state model that every AIS instruction reads from and writes to. Without a formal state model, agent behavior is scattered across Python closures, global variables, and implicit LLM context -- making it impossible to reason about, optimize, or verify.
 
+> For implementation details (runtime data structures, scoping policies, session storage), see [runtime sessions](../implementation/runtime/sessions.md) and [hierarchical AAM design](../design/hierarchical-aam.md).
+
 ## Formal Definition
 
 An AAM is a triple:
@@ -26,7 +28,7 @@ AAM = (B, G, C)
 Every AIS instruction is a state transition on the AAM:
 
 ```
-δ(AAM, Instr) → AAM'
+d(AAM, Instr) -> AAM'
 ```
 
 The transition function is **deterministic given the same inputs**: for a fixed AAM state and instruction, the resulting state is uniquely determined. Non-determinism (LLM sampling, tool failures) is captured in the typed return values, not in the transition mechanics.
@@ -37,7 +39,7 @@ The transition function is **deterministic given the same inputs**: for a fixed 
 stateDiagram-v2
     [*] --> Initialized: Load AAM
     Initialized --> Active: First instruction
-    Active --> Active: δ(AAM, Instr) → AAM'
+    Active --> Active: d(AAM, Instr) -> AAM'
     Active --> Waiting: WAIT_ALL / MERGE
     Waiting --> Active: All tokens arrive
     Active --> Complete: All goals satisfied
@@ -48,7 +50,7 @@ stateDiagram-v2
 
 ## Memory Hierarchy
 
-The AAM's Beliefs are backed by a **three-tier memory hierarchy**, each tier optimized for different access patterns:
+The AAM's Beliefs are backed by a **three-tier memory hierarchy**, each tier optimized for different access patterns. The tiers represent a semantic partition of agent state, not merely a performance optimization.
 
 ```mermaid
 graph TB
@@ -59,9 +61,9 @@ graph TB
     end
 
     subgraph Memory["Memory Hierarchy"]
-        STM["STM (Short-Term Memory)\nIn-memory KV store\nAccess: ~μs"]
-        LTM["LTM (Long-Term Memory)\nSQLite persistence\nAccess: ~ms"]
-        EPI["Episodic Memory\nAppend-only log\nAccess: ~ms"]
+        STM["STM (Short-Term Memory)\nWorking memory\nAccess: ~us"]
+        LTM["LTM (Long-Term Memory)\nPersistent knowledge\nAccess: ~ms"]
+        EPI["Episodic Memory\nExecution history\nAccess: ~ms"]
     end
 
     subgraph External["External World"]
@@ -80,25 +82,27 @@ graph TB
 
 ### Tier 1: Short-Term Memory (STM)
 
-An in-memory key-value store providing microsecond access to recent context and tool output. STM is the working memory of the agent -- it holds the values most likely to be needed by the next few operations. STM is volatile; entries are evicted based on recency and relevance.
+Working memory providing microsecond access to recent context and tool output. STM holds the values most likely to be needed by the next few operations. STM is volatile; entries are evicted based on recency and relevance.
 
 **Access pattern**: read-heavy, small values, high locality.
 
 ### Tier 2: Long-Term Memory (LTM)
 
-A SQLite-backed persistent store for durable knowledge. LTM survives agent restarts and holds accumulated facts, preferences, and learned associations. Updates to LTM are transactional and trigger Belief updates in the AAM.
+Persistent store for durable knowledge. LTM survives agent restarts and holds accumulated facts, preferences, and learned associations. Updates to LTM are transactional and trigger Belief updates in the AAM.
 
 **Access pattern**: write-occasionally, read-on-demand, medium-to-large values.
 
 ### Tier 3: Episodic Memory
 
-An append-only execution trace that records every operation the agent has performed, its inputs, outputs, and timing. Episodic memory is the substrate for the REFL (Reflect) instruction -- the agent can review its own history to identify patterns, errors, and improvement opportunities.
+Append-only execution trace recording every operation the agent has performed, its inputs, outputs, and timing. Episodic memory is the substrate for the REFL (Reflect) instruction -- the agent can review its own history to identify patterns, errors, and improvement opportunities.
 
 **Access pattern**: append-only writes, sequential reads during reflection.
 
 ### Tier 4: External World (Conceptual)
 
-Beyond the agent's own memory lies the external world: RAG systems for retrieval-augmented generation, tool APIs for actions, and human-in-the-loop interfaces for escalation. These are accessed through typed AIS instructions (INV, COMM) rather than direct memory operations. Note: this tier is conceptual -- it is not an actual memory tier in the runtime implementation, but a framing for how external data sources relate to the memory hierarchy.
+Beyond the agent's own memory lies the external world: RAG systems, tool APIs, and human-in-the-loop interfaces. These are accessed through typed AIS instructions (INV, COMM) rather than direct memory operations. This tier is conceptual -- it frames how external data sources relate to the memory hierarchy, not an actual memory tier in the runtime.
+
+For the full comparative analysis of memory across PXMs, see [memory.md](memory.md). For implementation details (backing stores, concurrency mechanisms, search pipelines), see [memory hierarchy implementation](../implementation/runtime/memory-hierarchy.md).
 
 ## Concurrency Model
 
@@ -107,16 +111,16 @@ Each memory tier has an **independent lock**, allowing concurrent access across 
 | Tier | Lock Granularity | Consistency |
 |------|-----------------|-------------|
 | STM | Whole-store RwLock | Eventual (within agent) |
-| LTM | Per-table | Transactional (SQLite) |
+| LTM | Per-table | Transactional |
 | Episodic | Append-only (no conflicts) | Sequential |
 
 ## Runtime Commitment
 
-The AAM is not aspirational -- the runtime **must** implement it. Just as CPU silicon implements the von Neumann triple (PC, Registers, Memory), the A-PXM runtime implements the AAM triple (Beliefs, Goals, Capabilities). This is not metaphorical: the runtime data structures ARE the abstract machine.
+The AAM is not aspirational -- the runtime **must** implement it. Just as CPU silicon implements the von Neumann triple (PC, Registers, Memory), the A-PXM runtime implements the AAM triple (Beliefs, Goals, Capabilities). This is not metaphorical: the runtime data structures ARE the abstract machine. (This is the ISA contract described in [foundations.md](foundations.md).)
 
 ### AAM-to-File-Tree Mapping
 
-A natural implementation of the AAM backs each component with files in a project directory. This makes agent state persistent, navigable, and editable by both humans and AI:
+A natural implementation of the AAM backs each component with files in a project directory, making agent state persistent, navigable, and editable by both humans and AI:
 
 | AAM Component | File Representation | Rationale |
 |---------------|-------------------|-----------|
@@ -124,19 +128,7 @@ A natural implementation of the AAM backs each component with files in a project
 | **Goals** | A structured file (`goals.toml`) or directory hierarchy | Directory nesting maps directly to goal decomposition -- a subdirectory IS a sub-goal |
 | **Capabilities** | Tool definition files with typed function signatures | Each capability is a schema that the agent can discover and invoke |
 
-This file-tree-backed approach means an agent's entire state is inspectable with `ls` and `cat`, diff-able with `git diff`, and version-controllable with ordinary commits. An LLM debugging an agent can navigate its beliefs the same way it navigates source code.
-
-> **Source note.** This mapping draws on the file-tree architecture argument (Quantum Quill Lyceum, 2025) -- that agent workflows should be organized as hierarchical directories where workflows are folders, tasks are sub-folders, and components are files (prompts, tools, data). A single coding agent navigates this tree. If a provider releases a capability that replaces an entire workflow, the corresponding folder condenses into a single tool definition and the architecture remains intact. The AAM formalizes this intuition: the directory tree IS the `(B, G, C)` state hierarchy.
-
-### Current Implementation
-
-The current runtime uses flat in-memory structures:
-
-- **Beliefs**: `HashMap<String, TypedValue>` -- a single global key-value store
-- **Goals**: `GoalTree` -- a priority queue with parent-child hierarchy (GoalTree is now implemented)
-- **Capabilities**: `HashMap<String, Signature>` -- a flat registry of available tools
-
-The vision is **hierarchical, scoped state**: each workflow or task gets its own AAM scope that inherits from its parent, mirroring how function calls create stack frames. A task's beliefs include its parent's beliefs unless explicitly shadowed. Scoped state is partially implemented: `ScopeSpec`, `ScopePolicy` (Inherit, Isolate, Snapshot, Filter), and `read_scoped`/`write_scoped` exist, but full hierarchical composition is still in progress.
+A file-tree-backed AAM means the entire agent state is inspectable with `ls` and `cat`, diff-able with `git diff`, and version-controllable with ordinary commits. For the hierarchical scoping design (Inherit, Isolate, Snapshot, Filter policies), see [hierarchical AAM](../design/hierarchical-aam.md).
 
 ### Why This Matters for Debugging
 
@@ -157,8 +149,8 @@ AAM = (
     Goal("log_interaction", priority=2)
   ],
   C: {
-    "weather_api": (location: String) → WeatherData,
-    "summarize":   (data: WeatherData, query: String) → String
+    "weather_api": (location: String) -> WeatherData,
+    "summarize":   (data: WeatherData, query: String) -> String
   }
 )
 ```
@@ -166,7 +158,7 @@ AAM = (
 After executing `INV weather_api(location)`, the transition function updates Beliefs:
 
 ```
-B' = B ∪ { "temperature": Float(22.5) }
+B' = B + { "temperature": Float(22.5) }
 ```
 
 The rest of the AAM remains unchanged. This explicit, typed state model makes every mutation visible and auditable.
@@ -175,12 +167,12 @@ The rest of the AAM remains unchanged. This explicit, typed state model makes ev
 
 ## References
 
-1. A. S. Rao and M. P. Georgeff, "BDI Agents: From Theory to Practice," in *Proc. ICMAS '95*, pp. 312–319, AAAI Press, 1995.
+1. A. S. Rao and M. P. Georgeff, "BDI Agents: From Theory to Practice," in *Proc. ICMAS '95*, pp. 312-319, AAAI Press, 1995.
 
 2. M. E. Bratman, *Intention, Plans, and Practical Reason*, Harvard University Press, 1987.
 
-3. R. C. Atkinson and R. M. Shiffrin, "Human Memory: A Proposed System and Its Control Processes," in *The Psychology of Learning and Motivation*, vol. 2, pp. 89–195, Academic Press, 1968.
+3. R. C. Atkinson and R. M. Shiffrin, "Human Memory: A Proposed System and Its Control Processes," in *The Psychology of Learning and Motivation*, vol. 2, pp. 89-195, Academic Press, 1968.
 
-4. E. Tulving, "Episodic and Semantic Memory," in *Organization of Memory*, pp. 381–403, Academic Press, 1972.
+4. E. Tulving, "Episodic and Semantic Memory," in *Organization of Memory*, pp. 381-403, Academic Press, 1972.
 
 5. G. R. Gao, R. Patel, and T. St. John, "The Codelet Program Execution Model," presented at *WiA, ISCA '13*, Tel-Aviv, Israel, 2013.

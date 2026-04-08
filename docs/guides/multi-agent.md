@@ -12,11 +12,11 @@ APXM distinguishes three kinds of participants:
 | **LLM** | A model backend you register with APXM | Powers internal `ASK`, `THINK`, `REASON` nodes |
 | **Tool** | A stateless capability (shell command, HTTP endpoint, MCP server) | Invoked by `INV` nodes |
 
-Key distinction: agents are autonomous processes that manage their own context, tool access, and execution. APXM does not give agents your LLM credentials -- it communicates with them over ACP (Agent Communication Protocol), sending prompts and receiving results.
+Key distinction: agents are autonomous processes that manage their own context, tool access, and execution. APXM does not share your LLM credentials with agents -- it communicates with them over ACP (Agent Communication Protocol), sending prompts and receiving results.
 
 ## 2. Setup
 
-APXM uses **explicit registration** for agents — nothing is available until you register it. This mirrors the backend system and prevents silent runtime failures from missing tools.
+APXM requires **explicit registration** -- nothing is available until you register it. This mirrors the backend system and prevents silent runtime failures from missing tools.
 
 ```bash
 # 1. Register an LLM backend for ASK/THINK/REASON nodes
@@ -25,7 +25,7 @@ apxm backend add my-openai --type cloud --protocol openai --api-key sk-...
 # 2. See which agent templates are available
 apxm agent templates
 
-# 3. Register agents you want to use (runs a spawn test to verify the tool is installed)
+# 3. Register agents (runs a spawn test to verify the tool is installed)
 apxm agent add claude
 apxm agent add codex
 
@@ -36,19 +36,19 @@ apxm agent list
 apxm agent test claude
 ```
 
-`apxm agent add <name>` uses a built-in template (command, timeouts) and runs a spawn test to verify the tool is installed. If the spawn fails, registration is rejected — use `--no-test` to skip this check in offline environments.
+`apxm agent add <name>` uses a built-in template (command, timeouts) and runs a spawn test. If the spawn fails, registration is rejected. Use `--no-test` to skip this check in offline environments.
 
 ## 3. Two Authoring Styles
 
 APXM supports two styles for working with agents. Both produce valid graphs.
 
-> **Note on JSON formats:** Style A examples below use the **runtime token format** (`op_type`, `input_tokens`, `output_tokens`, `entry_nodes`, `exit_nodes`) — this is the format emitted by the compiler and used in `examples/acp-agents/`. Style B examples use the **ApxmGraph IR format** (`op`, `name`, `parameters`) — this is the format accepted by `apxm validate` and described in CLAUDE.md's Graph JSON Contract. Both are valid; the runtime handles conversion automatically.
+> **Note on JSON formats:** Style A examples use the **runtime token format** (`op_type`, `input_tokens`, `output_tokens`, `entry_nodes`, `exit_nodes`) -- the format emitted by the compiler and used in `examples/acp-agents/`. Style B examples use the **ApxmGraph IR format** (`op`, `name`, `parameters`) -- the format accepted by `apxm validate` and described in the [graph format reference](../reference/graph-format.md). Both are valid; the runtime handles conversion automatically.
 
 ### Style A: SPAWN_AGENT + COMMUNICATE (explicit lifecycle)
 
 You control the agent's full lifecycle: spawn it, send messages, collect results. This style uses the low-level AIS operations `SPAWN_AGENT`, `COMMUNICATE`, `MERGE`, and `PRINT`.
 
-- `SPAWN_AGENT` starts an agent process. The `Control` edge from a spawn node ensures the agent is ready before any `COMMUNICATE` targets it.
+- `SPAWN_AGENT` starts an agent process. A `Control` edge from a spawn node ensures the agent is ready before any `COMMUNICATE` targets it.
 - `COMMUNICATE` sends a message to a named agent and returns its response. The `protocol` attribute is always `"acp"`.
 - `MERGE` collects multiple token streams into one.
 
@@ -120,13 +120,13 @@ Here is a complete graph that spawns two agents in parallel, asks them the same 
 ```
 
 Edge breakdown:
-- `Control` edges from `SPAWN_AGENT` to `COMMUNICATE` ensure agents are alive before messages are sent.
+- `Control` edges from `SPAWN_AGENT` to `COMMUNICATE` ensure agents are alive before messages arrive.
 - `Data` edges from `CONST_STR` to `COMMUNICATE` carry the prompt payload.
 - `Data` edges into `MERGE` collect both responses.
 
 ### Style B: INV with ACP capability (session-managed)
 
-The `INV` operation with `capability: "acp"` handles agent lifecycle automatically. You specify the agent, prompt, and optional session handle in `params_json`. This is more concise and better suited for pipelines where you don't need fine-grained lifecycle control.
+The `INV` operation with `capability: "acp"` handles agent lifecycle automatically. You specify the agent, prompt, and optional session handle in `params_json`. This style is more concise and suits pipelines where you do not need fine-grained lifecycle control.
 
 ```json
 {
@@ -176,7 +176,7 @@ Key differences from Style A:
 - No explicit `SPAWN_AGENT` -- the runtime manages agent lifecycle.
 - `params_json` carries the agent name, prompt, and optional `session_handle` and `mode`.
 - `timeout_ms` sets a deadline for the agent response.
-- Uses the standard graph contract (`name`, `nodes`, `edges`, `parameters`, `metadata`) rather than the token-based format.
+- Uses the standard [graph contract](../reference/graph-format.md) (`name`, `nodes`, `edges`, `parameters`, `metadata`) rather than the token-based format.
 
 ### When to use which
 
@@ -189,11 +189,11 @@ Key differences from Style A:
 
 ### Pattern 1: Parallel Review
 
-Ask multiple agents the same question in parallel, then synthesize. This is the multi-agent version of the fan-out pattern. See the Style B example in [Section 3](#style-b-inv-with-acp-capability-session-managed) above — nodes 1 and 2 have no edges between them, so the scheduler runs them concurrently, and node 3 waits for both via `Data` edges.
+Ask multiple agents the same question in parallel, then synthesize. This is the multi-agent version of the fan-out pattern. See the Style B example in [Section 3](#style-b-inv-with-acp-capability-session-managed) above -- nodes 1 and 2 have no edges between them, so the scheduler runs them concurrently, and node 3 waits for both via `Data` edges.
 
 ### Pattern 2: Pipeline (Architect, Implement, Review)
 
-Chain agents sequentially. Each step's output feeds the next agent. This uses Style A with explicit lifecycle management and multi-turn communication:
+Chain agents sequentially, feeding each step's output to the next. This example uses Style A with explicit lifecycle management and multi-turn communication:
 
 ```json
 {
@@ -260,7 +260,7 @@ Chain agents sequentially. Each step's output feeds the next agent. This uses St
 }
 ```
 
-The flow is: spawn architect (1) -> ask architect to design (3) -> spawn coder (4) -> send design to coder (5) -> send implementation back to architect for review (6) -> print final review (7). Notice how the `Control` edge from node 3 to node 4 delays spawning the coder until the design is ready.
+The flow: spawn architect (1) -> ask architect to design (3) -> spawn coder (4) -> send design to coder (5) -> send implementation back to architect for review (6) -> print final review (7). The `Control` edge from node 3 to node 4 delays coder spawning until the design is ready.
 
 The same pipeline in Style B (INV with session handles for multi-turn):
 
@@ -395,14 +395,14 @@ Two agents independently propose solutions, then each critiques the other's prop
 ```
 
 Execution flow:
-1. Both agents are spawned in parallel (nodes 1, 2).
+1. Both agents spawn in parallel (nodes 1, 2).
 2. Both receive the same prompt and produce proposals in parallel (nodes 4, 5).
-3. Agent A's proposal goes to Agent B for critique (node 6); Agent B's proposal goes to Agent A (node 7). The `Control` edges from nodes 4 and 5 ensure both proposals are ready before critiques begin.
+3. Agent A's proposal goes to Agent B for critique (node 6); Agent B's proposal goes to Agent A (node 7). `Control` edges from nodes 4 and 5 ensure both proposals are ready before critiques begin.
 4. Both critiques merge (node 8) and print (node 9).
 
 ## 5. Agent Registration
 
-Agents must be registered before they can be used in graphs. APXM ships 16 built-in templates (command, timeouts) but does **not** make them available by default — you register the ones you need.
+Agents must be registered before graphs can use them. APXM ships 16 built-in templates but does **not** make them available by default -- you register the ones you need.
 
 ### Templates vs. Custom Agents
 
@@ -424,21 +424,16 @@ apxm agent add gemini --no-test
 ### Managing Registrations
 
 ```bash
-# List registered agents
-apxm agent list
-
-# Test connectivity
-apxm agent test claude
-
-# Remove a registration
-apxm agent remove claude
+apxm agent list            # List registered agents
+apxm agent test claude     # Test connectivity
+apxm agent remove claude   # Remove a registration
 ```
 
 Registered agents become available by name in `SPAWN_AGENT` attributes and `INV` `params_json`. The `--permissions` flag controls what the agent is allowed to do:
 
 | Mode | Behavior |
 |------|----------|
-| `approve-reads` (default) | Allow file reads and searches, require approval for writes/exec |
+| `approve-reads` (default) | Allow file reads and searches; require approval for writes/exec |
 | `approve-all` | Allow all file and terminal operations |
 | `deny-all` | Deny all file and terminal operations |
 
@@ -456,13 +451,13 @@ The validator checks DAG constraints, operation names, required attributes, and 
 
 ### Analyze
 
-Inspect the execution plan to understand parallelism and the critical path:
+Inspect parallelism and the critical path:
 
 ```bash
 apxm analyze workflow.apxm
 ```
 
-For multi-agent graphs, this shows which agents run concurrently and where synchronization points (MERGE, WAIT_ALL) introduce sequential bottlenecks.
+For multi-agent graphs, this shows which agents run concurrently and where synchronization points (`MERGE`, `WAIT_ALL`) introduce sequential bottlenecks.
 
 ### Execute
 
@@ -470,19 +465,12 @@ Compile and run the graph:
 
 ```bash
 apxm execute workflow.apxm
+apxm execute workflow.apxm --trace info           # detailed execution logs
+apxm execute workflow.apxm --emit-metrics m.json   # runtime statistics
+apxm execute workflow.apxm --emit-session          # full session trace
 ```
 
-Add `--trace info` for detailed execution logs showing agent spawn times, message round-trips, and merge points:
-
-```bash
-apxm execute workflow.apxm --trace info
-```
-
-Use `--emit-metrics` to write runtime statistics (agent latencies, token counts) to a JSON file:
-
-```bash
-apxm execute workflow.apxm --emit-metrics metrics.json
-```
+See [Debugging](debugging.md) for tracing details and [Session Output](../implementation/runtime/sessions.md) for session directory layout.
 
 ## Quick Reference
 
@@ -494,9 +482,11 @@ apxm execute workflow.apxm --emit-metrics metrics.json
 | `CONST_STR` | Provide a literal string value | `value` |
 | `INV` (ACP) | Session-managed agent call | `capability: "acp"`, `params_json` |
 
-## Next Steps
+## See Also
 
-- Browse the example graphs: `examples/acp-agents/`
-- See all AIS operations: `apxm ops list`
-- Full CLI reference: run `apxm --help`
-- Build your first graph: [First Graph](first-graph.md)
+- [First Graph](../getting-started/first-graph.md) -- Build your first workflow
+- [Graph Format Reference](../reference/graph-format.md) -- Full `.apxm` file specification
+- [Self-Hosted Workflows](self-hosted-workflows.md) -- Using APXM to build APXM
+- [Runtime: Multi-Agent](../implementation/runtime/multi-agent.md) -- Internal agent orchestration details
+- [AIS: Communication Ops](../implementation/ais/communication.md) -- `SPAWN_AGENT`, `COMMUNICATE` internals
+- Browse example graphs: `examples/acp-agents/`

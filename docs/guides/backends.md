@@ -1,35 +1,28 @@
-# Backends and Models Architecture
+# Backends and Models
 
-> **Reference:** For the full configuration format, see [`docs/reference/config.md`](../reference/config.md).
+> **Full configuration reference:** [config.md](../reference/config.md) covers every field, default, and example for `~/.apxm/config.toml`.
 
 ## The Hierarchy
 
-APXM has a three-level hierarchy for LLM infrastructure:
+APXM organizes LLM infrastructure into three levels:
 
 ```
-BACKEND  ── where inference physically runs
-  └── MODEL  ── a specific LLM deployed on that backend
-        └── ENDPOINT  ── how to reach it (protocol + URL + auth)
+BACKEND  -- where inference physically runs
+  +-- MODEL  -- a specific LLM deployed on that backend
+        +-- ENDPOINT  -- how to reach it (protocol + URL + auth)
 ```
 
-A single `~/.apxm/config.toml` is the only source of truth.
+A single `~/.apxm/config.toml` file is the only source of truth.
 
 ---
 
 ## Backend Types
 
-APXM supports three backend categories with different lifecycle, cost, and capability profiles:
+APXM supports three backend categories, each with a distinct lifecycle and cost model.
 
 ### Cloud
 
-SaaS APIs from major LLM providers. You pay per token; the provider manages everything else.
-
-| Property | Value |
-|----------|-------|
-| Lifecycle | Always on (managed by provider) |
-| Cost | Per-token |
-| APXM Graph Hints | ❌ |
-| Setup | API key only |
+SaaS APIs from major LLM providers. You pay per token; the provider manages infrastructure.
 
 **Examples:** Anthropic (Claude), OpenAI (GPT), Google (Gemini)
 
@@ -46,20 +39,11 @@ context_window = 200000
 tags = ["production", "smart"]
 ```
 
----
-
 ### On-Prem
 
-Enterprise-managed endpoints. Fixed allocation or internal billing. You have an API but someone else manages the GPUs.
+Enterprise-managed endpoints with internal billing. You have an API but someone else manages the GPUs.
 
-| Property | Value |
-|----------|-------|
-| Lifecycle | Managed by IT/infra |
-| Cost | Internal billing |
-| APXM Graph Hints | ✅ only if `protocol = "vllm"` |
-| Setup | API key + custom headers |
-
-**Examples:** enterprise LLM gateway, Azure OpenAI, AWS Bedrock, private vLLM clusters
+**Examples:** Enterprise LLM gateway, Azure OpenAI, AWS Bedrock, private vLLM clusters
 
 ```toml
 [[backends]]
@@ -78,18 +62,9 @@ id = "GPT-oss-20B"
 tags = ["onprem", "internal"]
 ```
 
----
-
 ### Local
 
-You own the full stack. You download the model, manage GPU allocation, start and stop the server.
-
-| Property | Value |
-|----------|-------|
-| Lifecycle | **You manage it** |
-| Cost | Hardware only |
-| APXM Graph Hints | ✅ full support with APXM vLLM branch |
-| Setup | Docker config + model path |
+You own the full stack: download the model, allocate GPUs, start and stop the server.
 
 **Examples:** vLLM on GPU, Ollama, llama.cpp
 
@@ -121,123 +96,60 @@ tags = ["local", "free"]
 
 ## Protocols
 
-The `protocol` field determines the HTTP wire format APXM uses to talk to the backend:
+The `protocol` field selects the HTTP wire format APXM uses to talk to the backend:
 
 | Protocol | Description | Graph Hints |
 |----------|-------------|-------------|
-| `openai` | OpenAI Chat Completions API (also used by OpenRouter, Together, etc.) | ❌ |
-| `anthropic` | Anthropic Messages API | ❌ |
-| `google` | Google Gemini API | ❌ |
-| `ollama` | Ollama local API (`/api/chat`, streaming) | ❌ |
-| `vllm` | OpenAI-compatible + APXM graph extensions | ✅ |
+| `openai` | OpenAI Chat Completions API (also used by OpenRouter, Together, etc.) | No |
+| `anthropic` | Anthropic Messages API | No |
+| `google` | Google Gemini API | No |
+| `ollama` | Ollama local API (`/api/chat`, streaming) | No |
+| `vllm` | OpenAI-compatible + APXM graph extensions | Yes |
 
 ### vLLM and Graph Hints
 
 When `protocol = "vllm"`, APXM sends additional scheduling metadata with each request:
 
-- `POST /v1/apxm/graphs/register` — Register a graph for priority scheduling
-- `DELETE /v1/apxm/graphs/{graph_id}` — Release KV-cache for a completed graph
+- `POST /v1/apxm/graphs/register` -- Register a graph for priority scheduling
+- `DELETE /v1/apxm/graphs/{graph_id}` -- Release KV-cache for a completed graph
 - Requests include hints via the `extra_body.apxm` JSON field (graph ID, critical-path flag, etc.)
 
-This allows the vLLM scheduler (APXM branch) to prioritize critical-path operations in a running graph, reducing end-to-end latency.
-
----
-
-## Model Metadata
-
-Each model carries metadata used for routing, cost estimation, and capability checks:
-
-```toml
-[[backends.models]]
-id = "claude-sonnet-4-5"        # Identifier sent to the API (required)
-aliases = ["sonnet", "claude"]  # Alternative routing names
-context_window = 200000         # Max tokens (0 = unknown)
-cost_per_1k_input = 0.003       # USD per 1K input tokens
-cost_per_1k_output = 0.015      # USD per 1K output tokens
-supports_vision = true          # Image input support
-supports_functions = true       # Tool/function calling
-supports_thinking = false       # Extended reasoning (o1, Claude thinking)
-tags = ["production", "smart"]  # Routing tags
-```
-
-### Tag Conventions
-
-| Tag | Meaning |
-|-----|---------|
-| `production` | Approved for production workloads |
-| `development` | Dev/testing only |
-| `smart` | High capability, higher cost |
-| `fast` | Low latency, lower capability |
-| `cheap` | Cost-optimized |
-| `local` | Self-hosted, no per-token cost |
-| `vision` | Supports image inputs |
-| `thinking` | Extended reasoning mode |
-| `onprem` | Enterprise internal |
+This allows the vLLM scheduler (APXM branch) to prioritize critical-path operations, reducing end-to-end latency. See [vLLM Integration](../integrations/vllm.md) for setup details.
 
 ---
 
 ## Routing
 
-Routing controls which backend and model handle each request. Configured under `[chat]` and `[chat.routing]`.
+Routing determines which backend and model handle each request. APXM resolves routing through a priority chain -- see [Routing Resolution Order](../reference/config.md#routing-resolution-order) in the config reference for the full sequence.
 
-### Resolution Order
+Key concepts:
 
-When selecting a backend/model for a request:
+- **Operation routes** direct specific AIS operations (e.g., `plan`, `think`, `ask`) to specific backends or models.
+- **Model aliases** create shortcuts like `fast` or `smart` that map to concrete model/backend pairs.
+- **Fallback chains** redirect traffic when a backend becomes unhealthy.
 
-1. Explicit backend selection (request specifies backend/model directly)
-2. Model-based routing (model alias resolution via `[chat.routing.model_aliases]`)
-3. Operation-specific default (`[chat.routing.operation_routes]`)
-4. Global default backend (`chat.default_backend` / `chat.default_model`)
-5. Strategy-based selection (`FirstHealthy`, `RoundRobin`, or `LowLatency`)
-6. If selected backend is unhealthy → circuit breaker triggers fallback chain
-
-### Operation Routes
-
-Route specific AIS operations to specific backends:
-
-```toml
-[chat.routing.operation_routes.plan]
-model = "claude-sonnet-4-5"     # Use this model for PLAN ops
-
-[chat.routing.operation_routes.think]
-backend = "local-gpu"       # Use local GPU for THINK ops
-
-[chat.routing.operation_routes.ask]
-backend = "corp-gateway"          # Cheap queries go on-prem
-```
-
-Routable operations: `plan`, `think`, `reason`, `reflect`, `ask`, `verify`
-
-### Fallback Chains
-
-When a backend becomes unhealthy, the circuit breaker redirects to the fallback chain:
-
-```toml
-[[chat.routing.fallback_chains]]
-backend = "anthropic"
-fallbacks = ["corp-gateway", "local-gpu"]
-```
+All routing configuration lives under `[chat.routing]` in `config.toml`. See [config.md](../reference/config.md) for the full specification and examples.
 
 ---
 
 ## Health Monitoring
 
-APXM's ModelRouter continuously monitors backend health:
+APXM's `ModelRouter` continuously monitors backend health:
 
 | State | Meaning | Behavior |
 |-------|---------|----------|
-| `Unknown` | Initial state (not enough requests recorded) | Accept requests |
+| `Unknown` | Not enough requests recorded | Accept requests |
 | `Healthy` | Normal operation | Accept requests |
 | `Degraded` | High latency or elevated error rate | Accept with warning |
 | `Unhealthy` | Failed health check | Trigger fallback chain |
 
-This is the `HealthMonitor` system (success-rate-based). The circuit breaker (in `apxm-runtime::ModelRouter`) is a separate mechanism: it opens after N consecutive failures (default: 5), half-opens after a timeout (default: 30s) to test recovery, and closes after a successful request.
+The circuit breaker (in `apxm-runtime::ModelRouter`) is a separate mechanism: it opens after N consecutive failures (default: 5), half-opens after a timeout (default: 30s) to test recovery, and closes after a successful request.
 
 ---
 
 ## Docker Lifecycle (Local Backends)
 
-Local backends with `[backends.docker]` config support full container lifecycle via CLI:
+Local backends with `[backends.docker]` config support full container lifecycle:
 
 ```bash
 apxm backend start local-gpu    # Launch container
@@ -247,35 +159,13 @@ apxm backend stop local-gpu     # Shut down
 apxm backend restart local-gpu  # Restart
 ```
 
-The `DockerManager` translates the `[backends.docker]` config into `docker run` commands with the correct GPU device mappings, environment variables, model mounts, and tensor-parallel settings.
-
----
-
-## CLI Reference
-
-```bash
-# Discovery
-apxm backend list              # All registered backends
-apxm models list               # All models across all backends
-apxm models health             # ModelRouter health status
-
-# Management
-apxm backend add <name>        # Add a backend (uses flags: --type, --protocol, --endpoint, --api-key)
-apxm backend remove <name>     # Remove a backend
-apxm backend test [name]       # Test connectivity (all or specific)
-apxm backend migrate           # Import from legacy credentials.toml
-
-# Local backend lifecycle
-apxm backend start <name>      # Start Docker container
-apxm backend stop <name>       # Stop container
-apxm backend status [name]     # Container status
-apxm backend logs <name>       # Container logs (--tail N)
-apxm backend restart <name>    # Restart container
-```
+The `DockerManager` translates `[backends.docker]` config into `docker run` commands with the correct GPU device mappings, environment variables, model mounts, and tensor-parallel settings.
 
 ---
 
 ## See Also
 
-- [`docs/reference/config.md`](../reference/config.md) — Complete config file reference
-- [`docs/reference/backends-quickref.md`](../reference/backends-quickref.md) — One-page cheat sheet
+- [Configuration Reference](../reference/config.md) -- Complete `config.toml` field reference, routing resolution order, model metadata, and CLI commands
+- [Multi-Model Routing](multi-model.md) -- Per-node model selection and cost/quality trade-offs
+- [vLLM Integration](../integrations/vllm.md) -- Graph-aware scheduling with vLLM
+- [Getting Started](../getting-started/installation.md) -- Initial setup and backend registration

@@ -1,0 +1,90 @@
+# APXM Team Definitions
+#
+# Teams are higher-level abstractions that package multiple agent spawns with
+# predefined roles and prompts. Each team member is spawned with its configured
+# role (used as the agent name), profile (ACP agent), and optional system_prompt.
+#
+# Usage:
+#   1. Copy this file to ~/.apxm/teams.toml
+#   2. Customize team definitions for your workflow
+#   3. Use `dekk apxm team list` to view all teams
+#   4. Use `dekk apxm team show <name>` to view team members
+#   5. In AIS: spawn_team("ultrathink", "/path/to/project") -> spawns all members
+
+[[team]]
+name = "ultrathink"
+description = "3-phase parallel planning team"
+
+[[team.member]]
+role = "architect"
+profile = "claude"
+system_prompt = """You are a software architect specializing in system design.
+Your task is to design robust, scalable solutions. Focus on:
+- System boundaries and interfaces
+- Data flow and state management
+- Error handling and edge cases
+- Performance and scalability considerations"""
+
+[[team.member]]
+role = "adversary"
+profile = "claude"
+system_prompt = """You are an adversarial reviewer whose job is to identify weaknesses
+and potential failures in proposed solutions. Focus on:
+- Edge cases that could break the system
+- Security vulnerabilities and attack vectors
+- Performance bottlenecks
+- Maintainability and complexity issues"""
+
+[[team.member]]
+role = "impl_expert"
+profile = "codex"
+system_prompt = """You are an implementation expert who turns designs into code.
+Your task is to implement solutions efficiently. Focus on:
+- Clean, idiomatic code
+- Proper error handling
+- Test coverage
+- Documentation where needed"""
+
+[[team]]
+name = "discover"
+description = "4-specialist discovery team for competitive analysis"
+
+[[team.member]]
+role = "entity_analyst"
+profile = "claude"
+system_prompt = "Analyze business entities and organizational structures."
+
+[[team.member]]
+role = "competitor_analyst"
+profile = "claude"
+system_prompt = "Research competitors and market positioning."
+
+[[team.member]]
+role = "nav_analyst"
+profile = "claude"
+system_prompt = "Analyze user navigation patterns and UX design."
+
+[[team.member]]
+role = "design_analyst"
+profile = "claude"
+system_prompt = "Evaluate visual design and branding elements."
+
+[[team]]
+name = "full_stack"
+description = "Full-stack development team"
+
+[[team.member]]
+role = "frontend"
+profile = "claude"
+
+[[team.member]]
+role = "backend"
+profile = "codex"
+
+[[team.member]]
+role = "database"
+profile = "claude"
+
+[[team.member]]
+role = "devops"
+profile = "codex"

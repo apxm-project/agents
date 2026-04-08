@@ -1,6 +1,6 @@
 # Sessions
 
-Sessions manage the lifecycle of agent execution state -- checkpointing the AAM for restart continuity, tracking live agent processes, coordinating ACP subprocess lifecycles, and scoping hierarchical multi-agent execution.
+Sessions manage the lifecycle of agent execution state -- checkpointing the AAM for restart continuity, tracking live agent processes, coordinating ACP subprocess lifecycles, and scoping hierarchical multi-agent execution. This is the implementation counterpart to the formal [Agent Abstract Machine (AAM)](../../pxm/aam.md) specification.
 
 ## AAM Checkpoints
 
@@ -142,3 +142,10 @@ When `--emit-session <dir>` is passed to `dekk apxm execute` or `dekk apxm run`,
 ```
 
 Session folders enable reproducible inspection: the input graph, every node's output, all runtime events, and performance metrics are captured in one directory.
+
+## Related Documentation
+
+- [Agent Abstract Machine (AAM)](../../pxm/aam.md) -- formal `(B, G, C)` definition and transition function
+- [Hierarchical AAM](../../design/hierarchical-aam.md) -- scoping diagrams and file-tree-as-AAM design
+- [Observability](observability.md) -- event system, MetricsCollector, and CLI output flags
+- [Host Integration](../host-integration.md) -- how hosts (Codex, Gemini) interact with sessions and AAM

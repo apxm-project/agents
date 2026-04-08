@@ -5,7 +5,7 @@ description: "The typed operation taxonomy that forms A-PXM's intermediate repre
 
 # Agent Instruction Set (AIS)
 
-The AIS is a typed intermediate representation -- the "instruction set architecture" for agentic AI. Every operation takes typed inputs, produces typed outputs, and transitions the AAM state deterministically. The AIS is what makes agent workflows visible: each operation is a typed node with declared dependencies, not an opaque function call.
+The AIS is a typed intermediate representation -- the ISA contract for agentic AI (see [foundations.md](foundations.md) for why this contract matters). Every operation takes typed inputs, produces typed outputs, and transitions the [AAM](aam.md) state deterministically. The AIS is what makes agent workflows visible: each operation is a typed node with declared dependencies, not an opaque function call.
 
 ## Design Principles
 
@@ -30,6 +30,8 @@ The AIS operations are organized across multiple categories. Run `apxm ops list`
 | **ErrorHandling** | TRY_CATCH | Exception handling with recovery subgraphs |
 | **Identity** | NOP, IDENTITY | Pass-through operations for graph structuring |
 
+For per-operation implementation details and examples, see the [AIS implementation reference](../implementation/ais/llm-ops.md).
+
 ## Latency-Typed LLM Operations
 
 A distinguishing feature of AIS is that LLM operations carry explicit latency budgets:
@@ -40,12 +42,12 @@ A distinguishing feature of AIS is that LLM operations carry explicit latency bu
 | `THINK` | ~3s | Multi-step reasoning, summarization | "Summarize and extract key claims" |
 | `REASON` | ~10s | Complex analysis, planning, synthesis | "Analyze 5 reports, identify contradictions" |
 
-The scheduler uses these budgets to:
+The [scheduler](scheduling.md) uses these budgets to:
 - **Overlap** long-running REASON operations with independent ASK/THINK operations
 - **Prioritize** operations on the critical path
 - **Timeout** operations that exceed their budget, triggering TRY_CATCH recovery
 
-This stratification makes the cost structure of a workflow visible at compile time. A graph heavy in REASON nodes will have different scheduling characteristics than one dominated by ASK nodes, and the compiler can reason about this statically.
+This stratification makes the cost structure of a workflow visible at compile time.
 
 ## Type System
 
@@ -83,10 +85,10 @@ Futures are first-class tokens: they flow along DAG edges, trigger downstream op
 
 ## State Transitions
 
-Every AIS instruction is a deterministic state transition on the AAM:
+Every AIS instruction is a deterministic state transition on the [AAM](aam.md):
 
 ```
-δ(AAM, Instr) → AAM'
+d(AAM, Instr) -> AAM'
 ```
 
 Different instructions affect different components of the AAM triple:
@@ -102,11 +104,11 @@ Different instructions affect different components of the AAM triple:
 | UMEM | -- | B (memory write) |
 | COMM | -- | Outbound message |
 
-This explicit mapping of reads and writes is what enables the compiler to perform side-effect analysis, determine operation independence, and verify that state transitions are well-formed.
+This explicit mapping of reads and writes enables the compiler to perform side-effect analysis, determine operation independence, and verify that state transitions are well-formed.
 
 ## MLIR Dialect
 
-AIS is implemented as an MLIR dialect with custom operations, types, and verifiers:
+AIS is implemented as an MLIR dialect with custom operations, types, and verifiers. See [compiler overview](../implementation/compiler/overview.md) for the full pipeline.
 
 ```mlir
 %0 = "ais.ask"(%prompt, %ctx) {
@@ -125,10 +127,12 @@ Each operation carries:
 
 ## Further Reading
 
-- [PXM Foundations](foundations.md) -- why the five separations matter
+- [PXM Foundations](foundations.md) -- the five separations and the ISA contract
 - [AAM: Agent Abstract Machine](aam.md) -- the state model AIS operates on
+- [Compute in PXMs](compute.md) -- how AIS operations compare to six classical PXM compute models
 - [Implementation: LLM Operations](../implementation/ais/llm-ops.md) -- per-operation reference
 - [Implementation: Compiler Overview](../implementation/compiler/overview.md) -- how AIS maps to MLIR
+- [Optimization Passes](../optimization/passes.md) -- compiler passes that transform AIS graphs
 
 ---
 
