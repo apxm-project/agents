@@ -13,6 +13,34 @@ pub async fn configure_llm_registry(
     registry: &LLMRegistry,
     config: &ApXmConfig,
 ) -> Result<(), DriverError> {
+    // Check for mock backend override (for benchmarking)
+    if env::var("APXM_MOCK_BACKEND").is_ok() {
+        use apxm_backends::llm::backends::MockLLMBackend;
+
+        let latency_ms = env::var("APXM_MOCK_LATENCY_MS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(500);
+
+        eprintln!("[MOCK] Registering mock LLM backend with latency_ms={}", latency_ms);
+
+        let mock = MockLLMBackend::new()
+            .with_latency_ms(latency_ms)
+            .default(apxm_backends::llm::backends::MockResponse::new("Mock LLM response for benchmarking"));
+
+        registry.register("mock", mock).map_err(|e| {
+            DriverError::Driver(format!("Failed to register mock backend: {e}"))
+        })?;
+        registry.set_default("mock").map_err(|e| {
+            DriverError::Driver(format!("Failed to set mock as default backend: {e}"))
+        })?;
+
+        eprintln!("[MOCK] Mock backend registered successfully");
+        eprintln!("[MOCK] Registered backends: {:?}", registry.backend_names());
+
+        return Ok(());
+    }
+
     let allowed_backends = if config.chat.providers.is_empty() {
         None
     } else {

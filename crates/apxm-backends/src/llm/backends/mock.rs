@@ -34,6 +34,7 @@ use apxm_core::types::{FinishReason, ModelCapabilities, ModelInfo, TokenUsage};
 use async_trait::async_trait;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio_stream::Stream;
 
 /// A recorded LLM call for inspection in tests.
@@ -47,6 +48,12 @@ pub struct RecordedCall {
     pub model: String,
     /// Temperature used
     pub temperature: f32,
+    /// Input token count
+    pub input_tokens: usize,
+    /// Output token count
+    pub output_tokens: usize,
+    /// Simulated latency in milliseconds
+    pub latency_ms: u64,
 }
 
 /// Configurable response for pattern-based mocking.
@@ -86,6 +93,21 @@ struct PatternRule {
     response: MockResponse,
 }
 
+/// Mock backend metrics for benchmarking.
+#[derive(Debug, Clone, Default)]
+pub struct MockMetrics {
+    /// Total number of LLM calls
+    pub total_calls: usize,
+    /// Total input tokens across all calls
+    pub total_input_tokens: usize,
+    /// Total output tokens across all calls
+    pub total_output_tokens: usize,
+    /// Number of unique prompts (for CSE dedup measurement)
+    pub unique_prompts: usize,
+    /// Total simulated latency in milliseconds
+    pub total_latency_ms: u64,
+}
+
 /// LLM backend that returns configurable pre-programmed responses.
 ///
 /// Thread-safe and suitable for concurrent test scenarios.
@@ -99,6 +121,10 @@ pub struct MockLLMBackend {
     calls: Arc<Mutex<Vec<RecordedCall>>>,
     /// If Some, return this error on every call (failure injection)
     fail_with: Option<String>,
+    /// Simulated latency in milliseconds (0 = instant)
+    latency_ms: u64,
+    /// Tokens per second for realistic streaming (0 = instant)
+    tokens_per_second: u64,
 }
 
 impl MockLLMBackend {
@@ -111,12 +137,56 @@ impl MockLLMBackend {
             patterns: Vec::new(),
             calls: Arc::new(Mutex::new(Vec::new())),
             fail_with: None,
+            latency_ms: 0,
+            tokens_per_second: 0,
         }
     }
 
     /// Create a mock that always returns `content`.
     pub fn static_response(content: impl Into<String>) -> Self {
         Self::new().default(MockResponse::new(content))
+    }
+
+    /// Set simulated latency in milliseconds.
+    pub fn with_latency_ms(mut self, latency_ms: u64) -> Self {
+        self.latency_ms = latency_ms;
+        self
+    }
+
+    /// Set simulated tokens per second for realistic streaming.
+    pub fn with_tokens_per_second(mut self, tokens_per_second: u64) -> Self {
+        self.tokens_per_second = tokens_per_second;
+        self
+    }
+
+    /// Create from config (for backend factory integration).
+    ///
+    /// Config options:
+    /// - `latency_ms`: Simulated latency in milliseconds (default: 500)
+    /// - `tokens_per_second`: Simulated token generation rate (default: 50)
+    /// - `default_response`: Default response text (default: "Mock response")
+    pub async fn from_config(
+        _api_key: &str,
+        config: Option<serde_json::Value>,
+    ) -> anyhow::Result<Self> {
+        let mut backend = Self::new();
+
+        if let Some(cfg) = config {
+            if let Some(latency) = cfg.get("latency_ms").and_then(|v| v.as_u64()) {
+                backend = backend.with_latency_ms(latency);
+            }
+            if let Some(tps) = cfg.get("tokens_per_second").and_then(|v| v.as_u64()) {
+                backend = backend.with_tokens_per_second(tps);
+            }
+            if let Some(resp) = cfg.get("default_response").and_then(|v| v.as_str()) {
+                backend = backend.default(MockResponse::new(resp));
+            }
+        } else {
+            // Default benchmarking config: 500ms latency, 50 tokens/sec
+            backend = backend.with_latency_ms(500).with_tokens_per_second(50);
+        }
+
+        Ok(backend)
     }
 
     /// Set the mock's display name.
@@ -184,6 +254,24 @@ impl MockLLMBackend {
         self.calls.lock().unwrap().clear();
     }
 
+    /// Get aggregated metrics for all recorded calls.
+    pub fn metrics(&self) -> MockMetrics {
+        let calls = self.calls.lock().unwrap();
+        let unique_prompts = calls
+            .iter()
+            .map(|c| c.prompt.as_str())
+            .collect::<std::collections::HashSet<_>>()
+            .len();
+
+        MockMetrics {
+            total_calls: calls.len(),
+            total_input_tokens: calls.iter().map(|c| c.input_tokens).sum(),
+            total_output_tokens: calls.iter().map(|c| c.output_tokens).sum(),
+            unique_prompts,
+            total_latency_ms: calls.iter().map(|c| c.latency_ms).sum(),
+        }
+    }
+
     /// Select the response for a given prompt.
     fn select_response(&self, prompt: &str) -> &MockResponse {
         for rule in &self.patterns {
@@ -194,9 +282,9 @@ impl MockLLMBackend {
         &self.default_response
     }
 
-    /// Extract the effective prompt and record the call.
-    fn record_and_extract(&self, request: &LLMRequest) -> String {
-        let effective_prompt = if request.has_messages() {
+    /// Extract the effective prompt from request.
+    fn extract_prompt(&self, request: &LLMRequest) -> String {
+        if request.has_messages() {
             request
                 .resolved_messages()
                 .iter()
@@ -205,16 +293,39 @@ impl MockLLMBackend {
                 .join(" ")
         } else {
             request.prompt.clone()
-        };
+        }
+    }
 
+    /// Record a call to the mock backend.
+    fn record_call(&self, prompt: String, system: Option<String>, resp: &MockResponse) {
         self.calls.lock().unwrap().push(RecordedCall {
-            prompt: effective_prompt.clone(),
-            system: request.system_prompt.clone(),
+            prompt,
+            system,
             model: self.model.clone(),
-            temperature: request.temperature as f32,
+            temperature: 1.0, // default
+            input_tokens: resp.input_tokens,
+            output_tokens: resp.output_tokens,
+            latency_ms: self.latency_ms,
         });
+    }
 
-        effective_prompt
+    /// Extract the effective prompt and record the call.
+    async fn record_and_extract(&self, request: &LLMRequest) -> (String, MockResponse) {
+        let effective_prompt = self.extract_prompt(request);
+        let resp = self.select_response(&effective_prompt).clone();
+
+        // Simulate latency if configured
+        if self.latency_ms > 0 {
+            tokio::time::sleep(Duration::from_millis(self.latency_ms)).await;
+        }
+
+        self.record_call(
+            effective_prompt.clone(),
+            request.system_prompt.clone(),
+            &resp,
+        );
+
+        (effective_prompt, resp)
     }
 }
 
@@ -229,13 +340,12 @@ impl LLMBackend for MockLLMBackend {
     async fn generate(&self, request: LLMRequest) -> anyhow::Result<LLMResponse> {
         request.validate()?;
 
-        let effective_prompt = self.record_and_extract(&request);
-
         if let Some(ref err) = self.fail_with {
             return Err(anyhow::anyhow!("{}", err));
         }
 
-        let resp = self.select_response(&effective_prompt);
+        let (_prompt, resp) = self.record_and_extract(&request).await;
+
         Ok(LLMResponse::new(
             resp.content.clone(),
             self.model.clone(),
@@ -273,8 +383,6 @@ impl LLMBackend for MockLLMBackend {
         &self,
         request: LLMRequest,
     ) -> Pin<Box<dyn Stream<Item = anyhow::Result<StreamChunk>> + Send + '_>> {
-        let effective_prompt = self.record_and_extract(&request);
-
         if let Some(ref err) = self.fail_with {
             let err_msg = err.clone();
             return Box::pin(tokio_stream::iter(vec![Err(anyhow::anyhow!(
@@ -282,7 +390,16 @@ impl LLMBackend for MockLLMBackend {
             ))]));
         }
 
-        let resp = self.select_response(&effective_prompt);
+        let effective_prompt = self.extract_prompt(&request);
+        let resp = self.select_response(&effective_prompt).clone();
+
+        // Record the call (without latency for streaming)
+        self.record_call(
+            effective_prompt,
+            request.system_prompt.clone(),
+            &resp,
+        );
+
         let response = LLMResponse::new(
             resp.content.clone(),
             self.model.clone(),

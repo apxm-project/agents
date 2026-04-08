@@ -24,6 +24,8 @@ pub enum ProviderProtocol {
     Ollama,
     /// vLLM-compatible API with APXM graph-awareness extensions
     Vllm,
+    /// Mock backend for testing/benchmarking (no real API calls)
+    Mock,
 }
 
 impl ProviderProtocol {
@@ -34,6 +36,7 @@ impl ProviderProtocol {
             ProviderProtocol::Google => "google",
             ProviderProtocol::Ollama => "ollama",
             ProviderProtocol::Vllm => "vllm",
+            ProviderProtocol::Mock => "mock",
         }
     }
 }
@@ -54,6 +57,7 @@ impl std::str::FromStr for ProviderProtocol {
             "google" => Ok(ProviderProtocol::Google),
             "ollama" => Ok(ProviderProtocol::Ollama),
             "vllm" | "vllm-graph-aware" => Ok(ProviderProtocol::Vllm),
+            "mock" => Ok(ProviderProtocol::Mock),
             _ => Err(format!("Unknown provider protocol: '{}'", s)),
         }
     }
@@ -128,6 +132,14 @@ pub const BUILTIN_PROVIDERS: &[BuiltinProviderSpec] = &[
         default_base_url: Some("https://openrouter.ai/api/v1"),
         requires_api_key: true,
         protocol: ProviderProtocol::OpenAI,
+        aliases: &[],
+    },
+    BuiltinProviderSpec {
+        id: "mock",
+        api_key_env_var: None,
+        default_base_url: None,
+        requires_api_key: false,
+        protocol: ProviderProtocol::Mock,
         aliases: &[],
     },
 ];

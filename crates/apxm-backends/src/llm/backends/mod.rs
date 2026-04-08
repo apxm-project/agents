@@ -48,9 +48,10 @@ impl BackendFactory {
             "anthropic" => ProviderProtocol::Anthropic,
             "google" => ProviderProtocol::Google,
             "ollama" => ProviderProtocol::Ollama,
+            "mock" => ProviderProtocol::Mock,
             _ => {
                 return Err(anyhow::anyhow!(
-                    "Unknown provider: {}. Supported: openai, anthropic, google, ollama",
+                    "Unknown provider: {}. Supported: openai, anthropic, google, ollama, mock",
                     provider
                 ));
             }
@@ -84,12 +85,15 @@ impl BackendFactory {
             ProviderProtocol::Vllm => {
                 Arc::new(vllm::GraphAwareVllmBackend::new(api_key, config).await?)
             }
+            ProviderProtocol::Mock => {
+                Arc::new(mock::MockLLMBackend::from_config(api_key, config).await?)
+            }
         };
         Ok(backend)
     }
 
     /// List available backend providers.
     pub fn list_providers() -> Vec<&'static str> {
-        vec!["openai", "anthropic", "google", "ollama", "vllm"]
+        vec!["openai", "anthropic", "google", "ollama", "vllm", "mock"]
     }
 }

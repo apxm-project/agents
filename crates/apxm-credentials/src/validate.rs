@@ -38,6 +38,8 @@ pub async fn validate_backend(backend: &BackendConfig) -> Result<String, Backend
         ProviderProtocol::Ollama => validate_ollama(&client, &backend.name, backend, base).await,
         // vLLM uses OpenAI-compatible validation (same /v1/models endpoint)
         ProviderProtocol::Vllm => validate_openai(&client, &backend.name, backend, base).await,
+        // Mock backend doesn't need validation (no real API)
+        ProviderProtocol::Mock => Ok(format!("Mock backend '{}' is always valid", backend.name)),
     }
 }
 
