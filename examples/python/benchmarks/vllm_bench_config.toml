@@ -1,0 +1,10 @@
+# Temporary config override to use vLLM for all ASK operations
+
+[chat]
+providers = ["vllm-local"]
+default_backend = "vllm-local"
+default_model = "Qwen/Qwen2.5-7B-Instruct"
+
+[chat.routing.operation_routes.ask]
+backend = "vllm-local"
+model = "Qwen/Qwen2.5-7B-Instruct"
