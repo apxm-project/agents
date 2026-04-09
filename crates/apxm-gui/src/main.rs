@@ -295,9 +295,14 @@ fn analyze_graph(graph: &AirModule) -> GraphAnalysis {
 // Handlers
 // ---------------------------------------------------------------------------
 
-/// GET / — serve the embedded index.html.
+/// GET / — serve the embedded SPA index.html.
 async fn index_handler() -> Html<&'static str> {
-    Html(include_str!("static/index.html"))
+    Html(include_str!("frontend-dist/index.html"))
+}
+
+/// SPA fallback — serve index.html for all non-API routes (client-side routing).
+async fn spa_fallback() -> Html<&'static str> {
+    Html(include_str!("frontend-dist/index.html"))
 }
 
 /// GET /api/graph?path=<file> — read an `.apxm` file and return parsed graph JSON.
@@ -715,7 +720,7 @@ async fn main() {
         })
         .unwrap_or(18801);
 
-    // Static files directory: src/static/ relative to the binary's manifest dir,
+    // Frontend dist directory: frontend-dist/ relative to the binary's manifest dir,
     // or overridden via --static-dir.
     let static_dir = args
         .iter()
@@ -723,7 +728,7 @@ async fn main() {
         .and_then(|i| args.get(i + 1))
         .map(PathBuf::from)
         .unwrap_or_else(|| {
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src").join("static")
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src").join("frontend-dist")
         });
 
     // --file <path>: initial graph file to load on startup.
@@ -807,8 +812,10 @@ async fn main() {
         .route("/api/live/session", axum::routing::get(api::live::sse_session_stream))
         .route("/api/live/node/{id}", axum::routing::get(api::live::sse_node_output))
         .route("/api/sessions", axum::routing::get(api::live::list_sessions))
-        // Static file serving
-        .nest_service("/static", ServeDir::new(&static_dir))
+        // Serve frontend assets (JS, CSS)
+        .nest_service("/assets", ServeDir::new(static_dir.join("assets")))
+        // SPA fallback: all non-/api/ routes serve index.html for client-side routing
+        .fallback(axum::routing::get(spa_fallback))
         // CORS for local dev
         .layer(CorsLayer::permissive())
         .with_state(state);
