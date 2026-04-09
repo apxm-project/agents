@@ -14,7 +14,7 @@ use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
 use tracing::{error, info};
 
-use apxm_graph::ApxmGraph;
+use apxm_compiler::AirModule;
 
 mod api;
 
@@ -67,7 +67,10 @@ struct PathParam {
 #[derive(Deserialize)]
 struct OptimizedParam {
     path: String,
+    /// Accepted for backward compatibility but no longer used — graph-level
+    /// optimization passes have been removed.
     #[serde(default)]
+    #[allow(dead_code)]
     passes: Option<String>,
 }
 
@@ -146,7 +149,7 @@ struct GraphAnalysis {
     op_histogram: HashMap<String, usize>,
 }
 
-fn analyze_graph(graph: &ApxmGraph) -> GraphAnalysis {
+fn analyze_graph(graph: &AirModule) -> GraphAnalysis {
     use std::collections::{HashSet, VecDeque};
 
     let node_ids: HashSet<u64> = graph.nodes.iter().map(|n| n.id).collect();
@@ -315,22 +318,14 @@ async fn graph_handler(Query(params): Query<PathParam>) -> ApiResult<impl IntoRe
         )
     })?;
 
-    let graph = ApxmGraph::from_json(&content).map_err(|e| {
+    let graph: AirModule = serde_json::from_str(&content).map_err(|e| {
         AppError(
             StatusCode::BAD_REQUEST,
             format!("failed to parse graph: {e}"),
         )
     })?;
 
-    let json_str = graph.to_json().map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to serialize graph: {e}"),
-        )
-    })?;
-
-    let value: serde_json::Value = serde_json::from_str(&json_str)?;
-    Ok(Json(value))
+    Ok(Json(graph))
 }
 
 /// GET /api/graph/analyze?path=<file> — return graph analysis JSON.
@@ -346,7 +341,7 @@ async fn graph_analyze_handler(
             )
         })?;
 
-    let graph = ApxmGraph::from_json(&content).map_err(|e| {
+    let graph: AirModule = serde_json::from_str(&content).map_err(|e| {
         AppError(
             StatusCode::BAD_REQUEST,
             format!("failed to parse graph: {e}"),
@@ -357,8 +352,9 @@ async fn graph_analyze_handler(
     Ok(Json(analysis))
 }
 
-/// GET /api/graph/optimized?path=<file>&passes=prompt_caching,memoization_hints,pipeline_detection
-/// Returns the optimized graph and a diff showing what changed.
+/// GET /api/graph/optimized?path=<file>&passes=<ignored>
+/// Graph-level optimization passes are no longer available in AirModule.
+/// Returns the module unchanged with an empty diff.
 async fn graph_optimized_handler(
     Query(params): Query<OptimizedParam>,
 ) -> ApiResult<impl IntoResponse> {
@@ -371,107 +367,26 @@ async fn graph_optimized_handler(
             )
         })?;
 
-    let original = ApxmGraph::from_json(&content).map_err(|e| {
+    let module: AirModule = serde_json::from_str(&content).map_err(|e| {
         AppError(
             StatusCode::BAD_REQUEST,
             format!("failed to parse graph: {e}"),
         )
     })?;
 
-    let original_json = original.to_json().map_err(|e| {
+    let module_value = serde_json::to_value(&module).map_err(|e| {
         AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to serialize original graph: {e}"),
+            format!("failed to serialize module: {e}"),
         )
     })?;
-
-    let passes: Vec<&str> = params
-        .passes
-        .as_deref()
-        .unwrap_or("prompt_caching,memoization_hints,pipeline_detection")
-        .split(',')
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .collect();
-
-    let mut optimized = original.clone();
-    let mut applied: Vec<String> = Vec::new();
-
-    for pass in &passes {
-        match *pass {
-            "prompt_caching" => {
-                optimized.prompt_caching().map_err(|e| {
-                    AppError(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        format!("prompt_caching pass failed: {e}"),
-                    )
-                })?;
-                applied.push("prompt_caching".to_string());
-            }
-            "memoization_hints" => {
-                optimized.memoization_hints().map_err(|e| {
-                    AppError(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        format!("memoization_hints pass failed: {e}"),
-                    )
-                })?;
-                applied.push("memoization_hints".to_string());
-            }
-            "pipeline_detection" => {
-                optimized.pipeline_detection().map_err(|e| {
-                    AppError(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        format!("pipeline_detection pass failed: {e}"),
-                    )
-                })?;
-                applied.push("pipeline_detection".to_string());
-            }
-            unknown => {
-                return Err(AppError(
-                    StatusCode::BAD_REQUEST,
-                    format!("unknown optimization pass: {unknown}"),
-                ));
-            }
-        }
-    }
-
-    let optimized_json = optimized.to_json().map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to serialize optimized graph: {e}"),
-        )
-    })?;
-
-    // Compute a simple diff: nodes that changed attributes
-    let mut diff: Vec<serde_json::Value> = Vec::new();
-    for opt_node in &optimized.nodes {
-        if let Some(orig_node) = original.nodes.iter().find(|n| n.id == opt_node.id) {
-            if orig_node.attributes != opt_node.attributes {
-                let mut added_attrs = HashMap::new();
-                for (k, v) in &opt_node.attributes {
-                    if orig_node.attributes.get(k) != Some(v) {
-                        added_attrs.insert(k.clone(), v.clone());
-                    }
-                }
-                if !added_attrs.is_empty() {
-                    diff.push(serde_json::json!({
-                        "node_id": opt_node.id,
-                        "node_name": opt_node.name,
-                        "added_attributes": added_attrs,
-                    }));
-                }
-            }
-        }
-    }
-
-    let original_value: serde_json::Value = serde_json::from_str(&original_json)?;
-    let optimized_value: serde_json::Value = serde_json::from_str(&optimized_json)?;
 
     Ok(Json(serde_json::json!({
-        "original": original_value,
-        "optimized": optimized_value,
-        "passes_applied": applied,
-        "diff": diff,
+        "original": module_value,
+        "optimized": module_value,
+        "passes_applied": [],
+        "diff": [],
+        "note": "Graph-level optimization passes have been removed; optimization is now handled by the compiler pipeline.",
     })))
 }
 

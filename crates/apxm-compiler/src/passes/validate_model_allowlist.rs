@@ -9,13 +9,13 @@
 use apxm_core::error::compiler::{CompilerError, Result};
 use apxm_core::error::span::Span;
 use apxm_core::error::{Error, ErrorCode};
-use apxm_graph::ApxmGraph;
+use crate::air_builder::AirModule;
 use std::collections::{HashMap, HashSet};
 
-/// Validates that all models in the graph are in the allowlist (if configured).
+/// Validates that all models in the module are in the allowlist (if configured).
 ///
 /// # Arguments
-/// * `graph` - The graph to validate
+/// * `module` - The module to validate
 /// * `allowlist` - Optional list of approved model names. If None, validation is skipped.
 ///
 /// # Returns
@@ -24,7 +24,7 @@ use std::collections::{HashMap, HashSet};
 ///
 /// # Errors
 /// Returns an error listing ALL violations, not just the first one.
-pub fn validate_model_allowlist(graph: &ApxmGraph, allowlist: Option<&Vec<String>>) -> Result<()> {
+pub fn validate_model_allowlist(module: &AirModule, allowlist: Option<&Vec<String>>) -> Result<()> {
     // If no allowlist is configured, skip validation (backward compatible)
     let Some(allowed_models) = allowlist else {
         return Ok(());
@@ -35,7 +35,7 @@ pub fn validate_model_allowlist(graph: &ApxmGraph, allowlist: Option<&Vec<String
     let mut seen_models: HashMap<String, Vec<String>> = HashMap::new();
 
     // Check all nodes for model attributes
-    for node in &graph.nodes {
+    for node in &module.nodes {
         if let Some(model_value) = node.attributes.get("model") {
             // Extract the string value from the Value enum
             let Some(model) = model_value.as_str() else {
@@ -109,17 +109,17 @@ pub fn validate_model_allowlist(graph: &ApxmGraph, allowlist: Option<&Vec<String
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::air_builder::{AirModule, AirNode};
     use apxm_core::types::{AISOperationType, Value};
-    use apxm_graph::{ApxmGraph, GraphNode};
     use std::collections::HashMap;
 
-    fn make_test_graph(models: Vec<&str>) -> ApxmGraph {
+    fn make_test_graph(models: Vec<&str>) -> AirModule {
         let mut nodes = Vec::new();
         for (i, model) in models.iter().enumerate() {
             let mut attributes = HashMap::new();
             attributes.insert("model".to_string(), Value::String(model.to_string()));
 
-            nodes.push(GraphNode {
+            nodes.push(AirNode {
                 id: (i + 1) as u64,
                 name: format!("node_{}", i + 1),
                 op: AISOperationType::Ask,
@@ -127,7 +127,7 @@ mod tests {
             });
         }
 
-        ApxmGraph {
+        AirModule {
             name: "test_graph".to_string(),
             nodes,
             edges: vec![],
@@ -145,7 +145,7 @@ mod tests {
 
     #[test]
     fn test_empty_graph_passes() {
-        let graph = ApxmGraph {
+        let graph = AirModule {
             name: "empty".to_string(),
             nodes: vec![],
             edges: vec![],
@@ -223,14 +223,14 @@ mod tests {
         let mut attrs = HashMap::new();
         attrs.insert("prompt".to_string(), Value::String("test".to_string()));
 
-        nodes.push(GraphNode {
+        nodes.push(AirNode {
             id: 1,
             name: "no_model".to_string(),
             op: AISOperationType::Ask,
             attributes: attrs,
         });
 
-        let graph = ApxmGraph {
+        let graph = AirModule {
             name: "test".to_string(),
             nodes,
             edges: vec![],

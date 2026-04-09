@@ -69,6 +69,9 @@ std::unique_ptr<Pass> createPromptCanonicalizationPass();
 /// Create AssignPriority pass - assign execution priority based on critical path
 std::unique_ptr<Pass> createAssignPriorityPass();
 
+/// Create DspyOptimize pass - optimize templates using DSPy
+std::unique_ptr<Pass> createDspyOptimizePass();
+
 //===----------------------------------------------------------------------===//
 // Pass Registration
 //===----------------------------------------------------------------------===//

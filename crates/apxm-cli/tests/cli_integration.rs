@@ -733,7 +733,7 @@ fn explain_node_metadata() {
 // ─── task merge ─────────────────────────────────────────────────────────────
 
 #[test]
-fn task_merge_two_graphs_json() {
+fn task_merge_is_removed() {
     let g1 = write_tmp_graph(VALID_ASK);
     let g2 = write_tmp_graph(VALID_PIPELINE);
     let out = apxm()
@@ -748,37 +748,13 @@ fn task_merge_two_graphs_json() {
         ])
         .output()
         .unwrap();
-    assert!(out.status.success());
-    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(v["stats"]["input_graphs"], 2);
-    // 1 node from g1 + 2 from g2 + 1 sync node = 4
-    assert!(v["stats"]["total_nodes"].as_u64().unwrap() >= 3);
-    assert!(v["merged_graph"]["name"].as_str().unwrap() == "merged-test");
-}
-
-#[test]
-fn task_merge_output_file() {
-    let g1 = write_tmp_graph(VALID_ASK);
-    let out_dir = tempfile::tempdir().unwrap();
-    let out_path = out_dir.path().join("merged.json");
-    let out = apxm()
-        .args([
-            "--json",
-            "task",
-            "merge",
-            g1.path().to_str().unwrap(),
-            "--name",
-            "single-merge",
-            "-o",
-            out_path.to_str().unwrap(),
-        ])
-        .output()
-        .unwrap();
-    assert!(out.status.success());
-    // File should exist and be valid JSON
-    let content = std::fs::read_to_string(&out_path).unwrap();
-    let v: serde_json::Value = serde_json::from_str(&content).unwrap();
-    assert!(v["merged_graph"].is_object());
+    // Graph merge is no longer supported
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("no longer supported"),
+        "expected 'no longer supported' in stderr, got: {stderr}"
+    );
 }
 
 #[test]

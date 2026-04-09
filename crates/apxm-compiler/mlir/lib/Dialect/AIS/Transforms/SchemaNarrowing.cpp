@@ -23,6 +23,8 @@
 
 #include "ais/Dialect/AIS/Transforms/Passes.h"
 
+#include "ais/Common/Constants.h"
+
 #include "ais/Dialect/AIS/IR/AISOps.h"
 #include "ais/Dialect/AIS/Support/AISDebug.h"
 
@@ -79,7 +81,7 @@ struct SchemaNarrowingPass : impl::SchemaNarrowingBase<SchemaNarrowingPass> {
     }
 
     if (narrowed > 0) {
-      module->setAttr("ais.schemas_narrowed",
+      module->setAttr(apxm::constants::attrs::SCHEMAS_NARROWED,
                       IntegerAttr::get(IntegerType::get(module.getContext(), 64),
                                        narrowed));
       APXM_AIS_INFO("Narrowed " << narrowed << " output schemas");

@@ -132,6 +132,18 @@ pub struct PipelineConfig {
     /// exceeds this budget receive a `__profile_token_warning` attribute.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token_budget: Option<u64>,
+
+    /// Optional path to DSPy training data for prompt optimization.
+    ///
+    /// When set, the `dspy-optimize` pass uses this training data to run
+    /// DSPy optimizers (MIPROv2, BootstrapFewShot) on template strings.
+    /// Without training data, the pass is a no-op.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dspy_training_data: Option<PathBuf>,
+
+    /// Force DSPy re-optimization even if cached results exist.
+    #[serde(default)]
+    pub dspy_no_cache: bool,
 }
 
 impl Default for PipelineConfig {
@@ -143,6 +155,8 @@ impl Default for PipelineConfig {
             no_cse_llm: false,
             profile_path: None,
             token_budget: None,
+            dspy_training_data: None,
+            dspy_no_cache: false,
         }
     }
 }
@@ -157,6 +171,8 @@ impl PipelineConfig {
             no_cse_llm: false,
             profile_path: None,
             token_budget: None,
+            dspy_training_data: None,
+            dspy_no_cache: false,
         }
     }
 
@@ -169,6 +185,8 @@ impl PipelineConfig {
             no_cse_llm: false,
             profile_path: None,
             token_budget: None,
+            dspy_training_data: None,
+            dspy_no_cache: false,
         }
     }
 
@@ -199,6 +217,18 @@ impl PipelineConfig {
     /// Builder: Set token budget for profile-guided warnings
     pub fn with_token_budget(mut self, budget: u64) -> Self {
         self.token_budget = Some(budget);
+        self
+    }
+
+    /// Builder: Set DSPy training data path for prompt optimization
+    pub fn with_dspy_training_data(mut self, path: PathBuf) -> Self {
+        self.dspy_training_data = Some(path);
+        self
+    }
+
+    /// Builder: Force DSPy re-optimization (bypass cache)
+    pub fn with_dspy_no_cache(mut self, no_cache: bool) -> Self {
+        self.dspy_no_cache = no_cache;
         self
     }
 }

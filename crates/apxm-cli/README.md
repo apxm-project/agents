@@ -5,7 +5,7 @@ Minimal CLI wrapper for compile/run workflows.
 ## Overview
 
 `apxm-cli` is a thin wrapper around `apxm-driver` that exposes:
-- `compile` -- compile ApxmGraph (.apxm) to an artifact
+- `compile` -- compile AirModule (.apxm) to an artifact
 - `execute` -- compile + execute a graph via the runtime
 - `run` -- execute a precompiled artifact
 - `doctor` -- verify environment, dependencies, and toolchain (powered by [dekk](https://github.com/randreshg/dekk))

@@ -22,6 +22,8 @@
 
 #include "ais/Dialect/AIS/Transforms/Passes.h"
 
+#include "ais/Common/Constants.h"
+
 #include "ais/Dialect/AIS/IR/AISOps.h"
 #include "ais/Dialect/AIS/Support/AISDebug.h"
 
@@ -61,7 +63,7 @@ struct BuildPromptPass : impl::BuildPromptBase<BuildPromptPass> {
     });
 
     if (modified > 0) {
-      module->setAttr("ais.prompts_built",
+      module->setAttr(apxm::constants::attrs::PROMPTS_BUILT,
                       IntegerAttr::get(IntegerType::get(module.getContext(), 64),
                                        modified));
       APXM_AIS_INFO("Built prompts for " << modified << " operations");

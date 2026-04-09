@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use apxm_core::types::Value;
-use apxm_graph::ApxmGraph;
+use crate::air_builder::AirModule;
 
 /// Error-rate threshold above which a retry attribute is injected.
 const ERROR_RATE_RETRY_THRESHOLD: f64 = 0.05;
@@ -124,9 +124,9 @@ impl ExecutionProfile {
         self.execution_count = total;
     }
 
-    /// Apply profile data to a graph.
+    /// Apply profile data to a module.
     ///
-    /// For each node in the graph whose name appears in the profile:
+    /// For each node in the module whose name appears in the profile:
     ///   - Writes `__profile_latency_ms` and `__profile_p99_latency_ms` attributes.
     ///   - Writes `__profile_error_rate` and `__profile_avg_tokens` attributes.
     ///   - If `error_rate > 0.05`, injects a `retry_count` attribute (if not
@@ -135,9 +135,9 @@ impl ExecutionProfile {
     ///     attribute with a human-readable message.
     ///
     /// Returns the number of nodes that were annotated.
-    pub fn apply_to_graph(&self, graph: &mut ApxmGraph, token_budget: Option<u64>) -> usize {
+    pub fn apply_to_module(&self, module: &mut AirModule, token_budget: Option<u64>) -> usize {
         let mut annotated = 0;
-        for node in &mut graph.nodes {
+        for node in &mut module.nodes {
             if let Some(stats) = self.node_stats.get(&node.name) {
                 // Latency annotations
                 node.attributes.insert(
@@ -229,8 +229,8 @@ fn weighted_avg_f64(a: f64, w_a: u64, b: f64, w_b: u64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::air_builder::{AirEdge, AirNode};
     use apxm_core::types::AISOperationType;
-    use apxm_graph::{GraphEdge, GraphNode};
     use std::collections::HashMap;
 
     fn make_profile() -> ExecutionProfile {
@@ -259,11 +259,11 @@ mod tests {
         profile
     }
 
-    fn make_graph() -> ApxmGraph {
-        ApxmGraph {
+    fn make_module() -> AirModule {
+        AirModule {
             name: "test".to_string(),
             nodes: vec![
-                GraphNode {
+                AirNode {
                     id: 1,
                     name: "ask_node".to_string(),
                     op: AISOperationType::Ask,
@@ -272,7 +272,7 @@ mod tests {
                         Value::String("{0}".to_string()),
                     )]),
                 },
-                GraphNode {
+                AirNode {
                     id: 2,
                     name: "flaky_node".to_string(),
                     op: AISOperationType::Ask,
@@ -281,7 +281,7 @@ mod tests {
                         Value::String("{0}".to_string()),
                     )]),
                 },
-                GraphNode {
+                AirNode {
                     id: 3,
                     name: "unknown_node".to_string(),
                     op: AISOperationType::ConstStr,
@@ -292,12 +292,12 @@ mod tests {
                 },
             ],
             edges: vec![
-                GraphEdge {
+                AirEdge {
                     from: 1,
                     to: 2,
                     dependency: apxm_core::types::DependencyType::Data,
                 },
-                GraphEdge {
+                AirEdge {
                     from: 3,
                     to: 1,
                     dependency: apxm_core::types::DependencyType::Data,
@@ -311,9 +311,9 @@ mod tests {
     #[test]
     fn apply_profile_annotates_matching_nodes() {
         let profile = make_profile();
-        let mut graph = make_graph();
+        let mut graph = make_module();
 
-        let annotated = profile.apply_to_graph(&mut graph, None);
+        let annotated = profile.apply_to_module(&mut graph, None);
         assert_eq!(annotated, 2, "should annotate ask_node and flaky_node");
 
         // ask_node should have latency but no retry (error_rate < threshold)
@@ -347,9 +347,9 @@ mod tests {
     #[test]
     fn apply_profile_token_budget_warning() {
         let profile = make_profile();
-        let mut graph = make_graph();
+        let mut graph = make_module();
 
-        let _annotated = profile.apply_to_graph(&mut graph, Some(2000));
+        let _annotated = profile.apply_to_module(&mut graph, Some(2000));
 
         // ask_node (1500 tokens) should be under budget
         assert!(
@@ -373,7 +373,7 @@ mod tests {
     #[test]
     fn apply_profile_does_not_overwrite_existing_retry() {
         let profile = make_profile();
-        let mut graph = make_graph();
+        let mut graph = make_module();
 
         // Pre-set a retry_count on flaky_node
         graph.nodes[1].attributes.insert(
@@ -381,7 +381,7 @@ mod tests {
             Value::Number(apxm_core::types::Number::Integer(5)),
         );
 
-        let _annotated = profile.apply_to_graph(&mut graph, None);
+        let _annotated = profile.apply_to_module(&mut graph, None);
 
         // The existing retry_count should be preserved
         assert_eq!(
@@ -483,8 +483,8 @@ mod tests {
     #[test]
     fn empty_profile_applies_nothing() {
         let profile = ExecutionProfile::default();
-        let mut graph = make_graph();
-        let annotated = profile.apply_to_graph(&mut graph, None);
+        let mut graph = make_module();
+        let annotated = profile.apply_to_module(&mut graph, None);
         assert_eq!(annotated, 0);
     }
 }

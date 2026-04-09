@@ -32,6 +32,8 @@
 
 #include "ais/Dialect/AIS/Transforms/Passes.h"
 
+#include "ais/Common/Constants.h"
+
 #include "ais/Dialect/AIS/IR/AISOps.h"
 #include "ais/Dialect/AIS/Support/AISDebug.h"
 
@@ -170,7 +172,7 @@ struct PromptCanonicalizationPass : impl::PromptCanonicalizationBase<PromptCanon
     }
 
     if (opsModified > 0) {
-      module->setAttr("ais.prompts_canonicalized",
+      module->setAttr(apxm::constants::attrs::PROMPTS_CANONICALIZED,
                       IntegerAttr::get(IntegerType::get(module.getContext(), 64),
                                        opsModified));
       APXM_AIS_INFO("Canonicalized " << opsModified << " prompts in "
@@ -253,12 +255,12 @@ private:
     }
 
     // Add metadata attributes
-    op->setAttr("ais.shared_prefix_group", builder.getStringAttr(groupName));
-    op->setAttr("ais.shared_prefix_est_tokens",
+    op->setAttr(apxm::constants::attrs::SHARED_PREFIX_GROUP, builder.getStringAttr(groupName));
+    op->setAttr(apxm::constants::attrs::SHARED_PREFIX_EST_TOKENS,
                 builder.getI64IntegerAttr(estimatedTokens));
 
     if (isWarmupCandidate) {
-      op->setAttr("ais.warmup_candidate", builder.getBoolAttr(true));
+      op->setAttr(apxm::constants::attrs::WARMUP_CANDIDATE, builder.getBoolAttr(true));
       APXM_AIS_INFO("  Marked as warmup candidate");
     }
 

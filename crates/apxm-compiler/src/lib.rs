@@ -17,11 +17,13 @@
 //! - [`passes`]: Optimization and transformation passes
 //! - [`codegen`]: Artifact generation
 
+pub mod air_builder;
 pub mod api;
 pub mod codegen;
 mod ffi;
 pub mod passes;
 
+pub use air_builder::{AirEdge, AirError, AirModule, AirModuleBuilder, AirNode, AirParam};
 pub use api::{Context, Module, Pipeline};
 pub use passes::{
     ExecutionProfile, NodeProfile, PassManager, PassMetrics, PipelineDiagnostics, ProfileError,

@@ -13,7 +13,7 @@ Orchestration layer bridging compiler and runtime.
 ## Responsibilities
 
 - Load config and materialize runtime/backends
-- Compile ApxmGraph inputs via `apxm-compiler`
+- Compile AirModule inputs via `apxm-compiler`
 - Execute artifacts via `apxm-runtime`
 
 ## How It Fits

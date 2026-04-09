@@ -6,8 +6,9 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 
+use apxm_compiler::AirModule;
+
 use crate::error::DriverError;
-use apxm_graph::ApxmGraph;
 
 /// Returns `true` when the cache is explicitly disabled via `APXM_NO_CACHE=1`.
 pub fn cache_disabled() -> bool {
@@ -16,15 +17,14 @@ pub fn cache_disabled() -> bool {
         .unwrap_or(false)
 }
 
-/// Compute BLAKE3 hash of graph's JSON representation.
+/// Compute BLAKE3 hash of an AIR module's JSON representation.
 ///
-/// Uses JSON as the serialization format (not bincode) because ApxmGraph
+/// Uses JSON as the serialization format (not bincode) because AirModule
 /// contains HashMap fields that don't have a stable iteration order with bincode.
 /// JSON serialization with serde_json guarantees alphabetic key sorting.
-pub fn graph_hash(graph: &ApxmGraph) -> Result<String, DriverError> {
+pub fn graph_hash(module: &AirModule) -> Result<String, DriverError> {
     // Serialize to JSON with sorted keys for deterministic hashing
-    let json = graph
-        .to_json()
+    let json = serde_json::to_string(module)
         .map_err(|e| DriverError::Driver(e.to_string()))?;
     let hash = blake3::hash(json.as_bytes());
     Ok(hash.to_hex().to_string())
@@ -69,16 +69,16 @@ mod tests {
 
     #[test]
     fn hash_is_deterministic() {
-        let graph_a = ApxmGraph {
+        let module_a = AirModule {
             name: "test".to_string(),
             nodes: vec![],
             edges: vec![],
             parameters: vec![],
             metadata: std::collections::HashMap::new(),
         };
-        let graph_b = graph_a.clone();
-        // Identical graphs must produce identical hashes
-        assert_eq!(graph_hash(&graph_a).unwrap(), graph_hash(&graph_b).unwrap());
+        let module_b = module_a.clone();
+        // Identical modules must produce identical hashes
+        assert_eq!(graph_hash(&module_a).unwrap(), graph_hash(&module_b).unwrap());
     }
 
     #[test]
