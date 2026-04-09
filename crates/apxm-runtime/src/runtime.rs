@@ -24,7 +24,7 @@ use apxm_core::{
         values::Value,
     },
 };
-use apxm_sandbox::SandboxRegistry;
+use crate::sandbox::SandboxRegistry;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
 
@@ -224,7 +224,7 @@ impl Runtime {
 
     /// Set the sandbox registry.
     ///
-    /// Host applications register their [`SandboxBackend`](apxm_sandbox::SandboxBackend)
+    /// Host applications register their [`SandboxBackend`](crate::sandbox::SandboxBackend)
     /// implementations into a [`SandboxRegistry`] and inject it here.
     /// The runtime passes it through to every [`ExecutionContext`].
     ///

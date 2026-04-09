@@ -12,11 +12,9 @@ path = "src/main.rs"
 
 [dependencies]
 apxm-core = { path = "../apxm-core" }
-apxm-frontend = { path = "../apxm-frontend/rust" }
 apxm-driver = { path = "../apxm-driver", optional = true }
-apxm-compiler = { path = "../apxm-compiler", optional = true }
+apxm-compiler = { path = "../apxm-compiler" }
 apxm-artifact = { path = "../apxm-artifact", optional = true }
-apxm-graph = { path = "../apxm-graph" }
 clap = { version = "4.0", features = ["derive"] }
 tokio = { version = "1.0", features = ["rt", "rt-multi-thread", "macros"] }
 anyhow = "1.0"
@@ -25,9 +23,9 @@ dirs = "5.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"], optional = true }
-apxm-events = { path = "../apxm-events" }
 apxm-credentials = { path = "../apxm-credentials" }
 apxm-acp = { path = "../apxm-acp" }
+apxm-ais = { path = "../apxm-ais" }
 apxm-runtime = { path = "../apxm-runtime" }
 rpassword = "7.0"
 chrono = "0.4"
@@ -41,7 +39,7 @@ serde_json = "1.0"
 
 [features]
 default = []
-driver = ["dep:apxm-driver", "dep:apxm-compiler", "tokio/rt-multi-thread", "dep:apxm-artifact", "dep:tracing-subscriber", "dep:rusqlite"]
+driver = ["dep:apxm-driver", "tokio/rt-multi-thread", "dep:apxm-artifact", "dep:tracing-subscriber", "dep:rusqlite"]
 metrics = ["driver", "apxm-driver/metrics"]
 # Compile out all tracing for zero overhead (propagates through chain)
 no-trace = ["apxm-driver/no-trace", "apxm-core/no-trace"]

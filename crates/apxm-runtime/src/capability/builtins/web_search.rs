@@ -1,6 +1,6 @@
-use crate::require_string_arg;
+use super::require_string_arg;
 use apxm_core::{error::RuntimeError, types::Value};
-use apxm_runtime::capability::{
+use crate::capability::{
     executor::{CapabilityExecutor, CapabilityResult},
     metadata::CapabilityMetadata,
 };
@@ -29,7 +29,7 @@ impl SearchDepth {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SearchWebConfig {
-    #[serde(default = "crate::default_true")]
+    #[serde(default = "super::default_true")]
     pub enabled: bool,
     #[serde(default)]
     pub allowed_domains: Option<Vec<String>>,
@@ -45,7 +45,7 @@ pub struct SearchWebConfig {
     pub search_depth: SearchDepth,
     #[serde(default = "default_tavily_endpoint")]
     pub endpoint: String,
-    #[serde(default = "crate::default_true")]
+    #[serde(default = "super::default_true")]
     pub include_answer: bool,
 }
 

@@ -72,7 +72,11 @@ pub use scheduler::{DataflowScheduler, SchedulerConfig};
 pub use thread::{AgentThread, ThreadId, ThreadState};
 
 // Re-export sandbox interface for host applications
-pub use apxm_sandbox;
+pub use sandbox::{
+    DefaultBackend, ExecRequest, ExecResult, IsolationLevel, NodeSandboxReq, SandboxBackend,
+    SandboxCapabilities, SandboxContext, SandboxError, SandboxRegistry, SandboxSelection,
+    SecurityManifest, ValidationResult,
+};
 
 pub type RuntimeResult<T> = std::result::Result<T, RuntimeError>;
 

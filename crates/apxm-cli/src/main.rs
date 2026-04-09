@@ -5,6 +5,7 @@
 //! LLM credential management (`register`).
 
 mod commands;
+mod frontend;
 
 use anyhow::Result;
 use commands::*;
@@ -248,7 +249,7 @@ mod tests {
 
     // ── GraphAnalysis tests ─────────────────────────────────────────────────
 
-    fn pipeline_graph() -> apxm_graph::ApxmGraph {
+    fn pipeline_graph() -> apxm_compiler::AirModule {
         serde_json::from_value(serde_json::json!({
             "name": "test-pipeline",
             "nodes": [
@@ -266,7 +267,7 @@ mod tests {
         .unwrap()
     }
 
-    fn fanout_graph() -> apxm_graph::ApxmGraph {
+    fn fanout_graph() -> apxm_compiler::AirModule {
         serde_json::from_value(serde_json::json!({
             "name": "test-fanout",
             "nodes": [
@@ -286,7 +287,7 @@ mod tests {
         .unwrap()
     }
 
-    fn single_node_graph() -> apxm_graph::ApxmGraph {
+    fn single_node_graph() -> apxm_compiler::AirModule {
         serde_json::from_value(serde_json::json!({
             "name": "single",
             "nodes": [
@@ -476,7 +477,7 @@ mod tests {
     #[test]
     fn graph_analysis_no_nodes_errors() {
         let result =
-            serde_json::from_value::<apxm_graph::ApxmGraph>(serde_json::json!({"name": "empty"}));
+            serde_json::from_value::<apxm_compiler::AirModule>(serde_json::json!({"name": "empty"}));
         assert!(result.is_err());
     }
 }

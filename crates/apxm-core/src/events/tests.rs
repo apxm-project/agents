@@ -4,8 +4,8 @@
 mod tests {
     use std::collections::HashMap;
 
-    use crate::event::{ApxmEvent, EventSource};
-    use crate::payload::*;
+    use crate::events::event::{ApxmEvent, EventSource};
+    use crate::events::payload::*;
 
     // -----------------------------------------------------------------------
     // Helper: round-trip a payload through serde

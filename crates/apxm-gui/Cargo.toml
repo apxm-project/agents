@@ -9,8 +9,6 @@ path = "src/main.rs"
 
 [dependencies]
 apxm-core = { path = "../apxm-core" }
-apxm-graph = { path = "../apxm-graph" }
-apxm-events = { path = "../apxm-events" }
 apxm-ais = { path = "../apxm-ais" }
 
 axum = { version = "0.8", features = ["macros"] }
@@ -24,9 +22,4 @@ tower-http = { version = "0.6", features = ["fs", "cors"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-[features]
-compiler = ["dep:apxm-compiler"]
-
-[dependencies.apxm-compiler]
-path = "../apxm-compiler"
-optional = true
+apxm-compiler = { path = "../apxm-compiler" }

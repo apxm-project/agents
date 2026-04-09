@@ -1,10 +1,9 @@
 //! Sandbox registry configuration for the runtime.
 //!
-//! APXM keeps the sandbox interface generic in `apxm-sandbox`, but the driver
-//! can register stronger host-side implementations. On Linux we prefer a
-//! bubblewrap-backed backend that enforces read-only-by-default filesystem
-//! access and optional network isolation. The process backend remains as a
-//! portable degraded fallback.
+//! The sandbox interface lives in `apxm_runtime::sandbox`. The driver registers
+//! host-side implementations. On Linux we prefer a bubblewrap-backed backend
+//! that enforces read-only-by-default filesystem access and optional network
+//! isolation. The process backend remains as a portable degraded fallback.
 
 #[cfg(target_os = "linux")]
 #[path = "sandbox_linux.rs"]
@@ -15,7 +14,7 @@ use std::time::Instant;
 
 use apxm_core::constants::sandbox::{backend_names, session_prefixes};
 use apxm_runtime::sandbox::{policy::SandboxPolicy, process::ProcessSandbox};
-use apxm_sandbox::{
+use apxm_runtime::sandbox::{
     ExecRequest, ExecResult, IsolationLevel, SandboxBackend, SandboxCapabilities, SandboxContext,
     SandboxError, SandboxRegistry, ValidationResult,
 };

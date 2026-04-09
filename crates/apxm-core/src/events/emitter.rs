@@ -1,6 +1,6 @@
 //! The [`EventEmitter`] trait for components that produce events.
 
-use crate::payload::EventPayload;
+use super::payload::EventPayload;
 
 /// Trait for components that emit APXM events.
 ///

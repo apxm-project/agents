@@ -3,7 +3,7 @@ use std::path::Path;
 
 use anyhow::Result;
 
-use crate::registry::{
+use super::registry::{
     FrontendAgentTemplate, FrontendConstant, FrontendEmissionSpec, agent_templates,
     emission_specs, graph_attr_constants, graph_metadata_constants, operation_specs,
 };

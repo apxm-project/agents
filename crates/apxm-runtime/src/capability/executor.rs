@@ -2,7 +2,7 @@
 
 use super::metadata::CapabilityMetadata;
 use apxm_core::{error::RuntimeError, types::values::Value};
-use apxm_sandbox::{ExecRequest, ExecResult};
+use crate::sandbox::{ExecRequest, ExecResult};
 use async_trait::async_trait;
 use std::collections::HashMap;
 

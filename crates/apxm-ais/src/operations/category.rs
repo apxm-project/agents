@@ -1,7 +1,10 @@
 //! Operation categories for AIS operations.
 
+use serde::{Deserialize, Serialize};
+
 /// Categories for AIS operations, used by the scheduler to determine behavior.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum OperationCategory {
     /// Metadata operations: AGENT
     Metadata,

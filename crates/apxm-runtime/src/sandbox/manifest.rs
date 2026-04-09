@@ -4,7 +4,7 @@
 //! [`SecurityManifest`] that tells the runtime what minimum isolation
 //! level is needed and what capabilities each node requires.
 
-use crate::types::IsolationLevel;
+use super::types::IsolationLevel;
 use serde::{Deserialize, Serialize};
 
 /// AIS operation sandbox tiers.

@@ -2,8 +2,8 @@
 
 use chrono::Utc;
 
-use crate::event::{ApxmEvent, EventMeta, EventSource};
-use crate::payload::EventPayload;
+use super::event::{ApxmEvent, EventMeta, EventSource};
+use super::payload::EventPayload;
 
 impl ApxmEvent {
     /// Create a new event with the given payload, source, and trace ID.

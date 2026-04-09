@@ -1,6 +1,6 @@
-use crate::require_string_arg;
+use super::require_string_arg;
 use apxm_core::{error::RuntimeError, types::Value};
-use apxm_runtime::capability::{
+use crate::capability::{
     executor::{CapabilityExecutor, CapabilityResult},
     metadata::CapabilityMetadata,
 };
@@ -57,7 +57,7 @@ async fn atomic_write_with_backup(path: &Path, content: &str) -> std::io::Result
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WriteConfig {
-    #[serde(default = "crate::default_true")]
+    #[serde(default = "super::default_true")]
     pub enabled: bool,
     #[serde(default)]
     pub blocked_paths: Vec<PathBuf>,
@@ -67,9 +67,9 @@ pub struct WriteConfig {
     pub allowed_extensions: Option<Vec<String>>,
     #[serde(default)]
     pub blocked_extensions: Vec<String>,
-    #[serde(default = "crate::default_true")]
+    #[serde(default = "super::default_true")]
     pub create_directories: bool,
-    #[serde(default = "crate::default_true")]
+    #[serde(default = "super::default_true")]
     pub overwrite_existing: bool,
     #[serde(default)]
     pub max_file_size: Option<usize>,
@@ -335,5 +335,4 @@ mod tests {
         let entries: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
         assert_eq!(entries.len(), 1);
     }
-
 }

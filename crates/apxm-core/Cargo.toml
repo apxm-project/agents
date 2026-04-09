@@ -7,6 +7,7 @@ edition.workspace = true
 # AIS (Single Source of Truth for operations) - re-export for backward compatibility
 apxm-ais = { version = "0.0.1", path = "../apxm-ais" }
 anyhow = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
 colored = "3.0"
 envy = { version = "0.4", optional = true }
 serde = { version = "1.0", features = ["derive"] }
