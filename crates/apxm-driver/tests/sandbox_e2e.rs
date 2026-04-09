@@ -16,11 +16,10 @@
 //!
 //! However, the runtime's INV handler does NOT call `SandboxBackend::execute()`
 //! -- it calls `CapabilityExecutor::execute()` directly, which bypasses the
-//! sandbox entirely.  See `sandbox_integration::test_gap_sandbox_not_called_by_inv`
-//! in the `apxm-sandbox` crate for the full trace.
+//! sandbox entirely.
 
 use apxm_core::constants::sandbox::backend_names;
-use apxm_sandbox::{
+use apxm_runtime::sandbox::{
     DefaultBackend, ExecRequest, ExecResult, IsolationLevel, SandboxBackend, SandboxCapabilities,
     SandboxRegistry,
 };
@@ -277,7 +276,7 @@ async fn runtime_inv_node_with_sandbox_registry_configured() {
     use apxm_core::types::operations::AISOperationType;
     use apxm_core::types::values::Value;
     use apxm_runtime::{Runtime, RuntimeConfig};
-    use apxm_tools::BashCapability;
+    use apxm_runtime::capability::builtins::BashCapability;
     use std::collections::HashMap;
 
     // Create runtime

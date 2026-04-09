@@ -1,14 +1,14 @@
-use crate::require_string_arg;
+use super::require_string_arg;
 use apxm_core::{
     constants::sandbox::{executables, shell_args},
     error::RuntimeError,
     types::{AISOperationType, Value},
 };
-use apxm_runtime::capability::{
+use crate::capability::{
     executor::{CapabilityExecutor, CapabilityResult, exec_result_to_value},
     metadata::CapabilityMetadata,
 };
-use apxm_sandbox::{ExecRequest, ExecResult, IsolationLevel};
+use crate::sandbox::{ExecRequest, ExecResult, IsolationLevel};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::PathBuf, process::Stdio, time::Instant};
@@ -16,7 +16,7 @@ use tokio::{process::Command, time::Duration};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BashConfig {
-    #[serde(default = "crate::default_true")]
+    #[serde(default = "super::default_true")]
     pub enabled: bool,
     #[serde(default)]
     pub blocked_commands: Vec<String>,

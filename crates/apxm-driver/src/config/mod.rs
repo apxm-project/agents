@@ -192,7 +192,7 @@ pub struct ToolConfig {
     pub safe_search: Option<bool>,
 
     /// Search depth mode (search_web).
-    pub search_depth: Option<apxm_tools::SearchDepth>,
+    pub search_depth: Option<apxm_runtime::capability::builtins::SearchDepth>,
 
     /// Endpoint override (search_web).
     pub endpoint: Option<String>,
@@ -251,8 +251,8 @@ impl ApXmConfig {
     }
 
     /// Build APxM standard tool configuration from config file fields.
-    pub fn tools_config(&self) -> apxm_tools::ToolsConfig {
-        let mut tools_config = apxm_tools::ToolsConfig::default();
+    pub fn tools_config(&self) -> apxm_runtime::capability::builtins::ToolsConfig {
+        let mut tools_config = apxm_runtime::capability::builtins::ToolsConfig::default();
 
         for (tool_name, tool_config) in &self.tools {
             apply_tool_preset(tool_name, &mut tools_config);
@@ -275,7 +275,7 @@ fn project_config_path() -> Option<PathBuf> {
     None
 }
 
-fn apply_enabled_override(name: &str, enabled: bool, config: &mut apxm_tools::ToolsConfig) {
+fn apply_enabled_override(name: &str, enabled: bool, config: &mut apxm_runtime::capability::builtins::ToolsConfig) {
     match normalize_tool_name(name) {
         Some("bash") => config.bash.enabled = enabled,
         Some("read") => config.read.enabled = enabled,
@@ -285,7 +285,7 @@ fn apply_enabled_override(name: &str, enabled: bool, config: &mut apxm_tools::To
     }
 }
 
-fn apply_tool_preset(name: &str, config: &mut apxm_tools::ToolsConfig) {
+fn apply_tool_preset(name: &str, config: &mut apxm_runtime::capability::builtins::ToolsConfig) {
     match name {
         "bash_safe" => {
             config.bash.blocked_commands = vec![
@@ -384,13 +384,13 @@ fn apply_tool_preset(name: &str, config: &mut apxm_tools::ToolsConfig) {
             );
             config.search_web.max_results = 10;
             config.search_web.safe_search = true;
-            config.search_web.search_depth = apxm_tools::SearchDepth::Basic;
+            config.search_web.search_depth = apxm_runtime::capability::builtins::SearchDepth::Basic;
             config.search_web.enabled = true;
         }
         "search_research" => {
             config.search_web.max_results = 15;
             config.search_web.safe_search = true;
-            config.search_web.search_depth = apxm_tools::SearchDepth::Advanced;
+            config.search_web.search_depth = apxm_runtime::capability::builtins::SearchDepth::Advanced;
             config.search_web.enabled = true;
         }
         _ => {}
@@ -400,7 +400,7 @@ fn apply_tool_preset(name: &str, config: &mut apxm_tools::ToolsConfig) {
 fn apply_tool_overrides(
     tool_name: &str,
     tool_config: &ToolConfig,
-    config: &mut apxm_tools::ToolsConfig,
+    config: &mut apxm_runtime::capability::builtins::ToolsConfig,
 ) {
     match normalize_tool_name(tool_name) {
         Some("bash") => {

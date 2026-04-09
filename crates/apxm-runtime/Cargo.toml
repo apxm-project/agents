@@ -8,7 +8,6 @@ edition = "2024"
 apxm-core = { path = "../apxm-core" }
 apxm-backends = { path = "../apxm-backends" }
 apxm-artifact = { path = "../apxm-artifact" }
-apxm-sandbox = { path = "../apxm-sandbox" }
 
 # Async runtime
 tokio = { version = "1.0", features = ["rt-multi-thread", "macros", "sync", "time", "rt", "process", "io-util", "fs"] }

@@ -31,6 +31,7 @@
 //! ```
 
 pub mod approval;
+pub mod builtins;
 pub mod executor;
 pub mod flow_registry;
 pub mod interceptor;
@@ -40,7 +41,7 @@ pub mod registry;
 use crate::aam::{Aam, TransitionLabel};
 use approval::{ApprovalChannel, ApprovalStore};
 use apxm_core::{error::RuntimeError, types::values::Value};
-use apxm_sandbox::{SandboxRegistry, ValidationResult};
+use crate::sandbox::{SandboxRegistry, ValidationResult};
 use executor::{CapabilityExecutor, exec_result_to_value};
 use interceptor::{CapabilityInterceptor, InterceptDecision};
 use metadata::CapabilityMetadata;
@@ -620,10 +621,10 @@ mod tests {
             &self.metadata
         }
 
-        fn to_exec_request(&self, args: &HashMap<String, Value>) -> Option<apxm_sandbox::ExecRequest> {
+        fn to_exec_request(&self, args: &HashMap<String, Value>) -> Option<crate::sandbox::ExecRequest> {
             let command = args.get("command")?.as_str()?.to_string();
-            Some(apxm_sandbox::ExecRequest {
-                min_isolation: apxm_sandbox::IsolationLevel::OsLevel,
+            Some(crate::sandbox::ExecRequest {
+                min_isolation: crate::sandbox::IsolationLevel::OsLevel,
                 program: "/bin/echo".to_string(),
                 args: vec![command],
                 timeout: std::time::Duration::from_secs(10),
@@ -674,7 +675,7 @@ mod tests {
             &self.metadata
         }
 
-        fn to_exec_request(&self, _args: &HashMap<String, Value>) -> Option<apxm_sandbox::ExecRequest> {
+        fn to_exec_request(&self, _args: &HashMap<String, Value>) -> Option<crate::sandbox::ExecRequest> {
             None  // Doesn't need sandbox
         }
     }
@@ -689,9 +690,9 @@ mod tests {
 
         // Set up a sandbox registry with a mock backend
         let mut registry = SandboxRegistry::new();
-        let backend = Arc::new(apxm_sandbox::DefaultBackend::new(
-            apxm_sandbox::SandboxCapabilities {
-                isolation_level: apxm_sandbox::IsolationLevel::OsLevel,
+        let backend = Arc::new(crate::sandbox::DefaultBackend::new(
+            crate::sandbox::SandboxCapabilities {
+                isolation_level: crate::sandbox::IsolationLevel::OsLevel,
                 supports_filesystem_restriction: false,
                 supports_network_restriction: false,
                 supports_syscall_filtering: false,
@@ -700,7 +701,7 @@ mod tests {
                 version: "1.0".to_string(),
             },
             |_req| async {
-                Ok(apxm_sandbox::ExecResult {
+                Ok(crate::sandbox::ExecResult {
                     success: true,
                     exit_code: Some(0),
                     stdout: "test output".to_string(),
@@ -761,9 +762,9 @@ mod tests {
 
         // Even with a sandbox registry, non-sandboxed capabilities should execute directly
         let mut registry = SandboxRegistry::new();
-        let backend = Arc::new(apxm_sandbox::DefaultBackend::new(
-            apxm_sandbox::SandboxCapabilities {
-                isolation_level: apxm_sandbox::IsolationLevel::OsLevel,
+        let backend = Arc::new(crate::sandbox::DefaultBackend::new(
+            crate::sandbox::SandboxCapabilities {
+                isolation_level: crate::sandbox::IsolationLevel::OsLevel,
                 supports_filesystem_restriction: false,
                 supports_network_restriction: false,
                 supports_syscall_filtering: false,
@@ -772,7 +773,7 @@ mod tests {
                 version: "1.0".to_string(),
             },
             |_req| async {
-                Ok(apxm_sandbox::ExecResult {
+                Ok(crate::sandbox::ExecResult {
                     success: true,
                     exit_code: Some(0),
                     stdout: String::new(),

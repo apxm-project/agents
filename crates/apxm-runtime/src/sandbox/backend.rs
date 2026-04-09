@@ -4,8 +4,8 @@
 //! APXM never implements OS-level sandboxing — it delegates entirely to
 //! the registered backend.
 
-use crate::error::SandboxError;
-use crate::types::{ExecRequest, ExecResult, SandboxCapabilities, SandboxContext};
+use super::error::SandboxError;
+use super::types::{ExecRequest, ExecResult, SandboxCapabilities, SandboxContext};
 use async_trait::async_trait;
 
 const DEFAULT_SESSION_ID_PREFIX: &str = "sandbox";
@@ -190,7 +190,7 @@ impl std::fmt::Debug for DefaultBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::IsolationLevel;
+    use crate::sandbox::types::IsolationLevel;
     use std::time::Duration;
 
     fn test_capabilities() -> SandboxCapabilities {

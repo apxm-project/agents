@@ -10,9 +10,9 @@
 //!
 //! **Gap documented**: The `SandboxBackend::execute()` method is NOT called by
 //! the APXM runtime's INV handler.  See the `test_gap_sandbox_not_called_by_inv`
-//! test and the module-level documentation for the full trace.
+//! test for details.
 
-use apxm_sandbox::{
+use apxm_runtime::sandbox::{
     DefaultBackend, ExecRequest, ExecResult, IsolationLevel, SandboxBackend, SandboxCapabilities,
     SandboxContext, SandboxError, SandboxRegistry, SecurityManifest, ValidationResult,
 };
@@ -521,7 +521,6 @@ fn security_manifest_pure_does_not_require_sandbox() {
 
 #[test]
 fn security_manifest_with_io_tier_requires_sandbox() {
-    // tier::IO = 2 (see apxm-sandbox/src/manifest.rs)
     let m = SecurityManifest {
         max_tier: 2, // tier::IO
         min_isolation: IsolationLevel::OsLevel,
@@ -581,66 +580,17 @@ fn sandbox_context_downcast_inner_state() {
 // Test: Document the integration gap
 // ---------------------------------------------------------------------------
 
-/// **This test documents the wiring gap between the sandbox system and the
-/// runtime's INV handler.**
-///
-/// # Execution path trace
-///
-/// ```text
-/// Graph node (op=INV, capability="bash")
-///   -> executor/handlers/inv.rs::execute()
-///     -> ctx.capability_system.invoke_with_timeout("bash", args, timeout)
-///       -> CapabilityRegistry.get("bash")
-///         -> BashCapability.execute(args)          // <-- direct tokio::process::Command
-///           -> tokio::process::Command::new("sh")  // NO sandbox backend involved
-/// ```
-///
-/// # Where the gap is
-///
-/// 1. `ExecutionContext` carries `sandbox_registry: Arc<SandboxRegistry>`.
-/// 2. The INV handler (`executor/handlers/inv.rs`) has access to `ctx.sandbox_registry`.
-/// 3. But the INV handler calls `ctx.capability_system.invoke_with_timeout()` which
-///    resolves to `CapabilityExecutor::execute(args)` -- a direct trait method call.
-/// 4. `CapabilityExecutor::execute()` (e.g., `BashCapability`) spawns processes
-///    via `tokio::process::Command` directly, completely bypassing the sandbox.
-/// 5. The `SandboxBackend::execute()` method is never called during INV execution.
-///
-/// # What needs to change
-///
-/// Option A (recommended): Create a `SandboxedCapabilityExecutor` wrapper that:
-///   1. Receives `Arc<SandboxRegistry>` at construction time
-///   2. In `execute()`, selects a backend from the registry
-///   3. Translates `HashMap<String, Value>` args into `ExecRequest`
-///   4. Calls `backend.execute(ctx, request)` instead of spawning directly
-///   5. Wraps the `ExecResult` back into a `Value`
-///
-/// Option B: Modify the INV handler to call the sandbox directly for capabilities
-///   that are marked as requiring process execution (add a `needs_sandbox: bool`
-///   field to `CapabilityMetadata`).
-///
-/// Option C: Make `BashCapability` and `UserToolCapability` accept an optional
-///   `Arc<SandboxRegistry>` and delegate to it when present.
 #[test]
 fn test_gap_sandbox_not_called_by_inv_handler() {
-    // This test exists to document the gap.  It verifies that:
-    // 1. The sandbox registry IS stored in the execution context.
-    // 2. The INV handler does NOT reference it (confirmed by grep).
-    //
-    // When the gap is closed, this test should be updated to verify
-    // that the sandbox IS called.
-
-    // The SandboxRegistry can be constructed and is fully functional:
     let mut registry = SandboxRegistry::new();
     let backend = Arc::new(CountingBackend::new("test", IsolationLevel::PolicyOnly));
     let backend_ref = Arc::clone(&backend);
     registry.register(backend);
 
-    // The registry can select a backend:
     let selected = registry.select(IsolationLevel::None).unwrap();
     assert_eq!(selected.capabilities().name, "test");
 
-    // But during INV execution, the backend's execute() is never called.
-    // If it were, backend_ref.calls() would be > 0 after a graph execution.
+    // During INV execution, the backend's execute() is never called.
     assert_eq!(
         backend_ref.calls(),
         0,

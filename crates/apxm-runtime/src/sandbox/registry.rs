@@ -8,10 +8,10 @@
 //! **APXM never auto-detects backends.** Detection logic (checking for
 //! `bwrap`, `docker`, `wasmtime`, etc.) belongs in the host application.
 
-use crate::backend::{SandboxBackend, ValidationResult};
-use crate::error::SandboxError;
-use crate::manifest::SecurityManifest;
-use crate::types::{ExecRequest, IsolationLevel, SandboxCapabilities};
+use super::backend::{SandboxBackend, ValidationResult};
+use super::error::SandboxError;
+use super::manifest::SecurityManifest;
+use super::types::{ExecRequest, IsolationLevel, SandboxCapabilities};
 use std::sync::Arc;
 
 const REJECTED_UNAVAILABLE_SUFFIX: &str = " unavailable";
@@ -289,9 +289,9 @@ impl std::fmt::Debug for SandboxSelection {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::DefaultBackend;
-    use crate::error::SandboxError;
-    use crate::types::{ExecRequest, ExecResult, SandboxCapabilities};
+    use crate::sandbox::backend::DefaultBackend;
+    use crate::sandbox::error::SandboxError;
+    use crate::sandbox::types::{ExecRequest, ExecResult, SandboxCapabilities};
     use std::time::Duration;
 
     fn make_backend(name: &str, level: IsolationLevel) -> Arc<dyn SandboxBackend> {
@@ -454,13 +454,13 @@ mod tests {
                 }
             }
 
-            async fn create_session(&self) -> Result<crate::types::SandboxContext, SandboxError> {
+            async fn create_session(&self) -> Result<crate::sandbox::types::SandboxContext, SandboxError> {
                 unreachable!("not needed for selection tests")
             }
 
             async fn execute(
                 &self,
-                _ctx: &crate::types::SandboxContext,
+                _ctx: &crate::sandbox::types::SandboxContext,
                 _request: ExecRequest,
             ) -> Result<ExecResult, SandboxError> {
                 unreachable!("not needed for selection tests")
@@ -468,7 +468,7 @@ mod tests {
 
             async fn destroy_session(
                 &self,
-                _ctx: crate::types::SandboxContext,
+                _ctx: crate::sandbox::types::SandboxContext,
             ) -> Result<(), SandboxError> {
                 unreachable!("not needed for selection tests")
             }

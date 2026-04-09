@@ -3,7 +3,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::payload::EventPayload;
+use super::payload::EventPayload;
 
 /// Universal event envelope for all APXM events.
 #[derive(Debug, Clone, Serialize, Deserialize)]

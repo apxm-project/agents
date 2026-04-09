@@ -456,7 +456,8 @@ impl AISOperationType {
 // ============================================================================
 
 /// Indicates that an operation field references an external resource.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ReferenceType {
     /// ACP agent profile (e.g., "claude", "codex").
     Profile,
@@ -498,7 +499,7 @@ impl ReferenceType {
 }
 
 /// MLIR emission configuration for code generation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct MlirEmissionSpec {
     /// Primary attribute name (e.g., "template_str" for ASK).
     pub primary_attr: Option<&'static str>,
@@ -513,7 +514,8 @@ pub struct MlirEmissionSpec {
 }
 
 /// Context style for MLIR emission.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ContextStyle {
     /// Bracketed context: [...].
     Bracketed,
@@ -524,7 +526,8 @@ pub enum ContextStyle {
 }
 
 /// MLIR result type for operations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MlirResultType {
     /// Returns a token (!ais.token).
     Token,
@@ -535,7 +538,7 @@ pub enum MlirResultType {
 }
 
 /// A field in an operation specification.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct OperationField {
     /// Field name.
     pub name: &'static str,
@@ -603,7 +606,8 @@ impl OperationField {
 
 /// Expected latency tier for an operation, used by the scheduler for
 /// critical-path analysis and by agents for cost estimation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum OperationLatency {
     /// No external I/O — executes in microseconds (control flow, sync).
     None,
@@ -642,7 +646,7 @@ impl fmt::Display for OperationLatency {
 /// This is the single source of truth for operation semantics. Both the
 /// compiler (for validation and code generation) and runtime (for dispatch
 /// and execution) use these specifications.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct OperationSpec {
     /// Operation type identifier.
     pub op_type: AISOperationType,

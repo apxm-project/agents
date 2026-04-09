@@ -15,7 +15,7 @@ use apxm_core::InstructionConfig;
 use apxm_core::constants::{cache, runtime::metadata};
 use apxm_core::paths::ApxmPaths;
 use apxm_core::types::Agent;
-use apxm_sandbox::SandboxRegistry;
+use crate::sandbox::SandboxRegistry;
 use std::sync::Arc;
 
 use super::cancellation::CancellationToken;

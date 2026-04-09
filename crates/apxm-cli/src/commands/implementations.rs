@@ -769,7 +769,7 @@ pub fn compile_command(
         false
     };
 
-    // For new .air format (valid MLIR), compile directly without ApxmGraph
+    // For new .air format (valid MLIR), compile directly without AirModule
     if is_new_air {
         // NEW PATH: .air file is valid MLIR — compile directly
         // (no-cse-llm and diagnostics are graph-level optimizations, not applicable here)
@@ -802,7 +802,7 @@ pub fn compile_command(
         return Ok(());
     }
 
-    // OLD PATH: ApxmGraph-based compilation
+    // OLD PATH: AirModule-based compilation
     let graph = if input.is_dir() {
         load_graph_from_directory(&input)?
     } else {
@@ -964,13 +964,13 @@ pub fn decompile_command(artifact_path: PathBuf, output: Option<PathBuf>) -> Res
 }
 
 #[cfg(feature = "driver")]
-fn dag_to_graph(dag: &apxm_core::types::execution::ExecutionDag) -> apxm_graph::ApxmGraph {
-    use apxm_graph::{GraphEdge, GraphNode};
+fn dag_to_graph(dag: &apxm_core::types::execution::ExecutionDag) -> apxm_compiler::AirModule {
+    use apxm_compiler::{AirEdge, AirNode};
 
-    let nodes: Vec<GraphNode> = dag
+    let nodes: Vec<AirNode> = dag
         .nodes
         .iter()
-        .map(|n| GraphNode {
+        .map(|n| AirNode {
             id: n.id,
             name: format!("node_{}", n.id),
             op: n.op_type,
@@ -978,27 +978,27 @@ fn dag_to_graph(dag: &apxm_core::types::execution::ExecutionDag) -> apxm_graph::
         })
         .collect();
 
-    let edges: Vec<GraphEdge> = dag
+    let edges: Vec<AirEdge> = dag
         .edges
         .iter()
-        .map(|e| GraphEdge {
+        .map(|e| AirEdge {
             from: e.from,
             to: e.to,
             dependency: e.dependency_type.clone(),
         })
         .collect();
 
-    let parameters: Vec<apxm_graph::Parameter> = dag
+    let parameters: Vec<apxm_compiler::AirParam> = dag
         .metadata
         .parameters
         .iter()
-        .map(|p| apxm_graph::Parameter {
+        .map(|p| apxm_compiler::AirParam {
             name: p.name.clone(),
             type_name: p.type_name.clone(),
         })
         .collect();
 
-    apxm_graph::ApxmGraph {
+    apxm_compiler::AirModule {
         name: dag
             .metadata
             .name
@@ -1012,7 +1012,7 @@ fn dag_to_graph(dag: &apxm_core::types::execution::ExecutionDag) -> apxm_graph::
 }
 
 #[cfg(feature = "driver")]
-fn load_graph_from_directory(dir: &std::path::Path) -> Result<apxm_graph::ApxmGraph> {
+fn load_graph_from_directory(dir: &std::path::Path) -> Result<apxm_compiler::AirModule> {
     let mut graphs = Vec::new();
     let subdirs = ["flows", "nodes", ""];
 
@@ -1030,14 +1030,13 @@ fn load_graph_from_directory(dir: &std::path::Path) -> Result<apxm_graph::ApxmGr
             let path = entry.path();
             if matches!(
                 path.extension().and_then(|e| e.to_str()),
-                Some("json") // .apxm removed; json kept for internal decompile only
+                Some("json") | Some("apxm")
             ) {
                 let text = std::fs::read_to_string(&path)
                     .with_context(|| format!("Failed to read {}", path.display()))?;
                 if text.contains("\"nodes\"") {
-                    let graph = apxm_graph::ApxmGraph::from_json(&text).map_err(|e| {
-                        anyhow::anyhow!("Failed to parse {}: {}", path.display(), e)
-                    })?;
+                    let graph: apxm_compiler::AirModule = serde_json::from_str(&text)
+                        .map_err(|e| anyhow::anyhow!("Failed to parse {}: {}", path.display(), e))?;
                     graphs.push(graph);
                 }
             }
@@ -1055,26 +1054,26 @@ fn load_graph_from_directory(dir: &std::path::Path) -> Result<apxm_graph::ApxmGr
         return Ok(graphs.into_iter().next().unwrap());
     }
 
-    let name = dir
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("merged")
-        .to_string();
-    Ok(apxm_graph::ApxmGraph::merge(&name, &graphs))
+    Err(anyhow::anyhow!(
+        "Directory '{}' contains {} graph files — multi-graph merge is no longer supported. \
+         Provide a single graph file instead.",
+        dir.display(),
+        graphs.len()
+    ))
 }
 
-/// Convert an ExecutionDag back to an ApxmGraph for session output.
+/// Convert an ExecutionDag back to an AirModule for session output.
 #[cfg(feature = "driver")]
 fn graph_from_execution_dag(
     dag: &apxm_core::types::execution::ExecutionDag,
-) -> Option<apxm_graph::ApxmGraph> {
-    use apxm_graph::{GraphEdge, GraphNode, Parameter};
+) -> Option<apxm_compiler::AirModule> {
+    use apxm_compiler::{AirEdge, AirNode, AirParam};
     use std::collections::HashMap;
 
     let nodes = dag
         .nodes
         .iter()
-        .map(|node| GraphNode {
+        .map(|node| AirNode {
             id: node.id,
             name: node
                 .metadata
@@ -1089,7 +1088,7 @@ fn graph_from_execution_dag(
     let edges = dag
         .edges
         .iter()
-        .map(|edge| GraphEdge {
+        .map(|edge| AirEdge {
             from: edge.from,
             to: edge.to,
             dependency: edge.dependency_type.clone(),
@@ -1100,7 +1099,7 @@ fn graph_from_execution_dag(
         .metadata
         .parameters
         .iter()
-        .map(|param| Parameter {
+        .map(|param| AirParam {
             name: param.name.clone(),
             type_name: param.type_name.clone(),
         })
@@ -1114,7 +1113,7 @@ fn graph_from_execution_dag(
         );
     }
 
-    Some(apxm_graph::ApxmGraph {
+    Some(apxm_compiler::AirModule {
         name: dag
             .metadata
             .name
@@ -1128,7 +1127,7 @@ fn graph_from_execution_dag(
 }
 
 #[cfg(feature = "driver")]
-fn load_graph_for_session(input: &std::path::Path) -> Result<apxm_graph::ApxmGraph> {
+fn load_graph_for_session(input: &std::path::Path) -> Result<apxm_compiler::AirModule> {
     use apxm_driver::compiler::Compiler;
 
     // Try to load via compiler first so .air gets its dedicated error message.
@@ -1140,7 +1139,7 @@ fn load_graph_for_session(input: &std::path::Path) -> Result<apxm_graph::ApxmGra
 
     // Fallback: parse as JSON directly when the compiler is unavailable.
     let text = std::fs::read_to_string(input).context("Failed to read graph file")?;
-    apxm_graph::ApxmGraph::from_json(&text)
+    serde_json::from_str::<apxm_compiler::AirModule>(&text)
         .map_err(|e| anyhow::anyhow!("Failed to parse graph: {}", e))
 }
 
@@ -1149,7 +1148,7 @@ fn setup_session(
     emit_session: &Option<Option<PathBuf>>,
     input: &std::path::Path,
     default_stem: &str,
-    input_graph: Option<&apxm_graph::ApxmGraph>,
+    input_graph: Option<&apxm_compiler::AirModule>,
 ) -> Result<(
     Option<apxm_driver::session_output::SessionOutputWriter>,
     Option<std::sync::Arc<apxm_driver::session_output::SessionEventEmitter>>,
@@ -1222,7 +1221,7 @@ fn setup_session(
 #[cfg(feature = "driver")]
 fn context_stack_config_from_graph(
     session_dir: &std::path::Path,
-    graph: &apxm_graph::ApxmGraph,
+    graph: &apxm_compiler::AirModule,
 ) -> Option<apxm_runtime::context_stack::ContextStackConfig> {
     let node_metadata = graph
         .nodes
@@ -2242,51 +2241,6 @@ pub async fn backend_command(action: BackendAction, json_output: bool) -> Result
     Ok(())
 }
 
-#[cfg(feature = "driver")]
-fn build_semantic_context() -> apxm_graph::semantic::SemanticContext {
-    use apxm_core::constants::capabilities;
-    use apxm_core::types::identifiers::{BackendId, CapabilityName, ModelId, ProfileId};
-    use apxm_graph::semantic::SemanticContext;
-
-    let backends = apxm_credentials::BackendStore::open()
-        .and_then(|s| s.list())
-        .unwrap_or_default();
-
-    let registry = apxm_acp::AgentRegistry::load();
-    let profiles_list = registry.list();
-
-    let model_count: usize = backends
-        .iter()
-        .map(|b| b.models.len() + b.models.iter().map(|m| m.aliases.len()).sum::<usize>())
-        .sum();
-
-    let mut ctx = SemanticContext::with_capacity(
-        profiles_list.len(),
-        backends.len(),
-        model_count,
-        capabilities::BUILTINS.len(),
-    );
-
-    for (name, _, _) in &profiles_list {
-        ctx.profiles.insert(ProfileId::from(name.as_str()));
-    }
-
-    for b in &backends {
-        ctx.backends.insert(BackendId::from(b.name.as_str()));
-        for m in &b.models {
-            ctx.models.insert(ModelId::from(m.id.as_str()));
-            for a in &m.aliases {
-                ctx.models.insert(ModelId::from(a.as_str()));
-            }
-        }
-    }
-
-    for name in capabilities::BUILTINS {
-        ctx.capabilities.insert(CapabilityName::from(*name));
-    }
-
-    ctx
-}
 
 #[allow(unused_variables)]
 pub fn validate_command(input: PathBuf, json_output: bool, no_check_resources: bool) -> Result<()> {
@@ -2350,27 +2304,15 @@ pub fn validate_command(input: PathBuf, json_output: bool, no_check_resources: b
     // Check file extension - .air files need to be parsed differently
     let is_air = input.extension().and_then(|e| e.to_str()) == Some("air");
 
-    let raw: RawGraph = if is_air {
-        // Parse .air format into ApxmGraph, then serialize back to JSON for validation
-        #[cfg(feature = "driver")]
-        {
-            let graph = apxm_graph::ApxmGraph::from_air(&content)
-                .map_err(|e| anyhow::anyhow!("Failed to parse .air file {}: {e}", input.display()))?;
-            let json = graph.to_json()
-                .map_err(|e| anyhow::anyhow!("Failed to serialize graph: {e}"))?;
-            serde_json::from_str(&json)
-                .map_err(|e| anyhow::anyhow!("Internal error serializing graph: {e}"))?
-        }
-        #[cfg(not(feature = "driver"))]
-        {
-            return Err(anyhow::anyhow!(
-                "Driver feature required to validate .air files. Build with --features driver."
-            ));
-        }
-    } else {
-        serde_json::from_str(&content)
-            .map_err(|e| anyhow::anyhow!("Invalid JSON in {}: {e}", input.display()))?
-    };
+    if is_air {
+        return Err(anyhow::anyhow!(
+            "Direct .air file validation is no longer supported. \
+             Use 'apxm compile' to compile .air files instead."
+        ));
+    }
+
+    let raw: RawGraph = serde_json::from_str(&content)
+        .map_err(|e| anyhow::anyhow!("Invalid JSON in {}: {e}", input.display()))?;
 
     if raw.name.is_empty() {
         errors.push("graph name must not be empty".to_string());
@@ -2501,38 +2443,10 @@ pub fn validate_command(input: PathBuf, json_output: bool, no_check_resources: b
         }
     }
 
-    // Also attempt full Rust-side parse+validate for deeper checks (when driver feature available)
-    #[allow(unused_mut)]
-    let mut semantic_errors: Vec<String> = Vec::new();
-    #[allow(unused_mut)]
-    let mut semantic_warnings: Vec<String> = Vec::new();
-    #[cfg(feature = "driver")]
-    {
-        let parse_result = if is_air {
-            apxm_graph::ApxmGraph::from_air(&content)
-        } else {
-            apxm_graph::ApxmGraph::from_json(&content)
-        };
-
-        match parse_result {
-            Ok(graph) => {
-                // Semantic validation: Tier 1 always, Tier 2 unless --no-check-resources
-                let ctx = if no_check_resources {
-                    apxm_graph::semantic::SemanticContext::default()
-                } else {
-                    build_semantic_context()
-                };
-                let sem_errors = apxm_graph::semantic::validate_semantic(&graph, &ctx);
-                for err in &sem_errors {
-                    let msg = err.short_message();
-                    if err.code.is_warning() {
-                        semantic_warnings.push(msg);
-                    } else {
-                        semantic_errors.push(msg);
-                    }
-                }
-            }
-            Err(e) => {
+    // Also attempt full Rust-side parse+validate for deeper checks
+    match serde_json::from_str::<apxm_compiler::AirModule>(&content) {
+        Ok(graph) => {
+            if let Err(e) = graph.validate() {
                 let msg = e.to_string();
                 if !errors
                     .iter()
@@ -2542,10 +2456,17 @@ pub fn validate_command(input: PathBuf, json_output: bool, no_check_resources: b
                 }
             }
         }
+        Err(e) => {
+            let msg = e.to_string();
+            if !errors
+                .iter()
+                .any(|existing| msg.contains(&existing[..existing.len().min(30)]))
+            {
+                errors.push(format!("graph parse: {msg}"));
+            }
+        }
     }
 
-    errors.extend(semantic_errors);
-    warnings.extend(semantic_warnings);
     let valid = errors.is_empty();
 
     if json_output {
@@ -2590,7 +2511,7 @@ pub fn validate_command(input: PathBuf, json_output: bool, no_check_resources: b
 
 /// Parsed graph topology used by analyze and explain commands.
 pub(crate) struct GraphAnalysis<'a> {
-    pub(crate) graph: &'a apxm_graph::ApxmGraph,
+    pub(crate) graph: &'a apxm_compiler::AirModule,
     pub(crate) node_index: HashMap<u64, usize>,
     pub(crate) edge_count: usize,
     pub(crate) node_ids: HashSet<u64>,
@@ -2602,7 +2523,7 @@ pub(crate) struct GraphAnalysis<'a> {
 }
 
 impl<'a> GraphAnalysis<'a> {
-    pub(crate) fn from_graph(graph: &'a apxm_graph::ApxmGraph) -> Self {
+    pub(crate) fn from_graph(graph: &'a apxm_compiler::AirModule) -> Self {
         let node_index: HashMap<u64, usize> = graph
             .nodes
             .iter()
@@ -2671,7 +2592,7 @@ impl<'a> GraphAnalysis<'a> {
         }
     }
 
-    fn node_by_id(&self, id: u64) -> Option<&apxm_graph::GraphNode> {
+    fn node_by_id(&self, id: u64) -> Option<&apxm_compiler::AirNode> {
         self.node_index.get(&id).map(|&i| &self.graph.nodes[i])
     }
 
@@ -2760,7 +2681,7 @@ impl<'a> GraphAnalysis<'a> {
 pub fn analyze_command(input: PathBuf, json_output: bool) -> Result<()> {
     let content = std::fs::read_to_string(&input)
         .map_err(|e| anyhow::anyhow!("Failed to read {}: {e}", input.display()))?;
-    let graph: apxm_graph::ApxmGraph = serde_json::from_str(&content)
+    let graph: apxm_compiler::AirModule = serde_json::from_str(&content)
         .map_err(|e| anyhow::anyhow!("Invalid JSON in {}: {e}", input.display()))?;
 
     let ga = GraphAnalysis::from_graph(&graph);
@@ -3023,7 +2944,7 @@ pub fn explain_command(target: &str, json_output: bool) -> Result<()> {
     let file = PathBuf::from(target);
     let content = std::fs::read_to_string(&file)
         .map_err(|e| anyhow::anyhow!("Failed to read {}: {e}", file.display()))?;
-    let graph: apxm_graph::ApxmGraph = serde_json::from_str(&content)
+    let graph: apxm_compiler::AirModule = serde_json::from_str(&content)
         .map_err(|e| anyhow::anyhow!("Invalid JSON in {}: {e}", file.display()))?;
 
     let ga = GraphAnalysis::from_graph(&graph);
@@ -3906,86 +3827,11 @@ fn print_minimal_mlir_status() {
     }
 }
 
-pub fn task_command(action: TaskAction, json_output: bool) -> Result<()> {
-    use apxm_graph::ApxmGraph;
-
+pub fn task_command(action: TaskAction, _json_output: bool) -> Result<()> {
     match action {
-        TaskAction::Merge {
-            graphs,
-            name,
-            output,
-        } => {
-            let mut parsed_graphs: Vec<ApxmGraph> = Vec::with_capacity(graphs.len());
-            for path in &graphs {
-                let content = std::fs::read_to_string(path)
-                    .map_err(|e| anyhow::anyhow!("Failed to read {}: {e}", path.display()))?;
-                let graph = ApxmGraph::from_json(&content)
-                    .map_err(|e| anyhow::anyhow!("Invalid graph {}: {e}", path.display()))?;
-                parsed_graphs.push(graph);
-            }
-
-            let input_count = parsed_graphs.len();
-            let merged = ApxmGraph::merge(&name, &parsed_graphs);
-
-            let total_nodes = merged.nodes.len();
-            let total_edges = merged.edges.len();
-            let sync_node_id = merged.nodes.last().map(|n| n.id);
-
-            if json_output {
-                let merged_json = serde_json::to_value(&merged)
-                    .map_err(|e| anyhow::anyhow!("Failed to serialize merged graph: {e}"))?;
-                let result = serde_json::json!({
-                    "merged_graph": merged_json,
-                    "stats": {
-                        "input_graphs": input_count,
-                        "total_nodes": total_nodes,
-                        "total_edges": total_edges,
-                        "sync_node_id": sync_node_id,
-                    }
-                });
-                let json_str = serde_json::to_string_pretty(&result).unwrap();
-                if let Some(out_path) = output {
-                    std::fs::write(&out_path, &json_str).map_err(|e| {
-                        anyhow::anyhow!("Failed to write {}: {e}", out_path.display())
-                    })?;
-                    eprintln!("Wrote merged graph to {}", out_path.display());
-                } else {
-                    println!("{json_str}");
-                }
-            } else {
-                let graph_json = merged
-                    .to_json()
-                    .map_err(|e| anyhow::anyhow!("Failed to serialize merged graph: {e}"))?;
-                let written_path = if let Some(ref out_path) = output {
-                    std::fs::write(out_path, &graph_json).map_err(|e| {
-                        anyhow::anyhow!("Failed to write {}: {e}", out_path.display())
-                    })?;
-                    out_path.clone()
-                } else {
-                    let default_path = PathBuf::from(format!("{name}.json"));
-                    std::fs::write(&default_path, &graph_json).map_err(|e| {
-                        anyhow::anyhow!("Failed to write {}: {e}", default_path.display())
-                    })?;
-                    default_path
-                };
-
-                print_section_header("Task Merge");
-                print_status_line("name", Status::Ok, &name);
-                print_status_line("inputs", Status::Ok, &format!("{input_count} graph(s)"));
-                print_status_line("nodes", Status::Ok, &format!("{total_nodes}"));
-                print_status_line("edges", Status::Ok, &format!("{total_edges}"));
-                if let Some(sid) = sync_node_id {
-                    print_status_line("sync node", Status::Ok, &format!("id={sid}"));
-                }
-                println!();
-                println!(
-                    "  Wrote merged graph to {}",
-                    written_path.display().to_string().bold()
-                );
-            }
-
-            Ok(())
-        }
+        TaskAction::Merge { .. } => Err(anyhow::anyhow!(
+            "Graph merge is no longer supported. Compose workflows using the workflow system instead."
+        )),
     }
 }
 
@@ -3993,9 +3839,9 @@ pub fn codegen_command(action: CodegenAction, json_output: bool) -> Result<()> {
     match action {
         CodegenAction::Frontend { output_dir } => {
             let output_dir = output_dir.unwrap_or_else(default_frontend_codegen_dir);
-            apxm_frontend::write_generated_python(&output_dir)?;
+            crate::frontend::write_generated_python(&output_dir)?;
 
-            let mut files: Vec<String> = apxm_frontend::render_generated_python()
+            let mut files: Vec<String> = crate::frontend::render_generated_python()
                 .into_iter()
                 .map(|(name, _)| name.to_string())
                 .collect();
@@ -4106,13 +3952,13 @@ pub fn replay_command(session: PathBuf) -> Result<()> {
     let input_path = session.join(constants::session::files::INPUT_GRAPH);
     let node_names: HashMap<u64, String> = std::fs::read_to_string(&input_path)
         .ok()
-        .and_then(|text| apxm_graph::ApxmGraph::from_json(&text).ok())
+        .and_then(|text| serde_json::from_str::<apxm_compiler::AirModule>(&text).ok())
         .map(|graph| graph.nodes.iter().map(|n| (n.id, n.name.clone())).collect())
         .unwrap_or_default();
 
     // Parse trace events and build timeline
-    use apxm_events::ApxmEvent;
-    use apxm_events::payload::EventPayload;
+    use apxm_core::events::ApxmEvent;
+    use apxm_core::events::payload::EventPayload;
 
     enum EventKind {
         Start,
@@ -5158,7 +5004,7 @@ pub async fn workflow_run_command(file: PathBuf, args: Vec<String>) -> Result<()
                 // Load the graph to get its parameter order
                 let graph_bytes = std::fs::read(&graph_path)?;
                 let graph_text = std::str::from_utf8(&graph_bytes)?;
-                let graph = apxm_graph::ApxmGraph::from_json(graph_text)?;
+                let graph: apxm_compiler::AirModule = serde_json::from_str(graph_text)?;
 
                 graph
                     .parameters

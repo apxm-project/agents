@@ -7,7 +7,7 @@ use apxm_core::constants::sandbox::{
     backend_names, bubblewrap, env as sandbox_env, executables, session_prefixes,
 };
 use apxm_runtime::sandbox::policy::SandboxPolicy;
-use apxm_sandbox::{
+use apxm_runtime::sandbox::{
     ExecRequest, ExecResult, IsolationLevel, SandboxBackend, SandboxCapabilities, SandboxContext,
     SandboxError, ValidationResult,
 };

@@ -10,7 +10,7 @@ pub fn configure_capability_registry(
     config: &ApXmConfig,
 ) -> Result<(), DriverError> {
     let tools_config = config.tools_config();
-    apxm_tools::register_standard_tools(&capability_system, &tools_config)
+    apxm_runtime::capability::builtins::register_standard_tools(&capability_system, &tools_config)
         .map_err(DriverError::Runtime)?;
 
     if let Err(e) = register_user_tools(&capability_system) {
@@ -143,18 +143,18 @@ impl apxm_runtime::capability::executor::CapabilityExecutor for UserToolCapabili
     fn to_exec_request(
         &self,
         args: &std::collections::HashMap<String, apxm_core::types::values::Value>,
-    ) -> Option<apxm_sandbox::ExecRequest> {
+    ) -> Option<apxm_runtime::sandbox::ExecRequest> {
         let json_input = serde_json::to_string(&args).ok()?;
 
-        Some(apxm_sandbox::ExecRequest {
-            min_isolation: apxm_sandbox::IsolationLevel::OsLevel,
+        Some(apxm_runtime::sandbox::ExecRequest {
+            min_isolation: apxm_runtime::sandbox::IsolationLevel::OsLevel,
             program: self.command.clone(),
             args: self.args.clone(),
             stdin_data: Some(json_input),
             timeout: std::time::Duration::from_millis(self.timeout_ms),
             needs_network: true,
             origin_op: Some(AISOperationType::InvTool.to_string()),
-            ..apxm_sandbox::ExecRequest::default()
+            ..apxm_runtime::sandbox::ExecRequest::default()
         })
     }
 }

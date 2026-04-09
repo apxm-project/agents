@@ -1,6 +1,6 @@
-use crate::require_string_arg;
+use super::require_string_arg;
 use apxm_core::{error::RuntimeError, types::Value};
-use apxm_runtime::capability::{
+use crate::capability::{
     executor::{CapabilityExecutor, CapabilityResult},
     metadata::CapabilityMetadata,
 };
@@ -13,7 +13,7 @@ use std::{
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ReadConfig {
-    #[serde(default = "crate::default_true")]
+    #[serde(default = "super::default_true")]
     pub enabled: bool,
     #[serde(default)]
     pub blocked_paths: Vec<PathBuf>,
