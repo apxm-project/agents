@@ -591,6 +591,9 @@ LogicalResult emitNode(Operation *op, DagBuildState &state, ArtifactDag &dag) {
     if (key == "space") emitKey = "memory_tier";  // MLIR uses space, runtime expects memory_tier
     if (key == "child_agent") emitKey = "agent_name";  // MLIR uses child_agent, runtime expects agent_name
     if (key == "payload") emitKey = "message";  // CommunicateOp: MLIR uses payload, runtime expects message
+    // Strip ais. dialect prefix so runtime sees bare attribute names
+    if (emitKey.starts_with("ais."))
+      emitKey = emitKey.drop_front(4);
     node.attributes.emplace_back(emitKey.str(),
                                  convertAttribute(named.getValue()));
   }

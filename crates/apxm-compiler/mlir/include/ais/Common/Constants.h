@@ -113,6 +113,7 @@ constexpr llvm::StringLiteral FUSED_FROM = "ais.fused_from";
 constexpr llvm::StringLiteral SHARED_PREFIX_GROUP = "ais.shared_prefix_group";
 constexpr llvm::StringLiteral SHARED_PREFIX_EST_TOKENS = "ais.shared_prefix_est_tokens";
 constexpr llvm::StringLiteral WARMUP_CANDIDATE = "ais.warmup_candidate";
+constexpr llvm::StringLiteral DOWNSTREAM_NODES = "ais.downstream_nodes";
 
 // ---- DSPy module-level config (input from Rust) ----
 constexpr llvm::StringLiteral DSPY_TRAINING_DATA_PATH = "ais.dspy_training_data_path";

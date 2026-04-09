@@ -19,7 +19,7 @@
 
 use super::{
     ExecutionContext, Node, Result, Value, execute_llm_request, get_optional_string_attribute,
-    get_optional_u64_attribute, get_string_attribute,
+    get_optional_u64_attribute, get_string_attribute, get_u32_array_attribute,
     inner_plan::{InnerPlanOptions, execute_inner_plan},
 };
 use crate::aam::{Goal as AamGoal, GoalId, GoalStatus, TransitionLabel};
@@ -612,16 +612,44 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         }
     }
 
-    // Build APXM graph hints for vLLM scheduling (Phase 0+1)
-    // Get priority from node metadata and map to priority_class
-    let priority_value = node.metadata.priority as i32;
+    // Build APXM graph hints for vLLM scheduling
+    // Map numeric priority (0-100, higher=more important) to vLLM priority class
+    let priority_value = node.metadata.priority;
     let priority_class = match priority_value {
-        0..=2 => "critical_path",
-        3..=7 => "normal",
+        90.. => "critical_path",
+        60..=89 => "normal",
         _ => "speculative",
     };
 
     let node_name = node.metadata.name.clone().unwrap_or_else(|| format!("node_{}", node.id));
+
+    // Read compiler-set attributes from the node (populated by MLIR passes via artifact)
+    let warmup_candidate = node
+        .attributes
+        .get(graph_attrs::WARMUP_CANDIDATE)
+        .and_then(|v| v.as_bool());
+
+    let shared_prefix_est_tokens = node
+        .attributes
+        .get(graph_attrs::SHARED_PREFIX_EST_TOKENS)
+        .and_then(|v| v.as_u64())
+        .map(|u| u as u32);
+
+    let reuse_group = node
+        .attributes
+        .get(graph_attrs::REUSE_GROUP)
+        .and_then(|v| v.as_string())
+        .map(|s| s.to_string());
+
+    let downstream_nodes = get_u32_array_attribute(node, graph_attrs::DOWNSTREAM_NODES);
+
+    // Set pin policy based on whether this node belongs to a reuse group
+    let pin_policy = if reuse_group.is_some() {
+        PinPolicy::prefix_default()
+    } else {
+        PinPolicy::none()
+    };
+
     let hints = ApxmGraphHints {
         schema_version: 1,
         graph_id: Some(ctx.execution_id.clone()),
@@ -629,10 +657,14 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         node_id: Some(node.id as u32),
         node_name: Some(node_name),
         priority_class: Some(priority_class.to_string()),
-        downstream_nodes: Vec::new(), // Not available in handler context - Phase 2
-        reuse_group: None,             // Could be set by compiler pass - Phase 2
-        pin_policy: PinPolicy::none(), // No pinning in Phase 0+1
-        compiler_hints: CompilerHints::default(), // Phase 2
+        downstream_nodes,
+        reuse_group,
+        pin_policy,
+        compiler_hints: CompilerHints {
+            shared_prefix_est_tokens,
+            warmup_candidate,
+            pipeline_candidate: None,
+        },
     };
     request = request.with_apxm_hints(hints);
 

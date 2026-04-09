@@ -71,6 +71,16 @@ pub trait LLMBackend: Send + Sync {
             "capabilities": serde_json::to_value(self.capabilities()).unwrap_or(Value::Null),
         })
     }
+
+    /// Register a graph for KV-cache scheduling hints (vLLM graph-aware only).
+    async fn register_graph(&self, _metadata: Value) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    /// Release a graph's pinned KV-cache blocks (vLLM graph-aware only).
+    async fn release_graph(&self, _graph_id: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 #[cfg(test)]

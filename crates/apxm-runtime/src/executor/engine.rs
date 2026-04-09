@@ -1,7 +1,9 @@
 //! Executor engine - Main orchestrator for DAG execution
 
-use super::{ExecutionContext, Result, dispatcher::OperationDispatcher};
+use super::{ExecutionContext, Result, dispatcher::OperationDispatcher, handlers::get_u32_array_attribute};
 use crate::scheduler::{DataflowScheduler, SchedulerConfig};
+use apxm_backends::llm::backends::vllm::{GraphMetadata, NodeSpec};
+use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::types::{
     execution::{ExecutionDag, ExecutionStats, Node, NodeStatus, OpStatus},
     values::Value,
@@ -43,6 +45,23 @@ impl ExecutorEngine {
             "Starting DAG execution"
         );
 
+        // Register graph with backends for KV-cache scheduling hints
+        let graph_id = self.context.execution_id.clone();
+        self.register_graph_metadata(&dag, &graph_id).await;
+
+        let result = self.execute_dag_inner(dag).await;
+
+        // Release graph from backends (both success and error paths)
+        self.context
+            .llm_registry
+            .release_graph_all(&graph_id)
+            .await;
+
+        result
+    }
+
+    /// Inner DAG execution logic (parallel with sequential fallback).
+    async fn execute_dag_inner(&self, dag: ExecutionDag) -> Result<ExecutionResult> {
         if dag.nodes.len() > 1 {
             match self.execute_dag_parallel(dag.clone()).await {
                 Ok(result) => return Ok(result),
@@ -57,6 +76,55 @@ impl ExecutorEngine {
         }
 
         self.execute_dag_sequential(dag).await
+    }
+
+    /// Build and register graph metadata with all backends.
+    async fn register_graph_metadata(&self, dag: &ExecutionDag, graph_id: &str) {
+        let node_specs: Vec<NodeSpec> = dag
+            .nodes
+            .iter()
+            .map(|node| {
+                let downstream_nodes = get_u32_array_attribute(node, graph_attrs::DOWNSTREAM_NODES);
+
+                let reuse_group = node
+                    .attributes
+                    .get(graph_attrs::REUSE_GROUP)
+                    .and_then(|v| v.as_string())
+                    .map(|s| s.to_string());
+
+                let priority = node.metadata.priority;
+                let is_critical_path = priority >= 90;
+                let priority_class = match priority {
+                    90.. => Some("critical_path".to_string()),
+                    60..=89 => Some("normal".to_string()),
+                    _ => Some("speculative".to_string()),
+                };
+
+                NodeSpec {
+                    node_id: node.id as u32,
+                    node_name: node.metadata.name.clone(),
+                    estimated_prompt_tokens: node
+                        .attributes
+                        .get(graph_attrs::SHARED_PREFIX_EST_TOKENS)
+                        .and_then(|v| v.as_u64())
+                        .map(|u| u as u32),
+                    downstream_nodes,
+                    priority_class,
+                    reuse_group,
+                    is_critical_path,
+                }
+            })
+            .collect();
+
+        let metadata = GraphMetadata::new(graph_id, &self.context.execution_id)
+            .with_nodes(node_specs);
+
+        if let Ok(metadata_json) = serde_json::to_value(&metadata) {
+            self.context
+                .llm_registry
+                .register_graph_all(metadata_json)
+                .await;
+        }
     }
 
     /// Execute a DAG using the dataflow scheduler for automatic parallelism.
