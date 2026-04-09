@@ -56,3 +56,17 @@ export type HealthStatus = {
   total_tools: number;
   config_source: "project" | "global";
 };
+
+export type FileTreeNode = {
+  name: string;
+  path: string;
+  is_dir: boolean;
+  children?: FileTreeNode[];
+  apxm_meta?: { name: string | null; node_count: number | null };
+};
+
+export type FileTreeResponse = {
+  root: string;
+  cwd: string;
+  tree: FileTreeNode[];
+};

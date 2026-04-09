@@ -651,6 +651,111 @@ async fn workflows_handler() -> ApiResult<impl IntoResponse> {
     Ok(Json(serde_json::json!({ "workflows": workflows })))
 }
 
+/// GET /api/filetree — return the project directory tree for server-side browsing.
+async fn filetree_handler() -> ApiResult<impl IntoResponse> {
+    let cwd = std::env::current_dir().map_err(|e| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to get current directory: {e}"),
+        )
+    })?;
+
+    async fn build_tree(
+        dir: &std::path::Path,
+        base: &std::path::Path,
+        depth: usize,
+    ) -> Vec<serde_json::Value> {
+        if depth > 4 {
+            return vec![];
+        }
+        let mut entries = match tokio::fs::read_dir(dir).await {
+            Ok(e) => e,
+            Err(_) => return vec![],
+        };
+
+        let mut items: Vec<serde_json::Value> = Vec::new();
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+
+            // Skip hidden dirs, node_modules, target, __pycache__
+            if name.starts_with('.') || name == "node_modules" || name == "target"
+                || name == "__pycache__" || name == "frontend-dist"
+            {
+                continue;
+            }
+
+            let rel = path
+                .strip_prefix(base)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .to_string();
+
+            if path.is_dir() {
+                let children = Box::pin(build_tree(&path, base, depth + 1)).await;
+                // Only include directories that contain relevant files
+                if !children.is_empty() {
+                    items.push(serde_json::json!({
+                        "name": name,
+                        "path": rel,
+                        "is_dir": true,
+                        "children": children,
+                    }));
+                }
+            } else {
+                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                if ext == "apxm" || ext == "py" || ext == "toml" {
+                    let mut entry_json = serde_json::json!({
+                        "name": name,
+                        "path": rel,
+                        "is_dir": false,
+                    });
+
+                    // For .apxm files, extract graph metadata
+                    if ext == "apxm" {
+                        if let Ok(content) = tokio::fs::read_to_string(&path).await {
+                            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content) {
+                                let graph_name = parsed.get("name").and_then(|n| n.as_str());
+                                let node_count = parsed.get("nodes").and_then(|n| n.as_array()).map(|a| a.len());
+                                entry_json["apxm_meta"] = serde_json::json!({
+                                    "name": graph_name,
+                                    "node_count": node_count,
+                                });
+                            }
+                        }
+                    }
+
+                    items.push(entry_json);
+                }
+            }
+        }
+
+        items.sort_by(|a, b| {
+            let a_dir = a.get("is_dir").and_then(|v| v.as_bool()).unwrap_or(false);
+            let b_dir = b.get("is_dir").and_then(|v| v.as_bool()).unwrap_or(false);
+            b_dir.cmp(&a_dir).then_with(|| {
+                let an = a.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                let bn = b.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                an.cmp(bn)
+            })
+        });
+
+        items
+    }
+
+    let tree = build_tree(&cwd, &cwd, 0).await;
+    let cwd_name = cwd
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "project".to_string());
+
+    Ok(Json(serde_json::json!({
+        "root": cwd_name,
+        "cwd": cwd.to_string_lossy(),
+        "tree": tree,
+    })))
+}
+
 /// GET /api/health — return structured summary of system configuration.
 async fn health_handler() -> ApiResult<impl IntoResponse> {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
@@ -934,6 +1039,7 @@ async fn main() {
         .route("/api/config", axum::routing::get(config_handler))
         .route("/api/workflows", axum::routing::get(workflows_handler))
         .route("/api/health", axum::routing::get(health_handler))
+        .route("/api/filetree", axum::routing::get(filetree_handler))
         // Startup & examples
         .route("/api/startup", axum::routing::get(startup_handler))
         .route("/api/examples", axum::routing::get(examples_handler))
