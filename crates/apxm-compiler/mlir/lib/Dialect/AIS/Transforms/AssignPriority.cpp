@@ -16,6 +16,7 @@
 
 #include "ais/Dialect/AIS/Transforms/Passes.h"
 
+#include "ais/Common/Constants.h"
 #include "ais/Dialect/AIS/IR/AISOps.h"
 #include "ais/Dialect/AIS/Support/AISDebug.h"
 
@@ -37,6 +38,7 @@ APXM_AIS_DEBUG_SETUP(assign_priority)
 struct PriorityAnalysis {
   llvm::DenseMap<Operation*, unsigned> longestPath;
   llvm::DenseMap<Operation*, unsigned> fanOut;
+  llvm::DenseMap<Operation*, unsigned> opToId;
   unsigned criticalPathLength = 0;
 };
 
@@ -53,6 +55,12 @@ static PriorityAnalysis analyzeDag(func::FuncOp func) {
       return;
     ops.push_back(op);
   });
+
+  // Assign sequential IDs matching ArtifactEmitter walk order
+  unsigned nextId = 0;
+  for (Operation* op : ops) {
+    analysis.opToId[op] = nextId++;
+  }
 
   // Compute fan-out (number of consumers for each operation)
   for (Operation* op : ops) {
@@ -167,9 +175,24 @@ struct AssignPriorityPass : impl::AssignPriorityBase<AssignPriorityPass> {
         OpBuilder builder(op);
         op->setAttr("priority", builder.getI32IntegerAttr(static_cast<int32_t>(priority)));
 
+        // Emit downstream_nodes: collect IDs of AIS ops that consume this op's results
+        llvm::SmallVector<Attribute> downstreamIds;
+        for (Operation* user : op->getUsers()) {
+          if (user->getDialect() && user->getDialect()->getNamespace() == "ais") {
+            auto it = analysis.opToId.find(user);
+            if (it != analysis.opToId.end()) {
+              downstreamIds.push_back(
+                  builder.getI32IntegerAttr(static_cast<int32_t>(it->second)));
+            }
+          }
+        }
+        op->setAttr(apxm::constants::attrs::DOWNSTREAM_NODES,
+                     builder.getArrayAttr(downstreamIds));
+
         APXM_AIS_DEBUG("  " << op->getName() << ": priority=" << priority
                         << " (longest_path=" << longestPath
-                        << ", fan_out=" << fanOut << ")");
+                        << ", fan_out=" << fanOut
+                        << ", downstream=" << downstreamIds.size() << ")");
       });
     }
 

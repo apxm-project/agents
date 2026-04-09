@@ -357,6 +357,18 @@ impl LLMBackend for GraphAwareVllmBackend {
         }
         meta
     }
+
+    async fn register_graph(&self, metadata: serde_json::Value) -> Result<()> {
+        let graph_meta: GraphMetadata = serde_json::from_value(metadata)
+            .context("Failed to deserialize GraphMetadata")?;
+        GraphAwareVllmBackend::register_graph(self, graph_meta).await?;
+        Ok(())
+    }
+
+    async fn release_graph(&self, graph_id: &str) -> Result<()> {
+        GraphAwareVllmBackend::release_graph(self, graph_id).await?;
+        Ok(())
+    }
 }
 
 /// Arc-wrapped backend for shared use across threads.

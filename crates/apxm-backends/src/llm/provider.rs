@@ -161,6 +161,14 @@ impl LLMBackend for Provider {
     fn capabilities(&self) -> ModelCapabilities {
         self.backend_ref().capabilities()
     }
+
+    async fn register_graph(&self, metadata: serde_json::Value) -> anyhow::Result<()> {
+        self.backend_ref().register_graph(metadata).await
+    }
+
+    async fn release_graph(&self, graph_id: &str) -> anyhow::Result<()> {
+        self.backend_ref().release_graph(graph_id).await
+    }
 }
 
 /// A provider instance paired with its metadata.

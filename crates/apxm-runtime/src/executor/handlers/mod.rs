@@ -101,6 +101,24 @@ pub fn get_optional_u64_attribute(node: &Node, key: &str) -> Result<Option<u64>>
     }
 }
 
+/// Extract a `Vec<u32>` from an array-valued node attribute.
+///
+/// Returns an empty vec if the attribute is missing or not an array.
+pub fn get_u32_array_attribute(node: &Node, key: &str) -> Vec<u32> {
+    node.attributes
+        .get(key)
+        .and_then(|v| match v {
+            Value::Array(items) => Some(
+                items
+                    .iter()
+                    .filter_map(|item| item.as_u64().map(|u| u as u32))
+                    .collect(),
+            ),
+            _ => None,
+        })
+        .unwrap_or_default()
+}
+
 /// Helper to get input by index
 pub fn get_input(node: &Node, inputs: &[Value], index: usize) -> Result<Value> {
     inputs

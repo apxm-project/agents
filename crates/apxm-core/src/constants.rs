@@ -132,8 +132,8 @@ pub mod graph {
         pub const SHARED_PREFIX_EST_TOKENS: &str = "shared_prefix_est_tokens";
         /// Downstream nodes that depend on this node's output.
         pub const DOWNSTREAM_NODES: &str = "downstream_nodes";
-        /// Shared prefix reuse group identifier.
-        pub const REUSE_GROUP: &str = "reuse_group";
+        /// Shared prefix reuse group identifier (matches stripped MLIR `ais.shared_prefix_group`).
+        pub const REUSE_GROUP: &str = "shared_prefix_group";
     }
 }
 

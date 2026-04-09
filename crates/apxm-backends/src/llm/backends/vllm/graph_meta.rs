@@ -31,6 +31,14 @@ impl PinPolicy {
             ttl_ms: Some(ttl_ms),
         }
     }
+
+    /// Pin the prompt prefix blocks using the graph-level default TTL.
+    pub fn prefix_default() -> Self {
+        Self {
+            mode: "prefix".to_string(),
+            ttl_ms: None,
+        }
+    }
 }
 
 /// Compiler-level hints that inform vLLM's eager-prefill and warmup decisions.

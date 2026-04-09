@@ -544,6 +544,38 @@ impl LLMRegistry {
         )
     }
 
+    /// Register graph metadata with all backends (best-effort).
+    ///
+    /// Backends that don't support graph registration (default impl) silently succeed.
+    pub async fn register_graph_all(&self, metadata: serde_json::Value) {
+        for entry in self.backends.iter() {
+            let name = entry.key().clone();
+            let backend = entry.value().clone();
+            if let Err(e) = backend.register_graph(metadata.clone()).await {
+                tracing::warn!(
+                    backend = %name,
+                    error = %e,
+                    "Failed to register graph with backend (non-fatal)"
+                );
+            }
+        }
+    }
+
+    /// Release graph from all backends (best-effort).
+    pub async fn release_graph_all(&self, graph_id: &str) {
+        for entry in self.backends.iter() {
+            let name = entry.key().clone();
+            let backend = entry.value().clone();
+            if let Err(e) = backend.release_graph(graph_id).await {
+                tracing::warn!(
+                    backend = %name,
+                    error = %e,
+                    "Failed to release graph from backend (non-fatal)"
+                );
+            }
+        }
+    }
+
     /// Perform health checks on all backends.
     pub async fn check_all_backends(&self) -> HashMap<String, HealthStatus> {
         let mut results = HashMap::new();
