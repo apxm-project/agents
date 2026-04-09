@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useAppStore } from "@/store/app-store";
 import { fetchGraph, fetchGraphAnalysis } from "@/api/graph";
 import { fetchFileTree } from "@/api/filetree";
@@ -69,6 +69,31 @@ export function GraphToolbar() {
   const [tree, setTree] = useState<FileTreeNode[]>([]);
   const [rootName, setRootName] = useState("");
   const [loading, setLoading] = useState(false);
+  const browserRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown on click outside
+  useEffect(() => {
+    if (!browserOpen) return;
+    function handleMouseDown(e: MouseEvent) {
+      if (browserRef.current && !browserRef.current.contains(e.target as Node)) {
+        setBrowserOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleMouseDown);
+    return () => document.removeEventListener("mousedown", handleMouseDown);
+  }, [browserOpen]);
+
+  // Close dropdown on Escape key
+  useEffect(() => {
+    if (!browserOpen) return;
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        setBrowserOpen(false);
+      }
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [browserOpen]);
 
   const loadTree = useCallback(async () => {
     setLoading(true);
@@ -125,7 +150,7 @@ export function GraphToolbar() {
         ) : null}
       </div>
       <div className="graph-toolbar__actions">
-        <div className="graph-toolbar__browser-wrap">
+        <div className="graph-toolbar__browser-wrap" ref={browserRef}>
           <button
             type="button"
             className={`ghost-button${browserOpen ? " ghost-button--active" : ""}`}
@@ -143,7 +168,7 @@ export function GraphToolbar() {
                 {loading ? (
                   <div className="filetree-dropdown__loading">Loading...</div>
                 ) : tree.length === 0 ? (
-                  <div className="filetree-dropdown__empty">No .apxm or .py files found</div>
+                  <div className="filetree-dropdown__empty">No workflow files found</div>
                 ) : (
                   tree.map((node) => (
                     <FileTreeItem key={node.path} node={node} onSelect={handleSelectFile} depth={0} />

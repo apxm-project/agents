@@ -247,6 +247,16 @@ def SchemaNarrowing : Pass<"schema-narrowing", "mlir::ModuleOp"> {
   let constructor = "mlir::ais::createSchemaNarrowingPass()";
 }
 
+def DspyOptimize : Pass<"dspy-optimize", "mlir::ModuleOp"> {
+  let summary = "Optimize prompt templates using DSPy";
+  let description = [{
+    Invokes python3 -m apxm_dspy as a subprocess to run DSPy's prompt
+    optimizers (MIPROv2, BootstrapFewShot, COPRO) on template strings.
+    No-op when no training data is available.
+  }];
+  let constructor = "mlir::ais::createDspyOptimizePass()";
+}
+
 def PromptCanonicalization : Pass<"prompt-canonicalization", "mlir::ModuleOp"> {
   let summary = "Reorder prompts to maximize shared-prefix reuse for vLLM caching";
   let description = [{

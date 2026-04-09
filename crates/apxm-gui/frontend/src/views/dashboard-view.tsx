@@ -51,7 +51,7 @@ export function DashboardView() {
           </div>
           <div className="dashboard-card__body">
             {workflows.length === 0 ? (
-              <div className="dashboard-empty">No .apxm files found in project directory.</div>
+              <div className="dashboard-empty">No workflows found in project directory.</div>
             ) : null}
             {workflows.map((w) => (
               <button
@@ -59,10 +59,13 @@ export function DashboardView() {
                 type="button"
                 className="dashboard-workflow"
                 onClick={() => handleWorkflowClick(w.path)}
+                title={w.relative_path}
               >
                 <div className="dashboard-workflow__name">{w.name}</div>
                 <div className="dashboard-workflow__meta">
-                  <span className="dashboard-workflow__nodes">{w.node_count ?? "?"} nodes</span>
+                  {w.node_count != null ? (
+                    <span className="dashboard-workflow__nodes">{w.node_count} nodes</span>
+                  ) : null}
                   {w.category ? <span className="dashboard-workflow__category">{w.category}</span> : null}
                 </div>
               </button>

@@ -72,7 +72,7 @@ function GraphCanvasInner() {
         <GraphToolbar />
         <div className="viewer-status">
           <p className="viewer-status__title">No graph loaded</p>
-          <p className="viewer-status__hint">Open a .apxm file or select an example to get started.</p>
+          <p className="viewer-status__hint">Browse server files or select a workflow to get started.</p>
         </div>
       </div>
     );
