@@ -3,7 +3,7 @@ import type { ApxmGraph, GraphLayout } from "@/types/graph";
 import type { TraceEvent, NodeLiveStatus } from "@/types/events";
 import type { SessionData, SessionInfo } from "@/types/session";
 import type { OpSpec } from "@/types/ops";
-import type { ExampleInfo, GraphAnalysis, OptimizedResult } from "@/types/api";
+import type { ExampleInfo, GraphAnalysis, OptimizedResult, WorkflowInfo, HealthStatus } from "@/types/api";
 import type { TabKey } from "@/lib/constants";
 
 type AppState = {
@@ -33,6 +33,8 @@ type AppState = {
   ops: OpSpec[];
   config: string;
   examples: ExampleInfo[];
+  workflows: WorkflowInfo[];
+  health: HealthStatus | null;
   // Loading / errors
   loading: Record<string, boolean>;
   errors: Record<string, string | null>;
@@ -57,6 +59,8 @@ type AppState = {
   setOps: (ops: OpSpec[]) => void;
   setConfig: (config: string) => void;
   setExamples: (examples: ExampleInfo[]) => void;
+  setWorkflows: (workflows: WorkflowInfo[]) => void;
+  setHealth: (health: HealthStatus | null) => void;
   setLoading: (key: string, loading: boolean) => void;
   setError: (key: string, error: string | null) => void;
 };
@@ -85,6 +89,8 @@ export const useAppStore = create<AppState>((set) => ({
   ops: [],
   config: "",
   examples: [],
+  workflows: [],
+  health: null,
   loading: {},
   errors: {},
 
@@ -114,6 +120,8 @@ export const useAppStore = create<AppState>((set) => ({
   setOps: (ops) => set({ ops }),
   setConfig: (config) => set({ config }),
   setExamples: (examples) => set({ examples }),
+  setWorkflows: (workflows) => set({ workflows }),
+  setHealth: (health) => set({ health }),
   setLoading: (key, loading) => set((s) => ({ loading: { ...s.loading, [key]: loading } })),
   setError: (key, error) => set((s) => ({ errors: { ...s.errors, [key]: error } })),
 }));

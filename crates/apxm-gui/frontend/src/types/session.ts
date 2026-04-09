@@ -23,4 +23,5 @@ export type SessionInfo = {
   graph_name: string | null;
   status: string;
   started_at: string;
+  duration_ms?: number;
 };
