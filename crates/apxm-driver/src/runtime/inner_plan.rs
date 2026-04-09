@@ -10,7 +10,7 @@ use apxm_core::types::execution::{ExecutionDag, TaskDag};
 use apxm_core::types::{AISOperationType, DependencyType, Value};
 use apxm_core::utils::build::MlirEnvReport;
 use apxm_core::{log_debug, log_info};
-use apxm_graph::{ApxmGraph, GraphEdge, GraphNode, Parameter};
+use apxm_compiler::{AirEdge, AirModule, AirNode, AirParam};
 use apxm_runtime::{InnerPlanLinker, RuntimeError};
 use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};
@@ -57,13 +57,20 @@ impl InnerPlanLinker for CompilerInnerPlanLinker {
             "Linking inner plan graph JSON"
         );
 
-        let graph = ApxmGraph::from_json(graph_payload).map_err(|e| {
+        let air_module = serde_json::from_str::<AirModule>(graph_payload).map_err(|e| {
             RuntimeError::State(format!("Inner plan graph JSON parsing failed: {}", e))
+        })?;
+
+        let air_text = air_module.to_air().map_err(|e| {
+            RuntimeError::State(format!(
+                "Inner plan AIR emission failed for '{}': {}",
+                source_name, e
+            ))
         })?;
 
         let context = self.context.lock();
         let pipeline = Pipeline::with_opt_level(&context, OptimizationLevel::O1);
-        let module = pipeline.compile_graph(&graph).map_err(|e| {
+        let module = pipeline.compile(&air_text).map_err(|e| {
             RuntimeError::State(format!(
                 "Inner plan graph compilation failed for '{}': {}",
                 source_name, e
@@ -112,10 +119,13 @@ impl InnerPlanLinker for CompilerInnerPlanLinker {
             "Linking inner plan task DAG via graph canonicalization"
         );
 
-        let graph = task_dag_to_graph(&dag)?;
+        let air_module = task_dag_to_air_module(&dag)?;
+        let air_text = air_module.to_air().map_err(|e| {
+            RuntimeError::State(format!("Inner plan task AIR emission failed: {}", e))
+        })?;
         let context = self.context.lock();
         let pipeline = Pipeline::with_opt_level(&context, OptimizationLevel::O1);
-        let module = pipeline.compile_graph(&graph).map_err(|e| {
+        let module = pipeline.compile(&air_text).map_err(|e| {
             RuntimeError::State(format!("Inner plan task graph compilation failed: {}", e))
         })?;
 
@@ -141,7 +151,7 @@ impl InnerPlanLinker for CompilerInnerPlanLinker {
     }
 }
 
-fn task_dag_to_graph(dag: &TaskDag) -> Result<ApxmGraph, RuntimeError> {
+fn task_dag_to_air_module(dag: &TaskDag) -> Result<AirModule, RuntimeError> {
     dag.validate()?;
 
     let mut nodes = Vec::new();
@@ -177,7 +187,7 @@ fn task_dag_to_graph(dag: &TaskDag) -> Result<ApxmGraph, RuntimeError> {
                 Value::String(task.description.clone()),
             );
 
-            nodes.push(GraphNode {
+            nodes.push(AirNode {
                 id: node_id,
                 name: node_name,
                 op: AISOperationType::Ask,
@@ -191,7 +201,7 @@ fn task_dag_to_graph(dag: &TaskDag) -> Result<ApxmGraph, RuntimeError> {
         last_node_by_task.insert(task.id, last);
 
         for pair in realized_nodes.windows(2) {
-            edges.push(GraphEdge {
+            edges.push(AirEdge {
                 from: pair[0],
                 to: pair[1],
                 dependency: DependencyType::Data,
@@ -207,7 +217,7 @@ fn task_dag_to_graph(dag: &TaskDag) -> Result<ApxmGraph, RuntimeError> {
             let from = *last_node_by_task.get(dep).ok_or_else(|| {
                 RuntimeError::State(format!("Missing dependency mapping for task {}", dep))
             })?;
-            edges.push(GraphEdge {
+            edges.push(AirEdge {
                 from,
                 to,
                 dependency: DependencyType::Data,
@@ -220,7 +230,7 @@ fn task_dag_to_graph(dag: &TaskDag) -> Result<ApxmGraph, RuntimeError> {
         metadata.insert(graph_meta::IS_ENTRY.to_string(), Value::Bool(true));
     }
 
-    let graph = ApxmGraph {
+    let air_module = AirModule {
         name: dag
             .metadata
             .name
@@ -232,7 +242,7 @@ fn task_dag_to_graph(dag: &TaskDag) -> Result<ApxmGraph, RuntimeError> {
             .metadata
             .parameters
             .iter()
-            .map(|p| Parameter {
+            .map(|p| AirParam {
                 name: p.name.clone(),
                 type_name: p.type_name.clone(),
             })
@@ -240,9 +250,9 @@ fn task_dag_to_graph(dag: &TaskDag) -> Result<ApxmGraph, RuntimeError> {
         metadata,
     };
 
-    graph
+    air_module
         .validate()
         .map_err(|e| RuntimeError::State(format!("TaskDag graph validation failed: {}", e)))?;
 
-    Ok(graph)
+    Ok(air_module)
 }

@@ -14,6 +14,7 @@
 
 #include "ais/Dialect/AIS/Transforms/Passes.h"
 
+#include "ais/Common/Constants.h"
 #include "ais/Dialect/AIS/IR/AISAttributes.h"
 #include "ais/Dialect/AIS/IR/AISOps.h"
 #include "ais/Dialect/AIS/Support/AISDebug.h"
@@ -91,7 +92,7 @@ struct NormalizeAgentGraphPass : impl::NormalizeAgentGraphBase<NormalizeAgentGra
 
     // Module-level metadata
     const uint64_t totalNormalized = stats.contextDedups + stats.stringNorms;
-    module->setAttr("ais.graph_normalized",
+    module->setAttr(apxm::constants::attrs::GRAPH_NORMALIZED,
                     AISGraphNormalizedAttr::get(module.getContext(), totalNormalized));
 
     APXM_AIS_INFO(llvm::formatv("Normalized {0} attributes (ctx_dedup={1}, str_norm={2})",

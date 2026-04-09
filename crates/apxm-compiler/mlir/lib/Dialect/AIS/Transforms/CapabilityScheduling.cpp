@@ -17,6 +17,8 @@
 
 #include "ais/Dialect/AIS/Transforms/Passes.h"
 
+#include "ais/Common/Constants.h"
+
 #include "ais/Dialect/AIS/IR/AISAttributes.h"
 #include "ais/Dialect/AIS/IR/AISOps.h"
 #include "ais/Dialect/AIS/Support/AISDebug.h"
@@ -128,7 +130,7 @@ struct CapabilitySchedulingPass : impl::CapabilitySchedulingBase<CapabilitySched
     });
 
     // Module-level metadata
-    module->setAttr("ais.scheduling_annotations",
+    module->setAttr(apxm::constants::attrs::SCHEDULING_ANNOTATIONS,
                     AISAnnotationsAttr::get(module.getContext(), stats.annotated));
 
     APXM_AIS_INFO("Annotated " << stats.annotated << " ops"
@@ -143,9 +145,9 @@ private:
     const AISTierKind tier = classifyCapabilityTier(op.getCapabilityAttr().getValue());
     const unsigned cost = baseCost + contextWeight;
 
-    op->setAttr("ais.tier", AISTierAttr::get(op->getContext(), tier));
-    op->setAttr("ais.intent", AISIntentAttr::get(op->getContext(), AISIntentKind::capability));
-    op->setAttr("ais.estimated_cost",
+    op->setAttr(apxm::constants::attrs::TIER, AISTierAttr::get(op->getContext(), tier));
+    op->setAttr(apxm::constants::attrs::INTENT, AISIntentAttr::get(op->getContext(), AISIntentKind::capability));
+    op->setAttr(apxm::constants::attrs::ESTIMATED_COST,
                 AISEstimatedCostAttr::get(op->getContext(), static_cast<int32_t>(cost)));
   }
 
@@ -155,16 +157,16 @@ private:
     const unsigned cost = baseCost + static_cast<unsigned>(contextSize) * contextWeight;
     const bool isParallelSafe = (contextSize <= parallelThreshold);
 
-    op->setAttr("ais.tier", AISTierAttr::get(op->getContext(), AISTierKind::reasoning));
-    op->setAttr("ais.intent", AISIntentAttr::get(op->getContext(), AISIntentKind::reasoning));
-    op->setAttr("ais.latency", StringAttr::get(op->getContext(), "low"));
-    op->setAttr("ais.estimated_cost",
+    op->setAttr(apxm::constants::attrs::TIER, AISTierAttr::get(op->getContext(), AISTierKind::reasoning));
+    op->setAttr(apxm::constants::attrs::INTENT, AISIntentAttr::get(op->getContext(), AISIntentKind::reasoning));
+    op->setAttr(apxm::constants::attrs::LATENCY, StringAttr::get(op->getContext(), "low"));
+    op->setAttr(apxm::constants::attrs::ESTIMATED_COST,
                 AISEstimatedCostAttr::get(op->getContext(), static_cast<int32_t>(cost)));
 
     if (isParallelSafe)
-      op->setAttr("ais.parallel_safe", AISParallelSafeAttr::get(op->getContext()));
+      op->setAttr(apxm::constants::attrs::PARALLEL_SAFE, AISParallelSafeAttr::get(op->getContext()));
     else
-      op->removeAttr("ais.parallel_safe");
+      op->removeAttr(apxm::constants::attrs::PARALLEL_SAFE);
   }
 
   /// Annotate ThinkOp - HIGH latency, critical path bottleneck
@@ -173,13 +175,13 @@ private:
     // Think ops are expensive - multiply base cost
     const unsigned cost = (baseCost * 10) + static_cast<unsigned>(contextSize) * contextWeight;
 
-    op->setAttr("ais.tier", AISTierAttr::get(op->getContext(), AISTierKind::reasoning));
-    op->setAttr("ais.intent", AISIntentAttr::get(op->getContext(), AISIntentKind::reasoning));
-    op->setAttr("ais.latency", StringAttr::get(op->getContext(), "high"));
-    op->setAttr("ais.estimated_cost",
+    op->setAttr(apxm::constants::attrs::TIER, AISTierAttr::get(op->getContext(), AISTierKind::reasoning));
+    op->setAttr(apxm::constants::attrs::INTENT, AISIntentAttr::get(op->getContext(), AISIntentKind::reasoning));
+    op->setAttr(apxm::constants::attrs::LATENCY, StringAttr::get(op->getContext(), "high"));
+    op->setAttr(apxm::constants::attrs::ESTIMATED_COST,
                 AISEstimatedCostAttr::get(op->getContext(), static_cast<int32_t>(cost)));
     // Think ops are never parallel-safe due to high latency
-    op->removeAttr("ais.parallel_safe");
+    op->removeAttr(apxm::constants::attrs::PARALLEL_SAFE);
   }
 
   /// Annotate ReasonOp - MEDIUM latency, structured output
@@ -188,16 +190,16 @@ private:
     // Reason ops are moderately expensive
     const unsigned cost = (baseCost * 3) + static_cast<unsigned>(contextSize) * contextWeight;
 
-    op->setAttr("ais.tier", AISTierAttr::get(op->getContext(), AISTierKind::reasoning));
-    op->setAttr("ais.intent", AISIntentAttr::get(op->getContext(), AISIntentKind::reasoning));
-    op->setAttr("ais.latency", StringAttr::get(op->getContext(), "medium"));
-    op->setAttr("ais.estimated_cost",
+    op->setAttr(apxm::constants::attrs::TIER, AISTierAttr::get(op->getContext(), AISTierKind::reasoning));
+    op->setAttr(apxm::constants::attrs::INTENT, AISIntentAttr::get(op->getContext(), AISIntentKind::reasoning));
+    op->setAttr(apxm::constants::attrs::LATENCY, StringAttr::get(op->getContext(), "medium"));
+    op->setAttr(apxm::constants::attrs::ESTIMATED_COST,
                 AISEstimatedCostAttr::get(op->getContext(), static_cast<int32_t>(cost)));
     // Reason ops might support parallel execution if context is small
     if (contextSize <= parallelThreshold)
-      op->setAttr("ais.parallel_safe", AISParallelSafeAttr::get(op->getContext()));
+      op->setAttr(apxm::constants::attrs::PARALLEL_SAFE, AISParallelSafeAttr::get(op->getContext()));
     else
-      op->removeAttr("ais.parallel_safe");
+      op->removeAttr(apxm::constants::attrs::PARALLEL_SAFE);
   }
 
   void annotatePlan(PlanOp op) const {
@@ -205,8 +207,8 @@ private:
                                * static_cast<unsigned>(op.getContext().size());
     const unsigned cost = baseCost + contextCost;
 
-    op->setAttr("ais.intent", AISIntentAttr::get(op->getContext(), AISIntentKind::goal));
-    op->setAttr("ais.estimated_cost",
+    op->setAttr(apxm::constants::attrs::INTENT, AISIntentAttr::get(op->getContext(), AISIntentKind::goal));
+    op->setAttr(apxm::constants::attrs::ESTIMATED_COST,
                 AISEstimatedCostAttr::get(op->getContext(), static_cast<int32_t>(cost)));
   }
 };

@@ -40,7 +40,7 @@ use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::error::RuntimeError;
 use apxm_core::types::values::Value;
 use apxm_core::types::{AISOperationType, DependencyType};
-use apxm_graph::{ApxmGraph, GraphEdge, GraphNode};
+use apxm_compiler::{AirModule, AirEdge, AirNode};
 use apxm_runtime::capability::executor::{CapabilityExecutor, CapabilityResult};
 use apxm_runtime::capability::metadata::CapabilityMetadata;
 use apxm_runtime::executor::ExecutionEventEmitter;
@@ -1159,12 +1159,9 @@ async fn register_capability(
 
 fn prepare_request(
     mut req: ExecuteRequest,
-) -> Result<(ApxmGraph, Vec<String>, Option<String>), ApiError> {
-    let mut graph = ApxmGraph::from_json(
-        &serde_json::to_string(&req.graph)
-            .map_err(|e| ApiError::bad_request(format!("invalid json: {e}")))?,
-    )
-    .map_err(|e| ApiError::bad_request(format!("invalid graph: {e}")))?;
+) -> Result<(AirModule, Vec<String>, Option<String>), ApiError> {
+    let mut graph: AirModule = serde_json::from_value(req.graph)
+        .map_err(|e| ApiError::bad_request(format!("invalid graph: {e}")))?;
     apply_runtime_attributes(
         &mut graph,
         req.token_budget.take(),
@@ -1176,7 +1173,7 @@ fn prepare_request(
 }
 
 fn apply_runtime_attributes(
-    graph: &mut ApxmGraph,
+    graph: &mut AirModule,
     token_budget: Option<u64>,
     output_schema: Option<JsonValue>,
     max_schema_retries: Option<u32>,
@@ -1209,7 +1206,13 @@ fn apply_runtime_attributes(
     Ok(())
 }
 
-fn graph_to_artifact(graph: ApxmGraph) -> Result<Artifact, ApiError> {
+fn graph_to_artifact(graph: AirModule) -> Result<Artifact, ApiError> {
+    let air_text = graph.to_air().map_err(|error| {
+        ApiError::bad_request(format!(
+            "failed to lower graph '{}' to AIR: {error}",
+            graph.name
+        ))
+    })?;
     let context = CompilerContext::new().map_err(|error| {
         ApiError::internal_message(format!(
             "failed to initialize APXM compiler context: {error}"
@@ -1217,7 +1220,7 @@ fn graph_to_artifact(graph: ApxmGraph) -> Result<Artifact, ApiError> {
     })?;
     let pipeline =
         CompilerPipeline::with_opt_level(&context, apxm_core::types::OptimizationLevel::O1);
-    let module = pipeline.compile_graph(&graph).map_err(|error| {
+    let module = pipeline.compile(&air_text).map_err(|error| {
         ApiError::bad_request(format!("failed to compile graph '{}': {error}", graph.name))
     })?;
     let artifact_bytes = module
@@ -1459,17 +1462,17 @@ async fn a2a_send_task(
             .into_response();
     }
 
-    // Build a minimal CONST_STR → ASK ApxmGraph from the inbound text.
-    let graph = ApxmGraph {
+    // Build a minimal CONST_STR → ASK AirModule from the inbound text.
+    let graph = AirModule {
         name: format!("a2a_{}", req.id),
         nodes: vec![
-            GraphNode {
+            AirNode {
                 id: 1,
                 name: "input".to_string(),
                 op: AISOperationType::ConstStr,
                 attributes: HashMap::from([("value".to_string(), Value::String(user_text))]),
             },
-            GraphNode {
+            AirNode {
                 id: 2,
                 name: "response".to_string(),
                 op: AISOperationType::Ask,
@@ -1479,7 +1482,7 @@ async fn a2a_send_task(
                 )]),
             },
         ],
-        edges: vec![GraphEdge {
+        edges: vec![AirEdge {
             from: 1,
             to: 2,
             dependency: DependencyType::Data,

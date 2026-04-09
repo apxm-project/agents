@@ -5,7 +5,7 @@ use crate::passes::{PassManager, PipelineDiagnostics, build_pass_list};
 use apxm_core::error::compiler::{CompilerError, Result};
 use apxm_core::error::{builder::ErrorBuilder, codes::ErrorCode};
 use apxm_core::types::{OptimizationLevel, PipelineConfig};
-use apxm_graph::ApxmGraph;
+use crate::air_builder::AirModule;
 
 /// Pipeline API for compiling and optimizing modules.
 pub struct Pipeline<'ctx> {
@@ -40,30 +40,23 @@ impl<'ctx> Pipeline<'ctx> {
         self.process_module(module)
     }
 
-    pub fn compile_graph(&self, graph: &ApxmGraph) -> Result<Module> {
-        let module = self.lower_graph(graph)?;
-        self.process_module(module)
+    pub fn compile_graph(&self, module: &AirModule) -> Result<Module> {
+        let ir_module = self.lower_graph(module)?;
+        self.process_module(ir_module)
     }
 
     /// Compile a graph and collect per-pass diagnostics.
     pub fn compile_graph_with_diagnostics(
         &self,
-        graph: &ApxmGraph,
+        module: &AirModule,
     ) -> Result<(Module, PipelineDiagnostics)> {
-        let module = self.lower_graph(graph)?;
-        self.process_module_with_diagnostics(module)
+        let ir_module = self.lower_graph(module)?;
+        self.process_module_with_diagnostics(ir_module)
     }
 
-    /// Apply profile annotations and graph-level optimization passes, then
-    /// lower to MLIR and parse into a Module.
-    ///
-    /// Pass ordering at O2+:
-    /// 1. constant_folding -- fold CONST_STR into THINK/ASK templates
-    /// 2. prompt_caching -- detect shared system prompts
-    /// 3. memoization_hints -- mark duplicate pure operations
-    /// 4. parallelism_analysis -- compute max parallelism & critical path
-    fn lower_graph(&self, graph: &ApxmGraph) -> Result<Module> {
-        let mut graph = graph.clone();
+    /// Apply profile annotations, then lower to AIR text and parse into a Module.
+    fn lower_graph(&self, module: &AirModule) -> Result<Module> {
+        let mut module = module.clone();
 
         if let Some(ref profile_path) = self.config.profile_path {
             let profile = crate::passes::profile::ExecutionProfile::load_from_file(profile_path)
@@ -73,49 +66,16 @@ impl<'ctx> Pipeline<'ctx> {
                         format!("Failed to load profile: {e}"),
                     )))
                 })?;
-            profile.apply_to_graph(&mut graph, self.config.token_budget);
+            profile.apply_to_module(&mut module, self.config.token_budget);
         }
 
-        if matches!(
-            self.config.opt_level,
-            OptimizationLevel::O2 | OptimizationLevel::O3
-        ) {
-            Self::run_graph_passes(&mut graph, &self.config)?;
-        }
-
-        let mlir_text = graph.to_mlir().map_err(|e| {
+        let air_text = module.to_air().map_err(|e| {
             CompilerError::Unsupported(Box::new(ErrorBuilder::generic(
                 ErrorCode::InternalError,
-                format!("Graph lowering failed: {e}"),
+                format!("AIR emission failed: {e}"),
             )))
         })?;
-        Module::parse(self.context, &mlir_text)
-    }
-
-    fn run_graph_passes(graph: &mut ApxmGraph, config: &PipelineConfig) -> Result<()> {
-        macro_rules! run_pass {
-            ($graph:expr, $pass:ident, $label:literal) => {
-                $graph.$pass().map_err(|e| {
-                    CompilerError::Unsupported(Box::new(ErrorBuilder::generic(
-                        ErrorCode::InternalError,
-                        format!(concat!($label, " pass failed: {}"), e),
-                    )))
-                })?
-            };
-        }
-
-        // Set optimization target in graph metadata for passes to use
-        graph.metadata.insert(
-            "optimization.target".to_string(),
-            apxm_core::types::Value::String(config.target.to_string().into()),
-        );
-
-        run_pass!(graph, constant_folding, "Constant folding");
-        run_pass!(graph, prompt_caching, "Prompt caching");
-        run_pass!(graph, memoization_hints, "Memoization hints");
-        run_pass!(graph, parallelism_analysis, "Parallelism analysis");
-        run_pass!(graph, vllm_priority_hints, "vLLM priority hints");
-        Ok(())
+        Module::parse(self.context, &air_text)
     }
 
     fn process_module(&self, module: Module) -> Result<Module> {

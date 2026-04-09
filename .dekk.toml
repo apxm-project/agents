@@ -29,6 +29,7 @@ LLM_GATEWAY_KEY = "env:LLM_GATEWAY_KEY"
 MLIR_DIR = "{environment}/lib/cmake/mlir"
 LLVM_DIR = "{environment}/lib/cmake/llvm"
 APXM_HOME = "{project}"
+PYTHONPATH = "{project}/tools"
 LD_LIBRARY_PATH = "{project}/target/release/lib:{project}/target/release:{environment}/lib"
 APXM_BACKEND = "corp-gateway"
 
@@ -135,5 +136,13 @@ name = "vllm"
 label = "vLLM (graph-aware fork)"
 description = "Graph-aware vLLM server with APXM KV-pinning and priority scheduling"
 run = "git submodule update --init external/vllm && pip install -e external/vllm"
+default = false
+requires = ["pip"]
+
+[[install.components]]
+name = "dspy"
+label = "DSPy Prompt Optimizer"
+description = "Automatic prompt optimization via DSPy (Stanford NLP)"
+run = "pip install dspy-ai>=2.6.0"
 default = false
 requires = ["pip"]

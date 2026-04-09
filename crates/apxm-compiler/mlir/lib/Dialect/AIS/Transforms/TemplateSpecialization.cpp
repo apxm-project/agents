@@ -21,6 +21,8 @@
 
 #include "ais/Dialect/AIS/Transforms/Passes.h"
 
+#include "ais/Common/Constants.h"
+
 #include "ais/Dialect/AIS/IR/AISOps.h"
 #include "ais/Dialect/AIS/Support/AISDebug.h"
 
@@ -154,7 +156,7 @@ struct TemplateSpecializationPass : impl::TemplateSpecializationBase<TemplateSpe
     });
 
     if (specialized > 0) {
-      module->setAttr("ais.templates_specialized",
+      module->setAttr(apxm::constants::attrs::TEMPLATES_SPECIALIZED,
                       IntegerAttr::get(IntegerType::get(module.getContext(), 64),
                                        specialized));
       APXM_AIS_INFO("Specialized " << specialized << " template operations");

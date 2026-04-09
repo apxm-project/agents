@@ -7,7 +7,7 @@ use super::implementations::parse_header;
 
 #[derive(Parser)]
 #[command(name = "apxm")]
-#[command(about = "APxM CLI (minimal) - compile and run ApxmGraph inputs", long_about = None)]
+#[command(about = "APxM CLI (minimal) - compile and run AirModule inputs", long_about = None)]
 pub struct Cli {
     /// Optional config path (defaults to .apxm/config.toml or ~/.apxm/config.toml)
     #[arg(long)]
@@ -32,7 +32,7 @@ pub enum Commands {
         /// Project name (creates a directory with this name)
         name: String,
     },
-    /// Compile ApxmGraph to an artifact
+    /// Compile AirModule to an artifact
     Compile {
         /// Input graph file or directory (.json graph or .apxmobj artifact)
         input: PathBuf,
@@ -63,7 +63,7 @@ pub enum Commands {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
-    /// Compile and execute an ApxmGraph file through the runtime
+    /// Compile and execute an AirModule file through the runtime
     #[command(trailing_var_arg = true)]
     Execute {
         /// Input graph file (.json graph)
@@ -137,7 +137,7 @@ pub enum Commands {
         #[command(subcommand)]
         action: OpsAction,
     },
-    /// Validate an ApxmGraph file against the AIS contract
+    /// Validate an AirModule file against the AIS contract
     Validate {
         /// Input graph file (.json graph)
         input: PathBuf,
@@ -145,7 +145,7 @@ pub enum Commands {
         #[arg(long)]
         no_check_resources: bool,
     },
-    /// Analyze an ApxmGraph for parallelism, critical path, and execution phases
+    /// Analyze an AirModule for parallelism, critical path, and execution phases
     Analyze {
         /// Input graph file (.json graph)
         input: PathBuf,

@@ -19,6 +19,8 @@
 
 #include "ais/Dialect/AIS/Transforms/Passes.h"
 
+#include "ais/Common/Constants.h"
+
 #include "ais/Dialect/AIS/IR/AISOps.h"
 #include "ais/Dialect/AIS/Support/AISDebug.h"
 
@@ -136,7 +138,7 @@ struct DeadContextEliminationPass : impl::DeadContextEliminationBase<DeadContext
     });
 
     if (eliminated > 0) {
-      module->setAttr("ais.dead_context_eliminated",
+      module->setAttr(apxm::constants::attrs::DEAD_CONTEXT_ELIMINATED,
                       IntegerAttr::get(IntegerType::get(module.getContext(), 64),
                                        totalContextRemoved));
       APXM_AIS_INFO("Eliminated " << totalContextRemoved << " dead context values "

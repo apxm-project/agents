@@ -83,6 +83,46 @@ constexpr llvm::StringLiteral DEFAULT_INPUT = "<input>";
 constexpr llvm::StringLiteral STDIN = "<stdin>";
 }  // namespace input
 
+/// MLIR attribute names set by AIS passes.
+/// These mirror the Rust constants in apxm_core::constants::dspy.
+namespace attrs {
+
+// ---- Module-level pass counters ----
+constexpr llvm::StringLiteral PROMPTS_BUILT = "ais.prompts_built";
+constexpr llvm::StringLiteral SCHEDULING_ANNOTATIONS = "ais.scheduling_annotations";
+constexpr llvm::StringLiteral FUSED_PAIRS = "ais.fused_pairs";
+constexpr llvm::StringLiteral DEAD_CONTEXT_ELIMINATED = "ais.dead_context_eliminated";
+constexpr llvm::StringLiteral CONDENSED_OPS = "ais.condensed_ops";
+constexpr llvm::StringLiteral TEMPLATES_SPECIALIZED = "ais.templates_specialized";
+constexpr llvm::StringLiteral SCHEMAS_NARROWED = "ais.schemas_narrowed";
+constexpr llvm::StringLiteral PROMPTS_CANONICALIZED = "ais.prompts_canonicalized";
+constexpr llvm::StringLiteral GRAPH_NORMALIZED = "ais.graph_normalized";
+constexpr llvm::StringLiteral DSPY_OPTIMIZED = "ais.dspy_optimized";
+
+// ---- Per-op scheduling annotations ----
+constexpr llvm::StringLiteral TIER = "ais.tier";
+constexpr llvm::StringLiteral INTENT = "ais.intent";
+constexpr llvm::StringLiteral ESTIMATED_COST = "ais.estimated_cost";
+constexpr llvm::StringLiteral LATENCY = "ais.latency";
+constexpr llvm::StringLiteral PARALLEL_SAFE = "ais.parallel_safe";
+
+// ---- Per-op fusion annotations ----
+constexpr llvm::StringLiteral FUSED_FROM = "ais.fused_from";
+
+// ---- Per-op prompt canonicalization annotations ----
+constexpr llvm::StringLiteral SHARED_PREFIX_GROUP = "ais.shared_prefix_group";
+constexpr llvm::StringLiteral SHARED_PREFIX_EST_TOKENS = "ais.shared_prefix_est_tokens";
+constexpr llvm::StringLiteral WARMUP_CANDIDATE = "ais.warmup_candidate";
+
+// ---- DSPy module-level config (input from Rust) ----
+constexpr llvm::StringLiteral DSPY_TRAINING_DATA_PATH = "ais.dspy_training_data_path";
+constexpr llvm::StringLiteral DSPY_BACKEND_JSON = "ais.dspy_backend_json";
+constexpr llvm::StringLiteral DSPY_OPTIMIZER = "ais.dspy_optimizer";
+constexpr llvm::StringLiteral DSPY_AUTO = "ais.dspy_auto";
+constexpr llvm::StringLiteral DSPY_METRIC = "ais.dspy_metric";
+
+}  // namespace attrs
+
 /// Version and metadata
 namespace meta {
 constexpr uint32_t BINARY_FORMAT_VERSION = 1;

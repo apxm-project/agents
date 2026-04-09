@@ -385,6 +385,25 @@ is narrowed to only request that field."#,
     "mlir::ais::createSchemaNarrowingPass()",
 );
 
+/// DspyOptimize pass - optimize prompt templates using DSPy.
+pub const DSPY_OPTIMIZE: PassSpec = PassSpec::new(
+    "dspy-optimize",
+    "DspyOptimize",
+    "Optimize prompt templates using DSPy",
+    r#"Invokes DSPy (Stanford NLP) to automatically optimize LLM prompt templates.
+Uses MIPROv2, BootstrapFewShot, or COPRO optimizers to discover better
+instructions from training examples.
+
+This pass is a no-op when no training data is available — just like
+dead-context-elimination is a no-op when there is no dead context.
+
+Placement: immediately after build-prompt (which establishes {0} placeholders).
+Subsequent passes (template-specialization, dead-context-elimination,
+prompt-canonicalization) then operate on the optimized templates."#,
+    PassCategory::Optimization,
+    "mlir::ais::createDspyOptimizePass()",
+);
+
 /// PromptCanonicalization pass - reorders prompts for shared-prefix reuse.
 pub const PROMPT_CANONICALIZATION: PassSpec = PassSpec::new(
     "prompt-canonicalization",
@@ -449,8 +468,9 @@ pub const SYMBOL_DCE: PassSpec = PassSpec::new(
 pub const AIS_PASSES: &[&PassSpec] = &[
     &NORMALIZE,
     &BUILD_PROMPT,
+    &DSPY_OPTIMIZE,
     &SCHEDULING,
-        &ASSIGN_PRIORITY,
+    &ASSIGN_PRIORITY,
     &FUSE_ASK_OPS,
     &CONDENSE_OPS,
     &UNCONSUMED_VALUE_WARNING,
@@ -465,6 +485,7 @@ pub const ALL_PASSES: &[&PassSpec] = &[
     // AIS-specific
     &NORMALIZE,
     &BUILD_PROMPT,
+    &DSPY_OPTIMIZE,
     &SCHEDULING,
     &ASSIGN_PRIORITY,
     &FUSE_ASK_OPS,
@@ -516,6 +537,7 @@ mod tests {
     fn test_find_pass_by_name() {
         assert!(find_pass_by_name("normalize").is_some());
         assert!(find_pass_by_name("build-prompt").is_some());
+        assert!(find_pass_by_name("dspy-optimize").is_some());
         assert!(find_pass_by_name("fuse-ask-ops").is_some());
         assert!(find_pass_by_name("condense-ops").is_some());
         assert!(find_pass_by_name("template-specialization").is_some());

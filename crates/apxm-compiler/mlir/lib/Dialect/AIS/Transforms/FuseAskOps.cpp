@@ -31,6 +31,8 @@
 
 #include "ais/Dialect/AIS/Transforms/Passes.h"
 
+#include "ais/Common/Constants.h"
+
 #include "ais/Dialect/AIS/IR/AISAttributes.h"
 #include "ais/Dialect/AIS/IR/AISOps.h"
 #include "ais/Dialect/AIS/Support/AISDebug.h"
@@ -235,7 +237,7 @@ struct FuseAskOpsPass : impl::FuseAskOpsBase<FuseAskOpsPass> {
           }
         }
 
-        fusedOp->setAttr("ais.fused_from",
+        fusedOp->setAttr(apxm::constants::attrs::FUSED_FROM,
           AISFusedFromAttr::get(module.getContext(),
             builder.getArrayAttr({
               builder.getStringAttr(llvm::join_items(".", "producer", producer.getTemplateStrAttr())),
@@ -305,7 +307,7 @@ struct FuseAskOpsPass : impl::FuseAskOpsBase<FuseAskOpsPass> {
             }
           }
 
-          fusedOp->setAttr("ais.fused_from",
+          fusedOp->setAttr(apxm::constants::attrs::FUSED_FROM,
             AISFusedFromAttr::get(module.getContext(),
               builder.getArrayAttr({
                 builder.getStringAttr(llvm::join_items(".", "producer", producer.getTemplateStrAttr())),
@@ -338,7 +340,7 @@ struct FuseAskOpsPass : impl::FuseAskOpsBase<FuseAskOpsPass> {
 
     // Module-level metadata
     uint64_t totalFused = stats.fusedDirect + stats.fusedMergeChain;
-    module->setAttr("ais.fused_pairs",
+    module->setAttr(apxm::constants::attrs::FUSED_PAIRS,
                     AISFusedPairsAttr::get(module.getContext(), totalFused));
 
     APXM_AIS_INFO("Scanned " << stats.scanned << " ASK ops, fused "

@@ -63,6 +63,10 @@ impl<'ctx> PassManager<'ctx> {
         self.add_pass("build-prompt")
     }
 
+    pub fn dspy_optimize(&mut self) -> Result<&mut Self> {
+        self.add_pass("dspy-optimize")
+    }
+
     pub fn scheduling(&mut self) -> Result<&mut Self> {
         self.add_pass("scheduling")
     }

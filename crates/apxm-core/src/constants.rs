@@ -580,6 +580,35 @@ pub mod extensions {
 pub mod cache {
     /// SQLite cache database filename.
     pub const DB_FILE: &str = "cache.db";
+    /// DSPy optimization cache subdirectory.
+    pub const DSPY_DIR: &str = "dspy";
+}
+
+pub mod dspy {
+    /// Graph metadata key for DSPy configuration.
+    pub const METADATA_KEY: &str = "dspy";
+    /// Training data path field in DSPy metadata.
+    pub const TRAINING_DATA: &str = "training_data";
+    /// Optimizer name field (mipro, bootstrap, copro).
+    pub const OPTIMIZER: &str = "optimizer";
+    /// Auto-tuning level (light, medium, heavy).
+    pub const AUTO: &str = "auto";
+    /// Metric function name (token_overlap, exact_match, contains, llm_judge).
+    pub const METRIC: &str = "metric";
+    /// Backend name for DSPy LLM calls.
+    pub const BACKEND: &str = "backend";
+    /// MLIR module attribute: training data path.
+    pub const ATTR_TRAINING_DATA_PATH: &str = "ais.dspy_training_data_path";
+    /// MLIR module attribute: backend config JSON.
+    pub const ATTR_BACKEND_JSON: &str = "ais.dspy_backend_json";
+    /// MLIR module attribute: optimizer name.
+    pub const ATTR_OPTIMIZER: &str = "ais.dspy_optimizer";
+    /// MLIR module attribute: auto-tuning level.
+    pub const ATTR_AUTO: &str = "ais.dspy_auto";
+    /// MLIR module attribute: metric function.
+    pub const ATTR_METRIC: &str = "ais.dspy_metric";
+    /// MLIR module attribute: count of optimized templates.
+    pub const ATTR_OPTIMIZED: &str = "ais.dspy_optimized";
 }
 
 pub mod session {

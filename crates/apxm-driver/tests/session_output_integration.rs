@@ -1,9 +1,9 @@
+use apxm_compiler::{AirEdge, AirModule, AirNode};
 use apxm_core::constants;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::paths::session_node_dir_name;
 use apxm_core::types::{AISOperationType, DependencyType, Value};
 use apxm_driver::session_output::SessionEventEmitter;
-use apxm_graph::{ApxmGraph, GraphEdge, GraphNode};
 use apxm_runtime::ExecutionEventEmitter;
 use std::collections::HashMap;
 use std::fs;
@@ -11,8 +11,8 @@ use std::path::Path;
 use std::time::Duration;
 use tempfile::TempDir;
 
-fn make_graph(nodes: Vec<GraphNode>, edges: Vec<GraphEdge>) -> ApxmGraph {
-    ApxmGraph {
+fn make_graph(nodes: Vec<AirNode>, edges: Vec<AirEdge>) -> AirModule {
+    AirModule {
         name: "session-output".to_string(),
         nodes,
         edges,
@@ -26,8 +26,8 @@ fn make_node(
     name: &str,
     op: AISOperationType,
     attributes: HashMap<String, Value>,
-) -> GraphNode {
-    GraphNode {
+) -> AirNode {
+    AirNode {
         id,
         name: name.to_string(),
         op,
@@ -46,7 +46,7 @@ fn setup_project_root() -> TempDir {
     dir
 }
 
-fn make_emitter(session_dir: &Path, project_root: &Path, graph: &ApxmGraph) -> SessionEventEmitter {
+fn make_emitter(session_dir: &Path, project_root: &Path, graph: &AirModule) -> SessionEventEmitter {
     SessionEventEmitter::new(
         session_dir,
         "exec-123".to_string(),
@@ -81,12 +81,12 @@ fn node_workspace_creation_writes_context_and_outputs() {
             make_node(3, "sink", AISOperationType::ConstStr, HashMap::new()),
         ],
         vec![
-            GraphEdge {
+            AirEdge {
                 from: 1,
                 to: 2,
                 dependency: DependencyType::Data,
             },
-            GraphEdge {
+            AirEdge {
                 from: 2,
                 to: 3,
                 dependency: DependencyType::Data,

@@ -95,6 +95,12 @@ APXM_DEPENDENCIES: list[ApxmDependency] = [
         version_constraint=">=21.0",
         required=False,
     ),
+    _dep(
+        name="DSPy",
+        command="python3",
+        version_pattern=r"(\d+\.\d+\.\d+)",
+        required=False,
+    ),
 ]
 
 

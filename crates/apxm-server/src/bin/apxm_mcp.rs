@@ -6,10 +6,10 @@
 //!
 //! # Tools
 //!
-//! - `apxm_validate`      -- validate an ApxmGraph JSON against the AIS contract
-//! - `apxm_compile`       -- compile an ApxmGraph JSON to an optimized artifact
+//! - `apxm_validate`      -- validate an AirModule JSON against the AIS contract
+//! - `apxm_compile`       -- compile an AirModule JSON to an optimized artifact
 //! - `apxm_execute`       -- compile + execute a graph in one shot
-//! - `apxm_merge`         -- merge multiple ApxmGraph sub-graphs into one
+//! - `apxm_merge`         -- merge multiple AirModule sub-graphs into one
 //! - `apxm_get_contract`  -- return the full AIS contract (ops, attrs, types)
 //!
 //! # Running
@@ -26,7 +26,7 @@ use apxm_artifact::Artifact;
 use apxm_compiler::{Context as CompilerContext, Pipeline as CompilerPipeline};
 use apxm_core::constants::jsonrpc;
 use apxm_core::types::{AIS_OPERATIONS, OptimizationLevel};
-use apxm_graph::ApxmGraph;
+use apxm_compiler::AirModule;
 use serde_json::{Value, json};
 
 const MCP_PROTOCOL_VERSION: &str = apxm_core::constants::protocols::MCP_VERSION;
@@ -136,13 +136,13 @@ fn handle_tools_list() -> Result<Value, Value> {
     let tools = vec![
         json!({
             "name": "apxm_validate",
-            "description": "Validate an ApxmGraph JSON against the APXM AIS contract. Checks node ops, edges, parameters, cycles, and required attributes.",
+            "description": "Validate an AirModule JSON against the APXM AIS contract. Checks node ops, edges, parameters, cycles, and required attributes.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "graph_json": {
                         "type": "string",
-                        "description": "The ApxmGraph as a JSON string"
+                        "description": "The AirModule as a JSON string"
                     }
                 },
                 "required": ["graph_json"]
@@ -150,13 +150,13 @@ fn handle_tools_list() -> Result<Value, Value> {
         }),
         json!({
             "name": "apxm_compile",
-            "description": "Compile an ApxmGraph JSON to an optimized APXM artifact (.apxmobj). Returns the artifact path and compilation stats.",
+            "description": "Compile an AirModule JSON to an optimized APXM artifact (.apxmobj). Returns the artifact path and compilation stats.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "graph_json": {
                         "type": "string",
-                        "description": "The ApxmGraph as a JSON string"
+                        "description": "The AirModule as a JSON string"
                     },
                     "opt_level": {
                         "type": "integer",
@@ -170,13 +170,13 @@ fn handle_tools_list() -> Result<Value, Value> {
         }),
         json!({
             "name": "apxm_execute",
-            "description": "Compile and execute an ApxmGraph in one shot. Requires APXM runtime environment (LLM backend configured via APXM_BACKEND).",
+            "description": "Compile and execute an AirModule in one shot. Requires APXM runtime environment (LLM backend configured via APXM_BACKEND).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "graph_json": {
                         "type": "string",
-                        "description": "The ApxmGraph as a JSON string"
+                        "description": "The AirModule as a JSON string"
                     },
                     "parameters": {
                         "type": "object",
@@ -189,7 +189,7 @@ fn handle_tools_list() -> Result<Value, Value> {
         }),
         json!({
             "name": "apxm_merge",
-            "description": "Merge multiple ApxmGraph sub-graphs into a single graph. Node IDs are remapped to avoid collisions and a WAIT_ALL synchronization node is appended.",
+            "description": "Merge multiple AirModule sub-graphs into a single graph. Node IDs are remapped to avoid collisions and a WAIT_ALL synchronization node is appended.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -200,7 +200,7 @@ fn handle_tools_list() -> Result<Value, Value> {
                     "graphs": {
                         "type": "array",
                         "items": { "type": "string" },
-                        "description": "Array of ApxmGraph JSON strings to merge"
+                        "description": "Array of AirModule JSON strings to merge"
                     }
                 },
                 "required": ["name", "graphs"]
@@ -217,13 +217,13 @@ fn handle_tools_list() -> Result<Value, Value> {
         }),
         json!({
             "name": "apxm_analyze",
-            "description": "Analyze an ApxmGraph to extract parallelism opportunities, critical path, and execution phases. Use this to optimize execution plans — find which steps can run in parallel, identify bottlenecks, and estimate speedup.",
+            "description": "Analyze an AirModule to extract parallelism opportunities, critical path, and execution phases. Use this to optimize execution plans — find which steps can run in parallel, identify bottlenecks, and estimate speedup.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "graph_json": {
                         "type": "string",
-                        "description": "The ApxmGraph as a JSON string"
+                        "description": "The AirModule as a JSON string"
                     }
                 },
                 "required": ["graph_json"]
@@ -278,7 +278,7 @@ fn tool_validate(args: Value) -> Result<String, String> {
     let mut errors: Vec<String> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
 
-    let graph = match serde_json::from_str::<ApxmGraph>(graph_json) {
+    let graph = match serde_json::from_str::<AirModule>(graph_json) {
         Ok(g) => g,
         Err(e) => {
             errors.push(format!("graph deserialization failed: {e}"));
@@ -411,7 +411,7 @@ fn tool_validate(args: Value) -> Result<String, String> {
                 .iter()
                 .any(|existing| msg.contains(&existing[..existing.len().min(30)]))
             {
-                errors.push(format!("apxm-graph validation: {msg}"));
+                errors.push(format!("air-builder validation: {msg}"));
             }
         }
     }
@@ -444,7 +444,8 @@ fn tool_compile(args: Value) -> Result<String, String> {
         _ => return Err(format!("opt_level must be 0-3, got {opt_level_num}")),
     };
 
-    let graph = ApxmGraph::from_json(graph_json).map_err(|e| format!("invalid graph: {e}"))?;
+    let graph: AirModule =
+        serde_json::from_str(graph_json).map_err(|e| format!("invalid graph: {e}"))?;
 
     let node_count = graph.nodes.len();
     let edge_count = graph.edges.len();
@@ -452,11 +453,15 @@ fn tool_compile(args: Value) -> Result<String, String> {
 
     let start = Instant::now();
 
+    let air_text = graph
+        .to_air()
+        .map_err(|e| format!("failed to lower graph to AIR: {e}"))?;
+
     let context =
         CompilerContext::new().map_err(|e| format!("compiler context init failed: {e}"))?;
     let pipeline = CompilerPipeline::with_opt_level(&context, opt_level);
     let module = pipeline
-        .compile_graph(&graph)
+        .compile(&air_text)
         .map_err(|e| format!("compilation failed: {e}"))?;
 
     let artifact_bytes = module
@@ -504,15 +509,19 @@ fn tool_execute(args: Value) -> Result<String, String> {
         .cloned()
         .unwrap_or_default();
 
-    let graph = ApxmGraph::from_json(graph_json).map_err(|e| format!("invalid graph: {e}"))?;
+    let graph: AirModule =
+        serde_json::from_str(graph_json).map_err(|e| format!("invalid graph: {e}"))?;
 
     // Compile
     let compile_start = Instant::now();
+    let air_text = graph
+        .to_air()
+        .map_err(|e| format!("failed to lower graph to AIR: {e}"))?;
     let context =
         CompilerContext::new().map_err(|e| format!("compiler context init failed: {e}"))?;
     let pipeline = CompilerPipeline::with_opt_level(&context, OptimizationLevel::O1);
     let module = pipeline
-        .compile_graph(&graph)
+        .compile(&air_text)
         .map_err(|e| format!("compilation failed: {e}"))?;
     let artifact_bytes = module
         .generate_artifact_bytes()
@@ -596,68 +605,8 @@ fn tool_execute(args: Value) -> Result<String, String> {
 // Tool: apxm_merge
 // ---------------------------------------------------------------------------
 
-fn tool_merge(args: Value) -> Result<String, String> {
-    let name = args
-        .get("name")
-        .and_then(Value::as_str)
-        .ok_or("missing required argument: name")?;
-
-    let graph_strings = args
-        .get("graphs")
-        .and_then(Value::as_array)
-        .ok_or("missing required argument: graphs")?;
-
-    if graph_strings.is_empty() {
-        let merged = ApxmGraph::merge(name, &[]);
-        let merged_json = serde_json::to_value(&merged)
-            .map_err(|e| format!("failed to serialize merged graph: {e}"))?;
-        let result = json!({
-            "merged_graph": merged_json,
-            "stats": {
-                "input_graphs": 0,
-                "total_nodes": 0,
-                "total_edges": 0,
-                "sync_node_id": null,
-            }
-        });
-        return Ok(serde_json::to_string_pretty(&result).unwrap());
-    }
-
-    let mut graphs: Vec<ApxmGraph> = Vec::with_capacity(graph_strings.len());
-    for (i, entry) in graph_strings.iter().enumerate() {
-        let json_str = match entry.as_str() {
-            Some(s) => s.to_string(),
-            None => {
-                // Accept inline JSON objects as well as strings
-                serde_json::to_string(entry)
-                    .map_err(|e| format!("graphs[{i}]: failed to serialize: {e}"))?
-            }
-        };
-        let graph = ApxmGraph::from_json(&json_str)
-            .map_err(|e| format!("graphs[{i}]: invalid graph: {e}"))?;
-        graphs.push(graph);
-    }
-
-    let input_count = graphs.len();
-    let merged = ApxmGraph::merge(name, &graphs);
-
-    let total_nodes = merged.nodes.len();
-    let total_edges = merged.edges.len();
-    let sync_node_id = merged.nodes.last().map(|n| n.id);
-
-    let merged_json = serde_json::to_value(&merged)
-        .map_err(|e| format!("failed to serialize merged graph: {e}"))?;
-
-    let result = json!({
-        "merged_graph": merged_json,
-        "stats": {
-            "input_graphs": input_count,
-            "total_nodes": total_nodes,
-            "total_edges": total_edges,
-            "sync_node_id": sync_node_id,
-        }
-    });
-    Ok(serde_json::to_string_pretty(&result).unwrap())
+fn tool_merge(_args: Value) -> Result<String, String> {
+    Err("apxm_merge is no longer supported; use `apxm task merge` via the CLI instead".to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -738,8 +687,8 @@ fn tool_analyze(args: Value) -> Result<String, String> {
         .and_then(Value::as_str)
         .ok_or("missing required argument: graph_json")?;
 
-    let graph: ApxmGraph =
-        ApxmGraph::from_json(graph_json).map_err(|e| format!("invalid graph: {e}"))?;
+    let graph: AirModule =
+        serde_json::from_str(graph_json).map_err(|e| format!("invalid graph: {e}"))?;
 
     // Build adjacency and reverse-adjacency maps
     let node_ids: HashSet<u64> = graph.nodes.iter().map(|n| n.id).collect();
@@ -921,7 +870,7 @@ fn build_suggestions(
     max_parallelism: usize,
     speedup: f64,
     critical_path: &[u64],
-    graph: &ApxmGraph,
+    graph: &AirModule,
 ) -> Vec<String> {
     let mut suggestions = Vec::new();
 

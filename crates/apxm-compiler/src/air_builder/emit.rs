@@ -1,4 +1,4 @@
-use crate::{ApxmGraph, GraphError, GraphNode, Parameter};
+use crate::{AirError, AirModule, AirNode, AirParam};
 use apxm_core::constants::graph::{attrs as graph_attrs, metadata as graph_meta};
 use apxm_core::constants::mlir::types as mlir_types;
 use apxm_core::types::AISOperationType;
@@ -18,12 +18,12 @@ struct MlirValueRef {
     ty: MlirValueType,
 }
 
-struct LoweringState {
+struct EmitState {
     lines: Vec<String>,
     next_temp: u64,
 }
 
-impl LoweringState {
+impl EmitState {
     fn new() -> Self {
         Self {
             lines: Vec::new(),
@@ -41,15 +41,11 @@ impl LoweringState {
     }
 }
 
-/// Check if a node uses any flow parameters in its template/prompt attributes.
-/// Returns true if the node contains `{{PARAM_NAME}}` patterns that match any
-/// parameter name in the flow.
-fn node_uses_flow_params(node: &GraphNode, params: &[Parameter]) -> bool {
+fn node_uses_flow_params(node: &AirNode, params: &[AirParam]) -> bool {
     if params.is_empty() {
         return false;
     }
 
-    // Check template_str, prompt, and template attributes for {{PARAM_NAME}} patterns
     let template_attrs = [
         graph_attrs::TEMPLATE_STR,
         graph_attrs::PROMPT,
@@ -59,7 +55,6 @@ fn node_uses_flow_params(node: &GraphNode, params: &[Parameter]) -> bool {
     for attr_name in &template_attrs {
         if let Some(value) = node.attributes.get(*attr_name) {
             if let Some(text) = value.as_str() {
-                // Check if any parameter name appears in {{...}} patterns
                 for param in params {
                     let pattern = format!("{{{{{}}}}}", param.name);
                     if text.contains(&pattern) {
@@ -73,19 +68,19 @@ fn node_uses_flow_params(node: &GraphNode, params: &[Parameter]) -> bool {
     false
 }
 
-pub fn lower_to_mlir(graph: &ApxmGraph) -> Result<String, GraphError> {
-    graph.validate()?;
+pub fn emit_air(module: &AirModule) -> Result<String, AirError> {
+    module.validate()?;
 
-    let nodes_by_id = graph
+    let nodes_by_id = module
         .nodes
         .iter()
         .map(|node| (node.id, node))
         .collect::<HashMap<_, _>>();
-    let order = topo_order(graph, &nodes_by_id)?;
+    let order = topo_order(module, &nodes_by_id)?;
 
     let mut incoming_by_target: HashMap<u64, Vec<u64>> = HashMap::new();
     let mut outgoing_counts: HashMap<u64, usize> = HashMap::new();
-    for edge in &graph.edges {
+    for edge in &module.edges {
         incoming_by_target
             .entry(edge.to)
             .or_default()
@@ -93,15 +88,15 @@ pub fn lower_to_mlir(graph: &ApxmGraph) -> Result<String, GraphError> {
         *outgoing_counts.entry(edge.from).or_default() += 1;
     }
 
-    let is_entry = graph
+    let is_entry = module
         .metadata
         .get(graph_meta::IS_ENTRY)
         .and_then(Value::as_boolean)
         .unwrap_or(true);
 
-    let mut state = LoweringState::new();
+    let mut state = EmitState::new();
     let mut produced_values: HashMap<u64, MlirValueRef> = HashMap::new();
-    let arg_values: Vec<MlirValueRef> = (0..graph.parameters.len())
+    let arg_values: Vec<MlirValueRef> = (0..module.parameters.len())
         .map(|index| MlirValueRef {
             ssa: format!("%arg{index}"),
             ty: MlirValueType::Token,
@@ -110,9 +105,9 @@ pub fn lower_to_mlir(graph: &ApxmGraph) -> Result<String, GraphError> {
 
     for node_id in &order {
         let node = nodes_by_id.get(node_id).ok_or_else(|| {
-            GraphError::Lowering(format!(
-                "MLIR lowering internal error: node id {} not found in topological order (graph: '{}')",
-                node_id, graph.name
+            AirError::Emission(format!(
+                "internal error: node id {} not found in topological order (module: '{}')",
+                node_id, module.name
             ))
         })?;
 
@@ -126,23 +121,18 @@ pub fn lower_to_mlir(graph: &ApxmGraph) -> Result<String, GraphError> {
                         .get(source_id)
                         .map(|n| n.name.as_str())
                         .unwrap_or("unknown");
-                    GraphError::Lowering(format!(
-                        "MLIR lowering failed for node '{}' (id={}, op={}): \
-                         references source node '{}' (id={}) which has no produced SSA value. \
-                         This indicates the source node's MLIR emission did not produce an output.",
+                    AirError::Emission(format!(
+                        "emission failed for node '{}' (id={}, op={}): \
+                         references source '{}' (id={}) with no produced SSA value.",
                         node.name, node.id, node.op, source_name, source_id
                     ))
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
 
-        // Inject flow parameters into entry nodes that actually use them in their templates.
-        // Only inject if the node references parameters like {{PARAM_NAME}} in its
-        // template_str/prompt/template attributes. This prevents malformed MLIR for nodes
-        // like spawn_agent that don't consume parameters.
         if inputs.is_empty()
             && !arg_values.is_empty()
-            && node_uses_flow_params(node, &graph.parameters)
+            && node_uses_flow_params(node, &module.parameters)
         {
             inputs.extend(arg_values.clone());
         }
@@ -159,20 +149,18 @@ pub fn lower_to_mlir(graph: &ApxmGraph) -> Result<String, GraphError> {
         }
     }
 
-    let exit_ids = graph
+    let exit_ids = module
         .nodes
         .iter()
         .filter(|node| outgoing_counts.get(&node.id).copied().unwrap_or(0) == 0)
         .map(|node| node.id)
         .collect::<Vec<_>>();
 
-    // Check if the graph has an explicit RETURN node (which is a terminator)
-    let has_return_node = graph
+    let has_return_node = module
         .nodes
         .iter()
         .any(|node| node.op == AISOperationType::Return);
 
-    // Only emit func.return if there's no explicit RETURN node (which already terminates)
     if !has_return_node {
         let mut return_candidates = exit_ids
             .iter()
@@ -216,11 +204,14 @@ pub fn lower_to_mlir(graph: &ApxmGraph) -> Result<String, GraphError> {
             }
         };
 
-        state.emit(format!("    func.return {} : !ais.token", return_value.ssa));
+        state.emit(format!(
+            "    func.return {} : !ais.token",
+            return_value.ssa
+        ));
     }
 
-    let function_name = sanitize_symbol_name(&graph.name);
-    let args = graph
+    let function_name = sanitize_symbol_name(&module.name);
+    let args = module
         .parameters
         .iter()
         .enumerate()
@@ -257,16 +248,16 @@ pub fn lower_to_mlir(graph: &ApxmGraph) -> Result<String, GraphError> {
 }
 
 fn topo_order(
-    graph: &ApxmGraph,
-    nodes_by_id: &HashMap<u64, &GraphNode>,
-) -> Result<Vec<u64>, GraphError> {
+    module: &AirModule,
+    nodes_by_id: &HashMap<u64, &AirNode>,
+) -> Result<Vec<u64>, AirError> {
     let mut in_degree = nodes_by_id
         .keys()
         .map(|id| (*id, 0usize))
         .collect::<HashMap<_, _>>();
     let mut outgoing: HashMap<u64, Vec<u64>> = HashMap::new();
 
-    for edge in &graph.edges {
+    for edge in &module.edges {
         outgoing.entry(edge.from).or_default().push(edge.to);
         *in_degree.entry(edge.to).or_insert(0) += 1;
     }
@@ -293,15 +284,13 @@ fn topo_order(
 
     if order.len() != nodes_by_id.len() {
         let missing_count = nodes_by_id.len() - order.len();
-        return Err(GraphError::Lowering(format!(
-            "MLIR lowering failed: topological sort produced {} nodes but graph '{}' has {} nodes. \
-             {} node(s) unreachable (graph may contain cycles or disconnected components). \
-             Run 'apxm validate {}' to diagnose DAG structure.",
+        return Err(AirError::Emission(format!(
+            "topological sort produced {} nodes but module '{}' has {} nodes. \
+             {} node(s) unreachable (may contain cycles or disconnected components).",
             order.len(),
-            graph.name,
+            module.name,
             nodes_by_id.len(),
             missing_count,
-            graph.name
         )));
     }
 
@@ -309,10 +298,10 @@ fn topo_order(
 }
 
 fn emit_node(
-    state: &mut LoweringState,
-    node: &GraphNode,
+    state: &mut EmitState,
+    node: &AirNode,
     inputs: Vec<MlirValueRef>,
-) -> Result<Option<MlirValueRef>, GraphError> {
+) -> Result<Option<MlirValueRef>, AirError> {
     match node.op {
         AISOperationType::ConstStr => {
             let value = get_string_attr(
@@ -398,15 +387,14 @@ fn emit_node(
                 .map(|value| format!(" limit {value}"))
                 .unwrap_or_default();
 
-            // Emit enum attribute for space: stm, ltm, or episodic (bare keyword)
             state.emit(format!(
                 "    {result} = ais.qmem {} stage {} in {}{}{} : !ais.handle<{}>",
                 quote_string(&query),
                 quote_string(&sid),
-                space, // emit as bare enum keyword
+                space,
                 limit_str,
                 attrs,
-                space // emit memory space in handle type parameter
+                space
             ));
             Ok(Some(MlirValueRef {
                 ssa: result,
@@ -437,24 +425,18 @@ fn emit_node(
                 emit_const_token(state, "memory")
             };
 
-            // Build attr-dict with optional key attribute
-            // key is now an optional argument in the op definition
             let full_attrs = match (key.as_ref(), attrs.as_str()) {
                 (Some(k), "") => format!(" {{key = {}}}", quote_string(k)),
                 (Some(k), a) => {
-                    // attrs is " {k=v, ...}" - strip leading space and outer braces
                     let inner = a.trim().trim_start_matches('{').trim_end_matches('}');
                     format!(" {{key = {}, {}}}", quote_string(k), inner)
                 }
                 (None, a) => a.to_string(),
             };
 
-            // Emit enum attribute for space: stm, ltm, or episodic (bare keyword)
             state.emit(format!(
                 "    ais.umem {} into {}{} : !ais.token",
-                source.ssa,
-                space, // emit as bare enum keyword
-                full_attrs
+                source.ssa, space, full_attrs
             ));
             Ok(None)
         }
@@ -651,7 +633,10 @@ fn emit_node(
             let attrs = extra_attr_dict_for_node(node, &[]);
 
             if tokens.is_empty() {
-                state.emit(format!("    {result} = ais.{op_name}{attrs} -> {}", mlir_types::TOKEN));
+                state.emit(format!(
+                    "    {result} = ais.{op_name}{attrs} -> {}",
+                    mlir_types::TOKEN
+                ));
             } else {
                 let operands = tokens
                     .iter()
@@ -660,7 +645,8 @@ fn emit_node(
                     .join(", ");
                 let types = vec![mlir_types::TOKEN; tokens.len()].join(", ");
                 state.emit(format!(
-                    "    {result} = ais.{op_name} {operands} : {types}{attrs} -> {}", mlir_types::TOKEN
+                    "    {result} = ais.{op_name} {operands} : {types}{attrs} -> {}",
+                    mlir_types::TOKEN
                 ));
             }
             Ok(Some(MlirValueRef {
@@ -737,7 +723,6 @@ fn emit_node(
                 ty: MlirValueType::Token,
             }))
         }
-        // Communication ops
         AISOperationType::Communicate => {
             let message = get_string_attr(
                 &node.attributes,
@@ -822,7 +807,6 @@ fn emit_node(
             &[graph_attrs::PROPOSAL, graph_attrs::TEMPLATE_STR],
             Some(('(', ')')),
         ),
-        // Control flow ops
         AISOperationType::FlowCall => emit_simple_op(
             state,
             node,
@@ -855,7 +839,6 @@ fn emit_node(
             }
             Ok(None)
         }
-        // Tool / Execution ops
         AISOperationType::Exc => emit_simple_op(
             state,
             node,
@@ -893,7 +876,6 @@ fn emit_node(
             ));
             Ok(None)
         }
-        // Agent metadata
         AISOperationType::Agent => emit_simple_op(
             state,
             node,
@@ -903,7 +885,6 @@ fn emit_node(
             &[graph_attrs::AGENT_NAME, "name"],
             None,
         ),
-        // AAM / Coordination ops
         AISOperationType::UpdateGoal => emit_simple_op(
             state,
             node,
@@ -964,7 +945,6 @@ fn emit_node(
             &[graph_attrs::CHECKPOINT, graph_attrs::CHECKPOINT_ID],
             None,
         ),
-        // Identity / passthrough ops
         AISOperationType::Nop | AISOperationType::Identity | AISOperationType::Yield => {
             if let Some(input) = inputs.first() {
                 Ok(Some(input.clone()))
@@ -977,35 +957,24 @@ fn emit_node(
                 Ok(Some(result))
             }
         }
-        // Self-organization ops
-        AISOperationType::SpawnAgent => {
-            // spawn_agent never takes data inputs in MLIR — it is a standalone
-            // spawning op. The AIS DSL parser may add implicit sequential edges
-            // to it (when other nodes precede it in source order), but those edges
-            // carry no semantic meaning for spawn_agent's MLIR emission.
-            // Always emit with empty inputs to produce valid MLIR.
-            emit_simple_op(
-                state,
-                node,
-                &[], // always empty — spawn_agent has no data inputs in MLIR
-                &[graph_attrs::AGENT_NAME, "name"],
-                "child_agent",
-                &[graph_attrs::AGENT_NAME, "name"],
-                Some(('(', ')')),
-            )
-        }
-        AISOperationType::SpawnTeam => {
-            // spawn_team also takes no data inputs — it expands to N spawn_agent calls
-            emit_simple_op(
-                state,
-                node,
-                &[], // always empty — spawn_team has no data inputs in MLIR
-                &[graph_attrs::TEAM_NAME, "name"],
-                "team",
-                &[graph_attrs::TEAM_NAME, "name"],
-                Some(('(', ')')),
-            )
-        }
+        AISOperationType::SpawnAgent => emit_simple_op(
+            state,
+            node,
+            &[],
+            &[graph_attrs::AGENT_NAME, "name"],
+            "child_agent",
+            &[graph_attrs::AGENT_NAME, "name"],
+            Some(('(', ')')),
+        ),
+        AISOperationType::SpawnTeam => emit_simple_op(
+            state,
+            node,
+            &[],
+            &[graph_attrs::TEAM_NAME, "name"],
+            "team",
+            &[graph_attrs::TEAM_NAME, "name"],
+            Some(('(', ')')),
+        ),
         AISOperationType::RegisterCapability => emit_simple_op(
             state,
             node,
@@ -1015,7 +984,6 @@ fn emit_node(
             &[graph_attrs::CAPABILITY_NAME, graph_attrs::CAPABILITY],
             None,
         ),
-        // Autonomous execution
         AISOperationType::Autonomous => emit_simple_op(
             state,
             node,
@@ -1025,7 +993,6 @@ fn emit_node(
             &[graph_attrs::STRATEGY, graph_attrs::TEMPLATE_STR],
             Some(('(', ')')),
         ),
-        // Durable execution checkpoint
         AISOperationType::Checkpoint => emit_simple_op(
             state,
             node,
@@ -1038,21 +1005,16 @@ fn emit_node(
     }
 }
 
-/// Emit a simple op: `{result} = ais.{op_name} {primary}{context}{attrs} : !ais.token`
-///
-/// Used by many match arms that follow the same pattern: extract a single primary
-/// string attribute, build context from inputs, and emit a single MLIR line returning
-/// a token value. The op name is derived from node.op.mlir_mnemonic().
 #[allow(clippy::too_many_arguments)]
 fn emit_simple_op(
-    state: &mut LoweringState,
-    node: &GraphNode,
+    state: &mut EmitState,
+    node: &AirNode,
     inputs: &[MlirValueRef],
     primary_keys: &[&str],
     primary_default: &str,
     consumed_keys: &[&str],
     context_delimiters: Option<(char, char)>,
-) -> Result<Option<MlirValueRef>, GraphError> {
+) -> Result<Option<MlirValueRef>, AirError> {
     let op_name = node.op.mlir_mnemonic();
     let primary = get_string_attr(&node.attributes, primary_keys)
         .unwrap_or_else(|| primary_default.to_string());
@@ -1076,10 +1038,10 @@ fn emit_simple_op(
 }
 
 fn emit_bridge_token(
-    state: &mut LoweringState,
+    state: &mut EmitState,
     node_id: u64,
     inputs: &[MlirValueRef],
-) -> Result<MlirValueRef, GraphError> {
+) -> Result<MlirValueRef, AirError> {
     let result = format!("%n{node_id}");
     let tokens = inputs
         .iter()
@@ -1108,9 +1070,9 @@ fn emit_bridge_token(
 }
 
 fn ensure_token(
-    state: &mut LoweringState,
+    state: &mut EmitState,
     value: MlirValueRef,
-) -> Result<MlirValueRef, GraphError> {
+) -> Result<MlirValueRef, AirError> {
     if matches!(value.ty, MlirValueType::Token) {
         return Ok(value);
     }
@@ -1128,7 +1090,7 @@ fn ensure_token(
     })
 }
 
-fn emit_const_token(state: &mut LoweringState, value: &str) -> MlirValueRef {
+fn emit_const_token(state: &mut EmitState, value: &str) -> MlirValueRef {
     let result = state.fresh_value("const");
     state.emit(format!(
         "    {result} = ais.const_str {} : !ais.token",
@@ -1213,7 +1175,7 @@ fn value_to_string(value: &Value) -> Option<String> {
     }
 }
 
-fn extra_attr_dict_for_node(node: &GraphNode, consumed: &[&str]) -> String {
+fn extra_attr_dict_for_node(node: &AirNode, consumed: &[&str]) -> String {
     let mut attributes = node.attributes.clone();
     attributes
         .entry(graph_attrs::NODE_NAME.to_string())
@@ -1228,7 +1190,11 @@ fn extra_attr_dict(attributes: &HashMap<String, Value>, consumed: &[&str]) -> St
             if consumed.contains(&key.as_str()) || !is_valid_attr_name(key) {
                 return None;
             }
-            Some(format!("{} = {}", quote_string(key), value_to_mlir_attr(value)))
+            Some(format!(
+                "{} = {}",
+                quote_string(key),
+                value_to_mlir_attr(value)
+            ))
         })
         .collect::<Vec<_>>();
 
@@ -1326,599 +1292,5 @@ fn sanitize_symbol_name(name: &str) -> String {
         symbol
     } else {
         format!("g_{symbol}")
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use apxm_core::types::DependencyType;
-    use std::collections::HashMap;
-
-    #[test]
-    fn lowers_basic_const_ask_graph() {
-        let graph = ApxmGraph {
-            name: "research_flow".to_string(),
-            nodes: vec![
-                GraphNode {
-                    id: 1,
-                    name: "seed".to_string(),
-                    op: AISOperationType::ConstStr,
-                    attributes: HashMap::from([(
-                        "value".to_string(),
-                        Value::String("hello".to_string()),
-                    )]),
-                },
-                GraphNode {
-                    id: 2,
-                    name: "ask".to_string(),
-                    op: AISOperationType::Ask,
-                    attributes: HashMap::from([(
-                        graph_attrs::TEMPLATE_STR.to_string(),
-                        Value::String("Summarize {0}".to_string()),
-                    )]),
-                },
-            ],
-            edges: vec![crate::GraphEdge {
-                from: 1,
-                to: 2,
-                dependency: DependencyType::Data,
-            }],
-            parameters: vec![],
-            metadata: HashMap::new(),
-        };
-
-        let mlir = lower_to_mlir(&graph).expect("graph lowers to mlir");
-        assert!(mlir.contains("func.func @research_flow() -> !ais.token attributes {ais.entry}"));
-        assert!(mlir.contains("ais.const_str \"hello\""));
-        assert!(mlir.contains("ais.ask \"Summarize {0}\" [%n1 : !ais.token] : !ais.token"));
-        assert!(mlir.contains("func.return %n2 : !ais.token"));
-    }
-
-    #[test]
-    fn lowers_ask_with_tool_attributes() {
-        let graph = ApxmGraph {
-            name: "tools".to_string(),
-            nodes: vec![GraphNode {
-                id: 1,
-                name: "ask".to_string(),
-                op: AISOperationType::Ask,
-                attributes: HashMap::from([
-                    (
-                        graph_attrs::TEMPLATE_STR.to_string(),
-                        Value::String("Use tools".to_string()),
-                    ),
-                    (graph_attrs::TOOLS_ENABLED.to_string(), Value::Bool(true)),
-                    (
-                        graph_attrs::TOOLS.to_string(),
-                        Value::Array(vec![
-                            Value::String("bash".to_string()),
-                            Value::String("read".to_string()),
-                        ]),
-                    ),
-                ]),
-            }],
-            edges: vec![],
-            parameters: vec![],
-            metadata: HashMap::new(),
-        };
-
-        let mlir = lower_to_mlir(&graph).expect("graph lowers to mlir");
-        assert!(mlir.contains("\"tools_enabled\" = true"));
-        assert!(mlir.contains("\"tools\" = [\"bash\", \"read\"]"));
-    }
-
-    #[test]
-    fn lowers_switch_with_default_case() {
-        let graph = ApxmGraph {
-            name: "switch".to_string(),
-            nodes: vec![
-                GraphNode {
-                    id: 1,
-                    name: "input".to_string(),
-                    op: AISOperationType::ConstStr,
-                    attributes: HashMap::from([(
-                        "value".to_string(),
-                        Value::String("technical".to_string()),
-                    )]),
-                },
-                GraphNode {
-                    id: 2,
-                    name: "route".to_string(),
-                    op: AISOperationType::Switch,
-                    attributes: HashMap::new(),
-                },
-            ],
-            edges: vec![crate::GraphEdge {
-                from: 1,
-                to: 2,
-                dependency: DependencyType::Data,
-            }],
-            parameters: vec![],
-            metadata: HashMap::new(),
-        };
-
-        let mlir = lower_to_mlir(&graph).expect("graph lowers to mlir");
-        assert!(mlir.contains("ais.switch %n1 : !ais.token"));
-        assert!(mlir.contains("case \"default_case\""));
-        assert!(mlir.contains("default {"));
-    }
-
-    #[test]
-    fn lowers_loop_and_try_catch_control_ops() {
-        let graph = ApxmGraph {
-            name: "control".to_string(),
-            nodes: vec![
-                GraphNode {
-                    id: 1,
-                    name: "seed".to_string(),
-                    op: AISOperationType::ConstStr,
-                    attributes: HashMap::from([(
-                        "value".to_string(),
-                        Value::String("items".to_string()),
-                    )]),
-                },
-                GraphNode {
-                    id: 2,
-                    name: "loop_start".to_string(),
-                    op: AISOperationType::LoopStart,
-                    attributes: HashMap::from([(
-                        graph_attrs::LABEL.to_string(),
-                        Value::String("loop_items".to_string()),
-                    )]),
-                },
-                GraphNode {
-                    id: 3,
-                    name: "loop_end".to_string(),
-                    op: AISOperationType::LoopEnd,
-                    attributes: HashMap::new(),
-                },
-                GraphNode {
-                    id: 4,
-                    name: "try_catch".to_string(),
-                    op: AISOperationType::TryCatch,
-                    attributes: HashMap::from([
-                        (
-                            graph_attrs::TRY_LABEL.to_string(),
-                            Value::String("try_a".to_string()),
-                        ),
-                        (
-                            graph_attrs::CATCH_LABEL.to_string(),
-                            Value::String("catch_a".to_string()),
-                        ),
-                    ]),
-                },
-                GraphNode {
-                    id: 5,
-                    name: "err".to_string(),
-                    op: AISOperationType::Err,
-                    attributes: HashMap::from([(
-                        graph_attrs::RECOVERY_TEMPLATE.to_string(),
-                        Value::String("fallback".to_string()),
-                    )]),
-                },
-            ],
-            edges: vec![
-                crate::GraphEdge {
-                    from: 1,
-                    to: 2,
-                    dependency: DependencyType::Data,
-                },
-                crate::GraphEdge {
-                    from: 2,
-                    to: 3,
-                    dependency: DependencyType::Control,
-                },
-                crate::GraphEdge {
-                    from: 3,
-                    to: 4,
-                    dependency: DependencyType::Control,
-                },
-                crate::GraphEdge {
-                    from: 4,
-                    to: 5,
-                    dependency: DependencyType::Control,
-                },
-            ],
-            parameters: vec![],
-            metadata: HashMap::new(),
-        };
-
-        let mlir = lower_to_mlir(&graph).expect("graph lowers to mlir");
-        // Assertions use partial matches — extra attrs like {node_name = ...} may appear.
-        assert!(
-            mlir.contains("ais.loop_start %n1 as \"loop_items\""),
-            "actual mlir:\n{}",
-            mlir
-        );
-        assert!(
-            mlir.contains("!ais.token -> !ais.token"),
-            "actual mlir:\n{}",
-            mlir
-        );
-        assert!(mlir.contains("ais.loop_end %n2"), "actual mlir:\n{}", mlir);
-        assert!(
-            mlir.contains("ais.try_catch \"try_a\" -> \"catch_a\""),
-            "actual mlir:\n{}",
-            mlir
-        );
-        assert!(mlir.contains("ais.err"), "actual mlir:\n{}", mlir);
-        assert!(mlir.contains("with \"fallback\""), "actual mlir:\n{}", mlir);
-    }
-
-    #[test]
-    fn lowers_communicate_op() {
-        let graph = ApxmGraph {
-            name: "comm_flow".to_string(),
-            nodes: vec![
-                // spawn_agent must come first so validate_agent_references passes.
-                GraphNode {
-                    id: 1,
-                    name: "spawn_b".to_string(),
-                    op: AISOperationType::SpawnAgent,
-                    attributes: HashMap::from([
-                        (
-                            graph_attrs::AGENT_NAME.to_string(),
-                            Value::String("agent_b".to_string()),
-                        ),
-                        ("profile".to_string(), Value::String("claude".to_string())),
-                        ("cwd".to_string(), Value::String("/tmp".to_string())),
-                    ]),
-                },
-                GraphNode {
-                    id: 2,
-                    name: "seed".to_string(),
-                    op: AISOperationType::ConstStr,
-                    attributes: HashMap::from([(
-                        "value".to_string(),
-                        Value::String("hello world".to_string()),
-                    )]),
-                },
-                GraphNode {
-                    id: 3,
-                    name: "send".to_string(),
-                    op: AISOperationType::Communicate,
-                    attributes: HashMap::from([
-                        (
-                            graph_attrs::MESSAGE.to_string(),
-                            Value::String("status update".to_string()),
-                        ),
-                        (
-                            graph_attrs::RECIPIENT.to_string(),
-                            Value::String("agent_b".to_string()),
-                        ),
-                    ]),
-                },
-            ],
-            edges: vec![
-                crate::GraphEdge {
-                    from: 1,
-                    to: 3,
-                    dependency: DependencyType::Control,
-                },
-                crate::GraphEdge {
-                    from: 2,
-                    to: 3,
-                    dependency: DependencyType::Data,
-                },
-            ],
-            parameters: vec![],
-            metadata: HashMap::new(),
-        };
-
-        let mlir = lower_to_mlir(&graph).expect("graph lowers to mlir");
-        assert!(mlir.contains("ais.communicate \"status update\" to \"agent_b\""));
-        assert!(mlir.contains(": !ais.token"));
-    }
-
-    #[test]
-    fn lowers_flow_call_op() {
-        let graph = ApxmGraph {
-            name: "caller".to_string(),
-            nodes: vec![
-                GraphNode {
-                    id: 1,
-                    name: "seed".to_string(),
-                    op: AISOperationType::ConstStr,
-                    attributes: HashMap::from([(
-                        "value".to_string(),
-                        Value::String("input data".to_string()),
-                    )]),
-                },
-                GraphNode {
-                    id: 2,
-                    name: "call".to_string(),
-                    op: AISOperationType::FlowCall,
-                    attributes: HashMap::from([(
-                        graph_attrs::FLOW_NAME.to_string(),
-                        Value::String("sub_flow".to_string()),
-                    )]),
-                },
-            ],
-            edges: vec![crate::GraphEdge {
-                from: 1,
-                to: 2,
-                dependency: DependencyType::Data,
-            }],
-            parameters: vec![],
-            metadata: HashMap::new(),
-        };
-
-        let mlir = lower_to_mlir(&graph).expect("graph lowers to mlir");
-        assert!(mlir.contains("ais.flow_call \"sub_flow\""));
-        assert!(mlir.contains("(%n1 : !ais.token)"));
-        assert!(mlir.contains(": !ais.token"));
-    }
-
-    #[test]
-    fn lowers_nop_and_identity_passthrough() {
-        let graph = ApxmGraph {
-            name: "passthrough".to_string(),
-            nodes: vec![
-                GraphNode {
-                    id: 1,
-                    name: "seed".to_string(),
-                    op: AISOperationType::ConstStr,
-                    attributes: HashMap::from([(
-                        "value".to_string(),
-                        Value::String("data".to_string()),
-                    )]),
-                },
-                GraphNode {
-                    id: 2,
-                    name: "nop".to_string(),
-                    op: AISOperationType::Nop,
-                    attributes: HashMap::new(),
-                },
-                GraphNode {
-                    id: 3,
-                    name: "id".to_string(),
-                    op: AISOperationType::Identity,
-                    attributes: HashMap::new(),
-                },
-            ],
-            edges: vec![
-                crate::GraphEdge {
-                    from: 1,
-                    to: 2,
-                    dependency: DependencyType::Data,
-                },
-                crate::GraphEdge {
-                    from: 2,
-                    to: 3,
-                    dependency: DependencyType::Data,
-                },
-            ],
-            parameters: vec![],
-            metadata: HashMap::new(),
-        };
-
-        let mlir = lower_to_mlir(&graph).expect("graph lowers to mlir");
-        // Nop and Identity pass through their inputs so the final return
-        // should reference the const_str value directly.
-        assert!(mlir.contains("func.return %n1 : !ais.token"));
-    }
-
-    #[test]
-    fn lowers_aam_ops_update_goal_pause_resume() {
-        let graph = ApxmGraph {
-            name: "aam".to_string(),
-            nodes: vec![
-                GraphNode {
-                    id: 1,
-                    name: "update".to_string(),
-                    op: AISOperationType::UpdateGoal,
-                    attributes: HashMap::from([(
-                        graph_attrs::GOAL_ID.to_string(),
-                        Value::String("g1".to_string()),
-                    )]),
-                },
-                GraphNode {
-                    id: 2,
-                    name: "pause".to_string(),
-                    op: AISOperationType::Pause,
-                    attributes: HashMap::from([(
-                        graph_attrs::MESSAGE.to_string(),
-                        Value::String("awaiting review".to_string()),
-                    )]),
-                },
-                GraphNode {
-                    id: 3,
-                    name: "resume".to_string(),
-                    op: AISOperationType::Resume,
-                    attributes: HashMap::from([(
-                        graph_attrs::CHECKPOINT.to_string(),
-                        Value::String("cp_1".to_string()),
-                    )]),
-                },
-            ],
-            edges: vec![
-                crate::GraphEdge {
-                    from: 1,
-                    to: 2,
-                    dependency: DependencyType::Control,
-                },
-                crate::GraphEdge {
-                    from: 2,
-                    to: 3,
-                    dependency: DependencyType::Control,
-                },
-            ],
-            parameters: vec![],
-            metadata: HashMap::new(),
-        };
-
-        let mlir = lower_to_mlir(&graph).expect("graph lowers to mlir");
-        assert!(mlir.contains("ais.update_goal \"g1\""));
-        assert!(mlir.contains("ais.pause \"awaiting review\""));
-        assert!(mlir.contains("ais.resume \"cp_1\""));
-    }
-
-    #[test]
-    fn spawn_agent_with_flow_params_compiles() {
-        // Test that spawn_agent now works in parameterized flows (E511 bug fix).
-        // The key is that spawn_agent should NOT receive %arg0 even if it's an entry node.
-        let mut spawn = GraphNode {
-            id: 1,
-            name: "spawn".to_string(),
-            op: AISOperationType::SpawnAgent,
-            attributes: HashMap::new(),
-        };
-        spawn.attributes.insert(
-            graph_attrs::AGENT_NAME.to_string(),
-            Value::String("coder".to_string()),
-        );
-        spawn
-            .attributes
-            .insert("profile".to_string(), Value::String("claude".to_string()));
-        spawn
-            .attributes
-            .insert("cwd".to_string(), Value::String("/tmp".to_string()));
-
-        // think node uses the TASK parameter
-        let mut think = GraphNode {
-            id: 2,
-            name: "think".to_string(),
-            op: AISOperationType::Think,
-            attributes: HashMap::new(),
-        };
-        think.attributes.insert(
-            graph_attrs::TEMPLATE_STR.to_string(),
-            Value::String("task: {0}".to_string()),
-        );
-
-        // communicate sends result to the spawned agent
-        let mut comm = GraphNode {
-            id: 3,
-            name: "comm".to_string(),
-            op: AISOperationType::Communicate,
-            attributes: HashMap::new(),
-        };
-        comm.attributes.insert(
-            graph_attrs::RECIPIENT.to_string(),
-            Value::String("coder".to_string()),
-        );
-        comm.attributes.insert(
-            graph_attrs::MESSAGE.to_string(),
-            Value::String("{0}".to_string()),
-        );
-
-        let mut graph = ApxmGraph {
-            name: "test".to_string(),
-            nodes: vec![spawn, think, comm],
-            edges: vec![
-                crate::GraphEdge {
-                    from: 1,
-                    to: 3,
-                    dependency: DependencyType::Control, // spawn must happen before communicate
-                },
-                crate::GraphEdge {
-                    from: 2,
-                    to: 3,
-                    dependency: DependencyType::Data, // think result goes to communicate
-                },
-            ],
-            parameters: Vec::new(),
-            metadata: HashMap::new(),
-        };
-        graph.parameters = vec![crate::Parameter {
-            name: "TASK".to_string(),
-            type_name: "str".to_string(),
-        }];
-
-        // This should NOT crash or produce malformed MLIR anymore.
-        // Previously, this combination would cause E900 with "expected ':'" parse error.
-        let mlir = lower_to_mlir(&graph).expect("spawn_agent with flow params should compile");
-
-        // Verify the key invariants:
-        // 1. Function should have parameter arg
-        assert!(
-            mlir.contains("%arg0: !ais.token"),
-            "MLIR should have parameter arg\n{}",
-            mlir
-        );
-        // 2. spawn_agent should be emitted WITHOUT receiving %arg0 in its context
-        // (previously the lowering injected %arg0 into spawn_agent's inputs, causing malformed MLIR)
-        assert!(
-            mlir.contains("ais.spawn_agent \"coder\""),
-            "MLIR should have spawn_agent\n{}",
-            mlir
-        );
-        assert!(
-            !mlir.contains("ais.spawn_agent \"coder\"(%arg0"),
-            "spawn_agent should NOT receive %arg0 in context\n{}",
-            mlir
-        );
-        // 3. The MLIR should be parseable (no E900 error)
-        assert!(
-            mlir.contains("func.func @test"),
-            "MLIR should have function definition\n{}",
-            mlir
-        );
-        assert!(
-            mlir.contains("func.return"),
-            "MLIR should have return\n{}",
-            mlir
-        );
-    }
-
-    #[test]
-    fn umem_sets_key_attribute() {
-        // Test that UMEM nodes properly set the 'key' attribute in MLIR output
-        let mut umem = GraphNode {
-            id: 2,
-            name: "store".to_string(),
-            op: AISOperationType::UMem,
-            attributes: HashMap::new(),
-        };
-        umem.attributes.insert(
-            graph_attrs::KEY.to_string(),
-            Value::String("user_data".to_string()),
-        );
-        umem.attributes.insert(
-            graph_attrs::SPACE.to_string(),
-            Value::String("stm".to_string()),
-        );
-
-        let const_node = GraphNode {
-            id: 1,
-            name: "value".to_string(),
-            op: AISOperationType::ConstStr,
-            attributes: HashMap::from([(
-                graph_attrs::VALUE.to_string(),
-                Value::String("test_value".to_string()),
-            )]),
-        };
-
-        let graph = ApxmGraph {
-            name: "umem_test".to_string(),
-            nodes: vec![const_node, umem],
-            edges: vec![crate::GraphEdge {
-                from: 1,
-                to: 2,
-                dependency: DependencyType::Data,
-            }],
-            parameters: vec![],
-            metadata: HashMap::new(),
-        };
-
-        let mlir = lower_to_mlir(&graph).expect("UMEM graph should lower to MLIR");
-
-        // Verify that the UMEM operation includes the key attribute in attr-dict format
-        assert!(
-            mlir.contains("ais.umem"),
-            "MLIR should contain umem operation\n{}",
-            mlir
-        );
-        assert!(
-            mlir.contains("{key = \"user_data\"}"),
-            "UMEM should set key attribute in attr-dict\n{}",
-            mlir
-        );
-        assert!(
-            mlir.contains("into stm"),
-            "UMEM should set memory space as enum keyword stm\n{}",
-            mlir
-        );
     }
 }

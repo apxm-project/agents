@@ -33,6 +33,8 @@
 
 #include "ais/Dialect/AIS/Transforms/Passes.h"
 
+#include "ais/Common/Constants.h"
+
 #include "ais/Dialect/AIS/IR/AISAttributes.h"
 #include "ais/Dialect/AIS/IR/AISOps.h"
 #include "ais/Dialect/AIS/Support/AISDebug.h"
@@ -270,7 +272,7 @@ struct CondenseOpsPass : impl::CondenseOpsBase<CondenseOpsPass> {
     uint64_t totalChains = stats.qmemChains + stats.umemChains;
     if (totalChains > 0) {
       OpBuilder metaBuilder(module);
-      module->setAttr("ais.condensed_ops",
+      module->setAttr(apxm::constants::attrs::CONDENSED_OPS,
                       metaBuilder.getI64IntegerAttr(totalChains));
     }
 

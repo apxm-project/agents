@@ -8,7 +8,6 @@ description = "HTTP API wrapper for APXM runtime"
 apxm-artifact = { path = "../apxm-artifact" }
 apxm-compiler = { path = "../apxm-compiler" }
 apxm-core = { path = "../apxm-core" }
-apxm-graph = { path = "../apxm-graph" }
 apxm-backends = { path = "../apxm-backends" }
 apxm-credentials = { path = "../apxm-credentials" }
 apxm-runtime = { path = "../apxm-runtime", features = ["metrics"] }
