@@ -619,6 +619,133 @@ async fn collect_apxm_files(
     }
 }
 
+/// GET /api/workflows — scan cwd recursively for `.apxm` files.
+async fn workflows_handler() -> ApiResult<impl IntoResponse> {
+    let cwd = std::env::current_dir().map_err(|e| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to get current directory: {e}"),
+        )
+    })?;
+
+    let mut workflows: Vec<serde_json::Value> = Vec::new();
+    collect_apxm_files(&cwd, &cwd, &mut workflows).await;
+
+    // Also scan flows/ and agents/ subdirectories if they exist.
+    let flows_dir = cwd.join("flows");
+    if flows_dir.is_dir() {
+        collect_apxm_files(&cwd, &flows_dir, &mut workflows).await;
+    }
+    let agents_dir = cwd.join("agents");
+    if agents_dir.is_dir() {
+        collect_apxm_files(&cwd, &agents_dir, &mut workflows).await;
+    }
+
+    // Sort by relative path.
+    workflows.sort_by(|a, b| {
+        let pa = a.get("relative_path").and_then(|v| v.as_str()).unwrap_or("");
+        let pb = b.get("relative_path").and_then(|v| v.as_str()).unwrap_or("");
+        pa.cmp(pb)
+    });
+
+    Ok(Json(serde_json::json!({ "workflows": workflows })))
+}
+
+/// GET /api/health — return structured summary of system configuration.
+async fn health_handler() -> ApiResult<impl IntoResponse> {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
+    let apxm_dir = PathBuf::from(&home).join(".apxm");
+    let config_path = apxm_dir.join("config.toml");
+
+    let mut backends_json: Vec<serde_json::Value> = Vec::new();
+    let mut total_models: usize = 0;
+
+    if config_path.exists() {
+        if let Ok(content) = tokio::fs::read_to_string(&config_path).await {
+            if let Ok(config) = content.parse::<toml::Value>() {
+                if let Some(backends) = config.get("backends").and_then(|b| b.as_array()) {
+                    for backend in backends {
+                        let name = backend
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown")
+                            .to_string();
+                        let endpoint = backend
+                            .get("endpoint")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let protocol = backend
+                            .get("protocol")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown")
+                            .to_string();
+                        let model_count = backend
+                            .get("models")
+                            .and_then(|v| v.as_array())
+                            .map(|a| a.len())
+                            .unwrap_or(0);
+
+                        total_models += model_count;
+
+                        backends_json.push(serde_json::json!({
+                            "name": name,
+                            "endpoint": endpoint,
+                            "protocol": protocol,
+                            "model_count": model_count,
+                            "status": "unknown",
+                        }));
+                    }
+                }
+            }
+        }
+    }
+
+    // Count agents from ~/.apxm/agents.toml
+    let agents_path = apxm_dir.join("agents.toml");
+    let total_agents = if agents_path.exists() {
+        tokio::fs::read_to_string(&agents_path)
+            .await
+            .ok()
+            .and_then(|content| content.parse::<toml::Value>().ok())
+            .and_then(|v| v.get("agents").and_then(|a| a.as_array()).map(|a| a.len()))
+            .unwrap_or(0)
+    } else {
+        0
+    };
+
+    // Count tools from ~/.apxm/tools.json
+    let tools_path = apxm_dir.join("tools.json");
+    let total_tools = if tools_path.exists() {
+        tokio::fs::read_to_string(&tools_path)
+            .await
+            .ok()
+            .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+            .and_then(|v| v.get("tools").and_then(|t| t.as_array()).map(|a| a.len()))
+            .unwrap_or(0)
+    } else {
+        0
+    };
+
+    // Determine config source: project-local or global.
+    let config_source = if std::env::current_dir()
+        .map(|cwd| cwd.join(".apxm").join("config.toml").exists())
+        .unwrap_or(false)
+    {
+        "project"
+    } else {
+        "global"
+    };
+
+    Ok(Json(serde_json::json!({
+        "backends": backends_json,
+        "total_models": total_models,
+        "total_agents": total_agents,
+        "total_tools": total_tools,
+        "config_source": config_source,
+    })))
+}
+
 /// GET /api/config — read ~/.apxm/config.toml and return as text.
 async fn config_handler() -> ApiResult<impl IntoResponse> {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
@@ -805,6 +932,8 @@ async fn main() {
             axum::routing::get(session_node_handler),
         )
         .route("/api/config", axum::routing::get(config_handler))
+        .route("/api/workflows", axum::routing::get(workflows_handler))
+        .route("/api/health", axum::routing::get(health_handler))
         // Startup & examples
         .route("/api/startup", axum::routing::get(startup_handler))
         .route("/api/examples", axum::routing::get(examples_handler))

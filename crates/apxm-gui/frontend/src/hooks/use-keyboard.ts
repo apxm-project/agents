@@ -1,15 +1,13 @@
 import { useEffect } from "react";
 import { useAppStore } from "@/store/app-store";
-import type { TabKey } from "@/lib/constants";
+import type { ActivityKey } from "@/lib/constants";
 
-const TAB_KEYS: Record<string, TabKey> = {
-  "1": "graph",
-  "2": "compiler",
-  "3": "session",
-  "4": "live",
-  "5": "ops",
-  "6": "config",
-  "7": "replay",
+const ACTIVITY_KEYS: Record<string, ActivityKey> = {
+  "1": "dashboard",
+  "2": "graph",
+  "3": "execution",
+  "4": "reference",
+  "5": "settings",
 };
 
 export function useKeyboard() {
@@ -18,13 +16,12 @@ export function useKeyboard() {
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      // Don't handle when typing in inputs
       const tag = (e.target as HTMLElement).tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
 
-      if (e.key in TAB_KEYS) {
+      if (e.key in ACTIVITY_KEYS) {
         e.preventDefault();
-        setActiveTab(TAB_KEYS[e.key]!);
+        setActiveTab(ACTIVITY_KEYS[e.key]!);
         return;
       }
 

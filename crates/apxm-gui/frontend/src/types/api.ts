@@ -32,3 +32,27 @@ export type ExampleInfo = {
   category: string;
   node_count: number | null;
 };
+
+export type WorkflowInfo = {
+  path: string;
+  relative_path: string;
+  name: string;
+  category: string;
+  node_count: number | null;
+};
+
+export type BackendHealth = {
+  name: string;
+  endpoint: string;
+  protocol: string;
+  model_count: number;
+  status: "healthy" | "degraded" | "unreachable" | "unknown";
+};
+
+export type HealthStatus = {
+  backends: BackendHealth[];
+  total_models: number;
+  total_agents: number;
+  total_tools: number;
+  config_source: "project" | "global";
+};

@@ -56,6 +56,7 @@ pub struct SessionInfo {
     pub graph_name: Option<String>,
     pub status: String,
     pub started_at: String,
+    pub duration_ms: Option<u64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -460,11 +461,16 @@ pub async fn list_sessions(
             .unwrap_or("")
             .to_string();
 
+        let duration_ms = manifest
+            .get("duration_ms")
+            .and_then(|v| v.as_u64());
+
         sessions.push(SessionInfo {
             id,
             graph_name,
             status,
             started_at,
+            duration_ms,
         });
     }
 
