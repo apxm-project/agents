@@ -536,7 +536,7 @@ async fn startup_handler(
     }))
 }
 
-/// GET /api/examples — recursively list `.apxm` files under the examples directory.
+/// GET /api/examples — recursively list workflow files under the examples directory.
 async fn examples_handler(
     axum::extract::State(state): axum::extract::State<Arc<AppState>>,
 ) -> ApiResult<impl IntoResponse> {
@@ -548,7 +548,7 @@ async fn examples_handler(
     };
 
     let mut examples: Vec<serde_json::Value> = Vec::new();
-    collect_apxm_files(&examples_dir, &examples_dir, &mut examples).await;
+    collect_graphs(&examples_dir, &examples_dir, 0, &mut examples).await;
 
     // Sort by relative path.
     examples.sort_by(|a, b| {
@@ -560,12 +560,35 @@ async fn examples_handler(
     Ok(Json(serde_json::json!({ "examples": examples })))
 }
 
-/// Recursively collect `.apxm` files under `dir`, reading the `name` field from each.
-async fn collect_apxm_files(
+/// Whether a directory name represents build artifacts, caches, or generated output
+/// that should be skipped when scanning for workflow files.
+/// Whether a directory name represents build artifacts or caches that should be
+/// skipped during filesystem scans.
+fn is_skip_dir(name: &str) -> bool {
+    name.starts_with('.')
+        || matches!(
+            name,
+            "node_modules"
+                | "target"
+                | "__pycache__"
+                | "frontend-dist"
+                | "dist"
+                | "build"
+                | "venv"
+                | "site-packages"
+        )
+}
+
+/// Recursively find all `.apxm` graph files under `dir`.
+async fn collect_graphs(
     base: &std::path::Path,
     dir: &std::path::Path,
+    depth: usize,
     out: &mut Vec<serde_json::Value>,
 ) {
+    if depth > 8 {
+        return;
+    }
     let mut entries = match tokio::fs::read_dir(dir).await {
         Ok(e) => e,
         Err(_) => return,
@@ -573,8 +596,14 @@ async fn collect_apxm_files(
 
     while let Ok(Some(entry)) = entries.next_entry().await {
         let path = entry.path();
+        let name_str = entry.file_name().to_string_lossy().to_string();
+
+        if is_skip_dir(&name_str) {
+            continue;
+        }
+
         if path.is_dir() {
-            Box::pin(collect_apxm_files(base, &path, out)).await;
+            Box::pin(collect_graphs(base, &path, depth + 1, out)).await;
         } else if path.extension().map_or(false, |e| e == "apxm") {
             let abs = tokio::fs::canonicalize(&path)
                 .await
@@ -587,7 +616,12 @@ async fn collect_apxm_files(
                 .to_string_lossy()
                 .to_string();
 
-            // Read file once and extract name + node count.
+            let category = path
+                .parent()
+                .and_then(|p| p.file_name())
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+
             let (graph_name, node_count) = match tokio::fs::read_to_string(&path).await {
                 Ok(content) => {
                     let parsed = serde_json::from_str::<serde_json::Value>(&content).ok();
@@ -602,12 +636,6 @@ async fn collect_apxm_files(
                 Err(_) => (None, None),
             };
 
-            let category = path
-                .parent()
-                .and_then(|p| p.file_name())
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_default();
-
             out.push(serde_json::json!({
                 "path": abs,
                 "relative_path": rel,
@@ -619,7 +647,7 @@ async fn collect_apxm_files(
     }
 }
 
-/// GET /api/workflows — scan cwd recursively for `.apxm` files.
+/// GET /api/workflows — scan cwd recursively for `.apxm` graph files.
 async fn workflows_handler() -> ApiResult<impl IntoResponse> {
     let cwd = std::env::current_dir().map_err(|e| {
         AppError(
@@ -629,17 +657,7 @@ async fn workflows_handler() -> ApiResult<impl IntoResponse> {
     })?;
 
     let mut workflows: Vec<serde_json::Value> = Vec::new();
-    collect_apxm_files(&cwd, &cwd, &mut workflows).await;
-
-    // Also scan flows/ and agents/ subdirectories if they exist.
-    let flows_dir = cwd.join("flows");
-    if flows_dir.is_dir() {
-        collect_apxm_files(&cwd, &flows_dir, &mut workflows).await;
-    }
-    let agents_dir = cwd.join("agents");
-    if agents_dir.is_dir() {
-        collect_apxm_files(&cwd, &agents_dir, &mut workflows).await;
-    }
+    collect_graphs(&cwd, &cwd, 0, &mut workflows).await;
 
     // Sort by relative path.
     workflows.sort_by(|a, b| {
@@ -678,10 +696,7 @@ async fn filetree_handler() -> ApiResult<impl IntoResponse> {
             let path = entry.path();
             let name = entry.file_name().to_string_lossy().to_string();
 
-            // Skip hidden dirs, node_modules, target, __pycache__
-            if name.starts_with('.') || name == "node_modules" || name == "target"
-                || name == "__pycache__" || name == "frontend-dist"
-            {
+            if is_skip_dir(&name) {
                 continue;
             }
 
@@ -704,7 +719,7 @@ async fn filetree_handler() -> ApiResult<impl IntoResponse> {
                 }
             } else {
                 let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-                if ext == "apxm" || ext == "py" || ext == "toml" {
+                if matches!(ext, "apxm" | "py" | "toml") {
                     let mut entry_json = serde_json::json!({
                         "name": name,
                         "path": rel,
