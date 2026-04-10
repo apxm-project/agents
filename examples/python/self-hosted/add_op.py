@@ -11,7 +11,7 @@ Graph structure:
 - spawn reviewer (claude) — reviews both implementations, runs tests
 
 Usage:
-    PYTHONPATH=crates/apxm-frontend/python python3 examples/python/self-hosted/add_op.py > /tmp/add_op.air
+    PYTHONPATH=crates/compiler/apxm-frontend/python python3 examples/python/self-hosted/add_op.py > /tmp/add_op.air
     dekk apxm compile /tmp/add_op.air -o /tmp/add_op.apxmobj
     dekk apxm execute /tmp/add_op.air "CHECKPOINT" "Save execution state for later resume"
 """
@@ -49,11 +49,11 @@ Operation name: {op_name}
 Description: {op_description}
 
 Read the following files to understand the pattern:
-- crates/apxm-ais/src/definitions.rs (AISOperationType enum)
-- crates/apxm-compiler/src/lower/ArtifactEmitter.cpp (MLIR lowering)
-- crates/apxm-compiler/mlir/AISOps.td (TableGen definitions)
-- crates/apxm-runtime/src/executor/handlers/spawn_agent.rs (example handler)
-- crates/apxm-runtime/src/executor/mod.rs (dispatcher)
+- crates/core/apxm-ais/src/definitions.rs (AISOperationType enum)
+- crates/compiler/apxm-compiler/src/lower/ArtifactEmitter.cpp (MLIR lowering)
+- crates/compiler/apxm-compiler/mlir/AISOps.td (TableGen definitions)
+- crates/runtime/apxm-runtime/src/executor/handlers/spawn_agent.rs (example handler)
+- crates/runtime/apxm-runtime/src/executor/mod.rs (dispatcher)
 
 Create a structured plan with:
 1. Wire index (next available after checking definitions.rs)
@@ -81,14 +81,14 @@ Plan:
 {architect_plan}
 
 You need to modify:
-1. crates/apxm-ais/src/definitions.rs
+1. crates/core/apxm-ais/src/definitions.rs
    - Add variant to AISOperationType enum
    - Add to from_wire_index() match
 
-2. crates/apxm-compiler/mlir/AISOps.td
+2. crates/compiler/apxm-compiler/mlir/AISOps.td
    - Add def AIS_<OpName>Op block following the pattern of other ops
 
-3. crates/apxm-compiler/src/lower/ArtifactEmitter.cpp
+3. crates/compiler/apxm-compiler/src/lower/ArtifactEmitter.cpp
    - Add case to the switch in emitAISOperation()
 
 Make sure the wire index matches the plan. Use the same attribute names.
@@ -104,13 +104,13 @@ Plan:
 {architect_plan}
 
 You need to:
-1. Create crates/apxm-runtime/src/executor/handlers/<op_name>.rs
+1. Create crates/runtime/apxm-runtime/src/executor/handlers/<op_name>.rs
    - Implement the handler function following the pattern in spawn_agent.rs
    - Extract attributes from the node
    - Execute the operation logic
    - Return a ResultToken
 
-2. Modify crates/apxm-runtime/src/executor/mod.rs
+2. Modify crates/runtime/apxm-runtime/src/executor/mod.rs
    - Add mod <op_name> in the handlers module section
    - Add a new arm to the execute_node() match statement
 

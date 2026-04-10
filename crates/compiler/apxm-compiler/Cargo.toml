@@ -1,0 +1,31 @@
+[package]
+name = "apxm-compiler"
+version.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+apxm-ais.workspace = true
+apxm-core.workspace = true
+apxm-artifact.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+bpe-openai = "0.3"
+
+[dev-dependencies]
+insta.workspace = true
+tempfile.workspace = true
+
+[features]
+mlir = []
+
+[build-dependencies]
+anyhow.workspace = true
+apxm-core.workspace = true
+apxm-ais.workspace = true
+bindgen = "0.72"
+tracing.workspace = true

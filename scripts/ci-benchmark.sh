@@ -6,7 +6,7 @@
 set +e
 cd "$(dirname "$0")/.."
 source ~/.cargo/env
-export PYTHONPATH=crates/apxm-frontend/python
+export PYTHONPATH=crates/compiler/apxm-frontend/python
 
 FAILED=0
 echo "=== APXM CI Benchmark Suite ==="
@@ -26,13 +26,13 @@ python3 scripts/apxm-policy-check.py 2>&1 | tail -3
 
 # 4. Run Python tests
 echo "=== Running Python Tests ==="
-cd crates/apxm-frontend/python && PYTHONPATH=. python3 -m pytest tests/ -q 2>&1 || FAILED=1
+cd crates/compiler/apxm-frontend/python && PYTHONPATH=. python3 -m pytest tests/ -q 2>&1 || FAILED=1
 cd - > /dev/null
 
 # 5. Compile all benchmarks at O0 and O2
 echo "=== Compile Benchmarks ==="
 for graph in shared_prefix_fanout chained_llm mixed_priority multi_model; do
-  PYTHONPATH=crates/apxm-frontend/python python3 -c "
+  PYTHONPATH=crates/compiler/apxm-frontend/python python3 -c "
 import importlib.util
 spec = importlib.util.spec_from_file_location('m', 'examples/python/benchmarks/${graph}.py')
 mod = importlib.util.module_from_spec(spec)

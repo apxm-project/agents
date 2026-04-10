@@ -1,17 +1,22 @@
 [workspace]
 members = [
-	"crates/apxm-ais",
-	"crates/apxm-cli",
-	"crates/apxm-compiler",
-	"crates/apxm-driver",
-	"crates/apxm-server",
-	"crates/apxm-gui",
-	"crates/apxm-credentials",
-	"crates/apxm-core",
-	"crates/apxm-runtime",
-	"crates/apxm-artifact",
-	"crates/apxm-backends",
-	"crates/apxm-acp",
+	# ── Core (Foundation) ─────────────────────────
+	"crates/core/apxm-ais",
+	"crates/core/apxm-core",
+	# ── Compiler (Compilation) ────────────────────
+	"crates/compiler/apxm-compiler",
+	# ── Runtime (Execution + Backend) ─────────────
+	"crates/runtime/apxm-runtime",
+	"crates/runtime/apxm-backends",
+	"crates/runtime/apxm-credentials",
+	# ── Orchestration (Driver + ACP + Artifact) ───
+	"crates/orchestration/apxm-driver",
+	"crates/orchestration/apxm-acp",
+	"crates/orchestration/apxm-artifact",
+	# ── Tools (CLI + GUI + Server) ────────────────
+	"crates/tools/apxm-cli",
+	"crates/tools/apxm-gui",
+	"crates/tools/apxm-server",
 ]
 
 resolver = "3"
@@ -21,3 +26,106 @@ version = "0.0.1"
 edition = "2024"
 
 [workspace.dependencies]
+# ── Internal crates ──────────────────────────────────────────
+apxm-ais = { version = "0.0.1", path = "crates/core/apxm-ais" }
+apxm-core = { version = "0.0.1", path = "crates/core/apxm-core" }
+apxm-compiler = { version = "0.0.1", path = "crates/compiler/apxm-compiler" }
+apxm-runtime = { version = "0.0.1", path = "crates/runtime/apxm-runtime" }
+apxm-backends = { version = "0.0.1", path = "crates/runtime/apxm-backends" }
+apxm-credentials = { version = "0.0.1", path = "crates/runtime/apxm-credentials" }
+apxm-driver = { version = "0.0.1", path = "crates/orchestration/apxm-driver" }
+apxm-acp = { version = "0.0.1", path = "crates/orchestration/apxm-acp" }
+apxm-artifact = { version = "0.0.1", path = "crates/orchestration/apxm-artifact" }
+
+# ── Serialization ────────────────────────────────────────────
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.9"
+bincode = "1.0"
+
+# ── Error handling ───────────────────────────────────────────
+anyhow = "1.0"
+thiserror = "2.0"
+
+# ── Async runtime ───────────────────────────────────────────
+tokio = { version = "1.0", features = ["rt-multi-thread", "macros", "sync", "time"] }
+async-trait = "0.1"
+async-stream = "0.3"
+futures = "0.3"
+tokio-stream = "0.1"
+
+# ── HTTP ─────────────────────────────────────────────────────
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+axum = { version = "0.8", features = ["macros"] }
+tower-http = { version = "0.6", features = ["fs", "cors"] }
+
+# ── Concurrency ──────────────────────────────────────────────
+dashmap = "6.0"
+parking_lot = "0.12"
+crossbeam-deque = "0.8"
+
+# ── Observability ────────────────────────────────────────────
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+# ── Utilities ────────────────────────────────────────────────
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.0", features = ["v7", "v4", "serde"] }
+dirs = "5.0"
+once_cell = "1.0"
+regex = "1.0"
+tempfile = "3.0"
+colored = "3.0"
+blake3 = "1.5"
+clap = { version = "4.0", features = ["derive"] }
+walkdir = "2.0"
+rusqlite = { version = "0.32", features = ["bundled"] }
+jsonschema = "0.18"
+
+# ── Dev ──────────────────────────────────────────────────────
+insta = { version = "1.0", features = ["yaml"] }
+
+# ── Workspace lints ──────────────────────────────────────────
+[workspace.lints.rust]
+unsafe_code = "deny"
+unused_must_use = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# Allow common patterns that are fine in this codebase
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+too_many_lines = "allow"
+struct_excessive_bools = "allow"
+similar_names = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+cast_precision_loss = "allow"
+cast_lossless = "allow"
+wildcard_imports = "allow"
+default_trait_access = "allow"
+items_after_statements = "allow"
+needless_pass_by_value = "allow"
+return_self_not_must_use = "allow"
+single_match_else = "allow"
+enum_glob_use = "allow"
+redundant_closure_for_method_calls = "allow"
+manual_string_new = "allow"
+uninlined_format_args = "allow"
+trivially_copy_pass_by_ref = "allow"
+implicit_hasher = "allow"
+unnecessary_wraps = "allow"
+unreadable_literal = "allow"
+doc_markdown = "allow"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
+[profile.dev]
+opt-level = 0
+debug = 2

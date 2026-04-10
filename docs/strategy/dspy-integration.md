@@ -229,7 +229,7 @@ The DSPy cache is **project-scoped and content-addressed**, stored at:
 <repo>/.apxm/cache/dspy/<sha256>.json
 ```
 
-Uses `ApxmPaths::cache_dir()` (from `crates/apxm-core/src/paths.rs`) for discovery — same resolution as MemoCache and other project caches. The project `.apxm/` directory is found by walking up from `cwd`.
+Uses `ApxmPaths::cache_dir()` (from `crates/core/apxm-core/src/paths.rs`) for discovery — same resolution as MemoCache and other project caches. The project `.apxm/` directory is found by walking up from `cwd`.
 
 **Why project-scoped (not global `~/.apxm/dspy-cache/`):**
 

@@ -11,7 +11,7 @@ The workflow:
 4. Iterates if needed
 
 Usage:
-    PYTHONPATH=crates/apxm-frontend/python python3 examples/python/workflows/autofix_loop.py
+    PYTHONPATH=crates/compiler/apxm-frontend/python python3 examples/python/workflows/autofix_loop.py
     dekk apxm compile examples/python/workflows/autofix_loop.air
     dekk apxm execute examples/python/workflows/autofix_loop.air --emit-session
 """

@@ -159,4 +159,4 @@ def priority_scheduling(g: GraphRecorder):
 
 if __name__ == "__main__":
     # Output the graph as JSON
-    print(priority_scheduling._graph.to_json())
+    print(priority_scheduling._graph.to_air())

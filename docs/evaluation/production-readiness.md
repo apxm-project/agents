@@ -168,10 +168,10 @@ No checkpoint, no partial recovery, no memoization integration in fallback path.
 
 ## Source Code References
 
-- Error types: `crates/apxm-core/src/error/`
-- Retry strategy: `crates/apxm-backends/src/llm/retry/mod.rs`
-- Health monitoring: `crates/apxm-backends/src/llm/registry/health.rs`
-- Execution engine: `crates/apxm-runtime/src/executor/engine.rs`
-- TRYCATCH handler: `crates/apxm-runtime/src/executor/handlers/try_catch.rs`
+- Error types: `crates/core/apxm-core/src/error/`
+- Retry strategy: `crates/runtime/apxm-backends/src/llm/retry/mod.rs`
+- Health monitoring: `crates/runtime/apxm-backends/src/llm/registry/health.rs`
+- Execution engine: `crates/runtime/apxm-runtime/src/executor/engine.rs`
+- TRYCATCH handler: `crates/runtime/apxm-runtime/src/executor/handlers/try_catch.rs`
 - Sandbox: `crates/apxm-sandbox/src/backend.rs`
-- Credentials: `crates/apxm-credentials/src/backend.rs`
+- Credentials: `crates/runtime/apxm-credentials/src/backend.rs`

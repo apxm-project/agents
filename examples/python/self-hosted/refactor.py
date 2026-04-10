@@ -11,7 +11,7 @@ Graph structure:
 - analyzer → implementer → test_runner → summary
 
 Usage:
-    PYTHONPATH=crates/apxm-frontend/python python3 examples/python/self-hosted/refactor.py > /tmp/refactor.air
+    PYTHONPATH=crates/compiler/apxm-frontend/python python3 examples/python/self-hosted/refactor.py > /tmp/refactor.air
     dekk apxm compile /tmp/refactor.air -o /tmp/refactor.apxmobj
     dekk apxm execute /tmp/refactor.air "apxm-runtime" "Extract scheduler into its own module"
 """
@@ -26,7 +26,7 @@ def refactor_workflow(g: GraphRecorder):
     """Refactor a module or crate.
 
     Parameters:
-        target (str): Module/crate name (e.g., "apxm-runtime" or "crates/apxm-runtime/src/executor/mod.rs")
+        target (str): Module/crate name (e.g., "apxm-runtime" or "crates/runtime/apxm-runtime/src/executor/mod.rs")
         goal (str): Refactoring goal (e.g., "Extract scheduler into its own module")
     """
     g.param("target", "str")

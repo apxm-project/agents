@@ -1,0 +1,46 @@
+[package]
+name = "apxm-cli"
+version.workspace = true
+edition.workspace = true
+publish = false
+description = "APxM CLI - minimal compile/run wrapper for the driver"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "apxm"
+path = "src/main.rs"
+
+[dependencies]
+apxm-core.workspace = true
+apxm-driver = { workspace = true, optional = true }
+apxm-compiler.workspace = true
+apxm-artifact = { workspace = true, optional = true }
+apxm-credentials.workspace = true
+apxm-acp.workspace = true
+apxm-ais.workspace = true
+apxm-runtime.workspace = true
+clap.workspace = true
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
+anyhow.workspace = true
+colored.workspace = true
+dirs.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing-subscriber = { workspace = true, optional = true }
+rpassword = "7.0"
+chrono.workspace = true
+reqwest = { workspace = true, features = ["blocking"] }
+walkdir.workspace = true
+tempfile.workspace = true
+rusqlite = { workspace = true, optional = true }
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[features]
+default = []
+driver = ["dep:apxm-driver", "tokio/rt-multi-thread", "dep:apxm-artifact", "dep:tracing-subscriber", "dep:rusqlite"]
+metrics = ["driver", "apxm-driver/metrics"]
+no-trace = ["apxm-driver/no-trace", "apxm-core/no-trace"]

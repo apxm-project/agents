@@ -96,4 +96,4 @@ def cse_stress(g: GraphRecorder):
 
 if __name__ == "__main__":
     # Output the graph as JSON
-    print(cse_stress._graph.to_json())
+    print(cse_stress._graph.to_air())

@@ -5,7 +5,7 @@ All examples use the Python frontend (`apxm.graph`). See [python/README.md](pyth
 ## Quick Start
 
 ```bash
-cd crates/apxm-frontend/python
+cd crates/compiler/apxm-frontend/python
 export PYTHONPATH="$PWD:$PYTHONPATH"
 
 # Emit canonical .air from a Python workflow

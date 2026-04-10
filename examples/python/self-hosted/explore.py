@@ -14,7 +14,7 @@ Graph structure:
 - think: action_plan — extract concrete next steps
 
 Usage:
-    PYTHONPATH=crates/apxm-frontend/python python3 examples/python/self-hosted/explore.py > /tmp/explore.air
+    PYTHONPATH=crates/compiler/apxm-frontend/python python3 examples/python/self-hosted/explore.py > /tmp/explore.air
     dekk apxm compile /tmp/explore.air -o /tmp/explore.apxmobj
     dekk apxm execute /tmp/explore.air "Should we add distributed execution to APXM?"
 """

@@ -83,7 +83,7 @@ CONFIG                   COMPILATION              RUNTIME
 
 ### Step 1: Add vLLM attribute constants
 
-**File**: `crates/apxm-core/src/constants.rs` (after line 127)
+**File**: `crates/core/apxm-core/src/constants.rs` (after line 127)
 
 ```rust
 // vLLM graph-awareness hint attributes (set by vllm_hints pass)
@@ -223,7 +223,7 @@ pub fn vllm_hints(&mut self) -> Result<&mut Self, GraphError> {
 
 ### Step 3: Wire the pass into the pipeline
 
-**File**: `crates/apxm-compiler/src/api/pipeline.rs` (after line 109)
+**File**: `crates/compiler/apxm-compiler/src/api/pipeline.rs` (after line 109)
 
 ```rust
 run_pass!(graph, vllm_hints, "vLLM graph hints");
@@ -243,7 +243,7 @@ node.attributes = graph_node.attributes.clone();  // ALL _vllm_* attrs survive
 
 **Graph-level metadata**: Currently `lower_dag.rs:94-105` only reads `is_entry` from `graph.metadata` and does NOT propagate other metadata keys to `DagMetadata`. We need to propagate `vllm.*` keys.
 
-**File**: `crates/apxm-core/src/types/execution/dag.rs` — Add optional fields to `DagMetadata`:
+**File**: `crates/core/apxm-core/src/types/execution/dag.rs` — Add optional fields to `DagMetadata`:
 
 ```rust
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -289,7 +289,7 @@ metadata: DagMetadata {
 
 ### Step 5: ExecutionContext — carry vLLM graph/execution IDs
 
-**File**: `crates/apxm-runtime/src/executor/context.rs` (add after line 104)
+**File**: `crates/runtime/apxm-runtime/src/executor/context.rs` (add after line 104)
 
 ```rust
 /// vLLM graph ID for this execution (set when a vLLM backend is registered).
@@ -303,7 +303,7 @@ Initialize to `None` in `new()` (line 115). These are set by `build_context()` w
 
 ### Step 6: Backend detection API
 
-**File**: `crates/apxm-backends/src/llm/registry/mod.rs`
+**File**: `crates/runtime/apxm-backends/src/llm/registry/mod.rs`
 
 Add method:
 ```rust
@@ -323,7 +323,7 @@ pub fn find_graph_aware_backend(&self) -> Option<(String, String)> {
 }
 ```
 
-**File**: `crates/apxm-backends/src/llm/backends/vllm/backend.rs` line 240
+**File**: `crates/runtime/apxm-backends/src/llm/backends/vllm/backend.rs` line 240
 
 Add `base_url` to `metadata()` return value so the runtime can reach the vLLM server for lifecycle calls without downcasting:
 
@@ -341,7 +341,7 @@ fn metadata(&self) -> serde_json::Value {
 
 ### Step 7: vLLM graph lifecycle manager
 
-**New file**: `crates/apxm-runtime/src/vllm_lifecycle.rs`
+**New file**: `crates/runtime/apxm-runtime/src/vllm_lifecycle.rs`
 
 ```rust
 use apxm_backends::llm::backends::vllm::graph_meta::{GraphMetadata, NodeSpec};
@@ -426,7 +426,7 @@ impl VllmGraphLifecycle {
 
 ### Step 8: Wire lifecycle into Runtime::execute methods
 
-**File**: `crates/apxm-runtime/src/runtime.rs`
+**File**: `crates/runtime/apxm-runtime/src/runtime.rs`
 
 **In `build_context()` (line 160)** — detect vLLM backend and set context fields:
 
@@ -518,7 +518,7 @@ pub async fn execute_artifact_with_session_and_emitter(&self, ...) -> Result<...
 
 ### Step 9: Per-request hint injection in LLM handler
 
-**File**: `crates/apxm-runtime/src/executor/handlers/llm.rs`
+**File**: `crates/runtime/apxm-runtime/src/executor/handlers/llm.rs`
 
 **Injection point**: After line 559 (after all existing config: system_prompt, model, tools), before the retry loop at line 561.
 
@@ -595,7 +595,7 @@ fn inject_vllm_hints(ctx: &ExecutionContext, node: &Node, request: LLMRequest) -
 
 ### Step 10: Ensure hints survive tool loop
 
-**File**: `crates/apxm-runtime/src/executor/handlers/llm.rs` lines 932-946
+**File**: `crates/runtime/apxm-runtime/src/executor/handlers/llm.rs` lines 932-946
 
 **Current code** (tool loop request rebuild at line 933):
 ```rust
@@ -670,17 +670,17 @@ pipeline.rs                                          add system_prompt, model, t
 
 | File | Change |
 |------|--------|
-| `crates/apxm-core/src/constants.rs` | Add `_vllm_*` attrs (6 consts) + `vllm` module (3 consts + 1 default) |
-| `crates/apxm-core/src/types/execution/dag.rs` | Add 3 optional vLLM fields to `DagMetadata` |
+| `crates/core/apxm-core/src/constants.rs` | Add `_vllm_*` attrs (6 consts) + `vllm` module (3 consts + 1 default) |
+| `crates/core/apxm-core/src/types/execution/dag.rs` | Add 3 optional vLLM fields to `DagMetadata` |
 | `crates/apxm-graph/src/optimize.rs` | Refactor `compute_parallelism_metrics` → `analyze_graph_topology`; new `vllm_hints()` pass (~120 lines) |
 | `crates/apxm-graph/src/lower_dag.rs` | Propagate `vllm_*` metadata to `DagMetadata` (3 lines) |
-| `crates/apxm-compiler/src/api/pipeline.rs` | Add `run_pass!(graph, vllm_hints, "vLLM graph hints")` (1 line) |
-| `crates/apxm-backends/src/llm/registry/mod.rs` | Add `find_graph_aware_backend()` method (~15 lines) |
-| `crates/apxm-backends/src/llm/backends/vllm/backend.rs` | Add `base_url` to `metadata()` (1 line) |
-| `crates/apxm-runtime/src/vllm_lifecycle.rs` | **New** — register/release lifecycle (~80 lines) |
-| `crates/apxm-runtime/src/runtime.rs` | Wire lifecycle in `execute()` + `execute_artifact_with_session_and_emitter()` (~30 lines each) |
-| `crates/apxm-runtime/src/executor/context.rs` | Add `vllm_graph_id`, `vllm_execution_id` fields (4 lines) |
-| `crates/apxm-runtime/src/executor/handlers/llm.rs` | Add `inject_vllm_hints()` (~50 lines) + tool loop fix (3 lines) |
+| `crates/compiler/apxm-compiler/src/api/pipeline.rs` | Add `run_pass!(graph, vllm_hints, "vLLM graph hints")` (1 line) |
+| `crates/runtime/apxm-backends/src/llm/registry/mod.rs` | Add `find_graph_aware_backend()` method (~15 lines) |
+| `crates/runtime/apxm-backends/src/llm/backends/vllm/backend.rs` | Add `base_url` to `metadata()` (1 line) |
+| `crates/runtime/apxm-runtime/src/vllm_lifecycle.rs` | **New** — register/release lifecycle (~80 lines) |
+| `crates/runtime/apxm-runtime/src/runtime.rs` | Wire lifecycle in `execute()` + `execute_artifact_with_session_and_emitter()` (~30 lines each) |
+| `crates/runtime/apxm-runtime/src/executor/context.rs` | Add `vllm_graph_id`, `vllm_execution_id` fields (4 lines) |
+| `crates/runtime/apxm-runtime/src/executor/handlers/llm.rs` | Add `inject_vllm_hints()` (~50 lines) + tool loop fix (3 lines) |
 
 ## Verification
 

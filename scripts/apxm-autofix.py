@@ -325,24 +325,24 @@ def get_fix_instructions(error_type: str) -> str:
 """,
         "mlir_parse_error": """
 1. Review the .air emission in the error messages
-2. Check crates/apxm-frontend/python/apxm/graph/ir.py::to_air()
+2. Check crates/compiler/apxm-frontend/python/apxm/graph/ir.py::to_air()
 3. Compare emitted MLIR with dialect definitions in AISOps.td
 4. Common issues:
    - Missing or extra braces in attribute dicts
    - Incorrect operation syntax (should be %name = ais.op_name {attrs})
    - Type annotation errors (! missing or misplaced)
 5. Fix the to_air() emission or dialect definition
-6. Test: PYTHONPATH=crates/apxm-frontend/python python3 <example>.py
+6. Test: PYTHONPATH=crates/compiler/apxm-frontend/python python3 <example>.py
 """,
         "import_error": """
-1. Check PYTHONPATH is set: export PYTHONPATH=crates/apxm-frontend/python
-2. Verify module structure in crates/apxm-frontend/python/apxm/
+1. Check PYTHONPATH is set: export PYTHONPATH=crates/compiler/apxm-frontend/python
+2. Verify module structure in crates/compiler/apxm-frontend/python/apxm/
 3. Check for missing __init__.py files
 4. Ensure _generated/ directory exists and is populated
 5. Run codegen if needed: python3 tools/scripts/codegen.py
 """,
         "validation_error": """
-1. Review graph validation rules in crates/apxm-graph/src/validation.rs
+1. Review graph validation rules in crates/compiler/apxm-compiler/src/air_builder/
 2. Check for:
    - Missing edges between dependent nodes
    - Unreachable nodes (no path from entry)
@@ -353,7 +353,7 @@ def get_fix_instructions(error_type: str) -> str:
         "type_mismatch": """
 1. Check operation type signatures in AISOps.td
 2. Verify value types match expected inputs/outputs
-3. Compare with Rust type definitions in crates/apxm-ais/src/definitions.rs
+3. Compare with Rust type definitions in crates/core/apxm-ais/src/definitions.rs
 4. Ensure consistent type usage across dialect/frontend/runtime
 """,
         "build_error": """

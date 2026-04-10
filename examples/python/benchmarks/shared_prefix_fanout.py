@@ -108,4 +108,4 @@ def shared_prefix_fanout(g: GraphRecorder):
 
 if __name__ == "__main__":
     # Output the graph as JSON
-    print(shared_prefix_fanout._graph.to_json())
+    print(shared_prefix_fanout._graph.to_air())

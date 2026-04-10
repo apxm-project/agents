@@ -354,15 +354,15 @@ fn upstream_frame_content(&self, node_id: u64, ...) -> Option<String> {
 
 | Component | File | Lines |
 |---|---|---|
-| EpisodicEntry struct | `crates/apxm-runtime/src/memory/episodic.rs` | — |
-| Episodic recording | `crates/apxm-runtime/src/executor/dispatcher.rs` | 147-154 |
-| Session event emission | `crates/apxm-driver/src/session_output.rs` | 608-832 |
-| Node workspace creation | `crates/apxm-driver/src/session_output.rs` | 404-483 |
-| ContextAssembler | `crates/apxm-driver/src/context_assembler.rs` | 47-177 |
-| ContextStack | `crates/apxm-runtime/src/context_stack/mod.rs` | 87-149 |
-| ScopeRules (per-profile) | `crates/apxm-runtime/src/context_stack/policy.rs` | — |
-| AAM bridge rendering | `crates/apxm-acp/src/aam_bridge.rs` | 9-73 |
-| SPAWN_AGENT workspace | `crates/apxm-runtime/src/executor/handlers/spawn_agent.rs` | 106-154, 247-301 |
+| EpisodicEntry struct | `crates/runtime/apxm-runtime/src/memory/episodic.rs` | — |
+| Episodic recording | `crates/runtime/apxm-runtime/src/executor/dispatcher.rs` | 147-154 |
+| Session event emission | `crates/orchestration/apxm-driver/src/session_output.rs` | 608-832 |
+| Node workspace creation | `crates/orchestration/apxm-driver/src/session_output.rs` | 404-483 |
+| ContextAssembler | `crates/orchestration/apxm-driver/src/context_assembler.rs` | 47-177 |
+| ContextStack | `crates/runtime/apxm-runtime/src/context_stack/mod.rs` | 87-149 |
+| ScopeRules (per-profile) | `crates/runtime/apxm-runtime/src/context_stack/policy.rs` | — |
+| AAM bridge rendering | `crates/orchestration/apxm-acp/src/aam_bridge.rs` | 9-73 |
+| SPAWN_AGENT workspace | `crates/runtime/apxm-runtime/src/executor/handlers/spawn_agent.rs` | 106-154, 247-301 |
 | EventBus (orphaned) | `crates/apxm-events/src/bus.rs` | 1-96 |
-| REFLECT (uses episodic) | `crates/apxm-runtime/src/executor/handlers/reflect.rs` | 123-130 |
-| Worker event recording | `crates/apxm-runtime/src/scheduler/worker.rs` | 522-562 |
+| REFLECT (uses episodic) | `crates/runtime/apxm-runtime/src/executor/handlers/reflect.rs` | 123-130 |
+| Worker event recording | `crates/runtime/apxm-runtime/src/scheduler/worker.rs` | 522-562 |

@@ -73,7 +73,7 @@ All workflows follow the same pattern:
 
 ```bash
 # Generate .air file
-PYTHONPATH=crates/apxm-frontend/python python3 examples/python/self-hosted/add_op.py > /tmp/add_op.air
+PYTHONPATH=crates/compiler/apxm-frontend/python python3 examples/python/self-hosted/add_op.py > /tmp/add_op.air
 
 # Compile to artifact
 dekk apxm compile /tmp/add_op.air -o /tmp/add_op.apxmobj
@@ -112,7 +112,7 @@ dekk apxm replay ~/.apxm/sessions/<id>
 
 ```bash
 # Compile the add_op workflow
-PYTHONPATH=crates/apxm-frontend/python python3 examples/python/self-hosted/add_op.py > /tmp/add_op.air
+PYTHONPATH=crates/compiler/apxm-frontend/python python3 examples/python/self-hosted/add_op.py > /tmp/add_op.air
 
 # Execute it with parameters
 dekk apxm execute /tmp/add_op.air --emit-session "CHECKPOINT" "Save execution state for later resume"

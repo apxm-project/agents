@@ -86,7 +86,7 @@ python3 -m examples.python.acp-agents.parallel_agents
 
 ```python
 import sys
-sys.path.insert(0, 'crates/apxm-frontend/python')
+sys.path.insert(0, 'crates/compiler/apxm-frontend/python')
 
 from examples.python.basics.hello import hello_world
 
@@ -191,7 +191,7 @@ All converted examples emit parser-safe `.air`:
 ```bash
 # Verify an example
 python3 -c "
-import sys; sys.path.insert(0, 'crates/apxm-frontend/python')
+import sys; sys.path.insert(0, 'crates/compiler/apxm-frontend/python')
 from examples.python.basics.hello import hello_world
 print(hello_world._graph.to_air())
 "
@@ -205,7 +205,7 @@ print(hello_world._graph.to_air())
 
 ## Documentation
 
-- **Python API Reference**: `crates/apxm-frontend/python/apxm/graph/proxy.py`
+- **Python API Reference**: `crates/compiler/apxm-frontend/python/apxm/graph/proxy.py`
 - **Full AIS Reference**: `docs/guides/first-graph.md`
 - **Phase 5 Plan**: `docs/strategy/plan.md`
 
