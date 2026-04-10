@@ -377,6 +377,21 @@ fn generate_bindings(
         );
     }
 
+    // Also add the conda sysroot include path so clang's stdint.h can
+    // `#include_next <stdint.h>` to find the system header.
+    for root in &clang_roots {
+        let sysroot_include = root.join("x86_64-conda-linux-gnu/sysroot/usr/include");
+        if sysroot_include.join("stdint.h").exists() {
+            log_info!(
+                "apxm-compiler-build",
+                "Found conda sysroot includes at {}",
+                sysroot_include.display()
+            );
+            extra_clang_args.push(format!("-I{}", sysroot_include.display()));
+            break;
+        }
+    }
+
     let builder = bindgen::Builder::default()
         .header(header_path.to_str().context("Invalid header path")?)
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))

@@ -10,6 +10,7 @@ use apxm_core::types::AISOperationType;
 use dashmap::DashMap;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -50,7 +51,7 @@ impl SelectionCriteria {
 /// Resolve which backend to use for a request.
 pub fn resolve(
     criteria: &SelectionCriteria,
-    backends: &Arc<DashMap<String, Arc<dyn LLMBackend>>>,
+    backends: &Arc<RwLock<HashMap<String, Arc<dyn LLMBackend>>>>,
     operation_defaults: &Arc<DashMap<AISOperationType, String>>,
     default_backend: &Arc<RwLock<Option<String>>>,
     health_monitor: &HealthMonitor,
@@ -59,7 +60,7 @@ pub fn resolve(
 ) -> Result<String> {
     // Priority 1: Explicit backend selection
     if let Some(ref backend_name) = criteria.backend {
-        if backends.contains_key(backend_name) {
+        if backends.read().contains_key(backend_name) {
             return Ok(backend_name.clone());
         }
         anyhow::bail!("Explicitly requested backend '{}' not found", backend_name);
@@ -77,7 +78,7 @@ pub fn resolve(
         && let Some(entry) = operation_defaults.get(&operation)
     {
         let backend_name = entry.value().clone();
-        if backends.contains_key(&backend_name) {
+        if backends.read().contains_key(&backend_name) {
             return Ok(backend_name);
         }
     }
@@ -86,7 +87,7 @@ pub fn resolve(
     {
         let default = default_backend.read();
         if let Some(ref backend_name) = *default
-            && backends.contains_key(backend_name)
+            && backends.read().contains_key(backend_name)
         {
             return Ok(backend_name.clone());
         }
@@ -98,15 +99,15 @@ pub fn resolve(
 
 /// Find a backend that supports the given model.
 fn find_backend_for_model(
-    backends: &Arc<DashMap<String, Arc<dyn LLMBackend>>>,
+    backends: &Arc<RwLock<HashMap<String, Arc<dyn LLMBackend>>>>,
     model: &str,
 ) -> Option<String> {
     // Only use explicit backend registrations. Provider-name heuristics belong
     // outside the registry because they undermine APXM's registration model.
-    for entry in backends.iter() {
-        let backend = entry.value();
+    let guard = backends.read();
+    for (name, backend) in guard.iter() {
         if backend.model() == model {
-            return Some(entry.key().clone());
+            return Some(name.clone());
         }
     }
 
@@ -115,12 +116,12 @@ fn find_backend_for_model(
 
 /// Select a backend based on routing strategy.
 fn select_by_strategy(
-    backends: &Arc<DashMap<String, Arc<dyn LLMBackend>>>,
+    backends: &Arc<RwLock<HashMap<String, Arc<dyn LLMBackend>>>>,
     health_monitor: &HealthMonitor,
     strategy: &RoutingStrategy,
     round_robin_counter: &Arc<AtomicUsize>,
 ) -> Result<String> {
-    if backends.is_empty() {
+    if backends.read().is_empty() {
         anyhow::bail!("No backends registered");
     }
 
@@ -133,32 +134,30 @@ fn select_by_strategy(
 
 /// Select the first healthy backend.
 fn select_first_healthy(
-    backends: &Arc<DashMap<String, Arc<dyn LLMBackend>>>,
+    backends: &Arc<RwLock<HashMap<String, Arc<dyn LLMBackend>>>>,
     health_monitor: &HealthMonitor,
 ) -> Result<String> {
-    // Try to find a healthy backend
-    for entry in backends.iter() {
-        let name = entry.key().clone();
-        let status = health_monitor.status(&name);
+    let guard = backends.read();
 
+    // Try to find a healthy backend
+    for name in guard.keys() {
+        let status = health_monitor.status(name);
         if status == HealthStatus::Healthy || status == HealthStatus::Unknown {
-            return Ok(name);
+            return Ok(name.clone());
         }
     }
 
     // If no healthy backend, try degraded
-    for entry in backends.iter() {
-        let name = entry.key().clone();
-        let status = health_monitor.status(&name);
-
+    for name in guard.keys() {
+        let status = health_monitor.status(name);
         if status == HealthStatus::Degraded {
-            return Ok(name);
+            return Ok(name.clone());
         }
     }
 
     // Last resort: return any backend
-    if let Some(entry) = backends.iter().next() {
-        Ok(entry.key().clone())
+    if let Some(name) = guard.keys().next() {
+        Ok(name.clone())
     } else {
         anyhow::bail!("No backends registered (unexpected)")
     }
@@ -166,19 +165,23 @@ fn select_first_healthy(
 
 /// Select backend using round-robin across healthy backends.
 fn select_round_robin(
-    backends: &Arc<DashMap<String, Arc<dyn LLMBackend>>>,
+    backends: &Arc<RwLock<HashMap<String, Arc<dyn LLMBackend>>>>,
     health_monitor: &HealthMonitor,
     counter: &Arc<AtomicUsize>,
 ) -> Result<String> {
+    let guard = backends.read();
+
     // Collect healthy backends
-    let healthy: Vec<String> = backends
-        .iter()
-        .filter(|entry| {
-            let status = health_monitor.status(entry.key());
+    let healthy: Vec<String> = guard
+        .keys()
+        .filter(|name| {
+            let status = health_monitor.status(name);
             status == HealthStatus::Healthy || status == HealthStatus::Unknown
         })
-        .map(|entry| entry.key().clone())
+        .cloned()
         .collect();
+
+    drop(guard);
 
     if healthy.is_empty() {
         // Fall back to first_healthy logic (which includes degraded backends)
@@ -192,32 +195,34 @@ fn select_round_robin(
 
 /// Select backend with lowest average latency.
 fn select_low_latency(
-    backends: &Arc<DashMap<String, Arc<dyn LLMBackend>>>,
+    backends: &Arc<RwLock<HashMap<String, Arc<dyn LLMBackend>>>>,
     health_monitor: &HealthMonitor,
 ) -> Result<String> {
+    let guard = backends.read();
     let mut best_backend: Option<(String, std::time::Duration)> = None;
 
-    for entry in backends.iter() {
-        let name = entry.key().clone();
-        let status = health_monitor.status(&name);
+    for name in guard.keys() {
+        let status = health_monitor.status(name);
 
         if status == HealthStatus::Unhealthy {
             continue;
         }
 
-        if let Some(avg_latency) = health_monitor.average_latency(&name) {
+        if let Some(avg_latency) = health_monitor.average_latency(name) {
             match &best_backend {
                 None => {
-                    best_backend = Some((name, avg_latency));
+                    best_backend = Some((name.clone(), avg_latency));
                 }
                 Some((_, best_latency)) => {
                     if avg_latency < *best_latency {
-                        best_backend = Some((name, avg_latency));
+                        best_backend = Some((name.clone(), avg_latency));
                     }
                 }
             }
         }
     }
+
+    drop(guard);
 
     if let Some((name, _)) = best_backend {
         Ok(name)
@@ -237,7 +242,7 @@ mod tests {
 
     #[test]
     fn test_model_matching() {
-        let backends = Arc::new(DashMap::<String, Arc<dyn LLMBackend>>::new());
+        let backends = Arc::new(RwLock::new(HashMap::<String, Arc<dyn LLMBackend>>::new()));
         assert!(find_backend_for_model(&backends, "gpt-4").is_none());
     }
 }

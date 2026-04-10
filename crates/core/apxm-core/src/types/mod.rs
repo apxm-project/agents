@@ -19,6 +19,7 @@ pub mod intents;
 // ── Domain ─────────────────────────────────────────────────
 pub mod compiler;
 pub mod models;
+pub mod model_spec;
 pub mod backend;
 pub mod provider_spec;
 pub mod llm_control_plane;
@@ -68,6 +69,10 @@ pub use values::{Number, Token, TokenId, TokenStatus, Value};
 
 pub use backend::{BackendConfig, BackendType, DockerConfig, ModelConfig};
 pub use config::InstructionConfig;
+pub use model_spec::{
+    BUILTIN_MODELS, BuiltinModelSpec, default_model_for_provider, models_for_provider,
+    resolve_builtin_model,
+};
 pub use provider_spec::{
     BUILTIN_PROVIDERS, BuiltinProviderSpec, ProviderProtocol, ProviderSpec,
     resolve_builtin_provider, resolve_provider_spec,

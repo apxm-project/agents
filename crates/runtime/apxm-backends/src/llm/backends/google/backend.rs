@@ -18,8 +18,9 @@ use serde_json::json;
 use std::pin::Pin;
 use tokio_stream::Stream;
 
+use apxm_core::types::model_spec::{default_model_for_provider, models_for_provider};
+
 const DEFAULT_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta";
-const DEFAULT_MODEL: &str = "gemini-flash-latest";
 
 /// Google AI LLM backend.
 pub struct GoogleBackend {
@@ -40,7 +41,7 @@ impl GoogleBackend {
             .as_ref()
             .and_then(|c| c.get(MODEL))
             .and_then(|m| m.as_str())
-            .unwrap_or(DEFAULT_MODEL)
+            .unwrap_or_else(|| default_model_for_provider("google").unwrap_or("gemini-2.5-flash"))
             .to_string();
 
         let base_url = config
@@ -322,13 +323,10 @@ impl LLMBackend for GoogleBackend {
     }
 
     async fn list_models(&self) -> Result<Vec<ModelInfo>> {
-        // Return well-known models as documentation hints.
-        // The API will accept any model ID — this list is not enforced.
-        Ok(crate::llm::backends::google::WELL_KNOWN_MODELS
-            .iter()
-            .map(|id| ModelInfo {
-                id: id.to_string(),
-                name: id.to_string(),
+        Ok(models_for_provider("google")
+            .map(|m| ModelInfo {
+                id: m.id.to_string(),
+                name: m.id.to_string(),
                 context_window: 1_000_000,
                 supports_vision: true,
                 supports_functions: true,

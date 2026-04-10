@@ -1,12 +1,7 @@
 use crate::BackendError;
 use apxm_core::types::BackendConfig;
+use apxm_core::types::model_spec::default_model_for_provider;
 use apxm_core::types::provider_spec::{ProviderProtocol, resolve_builtin_provider};
-
-/// Fallback model for OpenAI validation when no model is configured.
-const OPENAI_FALLBACK_MODEL: &str = "gpt-4o-mini";
-
-/// Fallback model for Anthropic validation when no model is configured.
-const ANTHROPIC_FALLBACK_MODEL: &str = "claude-3-haiku-20240307";
 
 /// Validate a backend by making a minimal API call.
 ///
@@ -89,7 +84,7 @@ async fn validate_openai(
         .models
         .first()
         .map(|m| m.id.as_str())
-        .unwrap_or(OPENAI_FALLBACK_MODEL);
+        .unwrap_or_else(|| default_model_for_provider("openai").unwrap_or("gpt-4o-mini"));
     let chat_url = format!("{base}/chat/completions");
     let mut req = client
         .post(&chat_url)
@@ -128,7 +123,7 @@ async fn validate_anthropic(
         .models
         .first()
         .map(|m| m.id.as_str())
-        .unwrap_or(ANTHROPIC_FALLBACK_MODEL);
+        .unwrap_or_else(|| default_model_for_provider("anthropic").unwrap_or("claude-3-haiku-20240307"));
 
     let body = format!(
         "{{\"model\":\"{}\",\"max_tokens\":1,\"messages\":[{{\"role\":\"user\",\"content\":\"hi\"}}]}}",

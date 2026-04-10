@@ -3,7 +3,7 @@ import type { ApxmGraph, GraphLayout } from "@/types/graph";
 import type { TraceEvent, NodeLiveStatus } from "@/types/events";
 import type { SessionData, SessionInfo } from "@/types/session";
 import type { OpSpec } from "@/types/ops";
-import type { GraphAnalysis, WorkflowInfo, HealthStatus } from "@/types/api";
+import type { GraphAnalysis, WorkflowInfo, HealthStatus, PassInfo } from "@/types/api";
 import type { TabKey } from "@/lib/constants";
 
 type AppState = {
@@ -33,6 +33,7 @@ type AppState = {
   replaySessionPath: string | null;
   // Data
   ops: OpSpec[];
+  passes: PassInfo[];
   config: string;
   workflows: WorkflowInfo[];
   health: HealthStatus | null;
@@ -60,6 +61,7 @@ type AppState = {
   navigateToLive: (sessionPath: string) => void;
   navigateToReplay: (sessionPath: string) => void;
   setOps: (ops: OpSpec[]) => void;
+  setPasses: (passes: PassInfo[]) => void;
   setConfig: (config: string) => void;
   setWorkflows: (workflows: WorkflowInfo[]) => void;
   setHealth: (health: HealthStatus | null) => void;
@@ -90,6 +92,7 @@ export const useAppStore = create<AppState>((set) => ({
   liveManifest: null,
   replaySessionPath: null,
   ops: [],
+  passes: [],
   config: "",
   workflows: [],
   health: null,
@@ -125,6 +128,7 @@ export const useAppStore = create<AppState>((set) => ({
   navigateToLive: (sessionPath) => set({ liveActive: true, liveSessionPath: sessionPath, activeTab: "live" }),
   navigateToReplay: (sessionPath) => set({ replaySessionPath: sessionPath, activeTab: "replay" }),
   setOps: (ops) => set({ ops }),
+  setPasses: (passes) => set({ passes }),
   setConfig: (config) => set({ config }),
   setWorkflows: (workflows) => set({ workflows }),
   setHealth: (health) => set({ health }),

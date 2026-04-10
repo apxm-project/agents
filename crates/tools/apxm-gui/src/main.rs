@@ -540,7 +540,7 @@ async fn collect_graphs(
 
         if path.is_dir() {
             Box::pin(collect_graphs(base, &path, depth + 1, out)).await;
-        } else if path.extension().map_or(false, |e| e == "apxm") {
+        } else if path.extension().map_or(false, |e| e == "apxm" || e == "air") {
             let abs = tokio::fs::canonicalize(&path)
                 .await
                 .unwrap_or_else(|_| path.clone())
@@ -655,7 +655,7 @@ async fn filetree_handler() -> ApiResult<impl IntoResponse> {
                 }
             } else {
                 let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-                if matches!(ext, "apxm" | "py" | "toml") {
+                if matches!(ext, "apxm" | "air" | "py" | "toml") {
                     let mut entry_json = serde_json::json!({
                         "name": name,
                         "path": rel,
@@ -663,7 +663,7 @@ async fn filetree_handler() -> ApiResult<impl IntoResponse> {
                     });
 
                     // For .apxm files, extract graph metadata
-                    if ext == "apxm" {
+                    if ext == "apxm" || ext == "air" {
                         if let Ok(content) = tokio::fs::read_to_string(&path).await {
                             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content) {
                                 let graph_name = parsed.get("name").and_then(|n| n.as_str());
@@ -952,7 +952,7 @@ async fn main() {
         .or_else(|| {
             // Also accept a bare positional .apxm arg (last arg not starting with --)
             args.last()
-                .filter(|a| a.ends_with(".apxm") && !a.starts_with("--"))
+                .filter(|a| (a.ends_with(".apxm") || a.ends_with(".air")) && !a.starts_with("--"))
                 .cloned()
         })
         .map(|f| {
