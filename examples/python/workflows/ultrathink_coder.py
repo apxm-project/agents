@@ -43,7 +43,7 @@ def ultrathink_coder(g: GraphRecorder, task: str):
         "ultrathink. You are an adversarial reviewer. What already exists that should NOT be re-implemented? "
         "Minimal viable change vs over-engineering? Top 3 failure modes? What NOT to build in v1? "
         "The ONE thing that breaks everything? Be brutal. Adversary wins on scope. "
-        "Read crates/apxm-runtime/src/model_router/ first. Task: {task_ok}"
+        "Read crates/runtime/apxm-runtime/src/model_router/ first. Task: {task_ok}"
     )
 
     impl_ = g.think(

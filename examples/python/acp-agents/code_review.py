@@ -22,7 +22,7 @@ def code_review(g: GraphRecorder):
 
     # Codex analyzes the code
     coding_task = (
-        "Look at the file crates/apxm-runtime/src/executor/handlers/spawn_agent.rs "
+        "Look at the file crates/runtime/apxm-runtime/src/executor/handlers/spawn_agent.rs "
         "in this codebase. Write a brief summary of what it does and identify one "
         "potential improvement or edge case that could be handled better. Keep your "
         "response under 200 words."

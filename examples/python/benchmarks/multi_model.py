@@ -115,4 +115,4 @@ def multi_model(g: GraphRecorder):
 
 if __name__ == "__main__":
     # Output the graph as JSON
-    print(multi_model._graph.to_json())
+    print(multi_model._graph.to_air())

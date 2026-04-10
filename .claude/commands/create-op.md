@@ -10,7 +10,7 @@ Read each file before editing. Look at neighboring match arms and existing ops f
 
 ## Step 1: Enum + all match arms
 
-**File**: `crates/apxm-ais/src/operations/definitions.rs`
+**File**: `crates/core/apxm-ais/src/operations/definitions.rs`
 
 Add **all 8** of these in the file (read it first to find each location):
 
@@ -25,13 +25,13 @@ Add **all 8** of these in the file (read it first to find each location):
 
 ## Step 2: Constants
 
-**File**: `crates/apxm-core/src/constants.rs`
+**File**: `crates/core/apxm-core/src/constants.rs`
 
 Add attribute keys to `graph::attrs`, belief keys to `runtime::belief_keys`, response keys to `runtime::response_keys` — only for genuinely new strings. Reuse existing constants whenever possible.
 
 ## Step 3: Handler
 
-**File**: `crates/apxm-runtime/src/executor/handlers/<new_op>.rs` (new)
+**File**: `crates/runtime/apxm-runtime/src/executor/handlers/<new_op>.rs` (new)
 
 ```rust
 use super::{ExecutionContext, Node, Result, Value, get_string_attribute};
@@ -47,13 +47,13 @@ Copy test boilerplate from an existing handler in the same category (e.g., `nop.
 
 ## Step 4: Register handler module
 
-**File**: `crates/apxm-runtime/src/executor/handlers/mod.rs`
+**File**: `crates/runtime/apxm-runtime/src/executor/handlers/mod.rs`
 
 Add `pub mod <new_op>;` in alphabetical order.
 
 ## Step 5: Dispatcher
 
-**File**: `crates/apxm-runtime/src/executor/dispatcher.rs`
+**File**: `crates/runtime/apxm-runtime/src/executor/dispatcher.rs`
 
 1. Add match arm: `AISOperationType::NewOp => new_op::execute(ctx, node, inputs).await,`
 2. Update `all_operations_covered` test count (currently 39)
@@ -66,8 +66,8 @@ Add match arm in `lower_node()`. Read the file and follow the pattern of a simil
 
 ## Step 7: C++ compiler (skip if Rust-only)
 
-- `crates/apxm-compiler/mlir/lib/Dialect/AIS/Conversion/Artifact/ArtifactEmitter.cpp` — add `OperationKind` enum value + `.Case<>()` in `mapOperation()`
-- `crates/apxm-compiler/mlir/include/ais/Dialect/AIS/IR/AISOps.td` — add TableGen op def
+- `crates/compiler/apxm-compiler/mlir/lib/Dialect/AIS/Conversion/Artifact/ArtifactEmitter.cpp` — add `OperationKind` enum value + `.Case<>()` in `mapOperation()`
+- `crates/compiler/apxm-compiler/mlir/include/ais/Dialect/AIS/IR/AISOps.td` — add TableGen op def
 
 ## Step 8: Docs
 

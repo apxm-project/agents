@@ -107,6 +107,11 @@ stats = { run = "apxm cache stats", description = "Show cache statistics" }
 clear = { run = "apxm cache clear", description = "Clear all cached entries" }
 export = { run = "apxm cache export", description = "Export cache to JSON" }
 
+[agents]
+targets = ["claude", "codex", "copilot", "cursor"]
+enrich = true
+version = "0.1.0"
+
 [install]
 wrap = { name = "apxm", target = "target/release/apxm" }
 

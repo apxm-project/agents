@@ -12,7 +12,7 @@ Graph structure:
 - think: report — summarize what was fixed
 
 Usage:
-    PYTHONPATH=crates/apxm-frontend/python python3 examples/python/self-hosted/autofix_workflow.py > /tmp/autofix.air
+    PYTHONPATH=crates/compiler/apxm-frontend/python python3 examples/python/self-hosted/autofix_workflow.py > /tmp/autofix.air
     dekk apxm compile /tmp/autofix.air -o /tmp/autofix.apxmobj
     dekk apxm execute /tmp/autofix.air "examples/python"
 """

@@ -22,10 +22,10 @@ def apxm_dev_workflow(g: GraphRecorder):
     task = g.text(
         value="Add a CHECKPOINT operation to the AIS instruction set at wire index 38. "
         "Follow the exact pattern of the existing Pause op in: "
-        "(1) crates/apxm-ais/src/operations/definitions.rs - add the enum variant, all match arms, and OperationSpec. "
-        "(2) crates/apxm-runtime/src/executor/handlers/checkpoint.rs - create stub handler. "
-        "(3) crates/apxm-runtime/src/executor/handlers/mod.rs - register the module. "
-        "(4) crates/apxm-runtime/src/executor/dispatcher.rs - add match arm and update the count. "
+        "(1) crates/core/apxm-ais/src/operations/definitions.rs - add the enum variant, all match arms, and OperationSpec. "
+        "(2) crates/runtime/apxm-runtime/src/executor/handlers/checkpoint.rs - create stub handler. "
+        "(3) crates/runtime/apxm-runtime/src/executor/handlers/mod.rs - register the module. "
+        "(4) crates/runtime/apxm-runtime/src/executor/dispatcher.rs - add match arm and update the count. "
         "Required attribute: checkpoint_id (string). The handler should write to STM and return a token."
     )
 

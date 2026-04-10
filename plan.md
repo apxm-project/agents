@@ -27,7 +27,7 @@ The core bet still holds:
 ## Decisions
 
 - Python package name: `apxm`
-- New crate location: `crates/apxm-frontend/`
+- New crate location: `crates/compiler/apxm-frontend/`
 - Frontend layout: `rust/` for registry/codegen support, `python/` for the user-facing package
 - `.ais` deprecation: yes
 - `.ais` deletion: only after parity gates pass
@@ -91,13 +91,13 @@ Exit criteria:
 - A parity matrix exists for first-party examples and tests
 - The migration scope is based on observed usage, not aspirational API design
 
-### Phase 1: Create `crates/apxm-frontend/`
+### Phase 1: Create `crates/compiler/apxm-frontend/`
 
 Stand up the crate and make code generation real before moving Python code.
 
 Tasks:
 
-- Add `crates/apxm-frontend/` to the workspace
+- Add `crates/compiler/apxm-frontend/` to the workspace
 - Create `rust/` crate with:
   - `lib.rs`
   - `registry.rs`
@@ -129,7 +129,7 @@ Move the usable Python frontend into the new crate without redesigning everythin
 
 Tasks:
 
-- Copy the Python package from `external/agentmate/` into `crates/apxm-frontend/python/apxm/`
+- Copy the Python package from `external/agentmate/` into `crates/compiler/apxm-frontend/python/apxm/`
 - Rename imports from `agentmate` to `apxm`
 - Replace duplicated constants with imports from `apxm._generated`
 - Keep behavior stable where possible
@@ -221,7 +221,7 @@ Delete the DSL only after the Python frontend is established.
 
 Tasks:
 
-- Remove the C++ parser under `crates/apxm-compiler/mlir/lib/Parser/`
+- Remove the C++ parser under `crates/compiler/apxm-compiler/mlir/lib/Parser/`
 - Remove DSL C API entry points
 - Remove Rust DSL entry points and FFI exports
 - Remove `.ais` dispatch from the driver
@@ -300,7 +300,7 @@ Mitigation:
 
 The frontend migration is successful when all of the following are true:
 
-- `crates/apxm-frontend/` exists and is part of the workspace
+- `crates/compiler/apxm-frontend/` exists and is part of the workspace
 - `apxm codegen frontend` generates importable Python modules for Rust-owned registries
 - `apxm` replaces the needed `agentmate` functionality for first-party workflows
 - Function-signature parameters work for `@compile` flows

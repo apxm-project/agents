@@ -13,7 +13,7 @@ Graph structure:
 - think: final_plan — structured plan with file paths and test strategy
 
 Usage:
-    PYTHONPATH=crates/apxm-frontend/python python3 examples/python/self-hosted/plan_feature.py > /tmp/plan.air
+    PYTHONPATH=crates/compiler/apxm-frontend/python python3 examples/python/self-hosted/plan_feature.py > /tmp/plan.air
     dekk apxm compile /tmp/plan.air -o /tmp/plan.apxmobj
     dekk apxm execute /tmp/plan.air "Add streaming support to LLM backends"
 """

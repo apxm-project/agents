@@ -15,7 +15,7 @@ Graph structure:
 - think: generate actionable recommendations
 
 Usage:
-    PYTHONPATH=crates/apxm-frontend/python python3 examples/python/self-hosted/audit.py > /tmp/audit.air
+    PYTHONPATH=crates/compiler/apxm-frontend/python python3 examples/python/self-hosted/audit.py > /tmp/audit.air
     dekk apxm compile /tmp/audit.air -o /tmp/audit.apxmobj
     dekk apxm execute /tmp/audit.air "full"
 """
@@ -105,7 +105,7 @@ Output JSON:
     autofix_task = g.text(value="""Run APXM autofix validation and report:
 
 Execute:
-  PYTHONPATH=crates/apxm-frontend/python python3 scripts/apxm-autofix.py --report-only
+  PYTHONPATH=crates/compiler/apxm-frontend/python python3 scripts/apxm-autofix.py --report-only
 
 Parse the output and report:
 - Validation status (all pass/some failures)
@@ -170,7 +170,7 @@ Output JSON:
 
 Execute:
   grep -r "TODO\\|FIXME" crates/apxm-runtime crates/apxm-compiler --include="*.rs" | wc -l
-  grep -r "stub\\|unimplemented" crates/apxm-runtime/src/executor/handlers --include="*.rs" | wc -l
+  grep -r "stub\\|unimplemented" crates/runtime/apxm-runtime/src/executor/handlers --include="*.rs" | wc -l
 
 Report:
 - Total TODOs/FIXMEs
@@ -196,14 +196,14 @@ Output JSON:
     missing_ops_task = g.text(value="""Check for missing AIS operations in artifact emitter:
 
 Compare:
-1. AIS operations defined in crates/apxm-ais/src/operations/definitions.rs (AISOperationType enum)
-2. Operations mapped in crates/apxm-compiler/mlir/lib/Dialect/AIS/Conversion/Artifact/ArtifactEmitter.cpp (mapOperation function)
+1. AIS operations defined in crates/core/apxm-ais/src/operations/definitions.rs (AISOperationType enum)
+2. Operations mapped in crates/compiler/apxm-compiler/mlir/lib/Dialect/AIS/Conversion/Artifact/ArtifactEmitter.cpp (mapOperation function)
 
 Report any operations defined in Rust but missing from the C++ emitter.
 
 Execute:
-  grep "^\\s*[A-Z][a-zA-Z]*," crates/apxm-ais/src/operations/definitions.rs | wc -l
-  grep "Case<.*Op>" crates/apxm-compiler/mlir/lib/Dialect/AIS/Conversion/Artifact/ArtifactEmitter.cpp | wc -l
+  grep "^\\s*[A-Z][a-zA-Z]*," crates/core/apxm-ais/src/operations/definitions.rs | wc -l
+  grep "Case<.*Op>" crates/compiler/apxm-compiler/mlir/lib/Dialect/AIS/Conversion/Artifact/ArtifactEmitter.cpp | wc -l
 
 Output JSON:
 {

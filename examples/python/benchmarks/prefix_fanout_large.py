@@ -360,4 +360,4 @@ SUMMARY:
 
 if __name__ == "__main__":
     # Output the graph as JSON
-    print(prefix_fanout_large._graph.to_json())
+    print(prefix_fanout_large._graph.to_air())

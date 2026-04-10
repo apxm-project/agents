@@ -40,7 +40,7 @@ def architect_implement_review(g: GraphRecorder):
     # Stage 2: Coder implements
     implement_prompt = g.ask(
         "Based on the following design spec, write the stub implementation. Produce exactly two sections:\n"
-        "1. Rust handler: crates/apxm-runtime/src/executor/handlers/checkpoint.rs\n"
+        "1. Rust handler: crates/runtime/apxm-runtime/src/executor/handlers/checkpoint.rs\n"
         "2. TableGen op: the def AIS_CheckpointOp block for AISOps.td\n"
         "Keep it compilable. Base it on how spawn_agent.rs and AISOps.td are structured in this repo.\n\n"
         "Design spec:\n{architect_design}"

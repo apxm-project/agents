@@ -10,7 +10,7 @@ Graph structure:
 - spawn verifier (claude) — runs build + tests to ensure nothing broke
 
 Usage:
-    PYTHONPATH=crates/apxm-frontend/python python3 examples/python/self-hosted/remove_op.py > /tmp/remove_op.air
+    PYTHONPATH=crates/compiler/apxm-frontend/python python3 examples/python/self-hosted/remove_op.py > /tmp/remove_op.air
     dekk apxm compile /tmp/remove_op.air -o /tmp/remove_op.apxmobj
     dekk apxm execute /tmp/remove_op.air "OBSOLETE_OP"
 """
@@ -38,11 +38,11 @@ def remove_op_workflow(g: GraphRecorder):
 
 Check:
 1. Where is this operation defined?
-   - crates/apxm-ais/src/definitions.rs (enum variant)
-   - crates/apxm-compiler/mlir/AISOps.td (TableGen def)
-   - crates/apxm-compiler/src/lower/ArtifactEmitter.cpp (lowering)
-   - crates/apxm-runtime/src/executor/handlers/<op>.rs (handler)
-   - crates/apxm-runtime/src/executor/mod.rs (dispatcher)
+   - crates/core/apxm-ais/src/definitions.rs (enum variant)
+   - crates/compiler/apxm-compiler/mlir/AISOps.td (TableGen def)
+   - crates/compiler/apxm-compiler/src/lower/ArtifactEmitter.cpp (lowering)
+   - crates/runtime/apxm-runtime/src/executor/handlers/<op>.rs (handler)
+   - crates/runtime/apxm-runtime/src/executor/mod.rs (dispatcher)
 
 2. What code uses this operation?
    - Search examples/ for usage
@@ -77,15 +77,15 @@ Output a structured removal plan:
 Analysis: {impact_analysis}
 
 Remove from:
-1. crates/apxm-ais/src/definitions.rs
+1. crates/core/apxm-ais/src/definitions.rs
    - Remove enum variant
    - Remove from from_wire_index() match (or add a comment "// Reserved: <wire_index>")
 
-2. crates/apxm-compiler/mlir/AISOps.td
+2. crates/compiler/apxm-compiler/mlir/AISOps.td
    - Remove def AIS_<OpName>Op block
    - Add comment if wire index is reserved
 
-3. crates/apxm-compiler/src/lower/ArtifactEmitter.cpp
+3. crates/compiler/apxm-compiler/src/lower/ArtifactEmitter.cpp
    - Remove case from emitAISOperation() switch
 
 Be careful:
@@ -103,10 +103,10 @@ Be careful:
 Analysis: {impact_analysis}
 
 Remove from:
-1. crates/apxm-runtime/src/executor/handlers/<op>.rs
+1. crates/runtime/apxm-runtime/src/executor/handlers/<op>.rs
    - Delete the entire file
 
-2. crates/apxm-runtime/src/executor/mod.rs
+2. crates/runtime/apxm-runtime/src/executor/mod.rs
    - Remove mod <op> declaration
    - Remove match arm from execute_node()
 

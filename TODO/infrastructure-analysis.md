@@ -49,7 +49,7 @@ APXM's infrastructure is **significantly more sophisticated** than the OpenMulti
 
 **CRITICAL — Affects production reliability**
 
-**Verified Location**: `crates/apxm-backends/src/llm/registry/mod.rs:395-419`
+**Verified Location**: `crates/runtime/apxm-backends/src/llm/registry/mod.rs:395-419`
 
 **Finding**: `generate()` (non-streaming) has full fallback chain + retry logic. `generate_stream()` resolves a single backend and fails hard if it's unhealthy. No retry, no fallback.
 
@@ -59,7 +59,7 @@ APXM's infrastructure is **significantly more sophisticated** than the OpenMulti
 
 **Enhancement**:
 ```
-File: crates/apxm-backends/src/llm/registry/mod.rs
+File: crates/runtime/apxm-backends/src/llm/registry/mod.rs
 
 Add: generate_stream_with_fallback() that:
 1. Tries primary backend stream
@@ -100,7 +100,7 @@ Phase A — Graph-level (Rust, crates/apxm-graph/src/optimize.rs):
     - Low-latency I/O nodes → priority 50 (Normal, but ahead of peers)
     - Default → priority 30 (Normal)
 
-Phase B — MLIR pass (crates/apxm-compiler/mlir/):
+Phase B — MLIR pass (crates/compiler/apxm-compiler/mlir/):
   CapabilityScheduling.cpp already classifies tiers.
   Add: ais.priority attribute extraction in ArtifactEmitter.cpp:emitNode()
 ```
@@ -163,10 +163,10 @@ Option B (simpler):
 Phase A — Fix cleanup (bug fix):
   Add Runtime::shutdown() or execution-end hook that calls
   process_table.close_all() to gracefully terminate ACP sessions.
-  File: crates/apxm-runtime/src/runtime.rs
+  File: crates/runtime/apxm-runtime/src/runtime.rs
 
 Phase B — Warm pool (optimization):
-  New struct AgentPool in crates/apxm-runtime/src/agent_pool.rs:
+  New struct AgentPool in crates/runtime/apxm-runtime/src/agent_pool.rs:
   - pools: DashMap<String, Vec<PooledSession>>  // profile_name → warm sessions
   - acquire(profile, aam_context) → warm session or spawn new
   - release(session) → return to pool (inject new preamble to reset context)
@@ -187,7 +187,7 @@ Phase C — Compiler hint:
 
 **MEDIUM — Affects cost control at scale**
 
-**Verified**: `crates/apxm-backends/src/llm/rate_limit.rs:163`: Always consumes exactly 1.0 token per request regardless of actual token count.
+**Verified**: `crates/runtime/apxm-backends/src/llm/rate_limit.rs:163`: Always consumes exactly 1.0 token per request regardless of actual token count.
 
 **Enhancement**:
 ```
@@ -210,7 +210,7 @@ Add RateLimitConfig::token_based: bool flag to distinguish per-request vs per-to
 
 **MEDIUM — Advertised feature doesn't work**
 
-**Verified**: `crates/apxm-backends/src/llm/registry/resolver.rs:164-170`:
+**Verified**: `crates/runtime/apxm-backends/src/llm/registry/resolver.rs:164-170`:
 ```rust
 fn select_round_robin(...) -> Result<String> {
     select_first_healthy(...)  // Just calls FirstHealthy!
@@ -372,24 +372,24 @@ Nesting             runTasks (fork+join)               Recursive ExecutorEngine 
 
 | Component | Primary File | Lines |
 |---|---|---|
-| Scheduler priority pipeline | `crates/apxm-runtime/src/scheduler/state.rs` | 147-152, 384-419 |
-| Priority queue | `crates/apxm-runtime/src/scheduler/queue.rs` | 11-46 |
-| Work stealing | `crates/apxm-runtime/src/scheduler/work_stealing.rs` | 56-120 |
+| Scheduler priority pipeline | `crates/runtime/apxm-runtime/src/scheduler/state.rs` | 147-152, 384-419 |
+| Priority queue | `crates/runtime/apxm-runtime/src/scheduler/queue.rs` | 11-46 |
+| Work stealing | `crates/runtime/apxm-runtime/src/scheduler/work_stealing.rs` | 56-120 |
 | Parallelism analysis | `crates/apxm-graph/src/optimize.rs` | 116-281 |
-| Artifact emitter (C++) | `crates/apxm-compiler/mlir/.../ArtifactEmitter.cpp` | 582-657 |
-| LLM fallback chain | `crates/apxm-backends/src/llm/registry/mod.rs` | 285-330 |
-| Streaming (no fallback) | `crates/apxm-backends/src/llm/registry/mod.rs` | 395-419 |
-| Rate limiter | `crates/apxm-backends/src/llm/rate_limit.rs` | 163 |
-| RoundRobin stub | `crates/apxm-backends/src/llm/registry/resolver.rs` | 164-170 |
-| Circuit breaker | `crates/apxm-runtime/src/model_router/health.rs` | 24-122 |
-| Sandbox routing | `crates/apxm-runtime/src/capability/mod.rs` | 304-353 |
+| Artifact emitter (C++) | `crates/compiler/apxm-compiler/mlir/.../ArtifactEmitter.cpp` | 582-657 |
+| LLM fallback chain | `crates/runtime/apxm-backends/src/llm/registry/mod.rs` | 285-330 |
+| Streaming (no fallback) | `crates/runtime/apxm-backends/src/llm/registry/mod.rs` | 395-419 |
+| Rate limiter | `crates/runtime/apxm-backends/src/llm/rate_limit.rs` | 163 |
+| RoundRobin stub | `crates/runtime/apxm-backends/src/llm/registry/resolver.rs` | 164-170 |
+| Circuit breaker | `crates/runtime/apxm-runtime/src/model_router/health.rs` | 24-122 |
+| Sandbox routing | `crates/runtime/apxm-runtime/src/capability/mod.rs` | 304-353 |
 | BashCapability bypass | `crates/apxm-tools/src/bash.rs` | 238, 281-283 |
-| ProcessTable | `crates/apxm-runtime/src/process_table.rs` | 50-228 |
-| Agent spawn lifecycle | `crates/apxm-acp/src/session.rs` | 51-191 |
-| ASK tool loop | `crates/apxm-runtime/src/executor/handlers/llm.rs` | 806-974 |
-| Parallel tool dispatch | `crates/apxm-runtime/src/executor/handlers/llm.rs` | 310-347 |
+| ProcessTable | `crates/runtime/apxm-runtime/src/process_table.rs` | 50-228 |
+| Agent spawn lifecycle | `crates/orchestration/apxm-acp/src/session.rs` | 51-191 |
+| ASK tool loop | `crates/runtime/apxm-runtime/src/executor/handlers/llm.rs` | 806-974 |
+| Parallel tool dispatch | `crates/runtime/apxm-runtime/src/executor/handlers/llm.rs` | 310-347 |
 | EventBus (unused) | `crates/apxm-events/src/bus.rs` | 1-96 |
-| Memory scoping | `crates/apxm-runtime/src/memory/mod.rs` | 88-102, 186-211 |
-| FlowRegistry | `crates/apxm-runtime/src/capability/flow_registry.rs` | — |
-| DAG splicing | `crates/apxm-runtime/src/scheduler/splicing.rs` | — |
-| TeamRegistry | `crates/apxm-runtime/src/team/registry.rs` | — |
+| Memory scoping | `crates/runtime/apxm-runtime/src/memory/mod.rs` | 88-102, 186-211 |
+| FlowRegistry | `crates/runtime/apxm-runtime/src/capability/flow_registry.rs` | — |
+| DAG splicing | `crates/runtime/apxm-runtime/src/scheduler/splicing.rs` | — |
+| TeamRegistry | `crates/runtime/apxm-runtime/src/team/registry.rs` | — |

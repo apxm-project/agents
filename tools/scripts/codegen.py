@@ -45,7 +45,7 @@ def register_commands(app: Typer) -> None:
         rc = run_apxm(config, cmd)
 
         if rc == 0:
-            target = output_dir or (config.apxm_dir / "crates/apxm-frontend/python/apxm/_generated")
+            target = output_dir or (config.apxm_dir / "crates/compiler/apxm-frontend/python/apxm/_generated")
             print_success(f"Generated frontend bindings in {target}")
         else:
             print_error("Frontend code generation failed!")

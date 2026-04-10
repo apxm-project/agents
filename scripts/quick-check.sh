@@ -14,6 +14,6 @@ echo "2. Running Rust tests..."
 cargo test --workspace --quiet 2>&1 | grep "test result" | tail -1
 
 echo "3. Running autofix validation..."
-PYTHONPATH=crates/apxm-frontend/python python3 scripts/apxm-autofix.py --report-only 2>&1 | grep "Passed:"
+PYTHONPATH=crates/compiler/apxm-frontend/python python3 scripts/apxm-autofix.py --report-only 2>&1 | grep "Passed:"
 
 echo "=== Quick Check Complete ==="

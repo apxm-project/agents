@@ -147,4 +147,4 @@ def memo_cache_stress(g: GraphRecorder):
 
 if __name__ == "__main__":
     # Output the graph as JSON
-    print(memo_cache_stress._graph.to_json())
+    print(memo_cache_stress._graph.to_air())

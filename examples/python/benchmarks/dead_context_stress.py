@@ -217,4 +217,4 @@ List the top 3 entities and their relationships in 2-3 sentences.
 
 if __name__ == "__main__":
     # Output the graph as JSON
-    print(dead_context_stress._graph.to_json())
+    print(dead_context_stress._graph.to_air())

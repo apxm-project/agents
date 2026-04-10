@@ -1,0 +1,74 @@
+[package]
+name = "apxm-backends"
+version.workspace = true
+edition.workspace = true
+description = "APXM Backends - LLM providers, storage backends, and prompt templates"
+
+[lints]
+workspace = true
+
+[dependencies]
+apxm-core.workspace = true
+
+# Async
+async-trait.workspace = true
+async-stream.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
+tokio-stream.workspace = true
+futures.workspace = true
+
+# HTTP
+reqwest = { workspace = true, features = ["json", "stream", "rustls-tls"] }
+
+# Collections
+dashmap.workspace = true
+parking_lot.workspace = true
+
+# Pattern matching
+regex.workspace = true
+
+# Random
+rand = "0.9"
+
+# JSON Schema
+jsonschema.workspace = true
+
+# Storage
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
+redb = "2.0"
+
+# Embeddings (optional)
+fastembed = { version = "4.0", optional = true }
+
+# Prompts
+minijinja = "2.0"
+include_dir = "0.7"
+
+# Utilities
+once_cell.workspace = true
+dirs.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# Error handling
+thiserror.workspace = true
+anyhow.workspace = true
+
+# Logging
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full", "test-util"] }
+mockito = "1.0"
+tokio-test = "0.4"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "vllm_hints"
+harness = false
+
+[features]
+metrics = []
+embeddings = ["fastembed"]

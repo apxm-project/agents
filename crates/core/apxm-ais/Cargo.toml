@@ -1,0 +1,17 @@
+[package]
+name = "apxm-ais"
+version.workspace = true
+edition.workspace = true
+description = "Agent Instruction Set (AIS) - Single source of truth for A-PXM operations"
+license = "MIT OR Apache-2.0"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
