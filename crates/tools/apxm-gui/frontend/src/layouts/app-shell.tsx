@@ -59,6 +59,9 @@ export function AppShell() {
             </button>
           ))}
         </div>
+        <div className="sidebar__footer">
+          <span className="sidebar__version">v0.1</span>
+        </div>
       </nav>
       <div className="app-content">
         {errors.startup ? <div className="error-banner">{errors.startup}</div> : null}

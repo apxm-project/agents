@@ -29,10 +29,14 @@ pub use resolver::{RoutingStrategy, SelectionCriteria};
 ///
 /// Backends are stored as `Arc<dyn LLMBackend>`, allowing both enum-based
 /// `Provider` instances and custom trait implementations to be registered.
+///
+/// NOTE: `backends` uses `RwLock<HashMap<...>>` instead of `DashMap` because
+/// `DashMap<K, Arc<dyn Trait>>` triggers lifetime invariance errors when the
+/// containing type is used across async boundaries (DashMap `Map` trait issue).
 #[derive(Clone)]
 pub struct LLMRegistry {
     /// Registered backends by name
-    backends: Arc<DashMap<String, Arc<dyn LLMBackend>>>,
+    backends: Arc<parking_lot::RwLock<HashMap<String, Arc<dyn LLMBackend>>>>,
     /// Default backend name
     default_backend: Arc<parking_lot::RwLock<Option<String>>>,
     /// Default model name
@@ -72,7 +76,7 @@ impl LLMRegistry {
             .map_err(|e| anyhow::anyhow!("Invalid rate limit config: {}", e))?;
 
         Ok(LLMRegistry {
-            backends: Arc::new(DashMap::new()),
+            backends: Arc::new(parking_lot::RwLock::new(HashMap::new())),
             default_backend: Arc::new(parking_lot::RwLock::new(None)),
             default_model: Arc::new(parking_lot::RwLock::new(None)),
             operation_defaults: Arc::new(DashMap::new()),
@@ -95,7 +99,7 @@ impl LLMRegistry {
             RateLimiter::new(HashMap::new(), Arc::new(SystemClock)).expect("empty config is valid");
 
         LLMRegistry {
-            backends: Arc::new(DashMap::new()),
+            backends: Arc::new(parking_lot::RwLock::new(HashMap::new())),
             default_backend: Arc::new(parking_lot::RwLock::new(None)),
             default_model: Arc::new(parking_lot::RwLock::new(None)),
             operation_defaults: Arc::new(DashMap::new()),
@@ -128,7 +132,7 @@ impl LLMRegistry {
         let name = name.into();
         let backend: Arc<dyn LLMBackend> = Arc::new(backend);
 
-        self.backends.insert(name.clone(), backend);
+        self.backends.write().insert(name.clone(), backend);
         self.health_monitor.register_backend(&name);
 
         Ok(())
@@ -141,7 +145,7 @@ impl LLMRegistry {
         backend: Arc<dyn LLMBackend>,
     ) -> Result<()> {
         let name = name.into();
-        self.backends.insert(name.clone(), backend);
+        self.backends.write().insert(name.clone(), backend);
         self.health_monitor.register_backend(&name);
         Ok(())
     }
@@ -149,6 +153,7 @@ impl LLMRegistry {
     /// Unregister a backend.
     pub fn unregister(&self, name: &str) -> Result<()> {
         self.backends
+            .write()
             .remove(name)
             .with_context(|| format!("Backend '{}' not found", name))?;
 
@@ -162,7 +167,7 @@ impl LLMRegistry {
         let name = name.into();
 
         // Verify backend exists
-        if !self.backends.contains_key(&name) {
+        if !self.backends.read().contains_key(&name) {
             anyhow::bail!("Backend '{}' not registered", name);
         }
 
@@ -184,7 +189,7 @@ impl LLMRegistry {
         let backend_name = backend.into();
 
         // Verify backend exists
-        if !self.backends.contains_key(&backend_name) {
+        if !self.backends.read().contains_key(&backend_name) {
             anyhow::bail!("Backend '{}' not registered", backend_name);
         }
 
@@ -202,13 +207,15 @@ impl LLMRegistry {
         let backend_name = backend.into();
 
         // Verify all backends exist
-        if !self.backends.contains_key(&backend_name) {
-            anyhow::bail!("Backend '{}' not registered", backend_name);
-        }
-
-        for fallback in &fallbacks {
-            if !self.backends.contains_key(fallback) {
-                anyhow::bail!("Fallback backend '{}' not registered", fallback);
+        {
+            let backends = self.backends.read();
+            if !backends.contains_key(&backend_name) {
+                anyhow::bail!("Backend '{}' not registered", backend_name);
+            }
+            for fallback in &fallbacks {
+                if !backends.contains_key(fallback) {
+                    anyhow::bail!("Fallback backend '{}' not registered", fallback);
+                }
             }
         }
 
@@ -228,7 +235,7 @@ impl LLMRegistry {
         backend: impl Into<String>,
     ) -> Result<()> {
         let backend_name = backend.into();
-        if !self.backends.contains_key(&backend_name) {
+        if !self.backends.read().contains_key(&backend_name) {
             anyhow::bail!("Backend '{}' not registered", backend_name);
         }
         self.model_routes
@@ -238,15 +245,12 @@ impl LLMRegistry {
 
     /// Get registered backend names.
     pub fn backend_names(&self) -> Vec<String> {
-        self.backends
-            .iter()
-            .map(|entry| entry.key().clone())
-            .collect()
+        self.backends.read().keys().cloned().collect()
     }
 
     /// Get backend by name.
     pub fn get_backend(&self, name: &str) -> Option<Arc<dyn LLMBackend>> {
-        self.backends.get(name).map(|entry| entry.value().clone())
+        self.backends.read().get(name).cloned()
     }
 
     /// Get health status of a backend.
@@ -349,9 +353,10 @@ impl LLMRegistry {
     async fn try_generate(&self, backend_name: &str, request: LLMRequest) -> Result<LLMResponse> {
         let backend = self
             .backends
+            .read()
             .get(backend_name)
-            .with_context(|| format!("Backend '{}' not found", backend_name))?
-            .clone();
+            .cloned()
+            .with_context(|| format!("Backend '{}' not found", backend_name))?;
 
         // Check health status
         let health = self.health_monitor.status(backend_name);
@@ -420,9 +425,10 @@ impl LLMRegistry {
 
         let backend = self
             .backends
+            .read()
             .get(&backend_name)
-            .with_context(|| format!("Backend '{}' not found", backend_name))?
-            .clone();
+            .cloned()
+            .with_context(|| format!("Backend '{}' not found", backend_name))?;
 
         let health = self.health_monitor.status(&backend_name);
         if health == HealthStatus::Unhealthy {
@@ -450,8 +456,12 @@ impl LLMRegistry {
                 }
             };
 
-            let backend = match self.backends.get(&backend_name) {
-                Some(b) => b.clone(),
+            let backend = {
+                let guard = self.backends.read();
+                guard.get(&backend_name).cloned()
+            };
+            let backend = match backend {
+                Some(b) => b,
                 None => {
                     Err(anyhow::anyhow!("Backend '{}' not found", backend_name))?;
                     return;
@@ -480,7 +490,11 @@ impl LLMRegistry {
                     let mut fallback_succeeded = false;
                     if let Some(fallback_chain) = self.fallback_chains.get(&backend_name) {
                         for fallback_name in fallback_chain.value() {
-                            if let Some(fallback_backend) = self.backends.get(fallback_name) {
+                            let fallback_backend = {
+                                let guard = self.backends.read();
+                                guard.get(fallback_name).cloned()
+                            };
+                            if let Some(fallback_backend) = fallback_backend {
                                 let health = self.health_monitor.status(fallback_name);
                                 if health == HealthStatus::Unhealthy {
                                     continue;
@@ -544,13 +558,16 @@ impl LLMRegistry {
         )
     }
 
+    /// Snapshot all backends (clones name + Arc pairs out of the lock).
+    fn backend_snapshot(&self) -> Vec<(String, Arc<dyn LLMBackend>)> {
+        self.backends.read().iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+    }
+
     /// Register graph metadata with all backends (best-effort).
     ///
     /// Backends that don't support graph registration (default impl) silently succeed.
     pub async fn register_graph_all(&self, metadata: serde_json::Value) {
-        for entry in self.backends.iter() {
-            let name = entry.key().clone();
-            let backend = entry.value().clone();
+        for (name, backend) in self.backend_snapshot() {
             if let Err(e) = backend.register_graph(metadata.clone()).await {
                 tracing::warn!(
                     backend = %name,
@@ -563,9 +580,7 @@ impl LLMRegistry {
 
     /// Release graph from all backends (best-effort).
     pub async fn release_graph_all(&self, graph_id: &str) {
-        for entry in self.backends.iter() {
-            let name = entry.key().clone();
-            let backend = entry.value().clone();
+        for (name, backend) in self.backend_snapshot() {
             if let Err(e) = backend.release_graph(graph_id).await {
                 tracing::warn!(
                     backend = %name,
@@ -580,10 +595,7 @@ impl LLMRegistry {
     pub async fn check_all_backends(&self) -> HashMap<String, HealthStatus> {
         let mut results = HashMap::new();
 
-        for entry in self.backends.iter() {
-            let name = entry.key().clone();
-            let backend = entry.value();
-
+        for (name, backend) in self.backend_snapshot() {
             let status = match backend.health_check().await {
                 Ok(_) => HealthStatus::Healthy,
                 Err(_) => HealthStatus::Unhealthy,

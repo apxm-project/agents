@@ -21,8 +21,9 @@ use serde_json::json;
 use std::pin::Pin;
 use tokio_stream::Stream;
 
+use apxm_core::types::model_spec::{default_model_for_provider, models_for_provider};
+
 const DEFAULT_BASE_URL: &str = "https://api.anthropic.com/v1";
-const DEFAULT_MODEL: &str = "claude-opus-4";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 
 /// Anthropic LLM backend.
@@ -68,7 +69,7 @@ impl AnthropicBackend {
             .as_ref()
             .and_then(|c| c.get(MODEL))
             .and_then(|m| m.as_str())
-            .unwrap_or(DEFAULT_MODEL)
+            .unwrap_or_else(|| default_model_for_provider("anthropic").unwrap_or("claude-sonnet-4-5"))
             .to_string();
 
         let base_url = config
@@ -556,13 +557,10 @@ impl LLMBackend for AnthropicBackend {
     }
 
     async fn list_models(&self) -> Result<Vec<ModelInfo>> {
-        // Return well-known models as documentation hints.
-        // The API will accept any model ID — this list is not enforced.
-        Ok(crate::llm::backends::anthropic::WELL_KNOWN_MODELS
-            .iter()
-            .map(|id| ModelInfo {
-                id: id.to_string(),
-                name: id.to_string(),
+        Ok(models_for_provider("anthropic")
+            .map(|m| ModelInfo {
+                id: m.id.to_string(),
+                name: m.id.to_string(),
                 context_window: 200_000,
                 supports_vision: true,
                 supports_functions: true,
@@ -727,7 +725,7 @@ mod tests {
     fn test_build_request_body() {
         let backend = AnthropicBackend {
             api_key: "test".to_string(),
-            model: "claude-opus-4".to_string(),
+            model: "claude-sonnet-4-5".to_string(),
             base_url: DEFAULT_BASE_URL.to_string(),
             extra_headers: vec![],
             client: reqwest::Client::new(),
@@ -739,7 +737,7 @@ mod tests {
 
         let body = backend.build_request_body(&request);
 
-        assert_eq!(body["model"], "claude-opus-4");
+        assert_eq!(body["model"], "claude-sonnet-4-5");
         assert_eq!(body["temperature"], 0.9);
         assert_eq!(body["system"], "You are helpful");
         assert_eq!(body["messages"][0]["content"], "Hello");
@@ -749,7 +747,7 @@ mod tests {
     fn test_build_request_body_with_tools() {
         let backend = AnthropicBackend {
             api_key: "test".to_string(),
-            model: "claude-opus-4".to_string(),
+            model: "claude-sonnet-4-5".to_string(),
             base_url: DEFAULT_BASE_URL.to_string(),
             extra_headers: vec![],
             client: reqwest::Client::new(),
@@ -800,7 +798,7 @@ mod tests {
     fn test_build_request_body_with_specific_tool_choice() {
         let backend = AnthropicBackend {
             api_key: "test".to_string(),
-            model: "claude-opus-4".to_string(),
+            model: "claude-sonnet-4-5".to_string(),
             base_url: DEFAULT_BASE_URL.to_string(),
             extra_headers: vec![],
             client: reqwest::Client::new(),

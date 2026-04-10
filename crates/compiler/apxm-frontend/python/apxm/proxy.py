@@ -1180,6 +1180,10 @@ def _normalize_attributes(attributes: dict[str, Any]) -> dict[str, Any]:
 
 
 def _normalize_value(value: Any) -> Any:
+    # Import lazily to avoid circular import at module load time.
+    from ._generated.models import ModelId
+    if isinstance(value, ModelId):
+        return str(value)
     if hasattr(value, "to_dict") and callable(value.to_dict):
         return value.to_dict()
     if is_dataclass(value):

@@ -5,7 +5,7 @@ import { useLiveSession } from "@/hooks/use-live-session";
 import { useKeyboard } from "@/hooks/use-keyboard";
 import { fetchStartup } from "@/api/startup";
 import { fetchOps } from "@/api/ops";
-import { fetchGraph } from "@/api/graph";
+import { fetchGraph, fetchPasses } from "@/api/graph";
 import { fetchWorkflows } from "@/api/workflows";
 import { fetchHealth } from "@/api/health";
 import { getErrorMessage } from "@/lib/format";
@@ -13,6 +13,7 @@ import { getErrorMessage } from "@/lib/format";
 export function App() {
   const setGraphData = useAppStore((s) => s.setGraphData);
   const setOps = useAppStore((s) => s.setOps);
+  const setPasses = useAppStore((s) => s.setPasses);
   const setWorkflows = useAppStore((s) => s.setWorkflows);
   const setHealth = useAppStore((s) => s.setHealth);
   const setLoading = useAppStore((s) => s.setLoading);
@@ -27,9 +28,13 @@ export function App() {
     async function bootstrap() {
       setLoading("startup", true);
 
-      // Fetch ops metadata (non-critical)
+      // Fetch ops and passes metadata (non-critical)
       fetchOps()
         .then((ops) => { if (!cancelled) setOps(ops); })
+        .catch(() => {});
+
+      fetchPasses()
+        .then((passes) => { if (!cancelled) setPasses(passes); })
         .catch(() => {});
 
       // Fetch workflows (non-critical)
@@ -58,7 +63,7 @@ export function App() {
 
     void bootstrap();
     return () => { cancelled = true; };
-  }, [setGraphData, setOps, setWorkflows, setHealth, setLoading, setError]);
+  }, [setGraphData, setOps, setPasses, setWorkflows, setHealth, setLoading, setError]);
 
   return <AppShell />;
 }

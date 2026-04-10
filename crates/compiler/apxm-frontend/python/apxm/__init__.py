@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from . import _generated
+from ._generated.models import Anthropic, Google, ModelId, OpenAI
 from .config import (
     AgentConfig,
     BashConfig,
@@ -21,6 +22,7 @@ from .sugar import AgentHandle, Team
 
 __all__ = [
     "_generated",
+    "Anthropic",
     "ApxmGraph",
     "GraphNode",
     "GraphEdge",
@@ -35,6 +37,9 @@ __all__ = [
     "AgentHandle",
     "BashConfig",
     "FlowModule",
+    "Google",
+    "ModelId",
+    "OpenAI",
     "ProviderSpec",
     "ReadConfig",
     "SearchWebConfig",

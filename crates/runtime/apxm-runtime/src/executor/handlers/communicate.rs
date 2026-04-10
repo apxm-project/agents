@@ -235,6 +235,42 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
 
 // ─── Broadcast dispatch ────────────────────────────────────────────────────
 
+/// Execute a broadcast sub-flow for a single agent.
+///
+/// Extracted into a standalone async fn so the compiler can prove `Send + 'static`
+/// for the returned future — inline async blocks with captured `ExecutionContext`
+/// trigger DashMap `Map` trait invariance errors.
+async fn broadcast_one_agent(
+    child_ctx: ExecutionContext,
+    agent: String,
+    dag: apxm_core::types::execution::ExecutionDag,
+    msg: Value,
+) -> (String, Result<Value>) {
+    let _ = child_ctx
+        .memory
+        .write_scoped(
+            crate::memory::MemorySpace::Stm,
+            child_ctx.scope_id(),
+            belief_keys::COMMUNICATE_MESSAGE.to_string(),
+            msg,
+        )
+        .await;
+
+    let engine = ExecutorEngine::new(child_ctx);
+    match engine.execute_dag(dag).await {
+        Ok(result) => {
+            let response = result
+                .results
+                .values()
+                .find(|v| !matches!(v, Value::Null))
+                .cloned()
+                .unwrap_or(Value::Null);
+            (agent, Ok(response))
+        }
+        Err(e) => (agent, Err(e)),
+    }
+}
+
 /// Fan-out COMMUNICATE to ALL agents registered in the FlowRegistry in parallel.
 ///
 /// Dispatches to every unique agent name that has a known "communicate" or "main"
@@ -314,32 +350,9 @@ async fn execute_broadcast(ctx: &ExecutionContext, _node: &Node, message: Value)
         let agent = agent_name.clone();
         let dag_clone = (*sub_dag).clone();
 
-        handles.push(tokio::spawn(async move {
-            // Inject message into child STM
-            let _ = child_ctx
-                .memory
-                .write_scoped(
-                    crate::memory::MemorySpace::Stm,
-                    child_ctx.scope_id(),
-                    belief_keys::COMMUNICATE_MESSAGE.to_string(),
-                    msg,
-                )
-                .await;
-
-            let engine = ExecutorEngine::new(child_ctx);
-            match engine.execute_dag(dag_clone).await {
-                Ok(result) => {
-                    let response = result
-                        .results
-                        .values()
-                        .find(|v| !matches!(v, Value::Null))
-                        .cloned()
-                        .unwrap_or(Value::Null);
-                    (agent, Ok(response))
-                }
-                Err(e) => (agent, Err(e)),
-            }
-        }));
+        handles.push(tokio::spawn(broadcast_one_agent(
+            child_ctx, agent, dag_clone, msg,
+        )));
     }
 
     // Collect results — non-fatal errors become string values

@@ -22,8 +22,9 @@ use serde_json::json;
 use std::pin::Pin;
 use tokio_stream::Stream;
 
+use apxm_core::types::model_spec::{default_model_for_provider, models_for_provider};
+
 const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
-const DEFAULT_MODEL: &str = "gpt-4o-mini";
 
 /// OpenAI LLM backend.
 ///
@@ -70,7 +71,7 @@ impl OpenAIBackend {
             .as_ref()
             .and_then(|c| c.get(MODEL))
             .and_then(|m| m.as_str())
-            .unwrap_or(DEFAULT_MODEL)
+            .unwrap_or_else(|| default_model_for_provider("openai").unwrap_or("gpt-4o-mini"))
             .to_string();
 
         let base_url = config
@@ -646,15 +647,12 @@ impl LLMBackend for OpenAIBackend {
     }
 
     async fn list_models(&self) -> Result<Vec<ModelInfo>> {
-        // Return well-known models as documentation hints.
-        // The API will accept any model ID — this list is not enforced.
-        Ok(crate::llm::backends::openai::WELL_KNOWN_MODELS
-            .iter()
-            .map(|id| ModelInfo {
-                id: id.to_string(),
-                name: id.to_string(),
+        Ok(models_for_provider("openai")
+            .map(|m| ModelInfo {
+                id: m.id.to_string(),
+                name: m.id.to_string(),
                 context_window: 128_000,
-                supports_vision: id.contains("4o") || id.contains("5") || id.contains("turbo"),
+                supports_vision: m.id.contains("4o") || m.id.contains("5") || m.id.contains("turbo"),
                 supports_functions: true,
             })
             .collect())

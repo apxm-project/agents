@@ -1,6 +1,7 @@
 use apxm_acp::AgentRegistry;
 use apxm_ais::{OperationCategory, OperationField, get_all_operations};
 use apxm_core::constants;
+use apxm_core::types::model_spec::BUILTIN_MODELS;
 use apxm_core::types::provider_spec::{BUILTIN_PROVIDERS, ProviderProtocol};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,6 +70,24 @@ pub struct FrontendProviderSpec {
     pub requires_api_key: bool,
     pub api_key_env_var: Option<&'static str>,
     pub aliases: &'static [&'static str],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FrontendModelSpec {
+    pub id: &'static str,
+    pub provider: &'static str,
+    pub is_default: bool,
+}
+
+pub fn builtin_models() -> Vec<FrontendModelSpec> {
+    BUILTIN_MODELS
+        .iter()
+        .map(|m| FrontendModelSpec {
+            id: m.id,
+            provider: m.provider,
+            is_default: m.is_default,
+        })
+        .collect()
 }
 
 pub fn graph_metadata_constants() -> Vec<FrontendConstant> {
@@ -261,5 +280,16 @@ mod tests {
         assert!(protocols.contains(&"openai"));
         assert!(protocols.contains(&"mock"));
         assert_eq!(protocols.len(), 6);
+    }
+
+    #[test]
+    fn builtin_models_include_claude() {
+        assert!(builtin_models().iter().any(|m| m.id == "claude-sonnet-4-5"));
+    }
+
+    #[test]
+    fn builtin_models_include_openai_default() {
+        let default = builtin_models().iter().find(|m| m.provider == "openai" && m.is_default).map(|m| m.id.to_string());
+        assert_eq!(default, Some("gpt-4o-mini".to_string()));
     }
 }
