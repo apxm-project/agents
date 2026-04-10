@@ -1,0 +1,30 @@
+module {
+  func.func @autofix_workflow(%arg0: !ais.token {ais.param_name = "scope", ais.param_type = "str"}) -> !ais.token attributes {ais.entry} {
+    %validator = ais.spawn_agent "validator" {profile = "claude", cwd = "/home/raherrer/projects/agents/apxm"} : !ais.token
+    %validate_task = ais.const_str "Run the APXM autofix validation for scope: examples/python\n\nExecute:\n  python3 scripts/apxm-autofix.py --scope examples/python --report-only\n\nReport the full output (it will show validation results, task files created in /tmp/autofix-tasks/, etc.)\n" : !ais.token
+    %validator_msg_1 = ais.communicate "{0}" to "validator" (%validate_task : !ais.token) : !ais.token
+    ais.print "=== VALIDATION OUTPUT ===\n{0}" [%validator_msg_1 : !ais.token]
+    %think = ais.think "classify_failures" [%validator_msg_1 : !ais.token] : !ais.token
+    ais.print "=== FAILURE CLASSIFICATION ===\n{0}" [%think : !ais.token]
+    %fixer_import = ais.spawn_agent "fixer_import" {profile = "claude", cwd = "/home/raherrer/projects/agents/apxm"} : !ais.token
+    %fixer_mlir = ais.spawn_agent "fixer_mlir" {profile = "claude", cwd = "/home/raherrer/projects/agents/apxm"} : !ais.token
+    %fixer_compile = ais.spawn_agent "fixer_compile" {profile = "claude", cwd = "/home/raherrer/projects/agents/apxm"} : !ais.token
+    %ask = ais.ask "build_fix_import_task" [%think : !ais.token] : !ais.token
+    %ask_1 = ais.ask "build_fix_mlir_task" [%think : !ais.token] : !ais.token
+    %ask_2 = ais.ask "build_fix_compile_task" [%think : !ais.token] : !ais.token
+    %fixer_import_msg_1 = ais.communicate "{0}" to "fixer_import" (%ask : !ais.token) : !ais.token
+    %fixer_mlir_msg_1 = ais.communicate "{0}" to "fixer_mlir" (%ask_1 : !ais.token) : !ais.token
+    %fixer_compile_msg_1 = ais.communicate "{0}" to "fixer_compile" (%ask_2 : !ais.token) : !ais.token
+    ais.print "=== IMPORT FIXES ===\n{0}" [%fixer_import_msg_1 : !ais.token]
+    ais.print "=== MLIR FIXES ===\n{0}" [%fixer_mlir_msg_1 : !ais.token]
+    ais.print "=== COMPILE FIXES ===\n{0}" [%fixer_compile_msg_1 : !ais.token]
+    %wait_all_fixers = ais.wait_all %fixer_import_msg_1, %fixer_mlir_msg_1, %fixer_compile_msg_1 : !ais.token, !ais.token, !ais.token -> !ais.token
+    %verifier = ais.spawn_agent "verifier" {profile = "claude", cwd = "/home/raherrer/projects/agents/apxm"} : !ais.token
+    %verify_task = ais.const_str "Run final verification of all fixes:\n\nExecute:\n  python3 scripts/apxm-autofix.py --scope examples/python --verify-only\n\nReport the results (pass/fail counts, any remaining issues).\n" : !ais.token
+    %verifier_msg_1 = ais.communicate "{0}" to "verifier" (%verify_task : !ais.token) : !ais.token
+    ais.print "=== VERIFICATION OUTPUT ===\n{0}" [%verifier_msg_1 : !ais.token]
+    %think_1 = ais.think "generate_report" [%validator_msg_1, %think, %fixer_import_msg_1, %fixer_mlir_msg_1, %fixer_compile_msg_1, %verifier_msg_1 : !ais.token, !ais.token, !ais.token, !ais.token, !ais.token, !ais.token] : !ais.token
+    ais.print "=== AUTOFIX REPORT ===\n{0}" [%think_1 : !ais.token]
+    func.return %think_1 : !ais.token
+  }
+}

@@ -1,0 +1,20 @@
+module {
+  func.func @plan_feature_workflow(%arg0: !ais.token {ais.param_name = "feature", ais.param_type = "str"}) -> !ais.token attributes {ais.entry} {
+    %architect = ais.spawn_agent "architect" {profile = "claude", cwd = "/home/raherrer/projects/agents/apxm"} : !ais.token
+    %architect_task = ais.const_str "You are the APXM architect. Create an implementation plan for this feature:\n\nFeature: {0}\n\nRead the APXM project structure:\n- CLAUDE.md for architecture overview\n- Cargo.toml for workspace crates\n- docs/implementation/architecture.md for design principles\n- Existing code in relevant crates\n\nProduce a plan with:\n1. Feature breakdown (3-5 sub-tasks)\n2. Affected crates (which crates need changes)\n3. Public API changes (what new functions/types are exposed)\n4. Internal implementation changes (what changes inside each crate)\n5. Dependencies (what new dependencies might be needed)\n6. Testing strategy (unit tests, integration tests, examples)\n\nBe specific — include function names, file paths, and type signatures where possible.\nKeep under 500 words.\n" : !ais.token
+    %architect_msg_1 = ais.communicate "{0}" to "architect" (%architect_task : !ais.token) : !ais.token
+    ais.print "=== INITIAL PLAN ===\n{0}" [%architect_msg_1 : !ais.token]
+    %feature_for_gap = ais.const_str "{0}" : !ais.token
+    %think = ais.think "gap_analysis" [%feature_for_gap, %architect_msg_1 : !ais.token, !ais.token] : !ais.token
+    ais.print "=== GAP ANALYSIS ===\n{0}" [%think : !ais.token]
+    %feature_for_risk = ais.const_str "{0}" : !ais.token
+    %think_1 = ais.think "risk_analysis" [%feature_for_risk, %architect_msg_1 : !ais.token, !ais.token] : !ais.token
+    ais.print "=== RISK ANALYSIS ===\n{0}" [%think_1 : !ais.token]
+    %think_2 = ais.think "crate_ordering" [%architect_msg_1 : !ais.token] : !ais.token
+    ais.print "=== CRATE ORDERING ===\n{0}" [%think_2 : !ais.token]
+    %merge_analyses = ais.merge %architect_msg_1, %think, %think_1, %think_2 : !ais.token, !ais.token, !ais.token, !ais.token -> !ais.token
+    %think_3 = ais.think "final_plan" [%architect_msg_1, %think, %think_1, %think_2 : !ais.token, !ais.token, !ais.token, !ais.token] : !ais.token
+    ais.print "=== FINAL PLAN ===\n{0}" [%think_3 : !ais.token]
+    func.return %think_3 : !ais.token
+  }
+}
