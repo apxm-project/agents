@@ -181,7 +181,7 @@ git commit -m "fix(mlir_parse): align dialect with Python emission"
 
 ## Dogfooding: autofix_loop.py
 
-The `examples/python/workflows/autofix_loop.py` workflow is the "ultrathink" version — an APXM graph that:
+The `examples/python/real-world/autofix_loop.py` workflow is the "ultrathink" version — an APXM graph that:
 - Spawns an architect agent to analyze failures
 - Spawns parallel implementer agents per bug cluster
 - Has a reviewer agent that validates fixes
@@ -194,7 +194,7 @@ This workflow compiles through APXM's own compiler, demonstrating self-hosting.
 - `scripts/apxm-autofix.py` - Main driver (validate/classify/fix)
 - `scripts/apxm-policy-check.py` - Policy enforcement
 - `.agents/skills/autofix/SKILL.md` - This documentation
-- `examples/python/workflows/autofix_loop.py` - APXM workflow graph
+- `examples/python/real-world/autofix_loop.py` - APXM workflow graph
 
 ## Notes
 
