@@ -53,7 +53,7 @@ mod tests {
     #[tokio::test]
     async fn test_noop_linker() {
         let linker = NoOpLinker;
-        let result = linker.link_inner_plan("test", "test.apxm").await;
+        let result = linker.link_inner_plan("test", "test.air").await;
         assert!(result.is_err());
         let result = linker.link_task_dag(TaskDag::new("test")).await;
         assert!(result.is_err());

@@ -5,8 +5,8 @@ Tests: Priority mapping from critical path analysis to vLLM scheduling
 Measures: Critical path latency with/without priority scheduling
 
 Usage:
-  dekk apxm execute mixed_priority.apxm -O0 --target cost      # No priority
-  dekk apxm execute mixed_priority.apxm -O2 --target latency   # With priority scheduling
+  dekk apxm execute mixed_priority.air -O0 --target cost      # No priority
+  dekk apxm execute mixed_priority.air -O2 --target latency   # With priority scheduling
 """
 
 from apxm import compile, GraphRecorder

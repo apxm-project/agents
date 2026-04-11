@@ -15,8 +15,8 @@ Metrics:
 - Token savings percentage (~84% reduction expected)
 
 Usage:
-  dekk apxm execute prefix_fanout_large.apxm -O0  # No canonicalization (32k tokens)
-  dekk apxm execute prefix_fanout_large.apxm -O2  # With canonicalization (~5k tokens)
+  dekk apxm execute prefix_fanout_large.air -O0  # No canonicalization (32k tokens)
+  dekk apxm execute prefix_fanout_large.air -O2  # With canonicalization (~5k tokens)
 """
 
 from apxm import compile, GraphRecorder

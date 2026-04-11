@@ -101,7 +101,7 @@ Token-counting dataflow scheduler is correct. Work-stealing with 3-level hierarc
 
 ### 8. Documentation
 
-Theory docs (PXM foundations, AAM, AIS, scheduling) are excellent. Strategy docs are honest and realistic. Architecture.md inflates pass count (claims 93, actual ~12 per level). Getting-started guides have format confusion (.apxm vs .air). Python API examples reference methods that may not exist (g.print, g.done need verification). Design docs are proposals presented as architecture.
+Theory docs (PXM foundations, AAM, AIS, scheduling) are excellent. Strategy docs are honest and realistic. Architecture.md inflates pass count (claims 93, actual ~12 per level). Getting-started guides had inconsistent graph file extensions (now standardized on `.air`). Python API examples reference methods that may not exist (g.print, g.done need verification). Design docs are proposals presented as architecture.
 
 Full evaluation: [archive/findings-2026-04-08.md](../archive/findings-2026-04-08.md).
 

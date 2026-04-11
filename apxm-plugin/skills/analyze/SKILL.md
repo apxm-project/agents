@@ -13,8 +13,8 @@ This is the "profiler" for graph design — it tells you how well your workflow 
 ## Commands
 
 ```bash
-dekk apxm analyze graph.apxm           # human-readable parallelism report
-dekk apxm analyze graph.apxm --json    # machine-readable JSON output
+dekk apxm analyze graph.air           # human-readable parallelism report
+dekk apxm analyze graph.air --json    # machine-readable JSON output
 ```
 
 ## Output
@@ -45,9 +45,9 @@ Analysis uses BFS layering over the DAG. Nodes are grouped into phases based on 
 
 ## Related Commands
 
-- `dekk apxm validate graph.apxm` — structural validation (run before analyze)
-- `dekk apxm explain graph.apxm` — human-readable walkthrough of what the graph does
-- `dekk apxm view graph.apxm` — interactive visual graph explorer
+- `dekk apxm validate graph.air` — structural validation (run before analyze)
+- `dekk apxm explain graph.air` — human-readable walkthrough of what the graph does
+- `dekk apxm view graph.air` — interactive visual graph explorer
 
 ## When to Use
 

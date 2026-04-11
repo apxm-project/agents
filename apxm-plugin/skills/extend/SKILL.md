@@ -15,13 +15,13 @@ session folder.
 
 1. Execute the graph, passing the feature request as an argument:
    ```bash
-   dekk apxm execute .agents/skills/extend/extend.apxm --emit-session "$ARGUMENTS"
+   dekk apxm execute .agents/skills/extend/extend.air --emit-session "$ARGUMENTS"
    ```
    
    **Note:** To ensure sessions land in `~/.apxm/sessions/`, use `--emit-session` without
    a label (auto-generates path), or pass an absolute path:
    ```bash
-   dekk apxm execute .agents/skills/extend/extend.apxm --emit-session $HOME/.apxm/sessions/my-feature "$ARGUMENTS"
+   dekk apxm execute .agents/skills/extend/extend.air --emit-session $HOME/.apxm/sessions/my-feature "$ARGUMENTS"
    ```
 
 2. Monitor progress in the session folder:

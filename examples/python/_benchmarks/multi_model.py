@@ -5,7 +5,7 @@ Tests: Per-node model specification and backend routing
 Measures: Cost vs quality tradeoffs, latency distribution across models
 
 Usage:
-  dekk apxm execute multi_model.apxm -O2
+  dekk apxm execute multi_model.air -O2
 
 Note: Requires multiple backends configured:
   - Fast model (e.g., gpt-3.5-turbo, claude-haiku)

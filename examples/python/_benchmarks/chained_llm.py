@@ -5,8 +5,8 @@ Tests: Pipelining across sequential LLM operations
 Measures: Total latency, time-to-first-token, end-to-end completion time
 
 Usage:
-  dekk apxm execute chained_llm.apxm -O0  # No pipelining
-  dekk apxm execute chained_llm.apxm -O2  # With pipelining optimizations
+  dekk apxm execute chained_llm.air -O0  # No pipelining
+  dekk apxm execute chained_llm.air -O2  # With pipelining optimizations
 """
 
 from apxm import compile, GraphRecorder

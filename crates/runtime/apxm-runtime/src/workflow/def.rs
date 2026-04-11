@@ -34,7 +34,7 @@ pub struct WorkflowParam {
 pub struct GraphStep {
     /// Unique step ID
     pub id: String,
-    /// Path to the .apxm file (relative to .apxmw file)
+    /// Path to the .air file (relative to .apxmw file)
     pub path: String,
     /// Step IDs this step depends on
     #[serde(default)]
@@ -149,13 +149,13 @@ mod tests {
             graphs: vec![
                 GraphStep {
                     id: "a".to_string(),
-                    path: "a.apxm".to_string(),
+                    path: "a.air".to_string(),
                     depends_on: vec![],
                     params: HashMap::new(),
                 },
                 GraphStep {
                     id: "a".to_string(),
-                    path: "b.apxm".to_string(),
+                    path: "b.air".to_string(),
                     depends_on: vec![],
                     params: HashMap::new(),
                 },
@@ -176,7 +176,7 @@ mod tests {
             parameters: vec![],
             graphs: vec![GraphStep {
                 id: "a".to_string(),
-                path: "a.apxm".to_string(),
+                path: "a.air".to_string(),
                 depends_on: vec!["unknown".to_string()],
                 params: HashMap::new(),
             }],
@@ -197,13 +197,13 @@ mod tests {
             graphs: vec![
                 GraphStep {
                     id: "a".to_string(),
-                    path: "a.apxm".to_string(),
+                    path: "a.air".to_string(),
                     depends_on: vec!["b".to_string()],
                     params: HashMap::new(),
                 },
                 GraphStep {
                     id: "b".to_string(),
-                    path: "b.apxm".to_string(),
+                    path: "b.air".to_string(),
                     depends_on: vec!["a".to_string()],
                     params: HashMap::new(),
                 },
@@ -225,13 +225,13 @@ mod tests {
             graphs: vec![
                 GraphStep {
                     id: "a".to_string(),
-                    path: "a.apxm".to_string(),
+                    path: "a.air".to_string(),
                     depends_on: vec![],
                     params: HashMap::new(),
                 },
                 GraphStep {
                     id: "b".to_string(),
-                    path: "b.apxm".to_string(),
+                    path: "b.air".to_string(),
                     depends_on: vec!["a".to_string()],
                     params: HashMap::new(),
                 },

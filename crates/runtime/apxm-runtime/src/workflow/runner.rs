@@ -307,7 +307,7 @@ mod tests {
             parameters: vec![],
             graphs: vec![GraphStep {
                 id: "a".to_string(),
-                path: "a.apxm".to_string(),
+                path: "a.air".to_string(),
                 depends_on: vec![],
                 params: HashMap::new(),
             }],

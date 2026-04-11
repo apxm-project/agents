@@ -470,7 +470,6 @@ fn is_python_graph_input(input: &Path) -> bool {
     input.extension().and_then(|ext| ext.to_str()) == Some("py")
 }
 
-#[allow(dead_code)] // Python frontend integration - not yet wired to compile/execute commands
 fn emit_air_from_python(input: &Path) -> Result<tempfile::NamedTempFile> {
     use std::io::Write;
 
@@ -532,9 +531,10 @@ fn emit_air_from_python(input: &Path) -> Result<tempfile::NamedTempFile> {
             input.display()
         ));
     }
-    if !(trimmed.starts_with(';') || trimmed.starts_with('%')) {
+    if !(trimmed.starts_with(';') || trimmed.starts_with('%') || trimmed.starts_with("module") || trimmed.starts_with("func.func")) {
         return Err(anyhow::anyhow!(
-            "Python workflow {} did not emit recognizable .air text on stdout",
+            "Python workflow {} did not emit recognizable .air text on stdout.\n\
+             Expected MLIR text starting with 'module', 'func.func', ';', or '%'.",
             input.display()
         ));
     }
@@ -550,7 +550,6 @@ fn emit_air_from_python(input: &Path) -> Result<tempfile::NamedTempFile> {
     Ok(tmp)
 }
 
-#[allow(dead_code)] // Python frontend integration - not yet wired to compile/execute commands
 fn prepare_graph_input(
     input: &Path,
 ) -> Result<(PathBuf, Option<tempfile::NamedTempFile>)> {
@@ -1030,7 +1029,7 @@ fn load_graph_from_directory(dir: &std::path::Path) -> Result<apxm_compiler::Air
             let path = entry.path();
             if matches!(
                 path.extension().and_then(|e| e.to_str()),
-                Some("json") | Some("apxm")
+                Some("json") | Some("air")
             ) {
                 let text = std::fs::read_to_string(&path)
                     .with_context(|| format!("Failed to read {}", path.display()))?;
@@ -1045,7 +1044,7 @@ fn load_graph_from_directory(dir: &std::path::Path) -> Result<apxm_compiler::Air
 
     if graphs.is_empty() {
         return Err(anyhow::anyhow!(
-            "No graph files (.apxm) found in directory '{}'",
+            "No graph files (.air) found in directory '{}'",
             dir.display()
         ));
     }

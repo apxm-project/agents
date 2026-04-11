@@ -338,7 +338,7 @@ mod tests {
 
     #[test]
     fn test_error_display() {
-        let span = Span::new("test.apxm".to_string(), 10, 5, 3);
+        let span = Span::new("test.air".to_string(), 10, 5, 3);
         let error = Error::new(ErrorCode::ExpectedExpression, "expected expression", span);
         let display = format!("{error}");
         assert!(display.contains("E002"));
@@ -347,7 +347,7 @@ mod tests {
 
     #[test]
     fn test_error_pretty_print() {
-        let span = Span::new("test.apxm".to_string(), 1, 1, 1);
+        let span = Span::new("test.air".to_string(), 1, 1, 1);
         let error = Error::new(ErrorCode::ExpectedExpression, "expected expression", span);
         let source = "let x = ";
         let output = error.pretty_print(Some(source));

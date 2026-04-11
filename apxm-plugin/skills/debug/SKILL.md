@@ -11,15 +11,15 @@ user-invocable: true
 Enable trace output at different levels:
 
 ```bash
-dekk apxm execute graph.apxm --trace info
-dekk apxm execute graph.apxm --trace debug
+dekk apxm execute graph.air --trace info
+dekk apxm execute graph.air --trace debug
 ```
 
 ### Environment-based tracing
 
 ```bash
-RUST_LOG=apxm::scheduler=debug dekk apxm execute graph.apxm
-RUST_LOG=apxm::ops=trace dekk apxm execute graph.apxm
+RUST_LOG=apxm::scheduler=debug dekk apxm execute graph.air
+RUST_LOG=apxm::ops=trace dekk apxm execute graph.air
 ```
 
 ### Tracing targets
@@ -39,7 +39,7 @@ RUST_LOG=apxm::ops=trace dekk apxm execute graph.apxm
 Emit runtime metrics to a JSON file:
 
 ```bash
-dekk apxm execute graph.apxm --emit-metrics metrics.json
+dekk apxm execute graph.air --emit-metrics metrics.json
 ```
 
 ## References

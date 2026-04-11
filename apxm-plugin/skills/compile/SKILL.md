@@ -13,13 +13,13 @@ The compiled artifact is self-contained: it includes all DAGs, sub-flows, parame
 ## Commands
 
 ```bash
-dekk apxm compile graph.apxm                           # compile with default settings (O1)
-dekk apxm compile graph.apxm -o workflow.apxmobj       # specify output path
-dekk apxm compile graph.apxm -O0                       # no optimizations (raw IR to artifact)
-dekk apxm compile graph.apxm -O2                       # standard optimizations (fuse + specialize + narrow)
-dekk apxm compile graph.apxm -O3                       # aggressive (iterate passes to fixed-point)
-dekk apxm compile graph.apxm --emit-diagnostics d.json # write per-pass compilation statistics
-dekk apxm compile graph.apxm --no-cse-llm              # skip CSE for LLM ops (use when temperature > 0)
+dekk apxm compile graph.air                           # compile with default settings (O1)
+dekk apxm compile graph.air -o workflow.apxmobj       # specify output path
+dekk apxm compile graph.air -O0                       # no optimizations (raw IR to artifact)
+dekk apxm compile graph.air -O2                       # standard optimizations (fuse + specialize + narrow)
+dekk apxm compile graph.air -O3                       # aggressive (iterate passes to fixed-point)
+dekk apxm compile graph.air --emit-diagnostics d.json # write per-pass compilation statistics
+dekk apxm compile graph.air --no-cse-llm              # skip CSE for LLM ops (use when temperature > 0)
 dekk apxm compile myproject/                           # compile all graphs in a project directory
 ```
 
@@ -32,7 +32,7 @@ dekk apxm compile myproject/                           # compile all graphs in a
 
 ## Compilation Pipeline
 
-1. **Load** — Parse graph JSON (or discover and merge `.apxm` files from a directory)
+1. **Load** — Parse graph JSON (or discover and merge `.air` files from a directory)
 2. **Lower** — Convert `ApxmGraph` to AIS dialect MLIR with type inference and verifier attachment
 3. **Parse** — Feed MLIR text through the MLIR parser
 4. **Verify** — Run MLIR verifiers (type checking, latency budget validation, capability existence)

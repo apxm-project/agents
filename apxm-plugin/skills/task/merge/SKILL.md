@@ -13,10 +13,10 @@ Useful when different team members author different parts of a workflow, or when
 ## Commands
 
 ```bash
-dekk apxm task merge a.apxm b.apxm --name combined              # merge and print
-dekk apxm task merge a.apxm b.apxm --name combined -o out.apxm  # merge and write to file
-dekk apxm task merge a.apxm b.apxm c.apxm --name pipeline       # merge three fragments
-dekk apxm task merge a.apxm b.apxm --name combined --json       # machine-readable output
+dekk apxm task merge a.air b.air --name combined              # merge and print
+dekk apxm task merge a.air b.air --name combined -o out.air  # merge and write to file
+dekk apxm task merge a.air b.air c.air --name pipeline       # merge three fragments
+dekk apxm task merge a.air b.air --name combined --json       # machine-readable output
 ```
 
 ## How It Works

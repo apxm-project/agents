@@ -1,13 +1,13 @@
-import { useMemo, useEffect, useCallback, useState } from "react";
+import { useMemo, useEffect, useCallback, useState, useRef } from "react";
 import {
   ReactFlow,
   Controls,
-  MiniMap,
   Background,
   ReactFlowProvider,
   type NodeTypes,
   type EdgeTypes,
   type ReactFlowInstance,
+  type Connection,
 } from "@xyflow/react";
 import { useAppStore } from "@/store/app-store";
 import { useElkLayout } from "@/hooks/use-elk-layout";
@@ -21,7 +21,6 @@ import type { AisNodeData } from "@/types/graph";
 
 const nodeTypes: NodeTypes = { aisNode: AisNodeCard };
 const edgeTypes: EdgeTypes = { depEdge: DepEdge };
-const MINIMAP_STYLE = { background: "rgba(13, 19, 28, 0.96)" };
 const FIT_VIEW_OPTIONS = { padding: 0.5, maxZoom: 1.0 };
 
 function GraphCanvasInner() {
@@ -34,20 +33,23 @@ function GraphCanvasInner() {
   const liveNodeStates = useAppStore((s) => s.liveNodeStates);
   const searchQuery = useAppStore((s) => s.searchQuery);
   const graphAnalysis = useAppStore((s) => s.graphAnalysis);
+  const editMode = useAppStore((s) => s.editMode);
+  const addNode = useAppStore((s) => s.addNode);
+  const addEdge = useAppStore((s) => s.addEdge);
+  const removeNode = useAppStore((s) => s.removeNode);
+  const removeEdge = useAppStore((s) => s.removeEdge);
   const [, setFlowInstance] = useState<ReactFlowInstance | null>(null);
   const [analysisOpen, setAnalysisOpen] = useState(false);
+  const reactFlowWrapper = useRef<HTMLDivElement>(null);
 
   const { layout, layoutError } = useElkLayout(graphData, layoutDirection);
 
-  // Sync layout to store
   useEffect(() => { setGraphLayout(layout); }, [layout, setGraphLayout]);
 
-  // Auto-open analysis panel when analysis arrives
   useEffect(() => {
     if (graphAnalysis) setAnalysisOpen(true);
   }, [graphAnalysis]);
 
-  // Compute search match set
   const searchMatchIds = useMemo(() => {
     if (!searchQuery || !graphData) return null;
     const q = searchQuery.toLowerCase();
@@ -68,18 +70,19 @@ function GraphCanvasInner() {
     if (!graphData) return [];
     const nodes = buildGraphNodes(graphData, ops, layout, selectedNodeId);
     for (const node of nodes) {
-      // Apply search dimming
       if (searchMatchIds && !searchMatchIds.has(node.data.nodeId)) {
         (node.data as AisNodeData).dimmed = true;
       }
-      // Overlay live status
       const status = liveNodeStates[node.data.nodeId];
       if (status) {
         (node.data as AisNodeData).liveStatus = status;
       }
+      if (editMode) {
+        node.draggable = true;
+      }
     }
     return nodes;
-  }, [graphData, ops, layout, selectedNodeId, liveNodeStates, searchMatchIds]);
+  }, [graphData, ops, layout, selectedNodeId, liveNodeStates, searchMatchIds, editMode]);
 
   const graphEdges = useMemo(() => {
     if (!graphData) return [];
@@ -93,12 +96,72 @@ function GraphCanvasInner() {
     [setSelectedNodeId],
   );
 
+  const handleConnect = useCallback(
+    (connection: Connection) => {
+      if (!editMode) return;
+      const from = Number(connection.source);
+      const to = Number(connection.target);
+      if (!isNaN(from) && !isNaN(to) && from !== to) {
+        addEdge(from, to, "Data");
+      }
+    },
+    [editMode, addEdge],
+  );
+
+  const handleNodesDelete = useCallback(
+    (deleted: { id: string }[]) => {
+      if (!editMode) return;
+      for (const node of deleted) {
+        removeNode(Number(node.id));
+      }
+    },
+    [editMode, removeNode],
+  );
+
+  const handleEdgesDelete = useCallback(
+    (deleted: { id: string }[]) => {
+      if (!editMode) return;
+      for (const edge of deleted) {
+        const [from, to] = edge.id.split("->").map(Number);
+        if (!isNaN(from) && !isNaN(to)) {
+          removeEdge(from, to);
+        }
+      }
+    },
+    [editMode, removeEdge],
+  );
+
+  // Drag-and-drop from op palette
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+  }, []);
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      if (!editMode) return;
+
+      const data = e.dataTransfer.getData("application/apxm-op");
+      if (!data) return;
+
+      try {
+        const opData = JSON.parse(data) as { name: string; op_type: string; category: string };
+        const nodeName = opData.name.toLowerCase().replace(/\s+/g, "_");
+        addNode(opData.name, nodeName);
+      } catch {
+        // ignore invalid drag data
+      }
+    },
+    [editMode, addNode],
+  );
+
   if (!graphData) {
     return (
       <div className="canvas-empty">
         <div className="viewer-status">
           <p className="viewer-status__title">No graph loaded</p>
-          <p className="viewer-status__hint">Select a .apxm file from the sidebar to visualize it.</p>
+          <p className="viewer-status__hint">Select a workflow or create a new one to get started.</p>
         </div>
       </div>
     );
@@ -107,12 +170,17 @@ function GraphCanvasInner() {
   return (
     <>
       <GraphToolbar onToggleAnalysis={() => setAnalysisOpen(!analysisOpen)} />
-      {layoutError ? (
+      {layoutError && (
         <div className="layout-warning">Layout engine unavailable, showing grid fallback</div>
-      ) : null}
+      )}
       <div className="viewer-layout">
         <div className="stage">
-          <div className="canvas-card">
+          <div
+            className="canvas-card"
+            ref={reactFlowWrapper}
+            onDragOver={handleDragOver}
+            onDrop={handleDrop}
+          >
             <div className="canvas-card__flow">
               <ReactFlow
                 nodes={graphNodes}
@@ -120,23 +188,27 @@ function GraphCanvasInner() {
                 nodeTypes={nodeTypes}
                 edgeTypes={edgeTypes}
                 defaultViewport={{ x: 0, y: 0, zoom: 0.84 }}
-                nodesDraggable={false}
-                nodesConnectable={false}
+                nodesDraggable={editMode}
+                nodesConnectable={editMode}
+                edgesReconnectable={editMode}
+                deleteKeyCode={editMode ? "Delete" : null}
                 onInit={setFlowInstance}
                 onNodeClick={handleNodeClick}
+                onConnect={editMode ? handleConnect : undefined}
+                onNodesDelete={editMode ? handleNodesDelete : undefined}
+                onEdgesDelete={editMode ? handleEdgesDelete : undefined}
                 fitView
                 fitViewOptions={FIT_VIEW_OPTIONS}
                 proOptions={{ hideAttribution: true }}
               >
                 <Controls showInteractive={false} />
-                <MiniMap style={MINIMAP_STYLE} />
                 <Background color="rgba(148, 163, 184, 0.08)" gap={40} />
               </ReactFlow>
             </div>
             <GraphLegend categories={categories} />
-            {analysisOpen ? (
+            {analysisOpen && (
               <GraphAnalysisPanel onClose={() => setAnalysisOpen(false)} />
-            ) : null}
+            )}
           </div>
         </div>
       </div>

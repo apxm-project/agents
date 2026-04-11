@@ -58,3 +58,26 @@ export const STATUS_COLORS: Record<string, string> = {
 export function sessionPath(id: string): string {
   return `~/.apxm/sessions/${id}`;
 }
+
+export function timeAgo(isoOrEpoch: string | number): string {
+  const ts = typeof isoOrEpoch === "number"
+    ? isoOrEpoch * 1000
+    : new Date(isoOrEpoch).getTime();
+  if (isNaN(ts)) return "";
+  const diff = Date.now() - ts;
+  if (diff < 0) return "just now";
+  const secs = Math.floor(diff / 1000);
+  if (secs < 60) return `${secs}s ago`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d ago`;
+}
+
+export function isStaleSession(mtimeEpoch: number | null | undefined, thresholdMinutes = 5): boolean {
+  if (mtimeEpoch == null) return false;
+  const age = Date.now() - mtimeEpoch * 1000;
+  return age > thresholdMinutes * 60 * 1000;
+}

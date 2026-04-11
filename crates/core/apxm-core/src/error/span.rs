@@ -111,7 +111,7 @@ mod tests {
 
     #[test]
     fn test_span_multi_line() {
-        let span = Span::multi_line("test.apxm".to_string(), 10, 5, 12, 10);
+        let span = Span::multi_line("test.air".to_string(), 10, 5, 12, 10);
         assert_eq!(span.line_start, 10);
         assert_eq!(span.line_end, 12);
         assert!(!span.is_single_line());
@@ -119,10 +119,10 @@ mod tests {
 
     #[test]
     fn test_span_display() {
-        let span = Span::new("test.apxm".to_string(), 10, 5, 3);
-        assert_eq!(span.to_string(), "test.apxm:10:5");
+        let span = Span::new("test.air".to_string(), 10, 5, 3);
+        assert_eq!(span.to_string(), "test.air:10:5");
 
-        let multi = Span::multi_line("test.apxm".to_string(), 10, 5, 12, 10);
+        let multi = Span::multi_line("test.air".to_string(), 10, 5, 12, 10);
         assert!(multi.to_string().contains("10:5"));
         assert!(multi.to_string().contains("12:10"));
     }

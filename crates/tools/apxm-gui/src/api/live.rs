@@ -57,6 +57,9 @@ pub struct SessionInfo {
     pub status: String,
     pub started_at: String,
     pub duration_ms: Option<u64>,
+    pub node_count: Option<u64>,
+    /// Epoch seconds of manifest.json last modification — enables staleness detection.
+    pub mtime_epoch: Option<u64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -465,12 +468,25 @@ pub async fn list_sessions(
             .get("duration_ms")
             .and_then(|v| v.as_u64());
 
+        let node_count = manifest
+            .get("node_count")
+            .and_then(|v| v.as_u64());
+
+        let mtime_epoch = tokio::fs::metadata(&manifest_path)
+            .await
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs());
+
         sessions.push(SessionInfo {
             id,
             graph_name,
             status,
             started_at,
             duration_ms,
+            node_count,
+            mtime_epoch,
         });
     }
 

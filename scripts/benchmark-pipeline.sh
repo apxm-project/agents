@@ -26,7 +26,7 @@ if ! command -v dekk &> /dev/null; then
 fi
 
 # Create test graph: ASK→ASK chain
-TEST_GRAPH="${PROJECT_ROOT}/scripts/benchmark-pipeline-test.apxm"
+TEST_GRAPH="${PROJECT_ROOT}/scripts/benchmark-pipeline-test.air"
 
 cat > "${TEST_GRAPH}" << 'EOF'
 {

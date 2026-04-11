@@ -33,11 +33,11 @@ User-defined templates can be added to `~/.apxm/templates.json` and will appear 
 ## Typical Workflow
 
 ```bash
-dekk apxm template show fan-out --json > workflow.apxm   # start from template
-# edit workflow.apxm to customize nodes, prompts, tools
-dekk apxm validate workflow.apxm                          # check structure
-dekk apxm view workflow.apxm                              # visualize
-dekk apxm execute workflow.apxm                           # run it
+dekk apxm template show fan-out --json > workflow.air   # start from template
+# edit workflow.air to customize nodes, prompts, tools
+dekk apxm validate workflow.air                          # check structure
+dekk apxm view workflow.air                              # visualize
+dekk apxm execute workflow.air                           # run it
 ```
 
 ## When to Use

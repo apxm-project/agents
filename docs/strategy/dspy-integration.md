@@ -64,9 +64,9 @@ The study also found that extracting optimized instructions out of DSPy's framew
 `dspy-optimize` is a regular pass in the MLIR pipeline at every optimization level above O0. It is a **no-op** when no training data is available — just like `dead-context-elimination` is a no-op when there's no dead context, or PGO passes are no-ops without profile data.
 
 ```
-apxm compile flow.apxm -O1   # dspy-optimize in pipeline, no-op if no training data
-apxm compile flow.apxm -O2   # dspy-optimize in pipeline, no-op if no training data
-apxm compile flow.apxm -O3   # dspy-optimize in pipeline, no-op if no training data
+apxm compile flow.air -O1   # dspy-optimize in pipeline, no-op if no training data
+apxm compile flow.air -O2   # dspy-optimize in pipeline, no-op if no training data
+apxm compile flow.air -O3   # dspy-optimize in pipeline, no-op if no training data
 ```
 
 No special flag. No separate optimization level. If a graph has associated training data, the pass fires. If not, compilation proceeds normally with zero overhead.
@@ -255,7 +255,7 @@ DSPy optimization is most like PGO profiles — compile-time data derived from w
 ```
 compile (DSPy runs here)          execute (template is fixed)
     ↓                                 ↓
- .apxm → [dspy-optimize] → .apxmobj → session 1 (uses baked template)
+ .air → [dspy-optimize] → .apxmobj → session 1 (uses baked template)
                                      → session 2 (uses same template)
                                      → session N (uses same template)
 ```
@@ -270,7 +270,7 @@ Each session produces execution results (`results.json`, `metrics.json`, `node_s
 Session 1 → results.json → accumulated training data
 Session 2 → results.json → accumulated training data
   ...
-apxm compile flow.apxm -O2  → dspy-optimize sees MORE training data → better templates
+apxm compile flow.air -O2  → dspy-optimize sees MORE training data → better templates
 ```
 
 DSPy supports this via incremental optimizers (SIMBA, GEPA). This is a future enhancement — for v1, training data is user-provided and the cache is a one-time compile artifact. The project-scoped cache location (`<repo>/.apxm/cache/dspy/`) naturally supports this feedback loop: accumulated session data and DSPy cache live in the same project directory.
@@ -280,7 +280,7 @@ DSPy supports this via incremental optimizers (SIMBA, GEPA). This is a future en
 Multiple nodes in the same graph need DSPy optimization simultaneously. The pass handles this with **one subprocess per compilation**:
 
 ```
-apxm compile flow.apxm -O2
+apxm compile flow.air -O2
   └─ dspy-optimize pass walks all ops
      └─ collects all cache-miss templates
         └─ ONE subprocess: python3 -m apxm_dspy
@@ -298,9 +298,9 @@ For **parallel compilations** (e.g., CI building multiple workflows simultaneous
 First compilation with training data is slow (DSPy runs LLM trials). Subsequent compilations are fast (cache hit — pure file read).
 
 ```bash
-$ apxm compile flow.apxm -O2        # first time with training data: ~3 min per template
-$ apxm compile flow.apxm -O2        # second time: ~0.5s (cache hit)
-$ apxm compile flow.apxm -O2        # no training data at all: ~0.5s (no-op)
+$ apxm compile flow.air -O2        # first time with training data: ~3 min per template
+$ apxm compile flow.air -O2        # second time: ~0.5s (cache hit)
+$ apxm compile flow.air -O2        # no training data at all: ~0.5s (no-op)
 ```
 
 Cache invalidation:
@@ -313,7 +313,7 @@ Cache invalidation:
 
 Three sources, checked in order:
 
-**1. Graph metadata** (inline in `.apxm` file):
+**1. Graph metadata** (inline in `.air` file):
 ```json
 {
   "name": "code-review",
@@ -330,10 +330,10 @@ Three sources, checked in order:
 }
 ```
 
-**2. Companion file** (convention: `<name>.training.json` next to `<name>.apxm`):
+**2. Companion file** (convention: `<name>.training.json` next to `<name>.air`):
 ```
 flows/
-├── review.apxm
+├── review.air
 └── review.training.json     ← auto-discovered by naming convention
 ```
 
@@ -435,7 +435,7 @@ lm = dspy.LM("openai/claude-sonnet-4-5-20250929",
 
 Using the `multi_model` benchmark graph — a support ticket triage workflow.
 
-### 1. The graph (`multi_model.apxm`)
+### 1. The graph (`multi_model.air`)
 
 ```json
 {
@@ -511,7 +511,7 @@ Using the `multi_model` benchmark graph — a support ticket triage workflow.
 ### 3. What happens during compilation
 
 ```bash
-$ apxm compile multi_model.apxm -O2
+$ apxm compile multi_model.air -O2
 ```
 
 The pipeline runs. When `dspy-optimize` fires:
@@ -855,10 +855,10 @@ The C++ pass handles this gracefully: if `python3 -m apxm_dspy` exits with error
 ### What happens without DSPy installed
 
 ```
-$ apxm compile flow.apxm -O2
+$ apxm compile flow.air -O2
 # No training data → dspy-optimize is no-op, never tries to invoke Python
 
-$ apxm compile flow.apxm -O2  # (with training data, DSPy NOT installed)
+$ apxm compile flow.air -O2  # (with training data, DSPy NOT installed)
 warning: dspy-optimize: python3 -m apxm_dspy failed: dspy-ai not installed
 warning: dspy-optimize: skipping template optimization for 3 ops
 # Compilation succeeds with original (unoptimized) templates

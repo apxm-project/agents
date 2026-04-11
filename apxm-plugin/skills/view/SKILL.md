@@ -13,8 +13,8 @@ The visualizer is a React + TypeScript app using ReactFlow for rendering and ELK
 ## Commands
 
 ```bash
-dekk apxm view graph.apxm              # open graph in browser
-dekk apxm view graph.apxm --no-open    # start server without opening browser (navigate to http://127.0.0.1:4174)
+dekk apxm view graph.air              # open graph in browser
+dekk apxm view graph.air --no-open    # start server without opening browser (navigate to http://127.0.0.1:4174)
 ```
 
 ## Interactive Features
@@ -22,7 +22,7 @@ dekk apxm view graph.apxm --no-open    # start server without opening browser (n
 **Canvas:**
 - Pan (click-drag), zoom (scroll/pinch), fit-to-view button
 - Toggle layout direction: top-to-bottom (default) or left-to-right
-- Drag-and-drop an `.apxm` file onto the canvas to load a different graph
+- Drag-and-drop an `.air` file onto the canvas to load a different graph
 - Open file picker button to browse for graphs
 
 **Node cards** show:

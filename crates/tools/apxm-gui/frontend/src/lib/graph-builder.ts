@@ -5,13 +5,33 @@ import type { OpSpec } from "@/types/ops";
 import { getEdgeStyle } from "./category-styles";
 import { ELK_NODE_WIDTH, ELK_NODE_HEIGHT, FALLBACK_GRID_SPACING, elkLayoutOptionsForDirection } from "./layout-config";
 
+/**
+ * Build a lookup map that resolves ops by PascalCase name, SCREAMING_SNAKE_CASE,
+ * or lowercase. This handles the mismatch between AirModule serialization
+ * (SCREAMING_SNAKE_CASE) and the ops catalog (PascalCase).
+ */
+function buildOpLookup(opMetadata: OpSpec[]): Map<string, OpSpec> {
+  const map = new Map<string, OpSpec>();
+  for (const op of opMetadata) {
+    map.set(op.name, op);
+    map.set(op.name.toUpperCase(), op);
+    map.set(toScreamingSnake(op.name), op);
+    map.set(op.name.toLowerCase(), op);
+  }
+  return map;
+}
+
+function toScreamingSnake(pascal: string): string {
+  return pascal.replace(/([a-z])([A-Z])/g, "$1_$2").toUpperCase();
+}
+
 export function buildGraphNodes(
   graph: ApxmGraph,
   opMetadata: OpSpec[],
   layout: GraphLayout | null,
   selectedNodeId: number | null,
 ): Node<AisNodeData>[] {
-  const opLookup = new Map(opMetadata.map((op) => [op.name, op]));
+  const opLookup = buildOpLookup(opMetadata);
   const incomingCounts = new Map<number, number>();
   const outgoingCounts = new Map<number, number>();
 
@@ -108,7 +128,14 @@ let elkPromise: Promise<import("elkjs/lib/elk.bundled.js").ELK> | null = null;
 
 async function getElk() {
   if (!elkPromise) {
-    elkPromise = import("elkjs/lib/elk.bundled.js").then(({ default: Elk }) => new Elk());
+    elkPromise = import("elkjs/lib/elk.bundled.js").then((mod) => {
+      // Handle both ESM default export and CJS interop
+      const Elk = typeof mod.default === "function" ? mod.default : mod;
+      return new (Elk as unknown as new () => import("elkjs/lib/elk.bundled.js").ELK)();
+    }).catch((err) => {
+      elkPromise = null;
+      throw err;
+    });
   }
   return elkPromise;
 }
@@ -152,7 +179,9 @@ export async function computeElkLayout(
     }
 
     return { nodePositions, edgeRoutes };
-  } catch {
+  } catch (err) {
+    console.error("[ELK] Layout computation failed:", err);
+    elkPromise = null;
     return null;
   }
 }

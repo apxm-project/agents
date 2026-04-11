@@ -171,7 +171,7 @@ mod tests {
 
     #[test]
     fn test_suggestion_with_replacement() {
-        let span = Span::new("test.apxm".to_string(), 10, 5, 3);
+        let span = Span::new("test.air".to_string(), 10, 5, 3);
         let sugg = Suggestion::with_replacement(
             "Add semicolon".to_string(),
             span.clone(),

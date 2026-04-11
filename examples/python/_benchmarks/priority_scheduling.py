@@ -15,8 +15,8 @@ Metrics:
 - Speedup of critical path (should improve under contention)
 
 Usage:
-  dekk apxm execute priority_scheduling.apxm -O0  # No priority (equal scheduling)
-  dekk apxm execute priority_scheduling.apxm -O2  # With priority (critical path first)
+  dekk apxm execute priority_scheduling.air -O0  # No priority (equal scheduling)
+  dekk apxm execute priority_scheduling.air -O2  # With priority (critical path first)
 """
 
 from apxm import compile, GraphRecorder
