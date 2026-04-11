@@ -318,11 +318,13 @@ dependencies = [
 name = "apxm-gui"
 version = "0.0.1"
 dependencies = [
+ "apxm-acp",
  "apxm-ais",
  "apxm-compiler",
  "apxm-core",
  "async-stream",
  "axum",
+ "dashmap",
  "futures",
  "reqwest",
  "serde",

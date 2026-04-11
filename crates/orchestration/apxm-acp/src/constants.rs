@@ -38,6 +38,8 @@ pub mod methods {
 pub mod update_types {
     pub const AGENT_MESSAGE_CHUNK: &str = "agent_message_chunk";
     pub const USAGE_UPDATE: &str = "usage_update";
+    pub const TOOL_USE: &str = "tool_use";
+    pub const TOOL_RESULT: &str = "tool_result";
 }
 
 /// ACP protocol wire-format field names (camelCase as on the wire).

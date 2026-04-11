@@ -9,13 +9,16 @@ use axum::extract::{Path, Query};
 use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Json, Response};
 use axum::Router;
+use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
+use tokio::sync::Mutex;
 use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
 use tracing::{error, info};
 
 use apxm_compiler::AirModule;
 
+mod acp_client;
 mod air_parse;
 mod api;
 
@@ -24,7 +27,6 @@ mod api;
 // ---------------------------------------------------------------------------
 
 /// Shared application state.
-#[derive(Clone)]
 struct AppState {
     /// Path to the directory containing static assets (CSS, JS, images).
     #[allow(dead_code)]
@@ -33,6 +35,8 @@ struct AppState {
     initial_file: Option<String>,
     /// Directory to scan for example workflow files.
     examples_dir: Option<PathBuf>,
+    /// Active ACP agent sessions, keyed by session ID.
+    agent_sessions: DashMap<String, Arc<Mutex<acp_client::AgentSession>>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -2255,6 +2259,7 @@ async fn main() {
         static_dir: static_dir.clone(),
         initial_file,
         examples_dir,
+        agent_sessions: DashMap::new(),
     });
 
     // Build router
@@ -2295,6 +2300,10 @@ async fn main() {
         // Chat endpoints
         .route("/api/chat", axum::routing::post(api::chat::chat_handler))
         .route("/api/chat/models", axum::routing::get(api::chat::models_handler))
+        // Agent (ACP) endpoints
+        .route("/api/agent/chat", axum::routing::post(api::agent::agent_chat))
+        .route("/api/agent/sessions", axum::routing::get(api::agent::list_agent_sessions))
+        .route("/api/agent/sessions/{id}", axum::routing::delete(api::agent::delete_agent_session))
         // Skills
         .route("/api/skills", axum::routing::get(skills_handler))
         .route("/api/skills/{name}", axum::routing::get(skill_detail_handler))

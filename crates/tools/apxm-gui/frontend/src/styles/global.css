@@ -5812,3 +5812,208 @@ pre, code {
   font-size: 0.64rem;
   color: var(--ink-faint);
 }
+
+/* ── Agent toggle ─────────────────────────────────────────── */
+
+.agent-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  background: var(--panel-muted);
+  color: var(--ink-faint);
+  font-size: 0.72rem;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.agent-toggle:hover {
+  background: var(--panel-hover);
+  color: var(--ink-soft);
+}
+
+.agent-toggle--active {
+  background: rgba(62, 166, 198, 0.12);
+  border-color: rgba(62, 166, 198, 0.4);
+  color: var(--accent);
+}
+
+.agent-toggle--active:hover {
+  background: rgba(62, 166, 198, 0.18);
+}
+
+.agent-toggle:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Tool call cards ──────────────────────────────────────── */
+
+.tool-call-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 6px 0;
+}
+
+.tool-call-card {
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  overflow: hidden;
+  animation: content-fade-in 0.15s ease-out;
+}
+
+.tool-call-card--success {
+  border-color: rgba(88, 187, 129, 0.25);
+}
+
+.tool-call-card--error {
+  border-color: rgba(216, 107, 107, 0.25);
+}
+
+.tool-call-card--pending {
+  border-color: rgba(212, 155, 69, 0.25);
+}
+
+.tool-call-card__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 10px;
+  border: none;
+  background: var(--panel-muted);
+  color: var(--ink-soft);
+  font-size: 0.74rem;
+  cursor: pointer;
+  text-align: left;
+}
+
+.tool-call-card__header:hover {
+  background: var(--panel-hover);
+}
+
+.tool-call-card__chevron {
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+
+.tool-call-card__chevron--open {
+  transform: rotate(90deg);
+}
+
+.tool-call-card__label {
+  font-size: 0.64rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-faint);
+}
+
+.tool-call-card__name {
+  font-family: "IBM Plex Mono", monospace;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.tool-call-card__status {
+  margin-left: auto;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.64rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.tool-call-card__status--ok {
+  color: var(--success);
+}
+
+.tool-call-card__status--err {
+  color: var(--danger);
+}
+
+.tool-call-card__spinner {
+  margin-left: auto;
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid var(--panel-border);
+  border-top-color: var(--warning);
+  border-radius: 50%;
+  animation: tool-spin 0.6s linear infinite;
+}
+
+@keyframes tool-spin {
+  to { transform: rotate(360deg); }
+}
+
+.tool-call-card__body {
+  padding: 6px 10px 8px;
+  border-top: 1px solid var(--panel-border);
+}
+
+.tool-call-args {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 4px;
+}
+
+.tool-call-args__row {
+  display: flex;
+  gap: 6px;
+  font-size: 0.72rem;
+  line-height: 1.5;
+}
+
+.tool-call-args__key {
+  font-family: "IBM Plex Mono", monospace;
+  font-weight: 500;
+  color: var(--ink-faint);
+  flex-shrink: 0;
+}
+
+.tool-call-args__value {
+  font-family: "IBM Plex Mono", monospace;
+  color: var(--ink-soft);
+  word-break: break-all;
+}
+
+.tool-call-result {
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.tool-call-result--success {
+  border-left: 2px solid var(--success);
+}
+
+.tool-call-result--error {
+  border-left: 2px solid var(--danger);
+}
+
+.tool-call-result__output {
+  margin: 0;
+  padding: 6px 8px;
+  background: rgba(0, 0, 0, 0.2);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.7rem;
+  line-height: 1.5;
+  color: var(--ink-soft);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 160px;
+  overflow: auto;
+}
+
+.tool-call-usage {
+  margin-top: 6px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.64rem;
+  color: var(--ink-faint);
+  text-align: right;
+}

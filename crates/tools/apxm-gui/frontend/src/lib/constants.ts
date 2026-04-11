@@ -54,6 +54,27 @@ export const OVERLAY_LABELS: Record<OverlayKey, string> = {
   [Overlay.SETTINGS]: "Settings",
 };
 
+// ── Chat roles ──────────────────────────────────────────────
+export const Role = {
+  USER: "user",
+  ASSISTANT: "assistant",
+  SYSTEM: "system",
+} as const;
+
+export type ChatRole = (typeof Role)[keyof typeof Role];
+
+// ── SSE event types (agent stream) ──────────────────────────
+export const SseEvent = {
+  TOKEN: "token",
+  TOOL_CALL: "tool_call",
+  TOOL_RESULT: "tool_result",
+  USAGE: "usage",
+  DONE: "done",
+  ERROR: "error",
+} as const;
+
+export type SseEventType = (typeof SseEvent)[keyof typeof SseEvent];
+
 // ── Loading / error state keys ──────────────────────────────
 export const LoadKey = {
   STARTUP: "startup",

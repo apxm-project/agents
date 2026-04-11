@@ -438,6 +438,10 @@ pub mod llm {
         pub const ENV_PREFIX: &str = "env:";
     }
 
+    pub mod tags {
+        pub const DEAD_ENDPOINT: &str = "dead-endpoint";
+    }
+
     pub mod openai {
         pub const TOP_P: &str = "top_p";
         pub const FREQUENCY_PENALTY: &str = "frequency_penalty";

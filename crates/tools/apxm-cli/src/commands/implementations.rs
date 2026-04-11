@@ -1844,6 +1844,7 @@ fn sync_ollama_models(
                 supports_vision,
                 supports_functions,
                 supports_thinking: false,
+                max_output_tokens: None,
                 tags: vec!["local".to_string(), "ollama".to_string()],
             };
             store
@@ -2244,6 +2245,7 @@ pub async fn backend_command(action: BackendAction, json_output: bool) -> Result
                 supports_vision,
                 supports_functions,
                 supports_thinking,
+                max_output_tokens: None,
                 tags: tag,
             };
 
@@ -5241,6 +5243,288 @@ pub fn gui_command(file: Option<PathBuf>, port: u16, open: bool) -> Result<()> {
 
     if !status.success() {
         anyhow::bail!("apxm-gui exited with status {}", status);
+    }
+
+    Ok(())
+}
+
+// ── OpenClaw config sync ────────────────────────────────────────────────────
+
+pub fn openclaw_command(action: OpenClawAction, json_output: bool) -> Result<()> {
+    match action {
+        OpenClawAction::Sync => openclaw_sync(json_output),
+    }
+}
+
+/// Resolve an `env:VAR` prefixed value by reading the environment variable.
+/// Non-prefixed values are returned as-is.
+fn resolve_env_value(value: &str) -> String {
+    if let Some(var) = value.strip_prefix(apxm_core::constants::llm::config_keys::ENV_PREFIX) {
+        env::var(var).unwrap_or_default()
+    } else {
+        value.to_string()
+    }
+}
+
+/// Generate a human-readable name from a model ID.
+///
+/// "claude-sonnet-4-5@20250929" -> "Claude Sonnet 4.5"
+/// "gpt-4o-mini" -> "GPT 4o Mini"
+/// "DeepSeek-R1-0528" -> "DeepSeek R1 0528"
+fn humanize_model_id(id: &str) -> String {
+    // Strip version suffix (@date or :tag)
+    let base = id.split('@').next().unwrap_or(id);
+    let base = base.split(':').next().unwrap_or(base);
+
+    let words: Vec<String> = base
+        .split(|c: char| c == '-' || c == '_')
+        .filter(|w| !w.is_empty())
+        .map(|w| {
+            // Collapse version-like segments: "4" "5" -> "4.5" handled below
+            // Capitalize first letter of each word
+            let mut chars = w.chars();
+            match chars.next() {
+                Some(first) => {
+                    let rest: String = chars.collect();
+                    format!("{}{}", first.to_uppercase(), rest)
+                }
+                None => String::new(),
+            }
+        })
+        .collect();
+
+    // Post-process: collapse adjacent single-digit words into "X.Y"
+    // e.g., ["Claude", "Sonnet", "4", "5"] -> ["Claude", "Sonnet", "4.5"]
+    let mut result: Vec<String> = Vec::new();
+    for word in &words {
+        if word.len() == 1
+            && word.chars().next().map_or(false, |c| c.is_ascii_digit())
+            && result
+                .last()
+                .map_or(false, |prev: &String| prev.len() == 1 && prev.chars().next().map_or(false, |c| c.is_ascii_digit()))
+        {
+            // Merge with previous: "4" + "5" -> "4.5"
+            let prev = result.last_mut().unwrap();
+            prev.push('.');
+            prev.push_str(word);
+        } else {
+            result.push(word.clone());
+        }
+    }
+
+    result.join(" ")
+}
+
+/// Map APXM ProviderProtocol to OpenClaw API type string.
+fn protocol_to_openclaw_api(protocol: &apxm_core::types::ProviderProtocol) -> &'static str {
+    use apxm_core::types::ProviderProtocol;
+    match protocol {
+        ProviderProtocol::OpenAI => "openai-completions",
+        ProviderProtocol::Anthropic => "anthropic-messages",
+        ProviderProtocol::Ollama => "ollama",
+        // vLLM uses OpenAI-compatible protocol
+        ProviderProtocol::Vllm => "openai-completions",
+        ProviderProtocol::Google => "google-generative-ai",
+        ProviderProtocol::Mock => "openai-completions",
+    }
+}
+
+/// Check if all models in a backend have the "dead-endpoint" tag.
+fn is_dead_backend(backend: &apxm_core::types::BackendConfig) -> bool {
+    !backend.models.is_empty()
+        && backend
+            .models
+            .iter()
+            .all(|m| m.tags.iter().any(|t| t == apxm_core::constants::llm::tags::DEAD_ENDPOINT))
+}
+
+fn openclaw_sync(json_output: bool) -> Result<()> {
+    use apxm_core::types::ProviderProtocol;
+    use apxm_credentials::backend::BackendStore;
+
+    // 1. Load APXM backends
+    let store = BackendStore::open().map_err(|e| anyhow::anyhow!("{e}"))?;
+    let backends = store.list().map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    // 2. Build OpenClaw providers
+    let mut providers = serde_json::Map::new();
+
+    for backend in &backends {
+        // Skip dead backends
+        if is_dead_backend(backend) {
+            continue;
+        }
+
+        let api = protocol_to_openclaw_api(&backend.protocol);
+
+        // Build baseUrl: append /chat/completions for OpenAI-compat protocols
+        let base_url = match &backend.endpoint {
+            Some(ep) => {
+                let trimmed = ep.trim_end_matches('/');
+                if backend.protocol == ProviderProtocol::OpenAI
+                    || backend.protocol == ProviderProtocol::Vllm
+                {
+                    format!("{trimmed}/chat/completions")
+                } else {
+                    trimmed.to_string()
+                }
+            }
+            None => continue, // Skip backends without endpoints
+        };
+
+        // Resolve API key
+        let api_key = backend
+            .api_key
+            .as_deref()
+            .map(resolve_env_value)
+            .unwrap_or_default();
+
+        // Resolve headers
+        let headers: serde_json::Map<String, serde_json::Value> = backend
+            .headers
+            .iter()
+            .map(|(k, v)| (k.clone(), serde_json::Value::String(resolve_env_value(v))))
+            .collect();
+
+        // Convert models (skip individually dead-tagged models)
+        let models: Vec<serde_json::Value> = backend
+            .models
+            .iter()
+            .filter(|m| !m.tags.iter().any(|t| t == apxm_core::constants::llm::tags::DEAD_ENDPOINT))
+            .map(|m| {
+                let input = if m.supports_vision {
+                    serde_json::json!(["text", "image"])
+                } else {
+                    serde_json::json!(["text"])
+                };
+
+                serde_json::json!({
+                    "id": m.id,
+                    "name": humanize_model_id(&m.id),
+                    "reasoning": m.supports_thinking,
+                    "input": input,
+                    "cost": {
+                        "input": m.cost_per_1k_input,
+                        "output": m.cost_per_1k_output,
+                        "cacheRead": 0,
+                        "cacheWrite": 0
+                    },
+                    "contextWindow": m.context_window,
+                    "maxTokens": m.max_output_tokens.unwrap_or(8192)
+                })
+            })
+            .collect();
+
+        if models.is_empty() {
+            continue;
+        }
+
+        let mut provider = serde_json::Map::new();
+        provider.insert("baseUrl".into(), serde_json::Value::String(base_url));
+        provider.insert("apiKey".into(), serde_json::Value::String(api_key));
+        provider.insert("api".into(), serde_json::Value::String(api.to_string()));
+        if !headers.is_empty() {
+            provider.insert("headers".into(), serde_json::Value::Object(headers));
+        }
+        provider.insert("models".into(), serde_json::Value::Array(models));
+
+        providers.insert(backend.name.clone(), serde_json::Value::Object(provider));
+    }
+
+    // 3. Discover OpenClaw config location
+    let openclaw_dir = env::var("OPENCLAW_STATE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            dirs::home_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join(".openclaw")
+        });
+
+    std::fs::create_dir_all(&openclaw_dir)
+        .with_context(|| format!("Failed to create {}", openclaw_dir.display()))?;
+
+    let config_path = openclaw_dir.join("openclaw.json");
+
+    // 4. Merge with existing config (preserve non-APXM providers)
+    let mut root: serde_json::Map<String, serde_json::Value> =
+        match std::fs::read_to_string(&config_path) {
+            Ok(content) => serde_json::from_str(&content)
+                .with_context(|| format!("Failed to parse {}", config_path.display()))?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::Map::new(),
+            Err(e) => {
+                return Err(anyhow::anyhow!("Failed to read {}: {e}", config_path.display()))
+            }
+        };
+
+    // Ensure root.models.providers exists
+    let models = root
+        .entry("models")
+        .or_insert_with(|| serde_json::json!({}));
+    let models_obj = models
+        .as_object_mut()
+        .ok_or_else(|| anyhow::anyhow!("openclaw.json 'models' is not an object"))?;
+    let existing_providers = models_obj
+        .entry("providers")
+        .or_insert_with(|| serde_json::json!({}));
+    let existing_map = existing_providers
+        .as_object_mut()
+        .ok_or_else(|| anyhow::anyhow!("openclaw.json 'models.providers' is not an object"))?;
+
+    // Overwrite APXM-sourced providers, preserve others
+    let synced_count = providers.len();
+    for (name, provider) in providers {
+        existing_map.insert(name, provider);
+    }
+
+    // 5. Write atomically
+    let output = serde_json::to_string_pretty(&root)
+        .map_err(|e| anyhow::anyhow!("Failed to serialize OpenClaw config: {e}"))?;
+
+    let tmp_path = config_path.with_extension("json.tmp");
+    std::fs::write(&tmp_path, &output)
+        .with_context(|| format!("Failed to write {}", tmp_path.display()))?;
+    std::fs::rename(&tmp_path, &config_path)
+        .with_context(|| format!("Failed to rename {} -> {}", tmp_path.display(), config_path.display()))?;
+
+    // 6. Report
+    if json_output {
+        println!(
+            "{}",
+            serde_json::json!({
+                "status": "ok",
+                "providers_synced": synced_count,
+                "path": config_path.display().to_string()
+            })
+        );
+    } else {
+        println!(
+            "{} Synced {} provider(s) to {}",
+            "OK".green().bold(),
+            synced_count,
+            config_path.display().to_string().bold()
+        );
+        for backend in &backends {
+            if is_dead_backend(backend) {
+                continue;
+            }
+            if backend.endpoint.is_none() || backend.models.is_empty() {
+                continue;
+            }
+            let model_count = backend
+                .models
+                .iter()
+                .filter(|m| !m.tags.iter().any(|t| t == apxm_core::constants::llm::tags::DEAD_ENDPOINT))
+                .count();
+            if model_count > 0 {
+                println!(
+                    "  {} {} ({} model{})",
+                    ">".dimmed(),
+                    backend.name.cyan(),
+                    model_count,
+                    if model_count == 1 { "" } else { "s" }
+                );
+            }
+        }
     }
 
     Ok(())
