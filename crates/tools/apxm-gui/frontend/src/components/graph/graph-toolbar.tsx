@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useAppStore } from "@/store/app-store";
 import { fetchGraphAnalysis } from "@/api/graph";
 import { getErrorMessage } from "@/lib/format";
+import { LoadKey } from "@/lib/constants";
 
 export function GraphToolbar({ onToggleAnalysis }: { onToggleAnalysis?: () => void } = {}) {
   const graphData = useAppStore((s) => s.graphData);
@@ -27,7 +28,7 @@ export function GraphToolbar({ onToggleAnalysis }: { onToggleAnalysis?: () => vo
       const analysis = await fetchGraphAnalysis(graphPath);
       setGraphAnalysis(analysis);
     } catch (e) {
-      setError("analysis", getErrorMessage(e));
+      setError(LoadKey.ANALYSIS, getErrorMessage(e));
     } finally {
       setAnalyzing(false);
     }

@@ -11,8 +11,8 @@ Produces a narrative walkthrough of a graph's execution flow — what each node 
 ## Commands
 
 ```bash
-dekk apxm explain graph.apxm           # human-readable narrative
-dekk apxm explain graph.apxm --json    # structured JSON output
+dekk apxm explain graph.air           # human-readable narrative
+dekk apxm explain graph.air --json    # structured JSON output
 ```
 
 ## Output
@@ -42,9 +42,9 @@ dekk apxm explain graph.apxm --json    # structured JSON output
 
 ## Related Commands
 
-- `dekk apxm analyze graph.apxm` — quantitative parallelism analysis and speedup estimates
-- `dekk apxm validate graph.apxm` — structural validation
-- `dekk apxm view graph.apxm` — interactive visual graph explorer
+- `dekk apxm analyze graph.air` — quantitative parallelism analysis and speedup estimates
+- `dekk apxm validate graph.air` — structural validation
+- `dekk apxm view graph.air` — interactive visual graph explorer
 - `dekk apxm ops show ASK` — detailed info about a specific AIS operation
 
 ## When to Use

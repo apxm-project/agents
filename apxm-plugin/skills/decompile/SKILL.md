@@ -14,7 +14,7 @@ The decompiled graph shows the *optimized* structure: fused nodes, eliminated de
 
 ```bash
 dekk apxm decompile workflow.apxmobj                   # print graph JSON to stdout
-dekk apxm decompile workflow.apxmobj -o recovered.apxm  # write to file
+dekk apxm decompile workflow.apxmobj -o recovered.air  # write to file
 ```
 
 ## Process

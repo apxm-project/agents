@@ -114,7 +114,7 @@ def find_latest_session(pattern: str) -> Optional[Path]:
 
 
 def generate_graph_from_python(python_file: Path) -> Optional[Path]:
-    """Generate .apxm graph from Python file using AIR frontend."""
+    """Generate .air graph from Python file using AIR frontend."""
     print(f"  Generating graph from {python_file.name}...", end=" ", flush=True)
 
     try:
@@ -142,8 +142,8 @@ def generate_graph_from_python(python_file: Path) -> Optional[Path]:
         air_json = result.stdout.strip()
         graph_data = json.loads(air_json)
 
-        # Write to .apxm file
-        output_file = python_file.with_suffix(".apxm")
+        # Write to .air file
+        output_file = python_file.with_suffix(".air")
         with open(output_file, "w") as f:
             json.dump(graph_data, f, indent=2)
 
@@ -434,12 +434,12 @@ def run_benchmark(
         print(f"ERROR: Source file not found: {graph_file}")
         return {}
 
-    # If it's a Python file, generate .apxm first
+    # If it's a Python file, generate .air first
     if graph_file.suffix == ".py":
-        apxm_file = generate_graph_from_python(graph_file)
-        if not apxm_file:
+        air_file = generate_graph_from_python(graph_file)
+        if not air_file:
             return {}
-        graph_file = apxm_file
+        graph_file = air_file
 
     results = {}
 

@@ -32,8 +32,8 @@ Arguments are positional and must match the entry flow's parameter count. All ar
 
 ## Related Commands
 
-- `dekk apxm compile graph.apxm` — create the `.apxmobj` artifact that `run` consumes
-- `dekk apxm execute graph.apxm` — compile and run in one step (no artifact file)
+- `dekk apxm compile graph.air` — create the `.apxmobj` artifact that `run` consumes
+- `dekk apxm execute graph.air` — compile and run in one step (no artifact file)
 - `dekk apxm decompile workflow.apxmobj` — reverse-map an artifact back to graph JSON for inspection
 
 ## When to Use

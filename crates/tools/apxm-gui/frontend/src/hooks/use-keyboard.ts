@@ -1,30 +1,53 @@
 import { useEffect } from "react";
 import { useAppStore } from "@/store/app-store";
-import type { ActivityKey } from "@/lib/constants";
-
-const ACTIVITY_KEYS: Record<string, ActivityKey> = {
-  "1": "dashboard",
-  "2": "graph",
-  "3": "execution",
-  "4": "live",
-  "5": "replay",
-  "6": "reference",
-  "7": "settings",
-};
+import { Overlay, CTX_TAB_SHORTCUTS } from "@/lib/constants";
 
 export function useKeyboard() {
-  const setActiveTab = useAppStore((s) => s.setActiveTab);
+  const setOverlayView = useAppStore((s) => s.setOverlayView);
   const toggleInspector = useAppStore((s) => s.toggleInspector);
+  const toggleContextPanel = useAppStore((s) => s.toggleContextPanel);
+  const setNavigatorCollapsed = useAppStore((s) => s.setNavigatorCollapsed);
+  const navigatorCollapsed = useAppStore((s) => s.navigatorCollapsed);
+  const setContextPanelTab = useAppStore((s) => s.setContextPanelTab);
+  const overlayView = useAppStore((s) => s.overlayView);
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       const tag = (e.target as HTMLElement).tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
 
-      if (e.key in ACTIVITY_KEYS) {
-        e.preventDefault();
-        setActiveTab(ACTIVITY_KEYS[e.key]!);
-        return;
+      if (e.key === "Escape") {
+        if (overlayView) {
+          e.preventDefault();
+          setOverlayView(null);
+          return;
+        }
+      }
+
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey) {
+        if (e.key in CTX_TAB_SHORTCUTS) {
+          e.preventDefault();
+          setContextPanelTab(CTX_TAB_SHORTCUTS[e.key]!);
+          return;
+        }
+        if (e.key === ".") {
+          e.preventDefault();
+          toggleContextPanel();
+          return;
+        }
+        if (e.key === "b" || e.key === "B") {
+          e.preventDefault();
+          setNavigatorCollapsed(!navigatorCollapsed);
+          return;
+        }
+      }
+
+      if (e.key === "s" || e.key === "S") {
+        if (!e.metaKey && !e.ctrlKey) {
+          e.preventDefault();
+          setOverlayView(overlayView === Overlay.STUDIO ? null : Overlay.STUDIO);
+          return;
+        }
       }
 
       if (e.key === "i" || e.key === "I") {
@@ -36,5 +59,5 @@ export function useKeyboard() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [setActiveTab, toggleInspector]);
+  }, [setOverlayView, toggleInspector, toggleContextPanel, setNavigatorCollapsed, navigatorCollapsed, setContextPanelTab, overlayView]);
 }

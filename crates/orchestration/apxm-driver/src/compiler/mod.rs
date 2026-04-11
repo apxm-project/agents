@@ -47,7 +47,7 @@ impl Compiler {
 
         if matches!(ext, Some("mlir")) {
             return Err(DriverError::Driver(
-                ".mlir is a low-level format emitted by the compiler. Use .apxm or .air for compilation.".to_string(),
+                ".mlir is a low-level format emitted by the compiler. Use .air for compilation.".to_string(),
             ));
         }
 

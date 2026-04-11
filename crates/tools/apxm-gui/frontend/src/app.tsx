@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { AppShell } from "./layouts/app-shell";
 import { useAppStore } from "@/store/app-store";
+import { LoadKey } from "@/lib/constants";
 import { useLiveSession } from "@/hooks/use-live-session";
 import { useKeyboard } from "@/hooks/use-keyboard";
 import { fetchStartup } from "@/api/startup";
@@ -26,7 +27,7 @@ export function App() {
     let cancelled = false;
 
     async function bootstrap() {
-      setLoading("startup", true);
+      setLoading(LoadKey.STARTUP, true);
 
       // Fetch ops and passes metadata (non-critical)
       fetchOps()
@@ -55,10 +56,10 @@ export function App() {
           if (!cancelled) setGraphData(graph, startup.initial_file);
         }
       } catch (e) {
-        if (!cancelled) setError("startup", getErrorMessage(e));
+        if (!cancelled) setError(LoadKey.STARTUP, getErrorMessage(e));
       }
 
-      if (!cancelled) setLoading("startup", false);
+      if (!cancelled) setLoading(LoadKey.STARTUP, false);
     }
 
     void bootstrap();

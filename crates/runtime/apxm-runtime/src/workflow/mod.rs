@@ -1,6 +1,6 @@
 //! Multi-graph workflow execution layer.
 //!
-//! Composes multiple `.apxm` graphs into workflows where:
+//! Composes multiple `.air` graphs into workflows where:
 //! - Graphs can depend on each other's outputs
 //! - Independent graphs run in parallel (tokio::spawn)
 //! - Each graph gets its own session/trace directory

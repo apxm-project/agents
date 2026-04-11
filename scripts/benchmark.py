@@ -97,7 +97,7 @@ def find_latest_session(pattern: str) -> Optional[Path]:
 
 
 def generate_graph(benchmark_file: Path) -> Optional[Path]:
-    """Generate .apxm graph from Python file."""
+    """Generate .air graph from Python file."""
     print(f"  Generating graph from {benchmark_file.name}...", end=" ")
 
     try:
@@ -124,8 +124,8 @@ def generate_graph(benchmark_file: Path) -> Optional[Path]:
         air_json = result.stdout.strip()
         graph_data = json.loads(air_json)
 
-        # Write to .apxm file
-        output_file = benchmark_file.with_suffix(".apxm")
+        # Write to .air file
+        output_file = benchmark_file.with_suffix(".air")
         with open(output_file, "w") as f:
             json.dump(graph_data, f, indent=2)
 
@@ -144,7 +144,7 @@ def generate_graph(benchmark_file: Path) -> Optional[Path]:
 
 
 def compile_graph(graph_file: Path, opt_level: int = 2) -> Optional[Path]:
-    """Compile .apxm graph to .apxmobj."""
+    """Compile .air graph to .apxmobj."""
     artifact_file = graph_file.with_suffix(".apxmobj")
     print(f"  Compiling -O{opt_level}...", end=" ")
 

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Profile-Guided Optimization loop for APXM workflows
 #
-# Usage: scripts/pgo-compile.sh <graph.apxm> [output.apxmobj]
+# Usage: scripts/pgo-compile.sh <graph.air> [output.apxmobj]
 #
 # Process:
 # 1. Cold compile (no profile, baseline optimization)
@@ -12,7 +12,7 @@
 set -euo pipefail
 
 if [ $# -lt 1 ]; then
-    echo "Usage: $0 <graph.apxm> [output.apxmobj]"
+    echo "Usage: $0 <graph.air> [output.apxmobj]"
     echo ""
     echo "Profile-Guided Optimization loop:"
     echo "  1. Compile without profile (cold start)"
@@ -23,7 +23,7 @@ if [ $# -lt 1 ]; then
 fi
 
 GRAPH=$1
-OUTPUT=${2:-${GRAPH%.apxm}_pgo.apxmobj}
+OUTPUT=${2:-${GRAPH%.air}_pgo.apxmobj}
 COLD_OBJ=/tmp/apxm_cold.apxmobj
 PROFILE=/tmp/apxm_profile.json
 PGO_OBJ=/tmp/apxm_pgo.apxmobj

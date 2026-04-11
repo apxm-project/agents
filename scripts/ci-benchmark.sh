@@ -41,12 +41,12 @@ for name in dir(mod):
     obj = getattr(mod, name)
     if hasattr(obj, '_graph'):
         import json
-        with open('/tmp/ci_${graph}.apxm', 'w') as f:
+        with open('/tmp/ci_${graph}.air', 'w') as f:
             json.dump(obj._graph.to_dict(), f)
         break
 " 2>/dev/null
-  dekk apxm compile /tmp/ci_${graph}.apxm -o /tmp/ci_${graph}_O0.apxmobj -O0 2>/dev/null && echo "  O0 $graph: OK"
-  dekk apxm compile /tmp/ci_${graph}.apxm -o /tmp/ci_${graph}_O2.apxmobj -O2 2>/dev/null && echo "  O2 $graph: OK" || echo "  O2 $graph: FAILED"
+  dekk apxm compile /tmp/ci_${graph}.air -o /tmp/ci_${graph}_O0.apxmobj -O0 2>/dev/null && echo "  O0 $graph: OK"
+  dekk apxm compile /tmp/ci_${graph}.air -o /tmp/ci_${graph}_O2.apxmobj -O2 2>/dev/null && echo "  O2 $graph: OK" || echo "  O2 $graph: FAILED"
 done
 
 # 6. Run Rust tests

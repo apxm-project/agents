@@ -19,8 +19,8 @@ Note: This tests RUNTIME caching within a single execution.
 For cross-execution caching, see the persistent KV-cache benchmarks.
 
 Usage:
-  dekk apxm execute memo_cache_stress.apxm -O0  # No caching (6 LLM calls)
-  dekk apxm execute memo_cache_stress.apxm -O2  # With MemoCache (3 LLM calls)
+  dekk apxm execute memo_cache_stress.air -O0  # No caching (6 LLM calls)
+  dekk apxm execute memo_cache_stress.air -O2  # With MemoCache (3 LLM calls)
 """
 
 from apxm import compile, GraphRecorder

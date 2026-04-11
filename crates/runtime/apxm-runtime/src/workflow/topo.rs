@@ -92,7 +92,7 @@ mod tests {
     fn make_step(id: &str, deps: Vec<&str>) -> GraphStep {
         GraphStep {
             id: id.to_string(),
-            path: format!("{}.apxm", id),
+            path: format!("{}.air", id),
             depends_on: deps.into_iter().map(|s| s.to_string()).collect(),
             params: HashMap::new(),
         }

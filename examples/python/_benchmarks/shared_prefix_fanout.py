@@ -5,8 +5,8 @@ Tests: PromptCanonicalization pass - shared prefix across parallel nodes
 Measures: Prefix cache hit rate, total latency vs sequential execution
 
 Usage:
-  dekk apxm execute shared_prefix_fanout.apxm -O0  # No optimization
-  dekk apxm execute shared_prefix_fanout.apxm -O2  # With PromptCanonicalization
+  dekk apxm execute shared_prefix_fanout.air -O0  # No optimization
+  dekk apxm execute shared_prefix_fanout.air -O2  # With PromptCanonicalization
 """
 
 from apxm import compile, GraphRecorder

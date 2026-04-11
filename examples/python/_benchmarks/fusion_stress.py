@@ -14,8 +14,8 @@ Metrics:
 - Average latency per operation
 
 Usage:
-  dekk apxm execute fusion_stress.apxm -O0  # No fusion (20 LLM calls)
-  dekk apxm execute fusion_stress.apxm -O2  # With fusion (~10 LLM calls)
+  dekk apxm execute fusion_stress.air -O0  # No fusion (20 LLM calls)
+  dekk apxm execute fusion_stress.air -O2  # With fusion (~10 LLM calls)
 """
 
 from apxm import compile, GraphRecorder

@@ -14,8 +14,8 @@ Metrics:
 - Token savings percentage
 
 Usage:
-  dekk apxm execute dead_context_stress.apxm -O0  # No elimination (all 5 contexts sent)
-  dekk apxm execute dead_context_stress.apxm -O2  # With elimination (only {0} sent)
+  dekk apxm execute dead_context_stress.air -O0  # No elimination (all 5 contexts sent)
+  dekk apxm execute dead_context_stress.air -O2  # With elimination (only {0} sent)
 """
 
 from apxm import compile, GraphRecorder

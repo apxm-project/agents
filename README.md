@@ -57,12 +57,12 @@ Run `apxm doctor` to check your environment automatically.
 apxm doctor                           # Check environment (powered by dekk)
 apxm install                          # Install/update conda environment
 apxm activate                         # Print shell exports for MLIR/LLVM env setup
-apxm compile <file.apxm> -o out.apxmobj  # Compile to .apxmobj artifact
-apxm execute <file.apxm>              # Compile and run in one step
-apxm execute <file.apxm> --trace debug   # Run with debug tracing
+apxm compile <file.air> -o out.apxmobj  # Compile to .apxmobj artifact
+apxm execute <file.air>              # Compile and run in one step
+apxm execute <file.air> --trace debug   # Run with debug tracing
 apxm run <file.apxmobj>               # Run pre-compiled artifact
-apxm validate <file.apxm>             # Validate an ApxmGraph file
-apxm analyze <file.apxm>              # Analyze parallelism and critical path
+apxm validate <file.air>             # Validate an ApxmGraph file
+apxm analyze <file.air>              # Analyze parallelism and critical path
 apxm llm add <name> --provider openai --api-key sk-...  # Add LLM credential
 apxm llm list                         # List registered credentials
 apxm tool list                        # List registered external tools
@@ -70,8 +70,8 @@ apxm ops list                         # Browse AIS operations
 apxm ops show ASK                     # Detailed info for a specific op
 apxm template list                    # Browse graph templates
 apxm template show fan-out --json     # Emit template as ready-to-use JSON
-apxm explain <file.apxm>              # Explain what a graph does in human terms
-apxm task merge a.apxm b.apxm -o combined.apxm      # Merge graph fragments
+apxm explain <file.air>              # Explain what a graph does in human terms
+apxm task merge a.air b.air -o combined.air      # Merge graph fragments
 ```
 
 Run `apxm --help` for complete command reference.
@@ -83,10 +83,10 @@ Run `apxm --help` for complete command reference.
 APXM includes a tracing system for debugging and performance analysis:
 
 ```bash
-apxm execute workflow.apxm                  # Silent execution
-apxm execute workflow.apxm --trace info     # High-level execution flow
-apxm execute workflow.apxm --trace debug    # Detailed worker/operation info
-apxm execute workflow.apxm --trace trace    # Full verbosity (tokens, LLM calls)
+apxm execute workflow.air                  # Silent execution
+apxm execute workflow.air --trace info     # High-level execution flow
+apxm execute workflow.air --trace debug    # Detailed worker/operation info
+apxm execute workflow.air --trace trace    # Full verbosity (tokens, LLM calls)
 ```
 
 Trace targets: `apxm::scheduler`, `apxm::ops`, `apxm::llm`, `apxm::tokens`, `apxm::dag`
@@ -137,10 +137,10 @@ The `+` operator merges tokens; use the comma form for context operands.
 
 ```bash
 # Write per-pass MLIR snapshots to the given directory.
-APXM_PRINT_IR_DIR=/tmp/apxm-ir apxm compiler compile file.apxm -o output.apxmobj
+APXM_PRINT_IR_DIR=/tmp/apxm-ir apxm compiler compile file.air -o output.apxmobj
 
 # Optional: print a one-line trace of IR printing config.
-APXM_PRINT_IR_TRACE=1 APXM_PRINT_IR_DIR=/tmp/apxm-ir apxm compiler compile file.apxm -o output.apxmobj
+APXM_PRINT_IR_TRACE=1 APXM_PRINT_IR_DIR=/tmp/apxm-ir apxm compiler compile file.air -o output.apxmobj
 ```
 
 ---

@@ -14,8 +14,8 @@ Metrics:
 - Cache hit rate (CSE uses internal result caching)
 
 Usage:
-  dekk apxm execute cse_stress.apxm -O0  # No CSE (3 identical LLM calls)
-  dekk apxm execute cse_stress.apxm -O2  # With CSE (1 LLM call, reused 3x)
+  dekk apxm execute cse_stress.air -O0  # No CSE (3 identical LLM calls)
+  dekk apxm execute cse_stress.air -O2  # With CSE (1 LLM call, reused 3x)
 """
 
 from apxm import compile, GraphRecorder

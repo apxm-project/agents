@@ -192,7 +192,7 @@ pub enum Commands {
     },
     /// Launch the web-based GUI dashboard
     Gui {
-        /// Graph file to open on startup (.apxm)
+        /// Graph file to open on startup (.air)
         file: Option<PathBuf>,
         /// Port to listen on (default: 18801)
         #[arg(long, short, default_value = "18801")]
