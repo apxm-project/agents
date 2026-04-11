@@ -122,7 +122,12 @@ fn select_by_strategy(
     round_robin_counter: &Arc<AtomicUsize>,
 ) -> Result<String> {
     if backends.read().is_empty() {
-        anyhow::bail!("No backends registered");
+        anyhow::bail!(
+            "No backends registered in the LLM registry.\n\
+             Check ~/.apxm/config.toml has [[backends]] entries.\n\
+             Run: dekk apxm backend add <name> --protocol <protocol>\n\
+             Run: dekk apxm doctor"
+        );
     }
 
     match strategy {

@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import inspect
 import re
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from .execution import CompiledFlow, ExecutionMode
 from .ir import Parameter
 from .proxy import GraphRecorder
+
+if TYPE_CHECKING:
+    from ._generated.models import ModelId
 
 
 _PYTHON_TYPE_TO_APXM: dict[type | str, str] = {
@@ -33,9 +36,13 @@ class _CompiledFunction:
         *,
         opt_level: int,
         mode: ExecutionMode,
+        default_model: ModelId | None = None,
+        default_system_prompt: str | None = None,
         compile_kwargs: dict[str, Any],
     ) -> None:
         self._fn = fn
+        self._default_model = default_model
+        self._default_system_prompt = default_system_prompt
         self._signature = inspect.signature(fn)
         self._param_mapping = self._derive_parameters()
         self._graph = self._capture_graph()
@@ -102,6 +109,23 @@ class _CompiledFunction:
         graph = recorder.to_graph()
         self._convert_named_to_positional(graph)
 
+        # Stamp per-graph defaults onto LLM nodes that don't already have them
+        if self._default_model is not None or self._default_system_prompt is not None:
+            from .constants import LLM_OPS
+            from ._generated import constants as gen_keys
+            from .normalize import normalize_value as _normalize_value
+
+            if self._default_model is not None:
+                model_str = _normalize_value(self._default_model)
+                for node in graph.nodes:
+                    if node.op in LLM_OPS and gen_keys.MODEL not in node.attributes:
+                        node.attributes[gen_keys.MODEL] = model_str
+
+            if self._default_system_prompt is not None:
+                for node in graph.nodes:
+                    if node.op in LLM_OPS and gen_keys.SYSTEM_PROMPT not in node.attributes:
+                        node.attributes[gen_keys.SYSTEM_PROMPT] = self._default_system_prompt
+
         return graph
 
     def _convert_named_to_positional(self, graph: Any) -> None:
@@ -136,6 +160,8 @@ def compile(
     *,
     opt_level: int = 2,
     mode: ExecutionMode = ExecutionMode.COMPILED,
+    default_model: ModelId | None = None,
+    default_system_prompt: str | None = None,
     **compile_kwargs: Any,
 ) -> Callable[[Callable[..., Any]], _CompiledFunction]:
     def decorator(fn: Callable[..., Any]) -> _CompiledFunction:
@@ -143,6 +169,8 @@ def compile(
             fn,
             opt_level=opt_level,
             mode=mode,
+            default_model=default_model,
+            default_system_prompt=default_system_prompt,
             compile_kwargs=compile_kwargs,
         )
 

@@ -1,5 +1,9 @@
 # APXM Documentation
 
+## Getting Started
+
+New to APXM? **[Getting Started Guide](getting-started.md)** — install, configure, and run your first workflow.
+
 ## Architecture
 
 APXM follows a strict layered architecture where **Core** is the single source of truth.

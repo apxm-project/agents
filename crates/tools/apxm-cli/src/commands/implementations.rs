@@ -1349,6 +1349,19 @@ pub async fn execute_command(
     emit_profile: Option<PathBuf>,
 ) -> Result<()> {
     let apxm_config = load_config(config).context("Failed to load configuration")?;
+
+    if apxm_config.backends.is_empty() && std::env::var("APXM_MOCK_BACKEND").is_err() {
+        anyhow::bail!(
+            "No backends configured.\n\n\
+             Register at least one LLM backend:\n\n\
+             \x20 dekk apxm backend add openai --type cloud --protocol openai\n\
+             \x20 dekk apxm backend add anthropic --type cloud --protocol anthropic\n\
+             \x20 dekk apxm backend add ollama --protocol ollama\n\n\
+             Verify with: dekk apxm backend list\n\
+             Full guide:  docs/getting-started.md"
+        );
+    }
+
     let opt = parse_opt_level(opt_level);
     let mut linker_config = LinkerConfig::from_apxm_config(apxm_config).with_opt_level(opt);
     let (graph_input, _python_air) = prepare_graph_input(&input)?;
@@ -1584,6 +1597,19 @@ pub async fn run_command(
 
     // Initialize runtime
     let apxm_config = load_config(config).context("Failed to load configuration")?;
+
+    if apxm_config.backends.is_empty() && std::env::var("APXM_MOCK_BACKEND").is_err() {
+        anyhow::bail!(
+            "No backends configured.\n\n\
+             Register at least one LLM backend:\n\n\
+             \x20 dekk apxm backend add openai --type cloud --protocol openai\n\
+             \x20 dekk apxm backend add anthropic --type cloud --protocol anthropic\n\
+             \x20 dekk apxm backend add ollama --protocol ollama\n\n\
+             Verify with: dekk apxm backend list\n\
+             Full guide:  docs/getting-started.md"
+        );
+    }
+
     let mut linker_config = LinkerConfig::from_apxm_config(apxm_config);
 
     // Enable all-outputs collection when session output is requested

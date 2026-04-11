@@ -45,6 +45,8 @@ test-all = { run = "cargo test --workspace", description = "All tests (requires 
 test-cli = { run = "cargo test -p apxm-cli --features driver,metrics --release", description = "Run CLI tests with driver (preserves MLIR-linked binary)", group = "Build & Test" }
 clean = { run = "cargo clean", description = "Clean", group = "Build & Test" }
 
+codegen = { run = "apxm codegen", description = "Regenerate frontend bindings from Core definitions", skill = true, group = "Build & Test" }
+
 compile = { run = "apxm compile", description = "Compile graph to .apxmobj artifact", skill = true, group = "Compilation" }
 execute = { run = "apxm execute", description = "Compile and execute a graph", skill = true, group = "Compilation" }
 run = { run = "apxm run", description = "Run a pre-compiled .apxmobj artifact", skill = true, group = "Compilation" }

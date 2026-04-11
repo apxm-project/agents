@@ -69,6 +69,7 @@ pub const PRIORITY: &str = "priority";
 pub const CONDITION: &str = "condition";
 pub const EVIDENCE: &str = "evidence";
 pub const CLAIM_TEXT: &str = "claim";
+pub const GUARDRAIL_KIND: &str = "guardrail_kind";
 
 // -- Control flow --
 pub const LABEL: &str = "label";
@@ -120,6 +121,7 @@ pub const TARGET_AGENT: &str = "target_agent";
 pub const PARTIES: &str = "parties";
 pub const PROPOSAL: &str = "proposal";
 pub const MAX_ROUNDS: &str = "max_rounds";
+pub const HANDOFF: &str = "handoff";
 pub const HANDOFF_FROM: &str = "handoff_from";
 pub const HANDOFF_TO: &str = "handoff_to";
 
@@ -192,6 +194,7 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     CONDITION,
     EVIDENCE,
     CLAIM_TEXT,
+    GUARDRAIL_KIND,
     LABEL,
     TRUE_LABEL,
     FALSE_LABEL,
@@ -231,6 +234,7 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     PARTIES,
     PROPOSAL,
     MAX_ROUNDS,
+    HANDOFF,
     HANDOFF_FROM,
     HANDOFF_TO,
     CACHED_SYSTEM_PROMPT,

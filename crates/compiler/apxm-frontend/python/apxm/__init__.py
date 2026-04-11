@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 from . import _generated
-from ._generated.models import Anthropic, Google, ModelId, OpenAI
+try:
+    from ._generated.models import Anthropic, Google, ModelId, OpenAI
+except ImportError:
+    Anthropic = None  # type: ignore[assignment,misc]
+    Google = None  # type: ignore[assignment,misc]
+    ModelId = None  # type: ignore[assignment,misc]
+    OpenAI = None  # type: ignore[assignment,misc]
 from .config import (
     AgentConfig,
     BashConfig,
