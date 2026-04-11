@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { useAppStore } from "@/store/app-store";
 import { fetchChatModels, streamChat } from "@/api/chat";
+import { streamAgentChat } from "@/api/agents";
 import { executeWorkflow, compileWorkflow, explainWorkflow } from "@/api/compile";
 import { fetchGraph } from "@/api/graph";
 import { formatDuration, sessionPath } from "@/lib/format";
-import { Overlay, CtxTab } from "@/lib/constants";
+import { Overlay, CtxTab, Role } from "@/lib/constants";
 import type { ChatMessage, ModelInfo } from "@/api/chat";
+import type { ToolCallEvent, ToolResultEvent, UsageEvent } from "@/api/agents";
 import type { WorkflowInfo } from "@/types/api";
 
 type RichCard = {
@@ -13,8 +15,15 @@ type RichCard = {
   data: Record<string, unknown>;
 };
 
+type ToolCallBlock = {
+  call: ToolCallEvent;
+  result?: ToolResultEvent;
+};
+
 type EnrichedMessage = ChatMessage & {
   card?: RichCard;
+  toolCalls?: ToolCallBlock[];
+  usage?: UsageEvent;
 };
 
 export function ChatView() {
@@ -38,6 +47,8 @@ export function ChatView() {
   const [selectedModel, setSelectedModel] = useState("claude-sonnet-4-5@20250929");
   const [error, setError] = useState<string | null>(null);
   const [showCommands, setShowCommands] = useState(false);
+  const [agentMode, setAgentMode] = useState(false);
+  const [agentSessionId, setAgentSessionId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -99,7 +110,7 @@ export function ChatView() {
 
     if (cmd === "/run" && selectedWorkflow) {
       const sysMsg: EnrichedMessage = {
-        role: "assistant",
+        role: Role.ASSISTANT,
         content: `Executing **${selectedWorkflow.name}**...`,
       };
       setMessages((prev) => [...prev, sysMsg]);
@@ -109,7 +120,7 @@ export function ChatView() {
         if (result.session_path) {
           startInlineRun(result.session_path);
           const cardMsg: EnrichedMessage = {
-            role: "assistant",
+            role: Role.ASSISTANT,
             content: "",
             card: {
               type: "execute",
@@ -124,7 +135,7 @@ export function ChatView() {
         }
       } catch (e) {
         const errMsg: EnrichedMessage = {
-          role: "assistant",
+          role: Role.ASSISTANT,
           content: "",
           card: { type: "error", data: { message: e instanceof Error ? e.message : String(e) } },
         };
@@ -135,7 +146,7 @@ export function ChatView() {
 
     if (cmd === "/compile" && selectedWorkflow) {
       const sysMsg: EnrichedMessage = {
-        role: "assistant",
+        role: Role.ASSISTANT,
         content: `Compiling **${selectedWorkflow.name}**...`,
       };
       setMessages((prev) => [...prev, sysMsg]);
@@ -143,7 +154,7 @@ export function ChatView() {
       try {
         const result = await compileWorkflow(selectedWorkflow.path);
         const cardMsg: EnrichedMessage = {
-          role: "assistant",
+          role: Role.ASSISTANT,
           content: "",
           card: {
             type: "compile",
@@ -161,7 +172,7 @@ export function ChatView() {
         setMessages((prev) => [...prev, cardMsg]);
       } catch (e) {
         const errMsg: EnrichedMessage = {
-          role: "assistant",
+          role: Role.ASSISTANT,
           content: "",
           card: { type: "error", data: { message: e instanceof Error ? e.message : String(e) } },
         };
@@ -172,7 +183,7 @@ export function ChatView() {
 
     if (cmd === "/explain" && selectedWorkflow) {
       const sysMsg: EnrichedMessage = {
-        role: "assistant",
+        role: Role.ASSISTANT,
         content: `Explaining **${selectedWorkflow.name}**...`,
       };
       setMessages((prev) => [...prev, sysMsg]);
@@ -180,7 +191,7 @@ export function ChatView() {
       try {
         const result = await explainWorkflow(selectedWorkflow.path);
         const cardMsg: EnrichedMessage = {
-          role: "assistant",
+          role: Role.ASSISTANT,
           content: "",
           card: {
             type: "explain",
@@ -193,7 +204,7 @@ export function ChatView() {
         setMessages((prev) => [...prev, cardMsg]);
       } catch (e) {
         const errMsg: EnrichedMessage = {
-          role: "assistant",
+          role: Role.ASSISTANT,
           content: "",
           card: { type: "error", data: { message: e instanceof Error ? e.message : String(e) } },
         };
@@ -219,35 +230,109 @@ export function ChatView() {
 
     setError(null);
     setShowCommands(false);
-    const userMsg: EnrichedMessage = { role: "user", content: text };
+    const userMsg: EnrichedMessage = { role: Role.USER, content: text };
     const newMessages = [...messages, userMsg];
     setMessages(newMessages);
     setInput("");
     setStreaming(true);
 
-    const assistantMsg: EnrichedMessage = { role: "assistant", content: "" };
+    const assistantMsg: EnrichedMessage = { role: Role.ASSISTANT, content: "", toolCalls: [], usage: undefined };
     setMessages([...newMessages, assistantMsg]);
 
     const controller = new AbortController();
     abortRef.current = controller;
 
     try {
-      let accumulated = "";
-      await streamChat(
-        newMessages,
-        selectedModel,
-        (token) => {
-          accumulated += token;
-          setMessages((prev) => {
-            const updated = [...prev];
-            updated[updated.length - 1] = { role: "assistant", content: accumulated };
-            return updated;
+      if (agentMode) {
+        let accumulated = "";
+        const toolCalls: ToolCallBlock[] = [];
+        let usage: UsageEvent | undefined;
+        let dirty = false;
+        let rafId = 0;
+
+        const scheduleFlush = () => {
+          if (!dirty) return;
+          cancelAnimationFrame(rafId);
+          rafId = requestAnimationFrame(() => {
+            dirty = false;
+            setMessages((prev) => {
+              const updated = prev.slice();
+              updated[updated.length - 1] = {
+                role: Role.ASSISTANT,
+                content: accumulated,
+                toolCalls: toolCalls.slice(),
+                usage,
+              };
+              return updated;
+            });
           });
-        },
-        () => {},
-        (err) => setError(err),
-        controller.signal,
-      );
+        };
+
+        await streamAgentChat(
+          text,
+          agentSessionId,
+          {
+            onToken: (token) => {
+              accumulated += token;
+              dirty = true;
+              scheduleFlush();
+            },
+            onToolCall: (call) => {
+              toolCalls.push({ call });
+              dirty = true;
+              scheduleFlush();
+            },
+            onToolResult: (result) => {
+              const idx = toolCalls.findIndex((tc) => tc.call.id === result.id);
+              if (idx >= 0) {
+                toolCalls[idx] = { ...toolCalls[idx], result };
+              }
+              dirty = true;
+              scheduleFlush();
+            },
+            onUsage: (u) => {
+              usage = u;
+              dirty = true;
+              scheduleFlush();
+            },
+            onDone: (sid) => {
+              if (sid) setAgentSessionId(sid);
+            },
+            onError: (err) => setError(err),
+          },
+          controller.signal,
+        );
+
+        // Final flush to ensure last state is rendered
+        cancelAnimationFrame(rafId);
+        setMessages((prev) => {
+          const updated = prev.slice();
+          updated[updated.length - 1] = {
+            role: Role.ASSISTANT,
+            content: accumulated,
+            toolCalls: toolCalls.slice(),
+            usage,
+          };
+          return updated;
+        });
+      } else {
+        let accumulated = "";
+        await streamChat(
+          newMessages,
+          selectedModel,
+          (token) => {
+            accumulated += token;
+            setMessages((prev) => {
+              const updated = [...prev];
+              updated[updated.length - 1] = { role: Role.ASSISTANT, content: accumulated };
+              return updated;
+            });
+          },
+          () => {},
+          (err) => setError(err),
+          controller.signal,
+        );
+      }
     } catch (e: unknown) {
       if ((e as Error).name !== "AbortError") {
         setError(e instanceof Error ? e.message : String(e));
@@ -256,7 +341,7 @@ export function ChatView() {
       setStreaming(false);
       abortRef.current = null;
     }
-  }, [input, messages, selectedModel, streaming, COMMANDS]);
+  }, [input, messages, selectedModel, streaming, agentMode, agentSessionId, COMMANDS]);
 
   const handleStop = useCallback(() => {
     abortRef.current?.abort();
@@ -342,7 +427,7 @@ export function ChatView() {
           <MessageBubble
             key={i}
             message={msg}
-            isStreaming={streaming && i === messages.length - 1 && msg.role === "assistant"}
+            isStreaming={streaming && i === messages.length - 1 && msg.role === Role.ASSISTANT}
           />
         ))}
         {error && (
@@ -376,7 +461,23 @@ export function ChatView() {
       {/* Input area */}
       <div className="chat-view__input-area">
         <div className="chat-view__input-row">
-          <select
+          <button
+            type="button"
+            className={`agent-toggle ${agentMode ? "agent-toggle--active" : ""}`}
+            onClick={() => {
+              setAgentMode((prev) => !prev);
+              if (!agentMode) setAgentSessionId(null);
+            }}
+            disabled={streaming}
+            title={agentMode ? "Switch to Direct LLM" : "Switch to Agent Mode"}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M12 2a4 4 0 014 4v1a4 4 0 01-8 0V6a4 4 0 014-4zM6 21v-2a6 6 0 0112 0v2" />
+              {agentMode && <circle cx="12" cy="6" r="1.5" fill="currentColor" />}
+            </svg>
+            <span>{agentMode ? "Agent" : "LLM"}</span>
+          </button>
+          {!agentMode && <select
             className="chat-view__model-select"
             value={selectedModel}
             onChange={(e) => setSelectedModel(e.target.value)}
@@ -388,7 +489,7 @@ export function ChatView() {
             {models.length === 0 && (
               <option value={selectedModel}>{selectedModel}</option>
             )}
-          </select>
+          </select>}
           <textarea
             ref={inputRef}
             className="chat-view__input"
@@ -561,7 +662,7 @@ function StatPill({ value, label }: { value: number; label: string }) {
 // ─── Message Bubble ────────────────────────────────────────────────────────
 
 function MessageBubble({ message, isStreaming }: { message: EnrichedMessage; isStreaming: boolean }) {
-  const isUser = message.role === "user";
+  const isUser = message.role === Role.USER;
 
   return (
     <div className={`chat-msg ${isUser ? "chat-msg--user" : "chat-msg--assistant"}`}>
@@ -580,12 +681,85 @@ function MessageBubble({ message, isStreaming }: { message: EnrichedMessage; isS
         <div className="chat-msg__role">{isUser ? "You" : "APXM"}</div>
         <div className="chat-msg__content">
           {message.content && <MessageContent text={message.content} />}
+          {message.toolCalls && message.toolCalls.length > 0 && (
+            <div className="tool-call-list">
+              {message.toolCalls.map((tc) => (
+                <ToolCallCard key={tc.call.id} block={tc} />
+              ))}
+            </div>
+          )}
           {message.card && <RichCardRenderer card={message.card} />}
+          {message.usage && (
+            <div className="tool-call-usage">
+              {message.usage.inputTokens.toLocaleString()} in / {message.usage.outputTokens.toLocaleString()} out tokens
+            </div>
+          )}
           {isStreaming && <span className="chat-msg__cursor" />}
         </div>
       </div>
     </div>
   );
+}
+
+// -- Tool Call Card --------------------------------------------------------
+
+function ToolCallCard({ block }: { block: ToolCallBlock }) {
+  const [expanded, setExpanded] = useState(false);
+  const args = block.call.arguments;
+  const argKeys = Object.keys(args);
+  const hasResult = !!block.result;
+  const success = block.result?.success ?? true;
+
+  return (
+    <div className={`tool-call-card ${hasResult ? (success ? "tool-call-card--success" : "tool-call-card--error") : "tool-call-card--pending"}`}>
+      <button
+        type="button"
+        className="tool-call-card__header"
+        onClick={() => setExpanded((prev) => !prev)}
+      >
+        <svg
+          className={`tool-call-card__chevron ${expanded ? "tool-call-card__chevron--open" : ""}`}
+          width="12" height="12" viewBox="0 0 24 24"
+          fill="none" stroke="currentColor" strokeWidth="2"
+        >
+          <path d="M9 18l6-6-6-6" />
+        </svg>
+        <span className="tool-call-card__label">tool</span>
+        <span className="tool-call-card__name">{block.call.name}</span>
+        {hasResult && (
+          <span className={`tool-call-card__status ${success ? "tool-call-card__status--ok" : "tool-call-card__status--err"}`}>
+            {success ? "ok" : "err"}
+          </span>
+        )}
+        {!hasResult && <span className="tool-call-card__spinner" />}
+      </button>
+      {expanded && (
+        <div className="tool-call-card__body">
+          {argKeys.length > 0 && (
+            <div className="tool-call-args">
+              {argKeys.map((key) => (
+                <div key={key} className="tool-call-args__row">
+                  <span className="tool-call-args__key">{key}:</span>
+                  <span className="tool-call-args__value">{formatArgValue(args[key])}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {block.result && (
+            <div className={`tool-call-result ${success ? "tool-call-result--success" : "tool-call-result--error"}`}>
+              <pre className="tool-call-result__output">{block.result.output}</pre>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function formatArgValue(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value == null) return "null";
+  return JSON.stringify(value);
 }
 
 // ─── Rich Card Renderer ────────────────────────────────────────────────────

@@ -1,7 +1,11 @@
+import { SseEvent } from "@/lib/constants";
+import { parseSSEStream } from "./sse";
+import type { ChatRole } from "@/lib/constants";
+
 const BASE = "";
 
 export type ChatMessage = {
-  role: "user" | "assistant" | "system";
+  role: ChatRole;
   content: string;
 };
 
@@ -37,59 +41,18 @@ export async function streamChat(
     throw new Error(data.error ?? `Chat request failed: ${res.status}`);
   }
 
-  const reader = res.body?.getReader();
-  if (!reader) {
-    throw new Error("No response body");
-  }
-
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let currentEvent = "";
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (trimmed.startsWith(":")) continue;
-
-      // Empty line = end of SSE event block
-      if (!trimmed) {
-        currentEvent = "";
-        continue;
+  await parseSSEStream(res, {
+    onEvent: (eventType, parsed: any) => {
+      if (eventType === SseEvent.TOKEN && parsed.token) {
+        onToken(parsed.token);
+      } else if (eventType === SseEvent.DONE || parsed.finish_reason) {
+        onDone();
+      } else if (eventType === SseEvent.ERROR || parsed.error) {
+        onError(parsed.error ?? "Unknown error");
+      } else if (parsed.token) {
+        onToken(parsed.token);
       }
-
-      if (trimmed.startsWith("event: ")) {
-        currentEvent = trimmed.slice(7);
-        continue;
-      }
-
-      if (trimmed.startsWith("data: ")) {
-        const dataStr = trimmed.slice(6);
-        if (dataStr === "[DONE]") {
-          onDone();
-          continue;
-        }
-        try {
-          const parsed = JSON.parse(dataStr);
-          if (currentEvent === "token" && parsed.token) {
-            onToken(parsed.token);
-          } else if (currentEvent === "done" || parsed.finish_reason) {
-            onDone();
-          } else if (currentEvent === "error" || parsed.error) {
-            onError(parsed.error ?? "Unknown error");
-          } else if (parsed.token) {
-            onToken(parsed.token);
-          }
-        } catch {
-          // Skip unparseable lines
-        }
-      }
-    }
-  }
+    },
+    onDone,
+  }, signal);
 }

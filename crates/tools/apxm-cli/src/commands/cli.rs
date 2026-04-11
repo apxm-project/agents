@@ -201,6 +201,17 @@ pub enum Commands {
         #[arg(long)]
         open: bool,
     },
+    /// Manage OpenClaw integration (config bridging)
+    OpenClaw {
+        #[command(subcommand)]
+        action: OpenClawAction,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum OpenClawAction {
+    /// Sync APXM backends to OpenClaw's provider config (~/.openclaw/openclaw.json)
+    Sync,
 }
 
 #[derive(Subcommand)]

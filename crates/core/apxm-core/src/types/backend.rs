@@ -126,6 +126,10 @@ pub struct ModelConfig {
     #[serde(default)]
     pub supports_thinking: bool,
 
+    /// Maximum output tokens per request (None = provider default, typically 4096-8192)
+    #[serde(default)]
+    pub max_output_tokens: Option<usize>,
+
     /// Arbitrary classification tags (e.g., ["fast", "cheap", "multilingual"])
     #[serde(default)]
     pub tags: Vec<String>,
@@ -253,6 +257,7 @@ mod tests {
                 supports_vision: false,
                 supports_functions: true,
                 supports_thinking: false,
+                max_output_tokens: None,
                 tags: vec!["production".to_string()],
             }],
             docker: None,

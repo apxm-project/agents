@@ -334,6 +334,7 @@ fn credential_to_backend(name: &str, cred: LegacyCredential) -> BackendConfig {
             supports_vision: false,
             supports_functions: false,
             supports_thinking: false,
+            max_output_tokens: None,
             tags: vec![],
         }]
     } else {
@@ -526,6 +527,7 @@ mod tests {
                     supports_vision: false,
                     supports_functions: true,
                     supports_thinking: false,
+                    max_output_tokens: None,
                     tags: vec!["production".to_string()],
                 },
                 ModelConfig {
@@ -537,6 +539,7 @@ mod tests {
                     supports_vision: false,
                     supports_functions: true,
                     supports_thinking: false,
+                    max_output_tokens: None,
                     tags: vec!["fast".to_string(), "cheap".to_string()],
                 },
             ],
@@ -632,6 +635,7 @@ mod tests {
             supports_vision: true,
             supports_functions: true,
             supports_thinking: false,
+            max_output_tokens: None,
             tags: vec!["production".to_string()],
         };
         store.add_model("model-test", model).unwrap();
@@ -656,6 +660,7 @@ mod tests {
             supports_vision: false,
             supports_functions: false,
             supports_thinking: false,
+            max_output_tokens: None,
             tags: vec![],
         };
         let result = store.add_model("nonexistent", model);
@@ -688,6 +693,7 @@ mod tests {
             supports_vision: false,
             supports_functions: false,
             supports_thinking: false,
+            max_output_tokens: None,
             tags: vec![],
         };
         store.add_model("dup-model", model.clone()).unwrap();
