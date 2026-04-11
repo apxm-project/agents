@@ -1,14 +1,20 @@
 from __future__ import annotations
 
-from dataclasses import asdict, is_dataclass
 import inspect
 import json
 import re
-from typing import Any, Iterable
+from typing import TYPE_CHECKING, Any, Iterable
+
+if TYPE_CHECKING:
+    from ._generated.models import ModelId
+    from ._generated.providers import ProviderSpec
 
 from apxm._generated import constants as c
 from . import constants as graph_keys
 from .config import AgentConfig
+from .normalize import normalize_attributes as _normalize_attributes
+from .normalize import normalize_provider as _normalize_provider
+from .normalize import normalize_value as _normalize_value
 from .ir import ApxmGraph, GraphEdge, GraphNode, Parameter
 
 
@@ -134,8 +140,8 @@ class GraphRecorder:
         name: str | None = None,
         template: str | None = None,
         agent: AgentConfig | None = None,
-        model: str | None = None,
-        provider: str | None = None,
+        model: ModelId | None = None,
+        provider: ProviderSpec | str | None = None,
         backend: str | None = None,
         **attributes: Any,
     ) -> NodeRef:
@@ -154,7 +160,7 @@ class GraphRecorder:
             template = name_or_template
 
         if name is None:
-            name = self._auto_name("ask")
+            name = self._auto_name(graph_keys.OP_ASK)
         if template is None:
             raise ValueError("ask() missing required argument: template")
 
@@ -163,12 +169,12 @@ class GraphRecorder:
 
         attrs = {graph_keys.TEMPLATE_STR: resolved_template}
         if model is not None:
-            attrs[graph_keys.MODEL] = model
+            attrs[graph_keys.MODEL] = _normalize_value(model)
         if provider is not None:
-            attrs[graph_keys.PROVIDER] = provider
+            attrs[graph_keys.PROVIDER] = _normalize_provider(provider)
         if backend is not None:
             attrs[graph_keys.BACKEND] = backend
-        attrs.update(_compose_system_prompt(agent, "ask"))
+        attrs.update(_compose_system_prompt(agent, graph_keys.OP_ASK))
         attrs.update(_normalize_attributes(attributes))
         node = self._add_node(name, graph_keys.OP_ASK, attrs)
 
@@ -186,8 +192,8 @@ class GraphRecorder:
         name: str | None = None,
         template: str | None = None,
         agent: AgentConfig | None = None,
-        model: str | None = None,
-        provider: str | None = None,
+        model: ModelId | None = None,
+        provider: ProviderSpec | str | None = None,
         backend: str | None = None,
         **attributes: Any,
     ) -> NodeRef:
@@ -199,7 +205,7 @@ class GraphRecorder:
             template = name_or_template
 
         if name is None:
-            name = self._auto_name("think")
+            name = self._auto_name(graph_keys.OP_THINK)
         if template is None:
             raise ValueError("think() missing required argument: template")
 
@@ -208,12 +214,12 @@ class GraphRecorder:
 
         attrs = {graph_keys.TEMPLATE_STR: resolved_template}
         if model is not None:
-            attrs[graph_keys.MODEL] = model
+            attrs[graph_keys.MODEL] = _normalize_value(model)
         if provider is not None:
-            attrs[graph_keys.PROVIDER] = provider
+            attrs[graph_keys.PROVIDER] = _normalize_provider(provider)
         if backend is not None:
             attrs[graph_keys.BACKEND] = backend
-        attrs.update(_compose_system_prompt(agent, "think"))
+        attrs.update(_compose_system_prompt(agent, graph_keys.OP_THINK))
         attrs.update(_normalize_attributes(attributes))
         node = self._add_node(name, graph_keys.OP_THINK, attrs)
 
@@ -231,8 +237,8 @@ class GraphRecorder:
         name: str | None = None,
         template: str | None = None,
         agent: AgentConfig | None = None,
-        model: str | None = None,
-        provider: str | None = None,
+        model: ModelId | None = None,
+        provider: ProviderSpec | str | None = None,
         backend: str | None = None,
         **attributes: Any,
     ) -> NodeRef:
@@ -244,7 +250,7 @@ class GraphRecorder:
             template = name_or_template
 
         if name is None:
-            name = self._auto_name("reason")
+            name = self._auto_name(graph_keys.OP_REASON)
         if template is None:
             raise ValueError("reason() missing required argument: template")
 
@@ -253,12 +259,12 @@ class GraphRecorder:
 
         attrs = {graph_keys.TEMPLATE_STR: resolved_template}
         if model is not None:
-            attrs[graph_keys.MODEL] = model
+            attrs[graph_keys.MODEL] = _normalize_value(model)
         if provider is not None:
-            attrs[graph_keys.PROVIDER] = provider
+            attrs[graph_keys.PROVIDER] = _normalize_provider(provider)
         if backend is not None:
             attrs[graph_keys.BACKEND] = backend
-        attrs.update(_compose_system_prompt(agent, "reason"))
+        attrs.update(_compose_system_prompt(agent, graph_keys.OP_REASON))
         attrs.update(_normalize_attributes(attributes))
         node = self._add_node(name, graph_keys.OP_REASON, attrs)
 
@@ -278,14 +284,14 @@ class GraphRecorder:
         **attributes: Any,
     ) -> NodeRef:
         if name is None:
-            name = self._auto_name("query_memory")
+            name = self._auto_name(graph_keys.OP_QMEM)
         if query is None:
             raise ValueError("query_memory() missing required keyword argument: 'query'")
         attrs: dict[str, Any] = {graph_keys.QUERY: query}
         if space is not None:
             attrs[graph_keys.MEMORY_TIER] = space
         if limit is not None:
-            attrs["limit"] = limit
+            attrs[graph_keys.LIMIT] = limit
         attrs.update(_normalize_attributes(attributes))
         return self._add_node(name, graph_keys.OP_QMEM, attrs)
 
@@ -299,7 +305,7 @@ class GraphRecorder:
         **attributes: Any,
     ) -> NodeRef:
         if name is None:
-            name = self._auto_name("update_memory")
+            name = self._auto_name(graph_keys.OP_UMEM)
         if data is None:
             raise ValueError("update_memory() missing required keyword argument: 'data'")
         attrs: dict[str, Any] = {graph_keys.VALUE: _normalize_value(data), graph_keys.KEY: key or name}
@@ -317,7 +323,7 @@ class GraphRecorder:
         **attributes: Any,
     ) -> NodeRef:
         if name is None:
-            name = self._auto_name("invoke")
+            name = self._auto_name(graph_keys.OP_INV_TOOL)
         if capability is None:
             raise ValueError("invoke() missing required keyword argument: 'capability'")
         attrs: dict[str, Any] = {graph_keys.CAPABILITY: capability}
@@ -326,7 +332,7 @@ class GraphRecorder:
         elif params is not None:
             attrs[graph_keys.PARAMS_JSON] = params
         attrs.update(_normalize_attributes(attributes))
-        return self._add_node(name, graph_keys.OP_INV, attrs)
+        return self._add_node(name, graph_keys.OP_INV_TOOL, attrs)
 
     def branch(
         self,
@@ -338,7 +344,7 @@ class GraphRecorder:
         **attributes: Any,
     ) -> NodeRef:
         if name is None:
-            name = self._auto_name("branch")
+            name = self._auto_name(graph_keys.OP_BRANCH_ON_VALUE)
         if true_label is None:
             raise ValueError("branch() missing required keyword argument: 'true_label'")
         if false_label is None:
@@ -367,7 +373,7 @@ class GraphRecorder:
         **attributes: Any,
     ) -> NodeRef:
         if name is None:
-            name = self._auto_name("switch")
+            name = self._auto_name(graph_keys.OP_SWITCH)
         if discriminant is None:
             raise ValueError("switch_() missing required keyword argument: 'discriminant'")
         if cases is None:
@@ -381,7 +387,7 @@ class GraphRecorder:
 
     def wait_all(self, name: str | None = None, *dependencies: NodeRef | Iterable[NodeRef]) -> NodeRef:
         if name is None:
-            name = self._auto_name("wait_all")
+            name = self._auto_name(graph_keys.OP_WAIT_ALL)
         flat_dependencies = _flatten_refs(dependencies)
         node = self._add_node(name, graph_keys.OP_WAIT_ALL, {})
         for dep in flat_dependencies:
@@ -390,7 +396,7 @@ class GraphRecorder:
 
     def merge(self, name: str | None = None, *dependencies: NodeRef | Iterable[NodeRef]) -> NodeRef:
         if name is None:
-            name = self._auto_name("merge")
+            name = self._auto_name(graph_keys.OP_MERGE)
         flat_dependencies = _flatten_refs(dependencies)
         node = self._add_node(name, graph_keys.OP_MERGE, {})
         for dep in flat_dependencies:
@@ -399,38 +405,38 @@ class GraphRecorder:
 
     def fence(self, name: str | None = None, **attributes: Any) -> NodeRef:
         if name is None:
-            name = self._auto_name("fence")
+            name = self._auto_name(graph_keys.OP_FENCE)
         return self._add_node(name, graph_keys.OP_FENCE, _normalize_attributes(attributes))
 
-    def plan(self, name: str | None = None, *, goal: str | None = None, agent: AgentConfig | None = None, model: str | None = None, provider: str | None = None, backend: str | None = None, **attributes: Any) -> NodeRef:
+    def plan(self, name: str | None = None, *, goal: str | None = None, agent: AgentConfig | None = None, model: ModelId | None = None, provider: ProviderSpec | str | None = None, backend: str | None = None, **attributes: Any) -> NodeRef:
         if name is None:
-            name = self._auto_name("plan")
+            name = self._auto_name(graph_keys.OP_PLAN)
         if goal is None:
             raise ValueError("plan() missing required keyword argument: 'goal'")
         attrs = {graph_keys.GOAL: goal}
         if model is not None:
-            attrs[graph_keys.MODEL] = model
+            attrs[graph_keys.MODEL] = _normalize_value(model)
         if provider is not None:
-            attrs[graph_keys.PROVIDER] = provider
+            attrs[graph_keys.PROVIDER] = _normalize_provider(provider)
         if backend is not None:
             attrs[graph_keys.BACKEND] = backend
-        attrs.update(_compose_system_prompt(agent, "plan"))
+        attrs.update(_compose_system_prompt(agent, graph_keys.OP_PLAN))
         attrs.update(_normalize_attributes(attributes))
         return self._add_node(name, graph_keys.OP_PLAN, attrs)
 
-    def reflect(self, name: str | None = None, *, trace_id: str | None = None, agent: AgentConfig | None = None, model: str | None = None, provider: str | None = None, backend: str | None = None, **attributes: Any) -> NodeRef:
+    def reflect(self, name: str | None = None, *, trace_id: str | None = None, agent: AgentConfig | None = None, model: ModelId | None = None, provider: ProviderSpec | str | None = None, backend: str | None = None, **attributes: Any) -> NodeRef:
         if name is None:
-            name = self._auto_name("reflect")
+            name = self._auto_name(graph_keys.OP_REFLECT)
         if trace_id is None:
             raise ValueError("reflect() missing required keyword argument: 'trace_id'")
         attrs = {graph_keys.TRACE_ID: trace_id}
         if model is not None:
-            attrs[graph_keys.MODEL] = model
+            attrs[graph_keys.MODEL] = _normalize_value(model)
         if provider is not None:
-            attrs[graph_keys.PROVIDER] = provider
+            attrs[graph_keys.PROVIDER] = _normalize_provider(provider)
         if backend is not None:
             attrs[graph_keys.BACKEND] = backend
-        attrs.update(_compose_system_prompt(agent, "reflect"))
+        attrs.update(_compose_system_prompt(agent, graph_keys.OP_REFLECT))
         attrs.update(_normalize_attributes(attributes))
         return self._add_node(name, graph_keys.OP_REFLECT, attrs)
 
@@ -441,24 +447,24 @@ class GraphRecorder:
         claim: str | None = None,
         evidence: str | None = None,
         agent: AgentConfig | None = None,
-        model: str | None = None,
-        provider: str | None = None,
+        model: ModelId | None = None,
+        provider: ProviderSpec | str | None = None,
         backend: str | None = None,
         **attributes: Any,
     ) -> NodeRef:
         if name is None:
-            name = self._auto_name("verify")
+            name = self._auto_name(graph_keys.OP_VERIFY)
         if claim is None:
             raise ValueError("verify() missing required keyword argument: 'claim'")
         condition = claim if evidence is None else f"Claim: {claim}\nEvidence: {evidence}"
         attrs = {graph_keys.CONDITION: condition}
         if model is not None:
-            attrs[graph_keys.MODEL] = model
+            attrs[graph_keys.MODEL] = _normalize_value(model)
         if provider is not None:
-            attrs[graph_keys.PROVIDER] = provider
+            attrs[graph_keys.PROVIDER] = _normalize_provider(provider)
         if backend is not None:
             attrs[graph_keys.BACKEND] = backend
-        attrs.update(_compose_system_prompt(agent, "verify"))
+        attrs.update(_compose_system_prompt(agent, graph_keys.OP_VERIFY))
         attrs.update(_normalize_attributes(attributes))
         return self._add_node(name, graph_keys.OP_VERIFY, attrs)
 
@@ -471,7 +477,7 @@ class GraphRecorder:
     ) -> NodeRef:
         """Insert a schema-based input guardrail (Verify node)."""
         if name is None:
-            name = self._auto_name("input_guardrail")
+            name = self._auto_name("input_" + graph_keys.OP_VERIFY)
         if schema is None:
             raise ValueError("input_guardrail() missing required keyword argument: 'schema'")
         attrs: dict[str, Any] = {
@@ -491,7 +497,7 @@ class GraphRecorder:
     ) -> NodeRef:
         """Insert a schema-based output guardrail (Verify node with retry semantics)."""
         if name is None:
-            name = self._auto_name("output_guardrail")
+            name = self._auto_name("output_" + graph_keys.OP_VERIFY)
         if schema is None:
             raise ValueError("output_guardrail() missing required keyword argument: 'schema'")
         attrs: dict[str, Any] = {
@@ -515,7 +521,7 @@ class GraphRecorder:
         caught before execution.
         """
         if name is None:
-            name = self._auto_name("handoff")
+            name = self._auto_name(graph_keys.OP_COMMUNICATE)
         if from_agent is None:
             raise ValueError("handoff() missing required keyword argument: 'from_agent'")
         if to_agent is None:
@@ -543,7 +549,7 @@ class GraphRecorder:
         All target agents are verified at compile time via graph edges.
         """
         if name is None:
-            name = self._auto_name("handoff_when")
+            name = self._auto_name("conditional_" + graph_keys.OP_COMMUNICATE)
         if from_agent is None:
             raise ValueError("handoff_when() missing required keyword argument: 'from_agent'")
         if routes is None:
@@ -568,7 +574,7 @@ class GraphRecorder:
         pauses and a serialisable ``WorkflowCheckpoint`` is returned.
         """
         if name is None:
-            name = self._auto_name("checkpoint")
+            name = self._auto_name(graph_keys.OP_CHECKPOINT)
         attrs: dict[str, Any] = {graph_keys.CHECKPOINT: True}
         attrs.update(_normalize_attributes(attributes))
         return self._add_node(name, graph_keys.OP_FENCE, attrs)
@@ -583,12 +589,12 @@ class GraphRecorder:
     ) -> NodeRef:
         """Execute code in a sandboxed environment (EXC)."""
         if name is None:
-            name = self._auto_name("execute")
+            name = self._auto_name(graph_keys.OP_EXC)
         if code is None:
             raise ValueError("execute() missing required keyword argument: 'code'")
         attrs: dict[str, Any] = {graph_keys.CODE: code}
         if sandbox_config is not None:
-            attrs["sandbox_config"] = _normalize_value(sandbox_config)
+            attrs[graph_keys.SANDBOX_CONFIG] = _normalize_value(sandbox_config)
         attrs.update(_normalize_attributes(attributes))
         return self._add_node(name, graph_keys.OP_EXC, attrs)
 
@@ -610,7 +616,7 @@ class GraphRecorder:
                 name = name_or_message
 
         if name is None:
-            name = self._auto_name("print")
+            name = self._auto_name(graph_keys.OP_PRINT)
         if message is None:
             raise ValueError("print() missing required keyword argument: 'message'")
 
@@ -630,7 +636,7 @@ class GraphRecorder:
     def jump(self, name: str | None = None, *, label: str | None = None, **attributes: Any) -> NodeRef:
         """Unconditional jump to a labeled instruction (JUMP)."""
         if name is None:
-            name = self._auto_name("jump")
+            name = self._auto_name(graph_keys.OP_JUMP)
         if label is None:
             raise ValueError("jump() missing required keyword argument: 'label'")
         attrs: dict[str, Any] = {graph_keys.LABEL: label}
@@ -646,7 +652,7 @@ class GraphRecorder:
     ) -> NodeRef:
         """Begin a bounded loop (LOOP_START)."""
         if name is None:
-            name = self._auto_name("loop_start")
+            name = self._auto_name(graph_keys.OP_LOOP_START)
         if count is None:
             raise ValueError("loop_start() missing required keyword argument: 'count'")
         attrs: dict[str, Any] = {graph_keys.COUNT: count}
@@ -656,7 +662,7 @@ class GraphRecorder:
     def loop_end(self, name: str | None = None, **attributes: Any) -> NodeRef:
         """End a bounded loop (LOOP_END)."""
         if name is None:
-            name = self._auto_name("loop_end")
+            name = self._auto_name(graph_keys.OP_LOOP_END)
         return self._add_node(name, graph_keys.OP_LOOP_END, _normalize_attributes(attributes))
 
     def done(
@@ -667,7 +673,7 @@ class GraphRecorder:
     ) -> NodeRef:
         """Return from subgraph with a result token (RETURN)."""
         if name is None:
-            name = self._auto_name("return")
+            name = self._auto_name(graph_keys.OP_RETURN)
         node = self._add_node(name, graph_keys.OP_RETURN, _normalize_attributes(attributes))
         if source is not None:
             if hasattr(source, "get_last_node"):
@@ -686,7 +692,7 @@ class GraphRecorder:
     ) -> NodeRef:
         """Call a flow on another agent (FLOW_CALL)."""
         if name is None:
-            name = self._auto_name("flow_call")
+            name = self._auto_name(graph_keys.OP_FLOW_CALL)
         if agent_name is None:
             raise ValueError("flow_call() missing required keyword argument: 'agent_name'")
         if flow_name is None:
@@ -696,7 +702,7 @@ class GraphRecorder:
             graph_keys.FLOW_NAME: flow_name,
         }
         if args is not None:
-            attrs["args"] = _normalize_value(args)
+            attrs[graph_keys.ARGS] = _normalize_value(args)
         attrs.update(_normalize_attributes(attributes))
         return self._add_node(name, graph_keys.OP_FLOW_CALL, attrs)
 
@@ -710,7 +716,7 @@ class GraphRecorder:
     ) -> NodeRef:
         """Structured exception handling (TRY_CATCH)."""
         if name is None:
-            name = self._auto_name("try_catch")
+            name = self._auto_name(graph_keys.OP_TRY_CATCH)
         if try_label is None:
             raise ValueError("try_catch() missing required keyword argument: 'try_label'")
         if catch_label is None:
@@ -731,7 +737,7 @@ class GraphRecorder:
     ) -> NodeRef:
         """Error handler invocation (ERR)."""
         if name is None:
-            name = self._auto_name("err")
+            name = self._auto_name(graph_keys.OP_ERR)
         if error_handler is None:
             raise ValueError("err() missing required keyword argument: 'error_handler'")
         attrs: dict[str, Any] = {graph_keys.RECOVERY_TEMPLATE: error_handler}
@@ -758,7 +764,7 @@ class GraphRecorder:
                 name = name_or_message
 
         if name is None:
-            name = self._auto_name("communicate")
+            name = self._auto_name(graph_keys.OP_COMMUNICATE)
         if target_agent is None:
             raise ValueError("communicate() missing required keyword argument: 'target_agent'")
         if message is None:
@@ -793,7 +799,7 @@ class GraphRecorder:
     ) -> NodeRef:
         """Modify AAM goals at runtime (UPDATE_GOAL)."""
         if name is None:
-            name = self._auto_name("update_goal")
+            name = self._auto_name(graph_keys.OP_UPDATE_GOAL)
         if goal_id is None:
             raise ValueError("update_goal() missing required keyword argument: 'goal_id'")
         attrs: dict[str, Any] = {
@@ -817,7 +823,7 @@ class GraphRecorder:
     ) -> NodeRef:
         """Enforce preconditions before execution continues (GUARD)."""
         if name is None:
-            name = self._auto_name("guard")
+            name = self._auto_name(graph_keys.OP_GUARD)
         if condition is None:
             raise ValueError("guard() missing required keyword argument: 'condition'")
         attrs: dict[str, Any] = {
@@ -846,7 +852,7 @@ class GraphRecorder:
     ) -> NodeRef:
         """Atomically claim a task from a shared work queue (CLAIM)."""
         if name is None:
-            name = self._auto_name("claim")
+            name = self._auto_name(graph_keys.OP_CLAIM)
         if queue is None:
             raise ValueError("claim() missing required keyword argument: 'queue'")
         attrs: dict[str, Any] = {graph_keys.QUEUE: queue}
@@ -870,7 +876,7 @@ class GraphRecorder:
     ) -> NodeRef:
         """Suspend execution pending human-in-the-loop review (PAUSE)."""
         if name is None:
-            name = self._auto_name("pause")
+            name = self._auto_name(graph_keys.OP_PAUSE)
         if message is None:
             raise ValueError("pause() missing required keyword argument: 'message'")
         attrs: dict[str, Any] = {graph_keys.MESSAGE: message}
@@ -893,7 +899,7 @@ class GraphRecorder:
     ) -> NodeRef:
         """Resume a suspended PAUSE checkpoint (RESUME)."""
         if name is None:
-            name = self._auto_name("resume")
+            name = self._auto_name(graph_keys.OP_RESUME)
         if checkpoint is None:
             raise ValueError("resume() missing required keyword argument: 'checkpoint'")
         attrs: dict[str, Any] = {graph_keys.CHECKPOINT: checkpoint}
@@ -918,23 +924,23 @@ class GraphRecorder:
     ) -> NodeRef:
         """Agent metadata declaration (AGENT)."""
         if name is None:
-            name = self._auto_name("agent")
+            name = self._auto_name(graph_keys.OP_AGENT)
         attrs: dict[str, Any] = {}
         if memory is not None:
-            attrs["memory"] = _normalize_value(memory)
+            attrs[graph_keys.MEMORY] = _normalize_value(memory)
         if beliefs is not None:
-            attrs["beliefs"] = _normalize_value(beliefs)
+            attrs[graph_keys.BELIEFS] = _normalize_value(beliefs)
         if goals is not None:
-            attrs["goals"] = _normalize_value(goals)
+            attrs[graph_keys.GOALS] = _normalize_value(goals)
         if capabilities is not None:
-            attrs["capabilities"] = _normalize_value(capabilities)
+            attrs[graph_keys.CAPABILITIES] = _normalize_value(capabilities)
         attrs.update(_normalize_attributes(attributes))
         return self._add_node(name, graph_keys.OP_AGENT, attrs)
 
     def text(self, name: str | None = None, *, value: Any = None, **attributes: Any) -> NodeRef:
         """String constant (CONST_STR)."""
         if name is None:
-            name = self._auto_name("text")
+            name = self._auto_name(graph_keys.OP_CONST_STR)
         if value is None:
             raise ValueError("text() missing required keyword argument: 'value'")
         attrs = {graph_keys.VALUE: _normalize_value(value)}
@@ -948,7 +954,7 @@ class GraphRecorder:
     def yield_(self, name: str | None = None, *, source: NodeRef | None = None, **attributes: Any) -> NodeRef:
         """Yield value from a switch-case region, compiler internal (YIELD)."""
         if name is None:
-            name = self._auto_name("yield")
+            name = self._auto_name(graph_keys.OP_YIELD)
         node = self._add_node(name, graph_keys.OP_YIELD, _normalize_attributes(attributes))
         if source is not None:
             if hasattr(source, "get_last_node"):
@@ -966,7 +972,7 @@ class GraphRecorder:
     ) -> NodeRef:
         """Delegate a task to a sub-agent for execution (DELEGATE)."""
         if name is None:
-            name = self._auto_name("delegate")
+            name = self._auto_name(graph_keys.OP_DELEGATE)
         if task_spec is None:
             raise ValueError("delegate() missing required keyword argument: 'task_spec'")
         if target_agent is None:
@@ -989,7 +995,7 @@ class GraphRecorder:
     ) -> NodeRef:
         """Multi-agent negotiation protocol for consensus building (NEGOTIATE)."""
         if name is None:
-            name = self._auto_name("negotiate")
+            name = self._auto_name(graph_keys.OP_NEGOTIATE)
         if parties is None:
             raise ValueError("negotiate() missing required keyword argument: 'parties'")
         if proposal is None:
@@ -1006,13 +1012,13 @@ class GraphRecorder:
     def nop(self, name: str | None = None, **attributes: Any) -> NodeRef:
         """No-op passthrough with no side effects or AAM transition (NOP)."""
         if name is None:
-            name = self._auto_name("nop")
+            name = self._auto_name(graph_keys.OP_NOP)
         return self._add_node(name, graph_keys.OP_NOP, _normalize_attributes(attributes))
 
     def identity(self, name: str | None = None, **attributes: Any) -> NodeRef:
         """Identity passthrough that records an AAM identity transition (IDENTITY)."""
         if name is None:
-            name = self._auto_name("identity")
+            name = self._auto_name(graph_keys.OP_IDENTITY)
         return self._add_node(name, graph_keys.OP_IDENTITY, _normalize_attributes(attributes))
 
     def spawn_agent(
@@ -1041,7 +1047,7 @@ class GraphRecorder:
             goals: List of goals
         """
         if name is None:
-            name = self._auto_name("spawn_agent")
+            name = self._auto_name(graph_keys.OP_SPAWN_AGENT)
         if agent_name is None:
             raise ValueError("spawn_agent() missing required keyword argument: 'agent_name'")
         attrs: dict[str, Any] = {graph_keys.AGENT_NAME: agent_name}
@@ -1061,9 +1067,9 @@ class GraphRecorder:
         if cwd is not None:
             attrs[graph_keys.CWD] = cwd
         if capabilities is not None:
-            attrs["capabilities"] = _normalize_value(capabilities)
+            attrs[graph_keys.CAPABILITIES] = _normalize_value(capabilities)
         if goals is not None:
-            attrs["goals"] = _normalize_value(goals)
+            attrs[graph_keys.GOALS] = _normalize_value(goals)
         attrs.update(_normalize_attributes(attributes))
         return self._add_node(name, graph_keys.OP_SPAWN_AGENT, attrs)
 
@@ -1081,7 +1087,7 @@ class GraphRecorder:
     ) -> NodeRef:
         """Register a new capability in the runtime registry (REGISTER_CAPABILITY)."""
         if name is None:
-            name = self._auto_name("register_capability")
+            name = self._auto_name(graph_keys.OP_REGISTER_CAPABILITY)
         if capability_name is None:
             raise ValueError("register_capability() missing required keyword argument: 'capability_name'")
         attrs: dict[str, Any] = {graph_keys.CAPABILITY_NAME: capability_name}
@@ -1104,7 +1110,7 @@ class GraphRecorder:
     ) -> NodeRef:
         """Switch a sub-graph region to model-driven execution (AUTONOMOUS, stub)."""
         if name is None:
-            name = self._auto_name("autonomous")
+            name = self._auto_name(graph_keys.OP_AUTONOMOUS)
         attrs: dict[str, Any] = {}
         if region is not None:
             attrs[graph_keys.REGION] = region
@@ -1175,23 +1181,3 @@ def _compose_system_prompt(agent: AgentConfig | None, op: str) -> dict[str, Any]
     return attrs
 
 
-def _normalize_attributes(attributes: dict[str, Any]) -> dict[str, Any]:
-    return {key: _normalize_value(value) for key, value in attributes.items() if value is not None}
-
-
-def _normalize_value(value: Any) -> Any:
-    # Import lazily to avoid circular import at module load time.
-    from ._generated.models import ModelId
-    if isinstance(value, ModelId):
-        return str(value)
-    if hasattr(value, "to_dict") and callable(value.to_dict):
-        return value.to_dict()
-    if is_dataclass(value):
-        return asdict(value)
-    if isinstance(value, tuple):
-        return [_normalize_value(v) for v in value]
-    if isinstance(value, list):
-        return [_normalize_value(v) for v in value]
-    if isinstance(value, dict):
-        return {k: _normalize_value(v) for k, v in value.items()}
-    return value

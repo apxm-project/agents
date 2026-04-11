@@ -7,12 +7,12 @@
 //! - **Memory**: `GET|POST /v1/memory`
 //! - **Model discovery**: `GET /v1/models`
 //! - **Agent registry**: `POST /v1/capabilities/register`
-//! - **Task queue (CLAIM op)**: `POST /v1/tasks`, `GET /v1/tasks/:queue`,
-//!   `POST /v1/tasks/:queue/claim`, `POST /v1/tasks/:id/complete`
+//! - **Task queue (CLAIM op)**: `POST /v1/tasks`, `GET /v1/tasks/{queue}`,
+//!   `POST /v1/tasks/{queue}/claim`, `POST /v1/tasks/{id}/complete`
 //! - **HITL checkpoints (PAUSE/RESUME)**: `POST /v1/checkpoints`,
-//!   `GET /v1/checkpoints/:id`, `POST /v1/checkpoints/:id/resume`
+//!   `GET /v1/checkpoints/{id}`, `POST /v1/checkpoints/{id}/resume`
 //! - **MCP 2025-11-05** (JSON-RPC 2.0): `POST /v1/mcp`
-//! - **A2A v0.3** (REST): `POST /a2a/tasks/send`, `GET /a2a/tasks/:id`,
+//! - **A2A v0.3** (REST): `POST /a2a/tasks/send`, `GET /a2a/tasks/{id}`,
 //!   `GET /.well-known/agent.json`
 //!
 //! # Running
@@ -49,7 +49,7 @@ use async_trait::async_trait;
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use axum::response::sse::{Event, KeepAlive, Sse};
-use axum::{Json, Router, response::IntoResponse, routing::delete, routing::get, routing::post};
+use axum::{Json, Router, response::IntoResponse, routing::get, routing::post};
 use dashmap::DashMap;
 use futures::Stream;
 use serde::{Deserialize, Serialize};
@@ -635,22 +635,21 @@ fn build_app(state: AppState) -> Router {
         // Agent registry
         .route("/v1/agents", get(list_agents))
         .route("/v1/agents/register", post(register_agent))
-        .route("/v1/agents/:name", get(get_agent))
-        .route("/v1/agents/:name", delete(deregister_agent))
+        .route("/v1/agents/{name}", get(get_agent).delete(deregister_agent))
         // Task queue (Plan 07 — CLAIM op backend)
         .route("/v1/tasks", post(create_task))
-        .route("/v1/tasks/:queue", get(list_tasks))
-        .route("/v1/tasks/:queue/claim", post(claim_task))
-        .route("/v1/tasks/:id/complete", post(complete_task))
+        .route("/v1/tasks/{queue}", get(list_tasks))
+        .route("/v1/tasks/{queue}/claim", post(claim_task))
+        .route("/v1/tasks/{id}/complete", post(complete_task))
         // Checkpoints (Plan 07 — PAUSE/RESUME HITL)
         .route("/v1/checkpoints", post(create_checkpoint))
-        .route("/v1/checkpoints/:id", get(get_checkpoint))
-        .route("/v1/checkpoints/:id/resume", post(resume_checkpoint))
+        .route("/v1/checkpoints/{id}", get(get_checkpoint))
+        .route("/v1/checkpoints/{id}/resume", post(resume_checkpoint))
         // A2A v0.3 — AgentCard discovery + REST task lifecycle
         .route("/.well-known/agent.json", get(agent_card))
         .route("/a2a", post(a2a_jsonrpc)) // legacy JSON-RPC compat
         .route("/a2a/tasks/send", post(a2a_send_task)) // REST: submit task + execute
-        .route("/a2a/tasks/:id", get(a2a_get_task)) // REST: poll task result
+        .route("/a2a/tasks/{id}", get(a2a_get_task)) // REST: poll task result
         // LLM generation (Phase A3 — LLM backend routes)
         .route("/v1/generate", post(handle_generate))
         .route("/v1/generate-stream", post(handle_generate_stream))
@@ -1415,7 +1414,7 @@ async fn agent_card(State(state): State<AppState>) -> Json<JsonValue> {
 /// Accepts an A2A v0.3 task, constructs a minimal CONST_STR → ASK graph from
 /// the text parts, executes it immediately via the APXM runtime, and returns
 /// the result in A2A response format.  The task record is stored in
-/// `AppState.a2a_tasks` for subsequent `GET /a2a/tasks/:id` polling.
+/// `AppState.a2a_tasks` for subsequent `GET /a2a/tasks/{id}` polling.
 async fn a2a_send_task(
     State(state): State<AppState>,
     Json(req): Json<A2aSendTaskRequest>,
@@ -1542,7 +1541,7 @@ async fn a2a_send_task(
     }
 }
 
-/// `GET /a2a/tasks/:id` — return status and result of a previously submitted A2A task.
+/// `GET /a2a/tasks/{id}` — return status and result of a previously submitted A2A task.
 async fn a2a_get_task(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
     match state.a2a_tasks.get(&id) {
         Some(record) => {

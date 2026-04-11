@@ -1,36 +1,15 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field, is_dataclass
+from dataclasses import dataclass, field
 import json
 from typing import Any
 
 from apxm._generated import constants as c
 from apxm._generated import operations
+from apxm._generated.emission import EMITTERS, TEMPLATE_ATTRS, VOID_OPS
 
 
 _DEPENDENCY_TYPES = {"Data", "Effect", "Control"}
-
-
-def _normalize_air_value(value: Any) -> Any:
-    if hasattr(value, "to_dict") and callable(value.to_dict):
-        return _normalize_air_value(value.to_dict())
-    if is_dataclass(value):
-        return _normalize_air_value(asdict(value))
-    if isinstance(value, tuple):
-        return [_normalize_air_value(item) for item in value]
-    if isinstance(value, list):
-        return [_normalize_air_value(item) for item in value]
-    if isinstance(value, dict):
-        return {key: _normalize_air_value(item) for key, item in value.items()}
-    return value
-
-
-def _air_literal(value: Any) -> str:
-    normalized = _normalize_air_value(value)
-    try:
-        return json.dumps(normalized, ensure_ascii=False, allow_nan=False)
-    except (TypeError, ValueError):
-        return json.dumps(str(normalized), ensure_ascii=False)
 
 
 @dataclass(slots=True)
@@ -165,7 +144,6 @@ class ApxmGraph:
         arg_values = [f"%arg{i}" for i in range(len(self.parameters))]
 
         lines: list[str] = []
-        emitted_func_return = False  # Track if we emitted func.return from a RETURN node
 
         # Emit nodes in topological order
         for node_id in order:
@@ -183,9 +161,6 @@ class ApxmGraph:
             mlir_line = self._emit_mlir_op(node, ssa_name, inputs)
             if mlir_line:
                 lines.append(f"    {mlir_line}")
-                # Track if this was a func.return from a RETURN node
-                if node.op.upper() == "RETURN" and "func.return" in mlir_line:
-                    emitted_func_return = True
 
             # Track produced value
             if not self._is_void_op(node.op):
@@ -194,31 +169,29 @@ class ApxmGraph:
         # Find exit nodes (no outgoing edges) and emit func.return
         exit_nodes = [nid for nid in node_ids if not outgoing[nid]]
 
-        # Only add func.return if we didn't already emit one from a RETURN node
-        if not emitted_func_return:
-            # Find return value
-            return_vals = [produced[nid] for nid in exit_nodes if nid in produced]
-            if not return_vals:
-                # No exit nodes with values, find last produced value
-                for nid in reversed(order):
-                    if nid in produced:
-                        return_vals = [produced[nid]]
-                        break
+        # Emit func.return
+        return_vals = [produced[nid] for nid in exit_nodes if nid in produced]
+        if not return_vals:
+            # No exit nodes with values, find last produced value
+            for nid in reversed(order):
+                if nid in produced:
+                    return_vals = [produced[nid]]
+                    break
 
-            if return_vals:
-                if len(return_vals) == 1:
-                    lines.append(f"    func.return {return_vals[0]} : !ais.token")
-                else:
-                    # Merge multiple return values
-                    merged = "%ret_merge"
-                    operands = ", ".join(return_vals)
-                    types = ", ".join(["!ais.token"] * len(return_vals))
-                    lines.append(f"    {merged} = ais.merge {operands} : {types} -> !ais.token")
-                    lines.append(f"    func.return {merged} : !ais.token")
+        if return_vals:
+            if len(return_vals) == 1:
+                lines.append(f"    func.return {return_vals[0]} : !ais.token")
             else:
-                # No values produced, create a const token
-                lines.append("    %result = ais.const_str \"result\" : !ais.token")
-                lines.append("    func.return %result : !ais.token")
+                # Merge multiple return values
+                merged = "%ret_merge"
+                operands = ", ".join(return_vals)
+                types = ", ".join(["!ais.token"] * len(return_vals))
+                lines.append(f"    {merged} = ais.merge {operands} : {types} -> !ais.token")
+                lines.append(f"    func.return {merged} : !ais.token")
+        else:
+            # No values produced, create a const token
+            lines.append("    %result = ais.const_str \"result\" : !ais.token")
+            lines.append("    func.return %result : !ais.token")
 
         # Build function signature
         func_name = self._sanitize_name(self.name)
@@ -254,8 +227,7 @@ class ApxmGraph:
         if not self.parameters:
             return False
 
-        template_attrs = ["template_str", "prompt", "template", "value"]
-        for attr_name in template_attrs:
+        for attr_name in TEMPLATE_ATTRS:
             if attr_name in node.attributes:
                 text = str(node.attributes[attr_name])
                 # Check for positional placeholders {0}, {1}, ..., {N-1}
@@ -280,278 +252,19 @@ class ApxmGraph:
 
     def _is_void_op(self, op: str) -> bool:
         """Check if an operation produces no result (void)."""
-        void_ops = {"UMEM", "PRINT", "FENCE", "JUMP", "TRY_CATCH", "PAUSE", "RETURN"}
-        return op.upper() in void_ops
-
-    def _emit_op_fallback(self, op: str, ssa_name: str, attrs: dict[str, Any], inputs: list[str]) -> str:
-        """Fallback MLIR emission using hardcoded patterns.
-
-        This function contains the original hardcoded emission logic and serves as
-        a safety net when auto-generated emitters are not available.
-        """
-        # Helper to format context/inputs
-        def fmt_context(bracket_style: str = "[]") -> str:
-            if not inputs:
-                return ""
-            left, right = bracket_style[0], bracket_style[1]
-            types = ", ".join(["!ais.token"] * len(inputs))
-            return f" {left}{', '.join(inputs)} : {types}{right}"
-
-        # Helper to get attribute with fallback
-        def get_attr(keys: list[str], default: str = "") -> str:
-            for key in keys:
-                if key in attrs:
-                    val = attrs[key]
-                    return str(val) if val is not None else default
-            return default
-
-        # Helper to quote string for MLIR
-        def quote(s: str) -> str:
-            # Escape backslashes first, then quotes, then newlines and tabs
-            escaped = s.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n').replace('\t', '\\t').replace('\r', '\\r')
-            return f'"{escaped}"'
-
-        # Emit based on operation type
-        if op == "CONST_STR":
-            value = get_attr(["value", "text", "const", "template_str", "prompt"], "")
-            return f"{ssa_name} = ais.const_str {quote(value)} : !ais.token"
-
-        elif op in ("ASK", "THINK", "REASON"):
-            template = get_attr(["template_str", "prompt", "template"], "{0}")
-            op_name = op.lower()
-            ctx = fmt_context("[]")
-            return f"{ssa_name} = ais.{op_name} {quote(template)}{ctx} : !ais.token"
-
-        elif op == "QMEM":
-            query = get_attr(["query"], "")
-            sid = get_attr(["sid", "stage", "scope"], "default")
-            space = get_attr(["memory_tier"], "stm")
-            limit = attrs.get("limit")
-            limit_str = f" limit {limit}" if limit else ""
-            return f"{ssa_name} = ais.qmem {quote(query)} stage {quote(sid)} in {space}{limit_str} : !ais.handle<{space}>"
-
-        elif op == "UMEM":
-            space = get_attr(["memory_tier"], "stm")
-            key = attrs.get("key")
-            source = inputs[0] if inputs else "%const_mem"
-            key_str = f" {{key = {quote(key)}}}" if key else ""
-            return f"ais.umem {source} into {space}{key_str} : !ais.token"
-
-        elif op == "INV_TOOL":
-            capability = get_attr(["capability"], "unknown")
-            params_json = get_attr(["params_json"], "{}")
-            return f"{ssa_name} = ais.inv_tool {quote(capability)} ({quote(params_json)}) : !ais.token"
-
-        elif op in ("WAIT_ALL", "MERGE"):
-            op_name = op.lower()
-            if inputs:
-                operands = ", ".join(inputs)
-                types = ", ".join(["!ais.token"] * len(inputs))
-                return f"{ssa_name} = ais.{op_name} {operands} : {types} -> !ais.token"
-            else:
-                return f"{ssa_name} = ais.{op_name} -> !ais.token"
-
-        elif op == "PRINT":
-            message = get_attr(["message", "template_str", "prompt"], "{0}")
-            ctx = fmt_context("[]")
-            return f"ais.print {quote(message)}{ctx}"
-
-        elif op == "SPAWN_AGENT":
-            agent_name = get_attr(["agent_name"], "agent")
-            profile = attrs.get("profile")
-            mode = attrs.get("mode")
-            model = attrs.get("model")
-            cwd = attrs.get("cwd")
-            attr_parts = []
-            if profile:
-                attr_parts.append(f"profile = {quote(profile)}")
-            if mode:
-                attr_parts.append(f"mode = {quote(mode)}")
-            if model:
-                attr_parts.append(f"model = {quote(model)}")
-            if cwd:
-                attr_parts.append(f"cwd = {quote(cwd)}")
-            attr_str = f" {{{', '.join(attr_parts)}}}" if attr_parts else ""
-            return f"{ssa_name} = ais.spawn_agent {quote(agent_name)}{attr_str} : !ais.token"
-
-        elif op == "COMMUNICATE":
-            message = get_attr(["message", "template_str", "prompt"], "{0}")
-            recipient = get_attr(["recipient", "target"], "default")
-            ctx = fmt_context("()")
-            return f"{ssa_name} = ais.communicate {quote(message)} to {quote(recipient)}{ctx} : !ais.token"
-
-        elif op == "FENCE":
-            return "ais.fence"
-
-        elif op == "RETURN":
-            # RETURN nodes with inputs become func.return
-            # RETURN nodes without inputs are markers and should be handled
-            # by the automatic return logic (they just mark the exit point)
-            if inputs:
-                return f"func.return {inputs[0]} : !ais.token"
-            else:
-                # No explicit return value - let the automatic logic handle it
-                # Don't emit anything here, the check for has_return_node will be false
-                return ""  # Empty string means no output for this node
-
-        elif op == "PLAN":
-            goal = get_attr(["goal"], "goal")
-            ctx = fmt_context("()")
-            return f"{ssa_name} = ais.plan {quote(goal)}{ctx} : !ais.goal<0>"
-
-        elif op == "REFLECT":
-            trace_id = get_attr(["trace_query"], "")
-            ctx = fmt_context("()")
-            return f"{ssa_name} = ais.reflect {quote(trace_id)}{ctx} : !ais.token"
-
-        elif op == "VERIFY":
-            template = get_attr(["template_str", "prompt"], "Verify")
-            claim = inputs[0] if len(inputs) > 0 else "%claim"
-            evidence = inputs[1] if len(inputs) > 1 else claim
-            return f"{ssa_name} = ais.verify {claim} : !ais.token vs {evidence} : !ais.token with {quote(template)} : !ais.token"
-
-        elif op == "EXC":
-            code = get_attr(["code"], "")
-            ctx = fmt_context("()")
-            return f"{ssa_name} = ais.exc {quote(code)}{ctx} : !ais.token"
-
-        elif op == "JUMP":
-            target = get_attr(["label"], "next")
-            return f"ais.jump {quote(target)}"
-
-        elif op == "BRANCH_ON_VALUE":
-            condition = inputs[0] if inputs else "%cond"
-            true_label = get_attr(["true_label"], "true")
-            false_label = get_attr(["false_label"], "false")
-            return f"ais.branch_on_value {condition}, {quote(true_label)}, {quote(false_label)} : !ais.token"
-
-        elif op == "LOOP_START":
-            count = inputs[0] if inputs else "%count"
-            label = get_attr(["label"], "loop")
-            return f"{ssa_name} = ais.loop_start {count} as {quote(label)} : !ais.token -> !ais.token"
-
-        elif op == "LOOP_END":
-            state = inputs[0] if inputs else "%state"
-            return f"{ssa_name} = ais.loop_end {state} : !ais.token -> !ais.token"
-
-        elif op == "TRY_CATCH":
-            try_label = get_attr(["try_label"], "try")
-            catch_label = get_attr(["catch_label"], "catch")
-            return f"ais.try_catch {quote(try_label)} -> {quote(catch_label)}"
-
-        elif op == "ERR":
-            recovery = get_attr(["recovery_template"], "Recover")
-            if inputs:
-                return f"{ssa_name} = ais.err {inputs[0]} : !ais.token with {quote(recovery)} -> !ais.token"
-            else:
-                return f"{ssa_name} = ais.err with {quote(recovery)} -> !ais.token"
-
-        elif op == "CHECKPOINT":
-            checkpoint_id = get_attr(["checkpoint_id"], "checkpoint")
-            ctx = fmt_context("[]")
-            return f"{ssa_name} = ais.checkpoint {quote(checkpoint_id)}{ctx} : !ais.token"
-
-        elif op == "UPDATE_GOAL":
-            goal_id = get_attr(["goal_id"], "goal")
-            ctx = fmt_context("()")
-            return f"{ssa_name} = ais.update_goal {quote(goal_id)}{ctx} : !ais.token"
-
-        elif op == "GUARD":
-            condition = get_attr(["condition"], "true")
-            ctx = fmt_context("()")
-            return f"{ssa_name} = ais.guard {quote(condition)}{ctx} : !ais.token"
-
-        elif op == "CLAIM":
-            queue = get_attr(["queue"], "default")
-            lease_ms = attrs.get("lease_ms")
-            lease_str = f" {{lease_ms = {lease_ms} : i64}}" if lease_ms else ""
-            return f"{ssa_name} = ais.claim {quote(queue)}{lease_str} : !ais.token"
-
-        elif op == "PAUSE":
-            message = get_attr(["message"], "paused")
-            ctx = fmt_context("[]")
-            return f"ais.pause {quote(message)}{ctx}"
-
-        elif op == "RESUME":
-            checkpoint = get_attr(["checkpoint"], "latest")
-            return f"{ssa_name} = ais.resume {quote(checkpoint)} : !ais.token"
-
-        elif op == "SPAWN_TEAM":
-            team_name = get_attr(["team_name"], "team")
-            profile = attrs.get("profile")
-            attr_str = f" {{profile = {quote(profile)}}}" if profile else ""
-            return f"{ssa_name} = ais.spawn_team {quote(team_name)}{attr_str} : !ais.token"
-
-        elif op == "FLOW_CALL":
-            agent_name = get_attr(["agent_name"], "agent")
-            flow_name = get_attr(["flow_name"], "flow")
-            ctx = fmt_context("()")
-            return f"{ssa_name} = ais.flow_call {quote(agent_name)} {quote(flow_name)}{ctx} : !ais.token"
-
-        elif op == "DELEGATE":
-            target = get_attr(["target_agent"], "agent")
-            task = get_attr(["task_spec"], "{0}")
-            ctx = fmt_context("()")
-            return f"{ssa_name} = ais.delegate {quote(task)} to {quote(target)}{ctx} : !ais.token"
-
-        elif op == "NEGOTIATE":
-            topic = get_attr(["proposal"], "{0}")
-            ctx = fmt_context("()")
-            return f"{ssa_name} = ais.negotiate {quote(topic)}{ctx} : !ais.token"
-
-        elif op == "REGISTER_CAPABILITY":
-            cap_name = get_attr(["capability_name"], "capability")
-            desc = attrs.get("description")
-            attr_str = f" {{description = {quote(desc)}}}" if desc else ""
-            return f"{ssa_name} = ais.register_capability {quote(cap_name)}{attr_str} : !ais.token"
-
-        elif op == "AUTONOMOUS":
-            strategy = attrs.get("strategy")
-            template = attrs.get("template_str")
-            attr_parts = []
-            if strategy:
-                attr_parts.append(f"strategy = {quote(strategy)}")
-            if template:
-                attr_parts.append(f"template_str = {quote(template)}")
-            attr_str = f" {{{', '.join(attr_parts)}}}" if attr_parts else ""
-            return f"{ssa_name} = ais.autonomous{attr_str} : !ais.token"
-
-        elif op in ("NOP", "IDENTITY", "YIELD"):
-            op_name = op.lower()
-            if inputs:
-                # Passthrough
-                return f"{ssa_name} = {inputs[0]}"  # Not a real op, just alias
-            else:
-                return f"{ssa_name} = ais.{op_name} : !ais.token"
-
-        else:
-            # Fallback: generic op
-            return f"{ssa_name} = ais.{op.lower()} : !ais.token"
+        return op.upper() in VOID_OPS
 
     def _emit_op(self, op: str, ssa_name: str, attrs: dict[str, Any], inputs: list[str]) -> str:
-        """Dispatch to auto-generated emitters if available, otherwise use fallback.
-
-        This function tries to import and use auto-generated emitters from
-        apxm._generated.emission first. If that module doesn't exist or the
-        specific op emitter is not available, it falls back to the hardcoded
-        emission logic in _emit_op_fallback.
-        """
-        try:
-            from apxm._generated.emission import EMITTERS
-            if op in EMITTERS:
-                return EMITTERS[op](ssa_name, attrs, inputs)
-        except (ImportError, KeyError, AttributeError):
-            pass
-
-        # Fallback to hardcoded emission
-        return self._emit_op_fallback(op, ssa_name, attrs, inputs)
+        """Dispatch to auto-generated emitters, with a minimal generic fallback."""
+        fn = EMITTERS.get(op)
+        if fn is not None:
+            return fn(ssa_name, attrs, inputs)
+        # Unknown op — generic fallback
+        ctx = f" [{', '.join(inputs)} : {', '.join(['!ais.token'] * len(inputs))}]" if inputs else ""
+        return f"{ssa_name} = ais.{op.lower()}{ctx} : !ais.token"
 
     def _emit_mlir_op(self, node: GraphNode, ssa_name: str, inputs: list[str]) -> str:
-        """Emit MLIR assembly for a single operation.
-
-        Delegates to _emit_op which tries auto-generated emitters first,
-        then falls back to hardcoded patterns.
-        """
+        """Emit MLIR assembly for a single operation."""
         return self._emit_op(node.op.upper(), ssa_name, node.attributes, inputs)
 
     @classmethod
@@ -676,7 +389,7 @@ try:
 except ImportError:
     # Fallback: use generated operation specs
     _REQUIRED_ATTRS: dict[str, set[str]] = {
-        spec.op: set(spec.required_fields)
+        spec.op: {f.name for f in spec.fields if f.required}
         for spec in operations.ALL_OPERATIONS
     }
 

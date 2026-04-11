@@ -62,6 +62,8 @@ pub struct LLMRegistry {
     rate_limiter: Arc<RateLimiter<SystemClock>>,
     /// Round-robin counter for RoutingStrategy::RoundRobin
     round_robin_counter: Arc<AtomicUsize>,
+    /// Backend name → provider string (e.g. "anthropic", "openai")
+    backend_providers: Arc<DashMap<String, String>>,
 }
 
 impl LLMRegistry {
@@ -90,6 +92,7 @@ impl LLMRegistry {
             metrics: crate::llm::MetricsTracker::new(),
             rate_limiter: Arc::new(rate_limiter),
             round_robin_counter: Arc::new(AtomicUsize::new(0)),
+            backend_providers: Arc::new(DashMap::new()),
         })
     }
 
@@ -113,6 +116,7 @@ impl LLMRegistry {
             metrics: crate::llm::MetricsTracker::new(),
             rate_limiter: Arc::new(rate_limiter),
             round_robin_counter: Arc::new(AtomicUsize::new(0)),
+            backend_providers: Arc::new(DashMap::new()),
         }
     }
 
@@ -223,6 +227,13 @@ impl LLMRegistry {
         Ok(())
     }
 
+    /// Record which provider protocol a backend uses (e.g. "anthropic", "openai").
+    ///
+    /// Used for per-provider builtin model fallback when no model is specified.
+    pub fn register_backend_provider(&self, backend: impl Into<String>, provider: impl Into<String>) {
+        self.backend_providers.insert(backend.into(), provider.into());
+    }
+
     /// Register a named model alias.
     pub fn register_model_alias(&self, alias: impl Into<String>, model: impl Into<String>) {
         self.model_aliases.insert(alias.into(), model.into());
@@ -269,6 +280,13 @@ impl LLMRegistry {
                 prepared.model = Some(entry.value().clone());
             } else if let Some(default_model) = self.default_model.read().clone() {
                 prepared.model = Some(default_model);
+            } else if let Some(ref backend_name) = prepared.backend {
+                // Per-provider builtin fallback
+                if let Some(provider) = self.backend_providers.get(backend_name) {
+                    if let Some(builtin) = apxm_core::types::model_spec::default_model_for_provider(provider.value()) {
+                        prepared.model = Some(builtin.to_string());
+                    }
+                }
             }
         }
 

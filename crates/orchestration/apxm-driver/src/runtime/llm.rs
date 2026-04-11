@@ -57,7 +57,14 @@ pub async fn configure_llm_registry(
     // Load from config.toml's [[backends]] (unified system)
     if config.backends.is_empty() {
         return Err(DriverError::Driver(
-            "No backends configured. Add backends with: apxm backend add <name> ...".to_string(),
+            "No backends configured.\n\n\
+             Register at least one LLM backend:\n\n\
+             \x20 dekk apxm backend add openai --type cloud --protocol openai\n\
+             \x20 dekk apxm backend add anthropic --type cloud --protocol anthropic\n\
+             \x20 dekk apxm backend add ollama --protocol ollama\n\n\
+             Verify with: dekk apxm backend list\n\
+             Full guide:  docs/getting-started.md"
+                .to_string(),
         ));
     }
 
@@ -75,6 +82,7 @@ pub async fn configure_llm_registry(
                 backend.name
             ))
         })?;
+        registry.register_backend_provider(&backend.name, backend.protocol.as_str());
     }
 
     let default_backend = config
