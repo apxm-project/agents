@@ -77,22 +77,22 @@ class BenchmarkResult:
 # Benchmark configurations
 BENCHMARKS = {
     "shared_prefix_fanout": {
-        "file": "examples/python/benchmarks/shared_prefix_fanout.py",
+        "file": "examples/python/_benchmarks/shared_prefix_fanout.py",
         "description": "Tests prefix reuse optimization (4 parallel ASK with shared context)",
         "expected_improvement": "O2 should deduplicate shared prefix, reducing tokens sent",
     },
     "chained_llm": {
-        "file": "examples/python/benchmarks/chained_llm.py",
+        "file": "examples/python/_benchmarks/chained_llm.py",
         "description": "Tests sequential ASK chain optimization",
         "expected_improvement": "O2 may fuse operations or optimize data flow",
     },
     "mixed_priority": {
-        "file": "examples/python/benchmarks/mixed_priority.py",
+        "file": "examples/python/_benchmarks/mixed_priority.py",
         "description": "Tests priority-based scheduling with parallel branches",
         "expected_improvement": "O2 should optimize scheduling for critical path",
     },
     "multi_model": {
-        "file": "examples/python/benchmarks/multi_model.py",
+        "file": "examples/python/_benchmarks/multi_model.py",
         "description": "Tests multi-model routing optimization",
         "expected_improvement": "O2 should optimize model selection strategy",
     },

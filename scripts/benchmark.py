@@ -28,52 +28,52 @@ from datetime import datetime
 # Benchmark configuration
 BENCHMARKS = {
     "shared_prefix_fanout": {
-        "file": "examples/python/benchmarks/shared_prefix_fanout.py",
+        "file": "examples/python/_benchmarks/shared_prefix_fanout.py",
         "description": "Tests prefix reuse optimization (PromptCanonicalization)",
         "metrics": ["duration_ms", "cache_hits"],
     },
     "chained_llm": {
-        "file": "examples/python/benchmarks/chained_llm.py",
+        "file": "examples/python/_benchmarks/chained_llm.py",
         "description": "Tests LLM pipelining optimization",
         "metrics": ["duration_ms", "avg_parallelism"],
     },
     "mixed_priority": {
-        "file": "examples/python/benchmarks/mixed_priority.py",
+        "file": "examples/python/_benchmarks/mixed_priority.py",
         "description": "Tests priority-based scheduling",
         "metrics": ["duration_ms", "critical_path_latency"],
     },
     "multi_model": {
-        "file": "examples/python/benchmarks/multi_model.py",
+        "file": "examples/python/_benchmarks/multi_model.py",
         "description": "Tests per-node model/backend routing",
         "metrics": ["duration_ms", "cost_estimate"],
     },
     "fusion_stress": {
-        "file": "examples/python/benchmarks/fusion_stress.py",
+        "file": "examples/python/_benchmarks/fusion_stress.py",
         "description": "Tests FuseAskOps pass (10 sequential ask→think pairs)",
         "metrics": ["duration_ms", "llm_call_count"],
     },
     "cse_stress": {
-        "file": "examples/python/benchmarks/cse_stress.py",
+        "file": "examples/python/_benchmarks/cse_stress.py",
         "description": "Tests Common Subexpression Elimination (3 identical prompts)",
         "metrics": ["duration_ms", "unique_llm_calls", "cache_hit_rate"],
     },
     "dead_context_stress": {
-        "file": "examples/python/benchmarks/dead_context_stress.py",
+        "file": "examples/python/_benchmarks/dead_context_stress.py",
         "description": "Tests DeadContextElimination (5 contexts, only {0} used)",
         "metrics": ["duration_ms", "input_tokens", "token_savings_pct"],
     },
     "prefix_fanout_large": {
-        "file": "examples/python/benchmarks/prefix_fanout_large.py",
+        "file": "examples/python/_benchmarks/prefix_fanout_large.py",
         "description": "Tests PromptCanonicalization (8-way fanout, 4k shared prefix)",
         "metrics": ["duration_ms", "prefill_tokens", "cache_hit_rate"],
     },
     "priority_scheduling": {
-        "file": "examples/python/benchmarks/priority_scheduling.py",
+        "file": "examples/python/_benchmarks/priority_scheduling.py",
         "description": "Tests priority scheduling (critical path vs background)",
         "metrics": ["duration_ms", "critical_path_latency"],
     },
     "memo_cache_stress": {
-        "file": "examples/python/benchmarks/memo_cache_stress.py",
+        "file": "examples/python/_benchmarks/memo_cache_stress.py",
         "description": "Tests MemoCache effectiveness (repeated prompts)",
         "metrics": ["duration_ms", "llm_calls", "cache_hit_rate"],
     },
