@@ -90,3 +90,7 @@ def mixed_priority(g: GraphRecorder):
 if __name__ == "__main__":
     # Output the graph as JSON
     print(mixed_priority._graph.to_air())
+    # To execute directly:
+    # import asyncio
+    # result = asyncio.run(mixed_priority())
+    # print(result.content)

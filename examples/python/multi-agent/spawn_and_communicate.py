@@ -53,4 +53,7 @@ def two_agent_pipeline(g: GraphRecorder):
 
 
 if __name__ == "__main__":
-    print(two_agent_pipeline._graph.to_air())
+    import asyncio
+
+    result = asyncio.run(two_agent_pipeline())
+    print(result.content)

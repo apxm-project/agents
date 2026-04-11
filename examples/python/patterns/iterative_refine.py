@@ -57,5 +57,7 @@ def iterative_refine_unrolled(g: GraphRecorder):
 
 
 if __name__ == "__main__":
-    import json
-    print(iterative_refine_unrolled._graph.to_air())
+    import asyncio
+
+    result = asyncio.run(iterative_refine_unrolled())
+    print(result.content)

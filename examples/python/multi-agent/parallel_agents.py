@@ -50,5 +50,7 @@ def parallel_agents(g: GraphRecorder):
 
 
 if __name__ == "__main__":
-    import json
-    print(parallel_agents._graph.to_air())
+    import asyncio
+
+    result = asyncio.run(parallel_agents())
+    print(result.content)

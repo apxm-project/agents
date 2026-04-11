@@ -218,3 +218,7 @@ List the top 3 entities and their relationships in 2-3 sentences.
 if __name__ == "__main__":
     # Output the graph as JSON
     print(dead_context_stress._graph.to_air())
+    # To execute directly:
+    # import asyncio
+    # result = asyncio.run(dead_context_stress())
+    # print(result.content)

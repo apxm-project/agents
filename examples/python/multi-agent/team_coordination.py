@@ -40,4 +40,7 @@ def team_coordination(g: GraphRecorder):
 
 
 if __name__ == "__main__":
-    print(team_coordination._graph.to_air())
+    import asyncio
+
+    result = asyncio.run(team_coordination())
+    print(result.content)

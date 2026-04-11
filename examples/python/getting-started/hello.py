@@ -19,5 +19,7 @@ def hello_world(g: GraphRecorder):
 
 
 if __name__ == "__main__":
-    import json
-    print(hello_world._graph.to_air())
+    import asyncio
+
+    result = asyncio.run(hello_world())
+    print(result.content)

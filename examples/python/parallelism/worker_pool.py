@@ -61,5 +61,7 @@ def worker_pool_parallel(g: GraphRecorder):
 
 
 if __name__ == "__main__":
-    import json
-    print(worker_pool_parallel._graph.to_air())
+    import asyncio
+
+    result = asyncio.run(worker_pool_parallel())
+    print(result.content)

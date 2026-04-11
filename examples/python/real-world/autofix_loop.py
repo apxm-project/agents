@@ -114,18 +114,7 @@ Implementation:
 
 
 if __name__ == "__main__":
-    import sys
-    from pathlib import Path
+    import asyncio
 
-    # Emit the .air file
-    air_content = autofix_loop._graph.to_air()
-
-    # Write to file
-    output_path = Path(__file__).with_suffix(".air")
-    output_path.write_text(air_content)
-
-    print(f"Generated: {output_path}")
-    print()
-    print("To compile and execute:")
-    print(f"  dekk apxm compile {output_path}")
-    print(f"  dekk apxm execute {output_path} --emit-session")
+    result = asyncio.run(autofix_loop())
+    print(result.content)

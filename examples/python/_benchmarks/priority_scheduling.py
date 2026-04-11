@@ -160,3 +160,7 @@ def priority_scheduling(g: GraphRecorder):
 if __name__ == "__main__":
     # Output the graph as JSON
     print(priority_scheduling._graph.to_air())
+    # To execute directly:
+    # import asyncio
+    # result = asyncio.run(priority_scheduling())
+    # print(result.content)

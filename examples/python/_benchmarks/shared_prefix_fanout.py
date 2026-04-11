@@ -109,3 +109,7 @@ def shared_prefix_fanout(g: GraphRecorder):
 if __name__ == "__main__":
     # Output the graph as JSON
     print(shared_prefix_fanout._graph.to_air())
+    # To execute directly:
+    # import asyncio
+    # result = asyncio.run(shared_prefix_fanout())
+    # print(result.content)

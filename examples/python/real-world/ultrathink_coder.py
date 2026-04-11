@@ -83,5 +83,7 @@ def ultrathink_coder(g: GraphRecorder, task: str):
 
 
 if __name__ == "__main__":
-    import json
-    print(ultrathink_coder._graph.to_air())
+    import asyncio
+
+    result = asyncio.run(ultrathink_coder("implement a binary search in Python"))
+    print(result.content)

@@ -70,4 +70,7 @@ def sdlc_pipeline(g: GraphRecorder):
 
 
 if __name__ == "__main__":
-    print(sdlc_pipeline._graph.to_air())
+    import asyncio
+
+    result = asyncio.run(sdlc_pipeline())
+    print(result.content)

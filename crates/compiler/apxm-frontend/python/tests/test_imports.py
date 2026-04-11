@@ -38,3 +38,20 @@ def test_graph_imports():
     assert compile is not None
     assert AgentHandle is not None
     assert Team is not None
+
+
+def test_import_error_types():
+    """Verify error types can be imported."""
+    from apxm import ApxmError, CompilationError, ExecutionError, ServerError
+    assert issubclass(CompilationError, ApxmError)
+    assert issubclass(ExecutionError, ApxmError)
+    assert issubclass(ServerError, ApxmError)
+
+
+def test_import_execution_result():
+    """Verify execution result types can be imported."""
+    from apxm import ExecutionResult, ExecutionStats, LLMUsage, new_session
+    assert ExecutionResult is not None
+    assert ExecutionStats is not None
+    assert LLMUsage is not None
+    assert callable(new_session)

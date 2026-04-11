@@ -199,4 +199,7 @@ Summary:
 
 
 if __name__ == "__main__":
-    print(add_op_workflow._graph.to_air())
+    import asyncio
+
+    result = asyncio.run(add_op_workflow("SUMMARIZE", "Summarize input text"))
+    print(result.content)

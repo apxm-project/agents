@@ -40,5 +40,7 @@ def council_agent(g: GraphRecorder):
 
 
 if __name__ == "__main__":
-    import json
-    print(council_agent._graph.to_air())
+    import asyncio
+
+    result = asyncio.run(council_agent())
+    print(result.content)

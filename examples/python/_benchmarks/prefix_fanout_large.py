@@ -361,3 +361,7 @@ SUMMARY:
 if __name__ == "__main__":
     # Output the graph as JSON
     print(prefix_fanout_large._graph.to_air())
+    # To execute directly:
+    # import asyncio
+    # result = asyncio.run(prefix_fanout_large())
+    # print(result.content)

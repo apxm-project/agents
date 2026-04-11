@@ -18,6 +18,15 @@ def test_public_imports_and_all():
         "ExecutionMode",
         "AgentConfig",
         "ToolsConfig",
+        "ApxmError",
+        "CompilationError",
+        "ExecutionError",
+        "ExecutionResult",
+        "ExecutionStats",
+        "LLMUsage",
+        "ServerError",
+        "close",
+        "new_session",
     }
 
     assert ApxmGraph is apxm.ApxmGraph

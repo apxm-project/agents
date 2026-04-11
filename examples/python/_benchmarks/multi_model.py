@@ -116,3 +116,7 @@ def multi_model(g: GraphRecorder):
 if __name__ == "__main__":
     # Output the graph as JSON
     print(multi_model._graph.to_air())
+    # To execute directly:
+    # import asyncio
+    # result = asyncio.run(multi_model())
+    # print(result.content)

@@ -1,15 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import Generator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
-import importlib
 import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
-import tempfile
 from typing import Any
 
 from apxm._generated import constants as graph_keys
@@ -113,11 +110,102 @@ class WorkflowCheckpoint:
         )
 
 
-def _serialize_args(args: tuple[Any, ...]) -> str | None:
-    if not args:
-        return None
-    return str(args[0]) if len(args) == 1 else json.dumps(args)
+# ---------------------------------------------------------------------------
+# Execution result types
+# ---------------------------------------------------------------------------
 
+@dataclass(slots=True)
+class ExecutionStats:
+    executed_nodes: int = 0
+    failed_nodes: int = 0
+    duration_ms: int = 0
+
+
+@dataclass(slots=True)
+class LLMUsage:
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_requests: int = 0
+
+
+@dataclass(slots=True)
+class ExecutionResult:
+    content: str | None = None
+    results: dict[str, Any] = field(default_factory=dict)
+    stats: ExecutionStats = field(default_factory=ExecutionStats)
+    llm_usage: LLMUsage = field(default_factory=LLMUsage)
+
+    @classmethod
+    def from_response(cls, data: dict[str, Any]) -> ExecutionResult:
+        return cls(
+            content=data.get("content"),
+            results=data.get("results", {}),
+            stats=ExecutionStats(
+                **data.get("stats", {
+                    "executed_nodes": 0,
+                    "failed_nodes": 0,
+                    "duration_ms": 0,
+                }),
+            ),
+            llm_usage=LLMUsage(
+                **data.get("llm_usage", {
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "total_requests": 0,
+                }),
+            ),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Session helper
+# ---------------------------------------------------------------------------
+
+def new_session() -> str:
+    """Generate a new session ID for linking multiple executions."""
+    import uuid
+    return f"s-{uuid.uuid4()}"
+
+
+# ---------------------------------------------------------------------------
+# HTTP client management
+# ---------------------------------------------------------------------------
+
+_client: Any = None  # httpx.AsyncClient | None
+
+
+def _server_url() -> str:
+    return os.environ.get("APXM_SERVER_URL", "http://localhost:18800")
+
+
+async def _get_client() -> Any:
+    global _client
+    if _client is None:
+        try:
+            import httpx
+        except ImportError:
+            raise RuntimeError(
+                "httpx is required for remote execution. "
+                "Install it with: pip install apxm[server]"
+            )
+        _client = httpx.AsyncClient(
+            base_url=_server_url(),
+            timeout=httpx.Timeout(connect=5.0, read=300.0, write=10.0, pool=5.0),
+        )
+    return _client
+
+
+async def close() -> None:
+    """Close the shared HTTP client."""
+    global _client
+    if _client is not None:
+        await _client.aclose()
+        _client = None
+
+
+# ---------------------------------------------------------------------------
+# Binary lookup
+# ---------------------------------------------------------------------------
 
 def _find_apxm_binary() -> str:
     """Locate the APXM CLI, preferring the dekk wrapper when available."""
@@ -134,30 +222,12 @@ def _find_apxm_binary() -> str:
     )
 
 
-def _build_graph_text(graph: ApxmGraph, graph_format: str) -> str:
-    if graph_format == "air":
-        return graph.to_air()
-    if graph_format == "json":
-        return graph.to_json(indent=2)
-    raise ValueError(f"unsupported graph format '{graph_format}'")
-
-
-def _fallback_retry_reason(stderr: str) -> bool:
-    lowered = stderr.lower()
-    return any(
-        marker in lowered
-        for marker in (
-            ".air is an inspection",
-            "not a compile input",
-            "round-trip compilable",
-            "use json graphs for compilation and execution instead",
-            "use a json graph instead",
-        )
-    )
-
+# ---------------------------------------------------------------------------
+# CompiledFlow
+# ---------------------------------------------------------------------------
 
 class CompiledFlow:
-    __slots__ = ("_graph", "mode", "_opt_level", "_compiled_native", "_registered_tools")
+    __slots__ = ("_graph", "mode", "_opt_level", "_registered_tools")
 
     def __init__(
         self,
@@ -174,33 +244,17 @@ class CompiledFlow:
             self._opt_level = 0
         else:
             self._opt_level = 2
-        self._compiled_native: Any = None
         self._registered_tools: list[Any] = []
 
-    async def run(self, *args: Any) -> Any:
-        errors = validate_graph(self._graph)
-        if errors:
-            raise ValueError("invalid graph: " + "; ".join(errors))
-
-        if await self._ensure_native_compiled():
-            payload = _serialize_args(args) or ""
-            return await self._compiled_native.run(payload)
-
-        return self._fallback_subprocess(*args)
+    # -- persistence --------------------------------------------------------
 
     def save(self, path: str | os.PathLike[str]) -> None:
-        path = Path(path)
-
-        if self._compiled_native is not None and hasattr(self._compiled_native, "save"):
-            self._compiled_native.save(str(path))
-            return
-
         envelope = {
             graph_keys.GRAPH_PAYLOAD: self._graph.to_dict(),
             "mode": self.mode.value,
             "opt_level": self._opt_level,
         }
-        path.write_text(json.dumps(envelope, indent=2), encoding="utf-8")
+        Path(path).write_text(json.dumps(envelope, indent=2), encoding="utf-8")
 
     @classmethod
     def load(cls, path: str | os.PathLike[str]) -> "CompiledFlow":
@@ -216,156 +270,135 @@ class CompiledFlow:
         self._registered_tools.append(tool)
         return self
 
-    async def _ensure_native_compiled(self) -> bool:
-        if self._compiled_native is not None:
-            return True
+    # -- execution ----------------------------------------------------------
 
-        try:
-            native = importlib.import_module("apxm")
-        except Exception:
-            return False
+    async def run(self, *args: Any, session_id: str | None = None) -> ExecutionResult:
+        from .errors import CompilationError, ExecutionError, ServerError
 
-        builder_cls = getattr(native, "WorkflowBuilder", None)
-        if builder_cls is None:
-            return False
-
-        if hasattr(builder_cls, "from_graph_air"):
-            builder = builder_cls.from_graph_air(self._graph.to_air())
-        elif hasattr(builder_cls, "from_graph_json"):
-            builder = builder_cls.from_graph_json(self._graph.to_json(indent=0))
-        else:
-            return False
-
-        for tool in self._registered_tools:
-            schema = tool.schema() if callable(tool.schema) else tool.schema
-            builder.with_tool(
-                name=tool.name,
-                description=tool.description,
-                schema_json=json.dumps(schema),
-                invoke_fn=tool.invoke,
-            )
-
-        self._compiled_native = await builder.compile(self._opt_level)
-        return True
-
-    def run_streaming(self, *args: Any) -> Generator[dict[str, Any], None, None]:
         errors = validate_graph(self._graph)
         if errors:
-            yield {"event": "error", "message": "invalid graph: " + "; ".join(errors)}
-            return
+            raise CompilationError("invalid graph: " + "; ".join(errors))
 
-        yield {"event": "validation_ok"}
+        request_body = self._build_request(args, session_id=session_id)
+
+        # Try HTTP first
+        try:
+            client = await _get_client()
+            response = await client.post("/v1/execute", json=request_body)
+            if response.status_code != 200:
+                raise ServerError(
+                    f"Server returned {response.status_code}: {response.text}"
+                )
+            return ExecutionResult.from_response(response.json())
+        except RuntimeError:
+            # httpx not installed, fall through to subprocess
+            pass
+        except Exception as exc:
+            # Connection refused or other HTTP error -- try subprocess
+            if "httpx" in type(exc).__module__:
+                pass
+            else:
+                raise
+
+        # Subprocess fallback (stdin, no temp files)
+        if session_id is not None:
+            raise ServerError(
+                "session_id requires the HTTP server. "
+                "Start it with: dekk apxm server"
+            )
+        return self._fallback_subprocess(*args)
+
+    def run_sync(self, *args: Any, session_id: str | None = None) -> ExecutionResult:
+        """Synchronous execution convenience method."""
+        import asyncio
+        import threading
+
+        result: ExecutionResult | None = None
+        exc: BaseException | None = None
+
+        def _runner() -> None:
+            nonlocal result, exc
+            try:
+                result = asyncio.run(self.run(*args, session_id=session_id))
+            except BaseException as e:
+                exc = e
+
+        t = threading.Thread(target=_runner)
+        t.start()
+        t.join()
+        if exc is not None:
+            raise exc
+        assert result is not None
+        return result
+
+    async def stream(self, *args: Any, session_id: str | None = None):
+        """Async generator yielding execution events via SSE."""
+        from .errors import CompilationError, ServerError
+
+        errors = validate_graph(self._graph)
+        if errors:
+            raise CompilationError("invalid graph: " + "; ".join(errors))
 
         try:
-            apxm_bin = _find_apxm_binary()
-        except RuntimeError as e:
-            yield {"event": "error", "message": str(e)}
-            return
-
-        for node in self._graph.nodes:
-            yield {"event": "node_started", "node_id": node.id, "name": node.name}
-
-        attempted_formats = ("air", "json")
-        for graph_format in attempted_formats:
-            cmd, tmp_path = self._build_subprocess_cmd(apxm_bin, args, graph_format=graph_format)
-            try:
-                proc = subprocess.Popen(
-                    cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
-                )
-
-                for line in proc.stdout:  # type: ignore[union-attr]
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        parsed = json.loads(line)
-                        yield {"event": "output", "data": parsed}
-                    except json.JSONDecodeError:
-                        yield {"event": "output", "data": line}
-
-                proc.wait()
-                stderr = proc.stderr.read() if proc.stderr else ""  # type: ignore[union-attr]
-
-                if (
-                    proc.returncode != 0
-                    and graph_format == "air"
-                    and _fallback_retry_reason(stderr)
-                ):
-                    continue
-
-                if proc.returncode != 0:
-                    yield {
-                        "event": "error",
-                        "message": f"apxm exit {proc.returncode}: {stderr.strip()}",
-                    }
-                    return
-
-                for node in self._graph.nodes:
-                    yield {"event": "node_completed", "node_id": node.id, "name": node.name}
-
-                yield {"event": "result", "data": None}
-                return
-            finally:
-                os.unlink(tmp_path)
-
-    def _build_subprocess_cmd(
-        self,
-        apxm_or_dekk: str,
-        args: tuple[Any, ...],
-        *,
-        graph_format: str = "air",
-    ) -> tuple[list[str], str]:
-        graph_text = _build_graph_text(self._graph, graph_format)
-        suffix = f".{graph_format}"
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=suffix, delete=False, encoding="utf-8"
-        ) as tmp:
-            tmp.write(graph_text)
-            tmp_path = tmp.name
-
-        if Path(apxm_or_dekk).name == "dekk":
-            cmd = [apxm_or_dekk, "apxm", "execute", tmp_path, "--json-output"]
-        else:
-            cmd = [apxm_or_dekk, "execute", tmp_path, "--json-output"]
-        payload = _serialize_args(args)
-        if payload is not None:
-            cmd.extend(["--input", payload])
-        return cmd, tmp_path
-
-    def _fallback_subprocess(self, *args: Any) -> Any:
-        apxm_bin = _find_apxm_binary()
-        last_error: RuntimeError | None = None
-
-        for graph_format in ("air", "json"):
-            cmd, tmp_path = self._build_subprocess_cmd(
-                apxm_bin, args, graph_format=graph_format
+            import httpx
+            from httpx_sse import aconnect_sse
+        except ImportError:
+            raise RuntimeError(
+                "httpx and httpx-sse are required for streaming. "
+                "Install with: pip install apxm[stream]"
             )
 
-            try:
-                result = subprocess.run(
-                    cmd, capture_output=True, text=True, check=False
-                )
+        client = await _get_client()
+        request_body = self._build_request(args, session_id=session_id)
 
-                if result.returncode != 0:
-                    stderr = result.stderr.strip()
-                    if graph_format == "air" and _fallback_retry_reason(stderr):
-                        continue
-                    raise RuntimeError(
-                        f"apxm execute failed (exit {result.returncode}): {stderr}"
-                    )
+        async with aconnect_sse(
+            client, "POST", "/v1/execute/stream",
+            json=request_body,
+            timeout=httpx.Timeout(connect=5.0, read=None, write=10.0, pool=5.0),
+        ) as source:
+            async for sse in source.aiter_sse():
+                yield json.loads(sse.data)
 
-                stdout = result.stdout.strip()
-                if not stdout:
-                    return None
-                try:
-                    return json.loads(stdout)
-                except json.JSONDecodeError:
-                    return stdout
-            except RuntimeError as exc:
-                last_error = exc
-            finally:
-                os.unlink(tmp_path)
+    # -- internal helpers ---------------------------------------------------
 
-        if last_error is not None:
-            raise last_error
-        raise RuntimeError("apxm execute failed before producing output")
+    def _build_request(
+        self, args: tuple[Any, ...], *, session_id: str | None = None
+    ) -> dict[str, Any]:
+        request: dict[str, Any] = {
+            "graph": self._graph.to_dict(),
+            "args": [str(a) for a in args],
+        }
+        if session_id is not None:
+            request["session_id"] = session_id
+        return request
+
+    def _fallback_subprocess(self, *args: Any) -> ExecutionResult:
+        from .errors import ExecutionError
+
+        apxm_bin = _find_apxm_binary()
+        graph_json = json.dumps(self._graph.to_dict())
+
+        if Path(apxm_bin).name == "dekk":
+            cmd = [apxm_bin, "apxm", "execute", "/dev/stdin", "--json"]
+        else:
+            cmd = [apxm_bin, "execute", "/dev/stdin", "--json"]
+
+        for arg in args:
+            cmd.append(str(arg))
+
+        result = subprocess.run(
+            cmd, input=graph_json, capture_output=True, text=True, check=False
+        )
+
+        if result.returncode != 0:
+            raise ExecutionError(
+                f"apxm execute failed (exit {result.returncode}): {result.stderr.strip()}"
+            )
+
+        stdout = result.stdout.strip()
+        if not stdout:
+            return ExecutionResult()
+        try:
+            return ExecutionResult.from_response(json.loads(stdout))
+        except (json.JSONDecodeError, TypeError):
+            return ExecutionResult(content=stdout)

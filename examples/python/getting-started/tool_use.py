@@ -32,5 +32,7 @@ def tool_agent(g: GraphRecorder):
 
 
 if __name__ == "__main__":
-    import json
-    print(tool_agent._graph.to_air())
+    import asyncio
+
+    result = asyncio.run(tool_agent())
+    print(result.content)
