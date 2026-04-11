@@ -8,7 +8,7 @@ use anyhow::Result;
 use super::registry::{
     FrontendAgentTemplate, FrontendConstant, FrontendEmissionSpec, FrontendModelSpec,
     agent_templates, builtin_models, builtin_providers, emission_specs, graph_attr_constants,
-    graph_metadata_constants, operation_specs, provider_protocols,
+    graph_metadata_constants, operation_specs, provider_protocols, valid_param_types,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,6 +82,31 @@ fn render_constants_module() -> String {
     for item in graph_attr_constants() {
         render_constant(&mut buf, &item);
     }
+
+    // Valid parameter types
+    let types = valid_param_types();
+    let types_set = types
+        .iter()
+        .map(|t| py_string(t))
+        .collect::<Vec<_>>()
+        .join(", ");
+    buf.push_str(&format!(
+        "\nVALID_PARAM_TYPES: Final[frozenset[str]] = frozenset({{{types_set}}})\n"
+    ));
+
+    // Python type → APXM type mapping (derived from valid param types + Python aliases)
+    let mut mapping_parts = Vec::new();
+    for t in types {
+        mapping_parts.push(format!("{}: {}", py_string(t), py_string(t)));
+    }
+    // Additional Python-specific aliases that map to APXM "json"
+    mapping_parts.push(format!("{}: {}", py_string("dict"), py_string("json")));
+    mapping_parts.push(format!("{}: {}", py_string("list"), py_string("json")));
+    mapping_parts.push(format!("{}: {}", py_string("Any"), py_string("json")));
+    buf.push_str(&format!(
+        "PYTHON_TYPE_TO_APXM: Final[dict[str, str]] = {{{}}}\n",
+        mapping_parts.join(", ")
+    ));
 
     buf
 }
@@ -746,5 +771,12 @@ mod tests {
         assert_eq!(super::to_model_constant("o1-mini"), "O1_MINI");
         assert_eq!(super::to_model_constant("claude-3-5-sonnet-20241022"), "CLAUDE_3_5_SONNET");
         assert_eq!(super::to_model_constant("gpt-5.1"), "GPT_5_1");
+    }
+
+    #[test]
+    fn constants_module_renders_valid_param_types() {
+        let rendered = render_generated_files();
+        assert!(rendered.constants_py.contains("VALID_PARAM_TYPES: Final[frozenset[str]]"));
+        assert!(rendered.constants_py.contains("PYTHON_TYPE_TO_APXM: Final[dict[str, str]]"));
     }
 }

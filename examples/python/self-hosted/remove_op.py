@@ -199,4 +199,7 @@ Summary:
 
 
 if __name__ == "__main__":
-    print(remove_op_workflow._graph.to_air())
+    import asyncio
+
+    result = asyncio.run(remove_op_workflow("DEPRECATED_OP"))
+    print(result.content)

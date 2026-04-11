@@ -456,6 +456,11 @@ pub mod llm {
     }
 }
 
+pub mod parameters {
+    /// Valid parameter types for graph parameters.
+    pub const VALID_TYPES: &[&str] = &["str", "int", "float", "bool", "json"];
+}
+
 pub mod extensions {
     /// Agent IR text format — canonical intermediate representation (like LLVM .ll).
     /// This is the primary authoring format for graph IR.

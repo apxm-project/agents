@@ -75,5 +75,7 @@ def cross_critique_pipeline(g: GraphRecorder):
 
 
 if __name__ == "__main__":
-    import json
-    print(cross_critique_pipeline._graph.to_air())
+    import asyncio
+
+    result = asyncio.run(cross_critique_pipeline())
+    print(result.content)

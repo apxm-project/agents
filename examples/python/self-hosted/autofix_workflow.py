@@ -239,4 +239,7 @@ If status is partial or failed, list remaining issues and suggested next steps.
 
 
 if __name__ == "__main__":
-    print(autofix_workflow._graph.to_air())
+    import asyncio
+
+    result = asyncio.run(autofix_workflow("crates/runtime"))
+    print(result.content)

@@ -148,3 +148,7 @@ def memo_cache_stress(g: GraphRecorder):
 if __name__ == "__main__":
     # Output the graph as JSON
     print(memo_cache_stress._graph.to_air())
+    # To execute directly:
+    # import asyncio
+    # result = asyncio.run(memo_cache_stress())
+    # print(result.content)

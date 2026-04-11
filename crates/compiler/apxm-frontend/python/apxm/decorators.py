@@ -12,6 +12,11 @@ if TYPE_CHECKING:
     from ._generated.models import ModelId
 
 
+try:
+    from ._generated.constants import VALID_PARAM_TYPES as _VALID_TYPES
+except ImportError:
+    _VALID_TYPES = frozenset({"str", "int", "float", "bool", "json"})
+
 _PYTHON_TYPE_TO_APXM: dict[type | str, str] = {
     str: "str",
     int: "int",
@@ -55,9 +60,20 @@ class _CompiledFunction:
         self.__name__ = fn.__name__
         self.__doc__ = fn.__doc__
 
-    async def __call__(self, *args: Any, **kwargs: Any) -> Any:
+    async def __call__(self, *args: Any, session_id: str | None = None, **kwargs: Any) -> Any:
         runtime_args = self._normalize_runtime_args(*args, **kwargs)
-        return await self._compiled_flow.run(*runtime_args)
+        return await self._compiled_flow.run(*runtime_args, session_id=session_id)
+
+    def run_sync(self, *args: Any, session_id: str | None = None, **kwargs: Any) -> Any:
+        """Synchronous execution convenience method."""
+        runtime_args = self._normalize_runtime_args(*args, **kwargs)
+        return self._compiled_flow.run_sync(*runtime_args, session_id=session_id)
+
+    async def stream(self, *args: Any, session_id: str | None = None, **kwargs: Any):
+        """Async generator yielding execution events via SSE."""
+        runtime_args = self._normalize_runtime_args(*args, **kwargs)
+        async for event in self._compiled_flow.stream(*runtime_args, session_id=session_id):
+            yield event
 
     def _derive_parameters(self) -> dict[str, tuple[int, str]]:
         """Derive graph parameters from function signature.

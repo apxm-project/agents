@@ -32,6 +32,8 @@ Issues = "https://github.com/randreshg/apxm/issues"
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0", "pytest-asyncio>=0.21"]
+server = ["httpx>=0.25"]
+stream = ["httpx>=0.25", "httpx-sse>=0.4"]
 
 [tool.setuptools.packages.find]
 where = ["."]

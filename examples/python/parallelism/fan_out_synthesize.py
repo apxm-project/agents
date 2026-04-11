@@ -60,4 +60,7 @@ def fan_out_synthesize(g: GraphRecorder):
 
 
 if __name__ == "__main__":
-    print(fan_out_synthesize._graph.to_air())
+    import asyncio
+
+    result = asyncio.run(fan_out_synthesize())
+    print(result.content)

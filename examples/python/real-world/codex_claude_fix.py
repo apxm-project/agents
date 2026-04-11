@@ -69,5 +69,7 @@ def codex_claude_fix(g: GraphRecorder):
 
 
 if __name__ == "__main__":
-    import json
-    print(codex_claude_fix._graph.to_air())
+    import asyncio
+
+    result = asyncio.run(codex_claude_fix())
+    print(result.content)

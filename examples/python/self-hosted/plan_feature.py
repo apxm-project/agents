@@ -226,4 +226,7 @@ Keep the plan actionable and specific. Include file paths and function names.
 
 
 if __name__ == "__main__":
-    print(plan_feature_workflow._graph.to_air())
+    import asyncio
+
+    result = asyncio.run(plan_feature_workflow("Add retry logic to LLM calls"))
+    print(result.content)

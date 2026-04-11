@@ -55,4 +55,7 @@ def resilient_pipeline(g: GraphRecorder):
 
 
 if __name__ == "__main__":
-    print(resilient_pipeline._graph.to_air())
+    import asyncio
+
+    result = asyncio.run(resilient_pipeline())
+    print(result.content)

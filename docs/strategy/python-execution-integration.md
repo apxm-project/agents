@@ -528,7 +528,7 @@ Key changes from current code:
 
 ## Implementation Plan
 
-### Tier 1 — Source of Truth (apxm-core)
+### Tier 1 — Source of Truth (apxm-core + codegen)
 
 **File: `crates/core/apxm-core/src/constants.rs`**
 - Add `pub mod parameters { pub const VALID_TYPES: &[&str] = &[...]; }`
@@ -548,21 +548,26 @@ Key changes from current code:
 **File: `crates/compiler/apxm-frontend/python/apxm/execution.py`**
 - Add `ExecutionResult`, `ExecutionStats`, `LLMUsage` dataclasses
 - Rewrite `CompiledFlow.run()` → HTTP-first, subprocess-stdin fallback
+- Add `CompiledFlow.run_sync()` — sync convenience method
 - Add `CompiledFlow.stream()` → async generator via SSE
 - Remove `_build_subprocess_cmd` temp file logic
 - Remove `_ensure_native_compiled` (WorkflowBuilder doesn't exist)
 - Remove `_fallback_retry_reason` (air vs json format retry hack)
 - Remove `run_streaming` (replace with `stream()`)
+- Add `session_id: str | None = None` parameter to `run()` and `stream()`
 - Server URL: `os.environ.get("APXM_SERVER_URL", "http://localhost:18800")`
+- Add `new_session() -> str` module-level helper
 
 **File: `crates/compiler/apxm-frontend/python/apxm/decorators.py`**
-- `_CompiledFunction.__call__` returns `ExecutionResult`
+- `_CompiledFunction.__call__` signature: `async def __call__(self, *args, session_id=None, **kwargs) -> ExecutionResult`
 - Add `_CompiledFunction.run_sync()` sync convenience method
 - Add `_CompiledFunction.stream()` async generator passthrough
 
 **File: `crates/compiler/apxm-frontend/python/apxm/__init__.py`**
 - Export `ExecutionResult`, `ExecutionStats`, `LLMUsage`
 - Export `ApxmError`, `CompilationError`, `ExecutionError`, `ServerError`
+- Export `new_session`
+- Add to `__all__`
 
 ### Tier 3 — Eliminate Hardcoded Duplicates
 
@@ -572,20 +577,242 @@ Key changes from current code:
 **File: `crates/compiler/apxm-frontend/python/apxm/decorators.py`**
 - Replace `_PYTHON_TYPE_TO_APXM` target values with reference to generated set
 
-### Tier 4 — Examples
+### Tier 4 — pyproject.toml (optional dependencies)
 
-Update all `examples/python/` to show actual execution:
+**File: `crates/compiler/apxm-frontend/python/pyproject.toml`**
+- Add `server = ["httpx>=0.25"]` to `[project.optional-dependencies]`
+- Add `stream = ["httpx>=0.25", "httpx-sse>=0.4"]` to `[project.optional-dependencies]`
 
+### Tier 5 — Tests
+
+**File: `crates/compiler/apxm-frontend/python/tests/test_smoke.py`**
+- Add `ExecutionResult`, `ExecutionStats`, `LLMUsage` to `required_exports` set
+- Add `ApxmError`, `CompilationError`, `ExecutionError`, `ServerError` to `required_exports`
+- Add `new_session` to `required_exports`
+
+**New file: `crates/compiler/apxm-frontend/python/tests/test_execution.py`**
+- Test `ExecutionResult.from_response()` with mock server response dict
+- Test `new_session()` returns valid UUID string
+- Test `CompiledFlow.run()` raises `ServerError` when server unreachable and
+  no CLI binary found
+- Test `_normalize_runtime_args` handles positional and keyword args
+- Test `CompiledFlow.save()` and `CompiledFlow.load()` roundtrip
+
+**Existing test files — verify no regressions:**
+- `test_decorators.py` — decorator captures graph correctly (no changes needed,
+  tests are pure graph construction)
+- `test_graph_construction.py` — graph edges, nodes, params (no changes needed)
+- `test_imports.py` — add new exports to import checks
+
+### Tier 6 — Examples (40 files)
+
+All 40 example files follow an identical pattern that needs updating:
+
+**Current pattern (ALL files):**
 ```python
 @compile()
-async def hello_world(g: GraphRecorder):
-    g.ask("greeting", "Generate a friendly greeting")
+def workflow_name(g: GraphRecorder):          # sync def
+    # ... graph construction ...
+    g.done(output)
+
+if __name__ == "__main__":
+    print(workflow_name._graph.to_air())       # only prints AIR, never runs
+```
+
+**New pattern:**
+```python
+@compile()
+def workflow_name(g: GraphRecorder):          # stays sync def (graph capture is sync)
+    # ... graph construction ...
+    g.done(output)
 
 if __name__ == "__main__":
     import asyncio
-    result = asyncio.run(hello_world())
+    # Show AIR (optional, for debugging)
+    # print(workflow_name._graph.to_air())
+    result = asyncio.run(workflow_name())
     print(result.content)
 ```
+
+**Critical detail**: The `@compile()` decorated function itself stays `def` (NOT
+`async def`). The function body is pure graph construction, not execution.
+`_CompiledFunction.__call__` is the async part — it calls `CompiledFlow.run()`.
+
+#### Files with parameters (2 files — special handling)
+
+These files take arguments beyond `g: GraphRecorder` and need runtime args:
+
+**`examples/python/real-world/code_review_council.py`:**
+```python
+@compile()
+def code_review_council(g: GraphRecorder, code: str):
+    # ...
+
+if __name__ == "__main__":
+    import asyncio
+    sample_code = "def add(a, b): return a + b"
+    result = asyncio.run(code_review_council(sample_code))
+    print(result.content)
+```
+
+**`examples/python/real-world/ultrathink_coder.py`:**
+```python
+@compile()
+def ultrathink_coder(g: GraphRecorder, task: str):
+    # ...
+
+if __name__ == "__main__":
+    import asyncio
+    result = asyncio.run(ultrathink_coder("implement a binary search"))
+    print(result.content)
+```
+
+#### Files with g.param() (9 files — self-hosted workflows)
+
+These files use `g.param()` inside the function body for graph-level parameters.
+They need CLI-style positional args at runtime:
+
+- `self-hosted/add_op.py` — params: `op_name`, `op_description`
+- `self-hosted/remove_op.py` — params: `op_name`
+- `self-hosted/explore.py` — params: `question`
+- `self-hosted/plan_feature.py` — params: `feature`
+- `self-hosted/refactor.py` — params: `target`, `goal`
+- `self-hosted/autofix_workflow.py` — params: `scope`
+- `self-hosted/audit.py` — params: `scope`
+
+```python
+@compile()
+def explore_workflow(g: GraphRecorder):
+    g.param("question", "str")
+    # ...
+
+if __name__ == "__main__":
+    import asyncio
+    result = asyncio.run(explore_workflow("How does the scheduler work?"))
+    print(result.content)
+```
+
+#### Special case: `real-world/autofix_loop.py`
+
+This file writes the graph to disk instead of printing AIR. It also writes
+instructions for `dekk apxm execute`. Update to show both patterns:
+
+```python
+if __name__ == "__main__":
+    import asyncio
+    # Save graph for standalone execution
+    autofix_loop._compiled_flow.save("autofix_loop.json")
+    # Or execute directly
+    result = asyncio.run(autofix_loop())
+    print(result.content)
+```
+
+#### Benchmark files (10 files)
+
+These are designed for `dekk apxm execute` benchmarking. Keep the `to_air()`
+output as the primary behavior (benchmarks pipe AIR to the CLI). Add a
+commented execution example:
+
+```python
+if __name__ == "__main__":
+    print(chained_llm._graph.to_air())
+    # To execute directly:
+    # import asyncio
+    # result = asyncio.run(chained_llm())
+    # print(result.content)
+```
+
+### Complete File Inventory
+
+| # | File | Change Type | Key Changes |
+|---|------|------------|-------------|
+| **Rust (Tier 1)** | | | |
+| 1 | `apxm-core/src/constants.rs` | edit | Add `VALID_TYPES` |
+| 2 | `apxm-cli/src/frontend/registry.rs` | edit | Export param types |
+| 3 | `apxm-cli/src/frontend/codegen.rs` | edit | Emit `VALID_PARAM_TYPES`, `PYTHON_TYPE_TO_APXM` |
+| **Python frontend (Tier 2-3)** | | | |
+| 4 | `apxm/errors.py` | **new** | Error hierarchy |
+| 5 | `apxm/execution.py` | **rewrite** | HTTP-first, subprocess-stdin fallback, result types |
+| 6 | `apxm/decorators.py` | edit | Return `ExecutionResult`, add `run_sync`, `stream`, `session_id` |
+| 7 | `apxm/__init__.py` | edit | Export new types and functions |
+| 8 | `apxm/ir.py` | edit | Replace hardcoded `_VALID_PARAM_TYPES` |
+| **Package config (Tier 4)** | | | |
+| 9 | `pyproject.toml` | edit | Add `server` and `stream` optional deps |
+| **Tests (Tier 5)** | | | |
+| 10 | `tests/test_smoke.py` | edit | Verify new exports |
+| 11 | `tests/test_imports.py` | edit | Import new types |
+| 12 | `tests/test_execution.py` | **new** | `ExecutionResult`, `new_session`, error types |
+| 13 | `tests/test_decorators.py` | no change | Pure graph construction (not affected) |
+| 14 | `tests/test_graph_construction.py` | no change | Pure graph construction (not affected) |
+| **Examples (Tier 6) — getting-started** | | | |
+| 15 | `getting-started/hello.py` | edit | Add `asyncio.run()` execution |
+| 16 | `getting-started/tool_use.py` | edit | Add `asyncio.run()` execution |
+| **Examples — memory** | | | |
+| 17 | `memory/rag_pipeline.py` | edit | Add `asyncio.run()` execution |
+| **Examples — multi-agent** | | | |
+| 18 | `multi-agent/negotiation.py` | edit | Add `asyncio.run()` execution |
+| 19 | `multi-agent/parallel_agents.py` | edit | Add `asyncio.run()` execution |
+| 20 | `multi-agent/spawn_and_communicate.py` | edit | Add `asyncio.run()` execution |
+| 21 | `multi-agent/team_coordination.py` | edit | Add `asyncio.run()` execution |
+| **Examples — parallelism** | | | |
+| 22 | `parallelism/expert_council.py` | edit | Add `asyncio.run()` execution |
+| 23 | `parallelism/worker_pool.py` | edit | Add `asyncio.run()` execution |
+| 24 | `parallelism/fan_out_synthesize.py` | edit | Add `asyncio.run()` execution |
+| **Examples — patterns** | | | |
+| 25 | `patterns/cross_critique.py` | edit | Add `asyncio.run()` execution |
+| 26 | `patterns/iterative_refine.py` | edit | Add `asyncio.run()` execution |
+| 27 | `patterns/resilient_pipeline.py` | edit | Add `asyncio.run()` execution |
+| **Examples — real-world** | | | |
+| 28 | `real-world/code_review_council.py` | edit | Add `asyncio.run(fn(code))` with sample arg |
+| 29 | `real-world/sdlc_pipeline.py` | edit | Add `asyncio.run()` execution |
+| 30 | `real-world/codex_claude_fix.py` | edit | Add `asyncio.run()` execution |
+| 31 | `real-world/ultrathink_coder.py` | edit | Add `asyncio.run(fn(task))` with sample arg |
+| 32 | `real-world/autofix_loop.py` | edit | Add `asyncio.run()` + keep save pattern |
+| **Examples — optimization** | | | |
+| 33 | `optimization/fusion.py` | edit | Add `asyncio.run()` execution |
+| 34 | `optimization/dead_context.py` | edit | Add `asyncio.run()` execution |
+| 35 | `optimization/shared_prefix.py` | edit | Add `asyncio.run()` execution |
+| 36 | `optimization/optimization_showcase.py` | edit | Add `asyncio.run()` execution |
+| **Examples — multi-provider** | | | |
+| 37 | `multi-provider/model_routing.py` | edit | Add `asyncio.run()` execution |
+| **Examples — self-hosted** | | | |
+| 38 | `self-hosted/add_op.py` | edit | Add `asyncio.run(fn(args))` with sample args |
+| 39 | `self-hosted/remove_op.py` | edit | Add `asyncio.run(fn(arg))` with sample arg |
+| 40 | `self-hosted/explore.py` | edit | Add `asyncio.run(fn(arg))` with sample arg |
+| 41 | `self-hosted/plan_feature.py` | edit | Add `asyncio.run(fn(arg))` with sample arg |
+| 42 | `self-hosted/refactor.py` | edit | Add `asyncio.run(fn(args))` with sample args |
+| 43 | `self-hosted/autofix_workflow.py` | edit | Add `asyncio.run(fn(arg))` with sample arg |
+| 44 | `self-hosted/audit.py` | edit | Add `asyncio.run(fn(arg))` with sample arg |
+| **Examples — benchmarks (keep AIR output primary)** | | | |
+| 45 | `_benchmarks/chained_llm.py` | edit | Add commented execution example |
+| 46 | `_benchmarks/cse_stress.py` | edit | Add commented execution example |
+| 47 | `_benchmarks/dead_context_stress.py` | edit | Add commented execution example |
+| 48 | `_benchmarks/fusion_stress.py` | edit | Add commented execution example |
+| 49 | `_benchmarks/memo_cache_stress.py` | edit | Add commented execution example |
+| 50 | `_benchmarks/mixed_priority.py` | edit | Add commented execution example |
+| 51 | `_benchmarks/multi_model.py` | edit | Add commented execution example |
+| 52 | `_benchmarks/prefix_fanout_large.py` | edit | Add commented execution example |
+| 53 | `_benchmarks/priority_scheduling.py` | edit | Add commented execution example |
+| 54 | `_benchmarks/shared_prefix_fanout.py` | edit | Add commented execution example |
+
+**Total: 54 files** (3 Rust + 9 Python frontend + 2 test + 40 examples)
+
+### Files NOT changed (confirmed safe)
+
+| File | Reason |
+|------|--------|
+| `apxm/config.py` | Pure dataclass definitions (AgentConfig, ToolsConfig) — no execution logic |
+| `apxm/module.py` | FlowModule base class — pure graph capture, no execution |
+| `apxm/sugar.py` | AgentHandle/Team — pure graph construction sugar |
+| `apxm/proxy.py` | GraphRecorder — pure graph construction, no execution |
+| `apxm/utils.py` | topological_sort, detect_cycle — pure algorithms |
+| `apxm/normalize.py` | Value normalization — no execution dependency |
+| `apxm/constants.py` | Re-exports from _generated — no changes needed |
+| `apxm/providers.py` | Re-exports from _generated — no changes needed |
+| `apxm/_generated/*.py` | Auto-generated by codegen (Tier 1 regenerates these) |
+| `tests/test_decorators.py` | Pure graph capture tests (not affected) |
+| `tests/test_graph_construction.py` | Pure graph construction tests (not affected) |
+| `self-hosted/__init__.py` | Empty init file |
 
 ## Session and Execution ID Architecture
 
@@ -699,6 +926,17 @@ flow parameters.
 7. **`@compile()` at import time.** Graph capture happens when the module is
    imported (decoration time). This is fine — it's pure computation, no I/O.
    No change needed.
+
+8. **`g.done()` semantics.** All 40 examples use `g.done(node)` as the
+   terminal call. This is a graph-construction operation that marks the exit
+   node — it does NOT trigger execution. The execution happens at call time
+   via `CompiledFlow.run()`. No semantic change to `g.done()` is needed.
+
+9. **Benchmark pipeline dependency.** The 10 benchmark files
+   (`examples/python/_benchmarks/`) are consumed by `scripts/benchmark_e2e.py`
+   and `scripts/benchmark.py` which pipe AIR output to `dekk apxm execute`.
+   Keep their `to_air()` output as the primary `__main__` behavior — do NOT
+   replace it with `asyncio.run()`. Only add a commented execution example.
 
 ## File Index
 

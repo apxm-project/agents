@@ -71,5 +71,7 @@ def negotiate_consensus(g: GraphRecorder):
 
 
 if __name__ == "__main__":
-    import json
-    print(negotiate_consensus._graph.to_air())
+    import asyncio
+
+    result = asyncio.run(negotiate_consensus())
+    print(result.content)

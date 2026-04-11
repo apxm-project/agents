@@ -188,4 +188,7 @@ If status is incomplete or failed, list remaining issues.
 
 
 if __name__ == "__main__":
-    print(refactor_workflow._graph.to_air())
+    import asyncio
+
+    result = asyncio.run(refactor_workflow("apxm-runtime", "simplify error handling"))
+    print(result.content)

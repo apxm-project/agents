@@ -19,7 +19,18 @@ from .config import (
     WriteConfig,
 )
 from .decorators import compile
-from .execution import CompiledFlow, ExecutionMode, WorkflowCheckpoint, validate_graph
+from .errors import ApxmError, CompilationError, ExecutionError, ServerError
+from .execution import (
+    CompiledFlow,
+    ExecutionMode,
+    ExecutionResult,
+    ExecutionStats,
+    LLMUsage,
+    WorkflowCheckpoint,
+    close,
+    new_session,
+    validate_graph,
+)
 from .ir import ApxmGraph, GraphEdge, GraphNode, Parameter
 from .module import FlowModule
 from .providers import ProviderSpec, list_providers, resolve_provider
@@ -28,31 +39,40 @@ from .sugar import AgentHandle, Team
 
 __all__ = [
     "_generated",
+    "AgentConfig",
+    "AgentHandle",
     "Anthropic",
+    "ApxmError",
     "ApxmGraph",
-    "GraphNode",
-    "GraphEdge",
-    "Parameter",
-    "GraphRecorder",
-    "NodeRef",
+    "BashConfig",
+    "close",
     "compile",
     "CompiledFlow",
+    "CompilationError",
+    "ExecutionError",
     "ExecutionMode",
-    "AgentConfig",
-    "ToolsConfig",
-    "AgentHandle",
-    "BashConfig",
+    "ExecutionResult",
+    "ExecutionStats",
     "FlowModule",
     "Google",
+    "GraphEdge",
+    "GraphNode",
+    "GraphRecorder",
+    "LLMUsage",
+    "list_providers",
     "ModelId",
+    "new_session",
+    "NodeRef",
     "OpenAI",
+    "Parameter",
     "ProviderSpec",
     "ReadConfig",
+    "resolve_provider",
     "SearchWebConfig",
+    "ServerError",
     "Team",
+    "ToolsConfig",
+    "validate_graph",
     "WorkflowCheckpoint",
     "WriteConfig",
-    "list_providers",
-    "resolve_provider",
-    "validate_graph",
 ]

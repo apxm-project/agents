@@ -71,4 +71,7 @@ def model_routing(g: GraphRecorder):
 
 
 if __name__ == "__main__":
-    print(model_routing._graph.to_air())
+    import asyncio
+
+    result = asyncio.run(model_routing())
+    print(result.content)

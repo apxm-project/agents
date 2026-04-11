@@ -68,3 +68,7 @@ def fusion_stress(g: GraphRecorder):
 if __name__ == "__main__":
     # Output the graph as JSON
     print(fusion_stress._graph.to_air())
+    # To execute directly:
+    # import asyncio
+    # result = asyncio.run(fusion_stress())
+    # print(result.content)

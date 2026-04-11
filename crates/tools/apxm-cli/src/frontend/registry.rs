@@ -166,6 +166,10 @@ pub fn provider_protocols() -> Vec<&'static str> {
         .collect()
 }
 
+pub fn valid_param_types() -> &'static [&'static str] {
+    constants::parameters::VALID_TYPES
+}
+
 pub fn agent_templates() -> Vec<FrontendAgentTemplate> {
     AgentRegistry::builtin_templates()
         .into_iter()
@@ -291,5 +295,11 @@ mod tests {
     fn builtin_models_include_openai_default() {
         let default = builtin_models().iter().find(|m| m.provider == "openai" && m.is_default).map(|m| m.id.to_string());
         assert_eq!(default, Some("gpt-4o-mini".to_string()));
+    }
+
+    #[test]
+    fn valid_param_types_includes_all() {
+        let types = valid_param_types();
+        assert_eq!(types, &["str", "int", "float", "bool", "json"]);
     }
 }

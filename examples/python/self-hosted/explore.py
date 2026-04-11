@@ -212,4 +212,7 @@ Output a structured action plan ready for execution. Keep under 300 words.
 
 
 if __name__ == "__main__":
-    print(explore_workflow._graph.to_air())
+    import asyncio
+
+    result = asyncio.run(explore_workflow("How does the scheduler work?"))
+    print(result.content)

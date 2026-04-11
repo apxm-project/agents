@@ -394,7 +394,10 @@ except ImportError:
     }
 
 # Valid parameter type_name values accepted by the APXM runtime.
-_VALID_PARAM_TYPES: set[str] = {"str", "int", "float", "bool", "json"}
+try:
+    from apxm._generated.constants import VALID_PARAM_TYPES as _VALID_PARAM_TYPES
+except ImportError:
+    _VALID_PARAM_TYPES: set[str] = {"str", "int", "float", "bool", "json"}
 
 
 @dataclass(slots=True)

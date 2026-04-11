@@ -91,4 +91,7 @@ def optimization_showcase(g: GraphRecorder):
 
 
 if __name__ == "__main__":
-    print(optimization_showcase._graph.to_air())
+    import asyncio
+
+    result = asyncio.run(optimization_showcase())
+    print(result.content)

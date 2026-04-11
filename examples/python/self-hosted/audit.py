@@ -328,4 +328,7 @@ Output recommendations sorted by (impact, effort):
 
 
 if __name__ == "__main__":
-    print(audit._graph.to_air())
+    import asyncio
+
+    result = asyncio.run(audit("full"))
+    print(result.content)

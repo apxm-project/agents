@@ -40,4 +40,7 @@ def dead_context_demo(g: GraphRecorder):
 
 
 if __name__ == "__main__":
-    print(dead_context_demo._graph.to_air())
+    import asyncio
+
+    result = asyncio.run(dead_context_demo())
+    print(result.content)

@@ -36,4 +36,7 @@ def shared_prefix_demo(g: GraphRecorder):
 
 
 if __name__ == "__main__":
-    print(shared_prefix_demo._graph.to_air())
+    import asyncio
+
+    result = asyncio.run(shared_prefix_demo())
+    print(result.content)
