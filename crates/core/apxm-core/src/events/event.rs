@@ -1,17 +1,27 @@
 //! Core event envelope types.
 
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
-use super::payload::EventPayload;
+use chrono::{DateTime, Utc};
+use serde::de::Error as _;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+use super::payload::{EventPayload, boxed_payload_from_json};
 
 /// Universal event envelope for all APXM events.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ApxmEvent {
     /// Metadata attached to this event.
     pub meta: EventMeta,
     /// The event payload.
-    pub payload: EventPayload,
+    pub payload: Arc<dyn EventPayload>,
+}
+
+impl ApxmEvent {
+    /// Access the typed event kind without downcasting.
+    pub fn kind(&self) -> super::kind::EventKind {
+        self.payload.event_kind()
+    }
 }
 
 /// Metadata attached to every event.
@@ -39,4 +49,54 @@ pub enum EventSource {
     Session,
     /// The APXM server / API layer.
     Server,
+    /// ACP session-scoped events.
+    Acp(String),
+    /// User-initiated GUI events.
+    Gui,
+}
+
+impl Serialize for ApxmEvent {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut payload_json = self.payload.to_json();
+        if let Some(obj) = payload_json.as_object_mut() {
+            obj.insert("kind".into(), self.payload.event_kind().name().into());
+        } else {
+            payload_json = serde_json::json!({
+                "kind": self.payload.event_kind().name(),
+                "value": payload_json,
+            });
+        }
+
+        serde_json::json!({
+            "meta": self.meta,
+            "payload": payload_json,
+        })
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for ApxmEvent {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct RawEvent {
+            meta: EventMeta,
+            payload: serde_json::Value,
+        }
+
+        let raw = RawEvent::deserialize(deserializer)?;
+        let kind_name = raw
+            .payload
+            .get("kind")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| D::Error::custom("event payload is missing string field `kind`"))?
+            .to_owned();
+        let payload = boxed_payload_from_json(&kind_name, raw.payload)
+            .map(Arc::from)
+            .map_err(D::Error::custom)?;
+
+        Ok(Self {
+            meta: raw.meta,
+            payload,
+        })
+    }
 }

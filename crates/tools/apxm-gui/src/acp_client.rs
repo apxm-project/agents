@@ -5,6 +5,7 @@
 //! prompt/response cycle.
 
 use std::path::Path;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -14,46 +15,20 @@ use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio::sync::mpsc;
 use tracing::{debug, error, warn};
 
-use apxm_acp::constants::{fields as acp_fields, methods as acp_methods, stop_reasons, update_types};
+use apxm_acp::constants::{
+    fields as acp_fields, methods as acp_methods, stop_reasons, update_keys, update_types,
+};
 use apxm_core::constants::jsonrpc;
+use apxm_core::events::payload::EventPayload;
+
+use crate::events::{
+    AgentDonePayload, AgentErrorPayload, AgentTokenPayload, AgentToolCallPayload,
+    AgentToolResultPayload, AgentUsagePayload,
+};
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-/// Events emitted by an agent session during a prompt cycle.
-#[derive(Debug, Clone)]
-pub enum AgentEvent {
-    /// A text token from the agent's streaming response.
-    Token(String),
-    /// The agent is invoking a tool.
-    ToolCall {
-        id: String,
-        name: String,
-        args: Value,
-    },
-    /// Result of a tool invocation.
-    ToolResult {
-        id: String,
-        success: bool,
-        output: String,
-    },
-    /// Token usage update.
-    Usage {
-        input_tokens: u64,
-        output_tokens: u64,
-    },
-    /// The prompt cycle completed.
-    Done { stop_reason: String },
-    /// An error occurred.
-    Error(String),
-}
-
-/// Result returned after a prompt cycle completes.
-#[derive(Debug)]
-pub struct PromptResult {
-    pub stop_reason: String,
-}
 
 /// Errors from ACP client operations.
 #[derive(Debug)]
@@ -99,9 +74,9 @@ impl AgentSession {
     /// `acp` as its first argument. The subprocess's cwd is set to `cwd`.
     pub async fn spawn(command: &str, cwd: &Path) -> Result<Self, AgentError> {
         let parts: Vec<&str> = command.split_whitespace().collect();
-        let (bin, args) = parts.split_first().ok_or_else(|| {
-            AgentError("empty command".to_string())
-        })?;
+        let (bin, args) = parts
+            .split_first()
+            .ok_or_else(|| AgentError("empty command".to_string()))?;
 
         let mut child = tokio::process::Command::new(bin)
             .args(args)
@@ -112,12 +87,14 @@ impl AgentSession {
             .spawn()
             .map_err(|e| AgentError(format!("failed to spawn {command}: {e}")))?;
 
-        let stdin = child.stdin.take().ok_or_else(|| {
-            AgentError("failed to capture subprocess stdin".to_string())
-        })?;
-        let stdout = child.stdout.take().ok_or_else(|| {
-            AgentError("failed to capture subprocess stdout".to_string())
-        })?;
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| AgentError("failed to capture subprocess stdin".to_string()))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| AgentError("failed to capture subprocess stdout".to_string()))?;
 
         let reader = BufReader::new(stdout);
         let next_id = AtomicU64::new(1);
@@ -158,7 +135,8 @@ impl AgentSession {
             jsonrpc::ID: new_id,
             jsonrpc::METHOD: acp_methods::SESSION_NEW,
             jsonrpc::PARAMS: {
-                apxm_core::constants::acp::session_params::CWD: cwd.to_string_lossy()
+                apxm_core::constants::acp::session_params::CWD: cwd.to_string_lossy(),
+                apxm_core::constants::acp::session_params::MCP_SERVERS: []
             }
         });
         session.send_message(&new_req).await?;
@@ -188,8 +166,8 @@ impl AgentSession {
     pub async fn prompt(
         &mut self,
         text: &str,
-        tx: mpsc::Sender<AgentEvent>,
-    ) -> Result<PromptResult, AgentError> {
+        tx: mpsc::Sender<Arc<dyn EventPayload>>,
+    ) -> Result<(), AgentError> {
         let prompt_id = self.next_id();
         let req = serde_json::json!({
             jsonrpc::JSONRPC: jsonrpc::VERSION,
@@ -208,7 +186,13 @@ impl AgentSession {
             line_buf.clear();
             let n = self.reader.read_line(&mut line_buf).await?;
             if n == 0 {
-                let _ = tx.send(AgentEvent::Error("agent process closed stdout".into())).await;
+                send_payload(
+                    &tx,
+                    AgentErrorPayload {
+                        error: "agent process closed stdout".into(),
+                    },
+                )
+                .await;
                 return Err(AgentError("agent process closed stdout".into()));
             }
 
@@ -228,19 +212,43 @@ impl AgentSession {
             // Check if this is a response to our prompt request.
             if let Some(id) = msg.get(jsonrpc::ID) {
                 if id.as_u64() == Some(prompt_id) {
-                    // This is the final response.
-                    let stop_reason = msg
-                        .get(jsonrpc::RESULT)
+                    // This is the final response — extract usage and stop reason.
+                    let result = msg.get(jsonrpc::RESULT);
+                    let stop_reason = result
                         .and_then(|r| r.get(acp_fields::STOP_REASON))
                         .and_then(|s| s.as_str())
                         .unwrap_or(stop_reasons::END_TURN)
                         .to_string();
-                    let _ = tx
-                        .send(AgentEvent::Done {
-                            stop_reason: stop_reason.clone(),
-                        })
+
+                    // Send token usage from the final response
+                    if let Some(usage) = result.and_then(|r| r.get("usage")) {
+                        let input = usage
+                            .get(acp_fields::INPUT_TOKENS)
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+                        let output = usage
+                            .get(acp_fields::OUTPUT_TOKENS)
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+                        send_payload(
+                            &tx,
+                            AgentUsagePayload {
+                                input_tokens: input,
+                                output_tokens: output,
+                            },
+                        )
                         .await;
-                    return Ok(PromptResult { stop_reason });
+                    }
+
+                    send_payload(
+                        &tx,
+                        AgentDonePayload {
+                            stop_reason: stop_reason.clone(),
+                            session_id: self.session_id.clone(),
+                        },
+                    )
+                    .await;
+                    return Ok(());
                 }
 
                 // Has `method` + `id` — this is a reverse request from the agent.
@@ -321,97 +329,124 @@ impl AgentSession {
     }
 
     /// Handle a notification from the agent (streaming content, usage, etc.).
+    ///
+    /// Wire format (ACP v0.24+):
+    /// ```json
+    /// { "params": { "update": { "sessionUpdate": "<type>", ... } } }
+    /// ```
     async fn handle_notification(
         &self,
         method: &str,
         params: &Value,
-        tx: &mpsc::Sender<AgentEvent>,
+        tx: &mpsc::Sender<Arc<dyn EventPayload>>,
     ) {
-        match method {
-            acp_methods::SESSION_UPDATE => {
-                let update_type = params
-                    .get(apxm_core::constants::acp::notification::TYPE)
-                    .and_then(|t| t.as_str())
-                    .unwrap_or("");
+        if method != acp_methods::SESSION_UPDATE {
+            debug!(method, "unhandled notification method");
+            return;
+        }
 
-                match update_type {
-                    update_types::AGENT_MESSAGE_CHUNK => {
-                        if let Some(text) = params
-                            .get("data")
-                            .and_then(|d| d.get(apxm_core::constants::acp::notification::TEXT))
-                            .and_then(|t| t.as_str())
-                        {
-                            let _ = tx.send(AgentEvent::Token(text.to_string())).await;
-                        }
-                    }
-                    update_types::USAGE_UPDATE => {
-                        let data = params.get("data");
-                        let input = data
-                            .and_then(|d| d.get(acp_fields::INPUT_TOKENS))
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0);
-                        let output = data
-                            .and_then(|d| d.get(acp_fields::OUTPUT_TOKENS))
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0);
-                        let _ = tx
-                            .send(AgentEvent::Usage {
-                                input_tokens: input,
-                                output_tokens: output,
-                            })
-                            .await;
-                    }
-                    update_types::TOOL_USE => {
-                        let data = params.get("data");
-                        let id = data
-                            .and_then(|d| d.get("id"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        let name = data
-                            .and_then(|d| d.get("name"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        let args = data
-                            .and_then(|d| d.get("arguments"))
-                            .cloned()
-                            .unwrap_or(Value::Null);
-                        let _ = tx
-                            .send(AgentEvent::ToolCall { id, name, args })
-                            .await;
-                    }
-                    update_types::TOOL_RESULT => {
-                        let data = params.get("data");
-                        let id = data
-                            .and_then(|d| d.get("id"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        let success = data
-                            .and_then(|d| d.get("success"))
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(false);
-                        let output = data
-                            .and_then(|d| d.get("output"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        let _ = tx
-                            .send(AgentEvent::ToolResult {
-                                id,
-                                success,
-                                output,
-                            })
-                            .await;
-                    }
-                    _ => {
-                        debug!(update_type, "unhandled session/update type");
+        let update = match params.get(update_keys::UPDATE) {
+            Some(u) => u,
+            None => return,
+        };
+
+        let update_type = update
+            .get(update_keys::SESSION_UPDATE)
+            .and_then(|t| t.as_str())
+            .unwrap_or("");
+
+        match update_type {
+            update_types::AGENT_MESSAGE_CHUNK => {
+                if let Some(text) = update
+                    .get(update_keys::CONTENT)
+                    .and_then(|c| c.get(update_keys::TEXT))
+                    .and_then(|t| t.as_str())
+                {
+                    if !text.is_empty() {
+                        send_payload(
+                            tx,
+                            AgentTokenPayload {
+                                token: text.to_string(),
+                            },
+                        )
+                        .await;
                     }
                 }
             }
+            update_types::AGENT_THOUGHT_CHUNK => {
+                // Thinking tokens — skip for now (could emit as a separate event)
+            }
+            update_types::USAGE_UPDATE => {
+                // Usage in session/update is context-level (used/size).
+                // Token-level usage comes in the final response.
+                // Extract what we can from the update.
+                let used = update
+                    .get(update_keys::USED)
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                if used > 0 {
+                    send_payload(
+                        tx,
+                        AgentUsagePayload {
+                            input_tokens: used,
+                            output_tokens: 0,
+                        },
+                    )
+                    .await;
+                }
+            }
+            update_types::TOOL_USE => {
+                let id = update
+                    .get(jsonrpc::ID)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let name = update
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let args = update.get("arguments").cloned().unwrap_or(Value::Null);
+                send_payload(
+                    tx,
+                    AgentToolCallPayload {
+                        id,
+                        name,
+                        arguments: args,
+                    },
+                )
+                .await;
+            }
+            update_types::TOOL_RESULT => {
+                let id = update
+                    .get(jsonrpc::ID)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let success = update
+                    .get("success")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let output = update
+                    .get("output")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                send_payload(
+                    tx,
+                    AgentToolResultPayload {
+                        id,
+                        success,
+                        output,
+                    },
+                )
+                .await;
+            }
+            update_types::AVAILABLE_COMMANDS => {
+                // Commands list — informational, skip
+            }
             _ => {
-                debug!(method, "unhandled notification method");
+                debug!(update_type, "unhandled session/update type");
             }
         }
     }
@@ -420,7 +455,7 @@ impl AgentSession {
     async fn handle_reverse_request(
         &mut self,
         msg: &Value,
-        tx: &mpsc::Sender<AgentEvent>,
+        tx: &mpsc::Sender<Arc<dyn EventPayload>>,
     ) {
         use apxm_core::constants::acp::reverse_params;
         use apxm_core::constants::acp::reverse_response;
@@ -506,22 +541,21 @@ impl AgentSession {
             }
             acp_methods::REQUEST_PERMISSION => {
                 // Auto-approve read operations; approve writes in GUI context.
-                let _ = tx
-                    .send(AgentEvent::ToolCall {
+                send_payload(
+                    tx,
+                    AgentToolCallPayload {
                         id: request_id.to_string(),
                         name: acp_methods::REQUEST_PERMISSION.to_string(),
-                        args: params.clone(),
-                    })
-                    .await;
+                        arguments: params.clone(),
+                    },
+                )
+                .await;
                 serde_json::json!({ "granted": true })
             }
             _ => {
                 warn!(method, "unknown reverse request method");
                 let _ = self
-                    .send_error_response(
-                        &request_id,
-                        &format!("unsupported method: {method}"),
-                    )
+                    .send_error_response(&request_id, &format!("unsupported method: {method}"))
                     .await;
                 return;
             }
@@ -539,11 +573,7 @@ impl AgentSession {
     }
 
     /// Send a JSON-RPC error response back to the agent.
-    async fn send_error_response(
-        &mut self,
-        id: &Value,
-        message: &str,
-    ) -> Result<(), AgentError> {
+    async fn send_error_response(&mut self, id: &Value, message: &str) -> Result<(), AgentError> {
         let resp = serde_json::json!({
             jsonrpc::JSONRPC: jsonrpc::VERSION,
             jsonrpc::ID: id,
@@ -554,4 +584,11 @@ impl AgentSession {
         });
         self.send_message(&resp).await
     }
+}
+
+async fn send_payload<P>(tx: &mpsc::Sender<Arc<dyn EventPayload>>, payload: P)
+where
+    P: EventPayload,
+{
+    let _ = tx.send(Arc::new(payload) as Arc<dyn EventPayload>).await;
 }

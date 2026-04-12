@@ -56,8 +56,8 @@ pub use context_stack::{
     ContextAssembly, ContextFrame, ContextScope, ContextStack, ContextStackConfig,
 };
 pub use executor::{
-    CancellationToken, ExecutionContext, ExecutionEvent, ExecutionEventEmitter, ExecutorEngine,
-    InnerPlanLinker, NoOpLinker,
+    CancellationToken, EmitterAdapter, ExecutionContext, ExecutionEvent, ExecutionEventEmitter,
+    ExecutorEngine, InnerPlanLinker, NoOpLinker,
 };
 pub use memory::{Fact, FactFilter, FactResult, MemoryConfig, MemorySpace, MemorySystem};
 pub use model_router::{

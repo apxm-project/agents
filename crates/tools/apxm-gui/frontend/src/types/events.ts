@@ -1,3 +1,5 @@
+import * as EK from "@/lib/event-kinds";
+
 export type TraceEvent = {
   timestamp: string;
   kind: string;
@@ -5,23 +7,88 @@ export type TraceEvent = {
   [key: string]: unknown;
 };
 
+export type AgentStreamEvent =
+  | { kind: typeof EK.TOKEN.name; token?: string; text?: string }
+  | {
+      kind: typeof EK.TOOL_CALL.name;
+      id: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }
+  | {
+      kind: typeof EK.TOOL_RESULT.name;
+      id: string;
+      success: boolean;
+      output?: string;
+    }
+  | {
+      kind: typeof EK.USAGE.name;
+      inputTokens?: number;
+      outputTokens?: number;
+      input_tokens?: number;
+      output_tokens?: number;
+    }
+  | {
+      kind: typeof EK.DONE.name;
+      sessionId?: string;
+      session_id?: string;
+      stopReason?: string;
+    }
+  | { kind: typeof EK.ERROR.name; error?: string; message?: string }
+  | { kind: "unknown"; rawKind: string; token?: string; error?: string };
+
 export type EventPayload =
-  | { kind: "token"; text: string; node_id: number }
-  | { kind: "operation_start"; node_id: number; op_type: string }
-  | { kind: "operation_complete"; node_id: number; op_type: string; duration_ms: number }
+  | { kind: typeof EK.TOKEN.name; text: string; node_id: number }
+  | {
+      kind: typeof EK.OPERATION_START.name;
+      node_id: number;
+      op_type: string;
+    }
+  | {
+      kind: "operation_complete";
+      node_id: number;
+      op_type: string;
+      duration_ms: number;
+    }
   | { kind: "operation_error"; node_id: number; error: string }
-  | { kind: "session_start"; session_id: string }
+  | { kind: typeof EK.SESSION_START.name; session_id: string }
   | { kind: "session_complete"; session_id: string; duration_ms: number }
   | { kind: "session_error"; session_id: string; error: string }
-  | { kind: "scheduler_decision"; node_id: number; action: string }
-  | { kind: "memory_read"; node_id: number; tier: string; key: string }
-  | { kind: "memory_write"; node_id: number; tier: string; key: string }
+  | {
+      kind: typeof EK.SCHEDULER_DECISION.name;
+      node_id: number;
+      action: string;
+    }
+  | {
+      kind: typeof EK.MEMORY_READ.name;
+      node_id: number;
+      tier: string;
+      key: string;
+    }
+  | {
+      kind: typeof EK.MEMORY_WRITE.name;
+      node_id: number;
+      tier: string;
+      key: string;
+    }
   | { kind: "spawn_agent"; node_id: number; agent_type: string }
   | { kind: "agent_complete"; node_id: number; agent_type: string }
-  | { kind: "checkpoint_created"; node_id: number; checkpoint_id: string }
-  | { kind: "checkpoint_restored"; checkpoint_id: string }
+  | {
+      kind: typeof EK.CHECKPOINT_SAVED.name;
+      node_id: number;
+      checkpoint_id: string;
+    }
+  | {
+      kind: typeof EK.CHECKPOINT_RESTORED.name;
+      checkpoint_id: string;
+    }
   | { kind: "capability_invoked"; node_id: number; capability: string }
-  | { kind: "retry"; node_id: number; attempt: number; reason: string }
+  | {
+      kind: typeof EK.RETRY.name;
+      node_id: number;
+      attempt: number;
+      reason: string;
+    }
   | { kind: string; [key: string]: unknown };
 
 export type NodeLiveStatus = "pending" | "running" | "completed" | "failed";

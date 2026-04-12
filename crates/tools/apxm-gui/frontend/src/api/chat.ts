@@ -1,4 +1,4 @@
-import { SseEvent } from "@/lib/constants";
+import * as EK from "@/lib/event-kinds";
 import { parseSSEStream } from "./sse";
 import type { ChatRole } from "@/lib/constants";
 
@@ -43,11 +43,11 @@ export async function streamChat(
 
   await parseSSEStream(res, {
     onEvent: (eventType, parsed: any) => {
-      if (eventType === SseEvent.TOKEN && parsed.token) {
+      if (eventType === EK.TOKEN.name && parsed.token) {
         onToken(parsed.token);
-      } else if (eventType === SseEvent.DONE || parsed.finish_reason) {
+      } else if (eventType === EK.DONE.name || parsed.finish_reason) {
         onDone();
-      } else if (eventType === SseEvent.ERROR || parsed.error) {
+      } else if (eventType === EK.ERROR.name || parsed.error) {
         onError(parsed.error ?? "Unknown error");
       } else if (parsed.token) {
         onToken(parsed.token);

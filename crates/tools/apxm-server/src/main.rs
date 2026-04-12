@@ -35,15 +35,18 @@ use apxm_backends::llm::provider::{Provider, ProviderId};
 use apxm_backends::{
     LLMRequest, Message as LLMMessage, Role as LLMRole, StreamChunk, ToolDefinition,
 };
+use apxm_compiler::{AirEdge, AirModule, AirNode};
 use apxm_compiler::{Context as CompilerContext, Pipeline as CompilerPipeline};
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::error::RuntimeError;
+use apxm_core::events::payload::ErrorPayload;
+use apxm_core::events::{ApxmEvent, EventCategory, EventKind, EventSource};
+use apxm_core::impl_event_payload;
 use apxm_core::types::values::Value;
 use apxm_core::types::{AISOperationType, DependencyType};
-use apxm_compiler::{AirModule, AirEdge, AirNode};
 use apxm_runtime::capability::executor::{CapabilityExecutor, CapabilityResult};
 use apxm_runtime::capability::metadata::CapabilityMetadata;
-use apxm_runtime::executor::ExecutionEventEmitter;
+use apxm_runtime::EmitterAdapter;
 use apxm_runtime::{Runtime, RuntimeConfig};
 use async_trait::async_trait;
 use axum::extract::{Path, State};
@@ -493,7 +496,7 @@ struct ExecuteRequest {
     max_schema_retries: Option<u32>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct ExecuteResponse {
     results: HashMap<String, JsonValue>,
     content: Option<String>,
@@ -568,47 +571,23 @@ impl CapabilityExecutor for StaticCapability {
     }
 }
 
-#[derive(Clone)]
-struct ChannelEventEmitter {
-    tx: mpsc::Sender<JsonValue>,
-}
+/// Thin [`EventEmitter`] that forwards events to a tokio MPSC channel.
+struct TokioChannelEmitter(mpsc::Sender<ApxmEvent>);
 
-impl ExecutionEventEmitter for ChannelEventEmitter {
-    fn emit_llm_token(&self, content: &str) {
-        let _ = self
-            .tx
-            .try_send(serde_json::json!({ "type": apxm_core::constants::a2a::event_types::LLM_TOKEN, "content": content }));
-    }
-
-    fn emit_tool_start(&self, name: &str, args: &HashMap<String, Value>) {
-        let args = args
-            .iter()
-            .map(|(k, v)| {
-                (
-                    k.clone(),
-                    v.to_json()
-                        .unwrap_or_else(|_| JsonValue::String(v.to_string())),
-                )
-            })
-            .collect::<serde_json::Map<String, JsonValue>>();
-        let _ = self.tx.try_send(serde_json::json!({
-            "type": apxm_core::constants::a2a::event_types::TOOL_START,
-            "name": name,
-            "args": args
-        }));
-    }
-
-    fn emit_tool_end(&self, name: &str, result: &Value) {
-        let result_json = result
-            .to_json()
-            .unwrap_or_else(|_| JsonValue::String(result.to_string()));
-        let _ = self.tx.try_send(serde_json::json!({
-            "type": apxm_core::constants::a2a::event_types::TOOL_END,
-            "name": name,
-            "result": result_json
-        }));
+impl apxm_core::events::EventEmitter for TokioChannelEmitter {
+    fn emit(&self, event: ApxmEvent) {
+        let _ = self.0.try_send(event);
     }
 }
+
+const EXECUTE_COMPLETE: EventKind =
+    EventKind::new("execute_complete", EventCategory::Lifecycle, true);
+
+#[derive(Debug, Clone, Serialize)]
+struct ExecuteCompletePayload {
+    result: ExecuteResponse,
+}
+impl_event_payload!(ExecuteCompletePayload, EXECUTE_COMPLETE);
 
 /// Build the Axum router for the APXM server.
 ///
@@ -1018,10 +997,17 @@ async fn execute_stream(
 ) -> Result<Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>>, ApiError> {
     let (graph, args, session_id) = prepare_request(req)?;
     let artifact = graph_to_artifact(graph)?;
-    let (tx, mut rx) = mpsc::channel::<JsonValue>(128);
+    let (tx, mut rx) = mpsc::channel::<ApxmEvent>(128);
     let runtime = Arc::clone(&state.runtime);
+    let trace_id = session_id
+        .clone()
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     tokio::spawn(async move {
-        let emitter = Arc::new(ChannelEventEmitter { tx: tx.clone() });
+        let emitter = Arc::new(EmitterAdapter::new(
+            Arc::new(TokioChannelEmitter(tx.clone())),
+            EventSource::Runtime,
+            &trace_id,
+        ));
         match runtime
             .execute_artifact_with_session_and_emitter(
                 artifact,
@@ -1034,18 +1020,26 @@ async fn execute_stream(
         {
             Ok(result) => {
                 let _ = tx
-                    .send(serde_json::json!({
-                        "type": "complete",
-                        "result": to_execute_response(result)
-                    }))
+                    .send(ApxmEvent::new(
+                        ExecuteCompletePayload {
+                            result: to_execute_response(result),
+                        },
+                        EventSource::Server,
+                        &trace_id,
+                    ))
                     .await;
             }
             Err(err) => {
                 let _ = tx
-                    .send(serde_json::json!({
-                        "type": "error",
-                        "message": err.to_string()
-                    }))
+                    .send(ApxmEvent::new(
+                        ErrorPayload {
+                            message: err.to_string(),
+                            status: None,
+                            recoverable: false,
+                        },
+                        EventSource::Server,
+                        &trace_id,
+                    ))
                     .await;
             }
         }
@@ -1053,7 +1047,7 @@ async fn execute_stream(
 
     let stream = async_stream::stream! {
         while let Some(item) = rx.recv().await {
-            let data = item.to_string();
+            let data = serde_json::to_string(&item).unwrap_or_else(|_| "{}".to_string());
             yield Ok(Event::default().data(data));
         }
     };
