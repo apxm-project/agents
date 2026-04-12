@@ -1,3 +1,5 @@
+import * as EK from "./event-kinds";
+
 // ── Overlay views (full-page overlays) ──────────────────────
 export const Overlay = {
   STUDIO: "studio",
@@ -63,14 +65,16 @@ export const Role = {
 
 export type ChatRole = (typeof Role)[keyof typeof Role];
 
-// ── SSE event types (agent stream) ──────────────────────────
+// ── SSE event types (agent stream) — derived from typed EventKind constants ──
 export const SseEvent = {
-  TOKEN: "token",
-  TOOL_CALL: "tool_call",
-  TOOL_RESULT: "tool_result",
-  USAGE: "usage",
-  DONE: "done",
-  ERROR: "error",
+  TOKEN: EK.TOKEN.name,
+  TOOL_CALL: EK.TOOL_CALL.name,
+  TOOL_RESULT: EK.TOOL_RESULT.name,
+  USAGE: EK.USAGE.name,
+  DONE: EK.DONE.name,
+  ERROR: EK.ERROR.name,
+  ACP_SESSION_PROMPT_END: EK.ACP_SESSION_PROMPT_END.name,
+  ACP_TOOL_RESULT: EK.ACP_TOOL_RESULT.name,
 } as const;
 
 export type SseEventType = (typeof SseEvent)[keyof typeof SseEvent];

@@ -6,9 +6,9 @@
 use std::convert::Infallible;
 use std::time::Duration;
 
+use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Json};
-use axum::http::StatusCode;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 
@@ -63,8 +63,7 @@ struct BackendConfig {
 fn load_backend_config() -> Result<BackendConfig, String> {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
     let path = std::path::Path::new(&home).join(".apxm/config.toml");
-    let content = std::fs::read_to_string(&path)
-        .map_err(|e| format!("cannot read config: {e}"))?;
+    let content = std::fs::read_to_string(&path).map_err(|e| format!("cannot read config: {e}"))?;
 
     // Use line-based extraction for endpoint, api_key, and headers
     // since the strict TOML parser may fail on this config file.
@@ -77,17 +76,23 @@ fn load_backend_config() -> Result<BackendConfig, String> {
 
     for line in content.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with('#') || trimmed.is_empty() { continue; }
+        if trimmed.starts_with('#') || trimmed.is_empty() {
+            continue;
+        }
 
         if trimmed == "[[backends]]" {
-            if found_backend { break; } // only use the first backend
+            if found_backend {
+                break;
+            } // only use the first backend
             in_first_backend = true;
             found_backend = true;
             in_headers = false;
             continue;
         }
 
-        if !in_first_backend { continue; }
+        if !in_first_backend {
+            continue;
+        }
 
         if trimmed == "[backends.headers]" {
             in_headers = true;
@@ -131,7 +136,11 @@ fn load_backend_config() -> Result<BackendConfig, String> {
         return Err("no backend endpoint found in config".to_string());
     }
 
-    Ok(BackendConfig { endpoint, api_key, headers })
+    Ok(BackendConfig {
+        endpoint,
+        api_key,
+        headers,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -146,7 +155,11 @@ pub async fn models_handler() -> impl IntoResponse {
     let content = match std::fs::read_to_string(&path) {
         Ok(c) => c,
         Err(e) => {
-            return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("cannot read config: {e}") }))).into_response();
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("cannot read config: {e}") })),
+            )
+                .into_response();
         }
     };
 
@@ -156,10 +169,19 @@ pub async fn models_handler() -> impl IntoResponse {
     for backend in &backends {
         if let Some(backend_models) = backend.get("models").and_then(|m| m.as_array()) {
             for m in backend_models {
-                let id = m.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let aliases: Vec<String> = m.get("aliases")
+                let id = m
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let aliases: Vec<String> = m
+                    .get("aliases")
                     .and_then(|a| a.as_array())
-                    .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
                     .unwrap_or_default();
                 if !id.is_empty() {
                     models.push(ModelInfo { id, aliases });
@@ -176,14 +198,19 @@ pub async fn chat_handler(
     axum::extract::Json(req): axum::extract::Json<ChatRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let config = load_backend_config().map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e })))
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e })),
+        )
     })?;
 
     let url = format!("{}/chat/completions", config.endpoint.trim_end_matches('/'));
 
-    let messages: Vec<serde_json::Value> = req.messages.iter().map(|m| {
-        serde_json::json!({ "role": m.role, "content": m.content })
-    }).collect();
+    let messages: Vec<serde_json::Value> = req
+        .messages
+        .iter()
+        .map(|m| serde_json::json!({ "role": m.role, "content": m.content }))
+        .collect();
 
     let mut body = serde_json::json!({
         "model": req.model,
@@ -193,14 +220,19 @@ pub async fn chat_handler(
     });
 
     if let Some(max_tokens) = req.max_tokens {
-        body.as_object_mut().unwrap().insert("max_tokens".to_string(), serde_json::json!(max_tokens));
+        body.as_object_mut()
+            .unwrap()
+            .insert("max_tokens".to_string(), serde_json::json!(max_tokens));
     }
 
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(300))
         .build()
         .map_err(|e| {
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": format!("http client: {e}") })))
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("http client: {e}") })),
+            )
         })?;
 
     let mut request = client
@@ -214,7 +246,10 @@ pub async fn chat_handler(
     }
 
     let response = request.send().await.map_err(|e| {
-        (StatusCode::BAD_GATEWAY, Json(serde_json::json!({ "error": format!("LLM request failed: {e}") })))
+        (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({ "error": format!("LLM request failed: {e}") })),
+        )
     })?;
 
     if !response.status().is_success() {

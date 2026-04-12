@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { useSSE } from "./use-sse";
 import { useAppStore } from "@/store/app-store";
+import * as EK from "@/lib/event-kinds";
 import type { TraceEvent } from "@/types/events";
 
 /**
@@ -25,7 +26,7 @@ function normalizeTraceEvent(raw: Record<string, unknown>): TraceEvent {
   const timestamp = String(meta?.timestamp ?? "");
 
   // Map Rust operation_end (with success flag) to frontend operation_complete/error
-  if (kind === "operation_end") {
+  if (kind === EK.OPERATION_END.name) {
     const success = payload.success as boolean;
     return {
       timestamp,
@@ -67,7 +68,7 @@ export function useLiveSession(sessionPathOverride?: string | null) {
         if (eventType === "trace") {
           const trace = normalizeTraceEvent(parsed as Record<string, unknown>);
           addLiveEvent(trace);
-          if (trace.kind === "operation_start" && trace.node_id != null) {
+          if (trace.kind === EK.OPERATION_START.name && trace.node_id != null) {
             setLiveNodeStatus(trace.node_id, "running");
           } else if (trace.kind === "operation_complete" && trace.node_id != null) {
             setLiveNodeStatus(trace.node_id, "completed");

@@ -8,37 +8,30 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
 
+use apxm_core::events::payload::EventPayload;
 use axum::extract::{Path as AxumPath, State};
 use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Json};
 use futures::stream::Stream;
 use serde::Deserialize;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 use tracing::{error, info};
 
-use crate::acp_client::{AgentEvent, AgentSession};
+use apxm_acp::registry::AgentRegistry;
+
 use crate::AppState;
+use crate::acp_client::AgentSession;
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
 /// Default command to spawn the agent subprocess.
-const DEFAULT_AGENT_COMMAND: &str = "openclaw acp";
+const DEFAULT_AGENT_COMMAND: &str = "claude-agent-acp-wrapper";
 
 /// SSE heartbeat interval for agent chat streams.
 const AGENT_SSE_HEARTBEAT: Duration = Duration::from_secs(10);
-
-/// SSE event type names for the agent chat stream.
-mod sse_event {
-    pub const TOKEN: &str = "token";
-    pub const TOOL_CALL: &str = "tool_call";
-    pub const TOOL_RESULT: &str = "tool_result";
-    pub const USAGE: &str = "usage";
-    pub const DONE: &str = "done";
-    pub const ERROR: &str = "error";
-}
 
 // ---------------------------------------------------------------------------
 // Request types
@@ -52,6 +45,9 @@ pub struct AgentChatRequest {
     pub message: String,
     /// Optional command override (default: `"openclaw acp"`).
     pub command: Option<String>,
+    /// Agent profile ID (e.g. "openclaw", "claude", "codex").
+    /// Resolved via `AgentRegistry` to get the command.
+    pub agent_id: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -66,20 +62,28 @@ pub struct AgentChatRequest {
 pub async fn agent_chat(
     State(state): State<Arc<AppState>>,
     Json(req): Json<AgentChatRequest>,
-) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, (StatusCode, Json<serde_json::Value>)> {
-    let command = req
-        .command
-        .as_deref()
-        .unwrap_or(DEFAULT_AGENT_COMMAND)
-        .to_string();
+) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, (StatusCode, Json<serde_json::Value>)>
+{
+    // Resolve command: explicit command > agent_id via registry > default
+    let command = if let Some(ref cmd) = req.command {
+        cmd.clone()
+    } else if let Some(ref agent_id) = req.agent_id {
+        let registry = AgentRegistry::load();
+        registry
+            .get(agent_id)
+            .map(|p| p.command.clone())
+            .unwrap_or_else(|| DEFAULT_AGENT_COMMAND.to_string())
+    } else {
+        DEFAULT_AGENT_COMMAND.to_string()
+    };
     let message = req.message.clone();
 
     // Resolve or create a session.
-    let (session_id, session) = if let Some(ref id) = req.session_id {
+    let session = if let Some(ref id) = req.session_id {
         // Look up existing session.
         let entry = state.agent_sessions.get(id).map(|e| e.value().clone());
         match entry {
-            Some(s) => (id.clone(), s),
+            Some(s) => s,
             None => {
                 return Err((
                     StatusCode::NOT_FOUND,
@@ -103,15 +107,13 @@ pub async fn agent_chat(
         let session = Arc::new(Mutex::new(session));
         state.agent_sessions.insert(id.clone(), session.clone());
         info!(session_id = %id, command = %command, "new agent session spawned");
-        (id, session)
+        session
     };
-
-    let session_id_for_stream = session_id.clone();
 
     // Create the SSE stream — prompt happens inside the stream so we can
     // start sending events immediately.
     let stream = async_stream::stream! {
-        let (tx, mut rx) = mpsc::channel::<AgentEvent>(128);
+        let (tx, mut rx) = mpsc::channel::<Arc<dyn EventPayload>>(128);
 
         // Spawn the prompt in a background task so we can yield events as
         // they arrive on the channel.
@@ -131,66 +133,18 @@ pub async fn agent_chat(
         // task finishes.
         drop(tx);
 
-        while let Some(event) = rx.recv().await {
-            match event {
-                AgentEvent::Token(text) => {
-                    yield Ok::<Event, Infallible>(
-                        Event::default()
-                            .event(sse_event::TOKEN)
-                            .data(serde_json::json!({ "token": text }).to_string())
-                    );
-                }
-                AgentEvent::ToolCall { id, name, args } => {
-                    yield Ok(
-                        Event::default()
-                            .event(sse_event::TOOL_CALL)
-                            .data(serde_json::json!({
-                                "id": id,
-                                "name": name,
-                                "arguments": args,
-                            }).to_string())
-                    );
-                }
-                AgentEvent::ToolResult { id, success, output } => {
-                    yield Ok(
-                        Event::default()
-                            .event(sse_event::TOOL_RESULT)
-                            .data(serde_json::json!({
-                                "id": id,
-                                "success": success,
-                                "output": output,
-                            }).to_string())
-                    );
-                }
-                AgentEvent::Usage { input_tokens, output_tokens } => {
-                    yield Ok(
-                        Event::default()
-                            .event(sse_event::USAGE)
-                            .data(serde_json::json!({
-                                "inputTokens": input_tokens,
-                                "outputTokens": output_tokens,
-                            }).to_string())
-                    );
-                }
-                AgentEvent::Done { stop_reason } => {
-                    yield Ok(
-                        Event::default()
-                            .event(sse_event::DONE)
-                            .data(serde_json::json!({
-                                "stopReason": stop_reason,
-                                "sessionId": session_id_for_stream,
-                            }).to_string())
-                    );
-                    break;
-                }
-                AgentEvent::Error(msg) => {
-                    yield Ok(
-                        Event::default()
-                            .event(sse_event::ERROR)
-                            .data(serde_json::json!({ "error": msg }).to_string())
-                    );
-                    break;
-                }
+        while let Some(payload) = rx.recv().await {
+            let kind = payload.event_kind();
+            let data = payload_json_with_kind(payload.as_ref());
+
+            yield Ok::<Event, Infallible>(
+                Event::default()
+                    .event(kind.sse_event_type())
+                    .data(data.to_string())
+            );
+
+            if kind.is_terminal() {
+                break;
             }
         }
     };
@@ -202,10 +156,21 @@ pub async fn agent_chat(
     ))
 }
 
+fn payload_json_with_kind(payload: &dyn EventPayload) -> serde_json::Value {
+    let mut json = payload.to_json();
+    if let Some(obj) = json.as_object_mut() {
+        obj.insert("kind".into(), payload.event_kind().name().into());
+    } else {
+        json = serde_json::json!({
+            "kind": payload.event_kind().name(),
+            "value": json,
+        });
+    }
+    json
+}
+
 /// `GET /api/agent/sessions` — list active agent sessions.
-pub async fn list_agent_sessions(
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+pub async fn list_agent_sessions(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let sessions: Vec<serde_json::Value> = state
         .agent_sessions
         .iter()
@@ -217,6 +182,61 @@ pub async fn list_agent_sessions(
         .collect();
 
     Json(serde_json::json!({ "sessions": sessions }))
+}
+
+/// `GET /api/agent/profiles` — list available ACP agent profiles.
+///
+/// Returns the full agent registry (built-in templates + user overrides),
+/// with an `available` flag indicating whether the agent's command binary
+/// is found on `$PATH`. All binary checks run in parallel.
+pub async fn list_agent_profiles() -> impl IntoResponse {
+    let registry = AgentRegistry::load();
+    let entries: Vec<_> = registry
+        .list()
+        .into_iter()
+        .map(|(name, profile, from_template)| {
+            let bin = profile
+                .command
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .to_string();
+            let command = profile.command.clone();
+            let source = if from_template { "template" } else { "custom" };
+            (name, command, bin, source.to_string())
+        })
+        .collect();
+
+    // Check all binaries in parallel (async, non-blocking)
+    let checks: Vec<_> = entries
+        .iter()
+        .map(|(_, _, bin, _)| async move {
+            tokio::process::Command::new("which")
+                .arg(bin)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .await
+                .map(|s| s.success())
+                .unwrap_or(false)
+        })
+        .collect();
+
+    let results = futures::future::join_all(checks).await;
+
+    let profiles: Vec<serde_json::Value> = entries
+        .into_iter()
+        .zip(results)
+        .map(|((name, command, _, source), available)| {
+            serde_json::json!({
+                "id": name,
+                "command": command,
+                "available": available,
+                "source": source,
+            })
+        })
+        .collect();
+    Json(serde_json::json!({ "profiles": profiles }))
 }
 
 /// `DELETE /api/agent/sessions/{id}` — close and remove an agent session.

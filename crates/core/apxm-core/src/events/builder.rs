@@ -1,5 +1,7 @@
 //! Builder / convenience constructors for [`ApxmEvent`].
 
+use std::sync::Arc;
+
 use chrono::Utc;
 
 use super::event::{ApxmEvent, EventMeta, EventSource};
@@ -10,7 +12,20 @@ impl ApxmEvent {
     ///
     /// The timestamp is set to `Utc::now()` and the sequence number
     /// defaults to `0` (call [`with_seq`](Self::with_seq) to override).
-    pub fn new(payload: EventPayload, source: EventSource, trace_id: impl Into<String>) -> Self {
+    pub fn new(
+        payload: impl EventPayload,
+        source: EventSource,
+        trace_id: impl Into<String>,
+    ) -> Self {
+        Self::from_shared(Arc::new(payload), source, trace_id)
+    }
+
+    /// Create a new event from a shared payload object.
+    pub fn from_shared(
+        payload: Arc<dyn EventPayload>,
+        source: EventSource,
+        trace_id: impl Into<String>,
+    ) -> Self {
         Self {
             meta: EventMeta {
                 seq: 0,

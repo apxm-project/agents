@@ -245,14 +245,6 @@ pub mod protocols {
     pub const A2A_VERSION: &str = "0.3";
 }
 
-pub mod a2a {
-    pub mod event_types {
-        pub const LLM_TOKEN: &str = "llm_token";
-        pub const TOOL_START: &str = "tool_start";
-        pub const TOOL_END: &str = "tool_end";
-    }
-}
-
 pub mod acp {
     pub mod session_params {
         pub const MCP_SERVERS: &str = "mcpServers";
@@ -531,7 +523,6 @@ pub mod session {
         pub const RESPONSE_TXT: &str = "response.txt";
         pub const SKILLS_DIR: &str = "skills";
     }
-
 }
 
 pub mod ui {

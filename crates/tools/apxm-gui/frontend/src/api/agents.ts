@@ -1,11 +1,17 @@
 import { apiFetch } from "./client";
 import { parseSSEStream } from "./sse";
-import { SseEvent } from "@/lib/constants";
-import type { AgentProfile } from "@/types/api";
+import * as EK from "@/lib/event-kinds";
+import type { AgentProfile, AcpAgentProfile } from "@/types/api";
+import type { AgentStreamEvent } from "@/types/events";
 
 export async function fetchAgents(): Promise<AgentProfile[]> {
   const res = await apiFetch<{ agents: AgentProfile[] }>("/api/agents");
   return res.agents;
+}
+
+export async function fetchAgentProfiles(): Promise<AcpAgentProfile[]> {
+  const res = await apiFetch<{ profiles: AcpAgentProfile[] }>("/api/agent/profiles");
+  return res.profiles;
 }
 
 export type ToolCallEvent = {
@@ -39,11 +45,15 @@ export async function streamAgentChat(
   sessionId: string | null,
   callbacks: AgentCallbacks,
   signal?: AbortSignal,
+  agentId?: string,
 ): Promise<void> {
+  const body: Record<string, unknown> = { message, session_id: sessionId };
+  if (agentId) body.agent_id = agentId;
+
   const res = await fetch("/api/agent/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, session_id: sessionId }),
+    body: JSON.stringify(body),
     signal,
   });
 
@@ -54,42 +64,114 @@ export async function streamAgentChat(
 
   await parseSSEStream(res, {
     onEvent: (eventType, parsed: any) => {
-      switch (eventType) {
-        case SseEvent.TOKEN:
-          if (parsed.token != null) callbacks.onToken(parsed.token);
+      const event = normalizeAgentStreamEvent(eventType, parsed);
+      switch (event.kind) {
+        case EK.TOKEN.name:
+          if (event.token != null) callbacks.onToken(event.token);
           break;
-        case SseEvent.TOOL_CALL:
+        case EK.TOOL_CALL.name:
           callbacks.onToolCall({
-            id: parsed.id,
-            name: parsed.name,
-            arguments: parsed.arguments ?? {},
+            id: event.id,
+            name: event.name,
+            arguments: event.arguments ?? {},
           });
           break;
-        case SseEvent.TOOL_RESULT:
+        case EK.TOOL_RESULT.name:
           callbacks.onToolResult({
-            id: parsed.id,
-            success: parsed.success,
-            output: parsed.output ?? "",
+            id: event.id,
+            success: event.success,
+            output: event.output ?? "",
           });
           break;
-        case SseEvent.USAGE:
+        case EK.USAGE.name:
           callbacks.onUsage({
-            inputTokens: parsed.inputTokens ?? 0,
-            outputTokens: parsed.outputTokens ?? 0,
+            inputTokens: event.inputTokens ?? 0,
+            outputTokens: event.outputTokens ?? 0,
           });
           break;
-        case SseEvent.DONE:
-          callbacks.onDone(parsed.sessionId ?? "");
+        case EK.DONE.name:
+          callbacks.onDone(event.sessionId ?? "");
           break;
-        case SseEvent.ERROR:
-          callbacks.onError(parsed.error ?? "Unknown agent error");
+        case EK.ERROR.name:
+          callbacks.onError(event.error ?? "Unknown agent error");
           break;
         default:
-          if (parsed.token != null) callbacks.onToken(parsed.token);
-          else if (parsed.error) callbacks.onError(parsed.error);
+          if ("token" in event && event.token != null) callbacks.onToken(event.token);
+          else if ("error" in event && event.error) callbacks.onError(event.error);
           break;
       }
     },
     onDone: () => callbacks.onDone(""),
   }, signal);
+}
+
+function normalizeAgentStreamEvent(eventType: string, parsed: any): AgentStreamEvent {
+  const kind = asString(parsed?.kind, eventType);
+
+  switch (kind) {
+    case EK.TOKEN.name:
+      return {
+        kind: EK.TOKEN.name,
+        token: asOptionalString(parsed?.token ?? parsed?.text),
+      };
+    case EK.TOOL_CALL.name:
+      return {
+        kind: EK.TOOL_CALL.name,
+        id: asString(parsed?.id),
+        name: asString(parsed?.name),
+        arguments: asRecord(parsed?.arguments),
+      };
+    case EK.TOOL_RESULT.name:
+      return {
+        kind: EK.TOOL_RESULT.name,
+        id: asString(parsed?.id),
+        success: asBoolean(parsed?.success),
+        output: asString(parsed?.output),
+      };
+    case EK.USAGE.name:
+      return {
+        kind: EK.USAGE.name,
+        inputTokens: asNumber(parsed?.inputTokens ?? parsed?.input_tokens),
+        outputTokens: asNumber(parsed?.outputTokens ?? parsed?.output_tokens),
+      };
+    case EK.DONE.name:
+      return {
+        kind: EK.DONE.name,
+        sessionId: asString(parsed?.sessionId ?? parsed?.session_id),
+      };
+    case EK.ERROR.name:
+      return {
+        kind: EK.ERROR.name,
+        error: asString(parsed?.error ?? parsed?.message, "Unknown agent error"),
+      };
+    default:
+      return {
+        kind: "unknown",
+        rawKind: kind,
+        token: asOptionalString(parsed?.token ?? parsed?.text),
+        error: asOptionalString(parsed?.error ?? parsed?.message),
+      };
+  }
+}
+
+function asString(value: unknown, fallback = ""): string {
+  return typeof value === "string" ? value : fallback;
+}
+
+function asOptionalString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function asNumber(value: unknown, fallback = 0): number {
+  return typeof value === "number" ? value : fallback;
+}
+
+function asBoolean(value: unknown, fallback = false): boolean {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }

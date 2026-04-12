@@ -6,11 +6,11 @@ use std::time::Duration;
 use apxm_core::types::values::Value;
 use serde::{Deserialize, Serialize};
 
-/// Runtime execution event.
+/// Runtime execution event (legacy enum).
 ///
-/// Covers ~15 event categories: LLM tokens, tool lifecycle, operation
-/// lifecycle, planning, memory, checkpoints, scheduler decisions, and
-/// GPU hardware utilization.
+/// Prefer using concrete payload structs from `apxm_core::events::payload`
+/// with `EmitterAdapter` for new code. This enum is retained for backward
+/// compatibility with session output serialization.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ExecutionEvent {
