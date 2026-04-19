@@ -250,6 +250,18 @@ pub enum ErrorCode {
     ConstStrWithDynamicInput = 518,
 
     // ========================================================================
+    // Tool Binding Errors (E701-E799)
+    // ========================================================================
+    /// E712: INV_TOOL.capability does not resolve to any REGISTER_CAPABILITY or known builtin
+    UnboundCapability = 712,
+    /// E713: python_handler_id on REGISTER_CAPABILITY does not match sha256:<hex64>
+    InvalidHandlerId = 713,
+    /// W213: REGISTER_CAPABILITY whose name is never invoked
+    UnusedCapability = 721,
+    /// W214: schema-vs-signature drift (best-effort, Python frontend in-process)
+    SchemaDrift = 722,
+
+    // ========================================================================
     // Generic Errors (E900-E999)
     // ========================================================================
     /// E900: Internal error
@@ -344,6 +356,10 @@ impl ErrorCode {
             ErrorCode::EmptyTemplate => "E516",
             ErrorCode::UncheckedMemoryRead => "E517",
             ErrorCode::ConstStrWithDynamicInput => "E518",
+            ErrorCode::UnboundCapability => "E712",
+            ErrorCode::InvalidHandlerId => "E713",
+            ErrorCode::UnusedCapability => "E721",
+            ErrorCode::SchemaDrift => "E722",
             ErrorCode::InternalError => "E900",
             ErrorCode::NotImplemented => "E901",
             ErrorCode::InvalidConfiguration => "E902",
@@ -366,6 +382,8 @@ impl ErrorCode {
             "runtime"
         } else if code < 600 {
             "semantic"
+        } else if code < 800 {
+            "tool-binding"
         } else {
             "generic"
         }
@@ -384,6 +402,8 @@ impl ErrorCode {
                 | ErrorCode::CommunicateBeforeSpawn
                 | ErrorCode::EmptyTemplate
                 | ErrorCode::UncheckedMemoryRead
+                | ErrorCode::UnusedCapability
+                | ErrorCode::SchemaDrift
         )
     }
 
@@ -470,6 +490,10 @@ impl ErrorCode {
             516 => Some(ErrorCode::EmptyTemplate),
             517 => Some(ErrorCode::UncheckedMemoryRead),
             518 => Some(ErrorCode::ConstStrWithDynamicInput),
+            712 => Some(ErrorCode::UnboundCapability),
+            713 => Some(ErrorCode::InvalidHandlerId),
+            721 => Some(ErrorCode::UnusedCapability),
+            722 => Some(ErrorCode::SchemaDrift),
             900 => Some(ErrorCode::InternalError),
             901 => Some(ErrorCode::NotImplemented),
             902 => Some(ErrorCode::InvalidConfiguration),

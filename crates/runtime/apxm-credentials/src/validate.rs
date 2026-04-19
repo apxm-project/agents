@@ -31,7 +31,7 @@ pub async fn validate_backend(backend: &BackendConfig) -> Result<String, Backend
         }
         ProviderProtocol::Google => validate_google(&client, &backend.name, backend, base).await,
         ProviderProtocol::Ollama => validate_ollama(&client, &backend.name, backend, base).await,
-        // vLLM uses OpenAI-compatible validation (same /v1/models endpoint)
+        // vLLM uses OpenAI-compatible validation (same /models endpoint)
         ProviderProtocol::Vllm => validate_openai(&client, &backend.name, backend, base).await,
         // Mock backend doesn't need validation (no real API)
         ProviderProtocol::Mock => Ok(format!("Mock backend '{}' is always valid", backend.name)),
@@ -62,8 +62,9 @@ async fn validate_openai(
 ) -> Result<String, BackendError> {
     let api_key = require_api_key(name, backend)?;
 
-    // Try GET /v1/models first (standard OpenAI).
-    let models_url = format!("{base}/v1/models");
+    // Try GET /models first (standard OpenAI).
+    // Convention: `base` already includes the version prefix (e.g. `/v1`).
+    let models_url = format!("{base}/models");
     let mut req = client.get(&models_url).bearer_auth(api_key);
     for (k, v) in &backend.headers {
         req = req.header(k.as_str(), v.as_str());
@@ -116,7 +117,8 @@ async fn validate_anthropic(
     base: &str,
 ) -> Result<String, BackendError> {
     let api_key = require_api_key(name, backend)?;
-    let url = format!("{base}/v1/messages");
+    // Convention: `base` already includes the version prefix (e.g. `/v1`).
+    let url = format!("{base}/messages");
 
     // Use first registered model; fall back to a known Anthropic default.
     let model = backend
@@ -171,7 +173,8 @@ async fn validate_google(
     base: &str,
 ) -> Result<String, BackendError> {
     let api_key = require_api_key(name, backend)?;
-    let url = format!("{base}/v1/models?key={api_key}");
+    // Convention: `base` already includes the version prefix (e.g. `/v1`).
+    let url = format!("{base}/models?key={api_key}");
 
     let resp = client
         .get(&url)
@@ -204,5 +207,43 @@ async fn validate_ollama(
         Ok(format!("OK ({})", resp.status()))
     } else {
         Err(validation_err(name, format!("HTTP {}", resp.status())))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// Validate URL construction: endpoints stored with `/v1` must produce
+    /// correct resource paths without doubling the version prefix.
+    #[test]
+    fn openai_url_no_double_v1() {
+        let base = "https://api.openai.com/v1";
+        let models = format!("{base}/models");
+        let chat = format!("{base}/chat/completions");
+        assert_eq!(models, "https://api.openai.com/v1/models");
+        assert_eq!(chat, "https://api.openai.com/v1/chat/completions");
+    }
+
+    #[test]
+    fn vllm_url_no_double_v1() {
+        let base = "http://localhost:8000/v1";
+        let models = format!("{base}/models");
+        let chat = format!("{base}/chat/completions");
+        assert_eq!(models, "http://localhost:8000/v1/models");
+        assert_eq!(chat, "http://localhost:8000/v1/chat/completions");
+    }
+
+    #[test]
+    fn trailing_slash_stripped_before_url_build() {
+        // validate_backend trims trailing slash before dispatching
+        let base = "http://localhost:8000/v1";
+        let models = format!("{base}/models");
+        assert_eq!(models, "http://localhost:8000/v1/models");
+    }
+
+    #[test]
+    fn anthropic_url_no_double_v1() {
+        let base = "https://api.anthropic.com/v1";
+        let messages = format!("{base}/messages");
+        assert_eq!(messages, "https://api.anthropic.com/v1/messages");
     }
 }

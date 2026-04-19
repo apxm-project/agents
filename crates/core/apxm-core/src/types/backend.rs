@@ -87,6 +87,14 @@ pub struct BackendConfig {
 
     /// Docker configuration for local backends
     pub docker: Option<DockerConfig>,
+
+    /// Whether this backend accepts `tool_choice="auto"` on chat-completion
+    /// requests. Stock vLLM rejects it with HTTP 400 unless launched with
+    /// `--enable-auto-tool-choice` and `--tool-call-parser <name>`. Set
+    /// `auto_tool_choice = false` in `~/.apxm/config.toml` for such servers.
+    /// `None` is treated as `true` (the trait default).
+    #[serde(default)]
+    pub auto_tool_choice: Option<bool>,
 }
 
 /// Model metadata and capabilities.
@@ -198,6 +206,7 @@ mod tests {
             headers: HashMap::new(),
             models: vec![],
             docker: None,
+            auto_tool_choice: None,
         };
 
         let json = serde_json::to_string(&config).unwrap();
@@ -261,6 +270,7 @@ mod tests {
                 tags: vec!["production".to_string()],
             }],
             docker: None,
+            auto_tool_choice: None,
         };
 
         assert_eq!(config.models.len(), 1);

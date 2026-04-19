@@ -155,7 +155,6 @@ async fn run_cli() -> Result<()> {
         Commands::Workflow { action } => workflow_command(action, cli.json).await,
         Commands::Cache { action } => cache_command(action, cli.json),
         Commands::Gui { file, port, open } => gui_command(file, port, open),
-        Commands::OpenClaw { action } => openclaw_command(action, cli.json),
     }
 }
 
@@ -187,7 +186,6 @@ async fn run_cli_no_driver() -> Result<()> {
         Commands::Workflow { action } => workflow_command_no_driver(action, cli.json),
         Commands::Cache { action } => cache_command(action, cli.json),
         Commands::Gui { file, port, open } => gui_command(file, port, open),
-        Commands::OpenClaw { action } => openclaw_command(action, cli.json),
         _ => Err(anyhow::anyhow!(
             "Command requires the `driver` feature. Re-run with: cargo run -p apxm-cli --features driver -- <command>"
         )),

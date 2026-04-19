@@ -518,7 +518,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_sqlite_persistence() -> StorageResult<()> {
-        let temp_file = std::env::temp_dir().join("test_apxm_storage.db");
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let temp_file = std::env::temp_dir().join(format!(
+            "test_apxm_storage.{}.{nanos}.db",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&temp_file);
 
         {
             let backend = SqliteBackend::new(&temp_file, Some(4)).await?;

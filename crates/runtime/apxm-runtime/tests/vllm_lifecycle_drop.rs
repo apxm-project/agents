@@ -83,7 +83,10 @@ async fn start_mock_vllm(graph_id: &str, exec_id: &str) -> MockServer {
     server
 }
 
-async fn make_backend(base_url: &str) -> Arc<dyn LLMBackend> {
+async fn make_backend(server_uri: &str) -> Arc<dyn LLMBackend> {
+    // Convention: `base_url` includes the `/v1` prefix; the extension methods
+    // append `/apxm/...` to it. Wiremock mounts the full `/v1/apxm/...` paths.
+    let base_url = format!("{server_uri}/v1");
     let backend = GraphAwareVllmBackend::new(
         "test-key",
         Some(json!({

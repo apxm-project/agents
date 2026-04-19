@@ -132,7 +132,7 @@ pub const BUILTIN_PROVIDERS: &[BuiltinProviderSpec] = &[
     BuiltinProviderSpec {
         id: "vllm",
         api_key_env_var: None,
-        default_base_url: Some("http://localhost:8000"),
+        default_base_url: Some("http://localhost:8000/v1"),
         requires_api_key: false,
         protocol: ProviderProtocol::Vllm,
         aliases: &["vllm-graph-aware"],
@@ -254,7 +254,7 @@ mod tests {
         assert_eq!(spec.id, "vllm");
         assert_eq!(spec.protocol, ProviderProtocol::Vllm);
         assert!(!spec.requires_api_key);
-        assert_eq!(spec.default_base_url, Some("http://localhost:8000"));
+        assert_eq!(spec.default_base_url, Some("http://localhost:8000/v1"));
     }
 
     #[test]

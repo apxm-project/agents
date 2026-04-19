@@ -11,7 +11,7 @@ Usage:
 
 from apxm import compile, GraphRecorder
 
-from ._config import VLLM, Vllm, VLLM_BACKEND
+from _config import VLLM, Vllm, VLLM_BACKEND
 
 
 @compile(

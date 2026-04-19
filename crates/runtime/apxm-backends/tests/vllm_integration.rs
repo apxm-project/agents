@@ -186,7 +186,7 @@ async fn test_graph_registration_request_structure() {
     let backend = GraphAwareVllmBackend::new(
         "",
         Some(json!({
-            "base_url": "http://vllm.test:8000",
+            "base_url": "http://vllm.test:8000/v1",
             "model": "test-model"
         })),
     )

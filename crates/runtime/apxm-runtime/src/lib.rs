@@ -41,6 +41,7 @@ pub mod team;
 pub mod thread;
 pub mod workflow;
 pub mod workspace;
+pub mod python_tools;
 
 pub use aam::{
     Aam, AamCheckpoint, CapabilityRecord, Goal, GoalId, GoalStatus, STAGED_BELIEF_PREFIX,
@@ -80,6 +81,9 @@ pub use sandbox::{
     SandboxCapabilities, SandboxContext, SandboxError, SandboxRegistry, SandboxSelection,
     SecurityManifest, ValidationResult,
 };
+
+// Re-export Python tool bridge
+pub use python_tools::{PythonToolBridge, PythonToolRegistry, PythonToolWorker};
 
 pub type RuntimeResult<T> = std::result::Result<T, RuntimeError>;
 

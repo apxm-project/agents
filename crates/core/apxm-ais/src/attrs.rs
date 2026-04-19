@@ -32,6 +32,7 @@ pub const BIND_INNER_PLAN_OUTPUTS: &str = "bind_inner_plan_outputs";
 pub const BACKEND: &str = "backend";
 pub const MAX_TOOL_ITERATIONS: &str = "max_tool_iterations";
 pub const BUDGET: &str = "budget";
+pub const STRUCTURED: &str = "structured";
 
 // -- Template / prompt --
 pub const TEMPLATE_STR: &str = "template_str";
@@ -59,6 +60,10 @@ pub const INTERPRETER: &str = "interpreter";
 pub const CAPABILITY_NAME: &str = "capability_name";
 pub const DESCRIPTION: &str = "description";
 pub const PARAMETERS_SCHEMA: &str = "parameters_schema";
+/// When set, this capability is backed by a Python handler instead of a Rust
+/// builtin. The runtime dispatches to the python tool worker using this stable
+/// id. Must match `^sha256:[0-9a-f]{64}$`.
+pub const PYTHON_HANDLER_ID: &str = "python_handler_id";
 
 // -- Communication --
 pub const MESSAGE: &str = "message";
@@ -228,6 +233,7 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     CAPABILITY_NAME,
     DESCRIPTION,
     PARAMETERS_SCHEMA,
+    PYTHON_HANDLER_ID,
     MESSAGE,
     RECIPIENT,
     TARGET,
@@ -311,7 +317,7 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     "constraints",
     "reflection_prompt",
     "parameters",
-    "structured",
+    STRUCTURED,
     "token",
     "count_token",
     "cases",
