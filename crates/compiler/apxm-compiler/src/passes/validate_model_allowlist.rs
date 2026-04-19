@@ -6,10 +6,10 @@
 //! This is a compile-time governance check (Plan A from model-profiles-design.md).
 //! Does NOT query external APIs or check model health — that's the runtime ModelRouter's job.
 
+use crate::air_builder::AirModule;
 use apxm_core::error::compiler::{CompilerError, Result};
 use apxm_core::error::span::Span;
 use apxm_core::error::{Error, ErrorCode};
-use crate::air_builder::AirModule;
 use std::collections::{HashMap, HashSet};
 
 /// Validates that all models in the module are in the allowlist (if configured).

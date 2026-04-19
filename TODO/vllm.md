@@ -744,11 +744,11 @@ The `@compile()` decorator captures the graph as a Python `ApxmGraph`, then `to_
 module {
   func.func @plan_then_parallelize() -> !ais.token attributes {ais.entry} {
     %plan_steps = ais.ask "Create a 3-part outline for a blog post about Rust async programming..." : !ais.token
-    %section_concepts = ais.ask "Based on this plan:\n{0}\n\nWrite section 1: Core async concepts..." [%plan_steps : !ais.token] : !ais.token
-    %section_tokio = ais.ask "Based on this plan:\n{0}\n\nWrite section 2: Tokio runtime internals..." [%plan_steps : !ais.token] : !ais.token
-    %section_pitfalls = ais.ask "Based on this plan:\n{0}\n\nWrite section 3: Common pitfalls..." [%plan_steps : !ais.token] : !ais.token
-    %assemble = ais.think "SECTION 1:\n{0}\nSECTION 2:\n{1}\nSECTION 3:\n{2}\n\nAssemble into a polished blog post..." [%section_concepts, %section_tokio, %section_pitfalls : !ais.token, !ais.token, !ais.token] : !ais.token
-    ais.print "=== ASSEMBLED BLOG POST ===\n{0}" [%assemble : !ais.token]
+    %section_concepts = ais.ask "Based on this plan:\n{plan_steps}\n\nWrite section 1: Core async concepts..." [%plan_steps : !ais.token] : !ais.token
+    %section_tokio = ais.ask "Based on this plan:\n{plan_steps}\n\nWrite section 2: Tokio runtime internals..." [%plan_steps : !ais.token] : !ais.token
+    %section_pitfalls = ais.ask "Based on this plan:\n{plan_steps}\n\nWrite section 3: Common pitfalls..." [%plan_steps : !ais.token] : !ais.token
+    %assemble = ais.think "SECTION 1:\n{section_concepts}\nSECTION 2:\n{section_tokio}\nSECTION 3:\n{section_pitfalls}\n\nAssemble into a polished blog post..." [%section_concepts, %section_tokio, %section_pitfalls : !ais.token, !ais.token, !ais.token] : !ais.token
+    ais.print "=== ASSEMBLED BLOG POST ===\n{assemble}" [%assemble : !ais.token]
     func.return %assemble : !ais.token
   }
 }
@@ -794,7 +794,7 @@ node.attributes = {
 
 // Nodes 2-4: section_concepts / section_tokio / section_pitfalls (ASK) — parallel fan
 node.attributes = {
-    "template_str":           Value::String("Based on this plan:\n{0}\n\nWrite section ..."),
+    "template_str":           Value::String("Based on this plan:\n{plan_steps}\n\nWrite section ..."),
     "_vllm_critical_path":    Value::Bool(true),    // all paths are equal length
     "_vllm_downstream_nodes": Value::Array(vec![Value::Number(5)]),
     "_vllm_reuse_group":      Value::String("sp_ask_default"),
@@ -805,7 +805,7 @@ node.attributes = {
 
 // Node 5: assemble (THINK) — fan-in, last LLM node
 node.attributes = {
-    "template_str":           Value::String("SECTION 1:\n{0}\nSECTION 2:\n{1}..."),
+    "template_str":           Value::String("SECTION 1:\n{section_concepts}\nSECTION 2:\n{section_tokio}..."),
     "_vllm_critical_path":    Value::Bool(true),
     "_vllm_downstream_nodes": Value::Array(vec![]),  // no LLM nodes after this
     "_vllm_est_tokens":       Value::Number(120),
@@ -1250,7 +1250,7 @@ dekk apxm execute code_review.apxm --emit-session
        %perf_review = ais.ask "Review...PERFORMANCE..." [%diff_summary : !ais.token] : !ais.token
        %style_review = ais.ask "Review...CODE QUALITY..." [%diff_summary : !ais.token] : !ais.token
        %synthesis = ais.think "Three code reviewers..." [%security_review, %perf_review, %style_review : !ais.token, !ais.token, !ais.token] : !ais.token
-       ais.print "=== CODE REVIEW ===\n{0}" [%synthesis : !ais.token]
+       ais.print "=== CODE REVIEW ===\n{synthesis}" [%synthesis : !ais.token]
        func.return %synthesis : !ais.token
      }
    }

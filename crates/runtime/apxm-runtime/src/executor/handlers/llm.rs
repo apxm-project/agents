@@ -21,6 +21,7 @@ use super::{
     ExecutionContext, Node, Result, Value, execute_llm_request, get_optional_string_attribute,
     get_optional_u64_attribute, get_string_attribute, get_u32_array_attribute,
     inner_plan::{InnerPlanOptions, execute_inner_plan},
+    template::{input_names_from_node, render_named},
 };
 use crate::aam::{Goal as AamGoal, GoalId, GoalStatus, TransitionLabel};
 use crate::executor::memoization::ResponseCache;
@@ -509,57 +510,29 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         && node
             .attributes
             .get(graph_attrs::INNER_PLAN_SUPPORTED)
-            .and_then(|v| v.as_boolean())
+            .and_then(|v| v.as_bool())
             .unwrap_or(false);
     let enable_inner_plan = mode == LlmMode::Reason
         && node
             .attributes
             .get(graph_attrs::ENABLE_INNER_PLAN)
-            .and_then(|v| v.as_boolean())
+            .and_then(|v| v.as_bool())
             .unwrap_or(supports_inner_plan);
     let bind_outputs = node
         .attributes
         .get(graph_attrs::BIND_INNER_PLAN_OUTPUTS)
-        .and_then(|v| v.as_boolean())
+        .and_then(|v| v.as_bool())
         .unwrap_or(true);
 
-    // Build prompt with context
-    let mut prompt = base_prompt.clone();
-    if !inputs.is_empty() {
-        // Check for {n} placeholder pattern (from BuildPrompt pass)
-        if base_prompt.contains("{0}") {
-            // Substitute placeholders with context values
-            prompt = base_prompt.clone();
-            for (idx, value) in inputs.iter().enumerate() {
-                let placeholder = format!("{{{}}}", idx);
-                if prompt.contains(&placeholder) {
-                    let rendered = value
-                        .as_string()
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| value.to_string());
-                    prompt = prompt.replace(&placeholder, &rendered);
-                }
-            }
-        } else if !base_prompt.trim().is_empty() {
-            // Original behavior - append context as labeled lines
-            let mut ctx_lines = Vec::new();
-            for (idx, value) in inputs.iter().enumerate() {
-                let rendered = value
-                    .to_json()
-                    .map(|j| j.to_string())
-                    .unwrap_or_else(|_| value.to_string());
-                ctx_lines.push(format!("Context {}: {}", idx + 1, rendered));
-            }
-            prompt = format!("{}\n\n{}", base_prompt, ctx_lines.join("\n"));
-        } else {
-            // Empty template without placeholder - use first context as prompt
-            // (backward compat for artifacts compiled before BuildPrompt pass)
-            prompt = inputs[0]
-                .as_string()
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| inputs[0].to_string());
-        }
-    }
+    // Build prompt by named substitution. The compiler validator guarantees
+    // that any non-empty input chain has a matching `input_names` array and
+    // that every `{name}` in the template resolves against it.
+    let prompt = if inputs.is_empty() {
+        base_prompt.clone()
+    } else {
+        let input_names = input_names_from_node(node);
+        render_named(&base_prompt, &inputs, &input_names)?
+    };
 
     let mut request = LLMRequest::new(prompt.clone()).with_operation_type(node.op_type);
 
@@ -582,7 +555,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         && node
             .attributes
             .get(graph_attrs::TOOLS_ENABLED)
-            .and_then(|v| v.as_boolean())
+            .and_then(|v| v.as_bool())
             .unwrap_or(true); // Enable by default for Ask
 
     if tools_enabled {
@@ -621,7 +594,11 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         _ => "speculative",
     };
 
-    let node_name = node.metadata.name.clone().unwrap_or_else(|| format!("node_{}", node.id));
+    let node_name = node
+        .metadata
+        .name
+        .clone()
+        .unwrap_or_else(|| format!("node_{}", node.id));
 
     // Read compiler-set attributes from the node (populated by MLIR passes via artifact)
     let warmup_candidate = node

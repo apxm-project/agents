@@ -5,27 +5,27 @@ module {
     %implementer = ais.spawn_agent "implementer" {profile = "codex", cwd = "/home/raherrer/projects/agents/apxm"} : !ais.token
     %researcher = ais.spawn_agent "researcher" {profile = "claude", cwd = "/home/raherrer/projects/agents/apxm"} : !ais.token
     %user_advocate = ais.spawn_agent "user_advocate" {profile = "claude", cwd = "/home/raherrer/projects/agents/apxm"} : !ais.token
-    %architect_prompt = ais.const_str "You are the APXM systems architect. Answer this question from a systems design perspective:\n\nQuestion: {0}\n\nConsider:\n- How does this fit into the overall APXM architecture (compiler, runtime, AIS, frontend)?\n- What are the architectural implications?\n- How does it interact with existing components (AAM, scheduler, MLIR backend)?\n- What's the cleanest way to implement this in the current design?\n\nBe specific and reference actual APXM components. Keep under 300 words.\n" : !ais.token
-    %adversary_prompt = ais.const_str "You are the adversary. Your job is to find problems with the proposed idea:\n\nQuestion: {0}\n\nChallenge it:\n- What breaks if we do this?\n- What's over-engineered?\n- What assumptions are we making that might be wrong?\n- What are the maintenance costs?\n- Is this solving a real problem or imaginary one?\n- What's the simplest alternative that achieves 80% of the value?\n\nBe brutally honest. If it's a bad idea, say so. Keep under 300 words.\n" : !ais.token
-    %implementer_prompt = ais.const_str "You are the implementer. Answer this question with concrete Rust code:\n\nQuestion: {0}\n\nShow:\n- What crates would be modified\n- What new types/traits would be needed\n- Sketch key function signatures\n- Show a minimal working example (pseudocode is fine)\n\nFocus on *how* it would actually be built in Rust. Keep under 300 words.\n" : !ais.token
-    %researcher_prompt = ais.const_str "You are the researcher. Answer this question based on what the industry and literature say:\n\nQuestion: {0}\n\nResearch:\n- How do similar systems solve this? (LLVM, Dask, Ray, etc.)\n- What do the papers say? (cite if you know specific ones)\n- What are the standard approaches?\n- What have others tried that failed?\n- What's the state of the art?\n\nCite examples from real systems. Keep under 300 words.\n" : !ais.token
-    %user_advocate_prompt = ais.const_str "You are the user advocate. Answer this question from the user's perspective:\n\nQuestion: {0}\n\nConsider:\n- What do APXM users actually need?\n- Is this solving their pain points?\n- How does this affect the user experience (CLI, Python API, workflows)?\n- What would users have to learn or change?\n- Is there a simpler way to give users what they want?\n\nThink about real-world workflow authors using APXM. Keep under 300 words.\n" : !ais.token
-    %architect_msg_1 = ais.communicate "{0}" to "architect" (%architect_prompt : !ais.token) : !ais.token
-    %adversary_msg_1 = ais.communicate "{0}" to "adversary" (%adversary_prompt : !ais.token) : !ais.token
-    %implementer_msg_1 = ais.communicate "{0}" to "implementer" (%implementer_prompt : !ais.token) : !ais.token
-    %researcher_msg_1 = ais.communicate "{0}" to "researcher" (%researcher_prompt : !ais.token) : !ais.token
-    %user_advocate_msg_1 = ais.communicate "{0}" to "user_advocate" (%user_advocate_prompt : !ais.token) : !ais.token
-    ais.print "=== ARCHITECT ===\n{0}" [%architect_msg_1 : !ais.token]
-    ais.print "=== ADVERSARY ===\n{0}" [%adversary_msg_1 : !ais.token]
-    ais.print "=== IMPLEMENTER ===\n{0}" [%implementer_msg_1 : !ais.token]
-    ais.print "=== RESEARCHER ===\n{0}" [%researcher_msg_1 : !ais.token]
-    ais.print "=== USER ADVOCATE ===\n{0}" [%user_advocate_msg_1 : !ais.token]
+    %architect_prompt = ais.const_str "You are the APXM systems architect. Answer this question from a systems design perspective:\n\nQuestion: {question}\n\nConsider:\n- How does this fit into the overall APXM architecture (compiler, runtime, AIS, frontend)?\n- What are the architectural implications?\n- How does it interact with existing components (AAM, scheduler, MLIR backend)?\n- What's the cleanest way to implement this in the current design?\n\nBe specific and reference actual APXM components. Keep under 300 words.\n" : !ais.token
+    %adversary_prompt = ais.const_str "You are the adversary. Your job is to find problems with the proposed idea:\n\nQuestion: {question}\n\nChallenge it:\n- What breaks if we do this?\n- What's over-engineered?\n- What assumptions are we making that might be wrong?\n- What are the maintenance costs?\n- Is this solving a real problem or imaginary one?\n- What's the simplest alternative that achieves 80% of the value?\n\nBe brutally honest. If it's a bad idea, say so. Keep under 300 words.\n" : !ais.token
+    %implementer_prompt = ais.const_str "You are the implementer. Answer this question with concrete Rust code:\n\nQuestion: {question}\n\nShow:\n- What crates would be modified\n- What new types/traits would be needed\n- Sketch key function signatures\n- Show a minimal working example (pseudocode is fine)\n\nFocus on *how* it would actually be built in Rust. Keep under 300 words.\n" : !ais.token
+    %researcher_prompt = ais.const_str "You are the researcher. Answer this question based on what the industry and literature say:\n\nQuestion: {question}\n\nResearch:\n- How do similar systems solve this? (LLVM, Dask, Ray, etc.)\n- What do the papers say? (cite if you know specific ones)\n- What are the standard approaches?\n- What have others tried that failed?\n- What's the state of the art?\n\nCite examples from real systems. Keep under 300 words.\n" : !ais.token
+    %user_advocate_prompt = ais.const_str "You are the user advocate. Answer this question from the user's perspective:\n\nQuestion: {question}\n\nConsider:\n- What do APXM users actually need?\n- Is this solving their pain points?\n- How does this affect the user experience (CLI, Python API, workflows)?\n- What would users have to learn or change?\n- Is there a simpler way to give users what they want?\n\nThink about real-world workflow authors using APXM. Keep under 300 words.\n" : !ais.token
+    %architect_msg_1 = ais.communicate "{architect_prompt}" to "architect" (%architect_prompt : !ais.token) : !ais.token
+    %adversary_msg_1 = ais.communicate "{adversary_prompt}" to "adversary" (%adversary_prompt : !ais.token) : !ais.token
+    %implementer_msg_1 = ais.communicate "{implementer_prompt}" to "implementer" (%implementer_prompt : !ais.token) : !ais.token
+    %researcher_msg_1 = ais.communicate "{researcher_prompt}" to "researcher" (%researcher_prompt : !ais.token) : !ais.token
+    %user_advocate_msg_1 = ais.communicate "{user_advocate_prompt}" to "user_advocate" (%user_advocate_prompt : !ais.token) : !ais.token
+    ais.print "=== ARCHITECT ===\n{architect}" [%architect_msg_1 : !ais.token]
+    ais.print "=== ADVERSARY ===\n{adversary}" [%adversary_msg_1 : !ais.token]
+    ais.print "=== IMPLEMENTER ===\n{implementer}" [%implementer_msg_1 : !ais.token]
+    ais.print "=== RESEARCHER ===\n{researcher}" [%researcher_msg_1 : !ais.token]
+    ais.print "=== USER ADVOCATE ===\n{user_advocate}" [%user_advocate_msg_1 : !ais.token]
     %wait_all_perspectives = ais.wait_all %architect_msg_1, %adversary_msg_1, %implementer_msg_1, %researcher_msg_1, %user_advocate_msg_1 : !ais.token, !ais.token, !ais.token, !ais.token, !ais.token -> !ais.token
-    %question_for_synthesis = ais.const_str "{0}" : !ais.token
+    %question_for_synthesis = ais.const_str "{question}" : !ais.token
     %think = ais.think "synthesis" [%question_for_synthesis, %architect_msg_1, %adversary_msg_1, %implementer_msg_1, %researcher_msg_1, %user_advocate_msg_1 : !ais.token, !ais.token, !ais.token, !ais.token, !ais.token, !ais.token] : !ais.token
-    ais.print "=== SYNTHESIS ===\n{0}" [%think : !ais.token]
+    ais.print "=== SYNTHESIS ===\n{synthesis}" [%think : !ais.token]
     %think_1 = ais.think "action_plan" [%think : !ais.token] : !ais.token
-    ais.print "=== ACTION PLAN ===\n{0}" [%think_1 : !ais.token]
+    ais.print "=== ACTION PLAN ===\n{action_plan}" [%think_1 : !ais.token]
     func.return %think_1 : !ais.token
   }
 }

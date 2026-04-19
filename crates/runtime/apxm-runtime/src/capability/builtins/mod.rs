@@ -13,8 +13,8 @@ pub use read::{ReadCapability, ReadConfig};
 pub use web_search::{SearchDepth, SearchWebCapability, SearchWebConfig};
 pub use write::{WriteCapability, WriteConfig};
 
-use apxm_core::{error::RuntimeError, types::Value};
 use crate::CapabilitySystem;
+use apxm_core::{error::RuntimeError, types::Value};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
 

@@ -8,12 +8,12 @@ Usage:
   dekk apxm execute multi_model.air -O2
 
 Note: Requires multiple backends configured:
-  - Fast model (e.g., gpt-3.5-turbo, claude-haiku)
-  - Powerful model (e.g., gpt-4, claude-opus)
+  - Fast model (e.g., Anthropic.CLAUDE_3_HAIKU, OpenAI.GPT_4O_MINI)
+  - Powerful model (e.g., Anthropic.CLAUDE_SONNET_4_5, OpenAI.GPT_4O)
   - Local model (e.g., llama via ollama)
 """
 
-from apxm import compile, GraphRecorder
+from apxm import compile, GraphRecorder, Anthropic, OpenAI
 
 
 @compile()
@@ -34,23 +34,21 @@ def multi_model(g: GraphRecorder):
         """
 
     # Fast model: initial triage and classification
-    # This should use a fast, cheap model (gpt-3.5-turbo, claude-haiku)
     triage = g.ask(
-        "triage",
-        ticket_text + "\n\n"
+        name="triage",
+        prompt=ticket_text + "\n\n"
         "Classify this support ticket:\n"
         "- Priority: [LOW/MEDIUM/HIGH/URGENT]\n"
         "- Category: [BILLING/TECHNICAL/FEATURE_REQUEST/BUG]\n"
         "- Sentiment: [POSITIVE/NEUTRAL/FRUSTRATED/ANGRY]\n\n"
         "Respond in 3 lines only.",
-        # In real usage, would specify: model="gpt-3.5-turbo" or backend="fast"
+        model=Anthropic.CLAUDE_3_HAIKU,
     )
 
     # Local model: extract structured data (sensitive - keep local)
-    # This should use a local model for data privacy
     extracted_data = g.think(
-        "extracted_data",
-        "{ticket_text}\n\n"
+        name="extracted_data",
+        prompt=ticket_text + "\n\n"
         "Extract structured information:\n"
         "- Email: \n"
         "- Transaction ID: \n"
@@ -62,10 +60,9 @@ def multi_model(g: GraphRecorder):
     )
 
     # Powerful model: deep analysis and solution
-    # This should use the most capable model (gpt-4, claude-opus)
     solution = g.reason(
-        "solution",
-        "Ticket: {ticket_text}\n\n"
+        name="solution",
+        prompt="Ticket: " + ticket_text + "\n\n"
         "Triage: {triage}\n\n"
         "Extracted Data: {extracted_data}\n\n"
         "Generate a comprehensive solution:\n"
@@ -75,18 +72,17 @@ def multi_model(g: GraphRecorder):
         "4. Customer communication template\n"
         "5. Process improvements to prevent recurrence\n\n"
         "Be thorough and precise.",
-        # In real usage, would specify: model="gpt-4" or backend="powerful"
+        model=Anthropic.CLAUDE_SONNET_4_5,
     )
 
     # Fast model: format customer response
-    # Back to fast/cheap model for formatting
     customer_response = g.ask(
-        "customer_response",
-        "Solution: {solution}\n\n"
+        name="customer_response",
+        prompt="Solution: {solution}\n\n"
         "Create a friendly, professional customer email response.\n"
         "Maximum 200 words. Be empathetic and clear.\n"
         "Include specific next steps.",
-        # In real usage, would specify: model="gpt-3.5-turbo"
+        model=OpenAI.GPT_4O_MINI,
     )
 
     # Final report
@@ -99,7 +95,7 @@ def multi_model(g: GraphRecorder):
     )
 
     output = g.print(
-        "=== MULTI-MODEL ROUTING BENCHMARK ===\n\n"
+        message="=== MULTI-MODEL ROUTING BENCHMARK ===\n\n"
         "TRIAGE (Fast Model):\n{triage}\n\n"
         "---\n\n"
         "EXTRACTED DATA (Local Model - Privacy):\n{extracted_data}\n\n"
@@ -109,7 +105,7 @@ def multi_model(g: GraphRecorder):
         "CUSTOMER RESPONSE (Fast Model - Formatting):\n{customer_response}"
     )
 
-    output >> final_output
+    g.add_edge(output, final_output, dependency="Control")
     g.done(final_output)
 
 
@@ -117,6 +113,6 @@ if __name__ == "__main__":
     # Output the graph as JSON
     print(multi_model._graph.to_air())
     # To execute directly:
-    # import asyncio
-    # result = asyncio.run(multi_model())
+    # import apxm
+    # result = apxm.run(multi_model())
     # print(result.content)

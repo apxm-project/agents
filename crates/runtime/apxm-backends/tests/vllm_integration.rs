@@ -1,9 +1,9 @@
 //! Integration tests for vLLM graph-aware backend.
 
+use apxm_backends::llm::backends::LLMRequest;
 use apxm_backends::llm::backends::vllm::{
     ApxmGraphHints, GraphAwareVllmBackend, GraphMetadata, NodeSpec, PinPolicy,
 };
-use apxm_backends::llm::backends::LLMRequest;
 use serde_json::json;
 
 #[tokio::test]

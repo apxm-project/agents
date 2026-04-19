@@ -8,13 +8,16 @@ use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use apxm_compiler::AirModule;
 use apxm_core::constants;
+use apxm_core::events::payload::EventPayload;
+use apxm_core::events::payload::{OperationEndPayload, OperationStartPayload};
+use apxm_core::events::{ApxmEvent, EventSource};
 use apxm_core::paths::session_node_dir_name;
 use apxm_core::types::values::Value;
-use apxm_core::types::{CompletedNodeInfo, LiveSessionState, NodeInfo, SessionManifest, SessionStatus};
-use apxm_core::events::payload::{EventPayload, OperationEndPayload, OperationStartPayload};
-use apxm_core::events::{ApxmEvent, EventSource};
-use apxm_compiler::AirModule;
+use apxm_core::types::{
+    CompletedNodeInfo, LiveSessionState, NodeInfo, SessionManifest, SessionStatus,
+};
 use apxm_runtime::ExecutionEventEmitter;
 
 use crate::context_assembler::{ContextAssembler, WorkspaceNodeMetadata};
@@ -163,7 +166,10 @@ impl SessionOutputWriter {
         )
     }
 
-    fn write_episodic_entries(&self, entries: &[apxm_runtime::memory::EpisodicEntry]) -> io::Result<()> {
+    fn write_episodic_entries(
+        &self,
+        entries: &[apxm_runtime::memory::EpisodicEntry],
+    ) -> io::Result<()> {
         let path = self.session_dir.join("episodic.ndjson");
         let mut file = BufWriter::new(fs::File::create(&path)?);
         for entry in entries {
@@ -405,7 +411,7 @@ impl SessionEventEmitter {
         })
     }
 
-    fn write_trace_event(&self, payload: EventPayload) {
+    fn write_trace_event<P: EventPayload>(&self, payload: P) {
         let seq = self.seq.fetch_add(1, Ordering::Relaxed);
         let event = ApxmEvent::new(payload, EventSource::Runtime, &*self.trace_id).with_seq(seq);
         if let Ok(mut sink) = self.sink.lock() {
@@ -414,7 +420,7 @@ impl SessionEventEmitter {
         }
     }
 
-    fn write_node_trace_event(&self, node_id: u64, payload: EventPayload) {
+    fn write_node_trace_event<P: EventPayload>(&self, node_id: u64, payload: P) {
         let seq = self.seq.fetch_add(1, Ordering::Relaxed);
         let event = ApxmEvent::new(payload, EventSource::Runtime, &*self.trace_id).with_seq(seq);
         if let Ok(mut traces) = self.node_traces.lock()
@@ -508,7 +514,8 @@ impl SessionEventEmitter {
 
     fn write_live(&self, current_node_id: Option<u64>) -> io::Result<()> {
         if let Some(id) = current_node_id {
-            self.current_node_id.store(id.min(i64::MAX as u64) as i64, Ordering::Relaxed);
+            self.current_node_id
+                .store(id.min(i64::MAX as u64) as i64, Ordering::Relaxed);
         }
 
         let completed = self.completed.load(Ordering::Relaxed);
@@ -631,15 +638,15 @@ impl SessionEventEmitter {
 
 impl ExecutionEventEmitter for SessionEventEmitter {
     fn emit_llm_token(&self, content: &str) {
-        self.write_trace_event(EventPayload::Token(apxm_core::events::payload::TokenPayload {
+        self.write_trace_event(apxm_core::events::payload::TokenPayload {
             text: content.to_string(),
-        }));
+        });
     }
 
     fn emit_llm_token_for_node(&self, node_id: u64, content: &str) {
-        let payload = EventPayload::Token(apxm_core::events::payload::TokenPayload {
+        let payload = apxm_core::events::payload::TokenPayload {
             text: content.to_string(),
-        });
+        };
         self.write_trace_event(payload.clone());
         self.write_node_trace_event(node_id, payload);
         if let Ok(mut tokens) = self.node_llm_tokens.lock() {
@@ -662,21 +669,17 @@ impl ExecutionEventEmitter for SessionEventEmitter {
             .iter()
             .map(|(k, v)| (k.clone(), serde_json::to_value(v).unwrap_or_default()))
             .collect();
-        self.write_trace_event(EventPayload::ToolStart(
-            apxm_core::events::payload::ToolStartPayload {
-                name: name.to_string(),
-                args: args_json,
-            },
-        ));
+        self.write_trace_event(apxm_core::events::payload::ToolStartPayload {
+            name: name.to_string(),
+            args: args_json,
+        });
     }
 
     fn emit_tool_end(&self, name: &str, result: &apxm_core::types::values::Value) {
-        self.write_trace_event(EventPayload::ToolEnd(
-            apxm_core::events::payload::ToolEndPayload {
-                name: name.to_string(),
-                result: serde_json::to_value(result).unwrap_or_default(),
-            },
-        ));
+        self.write_trace_event(apxm_core::events::payload::ToolEndPayload {
+            name: name.to_string(),
+            result: serde_json::to_value(result).unwrap_or_default(),
+        });
     }
 
     fn emit_operation_start(&self, node_id: u64, op_type: &str) {
@@ -693,10 +696,10 @@ impl ExecutionEventEmitter for SessionEventEmitter {
             }
         }
 
-        let payload = EventPayload::OperationStart(OperationStartPayload {
+        let payload = OperationStartPayload {
             node_id,
             op_type: op_type.to_string(),
-        });
+        };
         self.write_trace_event(payload.clone());
         self.write_node_trace_event(node_id, payload);
         let _ = self.write_live(Some(node_id));
@@ -733,12 +736,12 @@ impl ExecutionEventEmitter for SessionEventEmitter {
             }
         }
 
-        let payload = EventPayload::OperationEnd(OperationEndPayload {
+        let payload = OperationEndPayload {
             node_id,
             op_type: op_type.to_string(),
             duration_ms: duration.as_millis() as u64,
             success,
-        });
+        };
         self.write_trace_event(payload.clone());
         self.write_node_trace_event(node_id, payload);
         self.write_node_completion(node_id, duration, success);
@@ -757,100 +760,78 @@ impl ExecutionEventEmitter for SessionEventEmitter {
     }
 
     fn emit_plan_created(&self, plan_id: &str, steps: usize) {
-        self.write_trace_event(EventPayload::PlanCreated(
-            apxm_core::events::payload::PlanCreatedPayload {
-                plan_id: plan_id.to_string(),
-                steps,
-            },
-        ));
+        self.write_trace_event(apxm_core::events::payload::PlanCreatedPayload {
+            plan_id: plan_id.to_string(),
+            steps,
+        });
     }
 
     fn emit_plan_step_started(&self, plan_id: &str, step_index: usize) {
-        self.write_trace_event(EventPayload::PlanStepStarted(
-            apxm_core::events::payload::PlanStepStartedPayload {
-                plan_id: plan_id.to_string(),
-                step_index,
-            },
-        ));
+        self.write_trace_event(apxm_core::events::payload::PlanStepStartedPayload {
+            plan_id: plan_id.to_string(),
+            step_index,
+        });
     }
 
     fn emit_plan_step_completed(&self, plan_id: &str, step_index: usize, success: bool) {
-        self.write_trace_event(EventPayload::PlanStepCompleted(
-            apxm_core::events::payload::PlanStepCompletedPayload {
-                plan_id: plan_id.to_string(),
-                step_index,
-                success,
-            },
-        ));
+        self.write_trace_event(apxm_core::events::payload::PlanStepCompletedPayload {
+            plan_id: plan_id.to_string(),
+            step_index,
+            success,
+        });
     }
 
     fn emit_memory_read(&self, scope: &str, key: &str) {
-        self.write_trace_event(EventPayload::MemoryRead(
-            apxm_core::events::payload::MemoryReadPayload {
-                scope: scope.to_string(),
-                key: key.to_string(),
-            },
-        ));
+        self.write_trace_event(apxm_core::events::payload::MemoryReadPayload {
+            scope: scope.to_string(),
+            key: key.to_string(),
+        });
     }
 
     fn emit_memory_write(&self, scope: &str, key: &str) {
-        self.write_trace_event(EventPayload::MemoryWrite(
-            apxm_core::events::payload::MemoryWritePayload {
-                scope: scope.to_string(),
-                key: key.to_string(),
-            },
-        ));
+        self.write_trace_event(apxm_core::events::payload::MemoryWritePayload {
+            scope: scope.to_string(),
+            key: key.to_string(),
+        });
     }
 
     fn emit_checkpoint_saved(&self, checkpoint_id: &str) {
-        self.write_trace_event(EventPayload::CheckpointSaved(
-            apxm_core::events::payload::CheckpointSavedPayload {
-                checkpoint_id: checkpoint_id.to_string(),
-            },
-        ));
+        self.write_trace_event(apxm_core::events::payload::CheckpointSavedPayload {
+            checkpoint_id: checkpoint_id.to_string(),
+        });
     }
 
     fn emit_checkpoint_restored(&self, checkpoint_id: &str) {
-        self.write_trace_event(EventPayload::CheckpointRestored(
-            apxm_core::events::payload::CheckpointRestoredPayload {
-                checkpoint_id: checkpoint_id.to_string(),
-            },
-        ));
+        self.write_trace_event(apxm_core::events::payload::CheckpointRestoredPayload {
+            checkpoint_id: checkpoint_id.to_string(),
+        });
     }
 
     fn emit_scheduler_decision(&self, node_id: u64, delay: std::time::Duration, reason: &str) {
-        self.write_trace_event(EventPayload::SchedulerDecision(
-            apxm_core::events::payload::SchedulerDecisionPayload {
-                node_id,
-                delay_ms: delay.as_millis() as u64,
-                reason: reason.to_string(),
-            },
-        ));
+        self.write_trace_event(apxm_core::events::payload::SchedulerDecisionPayload {
+            node_id,
+            delay_ms: delay.as_millis() as u64,
+            reason: reason.to_string(),
+        });
     }
 
     fn emit_gpu_utilization(&self, gpu_id: u32, utilization_pct: f32, memory_pct: f32) {
-        self.write_trace_event(EventPayload::GpuUtilization(
-            apxm_core::events::payload::GpuUtilizationPayload {
-                gpu_id,
-                utilization_pct,
-                memory_pct,
-            },
-        ));
+        self.write_trace_event(apxm_core::events::payload::GpuUtilizationPayload {
+            gpu_id,
+            utilization_pct,
+            memory_pct,
+        });
     }
 
     fn emit_token_usage(&self, node_id: u64, input_tokens: usize, output_tokens: usize) {
-        self.write_trace_event(EventPayload::TokenUsage(
-            apxm_core::events::payload::TokenUsagePayload {
-                node_id,
-                input_tokens,
-                output_tokens,
-            },
-        ));
+        self.write_trace_event(apxm_core::events::payload::TokenUsagePayload {
+            node_id,
+            input_tokens,
+            output_tokens,
+        });
     }
 
     fn emit_memoization_hit(&self, node_id: u64) {
-        self.write_trace_event(EventPayload::MemoizationHit(
-            apxm_core::events::payload::MemoizationHitPayload { node_id },
-        ));
+        self.write_trace_event(apxm_core::events::payload::MemoizationHitPayload { node_id });
     }
 }

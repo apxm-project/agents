@@ -92,7 +92,10 @@ pub fn build_pass_list(
             );
 
             // Target-specific adjustments for O1
-            if matches!(target, OptimizationTarget::Cost | OptimizationTarget::Tokens) {
+            if matches!(
+                target,
+                OptimizationTarget::Cost | OptimizationTarget::Tokens
+            ) {
                 // Add more aggressive DCE for cost/tokens targets
                 passes.insert(passes.len() - 1, DEAD_CONTEXT_ELIMINATION.to_string());
             }
@@ -191,57 +194,57 @@ pub fn build_pass_list(
         }
         OptimizationLevel::O3 => {
             passes.extend(
-                [NORMALIZE, BUILD_PROMPT, DSPY_OPTIMIZE, PROMPT_CANONICALIZATION, UNCONSUMED_VALUE_WARNING]
-                    .iter()
-                    .map(|s| s.to_string()),
+                [
+                    NORMALIZE,
+                    BUILD_PROMPT,
+                    DSPY_OPTIMIZE,
+                    PROMPT_CANONICALIZATION,
+                    UNCONSUMED_VALUE_WARNING,
+                ]
+                .iter()
+                .map(|s| s.to_string()),
             );
 
             let convergence_passes: Vec<String> = match target {
-                OptimizationTarget::Tokens => {
-                    vec![
-                        DEAD_CONTEXT_ELIMINATION,
-                        TEMPLATE_SPECIALIZATION,
-                        SCHEMA_NARROWING,
-                        SCHEDULING,
-                        FUSE_ASK_OPS,
-                        CONDENSE_OPS,
-                        ASSIGN_PRIORITY,
-                        CANONICALIZER,
-                    ]
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect()
-                }
-                OptimizationTarget::Latency | OptimizationTarget::Parallelism => {
-                    vec![
-                        SCHEDULING,
-                        TEMPLATE_SPECIALIZATION,
-                        SCHEMA_NARROWING,
-                        FUSE_ASK_OPS,
-                        CONDENSE_OPS,
-                        ASSIGN_PRIORITY,
-                        DEAD_CONTEXT_ELIMINATION,
-                        CANONICALIZER,
-                    ]
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect()
-                }
-                _ => {
-                    vec![
-                        TEMPLATE_SPECIALIZATION,
-                        SCHEMA_NARROWING,
-                        SCHEDULING,
-                        FUSE_ASK_OPS,
-                        CONDENSE_OPS,
-                        ASSIGN_PRIORITY,
-                        DEAD_CONTEXT_ELIMINATION,
-                        CANONICALIZER,
-                    ]
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect()
-                }
+                OptimizationTarget::Tokens => vec![
+                    DEAD_CONTEXT_ELIMINATION,
+                    TEMPLATE_SPECIALIZATION,
+                    SCHEMA_NARROWING,
+                    SCHEDULING,
+                    FUSE_ASK_OPS,
+                    CONDENSE_OPS,
+                    ASSIGN_PRIORITY,
+                    CANONICALIZER,
+                ]
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+                OptimizationTarget::Latency | OptimizationTarget::Parallelism => vec![
+                    SCHEDULING,
+                    TEMPLATE_SPECIALIZATION,
+                    SCHEMA_NARROWING,
+                    FUSE_ASK_OPS,
+                    CONDENSE_OPS,
+                    ASSIGN_PRIORITY,
+                    DEAD_CONTEXT_ELIMINATION,
+                    CANONICALIZER,
+                ]
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+                _ => vec![
+                    TEMPLATE_SPECIALIZATION,
+                    SCHEMA_NARROWING,
+                    SCHEDULING,
+                    FUSE_ASK_OPS,
+                    CONDENSE_OPS,
+                    ASSIGN_PRIORITY,
+                    DEAD_CONTEXT_ELIMINATION,
+                    CANONICALIZER,
+                ]
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
             };
 
             for _ in 0..MAX_CONVERGENCE_ITERATIONS {
@@ -358,14 +361,20 @@ mod tests {
 
     #[test]
     fn assign_priority_runs_after_fusion() {
-        for target in [OptimizationTarget::Balanced, OptimizationTarget::Latency,
-                       OptimizationTarget::Cost, OptimizationTarget::Tokens] {
+        for target in [
+            OptimizationTarget::Balanced,
+            OptimizationTarget::Latency,
+            OptimizationTarget::Cost,
+            OptimizationTarget::Tokens,
+        ] {
             for level in [OptimizationLevel::O1, OptimizationLevel::O2] {
                 let passes = build_pass_list(level, false, target);
                 let fusion_idx = passes.iter().position(|p| p == FUSE_ASK_OPS).unwrap();
                 let priority_idx = passes.iter().position(|p| p == ASSIGN_PRIORITY).unwrap();
-                assert!(priority_idx > fusion_idx,
-                        "ASSIGN_PRIORITY must run after FUSE_ASK_OPS at {level:?}/{target:?}");
+                assert!(
+                    priority_idx > fusion_idx,
+                    "ASSIGN_PRIORITY must run after FUSE_ASK_OPS at {level:?}/{target:?}"
+                );
             }
         }
     }

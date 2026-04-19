@@ -4,7 +4,7 @@
 //! can visualise `.air` files without requiring a full MLIR toolchain.
 
 use apxm_ais::{AISOperationType, get_operation_spec};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 
 /// Parse AIR textual IR into a JSON object matching the `AirModule` / `ApxmGraph` shape:
@@ -68,7 +68,9 @@ pub fn parse_air_text(source: &str) -> Result<Value, String> {
             let used_refs = extract_operand_refs(line);
             let already_returns = used_refs.iter().any(|r| {
                 defs.get(r).map_or(false, |&def_id| {
-                    nodes.iter().any(|n| n["id"] == def_id && n["op"] == "Return")
+                    nodes
+                        .iter()
+                        .any(|n| n["id"] == def_id && n["op"] == "Return")
                 })
             });
             if !already_returns {
@@ -112,10 +114,7 @@ pub fn parse_air_text(source: &str) -> Result<Value, String> {
             .to_string();
 
         let op_type = mnemonic_to_op_type(&mnemonic);
-        let node_name = result_name
-            .as_deref()
-            .unwrap_or(&mnemonic)
-            .to_string();
+        let node_name = result_name.as_deref().unwrap_or(&mnemonic).to_string();
 
         let id = next_id;
         next_id += 1;
@@ -130,7 +129,9 @@ pub fn parse_air_text(source: &str) -> Result<Value, String> {
         let quoted_strings = extract_quoted_strings(after_mnemonic);
         if let Some(first) = quoted_strings.first() {
             match mnemonic.as_str() {
-                "spawn_agent" => { attrs.insert("agent_name".into(), json!(first)); }
+                "spawn_agent" => {
+                    attrs.insert("agent_name".into(), json!(first));
+                }
                 "const_str" => {
                     let preview = if first.len() > 80 {
                         format!("{}...", &first[..80])
@@ -139,10 +140,18 @@ pub fn parse_air_text(source: &str) -> Result<Value, String> {
                     };
                     attrs.insert("value".into(), json!(preview));
                 }
-                "communicate" => { attrs.insert("template".into(), json!(first)); }
-                "print" => { attrs.insert("format".into(), json!(first)); }
-                "ask" | "think" => { attrs.insert("template".into(), json!(first)); }
-                _ => { attrs.insert("value".into(), json!(first)); }
+                "communicate" => {
+                    attrs.insert("template".into(), json!(first));
+                }
+                "print" => {
+                    attrs.insert("format".into(), json!(first));
+                }
+                "ask" | "think" => {
+                    attrs.insert("template".into(), json!(first));
+                }
+                _ => {
+                    attrs.insert("value".into(), json!(first));
+                }
             }
         }
 
@@ -221,7 +230,9 @@ fn infer_agent_edges(nodes: &[Value], edges: &mut Vec<Value>) {
             continue;
         }
         for &(comm_id, comm_name) in &communicates {
-            if comm_name.starts_with(&format!("{role}_")) || comm_name.contains(&format!("_{role}_")) {
+            if comm_name.starts_with(&format!("{role}_"))
+                || comm_name.contains(&format!("_{role}_"))
+            {
                 if !existing.contains(&(spawn_id, comm_id)) {
                     edges.push(json!({ "from": spawn_id, "to": comm_id, "dependency": "Control" }));
                 }
@@ -481,8 +492,8 @@ mod tests {
   func.func @test_flow() -> !ais.token attributes {ais.entry} {
     %a = ais.spawn_agent "worker" {profile = "claude"} : !ais.token
     %b = ais.const_str "hello world" : !ais.token
-    %c = ais.communicate "{0}" to "worker" (%b : !ais.token) : !ais.token
-    ais.print "result: {0}" [%c : !ais.token]
+    %c = ais.communicate "{b}" to "worker" (%b : !ais.token) {input_names = ["b"]} : !ais.token
+    ais.print "result: {c}" [%c : !ais.token] {input_names = ["c"]}
     func.return %c : !ais.token
   }
 }"#;

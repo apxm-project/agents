@@ -18,37 +18,160 @@ pub struct BuiltinModelSpec {
 /// All built-in models, grouped by provider.
 pub const BUILTIN_MODELS: &[BuiltinModelSpec] = &[
     // --- Anthropic ---
-    BuiltinModelSpec { id: "claude-opus-4-5",            provider: "anthropic", is_default: false },
-    BuiltinModelSpec { id: "claude-sonnet-4-5",          provider: "anthropic", is_default: true  },
-    BuiltinModelSpec { id: "claude-3-7-sonnet",          provider: "anthropic", is_default: false },
-    BuiltinModelSpec { id: "claude-3-5-sonnet-20241022", provider: "anthropic", is_default: false },
-    BuiltinModelSpec { id: "claude-3-opus-20240229",     provider: "anthropic", is_default: false },
-    BuiltinModelSpec { id: "claude-3-sonnet-20240229",   provider: "anthropic", is_default: false },
-    BuiltinModelSpec { id: "claude-3-haiku-20240307",    provider: "anthropic", is_default: false },
+    BuiltinModelSpec {
+        id: "claude-opus-4-6",
+        provider: "anthropic",
+        is_default: false,
+    },
+    BuiltinModelSpec {
+        id: "claude-sonnet-4-6",
+        provider: "anthropic",
+        is_default: true,
+    },
+    BuiltinModelSpec {
+        id: "claude-haiku-4-5",
+        provider: "anthropic",
+        is_default: false,
+    },
+    BuiltinModelSpec {
+        id: "claude-opus-4-5",
+        provider: "anthropic",
+        is_default: false,
+    },
+    BuiltinModelSpec {
+        id: "claude-sonnet-4-5",
+        provider: "anthropic",
+        is_default: false,
+    },
+    BuiltinModelSpec {
+        id: "claude-3-7-sonnet",
+        provider: "anthropic",
+        is_default: false,
+    },
+    BuiltinModelSpec {
+        id: "claude-3-5-sonnet-20241022",
+        provider: "anthropic",
+        is_default: false,
+    },
+    BuiltinModelSpec {
+        id: "claude-3-opus-20240229",
+        provider: "anthropic",
+        is_default: false,
+    },
+    BuiltinModelSpec {
+        id: "claude-3-sonnet-20240229",
+        provider: "anthropic",
+        is_default: false,
+    },
+    BuiltinModelSpec {
+        id: "claude-3-haiku-20240307",
+        provider: "anthropic",
+        is_default: false,
+    },
     // --- OpenAI ---
-    BuiltinModelSpec { id: "gpt-4o",        provider: "openai", is_default: false },
-    BuiltinModelSpec { id: "gpt-4o-mini",   provider: "openai", is_default: true  },
-    BuiltinModelSpec { id: "gpt-4-turbo",   provider: "openai", is_default: false },
-    BuiltinModelSpec { id: "gpt-4",         provider: "openai", is_default: false },
-    BuiltinModelSpec { id: "gpt-3.5-turbo", provider: "openai", is_default: false },
-    BuiltinModelSpec { id: "gpt-5",         provider: "openai", is_default: false },
-    BuiltinModelSpec { id: "gpt-5-mini",    provider: "openai", is_default: false },
-    BuiltinModelSpec { id: "gpt-5-nano",    provider: "openai", is_default: false },
-    BuiltinModelSpec { id: "gpt-5.1",       provider: "openai", is_default: false },
-    BuiltinModelSpec { id: "gpt-5.2",       provider: "openai", is_default: false },
-    BuiltinModelSpec { id: "o1",            provider: "openai", is_default: false },
-    BuiltinModelSpec { id: "o1-mini",       provider: "openai", is_default: false },
-    BuiltinModelSpec { id: "o1-preview",    provider: "openai", is_default: false },
+    BuiltinModelSpec {
+        id: "gpt-4o",
+        provider: "openai",
+        is_default: false,
+    },
+    BuiltinModelSpec {
+        id: "gpt-4o-mini",
+        provider: "openai",
+        is_default: true,
+    },
+    BuiltinModelSpec {
+        id: "gpt-4-turbo",
+        provider: "openai",
+        is_default: false,
+    },
+    BuiltinModelSpec {
+        id: "gpt-4",
+        provider: "openai",
+        is_default: false,
+    },
+    BuiltinModelSpec {
+        id: "gpt-3.5-turbo",
+        provider: "openai",
+        is_default: false,
+    },
+    BuiltinModelSpec {
+        id: "gpt-5",
+        provider: "openai",
+        is_default: false,
+    },
+    BuiltinModelSpec {
+        id: "gpt-5-mini",
+        provider: "openai",
+        is_default: false,
+    },
+    BuiltinModelSpec {
+        id: "gpt-5-nano",
+        provider: "openai",
+        is_default: false,
+    },
+    BuiltinModelSpec {
+        id: "gpt-5.1",
+        provider: "openai",
+        is_default: false,
+    },
+    BuiltinModelSpec {
+        id: "gpt-5.2",
+        provider: "openai",
+        is_default: false,
+    },
+    BuiltinModelSpec {
+        id: "o1",
+        provider: "openai",
+        is_default: false,
+    },
+    BuiltinModelSpec {
+        id: "o1-mini",
+        provider: "openai",
+        is_default: false,
+    },
+    BuiltinModelSpec {
+        id: "o1-preview",
+        provider: "openai",
+        is_default: false,
+    },
+    BuiltinModelSpec {
+        id: "o3",
+        provider: "openai",
+        is_default: false,
+    },
+    BuiltinModelSpec {
+        id: "o4-mini",
+        provider: "openai",
+        is_default: false,
+    },
     // --- Google ---
-    BuiltinModelSpec { id: "gemini-2.5-flash", provider: "google", is_default: true  },
-    BuiltinModelSpec { id: "gemini-2.0-pro",   provider: "google", is_default: false },
-    BuiltinModelSpec { id: "gemini-1.5-pro",   provider: "google", is_default: false },
-    BuiltinModelSpec { id: "gemini-1.5-flash",  provider: "google", is_default: false },
+    BuiltinModelSpec {
+        id: "gemini-2.5-flash",
+        provider: "google",
+        is_default: true,
+    },
+    BuiltinModelSpec {
+        id: "gemini-2.0-pro",
+        provider: "google",
+        is_default: false,
+    },
+    BuiltinModelSpec {
+        id: "gemini-1.5-pro",
+        provider: "google",
+        is_default: false,
+    },
+    BuiltinModelSpec {
+        id: "gemini-1.5-flash",
+        provider: "google",
+        is_default: false,
+    },
 ];
 
 /// All builtin models for a given provider.
 pub fn models_for_provider(provider: &str) -> impl Iterator<Item = &'static BuiltinModelSpec> {
-    BUILTIN_MODELS.iter().filter(move |m| m.provider == provider)
+    BUILTIN_MODELS
+        .iter()
+        .filter(move |m| m.provider == provider)
 }
 
 /// The default model for a given provider, if one is marked.
@@ -101,7 +224,10 @@ mod tests {
 
     #[test]
     fn default_model_for_anthropic() {
-        assert_eq!(default_model_for_provider("anthropic"), Some("claude-sonnet-4-5"));
+        assert_eq!(
+            default_model_for_provider("anthropic"),
+            Some("claude-sonnet-4-6")
+        );
     }
 
     #[test]
@@ -111,7 +237,10 @@ mod tests {
 
     #[test]
     fn default_model_for_google() {
-        assert_eq!(default_model_for_provider("google"), Some("gemini-2.5-flash"));
+        assert_eq!(
+            default_model_for_provider("google"),
+            Some("gemini-2.5-flash")
+        );
     }
 
     #[test]
@@ -127,8 +256,8 @@ mod tests {
 
     #[test]
     fn models_for_provider_count() {
-        assert_eq!(models_for_provider("anthropic").count(), 7);
-        assert_eq!(models_for_provider("openai").count(), 13);
+        assert_eq!(models_for_provider("anthropic").count(), 10);
+        assert_eq!(models_for_provider("openai").count(), 15);
         assert_eq!(models_for_provider("google").count(), 4);
     }
 }

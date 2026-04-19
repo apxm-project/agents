@@ -17,30 +17,28 @@ def mixed_priority(g: GraphRecorder):
     """Critical path + background speculative work."""
 
     # Critical path: user-facing query
-    user_query = g.text(
-        "user_query",
-        value="What are the top 3 programming languages for web development in 2026?"
-    )
+    user_query = "What are the top 3 programming languages for web development in 2026?"
 
     # CRITICAL PATH - should get highest priority
     quick_answer = g.ask(
-        "quick_answer",
-        "Provide a concise answer to this question:\n{user_query}\n\n"
+        name="quick_answer",
+        prompt="Provide a concise answer to this question:\n"
+        + user_query + "\n\n"
         "Answer in 2-3 sentences, prioritize speed."
     )
 
     # CRITICAL PATH - refine the answer
     final_answer = g.think(
-        "final_answer",
-        "Given this quick answer:\n{quick_answer}\n\n"
+        name="final_answer",
+        prompt="Given this quick answer:\n{quick_answer}\n\n"
         "Refine it to be more precise and add brief justification.\n"
         "Keep it under 5 sentences."
     )
 
     # Background task 1 - speculative deep analysis (lower priority)
     deep_analysis = g.reason(
-        "deep_analysis",
-        "Original query: {user_query}\n\n"
+        name="deep_analysis",
+        prompt="Original query: " + user_query + "\n\n"
         "Provide a comprehensive analysis covering:\n"
         "- Language ecosystem maturity\n"
         "- Job market trends\n"
@@ -51,8 +49,8 @@ def mixed_priority(g: GraphRecorder):
 
     # Background task 2 - speculative comparison (lower priority)
     comparison = g.think(
-        "comparison",
-        "Original query: {user_query}\n\n"
+        name="comparison",
+        prompt="Original query: " + user_query + "\n\n"
         "Create a detailed comparison table of the top languages.\n"
         "Include: performance, learning curve, community size, ecosystem.\n"
         "This is background analysis, not time-critical."
@@ -60,8 +58,8 @@ def mixed_priority(g: GraphRecorder):
 
     # Background task 3 - speculative future trends (lower priority)
     future_trends = g.think(
-        "future_trends",
-        "Original query: {user_query}\n\n"
+        name="future_trends",
+        prompt="Original query: " + user_query + "\n\n"
         "Predict language trends for the next 5 years.\n"
         "What new languages might emerge? What might decline?\n"
         "This is background analysis, not time-critical."
@@ -77,13 +75,13 @@ def mixed_priority(g: GraphRecorder):
     )
 
     output = g.print(
-        "=== QUICK ANSWER (Critical Path) ===\n{final_answer}\n\n"
+        message="=== QUICK ANSWER (Critical Path) ===\n{final_answer}\n\n"
         "=== DEEP ANALYSIS (Background) ===\n{deep_analysis}\n\n"
         "=== COMPARISON (Background) ===\n{comparison}\n\n"
         "=== FUTURE TRENDS (Background) ===\n{future_trends}"
     )
 
-    output >> complete_response
+    g.add_edge(output, complete_response, dependency="Control")
     g.done(complete_response)
 
 
@@ -91,6 +89,6 @@ if __name__ == "__main__":
     # Output the graph as JSON
     print(mixed_priority._graph.to_air())
     # To execute directly:
-    # import asyncio
-    # result = asyncio.run(mixed_priority())
+    # import apxm
+    # result = apxm.run(mixed_priority())
     # print(result.content)

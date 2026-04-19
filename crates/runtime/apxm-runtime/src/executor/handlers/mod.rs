@@ -33,6 +33,7 @@ pub mod return_op;
 pub mod spawn_agent;
 pub mod spawn_team;
 pub mod switch;
+pub mod template;
 pub mod try_catch;
 pub mod umem;
 pub mod update_goal;

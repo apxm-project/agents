@@ -36,30 +36,24 @@ def autofix_workflow(g: GraphRecorder):
     validator = g.spawn("validator", profile="claude", cwd=cwd)
 
     # Step 1: Run validation
-    validate_task = g.text(
-        "validate_task",
-        value="""Run the APXM autofix validation for scope: examples/python
+    validator.ask("""Run the APXM autofix validation for scope: examples/python
 
 Execute:
   python3 scripts/apxm-autofix.py --scope examples/python --report-only
 
 Report the full output (it will show validation results, task files created in /tmp/autofix-tasks/, etc.)
-"""
-    )
+""")
 
-    validator.ask("{0}")
-    validate_task | validator.get_last_node()
-
-    print1 = g.print("print_validation", message="=== VALIDATION OUTPUT ===\n{0}")
-    validator.get_last_node() | print1
+    print1 = g.print(name="print_validation", message="=== VALIDATION OUTPUT ===\n{validator}")
+    g.add_edge(validator.get_last_node(), print1)
 
     # Step 2: Classify failures into clusters
     classify = g.think(
-        "classify_failures",
-        template="""Analyze the autofix validation output and classify failures:
+        name="classify_failures",
+        prompt="""Analyze the autofix validation output and classify failures:
 
 Validation output from validator:
-{0}
+{validator}
 
 Parse the output and create failure clusters:
 1. Group by error type (import_error, mlir_parse_error, compile_error, etc.)
@@ -87,11 +81,11 @@ Output JSON:
 If status is "pass", output {{"status": "pass", "clusters": []}}.
 """
     )
-    validator.get_last_node() | classify
-    print1 >> classify
+    g.add_edge(validator.get_last_node(), classify)
+    g.add_edge(print1, classify, dependency="Control")
 
-    print2 = g.print("print_classification", message="=== FAILURE CLASSIFICATION ===\n{0}")
-    classify | print2
+    print2 = g.print(name="print_classification", message="=== FAILURE CLASSIFICATION ===\n{classify}")
+    g.add_edge(classify, print2)
 
     # Step 3: Branch on whether there are failures
     # Note: In a real implementation, we'd use BRANCH_ON_VALUE to conditionally execute.
@@ -104,10 +98,10 @@ If status is "pass", output {{"status": "pass", "clusters": []}}.
 
     # Build fix prompts for each cluster type
     fix_import_task = g.ask(
-        "build_fix_import_task",
-        template="""Fix import errors from the classification:
+        name="build_fix_import_task",
+        prompt="""Fix import errors from the classification:
 
-Classification: {0}
+Classification: {classify}
 
 If there are import_error failures:
 1. Read the task file from /tmp/autofix-tasks/import_error.md
@@ -122,14 +116,14 @@ If there are no import_error failures, output "No import errors to fix".
 Report what you fixed and verification results.
 """
     )
-    classify | fix_import_task
-    print2 >> fix_import_task
+    g.add_edge(classify, fix_import_task)
+    g.add_edge(print2, fix_import_task, dependency="Control")
 
     fix_mlir_task = g.ask(
-        "build_fix_mlir_task",
-        template="""Fix MLIR parse errors from the classification:
+        name="build_fix_mlir_task",
+        prompt="""Fix MLIR parse errors from the classification:
 
-Classification: {0}
+Classification: {classify}
 
 If there are mlir_parse_error failures:
 1. Read the task file from /tmp/autofix-tasks/mlir_parse_error.md
@@ -144,14 +138,14 @@ If there are no mlir_parse_error failures, output "No MLIR errors to fix".
 Report what you fixed and verification results.
 """
     )
-    classify | fix_mlir_task
-    print2 >> fix_mlir_task
+    g.add_edge(classify, fix_mlir_task)
+    g.add_edge(print2, fix_mlir_task, dependency="Control")
 
     fix_compile_task = g.ask(
-        "build_fix_compile_task",
-        template="""Fix compile errors from the classification:
+        name="build_fix_compile_task",
+        prompt="""Fix compile errors from the classification:
 
-Classification: {0}
+Classification: {classify}
 
 If there are compile_error failures:
 1. Read the task file from /tmp/autofix-tasks/compile_error.md
@@ -166,71 +160,66 @@ If there are no compile_error failures, output "No compile errors to fix".
 Report what you fixed and verification results.
 """
     )
-    classify | fix_compile_task
-    print2 >> fix_compile_task
+    g.add_edge(classify, fix_compile_task)
+    g.add_edge(print2, fix_compile_task, dependency="Control")
 
     # All fixers work in parallel
-    fixer1.ask("{0}")
-    fix_import_task | fixer1.get_last_node()
+    fixer1.ask("{fix_import_task}")
+    g.add_edge(fix_import_task, fixer1.get_last_node())
 
-    fixer2.ask("{0}")
-    fix_mlir_task | fixer2.get_last_node()
+    fixer2.ask("{fix_mlir_task}")
+    g.add_edge(fix_mlir_task, fixer2.get_last_node())
 
-    fixer3.ask("{0}")
-    fix_compile_task | fixer3.get_last_node()
+    fixer3.ask("{fix_compile_task}")
+    g.add_edge(fix_compile_task, fixer3.get_last_node())
 
-    print3 = g.print("print_fix_import", message="=== IMPORT FIXES ===\n{0}")
-    fixer1.get_last_node() | print3
+    print3 = g.print(name="print_fix_import", message="=== IMPORT FIXES ===\n{fixer1}")
+    g.add_edge(fixer1.get_last_node(), print3)
 
-    print4 = g.print("print_fix_mlir", message="=== MLIR FIXES ===\n{0}")
-    fixer2.get_last_node() | print4
+    print4 = g.print(name="print_fix_mlir", message="=== MLIR FIXES ===\n{fixer2}")
+    g.add_edge(fixer2.get_last_node(), print4)
 
-    print5 = g.print("print_fix_compile", message="=== COMPILE FIXES ===\n{0}")
-    fixer3.get_last_node() | print5
+    print5 = g.print(name="print_fix_compile", message="=== COMPILE FIXES ===\n{fixer3}")
+    g.add_edge(fixer3.get_last_node(), print5)
 
     # Step 5: Wait for all fixers to complete
     wait = g.wait_all(
-        "wait_all_fixers",
+        name="wait_all_fixers",
         fixer1.get_last_node(),
         fixer2.get_last_node(),
         fixer3.get_last_node()
     )
-    print3 >> wait
-    print4 >> wait
-    print5 >> wait
+    g.add_edge(print3, wait, dependency="Control")
+    g.add_edge(print4, wait, dependency="Control")
+    g.add_edge(print5, wait, dependency="Control")
 
     # Step 6: Run final verification
     verifier = g.spawn("verifier", profile="claude", cwd=cwd)
 
-    verify_task = g.text(
-        "verify_task",
-        value="""Run final verification of all fixes:
+    verifier.ask("""Run final verification of all fixes:
 
 Execute:
   python3 scripts/apxm-autofix.py --scope examples/python --verify-only
 
 Report the results (pass/fail counts, any remaining issues).
-"""
-    )
+""")
+    verify_comm = verifier.get_last_node()
+    g.add_edge(wait, verify_comm, dependency="Control")
 
-    verifier.ask("{0}")
-    verify_task | verifier.get_last_node()
-    wait >> verifier.get_last_node()
-
-    print6 = g.print("print_verification", message="=== VERIFICATION OUTPUT ===\n{0}")
-    verifier.get_last_node() | print6
+    print6 = g.print(name="print_verification", message="=== VERIFICATION OUTPUT ===\n{verifier}")
+    g.add_edge(verify_comm, print6)
 
     # Step 7: Generate final report
     report = g.think(
-        "generate_report",
-        template="""Generate autofix report:
+        name="generate_report",
+        prompt="""Generate autofix report:
 
-Initial validation: {0}
-Classification: {1}
-Import fixes: {2}
-MLIR fixes: {3}
-Compile fixes: {4}
-Final verification: {5}
+Initial validation: {validator}
+Classification: {classify}
+Import fixes: {fixer1}
+MLIR fixes: {fixer2}
+Compile fixes: {fixer3}
+Final verification: {verifier}
 
 Report:
 - Scope: examples/python
@@ -246,16 +235,16 @@ Report:
 If status is partial or failed, list remaining issues and suggested next steps.
 """
     )
-    validator.get_last_node() | report
-    classify | report
-    fixer1.get_last_node() | report
-    fixer2.get_last_node() | report
-    fixer3.get_last_node() | report
-    verifier.get_last_node() | report
-    print6 >> report
+    g.add_edge(validator.get_last_node(), report)
+    g.add_edge(classify, report)
+    g.add_edge(fixer1.get_last_node(), report)
+    g.add_edge(fixer2.get_last_node(), report)
+    g.add_edge(fixer3.get_last_node(), report)
+    g.add_edge(verifier.get_last_node(), report)
+    g.add_edge(print6, report, dependency="Control")
 
-    print7 = g.print("print_report", message="=== AUTOFIX REPORT ===\n{0}")
-    report | print7
+    print7 = g.print(name="print_report", message="=== AUTOFIX REPORT ===\n{report}")
+    g.add_edge(report, print7)
 
     g.done(print7)
 

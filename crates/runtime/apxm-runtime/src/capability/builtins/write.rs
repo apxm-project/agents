@@ -1,9 +1,9 @@
 use super::require_string_arg;
-use apxm_core::{error::RuntimeError, types::Value};
 use crate::capability::{
     executor::{CapabilityExecutor, CapabilityResult},
     metadata::CapabilityMetadata,
 };
+use apxm_core::{error::RuntimeError, types::Value};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -53,7 +53,6 @@ async fn atomic_write_with_backup(path: &Path, content: &str) -> std::io::Result
         }
     }
 }
-
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WriteConfig {

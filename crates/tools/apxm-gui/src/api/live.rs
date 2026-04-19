@@ -9,8 +9,8 @@ use std::time::{Duration, SystemTime};
 
 use axum::extract::{Path as AxumPath, Query};
 use axum::http::StatusCode;
-use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::Json;
+use axum::response::sse::{Event, KeepAlive, Sse};
 use futures::stream::Stream;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
@@ -110,9 +110,7 @@ pub fn watch_file(path: PathBuf) -> mpsc::Receiver<String> {
 
                         if file_len > last_pos {
                             // Seek to where we left off and read new data.
-                            if let Err(e) =
-                                file.seek(std::io::SeekFrom::Start(last_pos)).await
-                            {
+                            if let Err(e) = file.seek(std::io::SeekFrom::Start(last_pos)).await {
                                 warn!(path = %path.display(), error = %e, "seek failed");
                                 tokio::time::sleep(POLL_INTERVAL).await;
                                 continue;
@@ -263,9 +261,7 @@ pub async fn sse_session_stream(
         }
     };
 
-    Ok(Sse::new(stream).keep_alive(
-        KeepAlive::new().interval(HEARTBEAT_INTERVAL),
-    ))
+    Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(HEARTBEAT_INTERVAL)))
 }
 
 // ---------------------------------------------------------------------------
@@ -372,9 +368,7 @@ pub async fn sse_node_output(
         }
     };
 
-    Ok(Sse::new(stream).keep_alive(
-        KeepAlive::new().interval(HEARTBEAT_INTERVAL),
-    ))
+    Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(HEARTBEAT_INTERVAL)))
 }
 
 // ---------------------------------------------------------------------------
@@ -385,8 +379,8 @@ pub async fn sse_node_output(
 ///
 /// Lists all session directories under `~/.apxm/sessions/`, returning an
 /// array of session summaries parsed from each `manifest.json`.
-pub async fn list_sessions(
-) -> Result<Json<Vec<SessionInfo>>, (StatusCode, Json<serde_json::Value>)> {
+pub async fn list_sessions() -> Result<Json<Vec<SessionInfo>>, (StatusCode, Json<serde_json::Value>)>
+{
     let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
     let sessions_dir = PathBuf::from(home).join(".apxm").join("sessions");
 
@@ -464,13 +458,9 @@ pub async fn list_sessions(
             .unwrap_or("")
             .to_string();
 
-        let duration_ms = manifest
-            .get("duration_ms")
-            .and_then(|v| v.as_u64());
+        let duration_ms = manifest.get("duration_ms").and_then(|v| v.as_u64());
 
-        let node_count = manifest
-            .get("node_count")
-            .and_then(|v| v.as_u64());
+        let node_count = manifest.get("node_count").and_then(|v| v.as_u64());
 
         let mtime_epoch = tokio::fs::metadata(&manifest_path)
             .await

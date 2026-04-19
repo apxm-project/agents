@@ -47,7 +47,8 @@ impl Compiler {
 
         if matches!(ext, Some("mlir")) {
             return Err(DriverError::Driver(
-                ".mlir is a low-level format emitted by the compiler. Use .air for compilation.".to_string(),
+                ".mlir is a low-level format emitted by the compiler. Use .air for compilation."
+                    .to_string(),
             ));
         }
 
@@ -55,8 +56,7 @@ impl Compiler {
         if matches!(ext, Some("air")) {
             let air_text = fs::read_to_string(path)?;
             let pipeline = Pipeline::with_opt_level(&self.context, self.opt_level);
-            let module = pipeline.compile(&air_text)
-                .map_err(DriverError::Compiler)?;
+            let module = pipeline.compile(&air_text).map_err(DriverError::Compiler)?;
             return Ok(module);
         }
 
@@ -151,9 +151,9 @@ impl Compiler {
 
     /// Compile an in-memory AIR module by emitting .air text and running optimizer passes.
     pub fn compile_graph(&self, module: &AirModule) -> Result<Module, DriverError> {
-        let air_text = module.to_air().map_err(|e| {
-            DriverError::Driver(format!("AIR emission failed: {}", e))
-        })?;
+        let air_text = module
+            .to_air()
+            .map_err(|e| DriverError::Driver(format!("AIR emission failed: {}", e)))?;
         let pipeline = Pipeline::with_opt_level(&self.context, self.opt_level);
         pipeline.compile(&air_text).map_err(DriverError::Compiler)
     }
@@ -164,9 +164,9 @@ impl Compiler {
         module: &AirModule,
         config: PipelineConfig,
     ) -> Result<Module, DriverError> {
-        let air_text = module.to_air().map_err(|e| {
-            DriverError::Driver(format!("AIR emission failed: {}", e))
-        })?;
+        let air_text = module
+            .to_air()
+            .map_err(|e| DriverError::Driver(format!("AIR emission failed: {}", e)))?;
         let pipeline = Pipeline::with_config(&self.context, config);
         pipeline.compile(&air_text).map_err(DriverError::Compiler)
     }
@@ -176,15 +176,10 @@ impl Compiler {
         &self,
         module: &AirModule,
     ) -> Result<(Module, PipelineDiagnostics), DriverError> {
-        let air_text = module.to_air().map_err(|e| {
-            DriverError::Driver(format!("AIR emission failed: {}", e))
-        })?;
         let pipeline = Pipeline::with_opt_level(&self.context, self.opt_level);
-        let compiled = pipeline.compile(&air_text).map_err(DriverError::Compiler)?;
-        // For diagnostics with AIR text input, we compile once through the standard path.
-        // Per-pass diagnostics require the graph-level pass manager; since we now go through
-        // AIR text, we return empty diagnostics for the graph-level passes.
-        Ok((compiled, PipelineDiagnostics::default()))
+        pipeline
+            .compile_graph_with_diagnostics(module)
+            .map_err(DriverError::Compiler)
     }
 
     /// Compile an in-memory AIR module with a custom config and collect per-pass diagnostics.
@@ -193,12 +188,10 @@ impl Compiler {
         module: &AirModule,
         config: PipelineConfig,
     ) -> Result<(Module, PipelineDiagnostics), DriverError> {
-        let air_text = module.to_air().map_err(|e| {
-            DriverError::Driver(format!("AIR emission failed: {}", e))
-        })?;
         let pipeline = Pipeline::with_config(&self.context, config);
-        let compiled = pipeline.compile(&air_text).map_err(DriverError::Compiler)?;
-        Ok((compiled, PipelineDiagnostics::default()))
+        pipeline
+            .compile_graph_with_diagnostics(module)
+            .map_err(DriverError::Compiler)
     }
 
     /// Load a JSON graph file from disk into an `AirModule`.
@@ -223,8 +216,8 @@ impl Compiler {
     /// This produces MLIR text (the AIS dialect) that can be re-compiled.
     /// Analogous to LLVM .ll — human-readable, diffable, debuggable, and round-trippable.
     pub fn emit_air(&self, module: &AirModule) -> Result<String, DriverError> {
-        module.to_air().map_err(|e| {
-            DriverError::Driver(format!("Failed to generate .air (MLIR) text: {}", e))
-        })
+        module
+            .to_air()
+            .map_err(|e| DriverError::Driver(format!("Failed to generate .air (MLIR) text: {}", e)))
     }
 }

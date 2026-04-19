@@ -23,9 +23,10 @@
 pub mod air_builder;
 pub mod api;
 pub mod codegen;
-pub mod token_estimate;
 mod ffi;
 pub mod passes;
+pub mod template;
+pub mod token_estimate;
 
 pub use air_builder::{AirEdge, AirError, AirModule, AirModuleBuilder, AirNode, AirParam};
 pub use api::{Context, Module, Pipeline};

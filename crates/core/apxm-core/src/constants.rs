@@ -571,6 +571,8 @@ pub mod mlir {
     pub mod types {
         /// Token type (!ais.token).
         pub const TOKEN: &str = "!ais.token";
+        /// Handle type (!ais.handle).
+        pub const HANDLE: &str = "!ais.handle";
         /// Goal type (!ais.goal<0>).
         pub const GOAL: &str = "!ais.goal<0>";
     }

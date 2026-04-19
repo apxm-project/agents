@@ -67,10 +67,32 @@ export type PassInfo = {
   description: string;
 };
 
+export type PassMetricEntry = {
+  pass_name: string;
+  category: string;
+  summary: string;
+  description: string;
+  duration_ms: number | null;
+  ops_before: number | null;
+  ops_after: number | null;
+  ops_delta: number | null;
+};
+
+export type PassSummary = {
+  total_passes: number;
+  initial_ops: number;
+  final_ops: number;
+  total_ops_eliminated: number;
+  active_passes: string[];
+  total_duration_ms: number;
+};
+
 export type CompileResult = {
   success: boolean;
   artifact_path: string | null;
   passes: string[];
+  pass_metrics: PassMetricEntry[];
+  pass_summary: PassSummary | null;
   duration_ms: number;
   stdout: string;
   stderr: string;
@@ -103,6 +125,13 @@ export type AgentProfile = {
   description: string;
   skills: string[];
   category: string;
+};
+
+export type AcpAgentProfile = {
+  id: string;
+  command: string;
+  available: boolean;
+  source: "template" | "custom";
 };
 
 export type ExecuteResult = {

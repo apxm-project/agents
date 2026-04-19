@@ -454,7 +454,9 @@ mod tests {
                 }
             }
 
-            async fn create_session(&self) -> Result<crate::sandbox::types::SandboxContext, SandboxError> {
+            async fn create_session(
+                &self,
+            ) -> Result<crate::sandbox::types::SandboxContext, SandboxError> {
                 unreachable!("not needed for selection tests")
             }
 

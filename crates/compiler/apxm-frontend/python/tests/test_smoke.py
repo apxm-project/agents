@@ -23,10 +23,13 @@ def test_public_imports_and_all():
         "ExecutionError",
         "ExecutionResult",
         "ExecutionStats",
+        "FlowModule",
         "LLMUsage",
         "ServerError",
         "close",
+        "load_graph",
         "new_session",
+        "run",
     }
 
     assert ApxmGraph is apxm.ApxmGraph
@@ -55,7 +58,7 @@ def test_generated_agents_import():
 
 def test_graph_recorder_to_graph():
     recorder = GraphRecorder("smoke_graph")
-    ask_node = recorder.ask("ask_question", "What is APXM?")
+    ask_node = recorder.ask(name="ask_question", prompt="What is APXM?")
 
     graph = recorder.to_graph()
 
@@ -70,7 +73,7 @@ def test_graph_recorder_to_graph():
 
 def test_apxm_graph_to_air_produces_output():
     recorder = GraphRecorder("smoke_air")
-    recorder.ask("ask_question", "What is APXM?")
+    recorder.ask(name="ask_question", prompt="What is APXM?")
 
     graph = recorder.to_graph()
     air = graph.to_air()

@@ -21,22 +21,22 @@ def shared_prefix_demo(g: GraphRecorder):
     )
 
     # 3 parallel queries sharing the same prefix
-    security = g.ask("security", prefix + "What are the security risks?")
-    performance = g.ask("performance", prefix + "What are the performance bottlenecks?")
-    reliability = g.ask("reliability", prefix + "What are the reliability concerns?")
+    security = g.ask(name="security", prompt=prefix + "What are the security risks?")
+    performance = g.ask(name="performance", prompt=prefix + "What are the performance bottlenecks?")
+    reliability = g.ask(name="reliability", prompt=prefix + "What are the reliability concerns?")
 
     # Merge all reviews
     report = g.merge("report", security, performance, reliability)
 
     output = g.print(
-        "Security: {security}\nPerformance: {performance}\nReliability: {reliability}"
+        message="Security: {security}\nPerformance: {performance}\nReliability: {reliability}"
     )
-    output >> report
+    g.add_edge(output, report, dependency="Control")
     g.done(report)
 
 
 if __name__ == "__main__":
-    import asyncio
+    import apxm
 
-    result = asyncio.run(shared_prefix_demo())
+    result = apxm.run(shared_prefix_demo())
     print(result.content)

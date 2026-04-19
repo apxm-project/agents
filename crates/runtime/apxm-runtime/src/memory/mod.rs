@@ -236,8 +236,14 @@ impl MemorySystem {
         node_id: Option<u64>,
         session_dir: Option<PathBuf>,
     ) -> Result<String> {
-        self.record_episode(event_type.to_string(), payload, execution_id, node_id, session_dir)
-            .await
+        self.record_episode(
+            event_type.to_string(),
+            payload,
+            execution_id,
+            node_id,
+            session_dir,
+        )
+        .await
     }
 
     /// Query episodic memory by execution ID

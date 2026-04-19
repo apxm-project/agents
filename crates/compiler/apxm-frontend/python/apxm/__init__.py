@@ -29,9 +29,10 @@ from .execution import (
     WorkflowCheckpoint,
     close,
     new_session,
+    run,
     validate_graph,
 )
-from .ir import ApxmGraph, GraphEdge, GraphNode, Parameter
+from .ir import ApxmGraph, GraphEdge, GraphNode, Parameter, load_graph
 from .module import FlowModule
 from .providers import ProviderSpec, list_providers, resolve_provider
 from .proxy import GraphRecorder, NodeRef
@@ -60,6 +61,7 @@ __all__ = [
     "GraphRecorder",
     "LLMUsage",
     "list_providers",
+    "load_graph",
     "ModelId",
     "new_session",
     "NodeRef",
@@ -67,6 +69,7 @@ __all__ = [
     "Parameter",
     "ProviderSpec",
     "ReadConfig",
+    "run",
     "resolve_provider",
     "SearchWebConfig",
     "ServerError",

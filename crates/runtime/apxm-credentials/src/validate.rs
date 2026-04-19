@@ -123,7 +123,9 @@ async fn validate_anthropic(
         .models
         .first()
         .map(|m| m.id.as_str())
-        .unwrap_or_else(|| default_model_for_provider("anthropic").unwrap_or("claude-3-haiku-20240307"));
+        .unwrap_or_else(|| {
+            default_model_for_provider("anthropic").unwrap_or("claude-3-haiku-20240307")
+        });
 
     let body = format!(
         "{{\"model\":\"{}\",\"max_tokens\":1,\"messages\":[{{\"role\":\"user\",\"content\":\"hi\"}}]}}",

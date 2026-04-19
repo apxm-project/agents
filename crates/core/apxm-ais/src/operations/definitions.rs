@@ -510,8 +510,14 @@ pub struct MlirEmissionSpec {
     pub result_type: MlirResultType,
     /// Positional attributes (e.g., ["recipient"] for COMMUNICATE).
     pub positional_attrs: &'static [&'static str],
-    /// Keyword arguments for the operation (e.g., ["to"] for COMMUNICATE).
+    /// Keyword arguments emitted as the trailing attr-dict
+    /// (e.g., ["profile", "mode"] → `{profile = "...", mode = "..."}`).
     pub keywords: &'static [&'static str],
+    /// Syntactic-keyword attributes that emit as `<keyword> "<value>"` between
+    /// the primary attribute and the operand list (e.g., COMMUNICATE's
+    /// `to $recipient`, DELEGATE's `to $target_agent`). Pairs are
+    /// `(literal_keyword, attr_name)`.
+    pub syntactic_keywords: &'static [(&'static str, &'static str)],
 }
 
 /// Context style for MLIR emission.
@@ -522,6 +528,8 @@ pub enum ContextStyle {
     Bracketed,
     /// Parenthesized context: (...).
     Parenthesized,
+    /// Direct variadic operands (no delimiters): %a, %b : type, type -> result_type.
+    Direct,
     /// No context.
     None,
 }
@@ -698,6 +706,7 @@ const EMISSION_TOKEN_BRACKETED: MlirEmissionSpec = MlirEmissionSpec {
     result_type: MlirResultType::Token,
     positional_attrs: &[],
     keywords: &[],
+    syntactic_keywords: &[],
 };
 
 /// Standard emission spec: Void result, no context.
@@ -707,6 +716,7 @@ const EMISSION_VOID_NONE: MlirEmissionSpec = MlirEmissionSpec {
     result_type: MlirResultType::Void,
     positional_attrs: &[],
     keywords: &[],
+    syntactic_keywords: &[],
 };
 
 /// Standard emission spec: Handle result, parenthesized context.
@@ -758,7 +768,10 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         ),
         fields: &[
             OperationField::required(attrs::QUERY, "Query string or key to search for"),
-            OperationField::optional(attrs::MEMORY_TIER, "Target memory tier: stm, ltm, or episodic"),
+            OperationField::optional(
+                attrs::MEMORY_TIER,
+                "Target memory tier: stm, ltm, or episodic",
+            ),
         ],
         needs_submission: true,
         min_inputs: 0,
@@ -769,6 +782,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             result_type: MlirResultType::Token,
             positional_attrs: &[],
             keywords: &[attrs::MEMORY_TIER],
+            syntactic_keywords: &[],
         },
     },
     OperationSpec {
@@ -786,7 +800,10 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         fields: &[
             OperationField::required(attrs::KEY, "Key to store the value under"),
             OperationField::required(attrs::VALUE, "Value to store"),
-            OperationField::optional(attrs::MEMORY_TIER, "Target memory tier: stm, ltm, or episodic"),
+            OperationField::optional(
+                attrs::MEMORY_TIER,
+                "Target memory tier: stm, ltm, or episodic",
+            ),
         ],
         needs_submission: true,
         min_inputs: 0,
@@ -797,6 +814,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             result_type: MlirResultType::Token,
             positional_attrs: &[],
             keywords: &[attrs::MEMORY_TIER],
+            syntactic_keywords: &[],
         },
     },
     // ========== LLM Operations (3) ==========
@@ -831,6 +849,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             result_type: MlirResultType::Token,
             positional_attrs: &[],
             keywords: &[attrs::TEMPERATURE, attrs::MODEL],
+            syntactic_keywords: &[],
         },
     },
     OperationSpec {
@@ -859,7 +878,14 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: true,
         min_inputs: 0,
         produces_output: true,
-        emission: EMISSION_TOKEN_BRACKETED,
+        emission: MlirEmissionSpec {
+            primary_attr: Some(attrs::TEMPLATE_STR),
+            context_style: ContextStyle::Bracketed,
+            result_type: MlirResultType::Token,
+            positional_attrs: &[],
+            keywords: &[attrs::BUDGET, attrs::TEMPERATURE, attrs::MODEL],
+            syntactic_keywords: &[],
+        },
     },
     OperationSpec {
         op_type: AISOperationType::Reason,
@@ -875,7 +901,10 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             r#"{"id": 1, "op": "REASON", "attributes": {"template_str": "Given {{node_0}}, update your analysis", "structured": true}}"#,
         ),
         fields: &[
-            OperationField::required(attrs::TEMPLATE_STR, "Prompt template for structured reasoning"),
+            OperationField::required(
+                attrs::TEMPLATE_STR,
+                "Prompt template for structured reasoning",
+            ),
             OperationField::optional(attrs::TEMPERATURE, "Sampling temperature (0.0-1.0)"),
             OperationField::optional_ref(
                 attrs::MODEL,
@@ -887,7 +916,14 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: true,
         min_inputs: 0,
         produces_output: true,
-        emission: EMISSION_TOKEN_BRACKETED,
+        emission: MlirEmissionSpec {
+            primary_attr: Some(attrs::TEMPLATE_STR),
+            context_style: ContextStyle::Bracketed,
+            result_type: MlirResultType::Token,
+            positional_attrs: &[],
+            keywords: &[attrs::TEMPERATURE, attrs::MODEL, "structured"],
+            syntactic_keywords: &[],
+        },
     },
     // ========== Planning & Analysis Operations (3) ==========
     OperationSpec {
@@ -909,7 +945,14 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: true,
         min_inputs: 0,
         produces_output: true,
-        emission: EMISSION_TOKEN_BRACKETED,
+        emission: MlirEmissionSpec {
+            primary_attr: Some(attrs::GOAL),
+            context_style: ContextStyle::Parenthesized,
+            result_type: MlirResultType::Token,
+            positional_attrs: &[],
+            keywords: &[],
+            syntactic_keywords: &[],
+        },
     },
     OperationSpec {
         op_type: AISOperationType::Reflect,
@@ -930,7 +973,14 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: true,
         min_inputs: 0,
         produces_output: true,
-        emission: EMISSION_TOKEN_BRACKETED,
+        emission: MlirEmissionSpec {
+            primary_attr: Some(attrs::TRACE_QUERY),
+            context_style: ContextStyle::Parenthesized,
+            result_type: MlirResultType::Token,
+            positional_attrs: &[],
+            keywords: &[],
+            syntactic_keywords: &[],
+        },
     },
     OperationSpec {
         op_type: AISOperationType::Verify,
@@ -978,7 +1028,14 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: true,
         min_inputs: 0,
         produces_output: true,
-        emission: EMISSION_TOKEN_BRACKETED,
+        emission: MlirEmissionSpec {
+            primary_attr: Some(attrs::CAPABILITY),
+            context_style: ContextStyle::Bracketed,
+            result_type: MlirResultType::Token,
+            positional_attrs: &[],
+            keywords: &[],
+            syntactic_keywords: &[],
+        },
     },
     OperationSpec {
         op_type: AISOperationType::Exc,
@@ -998,7 +1055,14 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: true,
         min_inputs: 0,
         produces_output: true,
-        emission: EMISSION_TOKEN_BRACKETED,
+        emission: MlirEmissionSpec {
+            primary_attr: Some(attrs::CODE),
+            context_style: ContextStyle::Bracketed,
+            result_type: MlirResultType::Token,
+            positional_attrs: &[],
+            keywords: &[],
+            syntactic_keywords: &[],
+        },
     },
     OperationSpec {
         op_type: AISOperationType::Print,
@@ -1015,8 +1079,15 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         fields: &[OperationField::required(attrs::MESSAGE, "Message to print")],
         needs_submission: true,
         min_inputs: 0,
-        produces_output: true,
-        emission: EMISSION_TOKEN_BRACKETED,
+        produces_output: false,
+        emission: MlirEmissionSpec {
+            primary_attr: Some(attrs::MESSAGE),
+            context_style: ContextStyle::Bracketed,
+            result_type: MlirResultType::Void,
+            positional_attrs: &[],
+            keywords: &[],
+            syntactic_keywords: &[],
+        },
     },
     // ========== Control Flow Operations (7) ==========
     OperationSpec {
@@ -1029,7 +1100,10 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             use Control dependency type.",
         latency: OperationLatency::None,
         example_json: Some(r#"{"id": 5, "op": "JUMP", "attributes": {"label": "7"}}"#),
-        fields: &[OperationField::required(attrs::LABEL, "Target label to jump to")],
+        fields: &[OperationField::required(
+            attrs::LABEL,
+            "Target label to jump to",
+        )],
         needs_submission: false,
         min_inputs: 0,
         produces_output: false,
@@ -1102,7 +1176,10 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             allows JSON-based graphs to specify the source via {{node_N}} template syntax.",
         latency: OperationLatency::None,
         example_json: Some(r#"{"id": 6, "op": "RETURN", "attributes": {"token": "{{node_5}}"}}"#),
-        fields: &[OperationField::optional("token", "Result token reference (optional, resolved from edges)")], // structural
+        fields: &[OperationField::optional(
+            "token",
+            "Result token reference (optional, resolved from edges)",
+        )], // structural
         needs_submission: false,
         min_inputs: 1,
         produces_output: true,
@@ -1175,7 +1252,14 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: true,
         min_inputs: 1,
         produces_output: true,
-        emission: EMISSION_TOKEN_BRACKETED,
+        emission: MlirEmissionSpec {
+            primary_attr: None,
+            context_style: ContextStyle::Direct,
+            result_type: MlirResultType::Token,
+            positional_attrs: &[],
+            keywords: &[],
+            syntactic_keywords: &[],
+        },
     },
     OperationSpec {
         op_type: AISOperationType::Fence,
@@ -1209,11 +1293,21 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         example_json: Some(
             r#"{"id": 5, "op": "WAIT_ALL", "attributes": {"tokens": ["{{node_2}}", "{{node_3}}"]}}"#,
         ),
-        fields: &[OperationField::optional("tokens", "Token references to wait for (optional, resolved from edges)")], // structural
+        fields: &[OperationField::optional(
+            "tokens",
+            "Token references to wait for (optional, resolved from edges)",
+        )], // structural
         needs_submission: true,
         min_inputs: 1,
         produces_output: true,
-        emission: EMISSION_TOKEN_BRACKETED,
+        emission: MlirEmissionSpec {
+            primary_attr: None,
+            context_style: ContextStyle::Direct,
+            result_type: MlirResultType::Token,
+            positional_attrs: &[],
+            keywords: &[],
+            syntactic_keywords: &[],
+        },
     },
     // ========== Error Handling Operations (2) ==========
     OperationSpec {
@@ -1274,7 +1368,10 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             r#"{"id": 3, "op": "COMMUNICATE", "attributes": {"recipient": "reviewer", "protocol": "acp"}}"#,
         ),
         fields: &[
-            OperationField::required(attrs::RECIPIENT, "Target agent name (or URL for http protocol)"),
+            OperationField::required(
+                attrs::RECIPIENT,
+                "Target agent name (or URL for http protocol)",
+            ),
             OperationField::optional(attrs::MESSAGE, "Message content to send"),
             OperationField::optional(
                 attrs::PROTOCOL,
@@ -1284,7 +1381,14 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: true,
         min_inputs: 0,
         produces_output: true,
-        emission: EMISSION_TOKEN_BRACKETED,
+        emission: MlirEmissionSpec {
+            primary_attr: Some(attrs::MESSAGE),
+            context_style: ContextStyle::Parenthesized,
+            result_type: MlirResultType::Token,
+            positional_attrs: &[],
+            keywords: &[attrs::PROTOCOL],
+            syntactic_keywords: &[(super::mlir_keywords::TO, attrs::RECIPIENT)],
+        },
     },
     // ========== Phase 1 ISA Extensions (5) ==========
     OperationSpec {
@@ -1305,7 +1409,10 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
                 attrs::GOAL_ID,
                 "Goal identifier (used as description key for upsert/remove)",
             ),
-            OperationField::optional(attrs::ACTION, "Action to perform: set (default), remove, clear"),
+            OperationField::optional(
+                attrs::ACTION,
+                "Action to perform: set (default), remove, clear",
+            ),
             OperationField::optional(attrs::PRIORITY, "Goal priority (u32, default: 1)"),
         ],
         needs_submission: false,
@@ -1355,7 +1462,10 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         fields: &[
             OperationField::required(attrs::QUEUE, "Queue name to claim from"),
             OperationField::optional(attrs::LEASE_MS, "Lease duration in ms (default: 60000)"),
-            OperationField::optional(attrs::MAX_WAIT_MS, "Max time to wait for a task (default: 5000)"),
+            OperationField::optional(
+                attrs::MAX_WAIT_MS,
+                "Max time to wait for a task (default: 5000)",
+            ),
             OperationField::optional(attrs::SERVER_URL, "Override APXM_SERVER_URL env var"),
         ],
         needs_submission: true,
@@ -1377,13 +1487,22 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             r#"{"id": 5, "op": "PAUSE", "attributes": {"message": "Please review the analysis before proceeding"}}"#,
         ),
         fields: &[
-            OperationField::required(attrs::MESSAGE, "Human-readable message explaining the pause"),
+            OperationField::required(
+                attrs::MESSAGE,
+                "Human-readable message explaining the pause",
+            ),
             OperationField::optional(
                 attrs::CHECKPOINT_ID,
                 "Stable checkpoint ID (auto-generated if omitted)",
             ),
-            OperationField::optional(attrs::TIMEOUT_MS, "Max wait in ms (0 = indefinite, default: 0)"),
-            OperationField::optional(attrs::POLL_INTERVAL_MS, "Polling interval in ms (default: 2000)"),
+            OperationField::optional(
+                attrs::TIMEOUT_MS,
+                "Max wait in ms (0 = indefinite, default: 0)",
+            ),
+            OperationField::optional(
+                attrs::POLL_INTERVAL_MS,
+                "Polling interval in ms (default: 2000)",
+            ),
             OperationField::optional(
                 attrs::NOTIFICATION_URL,
                 "Webhook URL to notify on pause creation",
@@ -1444,7 +1563,14 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: true,
         min_inputs: 0,
         produces_output: true,
-        emission: EMISSION_TOKEN_BRACKETED,
+        emission: MlirEmissionSpec {
+            primary_attr: Some(attrs::TASK_SPEC),
+            context_style: ContextStyle::Parenthesized,
+            result_type: MlirResultType::Token,
+            positional_attrs: &[],
+            keywords: &[],
+            syntactic_keywords: &[(super::mlir_keywords::TO, attrs::TARGET_AGENT)],
+        },
     },
     OperationSpec {
         op_type: AISOperationType::Negotiate,
@@ -1545,7 +1671,14 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: true,
         min_inputs: 0,
         produces_output: true,
-        emission: EMISSION_TOKEN_BRACKETED,
+        emission: MlirEmissionSpec {
+            primary_attr: Some(attrs::AGENT_NAME),
+            context_style: ContextStyle::None,
+            result_type: MlirResultType::Token,
+            positional_attrs: &[],
+            keywords: &[attrs::PROFILE, attrs::MODE, attrs::MODEL, attrs::CWD],
+            syntactic_keywords: &[],
+        },
     },
     OperationSpec {
         op_type: AISOperationType::SpawnTeam,
@@ -1573,7 +1706,14 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: true,
         min_inputs: 0,
         produces_output: true,
-        emission: EMISSION_TOKEN_BRACKETED,
+        emission: MlirEmissionSpec {
+            primary_attr: Some(attrs::TEAM_NAME),
+            context_style: ContextStyle::None,
+            result_type: MlirResultType::Token,
+            positional_attrs: &[],
+            keywords: &[attrs::CWD],
+            syntactic_keywords: &[],
+        },
     },
     OperationSpec {
         op_type: AISOperationType::RegisterCapability,
@@ -1588,17 +1728,30 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             r#"{\"id\": 3, \"op\": \"REGISTER_CAPABILITY\", \"attributes\": {\"capability_name\": \"custom_tool\", \"description\": \"A custom analysis tool\"}}"#,
         ),
         fields: &[
-            OperationField::required(attrs::CAPABILITY_NAME, "Name for the capability to register"),
+            OperationField::required(
+                attrs::CAPABILITY_NAME,
+                "Name for the capability to register",
+            ),
             OperationField::optional(
                 attrs::DESCRIPTION,
                 "Human-readable description of the capability",
             ),
-            OperationField::optional(attrs::PARAMETERS_SCHEMA, "JSON schema for capability parameters"),
+            OperationField::optional(
+                attrs::PARAMETERS_SCHEMA,
+                "JSON schema for capability parameters",
+            ),
         ],
         needs_submission: true,
         min_inputs: 0,
         produces_output: true,
-        emission: EMISSION_TOKEN_BRACKETED,
+        emission: MlirEmissionSpec {
+            primary_attr: Some(attrs::CAPABILITY_NAME),
+            context_style: ContextStyle::None,
+            result_type: MlirResultType::Token,
+            positional_attrs: &[],
+            keywords: &[attrs::DESCRIPTION, attrs::PARAMETERS_SCHEMA],
+            syntactic_keywords: &[],
+        },
     },
     // ========== Autonomous Execution (stub) ==========
     OperationSpec {
@@ -1620,7 +1773,14 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: true,
         min_inputs: 0,
         produces_output: true,
-        emission: EMISSION_TOKEN_BRACKETED,
+        emission: MlirEmissionSpec {
+            primary_attr: Some(attrs::REGION),
+            context_style: ContextStyle::None,
+            result_type: MlirResultType::Token,
+            positional_attrs: &[],
+            keywords: &[],
+            syntactic_keywords: &[],
+        },
     },
     // ========== Durable Execution (1) ==========
     OperationSpec {
@@ -1639,7 +1799,10 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             r#"{"id": 4, "op": "CHECKPOINT", "attributes": {"checkpoint_id": "before_analysis"}}"#,
         ),
         fields: &[
-            OperationField::required(attrs::CHECKPOINT_ID, "Stable identifier for this checkpoint"),
+            OperationField::required(
+                attrs::CHECKPOINT_ID,
+                "Stable identifier for this checkpoint",
+            ),
             OperationField::optional("scope", "Snapshot scope: full (default) or local"),
             OperationField::optional(
                 "storage",
@@ -1651,7 +1814,14 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: false,
         min_inputs: 1,
         produces_output: true,
-        emission: EMISSION_TOKEN_BRACKETED,
+        emission: MlirEmissionSpec {
+            primary_attr: Some(attrs::CHECKPOINT_ID),
+            context_style: ContextStyle::None,
+            result_type: MlirResultType::Token,
+            positional_attrs: &[],
+            keywords: &[],
+            syntactic_keywords: &[],
+        },
     },
     // ========== Internal Operations (2) ==========
     OperationSpec {
@@ -1671,7 +1841,14 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: false,
         min_inputs: 0,
         produces_output: true,
-        emission: EMISSION_TOKEN_BRACKETED,
+        emission: MlirEmissionSpec {
+            primary_attr: Some(attrs::VALUE),
+            context_style: ContextStyle::None,
+            result_type: MlirResultType::Token,
+            positional_attrs: &[],
+            keywords: &[],
+            syntactic_keywords: &[],
+        },
     },
     OperationSpec {
         op_type: AISOperationType::Yield,

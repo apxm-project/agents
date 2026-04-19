@@ -27,35 +27,35 @@ def resilient_pipeline(g: GraphRecorder):
 
     # Define and format task
     task = g.ask(
-        "task",
-        "Describe a complex coding task that requires careful implementation."
+        name="task",
+        prompt="Describe a complex coding task that requires careful implementation."
     )
 
     formatted = g.think(
-        "formatted",
-        "Format this as a precise coding instruction for an agent:\n{task}"
+        name="formatted",
+        prompt="Format this as a precise coding instruction for an agent:\n{task}"
     )
 
     # Send to worker
     # Each COMMUNICATE is atomic -- exponential backoff on failure (500ms-60s)
     result = g.communicate(
-        "worker_result",
+        name="worker_result",
         target_agent="worker",
         message="{formatted}"
     )
 
     # Review result
     summary = g.think(
-        "summary",
-        "Review the worker's result and summarize what was accomplished:\n{result}"
+        name="summary",
+        prompt="Review the worker's result and summarize what was accomplished:\n{result}"
     )
 
-    output = g.print("=== RESULT ===\n{summary}")
+    output = g.print(message="=== RESULT ===\n{summary}")
     g.done(output)
 
 
 if __name__ == "__main__":
-    import asyncio
+    import apxm
 
-    result = asyncio.run(resilient_pipeline())
+    result = apxm.run(resilient_pipeline())
     print(result.content)

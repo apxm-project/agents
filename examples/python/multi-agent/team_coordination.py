@@ -33,14 +33,14 @@ def team_coordination(g: GraphRecorder):
     # Wait for all to complete, then merge results
     sync = team.wait_all("sync")
     results = team.merge("results")
-    sync >> results
+    g.add_edge(sync, results, dependency="Control")
 
-    output = g.print("output", message="Team results merged: {results}")
+    output = g.print(message="output", message="Team results merged: {results}")
     g.done(output)
 
 
 if __name__ == "__main__":
-    import asyncio
+    import apxm
 
-    result = asyncio.run(team_coordination())
+    result = apxm.run(team_coordination())
     print(result.content)

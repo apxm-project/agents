@@ -179,10 +179,16 @@ mod tests {
                     id: id_start + 1,
                     name: format!("{}_ask", name),
                     op: AISOperationType::Ask,
-                    attributes: HashMap::from([(
-                        graph_attrs::TEMPLATE_STR.into(),
-                        Value::String("{0}".into()),
-                    )]),
+                    attributes: HashMap::from([
+                        (
+                            graph_attrs::TEMPLATE_STR.into(),
+                            Value::String("{seed}".into()),
+                        ),
+                        (
+                            graph_attrs::INPUT_NAMES.into(),
+                            Value::Array(vec![Value::String("seed".into())]),
+                        ),
+                    ]),
                 },
             ],
             edges: vec![AirEdge {
@@ -223,10 +229,16 @@ mod tests {
         let a = builder.node(
             "ask",
             AISOperationType::Ask,
-            HashMap::from([(
-                graph_attrs::TEMPLATE_STR.into(),
-                Value::String("{0}".into()),
-            )]),
+            HashMap::from([
+                (
+                    graph_attrs::TEMPLATE_STR.into(),
+                    Value::String("{seed}".into()),
+                ),
+                (
+                    graph_attrs::INPUT_NAMES.into(),
+                    Value::Array(vec![Value::String("seed".into())]),
+                ),
+            ]),
         );
         builder.edge(c, a, DependencyType::Data);
         let module = builder.build();

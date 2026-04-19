@@ -18,8 +18,8 @@ def chained_llm(g: GraphRecorder):
 
     # Initial question - ASK operation
     initial_response = g.ask(
-        "initial_response",
-        "You are an AI assistant helping with software architecture.\n\n"
+        name="initial_response",
+        prompt="You are an AI assistant helping with software architecture.\n\n"
         "Question: Design a URL shortening service similar to bit.ly. "
         "What are the key components and how should they interact?\n\n"
         "Provide a high-level architectural overview in 4-5 sentences."
@@ -27,8 +27,8 @@ def chained_llm(g: GraphRecorder):
 
     # Deep analysis - THINK operation
     analysis = g.think(
-        "analysis",
-        "Given this architectural overview:\n{initial_response}\n\n"
+        name="analysis",
+        prompt="Given this architectural overview:\n{initial_response}\n\n"
         "Analyze the design in detail:\n"
         "1. What are the scalability challenges?\n"
         "2. How should data be partitioned?\n"
@@ -39,8 +39,8 @@ def chained_llm(g: GraphRecorder):
 
     # Deep reasoning - REASON operation
     final_design = g.reason(
-        "final_design",
-        "Based on this analysis:\n{analysis}\n\n"
+        name="final_design",
+        prompt="Based on this analysis:\n{analysis}\n\n"
         "Synthesize a complete system design that addresses all concerns.\n"
         "Include:\n"
         "- Database schema\n"
@@ -53,7 +53,7 @@ def chained_llm(g: GraphRecorder):
 
     # Format output
     output = g.print(
-        "=== CHAINED LLM BENCHMARK RESULT ===\n\n"
+        message="=== CHAINED LLM BENCHMARK RESULT ===\n\n"
         "Initial Response:\n{initial_response}\n\n"
         "---\n\n"
         "Detailed Analysis:\n{analysis}\n\n"
@@ -68,6 +68,6 @@ if __name__ == "__main__":
     # Output the graph as JSON
     print(chained_llm._graph.to_air())
     # To execute directly:
-    # import asyncio
-    # result = asyncio.run(chained_llm())
+    # import apxm
+    # result = apxm.run(chained_llm())
     # print(result.content)

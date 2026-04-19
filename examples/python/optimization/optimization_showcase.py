@@ -20,15 +20,15 @@ def optimization_showcase(g: GraphRecorder):
     """Showcase: parallel scheduling, fusion, shared prefix, and DCE."""
 
     topic = g.ask(
-        "topic",
-        "What technical topic should we analyze? "
+        name="topic",
+        prompt="What technical topic should we analyze? "
         "(e.g., 'Rust async runtimes', 'distributed consensus')"
     )
 
     # Fast triage (could use cheap model in production)
     triage = g.ask(
-        "triage",
-        "Quick triage of: {topic}\n"
+        name="triage",
+        prompt="Quick triage of: {topic}\n"
         "- Complexity: [LOW/MEDIUM/HIGH]\n"
         "- Security: [MINIMAL/MODERATE/CRITICAL]\n"
         "- Performance: [LOW/MEDIUM/HIGH]"
@@ -37,30 +37,30 @@ def optimization_showcase(g: GraphRecorder):
     # PARALLEL + SHARED PREFIX: three analyses fan out from triage
     # All share "Based on triage: {triage}" prefix -- KV-cache reuse
     arch = g.think(
-        "architecture",
-        "Based on triage: {triage}\n\n"
+        name="architecture",
+        prompt="Based on triage: {triage}\n\n"
         "Deep architecture analysis of: {topic}\n"
         "Cover: components, patterns, trade-offs. 300 words."
     )
 
     security = g.think(
-        "security",
-        "Based on triage: {triage}\n\n"
+        name="security",
+        prompt="Based on triage: {triage}\n\n"
         "Deep security analysis of: {topic}\n"
         "Cover: attack vectors, mitigations, best practices. 300 words."
     )
 
     perf = g.think(
-        "performance",
-        "Based on triage: {triage}\n\n"
+        name="performance",
+        prompt="Based on triage: {triage}\n\n"
         "Deep performance analysis of: {topic}\n"
         "Cover: bottlenecks, optimization strategies. 300 words."
     )
 
     # Synthesis
     synthesis = g.think(
-        "synthesis",
-        "Synthesize into executive summary:\n\n"
+        name="synthesis",
+        prompt="Synthesize into executive summary:\n\n"
         "ARCHITECTURE:\n{arch}\n\n"
         "SECURITY:\n{security}\n\n"
         "PERFORMANCE:\n{perf}\n\n"
@@ -69,29 +69,29 @@ def optimization_showcase(g: GraphRecorder):
 
     # FUSION CANDIDATES: adjacent THINK nodes (review + validation)
     review = g.think(
-        "review",
-        "Review this synthesis:\n{synthesis}\n\n"
+        name="review",
+        prompt="Review this synthesis:\n{synthesis}\n\n"
         "What's strong? What needs improvement?"
     )
 
     validation = g.think(
-        "validation",
-        "Validate completeness:\n{synthesis}\n\n"
+        name="validation",
+        prompt="Validate completeness:\n{synthesis}\n\n"
         "Check: coverage, accuracy, actionability."
     )
 
     report = g.merge("report", synthesis, review, validation)
 
     output = g.print(
-        "TOPIC: {topic}\n\nSYNTHESIS:\n{synthesis}\n\n"
+        message="TOPIC: {topic}\n\nSYNTHESIS:\n{synthesis}\n\n"
         "REVIEW:\n{review}\n\nVALIDATION:\n{validation}"
     )
-    output >> report
+    g.add_edge(output, report, dependency="Control")
     g.done(report)
 
 
 if __name__ == "__main__":
-    import asyncio
+    import apxm
 
-    result = asyncio.run(optimization_showcase())
+    result = apxm.run(optimization_showcase())
     print(result.content)

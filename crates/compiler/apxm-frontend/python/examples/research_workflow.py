@@ -9,7 +9,7 @@ This example demonstrates:
 - Graph serialization to canonical .air
 """
 
-from apxm import GraphRecorder, compile
+from apxm import compile, GraphRecorder
 
 
 @compile()
@@ -30,24 +30,24 @@ def research_workflow(g: GraphRecorder, topic: str):
     synthesizer = team.add("synthesizer", profile="claude", mode="normal")
 
     # Parallel research and critique
-    researcher.ask(f"Research the topic: {{topic}}. Provide detailed findings.")
-    critic.ask(f"Critically analyze existing research on: {{topic}}. Identify gaps and limitations.")
+    researcher.ask(name="research_findings", prompt="Research the topic: {topic}. Provide detailed findings.")
+    critic.ask(name="critique_findings", prompt="Critically analyze existing research on: {topic}. Identify gaps and limitations.")
 
     # Wait for both to complete
     sync = team.wait_all("research_sync")
 
     # Synthesize results
     synthesis = g.communicate(
-        "synthesis_request",
+        name="synthesis_request",
         target_agent="synthesizer",
-        message=f"Synthesize the research findings and critique into a comprehensive report on {{topic}}."
+        message="Synthesize the research findings and critique into a comprehensive report on {topic}.",
     )
 
     # Control flow: sync completes before synthesis
-    sync >> synthesis
+    g.add_edge(sync, synthesis, dependency="Control")
 
     # Return final synthesis
-    return_node = g.return_("final_output", source=synthesis)
+    g.done(source=synthesis)
 
 
 def main():

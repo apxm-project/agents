@@ -88,7 +88,8 @@ impl WarmupMetrics {
 
     /// Add tokens saved via warmup.
     pub fn add_tokens_saved(&self, tokens: u64) {
-        self.warmup_tokens_saved.fetch_add(tokens, Ordering::Relaxed);
+        self.warmup_tokens_saved
+            .fetch_add(tokens, Ordering::Relaxed);
     }
 
     /// Get current warmup requests sent count.
@@ -175,24 +176,19 @@ pub fn should_warmup(
 /// - Uses the same prompt/messages as the original
 /// - Sets max_tokens=1 to generate minimal output
 /// - Marks the request as warmup in metadata
-pub fn create_warmup_request(
-    original: &LLMRequest,
-    node_id: u64,
-) -> LLMRequest {
+pub fn create_warmup_request(original: &LLMRequest, node_id: u64) -> LLMRequest {
     let mut warmup_req = original.clone();
 
     // Generate minimal output (0 or 1 token)
     warmup_req.max_tokens = Some(1);
 
     // Mark as warmup in metadata
-    warmup_req.metadata.insert(
-        "warmup".to_string(),
-        serde_json::json!(true),
-    );
-    warmup_req.metadata.insert(
-        "warmup_node_id".to_string(),
-        serde_json::json!(node_id),
-    );
+    warmup_req
+        .metadata
+        .insert("warmup".to_string(), serde_json::json!(true));
+    warmup_req
+        .metadata
+        .insert("warmup_node_id".to_string(), serde_json::json!(node_id));
 
     // If the request has APXM hints, mark it as warmup
     if let Some(ref mut hints) = warmup_req.apxm_hints {
@@ -373,8 +369,14 @@ mod tests {
         let warmup = create_warmup_request(&original, 123);
 
         assert_eq!(warmup.max_tokens, Some(1));
-        assert_eq!(warmup.metadata.get("warmup"), Some(&serde_json::json!(true)));
-        assert_eq!(warmup.metadata.get("warmup_node_id"), Some(&serde_json::json!(123)));
+        assert_eq!(
+            warmup.metadata.get("warmup"),
+            Some(&serde_json::json!(true))
+        );
+        assert_eq!(
+            warmup.metadata.get("warmup_node_id"),
+            Some(&serde_json::json!(123))
+        );
     }
 
     #[test]

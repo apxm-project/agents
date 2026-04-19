@@ -15,8 +15,8 @@ use dashmap::DashMap;
 use futures::stream::{Stream, StreamExt};
 use std::collections::HashMap;
 use std::pin::Pin;
-use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
 use std::time::Instant;
 
 mod health;
@@ -230,8 +230,13 @@ impl LLMRegistry {
     /// Record which provider protocol a backend uses (e.g. "anthropic", "openai").
     ///
     /// Used for per-provider builtin model fallback when no model is specified.
-    pub fn register_backend_provider(&self, backend: impl Into<String>, provider: impl Into<String>) {
-        self.backend_providers.insert(backend.into(), provider.into());
+    pub fn register_backend_provider(
+        &self,
+        backend: impl Into<String>,
+        provider: impl Into<String>,
+    ) {
+        self.backend_providers
+            .insert(backend.into(), provider.into());
     }
 
     /// Register a named model alias.
@@ -283,7 +288,9 @@ impl LLMRegistry {
             } else if let Some(ref backend_name) = prepared.backend {
                 // Per-provider builtin fallback
                 if let Some(provider) = self.backend_providers.get(backend_name) {
-                    if let Some(builtin) = apxm_core::types::model_spec::default_model_for_provider(provider.value()) {
+                    if let Some(builtin) =
+                        apxm_core::types::model_spec::default_model_for_provider(provider.value())
+                    {
                         prepared.model = Some(builtin.to_string());
                     }
                 }
@@ -415,7 +422,8 @@ impl LLMRegistry {
             Ok(response) => {
                 // Reconcile rate limit based on actual token usage
                 let actual_cost = response.usage.total_tokens as f64;
-                self.rate_limiter.reconcile(backend_name, estimated_cost, actual_cost);
+                self.rate_limiter
+                    .reconcile(backend_name, estimated_cost, actual_cost);
 
                 // Record success
                 self.health_monitor.record_success(backend_name, latency);
@@ -578,7 +586,11 @@ impl LLMRegistry {
 
     /// Snapshot all backends (clones name + Arc pairs out of the lock).
     fn backend_snapshot(&self) -> Vec<(String, Arc<dyn LLMBackend>)> {
-        self.backends.read().iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+        self.backends
+            .read()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
     }
 
     /// Register graph metadata with all backends (best-effort).

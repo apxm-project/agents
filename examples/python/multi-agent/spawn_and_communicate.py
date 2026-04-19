@@ -21,7 +21,7 @@ def basic_spawn(g: GraphRecorder):
     reviewer.ask("Review the current directory structure and suggest improvements.")
 
     review = reviewer.get_last_node()
-    output = g.print("{review}")
+    output = g.print(message="{review}")
     g.done(output)
 
 
@@ -43,17 +43,17 @@ def two_agent_pipeline(g: GraphRecorder):
 
     # Summarizer receives analysis via COMMUNICATE
     summary = g.communicate(
-        "summary_request",
+        name="summary_request",
         target_agent="summarizer",
         message="Produce a 3-bullet executive summary:\n\n{analysis}"
     )
 
-    output = g.print("=== ANALYSIS ===\n{analysis}\n\n=== SUMMARY ===\n{summary}")
+    output = g.print(message="=== ANALYSIS ===\n{analysis}\n\n=== SUMMARY ===\n{summary}")
     g.done(output)
 
 
 if __name__ == "__main__":
-    import asyncio
+    import apxm
 
-    result = asyncio.run(two_agent_pipeline())
+    result = apxm.run(two_agent_pipeline())
     print(result.content)

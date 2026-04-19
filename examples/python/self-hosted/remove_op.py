@@ -33,8 +33,8 @@ def remove_op_workflow(g: GraphRecorder):
 
     # Step 1: Analyze impact
     impact_analysis = g.think(
-        "impact_analysis",
-        """Analyze the impact of removing operation: {op_name}
+        name="impact_analysis",
+        prompt="""Analyze the impact of removing operation: {op_name}
 
 Check:
 1. Where is this operation defined?
@@ -62,7 +62,7 @@ Output a structured removal plan:
 """
     )
 
-    print1 = g.print("=== IMPACT ANALYSIS ===\n{impact_analysis}")
+    print1 = g.print(message="=== IMPACT ANALYSIS ===\n{impact_analysis}")
 
     # Spawn agents
     compiler_dev = g.spawn("compiler_dev", profile=claude, cwd=cwd)
@@ -71,8 +71,8 @@ Output a structured removal plan:
 
     # Step 2: Build removal prompts
     compiler_task = g.ask(
-        "build_compiler_task",
-        """Remove operation from the compiler:
+        name="build_compiler_task",
+        prompt="""Remove operation from the compiler:
 
 Analysis: {impact_analysis}
 
@@ -94,11 +94,11 @@ Be careful:
 - Update any operation count constants if they exist
 """
     )
-    print1 >> compiler_task
+    g.add_edge(print1, compiler_task, dependency="Control")
 
     runtime_task = g.ask(
-        "build_runtime_task",
-        """Remove operation from the runtime:
+        name="build_runtime_task",
+        prompt="""Remove operation from the runtime:
 
 Analysis: {impact_analysis}
 
@@ -117,7 +117,7 @@ Remove from:
 Be thorough but careful — don't break adjacent code.
 """
     )
-    print1 >> runtime_task
+    g.add_edge(print1, runtime_task, dependency="Control")
 
     # Step 3: Both devs work in parallel
     compiler_dev.ask("{compiler_task}")
@@ -126,17 +126,17 @@ Be thorough but careful — don't break adjacent code.
     runtime_dev.ask("{runtime_task}")
     runtime_removal = runtime_dev.get_last_node()
 
-    print2 = g.print("=== COMPILER REMOVAL ===\n{compiler_removal}")
-    print3 = g.print("=== RUNTIME REMOVAL ===\n{runtime_removal}")
+    print2 = g.print(message="=== COMPILER REMOVAL ===\n{compiler_removal}")
+    print3 = g.print(message="=== RUNTIME REMOVAL ===\n{runtime_removal}")
 
     # Step 4: Verify nothing broke
     wait = g.wait_all("wait_removals", compiler_removal, runtime_removal)
-    print2 >> wait
-    print3 >> wait
+    g.add_edge(print2, wait, dependency="Control")
+    g.add_edge(print3, wait, dependency="Control")
 
     verify_task = g.ask(
-        "build_verify_task",
-        """Verify the removal was clean:
+        name="build_verify_task",
+        prompt="""Verify the removal was clean:
 
 Compiler changes: {compiler_removal}
 Runtime changes: {runtime_removal}
@@ -164,17 +164,17 @@ Report:
 If there are failures, identify what was missed and suggest fixes.
 """
     )
-    wait >> verify_task
+    g.add_edge(wait, verify_task, dependency="Control")
 
     verifier.ask("{verify_task}")
     verification = verifier.get_last_node()
 
-    print4 = g.print("=== VERIFICATION ===\n{verification}")
+    print4 = g.print(message="=== VERIFICATION ===\n{verification}")
 
     # Final summary
     final = g.think(
-        "removal_summary",
-        """Generate removal summary:
+        name="removal_summary",
+        prompt="""Generate removal summary:
 
 Impact analysis: {impact_analysis}
 Compiler changes: {compiler_removal}
@@ -191,15 +191,15 @@ Summary:
 - Status: <complete/needs-fixes>
 """
     )
-    print4 >> final
+    g.add_edge(print4, final, dependency="Control")
 
-    print5 = g.print("=== REMOVAL SUMMARY ===\n{final}")
+    print5 = g.print(message="=== REMOVAL SUMMARY ===\n{final}")
 
     g.done(print5)
 
 
 if __name__ == "__main__":
-    import asyncio
+    import apxm
 
-    result = asyncio.run(remove_op_workflow("DEPRECATED_OP"))
+    result = apxm.run(remove_op_workflow("DEPRECATED_OP"))
     print(result.content)

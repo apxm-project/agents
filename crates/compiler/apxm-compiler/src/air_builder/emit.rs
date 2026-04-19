@@ -204,10 +204,7 @@ pub fn emit_air(module: &AirModule) -> Result<String, AirError> {
             }
         };
 
-        state.emit(format!(
-            "    func.return {} : !ais.token",
-            return_value.ssa
-        ));
+        state.emit(format!("    func.return {} : !ais.token", return_value.ssa));
     }
 
     let function_name = sanitize_symbol_name(&module.name);
@@ -363,11 +360,8 @@ fn emit_node(
             let sid = get_string_attr(&node.attributes, &["sid", "stage", "scope"])
                 .unwrap_or_else(|| "default".to_string());
             let space = normalize_memory_space(
-                &get_string_attr(
-                    &node.attributes,
-                    &[graph_attrs::MEMORY_TIER],
-                )
-                .unwrap_or_else(|| "stm".to_string()),
+                &get_string_attr(&node.attributes, &[graph_attrs::MEMORY_TIER])
+                    .unwrap_or_else(|| "stm".to_string()),
             );
             let limit = get_u64_attr(&node.attributes, graph_attrs::LIMIT);
             let result = format!("%n{}", node.id);
@@ -403,18 +397,12 @@ fn emit_node(
         AISOperationType::UMem => {
             let key = get_string_attr(&node.attributes, &[graph_attrs::KEY]);
             let space = normalize_memory_space(
-                &get_string_attr(
-                    &node.attributes,
-                    &[graph_attrs::MEMORY_TIER],
-                )
-                .unwrap_or_else(|| "stm".to_string()),
+                &get_string_attr(&node.attributes, &[graph_attrs::MEMORY_TIER])
+                    .unwrap_or_else(|| "stm".to_string()),
             );
             let attrs = extra_attr_dict(
                 &node.attributes,
-                &[
-                    graph_attrs::KEY,
-                    graph_attrs::MEMORY_TIER,
-                ],
+                &[graph_attrs::KEY, graph_attrs::MEMORY_TIER],
             );
 
             let source = if let Some(input) = inputs.first() {
@@ -730,7 +718,7 @@ fn emit_node(
                     graph_attrs::PROMPT,
                 ],
             )
-            .unwrap_or_else(|| "{0}".to_string());
+            .unwrap_or_else(|| "{input}".to_string());
             let recipient = get_string_attr(
                 &node.attributes,
                 &[graph_attrs::RECIPIENT, graph_attrs::TARGET],
@@ -766,7 +754,7 @@ fn emit_node(
                 &node.attributes,
                 &[graph_attrs::TASK_SPEC, graph_attrs::TEMPLATE_STR],
             )
-            .unwrap_or_else(|| "{0}".to_string());
+            .unwrap_or_else(|| "{input}".to_string());
             let target_agent = get_string_attr(
                 &node.attributes,
                 &[graph_attrs::TARGET_AGENT, graph_attrs::TARGET],
@@ -801,7 +789,7 @@ fn emit_node(
             node,
             &inputs,
             &[graph_attrs::PROPOSAL, graph_attrs::TEMPLATE_STR],
-            "{0}",
+            "{input}",
             &[graph_attrs::PROPOSAL, graph_attrs::TEMPLATE_STR],
             Some(('(', ')')),
         ),
@@ -855,7 +843,7 @@ fn emit_node(
                     graph_attrs::MESSAGE,
                 ],
             )
-            .unwrap_or_else(|| "{0}".to_string());
+            .unwrap_or_else(|| "{input}".to_string());
             let attrs = extra_attr_dict(
                 &node.attributes,
                 &[
@@ -1067,10 +1055,7 @@ fn emit_bridge_token(
     })
 }
 
-fn ensure_token(
-    state: &mut EmitState,
-    value: MlirValueRef,
-) -> Result<MlirValueRef, AirError> {
+fn ensure_token(state: &mut EmitState, value: MlirValueRef) -> Result<MlirValueRef, AirError> {
     if matches!(value.ty, MlirValueType::Token) {
         return Ok(value);
     }
@@ -1078,8 +1063,10 @@ fn ensure_token(
     let result = state.fresh_value("tok");
     let source_type = format_type(&value.ty);
     state.emit(format!(
-        "    {result} = ais.ask \"{{0}}\" [{} : {}] : !ais.token",
-        value.ssa, source_type
+        "    {result} = ais.ask \"{{input}}\" [{} : {}] {{{} = [\"input\"]}} : !ais.token",
+        value.ssa,
+        source_type,
+        quote_string(graph_attrs::INPUT_NAMES),
     ));
 
     Ok(MlirValueRef {
@@ -1135,7 +1122,7 @@ fn get_non_empty_template(attributes: &HashMap<String, Value>) -> String {
         ],
     )
     .filter(|value| !value.trim().is_empty())
-    .unwrap_or_else(|| "{0}".to_string())
+    .unwrap_or_else(|| "{input}".to_string())
 }
 
 fn get_string_attr(attributes: &HashMap<String, Value>, keys: &[&str]) -> Option<String> {

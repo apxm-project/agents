@@ -1,7 +1,7 @@
 //! Tests for LLMRegistry routing strategies and streaming fallback.
 
-use apxm_backends::llm::backends::mock::MockLLMBackend;
 use apxm_backends::llm::backends::LLMRequest;
+use apxm_backends::llm::backends::mock::MockLLMBackend;
 use apxm_backends::llm::registry::{LLMRegistry, RoutingStrategy};
 use futures::StreamExt;
 
@@ -205,10 +205,12 @@ async fn test_streaming_fallback_all_backends_fail() {
     assert!(result.is_some());
     let chunk = result.unwrap();
     assert!(chunk.is_err());
-    assert!(chunk
-        .unwrap_err()
-        .to_string()
-        .contains("All backends failed"));
+    assert!(
+        chunk
+            .unwrap_err()
+            .to_string()
+            .contains("All backends failed")
+    );
 }
 
 #[tokio::test]

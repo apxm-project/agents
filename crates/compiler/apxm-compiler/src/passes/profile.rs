@@ -14,8 +14,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 
-use apxm_core::types::Value;
 use crate::air_builder::AirModule;
+use apxm_core::types::Value;
 
 /// Error-rate threshold above which a retry attribute is injected.
 const ERROR_RATE_RETRY_THRESHOLD: f64 = 0.05;
@@ -230,6 +230,7 @@ fn weighted_avg_f64(a: f64, w_a: u64, b: f64, w_b: u64) -> f64 {
 mod tests {
     use super::*;
     use crate::air_builder::{AirEdge, AirNode};
+    use apxm_ais::attrs as graph_attrs;
     use apxm_core::types::AISOperationType;
     use std::collections::HashMap;
 
@@ -267,26 +268,38 @@ mod tests {
                     id: 1,
                     name: "ask_node".to_string(),
                     op: AISOperationType::Ask,
-                    attributes: HashMap::from([(
-                        "template_str".to_string(),
-                        Value::String("{0}".to_string()),
-                    )]),
+                    attributes: HashMap::from([
+                        (
+                            graph_attrs::TEMPLATE_STR.to_string(),
+                            Value::String("{unknown_node}".to_string()),
+                        ),
+                        (
+                            graph_attrs::INPUT_NAMES.to_string(),
+                            Value::Array(vec![Value::String("unknown_node".to_string())]),
+                        ),
+                    ]),
                 },
                 AirNode {
                     id: 2,
                     name: "flaky_node".to_string(),
                     op: AISOperationType::Ask,
-                    attributes: HashMap::from([(
-                        "template_str".to_string(),
-                        Value::String("{0}".to_string()),
-                    )]),
+                    attributes: HashMap::from([
+                        (
+                            graph_attrs::TEMPLATE_STR.to_string(),
+                            Value::String("{ask_node}".to_string()),
+                        ),
+                        (
+                            graph_attrs::INPUT_NAMES.to_string(),
+                            Value::Array(vec![Value::String("ask_node".to_string())]),
+                        ),
+                    ]),
                 },
                 AirNode {
                     id: 3,
                     name: "unknown_node".to_string(),
                     op: AISOperationType::ConstStr,
                     attributes: HashMap::from([(
-                        "value".to_string(),
+                        graph_attrs::VALUE.to_string(),
                         Value::String("hi".to_string()),
                     )]),
                 },

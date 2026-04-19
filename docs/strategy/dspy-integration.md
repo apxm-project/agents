@@ -73,7 +73,7 @@ No special flag. No separate optimization level. If a graph has associated train
 
 ### Where it sits in the pipeline
 
-Placed right after `build-prompt` (which establishes `{0}` placeholders on empty templates). DSPy needs those placeholders to exist. All subsequent passes then operate on the optimized version.
+Placed right after `build-prompt` (which fills empty templates with a single `{<input_name>}` placeholder matching the sole context input). DSPy needs those placeholders to exist. All subsequent passes then operate on the optimized version.
 
 ```
 O1:  normalize → build-prompt → dspy-optimize → assign-priority → unconsumed-value-warning
@@ -250,7 +250,7 @@ DSPy optimization is most like PGO profiles — compile-time data derived from w
 3. **No cross-project contamination** — different projects with different training data can't interfere
 4. **`APXM_NO_CACHE=1`** disables (same env var as artifact cache)
 
-**Why NOT per-session:** DSPy optimization is compile-time. Templates are baked into the `.apxmobj` artifact — the runtime interpolates `{0}` placeholders but never modifies the template text itself. Once compiled, the optimized template is fixed for all sessions that run that artifact. Re-optimizing per-session would mean recompiling, which defeats the purpose of having a compiled artifact.
+**Why NOT per-session:** DSPy optimization is compile-time. Templates are baked into the `.apxmobj` artifact — the runtime interpolates `{name}` placeholders but never modifies the template text itself. Once compiled, the optimized template is fixed for all sessions that run that artifact. Re-optimizing per-session would mean recompiling, which defeats the purpose of having a compiled artifact.
 
 ```
 compile (DSPy runs here)          execute (template is fixed)
@@ -342,7 +342,8 @@ flows/
 {
   "id": 1, "name": "triage", "op": "ASK",
   "attributes": {
-    "template_str": "Classify this ticket: {0}",
+    "template_str": "Classify this ticket: {ticket_text}",
+    "input_names": ["ticket_text"],
     "training_data": "training/triage_examples.json"
   }
 }
@@ -365,7 +366,7 @@ No source found → pass returns immediately. No error. No warning. This is the 
 ]
 ```
 
-`inputs` keys map to `{N}` placeholders: `context_0` → `{0}`, `context_1` → `{1}`.
+`inputs` keys map to named template placeholders. The DSPy bridge uses `context_<N>` keys (e.g. `context_0`, `context_1`) and the compiled template references the same names: `{context_0}`, `{context_1}`. Each name must also appear in the node's `input_names` array.
 
 Optional `metric` field in graph metadata specifies the quality function:
 - `token_overlap` — F1 token overlap between output and expected
@@ -450,13 +451,15 @@ Using the `multi_model` benchmark graph — a support ticket triage workflow.
     {
       "id": 2, "name": "extracted_data", "op": "THINK",
       "attributes": {
-        "template_str": "{0}\n\nExtract structured information:\n- Email:\n- Transaction ID:\n- Plan:\n- Issue Type:\n\nOutput as JSON format only."
+        "template_str": "{triage}\n\nExtract structured information:\n- Email:\n- Transaction ID:\n- Plan:\n- Issue Type:\n\nOutput as JSON format only.",
+        "input_names": ["triage"]
       }
     },
     {
       "id": 3, "name": "solution", "op": "REASON",
       "attributes": {
-        "template_str": "Ticket: {0}\n\nTriage: {1}\n\nExtracted Data: {2}\n\nGenerate a comprehensive solution..."
+        "template_str": "Ticket: {ticket}\n\nTriage: {triage}\n\nExtracted Data: {extracted_data}\n\nGenerate a comprehensive solution...",
+        "input_names": ["ticket", "triage", "extracted_data"]
       }
     }
   ],
@@ -576,7 +579,7 @@ lm = dspy.LM(
 dspy.configure(lm=lm)
 
 # 2. Build DSPy signature from template placeholders
-#    template_str has {0} → maps to context_0 input field
+#    template_str has {context_0} → maps to context_0 input field
 classify = dspy.Predict("context_0 -> classification")
 
 # 3. Load training examples as dspy.Example objects
@@ -605,10 +608,10 @@ compiled = optimizer.compile(
 optimized_instruction = compiled.signature.instructions
 
 # 7. Reconstruct template_str with optimized instructions
-#    Keep the original {0} placeholder structure intact
+#    Keep the original named placeholder structure intact
 #    Replace the instruction portion, preserve the classification format
 original = request["template_str"]
-# The optimized instruction wraps around the {0} context
+# The optimized instruction wraps around the {context_0} context
 optimized_template = (
     f"{optimized_instruction}\n\n"
     f"Classify this support ticket:\n"
@@ -616,7 +619,7 @@ optimized_template = (
     f"- Category: [BILLING/TECHNICAL/FEATURE_REQUEST/BUG]\n"
     f"- Sentiment: [POSITIVE/NEUTRAL/FRUSTRATED/ANGRY]\n\n"
     f"Respond in exactly 3 lines.\n\n"
-    f"{{0}}"
+    f"{{context_0}}"
 )
 
 # 8. Return result
@@ -670,14 +673,14 @@ Respond in exactly 3 lines, one per dimension.
 // ─── AFTER dspy-optimize ────────────────────────────────────────
 
 %triage = ais.ask {
-    template_str = "You are a customer support triage specialist. Read the ticket carefully and classify it along exactly three dimensions.\0A\0AFor Priority: consider business impact...\0AFor Category: BILLING = payment...\0AFor Sentiment: assess from word choice...\0A\0ARespond in exactly 3 lines, one per dimension.\0A\0A{0}",
+    template_str = "You are a customer support triage specialist. Read the ticket carefully and classify it along exactly three dimensions.\0A\0AFor Priority: consider business impact...\0AFor Category: BILLING = payment...\0AFor Sentiment: assess from word choice...\0A\0ARespond in exactly 3 lines, one per dimension.\0A\0A{context_0}",
     ais.dspy_optimized = true,
     ais.dspy_metric_score = 0.92 : f64
 } [] : !ais.token
 ```
 
 Key changes:
-- The inline ticket text is moved to `{0}` — DSPy recognized it should be a variable input, not hardcoded
+- The inline ticket text is moved to `{context_0}` — DSPy recognized it should be a variable input, not hardcoded
 - Rich, structured instructions replace the terse original
 - `ais.dspy_optimized` marker for diagnostics
 - `ais.dspy_metric_score` records the quality score achieved during optimization
@@ -695,7 +698,7 @@ Key changes:
   "metric": "exact_match",
   "metric_score": 0.92,
   "trials": 10,
-  "optimized_template": "You are a customer support triage specialist...\n\n{0}",
+  "optimized_template": "You are a customer support triage specialist...\n\n{context_0}",
   "timestamp": "2026-04-08T14:30:00Z"
 }
 ```
@@ -706,13 +709,13 @@ Key changes:
 
 ```mlir
 %triage = ais.ask {
-    template_str = "You are a customer support triage specialist...\n\n{0}",
+    template_str = "You are a customer support triage specialist...\n\n{context_0}",
     ais.shared_prefix_group = "support_specialist",
     ais.shared_prefix_est_tokens = 180
 } ...
 ```
 
-**template-specialization** (O2+): If `{0}` references a compile-time constant (e.g., a `CONST_STR` node), the constant gets folded into the optimized template, producing an even richer final prompt.
+**template-specialization** (O2+): If `{context_0}` references a compile-time constant (e.g., a `CONST_STR` node), the constant gets folded into the optimized template, producing an even richer final prompt.
 
 **dead-context-elimination** (O2+): If DSPy's optimized instruction made some context operands redundant (e.g., the instruction now contains what used to be a separate context input), DCE removes the unused operands and renumbers placeholders.
 

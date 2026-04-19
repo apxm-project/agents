@@ -411,7 +411,10 @@ mod tests {
         let start = Instant::now();
         let clock = Arc::new(ManualClock::new(start));
         let mut configs = HashMap::new();
-        configs.insert("token-backend".to_string(), token_based_config(1000, 100.0, 100.0));
+        configs.insert(
+            "token-backend".to_string(),
+            token_based_config(1000, 100.0, 100.0),
+        );
 
         let limiter = RateLimiter::new(configs, clock).unwrap();
 

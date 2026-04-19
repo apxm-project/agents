@@ -300,13 +300,13 @@ impl MemoCache {
     /// - Verify: 24 hours (verification results, moderately stable)
     pub fn ttl_for_op(op: &AISOperationType) -> u64 {
         match op {
-            AISOperationType::Ask => 3600,       // 1 hour
-            AISOperationType::Think => 86400,    // 24 hours
-            AISOperationType::Reason => 604800,  // 7 days
-            AISOperationType::Plan => 86400,     // 24 hours
-            AISOperationType::Reflect => 86400,  // 24 hours
-            AISOperationType::Verify => 86400,   // 24 hours
-            _ => 3600,                           // default 1 hour
+            AISOperationType::Ask => 3600,      // 1 hour
+            AISOperationType::Think => 86400,   // 24 hours
+            AISOperationType::Reason => 604800, // 7 days
+            AISOperationType::Plan => 86400,    // 24 hours
+            AISOperationType::Reflect => 86400, // 24 hours
+            AISOperationType::Verify => 86400,  // 24 hours
+            _ => 3600,                          // default 1 hour
         }
     }
 

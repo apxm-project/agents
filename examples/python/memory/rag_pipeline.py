@@ -14,8 +14,8 @@ def memory_rag_pipeline(g: GraphRecorder):
     """Memory-augmented RAG pattern with verification."""
     # User query
     query = g.ask(
-        "query",
-        "What are the trade-offs between Rust async runtimes: Tokio vs async-std vs smol?"
+        name="query",
+        prompt="What are the trade-offs between Rust async runtimes: Tokio vs async-std vs smol?"
     )
 
     # Recall from memory (the runtime will make context available via AAM)
@@ -24,17 +24,17 @@ def memory_rag_pipeline(g: GraphRecorder):
     # Generate answer using memory context
     # The runtime provides memory context through AAM, so we don't need to wire recall_ltm
     answer = g.think(
-        "answer",
-        "Answer this question, using any relevant context from memory.\n\n"
+        name="answer",
+        prompt="Answer this question, using any relevant context from memory.\n\n"
         "QUESTION:\n{query}\n\n"
         "Provide a thorough, accurate answer about Rust async runtimes."
     )
-    recall_ltm >> answer  # Control dependency to ensure memory is queried first
+    g.add_edge(recall_ltm, answer, dependency="Control")  # Ensure memory is queried first
 
     # Verify the answer
     verification = g.think(
-        "verification",
-        "Verify this answer is accurate, complete, and balanced.\n\n"
+        name="verification",
+        prompt="Verify this answer is accurate, complete, and balanced.\n\n"
         "QUESTION:\n{query}\n\nANSWER:\n{answer}\n\n"
         "Is this correct? Any important omissions or errors?"
     )
@@ -45,21 +45,21 @@ def memory_rag_pipeline(g: GraphRecorder):
         data=answer,
         key="rust_async_runtimes_comparison"
     )
-    answer | mem
+    g.add_edge(answer, mem)
 
     # Print outputs
-    print1 = g.print("=== ANSWER ===\n{answer}")
+    print1 = g.print(message="=== ANSWER ===\n{answer}")
 
-    print2 = g.print("=== VERIFICATION ===\n{verification}")
-    print1 >> print2
-    mem >> print2
+    print2 = g.print(message="=== VERIFICATION ===\n{verification}")
+    g.add_edge(print1, print2, dependency="Control")
+    g.add_edge(mem, print2, dependency="Control")
 
     g.done(print2)
     
 
 
 if __name__ == "__main__":
-    import asyncio
+    import apxm
 
-    result = asyncio.run(memory_rag_pipeline())
+    result = apxm.run(memory_rag_pipeline())
     print(result.content)

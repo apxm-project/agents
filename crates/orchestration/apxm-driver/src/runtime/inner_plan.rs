@@ -4,13 +4,13 @@ use std::sync::Arc;
 
 use apxm_artifact::Artifact;
 use apxm_compiler::{self, Pipeline};
+use apxm_compiler::{AirEdge, AirModule, AirNode, AirParam};
 use apxm_core::constants::graph::{attrs as graph_attrs, metadata as graph_meta};
 use apxm_core::types::OptimizationLevel;
 use apxm_core::types::execution::{ExecutionDag, TaskDag};
 use apxm_core::types::{AISOperationType, DependencyType, Value};
 use apxm_core::utils::build::MlirEnvReport;
 use apxm_core::{log_debug, log_info};
-use apxm_compiler::{AirEdge, AirModule, AirNode, AirParam};
 use apxm_runtime::{InnerPlanLinker, RuntimeError};
 use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};

@@ -1,16 +1,16 @@
 //! CONST_STR operation - String constant
 
-use super::{ExecutionContext, Node, Result, Value, get_string_attribute};
+use super::{
+    ExecutionContext, Node, Result, Value, get_string_attribute,
+    template::{input_names_from_node, render_named},
+};
 use apxm_core::constants::graph::attrs as graph_attrs;
 
 pub async fn execute(_ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -> Result<Value> {
-    let mut value = get_string_attribute(node, graph_attrs::VALUE)?;
-    for (i, input) in inputs.iter().enumerate() {
-        if let Some(s) = input.as_string() {
-            value = value.replace(&format!("{{{i}}}"), s);
-        }
-    }
-    Ok(Value::String(value))
+    let value = get_string_attribute(node, graph_attrs::VALUE)?;
+    let input_names = input_names_from_node(node);
+    let rendered = render_named(&value, &inputs, &input_names)?;
+    Ok(Value::String(rendered))
 }
 
 #[cfg(test)]
@@ -22,6 +22,10 @@ mod tests {
     use std::sync::Arc;
 
     fn make_node(value: &str) -> Node {
+        make_node_with_inputs(value, &[])
+    }
+
+    fn make_node_with_inputs(value: &str, input_names: &[&str]) -> Node {
         let mut node = Node {
             id: 1,
             op_type: AISOperationType::ConstStr,
@@ -34,6 +38,17 @@ mod tests {
             graph_attrs::VALUE.to_string(),
             Value::String(value.to_string()),
         );
+        if !input_names.is_empty() {
+            node.attributes.insert(
+                graph_attrs::INPUT_NAMES.to_string(),
+                Value::Array(
+                    input_names
+                        .iter()
+                        .map(|n| Value::String((*n).to_string()))
+                        .collect(),
+                ),
+            );
+        }
         node
     }
 
@@ -74,7 +89,9 @@ mod tests {
             crate::aam::Aam::new(),
         );
 
-        let node = make_node("constant");
+        // Template has no placeholders; node declares one input_name to keep
+        // the runtime contract `input_names.len() == inputs.len()` satisfied.
+        let node = make_node_with_inputs("constant", &["unused"]);
         let result = execute(&ctx, &node, vec![Value::String("ignored".to_string())])
             .await
             .unwrap();
@@ -97,7 +114,7 @@ mod tests {
             crate::aam::Aam::new(),
         );
 
-        let node = make_node("hello {0}, meet {1}");
+        let node = make_node_with_inputs("hello {greeted}, meet {newcomer}", &["greeted", "newcomer"]);
         let result = execute(
             &ctx,
             &node,

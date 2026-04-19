@@ -32,6 +32,7 @@
 #include "ais/Dialect/AIS/Transforms/Passes.h"
 
 #include "ais/Common/Constants.h"
+#include "ais/Dialect/AIS/Transforms/Placeholders.h"
 
 #include "ais/Dialect/AIS/IR/AISAttributes.h"
 #include "ais/Dialect/AIS/IR/AISOps.h"
@@ -42,6 +43,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/StringSet.h"
 
 namespace mlir::ais {
 #define GEN_PASS_DEF_FUSEASKOPS
@@ -167,6 +169,37 @@ static std::string fuseTemplates(StringRef producerTemplate, StringRef consumerT
   return fuseTemplates(producerTemplate, {}, consumerTemplate);
 }
 
+/// Merge two input_names arrays consistently with how operands are merged.
+/// `producerNames` are the producer's input slots (kept entirely).
+/// `consumerNames` are the consumer's input slots, paired with
+/// `consumerOperands` so we can drop the entry that corresponded to the
+/// producer's now-inlined result.
+static llvm::SmallVector<std::string, 8>
+mergeInputNames(llvm::ArrayRef<llvm::StringRef> producerNames,
+                llvm::ArrayRef<llvm::StringRef> consumerNames,
+                ValueRange consumerOperands,
+                Value consumedValue) {
+  llvm::SmallVector<std::string, 8> merged;
+  merged.reserve(producerNames.size() + consumerNames.size());
+  llvm::StringSet<> taken;
+  auto pushUnique = [&](llvm::StringRef base) {
+    std::string candidate = base.str();
+    unsigned suffix = 1;
+    while (!taken.insert(candidate).second) {
+      candidate = (base + llvm::Twine("_") + llvm::Twine(suffix++)).str();
+    }
+    merged.emplace_back(std::move(candidate));
+  };
+  for (llvm::StringRef name : producerNames)
+    pushUnique(name);
+  for (size_t i = 0; i < consumerNames.size(); ++i) {
+    if (i < consumerOperands.size() && consumerOperands[i] == consumedValue)
+      continue;
+    pushUnique(consumerNames[i]);
+  }
+  return merged;
+}
+
 struct FuseAskOpsPass : impl::FuseAskOpsBase<FuseAskOpsPass> {
   void runOnOperation() override {
     APXM_AIS_DEBUG_HEADER(FuseAskOps);
@@ -230,16 +263,31 @@ struct FuseAskOpsPass : impl::FuseAskOpsBase<FuseAskOpsPass> {
         auto fusedTemplate = fuseTemplates(producer.getTemplateStrAttr().getValue(),
                                            consumer.getTemplateStrAttr().getValue());
 
+        auto producerNames = placeholders::readInputNames(producer.getOperation());
+        auto consumerNames = placeholders::readInputNames(consumer.getOperation());
+        auto mergedNames = mergeInputNames(producerNames, consumerNames,
+                                           consumer.getOperands(),
+                                           producer.getResult());
+
         auto fusedOp = builder.create<AskOp>(
             consumer.getLoc(), consumer.getType(),
             builder.getStringAttr(fusedTemplate), fusedContext);
 
-        // Transfer attributes
+        // Transfer attributes (input_names is rebuilt below from the merged
+        // operand list, so skip the consumer's stale copy here).
         for (NamedAttribute attr : consumer->getAttrs()) {
-          if (attr.getName() != "template_str" && attr.getName() != "operandSegmentSizes") {
+          if (attr.getName() != apxm::constants::attrs::TEMPLATE_STR &&
+              attr.getName() != apxm::constants::attrs::INPUT_NAMES &&
+              attr.getName() != "operandSegmentSizes") {
             fusedOp->setAttr(attr.getName(), attr.getValue());
           }
         }
+
+        llvm::SmallVector<llvm::StringRef, 8> mergedRefs;
+        mergedRefs.reserve(mergedNames.size());
+        for (const auto &name : mergedNames)
+          mergedRefs.push_back(name);
+        placeholders::writeInputNames(fusedOp.getOperation(), mergedRefs, builder);
 
         fusedOp->setAttr(apxm::constants::attrs::FUSED_FROM,
           AISFusedFromAttr::get(module.getContext(),
@@ -295,16 +343,32 @@ struct FuseAskOpsPass : impl::FuseAskOpsBase<FuseAskOpsPass> {
                                              trace->stringParts,
                                              consumer.getTemplateStrAttr().getValue());
 
+          auto producerNames = placeholders::readInputNames(producer.getOperation());
+          auto consumerNames = placeholders::readInputNames(consumer.getOperation());
+          // The consumed value here is the final operand of the merge chain
+          // (i.e. the one that flows into the consumer through `operand`).
+          auto mergedNames = mergeInputNames(producerNames, consumerNames,
+                                             consumer.getOperands(), operand);
+
           auto fusedOp = builder.create<AskOp>(
               consumer.getLoc(), consumer.getType(),
               builder.getStringAttr(fusedTemplate), fusedContext);
 
-          // Transfer attributes
+          // Transfer attributes (input_names is rebuilt below from the merged
+          // operand list, so skip the consumer's stale copy here).
           for (NamedAttribute attr : consumer->getAttrs()) {
-            if (attr.getName() != "template_str" && attr.getName() != "operandSegmentSizes") {
+            if (attr.getName() != apxm::constants::attrs::TEMPLATE_STR &&
+                attr.getName() != apxm::constants::attrs::INPUT_NAMES &&
+                attr.getName() != "operandSegmentSizes") {
               fusedOp->setAttr(attr.getName(), attr.getValue());
             }
           }
+
+          llvm::SmallVector<llvm::StringRef, 8> mergedRefs;
+          mergedRefs.reserve(mergedNames.size());
+          for (const auto &name : mergedNames)
+            mergedRefs.push_back(name);
+          placeholders::writeInputNames(fusedOp.getOperation(), mergedRefs, builder);
 
           fusedOp->setAttr(apxm::constants::attrs::FUSED_FROM,
             AISFusedFromAttr::get(module.getContext(),

@@ -38,19 +38,19 @@ def parallel_agents(g: GraphRecorder):
 
     # Merge the analyses
     merge_analyses = g.ask(
-        "merge_analyses",
-        "Compare and synthesize these two analyses:\n\nClaude:\n{claude_analysis}\n\nCodex:\n{codex_analysis}"
+        name="merge_analyses",
+        prompt="Compare and synthesize these two analyses:\n\nClaude:\n{claude_analysis}\n\nCodex:\n{codex_analysis}"
     )
 
     # Print and return
-    output = g.print("{merge_analyses}")
+    output = g.print(message="{merge_analyses}")
 
     g.done(output)
     
 
 
 if __name__ == "__main__":
-    import asyncio
+    import apxm
 
-    result = asyncio.run(parallel_agents())
+    result = apxm.run(parallel_agents())
     print(result.content)

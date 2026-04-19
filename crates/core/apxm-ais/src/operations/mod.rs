@@ -9,6 +9,7 @@
 
 mod category;
 mod definitions;
+pub mod mlir_keywords;
 pub mod tablegen;
 
 pub use category::OperationCategory;

@@ -23,10 +23,10 @@ use std::io::{self, BufRead, Write};
 use std::time::Instant;
 
 use apxm_artifact::Artifact;
+use apxm_compiler::AirModule;
 use apxm_compiler::{Context as CompilerContext, Pipeline as CompilerPipeline};
 use apxm_core::constants::jsonrpc;
 use apxm_core::types::{AIS_OPERATIONS, OptimizationLevel};
-use apxm_compiler::AirModule;
 use serde_json::{Value, json};
 
 const MCP_PROTOCOL_VERSION: &str = apxm_core::constants::protocols::MCP_VERSION;

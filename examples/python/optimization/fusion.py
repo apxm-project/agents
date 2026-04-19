@@ -16,23 +16,23 @@ def fusion_demo(g: GraphRecorder):
     """3 sequential ASK->THINK pairs. O0: 6 LLM calls. O2: 3 (fused)."""
 
     # Pair 1: question + elaboration
-    q1 = g.ask("q1", "What is the capital of France?")
-    e1 = g.think("e1", "Elaborate on this answer: {q1}")
+    q1 = g.ask(name="q1", prompt="What is the capital of France?")
+    e1 = g.think(name="e1", prompt="Elaborate on this answer: {q1}")
 
     # Pair 2: follow-up + elaboration
-    q2 = g.ask("q2", "What is a famous landmark there? Context: {e1}")
-    e2 = g.think("e2", "Explain why this landmark matters: {q2}")
+    q2 = g.ask(name="q2", prompt="What is a famous landmark there? Context: {e1}")
+    e2 = g.think(name="e2", prompt="Explain why this landmark matters: {q2}")
 
     # Pair 3: synthesis + elaboration
-    q3 = g.ask("q3", "Summarize the cultural significance: {e2}")
-    e3 = g.think("e3", "Final reflection on this topic: {q3}")
+    q3 = g.ask(name="q3", prompt="Summarize the cultural significance: {e2}")
+    e3 = g.think(name="e3", prompt="Final reflection on this topic: {q3}")
 
-    output = g.print("Result:\n{e3}")
+    output = g.print(message="Result:\n{e3}")
     g.done(output)
 
 
 if __name__ == "__main__":
-    import asyncio
+    import apxm
 
-    result = asyncio.run(fusion_demo())
+    result = apxm.run(fusion_demo())
     print(result.content)

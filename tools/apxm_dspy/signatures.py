@@ -1,15 +1,19 @@
-"""Build DSPy signatures from {N}-style APXM templates."""
+"""Build DSPy signatures from named-placeholder APXM templates."""
 
 from __future__ import annotations
 
 import re
 
-_PLACEHOLDER_RE = re.compile(r"\{(\d+)\}")
+_PLACEHOLDER_RE = re.compile(r"\{(\w+)\}")
 
 
-def extract_placeholders(template_str: str) -> list[int]:
-    """Extract {N} placeholder indices from a template string."""
-    return sorted(set(int(m.group(1)) for m in _PLACEHOLDER_RE.finditer(template_str)))
+def extract_placeholders(template_str: str) -> list[str]:
+    """Extract `{name}` placeholder names from a template string, in order
+    of first appearance, with duplicates removed."""
+    seen: dict[str, None] = {}
+    for m in _PLACEHOLDER_RE.finditer(template_str):
+        seen.setdefault(m.group(1), None)
+    return list(seen.keys())
 
 
 def extract_fields_from_template(
@@ -30,9 +34,9 @@ def extract_fields_from_template(
     # Fall back to placeholder-based naming
     placeholders = extract_placeholders(template_str)
     if placeholders:
-        input_fields = [f"context_{i}" for i in placeholders]
+        input_fields = [f"context_{name}" for name in placeholders]
     else:
-        input_fields = ["context_0"]
+        input_fields = ["context_input"]
     return input_fields, "output"
 
 
@@ -42,7 +46,7 @@ def template_to_signature_str(
 ) -> str:
     """Convert template + training data to a DSPy signature string.
 
-    Example: "context_0, context_1 -> output"
+    Example: "context_topic, context_question -> output"
     """
     input_fields, output_field = extract_fields_from_template(template_str, training_data)
     return ", ".join(input_fields) + " -> " + output_field

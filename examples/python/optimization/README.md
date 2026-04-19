@@ -23,8 +23,8 @@ q = g.ask("q", "Question")
 e = g.think("e", "Elaborate: {q}")  # Fused with q at O2
 
 # Dead context: unused inputs are pruned
-ctx1 | analysis  # Used (referenced as {0})
-ctx2 | analysis  # Dead -- template doesn't reference {1}
+ctx1 | analysis  # Used (referenced as {ctx1})
+ctx2 | analysis  # Dead -- template doesn't reference {ctx2}
 
 # Compare optimization levels
 # dekk apxm execute workflow.py -O0   # No optimizations

@@ -313,7 +313,9 @@ impl LLMBackend for GraphAwareVllmBackend {
                     let ttl_ms = hints.pin_policy.ttl_ms.unwrap_or(30_000) as u64;
 
                     // Call pin_prefix API (fire and forget - don't fail the request)
-                    let _ = self.pin_prefix(graph_id, node_id, reuse_group, ttl_ms).await;
+                    let _ = self
+                        .pin_prefix(graph_id, node_id, reuse_group, ttl_ms)
+                        .await;
                 }
             }
         }
@@ -359,8 +361,8 @@ impl LLMBackend for GraphAwareVllmBackend {
     }
 
     async fn register_graph(&self, metadata: serde_json::Value) -> Result<()> {
-        let graph_meta: GraphMetadata = serde_json::from_value(metadata)
-            .context("Failed to deserialize GraphMetadata")?;
+        let graph_meta: GraphMetadata =
+            serde_json::from_value(metadata).context("Failed to deserialize GraphMetadata")?;
         GraphAwareVllmBackend::register_graph(self, graph_meta).await?;
         Ok(())
     }
@@ -411,8 +413,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_inject_hints_into_extra_body() {
-        use crate::llm::backends::vllm::ApxmGraphHints;
         use crate::llm::backends::LLMRequest;
+        use crate::llm::backends::vllm::ApxmGraphHints;
 
         let backend = GraphAwareVllmBackend::new(
             "test-key",
@@ -452,8 +454,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_inject_hints_preserves_existing_extra_body() {
-        use crate::llm::backends::vllm::ApxmGraphHints;
         use crate::llm::backends::LLMRequest;
+        use crate::llm::backends::vllm::ApxmGraphHints;
 
         let backend = GraphAwareVllmBackend::new(
             "test-key",
@@ -487,8 +489,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_inject_hints_skips_if_already_present() {
-        use crate::llm::backends::vllm::ApxmGraphHints;
         use crate::llm::backends::LLMRequest;
+        use crate::llm::backends::vllm::ApxmGraphHints;
 
         let backend = GraphAwareVllmBackend::new(
             "test-key",

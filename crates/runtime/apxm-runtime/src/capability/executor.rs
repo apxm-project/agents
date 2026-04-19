@@ -1,8 +1,8 @@
 //! Capability executor trait and execution infrastructure
 
 use super::metadata::CapabilityMetadata;
-use apxm_core::{error::RuntimeError, types::values::Value};
 use crate::sandbox::{ExecRequest, ExecResult};
+use apxm_core::{error::RuntimeError, types::values::Value};
 use async_trait::async_trait;
 use std::collections::HashMap;
 

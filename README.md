@@ -107,9 +107,9 @@ APXM provides three core LLM operations with different reasoning characteristics
 {
   "name": "llm_ops",
   "nodes": [
-    { "id": 1, "name": "ask", "op": "ASK", "attributes": { "template_str": "Explain the domain background of {0}" } },
+    { "id": 1, "name": "ask", "op": "ASK", "attributes": { "template_str": "Explain the domain background of {topic}" } },
     { "id": 2, "name": "think", "op": "THINK", "attributes": { "template_str": "Analyze the implications", "budget": 2000 } },
-    { "id": 3, "name": "reason", "op": "REASON", "attributes": { "template_str": "Execute step 1: {0}" } }
+    { "id": 3, "name": "reason", "op": "REASON", "attributes": { "template_str": "Execute step 1: {think}", "input_names": ["think"] } }
   ],
   "edges": [
     { "from": 1, "to": 2, "dependency": "Data" },

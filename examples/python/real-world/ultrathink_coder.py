@@ -29,32 +29,32 @@ def ultrathink_coder(g: GraphRecorder, task: str):
     coder = g.spawn("coder", profile=claude, cwd=cwd)
 
     # Verify task received (compile parameter {task} is NOT auto-wired)
-    task_ok = g.ask("Confirm task received: {task}")
+    task_ok = g.ask(prompt="Confirm task received: {task}")
 
     # Three parallel planning perspectives (auto-wired from {task_ok})
     arch = g.think(
-        "ultrathink. You are a Rust systems architect for the APXM project at ~/projects/agents/apxm. "
+        prompt="ultrathink. You are a Rust systems architect for the APXM project at ~/projects/agents/apxm. "
         "Read relevant source files first. Produce: which crates affected, exact file paths to create or modify, "
         "public API design (structs, traits, function signatures), integration with existing systems "
         "(ContextStack, MemoCache, Scheduler, ModelRouter), and architectural risks. Task: {task_ok}"
     )
 
     adv = g.think(
-        "ultrathink. You are an adversarial reviewer. What already exists that should NOT be re-implemented? "
+        prompt="ultrathink. You are an adversarial reviewer. What already exists that should NOT be re-implemented? "
         "Minimal viable change vs over-engineering? Top 3 failure modes? What NOT to build in v1? "
         "The ONE thing that breaks everything? Be brutal. Adversary wins on scope. "
         "Read crates/runtime/apxm-runtime/src/model_router/ first. Task: {task_ok}"
     )
 
     impl_ = g.think(
-        "ultrathink. You are a Rust implementation expert. Produce: complete Rust structs and impl blocks "
+        prompt="ultrathink. You are a Rust implementation expert. Produce: complete Rust structs and impl blocks "
         "(not pseudocode), unit tests for happy path and error paths, exact Cargo.toml additions. "
         "Build command: dekk apxm build. Read relevant source files first. Task: {task_ok}"
     )
 
     # Synthesize the three perspectives (auto-wired from {arch}, {adv}, {impl_})
     synthesis = g.think(
-        "ultrathink. Synthesize 3 expert analyses into ONE implementation brief. Adversary wins on scope. "
+        prompt="ultrathink. Synthesize 3 expert analyses into ONE implementation brief. Adversary wins on scope. "
         "Exact file paths + complete Rust code blocks. Test cases. Flag uncertainty with [RISK]. "
         "End with CONSERVATIVE APPROACH and BOLD APPROACH sections. "
         "ARCHITECT: {arch} ADVERSARY: {adv} IMPL EXPERT: {impl_}"
@@ -62,7 +62,7 @@ def ultrathink_coder(g: GraphRecorder, task: str):
 
     # Format as coding prompt (auto-wired from {synthesis})
     prompt = g.think(
-        "Write a precise coding agent instruction from this synthesis. Conservative approach first "
+        prompt="Write a precise coding agent instruction from this synthesis. Conservative approach first "
         "(minimal, safe), bold approach second (full vision). Start with: cd ~/projects/agents/apxm. "
         "List exact files with full content. End with: dekk apxm build, fix errors, run tests, git commit. "
         "Synthesis: {synthesis}"
@@ -73,17 +73,17 @@ def ultrathink_coder(g: GraphRecorder, task: str):
 
     # Reflect on results (auto-wired from {result})
     summary = g.think(
-        "Reflect: what was built? Did it compile? Which approach won? "
+        prompt="Reflect: what was built? Did it compile? Which approach won? "
         "Summary for the engineer. Result: {result}"
     )
 
     # Print and return (auto-wired from {summary})
-    g.print("=== ULTRATHINK COMPLETE ===\n{summary}")
+    g.print(message="=== ULTRATHINK COMPLETE ===\n{summary}")
     g.done(summary)
 
 
 if __name__ == "__main__":
-    import asyncio
+    import apxm
 
-    result = asyncio.run(ultrathink_coder("implement a binary search in Python"))
+    result = apxm.run(ultrathink_coder("implement a binary search in Python"))
     print(result.content)

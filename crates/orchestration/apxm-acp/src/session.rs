@@ -358,7 +358,9 @@ impl Drop for AcpSession {
         if let Some(pid) = self.child.id() {
             // SAFETY: libc::kill is safe to call with a valid pid.
             #[allow(unsafe_code)]
-            unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+            unsafe {
+                libc::kill(pid as libc::pid_t, libc::SIGKILL)
+            };
         }
         #[cfg(not(unix))]
         if let Some(_pid) = self.child.id() {

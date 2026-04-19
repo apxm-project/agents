@@ -42,7 +42,7 @@ def codex_claude_fix(g: GraphRecorder):
 
     # Claude fixes everything (auto-wired from {report})
     prompt = g.ask(
-        "You are a senior Rust engineer. Codex has done a deep analysis of the APXM compiler and "
+        prompt="You are a senior Rust engineer. Codex has done a deep analysis of the APXM compiler and "
         "found issues. Fix ALL of them.\n\nCODEX REPORT:\n{report}\n\n"
         "For each issue:\n"
         "1. Read the relevant file(s)\n"
@@ -59,17 +59,17 @@ def codex_claude_fix(g: GraphRecorder):
 
     # Summarize (auto-wired from {report} and {result})
     summary = g.think(
-        "Summarize what codex found and what claude fixed:\n\n"
+        prompt="Summarize what codex found and what claude fixed:\n\n"
         "CODEX REPORT:\n{report}\n\nCLAUDE RESULT:\n{result}"
     )
 
     # Print and return (auto-wired from {summary})
-    g.print("=== CODEX + CLAUDE ANALYSIS COMPLETE ===\n{summary}")
+    g.print(message="=== CODEX + CLAUDE ANALYSIS COMPLETE ===\n{summary}")
     g.done(summary)
 
 
 if __name__ == "__main__":
-    import asyncio
+    import apxm
 
-    result = asyncio.run(codex_claude_fix())
+    result = apxm.run(codex_claude_fix())
     print(result.content)

@@ -69,7 +69,9 @@ impl AnthropicBackend {
             .as_ref()
             .and_then(|c| c.get(MODEL))
             .and_then(|m| m.as_str())
-            .unwrap_or_else(|| default_model_for_provider("anthropic").unwrap_or("claude-sonnet-4-5"))
+            .unwrap_or_else(|| {
+                default_model_for_provider("anthropic").unwrap_or("claude-sonnet-4-5")
+            })
             .to_string();
 
         let base_url = config

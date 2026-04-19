@@ -42,8 +42,8 @@ def explore_workflow(g: GraphRecorder):
     researcher = g.spawn("researcher", profile=claude, cwd=cwd)
     user_advocate = g.spawn("user_advocate", profile=claude, cwd=cwd)
 
-    # All 5 get the same question, different perspectives
-    architect_prompt = g.text(value="""You are the APXM systems architect. Answer this question from a systems design perspective:
+    # All 5 agents work in parallel with different perspectives
+    architect.ask(prompt="""You are the APXM systems architect. Answer this question from a systems design perspective:
 
 Question: {question}
 
@@ -54,10 +54,10 @@ Consider:
 - What's the cleanest way to implement this in the current design?
 
 Be specific and reference actual APXM components. Keep under 300 words.
-"""
-    )
+""")
+    arch_result = architect.get_last_node()
 
-    adversary_prompt = g.text(value="""You are the adversary. Your job is to find problems with the proposed idea:
+    adversary.ask(prompt="""You are the adversary. Your job is to find problems with the proposed idea:
 
 Question: {question}
 
@@ -70,10 +70,10 @@ Challenge it:
 - What's the simplest alternative that achieves 80% of the value?
 
 Be brutally honest. If it's a bad idea, say so. Keep under 300 words.
-"""
-    )
+""")
+    adv_result = adversary.get_last_node()
 
-    implementer_prompt = g.text(value="""You are the implementer. Answer this question with concrete Rust code:
+    implementer.ask(prompt="""You are the implementer. Answer this question with concrete Rust code:
 
 Question: {question}
 
@@ -84,10 +84,10 @@ Show:
 - Show a minimal working example (pseudocode is fine)
 
 Focus on *how* it would actually be built in Rust. Keep under 300 words.
-"""
-    )
+""")
+    impl_result = implementer.get_last_node()
 
-    researcher_prompt = g.text(value="""You are the researcher. Answer this question based on what the industry and literature say:
+    researcher.ask(prompt="""You are the researcher. Answer this question based on what the industry and literature say:
 
 Question: {question}
 
@@ -99,10 +99,10 @@ Research:
 - What's the state of the art?
 
 Cite examples from real systems. Keep under 300 words.
-"""
-    )
+""")
+    res_result = researcher.get_last_node()
 
-    user_advocate_prompt = g.text(value="""You are the user advocate. Answer this question from the user's perspective:
+    user_advocate.ask(prompt="""You are the user advocate. Answer this question from the user's perspective:
 
 Question: {question}
 
@@ -114,31 +114,15 @@ Consider:
 - Is there a simpler way to give users what they want?
 
 Think about real-world workflow authors using APXM. Keep under 300 words.
-"""
-    )
-
-    # All 5 agents work in parallel
-    architect.ask("{architect_prompt}")
-    arch_result = architect.get_last_node()
-
-    adversary.ask("{adversary_prompt}")
-    adv_result = adversary.get_last_node()
-
-    implementer.ask("{implementer_prompt}")
-    impl_result = implementer.get_last_node()
-
-    researcher.ask("{researcher_prompt}")
-    res_result = researcher.get_last_node()
-
-    user_advocate.ask("{user_advocate_prompt}")
+""")
     user_result = user_advocate.get_last_node()
 
     # Print each perspective
-    print_arch = g.print("=== ARCHITECT ===\n{arch_result}")
-    print_adv = g.print("=== ADVERSARY ===\n{adv_result}")
-    print_impl = g.print("=== IMPLEMENTER ===\n{impl_result}")
-    print_res = g.print("=== RESEARCHER ===\n{res_result}")
-    print_user = g.print("=== USER ADVOCATE ===\n{user_result}")
+    print_arch = g.print(message="=== ARCHITECT ===\n{arch_result}")
+    print_adv = g.print(message="=== ADVERSARY ===\n{adv_result}")
+    print_impl = g.print(message="=== IMPLEMENTER ===\n{impl_result}")
+    print_res = g.print(message="=== RESEARCHER ===\n{res_result}")
+    print_user = g.print(message="=== USER ADVOCATE ===\n{user_result}")
 
     # Wait for all to complete
     wait = g.wait_all(
@@ -149,16 +133,16 @@ Think about real-world workflow authors using APXM. Keep under 300 words.
         res_result,
         user_result
     )
-    print_arch >> wait
-    print_adv >> wait
-    print_impl >> wait
-    print_res >> wait
-    print_user >> wait
+    g.add_edge(print_arch, wait, dependency="Control")
+    g.add_edge(print_adv, wait, dependency="Control")
+    g.add_edge(print_impl, wait, dependency="Control")
+    g.add_edge(print_res, wait, dependency="Control")
+    g.add_edge(print_user, wait, dependency="Control")
 
     # Synthesis: merge all 5 perspectives, adversary wins on scope
     synthesis = g.think(
-        "synthesis",
-        """Synthesize the 5 perspectives on this question:
+        name="synthesis",
+        prompt="""Synthesize the 5 perspectives on this question:
 
 Question: {question}
 
@@ -179,14 +163,14 @@ Let the adversary win on scope reduction — if they identified over-engineering
 Give a clear, definitive answer. Keep under 400 words.
 """
     )
-    wait >> synthesis
+    g.add_edge(wait, synthesis, dependency="Control")
 
-    print_synth = g.print("=== SYNTHESIS ===\n{synthesis}")
+    print_synth = g.print(message="=== SYNTHESIS ===\n{synthesis}")
 
     # Action plan: extract concrete next steps
     action_plan = g.think(
-        "action_plan",
-        """Based on the synthesis, extract concrete next steps:
+        name="action_plan",
+        prompt="""Based on the synthesis, extract concrete next steps:
 
 Synthesis: {synthesis}
 
@@ -204,15 +188,15 @@ If the recommendation is NO or DIFFERENT-APPROACH:
 Output a structured action plan ready for execution. Keep under 300 words.
 """
     )
-    print_synth >> action_plan
+    g.add_edge(print_synth, action_plan, dependency="Control")
 
-    print_plan = g.print("=== ACTION PLAN ===\n{action_plan}")
+    print_plan = g.print(message="=== ACTION PLAN ===\n{action_plan}")
 
     g.done(print_plan)
 
 
 if __name__ == "__main__":
-    import asyncio
+    import apxm
 
-    result = asyncio.run(explore_workflow("How does the scheduler work?"))
+    result = apxm.run(explore_workflow("How does the scheduler work?"))
     print(result.content)

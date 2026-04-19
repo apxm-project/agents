@@ -35,7 +35,11 @@ fn is_cl100k_model(model: &str) -> bool {
 /// Sets `ais.est_template_tokens` on each ASK/THINK/REASON node so MLIR passes
 /// can read pre-computed values instead of the chars/4 heuristic.
 pub fn annotate_token_estimates(module: &mut AirModule) {
-    let mlir_key = format!("{}{}", ais_attrs::MLIR_ATTR_PREFIX, ais_attrs::EST_TEMPLATE_TOKENS);
+    let mlir_key = format!(
+        "{}{}",
+        ais_attrs::MLIR_ATTR_PREFIX,
+        ais_attrs::EST_TEMPLATE_TOKENS
+    );
     for node in &mut module.nodes {
         match node.op {
             AISOperationType::Ask | AISOperationType::Think | AISOperationType::Reason => {}
@@ -62,31 +66,52 @@ pub fn annotate_token_estimates(module: &mut AirModule) {
     }
 }
 
-/// Strip `{0}`, `{1}` etc. placeholders, returning only static text.
+/// Strip `{name}` placeholders, returning only static text.
+///
+/// Templates reference inputs by name (`{topic}`, `{question}`, …); the
+/// shared `template::parse_placeholder_names` helper defines the exact
+/// grammar (`\{(\w+)\}`). Anything that matches that grammar is removed;
+/// braces around non-word content (e.g. `{a-b}`) are preserved as text.
 fn strip_placeholders(template: &str) -> String {
     let mut result = String::with_capacity(template.len());
-    let mut chars = template.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '{' {
-            let mut buf = String::new();
-            let mut is_placeholder = false;
-            for inner in chars.by_ref() {
-                if inner == '}' {
-                    is_placeholder = buf.chars().all(|c| c.is_ascii_digit());
-                    break;
-                }
-                buf.push(inner);
+    let bytes = template.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'{' {
+            let start = i + 1;
+            let mut end = start;
+            while end < bytes.len()
+                && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_')
+            {
+                end += 1;
             }
-            if !is_placeholder {
-                result.push('{');
-                result.push_str(&buf);
-                result.push('}');
+            if end > start && end < bytes.len() && bytes[end] == b'}' {
+                // Drop `{name}` entirely.
+                i = end + 1;
+                continue;
             }
-        } else {
-            result.push(c);
         }
+        // Pass through one UTF-8 character at the current position.
+        let ch_end = i + utf8_len(bytes[i]);
+        result.push_str(&template[i..ch_end]);
+        i = ch_end;
     }
     result
+}
+
+/// UTF-8 byte length of the codepoint starting with `b`.
+fn utf8_len(b: u8) -> usize {
+    if b < 0x80 {
+        1
+    } else if b < 0xC0 {
+        1 // continuation byte — treat as one (input is assumed valid)
+    } else if b < 0xE0 {
+        2
+    } else if b < 0xF0 {
+        3
+    } else {
+        4
+    }
 }
 
 /// Refine shared-prefix token estimates using exact BPE tokenization.
@@ -159,7 +184,11 @@ mod tests {
     }
 
     fn get_est_tokens(node: &AirNode) -> Option<i64> {
-        let key = format!("{}{}", ais_attrs::MLIR_ATTR_PREFIX, ais_attrs::EST_TEMPLATE_TOKENS);
+        let key = format!(
+            "{}{}",
+            ais_attrs::MLIR_ATTR_PREFIX,
+            ais_attrs::EST_TEMPLATE_TOKENS
+        );
         match node.attributes.get(&key) {
             Some(Value::Number(Number::Integer(n))) => Some(*n),
             _ => None,
@@ -168,9 +197,11 @@ mod tests {
 
     #[test]
     fn annotate_sets_token_count_on_ask() {
-        let mut module = make_module(vec![
-            make_llm_node(1, AISOperationType::Ask, "What is the meaning of life?"),
-        ]);
+        let mut module = make_module(vec![make_llm_node(
+            1,
+            AISOperationType::Ask,
+            "What is the meaning of life?",
+        )]);
         annotate_token_estimates(&mut module);
         let count = get_est_tokens(&module.nodes[0]).expect("should have est_template_tokens");
         assert!(count > 0);
@@ -180,7 +211,11 @@ mod tests {
     #[test]
     fn annotate_sets_token_count_on_think_and_reason() {
         let mut module = make_module(vec![
-            make_llm_node(1, AISOperationType::Think, "Analyze this problem step by step."),
+            make_llm_node(
+                1,
+                AISOperationType::Think,
+                "Analyze this problem step by step.",
+            ),
             make_llm_node(2, AISOperationType::Reason, "Given the evidence, conclude."),
         ]);
         annotate_token_estimates(&mut module);
@@ -217,9 +252,11 @@ mod tests {
 
     #[test]
     fn annotate_strips_placeholders_before_counting() {
-        let mut module = make_module(vec![
-            make_llm_node(1, AISOperationType::Ask, "Explain {0} in detail"),
-        ]);
+        let mut module = make_module(vec![make_llm_node(
+            1,
+            AISOperationType::Ask,
+            "Explain {topic} in detail",
+        )]);
         annotate_token_estimates(&mut module);
         let count = get_est_tokens(&module.nodes[0]).unwrap();
         // "Explain  in detail" — placeholders stripped
@@ -229,9 +266,7 @@ mod tests {
 
     #[test]
     fn annotate_placeholder_only_template_gets_no_annotation() {
-        let mut module = make_module(vec![
-            make_llm_node(1, AISOperationType::Ask, "{0}"),
-        ]);
+        let mut module = make_module(vec![make_llm_node(1, AISOperationType::Ask, "{question}")]);
         annotate_token_estimates(&mut module);
         // Static text is empty after stripping → no annotation
         assert!(get_est_tokens(&module.nodes[0]).is_none());
@@ -266,9 +301,7 @@ mod tests {
     fn annotate_beats_heuristic_accuracy() {
         // Code-heavy text where chars/4 diverges most from BPE
         let code_template = "```rust\nfn main() {\n    println!(\"Hello, world!\");\n    let x = vec![1, 2, 3];\n    for i in &x {\n        println!(\"{}\", i);\n    }\n}\n```";
-        let mut module = make_module(vec![
-            make_llm_node(1, AISOperationType::Ask, code_template),
-        ]);
+        let mut module = make_module(vec![make_llm_node(1, AISOperationType::Ask, code_template)]);
         annotate_token_estimates(&mut module);
         let bpe_count = get_est_tokens(&module.nodes[0]).unwrap();
         let heuristic_count = (code_template.len() + 3) / 4;
@@ -279,14 +312,16 @@ mod tests {
 
     #[test]
     fn strip_simple_placeholders() {
-        assert_eq!(strip_placeholders("Hello {0} world"), "Hello  world");
-        assert_eq!(strip_placeholders("{0} {1}"), " ");
+        assert_eq!(strip_placeholders("Hello {topic} world"), "Hello  world");
+        assert_eq!(strip_placeholders("{a} {b}"), " ");
         assert_eq!(strip_placeholders("no placeholders"), "no placeholders");
     }
 
     #[test]
-    fn strip_preserves_non_digit_braces() {
-        assert_eq!(strip_placeholders("{name} is {0}"), "{name} is ");
+    fn strip_preserves_non_word_braces() {
+        // `{a-b}` is not a valid placeholder (regex `\{(\w+)\}`) so it
+        // remains in the static text.
+        assert_eq!(strip_placeholders("{a-b} is {x}"), "{a-b} is ");
     }
 
     #[test]

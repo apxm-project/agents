@@ -60,6 +60,10 @@ pub struct FrontendEmissionSpec {
     pub result_type: String,
     pub positional_attrs: Vec<String>,
     pub keywords: Vec<String>,
+    /// Syntactic-keyword attributes emitted as `<keyword> "<value>"` between
+    /// the primary attribute and the operand list. Pairs are
+    /// `(literal_keyword, attr_name)`.
+    pub syntactic_keywords: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -188,6 +192,7 @@ pub fn emission_specs() -> Vec<FrontendEmissionSpec> {
             let context_style = match spec.emission.context_style {
                 apxm_ais::ContextStyle::Bracketed => "Bracketed",
                 apxm_ais::ContextStyle::Parenthesized => "Parenthesized",
+                apxm_ais::ContextStyle::Direct => "Direct",
                 apxm_ais::ContextStyle::None => "None",
             };
             let result_type = match spec.emission.result_type {
@@ -207,7 +212,18 @@ pub fn emission_specs() -> Vec<FrontendEmissionSpec> {
                     .iter()
                     .map(|s| s.to_string())
                     .collect(),
-                keywords: spec.emission.keywords.iter().map(|s| s.to_string()).collect(),
+                keywords: spec
+                    .emission
+                    .keywords
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect(),
+                syntactic_keywords: spec
+                    .emission
+                    .syntactic_keywords
+                    .iter()
+                    .map(|(kw, attr)| (kw.to_string(), attr.to_string()))
+                    .collect(),
             }
         })
         .collect()
@@ -293,7 +309,10 @@ mod tests {
 
     #[test]
     fn builtin_models_include_openai_default() {
-        let default = builtin_models().iter().find(|m| m.provider == "openai" && m.is_default).map(|m| m.id.to_string());
+        let default = builtin_models()
+            .iter()
+            .find(|m| m.provider == "openai" && m.is_default)
+            .map(|m| m.id.to_string());
         assert_eq!(default, Some("gpt-4o-mini".to_string()));
     }
 

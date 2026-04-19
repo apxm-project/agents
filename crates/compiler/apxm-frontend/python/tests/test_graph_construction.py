@@ -9,7 +9,8 @@ def test_simple_graph():
     from apxm import GraphRecorder
 
     g = GraphRecorder("simple_test")
-    ask_node = g.ask("query", "What is {0}?")
+    g.param("topic", "str")
+    ask_node = g.ask(name="query", prompt="What is {topic}?")
 
     graph = g.to_graph()
 
@@ -17,7 +18,7 @@ def test_simple_graph():
     assert len(graph.nodes) == 1
     assert graph.nodes[0].name == "query"
     assert graph.nodes[0].op == "ASK"
-    assert graph.nodes[0].attributes["template_str"] == "What is {0}?"
+    assert graph.nodes[0].attributes["template_str"] == "What is {topic}?"
 
 
 def test_graph_with_params():
@@ -27,7 +28,7 @@ def test_graph_with_params():
     g = GraphRecorder("with_params")
     g.param("topic", "str")
     g.param("depth", "int")
-    ask_node = g.ask("query", "Research {0} with depth {1}")
+    ask_node = g.ask(name="query", prompt="Research {topic} with depth {depth}")
 
     graph = g.to_graph()
 
@@ -39,18 +40,18 @@ def test_graph_with_params():
 
 
 def test_graph_edges():
-    """Test graph edges with >> and | operators."""
+    """Test graph edges with add_edge()."""
     from apxm import GraphRecorder
 
     g = GraphRecorder("edges_test")
-    a = g.ask("step1", "Do A")
-    b = g.ask("step2", "Do B")
-    c = g.ask("step3", "Do C")
+    a = g.ask(name="step1", prompt="Do A")
+    b = g.ask(name="step2", prompt="Do B")
+    c = g.ask(name="step3", prompt="Do C")
 
     # Control edge
-    a >> b
+    g.add_edge(a, b, dependency="Control")
     # Data edge
-    b | c
+    g.add_edge(b, c, dependency="Data")
 
     graph = g.to_graph()
 
@@ -71,8 +72,8 @@ def test_spawn_and_communicate():
 
     g = GraphRecorder("spawn_test")
     spawn = g.spawn_agent("alice_spawn", agent_name="alice", profile="claude")
-    comm = g.communicate("alice_msg", target_agent="alice", message="Hello")
-    spawn >> comm
+    comm = g.communicate(name="alice_msg", target_agent="alice", message="Hello")
+    g.add_edge(spawn, comm, dependency="Control")
 
     graph = g.to_graph()
 
@@ -131,7 +132,7 @@ def test_graph_to_json():
 
     g = GraphRecorder("json_test")
     g.param("input", "str")
-    g.ask("process", "Process {0}")
+    g.ask(name="process", prompt="Process {input}")
 
     graph = g.to_graph()
     json_str = graph.to_json()
@@ -154,7 +155,7 @@ def test_graph_to_air_preserves_full_literals():
     )
 
     g = GraphRecorder("air_test")
-    g.ask("emit", long_prompt)
+    g.ask(name="emit", prompt=long_prompt)
     g.spawn_agent("alice", agent_name="alice", profile="claude", mode="auto")
 
     air = g.to_air()
@@ -178,9 +179,152 @@ def test_graph_validation():
     from apxm import GraphRecorder, validate_graph
 
     g = GraphRecorder("valid_graph")
-    g.ask("test", "Test query")
+    g.ask(name="test", prompt="Test query")
 
     graph = g.to_graph()
     errors = validate_graph(graph)
 
     assert len(errors) == 0
+
+
+def test_call_compiled_flow():
+    """Test g.call() with a @compile-decorated function."""
+    from apxm import GraphRecorder, compile
+
+    @compile()
+    def helper(g: GraphRecorder, topic: str):
+        result = g.ask(name="research", prompt=f"Research {{topic}}")
+        g.done(result)
+
+    g = GraphRecorder("main_flow")
+    step1 = g.ask(name="get_topic", prompt="What topic?")
+    step2 = g.call(helper, topic=step1)
+    g.done(step2)
+
+    graph = g.to_graph()
+
+    # Should have: get_topic (ASK) + call_helper (FLOW_CALL) + return (RETURN)
+    assert len(graph.nodes) == 3
+    flow_call_nodes = [n for n in graph.nodes if n.op == "FLOW_CALL"]
+    assert len(flow_call_nodes) == 1
+    assert flow_call_nodes[0].attributes["agent_name"] == "helper"
+    assert flow_call_nodes[0].attributes["flow_name"] == "main"
+
+    # Should have data edge from step1 -> flow_call
+    data_edges = [e for e in graph.edges if e.dependency == "Data"]
+    assert any(e.from_id == step1._node_id and e.to_id == step2._node_id for e in data_edges)
+
+
+def test_call_with_literal_args():
+    """Test g.call() with literal (non-NodeRef) arguments."""
+    from apxm import GraphRecorder, compile
+
+    @compile()
+    def helper(g: GraphRecorder, topic: str):
+        g.ask(name="research", prompt=f"Research {{topic}}")
+
+    g = GraphRecorder("main_flow")
+    result = g.call(helper, topic="AI safety")
+
+    graph = g.to_graph()
+
+    flow_call_node = [n for n in graph.nodes if n.op == "FLOW_CALL"][0]
+    # Literal args should be serialized in the args attribute
+    assert "AI safety" in str(flow_call_node.attributes.get("args", ""))
+
+
+def test_embed_compiled_flow():
+    """Test g.embed() to inline-compose another graph."""
+    from apxm import GraphRecorder, compile
+
+    @compile()
+    def helper(g: GraphRecorder):
+        a = g.ask(name="step_a", prompt="Do A")
+        b = g.ask(name="step_b", prompt="Do B based on {step_a}")
+        g.done(b)
+
+    g = GraphRecorder("main_flow")
+    embedded = g.embed(helper, prefix="sub")
+    g.done(embedded)
+
+    graph = g.to_graph()
+
+    # Should have the helper's nodes (step_a, step_b, return) prefixed + main's return
+    node_names = [n.name for n in graph.nodes]
+    assert "sub_step_a" in node_names
+    assert "sub_step_b" in node_names
+
+
+def test_embed_flow_module():
+    """Test g.embed() with a FlowModule."""
+    from apxm import GraphRecorder, FlowModule
+
+    class MyModule(FlowModule):
+        def define(self, g: GraphRecorder):
+            return g.ask(name="inner", prompt="Inner task")
+
+    g = GraphRecorder("main_flow")
+    result = g.embed(MyModule(), prefix="mod")
+    g.done(result)
+
+    graph = g.to_graph()
+    node_names = [n.name for n in graph.nodes]
+    assert "mod_inner" in node_names
+
+
+def test_load_graph():
+    """Test load_graph() from JSON file."""
+    import tempfile
+    from pathlib import Path
+    from apxm import GraphRecorder, load_graph
+
+    # Create a graph and save it
+    g = GraphRecorder("test_graph")
+    g.param("input", "str")
+    g.ask(name="process", prompt="Process {input}")
+    graph = g.to_graph()
+
+    with tempfile.NamedTemporaryFile(suffix=".json", mode="w", delete=False) as f:
+        f.write(graph.to_json())
+        tmp_path = f.name
+
+    try:
+        loaded = load_graph(tmp_path)
+        assert loaded.name == "test_graph"
+        assert len(loaded.nodes) == 1
+        assert len(loaded.parameters) == 1
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+
+def test_call_loaded_graph():
+    """Test g.call() with a loaded ApxmGraph."""
+    import tempfile
+    from pathlib import Path
+    from apxm import GraphRecorder, load_graph
+
+    # Create and save helper graph
+    helper_g = GraphRecorder("helper_flow")
+    helper_g.param("input", "str")
+    helper_g.ask(name="process", prompt="Process {0}")
+    helper_graph = helper_g.to_graph()
+
+    with tempfile.NamedTemporaryFile(suffix=".json", mode="w", delete=False) as f:
+        f.write(helper_graph.to_json())
+        tmp_path = f.name
+
+    try:
+        loaded = load_graph(tmp_path)
+
+        # Use in a new graph via call()
+        g = GraphRecorder("main_flow")
+        step1 = g.ask(name="get_input", prompt="What input?")
+        step2 = g.call(loaded, topic=step1)
+        g.done(step2)
+
+        graph = g.to_graph()
+        flow_call_nodes = [n for n in graph.nodes if n.op == "FLOW_CALL"]
+        assert len(flow_call_nodes) == 1
+        assert flow_call_nodes[0].attributes["agent_name"] == "helper_flow"
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)

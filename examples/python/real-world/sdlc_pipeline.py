@@ -31,46 +31,46 @@ def sdlc_pipeline(g: GraphRecorder):
     )
     design = architect.get_last_node()
 
-    print1 = g.print("=== ARCHITECT DESIGN ===\n{design}")
+    print1 = g.print(message="=== ARCHITECT DESIGN ===\n{design}")
 
     # Stage 2: Coder implements
     # SEQUENTIAL: coder waits for architect's design -- data dependency enforced
     implement_prompt = g.ask(
-        "build_implement_prompt",
-        "Based on this design spec, write the stub implementation:\n"
+        name="build_implement_prompt",
+        prompt="Based on this design spec, write the stub implementation:\n"
         "1. Rust handler: crates/runtime/apxm-runtime/src/executor/handlers/checkpoint.rs\n"
         "2. Dispatcher match arm in dispatcher.rs\n"
         "Keep it compilable. Follow existing handler patterns.\n\n"
         "Design spec:\n{design}"
     )
-    print1 >> implement_prompt
+    g.add_edge(print1, implement_prompt, dependency="Control")
 
     coder_result = g.communicate(
         target_agent="coder",
         message="{implement_prompt}"
     )
 
-    print2 = g.print("=== CODER IMPLEMENTATION ===\n{coder_result}")
+    print2 = g.print(message="=== CODER IMPLEMENTATION ===\n{coder_result}")
 
     # Stage 3: Architect reviews
     # SEQUENTIAL: review waits for implementation -- data dependency enforced
     review_prompt = g.ask(
-        "build_review_prompt",
-        "Review Codex's stub implementation for the CHECKPOINT op you designed. "
+        name="build_review_prompt",
+        prompt="Review Codex's stub implementation for the CHECKPOINT op you designed. "
         "Does it match your spec? What's correct, what needs fixing?\n\n"
         "Implementation:\n{coder_result}"
     )
-    print2 >> review_prompt
+    g.add_edge(print2, review_prompt, dependency="Control")
 
     architect.ask("{review_prompt}")
     final_review = architect.get_last_node()
 
-    print3 = g.print("=== ARCHITECT REVIEW ===\n{final_review}")
+    print3 = g.print(message="=== ARCHITECT REVIEW ===\n{final_review}")
     g.done(print3)
 
 
 if __name__ == "__main__":
-    import asyncio
+    import apxm
 
-    result = asyncio.run(sdlc_pipeline())
+    result = apxm.run(sdlc_pipeline())
     print(result.content)

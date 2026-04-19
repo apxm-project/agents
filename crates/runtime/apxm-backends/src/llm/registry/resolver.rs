@@ -11,8 +11,8 @@ use dashmap::DashMap;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Routing strategy determines how backends are selected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -132,7 +132,9 @@ fn select_by_strategy(
 
     match strategy {
         RoutingStrategy::FirstHealthy => select_first_healthy(backends, health_monitor),
-        RoutingStrategy::RoundRobin => select_round_robin(backends, health_monitor, round_robin_counter),
+        RoutingStrategy::RoundRobin => {
+            select_round_robin(backends, health_monitor, round_robin_counter)
+        }
         RoutingStrategy::LowLatency => select_low_latency(backends, health_monitor),
     }
 }

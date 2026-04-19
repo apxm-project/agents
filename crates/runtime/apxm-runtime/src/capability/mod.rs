@@ -39,9 +39,9 @@ pub mod metadata;
 pub mod registry;
 
 use crate::aam::{Aam, TransitionLabel};
+use crate::sandbox::{SandboxRegistry, ValidationResult};
 use approval::{ApprovalChannel, ApprovalStore};
 use apxm_core::{error::RuntimeError, types::values::Value};
-use crate::sandbox::{SandboxRegistry, ValidationResult};
 use executor::{CapabilityExecutor, exec_result_to_value};
 use interceptor::{CapabilityInterceptor, InterceptDecision};
 use metadata::CapabilityMetadata;
@@ -621,7 +621,10 @@ mod tests {
             &self.metadata
         }
 
-        fn to_exec_request(&self, args: &HashMap<String, Value>) -> Option<crate::sandbox::ExecRequest> {
+        fn to_exec_request(
+            &self,
+            args: &HashMap<String, Value>,
+        ) -> Option<crate::sandbox::ExecRequest> {
             let command = args.get("command")?.as_str()?.to_string();
             Some(crate::sandbox::ExecRequest {
                 min_isolation: crate::sandbox::IsolationLevel::OsLevel,
@@ -665,7 +668,8 @@ mod tests {
         async fn execute(&self, args: HashMap<String, Value>) -> CapabilityResult<Value> {
             // This SHOULD be called for non-sandboxed capabilities
             self.executed_directly.store(true, Ordering::SeqCst);
-            let value = args.get("value")
+            let value = args
+                .get("value")
                 .and_then(|v| v.as_str())
                 .unwrap_or("default");
             Ok(Value::String(format!("direct:{}", value)))
@@ -675,8 +679,11 @@ mod tests {
             &self.metadata
         }
 
-        fn to_exec_request(&self, _args: &HashMap<String, Value>) -> Option<crate::sandbox::ExecRequest> {
-            None  // Doesn't need sandbox
+        fn to_exec_request(
+            &self,
+            _args: &HashMap<String, Value>,
+        ) -> Option<crate::sandbox::ExecRequest> {
+            None // Doesn't need sandbox
         }
     }
 
@@ -720,10 +727,16 @@ mod tests {
         let result = system.invoke("mock_sandboxed", args).await;
 
         // Should succeed via sandbox routing
-        assert!(result.is_ok(), "Sandbox routing should succeed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Sandbox routing should succeed: {:?}",
+            result
+        );
         // execute() method should NOT have been called
-        assert!(!executed_directly.load(Ordering::SeqCst),
-                "Capability execute() should not be called when sandbox is available");
+        assert!(
+            !executed_directly.load(Ordering::SeqCst),
+            "Capability execute() should not be called when sandbox is available"
+        );
     }
 
     #[tokio::test]
@@ -742,14 +755,22 @@ mod tests {
         let result = system.invoke("mock_sandboxed", args).await;
 
         // Should fail because capability requires sandbox but no registry configured
-        assert!(result.is_err(), "Should error when sandbox required but not configured");
+        assert!(
+            result.is_err(),
+            "Should error when sandbox required but not configured"
+        );
         let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("sandbox") || err_msg.contains("not configured"),
-                "Error should mention sandbox/configuration: {}", err_msg);
+        assert!(
+            err_msg.contains("sandbox") || err_msg.contains("not configured"),
+            "Error should mention sandbox/configuration: {}",
+            err_msg
+        );
 
         // execute() method should NOT have been called
-        assert!(!executed_directly.load(Ordering::SeqCst),
-                "Capability execute() should not be called when sandbox is required");
+        assert!(
+            !executed_directly.load(Ordering::SeqCst),
+            "Capability execute() should not be called when sandbox is required"
+        );
     }
 
     #[tokio::test]
@@ -796,8 +817,10 @@ mod tests {
         assert_eq!(result.unwrap().as_str(), Some("direct:test"));
 
         // execute() method SHOULD have been called
-        assert!(executed_directly.load(Ordering::SeqCst),
-                "Capability execute() should be called for non-sandboxed capabilities");
+        assert!(
+            executed_directly.load(Ordering::SeqCst),
+            "Capability execute() should be called for non-sandboxed capabilities"
+        );
     }
 
     #[tokio::test]
@@ -818,13 +841,23 @@ mod tests {
         let result = system.invoke("mock_sandboxed", args).await;
 
         // Should fail because capability requires sandbox but no backend available
-        assert!(result.is_err(), "Should error when sandbox required but registry is empty");
+        assert!(
+            result.is_err(),
+            "Should error when sandbox required but registry is empty"
+        );
         let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("sandbox") || err_msg.contains("backend") || err_msg.contains("available"),
-                "Error should mention sandbox/backend availability: {}", err_msg);
+        assert!(
+            err_msg.contains("sandbox")
+                || err_msg.contains("backend")
+                || err_msg.contains("available"),
+            "Error should mention sandbox/backend availability: {}",
+            err_msg
+        );
 
         // execute() method should NOT have been called
-        assert!(!executed_directly.load(Ordering::SeqCst),
-                "Capability execute() should not be called when sandbox is required");
+        assert!(
+            !executed_directly.load(Ordering::SeqCst),
+            "Capability execute() should not be called when sandbox is required"
+        );
     }
 }

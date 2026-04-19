@@ -5,24 +5,24 @@
 //! - **Domain**: Compiler, LLM models, backends, providers, and sessions.
 
 // ── Foundation ──────────────────────────────────────────────
-pub mod values;
-pub mod operations;
-pub mod identifiers;
 pub mod aam;
 pub mod goal;
+pub mod identifiers;
+pub mod operations;
+pub mod values;
 
 // ── Execution ──────────────────────────────────────────────
-pub mod execution;
 pub mod config;
+pub mod execution;
 pub mod intents;
 
 // ── Domain ─────────────────────────────────────────────────
-pub mod compiler;
-pub mod models;
-pub mod model_spec;
 pub mod backend;
-pub mod provider_spec;
+pub mod compiler;
 pub mod llm_control_plane;
+pub mod model_spec;
+pub mod models;
+pub mod provider_spec;
 pub mod session;
 
 pub use aam::{

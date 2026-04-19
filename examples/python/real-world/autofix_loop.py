@@ -35,86 +35,69 @@ def autofix_loop(g: GraphRecorder):
     reviewer = g.spawn("reviewer", profile=claude, cwd=cwd)
 
     # Step 1: Architect analyzes the autofix report
-    analyze_task = g.text(
-        value="""Analyze APXM validation failures and create a fix strategy.
-
-Run the autofix validation:
-  python3 scripts/apxm-autofix.py
-
-Review the generated task files in /tmp/autofix-tasks/.
-
-Determine:
-1. Which clusters are related and can be fixed together
-2. Priority order (e.g., fix import_error before mlir_parse_error)
-3. Estimated complexity for each cluster
-
-Output a JSON strategy with priority_order and cluster_groups.
-""")
-
-    architect.ask("{analyze_task}")
+    architect.ask(
+        "Analyze APXM validation failures and create a fix strategy.\n\n"
+        "Run the autofix validation:\n"
+        "  python3 scripts/apxm-autofix.py\n\n"
+        "Review the generated task files in /tmp/autofix-tasks/.\n\n"
+        "Determine:\n"
+        "1. Which clusters are related and can be fixed together\n"
+        "2. Priority order (e.g., fix import_error before mlir_parse_error)\n"
+        "3. Estimated complexity for each cluster\n\n"
+        "Output a JSON strategy with priority_order and cluster_groups."
+    )
     strategy = architect.get_last_node()
 
-    print1 = g.print("=== STRATEGY ===\n{strategy}")
+    print1 = g.print(message="=== STRATEGY ===\n{strategy}")
 
     # Step 2: Implementer works on highest priority cluster
     implement_task = g.ask(
-        "build_implement_task",
-        """Based on this strategy, work on the highest priority cluster.
-
-Read the task file from /tmp/autofix-tasks/ for that cluster.
-Follow the fix instructions carefully.
-Make the necessary changes to the codebase.
-Run verification: python3 scripts/apxm-autofix.py --verify-only
-
-Report what you changed and verification results.
-
-Strategy:
-{strategy}
-"""
+        name="build_implement_task",
+        prompt="Based on this strategy, work on the highest priority cluster.\n\n"
+        "Read the task file from /tmp/autofix-tasks/ for that cluster.\n"
+        "Follow the fix instructions carefully.\n"
+        "Make the necessary changes to the codebase.\n"
+        "Run verification: python3 scripts/apxm-autofix.py --verify-only\n\n"
+        "Report what you changed and verification results.\n\n"
+        "Strategy:\n{strategy}"
     )
-    print1 >> implement_task
+    g.add_edge(print1, implement_task, dependency="Control")
 
     implementer.ask("{implement_task}")
     implementation = implementer.get_last_node()
 
-    print2 = g.print("=== IMPLEMENTATION ===\n{implementation}")
+    print2 = g.print(message="=== IMPLEMENTATION ===\n{implementation}")
 
     # Step 3: Reviewer validates the fixes
     review_task = g.ask(
-        "build_review_task",
-        """Review the implementation and verify quality.
-
-Check:
-1. Did all validations pass?
-2. Are the fixes consistent with APXM coding standards?
-3. Were any issues missed?
-
-Run policy checks:
-  python3 scripts/apxm-policy-check.py
-
-If any issues remain, output: {{"status": "iterate", "issues": [...]}}
-If everything passes, output: {{"status": "success"}}
-
-Implementation:
-{implementation}
-"""
+        name="build_review_task",
+        prompt="Review the implementation and verify quality.\n\n"
+        "Check:\n"
+        "1. Did all validations pass?\n"
+        "2. Are the fixes consistent with APXM coding standards?\n"
+        "3. Were any issues missed?\n\n"
+        "Run policy checks:\n"
+        "  python3 scripts/apxm-policy-check.py\n\n"
+        'If any issues remain, output: {{"status": "iterate", "issues": [...]}}\n'
+        'If everything passes, output: {{"status": "success"}}\n\n'
+        "Implementation:\n{implementation}"
     )
-    print2 >> review_task
+    g.add_edge(print2, review_task, dependency="Control")
 
     reviewer.ask("{review_task}")
     review = reviewer.get_last_node()
 
-    print3 = g.print("=== REVIEW ===\n{review}")
+    print3 = g.print(message="=== REVIEW ===\n{review}")
 
     # Final report
     final = g.merge("final_report", strategy, implementation, review)
-    print3 >> final
+    g.add_edge(print3, final, dependency="Control")
 
     g.done(final)
 
 
 if __name__ == "__main__":
-    import asyncio
+    import apxm
 
-    result = asyncio.run(autofix_loop())
+    result = apxm.run(autofix_loop())
     print(result.content)
