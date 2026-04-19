@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tokio_stream::Stream;
 
 const DEFAULT_BASE_URL: &str = "http://localhost:8000";
@@ -113,6 +113,13 @@ pub struct GraphAwareVllmBackend {
     client: reqwest::Client,
     /// Counter for generating unique execution IDs.
     execution_counter: AtomicU64,
+    /// Whether the server exposes the APXM extension endpoints (`/v1/apxm/*`).
+    /// Probed on first `health_check`; if probe returns 404, this flips to `false`
+    /// and `register_graph`/`pin_prefix`/`release_graph` become silent no-ops.
+    apxm_endpoints_available: AtomicBool,
+    /// Tracks whether we've already emitted a one-time WARN about missing
+    /// APXM endpoints (so we don't spam the log on every health check).
+    health_check_warned: AtomicBool,
 }
 
 impl GraphAwareVllmBackend {
@@ -140,17 +147,9 @@ impl GraphAwareVllmBackend {
             base_url,
             client,
             execution_counter: AtomicU64::new(0),
+            apxm_endpoints_available: AtomicBool::new(true),
+            health_check_warned: AtomicBool::new(false),
         })
-    }
-
-    /// Generate a unique execution ID for a graph run.
-    pub fn next_execution_id(&self) -> String {
-        let counter = self.execution_counter.fetch_add(1, Ordering::Relaxed);
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or(0);
-        format!("exec-{}-{}", timestamp, counter)
     }
 
     /// Return the registration endpoint used for graph metadata uploads.
@@ -164,6 +163,15 @@ impl GraphAwareVllmBackend {
     /// requests. The server stores the metadata and uses it for KV-cache
     /// pinning decisions.
     pub async fn register_graph(&self, metadata: GraphMetadata) -> Result<GraphRegisterResponse> {
+        // If the server doesn't expose `/v1/apxm/*`, become a silent no-op.
+        if !self.apxm_endpoints_available.load(Ordering::Relaxed) {
+            return Ok(GraphRegisterResponse {
+                object: "apxm.graph.registration".to_string(),
+                graph_id: metadata.graph_id.clone(),
+                execution_id: metadata.execution_id.clone(),
+                registered_nodes: 0,
+            });
+        }
         let url = self.graph_registration_url();
         let response = self
             .client
@@ -190,6 +198,14 @@ impl GraphAwareVllmBackend {
     /// Call this when a graph execution completes or is cancelled to free
     /// pinned KV blocks.
     pub async fn release_graph(&self, graph_id: &str) -> Result<GraphReleaseResponse> {
+        if !self.apxm_endpoints_available.load(Ordering::Relaxed) {
+            return Ok(GraphReleaseResponse {
+                object: "apxm.graph.release".to_string(),
+                graph_id: graph_id.to_string(),
+                released_handles: 0,
+                released_blocks: 0,
+            });
+        }
         let url = format!("{}/v1/apxm/graphs/{}", self.base_url, graph_id);
         let response = self
             .client
@@ -222,6 +238,17 @@ impl GraphAwareVllmBackend {
         reuse_group: Option<&str>,
         ttl_ms: u64,
     ) -> Result<PinCreateResponse> {
+        if !self.apxm_endpoints_available.load(Ordering::Relaxed) {
+            return Ok(PinCreateResponse {
+                object: "apxm.pin".to_string(),
+                graph_id: graph_id.to_string(),
+                node_id,
+                reuse_group: reuse_group.map(|s| s.to_string()),
+                request_id: String::new(),
+                ttl_ms,
+                expiry_ts: 0.0,
+            });
+        }
         let url = format!("{}/v1/apxm/pins", self.base_url);
         let request = PinCreateRequest {
             graph_id: graph_id.to_string(),
@@ -340,7 +367,29 @@ impl LLMBackend for GraphAwareVllmBackend {
     }
 
     async fn health_check(&self) -> Result<()> {
-        self.inner.health_check().await
+        // First do the standard inner health check.
+        self.inner.health_check().await?;
+
+        // Probe the APXM extension surface so callers can rely on
+        // `supports_graph_extensions()` reflecting reality. We only flip the
+        // flag to false on a definitive 404 — transient failures don't disable
+        // the extensions.
+        let url = format!("{}/v1/apxm/pins/stats", self.base_url);
+        if let Ok(response) = self.client.get(&url).send().await {
+            if response.status() == reqwest::StatusCode::NOT_FOUND {
+                self.apxm_endpoints_available
+                    .store(false, Ordering::Relaxed);
+                if !self.health_check_warned.swap(true, Ordering::Relaxed) {
+                    tracing::warn!(
+                        endpoint = %url,
+                        "vLLM server does not expose APXM extensions (/v1/apxm/*); \
+                         graph registration, prefix pinning, and graph release will be no-ops"
+                    );
+                }
+            }
+        }
+
+        Ok(())
     }
 
     async fn list_models(&self) -> Result<Vec<ModelInfo>> {
@@ -355,9 +404,21 @@ impl LLMBackend for GraphAwareVllmBackend {
         let mut meta = self.inner.metadata();
         if let serde_json::Value::Object(ref mut map) = meta {
             map.insert("backend_type".to_string(), "vllm-graph-aware".into());
-            map.insert("apxm_extensions".to_string(), true.into());
         }
         meta
+    }
+
+    fn supports_graph_extensions(&self) -> bool {
+        self.apxm_endpoints_available.load(Ordering::Relaxed)
+    }
+
+    fn next_execution_id(&self) -> String {
+        let counter = self.execution_counter.fetch_add(1, Ordering::Relaxed);
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        format!("exec-{}-{}", timestamp, counter)
     }
 
     async fn register_graph(&self, metadata: serde_json::Value) -> Result<()> {
@@ -518,5 +579,25 @@ mod tests {
 
         // Verify original apxm is preserved (not overwritten)
         assert_eq!(extra["apxm"]["already"], "present");
+    }
+
+    #[tokio::test]
+    async fn test_supports_graph_extensions_flag() {
+        let backend = GraphAwareVllmBackend::new(
+            "test-key",
+            Some(serde_json::json!({"base_url": "http://localhost:8000"})),
+        )
+        .await
+        .unwrap();
+
+        // A freshly-constructed backend optimistically claims support; the flag
+        // is only flipped to false on a definitive 404 from health_check.
+        assert!(backend.supports_graph_extensions());
+
+        // Simulate the health_check seeing a 404 on /v1/apxm/pins/stats.
+        backend
+            .apxm_endpoints_available
+            .store(false, Ordering::Relaxed);
+        assert!(!backend.supports_graph_extensions());
     }
 }

@@ -10,6 +10,7 @@
 //! To make this target-aware, we need to extend the FFI to accept pass options.
 
 use super::PassManager;
+use super::vllm_hints::VLLM_HINTS_PASS_NAME;
 use apxm_ais::passes;
 use apxm_core::error::compiler::Result;
 use apxm_core::types::{OptimizationLevel, OptimizationTarget};
@@ -34,6 +35,21 @@ const CANONICALIZER: &str = passes::CANONICALIZER.name;
 const CSE: &str = passes::CSE.name;
 const SYMBOL_DCE: &str = passes::SYMBOL_DCE.name;
 
+/// Rust-only post-MLIR pass that stamps `_vllm_*` hint attrs onto LLM nodes.
+/// Filtered out before being handed to the MLIR PassManager (see
+/// [`build_pipeline_with_config`]); appears in [`build_pass_list`] purely so
+/// downstream callers (diagnostics, ordering tests) see it in pipeline order.
+const VLLM_HINTS: &str = VLLM_HINTS_PASS_NAME;
+
+/// Names that are tracked in the pipeline list but are *not* dispatched
+/// through the MLIR PassManager — they run as Rust-side transforms on the
+/// `AirModule` instead.
+const RUST_ONLY_PASSES: &[&str] = &[VLLM_HINTS];
+
+fn is_mlir_pass(name: &str) -> bool {
+    !RUST_ONLY_PASSES.contains(&name)
+}
+
 pub fn build_pipeline(pm: &mut PassManager, level: OptimizationLevel) -> Result<()> {
     build_pipeline_with_config(pm, level, false, OptimizationTarget::Balanced)
 }
@@ -45,7 +61,9 @@ pub fn build_pipeline_with_config(
     target: OptimizationTarget,
 ) -> Result<()> {
     for name in build_pass_list(level, no_cse_llm, target) {
-        pm.add_pass(&name)?;
+        if is_mlir_pass(&name) {
+            pm.add_pass(&name)?;
+        }
     }
     Ok(())
 }
@@ -85,6 +103,7 @@ pub fn build_pass_list(
                     SCHEDULING,
                     FUSE_ASK_OPS,
                     ASSIGN_PRIORITY,
+                    VLLM_HINTS,
                     CANONICALIZER,
                 ]
                 .iter()
@@ -131,6 +150,7 @@ pub fn build_pass_list(
                             FUSE_ASK_OPS,
                             CONDENSE_OPS,
                             ASSIGN_PRIORITY,
+                            VLLM_HINTS,
                             CANONICALIZER,
                         ]
                         .iter()
@@ -146,6 +166,7 @@ pub fn build_pass_list(
                             FUSE_ASK_OPS,
                             CONDENSE_OPS,
                             ASSIGN_PRIORITY,
+                            VLLM_HINTS,
                             DEAD_CONTEXT_ELIMINATION,
                             CANONICALIZER,
                         ]
@@ -162,6 +183,7 @@ pub fn build_pass_list(
                             FUSE_ASK_OPS,
                             CONDENSE_OPS,
                             ASSIGN_PRIORITY,
+                            VLLM_HINTS,
                             DEAD_CONTEXT_ELIMINATION,
                             CANONICALIZER,
                         ]
@@ -178,6 +200,7 @@ pub fn build_pass_list(
                             FUSE_ASK_OPS,
                             CONDENSE_OPS,
                             ASSIGN_PRIORITY,
+                            VLLM_HINTS,
                             DEAD_CONTEXT_ELIMINATION,
                             CANONICALIZER,
                         ]
@@ -214,6 +237,7 @@ pub fn build_pass_list(
                     FUSE_ASK_OPS,
                     CONDENSE_OPS,
                     ASSIGN_PRIORITY,
+                    VLLM_HINTS,
                     CANONICALIZER,
                 ]
                 .iter()
@@ -226,6 +250,7 @@ pub fn build_pass_list(
                     FUSE_ASK_OPS,
                     CONDENSE_OPS,
                     ASSIGN_PRIORITY,
+                    VLLM_HINTS,
                     DEAD_CONTEXT_ELIMINATION,
                     CANONICALIZER,
                 ]
@@ -239,6 +264,7 @@ pub fn build_pass_list(
                     FUSE_ASK_OPS,
                     CONDENSE_OPS,
                     ASSIGN_PRIORITY,
+                    VLLM_HINTS,
                     DEAD_CONTEXT_ELIMINATION,
                     CANONICALIZER,
                 ]
@@ -376,6 +402,61 @@ mod tests {
                     "ASSIGN_PRIORITY must run after FUSE_ASK_OPS at {level:?}/{target:?}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn vllm_hints_runs_at_o1_plus_after_assign_priority() {
+        for target in [
+            OptimizationTarget::Balanced,
+            OptimizationTarget::Latency,
+            OptimizationTarget::Cost,
+            OptimizationTarget::Tokens,
+        ] {
+            for level in [
+                OptimizationLevel::O1,
+                OptimizationLevel::O2,
+                OptimizationLevel::O3,
+            ] {
+                let passes = build_pass_list(level, false, target);
+                let priority_idx = passes
+                    .iter()
+                    .position(|p| p == ASSIGN_PRIORITY)
+                    .expect("ASSIGN_PRIORITY must appear at O1+");
+                let vllm_idx = passes
+                    .iter()
+                    .position(|p| p == VLLM_HINTS)
+                    .unwrap_or_else(|| {
+                        panic!("VLLM_HINTS missing from O1+ pipeline at {level:?}/{target:?}")
+                    });
+                assert!(
+                    vllm_idx > priority_idx,
+                    "VLLM_HINTS must run after ASSIGN_PRIORITY at {level:?}/{target:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn o0_does_not_emit_vllm_hints() {
+        let passes = build_pass_list(OptimizationLevel::O0, false, OptimizationTarget::Balanced);
+        assert!(!passes.contains(&VLLM_HINTS.to_string()));
+    }
+
+    #[test]
+    fn vllm_hints_is_filtered_from_mlir_dispatch() {
+        // Sanity: the Rust-only marker must not look like an MLIR pass.
+        assert!(!is_mlir_pass(VLLM_HINTS));
+        // All other pass names should still be MLIR-dispatched.
+        for n in [
+            NORMALIZE,
+            BUILD_PROMPT,
+            ASSIGN_PRIORITY,
+            CANONICALIZER,
+            CSE,
+            SYMBOL_DCE,
+        ] {
+            assert!(is_mlir_pass(n), "{n} should be an MLIR pass");
         }
     }
 }

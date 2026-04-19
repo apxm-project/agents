@@ -17,6 +17,14 @@ pub struct SchedulerConfig {
     #[serde(default = "default_max_inflight")]
     pub max_inflight: usize,
 
+    /// Separate concurrency cap for LLM operations (Ask/Think/Reason).
+    ///
+    /// Decoupled from `max_inflight` so that compute-bound parallelism (CPU
+    /// cores) can stay tight while LLM requests can fan out wide enough to
+    /// keep continuous-batching backends like vLLM saturated.
+    #[serde(default = "default_llm_inflight")]
+    pub llm_inflight: usize,
+
     #[serde(default = "default_max_retries")]
     pub max_retries: u32,
 
@@ -81,6 +89,7 @@ impl Default for SchedulerConfig {
         Self {
             max_concurrency: default_max_concurrency(),
             max_inflight: default_max_inflight(),
+            llm_inflight: default_llm_inflight(),
             max_retries: default_max_retries(),
             retry_backoff_ms: default_retry_backoff_ms(),
             retry_backoff_max_ms: default_retry_backoff_max_ms(),
@@ -108,6 +117,11 @@ impl SchedulerConfig {
 
     pub fn with_max_inflight(mut self, max_inflight: usize) -> Self {
         self.max_inflight = max_inflight;
+        self
+    }
+
+    pub fn with_llm_inflight(mut self, llm_inflight: usize) -> Self {
+        self.llm_inflight = llm_inflight;
         self
     }
 
@@ -147,6 +161,10 @@ impl SchedulerConfig {
             return Err("max_inflight must be > 0".to_string());
         }
 
+        if self.llm_inflight == 0 {
+            return Err("llm_inflight must be > 0".to_string());
+        }
+
         if self.retry_backoff_ms == 0 {
             return Err("retry_backoff_ms must be > 0".to_string());
         }
@@ -174,6 +192,10 @@ fn default_max_concurrency() -> usize {
 
 fn default_max_inflight() -> usize {
     default_max_concurrency() * 2
+}
+
+fn default_llm_inflight() -> usize {
+    32
 }
 
 fn default_max_retries() -> u32 {
@@ -209,7 +231,24 @@ mod tests {
         let config = SchedulerConfig::default();
         assert!(config.max_concurrency > 0);
         assert!(config.max_inflight >= config.max_concurrency);
+        assert_eq!(config.llm_inflight, 32);
         assert_eq!(config.max_retries, 3);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validation_zero_llm_inflight() {
+        let config = SchedulerConfig {
+            llm_inflight: 0,
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_with_llm_inflight() {
+        let config = SchedulerConfig::new().with_llm_inflight(64);
+        assert_eq!(config.llm_inflight, 64);
         assert!(config.validate().is_ok());
     }
 

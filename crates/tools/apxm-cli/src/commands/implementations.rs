@@ -839,9 +839,19 @@ pub fn compile_command(
             .map_err(|e| anyhow::anyhow!("Failed to parse graph: {e}"))?
     };
 
-    // Validate model allowlist if configured
+    // Validate model allowlist if configured.
+    // Skip the check entirely if any registered backend uses the vLLM protocol —
+    // vLLM models are user-deployed and not in any builtin allowlist.
     if let Ok(config) = ApXmConfig::load_default() {
-        Compiler::validate_model_allowlist(&graph, config.models.allowlist.as_ref())?;
+        use apxm_core::types::ProviderProtocol;
+        use apxm_credentials::BackendStore;
+        let has_vllm = BackendStore::open()
+            .and_then(|bs| bs.list())
+            .map(|backends| backends.iter().any(|b| b.protocol == ProviderProtocol::Vllm))
+            .unwrap_or(false);
+        if !has_vllm {
+            Compiler::validate_model_allowlist(&graph, config.models.allowlist.as_ref())?;
+        }
     }
 
     // When diagnostics are requested, use the per-pass metrics path.

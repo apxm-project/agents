@@ -77,6 +77,50 @@ def test_named_placeholders_are_preserved():
     assert "{1}" not in template
 
 
+def test_compile_default_provider_and_backend_stamping():
+    """Test @compile(default_provider, default_backend) stamps LLM nodes."""
+    from apxm import GraphRecorder, compile
+    from apxm._generated import constants as gen_keys
+    from apxm._generated.providers import VLLM
+
+    @compile(default_provider=VLLM, default_backend="vllm-bench")
+    def vllm_workflow(g: GraphRecorder, topic: str):
+        g.ask(name="step1", prompt=f"Research {{topic}}")
+        g.ask(name="step2", prompt=f"Summarize {{topic}}")
+
+    graph = vllm_workflow._graph
+    from apxm.constants import LLM_OPS
+
+    llm_nodes = [n for n in graph.nodes if n.op in LLM_OPS]
+    assert len(llm_nodes) == 2
+    for node in llm_nodes:
+        assert node.attributes[gen_keys.PROVIDER] == "vllm"
+        assert node.attributes[gen_keys.BACKEND] == "vllm-bench"
+
+
+def test_compile_default_provider_does_not_override_per_node():
+    """Per-node provider/backend wins over @compile() defaults."""
+    from apxm import GraphRecorder, compile
+    from apxm._generated import constants as gen_keys
+    from apxm._generated.providers import VLLM
+
+    @compile(default_provider=VLLM, default_backend="vllm-bench")
+    def mixed_workflow(g: GraphRecorder):
+        g.ask(name="default_routed", prompt="hello")
+        g.ask(name="explicit_routed", prompt="hi", provider="openai", backend="openai-prod")
+
+    graph = mixed_workflow._graph
+    by_name = {n.name: n for n in graph.nodes}
+
+    default_node = by_name["default_routed"]
+    assert default_node.attributes[gen_keys.PROVIDER] == "vllm"
+    assert default_node.attributes[gen_keys.BACKEND] == "vllm-bench"
+
+    explicit_node = by_name["explicit_routed"]
+    assert explicit_node.attributes[gen_keys.PROVIDER] == "openai"
+    assert explicit_node.attributes[gen_keys.BACKEND] == "openai-prod"
+
+
 def test_compile_with_team_sugar():
     """Test @compile with team sugar."""
     from apxm import GraphRecorder, compile

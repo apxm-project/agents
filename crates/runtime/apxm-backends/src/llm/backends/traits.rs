@@ -81,6 +81,20 @@ pub trait LLMBackend: Send + Sync {
     async fn release_graph(&self, _graph_id: &str) -> anyhow::Result<()> {
         Ok(())
     }
+
+    /// Returns true if the backend implements vLLM-style graph-aware extensions
+    /// (`register_graph`, `pin_prefix`, `release_graph`). Default `false`.
+    ///
+    /// Use this in routing decisions instead of inspecting `metadata()` strings.
+    fn supports_graph_extensions(&self) -> bool {
+        false
+    }
+
+    /// Generate a unique execution id for graph registration. Default uses uuid v4.
+    /// Backends with custom counters (e.g. vLLM) may override.
+    fn next_execution_id(&self) -> String {
+        uuid::Uuid::new_v4().to_string()
+    }
 }
 
 #[cfg(test)]

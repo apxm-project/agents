@@ -9,6 +9,7 @@ from .proxy import GraphRecorder
 
 if TYPE_CHECKING:
     from ._generated.models import ModelId
+    from ._generated.providers import ProviderSpec
 
 
 try:
@@ -42,11 +43,15 @@ class _CompiledFunction:
         mode: ExecutionMode,
         default_model: ModelId | None = None,
         default_system_prompt: str | None = None,
+        default_provider: ProviderSpec | None = None,
+        default_backend: str | None = None,
         compile_kwargs: dict[str, Any],
     ) -> None:
         self._fn = fn
         self._default_model = default_model
         self._default_system_prompt = default_system_prompt
+        self._default_provider = default_provider
+        self._default_backend = default_backend
         self._signature = inspect.signature(fn)
         self._param_mapping = self._derive_parameters()
         self._graph = self._capture_graph()
@@ -122,9 +127,15 @@ class _CompiledFunction:
         graph = recorder.to_graph()
 
         # Stamp per-graph defaults onto LLM nodes that don't already have them
-        if self._default_model is not None or self._default_system_prompt is not None:
+        if (
+            self._default_model is not None
+            or self._default_system_prompt is not None
+            or self._default_provider is not None
+            or self._default_backend is not None
+        ):
             from .constants import LLM_OPS
             from ._generated import constants as gen_keys
+            from .normalize import normalize_provider as _normalize_provider
             from .normalize import normalize_value as _normalize_value
 
             if self._default_model is not None:
@@ -137,6 +148,17 @@ class _CompiledFunction:
                 for node in graph.nodes:
                     if node.op in LLM_OPS and gen_keys.SYSTEM_PROMPT not in node.attributes:
                         node.attributes[gen_keys.SYSTEM_PROMPT] = self._default_system_prompt
+
+            if self._default_provider is not None:
+                provider_value = _normalize_provider(self._default_provider)
+                for node in graph.nodes:
+                    if node.op in LLM_OPS and gen_keys.PROVIDER not in node.attributes:
+                        node.attributes[gen_keys.PROVIDER] = provider_value
+
+            if self._default_backend is not None:
+                for node in graph.nodes:
+                    if node.op in LLM_OPS and gen_keys.BACKEND not in node.attributes:
+                        node.attributes[gen_keys.BACKEND] = self._default_backend
 
         return graph
 
@@ -161,6 +183,8 @@ def compile(
     mode: ExecutionMode = ExecutionMode.COMPILED,
     default_model: ModelId | None = None,
     default_system_prompt: str | None = None,
+    default_provider: ProviderSpec | None = None,
+    default_backend: str | None = None,
     **compile_kwargs: Any,
 ) -> Callable[[Callable[..., Any]], _CompiledFunction]:
     def decorator(fn: Callable[..., Any]) -> _CompiledFunction:
@@ -170,6 +194,8 @@ def compile(
             mode=mode,
             default_model=default_model,
             default_system_prompt=default_system_prompt,
+            default_provider=default_provider,
+            default_backend=default_backend,
             compile_kwargs=compile_kwargs,
         )
 
