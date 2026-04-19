@@ -132,13 +132,18 @@ impl BackendStore {
     }
 
     /// Add a backend. Fails if name already exists.
-    pub fn add(&self, backend: BackendConfig) -> Result<(), BackendError> {
+    ///
+    /// For protocols that use a versioned API path (OpenAI, Anthropic, vLLM),
+    /// the endpoint is normalized to include `/v1` so that downstream code
+    /// can append resource paths directly (e.g. `/chat/completions`, `/models`).
+    pub fn add(&self, mut backend: BackendConfig) -> Result<(), BackendError> {
         let mut file = self.read_file()?;
         if file.backends.iter().any(|b| b.name == backend.name) {
             return Err(BackendError::AlreadyExists {
                 name: backend.name.clone(),
             });
         }
+        normalize_endpoint(&mut backend);
         file.backends.push(backend);
         self.write_file(&file)
     }
@@ -350,6 +355,32 @@ fn credential_to_backend(name: &str, cred: LegacyCredential) -> BackendConfig {
         headers,
         models,
         docker: None,
+        auto_tool_choice: None,
+    }
+}
+
+/// Ensure the stored endpoint includes the `/v1` version prefix for protocols
+/// that need it (OpenAI, Anthropic, vLLM). This makes the endpoint consistent
+/// with the runtime, which builds paths like `${endpoint}/chat/completions`.
+fn normalize_endpoint(backend: &mut BackendConfig) {
+    use apxm_core::types::ProviderProtocol;
+
+    let needs_v1 = matches!(
+        backend.protocol,
+        ProviderProtocol::OpenAI | ProviderProtocol::Anthropic | ProviderProtocol::Vllm
+    );
+    if !needs_v1 {
+        return;
+    }
+
+    if let Some(ref mut url) = backend.endpoint {
+        let trimmed = url.trim_end_matches('/');
+        if !trimmed.ends_with("/v1") {
+            *url = format!("{trimmed}/v1");
+        } else {
+            // Normalize trailing slash: "http://x/v1/" → "http://x/v1"
+            *url = trimmed.to_string();
+        }
     }
 }
 
@@ -383,6 +414,7 @@ mod tests {
             headers: HashMap::new(),
             models: vec![],
             docker: None,
+            auto_tool_choice: None,
         };
 
         store.add(backend.clone()).unwrap();
@@ -406,6 +438,7 @@ mod tests {
             headers: HashMap::new(),
             models: vec![],
             docker: None,
+            auto_tool_choice: None,
         };
 
         store.add(backend.clone()).unwrap();
@@ -427,6 +460,7 @@ mod tests {
             headers: HashMap::new(),
             models: vec![],
             docker: None,
+            auto_tool_choice: None,
         };
 
         store.add(backend).unwrap();
@@ -448,6 +482,7 @@ mod tests {
             headers: HashMap::new(),
             models: vec![],
             docker: None,
+            auto_tool_choice: None,
         };
 
         let backend2 = BackendConfig {
@@ -459,6 +494,7 @@ mod tests {
             headers: HashMap::new(),
             models: vec![],
             docker: None,
+            auto_tool_choice: None,
         };
 
         store.add(backend1).unwrap();
@@ -484,6 +520,7 @@ mod tests {
             headers: HashMap::new(),
             models: vec![],
             docker: None,
+            auto_tool_choice: None,
         };
 
         store.add(backend).unwrap();
@@ -497,6 +534,7 @@ mod tests {
             headers: HashMap::new(),
             models: vec![],
             docker: None,
+            auto_tool_choice: None,
         };
 
         store.update("update-test", updated).unwrap();
@@ -544,6 +582,7 @@ mod tests {
                 },
             ],
             docker: None,
+            auto_tool_choice: None,
         };
 
         store.add(backend).unwrap();
@@ -577,6 +616,7 @@ mod tests {
                 model_path: Some("/models/llama-7b".to_string()),
                 tensor_parallel: Some(2),
             }),
+            auto_tool_choice: None,
         };
 
         store.add(backend).unwrap();
@@ -601,6 +641,7 @@ mod tests {
             headers: HashMap::new(),
             models: vec![],
             docker: None,
+            auto_tool_choice: None,
         };
 
         store.add(backend).unwrap();
@@ -623,6 +664,7 @@ mod tests {
             headers: HashMap::new(),
             models: vec![],
             docker: None,
+            auto_tool_choice: None,
         };
         store.add(backend).unwrap();
 
@@ -681,6 +723,7 @@ mod tests {
             headers: HashMap::new(),
             models: vec![],
             docker: None,
+            auto_tool_choice: None,
         };
         store.add(backend).unwrap();
 
@@ -702,5 +745,119 @@ mod tests {
             result,
             Err(BackendError::ModelAlreadyExists { .. })
         ));
+    }
+
+    #[test]
+    fn endpoint_normalized_with_v1_on_add() {
+        let tmp = TempDir::new().unwrap();
+        let store = test_store(tmp.path());
+
+        let backend = BackendConfig {
+            name: "vllm-local".to_string(),
+            backend_type: BackendType::Local,
+            protocol: ProviderProtocol::Vllm,
+            endpoint: Some("http://localhost:8000".to_string()),
+            api_key: None,
+            headers: HashMap::new(),
+            models: vec![],
+            docker: None,
+            auto_tool_choice: None,
+        };
+
+        store.add(backend).unwrap();
+        let got = store.get("vllm-local").unwrap().unwrap();
+        assert_eq!(got.endpoint.as_deref(), Some("http://localhost:8000/v1"));
+    }
+
+    #[test]
+    fn endpoint_already_has_v1_unchanged() {
+        let tmp = TempDir::new().unwrap();
+        let store = test_store(tmp.path());
+
+        let backend = BackendConfig {
+            name: "openai-prod".to_string(),
+            backend_type: BackendType::Cloud,
+            protocol: ProviderProtocol::OpenAI,
+            endpoint: Some("https://api.openai.com/v1".to_string()),
+            api_key: Some("sk-test".to_string()),
+            headers: HashMap::new(),
+            models: vec![],
+            docker: None,
+            auto_tool_choice: None,
+        };
+
+        store.add(backend).unwrap();
+        let got = store.get("openai-prod").unwrap().unwrap();
+        assert_eq!(got.endpoint.as_deref(), Some("https://api.openai.com/v1"));
+    }
+
+    #[test]
+    fn endpoint_trailing_slash_normalized() {
+        let tmp = TempDir::new().unwrap();
+        let store = test_store(tmp.path());
+
+        let backend = BackendConfig {
+            name: "trailing-slash".to_string(),
+            backend_type: BackendType::Local,
+            protocol: ProviderProtocol::Vllm,
+            endpoint: Some("http://localhost:8000/v1/".to_string()),
+            api_key: None,
+            headers: HashMap::new(),
+            models: vec![],
+            docker: None,
+            auto_tool_choice: None,
+        };
+
+        store.add(backend).unwrap();
+        let got = store.get("trailing-slash").unwrap().unwrap();
+        assert_eq!(got.endpoint.as_deref(), Some("http://localhost:8000/v1"));
+    }
+
+    #[test]
+    fn ollama_endpoint_not_normalized() {
+        let tmp = TempDir::new().unwrap();
+        let store = test_store(tmp.path());
+
+        let backend = BackendConfig {
+            name: "ollama-local".to_string(),
+            backend_type: BackendType::Local,
+            protocol: ProviderProtocol::Ollama,
+            endpoint: Some("http://localhost:11434".to_string()),
+            api_key: None,
+            headers: HashMap::new(),
+            models: vec![],
+            docker: None,
+            auto_tool_choice: None,
+        };
+
+        store.add(backend).unwrap();
+        let got = store.get("ollama-local").unwrap().unwrap();
+        // Ollama does not use /v1 paths — endpoint should remain unchanged.
+        assert_eq!(got.endpoint.as_deref(), Some("http://localhost:11434"));
+    }
+
+    #[test]
+    fn anthropic_endpoint_normalized_with_v1() {
+        let tmp = TempDir::new().unwrap();
+        let store = test_store(tmp.path());
+
+        let backend = BackendConfig {
+            name: "anthropic-gw".to_string(),
+            backend_type: BackendType::OnPrem,
+            protocol: ProviderProtocol::Anthropic,
+            endpoint: Some("https://gateway.internal.example.com".to_string()),
+            api_key: Some("sk-ant-test".to_string()),
+            headers: HashMap::new(),
+            models: vec![],
+            docker: None,
+            auto_tool_choice: None,
+        };
+
+        store.add(backend).unwrap();
+        let got = store.get("anthropic-gw").unwrap().unwrap();
+        assert_eq!(
+            got.endpoint.as_deref(),
+            Some("https://gateway.internal.example.com/v1")
+        );
     }
 }

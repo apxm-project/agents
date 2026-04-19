@@ -90,6 +90,18 @@ pub trait LLMBackend: Send + Sync {
         false
     }
 
+    /// Returns true if the backend accepts `tool_choice="auto"` on chat-completion
+    /// requests. Default `true` (matches OpenAI/Anthropic). Stock vLLM rejects
+    /// it with HTTP 400 unless launched with `--enable-auto-tool-choice` and
+    /// `--tool-call-parser <name>`; backends fronting such servers should
+    /// override this (driven by `BackendConfig.auto_tool_choice = false`).
+    ///
+    /// The runtime checks this before attaching tools+tool_choice to a request
+    /// and refuses to silently drop user-supplied `tools=[...]`.
+    fn supports_auto_tool_choice(&self) -> bool {
+        true
+    }
+
     /// Generate a unique execution id for graph registration. Default uses uuid v4.
     /// Backends with custom counters (e.g. vLLM) may override.
     fn next_execution_id(&self) -> String {

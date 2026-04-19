@@ -299,6 +299,7 @@ impl ApXmConfig {
                 headers: HashMap::new(),
                 models: vec![],
                 docker: None,
+                auto_tool_choice: None,
             })
             .collect();
 

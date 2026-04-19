@@ -135,11 +135,10 @@ default = true
 
 [[install.components]]
 name = "gui"
-label = "GUI Dashboard + OpenClaw Agent Gateway"
+label = "GUI Dashboard"
 description = "Web dashboard with multi-model agent chat (requires >=1 backend)"
 run = "bash scripts/install-gui.sh"
 default = false
-requires = ["nodejs"]
 
 [[install.components]]
 name = "vllm"

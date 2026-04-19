@@ -253,6 +253,7 @@ fn unified_backend_to_registration(
         endpoint,
         options: std::collections::HashMap::new(), // BackendConfig doesn't have options
         extra_headers,
+        auto_tool_choice: backend.auto_tool_choice,
     })
 }
 

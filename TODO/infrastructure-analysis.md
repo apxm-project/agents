@@ -304,7 +304,7 @@ TaskQueue           dependency graph +                 4-level PriorityQueue +
                                                       cascade failure + fallback values
 
 Agent               run/prompt/stream                  AcpSession (ACP protocol) +
-                    (simple lifecycle)                  16 built-in profiles +
+                    (simple lifecycle)                  15 built-in profiles +
                                                       AAM context projection +
                                                       reverse request handling
 

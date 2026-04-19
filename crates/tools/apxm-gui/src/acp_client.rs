@@ -1,6 +1,6 @@
 //! Lightweight ACP client for communicating with agent subprocesses.
 //!
-//! Spawns a command (e.g. `openclaw acp`) and communicates via NDJson on
+//! Spawns an ACP agent command (e.g. Claude/Codex via npx) and communicates via NDJson on
 //! stdin/stdout, implementing the Agent Client Protocol handshake and
 //! prompt/response cycle.
 
@@ -70,7 +70,7 @@ pub struct AgentSession {
 impl AgentSession {
     /// Spawn an agent subprocess and complete the ACP handshake.
     ///
-    /// `command` is the executable (e.g. `"openclaw"`), which is invoked with
+    /// `command` is the shell command line (e.g. the npx Claude ACP wrapper), which is invoked with
     /// `acp` as its first argument. The subprocess's cwd is set to `cwd`.
     pub async fn spawn(command: &str, cwd: &Path) -> Result<Self, AgentError> {
         let parts: Vec<&str> = command.split_whitespace().collect();

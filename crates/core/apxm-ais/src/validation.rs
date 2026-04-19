@@ -3,6 +3,7 @@
 //! Provides shared validation logic used by both compiler and runtime to ensure
 //! operations have all required fields and correct types.
 
+use crate::attrs;
 use crate::operations::{AISOperationType, get_operation_spec};
 use crate::types::Value;
 use std::collections::HashMap;
@@ -69,6 +70,9 @@ pub fn validate_operation(
         }
     }
 
+    // Operation-specific format validation
+    validate_field_formats(op_type, spec.name, attributes)?;
+
     Ok(())
 }
 
@@ -101,6 +105,9 @@ pub fn validate_operation_strict(
         }
     }
 
+    // Operation-specific format validation
+    validate_field_formats(op_type, spec.name, attributes)?;
+
     Ok(())
 }
 
@@ -124,6 +131,45 @@ pub fn missing_required_fields(
         .filter(|f| !attributes.contains_key(f.name))
         .map(|f| f.name)
         .collect()
+}
+
+/// Validates format constraints on specific fields (e.g. `python_handler_id`).
+fn validate_field_formats(
+    _op_type: AISOperationType,
+    op_name: &str,
+    attributes: &HashMap<String, Value>,
+) -> Result<(), ValidationError> {
+    if let Some(val) = attributes.get(attrs::PYTHON_HANDLER_ID) {
+        match val.as_str() {
+            Some(s) => {
+                if !is_valid_python_handler_id(s) {
+                    return Err(ValidationError::OperationSpecific {
+                        operation: op_name.to_string(),
+                        message: format!(
+                            "python_handler_id must match sha256:<64 hex chars>, got: {s}"
+                        ),
+                    });
+                }
+            }
+            None => {
+                return Err(ValidationError::InvalidFieldType {
+                    operation: op_name.to_string(),
+                    field: attrs::PYTHON_HANDLER_ID.to_string(),
+                    expected: "string".to_string(),
+                    actual: format!("{val:?}"),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Returns `true` if `s` matches `^sha256:[0-9a-f]{64}$`.
+fn is_valid_python_handler_id(s: &str) -> bool {
+    let Some(hex) = s.strip_prefix("sha256:") else {
+        return false;
+    };
+    hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 
 #[cfg(test)]
@@ -211,6 +257,116 @@ mod tests {
         let missing = missing_required_fields(AISOperationType::UMem, &attrs);
         assert!(missing.contains(&"key"));
         assert!(missing.contains(&"value"));
+    }
+
+    #[test]
+    fn test_register_capability_valid_python_handler_id() {
+        let mut attrs = HashMap::new();
+        attrs.insert(
+            "capability_name".to_string(),
+            Value::String("my_tool".to_string()),
+        );
+        attrs.insert(
+            "python_handler_id".to_string(),
+            Value::String(
+                "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+                    .to_string(),
+            ),
+        );
+
+        let result = validate_operation(AISOperationType::RegisterCapability, &attrs);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_register_capability_invalid_python_handler_id_bad_prefix() {
+        let mut attrs = HashMap::new();
+        attrs.insert(
+            "capability_name".to_string(),
+            Value::String("my_tool".to_string()),
+        );
+        attrs.insert(
+            "python_handler_id".to_string(),
+            Value::String(
+                "md5:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+                    .to_string(),
+            ),
+        );
+
+        let result = validate_operation(AISOperationType::RegisterCapability, &attrs);
+        assert!(matches!(
+            result,
+            Err(ValidationError::OperationSpecific { .. })
+        ));
+    }
+
+    #[test]
+    fn test_register_capability_invalid_python_handler_id_short() {
+        let mut attrs = HashMap::new();
+        attrs.insert(
+            "capability_name".to_string(),
+            Value::String("my_tool".to_string()),
+        );
+        attrs.insert(
+            "python_handler_id".to_string(),
+            Value::String("sha256:abcdef".to_string()),
+        );
+
+        let result = validate_operation(AISOperationType::RegisterCapability, &attrs);
+        assert!(matches!(
+            result,
+            Err(ValidationError::OperationSpecific { .. })
+        ));
+    }
+
+    #[test]
+    fn test_register_capability_invalid_python_handler_id_uppercase() {
+        let mut attrs = HashMap::new();
+        attrs.insert(
+            "capability_name".to_string(),
+            Value::String("my_tool".to_string()),
+        );
+        attrs.insert(
+            "python_handler_id".to_string(),
+            Value::String(
+                "sha256:ABCDEF0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+                    .to_string(),
+            ),
+        );
+
+        let result = validate_operation(AISOperationType::RegisterCapability, &attrs);
+        assert!(matches!(
+            result,
+            Err(ValidationError::OperationSpecific { .. })
+        ));
+    }
+
+    #[test]
+    fn test_register_capability_invalid_python_handler_id_wrong_type() {
+        let mut attrs = HashMap::new();
+        attrs.insert(
+            "capability_name".to_string(),
+            Value::String("my_tool".to_string()),
+        );
+        attrs.insert("python_handler_id".to_string(), Value::Bool(true));
+
+        let result = validate_operation(AISOperationType::RegisterCapability, &attrs);
+        assert!(matches!(
+            result,
+            Err(ValidationError::InvalidFieldType { .. })
+        ));
+    }
+
+    #[test]
+    fn test_register_capability_without_python_handler_id() {
+        let mut attrs = HashMap::new();
+        attrs.insert(
+            "capability_name".to_string(),
+            Value::String("my_tool".to_string()),
+        );
+
+        let result = validate_operation(AISOperationType::RegisterCapability, &attrs);
+        assert!(result.is_ok());
     }
 
     #[test]

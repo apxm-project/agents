@@ -99,7 +99,7 @@ fn default_session_timeout() -> u64 {
 
 /// Registry of ACP agent profiles.
 ///
-/// **Templates** are the 16 built-in profile definitions (read-only reference
+/// **Templates** are the 15 built-in profile definitions (read-only reference
 /// data with known commands and timeouts).
 ///
 /// **Registered agents** are entries in `~/.apxm/agents.toml` — the only
@@ -132,7 +132,7 @@ impl AgentRegistry {
         }
     }
 
-    /// Build the 16 built-in template profiles.
+    /// Build the 15 built-in template profiles.
     fn build_templates() -> BTreeMap<String, AgentProfile> {
         let mut templates = BTreeMap::new();
 
@@ -153,7 +153,6 @@ impl AgentRegistry {
                 timeouts::GEMINI_SESSION_TIMEOUT_MS,
             ),
             ("copilot", "copilot --acp --stdio", dg, dt),
-            ("openclaw", "openclaw acp", dg, dt),
             ("pi", "npx pi-acp@^0.0.22", dg, dt),
             ("cursor", "cursor-agent acp", dg, dt),
             ("droid", "droid exec --output-format acp", dg, dt),
@@ -310,7 +309,7 @@ mod tests {
     #[test]
     fn templates_count() {
         let reg = empty_registry();
-        assert_eq!(reg.list_templates().len(), 16);
+        assert_eq!(reg.list_templates().len(), 15);
     }
 
     #[test]
@@ -347,9 +346,9 @@ mod tests {
         let reg = empty_registry();
         let list = reg.list();
         // list() includes templates so agents work out of the box.
-        // An empty registry still has all 16 built-in templates.
+        // An empty registry still has all 15 built-in templates.
         assert!(!list.is_empty());
-        assert_eq!(list.len(), 16);
+        assert_eq!(list.len(), 15);
         // All entries are from templates (none registered)
         assert!(list.iter().all(|(_, _, from_template)| *from_template));
     }
@@ -361,8 +360,8 @@ mod tests {
         reg.registered.insert("claude".to_string(), profile);
         assert!(reg.get("claude").is_some());
         let list = reg.list();
-        // All 16 templates + claude override = still 16 total (override replaces template slot)
-        assert_eq!(list.len(), 16);
+        // All 15 templates + claude override = still 15 total (override replaces template slot)
+        assert_eq!(list.len(), 15);
         // claude entry should be marked as from_template=true since it was based on one
         let claude_entry = list.iter().find(|(name, _, _)| name == "claude");
         assert!(claude_entry.is_some());
@@ -387,8 +386,8 @@ mod tests {
         reg.registered.insert("custom".to_string(), profile);
         assert!(reg.get("custom").is_some());
         let list = reg.list();
-        // 16 built-in templates + 1 custom registered agent = 17
-        assert_eq!(list.len(), 17);
+        // 15 built-in templates + 1 custom registered agent = 16
+        assert_eq!(list.len(), 16);
         // Find the custom entry and verify it is NOT from a template
         let custom_entry = list.iter().find(|(name, _, _)| name == "custom");
         assert!(custom_entry.is_some());

@@ -323,6 +323,7 @@ mod tests {
             headers: HashMap::new(),
             models: vec![],
             docker: None,
+            auto_tool_choice: None,
         };
 
         let result = DockerManager::start(&backend);
@@ -342,6 +343,7 @@ mod tests {
             headers: HashMap::new(),
             models: vec![],
             docker: None,
+            auto_tool_choice: None,
         };
 
         let result = DockerManager::start(&backend);

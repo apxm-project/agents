@@ -28,9 +28,6 @@ mod events;
 // App state
 // ---------------------------------------------------------------------------
 
-/// Default OpenClaw gateway port.
-const GATEWAY_PORT: u16 = 18789;
-
 /// Shared application state.
 struct AppState {
     /// Path to the directory containing static assets (CSS, JS, images).
@@ -42,8 +39,6 @@ struct AppState {
     examples_dir: Option<PathBuf>,
     /// Active ACP agent sessions, keyed by session ID.
     agent_sessions: DashMap<String, Arc<Mutex<acp_client::AgentSession>>>,
-    /// Managed OpenClaw gateway child process (started on GUI launch).
-    gateway_process: Mutex<Option<tokio::process::Child>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -2476,116 +2471,6 @@ async fn read_ndjson_file(path: &std::path::Path) -> Result<serde_json::Value, A
 }
 
 // ---------------------------------------------------------------------------
-// OpenClaw gateway lifecycle
-// ---------------------------------------------------------------------------
-
-/// Check if a TCP port is already listening.
-async fn port_is_open(port: u16) -> bool {
-    tokio::net::TcpStream::connect(("127.0.0.1", port))
-        .await
-        .is_ok()
-}
-
-/// Start the OpenClaw gateway as a managed child process.
-///
-/// Skips silently if `openclaw` is not on PATH or if the gateway port is already
-/// in use (another instance running). Runs `apxm openclaw sync` first to ensure
-/// the gateway config reflects current APXM backends.
-async fn start_gateway(state: &AppState) {
-    // Check if openclaw is available (async, non-blocking)
-    let has_openclaw = tokio::process::Command::new("which")
-        .arg("openclaw")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .await
-        .map(|s| s.success())
-        .unwrap_or(false);
-
-    if !has_openclaw {
-        info!("openclaw not found on PATH, skipping gateway startup");
-        return;
-    }
-
-    // Check if gateway port is already in use
-    if port_is_open(GATEWAY_PORT).await {
-        info!(
-            port = GATEWAY_PORT,
-            "gateway port already in use, skipping spawn"
-        );
-        return;
-    }
-
-    // Sync APXM backends to OpenClaw config before starting
-    let sync_result = tokio::process::Command::new("apxm")
-        .args(["openclaw", "sync"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .await;
-
-    match sync_result {
-        Ok(status) if status.success() => {
-            info!("synced APXM backends to OpenClaw config");
-        }
-        Ok(status) => {
-            error!(code = ?status.code(), "apxm openclaw sync failed");
-        }
-        Err(e) => {
-            error!(error = %e, "failed to run apxm openclaw sync");
-        }
-    }
-
-    // Spawn gateway
-    match tokio::process::Command::new("openclaw")
-        .args(["gateway", "--auth", "none", "--bind", "loopback"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-    {
-        Ok(child) => {
-            info!(pid = child.id(), "openclaw gateway spawned");
-
-            // Wait for health (up to 10s)
-            let mut ready = false;
-            for _ in 0..20 {
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                if port_is_open(GATEWAY_PORT).await {
-                    ready = true;
-                    break;
-                }
-            }
-
-            if ready {
-                info!(port = GATEWAY_PORT, "openclaw gateway is ready");
-            } else {
-                error!("openclaw gateway did not become ready within 10s");
-            }
-
-            *state.gateway_process.lock().await = Some(child);
-        }
-        Err(e) => {
-            error!(error = %e, "failed to spawn openclaw gateway");
-        }
-    }
-}
-
-/// Stop the managed gateway process.
-async fn stop_gateway(state: &AppState) {
-    let mut guard = state.gateway_process.lock().await;
-    if let Some(ref mut child) = *guard {
-        info!("stopping openclaw gateway");
-        let _ = child.kill().await;
-        let timeout = tokio::time::timeout(std::time::Duration::from_secs(3), child.wait()).await;
-        match timeout {
-            Ok(Ok(status)) => info!(status = %status, "gateway exited"),
-            _ => error!("gateway did not exit cleanly"),
-        }
-    }
-    *guard = None;
-}
-
-// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -2680,13 +2565,6 @@ async fn main() {
         initial_file,
         examples_dir,
         agent_sessions: DashMap::new(),
-        gateway_process: Mutex::new(None),
-    });
-
-    // Start OpenClaw gateway in background (don't block server startup)
-    let gw_state = state.clone();
-    tokio::spawn(async move {
-        start_gateway(&gw_state).await;
     });
 
     // Build router
@@ -2788,9 +2666,8 @@ async fn main() {
         .await
         .expect("failed to bind address");
 
-    // Graceful shutdown: stop gateway on SIGINT/SIGTERM
-    let shutdown_state = state.clone();
-    let shutdown = async move {
+    // Graceful shutdown on SIGINT/SIGTERM
+    let shutdown = async {
         let ctrl_c = tokio::signal::ctrl_c();
         #[cfg(unix)]
         {
@@ -2805,8 +2682,7 @@ async fn main() {
         #[cfg(not(unix))]
         ctrl_c.await.ok();
 
-        info!("shutdown signal received, stopping gateway...");
-        stop_gateway(&shutdown_state).await;
+        info!("shutdown signal received");
     };
 
     axum::serve(listener, app)

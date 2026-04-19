@@ -601,16 +601,11 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         request = request.with_model(model_name);
     }
 
-    // Tool configuration (Ask mode only)
-    let tools_enabled = mode == LlmMode::Ask
-        && node
-            .attributes
-            .get(graph_attrs::TOOLS_ENABLED)
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true); // Enable by default for Ask
-
-    if tools_enabled {
-        // Get tool names from node attributes, or use all registered capabilities
+    // Tool configuration (Ask mode only). Tools are OPT-IN: a node only
+    // attaches tools when it explicitly opts in via TOOLS (named list) or
+    // TOOLS_ENABLED=true (use all registered capabilities). The default is
+    // no tools — matches OpenAI/LangChain/CrewAI/PydanticAI behavior.
+    if mode == LlmMode::Ask {
         let tool_names: Option<Vec<String>> = node
             .attributes
             .get(graph_attrs::TOOLS)
@@ -621,12 +616,54 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
                     .collect()
             });
 
-        let tools = match tool_names {
-            Some(names) if !names.is_empty() => get_tools_by_names(ctx, &names),
-            _ => get_tool_definitions_from_capabilities(ctx),
+        let tools_enabled_all = node
+            .attributes
+            .get(graph_attrs::TOOLS_ENABLED)
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let tools = match (tool_names, tools_enabled_all) {
+            (Some(names), _) if !names.is_empty() => get_tools_by_names(ctx, &names),
+            (_, true) => get_tool_definitions_from_capabilities(ctx),
+            _ => vec![],
         };
 
         if !tools.is_empty() {
+            // Hard-fail if the resolved backend can't accept tool_choice="auto".
+            // Stock vLLM (no `--enable-auto-tool-choice`) returns HTTP 400; we
+            // surface a clear, actionable error instead of silently dropping
+            // tools. Configure `auto_tool_choice = false` in
+            // `~/.apxm/config.toml` for such servers.
+            let backend_name = ctx
+                .llm_registry
+                .resolve_backend_name(&request)
+                .map_err(|e| RuntimeError::LLM {
+                    message: format!("Failed to resolve backend for tool routing: {}", e),
+                    backend: None,
+                })?;
+            let backend = ctx.llm_registry.get_backend(&backend_name).ok_or_else(|| {
+                RuntimeError::LLM {
+                    message: format!(
+                        "Backend '{}' resolved but not present in registry",
+                        backend_name
+                    ),
+                    backend: Some(backend_name.clone()),
+                }
+            })?;
+            if !backend.supports_auto_tool_choice() {
+                return Err(RuntimeError::LLM {
+                    message: format!(
+                        "Backend '{}' does not support tool_choice=\"auto\". \
+                         Either remove tool usage from this node, configure \
+                         `auto_tool_choice = false` for this backend in \
+                         `~/.apxm/config.toml`, or launch the server with \
+                         `--enable-auto-tool-choice` and `--tool-call-parser <name>`.",
+                        backend_name
+                    ),
+                    backend: Some(backend_name),
+                });
+            }
+
             apxm_llm!(debug,
                 execution_id = %ctx.execution_id,
                 tool_count = tools.len(),

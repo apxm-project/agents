@@ -357,9 +357,14 @@ mod tests {
     use super::*;
 
     fn temp_path(name: &str) -> PathBuf {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let stem = name.strip_suffix(".db").unwrap_or(name);
         let mut p = std::env::temp_dir();
-        p.push(name);
-        // Best-effort cleanup from prior runs.
+        p.push(format!("{stem}.{}.{nanos}.db", std::process::id()));
         let _ = std::fs::remove_file(&p);
         p
     }

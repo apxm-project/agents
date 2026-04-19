@@ -12,7 +12,7 @@ Agent Client Protocol (ACP) client for spawning and communicating with coding ag
 |--------|-------------|
 | `protocol` | JSON-RPC 2.0 message framing and serialization |
 | `session` | `AcpSession` lifecycle (spawn, send, receive, close) |
-| `registry` | `AgentRegistry` with 16 built-in agent templates |
+| `registry` | `AgentRegistry` with 15 built-in agent templates |
 | `auth` | API key forwarding and credential injection |
 | `content` | Structured content types (text, tool results) |
 | `controls` | Permission modes and approval policies |
@@ -33,7 +33,7 @@ Agent Client Protocol (ACP) client for spawning and communicating with coding ag
 
 ## Built-in Agent Templates (16)
 
-claude, codex, gemini, copilot, cursor, openclaw, pi, droid, kilocode, kimi, kiro, opencode, qoder, qwen, trae, iflow.
+claude, codex, gemini, copilot, cursor, pi, droid, kilocode, kimi, kiro, opencode, qoder, qwen, trae, iflow.
 
 ## Dependencies
 

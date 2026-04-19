@@ -46,10 +46,18 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     let timeout_ms = get_optional_u64_attribute(node, graph_attrs::TIMEOUT_MS)?
         .unwrap_or(apxm_core::constants::defaults::DEFAULT_TIMEOUT_MS);
 
+    // Check if this capability is backed by a Python handler.
+    let python_handler_id = node
+        .attributes
+        .get(graph_attrs::PYTHON_HANDLER_ID)
+        .and_then(|v| v.as_string())
+        .map(|s| s.to_string());
+
     tracing::debug!(
         capability = %capability_name,
         inputs = inputs.len(),
         timeout_ms = timeout_ms,
+        python_handler = ?python_handler_id,
         "Executing INV_TOOL operation"
     );
 
@@ -125,20 +133,24 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         return Err(RuntimeError::SchedulerCancelled);
     }
 
-    // Invoke capability with timeout
     let timeout = std::time::Duration::from_millis(timeout_ms);
-    let result = ctx
-        .capability_system
-        .invoke_with_timeout(&capability_name, args, timeout)
-        .await
-        .map_err(|e| {
-            tracing::error!(
-                capability = %capability_name,
-                error = %e,
-                "Capability invocation failed"
-            );
-            e
-        })?;
+
+    // Dispatch: Python handler branch vs. Rust capability branch.
+    let result = if let Some(handler_id) = python_handler_id {
+        execute_python_tool(ctx, &capability_name, &handler_id, &args, timeout).await?
+    } else {
+        ctx.capability_system
+            .invoke_with_timeout(&capability_name, args, timeout)
+            .await
+            .map_err(|e| {
+                tracing::error!(
+                    capability = %capability_name,
+                    error = %e,
+                    "Capability invocation failed"
+                );
+                e
+            })?
+    };
 
     tracing::info!(
         capability = %capability_name,
@@ -154,6 +166,84 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     );
 
     Ok(result)
+}
+
+/// Dispatch an INV_TOOL call to the Python tool worker bridge.
+///
+/// Converts the `HashMap<String, Value>` args to `serde_json::Value`,
+/// calls into `PythonToolBridge::call`, and converts the result back.
+async fn execute_python_tool(
+    ctx: &ExecutionContext,
+    capability_name: &str,
+    _handler_id: &str,
+    args: &HashMap<String, Value>,
+    timeout: std::time::Duration,
+) -> Result<Value> {
+    let bridge = ctx
+        .python_tool_bridge
+        .as_ref()
+        .ok_or_else(|| RuntimeError::Capability {
+            capability: capability_name.to_string(),
+            message: "INV_TOOL has python_handler_id but no PythonToolBridge is configured"
+                .to_string(),
+        })?;
+
+    // Convert Value args to serde_json::Value for the wire protocol.
+    let json_args =
+        serde_json::to_value(args).map_err(|e| RuntimeError::Serialization(e.to_string()))?;
+
+    tracing::debug!(
+        capability = %capability_name,
+        timeout_ms = timeout.as_millis() as u64,
+        "Dispatching to Python tool worker"
+    );
+
+    let json_result = bridge.call(capability_name, json_args, timeout).await.map_err(|e| {
+        tracing::error!(
+            capability = %capability_name,
+            error = %e,
+            "Python tool invocation failed"
+        );
+        RuntimeError::Capability {
+            capability: capability_name.to_string(),
+            message: format!("Python tool failed: {}", e),
+        }
+    })?;
+
+    // Convert serde_json::Value back to Value.
+    json_to_value(json_result)
+}
+
+/// Convert a `serde_json::Value` to the runtime `Value` type.
+fn json_to_value(v: serde_json::Value) -> Result<Value> {
+    match v {
+        serde_json::Value::Null => Ok(Value::Null),
+        serde_json::Value::Bool(b) => Ok(Value::Bool(b)),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Ok(Value::Number(apxm_core::types::values::Number::Integer(i)))
+            } else if let Some(f) = n.as_f64() {
+                Ok(Value::Number(apxm_core::types::values::Number::Float(f)))
+            } else {
+                Err(RuntimeError::Serialization(format!(
+                    "Unsupported JSON number: {}",
+                    n
+                )))
+            }
+        }
+        serde_json::Value::String(s) => Ok(Value::String(s)),
+        serde_json::Value::Array(arr) => {
+            let items: Result<Vec<Value>> = arr.into_iter().map(json_to_value).collect();
+            Ok(Value::Array(items?))
+        }
+        serde_json::Value::Object(map) => {
+            let mut result = HashMap::new();
+            for (k, v) in map {
+                result.insert(k, json_to_value(v)?);
+            }
+            Ok(Value::Object(result))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -266,5 +356,104 @@ mod tests {
 
         let result = execute(&ctx, &node, vec![]).await.unwrap();
         assert_eq!(result.as_string().map(|s| s.as_str()), Some("Echo: Test"));
+    }
+
+    #[tokio::test]
+    async fn test_inv_python_handler_no_bridge_errors() {
+        let ctx = create_test_context_with_capability().await;
+        // python_tool_bridge is None by default
+
+        let mut node = Node {
+            id: 1,
+            op_type: AISOperationType::InvTool,
+            attributes: HashMap::new(),
+            input_tokens: vec![],
+            output_tokens: vec![100],
+            metadata: NodeMetadata::default(),
+        };
+
+        node.attributes.insert(
+            graph_attrs::CAPABILITY.to_string(),
+            Value::String("add".to_string()),
+        );
+        node.attributes.insert(
+            graph_attrs::PYTHON_HANDLER_ID.to_string(),
+            Value::String("sha256:abc123".to_string()),
+        );
+
+        let result = execute(&ctx, &node, vec![]).await;
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("PythonToolBridge"),
+            "Expected PythonToolBridge error, got: {}",
+            err_msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_inv_without_python_handler_uses_capability_system() {
+        // When python_handler_id is absent, the existing capability path is used.
+        let ctx = create_test_context_with_capability().await;
+
+        let mut node = Node {
+            id: 1,
+            op_type: AISOperationType::InvTool,
+            attributes: HashMap::new(),
+            input_tokens: vec![],
+            output_tokens: vec![100],
+            metadata: NodeMetadata::default(),
+        };
+
+        node.attributes.insert(
+            graph_attrs::CAPABILITY.to_string(),
+            Value::String("echo".to_string()),
+        );
+        node.attributes
+            .insert("arg_message".to_string(), Value::String("via Rust".to_string()));
+
+        let result = execute(&ctx, &node, vec![]).await.unwrap();
+        assert_eq!(
+            result.as_string().map(|s| s.as_str()),
+            Some("Echo: via Rust")
+        );
+    }
+
+    #[test]
+    fn test_json_to_value_primitives() {
+        assert_eq!(json_to_value(serde_json::Value::Null).unwrap(), Value::Null);
+        assert_eq!(
+            json_to_value(serde_json::json!(true)).unwrap(),
+            Value::Bool(true)
+        );
+        assert_eq!(
+            json_to_value(serde_json::json!(42)).unwrap(),
+            Value::Number(apxm_core::types::values::Number::Integer(42))
+        );
+        assert_eq!(
+            json_to_value(serde_json::json!(3.14)).unwrap(),
+            Value::Number(apxm_core::types::values::Number::Float(3.14))
+        );
+        assert_eq!(
+            json_to_value(serde_json::json!("hello")).unwrap(),
+            Value::String("hello".to_string())
+        );
+    }
+
+    #[test]
+    fn test_json_to_value_nested() {
+        let json = serde_json::json!({"nums": [1, 2, 3], "flag": true});
+        let val = json_to_value(json).unwrap();
+        if let Value::Object(map) = &val {
+            assert!(map.contains_key("nums"));
+            assert!(map.contains_key("flag"));
+            if let Value::Array(arr) = &map["nums"] {
+                assert_eq!(arr.len(), 3);
+            } else {
+                panic!("Expected Array for 'nums'");
+            }
+        } else {
+            panic!("Expected Object");
+        }
     }
 }

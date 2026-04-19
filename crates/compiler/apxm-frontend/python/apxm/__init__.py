@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from . import _generated
+from .agent import Agent, AgentHooks, BoundAgent
 try:
     from ._generated.models import Anthropic, Google, ModelId, OpenAI, Vllm
 except ImportError:
@@ -38,15 +39,19 @@ from .module import FlowModule
 from .providers import ProviderSpec, list_providers, resolve_provider
 from .proxy import GraphRecorder, NodeRef
 from .sugar import AgentHandle, Team
+from .tools import FunctionTool, ToolContext, tool
 
 __all__ = [
     "_generated",
+    "Agent",
     "AgentConfig",
     "AgentHandle",
+    "AgentHooks",
     "Anthropic",
     "ApxmError",
     "ApxmGraph",
     "BashConfig",
+    "BoundAgent",
     "close",
     "compile",
     "CompiledFlow",
@@ -56,6 +61,7 @@ __all__ = [
     "ExecutionResult",
     "ExecutionStats",
     "FlowModule",
+    "FunctionTool",
     "Google",
     "GraphEdge",
     "GraphNode",
@@ -75,6 +81,8 @@ __all__ = [
     "SearchWebConfig",
     "ServerError",
     "Team",
+    "tool",
+    "ToolContext",
     "ToolsConfig",
     "validate_graph",
     "Vllm",

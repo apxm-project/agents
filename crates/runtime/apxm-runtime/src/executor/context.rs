@@ -1,5 +1,6 @@
 //! Execution context - Holds runtime state and provides access to subsystems
 
+use crate::python_tools::PythonToolBridge;
 use crate::sandbox::SandboxRegistry;
 use crate::{
     aam::{Aam, ScopeSpec},
@@ -58,6 +59,10 @@ pub struct ExecutionContext {
     /// When set, LLM handler delegates backend selection here instead of `llm_registry`.
     pub model_router: Option<Arc<ModelRouter>>,
     pub agent_pool: Arc<AgentPool>,
+    /// Python tool bridge for dispatching INV_TOOL calls backed by
+    /// `@apxm.tool`-decorated Python handlers. `None` when no Python
+    /// tools are registered in the artifact.
+    pub python_tool_bridge: Option<Arc<PythonToolBridge>>,
 }
 
 impl ExecutionContext {
@@ -131,6 +136,7 @@ impl ExecutionContext {
             context_stack: None,
             model_router: None,
             agent_pool: Arc::new(AgentPool::new(4, std::time::Duration::from_secs(300))),
+            python_tool_bridge: None,
         }
     }
 
@@ -265,6 +271,7 @@ impl ExecutionContext {
             context_stack: self.context_stack.as_ref().map(Arc::clone),
             model_router: self.model_router.as_ref().map(Arc::clone),
             agent_pool: Arc::clone(&self.agent_pool),
+            python_tool_bridge: self.python_tool_bridge.as_ref().map(Arc::clone),
         }
     }
 
@@ -289,6 +296,12 @@ impl ExecutionContext {
     /// Attach a ModelRouter for dynamic backend/model selection with circuit breakers.
     pub fn with_model_router(mut self, router: Arc<ModelRouter>) -> Self {
         self.model_router = Some(router);
+        self
+    }
+
+    /// Set the Python tool bridge for dispatching to `@apxm.tool` handlers.
+    pub fn with_python_tool_bridge(mut self, bridge: Arc<PythonToolBridge>) -> Self {
+        self.python_tool_bridge = Some(bridge);
         self
     }
 

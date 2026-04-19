@@ -428,6 +428,10 @@ pub mod llm {
     pub mod config_keys {
         pub const EXTRA_HEADERS: &str = "extra_headers";
         pub const ENV_PREFIX: &str = "env:";
+        /// Whether the backend accepts `tool_choice="auto"` on chat-completion
+        /// requests. Stock vLLM rejects it unless launched with
+        /// `--enable-auto-tool-choice`. Plumbed from `BackendConfig.auto_tool_choice`.
+        pub const AUTO_TOOL_CHOICE: &str = "auto_tool_choice";
     }
 
     pub mod tags {

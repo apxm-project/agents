@@ -41,6 +41,10 @@ pub struct BackendRegistration {
     pub options: HashMap<String, String>,
     #[serde(default)]
     pub extra_headers: HashMap<String, String>,
+    /// Whether the backend accepts `tool_choice="auto"`. `None` means use
+    /// the backend's default (typically `true`). See `BackendConfig.auto_tool_choice`.
+    #[serde(default)]
+    pub auto_tool_choice: Option<bool>,
 }
 
 impl BackendRegistration {
@@ -71,6 +75,12 @@ impl BackendRegistration {
             map.insert(
                 config_keys::EXTRA_HEADERS.to_string(),
                 JsonValue::Object(headers),
+            );
+        }
+        if let Some(auto_tool_choice) = self.auto_tool_choice {
+            map.insert(
+                config_keys::AUTO_TOOL_CHOICE.to_string(),
+                json!(auto_tool_choice),
             );
         }
 

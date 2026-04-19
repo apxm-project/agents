@@ -1,6 +1,6 @@
 //! Agent chat endpoint — bridges ACP subprocess sessions to SSE.
 //!
-//! Spawns an agent subprocess (e.g. `openclaw acp`) on the first chat message,
+//! Spawns an agent subprocess (ACP) on the first chat message,
 //! then streams its responses as Server-Sent Events. Subsequent messages reuse
 //! the same ACP session. Sessions are stored in `AppState::agent_sessions`.
 
@@ -43,9 +43,9 @@ pub struct AgentChatRequest {
     pub session_id: Option<String>,
     /// The user message to send to the agent.
     pub message: String,
-    /// Optional command override (default: `"openclaw acp"`).
+    /// Optional command override (default: built-in wrapper or registry command).
     pub command: Option<String>,
-    /// Agent profile ID (e.g. "openclaw", "claude", "codex").
+    /// Agent profile ID (e.g. "claude", "codex").
     /// Resolved via `AgentRegistry` to get the command.
     pub agent_id: Option<String>,
 }
