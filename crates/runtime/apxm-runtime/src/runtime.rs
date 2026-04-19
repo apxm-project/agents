@@ -13,6 +13,7 @@ use crate::{
     memory::{MemoryConfig, MemorySystem},
     process_table::ProcessTable,
     scheduler::{DataflowScheduler, SchedulerConfig, SessionLaneGuard},
+    vllm_attr_derivation::derive_vllm_attrs,
     vllm_lifecycle::VllmGraphLifecycle,
 };
 use apxm_artifact::Artifact;
@@ -276,7 +277,7 @@ impl Runtime {
     /// Note: This method does NOT support inner DAG execution (multi-level planning).
     /// If you need inner DAG support, wrap the Runtime in Arc and use
     /// `execute_with_inner_support()` instead.
-    pub async fn execute(&self, dag: ExecutionDag) -> Result<RuntimeExecutionResult, RuntimeError> {
+    pub async fn execute(&self, mut dag: ExecutionDag) -> Result<RuntimeExecutionResult, RuntimeError> {
         log_info!(
             "runtime",
             nodes = dag.nodes.len(),
@@ -285,6 +286,13 @@ impl Runtime {
 
         #[cfg(feature = "metrics")]
         self.llm_registry.metrics().reset();
+
+        // Derive `_vllm_*` attributes from MLIR-stamped (bare-name) attrs in
+        // the wire format. Must run BEFORE register_graph + scheduling so the
+        // per-node hints in `extra_body.apxm.*` reflect the canonicalized
+        // shared-prefix groups, priorities, and pin modes. See
+        // `vllm_attr_derivation` module docs for the pipeline-ordering reason.
+        derive_vllm_attrs(&mut dag);
 
         // Step 4: register the DAG with any graph-aware backends (e.g. vLLM).
         // The guard is dropped at the end of this method; happy-path code calls
@@ -395,7 +403,7 @@ impl Runtime {
             None
         };
 
-        let entry_dag = find_entry_dag(&artifact)?;
+        let mut entry_dag = find_entry_dag(&artifact)?;
         validate_args(&entry_dag, &args)?;
 
         for agent in reconstruct_agents_from_artifact(&artifact) {
@@ -405,6 +413,11 @@ impl Runtime {
         let arg_values: Vec<Value> = args.into_iter().map(Value::String).collect();
         #[cfg(feature = "metrics")]
         self.llm_registry.metrics().reset();
+
+        // Derive `_vllm_*` attributes from the wire-format MLIR-stamped attrs
+        // before register_graph + scheduling. See `execute()` and the
+        // `vllm_attr_derivation` module for the full rationale.
+        derive_vllm_attrs(&mut entry_dag);
 
         // Step 4: register with vLLM-style graph-aware backends. See `execute()`
         // for the rationale (explicit happy-path release; Drop as safety net).

@@ -35,6 +35,7 @@ pub mod process_table;
 mod runtime;
 pub mod sandbox;
 pub mod scheduler;
+pub mod vllm_attr_derivation;
 pub mod vllm_lifecycle;
 pub mod team;
 pub mod thread;
