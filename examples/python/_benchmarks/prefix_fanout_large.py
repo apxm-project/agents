@@ -21,8 +21,14 @@ Usage:
 
 from apxm import compile, GraphRecorder
 
+from ._config import VLLM, Vllm, VLLM_BACKEND
 
-@compile()
+
+@compile(
+    default_provider=VLLM,
+    default_backend=VLLM_BACKEND,
+    default_model=Vllm.QWEN_2_5_7B,
+)
 def prefix_fanout_large(g: GraphRecorder):
     """One large 4000-token context shared by 8 parallel review nodes."""
 

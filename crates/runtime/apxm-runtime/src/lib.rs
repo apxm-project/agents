@@ -35,6 +35,7 @@ pub mod process_table;
 mod runtime;
 pub mod sandbox;
 pub mod scheduler;
+pub mod vllm_lifecycle;
 pub mod team;
 pub mod thread;
 pub mod workflow;
@@ -69,6 +70,7 @@ pub use process::{AgentProcess, ProcessId, ProcessKind, ProcessState};
 pub use process_table::{AgentPrompter, AgentSpawner, ProcessTable};
 pub use runtime::{Runtime, RuntimeConfig, RuntimeExecutionResult};
 pub use scheduler::{DataflowScheduler, SchedulerConfig};
+pub use vllm_lifecycle::VllmGraphLifecycle;
 pub use thread::{AgentThread, ThreadId, ThreadState};
 
 // Re-export sandbox interface for host applications

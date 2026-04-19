@@ -3,7 +3,10 @@
 //! These structures mirror the Python-side `ApxmRequestHints` and
 //! `ApxmGraphRegisterRequest` schemas in the vLLM fork.
 
+use apxm_core::constants::graph::attrs;
+use apxm_core::types::values::Value;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// KV-cache pin policy for a single request.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -148,6 +151,106 @@ impl ApxmGraphHints {
             reuse_group: None,
             pin_policy: PinPolicy::none(),
             compiler_hints: CompilerHints::default(),
+        }
+    }
+
+    /// Build hints from a node's `_vllm_*` attributes (populated by the
+    /// compiler `vllm_hints` pass). Missing keys fall back to safe defaults
+    /// equivalent to `ApxmGraphHints::default()` plus the graph/node
+    /// identifiers passed in.
+    ///
+    /// Reads (all keys via `apxm_core::constants::graph::attrs::*` —
+    /// no string literals):
+    /// - `VLLM_PRIORITY_CLASS` (string) → `priority_class`
+    /// - `VLLM_DOWNSTREAM_NODES` (array of u64) → `downstream_nodes`
+    /// - `VLLM_REUSE_GROUP` (string) → `reuse_group`
+    /// - `VLLM_CRITICAL_PATH` (bool) → folded into `priority_class` only when
+    ///   the priority key is missing
+    /// - `VLLM_PIN_MODE` (string) → `pin_policy.mode` ("prefix" → prefix
+    ///   default; anything else / missing → none)
+    /// - `VLLM_EST_TOKENS` (u64) → `compiler_hints.shared_prefix_est_tokens`
+    /// - `VLLM_WARMUP` (bool) → `compiler_hints.warmup_candidate`
+    /// - `VLLM_PIPELINE` (bool) → `compiler_hints.pipeline_candidate`
+    pub fn from_node_attrs(
+        graph_id: String,
+        node_id: String,
+        attrs_map: &HashMap<String, Value>,
+    ) -> Self {
+        // Numeric node id parses on a best-effort basis; if the caller passes
+        // a non-numeric string we leave the field unset rather than panicking.
+        let numeric_node_id = node_id.parse::<u32>().ok();
+
+        let priority_class = attrs_map
+            .get(attrs::VLLM_PRIORITY_CLASS)
+            .and_then(|v| v.as_string())
+            .map(|s| s.to_string())
+            .or_else(|| {
+                attrs_map
+                    .get(attrs::VLLM_CRITICAL_PATH)
+                    .and_then(|v| v.as_bool())
+                    .and_then(|cp| if cp { Some("critical_path".to_string()) } else { None })
+            });
+
+        let downstream_nodes: Vec<u32> = attrs_map
+            .get(attrs::VLLM_DOWNSTREAM_NODES)
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_u64().map(|u| u as u32))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let reuse_group = attrs_map
+            .get(attrs::VLLM_REUSE_GROUP)
+            .and_then(|v| v.as_string())
+            .map(|s| s.to_string());
+
+        let pin_policy = match attrs_map
+            .get(attrs::VLLM_PIN_MODE)
+            .and_then(|v| v.as_string())
+            .map(|s| s.as_str())
+        {
+            Some("prefix") => PinPolicy::prefix_default(),
+            _ => {
+                // No explicit pin mode: pin opportunistically when the node
+                // belongs to a shared-prefix group, otherwise leave unpinned.
+                if reuse_group.is_some() {
+                    PinPolicy::prefix_default()
+                } else {
+                    PinPolicy::none()
+                }
+            }
+        };
+
+        let shared_prefix_est_tokens = attrs_map
+            .get(attrs::VLLM_EST_TOKENS)
+            .and_then(|v| v.as_u64())
+            .map(|u| u as u32);
+
+        let warmup_candidate = attrs_map
+            .get(attrs::VLLM_WARMUP)
+            .and_then(|v| v.as_bool());
+
+        let pipeline_candidate = attrs_map
+            .get(attrs::VLLM_PIPELINE)
+            .and_then(|v| v.as_bool());
+
+        Self {
+            schema_version: 1,
+            graph_id: Some(graph_id),
+            execution_id: None,
+            node_id: numeric_node_id,
+            node_name: Some(node_id),
+            priority_class,
+            downstream_nodes,
+            reuse_group,
+            pin_policy,
+            compiler_hints: CompilerHints {
+                shared_prefix_est_tokens,
+                warmup_candidate,
+                pipeline_candidate,
+            },
         }
     }
 

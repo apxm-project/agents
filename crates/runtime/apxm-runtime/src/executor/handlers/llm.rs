@@ -19,13 +19,13 @@
 
 use super::{
     ExecutionContext, Node, Result, Value, execute_llm_request, get_optional_string_attribute,
-    get_optional_u64_attribute, get_string_attribute, get_u32_array_attribute,
+    get_optional_u64_attribute, get_string_attribute,
     inner_plan::{InnerPlanOptions, execute_inner_plan},
     template::{input_names_from_node, render_named},
 };
 use crate::aam::{Goal as AamGoal, GoalId, GoalStatus, TransitionLabel};
 use crate::executor::memoization::ResponseCache;
-use apxm_backends::llm::backends::vllm::{ApxmGraphHints, CompilerHints, PinPolicy};
+use apxm_backends::llm::backends::vllm::ApxmGraphHints;
 use apxm_backends::{LLMRequest, ToolChoice, ToolDefinition};
 use apxm_core::InnerPlanPayload;
 use apxm_core::apxm_llm;
@@ -478,6 +478,57 @@ fn default_priority() -> u32 {
     50
 }
 
+/// Build APXM graph hints from a node's compiler-stamped `_vllm_*` attributes
+/// and attach them to `request`. Hints are then enriched with runtime-only
+/// identifiers (execution id, human-readable node name, runtime-derived
+/// priority class fallback) that the compiler cannot supply.
+///
+/// All `_vllm_*` keys are read via `apxm_ais::attrs` constants — no string
+/// literals (Rule 1 in the integration plan).
+fn inject_vllm_hints(ctx: &ExecutionContext, node: &Node, request: LLMRequest) -> LLMRequest {
+    let node_name = node
+        .metadata
+        .name
+        .clone()
+        .unwrap_or_else(|| format!("node_{}", node.id));
+
+    let mut hints = ApxmGraphHints::from_node_attrs(
+        ctx.execution_id.clone(),
+        node_name.clone(),
+        &node.attributes,
+    );
+
+    // Enrich with runtime-only fields the compiler cannot stamp.
+    hints.execution_id = Some(ctx.execution_id.clone());
+    hints.node_id = Some(node.id as u32);
+    hints.node_name = Some(node_name);
+
+    // Runtime fallback for priority_class derived from numeric NodeMetadata
+    // priority when the compiler did not stamp `_vllm_priority_class` and did
+    // not flag the node as critical-path. Keeps observability for graphs
+    // compiled below -O1 (where vllm_hints does not run).
+    if hints.priority_class.is_none() {
+        let priority_value = node.metadata.priority;
+        let derived = match priority_value {
+            90.. => "critical_path",
+            60..=89 => "normal",
+            _ => "speculative",
+        };
+        hints.priority_class = Some(derived.to_string());
+    }
+
+    apxm_llm!(debug,
+        execution_id = %ctx.execution_id,
+        node_id = node.id,
+        priority_class = ?hints.priority_class,
+        reuse_group = ?hints.reuse_group,
+        downstream = hints.downstream_nodes.len(),
+        "Built APXM graph hints for vLLM scheduling"
+    );
+
+    request.with_apxm_hints(hints)
+}
+
 /// Execute LLM operation - unified handler for Ask, Think, Reason
 ///
 /// # Mode Behavior
@@ -585,74 +636,10 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         }
     }
 
-    // Build APXM graph hints for vLLM scheduling
-    // Map numeric priority (0-100, higher=more important) to vLLM priority class
-    let priority_value = node.metadata.priority;
-    let priority_class = match priority_value {
-        90.. => "critical_path",
-        60..=89 => "normal",
-        _ => "speculative",
-    };
-
-    let node_name = node
-        .metadata
-        .name
-        .clone()
-        .unwrap_or_else(|| format!("node_{}", node.id));
-
-    // Read compiler-set attributes from the node (populated by MLIR passes via artifact)
-    let warmup_candidate = node
-        .attributes
-        .get(graph_attrs::WARMUP_CANDIDATE)
-        .and_then(|v| v.as_bool());
-
-    let shared_prefix_est_tokens = node
-        .attributes
-        .get(graph_attrs::SHARED_PREFIX_EST_TOKENS)
-        .and_then(|v| v.as_u64())
-        .map(|u| u as u32);
-
-    let reuse_group = node
-        .attributes
-        .get(graph_attrs::REUSE_GROUP)
-        .and_then(|v| v.as_string())
-        .map(|s| s.to_string());
-
-    let downstream_nodes = get_u32_array_attribute(node, graph_attrs::DOWNSTREAM_NODES);
-
-    // Set pin policy based on whether this node belongs to a reuse group
-    let pin_policy = if reuse_group.is_some() {
-        PinPolicy::prefix_default()
-    } else {
-        PinPolicy::none()
-    };
-
-    let hints = ApxmGraphHints {
-        schema_version: 1,
-        graph_id: Some(ctx.execution_id.clone()),
-        execution_id: Some(ctx.execution_id.clone()),
-        node_id: Some(node.id as u32),
-        node_name: Some(node_name),
-        priority_class: Some(priority_class.to_string()),
-        downstream_nodes,
-        reuse_group,
-        pin_policy,
-        compiler_hints: CompilerHints {
-            shared_prefix_est_tokens,
-            warmup_candidate,
-            pipeline_candidate: None,
-        },
-    };
-    request = request.with_apxm_hints(hints);
-
-    // Add tracing for observability
-    apxm_llm!(debug,
-        execution_id = %ctx.execution_id,
-        node_id = node.id,
-        priority = priority_value,
-        priority_class = priority_class,
-        "Built APXM graph hints for vLLM scheduling"
-    );
+    // Inject APXM graph hints for vLLM scheduling. Hints are built from the
+    // node's compiler-stamped `_vllm_*` attributes and enriched with runtime
+    // identifiers (graph/execution id, numeric node id, name).
+    request = inject_vllm_hints(ctx, node, request);
 
     // Execute with retries
     let mut last_error = None;
@@ -1069,6 +1056,13 @@ async fn execute_ask_with_tools(
         }
         if let Some(model) = &initial_request.model {
             current_request = current_request.with_model(model.clone());
+        }
+        // Preserve compiler-stamped APXM graph hints across tool-call retries
+        // (Step 3b in the integration plan; Rule 4). The backend's
+        // `inject_hints` skips re-injection when `extra_body.apxm` is already
+        // set, so without this clone every retry would lose its hints.
+        if let Some(hints) = &initial_request.apxm_hints {
+            current_request = current_request.with_apxm_hints(hints.clone());
         }
     }
 

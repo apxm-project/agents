@@ -13,6 +13,7 @@ use crate::{
     memory::{MemoryConfig, MemorySystem},
     process_table::ProcessTable,
     scheduler::{DataflowScheduler, SchedulerConfig, SessionLaneGuard},
+    vllm_lifecycle::VllmGraphLifecycle,
 };
 use apxm_artifact::Artifact;
 use apxm_backends::LLMRegistry;
@@ -285,6 +286,11 @@ impl Runtime {
         #[cfg(feature = "metrics")]
         self.llm_registry.metrics().reset();
 
+        // Step 4: register the DAG with any graph-aware backends (e.g. vLLM).
+        // The guard is dropped at the end of this method; happy-path code calls
+        // `release().await` explicitly before that drop. Drop is the panic safety net.
+        let lifecycle = build_vllm_lifecycle(&self.llm_registry, &dag).await?;
+
         // Create execution context
         let context = self.build_context(None, None, None);
 
@@ -292,10 +298,20 @@ impl Runtime {
         let executor = Arc::new(ExecutorEngine::new(context.clone()));
 
         // Execute with dataflow scheduler for automatic parallelism
-        let (results, stats, scheduler_metrics, all_outputs, node_output_map) = self
+        let exec_result = self
             .scheduler
             .execute(dag, executor, context, vec![])
-            .await?;
+            .await;
+
+        // Explicit happy-path release (Rule 5) — fire whether the scheduler
+        // succeeded or returned a recoverable error, before propagating.
+        if let Some(lc) = &lifecycle {
+            if let Err(e) = lc.release().await {
+                tracing::warn!(error = %e, "vLLM graph release failed (non-fatal)");
+            }
+        }
+
+        let (results, stats, scheduler_metrics, all_outputs, node_output_map) = exec_result?;
 
         #[cfg(feature = "metrics")]
         let llm_metrics = self.llm_registry.metrics().aggregate();
@@ -390,12 +406,24 @@ impl Runtime {
         #[cfg(feature = "metrics")]
         self.llm_registry.metrics().reset();
 
+        // Step 4: register with vLLM-style graph-aware backends. See `execute()`
+        // for the rationale (explicit happy-path release; Drop as safety net).
+        let lifecycle = build_vllm_lifecycle(&self.llm_registry, &entry_dag).await?;
+
         let context = self.build_context(session_id, event_emitter, session_dir);
         let executor = Arc::new(ExecutorEngine::new(context.clone()));
-        let (results, stats, scheduler_metrics, all_outputs, node_output_map) = self
+        let exec_result = self
             .scheduler
             .execute(entry_dag, executor, context, arg_values)
-            .await?;
+            .await;
+
+        if let Some(lc) = &lifecycle {
+            if let Err(e) = lc.release().await {
+                tracing::warn!(error = %e, "vLLM graph release failed (non-fatal)");
+            }
+        }
+
+        let (results, stats, scheduler_metrics, all_outputs, node_output_map) = exec_result?;
 
         Ok(RuntimeExecutionResult {
             results,
@@ -476,6 +504,43 @@ impl Runtime {
     /// Get an Arc reference to the agent pool.
     pub fn agent_pool_arc(&self) -> Arc<AgentPool> {
         Arc::clone(&self.agent_pool)
+    }
+}
+
+/// Build a [`VllmGraphLifecycle`] for the first graph-aware backend, if any.
+///
+/// Returns `Ok(None)` when no registered backend opts into the vLLM-style
+/// `/v1/apxm/*` extensions (typed via `LLMBackend::supports_graph_extensions()`,
+/// no string matching). Errors from `register_graph` are demoted to warnings
+/// so that a vLLM control-plane outage does not kill the user's execution
+/// — graph hints simply fall back to vanilla OpenAI semantics.
+async fn build_vllm_lifecycle(
+    registry: &LLMRegistry,
+    dag: &ExecutionDag,
+) -> Result<Option<VllmGraphLifecycle>, RuntimeError> {
+    let candidates = registry.find_graph_aware_backends();
+    let Some((_, backend)) = candidates.into_iter().next() else {
+        return Ok(None);
+    };
+
+    let graph_id = dag
+        .metadata
+        .name
+        .clone()
+        .unwrap_or_else(|| format!("dag-{}", uuid::Uuid::new_v4()));
+    let exec_id = backend.next_execution_id();
+
+    match VllmGraphLifecycle::register(backend.clone(), graph_id.clone(), exec_id, dag).await {
+        Ok(lc) => Ok(Some(lc)),
+        Err(e) => {
+            tracing::warn!(
+                graph_id = %graph_id,
+                backend = %backend.name(),
+                error = %e,
+                "vLLM register_graph failed; continuing without graph-aware hints"
+            );
+            Ok(None)
+        }
     }
 }
 

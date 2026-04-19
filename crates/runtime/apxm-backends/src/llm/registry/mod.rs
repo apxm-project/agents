@@ -621,6 +621,19 @@ impl LLMRegistry {
         }
     }
 
+    /// Snapshot only the backends that opt into graph-aware extensions
+    /// (vLLM-style `/v1/apxm/*` endpoints). Routing is via the typed trait
+    /// method `LLMBackend::supports_graph_extensions()` — no string matching.
+    ///
+    /// The lock is dropped before this method returns; the resulting `Vec`
+    /// holds owned `Arc` clones that are safe to pass across `.await` points.
+    pub fn find_graph_aware_backends(&self) -> Vec<(String, Arc<dyn LLMBackend>)> {
+        self.backend_snapshot()
+            .into_iter()
+            .filter(|(_, b)| b.supports_graph_extensions())
+            .collect()
+    }
+
     /// Perform health checks on all backends.
     pub async fn check_all_backends(&self) -> HashMap<String, HealthStatus> {
         let mut results = HashMap::new();
