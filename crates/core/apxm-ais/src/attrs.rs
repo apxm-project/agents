@@ -37,6 +37,10 @@ pub const BUDGET: &str = "budget";
 pub const TEMPLATE_STR: &str = "template_str";
 pub const PROMPT: &str = "prompt";
 pub const TEMPLATE: &str = "template";
+/// Parallel string array enumerating the human-readable name of each
+/// incoming Data edge. Templates reference inputs by these names via
+/// `{name}` placeholders; the runtime substitutes by index lookup.
+pub const INPUT_NAMES: &str = "input_names";
 
 // -- Memory --
 pub const QUERY: &str = "query";
@@ -72,6 +76,7 @@ pub const CLAIM_TEXT: &str = "claim";
 pub const GUARDRAIL_KIND: &str = "guardrail_kind";
 
 // -- Control flow --
+pub const DISCRIMINANT: &str = "discriminant";
 pub const LABEL: &str = "label";
 pub const TRUE_LABEL: &str = "true_label";
 pub const FALSE_LABEL: &str = "false_label";
@@ -91,6 +96,9 @@ pub const ERROR_MESSAGE: &str = "error_message";
 pub const STRATEGY: &str = "strategy";
 pub const SEPARATOR: &str = "separator";
 pub const ACTION: &str = "action";
+/// MERGE op: ordered list of incoming `{{node_<id>}}` token references
+/// that the runtime concatenates into the merged output.
+pub const TOKENS: &str = "tokens";
 
 // -- Tracing --
 pub const TRACE_ID: &str = "trace_id";
@@ -137,6 +145,21 @@ pub const EST_TEMPLATE_TOKENS: &str = "est_template_tokens";
 /// AIS dialect prefix for MLIR-level attribute names.
 pub const MLIR_ATTR_PREFIX: &str = "ais.";
 
+/// Attribute keys whose string values are templates carrying `{name}`
+/// placeholders. The compiler validator resolves every placeholder against
+/// the node's [`INPUT_NAMES`] parallel array (matching incoming Data edges)
+/// or the module's declared parameters. Adding a new template-bearing
+/// attribute only requires extending this list.
+pub const TEMPLATE_BEARING_ATTRS: &[&str] = &[
+    TEMPLATE_STR,
+    MESSAGE,
+    GOAL,
+    CONDITION,
+    TRACE_ID,
+    DISCRIMINANT,
+    RECOVERY_TEMPLATE,
+];
+
 /// All attribute name values defined in this module.
 ///
 /// Used by the consistency test to verify that every OperationSpec field
@@ -170,6 +193,7 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     TEMPLATE_STR,
     PROMPT,
     TEMPLATE,
+    INPUT_NAMES,
     QUERY,
     MEMORY_TIER,
     KEY,
@@ -195,6 +219,7 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     EVIDENCE,
     CLAIM_TEXT,
     GUARDRAIL_KIND,
+    DISCRIMINANT,
     LABEL,
     TRUE_LABEL,
     FALSE_LABEL,
@@ -210,6 +235,7 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     STRATEGY,
     SEPARATOR,
     ACTION,
+    TOKENS,
     TRACE_ID,
     TRACE,
     TRACE_QUERY,
@@ -255,9 +281,7 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     "parameters",
     "structured",
     "token",
-    "tokens",
     "count_token",
-    "discriminant",
     "cases",
     "default",
     "args",

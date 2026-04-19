@@ -1,8 +1,8 @@
 //! Command implementations.
 
-use std::path::{Path, PathBuf};
 use std::collections::{HashMap, HashSet};
 use std::env;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use apxm_core::utils::build::MlirEnvReport;
@@ -522,8 +522,12 @@ fn emit_air_from_python(input: &Path) -> Result<tempfile::NamedTempFile> {
         ));
     }
 
-    let air = String::from_utf8(output.stdout)
-        .with_context(|| format!("Python workflow {} did not emit valid UTF-8", input.display()))?;
+    let air = String::from_utf8(output.stdout).with_context(|| {
+        format!(
+            "Python workflow {} did not emit valid UTF-8",
+            input.display()
+        )
+    })?;
     let trimmed = air.trim();
     if trimmed.is_empty() {
         return Err(anyhow::anyhow!(
@@ -531,7 +535,11 @@ fn emit_air_from_python(input: &Path) -> Result<tempfile::NamedTempFile> {
             input.display()
         ));
     }
-    if !(trimmed.starts_with(';') || trimmed.starts_with('%') || trimmed.starts_with("module") || trimmed.starts_with("func.func")) {
+    if !(trimmed.starts_with(';')
+        || trimmed.starts_with('%')
+        || trimmed.starts_with("module")
+        || trimmed.starts_with("func.func"))
+    {
         return Err(anyhow::anyhow!(
             "Python workflow {} did not emit recognizable .air text on stdout.\n\
              Expected MLIR text starting with 'module', 'func.func', ';', or '%'.",
@@ -545,14 +553,11 @@ fn emit_air_from_python(input: &Path) -> Result<tempfile::NamedTempFile> {
         .context("Failed to create temporary .air file")?;
     tmp.write_all(air.as_bytes())
         .context("Failed to write emitted .air to temporary file")?;
-    tmp.flush()
-        .context("Failed to flush temporary .air file")?;
+    tmp.flush().context("Failed to flush temporary .air file")?;
     Ok(tmp)
 }
 
-fn prepare_graph_input(
-    input: &Path,
-) -> Result<(PathBuf, Option<tempfile::NamedTempFile>)> {
+fn prepare_graph_input(input: &Path) -> Result<(PathBuf, Option<tempfile::NamedTempFile>)> {
     if is_python_graph_input(input) {
         let tmp = emit_air_from_python(input)?;
         return Ok((tmp.path().to_path_buf(), Some(tmp)));
@@ -681,6 +686,27 @@ pub fn install_command() -> Result<()> {
     }
 
     print_status_line("env", Status::Ok, "ready");
+
+    // Provider auto-detection after env setup
+    println!();
+    print_subsection_header("Provider Detection");
+    let detected: Vec<&str> = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY"]
+        .iter()
+        .filter(|k| env::var(k).is_ok())
+        .copied()
+        .collect();
+
+    if !detected.is_empty() {
+        for key in &detected {
+            print_status_line(key, Status::Ok, "detected");
+        }
+        print_hint("Run `apxm doctor` to auto-configure providers.");
+    } else {
+        print_hint(
+            "No API keys detected. Set ANTHROPIC_API_KEY or OPENAI_API_KEY, then run `apxm doctor`.",
+        );
+    }
+
     println!();
     print_subsection_header("Next Steps");
     println!("conda activate apxm");
@@ -746,7 +772,8 @@ pub fn compile_command(
     use apxm_core::types::{OptimizationTarget, PipelineConfig};
 
     let opt = parse_opt_level(opt_level);
-    let opt_target: OptimizationTarget = target.parse()
+    let opt_target: OptimizationTarget = target
+        .parse()
         .with_context(|| format!("Invalid optimization target: {}", target))?;
     let (graph_input, _python_air) = if input.is_dir() {
         (input.clone(), None)
@@ -758,7 +785,9 @@ pub fn compile_command(
     let compiler = Compiler::with_opt_level(opt).context("Failed to initialize compiler")?;
 
     // Check if this is a new-format .air file (valid MLIR)
-    let is_new_air = if !input.is_dir() && graph_input.extension().and_then(|e| e.to_str()) == Some("air") {
+    let is_new_air = if !input.is_dir()
+        && graph_input.extension().and_then(|e| e.to_str()) == Some("air")
+    {
         if let Ok(text) = std::fs::read_to_string(&graph_input) {
             text.trim_start().starts_with("module") || text.trim_start().starts_with("func.func")
         } else {
@@ -1034,8 +1063,10 @@ fn load_graph_from_directory(dir: &std::path::Path) -> Result<apxm_compiler::Air
                 let text = std::fs::read_to_string(&path)
                     .with_context(|| format!("Failed to read {}", path.display()))?;
                 if text.contains("\"nodes\"") {
-                    let graph: apxm_compiler::AirModule = serde_json::from_str(&text)
-                        .map_err(|e| anyhow::anyhow!("Failed to parse {}: {}", path.display(), e))?;
+                    let graph: apxm_compiler::AirModule =
+                        serde_json::from_str(&text).map_err(|e| {
+                            anyhow::anyhow!("Failed to parse {}: {}", path.display(), e)
+                        })?;
                     graphs.push(graph);
                 }
             }
@@ -1529,9 +1560,9 @@ pub async fn execute_command(
                 .unwrap_or("unknown");
             match extract_profile_from_session(writer.session_dir(), graph_name) {
                 Ok(profile) => {
-                    profile
-                        .save_to_file(&profile_path)
-                        .with_context(|| format!("Failed to save profile to {}", profile_path.display()))?;
+                    profile.save_to_file(&profile_path).with_context(|| {
+                        format!("Failed to save profile to {}", profile_path.display())
+                    })?;
                     eprintln!("Wrote profile to {}", profile_path.display());
                 }
                 Err(e) => {
@@ -1694,11 +1725,7 @@ pub async fn run_command(
         let stats = &result.stats;
 
         // Query episodic entries for this execution
-        let episodic_entries = runtime
-            .memory_system()
-            .query_episodes(exec_id)
-            .await
-            .ok();
+        let episodic_entries = runtime.memory_system().query_episodes(exec_id).await.ok();
 
         writer
             .finalize(
@@ -1726,9 +1753,9 @@ pub async fn run_command(
                 .unwrap_or("unknown");
             match extract_profile_from_session(writer.session_dir(), graph_name) {
                 Ok(profile) => {
-                    profile
-                        .save_to_file(&profile_path)
-                        .with_context(|| format!("Failed to save profile to {}", profile_path.display()))?;
+                    profile.save_to_file(&profile_path).with_context(|| {
+                        format!("Failed to save profile to {}", profile_path.display())
+                    })?;
                     eprintln!("Wrote profile to {}", profile_path.display());
                 }
                 Err(e) => {
@@ -2267,7 +2294,6 @@ pub async fn backend_command(action: BackendAction, json_output: bool) -> Result
 
     Ok(())
 }
-
 
 #[allow(unused_variables)]
 pub fn validate_command(input: PathBuf, json_output: bool, no_check_resources: bool) -> Result<()> {
@@ -3746,6 +3772,76 @@ pub fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> 
                 &format!("not found ({})", path_display),
             );
         }
+
+        // 5. Provider auto-detection
+        if !config_found {
+            print_section_header("Provider Auto-Detection");
+
+            let detected: Vec<&apxm_driver::config::DetectedProvider> =
+                apxm_driver::config::DETECTABLE_PROVIDERS
+                    .iter()
+                    .filter(|p| env::var(p.env_var).is_ok())
+                    .collect();
+
+            if detected.is_empty() {
+                print_status_line("API keys", Status::Warning, "none detected");
+                print_hint(
+                    "Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_API_KEY to auto-configure.",
+                );
+                print_hint(
+                    "Or run `apxm backend add <name> --type api` to configure manually.",
+                );
+            } else {
+                for provider in &detected {
+                    print_status_line(
+                        provider.name,
+                        Status::Ok,
+                        &format!("detected via {}", provider.env_var),
+                    );
+                }
+
+                match ApXmConfig::generate_default(&detected) {
+                    Ok(config) => match ApXmConfig::default_path() {
+                        Ok(path) => match config.write_to_file(&path) {
+                            Ok(()) => {
+                                let first = detected[0];
+                                print_status_line(
+                                    "Config",
+                                    Status::Ok,
+                                    &format!("auto-generated at {}", path.display()),
+                                );
+                                print_status_line(
+                                    "Default model",
+                                    Status::Ok,
+                                    &format!("{} ({})", first.default_model, first.name),
+                                );
+                            }
+                            Err(e) => {
+                                print_status_line(
+                                    "Config",
+                                    Status::Warning,
+                                    &format!("failed to write: {}", e),
+                                );
+                            }
+                        },
+                        Err(e) => {
+                            print_status_line(
+                                "Config",
+                                Status::Warning,
+                                &format!("cannot determine path: {}", e),
+                            );
+                        }
+                    },
+                    Err(e) => {
+                        print_status_line(
+                            "Config",
+                            Status::Warning,
+                            &format!("auto-generation failed: {}", e),
+                        );
+                    }
+                }
+            }
+        }
     }
 
     // Return error if MLIR is missing (critical dependency)
@@ -3867,7 +3963,8 @@ pub fn codegen_command(action: CodegenAction, json_output: bool) -> Result<()> {
         CodegenAction::Frontend { output_dir } => {
             let output_dir = output_dir.unwrap_or_else(default_frontend_codegen_dir);
             let rendered = crate::frontend::render_generated_python();
-            let mut files: Vec<String> = rendered.iter().map(|(name, _)| name.to_string()).collect();
+            let mut files: Vec<String> =
+                rendered.iter().map(|(name, _)| name.to_string()).collect();
             files.sort();
 
             std::fs::create_dir_all(&output_dir)?;
@@ -3915,12 +4012,12 @@ pub fn codegen_command(action: CodegenAction, json_output: bool) -> Result<()> {
 }
 
 fn default_frontend_codegen_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../compiler/apxm-frontend/python/apxm/_generated")
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../compiler/apxm-frontend/python/apxm/_generated")
 }
 
 fn default_typescript_codegen_path() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../apxm-gui/frontend/src/types/generated.ts")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../apxm-gui/frontend/src/types/generated.ts")
 }
 
 fn print_section_header(title: &str) {
@@ -4009,7 +4106,7 @@ pub fn replay_command(session: PathBuf) -> Result<()> {
 
     // Parse trace events and build timeline
     use apxm_core::events::ApxmEvent;
-    use apxm_core::events::payload::EventPayload;
+    use apxm_core::events::payload::{OperationEndPayload, OperationStartPayload};
 
     enum EventKind {
         Start,
@@ -4054,27 +4151,23 @@ pub fn replay_command(session: PathBuf) -> Result<()> {
                 .unwrap_or_else(|| format!("node_{}", node_id))
         };
 
-        match event.payload {
-            EventPayload::OperationStart(ref p) => {
-                entries.push(TimelineEntry {
-                    timestamp_ms: elapsed_ms,
-                    node_name: resolve_name(p.node_id),
-                    op_type: p.op_type.clone(),
-                    kind: EventKind::Start,
-                });
-            }
-            EventPayload::OperationEnd(ref p) => {
-                entries.push(TimelineEntry {
-                    timestamp_ms: elapsed_ms,
-                    node_name: resolve_name(p.node_id),
-                    op_type: p.op_type.clone(),
-                    kind: EventKind::End {
-                        duration_ms: p.duration_ms,
-                        success: p.success,
-                    },
-                });
-            }
-            _ => {}
+        if let Some(p) = event.payload.downcast_ref::<OperationStartPayload>() {
+            entries.push(TimelineEntry {
+                timestamp_ms: elapsed_ms,
+                node_name: resolve_name(p.node_id),
+                op_type: p.op_type.clone(),
+                kind: EventKind::Start,
+            });
+        } else if let Some(p) = event.payload.downcast_ref::<OperationEndPayload>() {
+            entries.push(TimelineEntry {
+                timestamp_ms: elapsed_ms,
+                node_name: resolve_name(p.node_id),
+                op_type: p.op_type.clone(),
+                kind: EventKind::End {
+                    duration_ms: p.duration_ms,
+                    success: p.success,
+                },
+            });
         }
     }
 
@@ -4203,7 +4296,9 @@ pub fn session_list_command(status_filter: Option<String>, limit: usize, json: b
             let duration_secs = manifest.duration_ms as f64 / 1000.0;
             let size_mb = *size as f64 / 1_000_000.0;
             let status_icon = match manifest.status {
-                apxm_core::types::SessionStatus::Completed if manifest.success => constants::ui::icons::SUCCESS,
+                apxm_core::types::SessionStatus::Completed if manifest.success => {
+                    constants::ui::icons::SUCCESS
+                }
                 apxm_core::types::SessionStatus::Failed => constants::ui::icons::FAILED,
                 _ => constants::ui::icons::INFO,
             };
@@ -4578,8 +4673,8 @@ pub fn cache_command(action: CacheAction, json: bool) -> Result<()> {
 }
 
 fn get_cache_db_path() -> Result<PathBuf> {
-    let home = dirs::home_dir()
-        .ok_or_else(|| anyhow::anyhow!("Cannot determine home directory"))?;
+    let home =
+        dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Cannot determine home directory"))?;
     Ok(home.join(".apxm").join("cache.db"))
 }
 
@@ -4601,31 +4696,28 @@ pub fn cache_stats_command(json: bool) -> Result<()> {
     let conn = Connection::open(&db_path)?;
 
     // Get total count
-    let total_entries: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM memo_cache",
-        [],
-        |row| row.get(0),
-    )?;
+    let total_entries: i64 =
+        conn.query_row("SELECT COUNT(*) FROM memo_cache", [], |row| row.get(0))?;
 
     // Get total size (approximate from content lengths)
-    let total_size: i64 = conn.query_row(
-        "SELECT SUM(LENGTH(content)) FROM memo_cache",
-        [],
-        |row| row.get(0),
-    ).unwrap_or(0);
+    let total_size: i64 = conn
+        .query_row("SELECT SUM(LENGTH(content)) FROM memo_cache", [], |row| {
+            row.get(0)
+        })
+        .unwrap_or(0);
 
     // Get oldest and newest entries
-    let oldest: Option<i64> = conn.query_row(
-        "SELECT MIN(inserted_at) FROM memo_cache",
-        [],
-        |row| row.get(0),
-    ).ok();
+    let oldest: Option<i64> = conn
+        .query_row("SELECT MIN(inserted_at) FROM memo_cache", [], |row| {
+            row.get(0)
+        })
+        .ok();
 
-    let newest: Option<i64> = conn.query_row(
-        "SELECT MAX(inserted_at) FROM memo_cache",
-        [],
-        |row| row.get(0),
-    ).ok();
+    let newest: Option<i64> = conn
+        .query_row("SELECT MAX(inserted_at) FROM memo_cache", [], |row| {
+            row.get(0)
+        })
+        .ok();
 
     // Get hit statistics (we don't track this in the schema, so we'll just show entry count)
     // In a real implementation, you'd add a hit_count column to track this
@@ -4648,7 +4740,7 @@ pub fn cache_stats_command(json: bool) -> Result<()> {
         println!("Total size: {:.2} MB", total_size as f64 / 1_000_000.0);
 
         if let Some(oldest_ts) = oldest {
-            use std::time::{SystemTime, UNIX_EPOCH, Duration};
+            use std::time::{Duration, SystemTime, UNIX_EPOCH};
             let oldest_time = UNIX_EPOCH + Duration::from_secs(oldest_ts as u64);
             if let Ok(duration) = SystemTime::now().duration_since(oldest_time) {
                 println!("Oldest entry: {} days ago", duration.as_secs() / 86400);
@@ -4656,7 +4748,7 @@ pub fn cache_stats_command(json: bool) -> Result<()> {
         }
 
         if let Some(newest_ts) = newest {
-            use std::time::{SystemTime, UNIX_EPOCH, Duration};
+            use std::time::{Duration, SystemTime, UNIX_EPOCH};
             let newest_time = UNIX_EPOCH + Duration::from_secs(newest_ts as u64);
             if let Ok(duration) = SystemTime::now().duration_since(newest_time) {
                 println!("Newest entry: {} seconds ago", duration.as_secs());
@@ -4697,11 +4789,7 @@ pub fn cache_clear_command(yes: bool, json: bool) -> Result<()> {
     let conn = Connection::open(&db_path)?;
 
     // Get count before clearing
-    let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM memo_cache",
-        [],
-        |row| row.get(0),
-    )?;
+    let count: i64 = conn.query_row("SELECT COUNT(*) FROM memo_cache", [], |row| row.get(0))?;
 
     if count == 0 {
         if json {
@@ -5203,10 +5291,7 @@ pub fn gui_command(file: Option<PathBuf>, port: u16, open: bool) -> Result<()> {
             port.to_string().bold()
         );
     } else {
-        println!(
-            "Launching APXM GUI on port {}...",
-            port.to_string().bold()
-        );
+        println!("Launching APXM GUI on port {}...", port.to_string().bold());
     }
 
     let mut cmd = std::process::Command::new(&gui_bin);
@@ -5299,9 +5384,9 @@ fn humanize_model_id(id: &str) -> String {
     for word in &words {
         if word.len() == 1
             && word.chars().next().map_or(false, |c| c.is_ascii_digit())
-            && result
-                .last()
-                .map_or(false, |prev: &String| prev.len() == 1 && prev.chars().next().map_or(false, |c| c.is_ascii_digit()))
+            && result.last().map_or(false, |prev: &String| {
+                prev.len() == 1 && prev.chars().next().map_or(false, |c| c.is_ascii_digit())
+            })
         {
             // Merge with previous: "4" + "5" -> "4.5"
             let prev = result.last_mut().unwrap();
@@ -5332,10 +5417,11 @@ fn protocol_to_openclaw_api(protocol: &apxm_core::types::ProviderProtocol) -> &'
 /// Check if all models in a backend have the "dead-endpoint" tag.
 fn is_dead_backend(backend: &apxm_core::types::BackendConfig) -> bool {
     !backend.models.is_empty()
-        && backend
-            .models
-            .iter()
-            .all(|m| m.tags.iter().any(|t| t == apxm_core::constants::llm::tags::DEAD_ENDPOINT))
+        && backend.models.iter().all(|m| {
+            m.tags
+                .iter()
+                .any(|t| t == apxm_core::constants::llm::tags::DEAD_ENDPOINT)
+        })
 }
 
 fn openclaw_sync(json_output: bool) -> Result<()> {
@@ -5390,7 +5476,11 @@ fn openclaw_sync(json_output: bool) -> Result<()> {
         let models: Vec<serde_json::Value> = backend
             .models
             .iter()
-            .filter(|m| !m.tags.iter().any(|t| t == apxm_core::constants::llm::tags::DEAD_ENDPOINT))
+            .filter(|m| {
+                !m.tags
+                    .iter()
+                    .any(|t| t == apxm_core::constants::llm::tags::DEAD_ENDPOINT)
+            })
             .map(|m| {
                 let input = if m.supports_vision {
                     serde_json::json!(["text", "image"])
@@ -5452,7 +5542,10 @@ fn openclaw_sync(json_output: bool) -> Result<()> {
                 .with_context(|| format!("Failed to parse {}", config_path.display()))?,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::Map::new(),
             Err(e) => {
-                return Err(anyhow::anyhow!("Failed to read {}: {e}", config_path.display()))
+                return Err(anyhow::anyhow!(
+                    "Failed to read {}: {e}",
+                    config_path.display()
+                ));
             }
         };
 
@@ -5483,8 +5576,13 @@ fn openclaw_sync(json_output: bool) -> Result<()> {
     let tmp_path = config_path.with_extension("json.tmp");
     std::fs::write(&tmp_path, &output)
         .with_context(|| format!("Failed to write {}", tmp_path.display()))?;
-    std::fs::rename(&tmp_path, &config_path)
-        .with_context(|| format!("Failed to rename {} -> {}", tmp_path.display(), config_path.display()))?;
+    std::fs::rename(&tmp_path, &config_path).with_context(|| {
+        format!(
+            "Failed to rename {} -> {}",
+            tmp_path.display(),
+            config_path.display()
+        )
+    })?;
 
     // 6. Report
     if json_output {
@@ -5513,7 +5611,11 @@ fn openclaw_sync(json_output: bool) -> Result<()> {
             let model_count = backend
                 .models
                 .iter()
-                .filter(|m| !m.tags.iter().any(|t| t == apxm_core::constants::llm::tags::DEAD_ENDPOINT))
+                .filter(|m| {
+                    !m.tags
+                        .iter()
+                        .any(|t| t == apxm_core::constants::llm::tags::DEAD_ENDPOINT)
+                })
                 .count();
             if model_count > 0 {
                 println!(
@@ -5547,4 +5649,3 @@ fn load_config(config: Option<PathBuf>) -> Result<ApXmConfig> {
         Err(err) => Err(anyhow::anyhow!(err)),
     }
 }
-

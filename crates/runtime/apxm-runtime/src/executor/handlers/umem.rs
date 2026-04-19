@@ -35,7 +35,13 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     match space {
         MemorySpace::Episodic => {
             ctx.memory
-                .record_episode(key.clone(), value.clone(), ctx.execution_id.clone(), Some(node.id), None)
+                .record_episode(
+                    key.clone(),
+                    value.clone(),
+                    ctx.execution_id.clone(),
+                    Some(node.id),
+                    None,
+                )
                 .await?;
         }
         _ => {

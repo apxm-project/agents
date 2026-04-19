@@ -7,8 +7,8 @@
 //! 4. Continues until goal is met or max_iterations reached
 
 use super::{
-    execute_llm_request, get_input, get_optional_u64_attribute, get_string_attribute,
-    ExecutionContext, Node, Result, Value,
+    ExecutionContext, Node, Result, Value, execute_llm_request, get_input,
+    get_optional_u64_attribute, get_string_attribute,
 };
 use crate::aam::TransitionLabel;
 use apxm_backends::LLMRequest;
@@ -30,8 +30,8 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     };
 
     // Get max iterations
-    let max_iterations = get_optional_u64_attribute(node, ATTR_MAX_ITERATIONS)?
-        .unwrap_or(DEFAULT_MAX_ITERATIONS);
+    let max_iterations =
+        get_optional_u64_attribute(node, ATTR_MAX_ITERATIONS)?.unwrap_or(DEFAULT_MAX_ITERATIONS);
 
     tracing::info!(
         execution_id = %ctx.execution_id,
@@ -108,8 +108,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
             "Goal: {}\n\n\
             Current state after action:\n{}\n\n\
             Has the goal been achieved? Respond with ONLY 'YES' if the goal is fully achieved, or 'NO' if more work is needed.",
-            goal,
-            action_response.content
+            goal, action_response.content
         );
 
         let eval_req = LLMRequest::new(eval_prompt);
@@ -118,11 +117,19 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
             .await
             .map_err(|e| RuntimeError::Operation {
                 op_type: node.op_type,
-                message: format!("Failed to evaluate progress (iteration {}): {}", iteration, e),
+                message: format!(
+                    "Failed to evaluate progress (iteration {}): {}",
+                    iteration, e
+                ),
             })?;
 
         // Check if goal is achieved
-        if eval_response.content.trim().to_uppercase().starts_with("YES") {
+        if eval_response
+            .content
+            .trim()
+            .to_uppercase()
+            .starts_with("YES")
+        {
             tracing::info!(
                 execution_id = %ctx.execution_id,
                 node_id = node.id,

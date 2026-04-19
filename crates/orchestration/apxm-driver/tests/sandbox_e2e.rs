@@ -275,8 +275,8 @@ async fn runtime_inv_node_with_sandbox_registry_configured() {
     use apxm_core::types::execution::{ExecutionDag, Node, NodeMetadata};
     use apxm_core::types::operations::AISOperationType;
     use apxm_core::types::values::Value;
-    use apxm_runtime::{Runtime, RuntimeConfig};
     use apxm_runtime::capability::builtins::BashCapability;
+    use apxm_runtime::{Runtime, RuntimeConfig};
     use std::collections::HashMap;
 
     // Create runtime

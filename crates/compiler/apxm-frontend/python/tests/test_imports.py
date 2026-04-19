@@ -48,6 +48,12 @@ def test_import_error_types():
     assert issubclass(ServerError, ApxmError)
 
 
+def test_import_run():
+    """Verify run() can be imported."""
+    from apxm import run
+    assert callable(run)
+
+
 def test_import_execution_result():
     """Verify execution result types can be imported."""
     from apxm import ExecutionResult, ExecutionStats, LLMUsage, new_session
@@ -55,3 +61,10 @@ def test_import_execution_result():
     assert ExecutionStats is not None
     assert LLMUsage is not None
     assert callable(new_session)
+
+
+def test_import_load_graph():
+    """Verify load_graph and FlowModule can be imported."""
+    from apxm import load_graph, FlowModule
+    assert callable(load_graph)
+    assert FlowModule is not None

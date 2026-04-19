@@ -37,9 +37,23 @@ pub mod methods {
 
 pub mod update_types {
     pub const AGENT_MESSAGE_CHUNK: &str = "agent_message_chunk";
+    pub const AGENT_THOUGHT_CHUNK: &str = "agent_thought_chunk";
     pub const USAGE_UPDATE: &str = "usage_update";
     pub const TOOL_USE: &str = "tool_use";
     pub const TOOL_RESULT: &str = "tool_result";
+    pub const AVAILABLE_COMMANDS: &str = "available_commands_update";
+}
+
+/// Wire-format keys for `session/update` notification payloads.
+pub mod update_keys {
+    pub const SESSION_UPDATE: &str = "sessionUpdate";
+    pub const CONTENT: &str = "content";
+    pub const TEXT: &str = "text";
+    pub const TYPE: &str = "type";
+    pub const USED: &str = "used";
+    pub const SIZE: &str = "size";
+    pub const COST: &str = "cost";
+    pub const UPDATE: &str = "update";
 }
 
 /// ACP protocol wire-format field names (camelCase as on the wire).

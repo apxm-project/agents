@@ -38,7 +38,7 @@ def plan_feature_workflow(g: GraphRecorder):
     architect = g.spawn("architect", profile=claude, cwd=cwd)
 
     # Step 1: Architect produces initial plan
-    architect_task = g.text(value="""You are the APXM architect. Create an implementation plan for this feature:
+    architect.ask(prompt="""You are the APXM architect. Create an implementation plan for this feature:
 
 Feature: {feature}
 
@@ -58,18 +58,15 @@ Produce a plan with:
 
 Be specific — include function names, file paths, and type signatures where possible.
 Keep under 500 words.
-"""
-    )
-
-    architect.ask("{architect_task}")
+""")
     initial_plan = architect.get_last_node()
 
-    print1 = g.print("=== INITIAL PLAN ===\n{initial_plan}")
+    print1 = g.print(message="=== INITIAL PLAN ===\n{initial_plan}")
 
     # Step 2: Gap analysis — what's missing vs what exists
     gap_analysis = g.think(
-        "gap_analysis",
-        """Analyze what's missing vs what exists:
+        name="gap_analysis",
+        prompt="""Analyze what's missing vs what exists:
 
 Feature: {feature}
 Initial plan: {initial_plan}
@@ -93,14 +90,14 @@ Output a structured gap analysis with:
 - Missing pieces (critical vs nice-to-have)
 """
     )
-    print1 >> gap_analysis
+    g.add_edge(print1, gap_analysis, dependency="Control")
 
-    print2 = g.print("=== GAP ANALYSIS ===\n{gap_analysis}")
+    print2 = g.print(message="=== GAP ANALYSIS ===\n{gap_analysis}")
 
     # Step 3: Risk analysis — what could go wrong
     risk_analysis = g.think(
-        "risk_analysis",
-        """Identify risks and mitigation strategies:
+        name="risk_analysis",
+        prompt="""Identify risks and mitigation strategies:
 
 Feature: {feature}
 Initial plan: {initial_plan}
@@ -127,14 +124,14 @@ For each risk, provide:
 - Mitigation strategy
 """
     )
-    print1 >> risk_analysis
+    g.add_edge(print1, risk_analysis, dependency="Control")
 
-    print3 = g.print("=== RISK ANALYSIS ===\n{risk_analysis}")
+    print3 = g.print(message="=== RISK ANALYSIS ===\n{risk_analysis}")
 
     # Step 4: Crate ordering — bottom-up dependency order
     crate_ordering = g.think(
-        "crate_ordering",
-        """Determine the order to modify crates based on dependencies:
+        name="crate_ordering",
+        prompt="""Determine the order to modify crates based on dependencies:
 
 Initial plan: {initial_plan}
 
@@ -155,9 +152,9 @@ Output the implementation order:
 - Estimated effort per crate (hours)
 """
     )
-    print1 >> crate_ordering
+    g.add_edge(print1, crate_ordering, dependency="Control")
 
-    print4 = g.print("=== CRATE ORDERING ===\n{crate_ordering}")
+    print4 = g.print(message="=== CRATE ORDERING ===\n{crate_ordering}")
 
     # Step 5: Merge all analyses
     merge = g.merge(
@@ -167,14 +164,14 @@ Output the implementation order:
         risk_analysis,
         crate_ordering
     )
-    print2 >> merge
-    print3 >> merge
-    print4 >> merge
+    g.add_edge(print2, merge, dependency="Control")
+    g.add_edge(print3, merge, dependency="Control")
+    g.add_edge(print4, merge, dependency="Control")
 
     # Step 6: Final plan with everything integrated
     final_plan = g.think(
-        "final_plan",
-        """Create the final implementation plan:
+        name="final_plan",
+        prompt="""Create the final implementation plan:
 
 Initial plan: {initial_plan}
 Gap analysis: {gap_analysis}
@@ -218,15 +215,15 @@ For each crate:
 Keep the plan actionable and specific. Include file paths and function names.
 """
     )
-    merge >> final_plan
+    g.add_edge(merge, final_plan, dependency="Control")
 
-    print5 = g.print("=== FINAL PLAN ===\n{final_plan}")
+    print5 = g.print(message="=== FINAL PLAN ===\n{final_plan}")
 
     g.done(print5)
 
 
 if __name__ == "__main__":
-    import asyncio
+    import apxm
 
-    result = asyncio.run(plan_feature_workflow("Add retry logic to LLM calls"))
+    result = apxm.run(plan_feature_workflow("Add retry logic to LLM calls"))
     print(result.content)

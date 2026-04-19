@@ -9,7 +9,7 @@ def test_compile_decorator_basic():
 
     @compile()
     def simple_workflow(g: GraphRecorder):
-        g.ask("step1", "Do something")
+        g.ask(name="step1", prompt="Do something")
 
     # Verify the decorated function has the right metadata
     assert hasattr(simple_workflow, "_graph")
@@ -25,7 +25,7 @@ def test_compile_with_typed_params():
 
     @compile()
     def research_workflow(g: GraphRecorder, topic: str):
-        g.ask("research", f"Research {{topic}}")
+        g.ask(name="research", prompt=f"Research {{topic}}")
 
     graph = research_workflow._graph
 
@@ -34,10 +34,9 @@ def test_compile_with_typed_params():
     assert graph.parameters[0].name == "topic"
     assert graph.parameters[0].type_name == "str"
 
-    # The template should use named placeholder
+    # The template should preserve the named placeholder verbatim
     node = graph.nodes[0]
-    # After conversion, named placeholders become positional
-    assert "{0}" in node.attributes["template_str"]
+    assert "{topic}" in node.attributes["template_str"]
 
 
 def test_compile_with_multiple_params():
@@ -46,7 +45,7 @@ def test_compile_with_multiple_params():
 
     @compile()
     def multi_param_workflow(g: GraphRecorder, topic: str, depth: int, threshold: float):
-        g.ask("process", f"Process {{topic}} at depth {{depth}} with threshold {{threshold}}")
+        g.ask(name="process", prompt=f"Process {{topic}} at depth {{depth}} with threshold {{threshold}}")
 
     graph = multi_param_workflow._graph
 
@@ -58,23 +57,24 @@ def test_compile_with_multiple_params():
     assert param_map["threshold"] == "float"
 
 
-def test_named_placeholder_conversion():
-    """Test that named placeholders {topic} are converted to positional {0}."""
+def test_named_placeholders_are_preserved():
+    """Named placeholders {subject}/{action} survive emission verbatim."""
     from apxm import GraphRecorder, compile
 
     @compile()
     def placeholder_workflow(g: GraphRecorder, subject: str, action: str):
-        g.ask("task", f"The {{subject}} will {{action}}")
+        g.ask(name="task", prompt=f"The {{subject}} will {{action}}")
 
     graph = placeholder_workflow._graph
     node = graph.nodes[0]
     template = node.attributes["template_str"]
 
-    # Named placeholders should be converted to positional
-    assert "{0}" in template
-    assert "{1}" in template
-    assert "{subject}" not in template
-    assert "{action}" not in template
+    # Named placeholders are kept; the validator resolves them against
+    # input_names / module parameters at compile time.
+    assert "{subject}" in template
+    assert "{action}" in template
+    assert "{0}" not in template
+    assert "{1}" not in template
 
 
 def test_compile_with_team_sugar():

@@ -32,8 +32,8 @@ def remove_op_workflow(g: GraphRecorder):
 
     # Step 1: Analyze impact
     impact_analysis = g.think(
-        "impact_analysis",
-        template="""Analyze the impact of removing operation: {0}
+        name="impact_analysis",
+        prompt="""Analyze the impact of removing operation: {op_name}
 
 Check:
 1. Where is this operation defined?
@@ -61,8 +61,8 @@ Output a structured removal plan:
 """
     )
 
-    print1 = g.print("print_analysis", message="=== IMPACT ANALYSIS ===\n{0}")
-    impact_analysis | print1
+    print1 = g.print(name="print_analysis", message="=== IMPACT ANALYSIS ===\n{impact_analysis}")
+    g.add_edge(impact_analysis, print1)
 
     # Spawn agents
     compiler_dev = g.spawn("compiler_dev", profile="claude", cwd=cwd)
@@ -71,10 +71,10 @@ Output a structured removal plan:
 
     # Step 2: Build removal prompts
     compiler_task = g.ask(
-        "build_compiler_task",
-        template="""Remove operation from the compiler:
+        name="build_compiler_task",
+        prompt="""Remove operation from the compiler:
 
-Analysis: {0}
+Analysis: {impact_analysis}
 
 Remove from:
 1. crates/core/apxm-ais/src/definitions.rs
@@ -94,14 +94,14 @@ Be careful:
 - Update any operation count constants if they exist
 """
     )
-    impact_analysis | compiler_task
-    print1 >> compiler_task
+    g.add_edge(impact_analysis, compiler_task)
+    g.add_edge(print1, compiler_task, dependency="Control")
 
     runtime_task = g.ask(
-        "build_runtime_task",
-        template="""Remove operation from the runtime:
+        name="build_runtime_task",
+        prompt="""Remove operation from the runtime:
 
-Analysis: {0}
+Analysis: {impact_analysis}
 
 Remove from:
 1. crates/runtime/apxm-runtime/src/executor/handlers/<op>.rs
@@ -118,33 +118,33 @@ Remove from:
 Be thorough but careful — don't break adjacent code.
 """
     )
-    impact_analysis | runtime_task
-    print1 >> runtime_task
+    g.add_edge(impact_analysis, runtime_task)
+    g.add_edge(print1, runtime_task, dependency="Control")
 
     # Step 3: Both devs work in parallel
-    compiler_dev.ask("{0}")
-    compiler_task | compiler_dev.get_last_node()
+    compiler_dev.ask("{compiler_task}")
+    g.add_edge(compiler_task, compiler_dev.get_last_node())
 
-    runtime_dev.ask("{0}")
-    runtime_task | runtime_dev.get_last_node()
+    runtime_dev.ask("{runtime_task}")
+    g.add_edge(runtime_task, runtime_dev.get_last_node())
 
-    print2 = g.print("print_compiler_removal", message="=== COMPILER REMOVAL ===\n{0}")
-    compiler_dev.get_last_node() | print2
+    print2 = g.print(name="print_compiler_removal", message="=== COMPILER REMOVAL ===\n{compiler_dev}")
+    g.add_edge(compiler_dev.get_last_node(), print2)
 
-    print3 = g.print("print_runtime_removal", message="=== RUNTIME REMOVAL ===\n{0}")
-    runtime_dev.get_last_node() | print3
+    print3 = g.print(name="print_runtime_removal", message="=== RUNTIME REMOVAL ===\n{runtime_dev}")
+    g.add_edge(runtime_dev.get_last_node(), print3)
 
     # Step 4: Verify nothing broke
-    wait = g.wait_all("wait_removals", compiler_dev.get_last_node(), runtime_dev.get_last_node())
-    print2 >> wait
-    print3 >> wait
+    wait = g.wait_all(name="wait_removals", compiler_dev.get_last_node(), runtime_dev.get_last_node())
+    g.add_edge(print2, wait, dependency="Control")
+    g.add_edge(print3, wait, dependency="Control")
 
     verify_task = g.ask(
-        "build_verify_task",
-        template="""Verify the removal was clean:
+        name="build_verify_task",
+        prompt="""Verify the removal was clean:
 
-Compiler changes: {0}
-Runtime changes: {1}
+Compiler changes: {compiler_dev}
+Runtime changes: {runtime_dev}
 
 Run the verification steps:
 
@@ -169,25 +169,25 @@ Report:
 If there are failures, identify what was missed and suggest fixes.
 """
     )
-    compiler_dev.get_last_node() | verify_task
-    runtime_dev.get_last_node() | verify_task
-    wait >> verify_task
+    g.add_edge(compiler_dev.get_last_node(), verify_task)
+    g.add_edge(runtime_dev.get_last_node(), verify_task)
+    g.add_edge(wait, verify_task, dependency="Control")
 
-    verifier.ask("{0}")
-    verify_task | verifier.get_last_node()
+    verifier.ask("{verify_task}")
+    g.add_edge(verify_task, verifier.get_last_node())
 
-    print4 = g.print("print_verification", message="=== VERIFICATION ===\n{0}")
-    verifier.get_last_node() | print4
+    print4 = g.print(name="print_verification", message="=== VERIFICATION ===\n{verifier}")
+    g.add_edge(verifier.get_last_node(), print4)
 
     # Final summary
     final = g.think(
-        "removal_summary",
-        template="""Generate removal summary:
+        name="removal_summary",
+        prompt="""Generate removal summary:
 
-Impact analysis: {0}
-Compiler changes: {1}
-Runtime changes: {2}
-Verification: {3}
+Impact analysis: {impact_analysis}
+Compiler changes: {compiler_dev}
+Runtime changes: {runtime_dev}
+Verification: {verifier}
 
 Summary:
 - Operation removed: <name>
@@ -199,14 +199,14 @@ Summary:
 - Status: <complete/needs-fixes>
 """
     )
-    impact_analysis | final
-    compiler_dev.get_last_node() | final
-    runtime_dev.get_last_node() | final
-    verifier.get_last_node() | final
-    print4 >> final
+    g.add_edge(impact_analysis, final)
+    g.add_edge(compiler_dev.get_last_node(), final)
+    g.add_edge(runtime_dev.get_last_node(), final)
+    g.add_edge(verifier.get_last_node(), final)
+    g.add_edge(print4, final, dependency="Control")
 
-    print5 = g.print("print_summary", message="=== REMOVAL SUMMARY ===\n{0}")
-    final | print5
+    print5 = g.print(name="print_summary", message="=== REMOVAL SUMMARY ===\n{final}")
+    g.add_edge(final, print5)
 
     g.done(print5)
 

@@ -38,18 +38,18 @@ def memo_cache_stress(g: GraphRecorder):
     # ============================================================
 
     prompt_a_v1 = g.ask(
-        "prompt_a_first",
-        "What is the capital of Japan? Answer in one word."
+        name="prompt_a_first",
+        prompt="What is the capital of Japan? Answer in one word."
     )
 
     prompt_b_v1 = g.ask(
-        "prompt_b_first",
-        "What is 15 + 27? Answer with just the number."
+        name="prompt_b_first",
+        prompt="What is 15 + 27? Answer with just the number."
     )
 
     prompt_c_v1 = g.ask(
-        "prompt_c_first",
-        "Name a primary color. Answer in one word."
+        name="prompt_c_first",
+        prompt="Name a primary color. Answer in one word."
     )
 
     # ============================================================
@@ -59,18 +59,18 @@ def memo_cache_stress(g: GraphRecorder):
     # MemoCache should detect this and return cached results
 
     prompt_a_v2 = g.ask(
-        "prompt_a_second",
-        "What is the capital of Japan? Answer in one word."
+        name="prompt_a_second",
+        prompt="What is the capital of Japan? Answer in one word."
     )
 
     prompt_b_v2 = g.ask(
-        "prompt_b_second",
-        "What is 15 + 27? Answer with just the number."
+        name="prompt_b_second",
+        prompt="What is 15 + 27? Answer with just the number."
     )
 
     prompt_c_v2 = g.ask(
-        "prompt_c_second",
-        "Name a primary color. Answer in one word."
+        name="prompt_c_second",
+        prompt="Name a primary color. Answer in one word."
     )
 
     # ============================================================
@@ -79,29 +79,25 @@ def memo_cache_stress(g: GraphRecorder):
     # Compare first vs second execution results
     # They should be IDENTICAL (same LLM response from cache)
 
+    # Auto-wire: each {var_name} resolves the local NodeRef and creates
+    # the Data edge. No need for explicit g.add_edge() calls.
     comparison_a = g.think(
-        "compare_a",
-        "First: {0}\nSecond: {1}\n\n"
+        name="compare_a",
+        prompt="First: {prompt_a_v1}\nSecond: {prompt_a_v2}\n\n"
         "Are these two responses identical? Answer yes or no."
     )
-    prompt_a_v1 | comparison_a
-    prompt_a_v2 | comparison_a
 
     comparison_b = g.think(
-        "compare_b",
-        "First: {0}\nSecond: {1}\n\n"
+        name="compare_b",
+        prompt="First: {prompt_b_v1}\nSecond: {prompt_b_v2}\n\n"
         "Are these two responses identical? Answer yes or no."
     )
-    prompt_b_v1 | comparison_b
-    prompt_b_v2 | comparison_b
 
     comparison_c = g.think(
-        "compare_c",
-        "First: {0}\nSecond: {1}\n\n"
+        name="compare_c",
+        prompt="First: {prompt_c_v1}\nSecond: {prompt_c_v2}\n\n"
         "Are these two responses identical? Answer yes or no."
     )
-    prompt_c_v1 | comparison_c
-    prompt_c_v2 | comparison_c
 
     # ============================================================
     # OUTPUT
@@ -116,19 +112,19 @@ def memo_cache_stress(g: GraphRecorder):
     )
 
     output = g.print(
-        "=== MEMO CACHE STRESS TEST RESULT ===\n\n"
+        message="=== MEMO CACHE STRESS TEST RESULT ===\n\n"
         "Prompt A (Japan capital):\n"
-        "  First: {0}\n"
-        "  Second: {1}\n"
-        "  Match: {2}\n\n"
+        "  First: {prompt_a_v1}\n"
+        "  Second: {prompt_a_v2}\n"
+        "  Match: {comparison_a}\n\n"
         "Prompt B (15 + 27):\n"
-        "  First: {3}\n"
-        "  Second: {4}\n"
-        "  Match: {5}\n\n"
+        "  First: {prompt_b_v1}\n"
+        "  Second: {prompt_b_v2}\n"
+        "  Match: {comparison_b}\n\n"
         "Prompt C (Primary color):\n"
-        "  First: {6}\n"
-        "  Second: {7}\n"
-        "  Match: {8}\n\n"
+        "  First: {prompt_c_v1}\n"
+        "  Second: {prompt_c_v2}\n"
+        "  Match: {comparison_c}\n\n"
         "---\n"
         "This workflow executed 3 prompts TWICE (6 total executions).\n\n"
         "O0 (no caching): 6 LLM calls (100% misses)\n"
@@ -140,7 +136,9 @@ def memo_cache_stress(g: GraphRecorder):
         "- Cache hit rate: 50%\n"
         "- Time savings: ~3x LLM call latency"
     )
-    all_results | output
+    # Control edge keeps the merge as a synchronization barrier without
+    # adding an extra Data input to print's input_names.
+    g.add_edge(all_results, output, dependency="Control")
 
     g.done(output)
 
@@ -149,6 +147,6 @@ if __name__ == "__main__":
     # Output the graph as JSON
     print(memo_cache_stress._graph.to_air())
     # To execute directly:
-    # import asyncio
-    # result = asyncio.run(memo_cache_stress())
+    # import apxm
+    # result = apxm.run(memo_cache_stress())
     # print(result.content)

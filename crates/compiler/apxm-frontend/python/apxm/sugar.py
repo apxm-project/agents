@@ -45,11 +45,11 @@ class AgentHandle:
         )
 
         # Create control edge from previous node to this communicate node
-        self._last_node >> comm_node
+        self._recorder.add_edge(self._last_node, comm_node, dependency="Control")
 
         # Create auto-wire data edges
         for ref in auto_refs:
-            ref | comm_node
+            self._recorder.add_edge(ref, comm_node, dependency="Data")
 
         self._last_node = comm_node
         return self

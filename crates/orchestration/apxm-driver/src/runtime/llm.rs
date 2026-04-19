@@ -22,15 +22,18 @@ pub async fn configure_llm_registry(
             .and_then(|s| s.parse().ok())
             .unwrap_or(500);
 
-        eprintln!("[MOCK] Registering mock LLM backend with latency_ms={}", latency_ms);
+        eprintln!(
+            "[MOCK] Registering mock LLM backend with latency_ms={}",
+            latency_ms
+        );
 
-        let mock = MockLLMBackend::new()
-            .with_latency_ms(latency_ms)
-            .default(apxm_backends::llm::backends::MockResponse::new("Mock LLM response for benchmarking"));
+        let mock = MockLLMBackend::new().with_latency_ms(latency_ms).default(
+            apxm_backends::llm::backends::MockResponse::new("Mock LLM response for benchmarking"),
+        );
 
-        registry.register("mock", mock).map_err(|e| {
-            DriverError::Driver(format!("Failed to register mock backend: {e}"))
-        })?;
+        registry
+            .register("mock", mock)
+            .map_err(|e| DriverError::Driver(format!("Failed to register mock backend: {e}")))?;
         registry.set_default("mock").map_err(|e| {
             DriverError::Driver(format!("Failed to set mock as default backend: {e}"))
         })?;

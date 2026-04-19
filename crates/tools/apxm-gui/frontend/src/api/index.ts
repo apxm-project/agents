@@ -12,4 +12,4 @@ export { compileWorkflow, executeWorkflow, validateWorkflow, decompileArtifact, 
 export { fetchBackends } from "./backends";
 export { saveGraph } from "./save";
 export { fetchSkills, fetchSkillDetail } from "./skills";
-export { fetchAgents } from "./agents";
+export { fetchAgents, fetchAgentProfiles } from "./agents";

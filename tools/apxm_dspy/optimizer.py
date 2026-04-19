@@ -101,7 +101,7 @@ def optimize_single_template(
 
     optimized_instruction = compiled.signature.instructions
 
-    # Reconstruct template preserving {N} placeholders
+    # Reconstruct template preserving named `{name}` placeholders
     optimized_template = optimized_instruction + "\n\n" + template_str
 
     result = {

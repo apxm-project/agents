@@ -4,8 +4,8 @@ use std::path::Path;
 use anyhow::Result;
 
 use super::registry::{
-    agent_templates, builtin_providers, graph_attr_constants, operation_specs, provider_protocols,
-    FrontendOperationSpec,
+    FrontendOperationSpec, agent_templates, builtin_providers, graph_attr_constants,
+    operation_specs, provider_protocols,
 };
 
 pub fn render_generated_typescript() -> String {
@@ -69,7 +69,10 @@ fn render_ts_operations(buf: &mut String, ops: &[FrontendOperationSpec]) {
             "  category: {} as OpCategory,\n",
             ts_string(spec.category)
         ));
-        buf.push_str(&format!("  description: {},\n", ts_string(spec.description)));
+        buf.push_str(&format!(
+            "  description: {},\n",
+            ts_string(spec.description)
+        ));
         buf.push_str(&format!(
             "  longDescription: {},\n",
             ts_string(spec.long_description)

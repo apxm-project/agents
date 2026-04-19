@@ -24,14 +24,6 @@ class NodeRef:
         self._node_id = node_id
         self.name = name
 
-    def __rshift__(self, other: "NodeRef") -> "NodeRef":
-        self._recorder.add_edge(self, other, dependency="Control")
-        return other
-
-    def __or__(self, other: "NodeRef") -> "NodeRef":
-        self._recorder.add_edge(self, other, dependency="Data")
-        return other
-
     def __repr__(self) -> str:
         return f"NodeRef(name={self.name!r}, id={self._node_id})"
 
@@ -71,103 +63,79 @@ class GraphRecorder:
             GraphEdge(from_id=from_ref._node_id, to_id=to_ref._node_id, dependency=dependency)
         )
 
-    def _resolve_template_refs(self, template: str) -> tuple[str, list[NodeRef]]:
-        """Replace {var_name} with {N} and collect auto-wire edges.
+    def _resolve_template_refs(self, template: str) -> tuple[str, list[tuple[str, NodeRef]]]:
+        """Collect auto-wire edges from `{name}` placeholders in template.
 
-        Looks up variable names in the caller's local scope. If a variable
-        holds a NodeRef or AgentHandle, auto-creates a data edge and replaces
-        the template placeholder with a positional index.
+        Walks the caller's local scope to look up each `{name}`. For each
+        name that resolves to a NodeRef or AgentHandle, records `(name, ref)`
+        in edge order. The template itself is returned unchanged — every
+        `{name}` placeholder remains a named reference (the runtime
+        substitutes by looking up `name` in the node's `input_names`).
 
-        Skips:
-        - Compile parameters (e.g., {task} in a @compile flow)
-        - Already-positional refs (e.g., {0}, {1})
+        Names not bound to a NodeRef/AgentHandle (compile params, literal
+        unknowns) are not added to the returned list. The compiler validator
+        is responsible for catching unresolved placeholders.
 
         Returns:
-            Tuple of (resolved_template, list_of_NodeRefs_to_wire)
+            (template_unchanged, [(name, NodeRef), ...] in edge order)
         """
-        # Get caller's locals (2 frames back: this method -> calling method -> user code)
         caller_frame = inspect.currentframe()
         if caller_frame is None:
             return template, []
 
         caller_locals: dict[str, Any] = {}
         try:
-            # Go up 2 frames: _resolve_template_refs -> ask/think/etc -> user code
+            # _resolve_template_refs -> ask/think/etc -> user code
             if caller_frame.f_back and caller_frame.f_back.f_back:
                 caller_locals = caller_frame.f_back.f_back.f_locals
         finally:
             del caller_frame
 
-        refs: list[NodeRef] = []
+        pairs: list[tuple[str, NodeRef]] = []
+        seen: set[str] = set()
 
-        def replacer(match: re.Match[str]) -> str:
+        for match in re.finditer(r'\{(\w+)\}', template):
             var_name = match.group(1)
+            if var_name in seen:
+                continue
+            seen.add(var_name)
 
-            # Skip compile parameter names
+            # Compile parameters are resolved at execute time against
+            # module.parameters, not via input_names — skip wiring.
             if var_name in self._param_names:
-                return match.group(0)
+                continue
 
-            # Skip already-positional {0}, {1}, etc.
-            if var_name.isdigit():
-                return match.group(0)
-
-            # Look up in caller locals
             val = caller_locals.get(var_name)
-
-            # Handle NodeRef
             if isinstance(val, NodeRef):
-                idx = len(refs)
-                refs.append(val)
-                return f"{{{idx}}}"
+                pairs.append((var_name, val))
+            elif hasattr(val, 'get_last_node') and callable(val.get_last_node):
+                pairs.append((var_name, val.get_last_node()))
+            # Otherwise leave as-is — validator will diagnose if unresolved.
 
-            # Handle AgentHandle (has get_last_node method)
-            if hasattr(val, 'get_last_node') and callable(val.get_last_node):
-                idx = len(refs)
-                refs.append(val.get_last_node())
-                return f"{{{idx}}}"
-
-            # Not found or not a node reference - leave as-is
-            return match.group(0)
-
-        resolved = re.sub(r'\{(\w+)\}', replacer, template)
-        return resolved, refs
+        return template, pairs
 
     def ask(
         self,
-        name_or_template: str | None = None,
-        template_arg: str | None = None,
         *,
         name: str | None = None,
-        template: str | None = None,
+        prompt: str | None = None,
         agent: AgentConfig | None = None,
         model: ModelId | None = None,
         provider: ProviderSpec | str | None = None,
         backend: str | None = None,
         **attributes: Any,
     ) -> NodeRef:
-        # Support three calling styles:
-        # 1. g.ask("template") - auto-named, template is first arg (most common)
-        # 2. g.ask("name", "template") - explicit name and template as positional args
-        # 3. g.ask(name="name", template="template") - keyword args (backward compat)
-
-        if template_arg is not None:
-            # Two positional args: name and template
-            name = name_or_template
-            template = template_arg
-        elif name_or_template is not None:
-            # One positional arg: assume it's a template (most common case)
-            # Names are typically short identifiers, templates are sentences/prompts
-            template = name_or_template
-
         if name is None:
             name = self._auto_name(graph_keys.OP_ASK)
-        if template is None:
-            raise ValueError("ask() missing required argument: template")
+        if prompt is None:
+            raise ValueError("ask() missing required argument: prompt")
 
         # Auto-wire: resolve {var_name} to NodeRef
-        resolved_template, auto_refs = self._resolve_template_refs(template)
+        resolved, auto_pairs = self._resolve_template_refs(prompt)
 
-        attrs = {graph_keys.TEMPLATE_STR: resolved_template}
+        attrs: dict[str, Any] = {graph_keys.TEMPLATE_STR: resolved}
+        if auto_pairs:
+            attrs[graph_keys.INPUT_NAMES] = [n for n, _ in auto_pairs]
         if model is not None:
             attrs[graph_keys.MODEL] = _normalize_value(model)
         if provider is not None:
@@ -178,41 +146,34 @@ class GraphRecorder:
         attrs.update(_normalize_attributes(attributes))
         node = self._add_node(name, graph_keys.OP_ASK, attrs)
 
-        # Create auto-wire edges
-        for ref in auto_refs:
-            ref | node
+        # Create auto-wire edges (in input_names order)
+        for _name, ref in auto_pairs:
+            self.add_edge(ref, node)
 
         return node
 
     def think(
         self,
-        name_or_template: str | None = None,
-        template_arg: str | None = None,
         *,
         name: str | None = None,
-        template: str | None = None,
+        prompt: str | None = None,
         agent: AgentConfig | None = None,
         model: ModelId | None = None,
         provider: ProviderSpec | str | None = None,
         backend: str | None = None,
         **attributes: Any,
     ) -> NodeRef:
-        # Support three calling styles (same as ask)
-        if template_arg is not None:
-            name = name_or_template
-            template = template_arg
-        elif name_or_template is not None:
-            template = name_or_template
-
         if name is None:
             name = self._auto_name(graph_keys.OP_THINK)
-        if template is None:
-            raise ValueError("think() missing required argument: template")
+        if prompt is None:
+            raise ValueError("think() missing required argument: prompt")
 
         # Auto-wire: resolve {var_name} to NodeRef
-        resolved_template, auto_refs = self._resolve_template_refs(template)
+        resolved, auto_pairs = self._resolve_template_refs(prompt)
 
-        attrs = {graph_keys.TEMPLATE_STR: resolved_template}
+        attrs: dict[str, Any] = {graph_keys.TEMPLATE_STR: resolved}
+        if auto_pairs:
+            attrs[graph_keys.INPUT_NAMES] = [n for n, _ in auto_pairs]
         if model is not None:
             attrs[graph_keys.MODEL] = _normalize_value(model)
         if provider is not None:
@@ -223,41 +184,34 @@ class GraphRecorder:
         attrs.update(_normalize_attributes(attributes))
         node = self._add_node(name, graph_keys.OP_THINK, attrs)
 
-        # Create auto-wire edges
-        for ref in auto_refs:
-            ref | node
+        # Create auto-wire edges (in input_names order)
+        for _name, ref in auto_pairs:
+            self.add_edge(ref, node)
 
         return node
 
     def reason(
         self,
-        name_or_template: str | None = None,
-        template_arg: str | None = None,
         *,
         name: str | None = None,
-        template: str | None = None,
+        prompt: str | None = None,
         agent: AgentConfig | None = None,
         model: ModelId | None = None,
         provider: ProviderSpec | str | None = None,
         backend: str | None = None,
         **attributes: Any,
     ) -> NodeRef:
-        # Support three calling styles (same as ask)
-        if template_arg is not None:
-            name = name_or_template
-            template = template_arg
-        elif name_or_template is not None:
-            template = name_or_template
-
         if name is None:
             name = self._auto_name(graph_keys.OP_REASON)
-        if template is None:
-            raise ValueError("reason() missing required argument: template")
+        if prompt is None:
+            raise ValueError("reason() missing required argument: prompt")
 
         # Auto-wire: resolve {var_name} to NodeRef
-        resolved_template, auto_refs = self._resolve_template_refs(template)
+        resolved, auto_pairs = self._resolve_template_refs(prompt)
 
-        attrs = {graph_keys.TEMPLATE_STR: resolved_template}
+        attrs: dict[str, Any] = {graph_keys.TEMPLATE_STR: resolved}
+        if auto_pairs:
+            attrs[graph_keys.INPUT_NAMES] = [n for n, _ in auto_pairs]
         if model is not None:
             attrs[graph_keys.MODEL] = _normalize_value(model)
         if provider is not None:
@@ -268,9 +222,9 @@ class GraphRecorder:
         attrs.update(_normalize_attributes(attributes))
         node = self._add_node(name, graph_keys.OP_REASON, attrs)
 
-        # Create auto-wire edges
-        for ref in auto_refs:
-            ref | node
+        # Create auto-wire edges (in input_names order)
+        for _name, ref in auto_pairs:
+            self.add_edge(ref, node)
 
         return node
 
@@ -361,7 +315,7 @@ class GraphRecorder:
             ),
         )
         if condition_node is not None:
-            condition_node | node
+            self.add_edge(condition_node, node)
         return node
 
     def switch_(
@@ -391,7 +345,7 @@ class GraphRecorder:
         flat_dependencies = _flatten_refs(dependencies)
         node = self._add_node(name, graph_keys.OP_WAIT_ALL, {})
         for dep in flat_dependencies:
-            dep | node
+            self.add_edge(dep, node)
         return node
 
     def merge(self, name: str | None = None, *dependencies: NodeRef | Iterable[NodeRef]) -> NodeRef:
@@ -400,7 +354,7 @@ class GraphRecorder:
         flat_dependencies = _flatten_refs(dependencies)
         node = self._add_node(name, graph_keys.OP_MERGE, {})
         for dep in flat_dependencies:
-            dep | node
+            self.add_edge(dep, node)
         return node
 
     def fence(self, name: str | None = None, **attributes: Any) -> NodeRef:
@@ -413,7 +367,10 @@ class GraphRecorder:
             name = self._auto_name(graph_keys.OP_PLAN)
         if goal is None:
             raise ValueError("plan() missing required keyword argument: 'goal'")
-        attrs = {graph_keys.GOAL: goal}
+        resolved_goal, auto_pairs = self._resolve_template_refs(goal)
+        attrs: dict[str, Any] = {graph_keys.GOAL: resolved_goal}
+        if auto_pairs:
+            attrs[graph_keys.INPUT_NAMES] = [n for n, _ in auto_pairs]
         if model is not None:
             attrs[graph_keys.MODEL] = _normalize_value(model)
         if provider is not None:
@@ -422,14 +379,20 @@ class GraphRecorder:
             attrs[graph_keys.BACKEND] = backend
         attrs.update(_compose_system_prompt(agent, graph_keys.OP_PLAN))
         attrs.update(_normalize_attributes(attributes))
-        return self._add_node(name, graph_keys.OP_PLAN, attrs)
+        node = self._add_node(name, graph_keys.OP_PLAN, attrs)
+        for _name, ref in auto_pairs:
+            self.add_edge(ref, node)
+        return node
 
     def reflect(self, name: str | None = None, *, trace_id: str | None = None, agent: AgentConfig | None = None, model: ModelId | None = None, provider: ProviderSpec | str | None = None, backend: str | None = None, **attributes: Any) -> NodeRef:
         if name is None:
             name = self._auto_name(graph_keys.OP_REFLECT)
         if trace_id is None:
             raise ValueError("reflect() missing required keyword argument: 'trace_id'")
-        attrs = {graph_keys.TRACE_ID: trace_id}
+        resolved_trace_id, auto_pairs = self._resolve_template_refs(trace_id)
+        attrs: dict[str, Any] = {graph_keys.TRACE_ID: resolved_trace_id}
+        if auto_pairs:
+            attrs[graph_keys.INPUT_NAMES] = [n for n, _ in auto_pairs]
         if model is not None:
             attrs[graph_keys.MODEL] = _normalize_value(model)
         if provider is not None:
@@ -438,7 +401,10 @@ class GraphRecorder:
             attrs[graph_keys.BACKEND] = backend
         attrs.update(_compose_system_prompt(agent, graph_keys.OP_REFLECT))
         attrs.update(_normalize_attributes(attributes))
-        return self._add_node(name, graph_keys.OP_REFLECT, attrs)
+        node = self._add_node(name, graph_keys.OP_REFLECT, attrs)
+        for _name, ref in auto_pairs:
+            self.add_edge(ref, node)
+        return node
 
     def verify(
         self,
@@ -456,8 +422,22 @@ class GraphRecorder:
             name = self._auto_name(graph_keys.OP_VERIFY)
         if claim is None:
             raise ValueError("verify() missing required keyword argument: 'claim'")
-        condition = claim if evidence is None else f"Claim: {claim}\nEvidence: {evidence}"
-        attrs = {graph_keys.CONDITION: condition}
+        resolved_claim, claim_pairs = self._resolve_template_refs(claim)
+        all_pairs: list[tuple[str, NodeRef]] = list(claim_pairs)
+        if evidence is not None:
+            resolved_evidence, ev_pairs = self._resolve_template_refs(evidence)
+            # Dedupe by name (an input shouldn't appear twice in input_names)
+            seen_names = {n for n, _ in all_pairs}
+            for n, r in ev_pairs:
+                if n not in seen_names:
+                    all_pairs.append((n, r))
+                    seen_names.add(n)
+            condition = f"Claim: {resolved_claim}\nEvidence: {resolved_evidence}"
+        else:
+            condition = resolved_claim
+        attrs: dict[str, Any] = {graph_keys.CONDITION: condition}
+        if all_pairs:
+            attrs[graph_keys.INPUT_NAMES] = [n for n, _ in all_pairs]
         if model is not None:
             attrs[graph_keys.MODEL] = _normalize_value(model)
         if provider is not None:
@@ -466,7 +446,10 @@ class GraphRecorder:
             attrs[graph_keys.BACKEND] = backend
         attrs.update(_compose_system_prompt(agent, graph_keys.OP_VERIFY))
         attrs.update(_normalize_attributes(attributes))
-        return self._add_node(name, graph_keys.OP_VERIFY, attrs)
+        node = self._add_node(name, graph_keys.OP_VERIFY, attrs)
+        for _name, ref in all_pairs:
+            self.add_edge(ref, node)
+        return node
 
     def input_guardrail(
         self,
@@ -526,15 +509,18 @@ class GraphRecorder:
             raise ValueError("handoff() missing required keyword argument: 'from_agent'")
         if to_agent is None:
             raise ValueError("handoff() missing required keyword argument: 'to_agent'")
-        # Create a data edge from from_agent → to_agent via a pass-through node
+        # Create a data edge from from_agent → to_agent via a pass-through node.
+        # Template references the upstream input by name; input_names mirrors
+        # the single incoming Data edge from from_agent.
         node = self._add_node(name, graph_keys.OP_ASK, {
-            graph_keys.TEMPLATE_STR: "{0}",
+            graph_keys.TEMPLATE_STR: "{" + from_agent.name + "}",
+            graph_keys.INPUT_NAMES: [from_agent.name],
             graph_keys.HANDOFF: True,
             graph_keys.HANDOFF_FROM: from_agent.name,
             graph_keys.HANDOFF_TO: to_agent.name,
         })
-        from_agent | node
-        node | to_agent
+        self.add_edge(from_agent, node)
+        self.add_edge(node, to_agent)
         return node
 
     def handoff_when(
@@ -555,15 +541,18 @@ class GraphRecorder:
         if routes is None:
             raise ValueError("handoff_when() missing required keyword argument: 'routes'")
         case_labels = list(routes.keys())
+        # Discriminant references the from_agent's output by name; the synthetic
+        # switch node has a single Data input (from_agent) named accordingly.
         switch_node = self.switch_(
             f"{name}_switch",
-            discriminant="{0}",
+            discriminant="{" + from_agent.name + "}",
             cases=case_labels,
+            input_names=[from_agent.name],
         )
-        from_agent | switch_node
+        self.add_edge(from_agent, switch_node)
 
         for _label, target in routes.items():
-            switch_node | target
+            self.add_edge(switch_node, target)
 
         return switch_node
 
@@ -600,36 +589,29 @@ class GraphRecorder:
 
     def print(
         self,
-        name_or_message: str | None = None,
-        /,
         *,
         name: str | None = None,
         message: str | None = None,
         **attributes: Any,
     ) -> NodeRef:
         """Print output to stdout (PRINT)."""
-        # Heuristic: if first positional arg contains {, it's a message
-        if name_or_message is not None:
-            if '{' in name_or_message:
-                message = name_or_message
-            else:
-                name = name_or_message
-
         if name is None:
             name = self._auto_name(graph_keys.OP_PRINT)
         if message is None:
             raise ValueError("print() missing required keyword argument: 'message'")
 
         # Auto-wire: resolve {var_name} to NodeRef
-        resolved_message, auto_refs = self._resolve_template_refs(message)
+        resolved_message, auto_pairs = self._resolve_template_refs(message)
 
         attrs: dict[str, Any] = {graph_keys.MESSAGE: resolved_message}
+        if auto_pairs:
+            attrs[graph_keys.INPUT_NAMES] = [n for n, _ in auto_pairs]
         attrs.update(_normalize_attributes(attributes))
         node = self._add_node(name, graph_keys.OP_PRINT, attrs)
 
-        # Create auto-wire edges
-        for ref in auto_refs:
-            ref | node
+        # Create auto-wire edges (in input_names order)
+        for _name, ref in auto_pairs:
+            self.add_edge(ref, node)
 
         return node
 
@@ -678,7 +660,7 @@ class GraphRecorder:
         if source is not None:
             if hasattr(source, "get_last_node"):
                 source = source.get_last_node()
-            source | node
+            self.add_edge(source, node)
         return node
 
     def flow_call(
@@ -705,6 +687,140 @@ class GraphRecorder:
             attrs[graph_keys.ARGS] = _normalize_value(args)
         attrs.update(_normalize_attributes(attributes))
         return self._add_node(name, graph_keys.OP_FLOW_CALL, attrs)
+
+    def call(
+        self,
+        flow: Any,
+        *,
+        name: str | None = None,
+        **kwargs: Any,
+    ) -> NodeRef:
+        """Invoke a compiled flow or FlowModule from this graph.
+
+        Accepts a @compile-decorated function, a FlowModule instance, or
+        an ApxmGraph. Keyword arguments are mapped to the flow's parameters.
+
+        Args:
+            flow: A @compile function, FlowModule, or ApxmGraph to invoke
+            name: Node name (auto-generated if not provided)
+            **kwargs: Arguments passed to the called flow's parameters.
+                      Values can be NodeRef (auto-wired as data edges) or
+                      literal values (serialized into the args dict).
+        """
+        # Extract graph from various sources
+        if hasattr(flow, '_graph'):
+            # @compile-decorated _CompiledFunction
+            graph = flow._graph
+        elif hasattr(flow, 'nodes') and hasattr(flow, 'edges') and hasattr(flow, 'name'):
+            # ApxmGraph directly
+            graph = flow
+        elif hasattr(flow, 'to_graph') and callable(flow.to_graph):
+            # FlowModule or similar
+            graph = flow.to_graph()
+        else:
+            raise TypeError(
+                f"call() expects a @compile function, FlowModule, or ApxmGraph, "
+                f"got {type(flow).__name__}"
+            )
+
+        flow_name = graph.name
+        if name is None:
+            name = self._auto_name(f"call_{flow_name}")
+
+        # Separate NodeRef args (auto-wire) from literal args
+        literal_args: dict[str, Any] = {}
+        node_ref_args: list[tuple[str, NodeRef]] = []
+
+        for key, val in kwargs.items():
+            if isinstance(val, NodeRef):
+                node_ref_args.append((key, val))
+                literal_args[key] = f"{{{key}}}"
+            elif hasattr(val, 'get_last_node'):
+                node_ref_args.append((key, val.get_last_node()))
+                literal_args[key] = f"{{{key}}}"
+            else:
+                literal_args[key] = val
+
+        attrs: dict[str, Any] = {
+            graph_keys.AGENT_NAME: flow_name,
+            graph_keys.FLOW_NAME: "main",
+        }
+        if literal_args:
+            attrs[graph_keys.ARGS] = _normalize_value(literal_args)
+        # Stamp input_names parallel to the Data edges below; the args dict
+        # references each input by `{param_name}`.
+        if node_ref_args:
+            attrs[graph_keys.INPUT_NAMES] = [pn for pn, _ in node_ref_args]
+
+        node = self._add_node(name, graph_keys.OP_FLOW_CALL, attrs)
+
+        # Auto-wire NodeRef arguments as data edges (in input_names order)
+        for _param_name, ref in node_ref_args:
+            self.add_edge(ref, node)
+
+        return node
+
+    def embed(
+        self,
+        flow: Any,
+        *,
+        prefix: str | None = None,
+    ) -> NodeRef:
+        """Inline-compose another graph into this one at compile time.
+
+        Copies all nodes, edges, and parameters from the source graph into
+        this graph (with optional name prefix). Returns the terminal NodeRef.
+
+        Args:
+            flow: A @compile function, FlowModule, or ApxmGraph
+            prefix: Optional prefix for namespacing embedded nodes
+        """
+        from .module import FlowModule as _FlowModule
+
+        if isinstance(flow, _FlowModule):
+            return flow.embed(self, prefix=prefix)
+
+        # Extract graph from @compile function or ApxmGraph
+        if hasattr(flow, '_graph'):
+            source_graph = flow._graph
+        elif hasattr(flow, 'nodes') and hasattr(flow, 'edges'):
+            source_graph = flow
+        elif hasattr(flow, 'to_graph') and callable(flow.to_graph):
+            source_graph = flow.to_graph()
+        else:
+            raise TypeError(
+                f"embed() expects a @compile function, FlowModule, or ApxmGraph, "
+                f"got {type(flow).__name__}"
+            )
+
+        from .ir import GraphEdge as _GE, Parameter as _P
+        node_id_map: dict[int, NodeRef] = {}
+
+        for node in source_graph.nodes:
+            merged_name = node.name if prefix is None else f"{prefix}_{node.name}"
+            merged_ref = self._add_node(merged_name, node.op, dict(node.attributes))
+            node_id_map[node.id] = merged_ref
+
+        for edge in source_graph.edges:
+            self._edges.append(
+                _GE(
+                    from_id=node_id_map[edge.from_id]._node_id,
+                    to_id=node_id_map[edge.to_id]._node_id,
+                    dependency=edge.dependency,
+                )
+            )
+
+        for param in source_graph.parameters:
+            merged_param = param.name if prefix is None else f"{prefix}_{param.name}"
+            if any(existing.name == merged_param for existing in self._parameters):
+                continue
+            self._parameters.append(_P(name=merged_param, type_name=param.type_name))
+
+        # Return the last node as the terminal
+        if source_graph.nodes:
+            last_node_id = source_graph.nodes[-1].id
+            return node_id_map[last_node_id]
+        raise ValueError("cannot embed an empty graph")
 
     def try_catch(
         self,
@@ -746,8 +862,6 @@ class GraphRecorder:
 
     def communicate(
         self,
-        name_or_message: str | None = None,
-        /,
         *,
         name: str | None = None,
         target_agent: str | None = None,
@@ -756,13 +870,6 @@ class GraphRecorder:
         **attributes: Any,
     ) -> NodeRef:
         """Send a message to another agent (COMMUNICATE)."""
-        # Heuristic: if first positional arg contains {, it's a message
-        if name_or_message is not None:
-            if '{' in name_or_message:
-                message = name_or_message
-            else:
-                name = name_or_message
-
         if name is None:
             name = self._auto_name(graph_keys.OP_COMMUNICATE)
         if target_agent is None:
@@ -771,20 +878,22 @@ class GraphRecorder:
             raise ValueError("communicate() missing required keyword argument: 'message'")
 
         # Auto-wire: resolve {var_name} to NodeRef
-        resolved_message, auto_refs = self._resolve_template_refs(message)
+        resolved_message, auto_pairs = self._resolve_template_refs(message)
 
         attrs: dict[str, Any] = {
             graph_keys.RECIPIENT: target_agent,
             graph_keys.MESSAGE: resolved_message,
         }
+        if auto_pairs:
+            attrs[graph_keys.INPUT_NAMES] = [n for n, _ in auto_pairs]
         if protocol is not None:
             attrs[graph_keys.PROTOCOL] = protocol
         attrs.update(_normalize_attributes(attributes))
         node = self._add_node(name, graph_keys.OP_COMMUNICATE, attrs)
 
-        # Create auto-wire edges
-        for ref in auto_refs:
-            ref | node
+        # Create auto-wire edges (in input_names order)
+        for _name, ref in auto_pairs:
+            self.add_edge(ref, node)
 
         return node
 
@@ -837,7 +946,7 @@ class GraphRecorder:
         if source is not None:
             if hasattr(source, "get_last_node"):
                 source = source.get_last_node()
-            source | node
+            self.add_edge(source, node)
         return node
 
     def claim(
@@ -937,20 +1046,6 @@ class GraphRecorder:
         attrs.update(_normalize_attributes(attributes))
         return self._add_node(name, graph_keys.OP_AGENT, attrs)
 
-    def text(self, name: str | None = None, *, value: Any = None, **attributes: Any) -> NodeRef:
-        """String constant (CONST_STR)."""
-        if name is None:
-            name = self._auto_name(graph_keys.OP_CONST_STR)
-        if value is None:
-            raise ValueError("text() missing required keyword argument: 'value'")
-        attrs = {graph_keys.VALUE: _normalize_value(value)}
-        attrs.update(_normalize_attributes(attributes))
-        return self._add_node(name, graph_keys.OP_CONST_STR, attrs)
-
-    def string(self, name: str | None = None, *, value: Any = None, **attributes: Any) -> NodeRef:
-        """String constant (CONST_STR). Alias for text()."""
-        return self.text(name, value=value, **attributes)
-
     def yield_(self, name: str | None = None, *, source: NodeRef | None = None, **attributes: Any) -> NodeRef:
         """Yield value from a switch-case region, compiler internal (YIELD)."""
         if name is None:
@@ -959,7 +1054,7 @@ class GraphRecorder:
         if source is not None:
             if hasattr(source, "get_last_node"):
                 source = source.get_last_node()
-            source | node
+            self.add_edge(source, node)
         return node
 
     def delegate(
@@ -1072,9 +1167,6 @@ class GraphRecorder:
             attrs[graph_keys.GOALS] = _normalize_value(goals)
         attrs.update(_normalize_attributes(attributes))
         return self._add_node(name, graph_keys.OP_SPAWN_AGENT, attrs)
-
-    # Shorthand alias
-    spawn = spawn_agent
 
     def register_capability(
         self,

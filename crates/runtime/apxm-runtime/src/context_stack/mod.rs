@@ -276,9 +276,9 @@ impl ContextStack {
             }
 
             // Query episodic memory for node-related events
-            if let Ok(entries) = tokio::task::block_in_place(|| {
-                handle.block_on(memory.query_episodes(exec_id))
-            }) {
+            if let Ok(entries) =
+                tokio::task::block_in_place(|| handle.block_on(memory.query_episodes(exec_id)))
+            {
                 let node_events: Vec<_> = entries
                     .iter()
                     .filter(|e| {

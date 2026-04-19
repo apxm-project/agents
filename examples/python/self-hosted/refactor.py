@@ -40,7 +40,7 @@ def refactor_workflow(g: GraphRecorder):
     test_runner = g.spawn("test_runner", profile=claude, cwd=cwd)
 
     # Step 1: Analyzer reads the code and identifies opportunities
-    analyzer_task = g.text(value="""You are the code analyzer for APXM. Analyze this refactoring request:
+    analyzer.ask(prompt="""You are the code analyzer for APXM. Analyze this refactoring request:
 
 Target: {target}
 Goal: {goal}
@@ -71,18 +71,15 @@ Produce a refactoring analysis:
    - Which changes can be mechanical (search-replace) vs manual
 
 Keep under 500 words but be specific about file paths and identifiers.
-"""
-    )
-
-    analyzer.ask("{analyzer_task}")
+""")
     analysis = analyzer.get_last_node()
 
-    print1 = g.print("=== REFACTORING ANALYSIS ===\n{analysis}")
+    print1 = g.print(message="=== REFACTORING ANALYSIS ===\n{analysis}")
 
     # Step 2: Implementer does the refactoring
     implementer_task = g.ask(
-        "build_implementer_task",
-        """Based on this analysis, implement the refactoring:
+        name="build_implementer_task",
+        prompt="""Based on this analysis, implement the refactoring:
 
 Analysis: {analysis}
 
@@ -105,17 +102,17 @@ After all changes:
 Be methodical. If something doesn't compile, fix it before moving on.
 """
     )
-    print1 >> implementer_task
+    g.add_edge(print1, implementer_task, dependency="Control")
 
     implementer.ask("{implementer_task}")
     impl_result = implementer.get_last_node()
 
-    print2 = g.print("=== REFACTORING CHANGES ===\n{impl_result}")
+    print2 = g.print(message="=== REFACTORING CHANGES ===\n{impl_result}")
 
     # Step 3: Test runner verifies nothing broke
     test_task = g.ask(
-        "build_test_task",
-        """Verify the refactoring didn't break anything:
+        name="build_test_task",
+        prompt="""Verify the refactoring didn't break anything:
 
 Changes: {impl_result}
 
@@ -149,17 +146,17 @@ If there are failures:
 Keep iterating until all tests pass.
 """
     )
-    print2 >> test_task
+    g.add_edge(print2, test_task, dependency="Control")
 
     test_runner.ask("{test_task}")
     test_result = test_runner.get_last_node()
 
-    print3 = g.print("=== TEST RESULTS ===\n{test_result}")
+    print3 = g.print(message="=== TEST RESULTS ===\n{test_result}")
 
     # Step 4: Summary
     summary = g.think(
-        "refactoring_summary",
-        """Summarize the refactoring:
+        name="refactoring_summary",
+        prompt="""Summarize the refactoring:
 
 Analysis: {analysis}
 Implementation: {impl_result}
@@ -180,15 +177,15 @@ Summary:
 If status is incomplete or failed, list remaining issues.
 """
     )
-    print3 >> summary
+    g.add_edge(print3, summary, dependency="Control")
 
-    print4 = g.print("=== REFACTORING SUMMARY ===\n{summary}")
+    print4 = g.print(message="=== REFACTORING SUMMARY ===\n{summary}")
 
     g.done(print4)
 
 
 if __name__ == "__main__":
-    import asyncio
+    import apxm
 
-    result = asyncio.run(refactor_workflow("apxm-runtime", "simplify error handling"))
+    result = apxm.run(refactor_workflow("apxm-runtime", "simplify error handling"))
     print(result.content)

@@ -3,17 +3,17 @@ module {
     %analyzer = ais.spawn_agent "analyzer" {profile = "claude", cwd = "/home/apxm/projects/agents/apxm"} : !ais.token
     %implementer = ais.spawn_agent "implementer" {profile = "codex", cwd = "/home/apxm/projects/agents/apxm"} : !ais.token
     %test_runner = ais.spawn_agent "test_runner" {profile = "claude", cwd = "/home/apxm/projects/agents/apxm"} : !ais.token
-    %analyzer_task = ais.const_str "You are the code analyzer for APXM. Analyze this refactoring request:\n\nTarget: {0}\nGoal: {1}\n\nRead the target code:\n- If it's a crate name, read the crate's src/ directory\n- If it's a file path, read that file and related files\n\nProduce a refactoring analysis:\n1. Current structure (what exists now)\n   - Key types, functions, modules\n   - Current organization\n   - Code smells or anti-patterns\n\n2. Proposed structure (what should exist after refactoring)\n   - New module boundaries\n   - What moves where\n   - What gets renamed\n   - New abstractions needed\n\n3. Impact analysis\n   - What breaks (imports, tests, examples)\n   - Public API changes (breaking vs non-breaking)\n   - What needs to be updated\n\n4. Step-by-step refactoring plan\n   - Order of changes (to maintain compilability)\n   - Which changes can be mechanical (search-replace) vs manual\n\nKeep under 500 words but be specific about file paths and identifiers.\n" : !ais.token
-    %analyzer_msg_1 = ais.communicate "{0}" to "analyzer" (%analyzer_task : !ais.token) : !ais.token
-    ais.print "=== REFACTORING ANALYSIS ===\n{0}" [%analyzer_msg_1 : !ais.token]
+    %analyzer_task = ais.const_str "You are the code analyzer for APXM. Analyze this refactoring request:\n\nTarget: {target}\nGoal: {goal}\n\nRead the target code:\n- If it's a crate name, read the crate's src/ directory\n- If it's a file path, read that file and related files\n\nProduce a refactoring analysis:\n1. Current structure (what exists now)\n   - Key types, functions, modules\n   - Current organization\n   - Code smells or anti-patterns\n\n2. Proposed structure (what should exist after refactoring)\n   - New module boundaries\n   - What moves where\n   - What gets renamed\n   - New abstractions needed\n\n3. Impact analysis\n   - What breaks (imports, tests, examples)\n   - Public API changes (breaking vs non-breaking)\n   - What needs to be updated\n\n4. Step-by-step refactoring plan\n   - Order of changes (to maintain compilability)\n   - Which changes can be mechanical (search-replace) vs manual\n\nKeep under 500 words but be specific about file paths and identifiers.\n" : !ais.token
+    %analyzer_msg_1 = ais.communicate "{analyzer_task}" to "analyzer" (%analyzer_task : !ais.token) : !ais.token
+    ais.print "=== REFACTORING ANALYSIS ===\n{analyzer}" [%analyzer_msg_1 : !ais.token]
     %ask = ais.ask "build_implementer_task" [%analyzer_msg_1 : !ais.token] : !ais.token
-    %implementer_msg_1 = ais.communicate "{0}" to "implementer" (%ask : !ais.token) : !ais.token
-    ais.print "=== REFACTORING CHANGES ===\n{0}" [%implementer_msg_1 : !ais.token]
+    %implementer_msg_1 = ais.communicate "{implementer_task}" to "implementer" (%ask : !ais.token) : !ais.token
+    ais.print "=== REFACTORING CHANGES ===\n{implementer}" [%implementer_msg_1 : !ais.token]
     %ask_1 = ais.ask "build_test_task" [%implementer_msg_1 : !ais.token] : !ais.token
-    %test_runner_msg_1 = ais.communicate "{0}" to "test_runner" (%ask_1 : !ais.token) : !ais.token
-    ais.print "=== TEST RESULTS ===\n{0}" [%test_runner_msg_1 : !ais.token]
+    %test_runner_msg_1 = ais.communicate "{test_task}" to "test_runner" (%ask_1 : !ais.token) : !ais.token
+    ais.print "=== TEST RESULTS ===\n{test_runner}" [%test_runner_msg_1 : !ais.token]
     %think = ais.think "refactoring_summary" [%analyzer_msg_1, %implementer_msg_1, %test_runner_msg_1 : !ais.token, !ais.token, !ais.token] : !ais.token
-    ais.print "=== REFACTORING SUMMARY ===\n{0}" [%think : !ais.token]
+    ais.print "=== REFACTORING SUMMARY ===\n{summary}" [%think : !ais.token]
     func.return %think : !ais.token
   }
 }

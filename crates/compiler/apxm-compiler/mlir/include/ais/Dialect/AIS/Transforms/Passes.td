@@ -43,14 +43,16 @@ def BuildPrompt : Pass<"build-prompt", "mlir::ModuleOp"> {
   let summary = "Build LLM operation prompt templates";
   let description = [{
     Processes LLM operations and generates placeholder templates:
-    1. Empty template_str -> "{0}" (context[0] becomes prompt)
-    2. Optionally embed instruction prompts from config
+    1. Empty template_str -> synthesized "{<name>}" templates referencing
+       each context operand by its `input_names` entry.
+    2. Optionally embed instruction prompts from config.
 
     Works with InstructionConfig system - does NOT replace runtime mapping,
     just ensures template_str is never empty when context exists.
 
     This pass enables proper prompt construction for operations like:
-      ask(user_input) -> ask("{0}", [user_input])
+      ask(user_input) -> ask("{user_input}", [user_input])
+      with the matching `input_names = ["user_input"]` attribute.
 
     Without this pass, empty template_str causes the runtime to produce
     empty prompts, resulting in empty or broken LLM responses.
@@ -58,7 +60,7 @@ def BuildPrompt : Pass<"build-prompt", "mlir::ModuleOp"> {
   let constructor = "mlir::ais::createBuildPromptPass()";
   let options = [
     Option<"generatePlaceholders", "generate-placeholders", "bool", "true",
-           "Generate {0} placeholder when template_str is empty">,
+           "Generate named {<input>} placeholders when template_str is empty">,
     Option<"embedInstructions", "embed-instructions", "bool", "false",
            "Embed instruction prompts into artifact (bypasses runtime config)">
   ];

@@ -1,9 +1,9 @@
 use super::require_string_arg;
-use apxm_core::{error::RuntimeError, types::Value};
 use crate::capability::{
     executor::{CapabilityExecutor, CapabilityResult},
     metadata::CapabilityMetadata,
 };
+use apxm_core::{error::RuntimeError, types::Value};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};

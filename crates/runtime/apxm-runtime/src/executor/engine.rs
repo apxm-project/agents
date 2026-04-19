@@ -1,6 +1,8 @@
 //! Executor engine - Main orchestrator for DAG execution
 
-use super::{ExecutionContext, Result, dispatcher::OperationDispatcher, handlers::get_u32_array_attribute};
+use super::{
+    ExecutionContext, Result, dispatcher::OperationDispatcher, handlers::get_u32_array_attribute,
+};
 use crate::scheduler::{DataflowScheduler, SchedulerConfig};
 use apxm_backends::llm::backends::vllm::{GraphMetadata, NodeSpec};
 use apxm_core::constants::graph::attrs as graph_attrs;
@@ -52,10 +54,7 @@ impl ExecutorEngine {
         let result = self.execute_dag_inner(dag).await;
 
         // Release graph from backends (both success and error paths)
-        self.context
-            .llm_registry
-            .release_graph_all(&graph_id)
-            .await;
+        self.context.llm_registry.release_graph_all(&graph_id).await;
 
         result
     }
@@ -116,8 +115,8 @@ impl ExecutorEngine {
             })
             .collect();
 
-        let metadata = GraphMetadata::new(graph_id, &self.context.execution_id)
-            .with_nodes(node_specs);
+        let metadata =
+            GraphMetadata::new(graph_id, &self.context.execution_id).with_nodes(node_specs);
 
         if let Ok(metadata_json) = serde_json::to_value(&metadata) {
             self.context

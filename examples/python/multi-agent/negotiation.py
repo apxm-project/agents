@@ -20,21 +20,21 @@ def negotiate_consensus(g: GraphRecorder):
 
     # Define negotiation topic
     topic = g.ask(
-        "topic",
-        "What technical architecture decision should we negotiate? "
+        name="topic",
+        prompt="What technical architecture decision should we negotiate? "
         "Describe a specific choice with trade-offs."
     )
 
     # Initial proposals (parallel)
     proposal_a_comm = g.communicate(
-        "proposal_a",
+        name="proposal_a",
         target_agent="agent_a",
         message="You are Agent A. Propose your preferred solution for: {topic}. "
         "Be specific about your recommendation and why."
     )
 
     proposal_b_comm = g.communicate(
-        "proposal_b",
+        name="proposal_b",
         target_agent="agent_b",
         message="You are Agent B. Propose your preferred solution for: {topic}. "
         "Be specific about your recommendation and why."
@@ -42,7 +42,7 @@ def negotiate_consensus(g: GraphRecorder):
 
     # Negotiation round: A responds to B's proposal
     response_a_comm = g.communicate(
-        "response_a",
+        name="response_a",
         target_agent="agent_a",
         message="Agent B proposed: {proposal_b_comm}\n\n"
         "Respond: do you agree, partially agree, or disagree? What compromise can you offer?"
@@ -50,7 +50,7 @@ def negotiate_consensus(g: GraphRecorder):
 
     # Consensus: B responds to A's proposal and response
     consensus_comm = g.communicate(
-        "consensus",
+        name="consensus",
         target_agent="agent_b",
         message="Agent A proposed: {proposal_a_comm} and responded: {response_a_comm}\n\n"
         "Can you reach consensus? State the agreed solution."
@@ -58,20 +58,20 @@ def negotiate_consensus(g: GraphRecorder):
 
     # Summarize the negotiation
     summary = g.think(
-        "summary",
-        "Two agents negotiated. Summarize the final consensus:\n\n"
+        name="summary",
+        prompt="Two agents negotiated. Summarize the final consensus:\n\n"
         "PROPOSAL A:\n{proposal_a_comm}\n\nPROPOSAL B:\n{proposal_b_comm}\n\nCONSENSUS:\n{consensus_comm}"
     )
 
     # Print and return
-    output = g.print("=== CONSENSUS ===\n{summary}")
+    output = g.print(message="=== CONSENSUS ===\n{summary}")
 
     g.done(output)
     
 
 
 if __name__ == "__main__":
-    import asyncio
+    import apxm
 
-    result = asyncio.run(negotiate_consensus())
+    result = apxm.run(negotiate_consensus())
     print(result.content)

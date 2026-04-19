@@ -775,7 +775,13 @@ fn codegen_frontend_is_idempotent() {
     let output_dir_str = output_dir.to_str().unwrap();
 
     let first = apxm()
-        .args(["--json", "codegen", "frontend", "--output-dir", output_dir_str])
+        .args([
+            "--json",
+            "codegen",
+            "frontend",
+            "--output-dir",
+            output_dir_str,
+        ])
         .output()
         .unwrap();
     assert!(first.status.success());
@@ -792,7 +798,13 @@ fn codegen_frontend_is_idempotent() {
     assert!(first_snapshot.contains_key("operations.py"));
 
     let second = apxm()
-        .args(["--json", "codegen", "frontend", "--output-dir", output_dir_str])
+        .args([
+            "--json",
+            "codegen",
+            "frontend",
+            "--output-dir",
+            output_dir_str,
+        ])
         .output()
         .unwrap();
     assert!(second.status.success());

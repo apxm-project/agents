@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import inspect
-import re
 from typing import TYPE_CHECKING, Any, Callable
 
 from .execution import CompiledFlow, ExecutionMode
@@ -113,17 +112,14 @@ class _CompiledFunction:
         for param_name, (idx, type_name) in self._param_mapping.items():
             recorder.param(param_name, type_name)
 
-        # Create placeholders: support both named {topic} and positional {0} forms
+        # Pass named placeholders into the user function so f-strings like
+        # f"Process {topic}" yield the literal string "Process {topic}". The
+        # compiler validator resolves each `{name}` against either the node's
+        # input_names attribute or the module's declared parameters.
         named_placeholders = {name: f"{{{name}}}" for name in self._param_mapping.keys()}
-        positional_placeholders = [f"{{{idx}}}" for idx in range(len(self._param_mapping))]
-
-        # Call the function with named placeholders
-        # The function can use either {topic} or {0} style
         self._fn(recorder, **named_placeholders)
 
-        # Post-process the graph to convert named placeholders to positional
         graph = recorder.to_graph()
-        self._convert_named_to_positional(graph)
 
         # Stamp per-graph defaults onto LLM nodes that don't already have them
         if self._default_model is not None or self._default_system_prompt is not None:
@@ -143,19 +139,6 @@ class _CompiledFunction:
                         node.attributes[gen_keys.SYSTEM_PROMPT] = self._default_system_prompt
 
         return graph
-
-    def _convert_named_to_positional(self, graph: Any) -> None:
-        """Convert named placeholders like {topic} to positional {0}."""
-        for node in graph.nodes:
-            for attr_key, attr_value in node.attributes.items():
-                if isinstance(attr_value, str):
-                    # Replace {param_name} with {index}
-                    new_value = attr_value
-                    for param_name, (idx, _) in self._param_mapping.items():
-                        pattern = r'\{' + re.escape(param_name) + r'\}'
-                        new_value = re.sub(pattern, f'{{{idx}}}', new_value)
-                    if new_value != attr_value:
-                        node.attributes[attr_key] = new_value
 
     def _normalize_runtime_args(self, *args: Any, **kwargs: Any) -> tuple[Any, ...]:
         # Build arg list in parameter order

@@ -1,22 +1,22 @@
 module {
   func.func @remove_op_workflow(%arg0: !ais.token {ais.param_name = "op_name", ais.param_type = "str"}) -> !ais.token attributes {ais.entry} {
     %think = ais.think "impact_analysis" : !ais.token
-    ais.print "=== IMPACT ANALYSIS ===\n{0}" [%think : !ais.token]
+    ais.print "=== IMPACT ANALYSIS ===\n{impact_analysis}" [%think : !ais.token]
     %compiler_dev = ais.spawn_agent "compiler_dev" {profile = "claude", cwd = "/home/apxm/projects/agents/apxm"} : !ais.token
     %runtime_dev = ais.spawn_agent "runtime_dev" {profile = "codex", cwd = "/home/apxm/projects/agents/apxm"} : !ais.token
     %verifier = ais.spawn_agent "verifier" {profile = "claude", cwd = "/home/apxm/projects/agents/apxm"} : !ais.token
     %ask = ais.ask "build_compiler_task" [%think : !ais.token] : !ais.token
     %ask_1 = ais.ask "build_runtime_task" [%think : !ais.token] : !ais.token
-    %compiler_dev_msg_1 = ais.communicate "{0}" to "compiler_dev" (%ask : !ais.token) : !ais.token
-    %runtime_dev_msg_1 = ais.communicate "{0}" to "runtime_dev" (%ask_1 : !ais.token) : !ais.token
-    ais.print "=== COMPILER REMOVAL ===\n{0}" [%compiler_dev_msg_1 : !ais.token]
-    ais.print "=== RUNTIME REMOVAL ===\n{0}" [%runtime_dev_msg_1 : !ais.token]
+    %compiler_dev_msg_1 = ais.communicate "{compiler_task}" to "compiler_dev" (%ask : !ais.token) : !ais.token
+    %runtime_dev_msg_1 = ais.communicate "{runtime_task}" to "runtime_dev" (%ask_1 : !ais.token) : !ais.token
+    ais.print "=== COMPILER REMOVAL ===\n{compiler_dev}" [%compiler_dev_msg_1 : !ais.token]
+    ais.print "=== RUNTIME REMOVAL ===\n{runtime_dev}" [%runtime_dev_msg_1 : !ais.token]
     %wait_removals = ais.wait_all %compiler_dev_msg_1, %runtime_dev_msg_1 : !ais.token, !ais.token -> !ais.token
     %ask_2 = ais.ask "build_verify_task" [%compiler_dev_msg_1, %runtime_dev_msg_1 : !ais.token, !ais.token] : !ais.token
-    %verifier_msg_1 = ais.communicate "{0}" to "verifier" (%ask_2 : !ais.token) : !ais.token
-    ais.print "=== VERIFICATION ===\n{0}" [%verifier_msg_1 : !ais.token]
+    %verifier_msg_1 = ais.communicate "{verify_task}" to "verifier" (%ask_2 : !ais.token) : !ais.token
+    ais.print "=== VERIFICATION ===\n{verifier}" [%verifier_msg_1 : !ais.token]
     %think_1 = ais.think "removal_summary" [%think, %compiler_dev_msg_1, %runtime_dev_msg_1, %verifier_msg_1 : !ais.token, !ais.token, !ais.token, !ais.token] : !ais.token
-    ais.print "=== REMOVAL SUMMARY ===\n{0}" [%think_1 : !ais.token]
+    ais.print "=== REMOVAL SUMMARY ===\n{final}" [%think_1 : !ais.token]
     func.return %think_1 : !ais.token
   }
 }

@@ -27,40 +27,42 @@ def fusion_stress(g: GraphRecorder):
 
     # Start with initial question
     current = g.ask(
-        "initial_ask",
-        "What is the capital of France? Answer in one word."
+        name="initial_ask",
+        prompt="What is the capital of France? Answer in one word."
     )
 
     # Chain of 10 ask→think pairs
-    # Each pair should be fusible into a single LLM call
+    # Each pair should be fusible into a single LLM call.
+    # Auto-wire reads the caller's local variable scope, so referencing
+    # `{prev}` in the template wires the edge from whatever NodeRef the
+    # local `prev` currently holds.
     for i in range(10):
-        # ASK: Simple factual question
+        prev = current  # bind local for template auto-wire
         ask_node = g.ask(
-            f"ask_{i}",
-            f"{{0}} Based on this, what is a famous landmark in that city? "
+            name=f"ask_{i}",
+            prompt=f"{{prev}} Based on this, what is a famous landmark in that city? "
             f"Answer in 3-4 words (iteration {i})."
         )
-        current | ask_node
 
-        # THINK: Elaborate on the previous answer
+        # THINK: Elaborate on the previous ASK answer.
+        prev = ask_node
         think_node = g.think(
-            f"think_{i}",
-            f"{{0}} Elaborate on why this landmark is historically significant. "
+            name=f"think_{i}",
+            prompt=f"{{prev}} Elaborate on why this landmark is historically significant. "
             f"Provide 2-3 sentences (iteration {i})."
         )
-        ask_node | think_node
 
         current = think_node
 
-    # Final output
+    # Final output (current is the last think node).
+    final = current  # bind local for template auto-wire
     output = g.print(
-        "=== FUSION STRESS TEST RESULT ===\n\n"
-        "Final elaboration:\n{0}\n\n"
-        "This workflow executed 10 ask→think pairs.\n"
+        message="=== FUSION STRESS TEST RESULT ===\n\n"
+        "Final elaboration:\n{final}\n\n"
+        "This workflow executed 10 ask\u2192think pairs.\n"
         "O0: 20 separate LLM calls\n"
         "O2 with FuseAskOps: ~10 fused LLM calls"
     )
-    current | output
 
     g.done(output)
 
@@ -69,6 +71,6 @@ if __name__ == "__main__":
     # Output the graph as JSON
     print(fusion_stress._graph.to_air())
     # To execute directly:
-    # import asyncio
-    # result = asyncio.run(fusion_stress())
+    # import apxm
+    # result = apxm.run(fusion_stress())
     # print(result.content)

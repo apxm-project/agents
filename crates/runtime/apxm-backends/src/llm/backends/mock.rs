@@ -394,11 +394,7 @@ impl LLMBackend for MockLLMBackend {
         let resp = self.select_response(&effective_prompt).clone();
 
         // Record the call (without latency for streaming)
-        self.record_call(
-            effective_prompt,
-            request.system_prompt.clone(),
-            &resp,
-        );
+        self.record_call(effective_prompt, request.system_prompt.clone(), &resp);
 
         let response = LLMResponse::new(
             resp.content.clone(),

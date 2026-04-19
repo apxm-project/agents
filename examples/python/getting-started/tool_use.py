@@ -18,21 +18,21 @@ def tool_agent(g: GraphRecorder):
         parameters_schema={"type": "object", "properties": {"query": {"type": "string"}}}
     )
 
-    topic = g.ask("ask_topic", "What topic should we research?")
-    register >> topic
+    topic = g.ask(name="ask_topic", prompt="What topic should we research?")
+    g.add_edge(register, topic, dependency="Control")
 
     # Invoke the search tool
     results = g.invoke("search_results", capability="search", params={"query": "{topic}"})
 
     # Summarize findings
-    summary = g.ask("summarize", "Summarize these findings: {results}")
+    summary = g.ask(name="summarize", prompt="Summarize these findings: {results}")
 
     g.done(summary)
     
 
 
 if __name__ == "__main__":
-    import asyncio
+    import apxm
 
-    result = asyncio.run(tool_agent())
+    result = apxm.run(tool_agent())
     print(result.content)

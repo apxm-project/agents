@@ -35,47 +35,47 @@ def cross_critique_pipeline(g: GraphRecorder):
     codex_proposal = agent_b.get_last_node()
 
     # Print parallel proposals
-    print1 = g.print("=== PROPOSALS (parallel) ===\nClaude:\n{claude_proposal}\n\nCodex:\n{codex_proposal}")
+    print1 = g.print(message="=== PROPOSALS (parallel) ===\nClaude:\n{claude_proposal}\n\nCodex:\n{codex_proposal}")
 
     # Cross-critiques: A critiques B, B critiques A
     codex_critique_prompt = g.ask(
-        "build_codex_critique",
-        "Critique the following feature proposal from Claude for the APXM project. "
+        name="build_codex_critique",
+        prompt="Critique the following feature proposal from Claude for the APXM project. "
         "Is it feasible? Is it truly the most impactful? What's missing? Under 100 words.\n\n"
         "Claude's proposal:\n{claude_proposal}"
     )
-    print1 >> codex_critique_prompt
+    g.add_edge(print1, codex_critique_prompt, dependency="Control")
 
     claude_critique_prompt = g.ask(
-        "build_claude_critique",
-        "Critique the following feature proposal from Codex for the APXM project. "
+        name="build_claude_critique",
+        prompt="Critique the following feature proposal from Codex for the APXM project. "
         "Is it feasible? Is it truly the most impactful? What's missing? Under 100 words.\n\n"
         "Codex's proposal:\n{codex_proposal}"
     )
-    print1 >> claude_critique_prompt
+    g.add_edge(print1, claude_critique_prompt, dependency="Control")
 
     # Send cross-critiques
     codex_critiques = g.communicate(
-        "codex_critiques_claude",
+        name="codex_critiques_claude",
         target_agent="agent_b",
         message="{codex_critique_prompt}"
     )
 
     claude_critiques = g.communicate(
-        "claude_critiques_codex",
+        name="claude_critiques_codex",
         target_agent="agent_a",
         message="{claude_critique_prompt}"
     )
 
     # Print critiques
-    print2 = g.print("=== CRITIQUES ===\nCodex critiques Claude:\n{codex_critiques}\n\nClaude critiques Codex:\n{claude_critiques}")
+    print2 = g.print(message="=== CRITIQUES ===\nCodex critiques Claude:\n{codex_critiques}\n\nClaude critiques Codex:\n{claude_critiques}")
 
     g.done(print2)
     
 
 
 if __name__ == "__main__":
-    import asyncio
+    import apxm
 
-    result = asyncio.run(cross_critique_pipeline())
+    result = apxm.run(cross_critique_pipeline())
     print(result.content)

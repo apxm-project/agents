@@ -8,6 +8,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use apxm_core::types::backend::BackendType;
+use apxm_core::types::provider_spec::ProviderProtocol;
 use apxm_core::types::BackendConfig;
 use dirs::home_dir;
 use serde::{Deserialize, Serialize};
@@ -15,6 +17,36 @@ use std::env;
 use thiserror::Error;
 
 pub(crate) type Result<T> = std::result::Result<T, ConfigError>;
+
+/// A provider detected from environment variables.
+pub struct DetectedProvider {
+    pub name: &'static str,
+    pub env_var: &'static str,
+    pub protocol: ProviderProtocol,
+    pub default_model: &'static str,
+}
+
+/// Well-known providers to auto-detect.
+pub const DETECTABLE_PROVIDERS: &[DetectedProvider] = &[
+    DetectedProvider {
+        name: "anthropic",
+        env_var: "ANTHROPIC_API_KEY",
+        protocol: ProviderProtocol::Anthropic,
+        default_model: "claude-sonnet-4-6",
+    },
+    DetectedProvider {
+        name: "openai",
+        env_var: "OPENAI_API_KEY",
+        protocol: ProviderProtocol::OpenAI,
+        default_model: "gpt-4o-mini",
+    },
+    DetectedProvider {
+        name: "google",
+        env_var: "GOOGLE_API_KEY",
+        protocol: ProviderProtocol::Google,
+        default_model: "gemini-2.5-flash",
+    },
+];
 
 /// Model governance configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -250,6 +282,49 @@ impl ApXmConfig {
         Self::load_default()
     }
 
+    /// Generate a minimal config from detected providers.
+    pub fn generate_default(providers: &[&DetectedProvider]) -> Result<Self> {
+        if providers.is_empty() {
+            return Err(ConfigError::NoProviders);
+        }
+        let first = providers[0];
+        let backends: Vec<BackendConfig> = providers
+            .iter()
+            .map(|p| BackendConfig {
+                name: p.name.to_string(),
+                backend_type: BackendType::Cloud,
+                protocol: p.protocol,
+                endpoint: None,
+                api_key: Some(format!("env:{}", p.env_var)),
+                headers: HashMap::new(),
+                models: vec![],
+                docker: None,
+            })
+            .collect();
+
+        Ok(Self {
+            chat: ChatConfig {
+                providers: providers.iter().map(|p| p.name.to_string()).collect(),
+                default_backend: Some(first.name.to_string()),
+                default_model: Some(first.default_model.to_string()),
+                ..Default::default()
+            },
+            backends,
+            ..Default::default()
+        })
+    }
+
+    /// Write this config to the given path.
+    pub fn write_to_file(&self, path: impl AsRef<Path>) -> Result<()> {
+        let content =
+            toml::to_string_pretty(self).map_err(|e| ConfigError::Serialize(e.to_string()))?;
+        if let Some(parent) = path.as_ref().parent() {
+            fs::create_dir_all(parent).map_err(ConfigError::Io)?;
+        }
+        fs::write(path, content).map_err(ConfigError::Io)?;
+        Ok(())
+    }
+
     /// Build APxM standard tool configuration from config file fields.
     pub fn tools_config(&self) -> apxm_runtime::capability::builtins::ToolsConfig {
         let mut tools_config = apxm_runtime::capability::builtins::ToolsConfig::default();
@@ -275,7 +350,11 @@ fn project_config_path() -> Option<PathBuf> {
     None
 }
 
-fn apply_enabled_override(name: &str, enabled: bool, config: &mut apxm_runtime::capability::builtins::ToolsConfig) {
+fn apply_enabled_override(
+    name: &str,
+    enabled: bool,
+    config: &mut apxm_runtime::capability::builtins::ToolsConfig,
+) {
     match normalize_tool_name(name) {
         Some("bash") => config.bash.enabled = enabled,
         Some("read") => config.read.enabled = enabled,
@@ -390,7 +469,8 @@ fn apply_tool_preset(name: &str, config: &mut apxm_runtime::capability::builtins
         "search_research" => {
             config.search_web.max_results = 15;
             config.search_web.safe_search = true;
-            config.search_web.search_depth = apxm_runtime::capability::builtins::SearchDepth::Advanced;
+            config.search_web.search_depth =
+                apxm_runtime::capability::builtins::SearchDepth::Advanced;
             config.search_web.enabled = true;
         }
         _ => {}
@@ -527,6 +607,12 @@ pub enum ConfigError {
 
     #[error("Unable to determine home directory for default config path")]
     HomeDirMissing,
+
+    #[error("No providers detected")]
+    NoProviders,
+
+    #[error("Failed to serialize config: {0}")]
+    Serialize(String),
 }
 
 #[cfg(test)]

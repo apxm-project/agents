@@ -6,8 +6,23 @@
 
 use apxm_compiler::{AirEdge, AirModule, AirNode};
 use apxm_compiler::{Context, Pipeline};
+use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::types::{AISOperationType, DependencyType, OptimizationLevel, Value};
 use std::collections::HashMap;
+
+/// Build the attribute map for an Ask node that consumes a single named input.
+fn ask_attrs(input_name: &str) -> HashMap<String, Value> {
+    HashMap::from([
+        (
+            graph_attrs::TEMPLATE_STR.into(),
+            Value::String(format!("{{{input_name}}}")),
+        ),
+        (
+            graph_attrs::INPUT_NAMES.into(),
+            Value::Array(vec![Value::String(input_name.into())]),
+        ),
+    ])
+}
 
 #[test]
 fn test_priority_on_critical_path() {
@@ -26,13 +41,13 @@ fn test_priority_on_critical_path() {
                 id: 2,
                 name: "process1".to_string(),
                 op: AISOperationType::Ask,
-                attributes: HashMap::from([("template_str".into(), Value::String("{0}".into()))]),
+                attributes: ask_attrs("input"),
             },
             AirNode {
                 id: 3,
                 name: "process2".to_string(),
                 op: AISOperationType::Ask,
-                attributes: HashMap::from([("template_str".into(), Value::String("{0}".into()))]),
+                attributes: ask_attrs("process1"),
             },
         ],
         edges: vec![
@@ -55,8 +70,7 @@ fn test_priority_on_critical_path() {
     let pipeline = Pipeline::with_opt_level(&context, OptimizationLevel::O1);
 
     // Compile the module through the pipeline (requires MLIR)
-    let _module = pipeline.compile_graph(&graph)
-        .expect("compilation failed");
+    let _module = pipeline.compile_graph(&graph).expect("compilation failed");
 }
 
 #[test]
@@ -76,19 +90,19 @@ fn test_priority_on_fan_out() {
                 id: 2,
                 name: "consumer1".to_string(),
                 op: AISOperationType::Ask,
-                attributes: HashMap::from([("template_str".into(), Value::String("{0}".into()))]),
+                attributes: ask_attrs("producer"),
             },
             AirNode {
                 id: 3,
                 name: "consumer2".to_string(),
                 op: AISOperationType::Ask,
-                attributes: HashMap::from([("template_str".into(), Value::String("{0}".into()))]),
+                attributes: ask_attrs("producer"),
             },
             AirNode {
                 id: 4,
                 name: "consumer3".to_string(),
                 op: AISOperationType::Ask,
-                attributes: HashMap::from([("template_str".into(), Value::String("{0}".into()))]),
+                attributes: ask_attrs("producer"),
             },
         ],
         edges: vec![
@@ -116,8 +130,7 @@ fn test_priority_on_fan_out() {
     let pipeline = Pipeline::with_opt_level(&context, OptimizationLevel::O1);
 
     // Compile the module through the pipeline (requires MLIR)
-    let _module = pipeline.compile_graph(&graph)
-        .expect("compilation failed");
+    let _module = pipeline.compile_graph(&graph).expect("compilation failed");
 }
 
 #[test]
@@ -138,19 +151,19 @@ fn test_priority_normal_for_non_critical() {
                 id: 2,
                 name: "critical1".to_string(),
                 op: AISOperationType::Ask,
-                attributes: HashMap::from([("template_str".into(), Value::String("{0}".into()))]),
+                attributes: ask_attrs("root"),
             },
             AirNode {
                 id: 3,
                 name: "non_critical".to_string(),
                 op: AISOperationType::Ask,
-                attributes: HashMap::from([("template_str".into(), Value::String("{0}".into()))]),
+                attributes: ask_attrs("root"),
             },
             AirNode {
                 id: 4,
                 name: "critical2".to_string(),
                 op: AISOperationType::Ask,
-                attributes: HashMap::from([("template_str".into(), Value::String("{0}".into()))]),
+                attributes: ask_attrs("critical1"),
             },
         ],
         edges: vec![
@@ -178,6 +191,5 @@ fn test_priority_normal_for_non_critical() {
     let pipeline = Pipeline::with_opt_level(&context, OptimizationLevel::O1);
 
     // Compile the module through the pipeline (requires MLIR)
-    let _module = pipeline.compile_graph(&graph)
-        .expect("compilation failed");
+    let _module = pipeline.compile_graph(&graph).expect("compilation failed");
 }

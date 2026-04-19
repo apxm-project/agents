@@ -1,11 +1,11 @@
 //! Pipeline API for compiling and optimizing modules.
 
+use crate::air_builder::AirModule;
 use crate::api::{Context, Module};
 use crate::passes::{PassManager, PipelineDiagnostics, build_pass_list};
 use apxm_core::error::compiler::{CompilerError, Result};
 use apxm_core::error::{builder::ErrorBuilder, codes::ErrorCode};
 use apxm_core::types::{OptimizationLevel, PipelineConfig};
-use crate::air_builder::AirModule;
 
 /// Pipeline API for compiling and optimizing modules.
 pub struct Pipeline<'ctx> {

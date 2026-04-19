@@ -1,5 +1,6 @@
 //! Execution context - Holds runtime state and provides access to subsystems
 
+use crate::sandbox::SandboxRegistry;
 use crate::{
     aam::{Aam, ScopeSpec},
     agent_pool::AgentPool,
@@ -15,7 +16,6 @@ use apxm_core::InstructionConfig;
 use apxm_core::constants::{cache, runtime::metadata};
 use apxm_core::paths::ApxmPaths;
 use apxm_core::types::Agent;
-use crate::sandbox::SandboxRegistry;
 use std::sync::Arc;
 
 use super::cancellation::CancellationToken;
@@ -85,14 +85,21 @@ impl ExecutionContext {
             Ok(db_path) => match ResponseCache::new_with_sqlite(&db_path) {
                 Ok(cache) => Arc::new(cache),
                 Err(e) => {
-                    tracing::warn!("Failed to initialize SQLite cache at {:?}: {}. Falling back to L1-only cache.", db_path, e);
+                    tracing::warn!(
+                        "Failed to initialize SQLite cache at {:?}: {}. Falling back to L1-only cache.",
+                        db_path,
+                        e
+                    );
                     Arc::new(ResponseCache::new())
                 }
             },
             #[cfg(not(feature = "sqlite"))]
             Ok(_) => Arc::new(ResponseCache::new()),
             Err(e) => {
-                tracing::warn!("Failed to resolve cache directory: {}. Using L1-only cache.", e);
+                tracing::warn!(
+                    "Failed to resolve cache directory: {}. Using L1-only cache.",
+                    e
+                );
                 Arc::new(ResponseCache::new())
             }
         };

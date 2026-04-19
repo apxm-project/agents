@@ -59,7 +59,7 @@ BENCHMARKS = {
     },
     "dead_context_stress": {
         "file": "examples/python/_benchmarks/dead_context_stress.py",
-        "description": "Tests DeadContextElimination (5 contexts, only {0} used)",
+        "description": "Tests DeadContextElimination (5 contexts, only one used)",
         "metrics": ["duration_ms", "input_tokens", "token_savings_pct"],
     },
     "prefix_fanout_large": {

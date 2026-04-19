@@ -71,7 +71,15 @@ async fn run_cli() -> Result<()> {
             target,
             no_cse_llm,
             profile,
-        } => compile_command(input, output, emit_diagnostics, opt_level, target, no_cse_llm, profile),
+        } => compile_command(
+            input,
+            output,
+            emit_diagnostics,
+            opt_level,
+            target,
+            no_cse_llm,
+            profile,
+        ),
         Commands::Decompile { artifact, output } => decompile_command(artifact, output),
         Commands::Execute {
             input,
@@ -98,7 +106,17 @@ async fn run_cli() -> Result<()> {
             emit_metrics,
             emit_session,
             emit_profile,
-        } => run_command(input, args, cli.config, emit_metrics, emit_session, emit_profile).await,
+        } => {
+            run_command(
+                input,
+                args,
+                cli.config,
+                emit_metrics,
+                emit_session,
+                emit_profile,
+            )
+            .await
+        }
         Commands::Doctor => doctor_command(cli.config, cli.json),
         Commands::Activate { shell } => activate_command(&shell),
         Commands::Install => install_command(),
@@ -159,7 +177,6 @@ async fn run_cli_no_driver() -> Result<()> {
         )),
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -478,8 +495,9 @@ mod tests {
 
     #[test]
     fn graph_analysis_no_nodes_errors() {
-        let result =
-            serde_json::from_value::<apxm_compiler::AirModule>(serde_json::json!({"name": "empty"}));
+        let result = serde_json::from_value::<apxm_compiler::AirModule>(
+            serde_json::json!({"name": "empty"}),
+        );
         assert!(result.is_err());
     }
 }

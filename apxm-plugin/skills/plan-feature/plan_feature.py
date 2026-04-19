@@ -37,11 +37,9 @@ def plan_feature_workflow(g: GraphRecorder):
     architect = g.spawn("architect", profile="claude", cwd=cwd)
 
     # Step 1: Architect produces initial plan
-    architect_task = g.text(
-        "architect_task",
-        value="""You are the APXM architect. Create an implementation plan for this feature:
+    architect.ask("""You are the APXM architect. Create an implementation plan for this feature:
 
-Feature: {0}
+Feature: {feature}
 
 Read the APXM project structure:
 - CLAUDE.md for architecture overview
@@ -59,22 +57,18 @@ Produce a plan with:
 
 Be specific — include function names, file paths, and type signatures where possible.
 Keep under 500 words.
-"""
-    )
+""")
 
-    architect.ask("{0}")
-    architect_task | architect.get_last_node()
-
-    print1 = g.print("print_initial_plan", message="=== INITIAL PLAN ===\n{0}")
-    architect.get_last_node() | print1
+    print1 = g.print(name="print_initial_plan", message="=== INITIAL PLAN ===\n{architect}")
+    g.add_edge(architect.get_last_node(), print1)
 
     # Step 2: Gap analysis — what's missing vs what exists
     gap_analysis = g.think(
-        "gap_analysis",
-        template="""Analyze what's missing vs what exists:
+        name="gap_analysis",
+        prompt="""Analyze what's missing vs what exists:
 
-Feature: {0}
-Initial plan: {1}
+Feature: {feature}
+Initial plan: {architect}
 
 Gap analysis:
 1. What components already exist that we can reuse?
@@ -95,20 +89,19 @@ Output a structured gap analysis with:
 - Missing pieces (critical vs nice-to-have)
 """
     )
-    g.text("feature_for_gap", value="{0}") | gap_analysis
-    architect.get_last_node() | gap_analysis
-    print1 >> gap_analysis
+    g.add_edge(architect.get_last_node(), gap_analysis)
+    g.add_edge(print1, gap_analysis, dependency="Control")
 
-    print2 = g.print("print_gap_analysis", message="=== GAP ANALYSIS ===\n{0}")
-    gap_analysis | print2
+    print2 = g.print(name="print_gap_analysis", message="=== GAP ANALYSIS ===\n{gap_analysis}")
+    g.add_edge(gap_analysis, print2)
 
     # Step 3: Risk analysis — what could go wrong
     risk_analysis = g.think(
-        "risk_analysis",
-        template="""Identify risks and mitigation strategies:
+        name="risk_analysis",
+        prompt="""Identify risks and mitigation strategies:
 
-Feature: {0}
-Initial plan: {1}
+Feature: {feature}
+Initial plan: {architect}
 
 Risk analysis:
 1. Technical risks:
@@ -132,19 +125,18 @@ For each risk, provide:
 - Mitigation strategy
 """
     )
-    g.text("feature_for_risk", value="{0}") | risk_analysis
-    architect.get_last_node() | risk_analysis
-    print1 >> risk_analysis
+    g.add_edge(architect.get_last_node(), risk_analysis)
+    g.add_edge(print1, risk_analysis, dependency="Control")
 
-    print3 = g.print("print_risk_analysis", message="=== RISK ANALYSIS ===\n{0}")
-    risk_analysis | print3
+    print3 = g.print(name="print_risk_analysis", message="=== RISK ANALYSIS ===\n{risk_analysis}")
+    g.add_edge(risk_analysis, print3)
 
     # Step 4: Crate ordering — bottom-up dependency order
     crate_ordering = g.think(
-        "crate_ordering",
-        template="""Determine the order to modify crates based on dependencies:
+        name="crate_ordering",
+        prompt="""Determine the order to modify crates based on dependencies:
 
-Initial plan: {0}
+Initial plan: {architect}
 
 APXM crate dependency order (bottom-up):
 1. apxm-core (no dependencies on other APXM crates)
@@ -163,33 +155,33 @@ Output the implementation order:
 - Estimated effort per crate (hours)
 """
     )
-    architect.get_last_node() | crate_ordering
-    print1 >> crate_ordering
+    g.add_edge(architect.get_last_node(), crate_ordering)
+    g.add_edge(print1, crate_ordering, dependency="Control")
 
-    print4 = g.print("print_crate_ordering", message="=== CRATE ORDERING ===\n{0}")
-    crate_ordering | print4
+    print4 = g.print(name="print_crate_ordering", message="=== CRATE ORDERING ===\n{crate_ordering}")
+    g.add_edge(crate_ordering, print4)
 
     # Step 5: Merge all analyses
     merge = g.merge(
-        "merge_analyses",
+        name="merge_analyses",
         architect.get_last_node(),
         gap_analysis,
         risk_analysis,
         crate_ordering
     )
-    print2 >> merge
-    print3 >> merge
-    print4 >> merge
+    g.add_edge(print2, merge, dependency="Control")
+    g.add_edge(print3, merge, dependency="Control")
+    g.add_edge(print4, merge, dependency="Control")
 
     # Step 6: Final plan with everything integrated
     final_plan = g.think(
-        "final_plan",
-        template="""Create the final implementation plan:
+        name="final_plan",
+        prompt="""Create the final implementation plan:
 
-Initial plan: {0}
-Gap analysis: {1}
-Risk analysis: {2}
-Crate ordering: {3}
+Initial plan: {architect}
+Gap analysis: {gap_analysis}
+Risk analysis: {risk_analysis}
+Crate ordering: {crate_ordering}
 
 Final plan structure:
 
@@ -228,14 +220,14 @@ For each crate:
 Keep the plan actionable and specific. Include file paths and function names.
 """
     )
-    architect.get_last_node() | final_plan
-    gap_analysis | final_plan
-    risk_analysis | final_plan
-    crate_ordering | final_plan
-    merge >> final_plan
+    g.add_edge(architect.get_last_node(), final_plan)
+    g.add_edge(gap_analysis, final_plan)
+    g.add_edge(risk_analysis, final_plan)
+    g.add_edge(crate_ordering, final_plan)
+    g.add_edge(merge, final_plan, dependency="Control")
 
-    print5 = g.print("print_final_plan", message="=== FINAL PLAN ===\n{0}")
-    final_plan | print5
+    print5 = g.print(name="print_final_plan", message="=== FINAL PLAN ===\n{final_plan}")
+    g.add_edge(final_plan, print5)
 
     g.done(print5)
 

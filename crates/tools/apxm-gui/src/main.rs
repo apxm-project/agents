@@ -5,10 +5,10 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use axum::Router;
 use axum::extract::{Path, Query};
 use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Json, Response};
-use axum::Router;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
@@ -17,14 +17,19 @@ use tower_http::services::ServeDir;
 use tracing::{error, info};
 
 use apxm_compiler::AirModule;
+use apxm_core::types::{OptimizationLevel, OptimizationTarget};
 
 mod acp_client;
 mod air_parse;
 mod api;
+mod events;
 
 // ---------------------------------------------------------------------------
 // App state
 // ---------------------------------------------------------------------------
+
+/// Default OpenClaw gateway port.
+const GATEWAY_PORT: u16 = 18789;
 
 /// Shared application state.
 struct AppState {
@@ -37,6 +42,8 @@ struct AppState {
     examples_dir: Option<PathBuf>,
     /// Active ACP agent sessions, keyed by session ID.
     agent_sessions: DashMap<String, Arc<Mutex<acp_client::AgentSession>>>,
+    /// Managed OpenClaw gateway child process (started on GUI launch).
+    gateway_process: Mutex<Option<tokio::process::Child>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -76,7 +83,10 @@ fn validate_path(path: &str) -> Result<PathBuf, AppError> {
     if canonical.starts_with(&cwd) || canonical.starts_with(&sessions) {
         Ok(canonical)
     } else {
-        Err(AppError(StatusCode::FORBIDDEN, "path outside allowed directories".into()))
+        Err(AppError(
+            StatusCode::FORBIDDEN,
+            "path outside allowed directories".into(),
+        ))
     }
 }
 
@@ -287,31 +297,53 @@ async fn read_graph_content(path: &std::path::Path) -> Result<String, AppError> 
         if let Some(existing) = std::env::var_os("PYTHONPATH") {
             pythonpath_entries.extend(std::env::split_paths(&existing));
         }
-        let pythonpath = std::env::join_paths(pythonpath_entries)
-            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("PYTHONPATH error: {e}")))?;
+        let pythonpath = std::env::join_paths(pythonpath_entries).map_err(|e| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("PYTHONPATH error: {e}"),
+            )
+        })?;
 
         let output = tokio::process::Command::new("python3")
             .arg(path)
             .env("PYTHONPATH", &pythonpath)
             .output()
             .await
-            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to run Python: {e}")))?;
+            .map_err(|e| {
+                AppError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("failed to run Python: {e}"),
+                )
+            })?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(AppError(StatusCode::BAD_REQUEST, format!("Python error: {}", stderr.trim())));
+            return Err(AppError(
+                StatusCode::BAD_REQUEST,
+                format!("Python error: {}", stderr.trim()),
+            ));
         }
 
-        let air = String::from_utf8(output.stdout)
-            .map_err(|_| AppError(StatusCode::BAD_REQUEST, "Python output is not valid UTF-8".into()))?;
+        let air = String::from_utf8(output.stdout).map_err(|_| {
+            AppError(
+                StatusCode::BAD_REQUEST,
+                "Python output is not valid UTF-8".into(),
+            )
+        })?;
         if air.trim().is_empty() {
-            return Err(AppError(StatusCode::BAD_REQUEST, "Python file produced no AIR output".into()));
+            return Err(AppError(
+                StatusCode::BAD_REQUEST,
+                "Python file produced no AIR output".into(),
+            ));
         }
         Ok(air)
     } else {
         tokio::fs::read_to_string(path).await.map_err(|e| {
             error!(path = %path.display(), error = %e, "failed to read graph file");
-            AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to read file: {e}"))
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to read file: {e}"),
+            )
         })
     }
 }
@@ -331,13 +363,19 @@ fn parse_graph_content(content: &str) -> Result<serde_json::Value, AppError> {
         }
         // Fallback: pass through raw JSON for studio-created graphs that use op names
         let val: serde_json::Value = serde_json::from_str(content).map_err(|e| {
-            AppError(StatusCode::BAD_REQUEST, format!("failed to parse graph JSON: {e}"))
+            AppError(
+                StatusCode::BAD_REQUEST,
+                format!("failed to parse graph JSON: {e}"),
+            )
         })?;
         // Validate it has the expected shape
         if val.get("nodes").is_some() && val.get("edges").is_some() {
             Ok(val)
         } else {
-            Err(AppError(StatusCode::BAD_REQUEST, "JSON missing 'nodes' or 'edges' fields".into()))
+            Err(AppError(
+                StatusCode::BAD_REQUEST,
+                "JSON missing 'nodes' or 'edges' fields".into(),
+            ))
         }
     }
 }
@@ -351,9 +389,7 @@ async fn graph_handler(Query(params): Query<PathParam>) -> ApiResult<impl IntoRe
 }
 
 /// GET /api/graph/analyze?path=<file> — return graph analysis JSON.
-async fn graph_analyze_handler(
-    Query(params): Query<PathParam>,
-) -> ApiResult<impl IntoResponse> {
+async fn graph_analyze_handler(Query(params): Query<PathParam>) -> ApiResult<impl IntoResponse> {
     let path = validate_path(&params.path)?;
     let content = read_graph_content(&path).await?;
     let graph_json = parse_graph_content(&content)?;
@@ -362,9 +398,8 @@ async fn graph_analyze_handler(
     // AirModule expects SCREAMING_SNAKE_CASE. Normalize before deserializing.
     let normalized = normalize_ops_for_air_module(graph_json);
 
-    let graph: AirModule = serde_json::from_value(normalized).map_err(|e| {
-        AppError(StatusCode::BAD_REQUEST, format!("failed to map graph: {e}"))
-    })?;
+    let graph: AirModule = serde_json::from_value(normalized)
+        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("failed to map graph: {e}")))?;
 
     let analysis = analyze_graph(&graph);
     Ok(Json(analysis))
@@ -376,7 +411,9 @@ fn normalize_ops_for_air_module(mut graph: serde_json::Value) -> serde_json::Val
         for node in nodes {
             if let Some(op) = node.get("op").and_then(|o| o.as_str()) {
                 let screaming = display_name_to_serde_variant(op);
-                node.as_object_mut().unwrap().insert("op".into(), serde_json::Value::String(screaming));
+                node.as_object_mut()
+                    .unwrap()
+                    .insert("op".into(), serde_json::Value::String(screaming));
             }
         }
     }
@@ -472,13 +509,19 @@ async fn session_handler(Query(params): Query<PathParam>) -> ApiResult<impl Into
     }
 
     // Detect source workflow path by scanning for matching graph_name
-    let graph_name = manifest.get("graph_name").and_then(|v| v.as_str()).unwrap_or("");
+    let graph_name = manifest
+        .get("graph_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     let mut source_path: Option<String> = None;
     if !graph_name.is_empty() {
         let cwd = std::env::current_dir().unwrap_or_default();
         // Check common locations for the source workflow
         for ext in &["py", "air"] {
-            let candidate = cwd.join("examples").join("python").join(format!("{graph_name}.{ext}"));
+            let candidate = cwd
+                .join("examples")
+                .join("python")
+                .join(format!("{graph_name}.{ext}"));
             if candidate.exists() {
                 source_path = Some(candidate.to_string_lossy().to_string());
                 break;
@@ -562,12 +605,7 @@ async fn session_node_handler(
     // Gather all JSON files in the node directory
     let mut result = serde_json::Map::new();
 
-    let files = &[
-        "node.json",
-        "output.json",
-        "status.json",
-        "live.json",
-    ];
+    let files = &["node.json", "output.json", "status.json", "live.json"];
 
     for filename in files {
         let file_path = target_dir.join(filename);
@@ -632,8 +670,14 @@ async fn examples_handler(
 
     // Sort by relative path.
     examples.sort_by(|a, b| {
-        let pa = a.get("relative_path").and_then(|v| v.as_str()).unwrap_or("");
-        let pb = b.get("relative_path").and_then(|v| v.as_str()).unwrap_or("");
+        let pa = a
+            .get("relative_path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let pb = b
+            .get("relative_path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         pa.cmp(pb)
     });
 
@@ -662,9 +706,9 @@ fn is_skip_dir(name: &str) -> bool {
 /// GET /api/file?path=<file> — return raw file content as plain text.
 async fn file_handler(Query(params): Query<PathParam>) -> ApiResult<impl IntoResponse> {
     let path = validate_path(&params.path)?;
-    let content = tokio::fs::read_to_string(&path).await.map_err(|e| {
-        AppError(StatusCode::NOT_FOUND, format!("failed to read file: {e}"))
-    })?;
+    let content = tokio::fs::read_to_string(&path)
+        .await
+        .map_err(|e| AppError(StatusCode::NOT_FOUND, format!("failed to read file: {e}")))?;
     Ok(content)
 }
 
@@ -682,10 +726,7 @@ fn extract_py_metadata(content: &str) -> (Option<String>, Option<String>) {
         }
         if found_compile && trimmed.starts_with("def ") {
             let after_def = &trimmed[4..];
-            func_name = after_def
-                .split('(')
-                .next()
-                .map(|s| s.trim().to_string());
+            func_name = after_def.split('(').next().map(|s| s.trim().to_string());
             found_compile = false;
             continue;
         }
@@ -694,8 +735,13 @@ fn extract_py_metadata(content: &str) -> (Option<String>, Option<String>) {
         }
         if func_name.is_some() && description.is_none() {
             if trimmed.starts_with("\"\"\"") || trimmed.starts_with("'''") {
-                let doc = trimmed.trim_start_matches("\"\"\"").trim_start_matches("'''");
-                let doc = doc.trim_end_matches("\"\"\"").trim_end_matches("'''").trim();
+                let doc = trimmed
+                    .trim_start_matches("\"\"\"")
+                    .trim_start_matches("'''");
+                let doc = doc
+                    .trim_end_matches("\"\"\"")
+                    .trim_end_matches("'''")
+                    .trim();
                 if !doc.is_empty() {
                     description = Some(doc.to_string());
                 }
@@ -771,7 +817,9 @@ async fn collect_graphs(
                     .unwrap_or((None, None));
                 // Only include .py files that use @compile (are actual workflows)
                 if func_name.is_none() {
-                    if content.as_deref().map_or(true, |c| !c.contains("@compile") && !c.contains("GraphRecorder")) {
+                    if content.as_deref().map_or(true, |c| {
+                        !c.contains("@compile") && !c.contains("GraphRecorder")
+                    }) {
                         continue;
                     }
                 }
@@ -783,18 +831,31 @@ async fn collect_graphs(
                     if trimmed.starts_with("module") || trimmed.starts_with("func.func") {
                         match air_parse::parse_air_text(text) {
                             Ok(parsed) => {
-                                let name = parsed.get("name").and_then(|n| n.as_str()).map(String::from);
-                                let count = parsed.get("nodes").and_then(|n| n.as_array()).map(|a| a.len());
-                                let params = parsed.get("parameters").and_then(|p| p.as_array()).cloned();
+                                let name = parsed
+                                    .get("name")
+                                    .and_then(|n| n.as_str())
+                                    .map(String::from);
+                                let count = parsed
+                                    .get("nodes")
+                                    .and_then(|n| n.as_array())
+                                    .map(|a| a.len());
+                                let params =
+                                    parsed.get("parameters").and_then(|p| p.as_array()).cloned();
                                 (name, count, None, params, "air")
                             }
                             Err(_) => (None, None, None, None, "air"),
                         }
                     } else {
                         let parsed = serde_json::from_str::<serde_json::Value>(text).ok();
-                        let name = parsed.as_ref().and_then(|v| v.get("name").and_then(|n| n.as_str()).map(String::from));
-                        let count = parsed.as_ref().and_then(|v| v.get("nodes").and_then(|n| n.as_array()).map(|a| a.len()));
-                        let params = parsed.as_ref().and_then(|v| v.get("parameters").and_then(|p| p.as_array()).cloned());
+                        let name = parsed
+                            .as_ref()
+                            .and_then(|v| v.get("name").and_then(|n| n.as_str()).map(String::from));
+                        let count = parsed.as_ref().and_then(|v| {
+                            v.get("nodes").and_then(|n| n.as_array()).map(|a| a.len())
+                        });
+                        let params = parsed
+                            .as_ref()
+                            .and_then(|v| v.get("parameters").and_then(|p| p.as_array()).cloned());
                         (name, count, None, params, "air")
                     }
                 } else {
@@ -847,10 +908,19 @@ async fn workflows_handler() -> ApiResult<impl IntoResponse> {
     let mut by_dir_stem: std::collections::HashMap<(String, String), Vec<serde_json::Value>> =
         std::collections::HashMap::new();
     for entry in raw {
-        let rel = entry.get("relative_path").and_then(|v| v.as_str()).unwrap_or("");
+        let rel = entry
+            .get("relative_path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         let p = std::path::Path::new(rel);
-        let dir = p.parent().map(|d| d.to_string_lossy().to_string()).unwrap_or_default();
-        let stem = p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+        let dir = p
+            .parent()
+            .map(|d| d.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let stem = p
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
         by_dir_stem.entry((dir, stem)).or_default().push(entry);
     }
 
@@ -860,9 +930,9 @@ async fn workflows_handler() -> ApiResult<impl IntoResponse> {
             workflows.push(group.remove(0));
         } else {
             // Find the .py entry (primary) and .air (secondary)
-            let py_idx = group.iter().position(|e| {
-                e.get("source_type").and_then(|v| v.as_str()) == Some("py")
-            });
+            let py_idx = group
+                .iter()
+                .position(|e| e.get("source_type").and_then(|v| v.as_str()) == Some("py"));
             if let Some(idx) = py_idx {
                 let mut primary = group.remove(idx);
                 // Merge metadata from the companion .air
@@ -878,7 +948,10 @@ async fn workflows_handler() -> ApiResult<impl IntoResponse> {
                         }
                     }
                     // Store companion path for graph visualization
-                    primary["air_path"] = companion.get("path").cloned().unwrap_or(serde_json::json!(null));
+                    primary["air_path"] = companion
+                        .get("path")
+                        .cloned()
+                        .unwrap_or(serde_json::json!(null));
                 }
                 workflows.push(primary);
             } else {
@@ -889,8 +962,14 @@ async fn workflows_handler() -> ApiResult<impl IntoResponse> {
     }
 
     workflows.sort_by(|a, b| {
-        let pa = a.get("relative_path").and_then(|v| v.as_str()).unwrap_or("");
-        let pb = b.get("relative_path").and_then(|v| v.as_str()).unwrap_or("");
+        let pa = a
+            .get("relative_path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let pb = b
+            .get("relative_path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         pa.cmp(pb)
     });
 
@@ -910,12 +989,36 @@ struct CompileRequest {
     #[serde(default)]
     target: Option<String>,
     #[serde(default)]
-    emit_diagnostics: bool,
-    #[serde(default)]
     no_cse_llm: bool,
 }
 
-fn default_opt_level() -> u8 { 1 }
+fn default_opt_level() -> u8 {
+    1
+}
+
+/// Per-pass metrics + metadata for the pipeline visualization.
+#[derive(Serialize, Clone)]
+struct PassMetricEntry {
+    pass_name: String,
+    category: String,
+    summary: String,
+    description: String,
+    duration_ms: Option<f64>,
+    ops_before: Option<usize>,
+    ops_after: Option<usize>,
+    ops_delta: Option<isize>,
+}
+
+/// Aggregate pass-pipeline statistics.
+#[derive(Serialize, Clone)]
+struct PassSummary {
+    total_passes: usize,
+    initial_ops: usize,
+    final_ops: usize,
+    total_ops_eliminated: usize,
+    active_passes: Vec<String>,
+    total_duration_ms: f64,
+}
 
 /// Response for POST /api/compile.
 #[derive(Serialize)]
@@ -923,6 +1026,8 @@ struct CompileResponse {
     success: bool,
     artifact_path: Option<String>,
     passes: Vec<String>,
+    pass_metrics: Vec<PassMetricEntry>,
+    pass_summary: Option<PassSummary>,
     duration_ms: u64,
     stdout: String,
     stderr: String,
@@ -944,15 +1049,53 @@ async fn compile_handler(
         None
     };
 
-    // Find the apxm CLI binary
     let cli_bin = find_apxm_cli();
 
+    // Build the enriched pass list using the compiler's real pass ordering + metadata
+    let opt_level = parse_compile_opt_level(req.opt_level);
+    let opt_target: OptimizationTarget = req
+        .target
+        .as_deref()
+        .and_then(|t| t.parse().ok())
+        .unwrap_or(OptimizationTarget::Balanced);
+    let pass_names = apxm_compiler::passes::build_pass_list(opt_level, req.no_cse_llm, opt_target);
+
+    let mut pass_metrics: Vec<PassMetricEntry> = pass_names
+        .iter()
+        .map(|name| {
+            let spec = apxm_ais::passes::find_pass_by_name(name);
+            PassMetricEntry {
+                pass_name: name.clone(),
+                category: spec
+                    .map(|s| format!("{:?}", s.category))
+                    .unwrap_or_default(),
+                summary: spec.map(|s| s.summary.to_string()).unwrap_or_default(),
+                description: spec.map(|s| s.description.to_string()).unwrap_or_default(),
+                duration_ms: None,
+                ops_before: None,
+                ops_after: None,
+                ops_delta: None,
+            }
+        })
+        .collect();
+
+    // Write diagnostics to a temp file so we can get per-pass metrics
+    let diag_path = std::env::temp_dir().join(format!(
+        "apxm-diag-{}.json",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+
     let start = std::time::Instant::now();
-    let mut cmd = tokio::process::Command::new(&cli_bin);
+    let mut cmd = apxm_command(&cli_bin);
     cmd.arg("compile")
         .arg(&path)
         .arg("--opt-level")
-        .arg(req.opt_level.to_string());
+        .arg(req.opt_level.to_string())
+        .arg("--emit-diagnostics")
+        .arg(&diag_path);
 
     if let Some(ref target) = req.target {
         cmd.arg("--target").arg(target);
@@ -960,15 +1103,17 @@ async fn compile_handler(
     if req.no_cse_llm {
         cmd.arg("--no-cse-llm");
     }
-    if req.emit_diagnostics {
-        cmd.arg("--emit-diagnostics");
-    }
 
     let output = cmd
         .current_dir(std::env::current_dir().unwrap_or_default())
         .output()
         .await
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to spawn compile: {e}")))?;
+        .map_err(|e| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to spawn compile: {e}"),
+            )
+        })?;
 
     let duration_ms = start.elapsed().as_millis() as u64;
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -978,17 +1123,17 @@ async fn compile_handler(
     let artifact_path = path.with_extension("apxmobj");
     let artifact_exists = artifact_path.exists();
 
-    // Get after-node-count from the artifact by decompiling, or from passes output
+    // Get after-node-count from the artifact by decompiling
     let node_count_after = if artifact_exists {
-        // Try to get node count from decompile
-        if let Ok(out) = tokio::process::Command::new(&cli_bin)
+        if let Ok(out) = apxm_command(&cli_bin)
             .arg("decompile")
             .arg(&artifact_path)
             .output()
             .await
         {
             let decomp = String::from_utf8_lossy(&out.stdout);
-            decomp.lines()
+            decomp
+                .lines()
                 .find(|l| l.contains("\"nodes\""))
                 .and_then(|_| {
                     serde_json::from_str::<serde_json::Value>(&decomp)
@@ -1002,16 +1147,82 @@ async fn compile_handler(
         None
     };
 
-    // Extract pass names from the optimization level
-    let passes = get_pass_list(req.opt_level);
-
-    // Parse diagnostics from stdout if requested
-    let diagnostics = if req.emit_diagnostics {
-        serde_json::from_str::<serde_json::Value>(&stdout).ok()
-            .and_then(|v| if v.get("passes").is_some() || v.get("diagnostics").is_some() { Some(v) } else { None })
+    // Parse the diagnostics file for per-pass metrics and merge into pass_metrics
+    let mut pass_summary: Option<PassSummary> = None;
+    let diagnostics = if let Ok(diag_content) = tokio::fs::read_to_string(&diag_path).await {
+        let _ = tokio::fs::remove_file(&diag_path).await;
+        if let Ok(diag_val) = serde_json::from_str::<serde_json::Value>(&diag_content) {
+            // Merge per-pass timing/ops into our enriched pass_metrics
+            if let Some(metrics_arr) = diag_val.get("pass_metrics").and_then(|v| v.as_array()) {
+                for m in metrics_arr {
+                    let pname = m.get("pass_name").and_then(|v| v.as_str()).unwrap_or("");
+                    if let Some(entry) = pass_metrics.iter_mut().find(|e| e.pass_name == pname) {
+                        entry.duration_ms = m.get("duration_ms").and_then(|v| v.as_f64());
+                        entry.ops_before = m
+                            .get("ops_before")
+                            .and_then(|v| v.as_u64())
+                            .map(|v| v as usize);
+                        entry.ops_after = m
+                            .get("ops_after")
+                            .and_then(|v| v.as_u64())
+                            .map(|v| v as usize);
+                        entry.ops_delta = m
+                            .get("ops_delta")
+                            .and_then(|v| v.as_i64())
+                            .map(|v| v as isize);
+                    }
+                }
+            }
+            // Build aggregate summary from diagnostics
+            if let Some(summary) = diag_val.get("pass_summary") {
+                pass_summary = Some(PassSummary {
+                    total_passes: summary
+                        .get("total_passes")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0) as usize,
+                    initial_ops: summary
+                        .get("initial_ops")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0) as usize,
+                    final_ops: summary
+                        .get("final_ops")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0) as usize,
+                    total_ops_eliminated: summary
+                        .get("total_ops_eliminated")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0) as usize,
+                    active_passes: summary
+                        .get("active_passes")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    total_duration_ms: summary
+                        .get("total_duration_ms")
+                        .and_then(|v| v.as_f64())
+                        .or_else(|| {
+                            diag_val
+                                .get("compilation_phases")
+                                .and_then(|p| p.get("passes_ms"))
+                                .and_then(|v| v.as_f64())
+                        })
+                        .unwrap_or(0.0),
+                });
+            }
+            Some(diag_val)
+        } else {
+            None
+        }
     } else {
+        let _ = tokio::fs::remove_file(&diag_path).await;
         None
     };
+
+    let passes: Vec<String> = pass_names;
 
     Ok(Json(CompileResponse {
         success: output.status.success(),
@@ -1021,6 +1232,8 @@ async fn compile_handler(
             None
         },
         passes,
+        pass_metrics,
+        pass_summary,
         duration_ms,
         stdout,
         stderr,
@@ -1043,31 +1256,12 @@ fn parse_node_count(content: &str) -> Option<usize> {
     }
 }
 
-fn get_pass_list(opt_level: u8) -> Vec<String> {
-    match opt_level {
-        0 => vec![],
-        1 => vec![
-            "normalize", "build-prompt", "dspy-optimize",
-            "unconsumed-value-warning", "scheduling", "fuse-ask-ops",
-            "assign-priority", "canonicalizer", "cse", "symbol-dce",
-        ].into_iter().map(String::from).collect(),
-        2 => vec![
-            "normalize", "build-prompt", "dspy-optimize",
-            "unconsumed-value-warning", "prompt-canonicalization",
-            "template-specialization", "schema-narrowing",
-            "scheduling", "fuse-ask-ops", "condense-ops",
-            "dead-context-elimination", "assign-priority",
-            "canonicalizer", "cse", "symbol-dce",
-        ].into_iter().map(String::from).collect(),
-        _ => vec![
-            "normalize", "build-prompt", "dspy-optimize",
-            "unconsumed-value-warning", "prompt-canonicalization",
-            "template-specialization", "schema-narrowing",
-            "scheduling", "fuse-ask-ops", "condense-ops",
-            "dead-context-elimination", "assign-priority",
-            "canonicalizer", "cse", "symbol-dce",
-            "(convergence x10)",
-        ].into_iter().map(String::from).collect(),
+fn parse_compile_opt_level(level: u8) -> OptimizationLevel {
+    match level {
+        0 => OptimizationLevel::O0,
+        1 => OptimizationLevel::O1,
+        2 => OptimizationLevel::O2,
+        _ => OptimizationLevel::O3,
     }
 }
 
@@ -1087,6 +1281,33 @@ fn find_apxm_cli() -> PathBuf {
     }
     // Fallback: hope it's on PATH
     PathBuf::from("apxm")
+}
+
+/// Create a `tokio::process::Command` for the CLI binary with
+/// `LD_LIBRARY_PATH` set so it can find `libapxm_compiler_c.so`
+/// and MLIR/LLVM shared libraries.  Mirrors the `[env]` section
+/// that dekk sets from `.dekk.toml`.
+fn apxm_command(cli_bin: &std::path::Path) -> tokio::process::Command {
+    let mut cmd = tokio::process::Command::new(cli_bin);
+
+    let mut dirs: Vec<String> = Vec::new();
+    if let Some(bin_dir) = cli_bin.parent().and_then(|p| std::fs::canonicalize(p).ok()) {
+        let lib_dir = bin_dir.join("lib");
+        if lib_dir.is_dir() {
+            dirs.push(lib_dir.to_string_lossy().into_owned());
+        }
+        dirs.push(bin_dir.to_string_lossy().into_owned());
+    }
+    if let Ok(existing) = std::env::var("LD_LIBRARY_PATH") {
+        if !existing.is_empty() {
+            dirs.push(existing);
+        }
+    }
+    if !dirs.is_empty() {
+        cmd.env("LD_LIBRARY_PATH", dirs.join(":"));
+    }
+
+    cmd
 }
 
 /// Request body for POST /api/execute.
@@ -1113,7 +1334,7 @@ async fn execute_handler(
     let path = validate_path(&req.path)?;
     let cli_bin = find_apxm_cli();
 
-    let mut cmd = tokio::process::Command::new(&cli_bin);
+    let mut cmd = apxm_command(&cli_bin);
     cmd.arg("execute")
         .arg(&path)
         .arg("--emit-session")
@@ -1133,16 +1354,22 @@ async fn execute_handler(
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to spawn execute: {e}")))?;
+        .map_err(|e| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to spawn execute: {e}"),
+            )
+        })?;
 
     let pid = child.id().unwrap_or(0);
 
     // Wait briefly for the session directory to appear
-    let sessions_dir = PathBuf::from(
-        std::env::var("HOME").unwrap_or_else(|_| "/root".into())
-    ).join(".apxm").join("sessions");
+    let sessions_dir = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/root".into()))
+        .join(".apxm")
+        .join("sessions");
 
-    let stem = path.file_stem()
+    let stem = path
+        .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("workflow");
 
@@ -1183,7 +1410,9 @@ async fn execute_handler(
         // Could not find session — return the PID at least
         return Err(AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("execution started (pid {pid}) but no session directory found — is --emit-session supported for this workflow?"),
+            format!(
+                "execution started (pid {pid}) but no session directory found — is --emit-session supported for this workflow?"
+            ),
         ));
     }
 
@@ -1217,19 +1446,24 @@ async fn save_graph_handler(
         let dir = PathBuf::from("workflows");
         if !dir.exists() {
             std::fs::create_dir_all(&dir).map_err(|e| {
-                AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("create dir: {e}"))
+                AppError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("create dir: {e}"),
+                )
             })?;
         }
         dir.join(format!("{}.air", graph_name))
     };
 
     // Write pretty-printed JSON
-    let content = serde_json::to_string_pretty(graph).map_err(|e| {
-        AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("serialize: {e}"))
-    })?;
+    let content = serde_json::to_string_pretty(graph)
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("serialize: {e}")))?;
 
     tokio::fs::write(&save_path, &content).await.map_err(|e| {
-        AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("write file: {e}"))
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("write file: {e}"),
+        )
     })?;
 
     let abs_path = save_path
@@ -1302,9 +1536,13 @@ async fn filetree_handler() -> ApiResult<impl IntoResponse> {
 
                     if ext == "air" {
                         if let Ok(content) = tokio::fs::read_to_string(&path).await {
-                            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content) {
+                            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content)
+                            {
                                 let graph_name = parsed.get("name").and_then(|n| n.as_str());
-                                let node_count = parsed.get("nodes").and_then(|n| n.as_array()).map(|a| a.len());
+                                let node_count = parsed
+                                    .get("nodes")
+                                    .and_then(|n| n.as_array())
+                                    .map(|a| a.len());
                                 entry_json["graph_meta"] = serde_json::json!({
                                     "name": graph_name,
                                     "node_count": node_count,
@@ -1363,9 +1601,7 @@ async fn probe_backend_status(endpoint: &str) -> String {
 
 /// GET /api/health — return structured summary of system configuration.
 /// With `?probe=true`, actively probes backend endpoints for reachability.
-async fn health_handler(
-    Query(params): Query<HealthParam>,
-) -> ApiResult<impl IntoResponse> {
+async fn health_handler(Query(params): Query<HealthParam>) -> ApiResult<impl IntoResponse> {
     let do_probe = params.probe.unwrap_or(false);
     let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
     let apxm_dir = PathBuf::from(&home).join(".apxm");
@@ -1388,22 +1624,50 @@ async fn health_handler(
                     let infos: Vec<BackendInfo> = backends
                         .iter()
                         .map(|backend| {
-                            let name = backend.get("name").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
-                            let endpoint = backend.get("endpoint").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                            let protocol = backend.get("protocol").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
-                            let model_count = backend.get("models").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
-                            BackendInfo { name, endpoint, protocol, model_count }
+                            let name = backend
+                                .get("name")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown")
+                                .to_string();
+                            let endpoint = backend
+                                .get("endpoint")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            let protocol = backend
+                                .get("protocol")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown")
+                                .to_string();
+                            let model_count = backend
+                                .get("models")
+                                .and_then(|v| v.as_array())
+                                .map(|a| a.len())
+                                .unwrap_or(0);
+                            BackendInfo {
+                                name,
+                                endpoint,
+                                protocol,
+                                model_count,
+                            }
                         })
                         .collect();
 
                     // Probe all backends concurrently
                     let statuses: Vec<String> = if do_probe {
-                        let futs: Vec<_> = infos.iter().map(|b| {
-                            let ep = b.endpoint.clone();
-                            async move {
-                                if ep.is_empty() { "unknown".to_string() } else { probe_backend_status(&ep).await }
-                            }
-                        }).collect();
+                        let futs: Vec<_> = infos
+                            .iter()
+                            .map(|b| {
+                                let ep = b.endpoint.clone();
+                                async move {
+                                    if ep.is_empty() {
+                                        "unknown".to_string()
+                                    } else {
+                                        probe_backend_status(&ep).await
+                                    }
+                                }
+                            })
+                            .collect();
                         futures::future::join_all(futs).await
                     } else {
                         infos.iter().map(|_| "unknown".to_string()).collect()
@@ -1430,7 +1694,9 @@ async fn health_handler(
 
     let (total_agents, total_tools) = tokio::join!(
         async {
-            if !agents_path.exists() { return 0; }
+            if !agents_path.exists() {
+                return 0;
+            }
             tokio::fs::read_to_string(&agents_path)
                 .await
                 .ok()
@@ -1439,7 +1705,9 @@ async fn health_handler(
                 .unwrap_or(0)
         },
         async {
-            if !tools_path.exists() { return 0; }
+            if !tools_path.exists() {
+                return 0;
+            }
             tokio::fs::read_to_string(&tools_path)
                 .await
                 .ok()
@@ -1476,18 +1744,25 @@ async fn health_handler(
 async fn validate_handler(
     axum::extract::Json(req): axum::extract::Json<serde_json::Value>,
 ) -> ApiResult<impl IntoResponse> {
-    let path_str = req.get("path").and_then(|v| v.as_str())
+    let path_str = req
+        .get("path")
+        .and_then(|v| v.as_str())
         .ok_or_else(|| AppError(StatusCode::BAD_REQUEST, "missing 'path' field".into()))?;
     let path = validate_path(path_str)?;
     let cli_bin = find_apxm_cli();
 
-    let output = tokio::process::Command::new(&cli_bin)
+    let output = apxm_command(&cli_bin)
         .arg("validate")
         .arg(&path)
         .current_dir(std::env::current_dir().unwrap_or_default())
         .output()
         .await
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to spawn validate: {e}")))?;
+        .map_err(|e| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to spawn validate: {e}"),
+            )
+        })?;
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -1511,18 +1786,25 @@ async fn validate_handler(
 async fn decompile_handler(
     axum::extract::Json(req): axum::extract::Json<serde_json::Value>,
 ) -> ApiResult<impl IntoResponse> {
-    let path_str = req.get("path").and_then(|v| v.as_str())
+    let path_str = req
+        .get("path")
+        .and_then(|v| v.as_str())
         .ok_or_else(|| AppError(StatusCode::BAD_REQUEST, "missing 'path' field".into()))?;
     let path = validate_path(path_str)?;
     let cli_bin = find_apxm_cli();
 
-    let output = tokio::process::Command::new(&cli_bin)
+    let output = apxm_command(&cli_bin)
         .arg("decompile")
         .arg(&path)
         .current_dir(std::env::current_dir().unwrap_or_default())
         .output()
         .await
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to spawn decompile: {e}")))?;
+        .map_err(|e| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to spawn decompile: {e}"),
+            )
+        })?;
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -1545,13 +1827,18 @@ async fn explain_handler(Query(params): Query<PathParam>) -> ApiResult<impl Into
     let path = validate_path(&params.path)?;
     let cli_bin = find_apxm_cli();
 
-    let output = tokio::process::Command::new(&cli_bin)
+    let output = apxm_command(&cli_bin)
         .arg("explain")
         .arg(&path)
         .current_dir(std::env::current_dir().unwrap_or_default())
         .output()
         .await
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to spawn explain: {e}")))?;
+        .map_err(|e| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to spawn explain: {e}"),
+            )
+        })?;
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -1577,15 +1864,16 @@ async fn agents_handler() -> impl IntoResponse {
             )
         })
         .flat_map(|op| {
-            op.fields.iter().filter(|f| {
-                f.ref_type.is_some()
-            }).map(move |f| {
-                serde_json::json!({
-                    "op": op.name,
-                    "field": f.name,
-                    "ref_type": format!("{:?}", f.ref_type),
+            op.fields
+                .iter()
+                .filter(|f| f.ref_type.is_some())
+                .map(move |f| {
+                    serde_json::json!({
+                        "op": op.name,
+                        "field": f.name,
+                        "ref_type": format!("{:?}", f.ref_type),
+                    })
                 })
-            })
         })
         .collect();
 
@@ -1630,13 +1918,19 @@ async fn config_update_handler(
     if let Some(content) = payload.get("content").and_then(|v| v.as_str()) {
         // Direct content write
         tokio::fs::write(&config_path, content).await.map_err(|e| {
-            AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to write config: {e}"))
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to write config: {e}"),
+            )
         })?;
         info!("Config updated: {}", config_path.display());
         return Ok(Json(serde_json::json!({ "success": true })));
     }
 
-    Err(AppError(StatusCode::BAD_REQUEST, "missing 'content' field".into()))
+    Err(AppError(
+        StatusCode::BAD_REQUEST,
+        "missing 'content' field".into(),
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -1650,10 +1944,7 @@ async fn config_update_handler(
 async fn skills_handler() -> ApiResult<impl IntoResponse> {
     let cwd = std::env::current_dir().unwrap_or_default();
 
-    let search_dirs = [
-        cwd.join(".claude/skills"),
-        cwd.join("apxm-plugin/skills"),
-    ];
+    let search_dirs = [cwd.join(".claude/skills"), cwd.join("apxm-plugin/skills")];
 
     let mut skills: Vec<serde_json::Value> = Vec::new();
     let mut seen = std::collections::HashSet::new();
@@ -1680,10 +1971,7 @@ async fn skill_detail_handler(
 ) -> ApiResult<impl IntoResponse> {
     let cwd = std::env::current_dir().unwrap_or_default();
 
-    let search_dirs = [
-        cwd.join(".claude/skills"),
-        cwd.join("apxm-plugin/skills"),
-    ];
+    let search_dirs = [cwd.join(".claude/skills"), cwd.join("apxm-plugin/skills")];
 
     let mut skills: Vec<serde_json::Value> = Vec::new();
     let mut seen = std::collections::HashSet::new();
@@ -1826,7 +2114,10 @@ pub(crate) fn extract_backends_from_config(content: &str) -> Vec<serde_json::Val
                 .map(|b| {
                     let name = b.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
                     let endpoint = b.get("endpoint").and_then(|v| v.as_str()).unwrap_or("");
-                    let protocol = b.get("protocol").and_then(|v| v.as_str()).unwrap_or("unknown");
+                    let protocol = b
+                        .get("protocol")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
                     let backend_type = b.get("type").and_then(|v| v.as_str()).unwrap_or("unknown");
                     let models: Vec<serde_json::Value> = b
                         .get("models")
@@ -1859,9 +2150,18 @@ fn toml_model_to_json(m: &toml::Value) -> serde_json::Value {
         .and_then(|a| a.as_array())
         .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
         .unwrap_or_default();
-    let context_window = m.get("context_window").and_then(|v| v.as_integer()).unwrap_or(0);
-    let supports_vision = m.get("supports_vision").and_then(|v| v.as_bool()).unwrap_or(false);
-    let supports_functions = m.get("supports_functions").and_then(|v| v.as_bool()).unwrap_or(false);
+    let context_window = m
+        .get("context_window")
+        .and_then(|v| v.as_integer())
+        .unwrap_or(0);
+    let supports_vision = m
+        .get("supports_vision")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let supports_functions = m
+        .get("supports_functions")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let tags: Vec<&str> = m
         .get("tags")
         .and_then(|t| t.as_array())
@@ -1893,13 +2193,14 @@ fn extract_backends_line_based(content: &str) -> Vec<serde_json::Value> {
             // Ensure standard model fields exist with defaults
             m.entry("id").or_insert_with(|| serde_json::json!(""));
             m.entry("aliases").or_insert_with(|| serde_json::json!([]));
-            m.entry("context_window").or_insert_with(|| serde_json::json!(0));
-            m.entry("supports_vision").or_insert_with(|| serde_json::json!(false));
-            m.entry("supports_functions").or_insert_with(|| serde_json::json!(false));
+            m.entry("context_window")
+                .or_insert_with(|| serde_json::json!(0));
+            m.entry("supports_vision")
+                .or_insert_with(|| serde_json::json!(false));
+            m.entry("supports_functions")
+                .or_insert_with(|| serde_json::json!(false));
             m.entry("tags").or_insert_with(|| serde_json::json!([]));
-            let models = b
-                .entry("models")
-                .or_insert_with(|| serde_json::json!([]));
+            let models = b.entry("models").or_insert_with(|| serde_json::json!([]));
             if let Some(arr) = models.as_array_mut() {
                 arr.push(serde_json::Value::Object(m));
             }
@@ -1989,7 +2290,9 @@ fn extract_backends_line_based(content: &str) -> Vec<serde_json::Value> {
                 }
             } else if let Some(ref mut b) = current_backend {
                 // Skip sensitive fields
-                if key == "api_key" { continue; }
+                if key == "api_key" {
+                    continue;
+                }
                 let store_key = if key == "type" { "backend_type" } else { key };
                 b.insert(store_key.to_string(), val);
             }
@@ -2041,9 +2344,7 @@ fn parse_toml_value(raw: &str) -> serde_json::Value {
 }
 
 /// GET /api/backends — detailed backend and model listing from config.
-async fn backends_handler(
-    Query(params): Query<HealthParam>,
-) -> ApiResult<impl IntoResponse> {
+async fn backends_handler(Query(params): Query<HealthParam>) -> ApiResult<impl IntoResponse> {
     let do_probe = params.probe.unwrap_or(false);
     let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
     let config_path = PathBuf::from(&home).join(".apxm").join("config.toml");
@@ -2065,7 +2366,11 @@ async fn backends_handler(
         let futs: Vec<_> = backends_json_list
             .iter()
             .map(|b| {
-                let ep = b.get("endpoint").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let ep = b
+                    .get("endpoint")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 async move {
                     if ep.is_empty() {
                         "unknown".to_string()
@@ -2077,7 +2382,10 @@ async fn backends_handler(
             .collect();
         futures::future::join_all(futs).await
     } else {
-        backends_json_list.iter().map(|_| "unknown".to_string()).collect()
+        backends_json_list
+            .iter()
+            .map(|_| "unknown".to_string())
+            .collect()
     };
 
     let backends_json: Vec<serde_json::Value> = backends_json_list
@@ -2168,6 +2476,116 @@ async fn read_ndjson_file(path: &std::path::Path) -> Result<serde_json::Value, A
 }
 
 // ---------------------------------------------------------------------------
+// OpenClaw gateway lifecycle
+// ---------------------------------------------------------------------------
+
+/// Check if a TCP port is already listening.
+async fn port_is_open(port: u16) -> bool {
+    tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .is_ok()
+}
+
+/// Start the OpenClaw gateway as a managed child process.
+///
+/// Skips silently if `openclaw` is not on PATH or if the gateway port is already
+/// in use (another instance running). Runs `apxm openclaw sync` first to ensure
+/// the gateway config reflects current APXM backends.
+async fn start_gateway(state: &AppState) {
+    // Check if openclaw is available (async, non-blocking)
+    let has_openclaw = tokio::process::Command::new("which")
+        .arg("openclaw")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .await
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    if !has_openclaw {
+        info!("openclaw not found on PATH, skipping gateway startup");
+        return;
+    }
+
+    // Check if gateway port is already in use
+    if port_is_open(GATEWAY_PORT).await {
+        info!(
+            port = GATEWAY_PORT,
+            "gateway port already in use, skipping spawn"
+        );
+        return;
+    }
+
+    // Sync APXM backends to OpenClaw config before starting
+    let sync_result = tokio::process::Command::new("apxm")
+        .args(["openclaw", "sync"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .await;
+
+    match sync_result {
+        Ok(status) if status.success() => {
+            info!("synced APXM backends to OpenClaw config");
+        }
+        Ok(status) => {
+            error!(code = ?status.code(), "apxm openclaw sync failed");
+        }
+        Err(e) => {
+            error!(error = %e, "failed to run apxm openclaw sync");
+        }
+    }
+
+    // Spawn gateway
+    match tokio::process::Command::new("openclaw")
+        .args(["gateway", "--auth", "none", "--bind", "loopback"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    {
+        Ok(child) => {
+            info!(pid = child.id(), "openclaw gateway spawned");
+
+            // Wait for health (up to 10s)
+            let mut ready = false;
+            for _ in 0..20 {
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                if port_is_open(GATEWAY_PORT).await {
+                    ready = true;
+                    break;
+                }
+            }
+
+            if ready {
+                info!(port = GATEWAY_PORT, "openclaw gateway is ready");
+            } else {
+                error!("openclaw gateway did not become ready within 10s");
+            }
+
+            *state.gateway_process.lock().await = Some(child);
+        }
+        Err(e) => {
+            error!(error = %e, "failed to spawn openclaw gateway");
+        }
+    }
+}
+
+/// Stop the managed gateway process.
+async fn stop_gateway(state: &AppState) {
+    let mut guard = state.gateway_process.lock().await;
+    if let Some(ref mut child) = *guard {
+        info!("stopping openclaw gateway");
+        let _ = child.kill().await;
+        let timeout = tokio::time::timeout(std::time::Duration::from_secs(3), child.wait()).await;
+        match timeout {
+            Ok(Ok(status)) => info!(status = %status, "gateway exited"),
+            _ => error!("gateway did not exit cleanly"),
+        }
+    }
+    *guard = None;
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -2203,7 +2621,9 @@ async fn main() {
         .and_then(|i| args.get(i + 1))
         .map(PathBuf::from)
         .unwrap_or_else(|| {
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src").join("frontend-dist")
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("src")
+                .join("frontend-dist")
         });
 
     // --file <path>: initial graph file to load on startup.
@@ -2260,6 +2680,13 @@ async fn main() {
         initial_file,
         examples_dir,
         agent_sessions: DashMap::new(),
+        gateway_process: Mutex::new(None),
+    });
+
+    // Start OpenClaw gateway in background (don't block server startup)
+    let gw_state = state.clone();
+    tokio::spawn(async move {
+        start_gateway(&gw_state).await;
     });
 
     // Build router
@@ -2268,7 +2695,10 @@ async fn main() {
         .route("/", axum::routing::get(index_handler))
         // API routes
         .route("/api/graph", axum::routing::get(graph_handler))
-        .route("/api/graph/analyze", axum::routing::get(graph_analyze_handler))
+        .route(
+            "/api/graph/analyze",
+            axum::routing::get(graph_analyze_handler),
+        )
         .route("/api/ops", axum::routing::get(ops_handler))
         .route("/api/passes", axum::routing::get(passes_handler))
         .route("/api/session", axum::routing::get(session_handler))
@@ -2296,28 +2726,59 @@ async fn main() {
         // Agents
         .route("/api/agents", axum::routing::get(agents_handler))
         // Config update
-        .route("/api/config/update", axum::routing::post(config_update_handler))
+        .route(
+            "/api/config/update",
+            axum::routing::post(config_update_handler),
+        )
         // Chat endpoints
         .route("/api/chat", axum::routing::post(api::chat::chat_handler))
-        .route("/api/chat/models", axum::routing::get(api::chat::models_handler))
+        .route(
+            "/api/chat/models",
+            axum::routing::get(api::chat::models_handler),
+        )
         // Agent (ACP) endpoints
-        .route("/api/agent/chat", axum::routing::post(api::agent::agent_chat))
-        .route("/api/agent/sessions", axum::routing::get(api::agent::list_agent_sessions))
-        .route("/api/agent/sessions/{id}", axum::routing::delete(api::agent::delete_agent_session))
+        .route(
+            "/api/agent/chat",
+            axum::routing::post(api::agent::agent_chat),
+        )
+        .route(
+            "/api/agent/profiles",
+            axum::routing::get(api::agent::list_agent_profiles),
+        )
+        .route(
+            "/api/agent/sessions",
+            axum::routing::get(api::agent::list_agent_sessions),
+        )
+        .route(
+            "/api/agent/sessions/{id}",
+            axum::routing::delete(api::agent::delete_agent_session),
+        )
         // Skills
         .route("/api/skills", axum::routing::get(skills_handler))
-        .route("/api/skills/{name}", axum::routing::get(skill_detail_handler))
+        .route(
+            "/api/skills/{name}",
+            axum::routing::get(skill_detail_handler),
+        )
         // Live SSE endpoints
-        .route("/api/live/session", axum::routing::get(api::live::sse_session_stream))
-        .route("/api/live/node/{id}", axum::routing::get(api::live::sse_node_output))
-        .route("/api/sessions", axum::routing::get(api::live::list_sessions))
+        .route(
+            "/api/live/session",
+            axum::routing::get(api::live::sse_session_stream),
+        )
+        .route(
+            "/api/live/node/{id}",
+            axum::routing::get(api::live::sse_node_output),
+        )
+        .route(
+            "/api/sessions",
+            axum::routing::get(api::live::list_sessions),
+        )
         // Serve frontend assets (JS, CSS)
         .nest_service("/assets", ServeDir::new(static_dir.join("assets")))
         // SPA fallback: all non-/api/ routes serve index.html for client-side routing
         .fallback(axum::routing::get(spa_fallback))
         // CORS for local dev
         .layer(CorsLayer::permissive())
-        .with_state(state);
+        .with_state(state.clone());
 
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
     info!("APXM GUI listening on http://localhost:{port}");
@@ -2327,7 +2788,29 @@ async fn main() {
         .await
         .expect("failed to bind address");
 
+    // Graceful shutdown: stop gateway on SIGINT/SIGTERM
+    let shutdown_state = state.clone();
+    let shutdown = async move {
+        let ctrl_c = tokio::signal::ctrl_c();
+        #[cfg(unix)]
+        {
+            let mut sigterm =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                    .expect("failed to install SIGTERM handler");
+            tokio::select! {
+                _ = ctrl_c => {},
+                _ = sigterm.recv() => {},
+            }
+        }
+        #[cfg(not(unix))]
+        ctrl_c.await.ok();
+
+        info!("shutdown signal received, stopping gateway...");
+        stop_gateway(&shutdown_state).await;
+    };
+
     axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown)
         .await
         .expect("server error");
 }

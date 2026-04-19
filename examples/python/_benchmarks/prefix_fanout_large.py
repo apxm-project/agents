@@ -244,8 +244,8 @@ SUMMARY:
     # Each adds a small unique suffix (50-100 tokens)
 
     review_security = g.ask(
-        "review_security",
-        large_context + "\n\n=== SECURITY REVIEW ===\n"
+        name="review_security",
+        prompt=large_context + "\n\n=== SECURITY REVIEW ===\n"
         "Analyze this PR for security vulnerabilities:\n"
         "1. Are there any authentication/authorization issues?\n"
         "2. Is sensitive data properly protected?\n"
@@ -254,8 +254,8 @@ SUMMARY:
     )
 
     review_performance = g.ask(
-        "review_performance",
-        large_context + "\n\n=== PERFORMANCE REVIEW ===\n"
+        name="review_performance",
+        prompt=large_context + "\n\n=== PERFORMANCE REVIEW ===\n"
         "Analyze this PR for performance concerns:\n"
         "1. Are there any performance bottlenecks?\n"
         "2. Is caching used effectively?\n"
@@ -264,8 +264,8 @@ SUMMARY:
     )
 
     review_reliability = g.ask(
-        "review_reliability",
-        large_context + "\n\n=== RELIABILITY REVIEW ===\n"
+        name="review_reliability",
+        prompt=large_context + "\n\n=== RELIABILITY REVIEW ===\n"
         "Analyze this PR for reliability concerns:\n"
         "1. Is error handling comprehensive?\n"
         "2. Are there race conditions or edge cases?\n"
@@ -274,8 +274,8 @@ SUMMARY:
     )
 
     review_scalability = g.ask(
-        "review_scalability",
-        large_context + "\n\n=== SCALABILITY REVIEW ===\n"
+        name="review_scalability",
+        prompt=large_context + "\n\n=== SCALABILITY REVIEW ===\n"
         "Analyze this PR for scalability:\n"
         "1. Will this work with multiple instances?\n"
         "2. Are there any single points of contention?\n"
@@ -284,8 +284,8 @@ SUMMARY:
     )
 
     review_maintainability = g.ask(
-        "review_maintainability",
-        large_context + "\n\n=== MAINTAINABILITY REVIEW ===\n"
+        name="review_maintainability",
+        prompt=large_context + "\n\n=== MAINTAINABILITY REVIEW ===\n"
         "Analyze this PR for maintainability:\n"
         "1. Is the code well-structured and readable?\n"
         "2. Are there sufficient tests?\n"
@@ -294,8 +294,8 @@ SUMMARY:
     )
 
     review_api_design = g.ask(
-        "review_api_design",
-        large_context + "\n\n=== API DESIGN REVIEW ===\n"
+        name="review_api_design",
+        prompt=large_context + "\n\n=== API DESIGN REVIEW ===\n"
         "Analyze this PR for API design:\n"
         "1. Is the API interface intuitive?\n"
         "2. Are there any breaking changes?\n"
@@ -304,8 +304,8 @@ SUMMARY:
     )
 
     review_testing = g.ask(
-        "review_testing",
-        large_context + "\n\n=== TESTING REVIEW ===\n"
+        name="review_testing",
+        prompt=large_context + "\n\n=== TESTING REVIEW ===\n"
         "Analyze this PR for test coverage:\n"
         "1. Are all critical paths tested?\n"
         "2. Are edge cases covered?\n"
@@ -314,8 +314,8 @@ SUMMARY:
     )
 
     review_accessibility = g.ask(
-        "review_accessibility",
-        large_context + "\n\n=== ACCESSIBILITY REVIEW ===\n"
+        name="review_accessibility",
+        prompt=large_context + "\n\n=== ACCESSIBILITY REVIEW ===\n"
         "Analyze this PR for accessibility:\n"
         "1. Are error messages user-friendly?\n"
         "2. Is logging comprehensive for debugging?\n"
@@ -336,24 +336,25 @@ SUMMARY:
         review_accessibility
     )
 
-    # Output
+    # Output (auto-wires from each {review_*} placeholder).
     output = g.print(
-        "=== PREFIX FANOUT LARGE STRESS TEST ===\n\n"
-        "Security: {0}\n\n"
-        "Performance: {1}\n\n"
-        "Reliability: {2}\n\n"
-        "Scalability: {3}\n\n"
-        "Maintainability: {4}\n\n"
-        "API Design: {5}\n\n"
-        "Testing: {6}\n\n"
-        "Accessibility: {7}\n\n"
+        message="=== PREFIX FANOUT LARGE STRESS TEST ===\n\n"
+        "Security: {review_security}\n\n"
+        "Performance: {review_performance}\n\n"
+        "Reliability: {review_reliability}\n\n"
+        "Scalability: {review_scalability}\n\n"
+        "Maintainability: {review_maintainability}\n\n"
+        "API Design: {review_api_design}\n\n"
+        "Testing: {review_testing}\n\n"
+        "Accessibility: {review_accessibility}\n\n"
         "---\n"
         "This workflow sent a 4000-token context to 8 parallel review nodes.\n"
-        "O0: 8 × 4000 = 32,000 tokens prefilled\n"
-        "O2 with PromptCanonicalization: 1 × 4000 + 8 × 100 ≈ 4,800 tokens\n"
+        "O0: 8 \u00d7 4000 = 32,000 tokens prefilled\n"
+        "O2 with PromptCanonicalization: 1 \u00d7 4000 + 8 \u00d7 100 \u2248 4,800 tokens\n"
         "Token savings: ~84% reduction via KV-cache prefix reuse"
     )
-    final_report | output
+    # Control edge keeps the merge as a synchronization barrier.
+    g.add_edge(final_report, output, dependency="Control")
 
     g.done(output)
 
@@ -362,6 +363,6 @@ if __name__ == "__main__":
     # Output the graph as JSON
     print(prefix_fanout_large._graph.to_air())
     # To execute directly:
-    # import asyncio
-    # result = asyncio.run(prefix_fanout_large())
+    # import apxm
+    # result = apxm.run(prefix_fanout_large())
     # print(result.content)

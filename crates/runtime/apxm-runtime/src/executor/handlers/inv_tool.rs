@@ -5,6 +5,7 @@
 
 use super::{
     ExecutionContext, Node, Result, Value, get_optional_u64_attribute, get_string_attribute,
+    template::{input_names_from_node, render_named},
 };
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::constants::runtime::belief_keys;
@@ -86,23 +87,16 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         }
     }
 
-    // Substitute {{input_N}} and {N} placeholders in string values with upstream inputs.
-    // This allows params_json to reference upstream node outputs, e.g.:
-    //   params_json: {"agent": "claude", "prompt": "{{input_0}}"}
-    // where input_0 is the first data-edge input to this INV_TOOL node.
+    // Substitute `{name}` placeholders in every string-valued arg with the
+    // corresponding upstream input, looked up via the node's `input_names`
+    // parallel array. Example:
+    //   input_names: ["query"]
+    //   params_json: {"agent": "claude", "prompt": "{query}"}
     if !inputs.is_empty() {
+        let input_names = input_names_from_node(node);
         for val in args.values_mut() {
             if let Value::String(s) = val {
-                let mut result = s.clone();
-                for (i, input_value) in inputs.iter().enumerate() {
-                    let input_str = match input_value {
-                        Value::String(sv) => sv.clone(),
-                        other => format!("{:?}", other),
-                    };
-                    result = result.replace(&format!("{{{{input_{}}}}}", i), &input_str);
-                    result = result.replace(&format!("{{input_{}}}", i), &input_str);
-                }
-                *s = result;
+                *s = render_named(s, &inputs, &input_names)?;
             }
         }
     }

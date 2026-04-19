@@ -24,8 +24,7 @@ pub fn cache_disabled() -> bool {
 /// JSON serialization with serde_json guarantees alphabetic key sorting.
 pub fn graph_hash(module: &AirModule) -> Result<String, DriverError> {
     // Serialize to JSON with sorted keys for deterministic hashing
-    let json = serde_json::to_string(module)
-        .map_err(|e| DriverError::Driver(e.to_string()))?;
+    let json = serde_json::to_string(module).map_err(|e| DriverError::Driver(e.to_string()))?;
     let hash = blake3::hash(json.as_bytes());
     Ok(hash.to_hex().to_string())
 }
@@ -78,7 +77,10 @@ mod tests {
         };
         let module_b = module_a.clone();
         // Identical modules must produce identical hashes
-        assert_eq!(graph_hash(&module_a).unwrap(), graph_hash(&module_b).unwrap());
+        assert_eq!(
+            graph_hash(&module_a).unwrap(),
+            graph_hash(&module_b).unwrap()
+        );
     }
 
     #[test]

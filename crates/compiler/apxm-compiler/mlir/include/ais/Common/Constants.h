@@ -124,6 +124,9 @@ constexpr llvm::StringLiteral DOWNSTREAM_NODES = "ais.downstream_nodes";
 constexpr llvm::StringLiteral PRIORITY = "priority";
 constexpr llvm::StringLiteral TEMPLATE_STR = "template_str";
 constexpr llvm::StringLiteral VALUE = "value";
+/// Parallel string array: human-readable name of each Data input,
+/// in operand order. Templates reference inputs as `{name}`.
+constexpr llvm::StringLiteral INPUT_NAMES = "input_names";
 
 // ---- DSPy module-level config (input from Rust) ----
 constexpr llvm::StringLiteral DSPY_TRAINING_DATA_PATH = "ais.dspy_training_data_path";

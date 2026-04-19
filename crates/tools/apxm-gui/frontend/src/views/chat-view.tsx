@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { useAppStore } from "@/store/app-store";
 import { fetchChatModels, streamChat } from "@/api/chat";
-import { streamAgentChat } from "@/api/agents";
+import { streamAgentChat, fetchAgentProfiles } from "@/api/agents";
 import { executeWorkflow, compileWorkflow, explainWorkflow } from "@/api/compile";
 import { fetchGraph } from "@/api/graph";
 import { formatDuration, sessionPath } from "@/lib/format";
 import { Overlay, CtxTab, Role } from "@/lib/constants";
 import type { ChatMessage, ModelInfo } from "@/api/chat";
 import type { ToolCallEvent, ToolResultEvent, UsageEvent } from "@/api/agents";
-import type { WorkflowInfo } from "@/types/api";
+import type { WorkflowInfo, AcpAgentProfile } from "@/types/api";
 
 type RichCard = {
   type: "compile" | "execute" | "explain" | "error";
@@ -47,7 +47,9 @@ export function ChatView() {
   const [selectedModel, setSelectedModel] = useState("claude-sonnet-4-5@20250929");
   const [error, setError] = useState<string | null>(null);
   const [showCommands, setShowCommands] = useState(false);
-  const [agentMode, setAgentMode] = useState(false);
+  const [agentMode, setAgentMode] = useState(true);
+  const [agentProfiles, setAgentProfiles] = useState<AcpAgentProfile[]>([]);
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [agentSessionId, setAgentSessionId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -60,6 +62,13 @@ export function ChatView() {
         if (m.length > 0 && !m.find((x) => x.id === selectedModel)) {
           setSelectedModel(m[0].id);
         }
+      })
+      .catch(() => {});
+    fetchAgentProfiles()
+      .then((profiles) => {
+        setAgentProfiles(profiles);
+        const first = profiles.find((p) => p.available);
+        if (first && !selectedAgentId) setSelectedAgentId(first.id);
       })
       .catch(() => {});
   }, []);
@@ -81,6 +90,13 @@ export function ChatView() {
     { cmd: "/studio", label: "Open Studio", available: true },
     { cmd: "/clear", label: "Clear chat", available: messages.length > 0 },
   ], [selectedWorkflow, messages.length]);
+
+  const availableAgents = useMemo(
+    () => agentProfiles.filter((p) =>
+      p.available && (p.source === "custom" || !p.command.startsWith("npx"))
+    ),
+    [agentProfiles],
+  );
 
   const filteredCommands = useMemo(() => {
     if (!showCommands) return [];
@@ -301,6 +317,7 @@ export function ChatView() {
             onError: (err) => setError(err),
           },
           controller.signal,
+          selectedAgentId ?? undefined,
         );
 
         // Final flush to ensure last state is rendered
@@ -341,7 +358,7 @@ export function ChatView() {
       setStreaming(false);
       abortRef.current = null;
     }
-  }, [input, messages, selectedModel, streaming, agentMode, agentSessionId, COMMANDS]);
+  }, [input, messages, selectedModel, streaming, agentMode, agentSessionId, selectedAgentId, COMMANDS]);
 
   const handleStop = useCallback(() => {
     abortRef.current?.abort();
@@ -477,19 +494,38 @@ export function ChatView() {
             </svg>
             <span>{agentMode ? "Agent" : "LLM"}</span>
           </button>
-          {!agentMode && <select
-            className="chat-view__model-select"
-            value={selectedModel}
-            onChange={(e) => setSelectedModel(e.target.value)}
-            disabled={streaming}
-          >
-            {models.map((m) => (
-              <option key={m.id} value={m.id}>{modelLabel(m)}</option>
-            ))}
-            {models.length === 0 && (
-              <option value={selectedModel}>{selectedModel}</option>
-            )}
-          </select>}
+          {agentMode ? (
+            <select
+              className="chat-view__model-select"
+              value={selectedAgentId ?? ""}
+              onChange={(e) => {
+                setSelectedAgentId(e.target.value);
+                setAgentSessionId(null);
+              }}
+              disabled={streaming}
+            >
+              {availableAgents.map((p) => (
+                <option key={p.id} value={p.id}>{p.id}</option>
+              ))}
+              {availableAgents.length === 0 && (
+                <option value="" disabled>No agents available</option>
+              )}
+            </select>
+          ) : (
+            <select
+              className="chat-view__model-select"
+              value={selectedModel}
+              onChange={(e) => setSelectedModel(e.target.value)}
+              disabled={streaming}
+            >
+              {models.map((m) => (
+                <option key={m.id} value={m.id}>{modelLabel(m)}</option>
+              ))}
+              {models.length === 0 && (
+                <option value={selectedModel}>{selectedModel}</option>
+              )}
+            </select>
+          )}
           <textarea
             ref={inputRef}
             className="chat-view__input"

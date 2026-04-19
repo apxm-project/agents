@@ -321,7 +321,7 @@ function SourceTabContent({
           {lines.map((line, i) => (
             <div key={i} className="ctx-source__line">
               <span className="ctx-source__lineno">{i + 1}</span>
-              <span dangerouslySetInnerHTML={{ __html: String(highlightLine(line, lang)) }} />
+              <span className="ctx-source__text">{highlightLine(line, lang)}</span>
             </div>
           ))}
         </code>

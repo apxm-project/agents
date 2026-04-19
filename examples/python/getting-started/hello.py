@@ -4,22 +4,23 @@
 Usage: python3 -m examples.python.basics.hello
 """
 
-from apxm import compile, GraphRecorder
+from apxm import compile, GraphRecorder, Anthropic
 
 
 @compile()
 def hello_world(g: GraphRecorder):
     """Simple greeting workflow."""
     greeting = g.ask(
-        "greeting",
-        "Generate a friendly greeting for someone learning about AI agents"
+        name="greeting",
+        prompt="Generate a friendly greeting for someone learning about AI agents",
+        # model=Anthropic.CLAUDE_SONNET_4_6,  # optional: override default
     )
     g.done(greeting)
 
 
 
 if __name__ == "__main__":
-    import asyncio
+    import apxm
 
-    result = asyncio.run(hello_world())
+    result = apxm.run(hello_world())
     print(result.content)

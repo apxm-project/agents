@@ -402,3 +402,12 @@ class CompiledFlow:
             return ExecutionResult.from_response(json.loads(stdout))
         except (json.JSONDecodeError, TypeError):
             return ExecutionResult(content=stdout)
+
+
+def run(coro):
+    """Execute an async workflow and return the result.
+
+    Convenience wrapper around asyncio.run() for executing compiled workflows.
+    """
+    import asyncio
+    return asyncio.run(coro)

@@ -1,9 +1,9 @@
 /**
  * @file  BuildPrompt.cpp
- * @brief Generates placeholder templates for LLM operations with empty template_str.
+ * @brief Generates named-placeholder templates for LLM operations whose
+ *        template string is empty but whose context array is non-empty.
  *
- * This pass addresses the case where LLM operations (ask/think/reason) have
- * empty template strings but non-empty context arrays. For example:
+ * For example:
  *
  *   DSL:   ask(user_input)
  *   MLIR:  %r = ais.ask "" [%user_input : !ais.token] : !ais.token
@@ -11,9 +11,13 @@
  * Without this pass, the empty template_str causes broken prompts at runtime.
  * This pass transforms it to:
  *
- *   %r = ais.ask "{0}" [%user_input : !ais.token] : !ais.token
+ *   %r = ais.ask "{user_input}" [%user_input : !ais.token]
+ *        {input_names = ["user_input"]} : !ais.token
  *
- * The "{0}" placeholder is then substituted by the runtime with context[0].
+ * Names are taken from the existing `input_names` attribute when present;
+ * otherwise the pass falls back to defaults `ctx0`, `ctx1`, ... and stamps
+ * a fresh `input_names` array. Either way the runtime resolves placeholders
+ * by name via the `input_names` parallel array.
  *
  * This pass works alongside the InstructionConfig system:
  * - BuildPrompt: Ensures template_str is never empty when context exists
@@ -23,11 +27,14 @@
 #include "ais/Dialect/AIS/Transforms/Passes.h"
 
 #include "ais/Common/Constants.h"
+#include "ais/Dialect/AIS/Transforms/Placeholders.h"
 
 #include "ais/Dialect/AIS/IR/AISOps.h"
 #include "ais/Dialect/AIS/Support/AISDebug.h"
 
 #include "mlir/IR/Builders.h"
+#include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/TypeSwitch.h"
 
 namespace mlir::ais {
@@ -98,14 +105,38 @@ private:
       return false;
     }
 
-    // Generate placeholder: "{0}" means "use context[0] as prompt"
     OpBuilder builder(op);
-    op.setTemplateStrAttr(builder.getStringAttr("{0}"));
+    const unsigned contextSize = op.getContext().size();
 
-    APXM_AIS_INFO("  Generated {0} placeholder for " << op->getName()
-                                                      << " with "
-                                                      << op.getContext().size()
-                                                      << " context operands");
+    // Source the names from the existing input_names attribute if present,
+    // otherwise synthesize defaults (ctx0..ctxN-1).
+    auto existing = placeholders::readInputNames(op.getOperation());
+    llvm::SmallVector<std::string, 8> nameStorage;
+    llvm::SmallVector<llvm::StringRef, 8> nameRefs;
+    nameStorage.reserve(contextSize);
+    nameRefs.reserve(contextSize);
+    for (unsigned i = 0; i < contextSize; ++i) {
+      if (i < existing.size() && !existing[i].empty()) {
+        nameStorage.emplace_back(existing[i].str());
+      } else {
+        nameStorage.emplace_back(("ctx" + llvm::Twine(i)).str());
+      }
+      nameRefs.push_back(nameStorage.back());
+    }
+
+    // Build "{name0}{name1}..." template that references each context input.
+    llvm::SmallString<128> templateBuf;
+    for (llvm::StringRef name : nameRefs) {
+      templateBuf.append("{");
+      templateBuf.append(name);
+      templateBuf.append("}");
+    }
+    op.setTemplateStrAttr(builder.getStringAttr(templateBuf));
+    placeholders::writeInputNames(op.getOperation(), nameRefs, builder);
+
+    APXM_AIS_INFO("  Generated named placeholder template for "
+                  << op->getName() << " with " << contextSize
+                  << " context operands");
     return true;
   }
 };

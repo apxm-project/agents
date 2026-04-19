@@ -106,11 +106,9 @@ impl Provider {
             ProviderProtocol::Vllm => Ok(Provider::Vllm(
                 GraphAwareVllmBackend::new(api_key, config).await?,
             )),
-            ProviderProtocol::Mock => {
-                Err(anyhow::anyhow!(
-                    "Mock backend not supported in Provider enum. Use BackendFactory::create_from_protocol instead."
-                ))
-            }
+            ProviderProtocol::Mock => Err(anyhow::anyhow!(
+                "Mock backend not supported in Provider enum. Use BackendFactory::create_from_protocol instead."
+            )),
         }
     }
 

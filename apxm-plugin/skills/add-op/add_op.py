@@ -41,13 +41,11 @@ def add_op_workflow(g: GraphRecorder):
     reviewer = g.spawn("reviewer", profile="claude", cwd=cwd)
 
     # Step 1: Architect analyzes and creates implementation plan
-    architect_task = g.text(
-        "architect_task",
-        value="""You are the architect for APXM. You need to create an implementation plan
+    architect.ask("""You are the architect for APXM. You need to create an implementation plan
 for adding a new AIS operation to the APXM codebase.
 
-Operation name: {0}
-Description: {1}
+Operation name: {op_name}
+Description: {op_description}
 
 Read the following files to understand the pattern:
 - crates/core/apxm-ais/src/definitions.rs (AISOperationType enum)
@@ -65,22 +63,18 @@ Create a structured plan with:
 6. Test strategy
 
 Keep the plan under 400 words but be specific about attribute names and types.
-"""
-    )
+""")
 
-    architect.ask("{0}")
-    architect_task | architect.get_last_node()
-
-    print1 = g.print("print_plan", message="=== ARCHITECT PLAN ===\n{0}")
-    architect.get_last_node() | print1
+    print1 = g.print(name="print_plan", message="=== ARCHITECT PLAN ===\n{architect}")
+    g.add_edge(architect.get_last_node(), print1)
 
     # Step 2: Build implementation prompts for parallel execution
     compiler_prompt = g.ask(
-        "build_compiler_prompt",
-        template="""Based on this plan, implement the compiler-side changes:
+        name="build_compiler_prompt",
+        prompt="""Based on this plan, implement the compiler-side changes:
 
 Plan:
-{0}
+{architect}
 
 You need to modify:
 1. crates/core/apxm-ais/src/definitions.rs
@@ -97,15 +91,15 @@ Make sure the wire index matches the plan. Use the same attribute names.
 Only modify what's necessary — don't refactor surrounding code.
 """
     )
-    architect.get_last_node() | compiler_prompt
-    print1 >> compiler_prompt
+    g.add_edge(architect.get_last_node(), compiler_prompt)
+    g.add_edge(print1, compiler_prompt, dependency="Control")
 
     runtime_prompt = g.ask(
-        "build_runtime_prompt",
-        template="""Based on this plan, implement the runtime-side changes:
+        name="build_runtime_prompt",
+        prompt="""Based on this plan, implement the runtime-side changes:
 
 Plan:
-{0}
+{architect}
 
 You need to:
 1. Create crates/runtime/apxm-runtime/src/executor/handlers/<op_name>.rs
@@ -125,36 +119,36 @@ You need to:
 Follow APXM conventions: use apxm-core types, proper error handling with context.
 """
     )
-    architect.get_last_node() | runtime_prompt
-    print1 >> runtime_prompt
+    g.add_edge(architect.get_last_node(), runtime_prompt)
+    g.add_edge(print1, runtime_prompt, dependency="Control")
 
     # Step 3: Both devs work in parallel
-    compiler_dev.ask("{0}")
-    compiler_prompt | compiler_dev.get_last_node()
+    compiler_dev.ask("{compiler_prompt}")
+    g.add_edge(compiler_prompt, compiler_dev.get_last_node())
 
-    runtime_dev.ask("{0}")
-    runtime_prompt | runtime_dev.get_last_node()
+    runtime_dev.ask("{runtime_prompt}")
+    g.add_edge(runtime_prompt, runtime_dev.get_last_node())
 
-    print2 = g.print("print_compiler_impl", message="=== COMPILER IMPL ===\n{0}")
-    compiler_dev.get_last_node() | print2
+    print2 = g.print(name="print_compiler_impl", message="=== COMPILER IMPL ===\n{compiler_dev}")
+    g.add_edge(compiler_dev.get_last_node(), print2)
 
-    print3 = g.print("print_runtime_impl", message="=== RUNTIME IMPL ===\n{0}")
-    runtime_dev.get_last_node() | print3
+    print3 = g.print(name="print_runtime_impl", message="=== RUNTIME IMPL ===\n{runtime_dev}")
+    g.add_edge(runtime_dev.get_last_node(), print3)
 
     # Step 4: Wait for both to complete, then review
-    wait = g.wait_all("wait_implementations", compiler_dev.get_last_node(), runtime_dev.get_last_node())
-    print2 >> wait
-    print3 >> wait
+    wait = g.wait_all(name="wait_implementations", compiler_dev.get_last_node(), runtime_dev.get_last_node())
+    g.add_edge(print2, wait, dependency="Control")
+    g.add_edge(print3, wait, dependency="Control")
 
     review_task = g.ask(
-        "build_review_task",
-        template="""Review both implementations and verify they work together:
+        name="build_review_task",
+        prompt="""Review both implementations and verify they work together:
 
 Compiler implementation:
-{0}
+{compiler_dev}
 
 Runtime implementation:
-{1}
+{runtime_dev}
 
 Check:
 1. Wire index consistency across all files
@@ -176,25 +170,25 @@ Report:
 If tests fail, suggest fixes.
 """
     )
-    compiler_dev.get_last_node() | review_task
-    runtime_dev.get_last_node() | review_task
-    wait >> review_task
+    g.add_edge(compiler_dev.get_last_node(), review_task)
+    g.add_edge(runtime_dev.get_last_node(), review_task)
+    g.add_edge(wait, review_task, dependency="Control")
 
-    reviewer.ask("{0}")
-    review_task | reviewer.get_last_node()
+    reviewer.ask("{review_task}")
+    g.add_edge(review_task, reviewer.get_last_node())
 
-    print4 = g.print("print_review", message="=== REVIEW ===\n{0}")
-    reviewer.get_last_node() | print4
+    print4 = g.print(name="print_review", message="=== REVIEW ===\n{reviewer}")
+    g.add_edge(reviewer.get_last_node(), print4)
 
     # Final synthesis
     final = g.think(
-        "synthesis",
-        template="""Synthesize the add-op workflow results:
+        name="synthesis",
+        prompt="""Synthesize the add-op workflow results:
 
-Plan: {0}
-Compiler impl: {1}
-Runtime impl: {2}
-Review: {3}
+Plan: {architect}
+Compiler impl: {compiler_dev}
+Runtime impl: {runtime_dev}
+Review: {reviewer}
 
 Summary:
 - Operation name and wire index
@@ -203,14 +197,14 @@ Summary:
 - Next steps (if any)
 """
     )
-    architect.get_last_node() | final
-    compiler_dev.get_last_node() | final
-    runtime_dev.get_last_node() | final
-    reviewer.get_last_node() | final
-    print4 >> final
+    g.add_edge(architect.get_last_node(), final)
+    g.add_edge(compiler_dev.get_last_node(), final)
+    g.add_edge(runtime_dev.get_last_node(), final)
+    g.add_edge(reviewer.get_last_node(), final)
+    g.add_edge(print4, final, dependency="Control")
 
-    print5 = g.print("print_final", message="=== FINAL SUMMARY ===\n{0}")
-    final | print5
+    print5 = g.print(name="print_final", message="=== FINAL SUMMARY ===\n{final}")
+    g.add_edge(final, print5)
 
     g.done(print5)
 

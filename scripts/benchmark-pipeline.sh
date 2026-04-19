@@ -47,7 +47,8 @@ cat > "${TEST_GRAPH}" << 'EOF'
       "op": "ASK",
       "attributes": {
         "system_prompt": "You are a helpful assistant.",
-        "template_str": "Based on this explanation: {0}\n\nNow explain it to a 10-year-old in 100 words."
+        "template_str": "Based on this explanation: {producer}\n\nNow explain it to a 10-year-old in 100 words.",
+        "input_names": ["producer"]
       }
     }
   ],

@@ -73,10 +73,7 @@ mod tests {
         let mut attrs = HashMap::new();
         assert_eq!(get_pipeline_consumer_id(&attrs), None);
 
-        attrs.insert(
-            "pipeline_consumer_id".to_string(),
-            Value::Number(42.into()),
-        );
+        attrs.insert("pipeline_consumer_id".to_string(), Value::Number(42.into()));
         assert_eq!(get_pipeline_consumer_id(&attrs), Some(42));
     }
 

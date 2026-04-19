@@ -4,9 +4,10 @@
 Tests: DeadContextElimination optimization pass
 Measures: Removal of unused context from LLM prompts to save tokens
 
-Graph structure: 5 upstream nodes producing context, 1 downstream think node using only {0}
+Graph structure: 5 upstream nodes producing context, 1 downstream think node
+referencing only the database context.
 - O0: All 5 contexts passed to LLM (~5000 tokens wasted on unused context)
-- O2 with DeadContextElimination: Only {0} passed (~4000 tokens saved)
+- O2 with DeadContextElimination: Only the database context passed (~4000 tokens saved)
 
 Metrics:
 - Total input tokens (should drop significantly from O0 to O2)
@@ -15,10 +16,11 @@ Metrics:
 
 Usage:
   dekk apxm execute dead_context_stress.air -O0  # No elimination (all 5 contexts sent)
-  dekk apxm execute dead_context_stress.air -O2  # With elimination (only {0} sent)
+  dekk apxm execute dead_context_stress.air -O2  # With elimination (only context_1 sent)
 """
 
 from apxm import compile, GraphRecorder
+from apxm.constants import INPUT_NAMES
 
 
 @compile()
@@ -28,9 +30,7 @@ def dead_context_stress(g: GraphRecorder):
     # Generate 5 large context chunks (simulating database queries, file reads, etc.)
     # Each is ~1000 tokens of context
 
-    context_1 = g.text(
-        "context_database",
-        value="""DATABASE SCHEMA CONTEXT (1000 tokens):
+    context_database_text = """DATABASE SCHEMA CONTEXT (1000 tokens):
 
 Tables: users, posts, comments, likes, followers, sessions, notifications
 - users: id, username, email, password_hash, created_at, updated_at, is_verified, profile_data
@@ -45,11 +45,13 @@ Indexes: users.email (unique), posts.user_id, posts.created_at, comments.post_id
 likes.post_id, followers.follower_id, followers.following_id, sessions.token (unique)
 
 Foreign keys: All user_id fields reference users.id, post_id references posts.id"""
+
+    context_1 = g.ask(
+        name="context_database",
+        prompt=context_database_text
     )
 
-    context_2 = g.text(
-        "context_api_docs",
-        value="""API DOCUMENTATION CONTEXT (1000 tokens):
+    context_api_docs_text = """API DOCUMENTATION CONTEXT (1000 tokens):
 
 Endpoints:
 GET /api/users/:id - Fetch user profile (auth optional)
@@ -73,11 +75,13 @@ GET /api/likes?post_id=:id - Get like count and user likes
 POST /api/auth/login - Login (params: email, password, returns: token)
 POST /api/auth/logout - Logout (requires auth, invalidates token)
 POST /api/auth/refresh - Refresh session token (requires valid token)"""
+
+    context_2 = g.ask(
+        name="context_api_docs",
+        prompt=context_api_docs_text
     )
 
-    context_3 = g.text(
-        "context_environment",
-        value="""ENVIRONMENT CONFIGURATION CONTEXT (1000 tokens):
+    context_environment_text = """ENVIRONMENT CONFIGURATION CONTEXT (1000 tokens):
 
 Production:
 - DATABASE_URL: postgres://prod-db.internal:5432/app_production
@@ -110,11 +114,13 @@ Development:
 - FRONTEND_URL: http://localhost:3000
 - JWT_SECRET: dev-secret-not-for-production
 - LOG_LEVEL: debug"""
+
+    context_3 = g.ask(
+        name="context_environment",
+        prompt=context_environment_text
     )
 
-    context_4 = g.text(
-        "context_metrics",
-        value="""PERFORMANCE METRICS CONTEXT (1000 tokens):
+    context_metrics_text = """PERFORMANCE METRICS CONTEXT (1000 tokens):
 
 Last 7 days (production):
 - Total requests: 14,285,392
@@ -142,11 +148,13 @@ Resource utilization:
 - Memory: 3.2GB / 8GB
 - Database connections: 45 / 100 pool size
 - Active sessions: 12,334 concurrent users"""
+
+    context_4 = g.ask(
+        name="context_metrics",
+        prompt=context_metrics_text
     )
 
-    context_5 = g.text(
-        "context_security_audit",
-        value="""SECURITY AUDIT CONTEXT (1000 tokens):
+    context_security_audit_text = """SECURITY AUDIT CONTEXT (1000 tokens):
 
 Recent vulnerability scan (2024-04-01):
 - SQL Injection: PASS (parameterized queries, ORM usage)
@@ -175,42 +183,52 @@ Penetration test findings (2024-03-15):
 - Token refresh race condition (MEDIUM) - in remediation
 - Session cleanup database lock (LOW) - scheduled fix
 - Rate limiter not clustered (MEDIUM) - architecture change needed"""
+
+    context_5 = g.ask(
+        name="context_security_audit",
+        prompt=context_security_audit_text
     )
 
-    # Downstream node that ONLY uses {0} (the first context)
-    # The template references {0} but NOT {1}, {2}, {3}, {4}
-    # DeadContextElimination should detect this and only wire context_1
-
+    # Downstream node: template only references {context_1}, but all five
+    # contexts are wired so the LLM sees them at O0. DeadContextElimination
+    # (O2) detects that context_2..context_5 are unused and prunes them.
+    #
+    # input_names lists every Data input (must equal the number of incoming
+    # Data edges). The template references only context_1 — that's the whole
+    # point of the benchmark.
     analysis = g.think(
-        "analysis",
-        """{0}
+        name="analysis",
+        prompt="""{context_1}
 
 Based on the database schema above, what are the main entities in this system?
 List the top 3 entities and their relationships in 2-3 sentences.
 
-(Note: This prompt only uses the FIRST context input {0}, ignoring {1}-{4})"""
+(Note: This prompt only references context_1; context_2..context_5 are dead.)""",
+        **{INPUT_NAMES: [
+            "context_1",
+            "context_2",
+            "context_3",
+            "context_4",
+            "context_5",
+        ]},
     )
 
-    # Wire all 5 contexts to the analysis node
-    # In O0: all 5 will be sent (wasteful, ~5000 tokens)
-    # In O2 with DeadContextElimination: only context_1 sent (~1000 tokens)
-    context_1 | analysis
-    context_2 | analysis
-    context_3 | analysis
-    context_4 | analysis
-    context_5 | analysis
+    # Wire context_2..context_5 explicitly (auto-wire already added context_1).
+    g.add_edge(context_2, analysis)
+    g.add_edge(context_3, analysis)
+    g.add_edge(context_4, analysis)
+    g.add_edge(context_5, analysis)
 
     # Output result
     output = g.print(
-        "=== DEAD CONTEXT ELIMINATION STRESS TEST ===\n\n"
-        "Analysis:\n{0}\n\n"
+        message="=== DEAD CONTEXT ELIMINATION STRESS TEST ===\n\n"
+        "Analysis:\n{analysis}\n\n"
         "This workflow created 5 large context chunks (~1000 tokens each).\n"
-        "The downstream 'analysis' node only uses {{0}} in its template.\n\n"
+        "The downstream 'analysis' node only references context_1 in its template.\n\n"
         "O0: All 5 contexts sent to LLM (~5000 tokens)\n"
-        "O2 with DeadContextElimination: Only {{0}} sent (~1000 tokens)\n"
+        "O2 with DeadContextElimination: Only context_1 sent (~1000 tokens)\n"
         "Token savings: ~80% reduction in input tokens"
     )
-    analysis | output
 
     g.done(output)
 
@@ -219,6 +237,6 @@ if __name__ == "__main__":
     # Output the graph as JSON
     print(dead_context_stress._graph.to_air())
     # To execute directly:
-    # import asyncio
-    # result = asyncio.run(dead_context_stress())
+    # import apxm
+    # result = apxm.run(dead_context_stress())
     # print(result.content)

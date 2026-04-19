@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useAppStore } from "@/store/app-store";
 import { decompileArtifact } from "@/api/compile";
+import { PassPipelineView } from "./pass-pipeline-view";
 
 export function CompilePanel() {
   const result = useAppStore((s) => s.compileResult);
@@ -83,19 +84,10 @@ export function CompilePanel() {
         )}
       </div>
 
-      {result.passes.length > 0 && (
-        <div className="compile-panel__passes">
-          <span className="compile-panel__section-title">Pass Pipeline (O{result.passes.length > 10 ? "2+" : "1"})</span>
-          <div className="compile-panel__pass-list">
-            {result.passes.map((pass, i) => (
-              <div key={i} className="compile-panel__pass">
-                <span className="compile-panel__pass-index">{i + 1}</span>
-                <span className="compile-panel__pass-name">{pass}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      <PassPipelineView
+        metrics={result.pass_metrics ?? []}
+        summary={result.pass_summary ?? null}
+      />
 
       {result.artifact_path && (
         <div className="compile-panel__artifact">

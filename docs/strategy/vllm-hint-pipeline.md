@@ -79,7 +79,8 @@ Key features of the Python API used here:
 - `g.ask(name, template)` creates an ASK node with `template_str` attribute
 - `g.merge(name, *inputs)` creates a MERGE node with data edges from inputs
 - `g.print(message)` references node variables by name (e.g. `{review_security}`)
-  which auto-wires data edges and converts to positional `{0}`, `{1}`, etc.
+  which auto-wires data edges and stamps `input_names` so the runtime can
+  look up each value by source name (no positional placeholders).
 - `output >> final_report` creates a Control edge (sequencing)
 - `g.done(node)` creates a RETURN node
 

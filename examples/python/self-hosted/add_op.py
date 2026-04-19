@@ -42,7 +42,7 @@ def add_op_workflow(g: GraphRecorder):
     reviewer = g.spawn("reviewer", profile=claude, cwd=cwd)
 
     # Step 1: Architect analyzes and creates implementation plan
-    architect_task = g.text(value="""You are the architect for APXM. You need to create an implementation plan
+    architect.ask(prompt="""You are the architect for APXM. You need to create an implementation plan
 for adding a new AIS operation to the APXM codebase.
 
 Operation name: {op_name}
@@ -64,18 +64,15 @@ Create a structured plan with:
 6. Test strategy
 
 Keep the plan under 400 words but be specific about attribute names and types.
-"""
-    )
-
-    architect.ask("{architect_task}")
-
-    print1 = g.print("=== ARCHITECT PLAN ===\n{architect_plan}")
+""")
     architect_plan = architect.get_last_node()
+
+    print1 = g.print(message="=== ARCHITECT PLAN ===\n{architect_plan}")
 
     # Step 2: Build implementation prompts for parallel execution
     compiler_prompt = g.ask(
-        "build_compiler_prompt",
-        """Based on this plan, implement the compiler-side changes:
+        name="build_compiler_prompt",
+        prompt="""Based on this plan, implement the compiler-side changes:
 
 Plan:
 {architect_plan}
@@ -97,8 +94,8 @@ Only modify what's necessary — don't refactor surrounding code.
     )
 
     runtime_prompt = g.ask(
-        "build_runtime_prompt",
-        """Based on this plan, implement the runtime-side changes:
+        name="build_runtime_prompt",
+        prompt="""Based on this plan, implement the runtime-side changes:
 
 Plan:
 {architect_plan}
@@ -129,17 +126,17 @@ Follow APXM conventions: use apxm-core types, proper error handling with context
     runtime_dev.ask("{runtime_prompt}")
     runtime_impl = runtime_dev.get_last_node()
 
-    print2 = g.print("=== COMPILER IMPL ===\n{compiler_impl}")
-    print3 = g.print("=== RUNTIME IMPL ===\n{runtime_impl}")
+    print2 = g.print(message="=== COMPILER IMPL ===\n{compiler_impl}")
+    print3 = g.print(message="=== RUNTIME IMPL ===\n{runtime_impl}")
 
     # Step 4: Wait for both to complete, then review
     wait = g.wait_all("wait_implementations", compiler_impl, runtime_impl)
-    print2 >> wait
-    print3 >> wait
+    g.add_edge(print2, wait, dependency="Control")
+    g.add_edge(print3, wait, dependency="Control")
 
     review_task = g.ask(
-        "build_review_task",
-        """Review both implementations and verify they work together:
+        name="build_review_task",
+        prompt="""Review both implementations and verify they work together:
 
 Compiler implementation:
 {compiler_impl}
@@ -167,17 +164,17 @@ Report:
 If tests fail, suggest fixes.
 """
     )
-    wait >> review_task
+    g.add_edge(wait, review_task, dependency="Control")
 
     reviewer.ask("{review_task}")
     review_result = reviewer.get_last_node()
 
-    print4 = g.print("=== REVIEW ===\n{review_result}")
+    print4 = g.print(message="=== REVIEW ===\n{review_result}")
 
     # Final synthesis
     final = g.think(
-        "synthesis",
-        """Synthesize the add-op workflow results:
+        name="synthesis",
+        prompt="""Synthesize the add-op workflow results:
 
 Plan: {architect_plan}
 Compiler impl: {compiler_impl}
@@ -191,15 +188,15 @@ Summary:
 - Next steps (if any)
 """
     )
-    print4 >> final
+    g.add_edge(print4, final, dependency="Control")
 
-    print5 = g.print("=== FINAL SUMMARY ===\n{final}")
+    print5 = g.print(message="=== FINAL SUMMARY ===\n{final}")
 
     g.done(print5)
 
 
 if __name__ == "__main__":
-    import asyncio
+    import apxm
 
-    result = asyncio.run(add_op_workflow("SUMMARIZE", "Summarize input text"))
+    result = apxm.run(add_op_workflow("SUMMARIZE", "Summarize input text"))
     print(result.content)

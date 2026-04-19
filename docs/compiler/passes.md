@@ -93,12 +93,14 @@ The MLIR passes need token counts to make budgeting decisions (e.g., should fuse
 
 ### Pre-MLIR: `annotate_token_estimates`
 
-Before the `AirModule` is lowered to MLIR text, every ASK/THINK/REASON node gets an `ais.est_template_tokens` attribute with the exact BPE token count of its static template text (placeholders like `{0}` are stripped first).
+Before the `AirModule` is lowered to MLIR text, every ASK/THINK/REASON node gets an `ais.est_template_tokens` attribute with the exact BPE token count of its static template text (named placeholders like `{topic}` are stripped first).
+
+The compiler validator rejects positional placeholders (`{0}`, `{1}`, ...) outright. Every `{name}` must match either an entry in the node's `input_names` array or a declared module parameter. Typos at compile time become errors with a Levenshtein-1 suggestion (e.g. `{seedz}` → "did you mean `{seed}`?").
 
 ```
 AirModule node:
   op = Ask
-  template_str = "Analyze {0} and summarize the key findings in 3 sentences."
+  template_str = "Analyze {topic} and summarize the key findings in 3 sentences."
 
 After annotation:
   ais.est_template_tokens = 11   ← BPE count of "Analyze  and summarize the key findings in 3 sentences."
@@ -142,10 +144,10 @@ Puts IR into a consistent shape before optimization: deduplicates context operan
 
 ```mlir
 // BEFORE: %data appears twice in context
-%r = ais.ask "Analyze {0} and compare {1}" [%data, %other, %data : !ais.token] : !ais.token
+%r = ais.ask "Analyze {data} and compare {other}" [%data, %other, %data : !ais.token] : !ais.token
 
 // AFTER: duplicate removed, template still correct
-%r = ais.ask "Analyze {0} and compare {1}" [%data, %other : !ais.token] : !ais.token
+%r = ais.ask "Analyze {data} and compare {other}" [%data, %other : !ais.token] : !ais.token
 ```
 
 **String normalization** — lowercases `memory_tier` and `capability` attributes for consistent matching in later passes:
@@ -160,14 +162,14 @@ ais.qmem "find facts" stage "db" in ltm : !ais.handle
 
 ### build-prompt — Template Placeholder Generation
 
-Fills in `"{0}"` for LLM operations that have context inputs but an empty template string. This prevents runtime errors from missing templates.
+Fills in a single named placeholder (matching the sole input's name) for LLM operations that have one context input but an empty template string. This prevents runtime errors from missing templates.
 
 ```mlir
 // BEFORE: context provided but template is empty
 %r = ais.ask "" [%user_input : !ais.token] : !ais.token
 
-// AFTER: default placeholder injected
-%r = ais.ask "{0}" [%user_input : !ais.token] : !ais.token
+// AFTER: default placeholder injected (matches the input's source name)
+%r = ais.ask "{user_input}" [%user_input : !ais.token] : !ais.token
 ```
 
 ### dspy-optimize — Neural Prompt Optimization (optional)
@@ -197,13 +199,13 @@ The subprocess has a 300-second timeout. On failure, original templates are pres
 ```mlir
 // BEFORE: two LLM round-trips
 %a = ais.ask "What is the capital of France?" : !ais.token
-%b = ais.ask "What landmarks are in {0}?" [%a : !ais.token] : !ais.token
+%b = ais.ask "What landmarks are in {a}?" [%a : !ais.token] : !ais.token
 
 // AFTER: single LLM call with concatenated template
-%fused = ais.ask "What is the capital of France?\n---\nWhat landmarks are in {0}?"
+%fused = ais.ask "What is the capital of France?\n---\nWhat landmarks are in {a}?"
            : !ais.token
            {ais.fused_from = ["What is the capital of France?",
-                               "What landmarks are in {0}?"]}
+                               "What landmarks are in {a}?"]}
 ```
 
 **Merge-chain fusion** — traces through `merge` + `const_str` chains to find the upstream producer:
@@ -228,13 +230,13 @@ The subprocess has a 300-second timeout. On failure, original templates are pres
 Scans template strings for `{N}` placeholders and removes context operands that are never referenced. Renumbers remaining placeholders to keep indices contiguous.
 
 ```mlir
-// BEFORE: template only uses {0} and {2}, but all 5 contexts are wired
-%r = ais.think "{0}\nAnalyze the database schema.\n(ignoring {1}-{4})"
+// BEFORE: template only uses {db_schema}, but all 5 contexts are wired
+%r = ais.think "{db_schema}\nAnalyze the database schema."
        [%db_schema, %api_docs, %env_config, %metrics, %security : !ais.token]
        : !ais.token
 
-// AFTER: unused contexts removed, {2} renumbered to {1}
-%r = ais.think "{0}\nAnalyze the database schema."
+// AFTER: unused contexts removed
+%r = ais.think "{db_schema}\nAnalyze the database schema."
        [%db_schema : !ais.token]
        : !ais.token
 ```
@@ -256,24 +258,24 @@ Groups LLM operations that share the same context operands and restructures thei
 %scal = ais.ask "You are reviewing auth code...\n\nFocus on SCALABILITY: ..."
           [%code : !ais.token] : !ais.token
 
-// AFTER: templates reordered so shared context ({0}) is the prefix
-%sec  = ais.ask "{0}\n---\nFocus on SECURITY: ..."
+// AFTER: templates reordered so shared context ({code}) is the prefix
+%sec  = ais.ask "{code}\n---\nFocus on SECURITY: ..."
           [%code : !ais.token] : !ais.token
           {ais.shared_prefix_group = "shared_prefix_0",
            ais.shared_prefix_est_tokens = 500,
            ais.warmup_candidate = true}                    // first in group: warmup hint
 
-%perf = ais.ask "{0}\n---\nFocus on PERFORMANCE: ..."
+%perf = ais.ask "{code}\n---\nFocus on PERFORMANCE: ..."
           [%code : !ais.token] : !ais.token
           {ais.shared_prefix_group = "shared_prefix_0",
            ais.shared_prefix_est_tokens = 500}
 
-%rel  = ais.ask "{0}\n---\nFocus on RELIABILITY: ..."
+%rel  = ais.ask "{code}\n---\nFocus on RELIABILITY: ..."
           [%code : !ais.token] : !ais.token
           {ais.shared_prefix_group = "shared_prefix_0",
            ais.shared_prefix_est_tokens = 500}
 
-%scal = ais.ask "{0}\n---\nFocus on SCALABILITY: ..."
+%scal = ais.ask "{code}\n---\nFocus on SCALABILITY: ..."
           [%code : !ais.token] : !ais.token
           {ais.shared_prefix_group = "shared_prefix_0",
            ais.shared_prefix_est_tokens = 500}
@@ -290,7 +292,7 @@ When all context operands are `ais.const_str` (known at compile time), substitut
 ```mlir
 // BEFORE: context is a compile-time constant
 %lang = ais.const_str "Rust"
-%r = ais.ask "Write a hello-world in {0}" [%lang : !ais.token] : !ais.token
+%r = ais.ask "Write a hello-world in {lang}" [%lang : !ais.token] : !ais.token
 
 // AFTER: constant folded into template, context cleared
 %r = ais.ask "Write a hello-world in Rust" [] : !ais.token

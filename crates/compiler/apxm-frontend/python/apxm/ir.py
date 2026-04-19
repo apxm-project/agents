@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
+import os
+import re
+from pathlib import Path
 from typing import Any
 
 from apxm._generated import constants as c
@@ -157,6 +160,12 @@ class ApxmGraph:
             if not inputs and arg_values and self._node_uses_params(node):
                 inputs = arg_values.copy()
 
+            # RETURN nodes are handled by the func.return at the end
+            if node.op.upper() == "RETURN":
+                if inputs:
+                    produced[node_id] = inputs[0]
+                continue
+
             # Emit the operation
             mlir_line = self._emit_mlir_op(node, ssa_name, inputs)
             if mlir_line:
@@ -165,6 +174,8 @@ class ApxmGraph:
             # Track produced value
             if not self._is_void_op(node.op):
                 produced[node_id] = ssa_name
+            elif inputs:
+                produced[node_id] = inputs[0]
 
         # Find exit nodes (no outgoing edges) and emit func.return
         exit_nodes = [nid for nid in node_ids if not outgoing[nid]]
@@ -223,20 +234,21 @@ class ApxmGraph:
         return "\n".join(mlir_lines)
 
     def _node_uses_params(self, node: GraphNode) -> bool:
-        """Check if a node uses flow parameters in its template/prompt attributes."""
+        """Check if a node uses flow parameters in its template/prompt attributes.
+
+        Templates reference parameters as `{name}`; the compiler validator
+        enforces that every `{name}` resolves to either an `input_names`
+        entry or a declared module parameter.
+        """
         if not self.parameters:
             return False
 
+        param_names = {p.name for p in self.parameters}
         for attr_name in TEMPLATE_ATTRS:
             if attr_name in node.attributes:
                 text = str(node.attributes[attr_name])
-                # Check for positional placeholders {0}, {1}, ..., {N-1}
-                for i in range(len(self.parameters)):
-                    if f"{{{i}}}" in text:
-                        return True
-                # Also check for named {{PARAM_NAME}} pattern
-                for param in self.parameters:
-                    if f"{{{{{param.name}}}}}" in text:
+                for match in re.finditer(r'\{(\w+)\}', text):
+                    if match.group(1) in param_names:
                         return True
         return False
 
@@ -366,6 +378,17 @@ class ApxmGraph:
             parameters=merged_params,
             metadata=merged_metadata,
         )
+
+
+def load_graph(path: str | os.PathLike[str]) -> ApxmGraph:
+    """Load a graph from a JSON file.
+
+    Args:
+        path: Path to a .json graph file
+    """
+    p = Path(path)
+    text = p.read_text(encoding="utf-8")
+    return ApxmGraph.from_json(text)
 
 
 # ============================================================================

@@ -652,7 +652,9 @@ impl LLMBackend for OpenAIBackend {
                 id: m.id.to_string(),
                 name: m.id.to_string(),
                 context_window: 128_000,
-                supports_vision: m.id.contains("4o") || m.id.contains("5") || m.id.contains("turbo"),
+                supports_vision: m.id.contains("4o")
+                    || m.id.contains("5")
+                    || m.id.contains("turbo"),
                 supports_functions: true,
             })
             .collect())
@@ -907,7 +909,10 @@ mod tests {
         let request = LLMRequest::new("Analyze").with_apxm_hints(hints);
         let body = backend.build_request_body(&request);
 
-        assert_eq!(body["priority"], 0, "critical_path should map to priority 0");
+        assert_eq!(
+            body["priority"], 0,
+            "critical_path should map to priority 0"
+        );
 
         // Test normal priority
         let mut hints = ApxmGraphHints::default();
@@ -923,7 +928,10 @@ mod tests {
         let request = LLMRequest::new("Analyze").with_apxm_hints(hints);
         let body = backend.build_request_body(&request);
 
-        assert_eq!(body["priority"], 10, "speculative should map to priority 10");
+        assert_eq!(
+            body["priority"], 10,
+            "speculative should map to priority 10"
+        );
     }
 
     #[test]
@@ -990,14 +998,8 @@ mod tests {
             client: reqwest::Client::new(),
         };
 
-        let hints = ApxmGraphHints::critical_path(
-            "graph-id",
-            "exec-id",
-            12,
-            "node-name",
-            vec![],
-            30_000,
-        );
+        let hints =
+            ApxmGraphHints::critical_path("graph-id", "exec-id", 12, "node-name", vec![], 30_000);
 
         let hints_json = serde_json::to_value(&hints).unwrap();
         let extra_body = json!({"apxm": hints_json});

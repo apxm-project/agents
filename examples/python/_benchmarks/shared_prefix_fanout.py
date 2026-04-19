@@ -50,8 +50,8 @@ def shared_prefix_fanout(g: GraphRecorder):
 
     # Parallel review tasks - all share the same large context
     review_security = g.ask(
-        "review_security",
-        context_text + "\n\nFocus on SECURITY aspects:\n"
+        name="review_security",
+        prompt=context_text + "\n\nFocus on SECURITY aspects:\n"
         "1. Are there any authentication vulnerabilities?\n"
         "2. Is the JWT implementation secure?\n"
         "3. Are rate limits sufficient?\n"
@@ -59,8 +59,8 @@ def shared_prefix_fanout(g: GraphRecorder):
     )
 
     review_performance = g.ask(
-        "review_performance",
-        context_text + "\n\nFocus on PERFORMANCE aspects:\n"
+        name="review_performance",
+        prompt=context_text + "\n\nFocus on PERFORMANCE aspects:\n"
         "1. Are there any performance bottlenecks?\n"
         "2. Is caching used effectively?\n"
         "3. Can any operations be optimized?\n"
@@ -68,8 +68,8 @@ def shared_prefix_fanout(g: GraphRecorder):
     )
 
     review_reliability = g.ask(
-        "review_reliability",
-        context_text + "\n\nFocus on RELIABILITY aspects:\n"
+        name="review_reliability",
+        prompt=context_text + "\n\nFocus on RELIABILITY aspects:\n"
         "1. What are the failure modes?\n"
         "2. Is error handling comprehensive?\n"
         "3. Are there any race conditions?\n"
@@ -77,8 +77,8 @@ def shared_prefix_fanout(g: GraphRecorder):
     )
 
     review_scalability = g.ask(
-        "review_scalability",
-        context_text + "\n\nFocus on SCALABILITY aspects:\n"
+        name="review_scalability",
+        prompt=context_text + "\n\nFocus on SCALABILITY aspects:\n"
         "1. Will this work with multiple instances?\n"
         "2. Are there any single points of contention?\n"
         "3. Can load be distributed effectively?\n"
@@ -95,14 +95,14 @@ def shared_prefix_fanout(g: GraphRecorder):
     )
 
     output = g.print(
-        "=== COMPLETE CODE REVIEW ===\n\n"
+        message="=== COMPLETE CODE REVIEW ===\n\n"
         "Security Review:\n{review_security}\n\n"
         "Performance Review:\n{review_performance}\n\n"
         "Reliability Review:\n{review_reliability}\n\n"
         "Scalability Review:\n{review_scalability}"
     )
 
-    output >> final_report
+    g.add_edge(output, final_report, dependency="Control")
     g.done(final_report)
 
 
@@ -110,6 +110,6 @@ if __name__ == "__main__":
     # Output the graph as JSON
     print(shared_prefix_fanout._graph.to_air())
     # To execute directly:
-    # import asyncio
-    # result = asyncio.run(shared_prefix_fanout())
+    # import apxm
+    # result = apxm.run(shared_prefix_fanout())
     # print(result.content)

@@ -95,7 +95,7 @@ def test_compiled_flow_build_request():
     from apxm.execution import CompiledFlow
 
     g = GraphRecorder("test_flow")
-    g.ask("step1", "Do something")
+    g.ask(name="step1", prompt="Do something")
     graph = g.to_graph()
 
     flow = CompiledFlow(graph)
@@ -112,7 +112,7 @@ def test_compiled_flow_build_request_no_session():
     from apxm.execution import CompiledFlow
 
     g = GraphRecorder("test_flow")
-    g.ask("step1", "Do something")
+    g.ask(name="step1", prompt="Do something")
     graph = g.to_graph()
 
     flow = CompiledFlow(graph)
@@ -120,6 +120,18 @@ def test_compiled_flow_build_request_no_session():
 
     assert "session_id" not in request
     assert request["args"] == []
+
+
+def test_run_wrapper():
+    """Test apxm.run() wrapper."""
+    import asyncio
+    from apxm.execution import run
+
+    async def simple():
+        return 42
+
+    result = run(simple())
+    assert result == 42
 
 
 def test_compiled_flow_save_load_roundtrip():
@@ -131,7 +143,7 @@ def test_compiled_flow_save_load_roundtrip():
 
     g = GraphRecorder("roundtrip_test")
     g.param("topic", "str")
-    g.ask("step1", "Research {0}")
+    g.ask(name="step1", prompt="Research {0}")
     graph = g.to_graph()
 
     flow = CompiledFlow(graph)

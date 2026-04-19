@@ -36,7 +36,10 @@ impl AgentPool {
     }
 
     /// Try to acquire a warm session for the given profile.
-    pub async fn acquire(&self, profile: &str) -> Option<Arc<Mutex<dyn std::any::Any + Send + Sync>>> {
+    pub async fn acquire(
+        &self,
+        profile: &str,
+    ) -> Option<Arc<Mutex<dyn std::any::Any + Send + Sync>>> {
         let mut entry = self.pools.entry(profile.to_string()).or_default();
         let pool = entry.value_mut();
 
@@ -213,7 +216,10 @@ mod tests {
         let session = Arc::new(Mutex::new(42u32));
 
         // Release a session
-        pool.release("claude", session.clone() as Arc<Mutex<dyn std::any::Any + Send + Sync>>);
+        pool.release(
+            "claude",
+            session.clone() as Arc<Mutex<dyn std::any::Any + Send + Sync>>,
+        );
 
         // Acquire it back
         let acquired = pool.acquire("claude").await;
@@ -230,7 +236,10 @@ mod tests {
         // Release 3 sessions
         for i in 0..3 {
             let session = Arc::new(Mutex::new(i));
-            pool.release("claude", session as Arc<Mutex<dyn std::any::Any + Send + Sync>>);
+            pool.release(
+                "claude",
+                session as Arc<Mutex<dyn std::any::Any + Send + Sync>>,
+            );
         }
 
         // Only 2 should be pooled (max_idle_per_profile = 2)
@@ -243,7 +252,10 @@ mod tests {
         let pool = AgentPool::new(4, Duration::from_millis(50));
         let session = Arc::new(Mutex::new(42u32));
 
-        pool.release("claude", session.clone() as Arc<Mutex<dyn std::any::Any + Send + Sync>>);
+        pool.release(
+            "claude",
+            session.clone() as Arc<Mutex<dyn std::any::Any + Send + Sync>>,
+        );
 
         // Wait for expiration
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -259,7 +271,10 @@ mod tests {
         // Add 3 sessions
         for i in 0..3 {
             let session = Arc::new(Mutex::new(i));
-            pool.release("claude", session as Arc<Mutex<dyn std::any::Any + Send + Sync>>);
+            pool.release(
+                "claude",
+                session as Arc<Mutex<dyn std::any::Any + Send + Sync>>,
+            );
         }
 
         assert_eq!(pool.stats().total_sessions, 3);
@@ -279,11 +294,17 @@ mod tests {
         // Add sessions for multiple profiles
         for i in 0..2 {
             let session = Arc::new(Mutex::new(i));
-            pool.release("claude", session as Arc<Mutex<dyn std::any::Any + Send + Sync>>);
+            pool.release(
+                "claude",
+                session as Arc<Mutex<dyn std::any::Any + Send + Sync>>,
+            );
         }
         for i in 0..3 {
             let session = Arc::new(Mutex::new(i));
-            pool.release("codex", session as Arc<Mutex<dyn std::any::Any + Send + Sync>>);
+            pool.release(
+                "codex",
+                session as Arc<Mutex<dyn std::any::Any + Send + Sync>>,
+            );
         }
 
         assert_eq!(pool.stats().total_sessions, 5);
@@ -298,10 +319,16 @@ mod tests {
         let pool = AgentPool::new(4, Duration::from_secs(300));
 
         let session1 = Arc::new(Mutex::new(1));
-        pool.release("claude", session1 as Arc<Mutex<dyn std::any::Any + Send + Sync>>);
+        pool.release(
+            "claude",
+            session1 as Arc<Mutex<dyn std::any::Any + Send + Sync>>,
+        );
 
         let session2 = Arc::new(Mutex::new(2));
-        pool.release("codex", session2 as Arc<Mutex<dyn std::any::Any + Send + Sync>>);
+        pool.release(
+            "codex",
+            session2 as Arc<Mutex<dyn std::any::Any + Send + Sync>>,
+        );
 
         let stats = pool.stats();
         assert_eq!(stats.total_sessions, 2);

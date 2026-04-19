@@ -313,13 +313,31 @@ mod tests {
         let episodic = EpisodicMemory::unlimited();
 
         episodic
-            .record("event1".to_string(), Value::Null, "exec_1".to_string(), None, None)
+            .record(
+                "event1".to_string(),
+                Value::Null,
+                "exec_1".to_string(),
+                None,
+                None,
+            )
             .await?;
         episodic
-            .record("event2".to_string(), Value::Null, "exec_1".to_string(), None, None)
+            .record(
+                "event2".to_string(),
+                Value::Null,
+                "exec_1".to_string(),
+                None,
+                None,
+            )
             .await?;
         episodic
-            .record("event3".to_string(), Value::Null, "exec_2".to_string(), None, None)
+            .record(
+                "event3".to_string(),
+                Value::Null,
+                "exec_2".to_string(),
+                None,
+                None,
+            )
             .await?;
 
         let exec_1_entries = episodic.get_by_execution("exec_1").await?;
@@ -341,7 +359,13 @@ mod tests {
 
         for i in 0..5 {
             episodic
-                .record(format!("event{}", i), Value::Null, "exec_123".to_string(), None, None)
+                .record(
+                    format!("event{}", i),
+                    Value::Null,
+                    "exec_123".to_string(),
+                    None,
+                    None,
+                )
                 .await?;
         }
 
@@ -369,7 +393,13 @@ mod tests {
             )
             .await?;
         episodic
-            .record("llm_call".to_string(), Value::Null, "exec_1".to_string(), None, None)
+            .record(
+                "llm_call".to_string(),
+                Value::Null,
+                "exec_1".to_string(),
+                None,
+                None,
+            )
             .await?;
         episodic
             .record(
@@ -396,7 +426,13 @@ mod tests {
 
         for i in 0..10 {
             episodic
-                .record(format!("event{}", i), Value::Null, "exec_123".to_string(), None, None)
+                .record(
+                    format!("event{}", i),
+                    Value::Null,
+                    "exec_123".to_string(),
+                    None,
+                    None,
+                )
                 .await?;
         }
 
@@ -413,13 +449,31 @@ mod tests {
         let episodic = EpisodicMemory::unlimited();
 
         episodic
-            .record("event1".to_string(), Value::Null, "exec_1".to_string(), None, None)
+            .record(
+                "event1".to_string(),
+                Value::Null,
+                "exec_1".to_string(),
+                None,
+                None,
+            )
             .await?;
         episodic
-            .record("event2".to_string(), Value::Null, "exec_1".to_string(), None, None)
+            .record(
+                "event2".to_string(),
+                Value::Null,
+                "exec_1".to_string(),
+                None,
+                None,
+            )
             .await?;
         episodic
-            .record("event3".to_string(), Value::Null, "exec_2".to_string(), None, None)
+            .record(
+                "event3".to_string(),
+                Value::Null,
+                "exec_2".to_string(),
+                None,
+                None,
+            )
             .await?;
 
         let stats = episodic.stats().await?;
