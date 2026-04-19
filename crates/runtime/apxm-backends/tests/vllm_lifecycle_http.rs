@@ -29,13 +29,12 @@
 //! - (b) at least one `chat/completions` call carries
 //!       `extra_body.apxm.{graph_id, node_id}` populated
 //! - (c) `release_graph` called exactly once on the happy path
-//! - (d) `release_graph` fires when the execution future is dropped
-//!       mid-flight (Drop guard) — **gated on Step 4** because the Drop
-//!       guard is a property of `VllmGraphLifecycle`, not of the raw
-//!       backend. This sub-test is `#[ignore]`'d with a TODO; the
-//!       maintainer should un-ignore it once Step 4 lands and can be
-//!       imported here (or, more likely, move it to
-//!       `apxm-runtime/tests/`).
+//!
+//! Assertion (d) — `release_graph` fires when the execution future is
+//! dropped mid-flight (Drop guard) — is exercised in
+//! `apxm-runtime/tests/vllm_lifecycle_drop.rs` instead, since the Drop
+//! guard is a property of `VllmGraphLifecycle` (defined in
+//! `apxm-runtime`) and cannot be imported from this crate.
 
 use apxm_backends::llm::backends::vllm::{ApxmGraphHints, GraphAwareVllmBackend, GraphMetadata};
 use apxm_backends::llm::backends::{LLMBackend, LLMRequest};
@@ -270,65 +269,8 @@ async fn vllm_lifecycle_happy_path_register_generate_release() {
     drop(server);
 }
 
-// ---------------------------------------------------------------------------
-// (d) — Drop guard: release fires when the execution future is dropped
-// mid-flight. This is a property of `VllmGraphLifecycle` (Step 4 of the
-// plan), which is not yet available from this crate. Ignored until Step 4
-// lands; the maintainer should un-ignore (and likely move to
-// `apxm-runtime/tests/`) once the lifecycle type is importable.
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-#[ignore = "Step 4 (VllmGraphLifecycle Drop guard) not yet merged. \
-            TODO: un-ignore and possibly relocate to apxm-runtime/tests/ \
-            once VllmGraphLifecycle is importable. The Drop guard cannot \
-            be exercised from apxm-backends in isolation because the \
-            wrapper that owns it lives one crate up."]
-async fn vllm_lifecycle_drop_guard_releases_on_cancel() {
-    let graph_id = "graph-test-drop-0001";
-    let exec_id = "exec-test-drop-0001";
-    let model = "Qwen/Qwen2.5-7B-Instruct";
-
-    let server = start_mock_vllm(graph_id, exec_id, model).await;
-    let _backend = make_backend(&server.uri(), model).await;
-
-    // Pseudocode for the eventual implementation (compiles against the
-    // expected Step 4 API, kept here as a reference for the maintainer):
-    //
-    //     let backend_arc: Arc<dyn LLMBackend> = Arc::new(_backend);
-    //     let lifecycle = VllmGraphLifecycle::register(
-    //         backend_arc.clone(),
-    //         graph_id.to_string(),
-    //         exec_id.to_string(),
-    //         &dag,
-    //     )
-    //     .await
-    //     .expect("register lifecycle");
-    //
-    //     let handle = tokio::spawn(async move {
-    //         // Hold the lifecycle inside a long-running future, then we'll
-    //         // drop the JoinHandle (and abort) before it completes.
-    //         let _lc = lifecycle;
-    //         tokio::time::sleep(Duration::from_secs(60)).await;
-    //     });
-    //     tokio::time::sleep(Duration::from_millis(50)).await;
-    //     handle.abort();
-    //     // Give the Drop's tokio::spawn a tick to flush.
-    //     tokio::time::sleep(Duration::from_millis(200)).await;
-    //
-    //     let received = server.received_requests().await.unwrap_or_default();
-    //     let releases = received
-    //         .iter()
-    //         .filter(|r| r.method == wiremock::http::Method::DELETE)
-    //         .filter(|r| r.url.path().starts_with("/v1/apxm/graphs/"))
-    //         .count();
-    //     assert_eq!(releases, 1, "Drop guard must fire exactly one DELETE");
-    //
-    //     drop(server);
-
-    // Until Step 4 lands, fail loudly if someone un-ignores prematurely.
-    panic!(
-        "vllm_lifecycle_drop_guard_releases_on_cancel is gated on Step 4 \
-         (VllmGraphLifecycle). Un-ignore once that lands."
-    );
-}
+// Drop-guard assertion (d) lives in
+// `crates/runtime/apxm-runtime/tests/vllm_lifecycle_drop.rs` — the wrapper
+// that owns the Drop impl is `VllmGraphLifecycle`, defined in
+// `apxm-runtime` and unavailable from this crate without inverting the
+// dependency direction.

@@ -56,3 +56,6 @@ dashmap = ["dep:dashmap"]
 sqlite = ["dep:rusqlite"]
 metrics = ["apxm-backends/metrics"]
 no-trace = ["apxm-core/no-trace"]
+
+[dev-dependencies]
+wiremock = "0.6"
