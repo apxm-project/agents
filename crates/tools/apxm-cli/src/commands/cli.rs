@@ -78,9 +78,14 @@ pub enum Commands {
         /// Emit metrics JSON file with runtime execution statistics
         #[arg(long)]
         emit_metrics: Option<PathBuf>,
-        /// Emit session output folder with all node results, events, metrics
-        #[arg(long)]
+        /// Emit session output folder with all node results, events, metrics.
+        /// Default: ON (auto-generates path under ApxmPaths::sessions_dir()).
+        /// Pass an explicit path to override, or use --no-emit-session to disable.
+        #[arg(long, value_name = "PATH", num_args = 0..=1, conflicts_with = "no_emit_session")]
         emit_session: Option<Option<PathBuf>>,
+        /// Disable session output (opt-out of the default-on --emit-session behavior).
+        #[arg(long)]
+        no_emit_session: bool,
         /// Emit execution profile JSON for profile-guided optimization
         #[arg(long)]
         emit_profile: Option<PathBuf>,
@@ -95,9 +100,14 @@ pub enum Commands {
         /// Emit metrics JSON file with runtime execution statistics
         #[arg(long)]
         emit_metrics: Option<PathBuf>,
-        /// Emit session output folder with all node results, events, metrics
-        #[arg(long)]
+        /// Emit session output folder with all node results, events, metrics.
+        /// Default: ON (auto-generates path under ApxmPaths::sessions_dir()).
+        /// Pass an explicit path to override, or use --no-emit-session to disable.
+        #[arg(long, value_name = "PATH", num_args = 0..=1, conflicts_with = "no_emit_session")]
         emit_session: Option<Option<PathBuf>>,
+        /// Disable session output (opt-out of the default-on --emit-session behavior).
+        #[arg(long)]
+        no_emit_session: bool,
         /// Emit execution profile JSON for profile-guided optimization
         #[arg(long)]
         emit_profile: Option<PathBuf>,

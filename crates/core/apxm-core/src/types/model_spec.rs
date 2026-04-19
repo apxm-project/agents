@@ -165,6 +165,27 @@ pub const BUILTIN_MODELS: &[BuiltinModelSpec] = &[
         provider: "google",
         is_default: false,
     },
+    // --- vLLM ---
+    BuiltinModelSpec {
+        id: "Qwen/Qwen2.5-7B-Instruct",
+        provider: "vllm",
+        is_default: true,
+    },
+    BuiltinModelSpec {
+        id: "Qwen/Qwen2.5-14B-Instruct",
+        provider: "vllm",
+        is_default: false,
+    },
+    BuiltinModelSpec {
+        id: "meta-llama/Llama-3.1-8B-Instruct",
+        provider: "vllm",
+        is_default: false,
+    },
+    BuiltinModelSpec {
+        id: "meta-llama/Llama-3.1-70B-Instruct",
+        provider: "vllm",
+        is_default: false,
+    },
 ];
 
 /// All builtin models for a given provider.

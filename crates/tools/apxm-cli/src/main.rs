@@ -9,6 +9,8 @@ mod frontend;
 
 use anyhow::Result;
 use commands::*;
+#[cfg(feature = "driver")]
+use std::path::PathBuf;
 
 /// Initialize the tracing subscriber based on the --trace flag or RUST_LOG env var.
 /// If neither is provided, no subscriber is registered (zero overhead).
@@ -87,15 +89,22 @@ async fn run_cli() -> Result<()> {
             opt_level,
             emit_metrics,
             emit_session,
+            no_emit_session,
             emit_profile,
         } => {
+            // Default: emit-session ON (auto-path). Explicit --no-emit-session disables.
+            let effective_emit_session: Option<Option<PathBuf>> = if no_emit_session {
+                None
+            } else {
+                Some(emit_session.unwrap_or(None))
+            };
             execute_command(
                 input,
                 args,
                 opt_level,
                 cli.config,
                 emit_metrics,
-                emit_session,
+                effective_emit_session,
                 emit_profile,
             )
             .await
@@ -105,14 +114,21 @@ async fn run_cli() -> Result<()> {
             args,
             emit_metrics,
             emit_session,
+            no_emit_session,
             emit_profile,
         } => {
+            // Default: emit-session ON (auto-path). Explicit --no-emit-session disables.
+            let effective_emit_session: Option<Option<PathBuf>> = if no_emit_session {
+                None
+            } else {
+                Some(emit_session.unwrap_or(None))
+            };
             run_command(
                 input,
                 args,
                 cli.config,
                 emit_metrics,
-                emit_session,
+                effective_emit_session,
                 emit_profile,
             )
             .await

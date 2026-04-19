@@ -23,6 +23,16 @@ def register_commands(app: Typer) -> None:
         emit_metrics: Optional[Path] = Option(
             None, "--emit-metrics", help="Emit runtime metrics to JSON file"
         ),
+        emit_session: Optional[Path] = Option(
+            None,
+            "--emit-session",
+            help="Emit session output folder (default: ON, auto-path under ~/.apxm/sessions/)",
+        ),
+        no_emit_session: bool = Option(
+            False,
+            "--no-emit-session",
+            help="Disable the default-on session output emission",
+        ),
         cargo: bool = Option(
             False,
             "--cargo",
@@ -38,6 +48,7 @@ def register_commands(app: Typer) -> None:
         cwd = Path.cwd()
         file = file.resolve()
         emit_metrics = resolve_path(emit_metrics, cwd)
+        emit_session = resolve_path(emit_session, cwd)
 
         if not file.exists():
             print_error(f"File not found: {file}")
@@ -50,6 +61,10 @@ def register_commands(app: Typer) -> None:
             extra.extend(["--trace", trace])
         if emit_metrics:
             extra.extend(["--emit-metrics", str(emit_metrics)])
+        if no_emit_session:
+            extra.append("--no-emit-session")
+        elif emit_session is not None:
+            extra.extend(["--emit-session", str(emit_session)])
         extra.append(str(file))
         if args:
             extra.extend(args)

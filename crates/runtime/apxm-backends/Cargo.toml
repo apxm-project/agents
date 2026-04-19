@@ -59,6 +59,9 @@ anyhow.workspace = true
 # Logging
 tracing.workspace = true
 
+# Identifiers
+uuid.workspace = true
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["full", "test-util"] }
 mockito = "1.0"

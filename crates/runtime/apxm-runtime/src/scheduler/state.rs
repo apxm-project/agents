@@ -47,6 +47,13 @@ pub struct SchedulerState {
     // Concurrency control (encapsulated)
     pub concurrency: ConcurrencyControl,
 
+    /// Separate concurrency controller for LLM operations (Ask/Think/Reason).
+    ///
+    /// Decouples LLM fan-out (request concurrency) from compute fan-out (CPU
+    /// cores) so a continuous-batching backend can be saturated without
+    /// inflating compute parallelism.
+    pub llm_concurrency: ConcurrencyControl,
+
     // Coordination
     pub executed: Arc<AtomicUsize>,
     pub failed: Arc<AtomicUsize>,
@@ -181,8 +188,11 @@ impl SchedulerState {
         // Create readiness tracker
         let ready_set = ReadySet::new();
 
-        // Create concurrency controller
+        // Create concurrency controllers: a general semaphore for compute-bound
+        // ops and a separate one for LLM ops so the two pools don't starve
+        // each other under remote-batched serving.
         let concurrency = ConcurrencyControl::new(cfg.max_inflight);
+        let llm_concurrency = ConcurrencyControl::new(cfg.llm_inflight);
 
         // Build state
         let state = Self {
@@ -201,6 +211,7 @@ impl SchedulerState {
             queue: Arc::clone(&queue),
 
             concurrency,
+            llm_concurrency,
 
             executed: Arc::new(AtomicUsize::new(0)),
             failed: Arc::new(AtomicUsize::new(0)),
@@ -243,6 +254,7 @@ impl SchedulerState {
         tracing::debug!("mark_done called, setting remaining to 0");
         self.remaining.store(0, Ordering::SeqCst);
         self.concurrency.cancel();
+        self.llm_concurrency.cancel();
         self.notify_done.notify_waiters();
     }
 
@@ -1257,6 +1269,38 @@ mod tests {
         // and no goal_id attribute -- the active goal boost only applies to
         // zero-priority nodes without an explicit goal_id.
         assert_eq!(*state.priorities.get(&1).unwrap(), Priority::Normal);
+    }
+
+    #[tokio::test]
+    async fn test_llm_concurrency_independent_of_compute_concurrency() {
+        // Exhaust the LLM semaphore; compute permits must remain available.
+        // This is the core invariant behind Step 5: LLM fan-out can saturate
+        // without throttling compute-bound work, and vice versa.
+        let cfg = SchedulerConfig::new()
+            .with_max_concurrency(2)
+            .with_max_inflight(2)
+            .with_llm_inflight(1);
+        let dag = two_node_dag();
+        let metrics = Arc::new(MetricsCollector::new());
+        let (state, _) =
+            SchedulerState::new(dag, cfg, metrics, Instant::now(), vec![]).unwrap();
+
+        // Take the only LLM permit.
+        let llm_permit = state
+            .llm_concurrency
+            .acquire()
+            .await
+            .expect("llm acquire");
+        assert_eq!(state.llm_concurrency.available_permits(), 0);
+
+        // Compute permits are unaffected.
+        assert_eq!(state.concurrency.available_permits(), 2);
+        let compute_permit = state
+            .concurrency
+            .try_acquire()
+            .expect("compute permit must still be available");
+        drop(compute_permit);
+        drop(llm_permit);
     }
 
     #[test]

@@ -142,6 +142,26 @@ pub const DOWNSTREAM_NODES: &str = "downstream_nodes";
 pub const REUSE_GROUP: &str = "shared_prefix_group";
 pub const EST_TEMPLATE_TOKENS: &str = "est_template_tokens";
 
+// -- vLLM graph-aware hints --
+// Mirrors of MLIR Constants.h::attrs::* (with ais. prefix). Read by the Rust
+// vllm_hints() compiler pass; written by the MLIR PromptCanonicalization +
+// AssignPriority passes. The drift-detector test asserts string equality.
+pub const AIS_SHARED_PREFIX_GROUP: &str = "ais.shared_prefix_group";
+pub const AIS_SHARED_PREFIX_EST_TOKENS: &str = "ais.shared_prefix_est_tokens";
+pub const AIS_WARMUP_CANDIDATE: &str = "ais.warmup_candidate";
+pub const AIS_DOWNSTREAM_NODES: &str = "ais.downstream_nodes";
+
+// vLLM payload keys: written by vllm_hints() pass onto LLM nodes; consumed
+// by the runtime when constructing extra_body.apxm.* on each LLMRequest.
+pub const VLLM_PRIORITY_CLASS: &str = "_vllm_priority_class";
+pub const VLLM_DOWNSTREAM_NODES: &str = "_vllm_downstream_nodes";
+pub const VLLM_REUSE_GROUP: &str = "_vllm_reuse_group";
+pub const VLLM_CRITICAL_PATH: &str = "_vllm_critical_path";
+pub const VLLM_PIN_MODE: &str = "_vllm_pin_mode";
+pub const VLLM_EST_TOKENS: &str = "_vllm_est_tokens";
+pub const VLLM_WARMUP: &str = "_vllm_warmup";
+pub const VLLM_PIPELINE: &str = "_vllm_pipeline";
+
 /// AIS dialect prefix for MLIR-level attribute names.
 pub const MLIR_ATTR_PREFIX: &str = "ais.";
 
@@ -270,6 +290,18 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     DOWNSTREAM_NODES,
     REUSE_GROUP,
     EST_TEMPLATE_TOKENS,
+    AIS_SHARED_PREFIX_GROUP,
+    AIS_SHARED_PREFIX_EST_TOKENS,
+    AIS_WARMUP_CANDIDATE,
+    AIS_DOWNSTREAM_NODES,
+    VLLM_PRIORITY_CLASS,
+    VLLM_DOWNSTREAM_NODES,
+    VLLM_REUSE_GROUP,
+    VLLM_CRITICAL_PATH,
+    VLLM_PIN_MODE,
+    VLLM_EST_TOKENS,
+    VLLM_WARMUP,
+    VLLM_PIPELINE,
     // OperationSpec-only fields (not graph attrs, but used in field names)
     "memory",
     "beliefs",
@@ -291,3 +323,52 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     "storage",
     "ttl_seconds",
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Drift detector: every AIS_*-prefixed Rust constant must equal the
+    /// matching `constexpr llvm::StringLiteral X = "..."` in MLIR Constants.h.
+    /// Editing one side without the other breaks payload contracts silently
+    /// in production; this test fails the build instead.
+    #[test]
+    fn ais_attrs_match_mlir_constants_h() {
+        let constants_h = include_str!(
+            "../../../compiler/apxm-compiler/mlir/include/ais/Common/Constants.h"
+        );
+        let pairs = [
+            ("SHARED_PREFIX_GROUP", AIS_SHARED_PREFIX_GROUP),
+            ("SHARED_PREFIX_EST_TOKENS", AIS_SHARED_PREFIX_EST_TOKENS),
+            ("WARMUP_CANDIDATE", AIS_WARMUP_CANDIDATE),
+            ("DOWNSTREAM_NODES", AIS_DOWNSTREAM_NODES),
+        ];
+        for (cpp_name, rust_value) in pairs {
+            let needle = format!("{cpp_name} = \"{rust_value}\"");
+            assert!(
+                constants_h.contains(&needle),
+                "MLIR Constants.h drift: expected `{}` (Rust constant differs from C++ literal)",
+                needle
+            );
+        }
+    }
+
+    #[test]
+    fn vllm_payload_keys_use_underscore_prefix() {
+        for key in [
+            VLLM_PRIORITY_CLASS,
+            VLLM_DOWNSTREAM_NODES,
+            VLLM_REUSE_GROUP,
+            VLLM_CRITICAL_PATH,
+            VLLM_PIN_MODE,
+            VLLM_EST_TOKENS,
+            VLLM_WARMUP,
+            VLLM_PIPELINE,
+        ] {
+            assert!(
+                key.starts_with("_vllm_"),
+                "vLLM extra_body payload keys must use the `_vllm_` prefix; got `{key}`"
+            );
+        }
+    }
+}

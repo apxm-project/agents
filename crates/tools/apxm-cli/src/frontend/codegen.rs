@@ -578,22 +578,52 @@ fn render_models_module() -> String {
 /// - Strip date suffixes (e.g. `-20241022`, `-20240229`)
 /// - Uppercase
 fn to_model_constant(id: &str) -> String {
+    // Hugging-Face style ids (`vendor/name`) get a richer transform so that
+    // e.g. "Qwen/Qwen2.5-7B-Instruct" becomes "QWEN_2_5_7B".
+    let has_vendor_prefix = id.contains('/');
+    let after_slash = id.rsplit('/').next().unwrap_or(id);
+
+    // Strip common suffix tokens (instruction-tuned variants).
+    let trimmed_suffix = ["-Instruct", "-instruct", "-Chat", "-chat"]
+        .iter()
+        .fold(after_slash, |acc, suf| acc.strip_suffix(suf).unwrap_or(acc));
+
     // Strip trailing date suffixes like -20241022
-    let stripped = if id.len() > 9 {
-        let suffix = &id[id.len() - 9..];
+    let stripped = if trimmed_suffix.len() > 9 {
+        let suffix = &trimmed_suffix[trimmed_suffix.len() - 9..];
         if suffix.starts_with('-')
             && suffix[1..].chars().all(|c| c.is_ascii_digit())
             && suffix.len() == 9
         {
-            &id[..id.len() - 9]
+            &trimmed_suffix[..trimmed_suffix.len() - 9]
         } else {
-            id
+            trimmed_suffix
         }
     } else {
-        id
+        trimmed_suffix
     };
 
-    stripped.replace(['-', '.'], "_").to_ascii_uppercase()
+    // For HF-style ids, insert separator between a letter and a following
+    // digit so "Qwen2.5" → "QWEN_2_5" and "Llama3.1" → "LLAMA_3_1".
+    // Skipped for non-vendor ids to preserve names like "GPT_4O" and "O1_MINI".
+    let spaced = if has_vendor_prefix {
+        let mut buf = String::with_capacity(stripped.len() + 4);
+        let mut prev: Option<char> = None;
+        for ch in stripped.chars() {
+            if let Some(p) = prev {
+                if p.is_ascii_alphabetic() && ch.is_ascii_digit() {
+                    buf.push('-');
+                }
+            }
+            buf.push(ch);
+            prev = Some(ch);
+        }
+        buf
+    } else {
+        stripped.to_string()
+    };
+
+    spaced.replace(['-', '.', '/'], "_").to_ascii_uppercase()
 }
 
 /// Map provider id to a Python class name.
@@ -848,6 +878,43 @@ mod tests {
             "CLAUDE_3_5_SONNET"
         );
         assert_eq!(super::to_model_constant("gpt-5.1"), "GPT_5_1");
+        // Hugging-Face style ids used by vLLM.
+        assert_eq!(
+            super::to_model_constant("Qwen/Qwen2.5-7B-Instruct"),
+            "QWEN_2_5_7B"
+        );
+        assert_eq!(
+            super::to_model_constant("Qwen/Qwen2.5-14B-Instruct"),
+            "QWEN_2_5_14B"
+        );
+        assert_eq!(
+            super::to_model_constant("meta-llama/Llama-3.1-8B-Instruct"),
+            "LLAMA_3_1_8B"
+        );
+        assert_eq!(
+            super::to_model_constant("meta-llama/Llama-3.1-70B-Instruct"),
+            "LLAMA_3_1_70B"
+        );
+    }
+
+    #[test]
+    fn models_module_renders_vllm_class() {
+        let rendered = render_generated_files();
+        assert!(rendered.models_py.contains("class Vllm:"));
+        assert!(
+            rendered
+                .models_py
+                .contains("QWEN_2_5_7B: Final[ModelId] = ModelId(\"Qwen/Qwen2.5-7B-Instruct\")")
+        );
+        assert!(rendered.models_py.contains("QWEN_2_5_14B: Final[ModelId]"));
+        assert!(rendered.models_py.contains("LLAMA_3_1_8B: Final[ModelId]"));
+        assert!(rendered.models_py.contains("LLAMA_3_1_70B: Final[ModelId]"));
+        // The default for vllm is QWEN_2_5_7B.
+        assert!(
+            rendered
+                .models_py
+                .contains("DEFAULT: Final[ModelId] = QWEN_2_5_7B")
+        );
     }
 
     #[test]

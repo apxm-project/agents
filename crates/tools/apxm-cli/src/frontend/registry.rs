@@ -119,7 +119,7 @@ pub fn graph_attr_constants() -> Vec<FrontendConstant> {
 }
 
 fn to_const_name(s: &str) -> String {
-    s.to_ascii_uppercase()
+    s.replace('.', "_").to_ascii_uppercase()
 }
 
 pub fn operation_specs() -> Vec<FrontendOperationSpec> {

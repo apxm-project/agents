@@ -13,6 +13,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
+use apxm_core::types::operations::AISOperationType;
 use apxm_core::types::{Node, NodeId, Number, OpStatus, TokenId, Value};
 use apxm_core::{apxm_op, apxm_token};
 use crossbeam_deque::Worker;
@@ -71,16 +72,24 @@ pub async fn worker_loop(
         // Record work-stealing time only on successful steals
         state.metrics.record_work_stealing(steal_start.elapsed());
 
-        // Acquire concurrency permit (backpressure)
-        let permit = match state.concurrency.acquire().await {
-            Ok(p) => p,
-            Err(_) => break, // Cancelled
+        // Get node up-front so we can pick the correct semaphore. If the node
+        // is missing, fall through and skip without ever acquiring a permit.
+        let Some(node) = state.nodes.get(&node_id).map(|n| n.value().clone()) else {
+            continue;
         };
 
-        // Get node
-        let Some(node) = state.nodes.get(&node_id).map(|n| n.value().clone()) else {
-            drop(permit);
-            continue;
+        // Acquire concurrency permit (backpressure). LLM ops draw from a
+        // separate semaphore so remote-batched serving (vLLM, etc.) can fan
+        // out without inflating compute parallelism — and vice versa, so a
+        // burst of LLM nodes cannot starve compute-bound work.
+        let semaphore = if is_llm_op(&node.op_type) {
+            &state.llm_concurrency
+        } else {
+            &state.concurrency
+        };
+        let permit = match semaphore.acquire().await {
+            Ok(p) => p,
+            Err(_) => break, // Cancelled
         };
 
         // Mark operation as running and record progress so the watchdog
@@ -168,6 +177,18 @@ pub async fn worker_loop(
 
         drop(permit);
     }
+}
+
+/// Returns true if the operation type counts against the LLM concurrency cap.
+///
+/// Kept in lockstep with `executor::pipeline::is_pure_llm_op` and the LLM
+/// dispatcher branch in `executor::dispatcher`.
+#[inline]
+fn is_llm_op(op: &AISOperationType) -> bool {
+    matches!(
+        op,
+        AISOperationType::Ask | AISOperationType::Think | AISOperationType::Reason
+    )
 }
 
 /// Collect input values for an operation.

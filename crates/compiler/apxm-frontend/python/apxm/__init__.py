@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from . import _generated
 try:
-    from ._generated.models import Anthropic, Google, ModelId, OpenAI
+    from ._generated.models import Anthropic, Google, ModelId, OpenAI, Vllm
 except ImportError:
     Anthropic = None  # type: ignore[assignment,misc]
     Google = None  # type: ignore[assignment,misc]
     ModelId = None  # type: ignore[assignment,misc]
     OpenAI = None  # type: ignore[assignment,misc]
+    Vllm = None  # type: ignore[assignment,misc]
 from .config import (
     AgentConfig,
     BashConfig,
@@ -76,6 +77,7 @@ __all__ = [
     "Team",
     "ToolsConfig",
     "validate_graph",
+    "Vllm",
     "WorkflowCheckpoint",
     "WriteConfig",
 ]
