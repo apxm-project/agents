@@ -65,7 +65,7 @@ pub struct CapabilityServerConfig {
 
 /// Profile describing how to spawn and interact with an ACP agent.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgentProfile {
+pub struct AcpAgentProfile {
     pub command: String,
     #[serde(default = "default_close_grace")]
     pub close_grace_ms: u64,
@@ -106,8 +106,8 @@ fn default_session_timeout() -> u64 {
 /// agents that are resolvable at runtime. `agent add claude` uses the template
 /// as defaults so users don't need to memorize npx commands.
 pub struct AgentRegistry {
-    templates: BTreeMap<String, AgentProfile>,
-    registered: BTreeMap<String, AgentProfile>,
+    templates: BTreeMap<String, AcpAgentProfile>,
+    registered: BTreeMap<String, AcpAgentProfile>,
 }
 
 impl AgentRegistry {
@@ -133,7 +133,7 @@ impl AgentRegistry {
     }
 
     /// Build the 15 built-in template profiles.
-    fn build_templates() -> BTreeMap<String, AgentProfile> {
+    fn build_templates() -> BTreeMap<String, AcpAgentProfile> {
         let mut templates = BTreeMap::new();
 
         let dg = timeouts::DEFAULT_CLOSE_GRACE_MS;
@@ -174,7 +174,7 @@ impl AgentRegistry {
         for &(name, cmd, grace, timeout) in entries {
             templates.insert(
                 name.to_string(),
-                AgentProfile {
+                AcpAgentProfile {
                     command: cmd.to_string(),
                     close_grace_ms: grace,
                     session_create_timeout_ms: timeout,
@@ -193,7 +193,7 @@ impl AgentRegistry {
     }
 
     /// Return the deterministic built-in template set without loading user config.
-    pub fn builtin_templates() -> BTreeMap<String, AgentProfile> {
+    pub fn builtin_templates() -> BTreeMap<String, AcpAgentProfile> {
         Self::build_templates()
     }
 
@@ -203,7 +203,7 @@ impl AgentRegistry {
     /// Checks registered agents first (user-configured), then falls through
     /// to built-in templates. This allows `claude`, `codex`, etc. to work
     /// out of the box without requiring explicit `apxm agent add` registration.
-    pub fn get(&self, name: &str) -> Option<&AgentProfile> {
+    pub fn get(&self, name: &str) -> Option<&AcpAgentProfile> {
         self.registered
             .get(name)
             .or_else(|| self.templates.get(name))
@@ -211,8 +211,8 @@ impl AgentRegistry {
 
     /// List all agents: registered entries first (overrides), then any templates
     /// not already overridden. The bool indicates whether the entry came from a template.
-    pub fn list(&self) -> Vec<(String, &AgentProfile, bool)> {
-        let mut entries: Vec<(String, &AgentProfile, bool)> = self
+    pub fn list(&self) -> Vec<(String, &AcpAgentProfile, bool)> {
+        let mut entries: Vec<(String, &AcpAgentProfile, bool)> = self
             .registered
             .iter()
             .map(|(name, profile)| {
@@ -233,12 +233,12 @@ impl AgentRegistry {
     }
 
     /// Look up a built-in template by name.
-    pub fn get_template(&self, name: &str) -> Option<&AgentProfile> {
+    pub fn get_template(&self, name: &str) -> Option<&AcpAgentProfile> {
         self.templates.get(name)
     }
 
     /// List all built-in templates.
-    pub fn list_templates(&self) -> Vec<(String, &AgentProfile)> {
+    pub fn list_templates(&self) -> Vec<(String, &AcpAgentProfile)> {
         self.templates
             .iter()
             .map(|(name, profile)| (name.clone(), profile))
@@ -251,7 +251,7 @@ impl AgentRegistry {
     }
 
     /// Add or override a registered agent. Persists to `~/.apxm/agents.toml`.
-    pub fn add(&mut self, name: String, profile: AgentProfile) -> Result<(), std::io::Error> {
+    pub fn add(&mut self, name: String, profile: AcpAgentProfile) -> Result<(), std::io::Error> {
         self.registered.insert(name, profile);
         self.persist_user_entries()
     }
@@ -292,7 +292,7 @@ impl AgentRegistry {
 #[derive(Debug, Serialize, Deserialize, Default)]
 struct UserAgentsFile {
     #[serde(default)]
-    agents: BTreeMap<String, AgentProfile>,
+    agents: BTreeMap<String, AcpAgentProfile>,
 }
 
 #[cfg(test)]
@@ -371,7 +371,7 @@ mod tests {
     #[test]
     fn register_custom() {
         let mut reg = empty_registry();
-        let profile = AgentProfile {
+        let profile = AcpAgentProfile {
             command: "my-agent --acp".to_string(),
             close_grace_ms: 200,
             session_create_timeout_ms: 10_000,
@@ -410,7 +410,7 @@ mod tests {
 
     #[test]
     fn profile_toml_roundtrip() {
-        let profile = AgentProfile {
+        let profile = AcpAgentProfile {
             command: "my-agent --acp".to_string(),
             close_grace_ms: 200,
             session_create_timeout_ms: 10_000,
@@ -423,7 +423,7 @@ mod tests {
             capabilities: Vec::new(),
         };
         let toml_str = toml::to_string_pretty(&profile).unwrap();
-        let parsed: AgentProfile = toml::from_str(&toml_str).unwrap();
+        let parsed: AcpAgentProfile = toml::from_str(&toml_str).unwrap();
         assert_eq!(parsed.command, "my-agent --acp");
         assert_eq!(parsed.permission_mode, PermissionMode::DenyAll);
     }

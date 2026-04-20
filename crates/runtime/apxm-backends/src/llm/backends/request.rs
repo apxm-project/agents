@@ -392,80 +392,6 @@ impl LLMRequest {
     }
 }
 
-/// Builder pattern helper for complex request construction.
-pub struct RequestBuilder {
-    request: LLMRequest,
-}
-
-impl RequestBuilder {
-    /// Create a new builder with the given prompt.
-    pub fn new(prompt: impl Into<String>) -> Self {
-        RequestBuilder {
-            request: LLMRequest::new(prompt),
-        }
-    }
-
-    /// Add system prompt.
-    pub fn system(mut self, system: impl Into<String>) -> Self {
-        self.request = self.request.with_system_prompt(system);
-        self
-    }
-
-    /// Set temperature.
-    pub fn temperature(mut self, temp: f64) -> Self {
-        self.request = self.request.with_temperature(temp);
-        self
-    }
-
-    /// Set max tokens.
-    pub fn max_tokens(mut self, max: usize) -> Self {
-        self.request = self.request.with_max_tokens(max);
-        self
-    }
-
-    /// Set top_p.
-    pub fn top_p(mut self, top_p: f64) -> Self {
-        self.request = self.request.with_top_p(top_p);
-        self
-    }
-
-    /// Add stop sequence.
-    pub fn stop(mut self, stop: impl Into<String>) -> Self {
-        self.request = self.request.add_stop_sequence(stop);
-        self
-    }
-
-    /// Set tools available for the LLM.
-    pub fn tools(mut self, tools: Vec<ToolDefinition>) -> Self {
-        self.request = self.request.with_tools(tools);
-        self
-    }
-
-    /// Set how the LLM should use tools.
-    pub fn tool_choice(mut self, choice: ToolChoice) -> Self {
-        self.request = self.request.with_tool_choice(choice);
-        self
-    }
-
-    /// Set a trace ID for cross-process event correlation.
-    pub fn trace_id(mut self, id: impl Into<String>) -> Self {
-        self.request = self.request.with_trace_id(id);
-        self
-    }
-
-    /// Set structured messages.
-    pub fn messages(mut self, messages: Vec<Message>) -> Self {
-        self.request = self.request.with_messages(messages);
-        self
-    }
-
-    /// Build the final request.
-    pub fn build(self) -> anyhow::Result<LLMRequest> {
-        self.request.validate()?;
-        Ok(self.request)
-    }
-}
-
 /// Reusable generation configuration template.
 #[derive(Debug, Clone)]
 pub struct GenerationConfig {
@@ -531,11 +457,11 @@ mod tests {
     }
 
     #[test]
-    fn test_request_builder() -> Result<(), Box<dyn std::error::Error>> {
-        let req = RequestBuilder::new("Test")
-            .temperature(0.9)
-            .max_tokens(500)
-            .build()?;
+    fn test_request_fluent_construction() -> Result<(), Box<dyn std::error::Error>> {
+        let req = LLMRequest::new("Test")
+            .with_temperature(0.9)
+            .with_max_tokens(500);
+        req.validate()?;
 
         assert_eq!(req.temperature, 0.9);
         assert_eq!(req.max_tokens, Some(500));
@@ -743,11 +669,9 @@ mod tests {
     }
 
     #[test]
-    fn test_builder_trace_id() {
-        let req = RequestBuilder::new("Hello")
-            .trace_id("trace-xyz")
-            .build()
-            .unwrap();
+    fn test_with_trace_id_validates() {
+        let req = LLMRequest::new("Hello").with_trace_id("trace-xyz");
+        req.validate().unwrap();
         assert_eq!(req.trace_id, Some("trace-xyz".to_string()));
     }
 }

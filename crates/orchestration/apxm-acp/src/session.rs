@@ -12,7 +12,7 @@ use crate::constants::{
 };
 use crate::content::ContentBlock;
 use crate::protocol::StdioTransport;
-use crate::registry::AgentProfile;
+use crate::registry::AcpAgentProfile;
 use crate::reverse::{CapabilityReverseHandler, ReverseHandler};
 use apxm_core::constants::acp::client_capabilities as client_caps;
 
@@ -50,7 +50,7 @@ impl AcpSession {
     /// `aam_context` is the projected AAM state to inject as a system preamble.
     pub async fn spawn(
         profile_name: &str,
-        profile: &AgentProfile,
+        profile: &AcpAgentProfile,
         cwd: &std::path::Path,
         aam_context: &apxm_core::types::aam::AamContext,
     ) -> Result<Self, AcpError> {

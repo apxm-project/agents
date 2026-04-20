@@ -70,7 +70,6 @@ pub use llm::{
     RateLimitError,
     RegisteredProvider,
     RegistryPolicy,
-    RequestBuilder,
     RequestMetrics,
     RequestTracer,
     RetryConfig,

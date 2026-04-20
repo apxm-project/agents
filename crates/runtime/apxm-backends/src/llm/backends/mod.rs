@@ -23,8 +23,8 @@ pub use mock::{MockLLMBackend, MockResponse, RecordedCall};
 pub use ollama::OllamaBackend;
 pub use openai::OpenAIBackend;
 pub use request::{
-    ContentPart, FunctionCall, GenerationConfig, LLMRequest, Message, RequestBuilder, Role,
-    ToolChoice, ToolDefinition,
+    ContentPart, FunctionCall, GenerationConfig, LLMRequest, Message, Role, ToolChoice,
+    ToolDefinition,
 };
 pub use response::{LLMResponse, TokenUsage};
 pub use traits::{LLMBackend, StreamChunk};
