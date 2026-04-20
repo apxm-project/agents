@@ -1020,7 +1020,7 @@ async fn execute_stream(
         {
             Ok(result) => {
                 let _ = tx
-                    .send(ApxmEvent::new(
+                    .send(ApxmEvent::root(
                         ExecuteCompletePayload {
                             result: to_execute_response(result),
                         },
@@ -1031,7 +1031,7 @@ async fn execute_stream(
             }
             Err(err) => {
                 let _ = tx
-                    .send(ApxmEvent::new(
+                    .send(ApxmEvent::root(
                         ErrorPayload {
                             message: err.to_string(),
                             status: None,

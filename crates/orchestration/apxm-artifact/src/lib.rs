@@ -126,6 +126,11 @@ impl Artifact {
         &self.sections
     }
 
+    /// Append an extra section to the artifact.
+    pub fn add_section(&mut self, section: ArtifactSection) {
+        self.sections.push(section);
+    }
+
     /// Consume artifact and return all DAGs
     pub fn into_dags(self) -> Vec<ExecutionDag> {
         self.dags

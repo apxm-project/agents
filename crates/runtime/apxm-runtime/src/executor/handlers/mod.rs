@@ -12,6 +12,7 @@ pub mod exc;
 pub mod fence;
 pub mod flow_call;
 pub mod guard;
+pub mod handoff;
 pub mod identity;
 pub mod inner_plan;
 pub mod inv_tool;
@@ -118,6 +119,37 @@ pub fn get_u32_array_attribute(node: &Node, key: &str) -> Vec<u32> {
             _ => None,
         })
         .unwrap_or_default()
+}
+
+/// Read an STM key looking in the parent (flow-root) scope first, then the
+/// current scope. SPAWN_AGENT writes `_agent_info:<name>` to the parent scope
+/// so sibling worker scopes (created per node by `scheduler/worker.rs`) can
+/// see it; this helper centralizes the lookup for HANDOFF and COMMUNICATE
+/// inline-agent fallbacks.
+pub async fn read_stm_with_scope_fallback(
+    ctx: &ExecutionContext,
+    key: &str,
+) -> Option<Value> {
+    use apxm_core::constants::runtime::metadata;
+    let parent_scope = ctx.metadata.get(metadata::PARENT_SCOPE_ID).cloned();
+    let primary = parent_scope.as_deref().unwrap_or_else(|| ctx.scope_id());
+    if let Ok(Some(v)) = ctx
+        .memory
+        .read_scoped(crate::memory::MemorySpace::Stm, primary, key)
+        .await
+    {
+        return Some(v);
+    }
+    if parent_scope.is_some() {
+        if let Ok(Some(v)) = ctx
+            .memory
+            .read_scoped(crate::memory::MemorySpace::Stm, ctx.scope_id(), key)
+            .await
+        {
+            return Some(v);
+        }
+    }
+    None
 }
 
 /// Helper to get input by index

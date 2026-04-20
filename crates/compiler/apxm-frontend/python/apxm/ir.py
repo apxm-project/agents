@@ -143,8 +143,10 @@ class ApxmGraph:
         # Track produced SSA values
         produced: dict[int, str] = {}
 
-        # Function arguments (parameters)
-        arg_values = [f"%arg{i}" for i in range(len(self.parameters))]
+        # Function arguments (parameters) — referenced by templates as `{name}`,
+        # rewritten below to `{{name}}` so the runtime substitutes them at
+        # scheduler init. Compile params are not wired as Data inputs.
+        param_names = {p.name for p in self.parameters}
 
         lines: list[str] = []
 
@@ -156,9 +158,27 @@ class ApxmGraph:
             # Get inputs from incoming edges
             inputs = [produced[src_id] for src_id in incoming[node_id] if src_id in produced]
 
-            # Inject parameters for nodes that have no inputs and use parameters
-            if not inputs and arg_values and self._node_uses_params(node):
-                inputs = arg_values.copy()
+            # Rewrite `{param_name}` → `{{param_name}}` in template attrs so
+            # the scheduler substitutes compile params at init (state.rs:154).
+            # NodeRef-bound names (in `input_names`) are left as `{name}` for
+            # the runtime template renderer.
+            if param_names:
+                input_names_attr = node.attributes.get(c.INPUT_NAMES) or []
+                input_name_set = set(input_names_attr)
+                for attr_name in TEMPLATE_ATTRS:
+                    if attr_name in node.attributes:
+                        text = node.attributes[attr_name]
+                        if isinstance(text, str):
+                            node.attributes[attr_name] = re.sub(
+                                r'\{(\w+)\}',
+                                lambda m: (
+                                    f'{{{{{m.group(1)}}}}}'
+                                    if m.group(1) in param_names
+                                    and m.group(1) not in input_name_set
+                                    else m.group(0)
+                                ),
+                                text,
+                            )
 
             # RETURN nodes are handled by the func.return at the end
             if node.op.upper() == "RETURN":
@@ -232,25 +252,6 @@ class ApxmGraph:
         mlir_lines.append("}")
 
         return "\n".join(mlir_lines)
-
-    def _node_uses_params(self, node: GraphNode) -> bool:
-        """Check if a node uses flow parameters in its template/prompt attributes.
-
-        Templates reference parameters as `{name}`; the compiler validator
-        enforces that every `{name}` resolves to either an `input_names`
-        entry or a declared module parameter.
-        """
-        if not self.parameters:
-            return False
-
-        param_names = {p.name for p in self.parameters}
-        for attr_name in TEMPLATE_ATTRS:
-            if attr_name in node.attributes:
-                text = str(node.attributes[attr_name])
-                for match in re.finditer(r'\{(\w+)\}', text):
-                    if match.group(1) in param_names:
-                        return True
-        return False
 
     def _sanitize_name(self, name: str) -> str:
         """Sanitize graph name for use as MLIR function name."""

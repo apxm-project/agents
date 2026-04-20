@@ -121,6 +121,24 @@ mod duration_millis {
 /// execution.  Every method has a default no-op implementation so
 /// consumers only need to override the events they care about.
 pub trait ExecutionEventEmitter: Send + Sync {
+    // ── Span hierarchy ─────────────────────────────────────────────
+    /// Set the current parent span ID for subsequently emitted events.
+    fn set_current_span_id(&self, _span_id: Option<String>) {}
+
+    /// Get the current parent span ID.
+    fn current_span_id(&self) -> Option<String> {
+        None
+    }
+
+    // ── Scope isolation ───────────────────────────────────────────
+    /// Set the current scope ID for subsequently emitted events.
+    fn set_current_scope_id(&self, _scope_id: Option<String>) {}
+
+    /// Get the current scope ID.
+    fn current_scope_id(&self) -> Option<String> {
+        None
+    }
+
     // ── Existing ────────────────────────────────────────────────────
     fn emit_llm_token(&self, content: &str);
     fn emit_tool_start(&self, name: &str, args: &HashMap<String, Value>);

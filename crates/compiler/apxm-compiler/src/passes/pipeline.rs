@@ -10,6 +10,7 @@
 //! To make this target-aware, we need to extend the FFI to accept pass options.
 
 use super::PassManager;
+use super::bind_tool_handlers::BIND_TOOL_HANDLERS_PASS_NAME;
 use super::tool_binding::TOOL_BINDING_PASS_NAME;
 use super::vllm_hints::VLLM_HINTS_PASS_NAME;
 use apxm_ais::passes;
@@ -47,10 +48,14 @@ const VLLM_HINTS: &str = VLLM_HINTS_PASS_NAME;
 /// consistency.
 const TOOL_BINDING: &str = TOOL_BINDING_PASS_NAME;
 
+/// Rust-only pass that copies `python_handler_id` from REGISTER_CAPABILITY
+/// onto matching INV_TOOL nodes. Runs after tool-binding-check.
+const BIND_TOOL_HANDLERS: &str = BIND_TOOL_HANDLERS_PASS_NAME;
+
 /// Names that are tracked in the pipeline list but are *not* dispatched
 /// through the MLIR PassManager — they run as Rust-side transforms on the
 /// `AirModule` instead.
-const RUST_ONLY_PASSES: &[&str] = &[VLLM_HINTS, TOOL_BINDING];
+const RUST_ONLY_PASSES: &[&str] = &[VLLM_HINTS, TOOL_BINDING, BIND_TOOL_HANDLERS];
 
 fn is_mlir_pass(name: &str) -> bool {
     !RUST_ONLY_PASSES.contains(&name)
@@ -112,6 +117,7 @@ pub fn build_pass_list(
                     VLLM_HINTS,
                     CANONICALIZER,
                     TOOL_BINDING,
+                    BIND_TOOL_HANDLERS,
                 ]
                 .iter()
                 .map(|s| s.to_string()),
@@ -123,7 +129,7 @@ pub fn build_pass_list(
                 OptimizationTarget::Cost | OptimizationTarget::Tokens
             ) {
                 // Add more aggressive DCE for cost/tokens targets
-                passes.insert(passes.len() - 2, DEAD_CONTEXT_ELIMINATION.to_string());
+                passes.insert(passes.len() - 3, DEAD_CONTEXT_ELIMINATION.to_string());
             }
 
             if !no_cse_llm {
@@ -160,6 +166,7 @@ pub fn build_pass_list(
                             VLLM_HINTS,
                             CANONICALIZER,
                             TOOL_BINDING,
+                            BIND_TOOL_HANDLERS,
                         ]
                         .iter()
                         .map(|s| s.to_string()),
@@ -178,6 +185,7 @@ pub fn build_pass_list(
                             DEAD_CONTEXT_ELIMINATION,
                             CANONICALIZER,
                             TOOL_BINDING,
+                            BIND_TOOL_HANDLERS,
                         ]
                         .iter()
                         .map(|s| s.to_string()),
@@ -196,6 +204,7 @@ pub fn build_pass_list(
                             DEAD_CONTEXT_ELIMINATION,
                             CANONICALIZER,
                             TOOL_BINDING,
+                            BIND_TOOL_HANDLERS,
                         ]
                         .iter()
                         .map(|s| s.to_string()),
@@ -214,6 +223,7 @@ pub fn build_pass_list(
                             DEAD_CONTEXT_ELIMINATION,
                             CANONICALIZER,
                             TOOL_BINDING,
+                            BIND_TOOL_HANDLERS,
                         ]
                         .iter()
                         .map(|s| s.to_string()),
@@ -251,6 +261,7 @@ pub fn build_pass_list(
                     VLLM_HINTS,
                     CANONICALIZER,
                     TOOL_BINDING,
+                    BIND_TOOL_HANDLERS,
                 ]
                 .iter()
                 .map(|s| s.to_string())
@@ -266,6 +277,7 @@ pub fn build_pass_list(
                     DEAD_CONTEXT_ELIMINATION,
                     CANONICALIZER,
                     TOOL_BINDING,
+                    BIND_TOOL_HANDLERS,
                 ]
                 .iter()
                 .map(|s| s.to_string())
@@ -281,6 +293,7 @@ pub fn build_pass_list(
                     DEAD_CONTEXT_ELIMINATION,
                     CANONICALIZER,
                     TOOL_BINDING,
+                    BIND_TOOL_HANDLERS,
                 ]
                 .iter()
                 .map(|s| s.to_string())
@@ -462,6 +475,7 @@ mod tests {
         // Sanity: Rust-only passes must not look like MLIR passes.
         assert!(!is_mlir_pass(VLLM_HINTS));
         assert!(!is_mlir_pass(TOOL_BINDING));
+        assert!(!is_mlir_pass(BIND_TOOL_HANDLERS));
         // All other pass names should still be MLIR-dispatched.
         for n in [
             NORMALIZE,
@@ -502,6 +516,40 @@ mod tests {
                 assert!(
                     tb_idx > canon_idx,
                     "TOOL_BINDING must run after CANONICALIZER at {level:?}/{target:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn bind_tool_handlers_runs_after_tool_binding_at_o1_plus() {
+        for target in [
+            OptimizationTarget::Balanced,
+            OptimizationTarget::Latency,
+            OptimizationTarget::Cost,
+            OptimizationTarget::Tokens,
+        ] {
+            for level in [
+                OptimizationLevel::O1,
+                OptimizationLevel::O2,
+                OptimizationLevel::O3,
+            ] {
+                let passes = build_pass_list(level, false, target);
+                let tb_idx = passes
+                    .iter()
+                    .position(|p| p == TOOL_BINDING)
+                    .expect("TOOL_BINDING must appear at O1+");
+                let bth_idx = passes
+                    .iter()
+                    .position(|p| p == BIND_TOOL_HANDLERS)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "BIND_TOOL_HANDLERS missing from pipeline at {level:?}/{target:?}"
+                        )
+                    });
+                assert!(
+                    bth_idx > tb_idx,
+                    "BIND_TOOL_HANDLERS must run after TOOL_BINDING at {level:?}/{target:?}"
                 );
             }
         }

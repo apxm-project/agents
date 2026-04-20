@@ -227,7 +227,7 @@ def _find_apxm_binary() -> str:
 # ---------------------------------------------------------------------------
 
 class CompiledFlow:
-    __slots__ = ("_graph", "mode", "_opt_level", "_registered_tools")
+    __slots__ = ("_graph", "mode", "_opt_level", "_registered_tools", "_air_text")
 
     def __init__(
         self,
@@ -235,6 +235,7 @@ class CompiledFlow:
         *,
         mode: ExecutionMode = ExecutionMode.COMPILED,
         opt_level: int | None = None,
+        air_text: str | None = None,
     ) -> None:
         self._graph = graph
         self.mode = mode
@@ -245,6 +246,7 @@ class CompiledFlow:
         else:
             self._opt_level = 2
         self._registered_tools: list[Any] = []
+        self._air_text = air_text
 
     # -- persistence --------------------------------------------------------
 
@@ -374,21 +376,43 @@ class CompiledFlow:
 
     def _fallback_subprocess(self, *args: Any) -> ExecutionResult:
         from .errors import ExecutionError
+        import tempfile
 
         apxm_bin = _find_apxm_binary()
-        graph_json = json.dumps(self._graph.to_dict())
 
-        if Path(apxm_bin).name == "dekk":
-            cmd = [apxm_bin, "apxm", "execute", "/dev/stdin", "--json"]
-        else:
-            cmd = [apxm_bin, "execute", "/dev/stdin", "--json"]
+        # Use pre-captured AIR text when available; otherwise fall back
+        # to ApxmGraph.to_air(). Strip the sidecar comment (if present)
+        # because the MLIR parser does not understand `;` comments.
+        air_text = self._air_text if self._air_text else self._graph.to_air()
+        clean_lines = [
+            line for line in air_text.splitlines()
+            if not line.startswith("; __apxm_python_tools__")
+        ]
+        clean_air = "\n".join(clean_lines)
 
-        for arg in args:
-            cmd.append(str(arg))
+        # Write AIR text to a tempfile (.air) so the compiler can parse it
+        # directly. Using AIR (not JSON) ensures that compile parameters
+        # are encoded as {{name}} which the runtime can substitute.
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".air", delete=False
+        ) as tmp:
+            tmp.write(clean_air)
+            tmp_path = tmp.name
 
-        result = subprocess.run(
-            cmd, input=graph_json, capture_output=True, text=True, check=False
-        )
+        try:
+            if Path(apxm_bin).name == "dekk":
+                cmd = [apxm_bin, "apxm", "execute", tmp_path]
+            else:
+                cmd = [apxm_bin, "execute", tmp_path]
+
+            for arg in args:
+                cmd.append(str(arg))
+
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, check=False
+            )
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
 
         if result.returncode != 0:
             raise ExecutionError(
@@ -401,13 +425,53 @@ class CompiledFlow:
         try:
             return ExecutionResult.from_response(json.loads(stdout))
         except (json.JSONDecodeError, TypeError):
-            return ExecutionResult(content=stdout)
+            # The executor prints one line per result. When there is a
+            # single output line it is printed as the bare value; otherwise
+            # lines are formatted as "key=value". Find the terminal node
+            # result: prefer the entry with the highest numeric key
+            # (the terminal/return node in a topologically-ordered DAG).
+            lines = [ln for ln in stdout.splitlines() if ln.strip()]
+            best_key = -1
+            best_val = stdout
+            for ln in lines:
+                if "=" in ln:
+                    key_str, val = ln.split("=", 1)
+                    try:
+                        key_int = int(key_str)
+                    except ValueError:
+                        continue
+                    if key_int > best_key:
+                        best_key = key_int
+                        best_val = val
+                elif best_key < 0:
+                    best_val = ln
+            # Strip surrounding quotes if present
+            if len(best_val) >= 2 and best_val[0] == '"' and best_val[-1] == '"':
+                best_val = best_val[1:-1]
+            return ExecutionResult(content=best_val)
 
 
-def run(coro):
+def run(coro, *args, mock: bool = False):
     """Execute an async workflow and return the result.
 
-    Convenience wrapper around asyncio.run() for executing compiled workflows.
+    When called with a single coroutine argument (e.g. ``run(flow())``) this is
+    a thin wrapper around ``asyncio.run()``.
+
+    When called with a compiled flow and positional arguments
+    (e.g. ``run(math_flow, "What is 17 + 25?")``) it invokes the flow with
+    those args.
+
+    If *mock* is ``True`` (or the environment variable ``APXM_MOCK_BACKEND`` is
+    already set) the subprocess child will have ``APXM_MOCK_BACKEND=1`` so the
+    runtime uses the deterministic mock backend — no real API keys required.
     """
     import asyncio
+
+    if mock:
+        os.environ["APXM_MOCK_BACKEND"] = "1"
+
+    # If `coro` is a compiled flow (callable), invoke it with the args first.
+    if callable(coro) and not asyncio.iscoroutine(coro):
+        coro = coro(*args)
+
     return asyncio.run(coro)

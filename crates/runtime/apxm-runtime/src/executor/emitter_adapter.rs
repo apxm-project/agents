@@ -12,6 +12,7 @@ use std::time::Duration;
 use apxm_core::events::payload::*;
 use apxm_core::events::{ApxmEvent, EventEmitter, EventSource};
 use apxm_core::types::values::Value;
+use parking_lot::RwLock;
 
 use super::events::ExecutionEventEmitter;
 
@@ -22,6 +23,12 @@ pub struct EmitterAdapter {
     source: EventSource,
     trace_id: String,
     seq: AtomicU64,
+    /// Current parent span ID for hierarchical event nesting.
+    /// Updated by the executor engine when entering/leaving node scopes.
+    current_span_id: RwLock<Option<String>>,
+    /// Current scope ID for session isolation.
+    /// Updated when entering/leaving scoped sub-flows.
+    current_scope_id: RwLock<Option<String>>,
 }
 
 impl EmitterAdapter {
@@ -35,17 +42,54 @@ impl EmitterAdapter {
             source,
             trace_id: trace_id.into(),
             seq: AtomicU64::new(0),
+            current_span_id: RwLock::new(None),
+            current_scope_id: RwLock::new(None),
         }
     }
 
+    /// Set the current span ID for subsequently emitted events.
+    pub fn set_current_span_id(&self, span_id: Option<String>) {
+        *self.current_span_id.write() = span_id;
+    }
+
+    /// Get the current span ID.
+    pub fn current_span_id(&self) -> Option<String> {
+        self.current_span_id.read().clone()
+    }
+
     fn emit(&self, payload: impl apxm_core::events::payload::EventPayload) {
-        let event = ApxmEvent::new(payload, self.source.clone(), &self.trace_id)
+        let parent = self.current_span_id.read().clone();
+        let scope = self.current_scope_id.read().clone();
+        let event = match parent {
+            Some(parent_id) => {
+                ApxmEvent::child_of(payload, self.source.clone(), &self.trace_id, parent_id)
+            }
+            None => ApxmEvent::root(payload, self.source.clone(), &self.trace_id),
+        };
+        let event = event
+            .with_scope_id(scope)
             .with_seq(self.seq.fetch_add(1, Ordering::Relaxed));
         self.emitter.emit(event);
     }
 }
 
 impl ExecutionEventEmitter for EmitterAdapter {
+    fn set_current_span_id(&self, span_id: Option<String>) {
+        *self.current_span_id.write() = span_id;
+    }
+
+    fn current_span_id(&self) -> Option<String> {
+        self.current_span_id.read().clone()
+    }
+
+    fn set_current_scope_id(&self, scope_id: Option<String>) {
+        *self.current_scope_id.write() = scope_id;
+    }
+
+    fn current_scope_id(&self) -> Option<String> {
+        self.current_scope_id.read().clone()
+    }
+
     fn emit_llm_token(&self, content: &str) {
         self.emit(TokenPayload {
             text: content.to_string(),

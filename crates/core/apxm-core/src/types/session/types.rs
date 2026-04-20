@@ -51,6 +51,9 @@ pub struct SessionManifest {
     pub duration_ms: u128,
     pub node_count: usize,
     pub success: bool,
+    /// Scope identifier for session isolation. `None` means global scope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope_id: Option<String>,
 }
 
 /// Live session state — updated in real-time as nodes complete.

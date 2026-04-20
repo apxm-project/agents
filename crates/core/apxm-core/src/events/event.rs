@@ -35,6 +35,14 @@ pub struct EventMeta {
     pub trace_id: String,
     /// Where the event originated.
     pub source: EventSource,
+    /// Unique span identifier for this event.
+    pub span_id: String,
+    /// Parent span ID for hierarchical span nesting. `None` for root spans.
+    pub parent_span_id: Option<String>,
+    /// Scope identifier for session isolation. Events within the same scope
+    /// share checkpoint state. `None` for the global (root) scope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope_id: Option<String>,
 }
 
 /// Where the event originated.

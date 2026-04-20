@@ -174,6 +174,12 @@ async fn execute_impl(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -
             .await;
     }
 
+    // Propagate the child scope_id to the event emitter so emitted events
+    // carry the sub-flow's scope for session isolation.
+    if let Some(emitter) = &child_ctx.event_emitter {
+        emitter.set_current_scope_id(child_ctx.current_scope_id.clone());
+    }
+
     // Execute the sub-flow DAG
     let engine = ExecutorEngine::new(child_ctx);
     let dag_to_execute = (*sub_dag).clone();

@@ -292,7 +292,16 @@ fn get_tools_by_names(ctx: &ExecutionContext, names: &[String]) -> Vec<ToolDefin
         .collect()
 }
 
-/// Execute a single tool call via the capability system
+/// Execute a single tool call.
+///
+/// Dispatch order:
+///   1. Python tool bridge (if attached and the tool name is registered).
+///   2. Rust capability system (built-ins and Rust-registered capabilities).
+///
+/// LLM-issued `tool_calls` carry only a name + JSON args, so the runtime
+/// resolves them by name; the bridge's manifest (loaded from the artifact's
+/// `python_tools` section) is the authoritative source for which names are
+/// Python-backed.
 async fn execute_tool_call(ctx: &ExecutionContext, tool_call: &ToolCall) -> ToolResult {
     apxm_llm!(debug,
         execution_id = %ctx.execution_id,
@@ -301,7 +310,7 @@ async fn execute_tool_call(ctx: &ExecutionContext, tool_call: &ToolCall) -> Tool
         "Executing tool call"
     );
 
-    // Convert JSON args to HashMap<String, Value>
+    // Convert JSON args to HashMap<String, Value> for capability_system / emitter.
     let args: HashMap<String, Value> = match &tool_call.args {
         serde_json::Value::Object(obj) => obj
             .iter()
@@ -314,7 +323,46 @@ async fn execute_tool_call(ctx: &ExecutionContext, tool_call: &ToolCall) -> Tool
         emitter.emit_tool_start(&tool_call.name, &args);
     }
 
-    // Invoke the capability
+    // Branch: Python tool bridge.
+    if let Some(bridge) = ctx.python_tool_bridge.as_ref() {
+        if bridge.has_tool(&tool_call.name) {
+            let timeout = std::time::Duration::from_millis(
+                apxm_core::constants::defaults::DEFAULT_TIMEOUT_MS,
+            );
+            let json_args = tool_call.args.clone();
+            return match bridge.call(&tool_call.name, json_args, timeout).await {
+                Ok(json_result) => {
+                    let content = match json_result {
+                        serde_json::Value::String(s) => s,
+                        other => other.to_string(),
+                    };
+                    if let Some(emitter) = &ctx.event_emitter {
+                        emitter.emit_tool_end(&tool_call.name, &Value::String(content.clone()));
+                    }
+                    apxm_llm!(info,
+                        execution_id = %ctx.execution_id,
+                        tool_name = %tool_call.name,
+                        "Python tool call succeeded"
+                    );
+                    ToolResult::success(&tool_call.id, content)
+                }
+                Err(e) => {
+                    if let Some(emitter) = &ctx.event_emitter {
+                        emitter.emit_tool_end(&tool_call.name, &Value::String(e.to_string()));
+                    }
+                    apxm_llm!(warn,
+                        execution_id = %ctx.execution_id,
+                        tool_name = %tool_call.name,
+                        error = %e,
+                        "Python tool call failed"
+                    );
+                    ToolResult::error(&tool_call.id, e.to_string())
+                }
+            };
+        }
+    }
+
+    // Branch: Rust capability system.
     match ctx.capability_system.invoke(&tool_call.name, args).await {
         Ok(result) => {
             let content = match result {

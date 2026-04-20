@@ -111,6 +111,7 @@ impl SessionOutputWriter {
             duration_ms,
             node_count,
             success,
+            scope_id: None,
         };
         json_pretty_write(
             &self.session_dir.join(constants::session::files::MANIFEST),
@@ -413,7 +414,7 @@ impl SessionEventEmitter {
 
     fn write_trace_event<P: EventPayload>(&self, payload: P) {
         let seq = self.seq.fetch_add(1, Ordering::Relaxed);
-        let event = ApxmEvent::new(payload, EventSource::Runtime, &*self.trace_id).with_seq(seq);
+        let event = ApxmEvent::root(payload, EventSource::Runtime, &*self.trace_id).with_seq(seq);
         if let Ok(mut sink) = self.sink.lock() {
             let _ = sink.write_event(&event);
             let _ = sink.flush();
@@ -422,7 +423,7 @@ impl SessionEventEmitter {
 
     fn write_node_trace_event<P: EventPayload>(&self, node_id: u64, payload: P) {
         let seq = self.seq.fetch_add(1, Ordering::Relaxed);
-        let event = ApxmEvent::new(payload, EventSource::Runtime, &*self.trace_id).with_seq(seq);
+        let event = ApxmEvent::root(payload, EventSource::Runtime, &*self.trace_id).with_seq(seq);
         if let Ok(mut traces) = self.node_traces.lock()
             && let Some(sink) = traces.get_mut(&node_id)
         {

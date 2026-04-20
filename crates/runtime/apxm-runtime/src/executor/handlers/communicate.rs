@@ -18,13 +18,14 @@
 //! For BROADCAST, `recipient` is ignored. The message is sent to every agent
 //! currently registered in the FlowRegistry; results are collected in parallel.
 
-use super::{ExecutionContext, Node, Result, Value, get_string_attribute};
+use super::{ExecutionContext, Node, Result, Value, execute_llm_request, get_string_attribute};
 use crate::aam::{ScopeSpec, TransitionLabel};
 use crate::executor::ExecutorEngine;
+use apxm_backends::LLMRequest;
 use apxm_core::constants::communicate_protocols as comm_proto;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::constants::runtime::context_stack as context_stack_consts;
-use apxm_core::constants::runtime::{belief_keys, metadata};
+use apxm_core::constants::runtime::{belief_keys, metadata, response_keys};
 use apxm_core::error::RuntimeError;
 
 /// Well-known flow names tried in order when looking up a recipient agent.
@@ -127,11 +128,23 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         match found {
             Some(dag) => dag,
             None => {
+                // Fallback: try inline-spawned agent (SPAWN_AGENT stamps
+                // instructions+model into STM) and dispatch via LLM.
+                if let Some(response) =
+                    communicate_inline_agent(ctx, node, &recipient, &message).await?
+                {
+                    return Ok(response);
+                }
+
                 let available = ctx.flow_registry.flows_for_agent(&recipient);
                 let hint = if available.is_empty() {
                     let all_flows = ctx.flow_registry.list_flows();
                     if all_flows.is_empty() {
-                        "No agents are registered in the flow registry.".to_string()
+                        format!(
+                            "COMMUNICATE target '{}' not found. No agents registered and no \
+                             inline SPAWN_AGENT info in STM.",
+                            recipient
+                        )
                     } else {
                         format!(
                             "Agent '{}' not found. Registered agents: {}",
@@ -231,6 +244,64 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     );
 
     Ok(response)
+}
+
+// ─── Inline-agent LLM fallback ────────────────────────────────────────────
+
+/// Fallback dispatch when the recipient agent has no registered flow.
+///
+/// Looks up `agent_info:<recipient>` in STM (written by SPAWN_AGENT) and, if
+/// it has a `system_prompt` and/or `model`, dispatches the message as a
+/// one-shot LLM call against that agent's config. Returns `Ok(None)` if no
+/// inline agent info is present so the caller can emit the original error.
+async fn communicate_inline_agent(
+    ctx: &ExecutionContext,
+    node: &Node,
+    recipient: &str,
+    message: &Value,
+) -> Result<Option<Value>> {
+    let key = format!("{}{}", belief_keys::AGENT_INFO_PREFIX, recipient);
+    let agent_info = match super::read_stm_with_scope_fallback(ctx, &key).await {
+        Some(Value::Object(obj)) => obj,
+        _ => return Ok(None),
+    };
+
+    let system_prompt = agent_info
+        .get(response_keys::SYSTEM_PROMPT)
+        .and_then(|v| v.as_string())
+        .cloned();
+    let model = agent_info
+        .get(response_keys::MODEL)
+        .and_then(|v| v.as_string())
+        .cloned();
+
+    // Require at least one of system_prompt/model — pure metadata-only entries
+    // (e.g. ACP subprocess agents) shouldn't be auto-dispatched as LLMs.
+    if system_prompt.is_none() && model.is_none() {
+        return Ok(None);
+    }
+
+    let prompt = message
+        .as_string()
+        .cloned()
+        .unwrap_or_default();
+
+    let mut request = LLMRequest::new(prompt).with_operation_type(node.op_type);
+    if let Some(sp) = system_prompt {
+        request = request.with_system_prompt(sp);
+    }
+    if let Some(m) = model {
+        request = request.with_model(m);
+    }
+
+    tracing::info!(
+        execution_id = %ctx.execution_id,
+        recipient = %recipient,
+        "COMMUNICATE dispatching to inline-spawned agent via LLM"
+    );
+
+    let response = execute_llm_request(ctx, node.id, "COMMUNICATE", &request).await?;
+    Ok(Some(Value::String(response.content)))
 }
 
 // ─── Broadcast dispatch ────────────────────────────────────────────────────

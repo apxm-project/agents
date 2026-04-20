@@ -44,6 +44,14 @@ class GraphRecorder:
         )
         # Track parameter names for auto-wiring resolution
         self._param_names: set[str] = set()
+        # Accumulate Python tool descriptors for artifact sidecar
+        self._python_tools: list[dict[str, Any]] = []
+        self._python_tool_ids: set[str] = set()  # dedup by handler_id
+        # Track bound agents by name so Agent.bind()/handoff() are idempotent —
+        # without this, calling bind() twice (or handoff() against an Agent
+        # that was already bound) emits a duplicate SPAWN_AGENT, which the
+        # runtime rejects with "Agent already exists in process table".
+        self._bound_agents: dict[str, Any] = {}
 
     def _auto_name(self, op_type: str) -> str:
         """Generate a unique name based on operation type and counter."""
@@ -490,71 +498,6 @@ class GraphRecorder:
         }
         attrs.update(_normalize_attributes(attributes))
         return self._add_node(name, graph_keys.OP_VERIFY, attrs)
-
-    def handoff(
-        self,
-        name: str | None = None,
-        *,
-        from_agent: NodeRef | None = None,
-        to_agent: NodeRef | None = None,
-    ) -> NodeRef:
-        """Unconditional handoff: route output from one agent to another.
-
-        Compile-time verified via graph validation — invalid targets are
-        caught before execution.
-        """
-        if name is None:
-            name = self._auto_name(graph_keys.OP_COMMUNICATE)
-        if from_agent is None:
-            raise ValueError("handoff() missing required keyword argument: 'from_agent'")
-        if to_agent is None:
-            raise ValueError("handoff() missing required keyword argument: 'to_agent'")
-        # Create a data edge from from_agent → to_agent via a pass-through node.
-        # Template references the upstream input by name; input_names mirrors
-        # the single incoming Data edge from from_agent.
-        node = self._add_node(name, graph_keys.OP_ASK, {
-            graph_keys.TEMPLATE_STR: "{" + from_agent.name + "}",
-            graph_keys.INPUT_NAMES: [from_agent.name],
-            graph_keys.HANDOFF: True,
-            graph_keys.HANDOFF_FROM: from_agent.name,
-            graph_keys.HANDOFF_TO: to_agent.name,
-        })
-        self.add_edge(from_agent, node)
-        self.add_edge(node, to_agent)
-        return node
-
-    def handoff_when(
-        self,
-        name: str | None = None,
-        *,
-        from_agent: NodeRef | None = None,
-        routes: dict[str, NodeRef] | None = None,
-    ) -> NodeRef:
-        """Conditional handoff: route based on discriminant value.
-
-        All target agents are verified at compile time via graph edges.
-        """
-        if name is None:
-            name = self._auto_name("conditional_" + graph_keys.OP_COMMUNICATE)
-        if from_agent is None:
-            raise ValueError("handoff_when() missing required keyword argument: 'from_agent'")
-        if routes is None:
-            raise ValueError("handoff_when() missing required keyword argument: 'routes'")
-        case_labels = list(routes.keys())
-        # Discriminant references the from_agent's output by name; the synthetic
-        # switch node has a single Data input (from_agent) named accordingly.
-        switch_node = self.switch_(
-            f"{name}_switch",
-            discriminant="{" + from_agent.name + "}",
-            cases=case_labels,
-            input_names=[from_agent.name],
-        )
-        self.add_edge(from_agent, switch_node)
-
-        for _label, target in routes.items():
-            self.add_edge(switch_node, target)
-
-        return switch_node
 
     def checkpoint(self, name: str | None = None, **attributes: Any) -> NodeRef:
         """Insert a checkpoint barrier (fence with checkpoint semantics).
@@ -1218,12 +1161,36 @@ class GraphRecorder:
             metadata=dict(self._metadata),
         )
 
+    def register_python_tool(self, tool: Any) -> None:
+        """Register a Python tool descriptor for artifact sidecar embedding.
+
+        Called by Agent.ask() / BoundAgent.__init__() for each FunctionTool.
+        Deduplicates by handler_id.
+        """
+        hid = tool.handler_id
+        if hid in self._python_tool_ids:
+            return
+        self._python_tool_ids.add(hid)
+        module = getattr(tool.fn, "__module__", "__unknown__") or "__unknown__"
+        qualname = getattr(tool.fn, "__qualname__", tool.fn.__name__)
+        self._python_tools.append({
+            "handler_id": hid,
+            "module": module,
+            "qualname": qualname,
+            "name": tool.name,
+            "schema": json.loads(tool.schema_json) if tool.schema_json else {},
+        })
+
     def to_air(self) -> str:
         """Emit canonical .air text IR for this graph.
 
-        Equivalent to: self.to_graph().to_air()
+        Includes a sidecar comment for python_tools if any tools were registered.
         """
-        return self.to_graph().to_air()
+        air = self.to_graph().to_air()
+        if self._python_tools:
+            manifest = json.dumps(self._python_tools, separators=(",", ":"))
+            air = f"; __apxm_python_tools__ {manifest}\n{air}"
+        return air
 
     def _add_node(self, name: str, op: str, attributes: dict[str, Any]) -> NodeRef:
         if name in self._node_ids:

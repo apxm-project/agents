@@ -11,7 +11,7 @@ mod tests {
     where
         T: EventPayload + Clone,
     {
-        let event = ApxmEvent::new(payload, EventSource::Runtime, "test-trace-id");
+        let event = ApxmEvent::root(payload, EventSource::Runtime, "test-trace-id");
         let json = serde_json::to_string(&event).expect("serialize");
         let back: ApxmEvent = serde_json::from_str(&json).expect("deserialize");
         let json2 = serde_json::to_string(&back).expect("re-serialize");
@@ -275,8 +275,8 @@ mod tests {
     );
 
     #[test]
-    fn builder_new() {
-        let event = ApxmEvent::new(
+    fn builder_root() {
+        let event = ApxmEvent::root(
             WarningPayload {
                 code: "W999".into(),
                 message: "test".into(),
@@ -286,6 +286,8 @@ mod tests {
         );
         assert_eq!(event.meta.seq, 0);
         assert_eq!(event.meta.trace_id, "trace-build");
+        assert!(!event.meta.span_id.is_empty());
+        assert!(event.meta.parent_span_id.is_none());
         assert_eq!(event.kind().name(), "warning");
         match event.meta.source {
             EventSource::Session => {}
@@ -294,8 +296,31 @@ mod tests {
     }
 
     #[test]
+    fn builder_child_of() {
+        let parent = ApxmEvent::root(
+            TokenPayload {
+                text: "parent".into(),
+            },
+            EventSource::Runtime,
+            "trace-parent",
+        );
+        let parent_span = parent.meta.span_id.clone();
+
+        let child = ApxmEvent::child_of(
+            TokenPayload {
+                text: "child".into(),
+            },
+            EventSource::Runtime,
+            "trace-parent",
+            &parent_span,
+        );
+        assert_eq!(child.meta.parent_span_id.as_deref(), Some(parent_span.as_str()));
+        assert_ne!(child.meta.span_id, parent.meta.span_id);
+    }
+
+    #[test]
     fn builder_with_seq() {
-        let event = ApxmEvent::new(
+        let event = ApxmEvent::root(
             ErrorPayload {
                 message: "boom".into(),
                 status: None,
@@ -310,7 +335,7 @@ mod tests {
 
     #[test]
     fn downcast_after_deserialize() {
-        let event = ApxmEvent::new(
+        let event = ApxmEvent::root(
             OperationEndPayload {
                 node_id: 42,
                 op_type: "ASK".into(),

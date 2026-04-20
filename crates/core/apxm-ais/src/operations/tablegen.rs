@@ -417,6 +417,7 @@ fn to_tablegen_name(op_type: AISOperationType) -> String {
         AISOperationType::TryCatch => "TryCatch",
         AISOperationType::Err => "Err",
         AISOperationType::Communicate => "Communicate",
+        AISOperationType::Handoff => "Handoff",
         AISOperationType::UpdateGoal => "UpdateGoal",
         AISOperationType::Guard => "Guard",
         AISOperationType::Claim => "Claim",

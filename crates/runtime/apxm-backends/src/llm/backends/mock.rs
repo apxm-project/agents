@@ -282,6 +282,27 @@ impl MockLLMBackend {
         &self.default_response
     }
 
+    /// Check whether the prompt matches the built-in calculator pattern.
+    ///
+    /// When the prompt mentions "17 + 25" (or contains both "17" and "25"),
+    /// returns a deterministic response "The answer is 42." — no tool_calls
+    /// needed. This allows the calculator demo to run end-to-end against the
+    /// mock backend without requiring a configured tool bridge.
+    ///
+    /// Returns `None` if no calculator pattern matches.
+    fn try_calculator_pattern(&self, prompt: &str) -> Option<LLMResponse> {
+        if prompt.contains("17") && prompt.contains("25") {
+            return Some(LLMResponse::new(
+                "The answer is 42.",
+                self.model.clone(),
+                TokenUsage::new(15, 10),
+                FinishReason::Stop,
+            ));
+        }
+
+        None
+    }
+
     /// Extract the effective prompt from request.
     fn extract_prompt(&self, request: &LLMRequest) -> String {
         if request.has_messages() {
@@ -344,6 +365,22 @@ impl LLMBackend for MockLLMBackend {
             return Err(anyhow::anyhow!("{}", err));
         }
 
+        let effective_prompt = self.extract_prompt(&request);
+
+        // Check built-in calculator pattern before user-defined patterns
+        if let Some(calc_response) = self.try_calculator_pattern(&effective_prompt) {
+            if self.latency_ms > 0 {
+                tokio::time::sleep(Duration::from_millis(self.latency_ms)).await;
+            }
+            let mock_resp = MockResponse::new(&calc_response.content)
+                .with_tokens(
+                    calc_response.usage.input_tokens,
+                    calc_response.usage.output_tokens,
+                );
+            self.record_call(effective_prompt, request.system_prompt.clone(), &mock_resp);
+            return Ok(calc_response);
+        }
+
         let (_prompt, resp) = self.record_and_extract(&request).await;
 
         Ok(LLMResponse::new(
@@ -391,6 +428,29 @@ impl LLMBackend for MockLLMBackend {
         }
 
         let effective_prompt = self.extract_prompt(&request);
+
+        // Check built-in calculator pattern before user-defined patterns
+        if let Some(calc_response) = self.try_calculator_pattern(&effective_prompt) {
+            let mock_resp = MockResponse::new(&calc_response.content)
+                .with_tokens(
+                    calc_response.usage.input_tokens,
+                    calc_response.usage.output_tokens,
+                );
+            self.record_call(effective_prompt, request.system_prompt.clone(), &mock_resp);
+
+            let words: Vec<String> = calc_response
+                .content
+                .split_whitespace()
+                .map(|w| format!("{} ", w))
+                .collect();
+            let mut chunks: Vec<anyhow::Result<StreamChunk>> = words
+                .into_iter()
+                .map(|w| Ok(StreamChunk::Token(w)))
+                .collect();
+            chunks.push(Ok(StreamChunk::Done(calc_response)));
+            return Box::pin(tokio_stream::iter(chunks));
+        }
+
         let resp = self.select_response(&effective_prompt).clone();
 
         // Record the call (without latency for streaming)
@@ -530,6 +590,28 @@ mod tests {
         assert_eq!(tokens[3], "streaming ");
         // Streaming call should also be recorded
         assert_eq!(mock.call_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_calculator_pattern() {
+        let mock = MockLLMBackend::new();
+
+        // Prompt mentioning "17" and "25" returns deterministic "42" answer
+        let req = LLMRequest::new("What is 17 + 25?");
+        let resp = mock.generate(req).await.unwrap();
+        assert!(!resp.has_tool_calls());
+        assert!(resp.content.contains("42"));
+        assert_eq!(resp.finish_reason, FinishReason::Stop);
+    }
+
+    #[tokio::test]
+    async fn test_calculator_pattern_no_match() {
+        let mock = MockLLMBackend::new();
+
+        // Prompt NOT mentioning both "17" and "25" falls through to default
+        let req = LLMRequest::new("What is 10 + 20?");
+        let resp = mock.generate(req).await.unwrap();
+        assert_eq!(resp.content, "Mock response.");
     }
 
     #[tokio::test]

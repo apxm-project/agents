@@ -135,7 +135,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
 
     let timeout = std::time::Duration::from_millis(timeout_ms);
 
-    // Dispatch: Python handler branch vs. Rust capability branch.
+    // Python branch is taken iff `bind-tool-handlers` stamped a handler id.
     let result = if let Some(handler_id) = python_handler_id {
         execute_python_tool(ctx, &capability_name, &handler_id, &args, timeout).await?
     } else {

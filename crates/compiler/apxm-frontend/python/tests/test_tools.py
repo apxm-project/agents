@@ -254,6 +254,19 @@ class TestHandlerId:
         id2 = _make_handler_id(stable_fn.fn)
         assert id1 == id2
 
+    def test_handler_id_has_sha256_prefix(self):
+        """handler_id must have 'sha256:' prefix for validator compatibility."""
+
+        @tool
+        def prefixed_fn(x: int) -> int:
+            return x
+
+        assert prefixed_fn.handler_id.startswith("sha256:")
+        # The hex digest after the prefix is 64 chars
+        hex_part = prefixed_fn.handler_id.removeprefix("sha256:")
+        assert len(hex_part) == 64
+        int(hex_part, 16)  # must be valid hex
+
     def test_registered_in_global_registry(self):
         """Decorated tools are registered in _TOOL_REGISTRY."""
 
