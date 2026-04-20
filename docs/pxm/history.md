@@ -61,7 +61,7 @@ Chris Lattner and Vikram Adve showed that compiler infrastructure could be **sha
 
 No compiler exists for agentic AI. When a developer writes a LangChain workflow or a CrewAI crew, there is no compilation step. The Python code executes directly -- every LLM call is opaque, every dependency implicit, every optimization opportunity invisible.
 
-A-PXM provides the missing compiler. Agent workflows are expressed as AIS dataflow graphs. The compiler, built on MLIR, performs typed analysis and optimization. The current pass pipeline is documented in [compiler/passes.md](../compiler/passes.md).
+A-PXM provides the missing compiler. Agent workflows are expressed as AIS dataflow graphs. The compiler, built on MLIR, performs typed analysis and optimization. The current pass pipeline is documented in [compiler/pipeline.md](../compiler/pipeline.md).
 
 The economics are different from traditional compilation -- and far more favorable. In traditional compilers, eliminating one instruction saves nanoseconds. In A-PXM, eliminating one LLM call saves **seconds and dollars**. The return on optimization is nine orders of magnitude higher per operation.
 

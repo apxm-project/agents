@@ -65,7 +65,7 @@ In LLVM IR, a unit of compute is an **SSA instruction** that defines a single va
 - **Composition**: SSA def-use chains form a value dependency graph. Across blocks, CFG and phi nodes connect definitions.
 - **Optimization surface**: SSA form enables CSE, DCE, constant folding, inlining -- because each value has a single definition point and all uses are visible.
 
-**Influence on A-PXM:** A-PXM's MLIR-based compiler IR inherits SSA's optimization properties. AIS operations in MLIR are SSA values: each ASK, THINK, or REASON node defines a single result that downstream operations reference. This enables the [optimization passes](../compiler/passes.md) that are impossible in frameworks where LLM calls are opaque function calls.
+**Influence on A-PXM:** A-PXM's MLIR-based compiler IR inherits SSA's optimization properties. AIS operations in MLIR are SSA values: each ASK, THINK, or REASON node defines a single result that downstream operations reference. This enables the [optimization pipeline](../compiler/pipeline.md) that are impossible in frameworks where LLM calls are opaque function calls.
 
 ---
 
@@ -151,7 +151,7 @@ A-PXM defines compute through the [Agent Instruction Set (AIS)](ais.md) -- typed
 
 ### The Optimization Payoff
 
-Because AIS operations are typed nodes in an SSA-style dataflow graph, A-PXM can apply compiler optimizations that no other agent framework supports. See [compiler/passes.md](../compiler/passes.md) for the current pass inventory and measured impact.
+Because AIS operations are typed nodes in an SSA-style dataflow graph, A-PXM can apply compiler optimizations that no other agent framework supports. See [compiler/pipeline.md](../compiler/pipeline.md) for the current pass inventory.
 
 Each eliminated operation saves seconds and dollars -- not nanoseconds. This is why compute separation matters more for agents than for any previous computing paradigm.
 

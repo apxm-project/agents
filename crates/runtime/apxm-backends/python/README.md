@@ -64,4 +64,4 @@ APXM Scheduler API (Python/FastAPI)
 vLLM Server
 ```
 
-See [docs/strategy/09-VLLM-GRAPH-AWARENESS.md](../../../docs/strategy/09-VLLM-GRAPH-AWARENESS.md) for the full architecture.
+For the conceptual overview, see [docs/README.md](../../../docs/README.md) and the compiler [pipeline doc](../../../docs/compiler/pipeline.md). For implementation details, see the parent [apxm-backends README](../README.md).

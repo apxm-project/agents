@@ -29,4 +29,4 @@ solution = g.reason("solution", "Root cause analysis: {triage}\n{data}")
 ## Learn More
 
 - [Model IDs](../../../crates/compiler/apxm-frontend/python/apxm/_generated/models.py)
-- [Backend configuration](../../../docs/llm-ops.md)
+- [Backend configuration](../../../crates/runtime/apxm-backends/README.md) (or run `dekk apxm ops list`)
