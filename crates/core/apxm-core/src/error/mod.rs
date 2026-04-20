@@ -2,8 +2,6 @@
 
 /// Error type with full context (like Rust compiler errors).
 pub mod api;
-/// Error builders for common error patterns.
-pub mod builder;
 /// Errors related to tooling interfaces.
 pub mod cli;
 /// Error codes for all APXM components.
@@ -24,7 +22,6 @@ pub mod span;
 pub mod suggestion;
 
 pub use api::Error;
-pub use builder::ErrorBuilder;
 pub use cli::{CliError, CliResult};
 pub use codes::ErrorCode;
 pub use common::{ErrorContext, OpId, SourceLocation, TraceId, chain_errors, format_error};

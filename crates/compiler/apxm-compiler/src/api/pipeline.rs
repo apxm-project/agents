@@ -4,7 +4,7 @@ use crate::air_builder::AirModule;
 use crate::api::{Context, Module};
 use crate::passes::{PassManager, PipelineDiagnostics, build_pass_list};
 use apxm_core::error::compiler::{CompilerError, Result};
-use apxm_core::error::{builder::ErrorBuilder, codes::ErrorCode};
+use apxm_core::error::{Error, codes::ErrorCode};
 use apxm_core::types::{OptimizationLevel, PipelineConfig};
 
 /// Pipeline API for compiling and optimizing modules.
@@ -60,7 +60,7 @@ impl<'ctx> Pipeline<'ctx> {
         if let Some(ref profile_path) = self.config.profile_path {
             let profile = crate::passes::profile::ExecutionProfile::load_from_file(profile_path)
                 .map_err(|e| {
-                    CompilerError::Unsupported(Box::new(ErrorBuilder::generic(
+                    CompilerError::Unsupported(Box::new(Error::new_generic(
                         ErrorCode::InternalError,
                         format!("Failed to load profile: {e}"),
                     )))
@@ -80,7 +80,7 @@ impl<'ctx> Pipeline<'ctx> {
         }
 
         let air_text = module.to_air().map_err(|e| {
-            CompilerError::Unsupported(Box::new(ErrorBuilder::generic(
+            CompilerError::Unsupported(Box::new(Error::new_generic(
                 ErrorCode::InternalError,
                 format!("AIR emission failed: {e}"),
             )))

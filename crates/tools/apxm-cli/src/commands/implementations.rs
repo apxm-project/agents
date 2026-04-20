@@ -128,7 +128,7 @@ pub async fn agent_command(action: AgentAction, json_output: bool) -> Result<()>
             let profile = match command {
                 Some(cmd) => {
                     // Custom registration with explicit command
-                    apxm_acp::AgentProfile {
+                    apxm_acp::AcpAgentProfile {
                         command: cmd,
                         close_grace_ms: close_grace_ms
                             .unwrap_or(acp_timeouts::DEFAULT_CLOSE_GRACE_MS),

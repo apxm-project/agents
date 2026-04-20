@@ -10,7 +10,7 @@ use crate::api::Context;
 use crate::codegen::artifact::parse_wire_dags;
 use crate::ffi;
 use apxm_artifact::{Artifact, ArtifactMetadata};
-use apxm_core::error::builder::ErrorBuilder;
+use apxm_core::error::Error;
 use apxm_core::error::codes::ErrorCode;
 use apxm_core::error::compiler::{CompilerError, Result};
 use std::ffi::CString;
@@ -19,7 +19,7 @@ use std::os::raw::c_char;
 use std::ptr;
 
 pub(crate) fn invalid_input_error(message: impl Into<String>) -> CompilerError {
-    CompilerError::InvalidInput(Box::new(ErrorBuilder::generic(
+    CompilerError::InvalidInput(Box::new(Error::new_generic(
         ErrorCode::InternalError,
         message,
     )))

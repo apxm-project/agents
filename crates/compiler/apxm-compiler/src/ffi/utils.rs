@@ -1,7 +1,7 @@
 //! Module containing utility functions for handling FFI results.
 
 use crate::ffi;
-use apxm_core::error::builder::ErrorBuilder;
+use apxm_core::error::{Error, codes::ErrorCode};
 use apxm_core::error::compiler::{CompilerError, Result};
 
 /// Handles a null result from an FFI function.
@@ -15,7 +15,8 @@ pub fn handle_null_result<T>(ptr: *mut T, context: &str) -> Result<*mut T> {
         return Err(CompilerError::Compilation(Box::new(first_error)));
     }
 
-    Err(CompilerError::Internal(Box::new(ErrorBuilder::internal(
+    Err(CompilerError::Internal(Box::new(Error::new_generic(
+        ErrorCode::InternalError,
         format!("{}: operation returned null", context),
     ))))
 }
@@ -31,7 +32,8 @@ pub fn handle_bool_result(success: bool, context: &str) -> Result<()> {
         return Err(CompilerError::Compilation(Box::new(first_error)));
     }
 
-    Err(CompilerError::Internal(Box::new(ErrorBuilder::internal(
+    Err(CompilerError::Internal(Box::new(Error::new_generic(
+        ErrorCode::InternalError,
         format!("{}: operation failed", context),
     ))))
 }

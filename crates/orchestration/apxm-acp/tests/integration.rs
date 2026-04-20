@@ -1,15 +1,15 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use apxm_acp::{AcpSession, AgentProfile, PermissionMode};
+use apxm_acp::{AcpSession, AcpAgentProfile, PermissionMode};
 use apxm_core::types::aam::AamContext;
 
-fn mock_profile() -> AgentProfile {
+fn mock_profile() -> AcpAgentProfile {
     let mock_script = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
         .join("mock_agent.sh");
 
-    AgentProfile {
+    AcpAgentProfile {
         command: format!("bash {}", mock_script.display()),
         close_grace_ms: 100,
         session_create_timeout_ms: 5_000,
