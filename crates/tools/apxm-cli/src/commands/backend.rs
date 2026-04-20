@@ -9,13 +9,11 @@ use colored::Colorize;
 use super::cli::*;
 use super::implementations::{Status, print_section_header, print_status_line};
 
-#[allow(dead_code)] // Ollama integration - reserved for future use
 const DEFAULT_OLLAMA_ENDPOINT: &str = "http://localhost:11434";
 
 /// Fetch installed models from a running Ollama instance and register them.
 ///
 /// Returns `(added, skipped)` counts. `existing` model IDs are skipped.
-#[allow(dead_code)] // Ollama integration - not yet wired to backend commands
 fn ollama_model_caps(base_url: &str, model_name: &str) -> (bool, bool, usize) {
     // Query /api/show for real capabilities — no hardcoding model family names.
     // Returns (supports_functions, supports_vision, context_window).
@@ -59,7 +57,6 @@ fn ollama_model_caps(base_url: &str, model_name: &str) -> (bool, bool, usize) {
     (supports_functions, supports_vision, ctx_window)
 }
 
-#[allow(dead_code)] // Ollama integration - not yet wired to backend commands
 fn sync_ollama_models(
     store: &apxm_credentials::backend::BackendStore,
     backend_name: &str,

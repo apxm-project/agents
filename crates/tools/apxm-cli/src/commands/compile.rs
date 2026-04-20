@@ -8,23 +8,24 @@ use anyhow::{Context, Result};
 use apxm_driver::compiler::Compiler;
 #[cfg(feature = "driver")]
 use apxm_driver::ApXmConfig;
-use colored::Colorize;
 
-use super::cli::*;
+#[cfg(feature = "driver")]
 use super::implementations::parse_opt_level;
 
-#[allow(dead_code)] // Python frontend integration - not yet wired to compile/execute commands
+#[cfg(feature = "driver")]
 fn is_python_graph_input(input: &Path) -> bool {
     input.extension().and_then(|ext| ext.to_str()) == Some("py")
 }
 
 /// Sentinel prefix emitted by the Python frontend in a `;` comment when
 /// `@tool`-decorated functions are registered via `Agent`.
+#[cfg(feature = "driver")]
 const PYTHON_TOOLS_PREFIX: &str = "; __apxm_python_tools__ ";
 
 /// Extract the `; __apxm_python_tools__ <json>` comment from AIR text.
 ///
 /// Returns `(air_without_sidecar, Option<json_bytes>)`.
+#[cfg(feature = "driver")]
 fn extract_python_tools_sidecar(air: &str) -> (String, Option<Vec<u8>>) {
     let mut sidecar: Option<Vec<u8>> = None;
     let mut filtered = String::with_capacity(air.len());
@@ -41,6 +42,7 @@ fn extract_python_tools_sidecar(air: &str) -> (String, Option<Vec<u8>>) {
     (filtered, sidecar)
 }
 
+#[cfg(feature = "driver")]
 fn emit_air_from_python(input: &Path) -> Result<(tempfile::NamedTempFile, Option<Vec<u8>>)> {
     use std::io::Write;
 
@@ -132,8 +134,10 @@ fn emit_air_from_python(input: &Path) -> Result<(tempfile::NamedTempFile, Option
 }
 
 /// Python tools sidecar data extracted from the AIR comment, if any.
+#[cfg(feature = "driver")]
 type PythonToolsSidecar = Option<Vec<u8>>;
 
+#[cfg(feature = "driver")]
 pub(super) fn prepare_graph_input(
     input: &Path,
 ) -> Result<(PathBuf, Option<tempfile::NamedTempFile>, PythonToolsSidecar)> {

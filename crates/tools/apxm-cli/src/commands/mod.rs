@@ -24,8 +24,10 @@ pub mod workflow;
 // Re-export CLI types
 pub use cli::*;
 
-// Re-export shared helpers and command functions
-pub use implementations::*;
+// Shared helpers in `implementations` are only consumed by tests in main.rs
+// (sibling modules import them directly via `super::implementations::X`).
+#[cfg(test)]
+pub(crate) use implementations::*;
 
 pub use agent::*;
 pub use analysis::*;
