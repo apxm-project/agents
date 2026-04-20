@@ -98,3 +98,13 @@ apxm.toml.local
 /apxm-plugin/.mcp.json
 /apxm-plugin/hooks/
 /apxm-plugin/mcp/
+
+# Openclaw bootstrap artifacts (external tool, not part of APXM)
+/.openclaw/
+/HEARTBEAT.md
+/IDENTITY.md
+/SOUL.md
+/TOOLS.md
+/USER.md
+/BOOTSTRAP.md
+/MEMORY.md
