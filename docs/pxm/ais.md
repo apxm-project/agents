@@ -132,7 +132,7 @@ Each operation carries:
 - [Compute in PXMs](compute.md) -- how AIS operations compare to six classical PXM compute models
 - [apxm-ais README](../../crates/core/apxm-ais/README.md) -- per-operation reference
 - [Compiler Pipeline](../../crates/compiler/apxm-compiler/README.md) -- how AIS maps to MLIR
-- [Optimization Passes](../compiler/passes.md) -- compiler passes that transform AIS graphs
+- [Optimization Pipeline](../compiler/pipeline.md) -- compiler passes that transform AIS graphs
 
 ---
 

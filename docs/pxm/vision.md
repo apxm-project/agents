@@ -5,8 +5,6 @@ description: "A-PXM aims to become the shared compiler and runtime infrastructur
 
 # Vision: The LLVM for Agents
 
-> See also [strategy](../strategy/) for roadmap details and gap analysis.
-
 A-PXM is not a framework. It is a **Program Execution Model** -- a formal specification of how agent programs are represented, optimized, and executed. Its ambition is structural: to become the shared compiler and runtime substrate for agent systems the way LLVM became the shared substrate for programming languages.
 
 ---
@@ -49,7 +47,7 @@ Frontend authors focus on developer experience; the execution model handles corr
 
 ### Modular MLIR passes
 
-A-PXM's [compiler](../../crates/compiler/apxm-compiler/README.md) is built on MLIR. Optimization is a pipeline of independent passes documented in [compiler/passes.md](../compiler/passes.md). Contributors can add new passes without understanding the full compiler. Over time, this pass library compounds -- every new optimization benefits every agent built on A-PXM, past and future.
+A-PXM's [compiler](../../crates/compiler/apxm-compiler/README.md) is built on MLIR. Optimization is a pipeline of independent passes documented in [compiler/pipeline.md](../compiler/pipeline.md). Contributors can add new passes without understanding the full compiler. Over time, this pass library compounds -- every new optimization benefits every agent built on A-PXM, past and future.
 
 In traditional compilers, eliminating one instruction saves nanoseconds. In A-PXM, eliminating one LLM call saves **seconds and dollars**. The economic return on agent-level optimization makes the optimization moat not just technically valuable but economically decisive.
 
@@ -121,7 +119,7 @@ More agents on A-PXM (because the infrastructure is better)
 
 Three mechanisms drive this cycle:
 
-**The optimization moat.** Every compiler pass benefits every agent. New passes -- CondenseOps, profile-guided tier adaptation, cross-agent fusion -- compound on top of existing ones. See [compiler/passes.md](../compiler/passes.md) for the current inventory. An ad-hoc runtime for a single agent cannot accumulate this library.
+**The optimization moat.** Every compiler pass benefits every agent. New passes -- CondenseOps, profile-guided tier adaptation, cross-agent fusion -- compound on top of existing ones. See [compiler/pipeline.md](../compiler/pipeline.md) for the current inventory. An ad-hoc runtime for a single agent cannot accumulate this library.
 
 **The formal guarantee moat.** A-PXM provides auditability (typed nodes with explicit state transitions), compliance (capability scoping, sandbox enforcement, approval gates), and reproducibility (compiled `.apxmobj` artifacts encode exact workflow structure). Each new verification pass widens the gap.
 
@@ -220,4 +218,4 @@ A-PXM is the bet that this will change. Not because A-PXM is the best agent fram
 - [Agent Instruction Set](ais.md) -- the typed operation taxonomy
 - [Compute in PXMs](compute.md) -- how A-PXM's compute model compares to six classical PXMs
 - [Scheduling](scheduling.md) -- token-counting dataflow with O(1) readiness detection
-- [Optimization Passes](../compiler/passes.md) -- compiler pass inventory
+- [Optimization Pipeline](../compiler/pipeline.md) -- compiler pass inventory

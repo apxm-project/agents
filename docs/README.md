@@ -1,90 +1,129 @@
 # APXM Documentation
 
-## Getting Started
+## What APXM is
 
-New to APXM? **[Getting Started Guide](getting-started.md)** — install, configure, and run your first workflow.
+APXM (**A**gent **P**rogram e**X**ecution **M**odel) treats an agent workflow the
+way a programming language treats a function: the author describes *what*, and the
+system decides *how* to run it. You write a graph of agent operations in Python; APXM
+lowers it to MLIR, optimizes it, and executes the result deterministically across LLM
+backends, Python tools, and sub-agents.
 
-## Architecture
+This documentation is the conceptual entry point. For installable, runnable code,
+see [`examples/python/`](../examples/python/). For the live API surface, run
+`dekk apxm ops list`. The crate-level READMEs under `crates/*/apxm-*/README.md`
+document the implementation details and stay close to the code.
 
-APXM follows a strict layered architecture where **Core** is the single source of truth.
-All downstream components (Compiler, Runtime, Backend) derive from Core definitions.
+## The Big Picture
 
 ```
-                         CORE
-              (operations, attributes, events)
-                  ┌──────┼──────┐
-                  │      │      │
-               Compiler  │   Backend
-               (MLIR +   │   (LLMs, credentials,
-                Python)  │    storage)
-                  │   Runtime     Codegen
-                  │   (executor,  (registry.rs →
-                  │    scheduler)  Python + TS)
-                  │      │
-               Artifact  ACP
-                  │      │
-                Driver
-           (orchestration)
-               ┌──┴──┐
-             CLI    GUI     Server
+        ┌──────────────────────────────────────────────────────┐
+        │                Author (Python frontend)              │
+        │   @compile, Agent(), @tool, GraphRecorder            │
+        └──────────────────────────┬───────────────────────────┘
+                                   │  to_air()
+                                   ▼
+                     ┌──────────────────────────┐
+                     │   AIR text  (.air)       │  human-readable
+                     └─────────────┬────────────┘  graph IR
+                                   │  parse + lower
+                                   ▼
+                     ┌──────────────────────────┐
+                     │   MLIR module            │  ais.* dialect ops
+                     │   (apxm-compiler)        │
+                     └─────────────┬────────────┘
+                                   │  optimization pipeline
+                                   ▼   (~12 MLIR passes + 4 Rust)
+                     ┌──────────────────────────┐
+                     │   .apxmobj artifact      │  serialized DAG +
+                     │   (apxm-artifact)        │  metadata
+                     └─────────────┬────────────┘
+                                   │  load + dispatch
+                                   ▼
+        ┌──────────────────────────────────────────────────────┐
+        │             Runtime  (apxm-runtime)                  │
+        │     scheduler · executor · memory tiers · AAM        │
+        └──┬─────────────────┬────────────────┬────────────────┘
+           ▼                 ▼                ▼
+        ┌──────┐         ┌────────┐       ┌─────────┐
+        │ LLMs │         │ Python │       │ Sub-    │
+        │      │         │ tools  │       │ agents  │
+        └──────┘         └────────┘       └─────────┘
+        (apxm-backends)  (apxm-tools)     (HANDOFF /
+                                           COMMUNICATE)
 ```
 
-## Crate Documentation
+The same artifact that runs locally can be shipped to a server, replayed for
+debugging, or dispatched against a different backend without recompiling.
 
-Each crate has its own README as the primary documentation:
+## Crate Layout
 
-| Layer | Crate | README |
-|-------|-------|--------|
-| Core | `apxm-ais` | [`crates/core/apxm-ais/README.md`](../crates/core/apxm-ais/README.md) |
-| Core | `apxm-core` | [`crates/core/apxm-core/README.md`](../crates/core/apxm-core/README.md) |
-| Compiler | `apxm-compiler` | [`crates/compiler/apxm-compiler/README.md`](../crates/compiler/apxm-compiler/README.md) |
-| Compiler | `apxm-frontend` | [`crates/compiler/apxm-frontend/README.md`](../crates/compiler/apxm-frontend/README.md) |
-| Runtime | `apxm-runtime` | [`crates/runtime/apxm-runtime/README.md`](../crates/runtime/apxm-runtime/README.md) |
-| Runtime | `apxm-backends` | [`crates/runtime/apxm-backends/README.md`](../crates/runtime/apxm-backends/README.md) |
-| Runtime | `apxm-credentials` | [`crates/runtime/apxm-credentials/README.md`](../crates/runtime/apxm-credentials/README.md) |
-| Orchestration | `apxm-driver` | [`crates/orchestration/apxm-driver/README.md`](../crates/orchestration/apxm-driver/README.md) |
-| Orchestration | `apxm-acp` | [`crates/orchestration/apxm-acp/README.md`](../crates/orchestration/apxm-acp/README.md) |
-| Orchestration | `apxm-artifact` | [`crates/orchestration/apxm-artifact/README.md`](../crates/orchestration/apxm-artifact/README.md) |
-| Tools | `apxm-cli` | [`crates/tools/apxm-cli/README.md`](../crates/tools/apxm-cli/README.md) |
-| Tools | `apxm-gui` | [`crates/tools/apxm-gui/README.md`](../crates/tools/apxm-gui/README.md) |
-| Tools | `apxm-server` | [`crates/tools/apxm-server/README.md`](../crates/tools/apxm-server/README.md) |
+APXM is organized in tiers — each layer depends only on layers above it.
 
-## Theory
+```
+core    →  apxm-core, apxm-ais          (definitions: types, ops, attrs, events)
+compiler→  apxm-compiler, apxm-frontend (AIR → MLIR → .apxmobj)
+runtime →  apxm-runtime, apxm-backends, (execution, LLM I/O, secrets)
+           apxm-credentials
+orchestr→  apxm-driver, apxm-acp,       (CLI/library glue, ACP protocol,
+           apxm-artifact                 artifact load/save)
+tools   →  apxm-cli, apxm-server,       (binary, HTTP API, browser UI)
+           apxm-gui
+```
 
-The A-PXM (Agent Program Execution Model) theory — why agent workflows need a formal
-execution model, and how A-PXM separates Compute, Memory, State, Optimization, and Scheduling:
+Each crate has a README under `crates/<tier>/<name>/README.md` describing what it
+owns and how it composes with its neighbors.
 
-| Order | Document | What You Learn |
-|-------|----------|----------------|
-| 1 | [History](pxm/history.md) | The recurring pattern: ad-hoc wiring → opacity wall → formal model |
-| 2 | [Foundations](pxm/foundations.md) | The agentic von Neumann bottleneck and the five separations |
-| 3 | [AAM](pxm/aam.md) | Agent Abstract Machine — formal (B, G, C) state model |
-| 4 | [AIS](pxm/ais.md) | Agent Instruction Set — typed operations, latency model, MLIR dialect |
-| 5 | [Compute](pxm/compute.md) | Comparative analysis of compute across 7 PXMs |
-| 6 | [Memory](pxm/memory.md) | Three-tier hierarchy (STM/LTM/Episodic) and first-class memory ops |
-| 7 | [Scheduling](pxm/scheduling.md) | Token-counting dataflow with O(1) readiness detection |
-| 8 | [Processes](pxm/processes.md) | Agent lifecycle, process/thread distinction |
-| 9 | [Vision](pxm/vision.md) | The LLVM-for-agents vision |
+## Core Concepts
 
-## Cross-Cutting Specs
+The **Process Algebra of Minds** (PAM, the "M" in APXM) is the formal model. These
+docs are the order to read them in:
 
-Documents that span multiple crates (not covered by any single crate README):
+| # | Doc                                | What you learn                                                     |
+|---|------------------------------------|--------------------------------------------------------------------|
+| 1 | [history](pxm/history.md)          | Why every domain hits the same "ad-hoc wiring → opacity wall" cycle |
+| 2 | [foundations](pxm/foundations.md)  | The agentic von-Neumann bottleneck and PAM's five separations       |
+| 3 | [aam](pxm/aam.md)                  | Agent Abstract Machine — the formal `(B, G, C)` state model         |
+| 4 | [ais](pxm/ais.md)                  | Agent Instruction Set — typed operations, MLIR dialect              |
+| 5 | [compute](pxm/compute.md)          | How seven different PXMs treat compute (and what APXM steals)       |
+| 6 | [memory](pxm/memory.md)            | The STM / LTM / Episodic tiers and first-class memory ops           |
+| 7 | [scheduling](pxm/scheduling.md)    | Token-counting dataflow with O(1) readiness detection               |
+| 8 | [processes](pxm/processes.md)      | Agent lifecycle, the process/thread distinction                     |
+| 9 | [vision](pxm/vision.md)            | The "LLVM for agents" thesis                                        |
 
-- [Optimization Passes](compiler/passes.md) — 15 passes, pipeline configuration, optimization levels, benchmark results
+## The Compiler
 
-## Assessment & Strategy
+The compiler turns AIR into a runnable artifact through a deterministic optimization
+pipeline. It runs as MLIR transforms (the `ais` dialect) plus a few Rust-side passes
+that do bookkeeping the MLIR side can't easily express (tool binding, vLLM hint
+stamping, model-allowlist validation).
 
-- [Evaluation](evaluation/) — Audit results and production readiness
-- [Strategy](strategy/) — Future integration plans (DSPy, vLLM)
+→ [compiler/pipeline.md](compiler/pipeline.md) — pipeline diagram and pass-by-pass
+purpose. The live ordering is in
+`crates/compiler/apxm-compiler/src/passes/pipeline.rs`.
+
+## Design Notes
+
+Forward-looking design proposals — what APXM is becoming, not what it is today.
+
+- [design/guardrails_handoffs.md](design/guardrails_handoffs.md) — input/output
+  guardrails and inter-agent handoffs as first-class AIR constructs
+- [design/sessions.md](design/sessions.md) — durable sessions and checkpoint scope
+
+## Trying It Out
+
+```
+dekk apxm doctor          # verify environment
+dekk apxm ops list        # browse the live AIS surface
+dekk apxm execute …       # run an .air graph end-to-end
+```
+
+Runnable demos live in [`examples/python/`](../examples/python/). The
+[`README.md`](../README.md) at the repo root has install instructions.
 
 ## Key Principle
 
-**Core defines. Everything else consumes.**
-
-- `apxm-ais` defines the 41 AIS operations, 150+ attributes, and fundamental types
-- `apxm-core` defines events, error codes, and protocol constants
-- Compiler reads Core definitions to build MLIR dialect ops and generate TableGen
-- Runtime reads Core definitions to dispatch operations
-- Backend reads Core types for LLM request/response contracts
-- Codegen pipeline auto-generates Python and TypeScript bindings from Core
-- `apxm codegen frontend` → Python; `apxm codegen typescript` → TypeScript
+**Core defines. Everything else consumes.** `apxm-ais` and `apxm-core` are the
+single source of truth for operations, attributes, events, and error codes. The
+compiler, runtime, codegen, and bindings all derive from those definitions — never
+the other way around. That invariant is what lets the same `.apxmobj` artifact run
+in any APXM environment.

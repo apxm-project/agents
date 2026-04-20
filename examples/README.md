@@ -27,8 +27,8 @@ dekk apxm compile hello.air -o hello.apxmobj
 dekk apxm run hello.apxmobj
 ```
 
-> **First time?** See [docs/getting-started.md](../docs/getting-started.md) for
-> backend configuration and environment setup.
+> **First time?** See the [docs/](../docs/README.md) overview, then run
+> `dekk apxm doctor` to verify your environment.
 
 ## Learning Path
 

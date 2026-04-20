@@ -210,7 +210,7 @@ Every AIS instruction is a deterministic state transition: `d(AAM, Instr) -> AAM
 
 ### 4. Optimization
 
-**Making workflows faster and cheaper.** See [optimization passes](../compiler/passes.md) for the current pass inventory.
+**Making workflows faster and cheaper.** See [optimization pipeline](../compiler/pipeline.md) for the current pass inventory.
 
 | Model | Optimization Approach |
 |-------|-----------------------|
@@ -218,7 +218,7 @@ Every AIS instruction is a deterministic state transition: `d(AAM, Instr) -> AAM
 | XLA/TVM/Triton | Graph-level ML optimization (operator fusion, memory planning) |
 | JIT (JVM, V8) | Profile-guided speculation |
 
-A-PXM uses **MLIR** as its compiler infrastructure. The current pass pipeline is documented in [compiler/passes.md](../compiler/passes.md).
+A-PXM uses **MLIR** as its compiler infrastructure. The current pass pipeline is documented in [compiler/pipeline.md](../compiler/pipeline.md).
 
 **Why this matters more than traditional compilation:** In traditional compilers, optimizing away one instruction saves nanoseconds. In A-PXM, optimizing away one LLM call saves **seconds and dollars**. The economic return on agent-level optimization is orders of magnitude higher.
 
@@ -279,7 +279,7 @@ Each concern is isolated, typed, and independently evolvable. This separation is
 - [Memory in PXMs](memory.md) -- deep dive on memory separation
 - [Scheduling in PXMs](scheduling.md) -- deep dive on scheduling separation
 - [History: From Von Neumann to Agents](history.md) -- how computing history repeats
-- [Optimization Passes](../compiler/passes.md) -- compiler pass inventory
+- [Optimization Pipeline](../compiler/pipeline.md) -- compiler pass inventory
 
 ---
 

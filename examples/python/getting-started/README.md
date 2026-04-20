@@ -25,5 +25,5 @@ def hello(g: GraphRecorder):
 
 ## Learn More
 
-- [docs/getting-started.md](../../../docs/getting-started.md) -- Full setup guide
+- [docs/README.md](../../../docs/README.md) -- conceptual overview and learning path
 - [API reference](../../../crates/compiler/apxm-frontend/python/apxm/proxy.py)
