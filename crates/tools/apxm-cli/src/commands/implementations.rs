@@ -470,7 +470,30 @@ fn is_python_graph_input(input: &Path) -> bool {
     input.extension().and_then(|ext| ext.to_str()) == Some("py")
 }
 
-fn emit_air_from_python(input: &Path) -> Result<tempfile::NamedTempFile> {
+/// Sentinel prefix emitted by the Python frontend in a `;` comment when
+/// `@tool`-decorated functions are registered via `Agent`.
+const PYTHON_TOOLS_PREFIX: &str = "; __apxm_python_tools__ ";
+
+/// Extract the `; __apxm_python_tools__ <json>` comment from AIR text.
+///
+/// Returns `(air_without_sidecar, Option<json_bytes>)`.
+fn extract_python_tools_sidecar(air: &str) -> (String, Option<Vec<u8>>) {
+    let mut sidecar: Option<Vec<u8>> = None;
+    let mut filtered = String::with_capacity(air.len());
+    for line in air.lines() {
+        if let Some(json_str) = line.strip_prefix(PYTHON_TOOLS_PREFIX) {
+            sidecar = Some(json_str.as_bytes().to_vec());
+        } else {
+            if !filtered.is_empty() {
+                filtered.push('\n');
+            }
+            filtered.push_str(line);
+        }
+    }
+    (filtered, sidecar)
+}
+
+fn emit_air_from_python(input: &Path) -> Result<(tempfile::NamedTempFile, Option<Vec<u8>>)> {
     use std::io::Write;
 
     let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
@@ -547,23 +570,31 @@ fn emit_air_from_python(input: &Path) -> Result<tempfile::NamedTempFile> {
         ));
     }
 
+    // Extract python_tools sidecar before writing AIR to tempfile
+    let (clean_air, sidecar) = extract_python_tools_sidecar(&air);
+
     let mut tmp = tempfile::Builder::new()
         .suffix(".air")
         .tempfile()
         .context("Failed to create temporary .air file")?;
-    tmp.write_all(air.as_bytes())
+    tmp.write_all(clean_air.as_bytes())
         .context("Failed to write emitted .air to temporary file")?;
     tmp.flush().context("Failed to flush temporary .air file")?;
-    Ok(tmp)
+    Ok((tmp, sidecar))
 }
 
-fn prepare_graph_input(input: &Path) -> Result<(PathBuf, Option<tempfile::NamedTempFile>)> {
+/// Python tools sidecar data extracted from the AIR comment, if any.
+type PythonToolsSidecar = Option<Vec<u8>>;
+
+fn prepare_graph_input(
+    input: &Path,
+) -> Result<(PathBuf, Option<tempfile::NamedTempFile>, PythonToolsSidecar)> {
     if is_python_graph_input(input) {
-        let tmp = emit_air_from_python(input)?;
-        return Ok((tmp.path().to_path_buf(), Some(tmp)));
+        let (tmp, sidecar) = emit_air_from_python(input)?;
+        return Ok((tmp.path().to_path_buf(), Some(tmp), sidecar));
     }
 
-    Ok((input.to_path_buf(), None))
+    Ok((input.to_path_buf(), None, None))
 }
 
 pub(crate) fn category_str(cat: apxm_core::types::OperationCategory) -> &'static str {
@@ -775,8 +806,8 @@ pub fn compile_command(
     let opt_target: OptimizationTarget = target
         .parse()
         .with_context(|| format!("Invalid optimization target: {}", target))?;
-    let (graph_input, _python_air) = if input.is_dir() {
-        (input.clone(), None)
+    let (graph_input, _python_air, python_tools_sidecar) = if input.is_dir() {
+        (input.clone(), None, None)
     } else {
         prepare_graph_input(&input)?
     };
@@ -807,9 +838,34 @@ pub fn compile_command(
         let compile_time = compile_start.elapsed();
 
         let artifact_start = std::time::Instant::now();
-        let bytes = module
-            .generate_artifact_bytes()
+        // Parse manifest from sidecar for orphan @tool detection (W723)
+        let manifest: Option<Vec<apxm_compiler::passes::PythonToolManifestEntry>> =
+            python_tools_sidecar.as_ref().and_then(|data| {
+                serde_json::from_slice(data)
+                    .map_err(|e| {
+                        eprintln!("warning: failed to parse python_tools manifest: {e}");
+                        e
+                    })
+                    .ok()
+            });
+        let mut artifact = module
+            .generate_artifact_with_manifest(
+                None,
+                manifest.as_deref(),
+            )
             .context("Failed to generate artifact")?;
+
+        // Inject python_tools sidecar section if present
+        if let Some(sidecar_data) = &python_tools_sidecar {
+            artifact.add_section(apxm_artifact::ArtifactSection {
+                kind: "python_tools".into(),
+                data: sidecar_data.clone(),
+            });
+        }
+
+        let bytes = artifact
+            .to_bytes()
+            .map_err(|err| anyhow::anyhow!("Failed to serialize artifact: {err}"))?;
         let artifact_time = artifact_start.elapsed();
 
         let out_path = output.unwrap_or_else(|| {
@@ -1404,7 +1460,7 @@ pub async fn execute_command(
 
     let opt = parse_opt_level(opt_level);
     let mut linker_config = LinkerConfig::from_apxm_config(apxm_config).with_opt_level(opt);
-    let (graph_input, _python_air) = prepare_graph_input(&input)?;
+    let (graph_input, _python_air, _python_tools_sidecar) = prepare_graph_input(&input)?;
 
     // Enable all-outputs collection when session output is requested
     if emit_session.is_some() {

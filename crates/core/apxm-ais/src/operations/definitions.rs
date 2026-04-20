@@ -1,7 +1,7 @@
 //! AIS Operation Definitions - Single Source of Truth
 //!
-//! This module contains the complete specification for all 41 AIS operations
-//! (38 public + 1 metadata + 2 internal). Both the compiler and runtime use
+//! This module contains the complete specification for all 42 AIS operations
+//! (39 public + 1 metadata + 2 internal). Both the compiler and runtime use
 //! these definitions to ensure consistent semantics.
 
 use super::category::OperationCategory;
@@ -15,9 +15,9 @@ use std::fmt;
 
 /// Represents all AIS operation types.
 ///
-/// This enum is the canonical list of operations (41 total):
+/// This enum is the canonical list of operations (42 total):
 /// - 1 metadata operation (AgentOp)
-/// - 38 public operations
+/// - 39 public operations
 /// - 2 internal operations (ConstStr, Yield)
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -88,9 +88,11 @@ pub enum AISOperationType {
     /// Error handler invocation.
     Err,
 
-    // Communication Operations (1)
+    // Communication Operations (2)
     /// Communication between agents.
     Communicate,
+    /// Hand off execution from one agent to another with optional state transfer.
+    Handoff,
 
     // Coordination Operations (Phase 1 ISA Extensions)
     /// Update agent goals at runtime (set/remove/clear).
@@ -176,6 +178,7 @@ impl fmt::Display for AISOperationType {
             AISOperationType::Err => write!(f, "ERR"),
             // Communication
             AISOperationType::Communicate => write!(f, "COMMUNICATE"),
+            AISOperationType::Handoff => write!(f, "HANDOFF"),
             // Coordination (Phase 1 ISA Extensions)
             AISOperationType::UpdateGoal => write!(f, "UPDATE_GOAL"),
             AISOperationType::Guard => write!(f, "GUARD"),
@@ -235,6 +238,7 @@ impl std::str::FromStr for AISOperationType {
             "try_catch" => Ok(AISOperationType::TryCatch),
             "err" => Ok(AISOperationType::Err),
             "communicate" => Ok(AISOperationType::Communicate),
+            "handoff" => Ok(AISOperationType::Handoff),
             "update_goal" => Ok(AISOperationType::UpdateGoal),
             "guard" => Ok(AISOperationType::Guard),
             "claim" => Ok(AISOperationType::Claim),
@@ -285,6 +289,7 @@ impl AISOperationType {
             AISOperationType::TryCatch => "try_catch",
             AISOperationType::Err => "err",
             AISOperationType::Communicate => "communicate",
+            AISOperationType::Handoff => "handoff",
             AISOperationType::UpdateGoal => "update_goal",
             AISOperationType::Guard => "guard",
             AISOperationType::Claim => "claim",
@@ -351,6 +356,7 @@ impl AISOperationType {
             37 => Some(AISOperationType::Autonomous),
             38 => Some(AISOperationType::Checkpoint),
             39 => Some(AISOperationType::SpawnTeam),
+            40 => Some(AISOperationType::Handoff),
             _ => None,
         }
     }
@@ -399,12 +405,13 @@ impl AISOperationType {
             AISOperationType::Autonomous => Some(37),
             AISOperationType::Checkpoint => Some(38),
             AISOperationType::SpawnTeam => Some(39),
+            AISOperationType::Handoff => Some(40),
             // Ops without wire indices
             _ => None,
         }
     }
 
-    /// Get all operation types (41 total: 27 original + 5 phase-1 + 7 phase-2 + 1 durable execution + 1 team).
+    /// Get all operation types (42 total: 27 original + 5 phase-1 + 7 phase-2 + 1 durable execution + 1 team + 1 handoff).
     pub fn all_operations() -> &'static [AISOperationType] {
         &[
             AISOperationType::Agent,
@@ -432,6 +439,7 @@ impl AISOperationType {
             AISOperationType::TryCatch,
             AISOperationType::Err,
             AISOperationType::Communicate,
+            AISOperationType::Handoff,
             AISOperationType::UpdateGoal,
             AISOperationType::Guard,
             AISOperationType::Claim,
@@ -1410,6 +1418,41 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             syntactic_keywords: &[(super::mlir_keywords::TO, attrs::RECIPIENT)],
         },
     },
+    OperationSpec {
+        op_type: AISOperationType::Handoff,
+        name: "Handoff",
+        category: OperationCategory::Communication,
+        description: "Hand off execution from one agent to another with optional state transfer",
+        long_description: "Transfers execution control from a source agent to a target agent. \
+            When transfer_state is true, the source agent's context-stack frames are copied to \
+            the target agent so it can continue with full conversational context. Emits \
+            HANDOFF_START and HANDOFF_END events with span continuity for tracing. The target \
+            agent's response becomes this node's output token.",
+        latency: OperationLatency::Medium,
+        example_json: Some(
+            r#"{"id": 3, "op": "HANDOFF", "attributes": {"handoff_from": "agent_a", "handoff_to": "agent_b", "transfer_state": true}}"#,
+        ),
+        fields: &[
+            OperationField::required(attrs::HANDOFF_FROM, "Source agent name"),
+            OperationField::required(attrs::HANDOFF_TO, "Target agent name"),
+            OperationField::optional("payload", "Message payload to pass to the target agent"),
+            OperationField::optional(
+                attrs::TRANSFER_STATE,
+                "Whether to copy context-stack frames from source to target (default: true)",
+            ),
+        ],
+        needs_submission: true,
+        min_inputs: 1,
+        produces_output: true,
+        emission: MlirEmissionSpec {
+            primary_attr: Some(attrs::HANDOFF_FROM),
+            context_style: ContextStyle::Parenthesized,
+            result_type: MlirResultType::Token,
+            positional_attrs: &[],
+            keywords: &[attrs::TRANSFER_STATE],
+            syntactic_keywords: &[(super::mlir_keywords::TO, attrs::HANDOFF_TO)],
+        },
+    },
     // ========== Phase 1 ISA Extensions (5) ==========
     OperationSpec {
         op_type: AISOperationType::UpdateGoal,
@@ -1687,6 +1730,11 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             ),
             OperationField::optional("capabilities", "List of capabilities for the new agent"),
             OperationField::optional("goals", "Initial goals for the new agent"),
+            OperationField::optional(
+                attrs::SYSTEM_PROMPT,
+                "System prompt / instructions for inline agents — enables HANDOFF/COMMUNICATE \
+                 dispatch without registering the agent as a separate compiled flow",
+            ),
         ],
         needs_submission: true,
         min_inputs: 0,
@@ -1696,7 +1744,13 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             context_style: ContextStyle::None,
             result_type: MlirResultType::Token,
             positional_attrs: &[],
-            keywords: &[attrs::PROFILE, attrs::MODE, attrs::MODEL, attrs::CWD],
+            keywords: &[
+                attrs::PROFILE,
+                attrs::MODE,
+                attrs::MODEL,
+                attrs::CWD,
+                attrs::SYSTEM_PROMPT,
+            ],
             syntactic_keywords: &[],
         },
     },
@@ -1936,13 +1990,13 @@ mod tests {
     fn test_operation_counts() {
         assert_eq!(
             AIS_OPERATIONS.len(),
-            41,
-            "Expected 41 total operations (1 metadata + 38 public + 2 internal)"
+            42,
+            "Expected 42 total operations (1 metadata + 39 public + 2 internal)"
         );
         assert_eq!(
             AISOperationType::all_operations().len(),
-            41,
-            "Expected 41 total operation types"
+            42,
+            "Expected 42 total operation types"
         );
     }
 
@@ -2006,8 +2060,13 @@ mod tests {
             AISOperationType::from_wire_index(39),
             Some(AISOperationType::SpawnTeam)
         );
+        // Handoff
+        assert_eq!(
+            AISOperationType::from_wire_index(40),
+            Some(AISOperationType::Handoff)
+        );
         // Out-of-range returns None
-        assert_eq!(AISOperationType::from_wire_index(40), None);
+        assert_eq!(AISOperationType::from_wire_index(41), None);
         assert_eq!(AISOperationType::from_wire_index(u32::MAX), None);
     }
 
@@ -2058,15 +2117,24 @@ mod tests {
                 "from_wire_index(39) returned duplicate {op:?}"
             );
         }
+        // Handoff: 40
+        {
+            let op =
+                AISOperationType::from_wire_index(40).expect("wire index 40 should be Handoff");
+            assert!(
+                seen.insert(op),
+                "from_wire_index(40) returned duplicate {op:?}"
+            );
+        }
         assert_eq!(
             seen.len(),
-            34,
-            "Expected 34 distinct wire-indexed operations (25 original + 7 phase-2 + 1 durable + 1 team)"
+            35,
+            "Expected 35 distinct wire-indexed operations (25 original + 7 phase-2 + 1 durable + 1 team + 1 handoff)"
         );
         assert_eq!(
-            AISOperationType::from_wire_index(40),
+            AISOperationType::from_wire_index(41),
             None,
-            "Index 40 should be out of range"
+            "Index 41 should be out of range"
         );
     }
 
@@ -2082,8 +2150,8 @@ mod tests {
                 "Wire-indexed op {op:?} (index {i}) is not in all_operations()"
             );
         }
-        // Phase 2 ops: 31-38 (includes Checkpoint at 38)
-        for i in 31u32..40 {
+        // Phase 2 ops: 31-40 (includes Checkpoint at 38, SpawnTeam at 39, Handoff at 40)
+        for i in 31u32..41 {
             let op = AISOperationType::from_wire_index(i).unwrap();
             assert!(
                 all_ops.contains(&op),

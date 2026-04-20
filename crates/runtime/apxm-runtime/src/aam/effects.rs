@@ -106,6 +106,7 @@ pub fn operation_effects(op: &AISOperationType) -> OperationEffects {
 
         // Communication
         AISOperationType::Communicate => OperationEffects::new().read(Beliefs).write(Beliefs),
+        AISOperationType::Handoff => OperationEffects::new().read(Beliefs).write(Beliefs),
 
         // Coordination (Phase 1)
         AISOperationType::UpdateGoal => OperationEffects::new().read(Goals).write(Goals),

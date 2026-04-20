@@ -697,6 +697,32 @@ def AIS_CommunicateOp : AIS_Op<"communicate"> {
   let hasVerifier = 1;
 }
 
+def AIS_HandoffOp : AIS_Op<"handoff"> {
+  let summary = "Hand off execution to another agent";
+  let description = [{
+    Transfers execution from a source agent to a target agent. When
+    transfer_state is true (default), the source agent's context-stack
+    frames are copied to the target agent so it can continue with full
+    conversational context.
+
+    Example:
+    ```mlir
+    %resp = ais.handoff "agent_a" to "agent_b" (%payload : !ais.token) : !ais.token
+    ```
+  }];
+  let arguments = (ins
+    StrAttr:$handoff_from,
+    StrAttr:$handoff_to,
+    OptionalAttr<BoolAttr>:$transfer_state,
+    Variadic<AIS_AnyTokenHandleOrGoal>:$args
+  );
+  let results = (outs AIS_TokenType:$result);
+  let assemblyFormat = [{
+    $handoff_from `to` $handoff_to (`(` $args^ `:` type($args) `)`)? attr-dict `:` type($result)
+  }];
+  let hasVerifier = 1;
+}
+
 //===----------------------------------------------------------------------===//
 // Phase 1 ISA Extensions
 //===----------------------------------------------------------------------===//
@@ -830,7 +856,8 @@ def AIS_SpawnAgentOp : AIS_Op<"spawn_agent"> {
     OptionalAttr<StrAttr>:$profile,
     OptionalAttr<StrAttr>:$mode,
     OptionalAttr<StrAttr>:$model,
-    OptionalAttr<StrAttr>:$cwd
+    OptionalAttr<StrAttr>:$cwd,
+    OptionalAttr<StrAttr>:$system_prompt
   );
   let results = (outs AIS_TokenType:$result);
   let assemblyFormat = [{

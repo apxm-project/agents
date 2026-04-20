@@ -122,6 +122,21 @@ impl FlowRegistry {
         self.agents.clear();
     }
 
+    /// Find a flow by label.
+    ///
+    /// Labels may be "AgentName.flowName" (dotted) or just "flowName"
+    /// (searches all agents for a match).
+    pub fn find_flow_by_label(&self, label: &str) -> Option<Arc<ExecutionDag>> {
+        if let Some((agent, flow)) = label.split_once('.') {
+            return self.get_flow(agent, flow);
+        }
+        // Search all agents for a flow with this name
+        self.flows
+            .iter()
+            .find(|entry| entry.key().1 == label)
+            .map(|entry| Arc::clone(&entry))
+    }
+
     /// Get the number of registered flows.
     pub fn len(&self) -> usize {
         self.flows.len()

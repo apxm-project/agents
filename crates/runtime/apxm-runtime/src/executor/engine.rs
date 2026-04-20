@@ -41,6 +41,11 @@ impl ExecutorEngine {
     /// via token-based dataflow execution, work stealing, and backpressure.
     /// Falls back to sequential execution only when the scheduler is unavailable.
     pub async fn execute_dag(&self, dag: ExecutionDag) -> Result<ExecutionResult> {
+        // Propagate scope_id to the event emitter for session isolation.
+        if let Some(emitter) = &self.context.event_emitter {
+            emitter.set_current_scope_id(self.context.current_scope_id.clone());
+        }
+
         tracing::info!(
             execution_id = %self.context.execution_id,
             nodes = dag.nodes.len(),
@@ -300,6 +305,65 @@ impl ExecutorEngine {
             .execute_with_context(node, inputs, &self.context)
             .await?;
         Ok(outcome.value)
+    }
+
+    /// Execute a sub-DAG identified by a flow registry label.
+    ///
+    /// Used by `TRY_CATCH` to drive try/catch branches without circular
+    /// dependencies. Creates a child execution context and runs the
+    /// referenced sub-DAG, returning the first non-null exit value.
+    pub async fn run_subgraph_by_label(
+        &self,
+        label: &str,
+        inputs: Vec<Value>,
+    ) -> Result<Value> {
+        // Labels are stored as "AgentName.flowName" or just "flowName".
+        // Search the flow registry for a matching flow.
+        let sub_dag = self
+            .context
+            .flow_registry
+            .find_flow_by_label(label)
+            .ok_or_else(|| {
+                apxm_core::error::RuntimeError::Operation {
+                    op_type: apxm_core::types::operations::AISOperationType::TryCatch,
+                    message: format!(
+                        "Sub-DAG label '{}' not found in flow registry",
+                        label
+                    ),
+                }
+            })?;
+
+        let child_ctx = self.context.child();
+
+        // Store inputs in STM for sub-DAG entry nodes
+        for (i, input) in inputs.iter().enumerate() {
+            let _ = child_ctx
+                .memory
+                .write_scoped(
+                    crate::memory::MemorySpace::Stm,
+                    child_ctx.scope_id(),
+                    format!("flow_arg_{}", i),
+                    input.clone(),
+                )
+                .await;
+        }
+
+        let child_engine = ExecutorEngine::new(child_ctx);
+        let dag_to_execute = (*sub_dag).clone();
+        let result = child_engine.execute_dag(dag_to_execute).await?;
+
+        // Return first non-null exit value
+        Ok(result
+            .results
+            .values()
+            .find(|v| !matches!(v, Value::Null))
+            .cloned()
+            .unwrap_or(Value::Null))
+    }
+
+    /// Get a reference to the execution context.
+    pub fn context(&self) -> &ExecutionContext {
+        &self.context
     }
 }
 

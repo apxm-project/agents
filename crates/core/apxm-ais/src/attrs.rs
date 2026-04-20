@@ -137,6 +137,7 @@ pub const MAX_ROUNDS: &str = "max_rounds";
 pub const HANDOFF: &str = "handoff";
 pub const HANDOFF_FROM: &str = "handoff_from";
 pub const HANDOFF_TO: &str = "handoff_to";
+pub const TRANSFER_STATE: &str = "transfer_state";
 
 // -- Optimization hints --
 pub const CACHED_SYSTEM_PROMPT: &str = "cached_system_prompt";
@@ -289,6 +290,7 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     HANDOFF,
     HANDOFF_FROM,
     HANDOFF_TO,
+    TRANSFER_STATE,
     CACHED_SYSTEM_PROMPT,
     MEMOIZABLE,
     WARMUP_CANDIDATE,
@@ -324,6 +326,7 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     "default",
     "args",
     "ordering",
+    "payload",
     "error_handler",
     "scope",
     "storage",

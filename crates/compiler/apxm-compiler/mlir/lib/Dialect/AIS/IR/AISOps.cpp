@@ -894,6 +894,7 @@ LogicalResult DelegateOp::verify()         { return success(); }
 LogicalResult NegotiateOp::verify()        { return success(); }
 LogicalResult NopOp::verify()              { return success(); }
 LogicalResult IdentityOp::verify()         { return success(); }
+LogicalResult HandoffOp::verify()          { return success(); }
 
 }  // namespace ais
 }  // namespace mlir

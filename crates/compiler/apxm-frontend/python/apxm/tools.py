@@ -223,7 +223,7 @@ def _make_handler_id(fn: Callable[..., Any]) -> str:
     module = getattr(fn, "__module__", "__unknown__") or "__unknown__"
     qualname = getattr(fn, "__qualname__", fn.__name__)
     key = f"{module}:{qualname}"
-    return hashlib.sha256(key.encode("utf-8")).hexdigest()
+    return f"sha256:{hashlib.sha256(key.encode('utf-8')).hexdigest()}"
 
 
 # ---------------------------------------------------------------------------

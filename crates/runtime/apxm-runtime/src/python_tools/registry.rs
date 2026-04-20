@@ -2,6 +2,7 @@
 //!
 //! Built from the `tools.json` sidecar embedded in a compiled `.apxmobj` artifact.
 
+use super::constants::CAPABILITY_NAME;
 use apxm_core::error::RuntimeError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -41,7 +42,7 @@ impl PythonToolRegistry {
     /// Load from a `tools.json` file path.
     pub fn from_file(path: &Path) -> Result<Self, RuntimeError> {
         let content = std::fs::read_to_string(path).map_err(|e| RuntimeError::Capability {
-            capability: "python_tools".into(),
+            capability: CAPABILITY_NAME.into(),
             message: format!("Failed to read tools.json at {}: {}", path.display(), e),
         })?;
         Self::from_json(&content)
@@ -51,7 +52,7 @@ impl PythonToolRegistry {
     pub fn from_json(json: &str) -> Result<Self, RuntimeError> {
         let descriptors: Vec<ToolDescriptor> =
             serde_json::from_str(json).map_err(|e| RuntimeError::Capability {
-                capability: "python_tools".into(),
+                capability: CAPABILITY_NAME.into(),
                 message: format!("Failed to parse tools.json: {}", e),
             })?;
         Ok(Self::from_descriptors(descriptors))

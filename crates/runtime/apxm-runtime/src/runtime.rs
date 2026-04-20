@@ -16,6 +16,8 @@ use crate::{
     vllm_attr_derivation::derive_vllm_attrs,
     vllm_lifecycle::VllmGraphLifecycle,
 };
+use crate::python_tools;
+use crate::python_tools::{PythonToolBridge, PythonToolRegistry};
 use apxm_artifact::Artifact;
 use apxm_backends::LLMRegistry;
 use apxm_core::constants::runtime::metadata;
@@ -178,6 +180,16 @@ impl Runtime {
         event_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
         session_dir: Option<String>,
     ) -> ExecutionContext {
+        self.build_context_with_bridge(session_id, event_emitter, session_dir, None)
+    }
+
+    fn build_context_with_bridge(
+        &self,
+        session_id: Option<String>,
+        event_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
+        session_dir: Option<String>,
+        python_tool_bridge: Option<Arc<PythonToolBridge>>,
+    ) -> ExecutionContext {
         let mut ctx = ExecutionContext::new(
             Arc::clone(&self.memory),
             Arc::clone(&self.llm_registry),
@@ -202,6 +214,9 @@ impl Runtime {
         }
         if let Some(ref router) = self.model_router {
             ctx.model_router = Some(Arc::clone(router));
+        }
+        if let Some(bridge) = python_tool_bridge {
+            ctx = ctx.with_python_tool_bridge(bridge);
         }
         ctx
     }
@@ -340,7 +355,8 @@ impl Runtime {
         &self,
         artifact: Artifact,
     ) -> Result<RuntimeExecutionResult, RuntimeError> {
-        let entry_dag = find_entry_dag(&artifact)?;
+        let python_bridge = python_tool_bridge_from_artifact(&artifact)?;
+        let mut entry_dag = find_entry_dag(&artifact)?;
 
         let agents = reconstruct_agents_from_artifact(&artifact);
         let num_registered_agents = agents.len();
@@ -364,7 +380,36 @@ impl Runtime {
             num_registered_flows
         );
 
-        self.execute(entry_dag).await
+        #[cfg(feature = "metrics")]
+        self.llm_registry.metrics().reset();
+
+        derive_vllm_attrs(&mut entry_dag);
+        let lifecycle = build_vllm_lifecycle(&self.llm_registry, &entry_dag).await?;
+
+        let context = self.build_context_with_bridge(None, None, None, python_bridge);
+        let executor = Arc::new(ExecutorEngine::new(context.clone()));
+        let exec_result = self
+            .scheduler
+            .execute(entry_dag, executor, context, vec![])
+            .await;
+
+        if let Some(lc) = &lifecycle {
+            if let Err(e) = lc.release().await {
+                tracing::warn!(error = %e, "vLLM graph release failed (non-fatal)");
+            }
+        }
+
+        let (results, stats, scheduler_metrics, all_outputs, node_output_map) = exec_result?;
+
+        Ok(RuntimeExecutionResult {
+            results,
+            stats,
+            #[cfg(feature = "metrics")]
+            llm_metrics: self.llm_registry.metrics().aggregate(),
+            scheduler_metrics,
+            all_outputs,
+            node_output_map,
+        })
     }
 
     /// Execute an artifact with provided arguments for entry flow parameters.
@@ -403,6 +448,7 @@ impl Runtime {
             None
         };
 
+        let python_bridge = python_tool_bridge_from_artifact(&artifact)?;
         let mut entry_dag = find_entry_dag(&artifact)?;
         validate_args(&entry_dag, &args)?;
 
@@ -423,7 +469,12 @@ impl Runtime {
         // for the rationale (explicit happy-path release; Drop as safety net).
         let lifecycle = build_vllm_lifecycle(&self.llm_registry, &entry_dag).await?;
 
-        let context = self.build_context(session_id, event_emitter, session_dir);
+        let context = self.build_context_with_bridge(
+            session_id,
+            event_emitter,
+            session_dir,
+            python_bridge,
+        );
         let executor = Arc::new(ExecutorEngine::new(context.clone()));
         let exec_result = self
             .scheduler
@@ -555,6 +606,51 @@ async fn build_vllm_lifecycle(
             Ok(None)
         }
     }
+}
+
+/// Artifact section kind for Python tool manifests. Aligned by value with
+/// `python_tools::CAPABILITY_NAME` since the Python frontend emits the
+/// sidecar under that section name; kept as a distinct const so the two
+/// concepts (section kind vs. error capability label) can diverge if needed.
+const PYTHON_TOOLS_SECTION_KIND: &str = python_tools::CAPABILITY_NAME;
+
+/// Extract a `PythonToolBridge` from an artifact's `python_tools` section, if present.
+///
+/// The section's `data` field is the UTF-8 JSON array produced by the Python
+/// frontend (`tools.json` sidecar format). Returns `Ok(None)` when the artifact
+/// has no such section, or `Err` if the section is present but malformed.
+fn python_tool_bridge_from_artifact(
+    artifact: &Artifact,
+) -> Result<Option<Arc<PythonToolBridge>>, RuntimeError> {
+    let section = artifact
+        .sections()
+        .iter()
+        .find(|s| s.kind == PYTHON_TOOLS_SECTION_KIND);
+
+    let Some(section) = section else {
+        return Ok(None);
+    };
+
+    let json = std::str::from_utf8(&section.data).map_err(|e| RuntimeError::Capability {
+        capability: python_tools::CAPABILITY_NAME.into(),
+        message: format!(
+            "{} section is not valid UTF-8: {}",
+            PYTHON_TOOLS_SECTION_KIND, e
+        ),
+    })?;
+
+    let registry = PythonToolRegistry::from_json(json)?;
+    let tool_count = registry.len();
+    let bridge = PythonToolBridge::new(registry);
+
+    log_info!(
+        "runtime",
+        tools = tool_count,
+        "Loaded Python tool bridge from artifact ({} tool(s))",
+        tool_count
+    );
+
+    Ok(Some(Arc::new(bridge)))
 }
 
 fn find_entry_dag(artifact: &Artifact) -> Result<ExecutionDag, RuntimeError> {
@@ -747,5 +843,78 @@ mod tests {
             .find(|agent| agent.name == "Writer")
             .expect("Writer agent should be present");
         assert!(writer.get_flow("compose").is_some());
+    }
+
+    #[test]
+    fn test_python_tool_bridge_from_artifact_no_section() {
+        let mut dag = ExecutionDag::new();
+        dag.metadata.is_entry = true;
+        dag.metadata.name = Some("test.main".into());
+
+        let artifact = Artifact::new(
+            ArtifactMetadata::new(Some("test".into()), "test"),
+            vec![dag],
+        );
+
+        // No python_tools section → returns None
+        let bridge = python_tool_bridge_from_artifact(&artifact).unwrap();
+        assert!(bridge.is_none());
+    }
+
+    #[test]
+    fn test_python_tool_bridge_from_artifact_with_section() {
+        use apxm_artifact::ArtifactSection;
+
+        let tools_json = r#"[{
+            "handler_id": "sha256:abc123",
+            "module": "mytools",
+            "qualname": "add",
+            "name": "add",
+            "schema": {"type": "object"}
+        }]"#;
+
+        let mut dag = ExecutionDag::new();
+        dag.metadata.is_entry = true;
+        dag.metadata.name = Some("test.main".into());
+
+        let mut artifact = Artifact::new(
+            ArtifactMetadata::new(Some("test".into()), "test"),
+            vec![dag],
+        );
+        artifact.add_section(ArtifactSection {
+            kind: PYTHON_TOOLS_SECTION_KIND.to_string(),
+            data: tools_json.as_bytes().to_vec(),
+        });
+
+        // Roundtrip through serialization to verify section survives
+        let bytes = artifact.to_bytes().unwrap();
+        let loaded = Artifact::from_bytes(&bytes).unwrap();
+
+        let bridge = python_tool_bridge_from_artifact(&loaded).unwrap();
+        assert!(bridge.is_some());
+        let bridge = bridge.unwrap();
+        assert!(bridge.has_tool("add"));
+        assert!(!bridge.has_tool("subtract"));
+    }
+
+    #[test]
+    fn test_python_tool_bridge_from_artifact_invalid_section() {
+        use apxm_artifact::ArtifactSection;
+
+        let mut dag = ExecutionDag::new();
+        dag.metadata.is_entry = true;
+        dag.metadata.name = Some("test.main".into());
+
+        let mut artifact = Artifact::new(
+            ArtifactMetadata::new(Some("test".into()), "test"),
+            vec![dag],
+        );
+        artifact.add_section(ArtifactSection {
+            kind: PYTHON_TOOLS_SECTION_KIND.to_string(),
+            data: b"not valid json".to_vec(),
+        });
+
+        let result = python_tool_bridge_from_artifact(&artifact);
+        assert!(result.is_err());
     }
 }

@@ -45,6 +45,13 @@ impl OperationDispatcher {
 
         let op_type_str = format!("{:?}", node.op_type);
 
+        // Push a new child span for this node execution.
+        let parent_span_id = ctx.event_emitter.as_ref().and_then(|e| e.current_span_id());
+        let node_span_id = uuid::Uuid::new_v4().to_string();
+        if let Some(emitter) = &ctx.event_emitter {
+            emitter.set_current_span_id(Some(node_span_id.clone()));
+        }
+
         // Emit OperationStart event
         if let Some(emitter) = &ctx.event_emitter {
             emitter.emit_operation_start(node.id, &op_type_str);
@@ -98,6 +105,7 @@ impl OperationDispatcher {
 
             // Communication operations
             AISOperationType::Communicate => communicate::execute(ctx, node, inputs).await,
+            AISOperationType::Handoff => handoff::execute(ctx, node, inputs).await,
 
             // Phase 1 ISA extensions (UPDATE_GOAL, GUARD, CLAIM, PAUSE, RESUME)
             AISOperationType::UpdateGoal => update_goal::execute(ctx, node, inputs).await,
@@ -134,6 +142,11 @@ impl OperationDispatcher {
         // Emit OperationEnd event
         if let Some(emitter) = &ctx.event_emitter {
             emitter.emit_operation_end(node.id, &op_type_str, op_duration, success);
+        }
+
+        // Restore parent span after node execution completes.
+        if let Some(emitter) = &ctx.event_emitter {
+            emitter.set_current_span_id(parent_span_id);
         }
 
         match &result {
@@ -191,7 +204,7 @@ mod tests {
         // match and CONTRACTS.md accordingly.
         assert_eq!(
             AISOperationType::all_operations().len(),
-            41,
+            42,
             "AISOperationType variant count changed — update dispatcher and CONTRACTS.md"
         );
     }

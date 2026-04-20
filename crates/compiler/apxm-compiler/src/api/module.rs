@@ -90,14 +90,33 @@ impl Module {
         self.raw
     }
 
-    pub fn generate_artifact_bytes(&self) -> Result<Vec<u8>> {
-        self.generate_artifact_bytes_with_name(None)
+    pub fn generate_artifact(&self) -> Result<Artifact> {
+        self.generate_artifact_with_name(None)
     }
 
-    pub fn generate_artifact_bytes_with_name(&self, module_name: Option<&str>) -> Result<Vec<u8>> {
+    pub fn generate_artifact_with_name(&self, module_name: Option<&str>) -> Result<Artifact> {
+        self.generate_artifact_with_manifest(module_name, None)
+    }
+
+    pub fn generate_artifact_with_manifest(
+        &self,
+        module_name: Option<&str>,
+        manifest: Option<&[crate::passes::PythonToolManifestEntry]>,
+    ) -> Result<Artifact> {
         let payload = self.emit_artifact_payload(module_name)?;
         let mut dags = parse_wire_dags(&payload)?;
         crate::token_estimate::refine_token_estimates(&mut dags);
+
+        // Post-MLIR tool-binding pass: validate INV_TOOL ↔ REGISTER_CAPABILITY
+        // and copy `python_handler_id` from registrations onto invocations.
+        // W721/W723 warnings are logged here (non-fatal).
+        for dag in dags.iter_mut() {
+            let warnings = crate::passes::tool_binding_check_dag(dag, manifest)?;
+            for w in &warnings {
+                eprintln!("warning[{}]: {}", w.code, w.message);
+            }
+            crate::passes::bind_python_handlers_to_dag(dag)?;
+        }
 
         // Find entry DAG for metadata naming
         let entry_dag = dags.iter().find(|d| d.metadata.is_entry);
@@ -106,7 +125,15 @@ impl Module {
             .or_else(|| dags.first().and_then(|d| d.metadata.name.clone()));
 
         let metadata = ArtifactMetadata::new(name, crate::VERSION);
-        Artifact::new(metadata, dags)
+        Ok(Artifact::new(metadata, dags))
+    }
+
+    pub fn generate_artifact_bytes(&self) -> Result<Vec<u8>> {
+        self.generate_artifact_bytes_with_name(None)
+    }
+
+    pub fn generate_artifact_bytes_with_name(&self, module_name: Option<&str>) -> Result<Vec<u8>> {
+        self.generate_artifact_with_name(module_name)?
             .to_bytes()
             .map_err(|err| invalid_input_error(err.to_string()))
     }

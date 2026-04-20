@@ -63,6 +63,13 @@ pub struct ExecutionContext {
     /// `@apxm.tool`-decorated Python handlers. `None` when no Python
     /// tools are registered in the artifact.
     pub python_tool_bridge: Option<Arc<PythonToolBridge>>,
+    /// Current span ID for hierarchical event nesting. Each node
+    /// execution pushes a new child span; the parent is restored on
+    /// completion.
+    pub current_span_id: Option<String>,
+    /// Current scope ID for session-scoped event isolation.
+    /// Propagated to emitted events and child contexts.
+    pub current_scope_id: Option<String>,
 }
 
 impl ExecutionContext {
@@ -137,6 +144,8 @@ impl ExecutionContext {
             model_router: None,
             agent_pool: Arc::new(AgentPool::new(4, std::time::Duration::from_secs(300))),
             python_tool_bridge: None,
+            current_span_id: None,
+            current_scope_id: None,
         }
     }
 
@@ -243,6 +252,7 @@ impl ExecutionContext {
         let mut metadata_map = self.metadata.clone();
         metadata_map.insert(metadata::SCOPE_ID.to_string(), scope_id.clone());
         metadata_map.insert(metadata::PARENT_SCOPE_ID.to_string(), self.scope_id.clone());
+        let child_scope_id_for_events = Some(scope_id.clone());
 
         Self {
             execution_id: uuid::Uuid::now_v7().to_string(),
@@ -272,6 +282,8 @@ impl ExecutionContext {
             model_router: self.model_router.as_ref().map(Arc::clone),
             agent_pool: Arc::clone(&self.agent_pool),
             python_tool_bridge: self.python_tool_bridge.as_ref().map(Arc::clone),
+            current_span_id: self.current_span_id.clone(),
+            current_scope_id: child_scope_id_for_events,
         }
     }
 

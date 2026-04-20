@@ -139,6 +139,8 @@ pub mod runtime {
         pub const GOALS: &str = "goals";
         pub const PROCESS_ID: &str = "process_id";
         pub const PROFILE: &str = "profile";
+        pub const SYSTEM_PROMPT: &str = "system_prompt";
+        pub const MODEL: &str = "model";
     }
 }
 

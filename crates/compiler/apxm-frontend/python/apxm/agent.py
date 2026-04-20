@@ -113,6 +113,12 @@ class Agent:
         spawn_attrs: dict[str, Any] = {graph_keys.AGENT_NAME: self.name}
         if self.model is not None:
             spawn_attrs[graph_keys.MODEL] = _normalize_value(self.model)
+        if self.instructions is not None:
+            spawn_attrs[graph_keys.SYSTEM_PROMPT] = self.instructions
+        if self.provider is not None:
+            spawn_attrs[graph_keys.PROVIDER] = _normalize_provider(self.provider)
+        if self.backend is not None:
+            spawn_attrs[graph_keys.BACKEND] = self.backend
         spawn_node = g._add_node(
             g._auto_name(graph_keys.OP_SPAWN_AGENT),
             graph_keys.OP_SPAWN_AGENT,
@@ -140,6 +146,9 @@ class Agent:
             )
             g.add_edge(prev_node, cap_node, dependency="Control")
             prev_node = cap_node
+
+            # Register tool for artifact sidecar embedding
+            g.register_python_tool(tool)
 
         # -- 3. ASK --
         resolved, auto_pairs = g._resolve_template_refs(prompt)
@@ -179,8 +188,16 @@ class Agent:
 
         The handle emits SPAWN_AGENT + REGISTER_CAPABILITY eagerly, then
         exposes .ask() for multiple prompts against the same agent instance.
+
+        Idempotent per (recorder, agent name): repeated calls return the
+        same BoundAgent so the runtime sees a single SPAWN_AGENT per agent.
         """
-        return BoundAgent(self, g)
+        existing = g._bound_agents.get(self.name)
+        if existing is not None:
+            return existing
+        bound = BoundAgent(self, g)
+        g._bound_agents[self.name] = bound
+        return bound
 
     def __repr__(self) -> str:
         tool_names = [t.name for t in self._tools]
@@ -199,10 +216,18 @@ class BoundAgent:
         self._g = g
         self._msg_counter = 0
 
-        # Emit SPAWN_AGENT eagerly
+        # Emit SPAWN_AGENT eagerly. We stamp instructions+model so the runtime
+        # can dispatch HANDOFF/COMMUNICATE against this agent without it being
+        # registered as its own compiled flow.
         spawn_attrs: dict[str, Any] = {graph_keys.AGENT_NAME: agent.name}
         if agent.model is not None:
             spawn_attrs[graph_keys.MODEL] = _normalize_value(agent.model)
+        if agent.instructions is not None:
+            spawn_attrs[graph_keys.SYSTEM_PROMPT] = agent.instructions
+        if agent.provider is not None:
+            spawn_attrs[graph_keys.PROVIDER] = _normalize_provider(agent.provider)
+        if agent.backend is not None:
+            spawn_attrs[graph_keys.BACKEND] = agent.backend
         self._spawn_node = g._add_node(
             g._auto_name(graph_keys.OP_SPAWN_AGENT),
             graph_keys.OP_SPAWN_AGENT,
@@ -229,6 +254,9 @@ class BoundAgent:
             )
             g.add_edge(prev_node, cap_node, dependency="Control")
             prev_node = cap_node
+
+            # Register tool for artifact sidecar embedding
+            g.register_python_tool(tool)
 
         self._last_node = prev_node
 
@@ -272,6 +300,56 @@ class BoundAgent:
 
         self._last_node = ask_node
         return ask_node
+
+    def handoff(
+        self,
+        target_agent: Agent,
+        payload: str,
+        transfer_state: bool = True,
+    ) -> NodeRef:
+        """Hand off execution from this agent to target_agent.
+
+        Emits a HANDOFF node that transfers control from this bound agent
+        to the target. If transfer_state is True, context-stack frames are
+        copied from source to target at runtime.
+
+        Returns the HANDOFF NodeRef (the target agent's response token).
+        """
+        g = self._g
+
+        # Ensure the target agent is also spawned
+        target_bound = target_agent.bind(g)
+
+        resolved, auto_pairs = g._resolve_template_refs(payload)
+
+        handoff_attrs: dict[str, Any] = {
+            graph_keys.HANDOFF_FROM: self._agent.name,
+            graph_keys.HANDOFF_TO: target_agent.name,
+            graph_keys.TRANSFER_STATE: transfer_state,
+            graph_keys.TEMPLATE_STR: resolved,
+        }
+        if auto_pairs:
+            handoff_attrs[graph_keys.INPUT_NAMES] = [n for n, _ in auto_pairs]
+
+        handoff_node = g._add_node(
+            g._auto_name("HANDOFF"),
+            "HANDOFF",
+            handoff_attrs,
+        )
+        # Data edges so the source's last node and the target's SPAWN_AGENT both
+        # become MLIR variadic inputs to HANDOFF — Control edges are dropped by
+        # to_air() (only Data edges become SSA uses), so they would not enforce
+        # ordering on the runtime side and HANDOFF would race the SPAWN_AGENT
+        # for the target's STM `_agent_info:<name>` write.
+        g.add_edge(self._last_node, handoff_node, dependency="Data")
+        g.add_edge(target_bound.get_spawn_node(), handoff_node, dependency="Data")
+
+        # Auto-wire data edges from template references
+        for _name, ref in auto_pairs:
+            g.add_edge(ref, handoff_node)
+
+        self._last_node = handoff_node
+        return handoff_node
 
     def get_spawn_node(self) -> NodeRef:
         """Return the SPAWN_AGENT node."""

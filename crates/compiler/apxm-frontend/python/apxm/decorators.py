@@ -54,11 +54,12 @@ class _CompiledFunction:
         self._default_backend = default_backend
         self._signature = inspect.signature(fn)
         self._param_mapping = self._derive_parameters()
-        self._graph = self._capture_graph()
+        self._graph, self._air_text = self._capture_graph()
         self._compiled_flow = CompiledFlow(
             self._graph,
             mode=mode,
             opt_level=opt_level,
+            air_text=self._air_text,
             **compile_kwargs,
         )
         self.__name__ = fn.__name__
@@ -160,7 +161,10 @@ class _CompiledFunction:
                     if node.op in LLM_OPS and gen_keys.BACKEND not in node.attributes:
                         node.attributes[gen_keys.BACKEND] = self._default_backend
 
-        return graph
+        # Capture the AIR text (with sidecar) before losing the recorder.
+        air_text = recorder.to_air()
+
+        return graph, air_text
 
     def _normalize_runtime_args(self, *args: Any, **kwargs: Any) -> tuple[Any, ...]:
         # Build arg list in parameter order

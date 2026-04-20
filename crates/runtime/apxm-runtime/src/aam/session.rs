@@ -38,22 +38,30 @@ impl SessionManager {
         Ok(Self { checkpoint_dir })
     }
 
-    /// Save a checkpoint for the given `session_id`.
+    /// Save a checkpoint for the given `(session_id, scope_id)` pair.
     ///
+    /// `scope_id` of `None` represents the global (root) scope.
     /// Returns the path the checkpoint was written to.
     pub fn save_checkpoint(
         &self,
         session_id: &str,
+        scope_id: Option<&str>,
         checkpoint: &AamCheckpoint,
     ) -> Result<PathBuf, RuntimeError> {
-        let path = self.checkpoint_path(session_id);
+        let path = self.checkpoint_path(session_id, scope_id);
         checkpoint.save_to_file(&path)?;
         Ok(path)
     }
 
-    /// Load the most recent checkpoint for `session_id`, if one exists.
-    pub fn load_checkpoint(&self, session_id: &str) -> Result<Option<AamCheckpoint>, RuntimeError> {
-        let path = self.checkpoint_path(session_id);
+    /// Load the most recent checkpoint for `(session_id, scope_id)`, if one exists.
+    ///
+    /// `scope_id` of `None` represents the global (root) scope.
+    pub fn load_checkpoint(
+        &self,
+        session_id: &str,
+        scope_id: Option<&str>,
+    ) -> Result<Option<AamCheckpoint>, RuntimeError> {
+        let path = self.checkpoint_path(session_id, scope_id);
         if !path.exists() {
             return Ok(None);
         }
@@ -83,12 +91,19 @@ impl SessionManager {
             }
         }
         sessions.sort();
+        sessions.dedup();
         Ok(sessions)
     }
 
-    /// Delete the checkpoint for the given session.
-    pub fn delete_checkpoint(&self, session_id: &str) -> Result<(), RuntimeError> {
-        let path = self.checkpoint_path(session_id);
+    /// Delete the checkpoint for the given `(session_id, scope_id)` pair.
+    ///
+    /// `scope_id` of `None` represents the global (root) scope.
+    pub fn delete_checkpoint(
+        &self,
+        session_id: &str,
+        scope_id: Option<&str>,
+    ) -> Result<(), RuntimeError> {
+        let path = self.checkpoint_path(session_id, scope_id);
         if path.exists() {
             std::fs::remove_file(&path).map_err(|e| {
                 RuntimeError::State(format!(
@@ -102,8 +117,17 @@ impl SessionManager {
     }
 
     /// Return the on-disk path for a session's checkpoint file.
-    pub fn checkpoint_path(&self, session_id: &str) -> PathBuf {
-        self.checkpoint_dir.join(format!("{}.json", session_id))
+    ///
+    /// When `scope_id` is `Some`, the filename encodes both session and scope
+    /// as `<session_id>__<scope_id>.json`. When `None`, it uses `<session_id>.json`
+    /// (the global scope).
+    pub fn checkpoint_path(&self, session_id: &str, scope_id: Option<&str>) -> PathBuf {
+        match scope_id {
+            Some(scope) => self
+                .checkpoint_dir
+                .join(format!("{}__{}.json", session_id, scope)),
+            None => self.checkpoint_dir.join(format!("{}.json", session_id)),
+        }
     }
 }
 
@@ -185,10 +209,12 @@ mod tests {
         let mgr = SessionManager::new(dir.path().to_path_buf()).unwrap();
 
         let checkpoint = sample_checkpoint();
-        let saved_path = mgr.save_checkpoint("sess-001", &checkpoint).unwrap();
+        let saved_path = mgr
+            .save_checkpoint("sess-001", None, &checkpoint)
+            .unwrap();
         assert!(saved_path.exists());
 
-        let loaded = mgr.load_checkpoint("sess-001").unwrap();
+        let loaded = mgr.load_checkpoint("sess-001", None).unwrap();
         assert!(loaded.is_some());
         let loaded = loaded.unwrap();
         assert_eq!(loaded.beliefs, checkpoint.beliefs);
@@ -196,11 +222,33 @@ mod tests {
     }
 
     #[test]
+    fn session_manager_save_and_load_with_scope() {
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = SessionManager::new(dir.path().to_path_buf()).unwrap();
+
+        let checkpoint = sample_checkpoint();
+        let saved_path = mgr
+            .save_checkpoint("sess-001", Some("scope-a"), &checkpoint)
+            .unwrap();
+        assert!(saved_path.exists());
+
+        // Loading with scope returns the checkpoint
+        let loaded = mgr
+            .load_checkpoint("sess-001", Some("scope-a"))
+            .unwrap();
+        assert!(loaded.is_some());
+
+        // Loading without scope returns None (different key)
+        let loaded_global = mgr.load_checkpoint("sess-001", None).unwrap();
+        assert!(loaded_global.is_none());
+    }
+
+    #[test]
     fn session_manager_load_missing_returns_none() {
         let dir = tempfile::tempdir().unwrap();
         let mgr = SessionManager::new(dir.path().to_path_buf()).unwrap();
 
-        let result = mgr.load_checkpoint("no-such-session").unwrap();
+        let result = mgr.load_checkpoint("no-such-session", None).unwrap();
         assert!(result.is_none());
     }
 
@@ -210,9 +258,9 @@ mod tests {
         let mgr = SessionManager::new(dir.path().to_path_buf()).unwrap();
 
         let checkpoint = sample_checkpoint();
-        mgr.save_checkpoint("alpha", &checkpoint).unwrap();
-        mgr.save_checkpoint("beta", &checkpoint).unwrap();
-        mgr.save_checkpoint("gamma", &checkpoint).unwrap();
+        mgr.save_checkpoint("alpha", None, &checkpoint).unwrap();
+        mgr.save_checkpoint("beta", None, &checkpoint).unwrap();
+        mgr.save_checkpoint("gamma", None, &checkpoint).unwrap();
 
         let sessions = mgr.list_sessions().unwrap();
         assert_eq!(sessions, vec!["alpha", "beta", "gamma"]);
@@ -224,11 +272,18 @@ mod tests {
         let mgr = SessionManager::new(dir.path().to_path_buf()).unwrap();
 
         let checkpoint = sample_checkpoint();
-        mgr.save_checkpoint("to-delete", &checkpoint).unwrap();
-        assert!(mgr.load_checkpoint("to-delete").unwrap().is_some());
+        mgr.save_checkpoint("to-delete", None, &checkpoint)
+            .unwrap();
+        assert!(mgr
+            .load_checkpoint("to-delete", None)
+            .unwrap()
+            .is_some());
 
-        mgr.delete_checkpoint("to-delete").unwrap();
-        assert!(mgr.load_checkpoint("to-delete").unwrap().is_none());
+        mgr.delete_checkpoint("to-delete", None).unwrap();
+        assert!(mgr
+            .load_checkpoint("to-delete", None)
+            .unwrap()
+            .is_none());
     }
 
     #[test]
@@ -236,7 +291,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mgr = SessionManager::new(dir.path().to_path_buf()).unwrap();
         // Deleting a session that doesn't exist should not error.
-        mgr.delete_checkpoint("never-existed").unwrap();
+        mgr.delete_checkpoint("never-existed", None).unwrap();
     }
 
     #[test]
@@ -250,8 +305,8 @@ mod tests {
 
         // Verify we can actually use it
         let checkpoint = sample_checkpoint();
-        mgr.save_checkpoint("sess", &checkpoint).unwrap();
-        assert!(mgr.load_checkpoint("sess").unwrap().is_some());
+        mgr.save_checkpoint("sess", None, &checkpoint).unwrap();
+        assert!(mgr.load_checkpoint("sess", None).unwrap().is_some());
     }
 
     #[test]
@@ -279,10 +334,13 @@ mod tests {
 
         // Checkpoint, save to disk
         let cp = aam.checkpoint();
-        mgr.save_checkpoint("full-round-trip", &cp).unwrap();
+        mgr.save_checkpoint("full-round-trip", None, &cp).unwrap();
 
         // Load into a fresh AAM
-        let loaded = mgr.load_checkpoint("full-round-trip").unwrap().unwrap();
+        let loaded = mgr
+            .load_checkpoint("full-round-trip", None)
+            .unwrap()
+            .unwrap();
         let aam2 = Aam::new();
         aam2.restore(&loaded);
 

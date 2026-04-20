@@ -749,6 +749,39 @@ fn emit_node(
                 ty: MlirValueType::Token,
             }))
         }
+        AISOperationType::Handoff => {
+            let from = get_string_attr(
+                &node.attributes,
+                &[graph_attrs::HANDOFF_FROM],
+            )
+            .unwrap_or_else(|| "source".to_string());
+            let to = get_string_attr(
+                &node.attributes,
+                &[graph_attrs::HANDOFF_TO],
+            )
+            .unwrap_or_else(|| "target".to_string());
+            let attrs = extra_attr_dict(
+                &node.attributes,
+                &[
+                    graph_attrs::HANDOFF_FROM,
+                    graph_attrs::HANDOFF_TO,
+                ],
+            );
+            let result = format!("%n{}", node.id);
+            let context = format_context(&inputs, '(', ')');
+
+            state.emit(format!(
+                "    {result} = ais.handoff {} to {}{}{} : !ais.token",
+                quote_string(&from),
+                quote_string(&to),
+                context,
+                attrs
+            ));
+            Ok(Some(MlirValueRef {
+                ssa: result,
+                ty: MlirValueType::Token,
+            }))
+        }
         AISOperationType::Delegate => {
             let task_spec = get_string_attr(
                 &node.attributes,

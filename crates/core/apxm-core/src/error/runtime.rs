@@ -148,6 +148,121 @@ impl RuntimeError {
             None => String::new(),
         }
     }
+
+    /// Serialize this error into a JSON `Value` for the catch-branch input slot.
+    pub fn to_value(&self) -> serde_json::Value {
+        let (kind, message, details) = match self {
+            RuntimeError::Scheduler { message } => ("scheduler", message.clone(), serde_json::Value::Null),
+            RuntimeError::SchedulerMissingToken { node_id, token_id } => (
+                "scheduler_missing_token",
+                format!("Missing token {} for node {}", token_id, node_id),
+                serde_json::json!({ "node_id": node_id, "token_id": token_id }),
+            ),
+            RuntimeError::SchedulerDuplicateProducer { token_id } => (
+                "scheduler_duplicate_producer",
+                format!("Duplicate producer for token {}", token_id),
+                serde_json::json!({ "token_id": token_id }),
+            ),
+            RuntimeError::SchedulerDeadlock { timeout_ms, remaining } => (
+                "scheduler_deadlock",
+                format!("Deadlock detected after {}ms with {} nodes remaining", timeout_ms, remaining),
+                serde_json::json!({ "timeout_ms": timeout_ms, "remaining": remaining }),
+            ),
+            RuntimeError::SchedulerCancelled => ("scheduler_cancelled", "Execution cancelled".to_string(), serde_json::Value::Null),
+            RuntimeError::SchedulerRetryExhausted { node_id, reason } => (
+                "scheduler_retry_exhausted",
+                format!("Node {} failed after retries: {}", node_id, reason),
+                serde_json::json!({ "node_id": node_id, "reason": reason }),
+            ),
+            RuntimeError::Operation { op_type, message } => (
+                "operation",
+                message.clone(),
+                serde_json::json!({ "op_type": format!("{}", op_type) }),
+            ),
+            RuntimeError::Capability { capability, message } => (
+                "capability",
+                message.clone(),
+                serde_json::json!({ "capability": capability }),
+            ),
+            RuntimeError::LLM { message, backend } => (
+                "llm",
+                message.clone(),
+                serde_json::json!({ "backend": backend }),
+            ),
+            RuntimeError::Memory { message, space } => (
+                "memory",
+                message.clone(),
+                serde_json::json!({ "space": space }),
+            ),
+            RuntimeError::Security(sec) => (
+                "security",
+                format!("{}", sec),
+                serde_json::Value::Null,
+            ),
+            RuntimeError::Timeout { op_id, timeout } => (
+                "timeout",
+                format!("Operation {:?} exceeded timeout {:?}", op_id, timeout),
+                serde_json::json!({ "timeout_ms": timeout.as_millis() as u64 }),
+            ),
+            RuntimeError::Serialization(msg) => ("serialization", msg.clone(), serde_json::Value::Null),
+            RuntimeError::Executor(msg) => ("executor", msg.clone(), serde_json::Value::Null),
+            RuntimeError::State(msg) => ("state", msg.clone(), serde_json::Value::Null),
+            RuntimeError::InvalidTask { reason } => (
+                "invalid_task",
+                reason.clone(),
+                serde_json::Value::Null,
+            ),
+        };
+        serde_json::json!({
+            "kind": kind,
+            "message": message,
+            "details": details,
+        })
+    }
+
+    /// Reconstruct a `RuntimeError` from a JSON `Value` produced by [`to_value`].
+    pub fn from_value(value: &serde_json::Value) -> Option<Self> {
+        let kind = value.get("kind")?.as_str()?;
+        let message = value.get("message")?.as_str()?.to_string();
+        Some(match kind {
+            "scheduler" => RuntimeError::Scheduler { message },
+            "scheduler_cancelled" => RuntimeError::SchedulerCancelled,
+            "operation" => RuntimeError::Operation {
+                op_type: AISOperationType::Nop,
+                message,
+            },
+            "capability" => RuntimeError::Capability {
+                capability: value
+                    .get("details")
+                    .and_then(|d| d.get("capability"))
+                    .and_then(|c| c.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                message,
+            },
+            "llm" => RuntimeError::LLM {
+                message,
+                backend: value
+                    .get("details")
+                    .and_then(|d| d.get("backend"))
+                    .and_then(|b| b.as_str())
+                    .map(|s| s.to_string()),
+            },
+            "memory" => RuntimeError::Memory {
+                message,
+                space: value
+                    .get("details")
+                    .and_then(|d| d.get("space"))
+                    .and_then(|s| s.as_str())
+                    .map(|s| s.to_string()),
+            },
+            "serialization" => RuntimeError::Serialization(message),
+            "executor" => RuntimeError::Executor(message),
+            "state" => RuntimeError::State(message),
+            "invalid_task" => RuntimeError::InvalidTask { reason: message },
+            _ => RuntimeError::Executor(format!("Unknown error kind '{}': {}", kind, message)),
+        })
+    }
 }
 
 #[cfg(test)]
@@ -165,5 +280,50 @@ mod tests {
         let display = format!("{}", runtime_error);
         assert!(display.contains("Security error"));
         assert!(display.contains("Policy violation"));
+    }
+
+    #[test]
+    fn test_to_value_operation_error() {
+        let err = RuntimeError::Operation {
+            op_type: AISOperationType::Ask,
+            message: "model unavailable".to_string(),
+        };
+        let val = err.to_value();
+        assert_eq!(val["kind"], "operation");
+        assert_eq!(val["message"], "model unavailable");
+    }
+
+    #[test]
+    fn test_to_value_roundtrip_llm_error() {
+        let err = RuntimeError::LLM {
+            message: "rate limited".to_string(),
+            backend: Some("openai".to_string()),
+        };
+        let val = err.to_value();
+        assert_eq!(val["kind"], "llm");
+        assert_eq!(val["message"], "rate limited");
+        assert_eq!(val["details"]["backend"], "openai");
+
+        let reconstructed = RuntimeError::from_value(&val).unwrap();
+        assert!(matches!(reconstructed, RuntimeError::LLM { message, backend }
+            if message == "rate limited" && backend == Some("openai".to_string())
+        ));
+    }
+
+    #[test]
+    fn test_from_value_unknown_kind() {
+        let val = serde_json::json!({
+            "kind": "alien",
+            "message": "unknown error",
+            "details": null,
+        });
+        let err = RuntimeError::from_value(&val).unwrap();
+        assert!(matches!(err, RuntimeError::Executor(msg) if msg.contains("alien")));
+    }
+
+    #[test]
+    fn test_from_value_missing_fields() {
+        let val = serde_json::json!({"unrelated": true});
+        assert!(RuntimeError::from_value(&val).is_none());
     }
 }

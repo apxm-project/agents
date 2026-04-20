@@ -89,6 +89,14 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
     if let Some(goals) = node.attributes.get(response_keys::GOALS) {
         agent_info.insert(response_keys::GOALS.to_string(), goals.clone());
     }
+    // Persist instructions+model so HANDOFF/COMMUNICATE can dispatch against
+    // inline-spawned agents without requiring a separately-registered flow.
+    if let Some(sp) = get_optional_string_attribute(node, graph_attrs::SYSTEM_PROMPT)? {
+        agent_info.insert(response_keys::SYSTEM_PROMPT.to_string(), Value::String(sp));
+    }
+    if let Some(m) = get_optional_string_attribute(node, graph_attrs::MODEL)? {
+        agent_info.insert(response_keys::MODEL.to_string(), Value::String(m));
+    }
 
     // When profile is present, spawn an ACP subprocess
     if let Some(profile_name) = &profile {
@@ -217,12 +225,22 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
         }
     }
 
+    // Write agent_info to the parent (flow-root) scope so HANDOFF/COMMUNICATE
+    // running in sibling worker scopes can see it. The scheduler creates a
+    // fresh child scope per node (`base_ctx.child()` in scheduler/worker.rs),
+    // so writing to ctx.scope_id() here would isolate agent_info from peers.
+    let stm_key = format!("{}{}", belief_keys::AGENT_INFO_PREFIX, agent_name);
+    let target_scope = ctx
+        .metadata
+        .get(metadata::PARENT_SCOPE_ID)
+        .cloned()
+        .unwrap_or_else(|| ctx.scope_id().to_string());
     if let Err(e) = ctx
         .memory
         .write_scoped(
             crate::memory::MemorySpace::Stm,
-            ctx.scope_id(),
-            format!("{}{}", belief_keys::AGENT_INFO_PREFIX, agent_name),
+            &target_scope,
+            stm_key,
             Value::Object(agent_info.clone()),
         )
         .await

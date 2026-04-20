@@ -1,10 +1,13 @@
-"""Calculator Agent demo — validates that Agent.ask() lowers to correct AIR ops.
+"""Calculator Agent demo — end-to-end execution with native Python tools.
 
 This is the MVP "killer demo" from the native_python_tools.md design doc.
-Usage: dekk apxm compile examples/python/getting-started/calculator_agent.py
+
+Usage:
+  APXM_MOCK_BACKEND=1 python examples/python/getting-started/calculator_agent.py
+  dekk apxm execute examples/python/getting-started/calculator_agent.py
 """
 
-from apxm import tool, Agent, GraphRecorder
+from apxm import tool, Agent, compile, run
 from apxm._generated.models import Anthropic
 
 
@@ -27,10 +30,13 @@ calc = Agent(
     model=Anthropic.CLAUDE_SONNET_4_6,
 )
 
-g = GraphRecorder("math_flow")
-g.param("q", "str")
 
-result = calc.ask(g, "{q}")
-g.done(result)
+@compile()
+def math_flow(g, q: str):
+    result = calc.ask(g, "{q}")
+    g.done(result)
 
-print(g.to_air())
+
+if __name__ == "__main__":
+    result = run(math_flow, "What is 17 + 25?", mock=True)
+    print(result.content)

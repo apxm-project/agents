@@ -17,11 +17,18 @@
 //! - `registry` — Tool manifest loaded from `tools.json` sidecar
 //! - `worker`   — Subprocess management, request multiplexing, timeout
 
+pub mod constants;
 pub mod protocol;
 pub mod registry;
 pub mod worker;
 
-pub use protocol::{CallResponse, ErrorEnvelope, PROTOCOL_VERSION};
+pub use constants::{
+    CAPABILITY_NAME, MANIFEST_TEMPFILE_PREFIX, MANIFEST_TEMPFILE_SUFFIX, PYTHON_BIN,
+    PYTHON_MODULE_FLAG, TRACE_TARGET, WORKER_MODULE,
+};
+pub use protocol::{
+    CallRequest, CallResponse, ErrorEnvelope, PROTOCOL_VERSION, WorkerRequest, WorkerResponse,
+};
 pub use registry::{PythonToolRegistry, ToolDescriptor};
 pub use worker::PythonToolWorker;
 
