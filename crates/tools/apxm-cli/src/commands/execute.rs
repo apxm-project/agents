@@ -5,9 +5,10 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 #[cfg(feature = "driver")]
 use apxm_driver::{Linker, LinkerConfig};
-use colored::Colorize;
 
+#[cfg(feature = "driver")]
 use super::compile::{graph_from_execution_dag, prepare_graph_input};
+#[cfg(feature = "driver")]
 use super::implementations::{load_config, parse_opt_level};
 
 #[cfg(feature = "driver")]
