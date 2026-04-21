@@ -6,6 +6,8 @@ use std::time::Duration;
 use apxm_core::types::values::Value;
 use serde::{Deserialize, Serialize};
 
+use crate::executor::token_accounting::TokenUsageSummary;
+
 /// Runtime execution event (legacy enum).
 ///
 /// Prefer using concrete payload structs from `apxm_core::events::payload`
@@ -152,6 +154,7 @@ pub trait ExecutionEventEmitter: Send + Sync {
         _op_type: &str,
         _duration: Duration,
         _success: bool,
+        _tokens: Option<TokenUsageSummary>,
     ) {
     }
     fn emit_node_output(&self, _node_id: u64, _value: &Value) {}

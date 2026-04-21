@@ -99,7 +99,7 @@ fn node_workspace_creation_writes_context_and_outputs() {
 
     emitter.emit_operation_start(1, "CONST_STR");
     emitter.emit_node_output(1, &Value::String("upstream design".to_string()));
-    emitter.emit_operation_end(1, "CONST_STR", Duration::from_millis(5), true);
+    emitter.emit_operation_end(1, "CONST_STR", Duration::from_millis(5), true, None);
 
     emitter.emit_operation_start(2, "SPAWN_AGENT");
 
@@ -147,7 +147,7 @@ fn llm_prompt_and_response_are_persisted() {
     emitter.emit_llm_token_for_node(1, "step one ");
     emitter.emit_llm_token_for_node(1, "step two");
     emitter.emit_node_output(1, &Value::String("step one step two".to_string()));
-    emitter.emit_operation_end(1, "ASK", Duration::from_millis(8), true);
+    emitter.emit_operation_end(1, "ASK", Duration::from_millis(8), true, None);
 
     let ask_dir = session_root
         .path()

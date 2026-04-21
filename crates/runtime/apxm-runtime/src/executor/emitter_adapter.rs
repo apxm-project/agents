@@ -130,7 +130,14 @@ impl ExecutionEventEmitter for EmitterAdapter {
         });
     }
 
-    fn emit_operation_end(&self, node_id: u64, op_type: &str, duration: Duration, success: bool) {
+    fn emit_operation_end(
+        &self,
+        node_id: u64,
+        op_type: &str,
+        duration: Duration,
+        success: bool,
+        _tokens: Option<crate::executor::token_accounting::TokenUsageSummary>,
+    ) {
         self.emit(OperationEndPayload {
             node_id,
             op_type: op_type.to_string(),

@@ -478,6 +478,8 @@ impl SchedulerState {
                         .finished_at
                         .map(|t| t.duration_since(self.start).as_millis()),
                     duration_ms: dur,
+                    input_tokens: None,
+                    output_tokens: None,
                 }
             })
             .collect();

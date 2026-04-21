@@ -712,6 +712,7 @@ impl ExecutionEventEmitter for SessionEventEmitter {
         op_type: &str,
         duration: std::time::Duration,
         success: bool,
+        tokens: Option<apxm_runtime::TokenUsageSummary>,
     ) {
         self.completed.fetch_add(1, Ordering::Relaxed);
 
@@ -725,12 +726,18 @@ impl ExecutionEventEmitter for SessionEventEmitter {
             } else {
                 SessionStatus::Failed
             };
+            let (input_tokens, output_tokens) = match &tokens {
+                Some(usage) => (Some(usage.input_tokens), Some(usage.output_tokens)),
+                None => (None, None),
+            };
             let completed_info = CompletedNodeInfo {
                 id: node_id,
                 name: meta.name.clone(),
                 op: op_type.to_string(),
                 duration_ms: duration.as_millis() as u64,
                 status,
+                input_tokens,
+                output_tokens,
             };
             if let Ok(mut completed) = self.completed_nodes.lock() {
                 completed.push(completed_info);

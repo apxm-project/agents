@@ -96,6 +96,12 @@ impl TokenAccountant {
         }
     }
 
+    /// Lookup current usage for one node without taking a full snapshot.
+    /// Returns None if no LLM call has been recorded for this node yet.
+    pub fn get_node(&self, node_id: u64) -> Option<TokenUsageSummary> {
+        self.per_node.read().get(&node_id).cloned()
+    }
+
     /// Take a point-in-time snapshot for serialization / metrics emission.
     pub fn snapshot(&self) -> TokenAccountingSnapshot {
         let total = TokenUsageSummary {

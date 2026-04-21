@@ -177,6 +177,8 @@ impl ExecutorEngine {
                         started_at_ms: Some(node_start.elapsed().as_millis()),
                         finished_at_ms: None,
                         duration_ms: None,
+                        input_tokens: None,
+                        output_tokens: None,
                     },
                 );
             }
@@ -222,6 +224,8 @@ impl ExecutorEngine {
                                 started_at_ms: Some(node_start.elapsed().as_millis()),
                                 finished_at_ms: Some(node_end.as_millis()),
                                 duration_ms: Some(node_end.as_millis()),
+                                input_tokens: None,
+                                output_tokens: None,
                             },
                         );
                     }
@@ -240,6 +244,8 @@ impl ExecutorEngine {
                                 started_at_ms: Some(node_start.elapsed().as_millis()),
                                 finished_at_ms: Some(node_end.as_millis()),
                                 duration_ms: Some(node_end.as_millis()),
+                                input_tokens: None,
+                                output_tokens: None,
                             },
                         );
                     }

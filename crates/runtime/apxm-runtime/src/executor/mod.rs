@@ -28,7 +28,7 @@ pub use events::{ExecutionEvent, ExecutionEventEmitter};
 pub use handlers::warmup::{WarmupConfig, WarmupMetrics};
 pub use inner_plan_linker::{InnerPlanLinker, NoOpLinker};
 pub use memoization::ResponseCache;
-pub use token_accounting::TokenAccountant;
+pub use token_accounting::{TokenAccountant, TokenUsageSummary};
 
 use apxm_core::error::RuntimeError;
 
