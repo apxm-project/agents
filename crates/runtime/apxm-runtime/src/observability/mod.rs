@@ -10,8 +10,10 @@
 //! When the `metrics` feature is disabled, all metrics calls compile to nothing.
 
 mod metrics;
+mod call_trace;
 
 pub use metrics::{MetricsCollector, OverheadBreakdown, SchedulerMetrics};
+pub use call_trace::{CallEvent, CallTrace};
 
 // Re-export the timing macros at crate root
 pub use crate::{timed, timed_async};
