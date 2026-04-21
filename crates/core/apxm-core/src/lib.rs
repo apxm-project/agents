@@ -16,6 +16,7 @@ pub mod error;
 pub mod events;
 pub mod logging;
 pub mod model_profiles;
+pub mod observability;
 pub mod paths;
 pub mod plan;
 pub mod types;
