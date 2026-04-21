@@ -77,6 +77,7 @@ impl apxm_runtime::ExecutionEventEmitter for RecordingEmitter {
         op_type: &str,
         _duration: Duration,
         _success: bool,
+        _tokens: Option<apxm_runtime::TokenUsageSummary>,
     ) {
         self.events
             .lock()

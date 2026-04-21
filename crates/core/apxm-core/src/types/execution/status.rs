@@ -26,6 +26,10 @@ pub struct NodeStatus {
     /// Milliseconds since execution start.
     pub finished_at_ms: Option<u128>,
     pub duration_ms: Option<u128>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<usize>,
 }
 
 /// Execution statistics for a completed DAG.

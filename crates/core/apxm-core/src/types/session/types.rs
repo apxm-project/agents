@@ -90,4 +90,8 @@ pub struct CompletedNodeInfo {
     pub op: String,
     pub duration_ms: u64,
     pub status: SessionStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<usize>,
 }
