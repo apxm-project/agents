@@ -46,6 +46,9 @@ pub struct RuntimeExecutionResult {
     pub scheduler_metrics: crate::observability::SchedulerMetrics,
     pub all_outputs: Option<HashMap<u64, Value>>,
     pub node_output_map: Option<HashMap<u64, Vec<u64>>>,
+    /// Aggregate token usage collected during execution. Empty snapshot if no
+    /// LLM nodes ran.
+    pub token_snapshot: crate::executor::token_accounting::TokenAccountingSnapshot,
 }
 
 /// Runtime configuration
@@ -320,6 +323,10 @@ impl Runtime {
         // Create executor
         let executor = Arc::new(ExecutorEngine::new(context.clone()));
 
+        // Clone context before scheduler takes ownership, so we can snapshot
+        // token accounting after execution completes
+        let token_accountant = Arc::clone(&context.token_accountant);
+
         // Execute with dataflow scheduler for automatic parallelism
         let exec_result = self
             .scheduler
@@ -339,6 +346,9 @@ impl Runtime {
         #[cfg(feature = "metrics")]
         let llm_metrics = self.llm_registry.metrics().aggregate();
 
+        // Capture token accounting snapshot after execution completes
+        let token_snapshot = token_accountant.snapshot();
+
         Ok(RuntimeExecutionResult {
             results,
             stats,
@@ -347,6 +357,7 @@ impl Runtime {
             scheduler_metrics,
             all_outputs,
             node_output_map,
+            token_snapshot,
         })
     }
 
@@ -388,6 +399,7 @@ impl Runtime {
 
         let context = self.build_context_with_bridge(None, None, None, python_bridge);
         let executor = Arc::new(ExecutorEngine::new(context.clone()));
+        let token_accountant = Arc::clone(&context.token_accountant);
         let exec_result = self
             .scheduler
             .execute(entry_dag, executor, context, vec![])
@@ -401,6 +413,8 @@ impl Runtime {
 
         let (results, stats, scheduler_metrics, all_outputs, node_output_map) = exec_result?;
 
+        let token_snapshot = token_accountant.snapshot();
+
         Ok(RuntimeExecutionResult {
             results,
             stats,
@@ -409,6 +423,7 @@ impl Runtime {
             scheduler_metrics,
             all_outputs,
             node_output_map,
+            token_snapshot,
         })
     }
 
@@ -476,6 +491,7 @@ impl Runtime {
             python_bridge,
         );
         let executor = Arc::new(ExecutorEngine::new(context.clone()));
+        let token_accountant = Arc::clone(&context.token_accountant);
         let exec_result = self
             .scheduler
             .execute(entry_dag, executor, context, arg_values)
@@ -489,6 +505,8 @@ impl Runtime {
 
         let (results, stats, scheduler_metrics, all_outputs, node_output_map) = exec_result?;
 
+        let token_snapshot = token_accountant.snapshot();
+
         Ok(RuntimeExecutionResult {
             results,
             stats,
@@ -497,6 +515,7 @@ impl Runtime {
             scheduler_metrics,
             all_outputs,
             node_output_map,
+            token_snapshot,
         })
     }
 
