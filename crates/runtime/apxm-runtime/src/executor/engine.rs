@@ -145,7 +145,11 @@ impl ExecutorEngine {
             .execute(dag, executor, self.context.clone(), vec![])
             .await?;
 
-        Ok(ExecutionResult { results, stats })
+        Ok(ExecutionResult {
+            results,
+            stats,
+            token_snapshot: self.context.token_accountant.snapshot(),
+        })
     }
 
     /// Sequential fallback executor for DAGs.
@@ -292,6 +296,7 @@ impl ExecutorEngine {
         Ok(ExecutionResult {
             results: final_results,
             stats,
+            token_snapshot: self.context.token_accountant.snapshot(),
         })
     }
 
@@ -380,6 +385,9 @@ pub struct ExecutionResult {
     pub results: HashMap<u64, Value>,
     /// Execution statistics
     pub stats: ExecutionStats,
+    /// Aggregate token usage collected during execution. Empty snapshot if no
+    /// LLM nodes ran. See [`crate::executor::token_accounting::TokenAccountant::snapshot`].
+    pub token_snapshot: crate::executor::token_accounting::TokenAccountingSnapshot,
 }
 
 #[cfg(test)]

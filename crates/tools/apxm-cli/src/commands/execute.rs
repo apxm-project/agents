@@ -349,6 +349,14 @@ pub async fn execute_command(
         "scheduler": result.execution.scheduler_metrics.to_json()
     });
 
+    // Merge token accounting snapshot into metrics.
+    // to_json() returns {"token_accounting": {...}}; we lift the inner object
+    // to the top level so the schema is metrics_json["token_accounting"].
+    let token_json = result.execution.token_snapshot.to_json();
+    if let Some(obj) = token_json.get("token_accounting").cloned() {
+        metrics_json["token_accounting"] = obj;
+    }
+
     #[cfg(feature = "metrics")]
     {
         let llm_metrics = &result.execution.llm_metrics;
