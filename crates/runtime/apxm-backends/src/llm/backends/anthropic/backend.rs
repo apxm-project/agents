@@ -909,3 +909,37 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod usage_parsing_tests {
+    //! Regression gate: pins the Anthropic wire-format -> `LLMResponse.usage`
+    //! contract (`input_tokens` and `output_tokens` carry through unchanged).
+    use super::*;
+
+    #[tokio::test]
+    async fn anthropic_response_usage_parses_into_token_usage() {
+        let wire_json = r#"{
+            "id": "msg_test",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude-sonnet-4-5",
+            "content": [{"type": "text", "text": "hi"}],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 11, "output_tokens": 22}
+        }"#;
+
+        let parsed: AnthropicResponse =
+            serde_json::from_str(wire_json).expect("Anthropic fixture must deserialize");
+
+        let backend = AnthropicBackend::new("test-key", None)
+            .await
+            .expect("AnthropicBackend::new should succeed with no config");
+
+        let response = backend
+            .parse_response(parsed, "claude-sonnet-4-5")
+            .expect("parse_response should succeed on a well-formed fixture");
+
+        assert_eq!(response.usage.input_tokens, 11);
+        assert_eq!(response.usage.output_tokens, 22);
+    }
+}

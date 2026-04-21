@@ -1034,3 +1034,41 @@ mod tests {
         assert_eq!(apxm["priority_class"], "critical_path");
     }
 }
+
+#[cfg(test)]
+mod usage_parsing_tests {
+    //! Regression gate: pins the OpenAI wire-format -> `LLMResponse.usage`
+    //! contract (`prompt_tokens` -> `input_tokens`, `completion_tokens` ->
+    //! `output_tokens`). The vLLM backend wraps `OpenAIBackend::generate` and
+    //! does not parse responses itself, so this test transitively covers it.
+    use super::*;
+
+    #[tokio::test]
+    async fn openai_response_usage_parses_into_token_usage() {
+        let wire_json = r#"{
+            "id": "chatcmpl-test",
+            "object": "chat.completion",
+            "model": "gpt-4o-mini",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "hi"},
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 11, "completion_tokens": 22}
+        }"#;
+
+        let parsed: OpenAIResponse =
+            serde_json::from_str(wire_json).expect("OpenAI fixture must deserialize");
+
+        let backend = OpenAIBackend::new("test-key", None)
+            .await
+            .expect("OpenAIBackend::new should succeed with no config");
+
+        let response = backend
+            .parse_response(parsed, "gpt-4o-mini")
+            .expect("parse_response should succeed on a well-formed fixture");
+
+        assert_eq!(response.usage.input_tokens, 11);
+        assert_eq!(response.usage.output_tokens, 22);
+    }
+}
