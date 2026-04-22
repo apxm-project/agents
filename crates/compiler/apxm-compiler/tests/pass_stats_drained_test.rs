@@ -99,7 +99,6 @@ fn build_synth_fanin_module() -> AirModule {
 }
 
 #[test]
-#[ignore = "unignored in Task 7 once FuseAskOps writes _fired_count"]
 fn fuse_ask_ops_reports_nonzero_fired_count() {
     let context = Context::new().expect("MLIR context must initialize");
     let pipeline = Pipeline::with_opt_level(&context, OptimizationLevel::O1);

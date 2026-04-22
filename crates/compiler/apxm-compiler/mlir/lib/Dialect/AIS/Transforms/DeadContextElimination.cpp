@@ -26,6 +26,7 @@
 
 #include "ais/Common/Constants.h"
 #include "ais/Dialect/AIS/Transforms/Placeholders.h"
+#include "PassStatsHelpers.h"
 
 #include "ais/Dialect/AIS/IR/AISOps.h"
 #include "ais/Dialect/AIS/Support/AISDebug.h"
@@ -49,6 +50,7 @@ struct DeadContextEliminationPass : impl::DeadContextEliminationBase<DeadContext
   void runOnOperation() override {
     APXM_AIS_DEBUG_HEADER(DeadContextElimination);
     ModuleOp module = getOperation();
+    const std::size_t irSizeBefore = computeModuleIRTextLength(module);
     unsigned eliminated = 0;
     unsigned totalContextRemoved = 0;
 
@@ -87,6 +89,13 @@ struct DeadContextEliminationPass : impl::DeadContextEliminationBase<DeadContext
     } else {
       APXM_AIS_DEBUG("No dead context found");
     }
+
+    // Phase B Task 7: per-pass stats drained by apxm_module_drain_pass_stats.
+    // fired_count = number of LLM ops that lost at least one context entry.
+    const std::size_t irSizeAfter = computeModuleIRTextLength(module);
+    const int64_t irDelta = static_cast<int64_t>(irSizeAfter)
+                          - static_cast<int64_t>(irSizeBefore);
+    writePassStats(module, getArgument(), eliminated, irDelta);
 
     APXM_AIS_DEBUG_FOOTER(DeadContextElimination);
   }

@@ -24,6 +24,7 @@
 #include "ais/Dialect/AIS/Transforms/Passes.h"
 
 #include "ais/Common/Constants.h"
+#include "PassStatsHelpers.h"
 
 #include "ais/Dialect/AIS/IR/AISOps.h"
 #include "ais/Dialect/AIS/Support/AISDebug.h"
@@ -56,6 +57,7 @@ struct SchemaNarrowingPass : impl::SchemaNarrowingBase<SchemaNarrowingPass> {
   void runOnOperation() override {
     APXM_AIS_DEBUG_HEADER(SchemaNarrowing);
     ModuleOp module = getOperation();
+    const std::size_t irSizeBefore = computeModuleIRTextLength(module);
     unsigned narrowed = 0;
 
     // Phase 1: Identify operations with output_schema attributes
@@ -69,6 +71,7 @@ struct SchemaNarrowingPass : impl::SchemaNarrowingBase<SchemaNarrowingPass> {
 
     if (opsWithSchema.empty()) {
       APXM_AIS_DEBUG("No operations with output_schema found");
+      writePassStats(module, getArgument(), 0, 0);
       APXM_AIS_DEBUG_FOOTER(SchemaNarrowing);
       return;
     }
@@ -88,6 +91,12 @@ struct SchemaNarrowingPass : impl::SchemaNarrowingBase<SchemaNarrowingPass> {
     } else {
       APXM_AIS_DEBUG("No schemas were narrowed");
     }
+
+    // Phase B Task 7: per-pass stats drained by apxm_module_drain_pass_stats.
+    const std::size_t irSizeAfter = computeModuleIRTextLength(module);
+    const int64_t irDelta = static_cast<int64_t>(irSizeAfter)
+                          - static_cast<int64_t>(irSizeBefore);
+    writePassStats(module, getArgument(), narrowed, irDelta);
 
     APXM_AIS_DEBUG_FOOTER(SchemaNarrowing);
   }

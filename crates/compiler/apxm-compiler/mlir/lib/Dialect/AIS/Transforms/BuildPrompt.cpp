@@ -28,6 +28,7 @@
 
 #include "ais/Common/Constants.h"
 #include "ais/Dialect/AIS/Transforms/Placeholders.h"
+#include "PassStatsHelpers.h"
 
 #include "ais/Dialect/AIS/IR/AISOps.h"
 #include "ais/Dialect/AIS/Support/AISDebug.h"
@@ -51,6 +52,7 @@ struct BuildPromptPass : impl::BuildPromptBase<BuildPromptPass> {
   void runOnOperation() override {
     APXM_AIS_DEBUG_HEADER(BuildPrompt);
     ModuleOp module = getOperation();
+    const std::size_t irSizeBefore = computeModuleIRTextLength(module);
     unsigned modified = 0;
 
     module.walk([&](Operation *op) {
@@ -77,6 +79,12 @@ struct BuildPromptPass : impl::BuildPromptBase<BuildPromptPass> {
     } else {
       APXM_AIS_DEBUG("No operations required prompt building");
     }
+
+    // Phase B Task 7: per-pass stats drained by apxm_module_drain_pass_stats.
+    const std::size_t irSizeAfter = computeModuleIRTextLength(module);
+    const int64_t irDelta = static_cast<int64_t>(irSizeAfter)
+                          - static_cast<int64_t>(irSizeBefore);
+    writePassStats(module, getArgument(), modified, irDelta);
 
     APXM_AIS_DEBUG_FOOTER(BuildPrompt);
   }
