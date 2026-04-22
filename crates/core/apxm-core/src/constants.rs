@@ -6,6 +6,8 @@
 pub mod diagnostics {
     /// Compile diagnostics mode for canonical graph input.
     pub const MODE_GRAPH: &str = "graph";
+    /// Compile diagnostics mode for `.air` (raw MLIR text) input.
+    pub const MODE_AIR: &str = "air";
 }
 
 pub mod inner_plan {

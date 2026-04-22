@@ -64,6 +64,34 @@ impl Compiler {
         self.compile_graph(&module)
     }
 
+    /// Compile a `.air` text source with a custom pipeline configuration.
+    ///
+    /// Used by the CLI when the user passes `--disable-pass`, `--pass-list`,
+    /// `--target`, etc. on a `.air` file. Skips the AirModule lowering step.
+    pub fn compile_air_with_config(
+        &self,
+        air_text: &str,
+        config: PipelineConfig,
+    ) -> Result<Module, DriverError> {
+        let pipeline = Pipeline::with_config(&self.context, config);
+        pipeline.compile(air_text).map_err(DriverError::Compiler)
+    }
+
+    /// Compile a `.air` text source with a custom config and collect diagnostics.
+    ///
+    /// Used by the CLI's `--emit-diagnostics` flag and by the ablation harness
+    /// to record per-pass `fired_count` / `tokens_saved` on `.air` inputs.
+    pub fn compile_air_with_config_and_diagnostics(
+        &self,
+        air_text: &str,
+        config: PipelineConfig,
+    ) -> Result<(Module, PipelineDiagnostics), DriverError> {
+        let pipeline = Pipeline::with_config(&self.context, config);
+        pipeline
+            .compile_with_diagnostics(air_text)
+            .map_err(DriverError::Compiler)
+    }
+
     /// Validate model allowlist for an AIR module.
     ///
     /// This is a static validation that doesn't require a compiler context.

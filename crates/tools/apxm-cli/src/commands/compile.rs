@@ -192,13 +192,58 @@ pub fn compile_command(
         false
     };
 
-    // For new .air format (valid MLIR), compile directly without AirModule
+    // For new .air format (valid MLIR), compile directly without AirModule.
+    // The .air path skips graph lowering, but still honors PipelineConfig
+    // (target / disable_passes / pass_list_override / warn_unconsumed) and
+    // --emit-diagnostics so the ablation harness can drive .air corpora.
     if is_new_air {
-        // NEW PATH: .air file is valid MLIR — compile directly
-        // (no-cse-llm and diagnostics are graph-level optimizations, not applicable here)
-        let module = compiler
-            .compile(&graph_input)
-            .map_err(|e| anyhow::anyhow!("Failed to compile MLIR: {e}"))?;
+        let air_text = std::fs::read_to_string(&graph_input)
+            .with_context(|| format!("Failed to read {}", graph_input.display()))?;
+        let needs_custom_config = no_cse_llm
+            || opt_target != OptimizationTarget::Balanced
+            || profile.is_some()
+            || warn
+            || !disable_passes.is_empty()
+            || pass_list_override.is_some();
+
+        let (module, air_pass_diagnostics) = if emit_diagnostics.is_some() {
+            let config = PipelineConfig {
+                opt_level: opt,
+                target: opt_target,
+                verify: true,
+                no_cse_llm,
+                profile_path: profile.clone(),
+                warn_unconsumed: warn,
+                disable_passes: disable_passes.clone(),
+                pass_list_override: pass_list_override.clone(),
+                ..Default::default()
+            };
+            let (m, d) = compiler
+                .compile_air_with_config_and_diagnostics(&air_text, config)
+                .map_err(|e| anyhow::anyhow!("Failed to compile MLIR: {e}"))?;
+            (m, Some(d))
+        } else if needs_custom_config {
+            let config = PipelineConfig {
+                opt_level: opt,
+                target: opt_target,
+                verify: true,
+                no_cse_llm,
+                profile_path: profile.clone(),
+                warn_unconsumed: warn,
+                disable_passes: disable_passes.clone(),
+                pass_list_override: pass_list_override.clone(),
+                ..Default::default()
+            };
+            let m = compiler
+                .compile_air_with_config(&air_text, config)
+                .map_err(|e| anyhow::anyhow!("Failed to compile MLIR: {e}"))?;
+            (m, None)
+        } else {
+            let m = compiler
+                .compile(&graph_input)
+                .map_err(|e| anyhow::anyhow!("Failed to compile MLIR: {e}"))?;
+            (m, None)
+        };
         let compile_time = compile_start.elapsed();
 
         let artifact_start = std::time::Instant::now();
@@ -246,6 +291,56 @@ pub fn compile_command(
         println!("  Compilation: {:?}", compile_time);
         println!("  Artifact generation: {:?}", artifact_time);
         println!("  Artifact size: {} bytes", bytes.len());
+
+        // Emit diagnostics if requested.
+        // The .air path bypasses the AirModule lowering, so the diagnostics
+        // payload here is a strict subset of the graph-JSON path: per-pass
+        // metrics + summary, but no DAG node/edge counts or graph-name field.
+        // The ablation harness only consumes pass_metrics + pass_summary so
+        // this is sufficient.
+        if let (Some(diag_path), Some(diag)) = (emit_diagnostics, air_pass_diagnostics) {
+            let per_pass_metrics: Vec<serde_json::Value> = diag
+                .passes
+                .iter()
+                .map(|p| {
+                    serde_json::json!({
+                        "pass_name": p.pass_name,
+                        "duration_ms": p.duration_ms,
+                        "ops_before": p.ops_before,
+                        "ops_after": p.ops_after,
+                        "ops_delta": p.ops_delta,
+                        "fired_count": p.fired_count,
+                        "ir_size_delta": p.ir_size_delta,
+                        "tokens_saved": p.tokens_saved
+                    })
+                })
+                .collect();
+
+            let diagnostics_json = serde_json::json!({
+                "input": graph_input.display().to_string(),
+                "mode": diagnostics::MODE_AIR,
+                "optimization_level": format!("O{}", opt_level),
+                "compilation_phases": {
+                    "total_ms": compile_time.as_secs_f64() * 1000.0,
+                    "artifact_gen_ms": artifact_time.as_secs_f64() * 1000.0,
+                    "passes_ms": diag.total_duration_ms
+                },
+                "pass_metrics": per_pass_metrics,
+                "pass_summary": {
+                    "total_passes": diag.pass_count(),
+                    "initial_ops": diag.initial_ops,
+                    "final_ops": diag.final_ops,
+                    "total_ops_eliminated": diag.total_ops_eliminated(),
+                    "total_tokens_saved": diag.total_tokens_saved(),
+                    "fired_passes": diag.fired_passes().iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+                    "active_passes": diag.active_passes().iter().map(|s| s.to_string()).collect::<Vec<_>>()
+                }
+            });
+
+            std::fs::write(&diag_path, serde_json::to_string_pretty(&diagnostics_json)?)
+                .with_context(|| format!("Failed to write diagnostics to {}", diag_path.display()))?;
+            println!("Wrote diagnostics to {}", diag_path.display());
+        }
 
         return Ok(());
     }
@@ -362,7 +457,10 @@ pub fn compile_command(
                             "duration_ms": p.duration_ms,
                             "ops_before": p.ops_before,
                             "ops_after": p.ops_after,
-                            "ops_delta": p.ops_delta
+                            "ops_delta": p.ops_delta,
+                            "fired_count": p.fired_count,
+                            "ir_size_delta": p.ir_size_delta,
+                            "tokens_saved": p.tokens_saved
                         })
                     })
                     .collect()
@@ -391,6 +489,8 @@ pub fn compile_command(
                 "initial_ops": pass_diagnostics.as_ref().map(|d| d.initial_ops).unwrap_or(0),
                 "final_ops": pass_diagnostics.as_ref().map(|d| d.final_ops).unwrap_or(0),
                 "total_ops_eliminated": pass_diagnostics.as_ref().map(|d| d.total_ops_eliminated()).unwrap_or(0),
+                "total_tokens_saved": pass_diagnostics.as_ref().map(|d| d.total_tokens_saved()).unwrap_or(0),
+                "fired_passes": pass_diagnostics.as_ref().map(|d| d.fired_passes().iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap_or_default(),
                 "active_passes": pass_diagnostics.as_ref().map(|d| d.active_passes().iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap_or_default()
             }
         });
