@@ -18,6 +18,16 @@ pub struct PassMetrics {
     pub ops_after: usize,
     /// Net change in operation count (positive = growth, negative = elimination).
     pub ops_delta: isize,
+    /// Number of pattern matches the pass fired (0 if pass did not run or did not surface stats).
+    #[serde(default)]
+    pub fired_count: usize,
+    /// Net change in serialized IR text length, in bytes.
+    #[serde(default)]
+    pub ir_size_delta: isize,
+    /// Estimated template tokens saved by this pass; `None` if the pass does not
+    /// produce a token estimate (e.g. structural passes like canonicalizer).
+    #[serde(default)]
+    pub tokens_saved: Option<usize>,
 }
 
 /// Aggregated diagnostics for a full pipeline execution.
@@ -66,6 +76,20 @@ impl PipelineDiagnostics {
             .map(|p| p.pass_name.as_str())
             .collect()
     }
+
+    /// Sum of `tokens_saved` across all passes that reported a value.
+    pub fn total_tokens_saved(&self) -> usize {
+        self.passes.iter().filter_map(|p| p.tokens_saved).sum()
+    }
+
+    /// Names of passes that fired at least one pattern (`fired_count > 0`).
+    pub fn fired_passes(&self) -> Vec<&str> {
+        self.passes
+            .iter()
+            .filter(|p| p.fired_count > 0)
+            .map(|p| p.pass_name.as_str())
+            .collect()
+    }
 }
 
 impl Default for PipelineDiagnostics {
@@ -96,6 +120,9 @@ mod tests {
                     ops_before: 10,
                     ops_after: 10,
                     ops_delta: 0,
+                    fired_count: 0,
+                    ir_size_delta: 0,
+                    tokens_saved: None,
                 },
                 PassMetrics {
                     pass_name: "fuse-ask-ops".into(),
@@ -103,6 +130,9 @@ mod tests {
                     ops_before: 10,
                     ops_after: 7,
                     ops_delta: -3,
+                    fired_count: 0,
+                    ir_size_delta: 0,
+                    tokens_saved: None,
                 },
                 PassMetrics {
                     pass_name: "symbol-dce".into(),
@@ -110,6 +140,9 @@ mod tests {
                     ops_before: 7,
                     ops_after: 5,
                     ops_delta: -2,
+                    fired_count: 0,
+                    ir_size_delta: 0,
+                    tokens_saved: None,
                 },
             ],
             total_duration_ms: 4.6,
@@ -130,6 +163,9 @@ mod tests {
             ops_before: 20,
             ops_after: 18,
             ops_delta: -2,
+            fired_count: 0,
+            ir_size_delta: 0,
+            tokens_saved: None,
         };
         let json = serde_json::to_string(&metrics).unwrap();
         let deserialized: PassMetrics = serde_json::from_str(&json).unwrap();
@@ -146,6 +182,9 @@ mod tests {
                 ops_before: 5,
                 ops_after: 4,
                 ops_delta: -1,
+                fired_count: 0,
+                ir_size_delta: 0,
+                tokens_saved: None,
             }],
             total_duration_ms: 1.0,
             initial_ops: 5,
@@ -155,5 +194,70 @@ mod tests {
         let deserialized: PipelineDiagnostics = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.pass_count(), 1);
         assert_eq!(deserialized.final_ops, 4);
+    }
+
+    #[test]
+    fn pass_metrics_carries_ablation_fields() {
+        let m = PassMetrics {
+            pass_name: "fuse-ask-ops".into(),
+            duration_ms: 2.0,
+            ops_before: 10,
+            ops_after: 7,
+            ops_delta: -3,
+            fired_count: 3,
+            ir_size_delta: -42,
+            tokens_saved: Some(180),
+        };
+        let json = serde_json::to_string(&m).unwrap();
+        let back: PassMetrics = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.fired_count, 3);
+        assert_eq!(back.ir_size_delta, -42);
+        assert_eq!(back.tokens_saved, Some(180));
+    }
+
+    #[test]
+    fn pipeline_diagnostics_total_tokens_saved() {
+        let diag = PipelineDiagnostics {
+            passes: vec![
+                PassMetrics {
+                    pass_name: "fuse-ask-ops".into(),
+                    duration_ms: 1.0,
+                    ops_before: 10,
+                    ops_after: 7,
+                    ops_delta: -3,
+                    fired_count: 3,
+                    ir_size_delta: -40,
+                    tokens_saved: Some(180),
+                },
+                PassMetrics {
+                    pass_name: "dead-context-elimination".into(),
+                    duration_ms: 1.0,
+                    ops_before: 7,
+                    ops_after: 7,
+                    ops_delta: 0,
+                    fired_count: 2,
+                    ir_size_delta: -10,
+                    tokens_saved: Some(60),
+                },
+                PassMetrics {
+                    pass_name: "canonicalizer".into(),
+                    duration_ms: 1.0,
+                    ops_before: 7,
+                    ops_after: 7,
+                    ops_delta: 0,
+                    fired_count: 0,
+                    ir_size_delta: 0,
+                    tokens_saved: None,
+                },
+            ],
+            total_duration_ms: 3.0,
+            initial_ops: 10,
+            final_ops: 7,
+        };
+        assert_eq!(diag.total_tokens_saved(), 240);
+        assert_eq!(
+            diag.fired_passes(),
+            vec!["fuse-ask-ops", "dead-context-elimination"]
+        );
     }
 }
