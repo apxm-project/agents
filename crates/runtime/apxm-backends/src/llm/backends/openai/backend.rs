@@ -19,6 +19,7 @@ use async_trait::async_trait;
 use futures::StreamExt as _;
 use serde::Deserialize;
 use serde_json::json;
+use std::collections::HashSet;
 use std::pin::Pin;
 use tokio_stream::Stream;
 
@@ -50,6 +51,11 @@ pub struct OpenAIBackend {
     base_url: String,
     /// Additional HTTP headers injected on every request.
     extra_headers: Vec<(String, String)>,
+    /// Model IDs declared with `supports_thinking = false` in
+    /// `~/.apxm/config.toml`. For these, `build_request_body` injects
+    /// `chat_template_kwargs.enable_thinking = false` so vLLM-served Qwen3
+    /// (and similarly-templated models) suppress `<think>...</think>` blocks.
+    non_thinking_models: HashSet<String>,
     client: reqwest::Client,
 }
 
@@ -103,11 +109,33 @@ impl OpenAIBackend {
             })
             .unwrap_or_default();
 
+        // Parse per-model capability entries forwarded by BackendRegistration.
+        // Only the `supports_thinking = false` opt-out is consulted today; any
+        // other fields are ignored so future flags can land without breaking
+        // older backends.
+        let non_thinking_models: HashSet<String> = config
+            .as_ref()
+            .and_then(|c| c.get(config_keys::MODELS))
+            .and_then(|m| m.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|entry| {
+                        let id = entry.get("id").and_then(|v| v.as_str())?;
+                        let supports = entry
+                            .get(config_keys::SUPPORTS_THINKING)
+                            .and_then(|v| v.as_bool())?;
+                        if supports { None } else { Some(id.to_string()) }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
         Ok(OpenAIBackend {
             api_key: api_key.to_string(),
             model,
             base_url,
             extra_headers,
+            non_thinking_models,
             client: reqwest::Client::new(),
         })
     }
@@ -283,6 +311,17 @@ impl OpenAIBackend {
                 };
                 body["priority"] = json!(priority);
             }
+        }
+
+        // Disable Qwen3-style thinking-mode for models flagged
+        // `supports_thinking = false` in `~/.apxm/config.toml`. vLLM forwards
+        // `chat_template_kwargs` into the model's chat template, so this
+        // suppresses `<think>...</think>` blocks. Skipped silently when the
+        // model is not in the opt-out set.
+        if self.non_thinking_models.contains(model) {
+            body[config_keys::CHAT_TEMPLATE_KWARGS] = json!({
+                config_keys::ENABLE_THINKING: false,
+            });
         }
 
         // Merge in extra_body if provided (for vLLM extensions, etc.)
@@ -781,6 +820,7 @@ mod tests {
             model: "gpt-4".to_string(),
             base_url: DEFAULT_BASE_URL.to_string(),
             extra_headers: vec![],
+            non_thinking_models: HashSet::new(),
             client: reqwest::Client::new(),
         };
 
@@ -800,6 +840,7 @@ mod tests {
             model: "gpt-4-turbo".to_string(),
             base_url: DEFAULT_BASE_URL.to_string(),
             extra_headers: vec![],
+            non_thinking_models: HashSet::new(),
             client: reqwest::Client::new(),
         };
 
@@ -821,6 +862,7 @@ mod tests {
             model: "gpt-4".to_string(),
             base_url: DEFAULT_BASE_URL.to_string(),
             extra_headers: vec![],
+            non_thinking_models: HashSet::new(),
             client: reqwest::Client::new(),
         };
 
@@ -870,6 +912,7 @@ mod tests {
             model: "gpt-4".to_string(),
             base_url: DEFAULT_BASE_URL.to_string(),
             extra_headers: vec![],
+            non_thinking_models: HashSet::new(),
             client: reqwest::Client::new(),
         };
 
@@ -894,6 +937,7 @@ mod tests {
             model: "gpt-4".to_string(),
             base_url: DEFAULT_BASE_URL.to_string(),
             extra_headers: vec![],
+            non_thinking_models: HashSet::new(),
             client: reqwest::Client::new(),
         };
 
@@ -943,6 +987,7 @@ mod tests {
             model: "meta-llama/Llama-3.1-8B-Instruct".to_string(),
             base_url: DEFAULT_BASE_URL.to_string(),
             extra_headers: vec![],
+            non_thinking_models: HashSet::new(),
             client: reqwest::Client::new(),
         };
 
@@ -987,6 +1032,87 @@ mod tests {
     }
 
     #[test]
+    fn test_build_request_body_disables_thinking_for_flagged_model() {
+        // Model is flagged `supports_thinking = false` -> body must carry
+        // `chat_template_kwargs.enable_thinking = false`.
+        let mut non_thinking = HashSet::new();
+        non_thinking.insert("Qwen/Qwen3.5-4B".to_string());
+
+        let backend = OpenAIBackend {
+            api_key: "test".to_string(),
+            model: "Qwen/Qwen3.5-4B".to_string(),
+            base_url: DEFAULT_BASE_URL.to_string(),
+            extra_headers: vec![],
+            non_thinking_models: non_thinking,
+            client: reqwest::Client::new(),
+        };
+
+        let request = LLMRequest::new("Hello").with_temperature(0.5);
+        let body = backend.build_request_body(&request);
+
+        assert_eq!(
+            body["chat_template_kwargs"]["enable_thinking"],
+            json!(false),
+            "flagged model must carry chat_template_kwargs.enable_thinking=false; got body={body}"
+        );
+    }
+
+    #[test]
+    fn test_build_request_body_omits_thinking_kwargs_when_unflagged() {
+        // No model in `non_thinking_models` set -> chat_template_kwargs must
+        // be absent so we don't perturb providers that don't understand it.
+        let backend = OpenAIBackend {
+            api_key: "test".to_string(),
+            model: "gpt-4".to_string(),
+            base_url: DEFAULT_BASE_URL.to_string(),
+            extra_headers: vec![],
+            non_thinking_models: HashSet::new(),
+            client: reqwest::Client::new(),
+        };
+
+        let request = LLMRequest::new("Hello").with_temperature(0.5);
+        let body = backend.build_request_body(&request);
+
+        assert!(
+            body.get("chat_template_kwargs").is_none(),
+            "unflagged model must not carry chat_template_kwargs; got body={body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_new_parses_non_thinking_models_from_config() {
+        // End-to-end check that the `models` array forwarded by
+        // BackendRegistration::backend_config_json() lands in the backend's
+        // opt-out set and reaches the request body.
+        let config = json!({
+            "model": "Qwen/Qwen3.5-4B",
+            "models": [
+                {"id": "Qwen/Qwen3.5-4B", "supports_thinking": false},
+                {"id": "gpt-4o", "supports_thinking": true},
+            ],
+        });
+
+        let backend = OpenAIBackend::new("test-key", Some(config))
+            .await
+            .expect("OpenAIBackend::new should accept models array");
+
+        // Qwen3 -> opted out, body must carry the kwargs.
+        let qwen_req = LLMRequest::new("Hi").with_temperature(0.7);
+        let qwen_body = backend.build_request_body(&qwen_req);
+        assert_eq!(
+            qwen_body["chat_template_kwargs"]["enable_thinking"],
+            json!(false),
+        );
+
+        // gpt-4o -> not opted out (despite being in the array), body must not
+        // carry the kwargs.
+        let mut gpt_req = LLMRequest::new("Hi").with_temperature(0.7);
+        gpt_req.model = Some("gpt-4o".to_string());
+        let gpt_body = backend.build_request_body(&gpt_req);
+        assert!(gpt_body.get("chat_template_kwargs").is_none());
+    }
+
+    #[test]
     fn test_vllm_request_structure_matches_spec() {
         use crate::llm::backends::vllm::ApxmGraphHints;
 
@@ -995,6 +1121,7 @@ mod tests {
             model: "meta-llama/Llama-3.1-8B-Instruct".to_string(),
             base_url: DEFAULT_BASE_URL.to_string(),
             extra_headers: vec![],
+            non_thinking_models: HashSet::new(),
             client: reqwest::Client::new(),
         };
 

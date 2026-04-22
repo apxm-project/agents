@@ -436,6 +436,21 @@ pub mod llm {
         /// requests. Stock vLLM rejects it unless launched with
         /// `--enable-auto-tool-choice`. Plumbed from `BackendConfig.auto_tool_choice`.
         pub const AUTO_TOOL_CHOICE: &str = "auto_tool_choice";
+        /// Per-model array forwarded to the backend so it can apply
+        /// model-specific request shaping (e.g. disabling thinking-mode for
+        /// Qwen3). Each entry carries at least `id` and `supports_thinking`.
+        pub const MODELS: &str = "models";
+        /// Per-model flag: when `false`, the backend must instruct the server
+        /// to suppress chain-of-thought output. For vLLM/Qwen3 this maps to
+        /// `chat_template_kwargs.enable_thinking = false`.
+        pub const SUPPORTS_THINKING: &str = "supports_thinking";
+        /// Top-level body key recognised by vLLM's OpenAI-compatible endpoint
+        /// to forward kwargs into the model's chat template (e.g.
+        /// `{"enable_thinking": false}` for Qwen3).
+        pub const CHAT_TEMPLATE_KWARGS: &str = "chat_template_kwargs";
+        /// Chat-template kwarg consumed by Qwen3 (and compatible) templates
+        /// to gate `<think>...</think>` emission.
+        pub const ENABLE_THINKING: &str = "enable_thinking";
     }
 
     pub mod tags {

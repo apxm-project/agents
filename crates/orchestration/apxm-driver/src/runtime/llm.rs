@@ -240,6 +240,7 @@ fn unified_backend_to_registration(
                 id: model.id.clone(),
                 aliases: model.aliases.clone(),
                 info,
+                supports_thinking: Some(model.supports_thinking),
             }
         })
         .collect();
