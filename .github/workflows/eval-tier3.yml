@@ -1,0 +1,89 @@
+name: eval-tier3
+
+# Tier-3 (quality-contract) gate. Two execution modes:
+#
+#   1. Offline harness pytest — runs on EVERY PR that touches the
+#      harness or its constants mirror. Pure-Python, no backend, no
+#      secrets. Catches regressions in the rubric DSL, budget parser,
+#      session extraction, drift between Rust/Python keys, etc.
+#
+#   2. Real-backend fixture sweep — runs only when a PR carries the
+#      "tier-3" label OR on the nightly schedule. Hits a configured
+#      LLM backend so an API key must be in repo secrets; without
+#      one the job degrades to NullJudge (rubric still applied,
+#      judge_prompt fixtures silently green) which would defeat the
+#      purpose, so the job hard-fails when LLM_GATEWAY_KEY is unset
+#      under those modes.
+#
+# Why nightly + label-gated rather than always-on:
+#   - Real-backend runs cost tokens and have non-zero flake rate
+#     (model temperature, rate limits). Forcing them on every PR
+#     would either burn budget or push reviewers to skip the gate.
+#   - The label model lets a PR author explicitly opt in when they
+#     touch graphs whose quality contract matters; nightly catches
+#     drift that wasn't covered by any tagged PR.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'tools/quality_eval/**'
+      - 'crates/core/apxm-core/src/constants.rs'
+      - 'crates/orchestration/apxm-driver/src/session_output.rs'
+      - 'crates/runtime/apxm-runtime/src/executor/token_accounting.rs'
+      - 'tests/quality_fixtures/**'
+      - '.github/workflows/eval-tier3.yml'
+  schedule:
+    # 06:17 UTC daily — off the hour so we don't pile onto the quarter-hour
+    # cron-job stampede that hits external LLM gateways.
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────
+  # Always-on offline gate. Fails the PR if the harness itself regresses,
+  # if Python and Rust constants drift apart, or if a fixture's rubric
+  # syntax is invalid.
+  harness-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Run harness pytest (offline)
+        run: python -m pytest tools/quality_eval/tests/ -q
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Real-backend sweep. Conditional on label or schedule so PRs that
+  # don't touch quality-sensitive paths skip it.
+  fixtures:
+    runs-on: ubuntu-latest
+    needs: harness-tests
+    if: |
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.pull_request.labels.*.name, 'tier-3')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Refuse to run without an LLM key
+        # Hard fail-fast — silently degrading to NullJudge would render
+        # this gate useless and mask quality regressions.
+        env:
+          LLM_GATEWAY_KEY: ${{ secrets.LLM_GATEWAY_KEY }}
+        run: |
+          if [ -z "${LLM_GATEWAY_KEY}" ]; then
+            echo "::error::LLM_GATEWAY_KEY is unset; tier-3 cannot run a real backend."
+            echo "Add the secret in repo settings, or remove the 'tier-3' label."
+            exit 1
+          fi
+      - name: Build APXM
+        run: dekk apxm build
+      - name: Run all quality fixtures (rubric + budget; NullJudge)
+        # NullJudge here is intentional: rubric/budget enforcement still
+        # runs, and we keep the API-key surface small. Switch to --judge llm
+        # in a follow-up once a dedicated grading backend is provisioned.
+        env:
+          LLM_GATEWAY_KEY: ${{ secrets.LLM_GATEWAY_KEY }}
+        run: dekk apxm quality-eval -- --all --opt 2 --judge none --samples 3 --threshold 2
