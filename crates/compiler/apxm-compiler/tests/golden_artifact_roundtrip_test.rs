@@ -120,13 +120,14 @@ fn dag_to_graph(dag: &ExecutionDag) -> AirModule {
     }
 }
 
-/// Marked `should_panic` because Phase A surfaced a non-idempotent pass:
-/// re-ingesting decompiled IR duplicates the `downstream_nodes` attribute
-/// (`ais.downstream_nodes` plus a bare `downstream_nodes`), so ir2 != ir3.
-/// The harness still validates that compile -> decompile -> recompile runs
-/// end-to-end; Phase B will fix the pass and flip this to a normal `#[test]`.
+/// Compile -> decompile -> recompile must reach a fixed point in one
+/// roundtrip. The bare-name forms of MLIR-derived attributes
+/// (`downstream_nodes`, `shared_prefix_group`, etc.) are filtered when
+/// AirModule is re-emitted as AIR text — see
+/// `apxm_ais::attrs::MLIR_DERIVED_BARE_ATTRS` and
+/// `air_builder/emit.rs::extra_attr_dict` — so the next MLIR pass run
+/// no longer produces both prefixed and bare copies on the same op.
 #[test]
-#[should_panic(expected = "non-idempotent on decompiled input")]
 fn golden_artifact_roundtrip_fusion_stress_o2() {
     let context = Context::new().expect("compiler context");
     let pipeline = Pipeline::with_opt_level(&context, OptimizationLevel::O2);
