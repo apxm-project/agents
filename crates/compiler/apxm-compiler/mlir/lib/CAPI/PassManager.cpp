@@ -205,4 +205,29 @@ int apxm_module_drain_pass_stats(ApxmModule* module,
   return 0;
 }
 
+int apxm_module_total_template_tokens(ApxmModule* module, uint64_t* total_out) {
+  if (!module || !module->module || !total_out) {
+    return 1;
+  }
+  mlir::ModuleOp moduleOp = *module->module;
+  uint64_t total = 0;
+  // Walk every op (including the module itself) and sum the
+  // `ais.est_template_tokens` IntegerAttr where present. Ops that lack the
+  // attribute contribute 0. Saturating-add to guard against pathological
+  // overflow on very large graphs.
+  moduleOp->walk([&](mlir::Operation* op) {
+    if (auto attr = op->getAttrOfType<mlir::IntegerAttr>(
+            "ais.est_template_tokens")) {
+      uint64_t v = attr.getValue().getZExtValue();
+      if (total > UINT64_MAX - v) {
+        total = UINT64_MAX;
+      } else {
+        total += v;
+      }
+    }
+  });
+  *total_out = total;
+  return 0;
+}
+
 } // extern "C"
