@@ -25,6 +25,7 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ._keys import DEFAULT_JUDGE_THRESHOLD, Cli, FixtureFiles
 from .budgets import enforce, load_budget
 from .judge import Judge, NullJudge
 from .rubric import Rubric, apply_rubric, load_rubric
@@ -53,7 +54,7 @@ class FixtureResult:
         out = list(self.rubric_failures) + list(self.budget_failures)
         if self.golden_failure:
             out.append(self.golden_failure)
-        if self.judge_score is not None and self.judge_score < 4:
+        if self.judge_score is not None and self.judge_score < DEFAULT_JUDGE_THRESHOLD:
             out.append(f"judge: SCORE={self.judge_score}")
         if self.error:
             out.append(f"error: {self.error}")
@@ -63,15 +64,17 @@ class FixtureResult:
 def list_fixtures() -> list[str]:
     if not FIXTURE_ROOT.exists():
         return []
-    return sorted(p.name for p in FIXTURE_ROOT.iterdir() if (p / "expected.toml").exists())
+    return sorted(
+        p.name for p in FIXTURE_ROOT.iterdir() if (p / FixtureFiles.EXPECTED).exists()
+    )
 
 
 def _execute(graph: Path, opt_level: int, session_dir: Path) -> None:
     """Drive ``dekk apxm execute`` against the configured backend."""
     cmd = [
-        "dekk", "apxm", "execute", str(graph),
-        "-O", str(opt_level),
-        "--emit-session", str(session_dir),
+        Cli.DEKK, Cli.APXM, Cli.EXECUTE, str(graph),
+        Cli.OPT_FLAG, str(opt_level),
+        Cli.EMIT_SESSION_FLAG, str(session_dir),
     ]
     subprocess.check_call(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
 
@@ -86,19 +89,19 @@ def run_fixture(
     is safe to call without a backend configured for grading."""
     judge = judge or NullJudge()
     fix = FIXTURE_ROOT / name
-    if not (fix / "expected.toml").exists():
+    if not (fix / FixtureFiles.EXPECTED).exists():
         return FixtureResult(
             name=name, opt_level=opt_level, backend=backend, passed=False,
-            output="", error=f"fixture {name!r} missing expected.toml at {fix}",
+            output="", error=f"fixture {name!r} missing {FixtureFiles.EXPECTED} at {fix}",
         )
 
-    rubric: Rubric = load_rubric(fix / "expected.toml")
-    budget = load_budget(fix / "budget.toml")
+    rubric: Rubric = load_rubric(fix / FixtureFiles.EXPECTED)
+    budget = load_budget(fix / FixtureFiles.BUDGET)
 
     with tempfile.TemporaryDirectory(prefix="apxm-quality-") as tmp:
         session_dir = Path(tmp) / "session"
         try:
-            _execute(fix / "graph.air", opt_level, session_dir)
+            _execute(fix / FixtureFiles.GRAPH, opt_level, session_dir)
         except subprocess.CalledProcessError as e:
             return FixtureResult(
                 name=name, opt_level=opt_level, backend=backend, passed=False,
@@ -120,7 +123,7 @@ def run_fixture(
     # optimisation_invariant fixture uses this to assert the const-string
     # path survives every -O level unchanged.
     golden_failure = ""
-    golden_path = fix / "golden_output.txt"
+    golden_path = fix / FixtureFiles.GOLDEN
     if golden_path.exists():
         golden = golden_path.read_text()
         if output.rstrip("\n") != golden.rstrip("\n"):

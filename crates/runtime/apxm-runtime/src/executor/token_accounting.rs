@@ -133,12 +133,13 @@ pub struct TokenAccountingSnapshot {
 impl TokenAccountingSnapshot {
     /// Export as a JSON value for `--emit-metrics`.
     pub fn to_json(&self) -> serde_json::Value {
+        use apxm_core::constants::session::metrics_keys as mk;
         serde_json::json!({
-            "token_accounting": {
-                "total": self.total,
-                "per_node": self.per_node,
-                "per_flow": self.per_flow,
-                "per_agent": self.per_agent,
+            mk::TOKEN_ACCOUNTING: {
+                mk::TOTAL: self.total,
+                mk::PER_NODE: self.per_node,
+                mk::PER_FLOW: self.per_flow,
+                mk::PER_AGENT: self.per_agent,
             }
         })
     }

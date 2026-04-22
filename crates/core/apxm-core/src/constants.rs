@@ -521,6 +521,31 @@ pub mod session {
         pub const NODES_DIR: &str = "nodes";
     }
 
+    /// JSON keys serialized into `results.json`. Mirrored on the Python side
+    /// by `tools/quality_eval/_keys.py::ResultsKeys`. Drift breaks tier-3.
+    pub mod results_keys {
+        pub const NODE_OUTPUTS: &str = "node_outputs";
+        pub const TOKEN_VALUES: &str = "token_values";
+        pub const EXIT_VALUES: &str = "exit_values";
+        pub const FINAL_NODE_ID: &str = "final_node_id";
+        pub const FINAL_OUTPUT: &str = "final_output";
+    }
+
+    /// JSON keys serialized into `metrics.json` by the runtime's
+    /// `TokenAccountingSnapshot::to_json`. Mirrored by `MetricsKeys` on the
+    /// Python side; tier-3 budget enforcement relies on these.
+    pub mod metrics_keys {
+        pub const TOKEN_ACCOUNTING: &str = "token_accounting";
+        pub const TOTAL: &str = "total";
+        pub const PER_NODE: &str = "per_node";
+        pub const PER_FLOW: &str = "per_flow";
+        pub const PER_AGENT: &str = "per_agent";
+        pub const INPUT_TOKENS: &str = "input_tokens";
+        pub const OUTPUT_TOKENS: &str = "output_tokens";
+        pub const TOTAL_TOKENS: &str = "total_tokens";
+        pub const CALL_COUNT: &str = "call_count";
+    }
+
     pub mod node {
         pub const NODE_JSON: &str = "node.json";
         pub const LIVE_JSON: &str = "live.json";
