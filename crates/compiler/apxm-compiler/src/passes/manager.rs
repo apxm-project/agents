@@ -4,8 +4,9 @@ use super::metrics::{PassMetrics, PipelineDiagnostics};
 use crate::api::{Context, Module, module::invalid_input_error};
 use crate::ffi;
 // Bindgen auto-generates `apxm_module_drain_pass_stats` from PassManager.h; the
-// re-export below names it so Task 3 can call it without re-importing from `ffi`.
-#[allow(unused_imports)]
+// re-export here names it so the per-pass loop can call it without re-importing
+// from `ffi`. Reads + erases the `<pass>_fired_count` / `<pass>_ir_size_delta`
+// module attrs after each pass.
 use crate::ffi::apxm_module_drain_pass_stats;
 use apxm_core::error::compiler::Result;
 use apxm_core::types::OptimizationLevel;
@@ -151,6 +152,7 @@ impl<'ctx> PassManager<'ctx> {
             let elapsed = start.elapsed();
 
             let ops_after = count_module_ops(module)?;
+            let (fired_count, ir_size_delta) = drain_pass_stats(module, name);
 
             diag.passes.push(PassMetrics {
                 pass_name: name.clone(),
@@ -158,9 +160,9 @@ impl<'ctx> PassManager<'ctx> {
                 ops_before: current_ops,
                 ops_after,
                 ops_delta: ops_after as isize - current_ops as isize,
-                fired_count: 0,
-                ir_size_delta: 0,
-                tokens_saved: None,
+                fired_count,
+                ir_size_delta,
+                tokens_saved: None, // wired in Task 4
             });
 
             current_ops = ops_after;
@@ -178,6 +180,27 @@ impl<'ctx> PassManager<'ctx> {
             ffi::apxm_pass_manager_clear(self.raw);
         }
     }
+}
+
+/// Read + erase the `<pass_name>_fired_count` and `<pass_name>_ir_size_delta`
+/// IntegerAttr attributes that a transform pass writes onto the module op.
+///
+/// Returns `(fired_count, ir_size_delta)`; either component is 0 if the pass
+/// did not surface stats.
+fn drain_pass_stats(module: &Module, pass_name: &str) -> (usize, isize) {
+    let c_name = match CString::new(pass_name) {
+        Ok(s) => s,
+        Err(_) => return (0, 0),
+    };
+    let mut fired: i64 = 0;
+    let mut ir_delta: i64 = 0;
+    // SAFETY: `module.as_ptr()` is a valid `*mut ApxmModule` for the lifetime
+    // of the &Module borrow. The C side only reads + erases the two named
+    // string-keyed attrs and writes to the two i64 out-params.
+    unsafe {
+        apxm_module_drain_pass_stats(module.as_ptr(), c_name.as_ptr(), &mut fired, &mut ir_delta);
+    }
+    (fired.max(0) as usize, ir_delta as isize)
 }
 
 /// Count the number of MLIR operations in a module by scanning its textual
