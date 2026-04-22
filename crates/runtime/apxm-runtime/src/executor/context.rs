@@ -24,6 +24,7 @@ use super::dag_splicer::{DagSplicer, NoOpSplicer};
 use super::events::ExecutionEventEmitter;
 use super::inner_plan_linker::{InnerPlanLinker, NoOpLinker};
 use super::memoization::ResponseCache;
+use super::timing_tracker::TimingTracker;
 use super::token_accounting::TokenAccountant;
 use crate::model_router::ModelRouter;
 
@@ -49,6 +50,7 @@ pub struct ExecutionContext {
     pub consumed_tokens: Arc<std::sync::atomic::AtomicU64>,
     pub event_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
     pub token_accountant: Arc<TokenAccountant>,
+    pub timing_tracker: Arc<TimingTracker>,
     pub response_cache: Arc<ResponseCache>,
     pub cancellation_token: CancellationToken,
     /// Only used for INV/tool nodes; LLM operations bypass sandboxing.
@@ -136,6 +138,7 @@ impl ExecutionContext {
             consumed_tokens: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             event_emitter: None,
             token_accountant: Arc::new(TokenAccountant::new()),
+            timing_tracker: Arc::new(TimingTracker::new()),
             response_cache,
             cancellation_token: CancellationToken::new(),
             sandbox_registry: Arc::new(SandboxRegistry::new()),
@@ -274,6 +277,7 @@ impl ExecutionContext {
             consumed_tokens: Arc::clone(&self.consumed_tokens),
             event_emitter: self.event_emitter.as_ref().map(Arc::clone),
             token_accountant: Arc::clone(&self.token_accountant),
+            timing_tracker: Arc::clone(&self.timing_tracker),
             response_cache: Arc::clone(&self.response_cache),
             cancellation_token: self.cancellation_token.child(),
             sandbox_registry: Arc::clone(&self.sandbox_registry),

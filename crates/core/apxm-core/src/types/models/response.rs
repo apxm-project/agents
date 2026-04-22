@@ -4,6 +4,13 @@ use super::{FinishReason, TokenUsage, ToolCall};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// Per-call wall-time breakdown for an LLM round-trip.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq)]
+pub struct TimingBreakdown {
+    pub prefill_ms: f64,
+    pub decode_ms: f64,
+}
+
 /// Response from an LLM backend.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LLMResponse {
@@ -20,6 +27,9 @@ pub struct LLMResponse {
     /// Tool calls requested by the model (if any)
     #[serde(default)]
     pub tool_calls: Vec<ToolCall>,
+    /// Optional prefill/decode wall-time split. Set by streaming backends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timing: Option<TimingBreakdown>,
 }
 
 impl LLMResponse {
@@ -37,6 +47,7 @@ impl LLMResponse {
             finish_reason,
             metadata: HashMap::new(),
             tool_calls: Vec::new(),
+            timing: None,
         }
     }
 

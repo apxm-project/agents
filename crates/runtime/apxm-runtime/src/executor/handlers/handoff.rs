@@ -243,6 +243,7 @@ fn finalize_handoff(
             std::time::Duration::ZERO, // actual duration tracked by dispatcher
             true,
             None,
+            None,
         );
     }
 

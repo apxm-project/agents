@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use apxm_core::types::TimingBreakdown;
 use apxm_core::types::values::Value;
 use serde::{Deserialize, Serialize};
 
@@ -155,6 +156,7 @@ pub trait ExecutionEventEmitter: Send + Sync {
         _duration: Duration,
         _success: bool,
         _tokens: Option<TokenUsageSummary>,
+        _timing: Option<TimingBreakdown>,
     ) {
     }
     fn emit_node_output(&self, _node_id: u64, _value: &Value) {}
