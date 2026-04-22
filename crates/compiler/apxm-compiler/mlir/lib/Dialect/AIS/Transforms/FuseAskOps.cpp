@@ -169,6 +169,47 @@ static std::string fuseTemplates(StringRef producerTemplate, StringRef consumerT
   return fuseTemplates(producerTemplate, {}, consumerTemplate);
 }
 
+/// If the consumer template references the producer by name (i.e. there is a
+/// `{<consumerNameForProducer>}` placeholder), substitute the producer's
+/// template content inline at that placeholder and return the rewritten
+/// template. The producer is then no longer prepended with `\n---\n`, since
+/// its contribution is already woven into the consumer's text where the
+/// consumer originally expected the producer's result.
+///
+/// Returns std::nullopt when no substitution is needed: either the consumer
+/// did not name the producer, or the placeholder did not appear in the text.
+/// Callers fall back to the concat-based `fuseTemplates` in that case.
+static std::optional<std::string> substituteProducerInConsumer(
+    StringRef producerTemplate,
+    StringRef consumerTemplate,
+    StringRef consumerNameForProducer) {
+  if (consumerNameForProducer.empty())
+    return std::nullopt;
+  llvm::StringMap<std::string> replacements;
+  replacements[consumerNameForProducer] = producerTemplate.str();
+  std::string substituted =
+      placeholders::substituteByName(consumerTemplate, replacements);
+  if (substituted == consumerTemplate.str())
+    return std::nullopt;
+  return substituted;
+}
+
+/// Locate the consumer input slot whose operand equals `consumed`. Returns
+/// the consumer's parallel `input_names` entry for that slot, or an empty
+/// StringRef when there is no match (which makes downstream substitution a
+/// no-op).
+static StringRef findConsumerNameForOperand(
+    ValueRange consumerOperands,
+    llvm::ArrayRef<llvm::StringRef> consumerNames,
+    Value consumed) {
+  for (size_t i = 0;
+       i < consumerOperands.size() && i < consumerNames.size(); ++i) {
+    if (consumerOperands[i] == consumed)
+      return consumerNames[i];
+  }
+  return StringRef();
+}
+
 /// Merge two input_names arrays consistently with how operands are merged.
 /// `producerNames` are the producer's input slots (kept entirely).
 /// `consumerNames` are the consumer's input slots, paired with
@@ -260,11 +301,21 @@ struct FuseAskOpsPass : impl::FuseAskOpsBase<FuseAskOpsPass> {
                       [&](Value ctx) { return ctx != producer.getResult(); });
 
         OpBuilder builder(consumer);
-        auto fusedTemplate = fuseTemplates(producer.getTemplateStrAttr().getValue(),
-                                           consumer.getTemplateStrAttr().getValue());
 
         auto producerNames = placeholders::readInputNames(producer.getOperation());
         auto consumerNames = placeholders::readInputNames(consumer.getOperation());
+
+        StringRef consumerNameForProducer = findConsumerNameForOperand(
+            consumer.getOperands(), consumerNames, producer.getResult());
+        auto substituted = substituteProducerInConsumer(
+            producer.getTemplateStrAttr().getValue(),
+            consumer.getTemplateStrAttr().getValue(),
+            consumerNameForProducer);
+        std::string fusedTemplate = substituted
+            ? std::move(*substituted)
+            : fuseTemplates(producer.getTemplateStrAttr().getValue(),
+                            consumer.getTemplateStrAttr().getValue());
+
         auto mergedNames = mergeInputNames(producerNames, consumerNames,
                                            consumer.getOperands(),
                                            producer.getResult());
@@ -339,12 +390,33 @@ struct FuseAskOpsPass : impl::FuseAskOpsBase<FuseAskOpsPass> {
                         [&](Value ctx) { return ctx != operand; });
 
           OpBuilder builder(consumer);
-          auto fusedTemplate = fuseTemplates(producer.getTemplateStrAttr().getValue(),
-                                             trace->stringParts,
-                                             consumer.getTemplateStrAttr().getValue());
 
           auto producerNames = placeholders::readInputNames(producer.getOperation());
           auto consumerNames = placeholders::readInputNames(consumer.getOperation());
+
+          // If the consumer template references the merge result by name,
+          // substitute its placeholder with the merge chain's expanded text
+          // (producer template + interpolation strings). Otherwise fall back
+          // to the prepend-with-separator legacy form.
+          std::string mergeChainExpansion;
+          {
+            mergeChainExpansion.append(
+                producer.getTemplateStrAttr().getValue().str());
+            for (const auto &str : trace->stringParts)
+              mergeChainExpansion.append(str);
+          }
+          StringRef consumerNameForOperand = findConsumerNameForOperand(
+              consumer.getOperands(), consumerNames, operand);
+          auto substituted = substituteProducerInConsumer(
+              mergeChainExpansion,
+              consumer.getTemplateStrAttr().getValue(),
+              consumerNameForOperand);
+          std::string fusedTemplate = substituted
+              ? std::move(*substituted)
+              : fuseTemplates(producer.getTemplateStrAttr().getValue(),
+                              trace->stringParts,
+                              consumer.getTemplateStrAttr().getValue());
+
           // The consumed value here is the final operand of the merge chain
           // (i.e. the one that flows into the consumer through `operand`).
           auto mergedNames = mergeInputNames(producerNames, consumerNames,
