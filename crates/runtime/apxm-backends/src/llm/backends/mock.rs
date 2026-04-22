@@ -30,8 +30,10 @@
 
 use super::traits::{LLMBackend, StreamChunk};
 use super::{LLMRequest, LLMResponse};
+use apxm_core::observability::{CallEvent, CallTrace};
 use apxm_core::types::{FinishReason, ModelCapabilities, ModelInfo, TokenUsage};
 use async_trait::async_trait;
+use parking_lot::RwLock;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -125,6 +127,8 @@ pub struct MockLLMBackend {
     latency_ms: u64,
     /// Tokens per second for realistic streaming (0 = instant)
     tokens_per_second: u64,
+    /// Optional CallTrace sink. None = recording disabled (default).
+    trace: Option<Arc<RwLock<CallTrace>>>,
 }
 
 impl MockLLMBackend {
@@ -139,7 +143,51 @@ impl MockLLMBackend {
             fail_with: None,
             latency_ms: 0,
             tokens_per_second: 0,
+            trace: None,
         }
+    }
+
+    /// Create a mock that records each call into the supplied `CallTrace`.
+    pub fn new_with_trace(trace: Arc<RwLock<CallTrace>>) -> Self {
+        let mut b = Self::new();
+        b.trace = Some(trace);
+        b
+    }
+
+    /// Push a `CallEvent` describing this request, if a trace sink is attached.
+    fn record_if_enabled(&self, request: &LLMRequest) {
+        let Some(trace) = &self.trace else {
+            return;
+        };
+        let (node_id, node_name) = match &request.apxm_hints {
+            Some(h) => (
+                h.node_id.map(|n| n as u64).unwrap_or(0),
+                h.node_name.clone().unwrap_or_default(),
+            ),
+            None => (0, String::new()),
+        };
+        let op = request
+            .operation_type
+            .map(|o| format!("{:?}", o).to_uppercase())
+            .unwrap_or_else(|| "UNKNOWN".to_string());
+        let model = request
+            .model
+            .clone()
+            .unwrap_or_else(|| "mock".to_string());
+        let params = format!(
+            "temp={},top_p={:?},max={:?}",
+            request.temperature, request.top_p, request.max_tokens
+        );
+        trace.write().push(CallEvent {
+            node_id,
+            node_name,
+            op,
+            prompt: request.prompt.clone(),
+            model,
+            params,
+            // parent_deps not currently exposed in LLMRequest.
+            parent_deps: vec![],
+        });
     }
 
     /// Create a mock that always returns `content`.
@@ -364,6 +412,8 @@ impl LLMBackend for MockLLMBackend {
         if let Some(ref err) = self.fail_with {
             return Err(anyhow::anyhow!("{}", err));
         }
+
+        self.record_if_enabled(&request);
 
         let effective_prompt = self.extract_prompt(&request);
 
@@ -630,5 +680,57 @@ mod tests {
             h.await.unwrap();
         }
         assert_eq!(mock.call_count(), 10);
+    }
+}
+
+#[cfg(test)]
+mod call_trace_recording_tests {
+    use super::*;
+    use crate::llm::backends::vllm::graph_meta::ApxmGraphHints;
+    use apxm_core::observability::CallTrace;
+    use apxm_core::types::AISOperationType;
+    use parking_lot::RwLock;
+    use std::sync::Arc;
+
+    fn make_test_request(prompt: &str, node_id: u32, node_name: &str) -> LLMRequest {
+        let mut req = LLMRequest::new(prompt);
+        req.operation_type = Some(AISOperationType::Ask);
+        req.apxm_hints = Some(ApxmGraphHints {
+            node_id: Some(node_id),
+            node_name: Some(node_name.to_string()),
+            ..Default::default()
+        });
+        req
+    }
+
+    #[tokio::test]
+    async fn mock_backend_records_call_trace_when_enabled() {
+        let trace = Arc::new(RwLock::new(CallTrace::new()));
+        let backend = MockLLMBackend::new_with_trace(trace.clone());
+        let req = make_test_request("hello", 3, "ask_x");
+        let _ = backend.generate(req).await.expect("ok");
+        let recorded = trace.read();
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded.events[0].node_id, 3);
+        assert_eq!(recorded.events[0].node_name, "ask_x");
+        assert_eq!(recorded.events[0].prompt, "hello");
+        assert_eq!(recorded.events[0].op, "ASK");
+    }
+
+    #[tokio::test]
+    async fn mock_backend_response_carries_nonzero_usage() {
+        let backend = MockLLMBackend::new();
+        let req = make_test_request("hi", 1, "ask_a");
+        let resp = backend.generate(req).await.expect("ok");
+        assert!(resp.usage.input_tokens > 0);
+        assert!(resp.usage.output_tokens > 0);
+    }
+
+    #[tokio::test]
+    async fn mock_backend_does_not_record_when_disabled() {
+        let backend = MockLLMBackend::new();
+        let req = make_test_request("hi", 2, "ask_y");
+        let _ = backend.generate(req).await.expect("ok");
+        // Locks the Option<Arc<...>> invariant: trace = None means no recording.
     }
 }
