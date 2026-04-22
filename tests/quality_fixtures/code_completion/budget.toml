@@ -1,2 +1,5 @@
 max_llm_calls = 1
-max_total_tokens = 500
+# Bumped for reasoning-model thinking budget (Qwen3 thinking is non-deterministic
+# in length); visible answer still capped by `max_chars` in expected.toml.
+# With `enable_thinking=false` plumbed at the backend this drops to ~500.
+max_total_tokens = 8000

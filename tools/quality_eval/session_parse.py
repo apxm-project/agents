@@ -9,10 +9,34 @@ stringifying via JSON for non-string Values.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
 from ._keys import ResultsKeys, SessionFiles
+
+# Reasoning models prepend a "thinking" block before the visible answer. Two
+# observed shapes:
+#   * Symmetric (DeepSeek-R1 etc.): "<think>...</think>\nanswer"
+#   * Asymmetric (Qwen3.5-4B served by vLLM): "Thinking Process:\n...\n</think>\nanswer"
+#     — no opening tag, just the closing one terminating the prelude.
+# Both end with `</think>`, so anchor at start-of-text and consume up through
+# the FIRST closing tag (lazy). Then also sweep any later symmetric blocks
+# that might appear inline. Order matters: leading sweep first.
+_LEADING_THINK = re.compile(r"\A.*?</think>\s*", re.DOTALL | re.IGNORECASE)
+_INLINE_THINK = re.compile(r"<think>.*?</think>\s*", re.DOTALL | re.IGNORECASE)
+
+
+def _strip_thinking_blocks(text: str) -> str:
+    """Remove leading and inline thinking blocks emitted by reasoning models.
+
+    Keeps the post-thinking content the user actually sees. Idempotent on
+    text that has no thinking blocks (the leading regex requires a `</think>`,
+    so plain text is left untouched).
+    """
+    text = _LEADING_THINK.sub("", text)
+    text = _INLINE_THINK.sub("", text)
+    return text.lstrip()
 
 
 def _stringify(value: Any) -> str:
@@ -63,17 +87,17 @@ def extract_final_output(session_dir: Path) -> str:
 
     fo = data.get(ResultsKeys.FINAL_OUTPUT)
     if isinstance(fo, str) and fo:
-        return fo
+        return _strip_thinking_blocks(fo)
 
     exits = data.get(ResultsKeys.EXIT_VALUES) or {}
     via_exit = _highest_id_value(exits)
     if via_exit:
-        return via_exit
+        return _strip_thinking_blocks(via_exit)
 
     tokens = data.get(ResultsKeys.TOKEN_VALUES) or {}
     via_token = _highest_id_value(tokens)
     if via_token:
-        return via_token
+        return _strip_thinking_blocks(via_token)
 
     raise RuntimeError(
         f"results.json at {results_path} has no extractable output "
