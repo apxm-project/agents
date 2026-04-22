@@ -57,22 +57,16 @@ PASSES = [
     "symbol-dce",
 ]
 
-# Passes whose only effect is to mutate IR attributes (not add/remove ops),
-# OR whose fire-count is not yet exposed via an `<pass>_fired_count` IntegerAttr
-# on the module. Until Phase B Task 7 wires every transform to write that attr,
-# these passes are exempt from the "dead-pass" check — we cannot tell whether
-# they fired from diagnostics alone, only that they ran. They are still toggled
-# off in the regression check, which catches "disabling this hurts ops_after".
+# Passes whose fired_count is structurally unobservable via the
+# `ais.<pass>_fired_count` attribute. After Phase B Task 7 every APXM-side
+# transform writes that attr, so the only remaining exemptions are upstream
+# MLIR passes (cse, symbol-dce, canonicalizer) which live outside our
+# Transforms/ tree and we cannot patch. The dead-pass check skips these;
+# the regression check (which compares ops_after) still covers them.
 PRE_TASK7_UNINSTRUMENTED = {
-    "normalize",
-    "build-prompt",
-    "dspy-optimize",
-    "prompt-canonicalization",
-    "template-specialization",
-    "schema-narrowing",
-    "assign-priority",
-    "dead-context-elimination",
+    "cse",
     "symbol-dce",
+    "canonicalizer",
 }
 
 REGRESSION_THRESHOLD = 0.05  # 5%
