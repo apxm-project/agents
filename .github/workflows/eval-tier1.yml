@@ -12,6 +12,9 @@ jobs:
       - name: Build
         run: dekk apxm build
       - name: Tier-1 semantic equivalence
-        run: dekk apxm test -- semantic_equivalence golden_artifact_roundtrip compile_is_deterministic
+        # `test-all` (not `test`) is required: the compiler-level tier-1
+        # tests (golden_artifact_roundtrip, compile_is_deterministic) live
+        # in apxm-compiler/tests and are only swept by the all-crates runner.
+        run: dekk apxm test-all -- semantic_equivalence golden_artifact_roundtrip compile_is_deterministic
       - name: trace_diff CLI smoke test
         run: tools/eval_harness/tests/test_trace_diff.sh
