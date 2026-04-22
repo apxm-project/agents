@@ -33,6 +33,8 @@ STRESS_GRAPHS = [
     "priority_scheduling.air",
     "schema_narrowing_stress.air",
     "condense_ops_stress.air",
+    "fusion_stress.air",
+    "dead_context_stress.air",
 ]
 
 # Mirrors the MLIR-side pass list dispatched at -O 2 by
