@@ -126,7 +126,7 @@ fn dag_to_graph(dag: &ExecutionDag) -> AirModule {
 /// The harness still validates that compile -> decompile -> recompile runs
 /// end-to-end; Phase B will fix the pass and flip this to a normal `#[test]`.
 #[test]
-#[should_panic(expected = "did not reach a fixed point")]
+#[should_panic(expected = "non-idempotent on decompiled input")]
 fn golden_artifact_roundtrip_fusion_stress_o2() {
     let context = Context::new().expect("compiler context");
     let pipeline = Pipeline::with_opt_level(&context, OptimizationLevel::O2);
