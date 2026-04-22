@@ -116,11 +116,11 @@ The TOML keys (`must_contain`, `max_llm_calls`, …) are owned by Python
 — Rust does not consume `expected.toml` or `budget.toml`. Those keys
 live in `_keys.py::RubricKeys` / `BudgetKeys`.
 
-## CI
+## Running the harness
 
-`.github/workflows/eval-tier3.yml`:
-- **harness-tests** runs the offline pytest on every PR that touches
-  the harness or its mirrored Rust keys.
-- **fixtures** runs every fixture against a real backend on the nightly
-  cron and on PRs labelled `tier-3`. Hard-fails when
-  `LLM_GATEWAY_KEY` is unset rather than silently degrading.
+The harness is run locally only (no CI gate is shipped in this repo):
+
+- Offline check (no backend required):
+  `python -m pytest tools/quality_eval/tests/ -q`
+- Real-backend sweep (backend configured in `~/.apxm/config.toml`):
+  `dekk apxm quality-eval -- --all --opt 2 --judge none --samples 3 --threshold 2`
