@@ -73,6 +73,7 @@ async fn run_cli() -> Result<()> {
             target,
             no_cse_llm,
             profile,
+            warn,
         } => compile_command(
             input,
             output,
@@ -81,6 +82,7 @@ async fn run_cli() -> Result<()> {
             target,
             no_cse_llm,
             profile,
+            warn,
         ),
         Commands::Decompile { artifact, output } => decompile_command(artifact, output),
         Commands::Execute {

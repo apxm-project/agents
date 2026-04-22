@@ -39,6 +39,7 @@ impl<'ctx> PassManager<'ctx> {
             config.opt_level,
             config.no_cse_llm,
             config.target,
+            config.warn_unconsumed,
         )?;
         Ok(pm)
     }

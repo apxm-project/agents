@@ -62,7 +62,7 @@ fn is_mlir_pass(name: &str) -> bool {
 }
 
 pub fn build_pipeline(pm: &mut PassManager, level: OptimizationLevel) -> Result<()> {
-    build_pipeline_with_config(pm, level, false, OptimizationTarget::Balanced)
+    build_pipeline_with_config(pm, level, false, OptimizationTarget::Balanced, false)
 }
 
 pub fn build_pipeline_with_config(
@@ -70,8 +70,9 @@ pub fn build_pipeline_with_config(
     level: OptimizationLevel,
     no_cse_llm: bool,
     target: OptimizationTarget,
+    warn: bool,
 ) -> Result<()> {
-    for name in build_pass_list(level, no_cse_llm, target) {
+    for name in build_pass_list_with_warn(level, no_cse_llm, target, warn) {
         if is_mlir_pass(&name) {
             pm.add_pass(&name)?;
         }
@@ -110,7 +111,6 @@ pub fn build_pass_list(
                     NORMALIZE,
                     BUILD_PROMPT,
                     DSPY_OPTIMIZE,
-                    UNCONSUMED_VALUE_WARNING,
                     FUSE_ASK_OPS,
                     ASSIGN_PRIORITY,
                     VLLM_HINTS,
@@ -144,7 +144,6 @@ pub fn build_pass_list(
                     DSPY_OPTIMIZE,
                     PROMPT_CANONICALIZATION,
                     TEMPLATE_SPECIALIZATION,
-                    UNCONSUMED_VALUE_WARNING,
                 ]
                 .iter()
                 .map(|s| s.to_string()),
@@ -238,7 +237,6 @@ pub fn build_pass_list(
                     BUILD_PROMPT,
                     DSPY_OPTIMIZE,
                     PROMPT_CANONICALIZATION,
-                    UNCONSUMED_VALUE_WARNING,
                 ]
                 .iter()
                 .map(|s| s.to_string()),
@@ -308,6 +306,25 @@ pub fn build_pass_list(
     passes
 }
 
+/// Like [`build_pass_list`] but appends `unconsumed-value-warning` when `warn` is true.
+///
+/// The warning pass is purely diagnostic — it produces no IR mutation — so it is
+/// always inserted at the very end of the pipeline regardless of opt level.
+/// It is opt-in via the CLI `--warn` flag and never appears in the default O1/O2/O3
+/// pipelines (see compiler-audit.md).
+pub fn build_pass_list_with_warn(
+    level: OptimizationLevel,
+    no_cse_llm: bool,
+    target: OptimizationTarget,
+    warn: bool,
+) -> Vec<String> {
+    let mut passes = build_pass_list(level, no_cse_llm, target);
+    if warn {
+        passes.push(UNCONSUMED_VALUE_WARNING.to_string());
+    }
+    passes
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -360,7 +377,8 @@ mod tests {
         assert_eq!(passes[1], BUILD_PROMPT);
         assert_eq!(passes[2], DSPY_OPTIMIZE);
         assert!(passes.contains(&ASSIGN_PRIORITY.to_string()));
-        assert!(passes.contains(&UNCONSUMED_VALUE_WARNING.to_string()));
+        // UNCONSUMED_VALUE_WARNING is opt-in via --warn (Task 6); it must NOT appear
+        // by default at any opt level. See unconsumed_value_warning_off_by_default.
         // Convergence loop produces many more passes than O2
         let o2_passes = build_pass_list(OptimizationLevel::O2, false, OptimizationTarget::Balanced);
         assert!(passes.len() > o2_passes.len() * 3);
@@ -526,6 +544,30 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn unconsumed_value_warning_off_by_default() {
+        use OptimizationTarget::Balanced;
+        for level in [
+            OptimizationLevel::O1,
+            OptimizationLevel::O2,
+            OptimizationLevel::O3,
+        ] {
+            let passes = build_pass_list(level, false, Balanced);
+            assert!(
+                !passes.iter().any(|p| p == UNCONSUMED_VALUE_WARNING),
+                "UNCONSUMED_VALUE_WARNING must not appear by default at {level:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn unconsumed_value_warning_added_when_requested() {
+        use OptimizationTarget::Balanced;
+        let passes =
+            build_pass_list_with_warn(OptimizationLevel::O1, false, Balanced, true);
+        assert!(passes.iter().any(|p| p == UNCONSUMED_VALUE_WARNING));
     }
 
     #[test]
