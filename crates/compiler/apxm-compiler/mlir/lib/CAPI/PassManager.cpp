@@ -11,6 +11,7 @@
 #include "ais/CAPI/PassManager.h"
 #include "ais/CAPI/Module.h"
 #include "ais/Dialect/AIS/Transforms/Passes.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/Transforms/Passes.h"
 #include "mlir/Pass/PassInstrumentation.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -181,6 +182,27 @@ void apxm_pass_manager_add_symbol_dce(ApxmPassManager* pm) {
 
 void apxm_pass_manager_add_inline(ApxmPassManager* pm) {
   if (pm) pm->pass_manager->addPass(mlir::createInlinerPass());
+}
+
+int apxm_module_drain_pass_stats(ApxmModule* module,
+                                 const char* pass_name,
+                                 int64_t* fired_count_out,
+                                 int64_t* ir_size_delta_out) {
+  if (!module || !module->module || !pass_name || !fired_count_out ||
+      !ir_size_delta_out) {
+    return 1;
+  }
+  mlir::ModuleOp moduleOp = *module->module;
+  auto drain = [&](const std::string& key, int64_t* out) {
+    *out = 0;
+    if (auto attr = moduleOp->getAttrOfType<mlir::IntegerAttr>(key)) {
+      *out = attr.getInt();
+      moduleOp->removeAttr(key);
+    }
+  };
+  drain(std::string(pass_name) + "_fired_count", fired_count_out);
+  drain(std::string(pass_name) + "_ir_size_delta", ir_size_delta_out);
+  return 0;
 }
 
 } // extern "C"

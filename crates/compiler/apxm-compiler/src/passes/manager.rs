@@ -3,6 +3,10 @@
 use super::metrics::{PassMetrics, PipelineDiagnostics};
 use crate::api::{Context, Module, module::invalid_input_error};
 use crate::ffi;
+// Bindgen auto-generates `apxm_module_drain_pass_stats` from PassManager.h; the
+// re-export below names it so Task 3 can call it without re-importing from `ffi`.
+#[allow(unused_imports)]
+use crate::ffi::apxm_module_drain_pass_stats;
 use apxm_core::error::compiler::Result;
 use apxm_core::types::OptimizationLevel;
 use std::ffi::CString;
