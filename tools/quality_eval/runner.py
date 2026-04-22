@@ -29,7 +29,7 @@ from ._keys import DEFAULT_JUDGE_THRESHOLD, Cli, FixtureFiles
 from .budgets import enforce, load_budget
 from .judge import Judge, NullJudge
 from .rubric import Rubric, apply_rubric, load_rubric
-from .session_parse import extract_final_output
+from .session_parse import _resolve_session_root, extract_final_output
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_ROOT = REPO_ROOT / "tests" / "quality_fixtures"
@@ -109,7 +109,8 @@ def run_fixture(
             )
 
         try:
-            output = extract_final_output(session_dir)
+            session_root = _resolve_session_root(session_dir)
+            output = extract_final_output(session_root)
         except (FileNotFoundError, RuntimeError) as e:
             return FixtureResult(
                 name=name, opt_level=opt_level, backend=backend, passed=False,
@@ -117,7 +118,7 @@ def run_fixture(
             )
 
         rubric_res = apply_rubric(output, rubric)
-        budget_fails = enforce(session_dir, budget)
+        budget_fails = enforce(session_root, budget)
 
     # Optional byte-exact contract for deterministic templates. The plan's
     # optimisation_invariant fixture uses this to assert the const-string
