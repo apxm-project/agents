@@ -49,14 +49,14 @@ def _fetch_models() -> Optional[list[dict]]:
         return None
 
     backends = config.get("backends", {})
-    amd_backend = None
+    enterprise_backend = None
 
     for _name, backend in backends.items():
         if backend.get("type") == "onprem" and "llm.example.com" in backend.get("base_url", ""):
-            amd_backend = backend
+            enterprise_backend = backend
             break
 
-    if not amd_backend:
+    if not enterprise_backend:
         api_key = os.environ.get("BACKEND_API_KEY")
         if not api_key:
             console = Console()
@@ -66,7 +66,7 @@ def _fetch_models() -> Optional[list[dict]]:
             console.print("  2. Set environment variable: [cyan]export BACKEND_API_KEY=<key>[/cyan]")
             return None
     else:
-        headers = amd_backend.get("custom_headers", {})
+        headers = enterprise_backend.get("custom_headers", {})
         api_key = headers.get("X-Custom-Gateway-Key")
         if not api_key:
             Console().print("[red]Error:[/red] Enterprise backend configured but missing X-Custom-Gateway-Key in custom_headers")
