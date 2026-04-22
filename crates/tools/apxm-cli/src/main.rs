@@ -160,6 +160,7 @@ async fn run_cli() -> Result<()> {
         Commands::Session { action } => session_command(action, cli.json),
         Commands::Workflow { action } => workflow_command(action, cli.json).await,
         Commands::Cache { action } => cache_command(action, cli.json),
+        Commands::QualityEval { args } => quality_eval_command(args),
         Commands::Gui { file, port, open } => gui_command(file, port, open),
     }
 }
@@ -191,6 +192,7 @@ async fn run_cli_no_driver() -> Result<()> {
         Commands::Session { action } => session_command(action, cli.json),
         Commands::Workflow { action } => workflow_command_no_driver(action, cli.json),
         Commands::Cache { action } => cache_command(action, cli.json),
+        Commands::QualityEval { args } => quality_eval_command(args),
         Commands::Gui { file, port, open } => gui_command(file, port, open),
         _ => Err(anyhow::anyhow!(
             "Command requires the `driver` feature. Re-run with: cargo run -p apxm-cli --features driver -- <command>"

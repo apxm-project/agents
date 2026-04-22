@@ -213,6 +213,14 @@ pub enum Commands {
         #[command(subcommand)]
         action: CacheAction,
     },
+    /// Run the tier-3 quality-eval harness (shells to `python -m quality_eval`).
+    /// Trailing args are forwarded verbatim — see `python -m quality_eval --help`.
+    #[command(name = "quality-eval", trailing_var_arg = true)]
+    QualityEval {
+        /// Arguments forwarded to the Python harness (--fixture / --all / --opt / ...)
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// Launch the web-based GUI dashboard
     Gui {
         /// Graph file to open on startup (.air)
