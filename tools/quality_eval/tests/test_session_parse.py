@@ -11,7 +11,10 @@ import pytest
 # Make ``tools/`` importable so ``from quality_eval.x import y`` works.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from quality_eval.session_parse import extract_final_output  # noqa: E402
+from quality_eval.session_parse import (  # noqa: E402
+    _resolve_session_root,
+    extract_final_output,
+)
 
 FIX = Path(__file__).parent / "fixtures" / "sample_session"
 
@@ -54,6 +57,29 @@ def test_extract_jsonifies_non_string_value(tmp_path: Path):
     out = extract_final_output(tmp_path)
     # Order within the dict is implementation-defined; reparse to compare.
     assert json.loads(out) == {"city": "Paris", "pop": 2_100_000}
+
+
+def test_resolve_session_root_descends_into_single_subdir(tmp_path: Path):
+    # `dekk apxm execute --emit-session <PATH>` treats PATH as a base dir
+    # and creates `<PATH>/<stem>-<timestamp>/` underneath. The harness
+    # passes a tempdir, so resolution must descend one level.
+    inner = tmp_path / "qa_factual-20260422T172024"
+    inner.mkdir()
+    (inner / "results.json").write_text("{}")
+    assert _resolve_session_root(tmp_path) == inner
+
+
+def test_resolve_session_root_accepts_direct_dir(tmp_path: Path):
+    (tmp_path / "results.json").write_text("{}")
+    assert _resolve_session_root(tmp_path) == tmp_path
+
+
+def test_resolve_session_root_raises_on_ambiguous_layout(tmp_path: Path):
+    # Two candidate subdirs with no results.json at the top: don't guess.
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    with pytest.raises(FileNotFoundError):
+        _resolve_session_root(tmp_path)
 
 
 def test_extract_raises_when_no_output_anywhere(tmp_path: Path):

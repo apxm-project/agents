@@ -29,6 +29,25 @@ def _highest_id_value(d: dict[str, Any]) -> str | None:
     return _stringify(d[pick_id])
 
 
+def _resolve_session_root(session_dir: Path) -> Path:
+    """Accept either a session dir (contains results.json) or its parent.
+
+    `dekk apxm execute --emit-session <PATH>` treats PATH as a base directory
+    and creates `<PATH>/<stem>-<timestamp>/` underneath it. The harness
+    passes a tempdir as PATH, so we must descend into the single child to
+    locate `results.json`.
+    """
+    direct = session_dir / SessionFiles.RESULTS
+    if direct.exists():
+        return session_dir
+    children = [p for p in session_dir.iterdir() if p.is_dir()]
+    if len(children) == 1 and (children[0] / SessionFiles.RESULTS).exists():
+        return children[0]
+    raise FileNotFoundError(
+        f"no {SessionFiles.RESULTS} under {session_dir} or its single subdir"
+    )
+
+
 def extract_final_output(session_dir: Path) -> str:
     """Return the canonical terminal output for a session.
 
@@ -38,7 +57,8 @@ def extract_final_output(session_dir: Path) -> str:
         3. `results.json::token_values`  (highest node id)
     Raises RuntimeError when none of the three yields anything.
     """
-    results_path = Path(session_dir) / SessionFiles.RESULTS
+    root = _resolve_session_root(Path(session_dir))
+    results_path = root / SessionFiles.RESULTS
     data = json.loads(results_path.read_text())
 
     fo = data.get(ResultsKeys.FINAL_OUTPUT)
