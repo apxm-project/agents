@@ -24,6 +24,12 @@ pub struct ModelRegistration {
     /// Optional descriptive metadata for routing and inspection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub info: Option<ModelInfo>,
+    /// Whether the model supports extended thinking/reasoning. `None` means
+    /// "use backend default". When `Some(false)` the OpenAI-compatible backend
+    /// will inject `chat_template_kwargs.enable_thinking = false` so vLLM
+    /// suppresses Qwen3 `<think>` blocks. Sourced from `ModelConfig.supports_thinking`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_thinking: Option<bool>,
 }
 
 /// Typed backend registration input for the LLM registry.
@@ -82,6 +88,25 @@ impl BackendRegistration {
                 config_keys::AUTO_TOOL_CHOICE.to_string(),
                 json!(auto_tool_choice),
             );
+        }
+
+        // Forward per-model capability flags that backends consult at request
+        // time. Only emit entries whose flags actually differ from the default
+        // so we don't bloat the JSON for the common case.
+        let model_entries: Vec<JsonValue> = self
+            .models
+            .iter()
+            .filter_map(|m| {
+                m.supports_thinking.map(|st| {
+                    json!({
+                        "id": m.id,
+                        config_keys::SUPPORTS_THINKING: st,
+                    })
+                })
+            })
+            .collect();
+        if !model_entries.is_empty() {
+            map.insert(config_keys::MODELS.to_string(), json!(model_entries));
         }
 
         if map.is_empty() {
