@@ -40,6 +40,18 @@ impl<'ctx> Pipeline<'ctx> {
         self.process_module(module)
     }
 
+    /// Compile pre-built AIR text and collect per-pass diagnostics.
+    ///
+    /// Mirror of [`compile`] for callers that need the diagnostics array,
+    /// e.g. the CLI's `--emit-diagnostics` flag and the ablation harness.
+    pub fn compile_with_diagnostics(
+        &self,
+        source: &str,
+    ) -> Result<(Module, PipelineDiagnostics)> {
+        let module = Module::parse(self.context, source)?;
+        self.process_module_with_diagnostics(module)
+    }
+
     pub fn compile_graph(&self, module: &AirModule) -> Result<Module> {
         let ir_module = self.lower_graph(module)?;
         self.process_module(ir_module)

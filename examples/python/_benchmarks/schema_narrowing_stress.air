@@ -1,0 +1,9 @@
+module {
+  func.func @schema_narrowing_stress() -> !ais.token attributes {ais.entry} {
+    %unused_a = ais.ask "Return user record" {output_schema = "{name, age, email, address, phone, ssn, dob, country}"} : !ais.token
+    %unused_b = ais.ask "Return order record" {output_schema = "{order_id, items, total, customer, shipping, billing, status}"} : !ais.token
+    %unused_c = ais.ask "Return product record" {output_schema = "{sku, name, price, stock, supplier, category}"} : !ais.token
+    %used = ais.think "Combine all" : !ais.token
+    func.return %used : !ais.token
+  }
+}
