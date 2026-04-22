@@ -1,0 +1,4 @@
+must_contain = ["paris"]
+case_sensitive = false
+min_chars = 1
+max_chars = 200
