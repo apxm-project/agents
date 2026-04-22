@@ -1,0 +1,17 @@
+name: eval-tier1
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  tier1:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: dekk apxm build
+      - name: Tier-1 semantic equivalence
+        run: dekk apxm test -- semantic_equivalence golden_artifact_roundtrip compile_is_deterministic
+      - name: trace_diff CLI smoke test
+        run: tools/eval_harness/tests/test_trace_diff.sh
