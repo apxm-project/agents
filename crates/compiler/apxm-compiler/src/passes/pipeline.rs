@@ -111,7 +111,6 @@ pub fn build_pass_list(
                     BUILD_PROMPT,
                     DSPY_OPTIMIZE,
                     UNCONSUMED_VALUE_WARNING,
-                    SCHEDULING,
                     FUSE_ASK_OPS,
                     ASSIGN_PRIORITY,
                     VLLM_HINTS,
@@ -159,7 +158,6 @@ pub fn build_pass_list(
                         [
                             DEAD_CONTEXT_ELIMINATION,
                             SCHEMA_NARROWING,
-                            SCHEDULING,
                             FUSE_ASK_OPS,
                             CONDENSE_OPS,
                             ASSIGN_PRIORITY,
@@ -177,7 +175,6 @@ pub fn build_pass_list(
                     passes.extend(
                         [
                             SCHEMA_NARROWING,
-                            SCHEDULING,
                             FUSE_ASK_OPS,
                             CONDENSE_OPS,
                             ASSIGN_PRIORITY,
@@ -195,7 +192,6 @@ pub fn build_pass_list(
                     // Prioritize fusion and scheduling
                     passes.extend(
                         [
-                            SCHEDULING,
                             SCHEMA_NARROWING,
                             FUSE_ASK_OPS,
                             CONDENSE_OPS,
@@ -215,7 +211,6 @@ pub fn build_pass_list(
                     passes.extend(
                         [
                             SCHEMA_NARROWING,
-                            SCHEDULING,
                             FUSE_ASK_OPS,
                             CONDENSE_OPS,
                             ASSIGN_PRIORITY,
@@ -374,11 +369,14 @@ mod tests {
     #[test]
     fn test_target_latency_enables_fusion() {
         let passes = build_pass_list(OptimizationLevel::O2, false, OptimizationTarget::Latency);
-        // Scheduling should come before fusion for latency target
-        let scheduling_idx = passes.iter().position(|p| p == SCHEDULING).unwrap();
-        let fusion_idx = passes.iter().position(|p| p == FUSE_ASK_OPS).unwrap();
-        assert!(scheduling_idx < fusion_idx);
+        // SCHEDULING is disabled at O2 (regression — see compiler-audit.md). Verify the
+        // remaining latency-target invariant: fusion is in the pipeline.
         assert!(passes.contains(&FUSE_ASK_OPS.to_string()));
+        // At O3 the scheduling-before-fusion ordering still holds.
+        let o3 = build_pass_list(OptimizationLevel::O3, false, OptimizationTarget::Latency);
+        let scheduling_idx = o3.iter().position(|p| p == SCHEDULING).unwrap();
+        let fusion_idx = o3.iter().position(|p| p == FUSE_ASK_OPS).unwrap();
+        assert!(scheduling_idx < fusion_idx);
     }
 
     #[test]
@@ -391,13 +389,22 @@ mod tests {
     #[test]
     fn test_target_tokens_enables_dce() {
         let passes = build_pass_list(OptimizationLevel::O2, false, OptimizationTarget::Tokens);
-        // Dead context elimination should come before scheduling for tokens target
+        // SCHEDULING is disabled at O2 (regression — see compiler-audit.md). Verify the
+        // remaining tokens-target invariant: dead-context-elimination runs before fusion.
         let dce_idx = passes
             .iter()
             .position(|p| p == DEAD_CONTEXT_ELIMINATION)
             .unwrap();
-        let scheduling_idx = passes.iter().position(|p| p == SCHEDULING).unwrap();
-        assert!(dce_idx < scheduling_idx);
+        let fusion_idx = passes.iter().position(|p| p == FUSE_ASK_OPS).unwrap();
+        assert!(dce_idx < fusion_idx);
+        // At O3 the DCE-before-scheduling ordering still holds.
+        let o3 = build_pass_list(OptimizationLevel::O3, false, OptimizationTarget::Tokens);
+        let dce_idx_o3 = o3
+            .iter()
+            .position(|p| p == DEAD_CONTEXT_ELIMINATION)
+            .unwrap();
+        let scheduling_idx_o3 = o3.iter().position(|p| p == SCHEDULING).unwrap();
+        assert!(dce_idx_o3 < scheduling_idx_o3);
     }
 
     #[test]
@@ -518,6 +525,28 @@ mod tests {
                     "TOOL_BINDING must run after CANONICALIZER at {level:?}/{target:?}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn scheduling_pass_only_present_at_o3() {
+        use OptimizationTarget::*;
+        for target in [Balanced, Latency, Cost, Tokens, Parallelism] {
+            let o1 = build_pass_list(OptimizationLevel::O1, false, target);
+            let o2 = build_pass_list(OptimizationLevel::O2, false, target);
+            let o3 = build_pass_list(OptimizationLevel::O3, false, target);
+            assert!(
+                !o1.iter().any(|p| p == SCHEDULING),
+                "SCHEDULING must not appear in O1 (target={target:?})"
+            );
+            assert!(
+                !o2.iter().any(|p| p == SCHEDULING),
+                "SCHEDULING must not appear in O2 (target={target:?})"
+            );
+            assert!(
+                o3.iter().any(|p| p == SCHEDULING),
+                "SCHEDULING must remain in O3 (target={target:?})"
+            );
         }
     }
 
