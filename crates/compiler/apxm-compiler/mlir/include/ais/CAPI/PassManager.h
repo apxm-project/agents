@@ -50,6 +50,14 @@ int apxm_module_drain_pass_stats(ApxmModule *module,
                                  int64_t *fired_count_out,
                                  int64_t *ir_size_delta_out);
 
+// Walk every op in the module and sum the `ais.est_template_tokens`
+// IntegerAttr value (treating absent attrs as 0). Returns the total in
+// `total_out`. Used by the pass runner to compute `tokens_saved` as the
+// pre/post delta around each pass.
+//
+// Returns 0 on success, non-zero if any pointer argument is null.
+int apxm_module_total_template_tokens(ApxmModule *module, uint64_t *total_out);
+
 #ifdef __cplusplus
 }
 #endif

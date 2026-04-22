@@ -7,7 +7,7 @@ use crate::ffi;
 // re-export here names it so the per-pass loop can call it without re-importing
 // from `ffi`. Reads + erases the `<pass>_fired_count` / `<pass>_ir_size_delta`
 // module attrs after each pass.
-use crate::ffi::apxm_module_drain_pass_stats;
+use crate::ffi::{apxm_module_drain_pass_stats, apxm_module_total_template_tokens};
 use apxm_core::error::compiler::Result;
 use apxm_core::types::OptimizationLevel;
 use std::ffi::CString;
@@ -147,12 +147,19 @@ impl<'ctx> PassManager<'ctx> {
         for name in pass_names {
             tmp_pm.add_pass(name)?;
 
+            let tokens_before = total_template_tokens(module);
             let start = Instant::now();
             tmp_pm.run(module)?;
             let elapsed = start.elapsed();
+            let tokens_after = total_template_tokens(module);
 
             let ops_after = count_module_ops(module)?;
             let (fired_count, ir_size_delta) = drain_pass_stats(module, name);
+            let tokens_saved = if tokens_before > tokens_after {
+                Some(tokens_before - tokens_after)
+            } else {
+                None
+            };
 
             diag.passes.push(PassMetrics {
                 pass_name: name.clone(),
@@ -162,7 +169,7 @@ impl<'ctx> PassManager<'ctx> {
                 ops_delta: ops_after as isize - current_ops as isize,
                 fired_count,
                 ir_size_delta,
-                tokens_saved: None, // wired in Task 4
+                tokens_saved,
             });
 
             current_ops = ops_after;
@@ -201,6 +208,24 @@ fn drain_pass_stats(module: &Module, pass_name: &str) -> (usize, isize) {
         apxm_module_drain_pass_stats(module.as_ptr(), c_name.as_ptr(), &mut fired, &mut ir_delta);
     }
     (fired.max(0) as usize, ir_delta as isize)
+}
+
+/// Sum every op's `ais.est_template_tokens` IntegerAttr across the module.
+///
+/// Returns 0 when no op carries the attr (e.g. before BuildPrompt has run).
+/// Used by `run_with_metrics` to compute `PassMetrics::tokens_saved` as the
+/// pre/post delta around each pass.
+fn total_template_tokens(module: &Module) -> usize {
+    let mut total: u64 = 0;
+    // SAFETY: `module.as_ptr()` is a valid `*mut ApxmModule` for the lifetime
+    // of the &Module borrow. The C side only walks ops and reads the
+    // `ais.est_template_tokens` IntegerAttr; no IR mutation.
+    let rc = unsafe { apxm_module_total_template_tokens(module.as_ptr(), &mut total) };
+    if rc != 0 {
+        return 0;
+    }
+    // usize is 64-bit on the supported targets; saturate just in case.
+    usize::try_from(total).unwrap_or(usize::MAX)
 }
 
 /// Count the number of MLIR operations in a module by scanning its textual
