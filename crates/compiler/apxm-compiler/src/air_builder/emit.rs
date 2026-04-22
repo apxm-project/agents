@@ -1205,7 +1205,10 @@ fn extra_attr_dict(attributes: &HashMap<String, Value>, consumed: &[&str]) -> St
     let mut items = attributes
         .iter()
         .filter_map(|(key, value)| {
-            if consumed.contains(&key.as_str()) || !is_valid_attr_name(key) {
+            if consumed.contains(&key.as_str())
+                || graph_attrs::MLIR_DERIVED_BARE_ATTRS.contains(&key.as_str())
+                || !is_valid_attr_name(key)
+            {
                 return None;
             }
             Some(format!(

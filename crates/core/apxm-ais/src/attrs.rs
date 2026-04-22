@@ -157,6 +157,21 @@ pub const AIS_SHARED_PREFIX_EST_TOKENS: &str = "ais.shared_prefix_est_tokens";
 pub const AIS_WARMUP_CANDIDATE: &str = "ais.warmup_candidate";
 pub const AIS_DOWNSTREAM_NODES: &str = "ais.downstream_nodes";
 
+/// Bare-name forms of MLIR-derived attributes (the result of
+/// `ArtifactEmitter.cpp` stripping the `ais.` prefix when serializing).
+/// These are re-derived by the MLIR PromptCanonicalization +
+/// AssignPriority passes on every compile, so emitting them back into
+/// AIR text would produce both the bare and prefixed forms on the same
+/// op after the next pass run, breaking compile-decompile-recompile
+/// idempotency. The AIR emitter filters this set when generating MLIR
+/// text from a (possibly roundtripped) `AirModule`.
+pub const MLIR_DERIVED_BARE_ATTRS: &[&str] = &[
+    REUSE_GROUP,              // "shared_prefix_group"
+    SHARED_PREFIX_EST_TOKENS, // "shared_prefix_est_tokens"
+    WARMUP_CANDIDATE,         // "warmup_candidate"
+    DOWNSTREAM_NODES,         // "downstream_nodes"
+];
+
 // vLLM payload keys: written by vllm_hints() pass onto LLM nodes; consumed
 // by the runtime when constructing extra_body.apxm.* on each LLMRequest.
 pub const VLLM_PRIORITY_CLASS: &str = "_vllm_priority_class";
