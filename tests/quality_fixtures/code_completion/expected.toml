@@ -1,0 +1,5 @@
+regex_match = ["def\\s+factorial\\s*\\("]
+must_contain = ["return"]
+min_chars = 20
+max_chars = 600
+case_sensitive = true

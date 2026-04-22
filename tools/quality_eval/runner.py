@@ -45,11 +45,14 @@ class FixtureResult:
     judge_score: int | None = None
     judge_rationale: str = ""
     budget_failures: list[str] = field(default_factory=list)
+    golden_failure: str = ""
     error: str = ""
 
     @property
     def all_failures(self) -> list[str]:
         out = list(self.rubric_failures) + list(self.budget_failures)
+        if self.golden_failure:
+            out.append(self.golden_failure)
         if self.judge_score is not None and self.judge_score < 4:
             out.append(f"judge: SCORE={self.judge_score}")
         if self.error:
@@ -113,6 +116,18 @@ def run_fixture(
         rubric_res = apply_rubric(output, rubric)
         budget_fails = enforce(session_dir, budget)
 
+    # Optional byte-exact contract for deterministic templates. The plan's
+    # optimisation_invariant fixture uses this to assert the const-string
+    # path survives every -O level unchanged.
+    golden_failure = ""
+    golden_path = fix / "golden_output.txt"
+    if golden_path.exists():
+        golden = golden_path.read_text()
+        if output.rstrip("\n") != golden.rstrip("\n"):
+            golden_failure = (
+                f"golden_output mismatch: got {output!r}, expected {golden!r}"
+            )
+
     judge_score: int | None = None
     judge_rationale = ""
     judge_passed = True
@@ -122,13 +137,19 @@ def run_fixture(
         judge_rationale = verdict.rationale
         judge_passed = verdict.passed
 
-    passed = rubric_res.passed and judge_passed and not budget_fails
+    passed = (
+        rubric_res.passed
+        and judge_passed
+        and not budget_fails
+        and not golden_failure
+    )
     return FixtureResult(
         name=name, opt_level=opt_level, backend=backend,
         passed=passed, output=output,
         rubric_failures=rubric_res.failures,
         judge_score=judge_score, judge_rationale=judge_rationale,
         budget_failures=budget_fails,
+        golden_failure=golden_failure,
     )
 
 

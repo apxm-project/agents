@@ -1,0 +1,5 @@
+# Pure-template canary: zero LLM calls, zero tokens. If anything bumps
+# either counter the rubric is being routed through a backend that should
+# never have been touched.
+max_llm_calls = 0
+max_total_tokens = 0

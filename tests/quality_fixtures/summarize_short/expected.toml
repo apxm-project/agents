@@ -1,0 +1,4 @@
+min_chars = 20
+max_chars = 400
+judge_prompt = "Score 0-5 how faithfully the candidate summarises the source paragraph about photosynthesis. 5 = accurate single-sentence summary covering the key idea (light + CO2 + water -> sugar + oxygen). 0 = unrelated or wrong."
+judge_threshold = 4

@@ -1,0 +1,7 @@
+module {
+  func.func @optimisation_invariant() -> !ais.token attributes {ais.entry} {
+    %v = ais.const_str "OPTIMISATION_INVARIANT_CANARY_42" : !ais.token
+    ais.print "{v}" [%v : !ais.token] {input_names = ["v"]}
+    func.return %v : !ais.token
+  }
+}

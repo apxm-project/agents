@@ -1,0 +1,8 @@
+module {
+  func.func @summarize_short() -> !ais.token attributes {ais.entry} {
+    %src = ais.ask "Provide a 3-sentence paragraph about the photosynthesis process in plants. Use simple language." : !ais.token
+    %sum = ais.think "Summarise the following passage in one sentence, no more than 30 words: {passage}" [%src : !ais.token] {input_names = ["passage"]} : !ais.token
+    ais.print "{sum}" [%sum : !ais.token] {input_names = ["sum"]}
+    func.return %sum : !ais.token
+  }
+}

@@ -171,6 +171,26 @@ def test_format_result_includes_failures(monkeypatch, _isolated_fixture_root):
     assert "must_contain: 'paris'" in out
 
 
+def test_golden_output_passes_when_exact_match(monkeypatch, _isolated_fixture_root):
+    fix = _make_fixture(_isolated_fixture_root, "canary",
+                        'must_contain = ["CANARY"]\ncase_sensitive = true\n')
+    (fix / "golden_output.txt").write_text("CANARY_42\n")
+    monkeypatch.setattr(runner, "_execute", _stub_execute("CANARY_42\n"))
+    res = runner.run_fixture("canary", opt_level=2, backend="mock")
+    assert res.passed
+    assert res.golden_failure == ""
+
+
+def test_golden_output_fails_on_drift(monkeypatch, _isolated_fixture_root):
+    fix = _make_fixture(_isolated_fixture_root, "canary",
+                        'must_contain = ["CANARY"]\ncase_sensitive = true\n')
+    (fix / "golden_output.txt").write_text("CANARY_42\n")
+    monkeypatch.setattr(runner, "_execute", _stub_execute("CANARY_99\n"))
+    res = runner.run_fixture("canary", opt_level=2, backend="mock")
+    assert not res.passed
+    assert "golden_output mismatch" in res.golden_failure
+
+
 def test_list_fixtures(_isolated_fixture_root):
     _make_fixture(_isolated_fixture_root, "alpha", 'must_contain = ["x"]\n')
     _make_fixture(_isolated_fixture_root, "beta", 'must_contain = ["y"]\n')

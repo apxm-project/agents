@@ -1,0 +1,7 @@
+module {
+  func.func @no_hallucination() -> !ais.token attributes {ais.entry} {
+    %ans = ais.ask "Use ONLY the following grounding facts; do not introduce outside knowledge.\n\nGROUNDING FACTS:\n- The Eiffel Tower is in Paris.\n- The Eiffel Tower opened in 1889.\n- It is made of wrought iron.\n\nQUESTION: When did the Eiffel Tower open and what is it made of?\n\nAnswer in one sentence." : !ais.token
+    ais.print "{ans}" [%ans : !ais.token] {input_names = ["ans"]}
+    func.return %ans : !ais.token
+  }
+}
