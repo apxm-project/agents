@@ -56,6 +56,7 @@ fn per_node_tokens_appear_in_live_json() {
             total_tokens: 30,
             call_count: 1,
         }),
+        None,
     );
 
     let live_path = session_root

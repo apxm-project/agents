@@ -4,7 +4,7 @@
 //! across the apxm ecosystem.
 
 mod response;
-pub use response::LLMResponse;
+pub use response::{LLMResponse, TimingBreakdown};
 
 use serde::{Deserialize, Serialize};
 

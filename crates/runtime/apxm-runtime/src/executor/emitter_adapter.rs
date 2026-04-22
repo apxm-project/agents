@@ -137,6 +137,7 @@ impl ExecutionEventEmitter for EmitterAdapter {
         duration: Duration,
         success: bool,
         _tokens: Option<crate::executor::token_accounting::TokenUsageSummary>,
+        _timing: Option<apxm_core::types::TimingBreakdown>,
     ) {
         self.emit(OperationEndPayload {
             node_id,

@@ -94,4 +94,10 @@ pub struct CompletedNodeInfo {
     pub input_tokens: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_tokens: Option<usize>,
+    /// Prefill wall-time (ms) for LLM nodes; None for non-LLM and cache hits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefill_ms: Option<f64>,
+    /// Decode wall-time (ms) for LLM nodes; None for non-LLM and cache hits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decode_ms: Option<f64>,
 }

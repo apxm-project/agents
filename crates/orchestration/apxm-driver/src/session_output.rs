@@ -713,6 +713,7 @@ impl ExecutionEventEmitter for SessionEventEmitter {
         duration: std::time::Duration,
         success: bool,
         tokens: Option<apxm_runtime::TokenUsageSummary>,
+        timing: Option<apxm_core::types::TimingBreakdown>,
     ) {
         self.completed.fetch_add(1, Ordering::Relaxed);
 
@@ -730,6 +731,10 @@ impl ExecutionEventEmitter for SessionEventEmitter {
                 Some(usage) => (Some(usage.input_tokens), Some(usage.output_tokens)),
                 None => (None, None),
             };
+            let (prefill_ms, decode_ms) = match &timing {
+                Some(t) => (Some(t.prefill_ms), Some(t.decode_ms)),
+                None => (None, None),
+            };
             let completed_info = CompletedNodeInfo {
                 id: node_id,
                 name: meta.name.clone(),
@@ -738,6 +743,8 @@ impl ExecutionEventEmitter for SessionEventEmitter {
                 status,
                 input_tokens,
                 output_tokens,
+                prefill_ms,
+                decode_ms,
             };
             if let Ok(mut completed) = self.completed_nodes.lock() {
                 completed.push(completed_info);

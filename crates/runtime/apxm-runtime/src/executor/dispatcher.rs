@@ -142,7 +142,15 @@ impl OperationDispatcher {
         // Emit OperationEnd event
         if let Some(emitter) = &ctx.event_emitter {
             let tokens = ctx.token_accountant.get_node(node.id);
-            emitter.emit_operation_end(node.id, &op_type_str, op_duration, success, tokens);
+            let timing = ctx.timing_tracker.get_node(node.id);
+            emitter.emit_operation_end(
+                node.id,
+                &op_type_str,
+                op_duration,
+                success,
+                tokens,
+                timing,
+            );
         }
 
         // Restore parent span after node execution completes.

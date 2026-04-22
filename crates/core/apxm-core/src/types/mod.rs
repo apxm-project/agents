@@ -54,7 +54,8 @@ pub use llm_control_plane::{
     ResolvedApxmBackendConfig, ResolvedApxmModelAlias, ResolvedApxmModelConfig,
 };
 pub use models::{
-    FinishReason, LLMResponse, ModelCapabilities, ModelInfo, TokenUsage, ToolCall, ToolResult,
+    FinishReason, LLMResponse, ModelCapabilities, ModelInfo, TimingBreakdown, TokenUsage, ToolCall,
+    ToolResult,
 };
 
 // Re-export from operations (which re-exports from apxm-ais)

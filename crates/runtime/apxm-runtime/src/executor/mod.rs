@@ -16,6 +16,7 @@ mod handlers;
 pub mod inner_plan_linker;
 pub mod memoization;
 pub mod pipeline;
+pub mod timing_tracker;
 pub mod token_accounting;
 
 pub use cancellation::CancellationToken;
@@ -28,6 +29,7 @@ pub use events::{ExecutionEvent, ExecutionEventEmitter};
 pub use handlers::warmup::{WarmupConfig, WarmupMetrics};
 pub use inner_plan_linker::{InnerPlanLinker, NoOpLinker};
 pub use memoization::ResponseCache;
+pub use timing_tracker::TimingTracker;
 pub use token_accounting::{TokenAccountant, TokenUsageSummary};
 
 use apxm_core::error::RuntimeError;

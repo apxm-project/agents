@@ -886,7 +886,14 @@ async fn execute_llm_once(
     );
 
     // Execute LLM request through registry.
+    let llm_start = std::time::Instant::now();
     let response = execute_llm_request(ctx, node.id, mode_name, request).await?;
+    let total_ms = llm_start.elapsed().as_secs_f64() * 1000.0;
+    let (prefill_ms, decode_ms) = response
+        .timing
+        .map(|t| (t.prefill_ms, t.decode_ms))
+        .unwrap_or((total_ms, 0.0));
+    ctx.timing_tracker.record(node.id, prefill_ms, decode_ms);
 
     charge_tokens(
         ctx,
@@ -1007,6 +1014,8 @@ async fn execute_ask_with_tools(
     let mut accumulated_tool_results: Vec<ToolResult> = Vec::new();
     let mut total_input_tokens = 0usize;
     let mut total_output_tokens = 0usize;
+    let mut total_prefill_ms = 0.0_f64;
+    let mut total_decode_ms = 0.0_f64;
 
     for iteration in 0..max_iterations {
         // Check cancellation before each tool-loop iteration
@@ -1023,7 +1032,15 @@ async fn execute_ask_with_tools(
         );
 
         // Execute LLM request
+        let llm_start = std::time::Instant::now();
         let response = execute_llm_request(ctx, node.id, "ASK", &current_request).await?;
+        let iter_total_ms = llm_start.elapsed().as_secs_f64() * 1000.0;
+        let (iter_prefill, iter_decode) = response
+            .timing
+            .map(|t| (t.prefill_ms, t.decode_ms))
+            .unwrap_or((iter_total_ms, 0.0));
+        total_prefill_ms += iter_prefill;
+        total_decode_ms += iter_decode;
         charge_tokens(
             ctx,
             resolve_token_budget(ctx, node),
@@ -1076,6 +1093,8 @@ async fn execute_ask_with_tools(
                 tools_invoked = accumulated_tool_results.len(),
                 "ASK tool loop completed"
             );
+            ctx.timing_tracker
+                .record(node.id, total_prefill_ms, total_decode_ms);
             return Ok(Value::String(response.content));
         }
 
@@ -1157,6 +1176,8 @@ async fn execute_ask_with_tools(
         max_iterations = max_iterations,
         "ASK tool loop exceeded max iterations"
     );
+    ctx.timing_tracker
+        .record(node.id, total_prefill_ms, total_decode_ms);
 
     Err(RuntimeError::LLM {
         message: format!(
