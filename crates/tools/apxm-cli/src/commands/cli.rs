@@ -54,6 +54,10 @@ pub enum Commands {
         /// Profile-guided optimization: path to execution profile JSON
         #[arg(long)]
         profile: Option<PathBuf>,
+        /// Enable the diagnostic `unconsumed-value-warning` pass.
+        /// Off by default — the pass is purely diagnostic with no IR mutation.
+        #[arg(long, default_value_t = false)]
+        warn: bool,
     },
     /// Decompile an artifact back to graph JSON
     Decompile {

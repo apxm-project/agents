@@ -25,7 +25,7 @@ pub use bind_tool_handlers::{
 };
 pub use manager::PassManager;
 pub use metrics::{PassMetrics, PipelineDiagnostics};
-pub use pipeline::{build_pass_list, build_pipeline};
+pub use pipeline::{build_pass_list, build_pass_list_with_warn, build_pipeline};
 pub use profile::{ExecutionProfile, NodeProfile, ProfileError};
 pub use registry::{find_pass, get_pass_count, get_pass_info, list_passes};
 pub use tool_binding::{

@@ -158,6 +158,7 @@ pub fn compile_command(
     target: String,
     no_cse_llm: bool,
     profile: Option<PathBuf>,
+    warn: bool,
 ) -> Result<()> {
     use apxm_core::constants::diagnostics;
     use apxm_core::types::{OptimizationTarget, PipelineConfig};
@@ -279,19 +280,25 @@ pub fn compile_command(
             verify: true,
             no_cse_llm,
             profile_path: profile.clone(),
+            warn_unconsumed: warn,
             ..Default::default()
         };
         let (m, d) = compiler
             .compile_graph_with_config_and_diagnostics(&graph, config)
             .map_err(|e| anyhow::anyhow!("Failed to compile graph: {e}"))?;
         (m, Some(d))
-    } else if no_cse_llm || opt_target != OptimizationTarget::Balanced || profile.is_some() {
+    } else if no_cse_llm
+        || opt_target != OptimizationTarget::Balanced
+        || profile.is_some()
+        || warn
+    {
         let config = PipelineConfig {
             opt_level: opt,
             target: opt_target,
             verify: true,
             no_cse_llm,
             profile_path: profile.clone(),
+            warn_unconsumed: warn,
             ..Default::default()
         };
         let m = compiler

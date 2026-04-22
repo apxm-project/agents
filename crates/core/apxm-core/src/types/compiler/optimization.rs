@@ -144,6 +144,13 @@ pub struct PipelineConfig {
     /// Force DSPy re-optimization even if cached results exist.
     #[serde(default)]
     pub dspy_no_cache: bool,
+
+    /// Enable the diagnostic `unconsumed-value-warning` pass.
+    ///
+    /// Off by default — the pass is purely diagnostic (no IR mutation) and
+    /// pure overhead in normal compiles. Wired through CLI `--warn`.
+    #[serde(default)]
+    pub warn_unconsumed: bool,
 }
 
 impl Default for PipelineConfig {
@@ -157,6 +164,7 @@ impl Default for PipelineConfig {
             token_budget: None,
             dspy_training_data: None,
             dspy_no_cache: false,
+            warn_unconsumed: false,
         }
     }
 }
@@ -173,6 +181,7 @@ impl PipelineConfig {
             token_budget: None,
             dspy_training_data: None,
             dspy_no_cache: false,
+            warn_unconsumed: false,
         }
     }
 
@@ -187,6 +196,7 @@ impl PipelineConfig {
             token_budget: None,
             dspy_training_data: None,
             dspy_no_cache: false,
+            warn_unconsumed: false,
         }
     }
 

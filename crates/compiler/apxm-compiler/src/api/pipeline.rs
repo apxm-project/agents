@@ -2,7 +2,7 @@
 
 use crate::air_builder::AirModule;
 use crate::api::{Context, Module};
-use crate::passes::{PassManager, PipelineDiagnostics, build_pass_list};
+use crate::passes::{PassManager, PipelineDiagnostics, build_pass_list_with_warn};
 use apxm_core::error::compiler::{CompilerError, Result};
 use apxm_core::error::{Error, codes::ErrorCode};
 use apxm_core::types::{OptimizationLevel, PipelineConfig};
@@ -112,10 +112,11 @@ impl<'ctx> Pipeline<'ctx> {
         }
 
         let pm = PassManager::new(self.context)?;
-        let pass_names = build_pass_list(
+        let pass_names = build_pass_list_with_warn(
             self.config.opt_level,
             self.config.no_cse_llm,
             self.config.target,
+            self.config.warn_unconsumed,
         );
         let diagnostics = pm.run_with_metrics(&module, &pass_names)?;
 
