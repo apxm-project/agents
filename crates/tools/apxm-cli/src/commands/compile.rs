@@ -150,6 +150,7 @@ pub(super) fn prepare_graph_input(
 }
 
 #[cfg(feature = "driver")]
+#[allow(clippy::too_many_arguments)]
 pub fn compile_command(
     input: PathBuf,
     output: Option<PathBuf>,
@@ -159,6 +160,8 @@ pub fn compile_command(
     no_cse_llm: bool,
     profile: Option<PathBuf>,
     warn: bool,
+    disable_passes: Vec<String>,
+    pass_list_override: Option<Vec<String>>,
 ) -> Result<()> {
     use apxm_core::constants::diagnostics;
     use apxm_core::types::{OptimizationTarget, PipelineConfig};
@@ -273,6 +276,12 @@ pub fn compile_command(
 
     // When diagnostics are requested, use the per-pass metrics path.
     // Otherwise use the fast bulk-run path.
+    let needs_custom_config = no_cse_llm
+        || opt_target != OptimizationTarget::Balanced
+        || profile.is_some()
+        || warn
+        || !disable_passes.is_empty()
+        || pass_list_override.is_some();
     let (module, pass_diagnostics) = if emit_diagnostics.is_some() {
         let config = PipelineConfig {
             opt_level: opt,
@@ -281,17 +290,15 @@ pub fn compile_command(
             no_cse_llm,
             profile_path: profile.clone(),
             warn_unconsumed: warn,
+            disable_passes: disable_passes.clone(),
+            pass_list_override: pass_list_override.clone(),
             ..Default::default()
         };
         let (m, d) = compiler
             .compile_graph_with_config_and_diagnostics(&graph, config)
             .map_err(|e| anyhow::anyhow!("Failed to compile graph: {e}"))?;
         (m, Some(d))
-    } else if no_cse_llm
-        || opt_target != OptimizationTarget::Balanced
-        || profile.is_some()
-        || warn
-    {
+    } else if needs_custom_config {
         let config = PipelineConfig {
             opt_level: opt,
             target: opt_target,
@@ -299,6 +306,8 @@ pub fn compile_command(
             no_cse_llm,
             profile_path: profile.clone(),
             warn_unconsumed: warn,
+            disable_passes: disable_passes.clone(),
+            pass_list_override: pass_list_override.clone(),
             ..Default::default()
         };
         let m = compiler

@@ -57,7 +57,7 @@ const BIND_TOOL_HANDLERS: &str = BIND_TOOL_HANDLERS_PASS_NAME;
 /// `AirModule` instead.
 const RUST_ONLY_PASSES: &[&str] = &[VLLM_HINTS, TOOL_BINDING, BIND_TOOL_HANDLERS];
 
-fn is_mlir_pass(name: &str) -> bool {
+pub fn is_mlir_pass(name: &str) -> bool {
     !RUST_ONLY_PASSES.contains(&name)
 }
 
@@ -321,6 +321,36 @@ pub fn build_pass_list_with_warn(
     let mut passes = build_pass_list(level, no_cse_llm, target);
     if warn {
         passes.push(UNCONSUMED_VALUE_WARNING.to_string());
+    }
+    passes
+}
+
+/// Materialize the final pass list for a [`PipelineConfig`].
+///
+/// Order of operations:
+/// 1. If `pass_list_override` is `Some`, that vector becomes the base list
+///    (opt-level / target / no-cse-llm / warn-unconsumed are ignored).
+/// 2. Otherwise, the base list comes from [`build_pass_list_with_warn`].
+/// 3. Any name in `disable_passes` is dropped from the resulting list.
+///
+/// Single source of truth used by both the MLIR-pass-manager build path
+/// ([`build_pipeline_with_config`]) and the diagnostics path
+/// (`process_module_with_diagnostics` in `api/pipeline.rs`).
+pub fn resolve_pass_list(config: &apxm_core::types::PipelineConfig) -> Vec<String> {
+    let mut passes = if let Some(override_list) = config.pass_list_override.as_ref() {
+        override_list.clone()
+    } else {
+        build_pass_list_with_warn(
+            config.opt_level,
+            config.no_cse_llm,
+            config.target,
+            config.warn_unconsumed,
+        )
+    };
+    if !config.disable_passes.is_empty() {
+        let drop: std::collections::HashSet<&str> =
+            config.disable_passes.iter().map(String::as_str).collect();
+        passes.retain(|p| !drop.contains(p.as_str()));
     }
     passes
 }
