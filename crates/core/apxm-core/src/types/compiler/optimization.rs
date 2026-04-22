@@ -151,6 +151,23 @@ pub struct PipelineConfig {
     /// pure overhead in normal compiles. Wired through CLI `--warn`.
     #[serde(default)]
     pub warn_unconsumed: bool,
+
+    /// Pass names to drop from the materialized pass list (ablation studies).
+    ///
+    /// Filter is applied after the default list is built (or after
+    /// `pass_list_override` is substituted). Empty = no filtering. Wired
+    /// through CLI `--disable-pass <name>` (repeatable).
+    #[serde(default)]
+    pub disable_passes: Vec<String>,
+
+    /// Replace the entire default pass list with this explicit sequence.
+    ///
+    /// When `Some`, `opt_level` / `target` / `no_cse_llm` / `warn_unconsumed`
+    /// no longer determine pass selection — only ordering matters here.
+    /// `disable_passes` still applies after the override. Wired through CLI
+    /// `--pass-list <a,b,c>`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pass_list_override: Option<Vec<String>>,
 }
 
 impl Default for PipelineConfig {
@@ -165,6 +182,8 @@ impl Default for PipelineConfig {
             dspy_training_data: None,
             dspy_no_cache: false,
             warn_unconsumed: false,
+            disable_passes: Vec::new(),
+            pass_list_override: None,
         }
     }
 }
@@ -182,6 +201,8 @@ impl PipelineConfig {
             dspy_training_data: None,
             dspy_no_cache: false,
             warn_unconsumed: false,
+            disable_passes: Vec::new(),
+            pass_list_override: None,
         }
     }
 
@@ -197,6 +218,8 @@ impl PipelineConfig {
             dspy_training_data: None,
             dspy_no_cache: false,
             warn_unconsumed: false,
+            disable_passes: Vec::new(),
+            pass_list_override: None,
         }
     }
 

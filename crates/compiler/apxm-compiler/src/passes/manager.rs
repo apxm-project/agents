@@ -39,13 +39,13 @@ impl<'ctx> PassManager<'ctx> {
         config: &apxm_core::types::PipelineConfig,
     ) -> Result<Self> {
         let mut pm = Self::new(context)?;
-        super::pipeline::build_pipeline_with_config(
-            &mut pm,
-            config.opt_level,
-            config.no_cse_llm,
-            config.target,
-            config.warn_unconsumed,
-        )?;
+        // resolve_pass_list applies pass_list_override and disable_passes on
+        // top of the level/target/no_cse_llm/warn_unconsumed defaults.
+        for name in super::pipeline::resolve_pass_list(config) {
+            if super::pipeline::is_mlir_pass(&name) {
+                pm.add_pass(&name)?;
+            }
+        }
         Ok(pm)
     }
 

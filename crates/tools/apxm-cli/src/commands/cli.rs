@@ -58,6 +58,15 @@ pub enum Commands {
         /// Off by default — the pass is purely diagnostic with no IR mutation.
         #[arg(long, default_value_t = false)]
         warn: bool,
+        /// Skip a named pass (repeatable). Useful for ablation studies.
+        /// Applied after --pass-list (if both are provided).
+        #[arg(long = "disable-pass", value_name = "PASS")]
+        disable_passes: Vec<String>,
+        /// Override the entire pass list with a comma-separated sequence.
+        /// When set, --opt-level / --target / --no-cse-llm / --warn no longer
+        /// determine pass selection — only ordering matters here.
+        #[arg(long = "pass-list", value_name = "A,B,C", value_delimiter = ',')]
+        pass_list_override: Option<Vec<String>>,
     },
     /// Decompile an artifact back to graph JSON
     Decompile {

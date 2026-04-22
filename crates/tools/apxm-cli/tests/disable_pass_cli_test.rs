@@ -1,0 +1,137 @@
+//! Smoke-test the --disable-pass / --pass-list CLI plumbing for ablation studies.
+//!
+//! Compiles a small inline JSON graph at O1 with a named pass dropped, then reads
+//! the `--emit-diagnostics` JSON and confirms the disabled pass is absent from the
+//! `pass_metrics` array. A second case exercises `--pass-list` to confirm the
+//! override replaces the default selection wholesale.
+//!
+//! Note: as of Task 8 the only emitted-metrics path on the compile subcommand is
+//! `--emit-diagnostics`; Task 9 may introduce a richer `--emit-metrics` artifact,
+//! at which point the `metrics.json` schema described in the parent plan can be
+//! asserted directly.
+//!
+//! Gated on the `driver` feature because the `compile` subcommand is itself
+//! gated there. `dekk apxm test-cli` builds with `--features driver,metrics`
+//! and exercises this file; the default `test-all` (no driver) skips it.
+
+#![cfg(feature = "driver")]
+
+use std::io::Write;
+use std::process::Command;
+
+fn apxm() -> Command {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_apxm"));
+    cmd.env("NO_COLOR", "1");
+    cmd
+}
+
+/// Two-ASK pipeline. The graph compiles cleanly at O1, exercising the standard
+/// pass list (normalize, build-prompt, fuse-ask-ops, cse, symbol-dce, …). The
+/// test only inspects which pass *names* show up in diagnostics, not whether
+/// fusion actually fires — so no input wiring is required.
+const FUSABLE_PIPELINE: &str = r#"{
+  "name": "fuse-test",
+  "nodes": [
+    {"id": 1, "name": "a", "op": "ASK", "attributes": {"template_str": "step 1"}},
+    {"id": 2, "name": "b", "op": "ASK", "attributes": {"template_str": "step 2"}}
+  ],
+  "edges": [{"from": 1, "to": 2, "dependency": "Data"}],
+  "parameters": [],
+  "metadata": {}
+}"#;
+
+fn write_tmp_graph(content: &str) -> tempfile::NamedTempFile {
+    let mut f = tempfile::Builder::new()
+        .suffix(".json")
+        .tempfile()
+        .unwrap();
+    f.write_all(content.as_bytes()).unwrap();
+    f.flush().unwrap();
+    f
+}
+
+fn pass_names_from_diagnostics(diag_path: &std::path::Path) -> Vec<String> {
+    let raw = std::fs::read_to_string(diag_path).expect("diagnostics file written");
+    let json: serde_json::Value = serde_json::from_str(&raw).expect("diagnostics parses as JSON");
+    json["pass_metrics"]
+        .as_array()
+        .expect("pass_metrics array present")
+        .iter()
+        .map(|p| {
+            p["pass_name"]
+                .as_str()
+                .expect("pass_name string")
+                .to_string()
+        })
+        .collect()
+}
+
+#[test]
+fn disable_pass_removes_pass_from_diagnostics() {
+    let graph = write_tmp_graph(FUSABLE_PIPELINE);
+    let tmp = tempfile::tempdir().unwrap();
+    let out = tmp.path().join("out.apxmobj");
+    let diag = tmp.path().join("diag.json");
+
+    let status = apxm()
+        .args([
+            "compile",
+            graph.path().to_str().unwrap(),
+            "--opt-level",
+            "1",
+            "--disable-pass",
+            "fuse-ask-ops",
+            "-o",
+            out.to_str().unwrap(),
+            "--emit-diagnostics",
+            diag.to_str().unwrap(),
+        ])
+        .status()
+        .expect("apxm compile must run");
+    assert!(status.success(), "apxm compile failed");
+
+    let names = pass_names_from_diagnostics(&diag);
+    assert!(
+        !names.iter().any(|n| n == "fuse-ask-ops"),
+        "fuse-ask-ops must be absent after --disable-pass; got {names:?}"
+    );
+    // Sanity: at least one O1 pass still present (override didn't accidentally clear).
+    assert!(
+        names.iter().any(|n| n == "normalize"),
+        "normalize must still appear at O1; got {names:?}"
+    );
+}
+
+#[test]
+fn pass_list_override_replaces_default_selection() {
+    let graph = write_tmp_graph(FUSABLE_PIPELINE);
+    let tmp = tempfile::tempdir().unwrap();
+    let out = tmp.path().join("out.apxmobj");
+    let diag = tmp.path().join("diag.json");
+
+    // Minimal viable list: normalize + canonicalizer. Notably omits build-prompt,
+    // dspy-optimize, fuse-ask-ops, cse, symbol-dce, etc. that O1 would include.
+    let status = apxm()
+        .args([
+            "compile",
+            graph.path().to_str().unwrap(),
+            "--opt-level",
+            "1",
+            "--pass-list",
+            "normalize,canonicalizer",
+            "-o",
+            out.to_str().unwrap(),
+            "--emit-diagnostics",
+            diag.to_str().unwrap(),
+        ])
+        .status()
+        .expect("apxm compile must run");
+    assert!(status.success(), "apxm compile failed");
+
+    let names = pass_names_from_diagnostics(&diag);
+    assert_eq!(
+        names,
+        vec!["normalize".to_string(), "canonicalizer".to_string()],
+        "--pass-list must replace the default selection wholesale; got {names:?}"
+    );
+}

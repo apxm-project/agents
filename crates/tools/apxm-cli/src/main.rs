@@ -74,6 +74,8 @@ async fn run_cli() -> Result<()> {
             no_cse_llm,
             profile,
             warn,
+            disable_passes,
+            pass_list_override,
         } => compile_command(
             input,
             output,
@@ -83,6 +85,8 @@ async fn run_cli() -> Result<()> {
             no_cse_llm,
             profile,
             warn,
+            disable_passes,
+            pass_list_override,
         ),
         Commands::Decompile { artifact, output } => decompile_command(artifact, output),
         Commands::Execute {
