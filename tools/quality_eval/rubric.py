@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List
 
+from ._keys import DEFAULT_JUDGE_THRESHOLD, RubricKeys
+
 
 @dataclass
 class Rubric:
@@ -26,7 +28,7 @@ class Rubric:
     max_chars: int = 0
     case_sensitive: bool = False
     judge_prompt: str = ""
-    judge_threshold: int = 4
+    judge_threshold: int = DEFAULT_JUDGE_THRESHOLD
 
 
 @dataclass
@@ -42,22 +44,22 @@ def apply_rubric(output: str, r: Rubric) -> RubricResult:
     for needle in r.must_contain:
         probe = needle if r.case_sensitive else needle.lower()
         if probe not in haystack:
-            failures.append(f"must_contain: '{needle}'")
+            failures.append(f"{RubricKeys.MUST_CONTAIN}: '{needle}'")
 
     for needle in r.must_not_contain:
         probe = needle if r.case_sensitive else needle.lower()
         if probe in haystack:
-            failures.append(f"must_not_contain: '{needle}'")
+            failures.append(f"{RubricKeys.MUST_NOT_CONTAIN}: '{needle}'")
 
     flags = 0 if r.case_sensitive else re.IGNORECASE
     for pattern in r.regex_match:
         if not re.search(pattern, output, flags):
-            failures.append(f"regex_match: '{pattern}'")
+            failures.append(f"{RubricKeys.REGEX_MATCH}: '{pattern}'")
 
     if r.min_chars and len(output) < r.min_chars:
-        failures.append(f"min_chars: {len(output)} < {r.min_chars}")
+        failures.append(f"{RubricKeys.MIN_CHARS}: {len(output)} < {r.min_chars}")
     if r.max_chars and len(output) > r.max_chars:
-        failures.append(f"max_chars: {len(output)} > {r.max_chars}")
+        failures.append(f"{RubricKeys.MAX_CHARS}: {len(output)} > {r.max_chars}")
 
     return RubricResult(passed=not failures, failures=failures)
 
@@ -74,12 +76,12 @@ def load_rubric(path: str | Path) -> Rubric:
         data = tomllib.load(f)
 
     return Rubric(
-        must_contain=list(data.get("must_contain", [])),
-        must_not_contain=list(data.get("must_not_contain", [])),
-        regex_match=list(data.get("regex_match", [])),
-        min_chars=int(data.get("min_chars", 0)),
-        max_chars=int(data.get("max_chars", 0)),
-        case_sensitive=bool(data.get("case_sensitive", False)),
-        judge_prompt=str(data.get("judge_prompt", "")),
-        judge_threshold=int(data.get("judge_threshold", 4)),
+        must_contain=list(data.get(RubricKeys.MUST_CONTAIN, [])),
+        must_not_contain=list(data.get(RubricKeys.MUST_NOT_CONTAIN, [])),
+        regex_match=list(data.get(RubricKeys.REGEX_MATCH, [])),
+        min_chars=int(data.get(RubricKeys.MIN_CHARS, 0)),
+        max_chars=int(data.get(RubricKeys.MAX_CHARS, 0)),
+        case_sensitive=bool(data.get(RubricKeys.CASE_SENSITIVE, False)),
+        judge_prompt=str(data.get(RubricKeys.JUDGE_PROMPT, "")),
+        judge_threshold=int(data.get(RubricKeys.JUDGE_THRESHOLD, DEFAULT_JUDGE_THRESHOLD)),
     )

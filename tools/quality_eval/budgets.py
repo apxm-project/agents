@@ -13,6 +13,8 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from ._keys import BudgetKeys, MetricsKeys, SessionFiles
+
 
 @dataclass
 class Budget:
@@ -37,8 +39,8 @@ def load_budget(path: str | Path) -> Budget:
     with open(p, "rb") as f:
         data = tomllib.load(f)
     return Budget(
-        max_llm_calls=int(data.get("max_llm_calls", 0)),
-        max_total_tokens=int(data.get("max_total_tokens", 0)),
+        max_llm_calls=int(data.get(BudgetKeys.MAX_LLM_CALLS, 0)),
+        max_total_tokens=int(data.get(BudgetKeys.MAX_TOTAL_TOKENS, 0)),
     )
 
 
@@ -53,22 +55,22 @@ def enforce(session_dir: Path, budget: Budget) -> list[str]:
     if not budget.has_caps:
         return []
 
-    metrics_path = Path(session_dir) / "metrics.json"
+    metrics_path = Path(session_dir) / SessionFiles.METRICS
     if not metrics_path.exists():
-        return [f"budget: metrics.json missing at {metrics_path}"]
+        return [f"budget: {SessionFiles.METRICS} missing at {metrics_path}"]
 
     try:
         data = json.loads(metrics_path.read_text())
     except json.JSONDecodeError as e:
-        return [f"budget: metrics.json parse error: {e}"]
+        return [f"budget: {SessionFiles.METRICS} parse error: {e}"]
 
-    total = (data.get("token_accounting") or {}).get("total") or {}
-    calls = int(total.get("call_count", 0))
-    tokens = int(total.get("total_tokens", 0))
+    total = (data.get(MetricsKeys.TOKEN_ACCOUNTING) or {}).get(MetricsKeys.TOTAL) or {}
+    calls = int(total.get(MetricsKeys.CALL_COUNT, 0))
+    tokens = int(total.get(MetricsKeys.TOTAL_TOKENS, 0))
 
     failures: list[str] = []
     if budget.max_llm_calls and calls > budget.max_llm_calls:
-        failures.append(f"max_llm_calls: {calls} > {budget.max_llm_calls}")
+        failures.append(f"{BudgetKeys.MAX_LLM_CALLS}: {calls} > {budget.max_llm_calls}")
     if budget.max_total_tokens and tokens > budget.max_total_tokens:
-        failures.append(f"max_total_tokens: {tokens} > {budget.max_total_tokens}")
+        failures.append(f"{BudgetKeys.MAX_TOTAL_TOKENS}: {tokens} > {budget.max_total_tokens}")
     return failures

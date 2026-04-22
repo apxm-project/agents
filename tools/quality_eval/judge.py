@@ -22,6 +22,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from ._keys import DEFAULT_JUDGE_MODEL, DEFAULT_JUDGE_THRESHOLD, Cli
+
 
 @dataclass
 class JudgeVerdict:
@@ -31,13 +33,13 @@ class JudgeVerdict:
 
 
 class Judge(Protocol):
-    def score(self, output: str, prompt: str, threshold: int = 4) -> JudgeVerdict: ...
+    def score(self, output: str, prompt: str, threshold: int = DEFAULT_JUDGE_THRESHOLD) -> JudgeVerdict: ...
 
 
 class NullJudge:
     """Always passes. Use when no real backend is configured."""
 
-    def score(self, output: str, prompt: str, threshold: int = 4) -> JudgeVerdict:
+    def score(self, output: str, prompt: str, threshold: int = DEFAULT_JUDGE_THRESHOLD) -> JudgeVerdict:
         return JudgeVerdict(
             score=5,
             rationale="NullJudge: backend-free CI mode; rubric still applied",
@@ -62,7 +64,7 @@ class LLMJudge:
         "SCORE=<integer 0-5> RATIONALE=<one short sentence>"
     )
 
-    def __init__(self, backend: str, model: str = "claude-haiku-4-5-20251001"):
+    def __init__(self, backend: str, model: str = DEFAULT_JUDGE_MODEL):
         self.backend = backend
         self.model = model
 
@@ -81,16 +83,16 @@ class LLMJudge:
         )
         return graph
 
-    def score(self, output: str, prompt: str, threshold: int = 4) -> JudgeVerdict:
+    def score(self, output: str, prompt: str, threshold: int = DEFAULT_JUDGE_THRESHOLD) -> JudgeVerdict:
         full = self.JUDGE_TEMPLATE.format(prompt=prompt, output=output)
         with tempfile.TemporaryDirectory(prefix="apxm-judge-") as tmp:
             tmpdir = Path(tmp)
             graph = self._build_graph(full, tmpdir)
             session = tmpdir / "session"
             cmd = [
-                "dekk", "apxm", "execute", str(graph),
-                "-O", "2",
-                "--emit-session", str(session),
+                Cli.DEKK, Cli.APXM, Cli.EXECUTE, str(graph),
+                Cli.OPT_FLAG, "2",
+                Cli.EMIT_SESSION_FLAG, str(session),
             ]
             try:
                 subprocess.check_call(

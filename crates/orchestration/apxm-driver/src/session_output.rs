@@ -232,16 +232,17 @@ impl SessionOutputWriter {
         // form; for multi-return entries we concatenate (newline-separated) so
         // a rubric can still apply. Non-string returns serialise via JSON.
         let (final_node_id, final_output) = derive_final_output(exit_values, all_outputs);
+        use constants::session::results_keys as rk;
         let results = serde_json::json!({
-            "node_outputs": node_map,
-            "token_values": all_outputs.iter()
+            rk::NODE_OUTPUTS: node_map,
+            rk::TOKEN_VALUES: all_outputs.iter()
                 .map(|(k, v)| (k.to_string(), serde_json::to_value(v).unwrap_or_default()))
                 .collect::<serde_json::Map<String, serde_json::Value>>(),
-            "exit_values": exit_values.iter()
+            rk::EXIT_VALUES: exit_values.iter()
                 .map(|(k, v)| (k.to_string(), serde_json::to_value(v).unwrap_or_default()))
                 .collect::<serde_json::Map<String, serde_json::Value>>(),
-            "final_node_id": final_node_id,
-            "final_output": final_output,
+            rk::FINAL_NODE_ID: final_node_id,
+            rk::FINAL_OUTPUT: final_output,
         });
         json_pretty_write(
             &self.session_dir.join(constants::session::files::RESULTS),

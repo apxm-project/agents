@@ -12,6 +12,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from ._keys import ResultsKeys, SessionFiles
+
 
 def _stringify(value: Any) -> str:
     if isinstance(value, str):
@@ -36,19 +38,19 @@ def extract_final_output(session_dir: Path) -> str:
         3. `results.json::token_values`  (highest node id)
     Raises RuntimeError when none of the three yields anything.
     """
-    results_path = Path(session_dir) / "results.json"
+    results_path = Path(session_dir) / SessionFiles.RESULTS
     data = json.loads(results_path.read_text())
 
-    fo = data.get("final_output")
+    fo = data.get(ResultsKeys.FINAL_OUTPUT)
     if isinstance(fo, str) and fo:
         return fo
 
-    exits = data.get("exit_values") or {}
+    exits = data.get(ResultsKeys.EXIT_VALUES) or {}
     via_exit = _highest_id_value(exits)
     if via_exit:
         return via_exit
 
-    tokens = data.get("token_values") or {}
+    tokens = data.get(ResultsKeys.TOKEN_VALUES) or {}
     via_token = _highest_id_value(tokens)
     if via_token:
         return via_token
