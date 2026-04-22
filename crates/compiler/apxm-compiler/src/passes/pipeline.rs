@@ -61,6 +61,27 @@ pub fn is_mlir_pass(name: &str) -> bool {
     !RUST_ONLY_PASSES.contains(&name)
 }
 
+/// Insert an early CSE pass immediately before the first ASSIGN_PRIORITY in
+/// `passes`. Skipped when CSE is globally disabled (`no_cse_llm`) or when
+/// ASSIGN_PRIORITY isn't part of this pipeline level.
+///
+/// Why: `assign-priority` writes a per-op `downstream_nodes` ArrayAttr
+/// listing the IDs of consumer ops. Three structurally-identical ASKs end
+/// up with three *different* `downstream_nodes` arrays, so a downstream CSE
+/// pass no longer treats them as equal and skips deduplication. Running CSE
+/// once before assign-priority dedupes the structurally-identical ops while
+/// they still look the same, then assign-priority stamps the survivor with
+/// the union of consumers. Verified against `cse_stress.air` in the tier-2
+/// ablation harness.
+fn insert_early_cse(passes: &mut Vec<String>, no_cse_llm: bool) {
+    if no_cse_llm {
+        return;
+    }
+    if let Some(idx) = passes.iter().position(|p| p == ASSIGN_PRIORITY) {
+        passes.insert(idx, CSE.to_string());
+    }
+}
+
 pub fn build_pipeline(pm: &mut PassManager, level: OptimizationLevel) -> Result<()> {
     build_pipeline_with_config(pm, level, false, OptimizationTarget::Balanced, false)
 }
@@ -131,6 +152,7 @@ pub fn build_pass_list(
                 passes.insert(passes.len() - 3, DEAD_CONTEXT_ELIMINATION.to_string());
             }
 
+            insert_early_cse(&mut passes, no_cse_llm);
             if !no_cse_llm {
                 passes.push(CSE.to_string());
             }
@@ -225,6 +247,7 @@ pub fn build_pass_list(
                 }
             }
 
+            insert_early_cse(&mut passes, no_cse_llm);
             if !no_cse_llm {
                 passes.push(CSE.to_string());
             }
@@ -242,7 +265,7 @@ pub fn build_pass_list(
                 .map(|s| s.to_string()),
             );
 
-            let convergence_passes: Vec<String> = match target {
+            let mut convergence_passes: Vec<String> = match target {
                 OptimizationTarget::Tokens => vec![
                     DEAD_CONTEXT_ELIMINATION,
                     TEMPLATE_SPECIALIZATION,
@@ -292,6 +315,11 @@ pub fn build_pass_list(
                 .map(|s| s.to_string())
                 .collect(),
             };
+
+            // Each convergence iteration runs (CSE → ASSIGN_PRIORITY → ... → CSE
+            // → SYMBOL_DCE), so the early CSE is part of `convergence_passes` and
+            // replays every iteration alongside the trailing CSE.
+            insert_early_cse(&mut convergence_passes, no_cse_llm);
 
             for _ in 0..MAX_CONVERGENCE_ITERATIONS {
                 passes.extend(convergence_passes.clone());
@@ -484,6 +512,58 @@ mod tests {
                     "ASSIGN_PRIORITY must run after FUSE_ASK_OPS at {level:?}/{target:?}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn early_cse_runs_before_assign_priority() {
+        // Regression guard for the assign-priority/CSE ordering bug: assign-priority
+        // stamps each op with a `downstream_nodes` ArrayAttr listing consumer IDs,
+        // which makes structurally-identical ops look distinct to a later CSE pass.
+        // Inserting CSE *before* assign-priority lets dedup happen first; the
+        // surviving op then gets the union of consumers stamped onto it. Verified
+        // on cse_stress.air via the tier-2 ablation harness (disabling CSE
+        // regresses ops_after by +33%, was +0% before this fix).
+        for target in [
+            OptimizationTarget::Balanced,
+            OptimizationTarget::Latency,
+            OptimizationTarget::Cost,
+            OptimizationTarget::Tokens,
+        ] {
+            for level in [
+                OptimizationLevel::O1,
+                OptimizationLevel::O2,
+                OptimizationLevel::O3,
+            ] {
+                let passes = build_pass_list(level, false, target);
+                let priority_idx = passes
+                    .iter()
+                    .position(|p| p == ASSIGN_PRIORITY)
+                    .expect("ASSIGN_PRIORITY must appear at O1+");
+                let cse_before = passes[..priority_idx].iter().any(|p| p == CSE);
+                assert!(
+                    cse_before,
+                    "CSE must run at least once before ASSIGN_PRIORITY at {level:?}/{target:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn no_cse_llm_skips_early_cse() {
+        // The early CSE insertion must respect the `no_cse_llm` opt-out at
+        // every level. If the user disables CSE, neither the trailing CSE
+        // nor the early-CSE-before-assign-priority should appear.
+        for level in [
+            OptimizationLevel::O1,
+            OptimizationLevel::O2,
+            OptimizationLevel::O3,
+        ] {
+            let passes = build_pass_list(level, true, OptimizationTarget::Balanced);
+            assert!(
+                !passes.contains(&CSE.to_string()),
+                "no_cse_llm at {level:?} must elide every CSE (incl. the early one)"
+            );
         }
     }
 
