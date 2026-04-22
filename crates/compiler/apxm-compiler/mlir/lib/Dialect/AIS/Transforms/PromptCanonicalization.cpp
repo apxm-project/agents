@@ -33,6 +33,7 @@
 #include "ais/Dialect/AIS/Transforms/Passes.h"
 
 #include "ais/Common/Constants.h"
+#include "PassStatsHelpers.h"
 
 #include "ais/Dialect/AIS/IR/AISOps.h"
 #include "ais/Dialect/AIS/Support/AISDebug.h"
@@ -118,6 +119,7 @@ struct PromptCanonicalizationPass : impl::PromptCanonicalizationBase<PromptCanon
   void runOnOperation() override {
     APXM_AIS_DEBUG_HEADER(PromptCanonicalization);
     ModuleOp module = getOperation();
+    const std::size_t irSizeBefore = computeModuleIRTextLength(module);
 
     // Step 1: Collect all LLM operations and group by shared context
     // Use a map that compares Value pointers for grouping
@@ -192,6 +194,12 @@ struct PromptCanonicalizationPass : impl::PromptCanonicalizationBase<PromptCanon
     } else {
       APXM_AIS_DEBUG("No prompts required canonicalization");
     }
+
+    // Phase B Task 7: per-pass stats drained by apxm_module_drain_pass_stats.
+    const std::size_t irSizeAfter = computeModuleIRTextLength(module);
+    const int64_t irDelta = static_cast<int64_t>(irSizeAfter)
+                          - static_cast<int64_t>(irSizeBefore);
+    writePassStats(module, getArgument(), opsModified, irDelta);
 
     APXM_AIS_DEBUG_FOOTER(PromptCanonicalization);
   }

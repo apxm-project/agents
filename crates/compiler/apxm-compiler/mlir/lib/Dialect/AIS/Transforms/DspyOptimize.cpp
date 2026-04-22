@@ -12,6 +12,7 @@
 #include "ais/Dialect/AIS/Transforms/Passes.h"
 
 #include "ais/Common/Constants.h"
+#include "PassStatsHelpers.h"
 #include "ais/Dialect/AIS/IR/AISOps.h"
 #include "ais/Dialect/AIS/Support/AISDebug.h"
 
@@ -38,6 +39,23 @@ struct DspyOptimizePass : impl::DspyOptimizeBase<DspyOptimizePass> {
   void runOnOperation() override {
     APXM_AIS_DEBUG_HEADER(DspyOptimize);
     ModuleOp module = getOperation();
+
+    // Phase B Task 7: capture IR size at entry; fire writePassStats on every
+    // exit path via an RAII guard so early returns still publish stats.
+    unsigned optimized = 0;
+    const std::size_t irSizeBefore = computeModuleIRTextLength(module);
+    struct StatsGuard {
+      ModuleOp module;
+      llvm::StringRef passArg;
+      unsigned &counter;
+      std::size_t before;
+      ~StatsGuard() {
+        const std::size_t after = computeModuleIRTextLength(module);
+        const int64_t delta = static_cast<int64_t>(after)
+                            - static_cast<int64_t>(before);
+        writePassStats(module, passArg, counter, delta);
+      }
+    } statsGuard{module, getArgument(), optimized, irSizeBefore};
 
     // 1. Check for training data path (set by Rust layer as module attribute)
     auto trainingAttr =
@@ -212,7 +230,6 @@ struct DspyOptimizePass : impl::DspyOptimizeBase<DspyOptimizePass> {
     }
 
     // 10. Apply optimized templates
-    unsigned optimized = 0;
     OpBuilder builder(module.getContext());
 
     // Single template mode

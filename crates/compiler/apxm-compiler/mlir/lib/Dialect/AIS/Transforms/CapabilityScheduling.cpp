@@ -18,6 +18,7 @@
 #include "ais/Dialect/AIS/Transforms/Passes.h"
 
 #include "ais/Common/Constants.h"
+#include "PassStatsHelpers.h"
 
 #include "ais/Dialect/AIS/IR/AISAttributes.h"
 #include "ais/Dialect/AIS/IR/AISOps.h"
@@ -77,6 +78,7 @@ struct CapabilitySchedulingPass : impl::CapabilitySchedulingBase<CapabilitySched
     APXM_AIS_DEBUG_HEADER(CapabilityScheduling);
 
     ModuleOp module = getOperation();
+    const std::size_t irSizeBefore = computeModuleIRTextLength(module);
     struct Statistics {
       unsigned annotated = 0;
       unsigned invocations = 0;
@@ -137,6 +139,13 @@ struct CapabilitySchedulingPass : impl::CapabilitySchedulingBase<CapabilitySched
                   << " (inv=" << stats.invocations
                   << ", llm=" << stats.reasonings
                   << ", plan=" << stats.plans << ")");
+
+    // Phase B Task 7: per-pass stats drained by apxm_module_drain_pass_stats.
+    const std::size_t irSizeAfter = computeModuleIRTextLength(module);
+    const int64_t irDelta = static_cast<int64_t>(irSizeAfter)
+                          - static_cast<int64_t>(irSizeBefore);
+    writePassStats(module, getArgument(), stats.annotated, irDelta);
+
     APXM_AIS_DEBUG_FOOTER(CapabilityScheduling);
   }
 

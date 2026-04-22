@@ -34,6 +34,7 @@
 #include "ais/Dialect/AIS/Transforms/Passes.h"
 
 #include "ais/Common/Constants.h"
+#include "PassStatsHelpers.h"
 
 #include "ais/Dialect/AIS/IR/AISAttributes.h"
 #include "ais/Dialect/AIS/IR/AISOps.h"
@@ -171,6 +172,7 @@ struct CondenseOpsPass : impl::CondenseOpsBase<CondenseOpsPass> {
   void runOnOperation() override {
     APXM_AIS_DEBUG_HEADER(CondenseOps);
     ModuleOp module = getOperation();
+    const std::size_t irSizeBefore = computeModuleIRTextLength(module);
 
     struct Statistics {
       uint64_t qmemChains = 0;     // Number of QMEM chains condensed
@@ -279,6 +281,14 @@ struct CondenseOpsPass : impl::CondenseOpsBase<CondenseOpsPass> {
     APXM_AIS_INFO("Condensed " << stats.qmemChains << " QMEM chains + "
                   << stats.umemChains << " UMEM chains, removed "
                   << stats.opsCondensed << " redundant ops");
+
+    // Phase B Task 7: per-pass stats drained by apxm_module_drain_pass_stats.
+    // fired_count = total chains condensed (each chain is one rewrite).
+    const std::size_t irSizeAfter = computeModuleIRTextLength(module);
+    const int64_t irDelta = static_cast<int64_t>(irSizeAfter)
+                          - static_cast<int64_t>(irSizeBefore);
+    writePassStats(module, getArgument(), totalChains, irDelta);
+
     APXM_AIS_DEBUG_FOOTER(CondenseOps);
   }
 };

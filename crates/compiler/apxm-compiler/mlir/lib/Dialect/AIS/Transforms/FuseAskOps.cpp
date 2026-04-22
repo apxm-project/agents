@@ -33,6 +33,7 @@
 
 #include "ais/Common/Constants.h"
 #include "ais/Dialect/AIS/Transforms/Placeholders.h"
+#include "PassStatsHelpers.h"
 
 #include "ais/Dialect/AIS/IR/AISAttributes.h"
 #include "ais/Dialect/AIS/IR/AISOps.h"
@@ -245,6 +246,7 @@ struct FuseAskOpsPass : impl::FuseAskOpsBase<FuseAskOpsPass> {
   void runOnOperation() override {
     APXM_AIS_DEBUG_HEADER(FuseAskOps);
     ModuleOp module = getOperation();
+    const std::size_t irSizeBefore = computeModuleIRTextLength(module);
 
     struct Statistics {
       uint64_t scanned = 0;
@@ -477,6 +479,12 @@ struct FuseAskOpsPass : impl::FuseAskOpsBase<FuseAskOpsPass> {
     uint64_t totalFused = stats.fusedDirect + stats.fusedMergeChain;
     module->setAttr(apxm::constants::attrs::FUSED_PAIRS,
                     AISFusedPairsAttr::get(module.getContext(), totalFused));
+
+    // Phase B Task 7: per-pass stats drained by apxm_module_drain_pass_stats.
+    const std::size_t irSizeAfter = computeModuleIRTextLength(module);
+    const int64_t irDelta = static_cast<int64_t>(irSizeAfter)
+                          - static_cast<int64_t>(irSizeBefore);
+    writePassStats(module, getArgument(), totalFused, irDelta);
 
     APXM_AIS_INFO("Scanned " << stats.scanned << " ASK ops, fused "
                   << stats.fusedDirect << " direct + "

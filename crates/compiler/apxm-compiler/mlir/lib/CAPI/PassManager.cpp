@@ -200,8 +200,29 @@ int apxm_module_drain_pass_stats(ApxmModule* module,
       moduleOp->removeAttr(key);
     }
   };
-  drain(std::string(pass_name) + "_fired_count", fired_count_out);
-  drain(std::string(pass_name) + "_ir_size_delta", ir_size_delta_out);
+  // Attribute keys are dialect-prefixed (`ais.`) on the write side; see
+  // mlir/lib/Dialect/AIS/Transforms/PassStatsHelpers.cpp.
+  drain(std::string("ais.") + pass_name + "_fired_count", fired_count_out);
+  drain(std::string("ais.") + pass_name + "_ir_size_delta", ir_size_delta_out);
+  return 0;
+}
+
+int apxm_module_strip_all_pass_stats(ApxmModule* module) {
+  if (!module || !module->module) {
+    return 1;
+  }
+  mlir::ModuleOp moduleOp = *module->module;
+  llvm::SmallVector<llvm::StringRef, 16> toRemove;
+  for (mlir::NamedAttribute attr : moduleOp->getAttrs()) {
+    llvm::StringRef name = attr.getName().getValue();
+    if (!name.starts_with("ais.")) continue;
+    if (name.ends_with("_fired_count") || name.ends_with("_ir_size_delta")) {
+      toRemove.push_back(name);
+    }
+  }
+  for (llvm::StringRef name : toRemove) {
+    moduleOp->removeAttr(name);
+  }
   return 0;
 }
 

@@ -108,6 +108,17 @@ impl<'ctx> Pipeline<'ctx> {
         let pm = PassManager::from_config(self.context, &self.config)?;
         pm.run(&module)?;
 
+        // Strip per-pass stat attributes (`ais.<pass>_fired_count`,
+        // `ais.<pass>_ir_size_delta`) before verification + serialization so
+        // they don't bake into the artifact and break golden-roundtrip /
+        // idempotency checks. The diagnostics path drains them per-pass via
+        // `drain_pass_stats` instead.
+        // SAFETY: `module.as_ptr()` is a valid `*mut ApxmModule` for the
+        // lifetime of this borrow; the C side only mutates module attrs.
+        unsafe {
+            crate::ffi::apxm_module_strip_all_pass_stats(module.as_ptr());
+        }
+
         if self.config.verify {
             module.verify()?;
         }

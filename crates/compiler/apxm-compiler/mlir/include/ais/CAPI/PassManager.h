@@ -39,16 +39,25 @@ void apxm_pass_manager_add_symbol_dce(ApxmPassManager *pm);
 
 // Read and erase a pass's per-run stat attributes from a module.
 //
-// Looks up `<pass_name>_fired_count` and `<pass_name>_ir_size_delta` as
-// IntegerAttr on the module op. If either is present its value is written
-// to the corresponding out-parameter and the attribute is removed; otherwise
-// the out-parameter is set to 0.
+// Looks up `ais.<pass_name>_fired_count` and `ais.<pass_name>_ir_size_delta`
+// as IntegerAttr on the module op (the `ais.` prefix is required because
+// builtin.module rejects unprefixed attribute names). If either is present
+// its value is written to the corresponding out-parameter and the attribute
+// is removed; otherwise the out-parameter is set to 0.
 //
 // Returns 0 on success, non-zero if any pointer argument is null.
 int apxm_module_drain_pass_stats(ApxmModule *module,
                                  const char *pass_name,
                                  int64_t *fired_count_out,
                                  int64_t *ir_size_delta_out);
+
+// Remove every `ais.<pass>_fired_count` and `ais.<pass>_ir_size_delta`
+// attribute from the module op. Used by the non-diagnostic compile path
+// so that pass stats do not leak into the serialized artifact (where they
+// would break golden-roundtrip and idempotency checks).
+//
+// Returns 0 on success, non-zero if `module` is null.
+int apxm_module_strip_all_pass_stats(ApxmModule *module);
 
 // Walk every op in the module and sum the `ais.est_template_tokens`
 // IntegerAttr value (treating absent attrs as 0). Returns the total in
