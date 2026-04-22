@@ -1,0 +1,13 @@
+module {
+  func.func @dead_context_stress() -> !ais.token attributes {ais.entry} {
+    %a = ais.ask "Generate a one-line haiku about coding." : !ais.token
+    %b = ais.ask "Generate a one-line haiku about debugging." : !ais.token
+    %c = ais.ask "Generate a one-line haiku about deployment." : !ais.token
+    %d = ais.ask "Generate a one-line haiku about code review." : !ais.token
+    %pick = ais.think "Pick the most evocative phrase from: {one}" [%a, %b, %c, %d : !ais.token, !ais.token, !ais.token, !ais.token] {input_names = ["one", "two", "three", "four"]} : !ais.token
+    %compare = ais.think "Compare {x} with {y} in one sentence." [%a, %b, %c, %d : !ais.token, !ais.token, !ais.token, !ais.token] {input_names = ["x", "y", "z", "w"]} : !ais.token
+    %merged = ais.merge %pick, %compare : !ais.token, !ais.token -> !ais.token
+    ais.print "=== DEAD CONTEXT STRESS RESULT ===\n\nPicked: {r1}\nCompared: {r2}" [%pick, %compare : !ais.token, !ais.token] {input_names = ["r1", "r2"]}
+    func.return %merged : !ais.token
+  }
+}
