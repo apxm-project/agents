@@ -153,6 +153,9 @@ impl<'ctx> PassManager<'ctx> {
                 ops_before: current_ops,
                 ops_after,
                 ops_delta: ops_after as isize - current_ops as isize,
+                fired_count: 0,
+                ir_size_delta: 0,
+                tokens_saved: None,
             });
 
             current_ops = ops_after;
