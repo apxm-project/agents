@@ -35,6 +35,96 @@ fn json_pretty_write(path: &Path, value: &(impl serde::Serialize + ?Sized)) -> i
     fs::write(path, json)
 }
 
+/// Pick the entry function's terminal output for `results.json::final_output`.
+///
+/// Single exit → that value's string form (or JSON-stringified non-string).
+/// Multi-exit → newline-joined string forms in ascending node-id order so the
+/// concatenation is deterministic for rubric matching.
+/// No exit values → empty string + null id, matching the previous shape's
+/// implicit behavior of not surfacing a result.
+fn derive_final_output(
+    exit_values: &HashMap<u64, Value>,
+    fallback_outputs: &HashMap<u64, Value>,
+) -> (Option<u64>, String) {
+    let stringify = |v: &Value| -> String {
+        match v {
+            Value::String(s) => s.clone(),
+            other => serde_json::to_string(other).unwrap_or_default(),
+        }
+    };
+    if exit_values.is_empty() {
+        // Some graphs don't surface a typed exit value; fall back to the
+        // highest-numbered token output if anything was captured. Yields
+        // ("", None) when the run produced no values at all.
+        if let Some((id, v)) = fallback_outputs.iter().max_by_key(|(k, _)| **k) {
+            return (Some(*id), stringify(v));
+        }
+        return (None, String::new());
+    }
+    if exit_values.len() == 1 {
+        let (id, v) = exit_values.iter().next().unwrap();
+        return (Some(*id), stringify(v));
+    }
+    let mut ids: Vec<u64> = exit_values.keys().copied().collect();
+    ids.sort_unstable();
+    let joined = ids
+        .iter()
+        .map(|id| stringify(exit_values.get(id).expect("known key")))
+        .collect::<Vec<_>>()
+        .join("\n");
+    (None, joined)
+}
+
+#[cfg(test)]
+mod final_output_tests {
+    use super::*;
+
+    fn s(v: &str) -> Value {
+        Value::String(v.to_string())
+    }
+
+    #[test]
+    fn single_exit_returns_id_and_string() {
+        let exit: HashMap<u64, Value> = [(7u64, s("Paris"))].into_iter().collect();
+        let outs: HashMap<u64, Value> = HashMap::new();
+        let (id, out) = derive_final_output(&exit, &outs);
+        assert_eq!(id, Some(7));
+        assert_eq!(out, "Paris");
+    }
+
+    #[test]
+    fn multi_exit_concatenates_in_id_order() {
+        let exit: HashMap<u64, Value> = [(2u64, s("b")), (1u64, s("a"))].into_iter().collect();
+        let outs: HashMap<u64, Value> = HashMap::new();
+        let (id, out) = derive_final_output(&exit, &outs);
+        assert_eq!(id, None);
+        assert_eq!(out, "a\nb");
+    }
+
+    #[test]
+    fn empty_exit_falls_back_to_highest_output_id() {
+        let exit: HashMap<u64, Value> = HashMap::new();
+        let outs: HashMap<u64, Value> = [(3u64, s("low")), (9u64, s("hi"))].into_iter().collect();
+        let (id, out) = derive_final_output(&exit, &outs);
+        assert_eq!(id, Some(9));
+        assert_eq!(out, "hi");
+    }
+
+    #[test]
+    fn empty_everywhere_returns_empty_string() {
+        let (id, out) = derive_final_output(&HashMap::new(), &HashMap::new());
+        assert_eq!(id, None);
+        assert_eq!(out, "");
+    }
+
+    #[test]
+    fn non_string_value_serialises_via_json() {
+        let exit: HashMap<u64, Value> = [(5u64, Value::Bool(true))].into_iter().collect();
+        let (_, out) = derive_final_output(&exit, &HashMap::new());
+        assert_eq!(out, "true");
+    }
+}
+
 /// Simple .air emitter for session output (avoids circular dependency on Compiler).
 fn emit_air_simple(module: &AirModule) -> String {
     let mut out = String::new();
@@ -136,6 +226,12 @@ impl SessionOutputWriter {
         node_map: &HashMap<u64, Vec<u64>>,
         exit_values: &HashMap<u64, Value>,
     ) -> io::Result<()> {
+        // Phase C contract: tier-3 quality_eval reads `final_output` directly,
+        // without having to parse `exit_values` and follow `node_map`. When the
+        // entry function returns one value we surface its node id + string
+        // form; for multi-return entries we concatenate (newline-separated) so
+        // a rubric can still apply. Non-string returns serialise via JSON.
+        let (final_node_id, final_output) = derive_final_output(exit_values, all_outputs);
         let results = serde_json::json!({
             "node_outputs": node_map,
             "token_values": all_outputs.iter()
@@ -144,6 +240,8 @@ impl SessionOutputWriter {
             "exit_values": exit_values.iter()
                 .map(|(k, v)| (k.to_string(), serde_json::to_value(v).unwrap_or_default()))
                 .collect::<serde_json::Map<String, serde_json::Value>>(),
+            "final_node_id": final_node_id,
+            "final_output": final_output,
         });
         json_pretty_write(
             &self.session_dir.join(constants::session::files::RESULTS),
