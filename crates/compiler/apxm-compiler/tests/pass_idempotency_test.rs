@@ -41,10 +41,7 @@ fn build_shared_prefix_fanout() -> AirModule {
                 id: 1,
                 name: "preface".to_string(),
                 op: AISOperationType::ConstStr,
-                attributes: HashMap::from([(
-                    "value".into(),
-                    Value::String("preface".into()),
-                )]),
+                attributes: HashMap::from([("value".into(), Value::String("preface".into()))]),
             },
             AirNode {
                 id: 2,
@@ -66,9 +63,21 @@ fn build_shared_prefix_fanout() -> AirModule {
             },
         ],
         edges: vec![
-            AirEdge { from: 1, to: 2, dependency: DependencyType::Data },
-            AirEdge { from: 1, to: 3, dependency: DependencyType::Data },
-            AirEdge { from: 1, to: 4, dependency: DependencyType::Data },
+            AirEdge {
+                from: 1,
+                to: 2,
+                dependency: DependencyType::Data,
+            },
+            AirEdge {
+                from: 1,
+                to: 3,
+                dependency: DependencyType::Data,
+            },
+            AirEdge {
+                from: 1,
+                to: 4,
+                dependency: DependencyType::Data,
+            },
         ],
         parameters: vec![],
         metadata: HashMap::new(),

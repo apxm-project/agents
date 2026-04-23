@@ -15,21 +15,13 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::air_builder::AirModule;
-use apxm_core::types::Value;
+use apxm_core::{constants::graph::attrs as graph_attrs, types::Value};
 
 /// Error-rate threshold above which a retry attribute is injected.
 const ERROR_RATE_RETRY_THRESHOLD: f64 = 0.05;
 
 /// Default retry count injected for high-error-rate nodes.
 const DEFAULT_RETRY_COUNT: i64 = 2;
-
-// Attribute keys used by the profile pass.
-const ATTR_PROFILE_LATENCY_MS: &str = "__profile_latency_ms";
-const ATTR_PROFILE_P99_LATENCY_MS: &str = "__profile_p99_latency_ms";
-const ATTR_PROFILE_ERROR_RATE: &str = "__profile_error_rate";
-const ATTR_PROFILE_AVG_TOKENS: &str = "__profile_avg_tokens";
-const ATTR_RETRY_COUNT: &str = "retry_count";
-const ATTR_PROFILE_TOKEN_WARNING: &str = "__profile_token_warning";
 
 /// Runtime execution profile collected from previous runs.
 ///
@@ -141,13 +133,13 @@ impl ExecutionProfile {
             if let Some(stats) = self.node_stats.get(&node.name) {
                 // Latency annotations
                 node.attributes.insert(
-                    ATTR_PROFILE_LATENCY_MS.to_string(),
+                    graph_attrs::PROFILE_LATENCY_MS.to_string(),
                     Value::Number(apxm_core::types::Number::Integer(
                         stats.avg_latency_ms as i64,
                     )),
                 );
                 node.attributes.insert(
-                    ATTR_PROFILE_P99_LATENCY_MS.to_string(),
+                    graph_attrs::PROFILE_P99_LATENCY_MS.to_string(),
                     Value::Number(apxm_core::types::Number::Integer(
                         stats.p99_latency_ms as i64,
                     )),
@@ -155,22 +147,22 @@ impl ExecutionProfile {
 
                 // Error-rate annotation
                 node.attributes.insert(
-                    ATTR_PROFILE_ERROR_RATE.to_string(),
+                    graph_attrs::PROFILE_ERROR_RATE.to_string(),
                     Value::Number(apxm_core::types::Number::Float(stats.error_rate)),
                 );
 
                 // Token usage annotation
                 node.attributes.insert(
-                    ATTR_PROFILE_AVG_TOKENS.to_string(),
+                    graph_attrs::PROFILE_AVG_TOKENS.to_string(),
                     Value::Number(apxm_core::types::Number::Integer(stats.avg_tokens as i64)),
                 );
 
                 // Inject retry_count for high-error-rate nodes
                 if stats.error_rate > ERROR_RATE_RETRY_THRESHOLD
-                    && !node.attributes.contains_key(ATTR_RETRY_COUNT)
+                    && !node.attributes.contains_key(graph_attrs::RETRY_COUNT)
                 {
                     node.attributes.insert(
-                        ATTR_RETRY_COUNT.to_string(),
+                        graph_attrs::RETRY_COUNT.to_string(),
                         Value::Number(apxm_core::types::Number::Integer(DEFAULT_RETRY_COUNT)),
                     );
                 }
@@ -179,7 +171,7 @@ impl ExecutionProfile {
                 if let Some(budget) = token_budget {
                     if stats.avg_tokens > budget {
                         node.attributes.insert(
-                            ATTR_PROFILE_TOKEN_WARNING.to_string(),
+                            graph_attrs::PROFILE_TOKEN_WARNING.to_string(),
                             Value::String(format!(
                                 "avg_tokens ({}) exceeds budget ({})",
                                 stats.avg_tokens, budget
@@ -230,7 +222,6 @@ fn weighted_avg_f64(a: f64, w_a: u64, b: f64, w_b: u64) -> f64 {
 mod tests {
     use super::*;
     use crate::air_builder::{AirEdge, AirNode};
-    use apxm_ais::attrs as graph_attrs;
     use apxm_core::types::AISOperationType;
     use std::collections::HashMap;
 

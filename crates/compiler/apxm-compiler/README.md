@@ -1,6 +1,6 @@
 # apxm-compiler
 
-MLIR-based compiler for the Agent Instruction Set (AIS) dialect.
+MLIR-based compiler for the APXM graph contract and AIS MLIR dialect.
 
 ## Overview
 
@@ -70,8 +70,8 @@ The AIS MLIR dialect is defined in `mlir/include/ais/Dialect/AIS/IR/`:
 | `AISTypes.td` | Type system (`!ais.token`, `!ais.handle`) |
 | `AISAttributes.td` | Operation attributes |
 
-TableGen is generated from Core definitions:
-```
+TableGen is generated from the AIS authoring/codegen source:
+``` 
 apxm-ais/src/operations/definitions.rs  →  tablegen.rs  →  AISOps.td
 apxm-ais/src/attrs.rs                   →                  AISAttributes.td
 ```
@@ -117,8 +117,8 @@ Optimized MLIR  →  apxm_codegen_emit_artifact() [FFI]  →  ExecutionDag  → 
 
 | Crate | Purpose |
 |-------|---------|
-| apxm-ais | Operation definitions and TableGen source |
-| apxm-core | Error types, compiler options, shared constants |
+| apxm-ais | Build-time authoring/codegen source for TableGen and pass descriptors |
+| apxm-core | Shared downstream graph contract, error types, compiler options, constants |
 | apxm-artifact | Artifact serialization |
 
 ## Requirements

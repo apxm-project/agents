@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import json
 from typing import TYPE_CHECKING, Any, Callable
 
 from .execution import CompiledFlow, ExecutionMode
@@ -161,8 +162,14 @@ class _CompiledFunction:
                     if node.op in LLM_OPS and gen_keys.BACKEND not in node.attributes:
                         node.attributes[gen_keys.BACKEND] = self._default_backend
 
-        # Capture the AIR text (with sidecar) before losing the recorder.
-        air_text = recorder.to_air()
+        # Emit AIR from the stamped graph so subprocess fallback preserves
+        # default backend/model/provider attributes. Re-attach the python tool
+        # sidecar comment that GraphRecorder normally prepends.
+        air_text = graph.to_air()
+        python_tools = getattr(recorder, "_python_tools", None)
+        if python_tools:
+            manifest = json.dumps(python_tools, separators=(",", ":"))
+            air_text = f"; __apxm_python_tools__ {manifest}\n{air_text}"
 
         return graph, air_text
 

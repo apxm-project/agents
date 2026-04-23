@@ -902,14 +902,15 @@ def AIS_RegisterCapabilityOp : AIS_Op<"register_capability"> {
 }
 
 def AIS_AutonomousOp : AIS_Op<"autonomous"> {
-  let summary = "Switch a sub-graph region to model-driven execution";
+  let summary = "Run a goal-directed autonomous loop";
   let arguments = (ins
-    OptionalAttr<StrAttr>:$strategy,
-    OptionalAttr<StrAttr>:$template_str
+    StrAttr:$prompt,
+    OptionalAttr<I64Attr>:$max_iterations,
+    Variadic<AIS_TokenType>:$inputs
   );
   let results = (outs AIS_TokenType:$result);
   let assemblyFormat = [{
-    attr-dict `:` type($result)
+    $prompt (`(` $inputs^ `:` type($inputs) `)`)? attr-dict `:` type($result)
   }];
   let hasVerifier = 1;
 }

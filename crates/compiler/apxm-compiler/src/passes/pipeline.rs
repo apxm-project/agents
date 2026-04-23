@@ -13,14 +13,16 @@ use super::PassManager;
 use super::bind_tool_handlers::BIND_TOOL_HANDLERS_PASS_NAME;
 use super::tool_binding::TOOL_BINDING_PASS_NAME;
 use super::vllm_hints::VLLM_HINTS_PASS_NAME;
-use apxm_ais::passes;
 use apxm_core::error::compiler::Result;
+use apxm_core::types::compiler::metadata as passes;
 use apxm_core::types::{OptimizationLevel, OptimizationTarget};
 
 /// Maximum iterations for O3 fixed-point convergence.
 const MAX_CONVERGENCE_ITERATIONS: usize = 10;
 
-// Short aliases for pass names — single source of truth from apxm_ais::passes.
+// Short aliases for pass names — downstream compiler consumers read these
+// through apxm_core::types::compiler::metadata, which re-exports the canonical
+// AIS authoring definitions.
 const NORMALIZE: &str = passes::NORMALIZE.name;
 const BUILD_PROMPT: &str = passes::BUILD_PROMPT.name;
 const DSPY_OPTIMIZE: &str = passes::DSPY_OPTIMIZE.name;
@@ -675,8 +677,7 @@ mod tests {
     #[test]
     fn unconsumed_value_warning_added_when_requested() {
         use OptimizationTarget::Balanced;
-        let passes =
-            build_pass_list_with_warn(OptimizationLevel::O1, false, Balanced, true);
+        let passes = build_pass_list_with_warn(OptimizationLevel::O1, false, Balanced, true);
         assert!(passes.iter().any(|p| p == UNCONSUMED_VALUE_WARNING));
     }
 
@@ -724,9 +725,7 @@ mod tests {
                     .iter()
                     .position(|p| p == BIND_TOOL_HANDLERS)
                     .unwrap_or_else(|| {
-                        panic!(
-                            "BIND_TOOL_HANDLERS missing from pipeline at {level:?}/{target:?}"
-                        )
+                        panic!("BIND_TOOL_HANDLERS missing from pipeline at {level:?}/{target:?}")
                     });
                 assert!(
                     bth_idx > tb_idx,

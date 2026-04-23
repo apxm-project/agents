@@ -1,4 +1,3 @@
-use apxm_ais::attrs as ais_attrs;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::types::execution::ExecutionDag;
 use apxm_core::types::{AISOperationType, Number, Value};
@@ -37,15 +36,15 @@ fn is_cl100k_model(model: &str) -> bool {
 pub fn annotate_token_estimates(module: &mut AirModule) {
     let mlir_key = format!(
         "{}{}",
-        ais_attrs::MLIR_ATTR_PREFIX,
-        ais_attrs::EST_TEMPLATE_TOKENS
+        graph_attrs::MLIR_ATTR_PREFIX,
+        graph_attrs::EST_TEMPLATE_TOKENS
     );
     for node in &mut module.nodes {
         match node.op {
             AISOperationType::Ask | AISOperationType::Think | AISOperationType::Reason => {}
             _ => continue,
         }
-        let template = match node.attributes.get(ais_attrs::TEMPLATE_STR) {
+        let template = match node.attributes.get(graph_attrs::TEMPLATE_STR) {
             Some(Value::String(s)) => s.clone(),
             _ => continue,
         };
@@ -55,7 +54,7 @@ pub fn annotate_token_estimates(module: &mut AirModule) {
         }
         let model = node
             .attributes
-            .get(ais_attrs::MODEL)
+            .get(graph_attrs::MODEL)
             .and_then(|v| v.as_str());
         let tok = tokenizer_for_model(model);
         let count = tok.count(&static_text);
@@ -80,9 +79,7 @@ fn strip_placeholders(template: &str) -> String {
         if bytes[i] == b'{' {
             let start = i + 1;
             let mut end = start;
-            while end < bytes.len()
-                && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_')
-            {
+            while end < bytes.len() && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_') {
                 end += 1;
             }
             if end > start && end < bytes.len() && bytes[end] == b'}' {
@@ -162,7 +159,7 @@ mod tests {
     fn make_llm_node(id: u64, op: AISOperationType, template: &str) -> AirNode {
         let mut attributes = HashMap::new();
         attributes.insert(
-            ais_attrs::TEMPLATE_STR.to_string(),
+            graph_attrs::TEMPLATE_STR.to_string(),
             Value::String(template.to_string()),
         );
         AirNode {
@@ -186,8 +183,8 @@ mod tests {
     fn get_est_tokens(node: &AirNode) -> Option<i64> {
         let key = format!(
             "{}{}",
-            ais_attrs::MLIR_ATTR_PREFIX,
-            ais_attrs::EST_TEMPLATE_TOKENS
+            graph_attrs::MLIR_ATTR_PREFIX,
+            graph_attrs::EST_TEMPLATE_TOKENS
         );
         match node.attributes.get(&key) {
             Some(Value::Number(Number::Integer(n))) => Some(*n),

@@ -91,9 +91,10 @@ class TestEmitterFunctions:
 
     def test_emit_autonomous_primary(self):
         result = emit_autonomous(
-            "%auto", {"region": "exploration"}, []
+            "%auto", {"prompt": "Investigate the issue", "max_iterations": 3}, []
         )
-        assert '"exploration"' in result
+        assert '"Investigate the issue"' in result
+        assert 'max_iterations = 3 : i64' in result
 
     def test_emit_checkpoint_primary(self):
         result = emit_checkpoint(
@@ -166,10 +167,15 @@ class TestGraphToAirRoundTrip:
 
     def test_autonomous_air(self):
         g = GraphRecorder("auto_test")
-        g.autonomous(name="auto_region", region="exploration")
+        g.autonomous(
+            name="auto_region",
+            prompt="Investigate the issue",
+            max_iterations=3,
+        )
         air = g.to_air()
 
-        assert 'ais.autonomous "exploration"' in air
+        assert 'ais.autonomous "Investigate the issue"' in air
+        assert 'max_iterations = 3 : i64' in air
 
     def test_checkpoint_air(self):
         g = GraphRecorder("ckpt_test")

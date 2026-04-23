@@ -750,22 +750,13 @@ fn emit_node(
             }))
         }
         AISOperationType::Handoff => {
-            let from = get_string_attr(
-                &node.attributes,
-                &[graph_attrs::HANDOFF_FROM],
-            )
-            .unwrap_or_else(|| "source".to_string());
-            let to = get_string_attr(
-                &node.attributes,
-                &[graph_attrs::HANDOFF_TO],
-            )
-            .unwrap_or_else(|| "target".to_string());
+            let from = get_string_attr(&node.attributes, &[graph_attrs::HANDOFF_FROM])
+                .unwrap_or_else(|| "source".to_string());
+            let to = get_string_attr(&node.attributes, &[graph_attrs::HANDOFF_TO])
+                .unwrap_or_else(|| "target".to_string());
             let attrs = extra_attr_dict(
                 &node.attributes,
-                &[
-                    graph_attrs::HANDOFF_FROM,
-                    graph_attrs::HANDOFF_TO,
-                ],
+                &[graph_attrs::HANDOFF_FROM, graph_attrs::HANDOFF_TO],
             );
             let result = format!("%n{}", node.id);
             let context = format_context(&inputs, '(', ')');
@@ -1007,9 +998,17 @@ fn emit_node(
             state,
             node,
             &inputs,
-            &[graph_attrs::STRATEGY, graph_attrs::TEMPLATE_STR],
-            "default",
-            &[graph_attrs::STRATEGY, graph_attrs::TEMPLATE_STR],
+            &[
+                graph_attrs::PROMPT,
+                graph_attrs::TEMPLATE_STR,
+                graph_attrs::REGION,
+            ],
+            "",
+            &[
+                graph_attrs::PROMPT,
+                graph_attrs::TEMPLATE_STR,
+                graph_attrs::REGION,
+            ],
             Some(('(', ')')),
         ),
         AISOperationType::Checkpoint => emit_simple_op(
