@@ -1,5 +1,5 @@
-use axum::extract::{Path, State};
 use axum::Json;
+use axum::extract::{Path, State};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use tracing::info;
@@ -130,8 +130,8 @@ pub(crate) async fn deregister_agent(
 // ─── A2A AgentCard ───────────────────────────────────────────────────────────
 
 pub(crate) async fn agent_card(State(state): State<AppState>) -> Json<JsonValue> {
-    let base_url = std::env::var("APXM_PUBLIC_URL")
-        .unwrap_or_else(|_| crate::DEFAULT_PUBLIC_URL.to_string());
+    let base_url =
+        std::env::var("APXM_PUBLIC_URL").unwrap_or_else(|_| crate::DEFAULT_PUBLIC_URL.to_string());
 
     let skills: Vec<JsonValue> = state
         .agent_registry

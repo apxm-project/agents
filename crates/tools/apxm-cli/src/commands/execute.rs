@@ -1,8 +1,11 @@
 //! Execute and run commands.
 
+#[cfg(feature = "driver")]
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+#[cfg(feature = "driver")]
+use anyhow::Context;
+use anyhow::Result;
 #[cfg(feature = "driver")]
 use apxm_driver::{Linker, LinkerConfig};
 
@@ -238,12 +241,12 @@ pub async fn execute_command(
     if apxm_config.backends.is_empty() && std::env::var("APXM_MOCK_BACKEND").is_err() {
         anyhow::bail!(
             "No backends configured.\n\n\
-             Register at least one LLM backend:\n\n\
+             Register a backend before executing this graph:\n\n\
              \x20 dekk apxm backend add openai --type cloud --protocol openai\n\
-             \x20 dekk apxm backend add anthropic --type cloud --protocol anthropic\n\
-             \x20 dekk apxm backend add ollama --protocol ollama\n\n\
+             \x20 dekk apxm backend add ollama --protocol ollama\n\
+             \x20 dekk apxm backend add vllm-fork --type onprem --protocol vllm --endpoint http://127.0.0.1:8916/v1\n\n\
              Verify with: dekk apxm backend list\n\
-             Full guide:  docs/getting-started.md"
+             If the backend requires authentication, provide it on the backend registration."
         );
     }
 
@@ -435,7 +438,7 @@ pub async fn execute_command(
         }
     }
 
-    // Print workflow outputs
+    // Print graph outputs
     if result.execution.results.is_empty() {
         eprintln!("Warning: No output values");
     } else {
@@ -494,12 +497,12 @@ pub async fn run_command(
     if apxm_config.backends.is_empty() && std::env::var("APXM_MOCK_BACKEND").is_err() {
         anyhow::bail!(
             "No backends configured.\n\n\
-             Register at least one LLM backend:\n\n\
+             Register a backend before running this artifact:\n\n\
              \x20 dekk apxm backend add openai --type cloud --protocol openai\n\
-             \x20 dekk apxm backend add anthropic --type cloud --protocol anthropic\n\
-             \x20 dekk apxm backend add ollama --protocol ollama\n\n\
+             \x20 dekk apxm backend add ollama --protocol ollama\n\
+             \x20 dekk apxm backend add vllm-fork --type onprem --protocol vllm --endpoint http://127.0.0.1:8916/v1\n\n\
              Verify with: dekk apxm backend list\n\
-             Full guide:  docs/getting-started.md"
+             If the backend requires authentication, provide it on the backend registration."
         );
     }
 

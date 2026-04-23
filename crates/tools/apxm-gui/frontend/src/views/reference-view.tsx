@@ -445,6 +445,8 @@ const EVENT_KINDS = [
   { kind: "operation_start", desc: "Fired when a node begins execution" },
   { kind: "operation_complete", desc: "Fired when a node finishes successfully" },
   { kind: "operation_error", desc: "Fired when a node encounters an error" },
+  { kind: "scheduler_decision", desc: "Scheduler emits node pick rationale and ready-queue delay" },
+  { kind: "head_of_line_block", desc: "Observed ready-queue wait attributed to a higher-priority running node" },
   { kind: "token", desc: "Individual LLM output token during streaming" },
   { kind: "session_start", desc: "Session initialized with graph metadata" },
   { kind: "session_complete", desc: "All nodes finished, session closing" },

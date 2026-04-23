@@ -11,8 +11,9 @@ import {
 import { eventSummary } from "@/lib/event-utils";
 import { CtxTab } from "@/lib/constants";
 import type { TraceEvent } from "@/types/events";
+import { TimelineView } from "./timeline-view";
 
-type PanelTab = "events" | "nodes" | "detail";
+type PanelTab = "events" | "timeline" | "nodes" | "detail";
 
 export function StudioLivePanel() {
   const liveActive = useAppStore((s) => s.liveActive);
@@ -33,6 +34,7 @@ export function StudioLivePanel() {
   const [detailNodeId, setDetailNodeId] = useState<number | null>(null);
   const [nodeDetail, setNodeDetail] = useState<Record<string, unknown> | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
+  const [timelineNowMs, setTimelineNowMs] = useState(() => Date.now());
   const eventEndRef = useRef<HTMLDivElement>(null);
 
   const isLive = liveActive && inlineRun;
@@ -55,6 +57,20 @@ export function StudioLivePanel() {
     }
     return map;
   }, [graphData]);
+
+  useEffect(() => {
+    setTimelineNowMs(Date.now());
+  }, [liveEvents.length, isFinished]);
+
+  useEffect(() => {
+    if (!isLive) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      setTimelineNowMs(Date.now());
+    }, 250);
+    return () => window.clearInterval(timer);
+  }, [isLive]);
 
   // Progress stats
   const { completed, running, failed, total } = useMemo(() => {
@@ -180,6 +196,11 @@ export function StudioLivePanel() {
               Events ({liveEvents.length})
             </button>
             <button type="button"
+              className={`slp__tab${tab === "timeline" ? " slp__tab--active" : ""}`}
+              onClick={() => setTab("timeline")}>
+              Timeline
+            </button>
+            <button type="button"
               className={`slp__tab${tab === "nodes" ? " slp__tab--active" : ""}`}
               onClick={() => setTab("nodes")}>
               Nodes ({Object.keys(liveNodeStates).length})
@@ -213,6 +234,16 @@ export function StudioLivePanel() {
               )}
               <div ref={eventEndRef} />
             </div>
+          )}
+
+          {tab === "timeline" && (
+            <TimelineView
+              events={liveEvents}
+              liveNodeStates={liveNodeStates}
+              nodeNames={nodeNames}
+              nowMs={timelineNowMs}
+              onNodeClick={handleNodeClick}
+            />
           )}
 
           {/* Nodes tab */}

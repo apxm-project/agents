@@ -3,7 +3,7 @@
 //! Extracts nodes and SSA data-flow edges from single-block AIS IR so the GUI
 //! can visualise `.air` files without requiring a full MLIR toolchain.
 
-use apxm_ais::{AISOperationType, get_operation_spec};
+use apxm_core::types::{AISOperationType, get_operation_spec};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
@@ -260,7 +260,7 @@ fn extract_agent_role(name: &str) -> String {
     name.to_string()
 }
 
-/// Resolve MLIR mnemonic to the PascalCase display name from `apxm-ais`.
+/// Resolve MLIR mnemonic to the PascalCase display name from the shared core operation catalog.
 fn mnemonic_to_op_type(mnemonic: &str) -> String {
     match mnemonic.parse::<AISOperationType>() {
         Ok(op) => get_operation_spec(op).name.to_string(),

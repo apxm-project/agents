@@ -4,9 +4,9 @@ use apxm_compiler::{AirEdge, AirModule, AirNode};
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::types::values::Value;
 use apxm_core::types::{AISOperationType, DependencyType};
+use axum::Json;
 use axum::extract::{Path, State};
 use axum::response::IntoResponse;
-use axum::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 

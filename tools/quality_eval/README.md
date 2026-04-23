@@ -28,7 +28,7 @@ dekk apxm quality-eval -- --fixture qa_factual --samples 3 --threshold 2
 # Run with the LLM judge (requires backend configured in ~/.apxm/config.toml):
 dekk apxm quality-eval -- --all --judge llm
 
-# Direct invocation (no Rust wrapper):
+# Internal fallback when debugging the harness wrapper itself:
 PYTHONPATH=tools python -m quality_eval --all
 ```
 
@@ -121,6 +121,6 @@ live in `_keys.py::RubricKeys` / `BudgetKeys`.
 The harness is run locally only (no CI gate is shipped in this repo):
 
 - Offline check (no backend required):
-  `python -m pytest tools/quality_eval/tests/ -q`
+  `dekk apxm test-quality-eval`
 - Real-backend sweep (backend configured in `~/.apxm/config.toml`):
   `dekk apxm quality-eval -- --all --opt 2 --judge none --samples 3 --threshold 2`

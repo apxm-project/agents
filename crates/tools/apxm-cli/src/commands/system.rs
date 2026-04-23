@@ -4,6 +4,7 @@ use std::env;
 use std::path::PathBuf;
 
 use anyhow::Result;
+use apxm_compiler::Context as CompilerContext;
 use apxm_core::utils::build::MlirEnvReport;
 #[cfg(feature = "driver")]
 use apxm_driver::ApXmConfig;
@@ -11,7 +12,7 @@ use apxm_driver::ApXmConfig;
 #[cfg(feature = "driver")]
 use super::implementations::load_config;
 use super::implementations::{
-    Status, print_section_header, print_status_line, print_subsection_header, print_hint,
+    Status, print_hint, print_section_header, print_status_line, print_subsection_header,
 };
 
 pub fn activate_command(shell: &str) -> Result<()> {
@@ -92,30 +93,20 @@ pub fn install_command() -> Result<()> {
 
     print_status_line("env", Status::Ok, "ready");
 
-    // Provider auto-detection after env setup
+    // Backend registration guidance after env setup
     println!();
-    print_subsection_header("Provider Detection");
-    let detected: Vec<&str> = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY"]
-        .iter()
-        .filter(|k| env::var(k).is_ok())
-        .copied()
-        .collect();
-
-    if !detected.is_empty() {
-        for key in &detected {
-            print_status_line(key, Status::Ok, "detected");
-        }
-        print_hint("Run `apxm doctor` to auto-configure providers.");
-    } else {
-        print_hint(
-            "No API keys detected. Set ANTHROPIC_API_KEY or OPENAI_API_KEY, then run `apxm doctor`.",
-        );
-    }
+    print_subsection_header("Backend Registration");
+    print_hint(
+        "Register a backend explicitly with `dekk apxm backend add <name> --type <cloud|onprem|local> --protocol <protocol>`.",
+    );
+    print_hint(
+        "If the backend needs authentication, attach it during backend registration instead of relying on ad hoc shell hints.",
+    );
 
     println!();
     print_subsection_header("Next Steps");
-    println!("conda activate apxm");
-    println!("eval \"$(cargo run -p apxm-cli -- activate)\"");
+    println!("dekk apxm backend add <name> --type <cloud|onprem|local> --protocol <protocol>");
+    println!("dekk apxm doctor");
 
     Ok(())
 }
@@ -163,15 +154,20 @@ max_parallel = 4
     Ok(())
 }
 
-
 pub fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> {
     let report = MlirEnvReport::detect();
+    report.apply_env();
     let mlir_available = report.is_ready();
     let mlir_prefix = report
         .resolved_prefix
         .as_ref()
         .map(|p| p.display().to_string());
     let mlir_version = report.llvm_version.clone();
+    let compiler_probe = CompilerContext::new()
+        .map(|_| ())
+        .map_err(|err| err.to_string());
+    let compiler_ready = compiler_probe.is_ok();
+    let compiler_error = compiler_probe.err();
 
     // --- Backends ---
     let (backend_count, backend_names): (usize, Vec<String>) =
@@ -224,6 +220,8 @@ pub fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> 
                 "available": mlir_available,
                 "prefix": mlir_prefix,
                 "version": mlir_version,
+                "compiler_ready": compiler_ready,
+                "compiler_error": compiler_error,
             },
             "backends": {
                 "count": backend_count,
@@ -264,6 +262,22 @@ pub fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> 
         print_status_line("MLIR toolchain", Status::Error, "missing");
     }
 
+    if compiler_ready {
+        print_status_line(
+            "APXM compiler",
+            Status::Ok,
+            "context initialization succeeded",
+        );
+    } else {
+        let detail = compiler_error
+            .as_deref()
+            .unwrap_or("context initialization failed");
+        print_status_line("APXM compiler", Status::Error, detail);
+        print_hint(
+            "If MLIR is present but the compiler is unavailable, rebuild after the real toolchain is visible so apxm-compiler does not keep stub bindings.",
+        );
+    }
+
     // 2. Backends
     print_section_header("Backends");
     if backend_count > 0 {
@@ -278,7 +292,9 @@ pub fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> 
         );
     } else {
         print_status_line("Backends", Status::Warning, "none registered");
-        print_hint("Run `apxm backend add` to configure a backend.");
+        print_hint(
+            "Register a backend first with `dekk apxm backend add <name> --type <cloud|onprem|local> --protocol <protocol>`.",
+        );
     }
 
     // 3. Environment Variables
@@ -294,7 +310,9 @@ pub fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> 
         }
     }
     if env_mlir_dir.is_none() || env_llvm_dir.is_none() {
-        print_hint("Run `eval $(apxm activate)` to set MLIR/LLVM environment variables.");
+        print_hint(
+            "Invoke project commands through `dekk apxm ...` so dekk injects the MLIR/LLVM environment.",
+        );
     }
 
     // 4. Config (driver feature only)
@@ -309,7 +327,7 @@ pub fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> 
                 &format!("found at {}", path_display),
             );
             print_status_line(
-                "LLM backends",
+                "Configured backends",
                 if config_backends > 0 {
                     Status::Ok
                 } else {
@@ -326,74 +344,14 @@ pub fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> 
             );
         }
 
-        // 5. Provider auto-detection
+        // 5. Backend registration guidance
         if !config_found {
-            print_section_header("Provider Auto-Detection");
-
-            let detected: Vec<&apxm_driver::config::DetectedProvider> =
-                apxm_driver::config::DETECTABLE_PROVIDERS
-                    .iter()
-                    .filter(|p| env::var(p.env_var).is_ok())
-                    .collect();
-
-            if detected.is_empty() {
-                print_status_line("API keys", Status::Warning, "none detected");
-                print_hint(
-                    "Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_API_KEY to auto-configure.",
-                );
-                print_hint(
-                    "Or run `apxm backend add <name> --type api` to configure manually.",
-                );
-            } else {
-                for provider in &detected {
-                    print_status_line(
-                        provider.name,
-                        Status::Ok,
-                        &format!("detected via {}", provider.env_var),
-                    );
-                }
-
-                match ApXmConfig::generate_default(&detected) {
-                    Ok(config) => match ApXmConfig::default_path() {
-                        Ok(path) => match config.write_to_file(&path) {
-                            Ok(()) => {
-                                let first = detected[0];
-                                print_status_line(
-                                    "Config",
-                                    Status::Ok,
-                                    &format!("auto-generated at {}", path.display()),
-                                );
-                                print_status_line(
-                                    "Default model",
-                                    Status::Ok,
-                                    &format!("{} ({})", first.default_model, first.name),
-                                );
-                            }
-                            Err(e) => {
-                                print_status_line(
-                                    "Config",
-                                    Status::Warning,
-                                    &format!("failed to write: {}", e),
-                                );
-                            }
-                        },
-                        Err(e) => {
-                            print_status_line(
-                                "Config",
-                                Status::Warning,
-                                &format!("cannot determine path: {}", e),
-                            );
-                        }
-                    },
-                    Err(e) => {
-                        print_status_line(
-                            "Config",
-                            Status::Warning,
-                            &format!("auto-generation failed: {}", e),
-                        );
-                    }
-                }
-            }
+            print_section_header("Backend Registration");
+            print_status_line("Config file", Status::Warning, "not configured");
+            print_hint(
+                "Register a backend explicitly with `dekk apxm backend add <name> --type <cloud|onprem|local> --protocol <protocol>`.",
+            );
+            print_hint("Then rerun `dekk apxm doctor` to verify the registered backend set.");
         }
     }
 
@@ -467,7 +425,9 @@ fn print_minimal_mlir_status() {
         }
         None => {
             print_status_line("Conda prefix", Status::Error, "<not set>");
-            print_hint("Run `cargo run -p apxm-cli -- install`, then `conda activate apxm`.");
+            print_hint(
+                "Run `dekk apxm install --no-interactive`, then invoke commands through `dekk apxm ...`.",
+            );
             return;
         }
     }
@@ -494,11 +454,10 @@ fn print_minimal_mlir_status() {
 
     if checks.iter().any(|(_, found)| !found) {
         print_subsection_header("Suggested Fix");
-        println!("cargo run -p apxm-cli -- install");
-        println!("conda activate apxm");
-        println!("eval \"$(cargo run -p apxm-cli -- activate)\"");
+        println!("dekk apxm install --no-interactive");
+        println!("dekk apxm doctor");
         if let Some(ref prefix) = conda_prefix {
-            println!("# Or export directly from: {}", prefix.display());
+            println!("# Runtime environment prefix: {}", prefix.display());
         }
     }
 }

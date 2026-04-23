@@ -1,7 +1,9 @@
 use apxm_acp::AgentRegistry;
-use apxm_ais::{OperationCategory, OperationField, get_all_operations};
 use apxm_core::constants;
 use apxm_core::types::model_spec::BUILTIN_MODELS;
+use apxm_core::types::operations::{
+    ContextStyle, MlirResultType, OperationCategory, OperationField, get_all_operations,
+};
 use apxm_core::types::provider_spec::{BUILTIN_PROVIDERS, ProviderProtocol};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,16 +33,6 @@ pub struct FrontendOperationSpec {
     pub needs_submission: bool,
     pub min_inputs: u32,
     pub example_json: Option<&'static str>,
-}
-
-impl FrontendOperationSpec {
-    pub fn required_fields(&self) -> impl Iterator<Item = &FrontendFieldSpec> {
-        self.fields.iter().filter(|f| f.required)
-    }
-
-    pub fn optional_fields(&self) -> impl Iterator<Item = &FrontendFieldSpec> {
-        self.fields.iter().filter(|f| !f.required)
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -109,7 +101,7 @@ pub fn graph_metadata_constants() -> Vec<FrontendConstant> {
 
 /// Derives attribute constants directly from `ALL_ATTR_NAMES` — no hand-maintained list.
 pub fn graph_attr_constants() -> Vec<FrontendConstant> {
-    apxm_ais::attrs::ALL_ATTR_NAMES
+    constants::graph::attrs::ALL_ATTR_NAMES
         .iter()
         .map(|&value| FrontendConstant {
             name: to_const_name(value),
@@ -190,15 +182,15 @@ pub fn emission_specs() -> Vec<FrontendEmissionSpec> {
     get_all_operations()
         .map(|spec| {
             let context_style = match spec.emission.context_style {
-                apxm_ais::ContextStyle::Bracketed => "Bracketed",
-                apxm_ais::ContextStyle::Parenthesized => "Parenthesized",
-                apxm_ais::ContextStyle::Direct => "Direct",
-                apxm_ais::ContextStyle::None => "None",
+                ContextStyle::Bracketed => "Bracketed",
+                ContextStyle::Parenthesized => "Parenthesized",
+                ContextStyle::Direct => "Direct",
+                ContextStyle::None => "None",
             };
             let result_type = match spec.emission.result_type {
-                apxm_ais::MlirResultType::Token => "Token",
-                apxm_ais::MlirResultType::Handle => "Handle",
-                apxm_ais::MlirResultType::Void => "Void",
+                MlirResultType::Token => "Token",
+                MlirResultType::Handle => "Handle",
+                MlirResultType::Void => "Void",
             };
             FrontendEmissionSpec {
                 op: spec.op_type.to_string(),
@@ -230,19 +222,7 @@ pub fn emission_specs() -> Vec<FrontendEmissionSpec> {
 }
 
 fn category_label(category: OperationCategory) -> &'static str {
-    match category {
-        OperationCategory::Metadata => "metadata",
-        OperationCategory::Memory => "memory",
-        OperationCategory::Reasoning => "reasoning",
-        OperationCategory::Tools => "tools",
-        OperationCategory::ControlFlow => "control_flow",
-        OperationCategory::Synchronization => "synchronization",
-        OperationCategory::ErrorHandling => "error_handling",
-        OperationCategory::Communication => "communication",
-        OperationCategory::Coordination => "coordination",
-        OperationCategory::Identity => "identity",
-        OperationCategory::Internal => "internal",
-    }
+    crate::commands::implementations::category_str(category)
 }
 
 #[cfg(test)]
@@ -261,7 +241,10 @@ mod tests {
     #[test]
     fn graph_attr_constants_derived_from_all_attr_names() {
         let constants = graph_attr_constants();
-        assert_eq!(constants.len(), apxm_ais::attrs::ALL_ATTR_NAMES.len());
+        assert_eq!(
+            constants.len(),
+            constants::graph::attrs::ALL_ATTR_NAMES.len()
+        );
     }
 
     #[test]

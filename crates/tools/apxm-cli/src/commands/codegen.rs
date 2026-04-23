@@ -15,10 +15,7 @@ pub fn codegen_command(action: CodegenAction, json_output: bool) -> Result<()> {
                 rendered.iter().map(|(name, _)| name.to_string()).collect();
             files.sort();
 
-            std::fs::create_dir_all(&output_dir)?;
-            for (filename, content) in &rendered {
-                std::fs::write(output_dir.join(filename), content)?;
-            }
+            crate::frontend::codegen::write_generated_python(&output_dir)?;
 
             if json_output {
                 let output = serde_json::json!({

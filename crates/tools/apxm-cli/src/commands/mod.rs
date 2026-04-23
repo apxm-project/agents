@@ -5,10 +5,13 @@ pub mod implementations;
 
 pub mod agent;
 pub mod analysis;
+#[cfg(feature = "driver")]
 pub mod backend;
 pub mod cache;
 pub mod codegen;
+#[cfg(feature = "driver")]
 pub mod compile;
+#[cfg(feature = "driver")]
 pub mod execute;
 pub mod gui;
 pub mod ops;
@@ -32,10 +35,13 @@ pub(crate) use implementations::*;
 
 pub use agent::*;
 pub use analysis::*;
+#[cfg(feature = "driver")]
 pub use backend::*;
 pub use cache::*;
 pub use codegen::*;
+#[cfg(feature = "driver")]
 pub use compile::*;
+#[cfg(feature = "driver")]
 pub use execute::*;
 pub use gui::*;
 pub use ops::*;

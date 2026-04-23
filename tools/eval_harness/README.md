@@ -1,7 +1,7 @@
 # eval_harness
 
 Phase-A evaluation utilities. See
-`docs/superpowers/plans/2026-04-21-apxm-evaluation-framework.md`.
+`docs/planning/plans/2026-04-21-apxm-evaluation-framework.md`.
 
 ## trace_diff
 

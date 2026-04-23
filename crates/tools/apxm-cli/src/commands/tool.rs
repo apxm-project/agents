@@ -19,7 +19,7 @@ pub fn tool_command(action: ToolAction, json_output: bool) -> Result<()> {
             }
             if tf.tools.is_empty() {
                 println!("No tools registered.");
-                println!("Add one with: apxm tool add <name> --description \"...\"");
+                println!("Add one with: dekk apxm tool add <name> --description \"...\"");
                 return Ok(());
             }
             print_section_header("Registered Tools");
@@ -75,4 +75,3 @@ pub fn tool_command(action: ToolAction, json_output: bool) -> Result<()> {
     }
     Ok(())
 }
-

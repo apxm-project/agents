@@ -1,10 +1,10 @@
 # apxm-gui
 
-Web-based visualization for agent workflow graphs, compiler optimizations, and session traces.
+Web-based visualization for APXM graphs, compiler optimizations, and session traces.
 
 ## Overview
 
-`apxm-gui` is a standalone Axum web server that serves a React 19 + TypeScript single-page application. It visualizes AIS workflow graphs using ELK layout, displays compiler optimization diffs, and replays live session traces with streaming updates.
+`apxm-gui` is a standalone Axum web server that serves a React 19 + TypeScript single-page application. It visualizes APXM graphs using ELK layout, displays compiler optimization diffs, and replays live session traces with streaming updates.
 
 ## Architecture
 
@@ -44,12 +44,11 @@ The crate has two layers:
 
 | Crate | Purpose |
 |-------|---------|
-| apxm-core | Shared types |
-| apxm-ais | AIS operation metadata for node rendering |
+| apxm-core | Shared graph contract and types |
 | apxm-compiler | `AirModule` parsing (via re-export) |
 
 ## Running
 
 ```bash
-apxm gui --file workflow.air --port 18801 --open
+dekk apxm gui --file graph.air --port 18801 --open
 ```

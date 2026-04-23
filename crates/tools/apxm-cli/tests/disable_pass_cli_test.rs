@@ -41,10 +41,7 @@ const FUSABLE_PIPELINE: &str = r#"{
 }"#;
 
 fn write_tmp_graph(content: &str) -> tempfile::NamedTempFile {
-    let mut f = tempfile::Builder::new()
-        .suffix(".json")
-        .tempfile()
-        .unwrap();
+    let mut f = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
     f.write_all(content.as_bytes()).unwrap();
     f.flush().unwrap();
     f

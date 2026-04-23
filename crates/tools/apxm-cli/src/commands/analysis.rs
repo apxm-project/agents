@@ -10,7 +10,11 @@ use super::implementations::{
     Status, category_str, find_op_spec, op_latency_ms, print_section_header, print_status_line,
 };
 
-pub fn validate_command(input: PathBuf, json_output: bool, no_check_resources: bool) -> Result<()> {
+pub fn validate_command(
+    input: PathBuf,
+    json_output: bool,
+    _no_check_resources: bool,
+) -> Result<()> {
     use apxm_core::types::AIS_OPERATIONS;
     use std::collections::HashSet;
 
