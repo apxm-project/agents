@@ -187,18 +187,6 @@ pub async fn worker_loop(
     }
 }
 
-/// Returns true if the operation type counts against the LLM concurrency cap.
-///
-/// Kept in lockstep with `executor::pipeline::is_pure_llm_op` and the LLM
-/// dispatcher branch in `executor::dispatcher`.
-#[inline]
-fn is_llm_op(op: &AISOperationType) -> bool {
-    matches!(
-        op,
-        AISOperationType::Ask | AISOperationType::Think | AISOperationType::Reason
-    )
-}
-
 /// Collect input values for an operation.
 ///
 /// Returns None if any inputs are not ready (shouldn't happen due to readiness tracking).
