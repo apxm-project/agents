@@ -20,6 +20,7 @@ use crossbeam_deque::Worker;
 
 use crate::executor::ExecutionContext;
 use crate::executor::ExecutorEngine;
+use crate::executor::pipeline::is_pure_llm_op;
 use crate::scheduler::internal_state::{OpState, TokenState};
 use crate::scheduler::queue::Priority;
 use crate::scheduler::state::SchedulerState;
@@ -85,7 +86,7 @@ pub async fn worker_loop(
         // separate semaphore so remote-batched serving (vLLM, etc.) can fan
         // out without inflating compute parallelism — and vice versa, so a
         // burst of LLM nodes cannot starve compute-bound work.
-        let semaphore = if is_llm_op(&node.op_type) {
+        let semaphore = if is_pure_llm_op(&node.op_type) {
             &state.llm_concurrency
         } else {
             &state.concurrency
