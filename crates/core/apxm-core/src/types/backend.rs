@@ -82,7 +82,7 @@ pub struct BackendConfig {
     pub headers: HashMap<String, String>,
 
     /// Models hosted on this backend
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub models: Vec<ModelConfig>,
 
     /// Docker configuration for local backends
@@ -133,6 +133,13 @@ pub struct ModelConfig {
     /// Whether the model supports extended thinking/reasoning
     #[serde(default)]
     pub supports_thinking: bool,
+
+    /// Whether the model accepts an explicit custom `temperature` value.
+    ///
+    /// `None` means "use backend default policy". Some OpenAI-compatible
+    /// reasoning models reject custom temperatures and must omit the field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_custom_temperature: Option<bool>,
 
     /// Maximum output tokens per request (None = provider default, typically 4096-8192)
     #[serde(default)]
@@ -226,6 +233,7 @@ mod tests {
         assert!(!config.supports_vision);
         assert!(!config.supports_functions);
         assert!(!config.supports_thinking);
+        assert_eq!(config.supports_custom_temperature, None);
     }
 
     #[test]
@@ -266,6 +274,7 @@ mod tests {
                 supports_vision: false,
                 supports_functions: true,
                 supports_thinking: false,
+                supports_custom_temperature: None,
                 max_output_tokens: None,
                 tags: vec!["production".to_string()],
             }],

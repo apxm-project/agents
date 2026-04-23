@@ -169,7 +169,7 @@ pub const BUILTIN_MODELS: &[BuiltinModelSpec] = &[
     BuiltinModelSpec {
         id: "Qwen/Qwen2.5-7B-Instruct",
         provider: "vllm",
-        is_default: true,
+        is_default: false,
     },
     BuiltinModelSpec {
         id: "Qwen/Qwen2.5-14B-Instruct",
@@ -196,6 +196,10 @@ pub fn models_for_provider(provider: &str) -> impl Iterator<Item = &'static Buil
 }
 
 /// The default model for a given provider, if one is marked.
+///
+/// Self-hosted providers such as `vllm` may intentionally have no builtin
+/// default because the served model is an operator choice, not a provider
+/// invariant.
 pub fn default_model_for_provider(provider: &str) -> Option<&'static str> {
     BUILTIN_MODELS
         .iter()
@@ -213,7 +217,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn each_provider_has_exactly_one_default() {
+    fn each_provider_has_at_most_one_default() {
         let providers: Vec<&str> = BUILTIN_MODELS
             .iter()
             .map(|m| m.provider)
@@ -226,10 +230,9 @@ mod tests {
                 .iter()
                 .filter(|m| m.provider == provider && m.is_default)
                 .collect();
-            assert_eq!(
-                defaults.len(),
-                1,
-                "Provider '{provider}' should have exactly 1 default model, found {}",
+            assert!(
+                defaults.len() <= 1,
+                "Provider '{provider}' should have at most 1 default model, found {}",
                 defaults.len()
             );
         }
@@ -262,6 +265,11 @@ mod tests {
             default_model_for_provider("google"),
             Some("gemini-2.5-flash")
         );
+    }
+
+    #[test]
+    fn vllm_has_no_builtin_default_model() {
+        assert_eq!(default_model_for_provider("vllm"), None);
     }
 
     #[test]

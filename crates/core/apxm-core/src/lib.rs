@@ -34,7 +34,8 @@ pub use error::{
 pub use plan::{InnerPlanPayload, Plan, PlanStep};
 
 pub use types::{
-    AISOperation, AISOperationType, CapabilityRecord, CompletionPolicy, DependencyType, Edge,
-    GoalTree, InstructionConfig, Node, NodeId, NodeMetadata, Number, ScopePolicy, ScopeSpec, Token,
-    TokenId, TokenStatus, Value,
+    AISOperation, AISOperationType, ApxmGraphHints, CapabilityRecord, CompilerHints,
+    CompletionPolicy, DependencyType, Edge, GoalTree, GraphMetadata, InstructionConfig, Node,
+    NodeId, NodeMetadata, NodeSpec, Number, PinMode, PinPolicy, PriorityClass, ScopePolicy,
+    ScopeSpec, Token, TokenId, TokenStatus, Value,
 };

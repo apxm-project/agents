@@ -88,6 +88,8 @@ pub const CHECKPOINT_RESTORED: EventKind =
     EventKind::new("checkpoint_restored", EventCategory::Lifecycle, false);
 pub const SCHEDULER_DECISION: EventKind =
     EventKind::new("scheduler_decision", EventCategory::Observability, false);
+pub const HEAD_OF_LINE_BLOCK: EventKind =
+    EventKind::new("head_of_line_block", EventCategory::Observability, false);
 pub const GPU_UTILIZATION: EventKind =
     EventKind::new("gpu_utilization", EventCategory::Observability, false);
 pub const TOKEN_USAGE: EventKind =

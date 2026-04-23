@@ -1,4 +1,8 @@
-//! Pass types and definitions.
+//! Runtime-facing pass registry types.
+//!
+//! These local types are used for FFI/registry reporting. Canonical compiler
+//! pass metadata lives in [`super::metadata`], which re-exports the AIS pass
+//! catalog without duplicating definitions.
 
 /// Pass category for filtering and introspection
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -24,7 +24,7 @@ pub mod graph {
     }
 
     pub mod attrs {
-        pub use apxm_ais::attrs::*;
+        include!(concat!(env!("OUT_DIR"), "/apxm_graph_attrs.rs"));
     }
 }
 
@@ -142,6 +142,7 @@ pub mod runtime {
         pub const PROCESS_ID: &str = "process_id";
         pub const PROFILE: &str = "profile";
         pub const SYSTEM_PROMPT: &str = "system_prompt";
+        pub const BACKEND: &str = "backend";
         pub const MODEL: &str = "model";
     }
 }
@@ -406,11 +407,34 @@ pub mod llm {
     }
 
     pub mod api_paths {
+        pub const VERSION_PREFIX: &str = "/v1";
         pub const CHAT_COMPLETIONS: &str = "/chat/completions";
         pub const MODELS: &str = "/models";
         pub const MESSAGES: &str = "/messages";
         pub const API_CHAT: &str = "/api/chat";
         pub const API_TAGS: &str = "/api/tags";
+        pub const APXM_GRAPHS: &str = "/apxm/graphs";
+        pub const APXM_GRAPHS_REGISTER: &str = "/apxm/graphs/register";
+    }
+
+    pub mod apxm {
+        pub const OBJECT_GRAPH_REGISTRATION: &str = "apxm.graph.registration";
+        pub const OBJECT_GRAPH_STATUS: &str = "apxm.graph.status";
+        pub const OBJECT_GRAPH_RELEASE: &str = "apxm.graph.release";
+
+        pub const PRIORITY_CRITICAL_PATH: &str = "critical_path";
+        pub const PRIORITY_PARALLEL: &str = "parallel";
+        pub const PRIORITY_NORMAL_LEGACY: &str = "normal";
+        pub const PRIORITY_SPECULATIVE_LEGACY: &str = "speculative";
+
+        pub const PIN_MODE_PREFIX: &str = "prefix";
+        pub const PIN_MODE_NONE: &str = "none";
+        pub const PIN_MODE_PREFIX_LEGACY: &str = "pin_strong";
+        pub const PIN_MODE_NONE_LEGACY: &str = "pin_weak";
+    }
+
+    pub mod vllm {
+        pub const APXM_PROBE_GRAPH_ID: &str = "__apxm_probe__";
     }
 
     pub mod anthropic_events {
@@ -444,6 +468,9 @@ pub mod llm {
         /// to suppress chain-of-thought output. For vLLM/Qwen3 this maps to
         /// `chat_template_kwargs.enable_thinking = false`.
         pub const SUPPORTS_THINKING: &str = "supports_thinking";
+        /// Per-model flag: when `false`, the backend must omit the explicit
+        /// `temperature` field and let the provider default apply.
+        pub const SUPPORTS_CUSTOM_TEMPERATURE: &str = "supports_custom_temperature";
         /// Top-level body key recognised by vLLM's OpenAI-compatible endpoint
         /// to forward kwargs into the model's chat template (e.g.
         /// `{"enable_thinking": false}` for Qwen3).
