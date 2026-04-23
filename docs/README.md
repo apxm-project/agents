@@ -2,7 +2,7 @@
 
 ## What APXM is
 
-APXM (**A**gent **P**rogram e**X**ecution **M**odel) treats an agent workflow the
+APXM (**A**gent **P**rogram e**X**ecution **M**odel) treats an agent graph the
 way a programming language treats a function: the author describes *what*, and the
 system decides *how* to run it. You write a graph of agent operations in Python; APXM
 lowers it to MLIR, optimizes it, and executes the result deterministically across LLM
@@ -60,7 +60,7 @@ debugging, or dispatched against a different backend without recompiling.
 APXM is organized in tiers — each layer depends only on layers above it.
 
 ```
-core    →  apxm-core, apxm-ais          (definitions: types, ops, attrs, events)
+core    →  apxm-core, apxm-ais          (contracts in apxm-core; authoring/codegen specs in apxm-ais)
 compiler→  apxm-compiler, apxm-frontend (AIR → MLIR → .apxmobj)
 runtime →  apxm-runtime, apxm-backends, (execution, LLM I/O, secrets)
            apxm-credentials
@@ -122,8 +122,10 @@ Runnable demos live in [`examples/python/`](../examples/python/). The
 
 ## Key Principle
 
-**Core defines. Everything else consumes.** `apxm-ais` and `apxm-core` are the
-single source of truth for operations, attributes, events, and error codes. The
-compiler, runtime, codegen, and bindings all derive from those definitions — never
-the other way around. That invariant is what lets the same `.apxmobj` artifact run
-in any APXM environment.
+**Core defines. Everything else consumes.** `apxm-core` is the downstream contract
+crate for shared operations, attributes, events, and error codes. `apxm-ais`
+remains the authoring/codegen source that feeds those shared contracts and compiler
+generation paths. The compiler, runtime, codegen, and bindings should consume the
+shared `apxm-core` surface unless they are explicitly participating in authoring or
+generation. That invariant is what lets the same `.apxmobj` artifact run in any
+APXM environment.
