@@ -23,19 +23,13 @@ fn build_fusion_stress_module() -> AirModule {
                 id: 1,
                 name: "const_a".to_string(),
                 op: AISOperationType::ConstStr,
-                attributes: HashMap::from([(
-                    "value".into(),
-                    Value::String("alpha".into()),
-                )]),
+                attributes: HashMap::from([("value".into(), Value::String("alpha".into()))]),
             },
             AirNode {
                 id: 2,
                 name: "const_b".to_string(),
                 op: AISOperationType::ConstStr,
-                attributes: HashMap::from([(
-                    "value".into(),
-                    Value::String("beta".into()),
-                )]),
+                attributes: HashMap::from([("value".into(), Value::String("beta".into()))]),
             },
             AirNode {
                 id: 3,
@@ -124,7 +118,7 @@ fn dag_to_graph(dag: &ExecutionDag) -> AirModule {
 /// roundtrip. The bare-name forms of MLIR-derived attributes
 /// (`downstream_nodes`, `shared_prefix_group`, etc.) are filtered when
 /// AirModule is re-emitted as AIR text — see
-/// `apxm_ais::attrs::MLIR_DERIVED_BARE_ATTRS` and
+/// `apxm_core::constants::graph::attrs::MLIR_DERIVED_BARE_ATTRS` and
 /// `air_builder/emit.rs::extra_attr_dict` — so the next MLIR pass run
 /// no longer produces both prefixed and bare copies on the same op.
 #[test]

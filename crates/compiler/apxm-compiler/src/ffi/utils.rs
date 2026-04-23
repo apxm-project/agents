@@ -1,8 +1,8 @@
 //! Module containing utility functions for handling FFI results.
 
 use crate::ffi;
-use apxm_core::error::{Error, codes::ErrorCode};
 use apxm_core::error::compiler::{CompilerError, Result};
+use apxm_core::error::{Error, codes::ErrorCode};
 
 /// Handles a null result from an FFI function.
 pub fn handle_null_result<T>(ptr: *mut T, context: &str) -> Result<*mut T> {

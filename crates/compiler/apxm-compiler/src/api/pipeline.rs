@@ -44,10 +44,7 @@ impl<'ctx> Pipeline<'ctx> {
     ///
     /// Mirror of [`compile`] for callers that need the diagnostics array,
     /// e.g. the CLI's `--emit-diagnostics` flag and the ablation harness.
-    pub fn compile_with_diagnostics(
-        &self,
-        source: &str,
-    ) -> Result<(Module, PipelineDiagnostics)> {
+    pub fn compile_with_diagnostics(&self, source: &str) -> Result<(Module, PipelineDiagnostics)> {
         let module = Module::parse(self.context, source)?;
         self.process_module_with_diagnostics(module)
     }

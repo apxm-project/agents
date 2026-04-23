@@ -87,8 +87,20 @@ fn setup_rerun_triggers() {
         "mlir/lib/CMakeLists.txt",
         "mlir/lib",
         "mlir/include",
+        "../../../.dekk.toml",
     ] {
         println!("cargo:rerun-if-changed={}", path);
+    }
+    for key in [
+        "MLIR_PREFIX",
+        "LLVM_PREFIX",
+        "MLIR_DIR",
+        "LLVM_DIR",
+        "CONDA_PREFIX",
+        "LIBCLANG_PATH",
+        "PATH",
+    ] {
+        println!("cargo:rerun-if-env-changed={key}");
     }
     // Also rerun if apxm-ais changes (for TableGen regeneration)
     println!("cargo:rerun-if-changed=../../core/apxm-ais/src/operations/");
@@ -544,10 +556,40 @@ pub mod bindings_inner {
     pub unsafe fn apxm_pass_manager_add_pass_by_name(
         _pm: *mut ApxmPassManager, _name: *const c_char,
     ) -> bool { false }
+    pub unsafe fn apxm_pass_manager_has_pass(
+        _pm: *mut ApxmPassManager, _name: *const c_char,
+    ) -> bool { false }
     pub unsafe fn apxm_pass_manager_clear(_pm: *mut ApxmPassManager) {}
     pub unsafe fn apxm_pass_manager_run(
         _pm: *mut ApxmPassManager, _m: *mut ApxmModule,
     ) -> bool { false }
+
+    pub unsafe fn apxm_module_drain_pass_stats(
+        _m: *mut ApxmModule,
+        _pass_name: *const c_char,
+        fired_count_out: *mut i64,
+        ir_size_delta_out: *mut i64,
+    ) -> i32 {
+        if !fired_count_out.is_null() {
+            unsafe { *fired_count_out = 0; }
+        }
+        if !ir_size_delta_out.is_null() {
+            unsafe { *ir_size_delta_out = 0; }
+        }
+        0
+    }
+
+    pub unsafe fn apxm_module_strip_all_pass_stats(_m: *mut ApxmModule) -> i32 { 0 }
+
+    pub unsafe fn apxm_module_total_template_tokens(
+        _m: *mut ApxmModule,
+        total_out: *mut u64,
+    ) -> i32 {
+        if !total_out.is_null() {
+            unsafe { *total_out = 0; }
+        }
+        0
+    }
 
     // ── Pass registry ──────────────────────────────────────────────────────
     pub unsafe fn apxm_pass_registry_get_count() -> usize { 0 }

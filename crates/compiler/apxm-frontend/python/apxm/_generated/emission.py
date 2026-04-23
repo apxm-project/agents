@@ -69,6 +69,8 @@ def emit_ask(ssa_name: str, attrs: dict[str, Any], inputs: list[str]) -> str:
     primary = f' {_quote(str(attrs["template_str"]))}' if "template_str" in attrs else ""
     syn_kw = ""
     kw_parts = []
+    if "input_names" in attrs and attrs["input_names"] is not None:
+        kw_parts.append(f'input_names = {_format_attr_value(attrs["input_names"])}')
     if "temperature" in attrs and attrs["temperature"] is not None:
         kw_parts.append(f'temperature = {_format_attr_value(attrs["temperature"])}')
     if "model" in attrs and attrs["model"] is not None:
@@ -89,6 +91,8 @@ def emit_think(ssa_name: str, attrs: dict[str, Any], inputs: list[str]) -> str:
     primary = f' {_quote(str(attrs["template_str"]))}' if "template_str" in attrs else ""
     syn_kw = ""
     kw_parts = []
+    if "input_names" in attrs and attrs["input_names"] is not None:
+        kw_parts.append(f'input_names = {_format_attr_value(attrs["input_names"])}')
     if "budget" in attrs and attrs["budget"] is not None:
         kw_parts.append(f'budget = {_format_attr_value(attrs["budget"])}')
     if "temperature" in attrs and attrs["temperature"] is not None:
@@ -111,6 +115,8 @@ def emit_reason(ssa_name: str, attrs: dict[str, Any], inputs: list[str]) -> str:
     primary = f' {_quote(str(attrs["template_str"]))}' if "template_str" in attrs else ""
     syn_kw = ""
     kw_parts = []
+    if "input_names" in attrs and attrs["input_names"] is not None:
+        kw_parts.append(f'input_names = {_format_attr_value(attrs["input_names"])}')
     if "temperature" in attrs and attrs["temperature"] is not None:
         kw_parts.append(f'temperature = {_format_attr_value(attrs["temperature"])}')
     if "model" in attrs and attrs["model"] is not None:
@@ -177,7 +183,10 @@ def emit_print(ssa_name: str, attrs: dict[str, Any], inputs: list[str]) -> str:
     ctx = f" [{', '.join(inputs)} : {', '.join(['!ais.token'] * len(inputs))}]" if inputs else ""
     primary = f' {_quote(str(attrs["message"]))}' if "message" in attrs else ""
     syn_kw = ""
-    kw_str = ""
+    kw_parts = []
+    if "input_names" in attrs and attrs["input_names"] is not None:
+        kw_parts.append(f'input_names = {_format_attr_value(attrs["input_names"])}')
+    kw_str = f' {{{", ".join(kw_parts)}}}' if kw_parts else ""
     return f"ais.print{primary}{syn_kw}{ctx}{kw_str}"
 
 
@@ -453,10 +462,15 @@ def emit_register_capability(ssa_name: str, attrs: dict[str, Any], inputs: list[
 
 def emit_autonomous(ssa_name: str, attrs: dict[str, Any], inputs: list[str]) -> str:
     """Emit MLIR for AUTONOMOUS operation."""
-    ctx = ""
-    primary = f' {_quote(str(attrs["region"]))}' if "region" in attrs else ""
+    ctx = f" ({', '.join(inputs)} : {', '.join(['!ais.token'] * len(inputs))})" if inputs else ""
+    primary = f' {_quote(str(attrs["prompt"]))}' if "prompt" in attrs else ""
     syn_kw = ""
-    kw_str = ""
+    kw_parts = []
+    for key in sorted(attrs):
+        if key == "prompt" or attrs[key] is None:
+            continue
+        kw_parts.append(f'{key} = {_format_attr_value(attrs[key])}')
+    kw_str = f' {{{", ".join(kw_parts)}}}' if kw_parts else ""
     return f"{ssa_name} = ais.autonomous{primary}{syn_kw}{ctx}{kw_str} : !ais.token"
 
 

@@ -206,7 +206,11 @@ fn validate_agent_references(module: &AirModule) -> Result<(), AirError> {
         if node.op != AISOperationType::SpawnAgent {
             continue;
         }
-        let name = match node.attributes.get(graph_attrs::AGENT_NAME).and_then(|v| v.as_str()) {
+        let name = match node
+            .attributes
+            .get(graph_attrs::AGENT_NAME)
+            .and_then(|v| v.as_str())
+        {
             Some(s) => s.to_string(),
             None => continue,
         };
@@ -222,7 +226,11 @@ fn validate_agent_references(module: &AirModule) -> Result<(), AirError> {
         if node.op != AISOperationType::Communicate {
             continue;
         }
-        let recipient = match node.attributes.get(graph_attrs::RECIPIENT).and_then(|v| v.as_str()) {
+        let recipient = match node
+            .attributes
+            .get(graph_attrs::RECIPIENT)
+            .and_then(|v| v.as_str())
+        {
             Some(s) => s.to_string(),
             None => continue,
         };
@@ -275,13 +283,12 @@ fn validate_required_attributes(module: &AirModule) -> Result<(), AirError> {
 /// Data edges.
 ///
 /// The canonical list of template-bearing attribute keys lives in
-/// `apxm_ais::attrs::TEMPLATE_BEARING_ATTRS` — this validator is driven
+/// `apxm_core::constants::graph::attrs::TEMPLATE_BEARING_ATTRS` — this validator is driven
 /// by that constant, so adding a new templated attribute does not require
 /// touching the validator.
 fn validate_template_placeholders(module: &AirModule) -> Result<(), AirError> {
     // Module-level parameter names — every `{name}` may resolve here. O(1) lookup.
-    let param_names: HashSet<&str> =
-        module.parameters.iter().map(|p| p.name.as_str()).collect();
+    let param_names: HashSet<&str> = module.parameters.iter().map(|p| p.name.as_str()).collect();
 
     // Single sweep over edges: count incoming Data edges per destination node.
     let mut data_in_count: HashMap<u64, usize> = HashMap::with_capacity(module.nodes.len());
@@ -293,7 +300,10 @@ fn validate_template_placeholders(module: &AirModule) -> Result<(), AirError> {
 
     // Single sweep over template-bearing attribute names → O(1) membership set
     // for the per-node attribute scan below.
-    let template_attrs: HashSet<&str> = graph_attrs::TEMPLATE_BEARING_ATTRS.iter().copied().collect();
+    let template_attrs: HashSet<&str> = graph_attrs::TEMPLATE_BEARING_ATTRS
+        .iter()
+        .copied()
+        .collect();
 
     for node in &module.nodes {
         let input_names = collect_input_names(node);
@@ -324,9 +334,7 @@ fn validate_template_placeholders(module: &AirModule) -> Result<(), AirError> {
             let Value::String(template) = attr_val else {
                 continue;
             };
-            check_template_placeholders(
-                template, attr_key, node, &input_set, &param_names,
-            )?;
+            check_template_placeholders(template, attr_key, node, &input_set, &param_names)?;
         }
     }
 
@@ -531,7 +539,10 @@ mod template_validation_tests {
             msg.contains("numeric placeholder"),
             "unexpected diagnostic: {msg}"
         );
-        assert!(msg.contains("{0}"), "diagnostic should quote the offender: {msg}");
+        assert!(
+            msg.contains("{0}"),
+            "diagnostic should quote the offender: {msg}"
+        );
     }
 
     #[test]
@@ -566,10 +577,7 @@ mod template_validation_tests {
             .attributes
             .insert(
                 graph_attrs::INPUT_NAMES.into(),
-                Value::Array(vec![
-                    Value::String("a".into()),
-                    Value::String("b".into()),
-                ]),
+                Value::Array(vec![Value::String("a".into()), Value::String("b".into())]),
             );
         let err = validate_template_placeholders(&module).unwrap_err();
         let msg = format!("{err}");

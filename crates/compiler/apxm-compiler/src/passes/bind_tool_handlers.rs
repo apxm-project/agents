@@ -12,7 +12,7 @@
 //!   conflicting `python_handler_id` values
 
 use crate::air_builder::AirModule;
-use apxm_ais::attrs;
+use apxm_core::constants::graph::attrs;
 use apxm_core::error::compiler::{CompilerError, Result};
 use apxm_core::error::span::Span;
 use apxm_core::error::{Error, ErrorCode};
@@ -426,8 +426,8 @@ mod tests {
 
     // ---- ExecutionDag variant ----
 
-    use apxm_core::types::execution::ExecutionDag;
     use apxm_core::types::Node;
+    use apxm_core::types::execution::ExecutionDag;
 
     fn dag_reg_cap_with_handler(id: u64, cap_name: &str, handler_id: &str) -> Node {
         let mut n = Node::new(id, AISOperationType::RegisterCapability);
@@ -495,8 +495,10 @@ mod tests {
         let handler_a = format!("sha256:{}", "a".repeat(64));
         let handler_b = format!("sha256:{}", "b".repeat(64));
         let mut dag = ExecutionDag::new();
-        dag.nodes.push(dag_reg_cap_with_handler(1, "tool", &handler_a));
-        dag.nodes.push(dag_reg_cap_with_handler(2, "tool", &handler_b));
+        dag.nodes
+            .push(dag_reg_cap_with_handler(1, "tool", &handler_a));
+        dag.nodes
+            .push(dag_reg_cap_with_handler(2, "tool", &handler_b));
         dag.nodes.push(dag_inv_tool(3, "tool"));
 
         let result = bind_python_handlers_to_dag(&mut dag);

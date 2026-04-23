@@ -560,14 +560,14 @@ AUTONOMOUS: Final = OpSpec(
     op="AUTONOMOUS",
     name="Autonomous",
     category="coordination",
-    description="Switch a sub-graph region to model-driven execution (stub)",
-    long_description="Switches a sub-graph region to model-driven (unstructured) execution, returning to structured DAG after the region exits. This is a stub implementation that passes through its input unchanged.",
+    description="Run a goal-directed autonomous loop with the configured model",
+    long_description="Runs an iterative plan / act / evaluate loop against a goal prompt. The node keeps calling the configured model until the goal is achieved or `max_iterations` is reached. Optional backend, model, system prompt, provider, and temperature attributes follow the same routing contract as the other LLM operations.",
     latency="high",
-    fields=(FieldSpec(name="region", description="Name of the autonomous execution region", required=False, ref_type=None),),
+    fields=(FieldSpec(name="prompt", description="Goal or objective for the autonomous loop", required=True, ref_type=None), FieldSpec(name="max_iterations", description="Maximum number of plan / act / evaluate iterations before stopping", required=False, ref_type=None), FieldSpec(name="backend", description="Backend override for the autonomous loop", required=False, ref_type="backend"), FieldSpec(name="model", description="Model override for the autonomous loop", required=False, ref_type="model"), FieldSpec(name="provider", description="Provider override when backend routing is not used", required=False, ref_type=None), FieldSpec(name="system_prompt", description="System prompt applied to each model call in the loop", required=False, ref_type=None), FieldSpec(name="temperature", description="Sampling temperature for the loop's model calls", required=False, ref_type=None)),
     produces_output=True,
     needs_submission=True,
     min_inputs=0,
-    example_json="{\\\"id\\\": 3, \\\"op\\\": \\\"AUTONOMOUS\\\", \\\"attributes\\\": {\\\"region\\\": \\\"exploration\\\"}}",
+    example_json="{\\\"id\\\": 3, \\\"op\\\": \\\"AUTONOMOUS\\\", \\\"attributes\\\": {\\\"prompt\\\": \\\"Find the root cause and propose a fix\\\", \\\"max_iterations\\\": 6}}",
 )
 
 CHECKPOINT: Final = OpSpec(
@@ -712,4 +712,4 @@ OP_CHECKPOINT: Final[str] = "CHECKPOINT"
 OP_CONST_STR: Final[str] = "CONST_STR"
 OP_YIELD: Final[str] = "YIELD"
 
-LLM_OPS: Final[frozenset] = frozenset({"ASK", "THINK", "REASON", "PLAN", "REFLECT", "VERIFY"})
+LLM_OPS: Final[frozenset] = frozenset({"ASK", "THINK", "REASON", "PLAN", "REFLECT", "VERIFY", "AUTONOMOUS"})

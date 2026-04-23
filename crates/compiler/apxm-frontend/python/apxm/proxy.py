@@ -1140,15 +1140,29 @@ class GraphRecorder:
         self,
         name: str | None = None,
         *,
-        region: str | None = None,
+        prompt: str | None = None,
+        max_iterations: int | None = None,
+        agent: AgentConfig | None = None,
+        model: ModelId | None = None,
+        provider: ProviderSpec | str | None = None,
+        backend: str | None = None,
         **attributes: Any,
     ) -> NodeRef:
-        """Switch a sub-graph region to model-driven execution (AUTONOMOUS, stub)."""
+        """Run a goal-directed autonomous loop (AUTONOMOUS)."""
         if name is None:
             name = self._auto_name(graph_keys.OP_AUTONOMOUS)
-        attrs: dict[str, Any] = {}
-        if region is not None:
-            attrs[graph_keys.REGION] = region
+        if prompt is None:
+            raise ValueError("autonomous() missing required argument: prompt")
+        attrs: dict[str, Any] = {graph_keys.PROMPT: prompt}
+        if max_iterations is not None:
+            attrs[graph_keys.MAX_ITERATIONS] = max_iterations
+        if model is not None:
+            attrs[graph_keys.MODEL] = _normalize_value(model)
+        if provider is not None:
+            attrs[graph_keys.PROVIDER] = _normalize_provider(provider)
+        if backend is not None:
+            attrs[graph_keys.BACKEND] = backend
+        attrs.update(_compose_system_prompt(agent, graph_keys.OP_AUTONOMOUS))
         attrs.update(_normalize_attributes(attributes))
         return self._add_node(name, graph_keys.OP_AUTONOMOUS, attrs)
 
@@ -1238,5 +1252,4 @@ def _compose_system_prompt(agent: AgentConfig | None, op: str) -> dict[str, Any]
             attrs[graph_keys.SYSTEM_PROMPT] = composed
 
     return attrs
-
 

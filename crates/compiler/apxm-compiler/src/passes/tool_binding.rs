@@ -12,12 +12,12 @@
 //! - W723: orphan Python tool (manifest entry with no matching REGISTER_CAPABILITY)
 
 use crate::air_builder::AirModule;
-use apxm_ais::attrs;
+use apxm_core::constants::graph::attrs;
 use apxm_core::error::compiler::{CompilerError, Result};
 use apxm_core::error::span::Span;
 use apxm_core::error::{Error, ErrorCode};
-use apxm_core::types::execution::ExecutionDag;
 use apxm_core::types::AISOperationType;
+use apxm_core::types::execution::ExecutionDag;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 
@@ -78,7 +78,10 @@ pub fn tool_binding_check(
     let mut registered: HashMap<String, Vec<String>> = HashMap::new();
     for node in &module.nodes {
         if node.op == AISOperationType::RegisterCapability {
-            if let Some(name) = node.attributes.get(attrs::CAPABILITY_NAME).and_then(|v| v.as_str())
+            if let Some(name) = node
+                .attributes
+                .get(attrs::CAPABILITY_NAME)
+                .and_then(|v| v.as_str())
             {
                 registered
                     .entry(name.to_string())
@@ -92,7 +95,11 @@ pub fn tool_binding_check(
     let mut invoked: HashSet<String> = HashSet::new();
     for node in &module.nodes {
         if node.op == AISOperationType::InvTool {
-            if let Some(cap) = node.attributes.get(attrs::CAPABILITY).and_then(|v| v.as_str()) {
+            if let Some(cap) = node
+                .attributes
+                .get(attrs::CAPABILITY)
+                .and_then(|v| v.as_str())
+            {
                 invoked.insert(cap.to_string());
 
                 // E712: capability must resolve to a REGISTER_CAPABILITY or a builtin.
@@ -236,7 +243,11 @@ pub fn tool_binding_check_dag(
     let mut invoked: HashSet<String> = HashSet::new();
     for node in &dag.nodes {
         if node.op_type == AISOperationType::InvTool {
-            if let Some(cap) = node.attributes.get(attrs::CAPABILITY).and_then(|v| v.as_str()) {
+            if let Some(cap) = node
+                .attributes
+                .get(attrs::CAPABILITY)
+                .and_then(|v| v.as_str())
+            {
                 invoked.insert(cap.to_string());
 
                 // E712: capability must resolve to REGISTER_CAPABILITY or builtin.
@@ -422,9 +433,11 @@ mod tests {
     fn e712_inv_tool_references_builtin_capability() {
         let mut module = empty_module();
         for (i, builtin) in BUILTIN_CAPABILITIES.iter().enumerate() {
-            module
-                .nodes
-                .push(inv_tool_node((i + 1) as u64, &format!("call_{builtin}"), builtin));
+            module.nodes.push(inv_tool_node(
+                (i + 1) as u64,
+                &format!("call_{builtin}"),
+                builtin,
+            ));
         }
         let result = tool_binding_check(&module, None);
         assert!(result.is_ok());
@@ -446,12 +459,8 @@ mod tests {
     #[test]
     fn e712_multiple_unbound_capabilities_all_reported() {
         let mut module = empty_module();
-        module
-            .nodes
-            .push(inv_tool_node(1, "call_a", "missing_a"));
-        module
-            .nodes
-            .push(inv_tool_node(2, "call_b", "missing_b"));
+        module.nodes.push(inv_tool_node(1, "call_a", "missing_a"));
+        module.nodes.push(inv_tool_node(2, "call_b", "missing_b"));
         let result = tool_binding_check(&module, None);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
@@ -465,12 +474,9 @@ mod tests {
     fn e713_valid_handler_id_passes() {
         let valid_hash = format!("sha256:{}", "a".repeat(64));
         let mut module = empty_module();
-        module.nodes.push(reg_cap_with_handler(
-            1,
-            "reg_add",
-            "add",
-            &valid_hash,
-        ));
+        module
+            .nodes
+            .push(reg_cap_with_handler(1, "reg_add", "add", &valid_hash));
         module.nodes.push(inv_tool_node(2, "call_add", "add"));
         let result = tool_binding_check(&module, None);
         assert!(result.is_ok());
@@ -479,12 +485,9 @@ mod tests {
     #[test]
     fn e713_invalid_handler_id_too_short() {
         let mut module = empty_module();
-        module.nodes.push(reg_cap_with_handler(
-            1,
-            "reg_add",
-            "add",
-            "sha256:abcd",
-        ));
+        module
+            .nodes
+            .push(reg_cap_with_handler(1, "reg_add", "add", "sha256:abcd"));
         module.nodes.push(inv_tool_node(2, "call_add", "add"));
         let result = tool_binding_check(&module, None);
         assert!(result.is_err());
@@ -513,12 +516,9 @@ mod tests {
     fn e713_invalid_handler_id_non_hex() {
         let mut module = empty_module();
         let bad_hex = format!("sha256:{}z", "a".repeat(63));
-        module.nodes.push(reg_cap_with_handler(
-            1,
-            "reg_add",
-            "add",
-            &bad_hex,
-        ));
+        module
+            .nodes
+            .push(reg_cap_with_handler(1, "reg_add", "add", &bad_hex));
         module.nodes.push(inv_tool_node(2, "call_add", "add"));
         let result = tool_binding_check(&module, None);
         assert!(result.is_err());
@@ -539,7 +539,9 @@ mod tests {
     #[test]
     fn w721_unused_capability_emits_warning() {
         let mut module = empty_module();
-        module.nodes.push(reg_cap_node(1, "reg_unused", "unused_tool"));
+        module
+            .nodes
+            .push(reg_cap_node(1, "reg_unused", "unused_tool"));
         let result = tool_binding_check(&module, None);
         assert!(result.is_ok());
         let warnings = result.unwrap();
@@ -604,20 +606,15 @@ mod tests {
     fn e712_and_e713_both_reported() {
         let mut module = empty_module();
         // Invalid handler ID on a registration
-        module.nodes.push(reg_cap_with_handler(
-            1,
-            "reg_bad",
-            "bad_tool",
-            "not-a-hash",
-        ));
+        module
+            .nodes
+            .push(reg_cap_with_handler(1, "reg_bad", "bad_tool", "not-a-hash"));
         // Unbound capability reference
         module
             .nodes
             .push(inv_tool_node(2, "call_ghost", "ghost_tool"));
         // Also invoke the registered one so it's not unused
-        module
-            .nodes
-            .push(inv_tool_node(3, "call_bad", "bad_tool"));
+        module.nodes.push(inv_tool_node(3, "call_bad", "bad_tool"));
         let result = tool_binding_check(&module, None);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
@@ -636,20 +633,11 @@ mod tests {
         assert!(!is_valid_handler_id(""));
         assert!(!is_valid_handler_id("sha256:"));
         // Exactly 64 hex chars
-        assert!(is_valid_handler_id(&format!(
-            "sha256:{}",
-            "0".repeat(64)
-        )));
+        assert!(is_valid_handler_id(&format!("sha256:{}", "0".repeat(64))));
         // 63 hex chars: too short
-        assert!(!is_valid_handler_id(&format!(
-            "sha256:{}",
-            "0".repeat(63)
-        )));
+        assert!(!is_valid_handler_id(&format!("sha256:{}", "0".repeat(63))));
         // 65 hex chars: too long
-        assert!(!is_valid_handler_id(&format!(
-            "sha256:{}",
-            "0".repeat(65)
-        )));
+        assert!(!is_valid_handler_id(&format!("sha256:{}", "0".repeat(65))));
     }
 
     // ---- W723: orphan Python tool ----
@@ -721,7 +709,11 @@ mod tests {
         assert!(result.is_ok());
         let warnings = result.unwrap();
         assert_eq!(warnings.len(), 2);
-        assert!(warnings.iter().all(|w| w.code == ErrorCode::OrphanPythonTool));
+        assert!(
+            warnings
+                .iter()
+                .all(|w| w.code == ErrorCode::OrphanPythonTool)
+        );
         let names: HashSet<&str> = warnings.iter().map(|w| w.node_name.as_str()).collect();
         assert!(names.contains("add"));
         assert!(names.contains("multiply"));

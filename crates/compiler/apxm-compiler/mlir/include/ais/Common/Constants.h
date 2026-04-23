@@ -119,7 +119,8 @@ constexpr llvm::StringLiteral WARMUP_CANDIDATE = "ais.warmup_candidate";
 constexpr llvm::StringLiteral DOWNSTREAM_NODES = "ais.downstream_nodes";
 
 // ---- Operation-level attributes (no ais. prefix) ----
-// These mirror apxm_ais::attrs and match ODS TableGen definitions.
+// These mirror the canonical graph attrs exported through apxm-core and match
+// ODS TableGen definitions.
 // No "ais." prefix because these are op arguments, not pass annotations.
 constexpr llvm::StringLiteral PRIORITY = "priority";
 constexpr llvm::StringLiteral TEMPLATE_STR = "template_str";

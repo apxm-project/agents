@@ -35,7 +35,10 @@ fn ask_attrs_one(tag: &str, input_name: &str) -> HashMap<String, Value> {
 
 fn ask_attrs_many(template: &str, names: &[&str]) -> HashMap<String, Value> {
     HashMap::from([
-        (graph_attrs::TEMPLATE_STR.into(), Value::String(template.into())),
+        (
+            graph_attrs::TEMPLATE_STR.into(),
+            Value::String(template.into()),
+        ),
         (
             graph_attrs::INPUT_NAMES.into(),
             Value::Array(names.iter().map(|s| Value::String((*s).into())).collect()),
@@ -52,10 +55,7 @@ fn build_synth_fanin_module() -> AirModule {
                 id: 1,
                 name: "question".to_string(),
                 op: AISOperationType::ConstStr,
-                attributes: HashMap::from([(
-                    "value".into(),
-                    Value::String("what is 42?".into()),
-                )]),
+                attributes: HashMap::from([("value".into(), Value::String("what is 42?".into()))]),
             },
             AirNode {
                 id: 2,
@@ -86,12 +86,36 @@ fn build_synth_fanin_module() -> AirModule {
             },
         ],
         edges: vec![
-            AirEdge { from: 1, to: 2, dependency: DependencyType::Data },
-            AirEdge { from: 1, to: 3, dependency: DependencyType::Data },
-            AirEdge { from: 1, to: 4, dependency: DependencyType::Data },
-            AirEdge { from: 2, to: 5, dependency: DependencyType::Data },
-            AirEdge { from: 3, to: 5, dependency: DependencyType::Data },
-            AirEdge { from: 4, to: 5, dependency: DependencyType::Data },
+            AirEdge {
+                from: 1,
+                to: 2,
+                dependency: DependencyType::Data,
+            },
+            AirEdge {
+                from: 1,
+                to: 3,
+                dependency: DependencyType::Data,
+            },
+            AirEdge {
+                from: 1,
+                to: 4,
+                dependency: DependencyType::Data,
+            },
+            AirEdge {
+                from: 2,
+                to: 5,
+                dependency: DependencyType::Data,
+            },
+            AirEdge {
+                from: 3,
+                to: 5,
+                dependency: DependencyType::Data,
+            },
+            AirEdge {
+                from: 4,
+                to: 5,
+                dependency: DependencyType::Data,
+            },
         ],
         parameters: vec![],
         metadata: HashMap::new(),

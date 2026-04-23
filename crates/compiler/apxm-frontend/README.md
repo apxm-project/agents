@@ -1,10 +1,10 @@
 # apxm-frontend
 
-Python frontend for authoring APXM agent workflows.
+Python frontend for authoring APXM graphs.
 
 ## Overview
 
-`apxm-frontend` is a pure-Python package that lets users define agent workflows using a `@compile()` decorator and `GraphRecorder` proxy. The recorder captures operation calls, builds an in-memory graph, and emits `.air` (MLIR text in the AIS dialect) for the compiler pipeline.
+`apxm-frontend` is a pure-Python package that lets users define APXM graphs using a `@compile()` decorator and `GraphRecorder` proxy. The recorder captures operation calls, builds an in-memory graph, and emits `.air` (MLIR text in the AIS dialect) for the compiler pipeline.
 
 ## Package Structure
 
@@ -18,16 +18,16 @@ Python frontend for authoring APXM agent workflows.
 | `config` | `AgentConfig`, `ToolsConfig`, `BashConfig`, `ReadConfig`, `WriteConfig` |
 | `execution` | `CompiledFlow`, `ExecutionMode`, `WorkflowCheckpoint`, `validate_graph` |
 | `providers` | `ProviderSpec`, `list_providers`, `resolve_provider` |
-| `constants` | Attribute name constants mirrored from `apxm-ais` |
+| `constants` | Generated graph-attribute constants from the shared `apxm-core` contract |
 | `utils` | Shared utilities |
-| `_generated/` | Auto-generated code from Rust definitions |
+| `_generated/` | Auto-generated contract bindings from Rust definitions |
 
 ## Generated Code (`_generated/`)
 
 | File | Description |
 |------|-------------|
-| `operations.py` | All 41 AIS operation types and metadata |
-| `constants.py` | Attribute constants from `apxm-ais` |
+| `operations.py` | All AIS operation types and metadata from the shared contract |
+| `constants.py` | Graph attribute constants from the shared contract |
 | `agents.py` | Built-in agent profiles from `apxm-acp` |
 | `emission.py` | MLIR emission helpers |
 | `providers.py` | Built-in provider specs and protocols from `apxm-core` |
@@ -39,7 +39,7 @@ Python frontend for authoring APXM agent workflows.
 - `NodeRef` -- handle to a recorded operation node
 - `ApxmGraph` -- in-memory graph representation
 - `FlowModule` -- multi-flow module with entry flow and sub-flows
-- `AgentHandle` / `Team` -- sugar for multi-agent workflows
+- `AgentHandle` / `Team` -- sugar for multi-agent graphs
 
 ## Usage
 
