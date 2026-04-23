@@ -113,6 +113,8 @@ pub fn boxed_payload_from_json(
         boxed!(CheckpointRestoredPayload)
     } else if kind_name == kind::SCHEDULER_DECISION.name() {
         boxed!(SchedulerDecisionPayload)
+    } else if kind_name == kind::HEAD_OF_LINE_BLOCK.name() {
+        boxed!(HeadOfLineBlockPayload)
     } else if kind_name == kind::GPU_UTILIZATION.name() {
         boxed!(GpuUtilizationPayload)
     } else if kind_name == kind::TOKEN_USAGE.name() {
@@ -398,6 +400,20 @@ pub struct SchedulerDecisionPayload {
     pub reason: String,
 }
 impl_event_payload!(SchedulerDecisionPayload, kind::SCHEDULER_DECISION);
+
+/// A head-of-line blocking observation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HeadOfLineBlockPayload {
+    /// The running node likely causing the blockage.
+    pub blocker_node: u64,
+    /// The node that waited in the ready queue.
+    pub blocked_node: u64,
+    /// The observed wait time before dispatch, in milliseconds.
+    pub wait_ms: u64,
+    /// Human-readable explanation of the heuristic.
+    pub reason: String,
+}
+impl_event_payload!(HeadOfLineBlockPayload, kind::HEAD_OF_LINE_BLOCK);
 
 /// GPU utilization snapshot.
 #[derive(Debug, Clone, Serialize, Deserialize)]

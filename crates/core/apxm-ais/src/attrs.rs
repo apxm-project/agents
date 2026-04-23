@@ -98,6 +98,9 @@ pub const ON_FAIL: &str = "on_fail";
 pub const ERROR_MESSAGE: &str = "error_message";
 
 // -- Synchronization --
+pub const SCOPE: &str = "scope";
+pub const STORAGE: &str = "storage";
+pub const TTL_SECONDS: &str = "ttl_seconds";
 pub const STRATEGY: &str = "strategy";
 pub const SEPARATOR: &str = "separator";
 pub const ACTION: &str = "action";
@@ -142,6 +145,12 @@ pub const TRANSFER_STATE: &str = "transfer_state";
 // -- Optimization hints --
 pub const CACHED_SYSTEM_PROMPT: &str = "cached_system_prompt";
 pub const MEMOIZABLE: &str = "memoizable";
+pub const RETRY_COUNT: &str = "retry_count";
+pub const PROFILE_LATENCY_MS: &str = "__profile_latency_ms";
+pub const PROFILE_P99_LATENCY_MS: &str = "__profile_p99_latency_ms";
+pub const PROFILE_ERROR_RATE: &str = "__profile_error_rate";
+pub const PROFILE_AVG_TOKENS: &str = "__profile_avg_tokens";
+pub const PROFILE_TOKEN_WARNING: &str = "__profile_token_warning";
 pub const WARMUP_CANDIDATE: &str = "warmup_candidate";
 pub const SHARED_PREFIX_EST_TOKENS: &str = "shared_prefix_est_tokens";
 pub const DOWNSTREAM_NODES: &str = "downstream_nodes";
@@ -274,6 +283,9 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     REGION,
     ON_FAIL,
     ERROR_MESSAGE,
+    SCOPE,
+    STORAGE,
+    TTL_SECONDS,
     STRATEGY,
     SEPARATOR,
     ACTION,
@@ -308,6 +320,12 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     TRANSFER_STATE,
     CACHED_SYSTEM_PROMPT,
     MEMOIZABLE,
+    RETRY_COUNT,
+    PROFILE_LATENCY_MS,
+    PROFILE_P99_LATENCY_MS,
+    PROFILE_ERROR_RATE,
+    PROFILE_AVG_TOKENS,
+    PROFILE_TOKEN_WARNING,
     WARMUP_CANDIDATE,
     SHARED_PREFIX_EST_TOKENS,
     DOWNSTREAM_NODES,
@@ -343,9 +361,6 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     "ordering",
     "payload",
     "error_handler",
-    "scope",
-    "storage",
-    "ttl_seconds",
 ];
 
 #[cfg(test)]
@@ -358,9 +373,8 @@ mod tests {
     /// in production; this test fails the build instead.
     #[test]
     fn ais_attrs_match_mlir_constants_h() {
-        let constants_h = include_str!(
-            "../../../compiler/apxm-compiler/mlir/include/ais/Common/Constants.h"
-        );
+        let constants_h =
+            include_str!("../../../compiler/apxm-compiler/mlir/include/ais/Common/Constants.h");
         let pairs = [
             ("SHARED_PREFIX_GROUP", AIS_SHARED_PREFIX_GROUP),
             ("SHARED_PREFIX_EST_TOKENS", AIS_SHARED_PREFIX_EST_TOKENS),

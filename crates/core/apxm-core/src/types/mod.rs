@@ -14,6 +14,7 @@ pub mod values;
 // ── Execution ──────────────────────────────────────────────
 pub mod config;
 pub mod execution;
+pub mod graph_hints;
 pub mod intents;
 
 // ── Domain ─────────────────────────────────────────────────
@@ -30,8 +31,8 @@ pub use aam::{
     ScopePolicy, ScopeSpec,
 };
 pub use compiler::{
-    CodegenOptions, CompilationStage, EmitFormat, OptimizationLevel, OptimizationTarget,
-    PipelineConfig, stage_rank,
+    CodegenOptions, CompilationStage, EmitFormat, OptimizationLevel, OptimizationTarget, PassInfo,
+    PassMetadata, PipelineConfig, find_pass_metadata, list_pass_metadata, stage_rank,
 };
 pub use execution::{
     Agent, AgentFlow, AgentId, AgentMetadata, CapabilityDeclaration, DagMetadata, DependencyType,
@@ -39,6 +40,9 @@ pub use execution::{
     NodeMetadata, NodeStatus, OpStatus, Task, TaskDag, TaskId, TaskMetadata, WorkflowNode,
 };
 pub use goal::{Goal, GoalId, GoalStatus};
+pub use graph_hints::{
+    ApxmGraphHints, CompilerHints, GraphMetadata, NodeSpec, PinMode, PinPolicy, PriorityClass,
+};
 pub use identifiers::{
     BackendId, CapabilityName, CheckpointId, ExecutionId, MessageId, ModelId, NodeIdType, OpIdType,
     ProfileId, SessionId, TokenIdType, TraceId,
@@ -58,10 +62,10 @@ pub use models::{
     ToolResult,
 };
 
-// Re-export from operations (which re-exports from apxm-ais)
 pub use operations::metadata::{
-    AIS_OPERATIONS, OperationField, OperationLatency, OperationSpec, ReferenceType,
-    ValidationError, get_operation_spec,
+    AIS_OPERATIONS, ContextStyle, MlirEmissionSpec, MlirResultType, OperationField,
+    OperationLatency, OperationSpec, ReferenceType, ValidationError, get_all_operations,
+    get_operation_spec,
 };
 pub use operations::{AISOperation, AISOperationType, OperationCategory, validate_operation};
 

@@ -126,8 +126,8 @@ pub enum AISOperationType {
     /// Register a new capability in the runtime registry.
     RegisterCapability,
 
-    // Autonomous Execution (stub)
-    /// Switch a sub-graph region to model-driven execution.
+    // Autonomous Execution
+    /// Run a goal-directed autonomous loop.
     Autonomous,
 
     // Durable Execution
@@ -1827,36 +1827,74 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             context_style: ContextStyle::None,
             result_type: MlirResultType::Token,
             positional_attrs: &[],
-            keywords: &[attrs::DESCRIPTION, attrs::PARAMETERS_SCHEMA, attrs::PYTHON_HANDLER_ID],
+            keywords: &[
+                attrs::DESCRIPTION,
+                attrs::PARAMETERS_SCHEMA,
+                attrs::PYTHON_HANDLER_ID,
+            ],
             syntactic_keywords: &[],
         },
     },
-    // ========== Autonomous Execution (stub) ==========
+    // ========== Autonomous Execution ==========
     OperationSpec {
         op_type: AISOperationType::Autonomous,
         name: "Autonomous",
         category: OperationCategory::Coordination,
-        description: "Switch a sub-graph region to model-driven execution (stub)",
-        long_description: "Switches a sub-graph region to model-driven (unstructured) execution, \
-            returning to structured DAG after the region exits. This is a stub implementation \
-            that passes through its input unchanged.",
+        description: "Run a goal-directed autonomous loop with the configured model",
+        long_description: "Runs an iterative plan / act / evaluate loop against a goal prompt. \
+            The node keeps calling the configured model until the goal is achieved or \
+            `max_iterations` is reached. Optional backend, model, system prompt, provider, \
+            and temperature attributes follow the same routing contract as the other LLM \
+            operations.",
         latency: OperationLatency::High,
         example_json: Some(
-            r#"{\"id\": 3, \"op\": \"AUTONOMOUS\", \"attributes\": {\"region\": \"exploration\"}}"#,
+            r#"{"id": 3, "op": "AUTONOMOUS", "attributes": {"prompt": "Find the root cause and propose a fix", "max_iterations": 6}}"#,
         ),
-        fields: &[OperationField::optional(
-            attrs::REGION,
-            "Name of the autonomous execution region",
-        )],
+        fields: &[
+            OperationField::required(attrs::PROMPT, "Goal or objective for the autonomous loop"),
+            OperationField::optional(
+                attrs::MAX_ITERATIONS,
+                "Maximum number of plan / act / evaluate iterations before stopping",
+            ),
+            OperationField::optional_ref(
+                attrs::BACKEND,
+                "Backend override for the autonomous loop",
+                ReferenceType::Backend,
+            ),
+            OperationField::optional_ref(
+                attrs::MODEL,
+                "Model override for the autonomous loop",
+                ReferenceType::Model,
+            ),
+            OperationField::optional(
+                attrs::PROVIDER,
+                "Provider override when backend routing is not used",
+            ),
+            OperationField::optional(
+                attrs::SYSTEM_PROMPT,
+                "System prompt applied to each model call in the loop",
+            ),
+            OperationField::optional(
+                attrs::TEMPERATURE,
+                "Sampling temperature for the loop's model calls",
+            ),
+        ],
         needs_submission: true,
         min_inputs: 0,
         produces_output: true,
         emission: MlirEmissionSpec {
-            primary_attr: Some(attrs::REGION),
-            context_style: ContextStyle::None,
+            primary_attr: Some(attrs::PROMPT),
+            context_style: ContextStyle::Parenthesized,
             result_type: MlirResultType::Token,
             positional_attrs: &[],
-            keywords: &[],
+            keywords: &[
+                attrs::MAX_ITERATIONS,
+                attrs::BACKEND,
+                attrs::MODEL,
+                attrs::PROVIDER,
+                attrs::SYSTEM_PROMPT,
+                attrs::TEMPERATURE,
+            ],
             syntactic_keywords: &[],
         },
     },
@@ -1881,12 +1919,15 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
                 attrs::CHECKPOINT_ID,
                 "Stable identifier for this checkpoint",
             ),
-            OperationField::optional("scope", "Snapshot scope: full (default) or local"),
+            OperationField::optional(attrs::SCOPE, "Snapshot scope: full (default) or local"),
             OperationField::optional(
-                "storage",
+                attrs::STORAGE,
                 "Storage backend: fs (default), memory, or custom",
             ),
-            OperationField::optional("ttl_seconds", "Time-to-live for the checkpoint in seconds"),
+            OperationField::optional(
+                attrs::TTL_SECONDS,
+                "Time-to-live for the checkpoint in seconds",
+            ),
             OperationField::optional(attrs::ON_FAIL, "Failure mode: halt (default) or continue"),
         ],
         needs_submission: false,

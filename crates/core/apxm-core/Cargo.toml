@@ -7,7 +7,6 @@ edition.workspace = true
 workspace = true
 
 [dependencies]
-apxm-ais.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
 colored.workspace = true

@@ -149,12 +149,53 @@ pub fn locate_library(config: &LibraryConfig) -> Result<LinkSpec> {
 
 /// Gather candidate installation prefixes from environment variables.
 fn gather_prefix_candidates(env_vars: &[String]) -> Vec<PathBuf> {
-    env_vars
+    let mut candidates: Vec<PathBuf> = env_vars
         .iter()
         .filter_map(|key| env::var(key).ok())
         .map(|value| normalize_candidate_prefix(&PathBuf::from(value)))
         .filter(|path| path.is_dir())
-        .collect()
+        .collect();
+
+    candidates.extend(inferred_prefix_candidates());
+    dedup_preserve_order(candidates)
+}
+
+fn inferred_prefix_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+
+    if let Ok(cwd) = env::current_dir() {
+        for dir in cwd.ancestors() {
+            let repo_local_dekk = dir.join(".dekk/env");
+            if repo_local_dekk.is_dir() {
+                candidates.push(repo_local_dekk);
+            }
+        }
+    }
+
+    if let Some(home) = dirs::home_dir() {
+        for candidate in [
+            home.join("miniforge3/envs/apxm"),
+            home.join("mambaforge/envs/apxm"),
+            home.join("miniconda3/envs/apxm"),
+        ] {
+            if candidate.is_dir() {
+                candidates.push(candidate);
+            }
+        }
+    }
+
+    candidates
+}
+
+fn dedup_preserve_order(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut seen = std::collections::HashSet::new();
+    let mut unique = Vec::new();
+    for path in paths {
+        if seen.insert(path.clone()) {
+            unique.push(path);
+        }
+    }
+    unique
 }
 
 fn normalize_candidate_prefix(path: &Path) -> PathBuf {

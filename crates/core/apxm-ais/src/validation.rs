@@ -169,7 +169,10 @@ fn is_valid_python_handler_id(s: &str) -> bool {
     let Some(hex) = s.strip_prefix("sha256:") else {
         return false;
     };
-    hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    hex.len() == 64
+        && hex
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 
 #[cfg(test)]
@@ -288,8 +291,7 @@ mod tests {
         attrs.insert(
             "python_handler_id".to_string(),
             Value::String(
-                "md5:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
-                    .to_string(),
+                "md5:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789".to_string(),
             ),
         );
 

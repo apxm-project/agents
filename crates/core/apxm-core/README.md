@@ -1,10 +1,10 @@
 # apxm-core
 
-Shared types, error definitions, event system, and constants used across all APXM crates.
+Shared graph contract, types, error definitions, event system, and constants used across APXM crates.
 
 ## Overview
 
-`apxm-core` provides foundational infrastructure for the entire APXM toolchain: execution graph primitives, structured errors with codes and suggestions, a 33-variant event system, 350+ string constants, and provider/model specifications.
+`apxm-core` provides the downstream contract surface for the APXM toolchain: execution graph primitives, shared operation and pass metadata, structured errors with codes and suggestions, a 33-variant event system, graph constants, and provider/model specifications.
 
 ## Module Structure
 
@@ -13,7 +13,7 @@ Shared types, error definitions, event system, and constants used across all APX
 | `types/execution/` | `Agent`, `AgentFlow`, `ExecutionDag`, `Node`, `Edge`, `Status`, `Task` |
 | `types/values/` | `Value`, `Token`, `Number` runtime value types |
 | `types/compiler/` | `PassInfo`, `PassCategory`, `OptimizationLevel`, `CodegenOptions`, `Stages` |
-| `types/operations/` | `AISOperationType`, `OperationCategory`, operation metadata |
+| `types/operations/` | `AISOperationType`, `OperationCategory`, generated operation metadata |
 | `types/session/` | Session management types |
 | `types/identifiers/` | Typed IDs (`NodeId`, `TokenId`) |
 | `types/intents/` | Intent types for goal-directed execution |
@@ -25,7 +25,7 @@ Shared types, error definitions, event system, and constants used across all APX
 | `events/` | `ApxmEvent` envelope, 33 `EventPayload` variants, `EventEmitter` trait |
 | `events/builder` | Fluent event construction |
 | `events/emitter` | `EventEmitter` trait for pluggable event sinks |
-| `constants` | 350+ string constants for graph attributes, JSON-RPC, protocols, diagnostics |
+| `constants` | graph attributes, JSON-RPC, protocol, and diagnostic constants |
 | `agent_profile` | `AgentProfile` type for agent configuration |
 | `model_profiles` | Model capability profiles and token limits |
 | `plan` | `Plan`, `PlanStep`, `InnerPlanPayload` for dynamic sub-graphs |
@@ -68,4 +68,4 @@ ContextCompacted, ModelRerouted, Cancelled, LoopDetected, ContextWindowWarning, 
 
 | Crate | Purpose |
 |-------|---------|
-| apxm-ais | Re-exports for backward compatibility |
+| apxm-ais | Build-time authoring/codegen source only |

@@ -6,7 +6,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::error::runtime::RuntimeError;
-use apxm_ais::types::{TokenId, Value};
+
+use super::{TokenId, Value};
 
 /// Represents the state of a token in the dataflow.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

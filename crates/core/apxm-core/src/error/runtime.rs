@@ -152,7 +152,9 @@ impl RuntimeError {
     /// Serialize this error into a JSON `Value` for the catch-branch input slot.
     pub fn to_value(&self) -> serde_json::Value {
         let (kind, message, details) = match self {
-            RuntimeError::Scheduler { message } => ("scheduler", message.clone(), serde_json::Value::Null),
+            RuntimeError::Scheduler { message } => {
+                ("scheduler", message.clone(), serde_json::Value::Null)
+            }
             RuntimeError::SchedulerMissingToken { node_id, token_id } => (
                 "scheduler_missing_token",
                 format!("Missing token {} for node {}", token_id, node_id),
@@ -163,12 +165,22 @@ impl RuntimeError {
                 format!("Duplicate producer for token {}", token_id),
                 serde_json::json!({ "token_id": token_id }),
             ),
-            RuntimeError::SchedulerDeadlock { timeout_ms, remaining } => (
+            RuntimeError::SchedulerDeadlock {
+                timeout_ms,
+                remaining,
+            } => (
                 "scheduler_deadlock",
-                format!("Deadlock detected after {}ms with {} nodes remaining", timeout_ms, remaining),
+                format!(
+                    "Deadlock detected after {}ms with {} nodes remaining",
+                    timeout_ms, remaining
+                ),
                 serde_json::json!({ "timeout_ms": timeout_ms, "remaining": remaining }),
             ),
-            RuntimeError::SchedulerCancelled => ("scheduler_cancelled", "Execution cancelled".to_string(), serde_json::Value::Null),
+            RuntimeError::SchedulerCancelled => (
+                "scheduler_cancelled",
+                "Execution cancelled".to_string(),
+                serde_json::Value::Null,
+            ),
             RuntimeError::SchedulerRetryExhausted { node_id, reason } => (
                 "scheduler_retry_exhausted",
                 format!("Node {} failed after retries: {}", node_id, reason),
@@ -179,7 +191,10 @@ impl RuntimeError {
                 message.clone(),
                 serde_json::json!({ "op_type": format!("{}", op_type) }),
             ),
-            RuntimeError::Capability { capability, message } => (
+            RuntimeError::Capability {
+                capability,
+                message,
+            } => (
                 "capability",
                 message.clone(),
                 serde_json::json!({ "capability": capability }),
@@ -194,24 +209,22 @@ impl RuntimeError {
                 message.clone(),
                 serde_json::json!({ "space": space }),
             ),
-            RuntimeError::Security(sec) => (
-                "security",
-                format!("{}", sec),
-                serde_json::Value::Null,
-            ),
+            RuntimeError::Security(sec) => {
+                ("security", format!("{}", sec), serde_json::Value::Null)
+            }
             RuntimeError::Timeout { op_id, timeout } => (
                 "timeout",
                 format!("Operation {:?} exceeded timeout {:?}", op_id, timeout),
                 serde_json::json!({ "timeout_ms": timeout.as_millis() as u64 }),
             ),
-            RuntimeError::Serialization(msg) => ("serialization", msg.clone(), serde_json::Value::Null),
+            RuntimeError::Serialization(msg) => {
+                ("serialization", msg.clone(), serde_json::Value::Null)
+            }
             RuntimeError::Executor(msg) => ("executor", msg.clone(), serde_json::Value::Null),
             RuntimeError::State(msg) => ("state", msg.clone(), serde_json::Value::Null),
-            RuntimeError::InvalidTask { reason } => (
-                "invalid_task",
-                reason.clone(),
-                serde_json::Value::Null,
-            ),
+            RuntimeError::InvalidTask { reason } => {
+                ("invalid_task", reason.clone(), serde_json::Value::Null)
+            }
         };
         serde_json::json!({
             "kind": kind,
@@ -305,9 +318,11 @@ mod tests {
         assert_eq!(val["details"]["backend"], "openai");
 
         let reconstructed = RuntimeError::from_value(&val).unwrap();
-        assert!(matches!(reconstructed, RuntimeError::LLM { message, backend }
-            if message == "rate limited" && backend == Some("openai".to_string())
-        ));
+        assert!(
+            matches!(reconstructed, RuntimeError::LLM { message, backend }
+                if message == "rate limited" && backend == Some("openai".to_string())
+            )
+        );
     }
 
     #[test]

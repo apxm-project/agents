@@ -193,6 +193,15 @@ mod tests {
         }
     );
     roundtrip_test!(
+        serde_head_of_line_block,
+        HeadOfLineBlockPayload {
+            blocker_node: 2,
+            blocked_node: 5,
+            wait_ms: 80,
+            reason: "wait_ms=80; threshold_ms=50; blocker=critical; blocked=low".into(),
+        }
+    );
+    roundtrip_test!(
         serde_gpu_utilization,
         GpuUtilizationPayload {
             gpu_id: 0,
@@ -314,7 +323,10 @@ mod tests {
             "trace-parent",
             &parent_span,
         );
-        assert_eq!(child.meta.parent_span_id.as_deref(), Some(parent_span.as_str()));
+        assert_eq!(
+            child.meta.parent_span_id.as_deref(),
+            Some(parent_span.as_str())
+        );
         assert_ne!(child.meta.span_id, parent.meta.span_id);
     }
 

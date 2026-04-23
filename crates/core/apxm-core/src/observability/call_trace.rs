@@ -27,10 +27,18 @@ pub struct CallTrace {
 }
 
 impl CallTrace {
-    pub fn new() -> Self { Self::default() }
-    pub fn push(&mut self, evt: CallEvent) { self.events.push(evt); }
-    pub fn len(&self) -> usize { self.events.len() }
-    pub fn is_empty(&self) -> bool { self.events.is_empty() }
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn push(&mut self, evt: CallEvent) {
+        self.events.push(evt);
+    }
+    pub fn len(&self) -> usize {
+        self.events.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.events.is_empty()
+    }
 }
 
 #[cfg(test)]

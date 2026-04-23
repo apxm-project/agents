@@ -1,15 +1,33 @@
-//! Operation metadata module.
+//! Canonical graph operation contract materialized into `apxm-core`.
 //!
-//! Re-exports from apxm-ais (single source of truth).
+//! `apxm-ais` remains the authoring/codegen source of truth. `apxm-core`
+//! exposes the generated downstream contract surface.
 
-// Re-export everything from apxm-ais operations
-pub use apxm_ais::operations::{
-    AIS_OPERATIONS, AISOperationType, OperationCategory, OperationField, OperationLatency,
-    OperationSpec, ReferenceType, get_all_operations, get_operation_spec,
+mod generated {
+    pub mod category {
+        include!(concat!(env!("OUT_DIR"), "/apxm_operation_category.rs"));
+    }
+
+    pub mod mlir_keywords {
+        include!(concat!(env!("OUT_DIR"), "/apxm_operation_mlir_keywords.rs"));
+    }
+
+    pub mod definitions {
+        include!(concat!(env!("OUT_DIR"), "/apxm_operation_definitions.rs"));
+    }
+
+    pub mod validation {
+        include!(concat!(env!("OUT_DIR"), "/apxm_operation_validation.rs"));
+    }
+}
+
+pub use generated::category::OperationCategory;
+pub use generated::definitions::{
+    AIS_OPERATIONS, AISOperationType, ContextStyle, MlirEmissionSpec, MlirResultType,
+    OperationField, OperationLatency, OperationSpec, ReferenceType, get_all_operations,
+    get_operation_spec,
 };
-
-// Re-export validation from apxm-ais
-pub use apxm_ais::validation::{
+pub use generated::validation::{
     ValidationError, has_required_fields, missing_required_fields, validate_operation,
     validate_operation_strict,
 };
