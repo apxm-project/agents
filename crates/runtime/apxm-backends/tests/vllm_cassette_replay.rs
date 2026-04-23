@@ -51,9 +51,7 @@ async fn cassette_replay_qwen35_happy_path() {
 
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(response_fixture.clone()),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(response_fixture.clone()))
         .expect(1)
         .mount(&server)
         .await;

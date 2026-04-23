@@ -7,8 +7,8 @@
 //! 4. Continues until goal is met or max_iterations reached
 
 use super::{
-    ExecutionContext, Node, Result, Value, execute_llm_request, get_input,
-    get_optional_u64_attribute, get_string_attribute,
+    ExecutionContext, Node, Result, Value, apply_llm_request_routing_from_node,
+    execute_llm_request, get_input, get_optional_string_attribute, get_optional_u64_attribute,
 };
 use crate::aam::TransitionLabel;
 use apxm_backends::LLMRequest;
@@ -16,11 +16,20 @@ use apxm_core::constants::{graph::attrs as graph_attrs, runtime::belief_keys};
 use apxm_core::error::RuntimeError;
 
 const DEFAULT_MAX_ITERATIONS: u64 = 10;
-const ATTR_MAX_ITERATIONS: &str = "max_iterations";
 
 pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -> Result<Value> {
-    // Extract goal/objective from attributes (use PROMPT as the goal description)
-    let goal = get_string_attribute(node, graph_attrs::PROMPT)?;
+    let goal = if let Some(goal) = get_optional_string_attribute(node, graph_attrs::PROMPT)? {
+        goal
+    } else if let Some(goal) = get_optional_string_attribute(node, graph_attrs::TEMPLATE_STR)? {
+        goal
+    } else if let Some(goal) = get_optional_string_attribute(node, graph_attrs::REGION)? {
+        goal
+    } else {
+        return Err(RuntimeError::Operation {
+            op_type: node.op_type,
+            message: format!("Missing required attribute: {}", graph_attrs::PROMPT),
+        });
+    };
 
     // Get initial state from inputs
     let initial_state = if !inputs.is_empty() {
@@ -30,8 +39,8 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     };
 
     // Get max iterations
-    let max_iterations =
-        get_optional_u64_attribute(node, ATTR_MAX_ITERATIONS)?.unwrap_or(DEFAULT_MAX_ITERATIONS);
+    let max_iterations = get_optional_u64_attribute(node, graph_attrs::MAX_ITERATIONS)?
+        .unwrap_or(DEFAULT_MAX_ITERATIONS);
 
     tracing::info!(
         execution_id = %ctx.execution_id,
@@ -65,7 +74,8 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
             format_state(&current_state)
         );
 
-        let plan_req = LLMRequest::new(plan_prompt.clone());
+        let plan_req =
+            apply_llm_request_routing_from_node(LLMRequest::new(plan_prompt.clone()), node)?;
 
         let plan_response = execute_llm_request(ctx, node.id, "autonomous_plan", &plan_req)
             .await
@@ -92,7 +102,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
             plan_response.content
         );
 
-        let action_req = LLMRequest::new(action_prompt);
+        let action_req = apply_llm_request_routing_from_node(LLMRequest::new(action_prompt), node)?;
 
         let action_response = execute_llm_request(ctx, node.id, "autonomous_action", &action_req)
             .await
@@ -111,7 +121,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
             goal, action_response.content
         );
 
-        let eval_req = LLMRequest::new(eval_prompt);
+        let eval_req = apply_llm_request_routing_from_node(LLMRequest::new(eval_prompt), node)?;
 
         let eval_response = execute_llm_request(ctx, node.id, "autonomous_eval", &eval_req)
             .await
@@ -203,7 +213,7 @@ mod tests {
         );
         if let Some(max_iter) = max_iterations {
             attributes.insert(
-                ATTR_MAX_ITERATIONS.to_string(),
+                graph_attrs::MAX_ITERATIONS.to_string(),
                 Value::Number(apxm_core::types::values::Number::Integer(max_iter as i64)),
             );
         }

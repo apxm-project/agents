@@ -170,10 +170,7 @@ impl MockLLMBackend {
             .operation_type
             .map(|o| format!("{:?}", o).to_uppercase())
             .unwrap_or_else(|| "UNKNOWN".to_string());
-        let model = request
-            .model
-            .clone()
-            .unwrap_or_else(|| "mock".to_string());
+        let model = request.model.clone().unwrap_or_else(|| "mock".to_string());
         let params = format!(
             "temp={},top_p={:?},max={:?}",
             request.temperature, request.top_p, request.max_tokens
@@ -422,11 +419,10 @@ impl LLMBackend for MockLLMBackend {
             if self.latency_ms > 0 {
                 tokio::time::sleep(Duration::from_millis(self.latency_ms)).await;
             }
-            let mock_resp = MockResponse::new(&calc_response.content)
-                .with_tokens(
-                    calc_response.usage.input_tokens,
-                    calc_response.usage.output_tokens,
-                );
+            let mock_resp = MockResponse::new(&calc_response.content).with_tokens(
+                calc_response.usage.input_tokens,
+                calc_response.usage.output_tokens,
+            );
             self.record_call(effective_prompt, request.system_prompt.clone(), &mock_resp);
             return Ok(calc_response);
         }
@@ -481,11 +477,10 @@ impl LLMBackend for MockLLMBackend {
 
         // Check built-in calculator pattern before user-defined patterns
         if let Some(calc_response) = self.try_calculator_pattern(&effective_prompt) {
-            let mock_resp = MockResponse::new(&calc_response.content)
-                .with_tokens(
-                    calc_response.usage.input_tokens,
-                    calc_response.usage.output_tokens,
-                );
+            let mock_resp = MockResponse::new(&calc_response.content).with_tokens(
+                calc_response.usage.input_tokens,
+                calc_response.usage.output_tokens,
+            );
             self.record_call(effective_prompt, request.system_prompt.clone(), &mock_resp);
 
             let words: Vec<String> = calc_response

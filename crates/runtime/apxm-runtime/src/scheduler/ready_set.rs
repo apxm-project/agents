@@ -120,6 +120,7 @@ impl ReadySet {
         // Update operation status
         if let Some(mut state) = op_states.get_mut(&node_id) {
             state.status = OpStatus::Ready;
+            state.ready_at = Some(std::time::Instant::now());
         }
 
         // Enqueue at appropriate priority level
@@ -317,6 +318,9 @@ mod tests {
         assert!(ready_set.is_ready(1));
         assert!(!ready_set.is_ready(2));
         assert_eq!(ready_set.pending_count(2), 1);
+        assert_eq!(op_states.get(&1).unwrap().status, OpStatus::Ready);
+        assert!(op_states.get(&1).unwrap().ready_at.is_some());
+        assert!(op_states.get(&2).unwrap().ready_at.is_none());
     }
 
     #[test]
@@ -353,6 +357,8 @@ mod tests {
         assert!(ready_set.is_ready(1));
         assert!(ready_set.is_ready(2));
         assert!(ready_set.is_empty());
+        assert!(op_states.get(&1).unwrap().ready_at.is_some());
+        assert!(op_states.get(&2).unwrap().ready_at.is_some());
     }
 
     #[test]

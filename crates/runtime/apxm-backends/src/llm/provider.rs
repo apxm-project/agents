@@ -5,20 +5,27 @@
 
 use crate::llm::backends::{
     AnthropicBackend, GoogleBackend, GraphAwareVllmBackend, LLMBackend, LLMRequest, LLMResponse,
-    OllamaBackend, OpenAIBackend,
+    MockLLMBackend, OllamaBackend, OpenAIBackend,
 };
 use apxm_core::types::{ModelCapabilities, ModelInfo, ProviderProtocol, ProviderSpec};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-/// Unified provider enum containing all supported backends.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+/// Built-in provider identifiers supported by the enum-based backend surface.
+///
+/// This stays aligned with the built-in [`ProviderProtocol`] variants that
+/// `Provider` can construct directly. Custom providers that share a protocol
+/// should use [`RegisteredProvider`] with a [`ProviderSpec`].
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "lowercase")]
 pub enum ProviderId {
     OpenAI,
     Anthropic,
     Google,
     Ollama,
+    Vllm,
+    Mock,
 }
 
 impl ProviderId {
@@ -28,17 +35,37 @@ impl ProviderId {
             ProviderId::Anthropic => "anthropic",
             ProviderId::Google => "google",
             ProviderId::Ollama => "ollama",
+            ProviderId::Vllm => "vllm",
+            ProviderId::Mock => "mock",
         }
     }
 
-    /// Convert to a `ProviderProtocol`.
-    pub fn to_protocol(&self) -> ProviderProtocol {
+    pub fn all_variants() -> &'static [ProviderId] {
+        &[
+            ProviderId::OpenAI,
+            ProviderId::Anthropic,
+            ProviderId::Google,
+            ProviderId::Ollama,
+            ProviderId::Vllm,
+            ProviderId::Mock,
+        ]
+    }
+
+    /// Returns the concrete protocol used by this built-in provider.
+    pub fn protocol(&self) -> ProviderProtocol {
         match self {
             ProviderId::OpenAI => ProviderProtocol::OpenAI,
             ProviderId::Anthropic => ProviderProtocol::Anthropic,
             ProviderId::Google => ProviderProtocol::Google,
             ProviderId::Ollama => ProviderProtocol::Ollama,
+            ProviderId::Vllm => ProviderProtocol::Vllm,
+            ProviderId::Mock => ProviderProtocol::Mock,
         }
+    }
+
+    /// Convert to a `ProviderProtocol`.
+    pub fn to_protocol(&self) -> ProviderProtocol {
+        self.protocol()
     }
 }
 
@@ -57,6 +84,8 @@ impl std::str::FromStr for ProviderId {
             "anthropic" => Ok(ProviderId::Anthropic),
             "google" => Ok(ProviderId::Google),
             "ollama" => Ok(ProviderId::Ollama),
+            "vllm" | "vllm-graph-aware" => Ok(ProviderId::Vllm),
+            "mock" => Ok(ProviderId::Mock),
             _ => Err(anyhow::anyhow!("Unknown provider: {}", s)),
         }
     }
@@ -69,6 +98,7 @@ pub enum Provider {
     Google(GoogleBackend),
     Ollama(OllamaBackend),
     Vllm(GraphAwareVllmBackend),
+    Mock(MockLLMBackend),
 }
 
 impl Provider {
@@ -78,7 +108,7 @@ impl Provider {
         api_key: &str,
         config: Option<serde_json::Value>,
     ) -> anyhow::Result<Self> {
-        Self::from_protocol(provider_id.to_protocol(), api_key, config).await
+        Self::from_protocol(provider_id.protocol(), api_key, config).await
     }
 
     /// Create a provider from a `ProviderProtocol`.
@@ -106,21 +136,27 @@ impl Provider {
             ProviderProtocol::Vllm => Ok(Provider::Vllm(
                 GraphAwareVllmBackend::new(api_key, config).await?,
             )),
-            ProviderProtocol::Mock => Err(anyhow::anyhow!(
-                "Mock backend not supported in Provider enum. Use BackendFactory::create_from_protocol instead."
+            ProviderProtocol::Mock => Ok(Provider::Mock(
+                MockLLMBackend::from_config(api_key, config).await?,
             )),
         }
     }
 
-    /// Get the provider ID.
+    /// Get the built-in provider identifier for this enum variant.
     pub fn provider_id(&self) -> ProviderId {
         match self {
             Provider::OpenAI(_) => ProviderId::OpenAI,
             Provider::Anthropic(_) => ProviderId::Anthropic,
             Provider::Google(_) => ProviderId::Google,
             Provider::Ollama(_) => ProviderId::Ollama,
-            Provider::Vllm(_) => ProviderId::OpenAI, // Vllm is OpenAI-compatible
+            Provider::Vllm(_) => ProviderId::Vllm,
+            Provider::Mock(_) => ProviderId::Mock,
         }
+    }
+
+    /// Get the wire protocol spoken by this provider.
+    pub fn protocol(&self) -> ProviderProtocol {
+        self.provider_id().protocol()
     }
 
     fn backend_ref(&self) -> &dyn LLMBackend {
@@ -130,6 +166,7 @@ impl Provider {
             Provider::Google(b) => b,
             Provider::Ollama(b) => b,
             Provider::Vllm(b) => b,
+            Provider::Mock(b) => b,
         }
     }
 }
@@ -208,6 +245,9 @@ mod tests {
         assert_eq!("anthropic".parse::<ProviderId>()?, ProviderId::Anthropic);
         assert_eq!("google".parse::<ProviderId>()?, ProviderId::Google);
         assert_eq!("ollama".parse::<ProviderId>()?, ProviderId::Ollama);
+        assert_eq!("vllm".parse::<ProviderId>()?, ProviderId::Vllm);
+        assert_eq!("vllm-graph-aware".parse::<ProviderId>()?, ProviderId::Vllm);
+        assert_eq!("mock".parse::<ProviderId>()?, ProviderId::Mock);
 
         assert!("unknown".parse::<ProviderId>().is_err());
         Ok(())
@@ -219,6 +259,8 @@ mod tests {
         assert_eq!(ProviderId::Anthropic.as_str(), "anthropic");
         assert_eq!(ProviderId::Google.as_str(), "google");
         assert_eq!(ProviderId::Ollama.as_str(), "ollama");
+        assert_eq!(ProviderId::Vllm.as_str(), "vllm");
+        assert_eq!(ProviderId::Mock.as_str(), "mock");
     }
 
     #[test]
@@ -230,5 +272,14 @@ mod tests {
         );
         assert_eq!(ProviderId::Google.to_protocol(), ProviderProtocol::Google);
         assert_eq!(ProviderId::Ollama.to_protocol(), ProviderProtocol::Ollama);
+        assert_eq!(ProviderId::Vllm.to_protocol(), ProviderProtocol::Vllm);
+        assert_eq!(ProviderId::Mock.to_protocol(), ProviderProtocol::Mock);
+    }
+
+    #[test]
+    fn test_provider_variant_identity_is_consistent() {
+        let provider = Provider::Mock(MockLLMBackend::new());
+        assert_eq!(provider.provider_id(), ProviderId::Mock);
+        assert_eq!(provider.protocol(), ProviderProtocol::Mock);
     }
 }

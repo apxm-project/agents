@@ -5,8 +5,8 @@
 //! the pluggable [`EventEmitter`] sink.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use apxm_core::events::payload::*;
@@ -199,6 +199,21 @@ impl ExecutionEventEmitter for EmitterAdapter {
         self.emit(SchedulerDecisionPayload {
             node_id,
             delay_ms: delay.as_millis() as u64,
+            reason: reason.to_string(),
+        });
+    }
+
+    fn emit_head_of_line_block(
+        &self,
+        blocker_node: u64,
+        blocked_node: u64,
+        wait_ms: u64,
+        reason: &str,
+    ) {
+        self.emit(apxm_core::events::payload::HeadOfLineBlockPayload {
+            blocker_node,
+            blocked_node,
+            wait_ms,
             reason: reason.to_string(),
         });
     }

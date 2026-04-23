@@ -180,6 +180,14 @@ pub trait ExecutionEventEmitter: Send + Sync {
 
     // ── Scheduler ───────────────────────────────────────────────────
     fn emit_scheduler_decision(&self, _node_id: u64, _delay: Duration, _reason: &str) {}
+    fn emit_head_of_line_block(
+        &self,
+        _blocker_node: u64,
+        _blocked_node: u64,
+        _wait_ms: u64,
+        _reason: &str,
+    ) {
+    }
 
     // ── Hardware ────────────────────────────────────────────────────
     fn emit_gpu_utilization(&self, _gpu_id: u32, _utilization_pct: f32, _memory_pct: f32) {}

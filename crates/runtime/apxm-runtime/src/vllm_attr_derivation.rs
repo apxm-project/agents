@@ -14,8 +14,8 @@
 //! After MLIR runs, `ArtifactEmitter.cpp` strips the `ais.` dialect prefix
 //! and copies the attributes into `WireNode.attributes`. The runtime
 //! deserializes them into `Node.attributes` with bare names
-//! (`shared_prefix_group`, etc.), exposed via the constants in
-//! [`apxm_ais::attrs`] (lines 137–143).
+//! (`shared_prefix_group`, etc.), exposed via
+//! `apxm_core::constants::graph::attrs`.
 //!
 //! This module re-runs the same derivation logic as the compiler pass —
 //! tally reuse-group sizes once, then for each LLM node compute
@@ -23,26 +23,18 @@
 //! eight `_vllm_*` keys. The downstream runtime code
 //! (`ApxmGraphHints::from_node_attrs`, `inject_vllm_hints`) is unchanged.
 
-use apxm_core::constants::graph::attrs;
+use apxm_core::constants::{graph::attrs, llm::apxm as apxm_llm};
 use apxm_core::types::execution::ExecutionDag;
 use apxm_core::types::{AISOperationType, Number, Value};
-use std::collections::HashMap;
 
 /// Priority threshold above which a node is considered to be on the
 /// critical path (mirrors `ASSIGN_PRIORITY`'s "High" tier ≥ 70 and the
 /// constant in the compile-time pass).
 const CRITICAL_PATH_PRIORITY_THRESHOLD: i64 = 70;
 
-/// A reuse group with at least this many participating nodes warrants a
-/// strong pin; otherwise the runtime applies a weak (best-effort) pin.
-const PIN_STRONG_GROUP_SIZE: usize = 2;
-
 /// A node with this many or more downstream nodes plus a shared prefix is
 /// pipeline-eligible.
 const PIPELINE_DOWNSTREAM_THRESHOLD: u32 = 2;
-
-const PIN_MODE_STRONG: &str = "pin_strong";
-const PIN_MODE_WEAK: &str = "pin_weak";
 
 /// Walk every LLM-eligible node in `dag` and stamp the eight `_vllm_*`
 /// attributes derived from MLIR-stamped (bare-name) attributes. Existing
@@ -51,22 +43,6 @@ const PIN_MODE_WEAK: &str = "pin_weak";
 ///
 /// Returns the number of LLM nodes annotated.
 pub fn derive_vllm_attrs(dag: &mut ExecutionDag) -> usize {
-    // Pass 1 — tally reuse-group sizes so we can derive `pin_mode`.
-    let mut group_sizes: HashMap<String, usize> = HashMap::new();
-    for node in &dag.nodes {
-        if !is_llm_op(node.op_type) {
-            continue;
-        }
-        if let Some(g) = node
-            .attributes
-            .get(attrs::REUSE_GROUP)
-            .and_then(Value::as_str)
-        {
-            *group_sizes.entry(g.to_string()).or_insert(0) += 1;
-        }
-    }
-
-    // Pass 2 — derive and write per-node `_vllm_*` attributes.
     let mut annotated = 0;
     for node in &mut dag.nodes {
         if !is_llm_op(node.op_type) {
@@ -98,12 +74,8 @@ pub fn derive_vllm_attrs(dag: &mut ExecutionDag) -> usize {
             .unwrap_or(30)
             .clamp(0, u8::MAX as i64) as u8;
 
-        let downstream: u32 = node
-            .attributes
-            .get(attrs::DOWNSTREAM_NODES)
-            .and_then(Value::as_u64)
-            .unwrap_or(0)
-            .min(u32::MAX as u64) as u32;
+        let downstream_nodes =
+            downstream_nodes_from_attr(node.attributes.get(attrs::DOWNSTREAM_NODES));
 
         let est_tokens: u32 = node
             .attributes
@@ -126,26 +98,28 @@ pub fn derive_vllm_attrs(dag: &mut ExecutionDag) -> usize {
 
         // --- Derivations -----------------------------------------------
         let critical_path = (priority as i64) >= CRITICAL_PATH_PRIORITY_THRESHOLD;
-        let pin_mode = match group.as_deref() {
-            Some(g) => {
-                if group_sizes.get(g).copied().unwrap_or(0) >= PIN_STRONG_GROUP_SIZE {
-                    PIN_MODE_STRONG
-                } else {
-                    PIN_MODE_WEAK
-                }
-            }
-            None => PIN_MODE_WEAK,
+        let priority_class = priority_class_from_priority(priority);
+        let pin_mode = if group.is_some() {
+            apxm_llm::PIN_MODE_PREFIX
+        } else {
+            apxm_llm::PIN_MODE_NONE
         };
-        let pipeline = group.is_some() && downstream >= PIPELINE_DOWNSTREAM_THRESHOLD;
+        let pipeline =
+            group.is_some() && downstream_nodes.len() as u32 >= PIPELINE_DOWNSTREAM_THRESHOLD;
 
         // --- Write back the eight `_vllm_*` keys -----------------------
         node.attributes.insert(
             attrs::VLLM_PRIORITY_CLASS.to_string(),
-            Value::Number(Number::Integer(priority as i64)),
+            Value::String(priority_class.to_string()),
         );
         node.attributes.insert(
             attrs::VLLM_DOWNSTREAM_NODES.to_string(),
-            Value::Number(Number::Integer(downstream as i64)),
+            Value::Array(
+                downstream_nodes
+                    .iter()
+                    .map(|id| Value::Number(Number::Integer(i64::from(*id))))
+                    .collect(),
+            ),
         );
         if let Some(g) = group {
             node.attributes
@@ -177,6 +151,24 @@ pub fn derive_vllm_attrs(dag: &mut ExecutionDag) -> usize {
     annotated
 }
 
+fn downstream_nodes_from_attr(value: Option<&Value>) -> Vec<u32> {
+    match value {
+        Some(Value::Array(items)) => items
+            .iter()
+            .filter_map(|item| item.as_u64().map(|u| u as u32))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn priority_class_from_priority(priority: u8) -> &'static str {
+    if (priority as i64) >= CRITICAL_PATH_PRIORITY_THRESHOLD {
+        apxm_llm::PRIORITY_CRITICAL_PATH
+    } else {
+        apxm_llm::PRIORITY_PARALLEL
+    }
+}
+
 #[inline]
 fn is_llm_op(op: AISOperationType) -> bool {
     matches!(
@@ -203,7 +195,7 @@ mod tests {
     }
 
     #[test]
-    fn derives_vllm_attrs_for_shared_group_with_pin_strong() {
+    fn derives_vllm_attrs_for_shared_group() {
         let mut a = ask_node(0);
         a.set_attribute(
             attrs::PRIORITY.to_string(),
@@ -219,7 +211,10 @@ mod tests {
         );
         a.set_attribute(
             attrs::DOWNSTREAM_NODES.to_string(),
-            Value::Number(Number::Integer(3)),
+            Value::Array(vec![
+                Value::Number(Number::Integer(2)),
+                Value::Number(Number::Integer(3)),
+            ]),
         );
         a.set_attribute(attrs::WARMUP_CANDIDATE.to_string(), Value::Bool(true));
 
@@ -234,7 +229,7 @@ mod tests {
         );
         b.set_attribute(
             attrs::DOWNSTREAM_NODES.to_string(),
-            Value::Number(Number::Integer(1)),
+            Value::Array(vec![Value::Number(Number::Integer(4))]),
         );
 
         let mut dag = dag_with_nodes(vec![a, b]);
@@ -244,7 +239,7 @@ mod tests {
         let a_attrs = &dag.nodes[0].attributes;
         assert_eq!(
             a_attrs.get(attrs::VLLM_PRIORITY_CLASS),
-            Some(&Value::Number(Number::Integer(90)))
+            Some(&Value::String(apxm_llm::PRIORITY_CRITICAL_PATH.to_string()))
         );
         assert_eq!(
             a_attrs.get(attrs::VLLM_CRITICAL_PATH),
@@ -256,21 +251,31 @@ mod tests {
         );
         assert_eq!(
             a_attrs.get(attrs::VLLM_PIN_MODE),
-            Some(&Value::String(PIN_MODE_STRONG.to_string()))
+            Some(&Value::String(apxm_llm::PIN_MODE_PREFIX.to_string()))
         );
-        // group present + downstream (3) >= 2 → pipeline
+        assert_eq!(
+            a_attrs.get(attrs::VLLM_DOWNSTREAM_NODES),
+            Some(&Value::Array(vec![
+                Value::Number(Number::Integer(2)),
+                Value::Number(Number::Integer(3)),
+            ]))
+        );
+        // group present + downstream fanout 2 → pipeline
         assert_eq!(a_attrs.get(attrs::VLLM_PIPELINE), Some(&Value::Bool(true)));
         assert_eq!(a_attrs.get(attrs::VLLM_WARMUP), Some(&Value::Bool(true)));
 
         let b_attrs = &dag.nodes[1].attributes;
         assert_eq!(
+            b_attrs.get(attrs::VLLM_PRIORITY_CLASS),
+            Some(&Value::String(apxm_llm::PRIORITY_PARALLEL.to_string()))
+        );
+        assert_eq!(
             b_attrs.get(attrs::VLLM_CRITICAL_PATH),
             Some(&Value::Bool(false))
         );
-        // Group has 2 members → still strong.
         assert_eq!(
             b_attrs.get(attrs::VLLM_PIN_MODE),
-            Some(&Value::String(PIN_MODE_STRONG.to_string()))
+            Some(&Value::String(apxm_llm::PIN_MODE_PREFIX.to_string()))
         );
         // group present but downstream (1) < 2 → not pipeline
         assert_eq!(b_attrs.get(attrs::VLLM_PIPELINE), Some(&Value::Bool(false)));
@@ -279,7 +284,7 @@ mod tests {
     }
 
     #[test]
-    fn singleton_group_yields_pin_weak() {
+    fn grouped_node_uses_prefix_pin_mode() {
         let mut a = ask_node(0);
         a.set_attribute(
             attrs::PRIORITY.to_string(),
@@ -291,14 +296,14 @@ mod tests {
         );
         a.set_attribute(
             attrs::DOWNSTREAM_NODES.to_string(),
-            Value::Number(Number::Integer(5)),
+            Value::Array(vec![Value::Number(Number::Integer(5))]),
         );
 
         let mut dag = dag_with_nodes(vec![a]);
         derive_vllm_attrs(&mut dag);
         assert_eq!(
             dag.nodes[0].attributes.get(attrs::VLLM_PIN_MODE),
-            Some(&Value::String(PIN_MODE_WEAK.to_string()))
+            Some(&Value::String(apxm_llm::PIN_MODE_PREFIX.to_string()))
         );
     }
 
@@ -331,13 +336,13 @@ mod tests {
         let a = &dag.nodes[0].attributes;
         assert_eq!(
             a.get(attrs::VLLM_PRIORITY_CLASS),
-            Some(&Value::Number(Number::Integer(30)))
+            Some(&Value::String(apxm_llm::PRIORITY_PARALLEL.to_string()))
         );
         assert_eq!(a.get(attrs::VLLM_CRITICAL_PATH), Some(&Value::Bool(false)));
         assert!(!a.contains_key(attrs::VLLM_REUSE_GROUP));
         assert_eq!(
             a.get(attrs::VLLM_PIN_MODE),
-            Some(&Value::String(PIN_MODE_WEAK.to_string()))
+            Some(&Value::String(apxm_llm::PIN_MODE_NONE.to_string()))
         );
         assert_eq!(a.get(attrs::VLLM_PIPELINE), Some(&Value::Bool(false)));
         assert_eq!(a.get(attrs::VLLM_WARMUP), Some(&Value::Bool(false)));
@@ -380,10 +385,10 @@ mod tests {
         // must overwrite those defaults with values derived from
         // MLIR-stamped (bare-name) attrs.
         let mut a = ask_node(0);
-        // Stale compile-time defaults (priority=30, no group, etc.)
+        // Stale compile-time defaults (parallel, no group, etc.)
         a.set_attribute(
             attrs::VLLM_PRIORITY_CLASS.to_string(),
-            Value::Number(Number::Integer(30)),
+            Value::String(apxm_llm::PRIORITY_PARALLEL.to_string()),
         );
         a.set_attribute(attrs::VLLM_CRITICAL_PATH.to_string(), Value::Bool(false));
         a.set_attribute(
@@ -402,8 +407,8 @@ mod tests {
         let attrs_map = &dag.nodes[0].attributes;
         assert_eq!(
             attrs_map.get(attrs::VLLM_PRIORITY_CLASS),
-            Some(&Value::Number(Number::Integer(95))),
-            "runtime derivation must overwrite stale compile-time priority"
+            Some(&Value::String(apxm_llm::PRIORITY_CRITICAL_PATH.to_string())),
+            "runtime derivation must overwrite stale compile-time priority class"
         );
         assert_eq!(
             attrs_map.get(attrs::VLLM_CRITICAL_PATH),

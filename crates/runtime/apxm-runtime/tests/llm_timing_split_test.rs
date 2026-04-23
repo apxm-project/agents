@@ -73,7 +73,10 @@ async fn llm_timing_split_populates_prefill_for_non_streaming_backend() {
 
     // 3. Build a single-Ask DAG.
     let mut attrs = HashMap::new();
-    attrs.insert("prompt".to_string(), Value::String("test prompt".to_string()));
+    attrs.insert(
+        "prompt".to_string(),
+        Value::String("test prompt".to_string()),
+    );
     attrs.insert("model".to_string(), Value::String("mock-model".to_string()));
     let ask = Node {
         id: 1,

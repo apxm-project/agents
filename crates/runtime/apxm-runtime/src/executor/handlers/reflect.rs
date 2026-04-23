@@ -8,8 +8,8 @@
 //! - Retry logic with exponential backoff
 
 use super::{
-    ExecutionContext, Node, Result, Value, execute_llm_request, extract_json_from_markdown,
-    get_optional_string_attribute,
+    ExecutionContext, Node, Result, Value, apply_llm_request_routing_from_node,
+    execute_llm_request, extract_json_from_markdown, get_optional_string_attribute,
 };
 use apxm_backends::LLMRequest;
 use apxm_core::constants::graph::attrs as graph_attrs;
@@ -90,7 +90,6 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
 
     let trace_query = get_optional_string_attribute(node, graph_attrs::TRACE_QUERY)?;
 
-    let model = get_optional_string_attribute(node, graph_attrs::MODEL)?;
     let limit = node
         .attributes
         .get(graph_attrs::HISTORY_LIMIT)
@@ -175,11 +174,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         });
 
     // Build LLM request
-    let mut request = LLMRequest::new(full_prompt);
-
-    if let Some(m) = model {
-        request = request.with_model(m);
-    }
+    let mut request = apply_llm_request_routing_from_node(LLMRequest::new(full_prompt), node)?;
 
     // Load system prompt from config, template, or fallback
     // Priority: 1) node attribute (agent context), 2) config instruction, 3) template, 4) hardcoded fallback

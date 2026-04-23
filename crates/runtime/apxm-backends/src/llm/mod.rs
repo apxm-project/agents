@@ -1,8 +1,8 @@
 //! APxM Models - Unified LLM Provider Integration Library
 //!
 //! Provides a declarative, minimalistic interface for integrating multiple LLM providers
-//! (OpenAI, Anthropic, Google, local Ollama) with intelligent routing, cost tracking,
-//! retry logic, and schema validation.
+//! and protocols (OpenAI, Anthropic, Google, Ollama, vLLM, mock) with intelligent
+//! routing, cost tracking, retry logic, and schema validation.
 //!
 //! # Design Principles
 //!
@@ -137,6 +137,8 @@ pub mod registration;
 pub mod registry;
 pub mod retry;
 pub mod schema;
+
+pub use apxm_core::types::{ProviderProtocol, ProviderSpec};
 
 // Re-export key public API types
 pub use assembler::{AssembledEvent, AssembledToolCall, StreamAssembler};

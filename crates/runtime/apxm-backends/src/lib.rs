@@ -2,7 +2,7 @@
 //!
 //! This crate consolidates three backend systems:
 //!
-//! - **`llm`**: Unified LLM provider integration (OpenAI, Anthropic, Google, Ollama)
+//! - **`llm`**: Unified LLM provider integration (OpenAI, Anthropic, Google, Ollama, vLLM, mock)
 //! - **`storage`**: Pluggable storage backends (in-memory, SQLite, embedded KV)
 //! - **`prompts`**: Compile-time embedded prompt templates with MiniJinja
 //!
@@ -64,6 +64,8 @@ pub use llm::{
     // Provider management
     Provider,
     ProviderId,
+    ProviderProtocol,
+    ProviderSpec,
     // Rate limiting
     RateLimitConfig,
     RateLimitConfigError,

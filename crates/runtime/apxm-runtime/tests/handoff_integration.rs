@@ -94,8 +94,8 @@ async fn handoff_transfers_execution_to_target_agent() {
     use apxm_runtime::aam::Aam;
     use apxm_runtime::capability::CapabilitySystem;
     use apxm_runtime::capability::flow_registry::FlowRegistry;
-    use apxm_runtime::executor::ExecutorEngine;
     use apxm_runtime::executor::ExecutionContext;
+    use apxm_runtime::executor::ExecutorEngine;
     use apxm_runtime::memory::{MemoryConfig, MemorySystem};
 
     // Create target agent's flow: just returns a constant string
@@ -137,7 +137,10 @@ async fn handoff_transfers_execution_to_target_agent() {
             make_node(
                 1,
                 AISOperationType::ConstStr,
-                vec![(graph_attrs::VALUE, Value::String("hello from source".into()))],
+                vec![(
+                    graph_attrs::VALUE,
+                    Value::String("hello from source".into()),
+                )],
                 vec![],
                 vec![10],
             ),
@@ -145,7 +148,10 @@ async fn handoff_transfers_execution_to_target_agent() {
                 2,
                 AISOperationType::Handoff,
                 vec![
-                    (graph_attrs::HANDOFF_FROM, Value::String("source_bot".into())),
+                    (
+                        graph_attrs::HANDOFF_FROM,
+                        Value::String("source_bot".into()),
+                    ),
                     (graph_attrs::HANDOFF_TO, Value::String("target_bot".into())),
                     (graph_attrs::TRANSFER_STATE, Value::Bool(true)),
                 ],
@@ -186,10 +192,7 @@ async fn handoff_transfers_execution_to_target_agent() {
         !handoff_start_events.is_empty(),
         "Expected HANDOFF_START event"
     );
-    assert!(
-        !handoff_end_events.is_empty(),
-        "Expected HANDOFF_END event"
-    );
+    assert!(!handoff_end_events.is_empty(), "Expected HANDOFF_END event");
 }
 
 #[tokio::test]
@@ -197,15 +200,18 @@ async fn handoff_without_transfer_state() {
     use apxm_runtime::aam::Aam;
     use apxm_runtime::capability::CapabilitySystem;
     use apxm_runtime::capability::flow_registry::FlowRegistry;
-    use apxm_runtime::executor::ExecutorEngine;
     use apxm_runtime::executor::ExecutionContext;
+    use apxm_runtime::executor::ExecutorEngine;
     use apxm_runtime::memory::{MemoryConfig, MemorySystem};
 
     let target_dag = ExecutionDag {
         nodes: vec![make_node(
             1,
             AISOperationType::ConstStr,
-            vec![(graph_attrs::VALUE, Value::String("no-state response".into()))],
+            vec![(
+                graph_attrs::VALUE,
+                Value::String("no-state response".into()),
+            )],
             vec![],
             vec![100],
         )],

@@ -15,33 +15,24 @@ use std::time::Duration;
 
 use apxm_backends::llm::backends::traits::LLMBackend;
 use apxm_backends::llm::backends::vllm::GraphAwareVllmBackend;
+use apxm_core::constants::llm::{api_paths, apxm as apxm_llm};
 use apxm_core::types::{AISOperationType, ExecutionDag, Node};
 use apxm_runtime::vllm_lifecycle::VllmGraphLifecycle;
 use serde_json::{Value, json};
 use wiremock::matchers::{method, path, path_regex};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+fn versioned_path(route: &str) -> String {
+    format!("{}{}", api_paths::VERSION_PREFIX, route)
+}
+
 // ---------------------------------------------------------------------------
 // Stub helpers (kept self-contained; mirrors apxm-backends/tests/vllm_lifecycle_http.rs).
 // ---------------------------------------------------------------------------
 
-fn pin_stats_body() -> Value {
-    json!({
-        "object": "apxm.pins.stats",
-        "active_pins": 0_u64,
-        "pinned_blocks": 0_u64,
-        "pin_hits": 0_u64,
-        "pin_misses": 0_u64,
-        "pin_hit_ratio": 0.0_f64,
-        "pin_expirations": 0_u64,
-        "memory_pressure_releases": 0_u64,
-        "total_lookups": 0_u64,
-    })
-}
-
 fn graph_register_body(graph_id: &str, exec_id: &str) -> Value {
     json!({
-        "object": "apxm.graph.registration",
+        "object": apxm_llm::OBJECT_GRAPH_REGISTRATION,
         "graph_id": graph_id,
         "execution_id": exec_id,
         "registered_nodes": 1,
@@ -50,7 +41,7 @@ fn graph_register_body(graph_id: &str, exec_id: &str) -> Value {
 
 fn graph_release_body(graph_id: &str) -> Value {
     json!({
-        "object": "apxm.graph.release",
+        "object": apxm_llm::OBJECT_GRAPH_RELEASE,
         "graph_id": graph_id,
         "released_handles": 0_u32,
         "released_blocks": 0_u32,
@@ -59,23 +50,19 @@ fn graph_release_body(graph_id: &str) -> Value {
 
 async fn start_mock_vllm(graph_id: &str, exec_id: &str) -> MockServer {
     let server = MockServer::start().await;
+    let graph_release_pattern =
+        format!(r"^{}{}[^/]+$", versioned_path(api_paths::APXM_GRAPHS), "/");
 
     Mock::given(method("POST"))
-        .and(path("/v1/apxm/graphs/register"))
+        .and(path(versioned_path(api_paths::APXM_GRAPHS_REGISTER)))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(graph_register_body(graph_id, exec_id)),
         )
         .mount(&server)
         .await;
 
-    Mock::given(method("GET"))
-        .and(path("/v1/apxm/pins/stats"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(pin_stats_body()))
-        .mount(&server)
-        .await;
-
     Mock::given(method("DELETE"))
-        .and(path_regex(r"^/v1/apxm/graphs/[^/]+$"))
+        .and(path_regex(graph_release_pattern))
         .respond_with(ResponseTemplate::new(200).set_body_json(graph_release_body(graph_id)))
         .mount(&server)
         .await;
@@ -113,7 +100,11 @@ fn count_releases(received: &[wiremock::Request]) -> usize {
     received
         .iter()
         .filter(|r| r.method == wiremock::http::Method::DELETE)
-        .filter(|r| r.url.path().starts_with("/v1/apxm/graphs/"))
+        .filter(|r| {
+            r.url
+                .path()
+                .starts_with(&versioned_path(api_paths::APXM_GRAPHS))
+        })
         .count()
 }
 
@@ -129,14 +120,10 @@ async fn vllm_lifecycle_explicit_release_fires_once() {
     let backend = make_backend(&server.uri()).await;
     let dag = single_node_dag("happy");
 
-    let lifecycle = VllmGraphLifecycle::register(
-        backend,
-        graph_id.to_string(),
-        exec_id.to_string(),
-        &dag,
-    )
-    .await
-    .expect("register lifecycle");
+    let lifecycle =
+        VllmGraphLifecycle::register(backend, graph_id.to_string(), exec_id.to_string(), &dag)
+            .await
+            .expect("register lifecycle");
 
     lifecycle.release().await.expect("explicit release");
 
@@ -166,14 +153,10 @@ async fn vllm_lifecycle_drop_guard_releases_when_dropped() {
     let dag = single_node_dag("drop");
 
     {
-        let lifecycle = VllmGraphLifecycle::register(
-            backend,
-            graph_id.to_string(),
-            exec_id.to_string(),
-            &dag,
-        )
-        .await
-        .expect("register lifecycle");
+        let lifecycle =
+            VllmGraphLifecycle::register(backend, graph_id.to_string(), exec_id.to_string(), &dag)
+                .await
+                .expect("register lifecycle");
         // Intentionally drop without calling release().
         drop(lifecycle);
     }
@@ -202,14 +185,10 @@ async fn vllm_lifecycle_drop_guard_releases_on_task_cancel() {
     let backend = make_backend(&server.uri()).await;
     let dag = single_node_dag("cancel");
 
-    let lifecycle = VllmGraphLifecycle::register(
-        backend,
-        graph_id.to_string(),
-        exec_id.to_string(),
-        &dag,
-    )
-    .await
-    .expect("register lifecycle");
+    let lifecycle =
+        VllmGraphLifecycle::register(backend, graph_id.to_string(), exec_id.to_string(), &dag)
+            .await
+            .expect("register lifecycle");
 
     let handle = tokio::spawn(async move {
         let _lc = lifecycle;

@@ -1,7 +1,6 @@
 //! LLM request types and builders.
 
-use super::vllm::ApxmGraphHints;
-use apxm_core::types::AISOperationType;
+use apxm_core::types::{AISOperationType, ApxmGraphHints};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

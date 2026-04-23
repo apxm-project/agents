@@ -83,7 +83,7 @@ pub trait LLMBackend: Send + Sync {
     }
 
     /// Returns true if the backend implements vLLM-style graph-aware extensions
-    /// (`register_graph`, `pin_prefix`, `release_graph`). Default `false`.
+    /// (`register_graph`, graph status, `release_graph`). Default `false`.
     ///
     /// Use this in routing decisions instead of inspecting `metadata()` strings.
     fn supports_graph_extensions(&self) -> bool {

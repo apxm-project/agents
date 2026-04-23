@@ -4,9 +4,9 @@ use super::{
     ExecutionContext, Result, dispatcher::OperationDispatcher, handlers::get_u32_array_attribute,
 };
 use crate::scheduler::{DataflowScheduler, SchedulerConfig};
-use apxm_backends::llm::backends::vllm::{GraphMetadata, NodeSpec};
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::types::{
+    GraphMetadata, NodeSpec, PriorityClass,
     execution::{ExecutionDag, ExecutionStats, Node, NodeStatus, OpStatus},
     values::Value,
 };
@@ -98,11 +98,11 @@ impl ExecutorEngine {
 
                 let priority = node.metadata.priority;
                 let is_critical_path = priority >= 90;
-                let priority_class = match priority {
-                    90.. => Some("critical_path".to_string()),
-                    60..=89 => Some("normal".to_string()),
-                    _ => Some("speculative".to_string()),
-                };
+                let priority_class = Some(if is_critical_path {
+                    PriorityClass::CriticalPath
+                } else {
+                    PriorityClass::Parallel
+                });
 
                 NodeSpec {
                     node_id: node.id as u32,
@@ -323,25 +323,16 @@ impl ExecutorEngine {
     /// Used by `TRY_CATCH` to drive try/catch branches without circular
     /// dependencies. Creates a child execution context and runs the
     /// referenced sub-DAG, returning the first non-null exit value.
-    pub async fn run_subgraph_by_label(
-        &self,
-        label: &str,
-        inputs: Vec<Value>,
-    ) -> Result<Value> {
+    pub async fn run_subgraph_by_label(&self, label: &str, inputs: Vec<Value>) -> Result<Value> {
         // Labels are stored as "AgentName.flowName" or just "flowName".
         // Search the flow registry for a matching flow.
         let sub_dag = self
             .context
             .flow_registry
             .find_flow_by_label(label)
-            .ok_or_else(|| {
-                apxm_core::error::RuntimeError::Operation {
-                    op_type: apxm_core::types::operations::AISOperationType::TryCatch,
-                    message: format!(
-                        "Sub-DAG label '{}' not found in flow registry",
-                        label
-                    ),
-                }
+            .ok_or_else(|| apxm_core::error::RuntimeError::Operation {
+                op_type: apxm_core::types::operations::AISOperationType::TryCatch,
+                message: format!("Sub-DAG label '{}' not found in flow registry", label),
             })?;
 
         let child_ctx = self.context.child();

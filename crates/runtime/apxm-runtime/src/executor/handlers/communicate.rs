@@ -270,25 +270,29 @@ async fn communicate_inline_agent(
         .get(response_keys::SYSTEM_PROMPT)
         .and_then(|v| v.as_string())
         .cloned();
+    let backend = agent_info
+        .get(response_keys::BACKEND)
+        .and_then(|v| v.as_string())
+        .cloned();
     let model = agent_info
         .get(response_keys::MODEL)
         .and_then(|v| v.as_string())
         .cloned();
 
-    // Require at least one of system_prompt/model — pure metadata-only entries
+    // Require at least one of system_prompt/backend/model — pure metadata-only entries
     // (e.g. ACP subprocess agents) shouldn't be auto-dispatched as LLMs.
-    if system_prompt.is_none() && model.is_none() {
+    if system_prompt.is_none() && backend.is_none() && model.is_none() {
         return Ok(None);
     }
 
-    let prompt = message
-        .as_string()
-        .cloned()
-        .unwrap_or_default();
+    let prompt = message.as_string().cloned().unwrap_or_default();
 
     let mut request = LLMRequest::new(prompt).with_operation_type(node.op_type);
     if let Some(sp) = system_prompt {
         request = request.with_system_prompt(sp);
+    }
+    if let Some(b) = backend {
+        request = request.with_backend(b);
     }
     if let Some(m) = model {
         request = request.with_model(m);

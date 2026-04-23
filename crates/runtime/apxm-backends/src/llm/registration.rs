@@ -5,13 +5,14 @@
 
 use crate::llm::LLMRegistry;
 use crate::llm::Provider;
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use apxm_core::constants::graph::attrs::{BASE_URL, MODEL};
 use apxm_core::constants::llm::config_keys;
-use apxm_core::types::{AISOperationType, ModelInfo, ProviderProtocol};
+use apxm_core::types::{AISOperationType, BackendConfig, BackendType, ModelInfo, ProviderProtocol};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value as JsonValue, json};
 use std::collections::HashMap;
+use std::env;
 
 /// Model registration metadata attached to a backend.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,6 +31,11 @@ pub struct ModelRegistration {
     /// suppresses Qwen3 `<think>` blocks. Sourced from `ModelConfig.supports_thinking`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supports_thinking: Option<bool>,
+    /// Whether the model accepts an explicit custom `temperature` field.
+    /// `Some(false)` means the OpenAI-compatible adapter must omit
+    /// `temperature` and rely on the provider default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_custom_temperature: Option<bool>,
 }
 
 /// Typed backend registration input for the LLM registry.
@@ -54,6 +60,68 @@ pub struct BackendRegistration {
 }
 
 impl BackendRegistration {
+    pub fn from_backend_config(backend: &BackendConfig) -> Result<Self> {
+        let api_key = match backend.api_key.as_deref() {
+            Some(key) => resolve_env_reference(key, "api_key", &backend.name)?,
+            None if backend.backend_type == BackendType::Local
+                || backend.protocol == ProviderProtocol::Ollama =>
+            {
+                String::new()
+            }
+            None => {
+                return Err(anyhow!(
+                    "Missing API key for backend '{}'. Set `api_key` or use `env:VAR`.",
+                    backend.name
+                ));
+            }
+        };
+
+        let endpoint = backend
+            .endpoint
+            .as_deref()
+            .map(|value| resolve_env_reference(value, "endpoint", &backend.name))
+            .transpose()?;
+
+        let extra_headers = backend
+            .headers
+            .iter()
+            .map(|(key, value)| {
+                let resolved = resolve_env_reference(value, key, &backend.name)?;
+                Ok((key.clone(), resolved))
+            })
+            .collect::<Result<HashMap<_, _>>>()?;
+
+        let models = backend
+            .models
+            .iter()
+            .map(|model| ModelRegistration {
+                id: model.id.clone(),
+                aliases: model.aliases.clone(),
+                info: Some(ModelInfo {
+                    id: model.id.clone(),
+                    name: model.id.clone(),
+                    context_window: model.context_window,
+                    supports_vision: model.supports_vision,
+                    supports_functions: model.supports_functions,
+                }),
+                supports_thinking: Some(model.supports_thinking),
+                supports_custom_temperature: model.supports_custom_temperature,
+            })
+            .collect();
+
+        Ok(Self {
+            name: backend.name.clone(),
+            protocol: backend.protocol,
+            api_key,
+            default_model: None,
+            models,
+            endpoint,
+            options: HashMap::new(),
+            extra_headers,
+            auto_tool_choice: backend.auto_tool_choice,
+        })
+    }
+
     fn primary_model_id(&self) -> Option<&str> {
         self.default_model
             .as_deref()
@@ -97,12 +165,21 @@ impl BackendRegistration {
             .models
             .iter()
             .filter_map(|m| {
-                m.supports_thinking.map(|st| {
-                    json!({
-                        "id": m.id,
-                        config_keys::SUPPORTS_THINKING: st,
-                    })
-                })
+                let mut entry = Map::new();
+                entry.insert("id".to_string(), json!(m.id));
+                if let Some(supports_thinking) = m.supports_thinking {
+                    entry.insert(
+                        config_keys::SUPPORTS_THINKING.to_string(),
+                        json!(supports_thinking),
+                    );
+                }
+                if let Some(supports_custom_temperature) = m.supports_custom_temperature {
+                    entry.insert(
+                        config_keys::SUPPORTS_CUSTOM_TEMPERATURE.to_string(),
+                        json!(supports_custom_temperature),
+                    );
+                }
+                (entry.len() > 1).then_some(JsonValue::Object(entry))
             })
             .collect();
         if !model_entries.is_empty() {
@@ -135,6 +212,21 @@ impl BackendRegistration {
             }
         }
         Ok(())
+    }
+}
+
+fn resolve_env_reference(value: &str, field: &str, backend_name: &str) -> Result<String> {
+    if let Some(var_name) = value.strip_prefix("env:") {
+        env::var(var_name).map_err(|_| {
+            anyhow!(
+                "Environment variable '{}' not set for {} in backend '{}'",
+                var_name,
+                field,
+                backend_name
+            )
+        })
+    } else {
+        Ok(value.to_string())
     }
 }
 
@@ -206,5 +298,68 @@ impl RegistryPolicy {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use apxm_core::types::{BackendType, ModelConfig};
+
+    #[test]
+    fn backend_registration_from_vllm_backend_config_preserves_backend_model_split() {
+        let backend = BackendConfig {
+            name: "vllm-fork".to_string(),
+            backend_type: BackendType::Local,
+            protocol: ProviderProtocol::Vllm,
+            endpoint: Some("http://localhost:8916/v1".to_string()),
+            api_key: None,
+            headers: HashMap::from([("x-tenant".to_string(), "lab".to_string())]),
+            models: vec![ModelConfig {
+                id: "DataPilot/ArrowMint-Gemma3-4B-ChocoMint-instruct-v0.2".to_string(),
+                aliases: vec!["gemma-smoke".to_string()],
+                context_window: 8192,
+                cost_per_1k_input: 0.0,
+                cost_per_1k_output: 0.0,
+                supports_vision: false,
+                supports_functions: true,
+                supports_thinking: false,
+                supports_custom_temperature: Some(false),
+                max_output_tokens: Some(2048),
+                tags: Vec::new(),
+            }],
+            docker: None,
+            auto_tool_choice: Some(false),
+        };
+
+        let registration =
+            BackendRegistration::from_backend_config(&backend).expect("registration builds");
+
+        assert_eq!(registration.name, "vllm-fork");
+        assert_eq!(registration.protocol, ProviderProtocol::Vllm);
+        assert_eq!(
+            registration.endpoint.as_deref(),
+            Some("http://localhost:8916/v1")
+        );
+        assert_eq!(registration.api_key, "");
+        assert_eq!(
+            registration.models.first().map(|model| model.id.as_str()),
+            Some("DataPilot/ArrowMint-Gemma3-4B-ChocoMint-instruct-v0.2")
+        );
+        assert_eq!(
+            registration
+                .models
+                .first()
+                .map(|model| model.aliases.clone()),
+            Some(vec!["gemma-smoke".to_string()])
+        );
+        assert_eq!(registration.auto_tool_choice, Some(false));
+        assert_eq!(
+            registration
+                .extra_headers
+                .get("x-tenant")
+                .map(String::as_str),
+            Some("lab")
+        );
     }
 }

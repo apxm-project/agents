@@ -4,6 +4,8 @@ use apxm_backends::llm::backends::LLMRequest;
 use apxm_backends::llm::backends::vllm::{
     ApxmGraphHints, GraphAwareVllmBackend, GraphMetadata, NodeSpec, PinPolicy,
 };
+use apxm_core::constants::llm::{api_paths, apxm as apxm_llm};
+use apxm_core::types::{PinMode, PriorityClass};
 use serde_json::json;
 
 #[tokio::test]
@@ -24,9 +26,9 @@ async fn test_apxm_graph_hints_serialization() {
     assert_eq!(json["execution_id"], "exec-001");
     assert_eq!(json["node_id"], 1);
     assert_eq!(json["node_name"], "reasoning-node");
-    assert_eq!(json["priority_class"], "critical_path");
+    assert_eq!(json["priority_class"], apxm_llm::PRIORITY_CRITICAL_PATH);
     assert_eq!(json["downstream_nodes"], json!([2, 3]));
-    assert_eq!(json["pin_policy"]["mode"], "prefix");
+    assert_eq!(json["pin_policy"]["mode"], apxm_llm::PIN_MODE_PREFIX);
     assert_eq!(json["pin_policy"]["ttl_ms"], 30_000);
 }
 
@@ -45,10 +47,10 @@ async fn test_apxm_graph_hints_roundtrip() {
     assert_eq!(deserialized.node_name, Some("plan".to_string()));
     assert_eq!(
         deserialized.priority_class,
-        Some("critical_path".to_string())
+        Some(PriorityClass::CriticalPath)
     );
     assert_eq!(deserialized.downstream_nodes, vec![6, 7, 8]);
-    assert_eq!(deserialized.pin_policy.mode, "prefix");
+    assert_eq!(deserialized.pin_policy.mode, PinMode::Prefix);
     assert_eq!(deserialized.pin_policy.ttl_ms, Some(45_000));
 }
 
@@ -57,13 +59,13 @@ fn test_pin_policy_variants_serialization() {
     // Test "none" mode
     let none_policy = PinPolicy::none();
     let none_json = serde_json::to_value(&none_policy).expect("serialize none");
-    assert_eq!(none_json["mode"], "none");
+    assert_eq!(none_json["mode"], apxm_llm::PIN_MODE_NONE);
     assert!(none_json.get("ttl_ms").is_none() || none_json["ttl_ms"].is_null());
 
     // Test "prefix" mode
     let prefix_policy = PinPolicy::prefix(60_000);
     let prefix_json = serde_json::to_value(&prefix_policy).expect("serialize prefix");
-    assert_eq!(prefix_json["mode"], "prefix");
+    assert_eq!(prefix_json["mode"], apxm_llm::PIN_MODE_PREFIX);
     assert_eq!(prefix_json["ttl_ms"], 60_000);
 }
 
@@ -78,7 +80,7 @@ fn test_graph_metadata_registration_shape() {
                 node_name: Some("architect".to_string()),
                 estimated_prompt_tokens: Some(500),
                 downstream_nodes: vec![2, 3],
-                priority_class: Some("critical_path".to_string()),
+                priority_class: Some(PriorityClass::CriticalPath),
                 reuse_group: Some("planning".to_string()),
                 is_critical_path: true,
             },
@@ -87,7 +89,7 @@ fn test_graph_metadata_registration_shape() {
                 node_name: Some("coder".to_string()),
                 estimated_prompt_tokens: Some(1500),
                 downstream_nodes: vec![4],
-                priority_class: Some("parallel".to_string()),
+                priority_class: Some(PriorityClass::Parallel),
                 reuse_group: None,
                 is_critical_path: false,
             },
@@ -106,7 +108,7 @@ fn test_graph_metadata_registration_shape() {
     assert_eq!(node1["node_id"], 1);
     assert_eq!(node1["node_name"], "architect");
     assert_eq!(node1["estimated_prompt_tokens"], 500);
-    assert_eq!(node1["priority_class"], "critical_path");
+    assert_eq!(node1["priority_class"], apxm_llm::PRIORITY_CRITICAL_PATH);
     assert_eq!(node1["is_critical_path"], true);
 }
 
@@ -128,7 +130,10 @@ fn test_backend_injects_apxm_hints_into_extra_body() {
     assert_eq!(hints_json["schema_version"], 1);
     assert_eq!(hints_json["graph_id"], "test-graph");
     assert_eq!(hints_json["node_id"], 1);
-    assert_eq!(hints_json["priority_class"], "critical_path");
+    assert_eq!(
+        hints_json["priority_class"],
+        apxm_llm::PRIORITY_CRITICAL_PATH
+    );
 
     // Verify the hint injection creates proper extra_body structure
     let extra_body = serde_json::json!({"apxm": hints_json});
@@ -148,19 +153,19 @@ fn test_critical_path_priority_mapped_in_request() {
         30_000,
     );
 
-    assert_eq!(hints.priority_class, Some("critical_path".to_string()));
+    assert_eq!(hints.priority_class, Some(PriorityClass::CriticalPath));
     assert_eq!(hints.node_id, Some(1));
     assert_eq!(hints.downstream_nodes, vec![2, 3]);
 
     // Verify parallel hints don't have critical priority
     let parallel = ApxmGraphHints::parallel("graph-xyz", "exec-002", 5, "parallel-node");
-    assert_eq!(parallel.priority_class, Some("parallel".to_string()));
+    assert_eq!(parallel.priority_class, Some(PriorityClass::Parallel));
 }
 
 #[tokio::test]
 async fn test_graph_registration_request_structure() {
     let expected_body = json!({
-        "graph_id": "workflow-123",
+        "graph_id": "graph-123",
         "execution_id": "exec-456",
         "critical_path_length": 3,
         "node_count": 2,
@@ -171,7 +176,7 @@ async fn test_graph_registration_request_structure() {
                 "node_name": "planner",
                 "estimated_prompt_tokens": 800,
                 "downstream_nodes": [2],
-                "priority_class": "critical_path",
+                "priority_class": apxm_llm::PRIORITY_CRITICAL_PATH,
                 "is_critical_path": true
             },
             {
@@ -193,7 +198,7 @@ async fn test_graph_registration_request_structure() {
     .await
     .expect("create backend");
 
-    let metadata = GraphMetadata::new("workflow-123", "exec-456")
+    let metadata = GraphMetadata::new("graph-123", "exec-456")
         .with_pin_ttl(45_000)
         .with_critical_path_length(3)
         .with_nodes(vec![
@@ -202,7 +207,7 @@ async fn test_graph_registration_request_structure() {
                 node_name: Some("planner".to_string()),
                 estimated_prompt_tokens: Some(800),
                 downstream_nodes: vec![2],
-                priority_class: Some("critical_path".to_string()),
+                priority_class: Some(PriorityClass::CriticalPath),
                 reuse_group: None,
                 is_critical_path: true,
             },
@@ -220,7 +225,11 @@ async fn test_graph_registration_request_structure() {
     let payload = serde_json::to_value(&metadata).expect("serialize metadata");
     assert_eq!(
         backend.graph_registration_url(),
-        "http://vllm.test:8000/v1/apxm/graphs/register"
+        format!(
+            "http://vllm.test:8000{}{}",
+            api_paths::VERSION_PREFIX,
+            api_paths::APXM_GRAPHS_REGISTER
+        )
     );
     assert_eq!(payload, expected_body);
 }

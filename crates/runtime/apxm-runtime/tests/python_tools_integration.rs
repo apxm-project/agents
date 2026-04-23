@@ -125,8 +125,7 @@ async fn compute_handler_id(module: &str, qualname: &str, pythonpath: &str) -> S
 /// lives at `crates/compiler/apxm-frontend/python/apxm`, so the directory
 /// to put on PYTHONPATH is `crates/compiler/apxm-frontend/python`.
 fn apxm_python_root() -> std::path::PathBuf {
-    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../compiler/apxm-frontend/python")
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../compiler/apxm-frontend/python")
 }
 
 /// Build a PYTHONPATH that prepends the temp fixture dir AND the apxm
@@ -193,7 +192,11 @@ async fn test_worker_calls_real_python_tool() {
 
     // ----- happy path: add(7, 11) == 18 -----
     let value = worker
-        .call(&add_id, serde_json::json!({"a": 7, "b": 11}), Duration::from_secs(15))
+        .call(
+            &add_id,
+            serde_json::json!({"a": 7, "b": 11}),
+            Duration::from_secs(15),
+        )
         .await
         .expect("add should succeed");
     assert_eq!(value, serde_json::json!(18));
@@ -209,7 +212,11 @@ async fn test_worker_calls_real_python_tool() {
 
     // ----- unknown handler_id is rejected by the worker -----
     let err = worker
-        .call("sha256:does_not_exist", serde_json::json!({}), Duration::from_secs(5))
+        .call(
+            "sha256:does_not_exist",
+            serde_json::json!({}),
+            Duration::from_secs(5),
+        )
         .await
         .expect_err("unknown handler should fail");
     assert!(format!("{err}").contains("unknown_handler"));

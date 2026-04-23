@@ -21,9 +21,12 @@ use crossbeam_deque::Worker;
 use crate::executor::ExecutionContext;
 use crate::executor::ExecutorEngine;
 use crate::scheduler::internal_state::{OpState, TokenState};
+use crate::scheduler::queue::Priority;
 use crate::scheduler::state::SchedulerState;
 use crate::timed;
 use apxm_core::error::RuntimeError;
+
+const HOL_BLOCK_THRESHOLD_MS: u64 = 50;
 
 /// Main worker loop.
 ///
@@ -92,9 +95,14 @@ pub async fn worker_loop(
             Err(_) => break, // Cancelled
         };
 
-        // Mark operation as running and record progress so the watchdog
-        // knows the scheduler is alive during long-running operations (e.g. LLM calls).
+        // Mark operation as running and emit scheduler-side observability
+        // before dispatch so wait time is measured from ready -> running.
+        let child_ctx = base_ctx.child();
         op_start(&state.op_states, node_id);
+        emit_scheduler_events(&state, &child_ctx, node_id);
+
+        // Record progress so the watchdog knows the scheduler is alive during
+        // long-running operations (e.g. LLM calls).
         state.record_progress();
 
         apxm_op!(debug,
@@ -128,7 +136,6 @@ pub async fn worker_loop(
         };
 
         // Execute operation with retries
-        let child_ctx = base_ctx.child();
         let outputs = node.output_tokens.clone();
 
         let outcome =
@@ -219,6 +226,159 @@ fn op_start(op_states: &dashmap::DashMap<NodeId, OpState>, node_id: NodeId) {
         if state.started_at.is_none() {
             state.started_at = Some(Instant::now());
         }
+    }
+}
+
+fn emit_scheduler_events(state: &SchedulerState, ctx: &ExecutionContext, node_id: NodeId) {
+    let Some(emitter) = ctx.event_emitter.as_ref() else {
+        return;
+    };
+
+    let chosen_priority = state
+        .priorities
+        .get(&node_id)
+        .map(|priority| *priority)
+        .unwrap_or(Priority::Low);
+
+    let delay = {
+        let Some(op_state) = state.op_states.get(&node_id) else {
+            return;
+        };
+        let Some(ready_at) = op_state.ready_at else {
+            return;
+        };
+        let started_at = op_state.started_at.unwrap_or_else(Instant::now);
+        started_at.saturating_duration_since(ready_at)
+    };
+
+    let counts = ready_priority_counts(state, node_id, chosen_priority);
+    let total_ready = counts.iter().sum::<usize>().max(1);
+    let median_priority = median_priority_from_counts(&counts).unwrap_or(chosen_priority);
+    let rank = higher_priority_count(&counts, chosen_priority) + 1;
+
+    emitter.emit_scheduler_decision(
+        node_id,
+        delay,
+        &format!(
+            "chosen={}; median={}; rank={}_of_{}",
+            priority_label(chosen_priority),
+            priority_label(median_priority),
+            rank,
+            total_ready
+        ),
+    );
+
+    let wait_ms = delay.as_millis().min(u64::MAX as u128) as u64;
+    if wait_ms < HOL_BLOCK_THRESHOLD_MS {
+        return;
+    }
+
+    let Some((blocker_node, blocker_priority)) = highest_priority_running_node(state, node_id)
+    else {
+        return;
+    };
+
+    emitter.emit_head_of_line_block(
+        blocker_node,
+        node_id,
+        wait_ms,
+        &format!(
+            "wait_ms={}; threshold_ms={}; blocker={}; blocked={}",
+            wait_ms,
+            HOL_BLOCK_THRESHOLD_MS,
+            priority_label(blocker_priority),
+            priority_label(chosen_priority)
+        ),
+    );
+}
+
+fn ready_priority_counts(
+    state: &SchedulerState,
+    chosen_node_id: NodeId,
+    chosen_priority: Priority,
+) -> [usize; Priority::COUNT] {
+    let mut counts = [0usize; Priority::COUNT];
+    counts[chosen_priority.as_index()] += 1;
+
+    for entry in state.op_states.iter() {
+        if *entry.key() == chosen_node_id || entry.status != OpStatus::Ready {
+            continue;
+        }
+
+        if let Some(priority) = state.priorities.get(entry.key()).map(|priority| *priority) {
+            counts[priority.as_index()] += 1;
+        }
+    }
+
+    counts
+}
+
+fn higher_priority_count(counts: &[usize; Priority::COUNT], chosen_priority: Priority) -> usize {
+    counts
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| *index > chosen_priority.as_index())
+        .map(|(_, count)| *count)
+        .sum()
+}
+
+fn median_priority_from_counts(counts: &[usize; Priority::COUNT]) -> Option<Priority> {
+    let total: usize = counts.iter().sum();
+    if total == 0 {
+        return None;
+    }
+
+    let median_index = total / 2;
+    let ordered = [
+        Priority::Low,
+        Priority::Normal,
+        Priority::High,
+        Priority::Critical,
+    ];
+
+    let mut seen = 0usize;
+    for priority in ordered {
+        seen += counts[priority.as_index()];
+        if seen > median_index {
+            return Some(priority);
+        }
+    }
+
+    Some(Priority::Critical)
+}
+
+fn highest_priority_running_node(
+    state: &SchedulerState,
+    blocked_node_id: NodeId,
+) -> Option<(NodeId, Priority)> {
+    let mut best: Option<(NodeId, Priority)> = None;
+
+    for entry in state.op_states.iter() {
+        let node_id = *entry.key();
+        if node_id == blocked_node_id || entry.status != OpStatus::Running {
+            continue;
+        }
+
+        let priority = state
+            .priorities
+            .get(&node_id)
+            .map(|priority| *priority)
+            .unwrap_or(Priority::Low);
+
+        if best.is_none_or(|(_, best_priority)| priority > best_priority) {
+            best = Some((node_id, priority));
+        }
+    }
+
+    best
+}
+
+fn priority_label(priority: Priority) -> &'static str {
+    match priority {
+        Priority::Low => "low",
+        Priority::Normal => "normal",
+        Priority::High => "high",
+        Priority::Critical => "critical",
     }
 }
 
@@ -582,4 +742,193 @@ async fn record_event(
             None, // session_dir not available in worker context
         )
         .await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::capability::CapabilitySystem;
+    use crate::executor::ExecutionEventEmitter;
+    use crate::memory::{MemoryConfig, MemorySystem};
+    use crate::observability::MetricsCollector;
+    use crate::scheduler::config::SchedulerConfig;
+    use crate::scheduler::state::SchedulerState;
+    use apxm_backends::LLMRegistry;
+    use apxm_core::types::execution::{ExecutionDag, NodeMetadata};
+    use parking_lot::Mutex;
+    use std::collections::HashMap;
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct SchedulerDecisionRecord {
+        node_id: u64,
+        delay_ms: u64,
+        reason: String,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct HeadOfLineBlockRecord {
+        blocker_node: u64,
+        blocked_node: u64,
+        wait_ms: u64,
+        reason: String,
+    }
+
+    #[derive(Default)]
+    struct RecordingEmitter {
+        scheduler_decisions: Mutex<Vec<SchedulerDecisionRecord>>,
+        head_of_line_blocks: Mutex<Vec<HeadOfLineBlockRecord>>,
+    }
+
+    impl ExecutionEventEmitter for RecordingEmitter {
+        fn emit_llm_token(&self, _content: &str) {}
+
+        fn emit_tool_start(&self, _name: &str, _args: &HashMap<String, Value>) {}
+
+        fn emit_tool_end(&self, _name: &str, _result: &Value) {}
+
+        fn emit_scheduler_decision(&self, node_id: u64, delay: Duration, reason: &str) {
+            self.scheduler_decisions
+                .lock()
+                .push(SchedulerDecisionRecord {
+                    node_id,
+                    delay_ms: delay.as_millis() as u64,
+                    reason: reason.to_string(),
+                });
+        }
+
+        fn emit_head_of_line_block(
+            &self,
+            blocker_node: u64,
+            blocked_node: u64,
+            wait_ms: u64,
+            reason: &str,
+        ) {
+            self.head_of_line_blocks.lock().push(HeadOfLineBlockRecord {
+                blocker_node,
+                blocked_node,
+                wait_ms,
+                reason: reason.to_string(),
+            });
+        }
+    }
+
+    fn make_node(id: u64, priority: u8) -> Node {
+        Node {
+            id,
+            op_type: AISOperationType::Nop,
+            attributes: HashMap::new(),
+            input_tokens: vec![],
+            output_tokens: vec![id],
+            metadata: NodeMetadata {
+                priority: priority.into(),
+                ..NodeMetadata::default()
+            },
+        }
+    }
+
+    fn build_state(nodes: Vec<Node>) -> (SchedulerState, Vec<Worker<NodeId>>) {
+        let mut dag = ExecutionDag::new();
+        for node in nodes {
+            dag.add_node(node).unwrap();
+        }
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+
+        SchedulerState::new(
+            dag,
+            SchedulerConfig::default(),
+            Arc::new(MetricsCollector::new()),
+            Instant::now(),
+            Vec::new(),
+        )
+        .unwrap()
+    }
+
+    async fn build_context() -> ExecutionContext {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .expect("in-memory memory system"),
+        );
+        let llm_registry = Arc::new(LLMRegistry::new());
+        let capability_system = Arc::new(CapabilitySystem::new());
+        ExecutionContext::new(
+            memory,
+            llm_registry,
+            capability_system,
+            crate::aam::Aam::new(),
+        )
+    }
+
+    #[tokio::test]
+    async fn emits_scheduler_decision_with_median_priority_and_rank() {
+        let (state, workers) =
+            build_state(vec![make_node(1, 95), make_node(2, 40), make_node(3, 10)]);
+        let chosen = state.work_stealing.steal_next(&workers[0], 0).unwrap();
+        let ready_at = Instant::now() - Duration::from_millis(25);
+
+        {
+            let mut op = state.op_states.get_mut(&chosen).unwrap();
+            op.status = OpStatus::Running;
+            op.ready_at = Some(ready_at);
+            op.started_at = Some(ready_at + Duration::from_millis(25));
+        }
+
+        let emitter = Arc::new(RecordingEmitter::default());
+        let ctx = build_context()
+            .await
+            .with_event_emitter(Some(emitter.clone()));
+
+        emit_scheduler_events(&state, &ctx, chosen);
+
+        assert_eq!(
+            *emitter.scheduler_decisions.lock(),
+            vec![SchedulerDecisionRecord {
+                node_id: chosen,
+                delay_ms: 25,
+                reason: "chosen=critical; median=normal; rank=1_of_3".to_string(),
+            }]
+        );
+        assert!(emitter.head_of_line_blocks.lock().is_empty());
+    }
+
+    #[tokio::test]
+    async fn emits_head_of_line_block_when_ready_node_waits_past_threshold() {
+        let (state, workers) = build_state(vec![make_node(1, 10), make_node(2, 95)]);
+        let blocker = state.work_stealing.steal_next(&workers[0], 0).unwrap();
+
+        {
+            let mut blocker_state = state.op_states.get_mut(&blocker).unwrap();
+            blocker_state.status = OpStatus::Running;
+            blocker_state.started_at = Some(Instant::now() - Duration::from_millis(120));
+        }
+
+        let blocked = state.work_stealing.steal_next(&workers[0], 0).unwrap();
+        let ready_at = Instant::now() - Duration::from_millis(80);
+
+        {
+            let mut blocked_state = state.op_states.get_mut(&blocked).unwrap();
+            blocked_state.status = OpStatus::Running;
+            blocked_state.ready_at = Some(ready_at);
+            blocked_state.started_at = Some(ready_at + Duration::from_millis(80));
+        }
+
+        let emitter = Arc::new(RecordingEmitter::default());
+        let ctx = build_context()
+            .await
+            .with_event_emitter(Some(emitter.clone()));
+
+        emit_scheduler_events(&state, &ctx, blocked);
+
+        assert_eq!(emitter.scheduler_decisions.lock()[0].delay_ms, 80);
+        assert_eq!(
+            *emitter.head_of_line_blocks.lock(),
+            vec![HeadOfLineBlockRecord {
+                blocker_node: blocker,
+                blocked_node: blocked,
+                wait_ms: 80,
+                reason: "wait_ms=80; threshold_ms=50; blocker=critical; blocked=low".to_string(),
+            }]
+        );
+    }
 }

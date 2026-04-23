@@ -54,9 +54,8 @@ async fn execute_impl(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -
             );
 
             // Convert the error to a JSON value for the catch-branch input
-            let error_value = Value::try_from(try_err.to_value()).unwrap_or_else(|_| {
-                Value::String(format!("Error conversion failed: {}", try_err))
-            });
+            let error_value = Value::try_from(try_err.to_value())
+                .unwrap_or_else(|_| Value::String(format!("Error conversion failed: {}", try_err)));
 
             // Execute catch-branch with the error as input
             let catch_engine = ExecutorEngine::new(ctx.child());
@@ -141,8 +140,10 @@ mod tests {
         }
     }
 
-    fn make_try_catch_node(try_label: &str, catch_label: &str) -> apxm_core::types::execution::Node
-    {
+    fn make_try_catch_node(
+        try_label: &str,
+        catch_label: &str,
+    ) -> apxm_core::types::execution::Node {
         let mut node = apxm_core::types::execution::Node {
             id: 10,
             op_type: AISOperationType::TryCatch,
@@ -218,7 +219,10 @@ mod tests {
         let node = make_try_catch_node("try_block", "catch_block");
 
         let result = execute(&ctx, &node, vec![]).await;
-        assert!(result.is_err(), "Expected error to propagate from catch-branch");
+        assert!(
+            result.is_err(),
+            "Expected error to propagate from catch-branch"
+        );
         let err_msg = result.unwrap_err().to_string();
         assert!(
             err_msg.contains("Missing required attribute"),

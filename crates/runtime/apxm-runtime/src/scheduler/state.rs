@@ -1284,15 +1284,10 @@ mod tests {
             .with_llm_inflight(1);
         let dag = two_node_dag();
         let metrics = Arc::new(MetricsCollector::new());
-        let (state, _) =
-            SchedulerState::new(dag, cfg, metrics, Instant::now(), vec![]).unwrap();
+        let (state, _) = SchedulerState::new(dag, cfg, metrics, Instant::now(), vec![]).unwrap();
 
         // Take the only LLM permit.
-        let llm_permit = state
-            .llm_concurrency
-            .acquire()
-            .await
-            .expect("llm acquire");
+        let llm_permit = state.llm_concurrency.acquire().await.expect("llm acquire");
         assert_eq!(state.llm_concurrency.available_permits(), 0);
 
         // Compute permits are unaffected.

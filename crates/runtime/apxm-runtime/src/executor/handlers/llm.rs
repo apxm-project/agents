@@ -18,14 +18,14 @@
 //! 5. Repeat until LLM returns text (no tool calls)
 
 use super::{
-    ExecutionContext, Node, Result, Value, execute_llm_request, get_optional_string_attribute,
+    ExecutionContext, Node, Result, Value, apply_llm_request_routing_from_node,
+    copy_llm_request_routing, execute_llm_request, get_optional_string_attribute,
     get_optional_u64_attribute, get_string_attribute,
     inner_plan::{InnerPlanOptions, execute_inner_plan},
     template::{input_names_from_node, render_named},
 };
 use crate::aam::{Goal as AamGoal, GoalId, GoalStatus, TransitionLabel};
 use crate::executor::memoization::ResponseCache;
-use apxm_backends::llm::backends::vllm::ApxmGraphHints;
 use apxm_backends::{LLMRequest, ToolChoice, ToolDefinition};
 use apxm_core::InnerPlanPayload;
 use apxm_core::apxm_llm;
@@ -33,7 +33,7 @@ use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::constants::runtime::belief_keys;
 use apxm_core::error::RuntimeError;
 use apxm_core::types::operations::AISOperationType;
-use apxm_core::types::{ToolCall, ToolResult};
+use apxm_core::types::{ApxmGraphHints, PriorityClass, ToolCall, ToolResult};
 use jsonschema::JSONSchema;
 use serde::de::Error;
 use serde::{Deserialize, Serialize};
@@ -530,9 +530,6 @@ fn default_priority() -> u32 {
 /// and attach them to `request`. Hints are then enriched with runtime-only
 /// identifiers (execution id, human-readable node name, runtime-derived
 /// priority class fallback) that the compiler cannot supply.
-///
-/// All `_vllm_*` keys are read via `apxm_ais::attrs` constants — no string
-/// literals (Rule 1 in the integration plan).
 fn inject_vllm_hints(ctx: &ExecutionContext, node: &Node, request: LLMRequest) -> LLMRequest {
     let node_name = node
         .metadata
@@ -551,18 +548,13 @@ fn inject_vllm_hints(ctx: &ExecutionContext, node: &Node, request: LLMRequest) -
     hints.node_id = Some(node.id as u32);
     hints.node_name = Some(node_name);
 
-    // Runtime fallback for priority_class derived from numeric NodeMetadata
-    // priority when the compiler did not stamp `_vllm_priority_class` and did
-    // not flag the node as critical-path. Keeps observability for graphs
-    // compiled below -O1 (where vllm_hints does not run).
+    // If the compiler did not stamp a class, derive one from the node priority.
     if hints.priority_class.is_none() {
         let priority_value = node.metadata.priority;
-        let derived = match priority_value {
-            90.. => "critical_path",
-            60..=89 => "normal",
-            _ => "speculative",
-        };
-        hints.priority_class = Some(derived.to_string());
+        hints.priority_class = Some(match priority_value {
+            90.. => PriorityClass::CriticalPath,
+            _ => PriorityClass::Parallel,
+        });
     }
 
     apxm_llm!(debug,
@@ -590,7 +582,6 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
 
     let base_prompt = get_string_attribute(node, graph_attrs::TEMPLATE_STR)
         .or_else(|_| get_string_attribute(node, graph_attrs::PROMPT))?;
-    let model = get_optional_string_attribute(node, graph_attrs::MODEL)?;
     let budget = get_optional_u64_attribute(node, graph_attrs::BUDGET)?;
     let max_retries = node
         .attributes
@@ -633,7 +624,10 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         render_named(&base_prompt, &inputs, &input_names)?
     };
 
-    let mut request = LLMRequest::new(prompt.clone()).with_operation_type(node.op_type);
+    let mut request = apply_llm_request_routing_from_node(
+        LLMRequest::new(prompt.clone()).with_operation_type(node.op_type),
+        node,
+    )?;
 
     // Apply mode-specific configuration
     if mode == LlmMode::Think
@@ -644,10 +638,6 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
 
     let system_prompt = resolve_system_prompt(ctx, node, mode)?;
     request = request.with_system_prompt(system_prompt);
-
-    if let Some(model_name) = model {
-        request = request.with_model(model_name);
-    }
 
     // Tool configuration (Ask mode only). Tools are OPT-IN: a node only
     // attaches tools when it explicitly opts in via TOOLS (named list) or
@@ -689,15 +679,16 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
                     message: format!("Failed to resolve backend for tool routing: {}", e),
                     backend: None,
                 })?;
-            let backend = ctx.llm_registry.get_backend(&backend_name).ok_or_else(|| {
-                RuntimeError::LLM {
-                    message: format!(
-                        "Backend '{}' resolved but not present in registry",
-                        backend_name
-                    ),
-                    backend: Some(backend_name.clone()),
-                }
-            })?;
+            let backend =
+                ctx.llm_registry
+                    .get_backend(&backend_name)
+                    .ok_or_else(|| RuntimeError::LLM {
+                        message: format!(
+                            "Backend '{}' resolved but not present in registry",
+                            backend_name
+                        ),
+                        backend: Some(backend_name.clone()),
+                    })?;
             if !backend.supports_auto_tool_choice() {
                 return Err(RuntimeError::LLM {
                     message: format!(
@@ -1147,9 +1138,12 @@ async fn execute_ask_with_tools(
         );
 
         // Update request for next iteration
-        current_request = LLMRequest::new(continuation_prompt)
-            .with_system_prompt(current_request.system_prompt.clone().unwrap_or_default())
-            .with_temperature(current_request.temperature);
+        current_request = copy_llm_request_routing(
+            LLMRequest::new(continuation_prompt)
+                .with_system_prompt(current_request.system_prompt.clone().unwrap_or_default())
+                .with_temperature(current_request.temperature),
+            initial_request,
+        );
 
         // Keep tools available for subsequent calls
         if let Some(tools) = &initial_request.tools {
@@ -1158,13 +1152,9 @@ async fn execute_ask_with_tools(
         if let Some(choice) = &initial_request.tool_choice {
             current_request = current_request.with_tool_choice(choice.clone());
         }
-        if let Some(model) = &initial_request.model {
-            current_request = current_request.with_model(model.clone());
-        }
-        // Preserve compiler-stamped APXM graph hints across tool-call retries
-        // (Step 3b in the integration plan; Rule 4). The backend's
-        // `inject_hints` skips re-injection when `extra_body.apxm` is already
-        // set, so without this clone every retry would lose its hints.
+        // Preserve compiler-stamped APXM graph hints across tool-call retries.
+        // The backend skips re-injection when `extra_body.apxm` is already set,
+        // so retries need an explicit clone here.
         if let Some(hints) = &initial_request.apxm_hints {
             current_request = current_request.with_apxm_hints(hints.clone());
         }

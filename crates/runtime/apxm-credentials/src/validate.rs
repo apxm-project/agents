@@ -31,8 +31,7 @@ pub async fn validate_backend(backend: &BackendConfig) -> Result<String, Backend
         }
         ProviderProtocol::Google => validate_google(&client, &backend.name, backend, base).await,
         ProviderProtocol::Ollama => validate_ollama(&client, &backend.name, backend, base).await,
-        // vLLM uses OpenAI-compatible validation (same /models endpoint)
-        ProviderProtocol::Vllm => validate_openai(&client, &backend.name, backend, base).await,
+        ProviderProtocol::Vllm => validate_vllm(&client, &backend.name, backend, base).await,
         // Mock backend doesn't need validation (no real API)
         ProviderProtocol::Mock => Ok(format!("Mock backend '{}' is always valid", backend.name)),
     }
@@ -204,6 +203,66 @@ async fn validate_ollama(
         .map_err(|e| validation_err(name, format!("Connection failed: {e}")))?;
 
     if resp.status().is_success() {
+        Ok(format!("OK ({})", resp.status()))
+    } else {
+        Err(validation_err(name, format!("HTTP {}", resp.status())))
+    }
+}
+
+async fn validate_vllm(
+    client: &reqwest::Client,
+    name: &str,
+    backend: &BackendConfig,
+    base: &str,
+) -> Result<String, BackendError> {
+    let models_url = format!("{base}/models");
+    let mut req = client.get(&models_url);
+    if let Some(api_key) = backend.api_key.as_deref().filter(|key| !key.is_empty()) {
+        req = req.bearer_auth(api_key);
+    }
+    for (k, v) in &backend.headers {
+        req = req.header(k.as_str(), v.as_str());
+    }
+
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| validation_err(name, format!("Request failed: {e}")))?;
+
+    if resp.status().is_success() {
+        return Ok(format!("OK ({})", resp.status()));
+    }
+
+    let Some(model) = backend.models.first().map(|m| m.id.as_str()) else {
+        return Err(validation_err(
+            name,
+            format!(
+                "HTTP {} from /models and no model is registered. Add one with `dekk apxm backend add-model {name} <model-id>`.",
+                resp.status()
+            ),
+        ));
+    };
+
+    let chat_url = format!("{base}/chat/completions");
+    let mut req = client
+        .post(&chat_url)
+        .header("content-type", "application/json")
+        .body(format!(
+            r#"{{"model":"{model}","max_completion_tokens":1,"messages":[{{"role":"user","content":"hi"}}]}}"#,
+        ));
+    if let Some(api_key) = backend.api_key.as_deref().filter(|key| !key.is_empty()) {
+        req = req.bearer_auth(api_key);
+    }
+    for (k, v) in &backend.headers {
+        req = req.header(k.as_str(), v.as_str());
+    }
+
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| validation_err(name, format!("Chat completions request failed: {e}")))?;
+
+    if resp.status().is_success() || resp.status().as_u16() == 400 {
         Ok(format!("OK ({})", resp.status()))
     } else {
         Err(validation_err(name, format!("HTTP {}", resp.status())))

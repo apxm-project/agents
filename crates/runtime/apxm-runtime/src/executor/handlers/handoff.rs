@@ -200,10 +200,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         );
         RuntimeError::Operation {
             op_type: node.op_type,
-            message: format!(
-                "Handoff from '{}' to '{}' failed: {}",
-                source, target, e
-            ),
+            message: format!("Handoff from '{}' to '{}' failed: {}", source, target, e),
         }
     })?;
 
@@ -285,25 +282,29 @@ async fn handoff_inline_agent(
         .get(response_keys::SYSTEM_PROMPT)
         .and_then(|v| v.as_string())
         .cloned();
+    let backend = agent_info
+        .get(response_keys::BACKEND)
+        .and_then(|v| v.as_string())
+        .cloned();
     let model = agent_info
         .get(response_keys::MODEL)
         .and_then(|v| v.as_string())
         .cloned();
 
-    // Require at least one of system_prompt/model — pure metadata-only entries
+    // Require at least one of system_prompt/backend/model — pure metadata-only entries
     // (e.g. ACP subprocess agents) shouldn't be auto-dispatched as LLMs.
-    if system_prompt.is_none() && model.is_none() {
+    if system_prompt.is_none() && backend.is_none() && model.is_none() {
         return Ok(None);
     }
 
-    let prompt = payload
-        .as_string()
-        .cloned()
-        .unwrap_or_default();
+    let prompt = payload.as_string().cloned().unwrap_or_default();
 
     let mut request = LLMRequest::new(prompt).with_operation_type(node.op_type);
     if let Some(sp) = system_prompt {
         request = request.with_system_prompt(sp);
+    }
+    if let Some(b) = backend {
+        request = request.with_backend(b);
     }
     if let Some(m) = model {
         request = request.with_model(m);
@@ -393,9 +394,13 @@ mod tests {
             Value::String("target_agent".to_string()),
         );
 
-        let result = execute(&ctx, &node, vec![Value::String("hello from source".to_string())])
-            .await
-            .unwrap();
+        let result = execute(
+            &ctx,
+            &node,
+            vec![Value::String("hello from source".to_string())],
+        )
+        .await
+        .unwrap();
         assert_eq!(result, Value::String("handoff response".to_string()));
     }
 
@@ -467,10 +472,8 @@ mod tests {
             graph_attrs::HANDOFF_TO.to_string(),
             Value::String("target_agent".to_string()),
         );
-        node.attributes.insert(
-            graph_attrs::TRANSFER_STATE.to_string(),
-            Value::Bool(false),
-        );
+        node.attributes
+            .insert(graph_attrs::TRANSFER_STATE.to_string(), Value::Bool(false));
 
         let result = execute(&ctx, &node, vec![Value::String("msg".to_string())])
             .await

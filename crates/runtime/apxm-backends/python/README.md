@@ -1,67 +1,54 @@
-# APXM vLLM Graph-Aware Scheduler
+# APXM Python vLLM Prototype
 
-Python extension for vLLM that adds APXM graph metadata awareness.
+This directory contains an older Python prototype for APXM graph-aware vLLM
+behavior. It is useful for local experimentation and tests, but it is not the
+canonical runtime contract for the current external fork.
 
-## Installation
+## Status
 
-```bash
-pip install -e .
-```
+Treat this package as historical or prototype code.
 
-With test dependencies:
+The current graph-aware vLLM integration used by APXM is centered on the fork in:
 
-```bash
-pip install -e ".[test]"
-```
+- `external/vllm`
 
-## Running the Scheduler API
+The canonical repo-level documentation for that integration is:
 
-```bash
-apxm-vllm-server --host 0.0.0.0 --port 8001
-```
+- [`docs/external-vllm-fork.md`](../../../../docs/external-vllm-fork.md)
 
-Or programmatically:
+## Why This README Changed
 
-```python
-from apxm_vllm.api import create_apxm_app
-import uvicorn
+Older APXM docs and helpers described a four-endpoint design around:
 
-app = create_apxm_app()
-uvicorn.run(app, host="0.0.0.0", port=8001)
-```
+- `POST /v1/apxm/graphs/register`
+- `GET /v1/apxm/graphs/{graph_id}/priority/{node_id}`
+- `DELETE /v1/apxm/graphs/{graph_id}`
+- `GET /v1/apxm/metrics`
+- plus separate pin-management endpoints
 
-## Running Tests
+That is not the contract exposed by the live fork in `external/vllm`.
 
-```bash
-pytest
-```
+The current fork exposes:
 
-With coverage:
+- `POST /v1/apxm/graphs/register`
+- `GET /v1/apxm/graphs/{graph_id}`
+- `DELETE /v1/apxm/graphs/{graph_id}`
 
-```bash
-pytest --cov=apxm_vllm --cov-report=html
-```
+and consumes per-request APXM hints through request bodies sent to the forked
+vLLM server.
 
-## Documentation
+## If You Are Trying To Run The Real Fork
 
-See [docs/guides/vllm-integration.md](../../../docs/guides/vllm-integration.md) for the full integration guide.
+Do not start from this package.
 
-## API Endpoints
+Start from:
 
-- `POST /v1/apxm/graphs/register` — Register graph metadata
-- `GET /v1/apxm/graphs/{graph_id}/priority/{node_id}` — Get node priority
-- `DELETE /v1/apxm/graphs/{graph_id}` — Release graph
-- `GET /v1/apxm/metrics` — Get scheduler metrics
-- `GET /health` — Health check
+1. `external/vllm/AGENTS.md`
+2. [`docs/external-vllm-fork.md`](../../../../docs/external-vllm-fork.md)
+3. the fork source under `external/vllm/vllm/...`
 
-## Architecture
+## If You Are Working On This Prototype
 
-```
-APXM Runtime (Rust)
-    ↓ HTTP requests with extra_body.apxm hints
-APXM Scheduler API (Python/FastAPI)
-    ↓ Priority hints + pin decisions
-vLLM Server
-```
-
-For the conceptual overview, see [docs/README.md](../../../docs/README.md) and the compiler [pipeline doc](../../../docs/compiler/pipeline.md). For implementation details, see the parent [apxm-backends README](../README.md).
+Be explicit in code reviews and docs that changes here affect the prototype
+package only unless they are also reflected in the external fork and the Rust
+integration.

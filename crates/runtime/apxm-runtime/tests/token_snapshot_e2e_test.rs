@@ -16,7 +16,10 @@ use apxm_runtime::{Runtime, RuntimeConfig};
 /// Minimal Ask node that exercises the LLM path with MockLLMBackend.
 fn single_ask_dag() -> ExecutionDag {
     let mut ask_attrs = HashMap::new();
-    ask_attrs.insert("prompt".to_string(), Value::String("test prompt".to_string()));
+    ask_attrs.insert(
+        "prompt".to_string(),
+        Value::String("test prompt".to_string()),
+    );
     // MockLLMBackend requires model attr; any string will do.
     ask_attrs.insert("model".to_string(), Value::String("mock-model".to_string()));
 
@@ -44,13 +47,22 @@ async fn token_snapshot_e2e() {
 
     // Register MockLLMBackend so the Ask node resolves
     let mock = MockLLMBackend::static_response("mock response text");
-    runtime.llm_registry().register("mock-backend", mock).expect("register backend");
-    runtime.llm_registry().set_default("mock-backend").expect("set default");
+    runtime
+        .llm_registry()
+        .register("mock-backend", mock)
+        .expect("register backend");
+    runtime
+        .llm_registry()
+        .set_default("mock-backend")
+        .expect("set default");
 
     let dag = single_ask_dag();
 
     // 2. Execute the DAG
-    let result = runtime.execute(dag).await.expect("execution should succeed");
+    let result = runtime
+        .execute(dag)
+        .await
+        .expect("execution should succeed");
 
     // 3. Assert token_snapshot is populated with non-zero values
     let snapshot = &result.token_snapshot;
