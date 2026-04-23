@@ -174,6 +174,7 @@ fn priority_class_from_priority(priority: u8) -> &'static str {
 mod tests {
     use super::*;
     use apxm_core::types::execution::Node;
+    use apxm_core::types::AISOperationType;
 
     fn ask_node(id: u64) -> Node {
         Node::new(id, AISOperationType::Ask)

@@ -208,18 +208,15 @@ Each check provides actionable fix suggestions when issues are found.
 - CLI Reference — Run `dekk apxm --help` for commands, options, and graph tooling
 - [External vLLM Fork](docs/external-vllm-fork.md) — Repo-local fork setup and backend registration
 
-### Core Docs
-- [PXM Overview](docs/pxm/readme.md) — High-level overview of APXM as a program execution model
-- [Foundations](docs/pxm/foundations.md) — Why agent graphs need a formal execution model
+### PXM
+- [Overview](docs/pxm/readme.md) — High-level overview of APXM as a program execution model
+- [Foundations](docs/pxm/foundations.md) — How A-PXM draws on decades of PXM research
 - [AAM](docs/pxm/aam.md) — Agent Abstract Machine state model
 - [AIS](docs/pxm/ais.md) — Agent Instruction Set contract and typed operations
-- [Vision](docs/pxm/vision.md) — Long-range system direction
-
-### PXM Deep Dives
-- [Foundations](docs/pxm/foundations.md) — How A-PXM draws on decades of PXM research
 - [Compute](docs/pxm/compute.md) — Compute across 6 foundational PXMs
 - [Memory](docs/pxm/memory.md) — Memory separation across PXMs
 - [Scheduling](docs/pxm/scheduling.md) — Scheduling and execution across PXMs
+- [Vision](docs/pxm/vision.md) — Long-range system direction
 
 ### AIS Operations
 - Run `dekk apxm ops list` or `dekk apxm ops show <OP>` for the live AIS surface

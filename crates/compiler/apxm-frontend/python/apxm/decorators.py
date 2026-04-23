@@ -97,12 +97,7 @@ class _CompiledFunction:
             # Infer type from annotation
             type_name = "str"  # default
             if param.annotation != inspect.Parameter.empty:
-                annotation = param.annotation
-                # Handle string annotations (from __future__ import annotations)
-                if isinstance(annotation, str):
-                    type_name = _PYTHON_TYPE_TO_APXM.get(annotation, "str")
-                else:
-                    type_name = _PYTHON_TYPE_TO_APXM.get(annotation, "str")
+                type_name = _PYTHON_TYPE_TO_APXM.get(param.annotation, "str")
 
             param_mapping[param.name] = (idx, type_name)
 
@@ -140,27 +135,20 @@ class _CompiledFunction:
             from .normalize import normalize_provider as _normalize_provider
             from .normalize import normalize_value as _normalize_value
 
-            if self._default_model is not None:
-                model_str = _normalize_value(self._default_model)
-                for node in graph.nodes:
-                    if node.op in LLM_OPS and gen_keys.MODEL not in node.attributes:
-                        node.attributes[gen_keys.MODEL] = model_str
+            model_str = _normalize_value(self._default_model) if self._default_model is not None else None
+            provider_value = _normalize_provider(self._default_provider) if self._default_provider is not None else None
 
-            if self._default_system_prompt is not None:
-                for node in graph.nodes:
-                    if node.op in LLM_OPS and gen_keys.SYSTEM_PROMPT not in node.attributes:
-                        node.attributes[gen_keys.SYSTEM_PROMPT] = self._default_system_prompt
-
-            if self._default_provider is not None:
-                provider_value = _normalize_provider(self._default_provider)
-                for node in graph.nodes:
-                    if node.op in LLM_OPS and gen_keys.PROVIDER not in node.attributes:
-                        node.attributes[gen_keys.PROVIDER] = provider_value
-
-            if self._default_backend is not None:
-                for node in graph.nodes:
-                    if node.op in LLM_OPS and gen_keys.BACKEND not in node.attributes:
-                        node.attributes[gen_keys.BACKEND] = self._default_backend
+            for node in graph.nodes:
+                if node.op not in LLM_OPS:
+                    continue
+                if model_str is not None and gen_keys.MODEL not in node.attributes:
+                    node.attributes[gen_keys.MODEL] = model_str
+                if self._default_system_prompt is not None and gen_keys.SYSTEM_PROMPT not in node.attributes:
+                    node.attributes[gen_keys.SYSTEM_PROMPT] = self._default_system_prompt
+                if provider_value is not None and gen_keys.PROVIDER not in node.attributes:
+                    node.attributes[gen_keys.PROVIDER] = provider_value
+                if self._default_backend is not None and gen_keys.BACKEND not in node.attributes:
+                    node.attributes[gen_keys.BACKEND] = self._default_backend
 
         # Emit AIR from the stamped graph so subprocess fallback preserves
         # default backend/model/provider attributes. Re-attach the python tool

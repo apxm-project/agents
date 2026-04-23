@@ -13,7 +13,6 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
-use apxm_core::types::operations::AISOperationType;
 use apxm_core::types::{Node, NodeId, Number, OpStatus, TokenId, Value};
 use apxm_core::{apxm_op, apxm_token};
 use crossbeam_deque::Worker;
@@ -744,6 +743,7 @@ mod tests {
     use crate::scheduler::state::SchedulerState;
     use apxm_backends::LLMRegistry;
     use apxm_core::types::execution::{ExecutionDag, NodeMetadata};
+    use apxm_core::types::operations::AISOperationType;
     use parking_lot::Mutex;
     use std::collections::HashMap;
 

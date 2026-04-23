@@ -591,11 +591,11 @@ fn load_graph_from_directory(dir: &std::path::Path) -> Result<apxm_compiler::Air
     ))
 }
 
-/// Convert an ExecutionDag back to an AirModule for session output.
+/// Convert an ExecutionDag back to an AirModule (used by decompile + session output).
 #[cfg(feature = "driver")]
 pub(super) fn graph_from_execution_dag(
     dag: &apxm_core::types::execution::ExecutionDag,
-) -> Option<apxm_compiler::AirModule> {
+) -> apxm_compiler::AirModule {
     use apxm_compiler::{AirEdge, AirNode, AirParam};
     use std::collections::HashMap;
 
@@ -642,7 +642,7 @@ pub(super) fn graph_from_execution_dag(
         );
     }
 
-    Some(apxm_compiler::AirModule {
+    apxm_compiler::AirModule {
         name: dag
             .metadata
             .name
@@ -652,5 +652,5 @@ pub(super) fn graph_from_execution_dag(
         edges,
         parameters,
         metadata,
-    })
+    }
 }
