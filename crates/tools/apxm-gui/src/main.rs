@@ -32,9 +32,6 @@ mod events;
 
 /// Shared application state.
 struct AppState {
-    /// Path to the directory containing static assets (CSS, JS, images).
-    #[allow(dead_code)]
-    static_dir: PathBuf,
     /// Initial graph file to load on startup (from `--file` arg).
     initial_file: Option<String>,
     /// Directory to scan for example workflow files.
@@ -682,8 +679,6 @@ async fn examples_handler(
     Ok(Json(serde_json::json!({ "examples": examples })))
 }
 
-/// Whether a directory name represents build artifacts, caches, or generated output
-/// that should be skipped when scanning for workflow files.
 /// Whether a directory name represents build artifacts or caches that should be
 /// skipped during filesystem scans.
 fn is_skip_dir(name: &str) -> bool {
@@ -2564,7 +2559,6 @@ async fn main() {
     }
 
     let state = Arc::new(AppState {
-        static_dir: static_dir.clone(),
         initial_file,
         examples_dir,
         agent_sessions: DashMap::new(),

@@ -12,6 +12,21 @@ use commands::*;
 #[cfg(feature = "driver")]
 use std::path::PathBuf;
 
+/// Resolve the --emit-session / --no-emit-session flag pair.
+///
+/// Default: emit-session ON (auto-path). Explicit --no-emit-session disables.
+#[cfg(feature = "driver")]
+fn resolve_emit_session(
+    emit_session: Option<Option<PathBuf>>,
+    no_emit_session: bool,
+) -> Option<Option<PathBuf>> {
+    if no_emit_session {
+        None
+    } else {
+        Some(emit_session.unwrap_or(None))
+    }
+}
+
 /// Initialize the tracing subscriber based on the --trace flag or RUST_LOG env var.
 /// If neither is provided, no subscriber is registered (zero overhead).
 #[cfg(feature = "driver")]
@@ -98,19 +113,13 @@ async fn run_cli() -> Result<()> {
             no_emit_session,
             emit_profile,
         } => {
-            // Default: emit-session ON (auto-path). Explicit --no-emit-session disables.
-            let effective_emit_session: Option<Option<PathBuf>> = if no_emit_session {
-                None
-            } else {
-                Some(emit_session.unwrap_or(None))
-            };
             execute_command(
                 input,
                 args,
                 opt_level,
                 cli.config,
                 emit_metrics,
-                effective_emit_session,
+                resolve_emit_session(emit_session, no_emit_session),
                 emit_profile,
             )
             .await
@@ -123,18 +132,12 @@ async fn run_cli() -> Result<()> {
             no_emit_session,
             emit_profile,
         } => {
-            // Default: emit-session ON (auto-path). Explicit --no-emit-session disables.
-            let effective_emit_session: Option<Option<PathBuf>> = if no_emit_session {
-                None
-            } else {
-                Some(emit_session.unwrap_or(None))
-            };
             run_command(
                 input,
                 args,
                 cli.config,
                 emit_metrics,
-                effective_emit_session,
+                resolve_emit_session(emit_session, no_emit_session),
                 emit_profile,
             )
             .await
