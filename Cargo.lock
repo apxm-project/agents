@@ -217,7 +217,6 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "apxm-acp",
- "apxm-ais",
  "apxm-artifact",
  "apxm-compiler",
  "apxm-core",
@@ -262,7 +261,6 @@ name = "apxm-core"
 version = "0.0.1"
 dependencies = [
  "anyhow",
- "apxm-ais",
  "chrono",
  "colored",
  "dirs 5.0.1",
@@ -295,7 +293,6 @@ name = "apxm-driver"
 version = "0.0.1"
 dependencies = [
  "apxm-acp",
- "apxm-ais",
  "apxm-artifact",
  "apxm-backends",
  "apxm-compiler",
@@ -321,7 +318,6 @@ name = "apxm-gui"
 version = "0.0.1"
 dependencies = [
  "apxm-acp",
- "apxm-ais",
  "apxm-compiler",
  "apxm-core",
  "async-stream",

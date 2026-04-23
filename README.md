@@ -3,10 +3,10 @@
 APXM is a full toolchain for building autonomous agents:
 
 - **ApxmGraph IR** as the canonical frontend format
-- **AIS DSL frontend** support via AST normalization to `ApxmGraph`
+- **AIS dialect** as the compiler/lowering representation for that graph contract
 - **Compiler** that lowers graph → AIS MLIR → executable artifacts
 - **Runtime** with scheduler, memory system, and LLM registry
-- **CLI** for compile/run workflows
+- **CLI** for compile/run graph execution
 
 ---
 
@@ -16,26 +16,22 @@ APXM is a full toolchain for building autonomous agents:
 ```bash
 git clone https://github.com/randreshg/apxm
 cd apxm
-python3 tools/apxm_cli.py install
-source ~/.bashrc  # or ~/.zshrc - restart shell
-apxm doctor
+dekk apxm install --no-interactive
+dekk apxm doctor
 ```
 
-**What happens on first run:**
+**Optional repo-local vLLM fork:**
 ```bash
-python3 tools/apxm_cli.py install
+dekk apxm vllm install
+dekk apxm vllm serve <HF_MODEL_ID>
 ```
-
-On the first run, APXM installs `dekk` from PyPI into `.apxm/bootstrap-venv` and then re-runs the CLI from that environment.
 
 **What the installer does:**
 - ✓ Detects platform and package manager (via dekk)
-- ✓ Creates conda environment with MLIR/LLVM 21
+- ✓ Creates a repo-local conda environment with MLIR/LLVM 22
 - ✓ Installs Rust nightly if needed
 - ✓ Builds the APXM binary
-- ✓ Installs a self-contained wrapper to `~/.local/bin/apxm` (no manual `conda activate` needed)
-
-See [Getting Started](docs/guides/getting-started.md) for detailed instructions and troubleshooting.
+- ✓ Runs APXM commands without manual `PATH` or `LD_LIBRARY_PATH` edits when invoked through `dekk apxm ...`
 
 ## Prerequisites
 
@@ -47,34 +43,28 @@ Optional (installer can set these up automatically):
 - Rust nightly
 - CMake >= 3.20
 
-Run `apxm doctor` to check your environment automatically.
+Run `dekk apxm doctor` to check your environment automatically.
 
 ---
 
 ## CLI Commands
 
 ```bash
-apxm doctor                           # Check environment (powered by dekk)
-apxm install                          # Install/update conda environment
-apxm activate                         # Print shell exports for MLIR/LLVM env setup
-apxm compile <file.air> -o out.apxmobj  # Compile to .apxmobj artifact
-apxm execute <file.air>              # Compile and run in one step
-apxm execute <file.air> --trace debug   # Run with debug tracing
-apxm run <file.apxmobj>               # Run pre-compiled artifact
-apxm validate <file.air>             # Validate an ApxmGraph file
-apxm analyze <file.air>              # Analyze parallelism and critical path
-apxm llm add <name> --provider openai --api-key sk-...  # Add LLM credential
-apxm llm list                         # List registered credentials
-apxm tool list                        # List registered external tools
-apxm ops list                         # Browse AIS operations
-apxm ops show ASK                     # Detailed info for a specific op
-apxm template list                    # Browse graph templates
-apxm template show fan-out --json     # Emit template as ready-to-use JSON
-apxm explain <file.air>              # Explain what a graph does in human terms
-apxm task merge a.air b.air -o combined.air      # Merge graph fragments
+dekk apxm doctor                           # Check environment
+dekk apxm install --no-interactive        # Install/update APXM
+dekk apxm compile <file.air> -o out.apxmobj
+dekk apxm execute <file.air>
+dekk apxm execute <file.air> --trace debug
+dekk apxm run <file.apxmobj>
+dekk apxm validate <file.air>
+dekk apxm analyze <file.air>
+dekk apxm backend add vllm-fork --type onprem --protocol vllm --endpoint http://127.0.0.1:8916/v1
+dekk apxm backend add-model vllm-fork <HF_MODEL_ID>
+dekk apxm vllm install
+dekk apxm vllm serve <HF_MODEL_ID>
 ```
 
-Run `apxm --help` for complete command reference.
+Run `dekk apxm --help` for complete command reference.
 
 ---
 
@@ -83,10 +73,10 @@ Run `apxm --help` for complete command reference.
 APXM includes a tracing system for debugging and performance analysis:
 
 ```bash
-apxm execute workflow.air                  # Silent execution
-apxm execute workflow.air --trace info     # High-level execution flow
-apxm execute workflow.air --trace debug    # Detailed worker/operation info
-apxm execute workflow.air --trace trace    # Full verbosity (tokens, LLM calls)
+dekk apxm execute graph.air                # Silent execution
+dekk apxm execute graph.air --trace info   # High-level execution flow
+dekk apxm execute graph.air --trace debug  # Detailed worker/operation info
+dekk apxm execute graph.air --trace trace  # Full verbosity (tokens, LLM calls)
 ```
 
 Trace targets: `apxm::scheduler`, `apxm::ops`, `apxm::llm`, `apxm::tokens`, `apxm::dag`
@@ -167,15 +157,24 @@ endpoint = "http://localhost:11434"
 
 ```text
 crates/
-  apxm-ais        # AIS operation definitions
-  apxm-cli        # CLI tool
-  apxm-compiler   # MLIR compiler
-  apxm-driver     # Compiler+runtime orchestration
-  runtime/
+  core/
+    apxm-core     # Shared downstream graph contract, types, constants, errors
+    apxm-ais      # Authoring/codegen source for AIS ops, attrs, and pass generation
+  compiler/
+    apxm-compiler # MLIR compiler
+    apxm-frontend # Python graph authoring frontend
+  orchestration/
+    apxm-driver   # Compiler+runtime orchestration
     apxm-artifact # Artifact format
+    apxm-acp      # ACP protocol glue
+  runtime/
     apxm-backends # LLM and storage backends
-    apxm-core     # Shared types
+    apxm-credentials # Backend credentials and registry helpers
     apxm-runtime  # Execution engine
+  tools/
+    apxm-cli      # CLI tool
+    apxm-server   # HTTP/MCP server
+    apxm-gui      # Browser UI
 examples/         # Sample ApxmGraph programs
 docs/             # Documentation
 ```
@@ -184,18 +183,18 @@ docs/             # Documentation
 
 ## Environment Diagnostics
 
-The `apxm doctor` command uses [dekk](https://github.com/randreshg/dekk) for comprehensive environment detection:
+The `dekk apxm doctor` command uses [dekk](https://github.com/randreshg/dekk) for comprehensive environment detection:
 
 ```bash
-apxm doctor
+dekk apxm doctor
 ```
 
 **What it checks:**
 - **Platform** -- OS, architecture, Linux distro, WSL, containers
 - **Dependencies** -- Rust (nightly), Cargo, CMake, Ninja, Git, LLVM
-- **Conda environment** -- `apxm` env activation, Python version, MLIR/LLVM 21.x
+- **Conda environment** -- `apxm` env activation, Python version, MLIR/LLVM 22.x
 - **Build status** -- whether the compiler binary has been built
-- **Credentials** -- registered LLM provider API keys
+- **Backend registry** -- registered backends, protocols, and endpoint wiring
 - **CI environment** -- GitHub Actions, GitLab CI, Jenkins, and other providers (auto-detected)
 
 Each check provides actionable fix suggestions when issues are found.
@@ -205,20 +204,16 @@ Each check provides actionable fix suggestions when issues are found.
 ## Documentation
 
 ### Guides
-- [Getting Started](docs/guides/getting-started.md) — Installation, first program, common patterns
-- CLI Reference — Run `apxm --help` for all commands, options, and workflows
-- [LLM Backends](docs/guides/llm-backends.md) — Provider setup, credentials, security
+- [Documentation Index](docs/README.md) — Entry point for the current docs set
+- CLI Reference — Run `dekk apxm --help` for commands, options, and graph tooling
+- [External vLLM Fork](docs/external-vllm-fork.md) — Repo-local fork setup and backend registration
 
-### Concepts
-- [What is A-PXM?](docs/concepts/overview.md) — High-level overview
-- [Motivation](docs/concepts/motivation.md) — Why agent workflows need a formal execution model
-- [The Problem](docs/concepts/the-problem.md) — The agentic von Neumann bottleneck
-- [Architecture](docs/concepts/architecture.md) — End-to-end system design
-- [Strategic Analysis](docs/concepts/strategic-analysis.md) — Where A-PXM wins vs alternatives
-- [AAM](docs/concepts/aam.md) — Agent Abstract Machine (Beliefs, Goals, Capabilities)
-- [AIS](docs/concepts/ais.md) — Agent Instruction Set (17 typed operations)
-- [Dataflow Execution](docs/concepts/dataflow-execution.md) — Token-based scheduling
-- [Tasks](docs/concepts/tasks.md) — Fundamental unit of AI work
+### Core Docs
+- [PXM Overview](docs/pxm/readme.md) — High-level overview of APXM as a program execution model
+- [Foundations](docs/pxm/foundations.md) — Why agent graphs need a formal execution model
+- [AAM](docs/pxm/aam.md) — Agent Abstract Machine state model
+- [AIS](docs/pxm/ais.md) — Agent Instruction Set contract and typed operations
+- [Vision](docs/pxm/vision.md) — Long-range system direction
 
 ### PXM Deep Dives
 - [Foundations](docs/pxm/foundations.md) — How A-PXM draws on decades of PXM research
@@ -227,19 +222,9 @@ Each check provides actionable fix suggestions when issues are found.
 - [Scheduling](docs/pxm/scheduling.md) — Scheduling and execution across PXMs
 
 ### AIS Operations
-- [LLM Ops](docs/ais/llm-ops.md) — ASK, THINK, REASON, PLAN, REFLECT, VERIFY
-- [Tool Ops](docs/ais/tool-ops.md) — INV instruction
-- [Memory Ops](docs/ais/memory-ops.md) — QMEM, UMEM, FENCE
-- [Control Flow](docs/ais/control-flow.md) — BRANCH, SWITCH
-- [Synchronization](docs/ais/sync-ops.md) — MERGE, WAIT_ALL, FENCE
-- [Communication](docs/ais/communication.md) — TRY_CATCH, COMM, FLOW
+- Run `dekk apxm ops list` or `dekk apxm ops show <OP>` for the live AIS surface
 
-### Internals
-- [Compiler Pipeline](docs/compiler/overview.md) — Four-stage pipeline
-- [Optimization Passes](docs/compiler/optimization-passes.md) — FuseAskOps, CSE, DCE
-- [Artifact Format](docs/compiler/artifact-format.md) — .apxmobj binary specification
-- [Wire Contracts](docs/internals/contracts.md) — Compiler-runtime synchronization
-- [Graph JSON Contract](docs/internals/graph-json-contract.md) — Stable JSON format
-- [Dataflow Scheduler](docs/runtime/dataflow-scheduler.md) — Token-based scheduling
-- [Memory Hierarchy](docs/runtime/memory-hierarchy.md) — STM, LTM, Episodic tiers
-- [Multi-Agent Execution](docs/runtime/multi-agent.md) — Cross-agent parallelism
+### Design Notes
+- [Compiler Pipeline](docs/compiler/pipeline.md) — Current pass pipeline and optimization stages
+- [Guardrails and Handoffs](docs/design/guardrails_handoffs.md) — Design notes for safe inter-agent boundaries
+- [Sessions](docs/design/sessions.md) — Durable session and checkpoint design

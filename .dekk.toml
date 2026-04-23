@@ -2,7 +2,7 @@
 
 [project]
 name = "apxm"
-description = "MLIR compiler and runtime for agent workflows"
+description = "MLIR compiler and runtime for agent graphs"
 
 [environment]
 type = "conda"
@@ -14,6 +14,8 @@ channels = ["conda-forge"]
 mlir = "22"
 libclang13 = "22"
 python = "3.11"
+pytest = ""
+pytest-asyncio = ""
 cmake = ""
 nodejs = "22"
 
@@ -28,6 +30,8 @@ LLM_GATEWAY_KEY = "env:LLM_GATEWAY_KEY"
 
 MLIR_DIR = "{environment}/lib/cmake/mlir"
 LLVM_DIR = "{environment}/lib/cmake/llvm"
+MLIR_PREFIX = "{environment}"
+LLVM_PREFIX = "{environment}"
 APXM_HOME = "{project}"
 PYTHONPATH = "{project}/tools"
 LD_LIBRARY_PATH = "{project}/target/release/lib:{project}/target/release:{environment}/lib"
@@ -44,6 +48,9 @@ build-dialect = { run = "cmake --build $(find target/release/build -name 'Makefi
 test = { run = "cargo test --workspace --exclude apxm-compiler --exclude apxm-cli", description = "Run tests", skill = true, group = "Build & Test" }
 test-all = { run = "cargo test --workspace", description = "All tests (requires MLIR)", group = "Build & Test" }
 test-cli = { run = "cargo test -p apxm-cli --features driver,metrics --release", description = "Run CLI tests with driver (preserves MLIR-linked binary)", group = "Build & Test" }
+test-python-frontend = { run = "python -m pytest crates/compiler/apxm-frontend/python/tests -q", description = "Run Python frontend tests", group = "Build & Test" }
+test-python-backends = { run = "python -m pytest crates/runtime/apxm-backends/python/tests -q", description = "Run Python backend contract tests", group = "Build & Test" }
+test-quality-eval = { run = "python -m pytest tools/quality_eval/tests -q", description = "Run offline quality-eval harness tests", group = "Build & Test" }
 clean = { run = "cargo clean", description = "Clean", group = "Build & Test" }
 
 codegen = { run = "apxm codegen", description = "Regenerate frontend bindings from Core definitions", skill = true, group = "Build & Test" }
@@ -53,13 +60,15 @@ compile = { run = "apxm compile", description = "Compile graph to .apxmobj artif
 execute = { run = "apxm execute", description = "Compile and execute a graph", skill = true, group = "Compilation" }
 run = { run = "apxm run", description = "Run a pre-compiled .apxmobj artifact", skill = true, group = "Compilation" }
 decompile = { run = "apxm decompile", description = "Reverse-map artifact back to graph JSON", group = "Compilation" }
+doctor = { run = "apxm doctor", description = "Diagnose the real APXM compiler/runtime environment", group = "Configuration" }
+server = { run = "apxm-server", description = "Launch the APXM HTTP server", group = "Configuration" }
 
 gui = { run = "apxm gui", description = "Launch the web-based GUI dashboard", skill = true, group = "Authoring" }
-view = { run = "python tools/scripts/view.py", description = "Open interactive graph visualizer", skill = true, group = "Authoring" }
+view = { run = "apxm view", description = "Open interactive graph visualizer", skill = true, group = "Authoring" }
 validate = { run = "apxm validate", description = "Validate graph against AIS contract", skill = true, group = "Authoring" }
 analyze = { run = "apxm analyze", description = "Analyze parallelism and critical path", group = "Authoring" }
 explain = { run = "apxm explain", description = "Human-readable summary of a graph", group = "Authoring" }
-merge = { run = "apxm task merge", description = "Merge graph fragments into one workflow", group = "Authoring" }
+merge = { run = "apxm task merge", description = "Merge graph fragments into one graph", group = "Authoring" }
 
 [commands.backend]
 description = "Manage inference backends (cloud/onprem/local)"
@@ -75,6 +84,12 @@ status = { run = "apxm backend status", description = "Show backend status" }
 logs = { run = "apxm backend logs", description = "Show backend logs" }
 restart = { run = "apxm backend restart", description = "Restart local backend" }
 add-model = { run = "apxm backend add-model", description = "Add model to backend" }
+
+[commands.vllm]
+description = "Operate the visible external/vllm fork"
+group = "Configuration"
+install = { run = "python tools/scripts/vllm.py install", description = "Install the repo-local external/vllm fork" }
+serve = { run = "python tools/scripts/vllm.py serve", description = "Serve a model from the repo-local external/vllm fork" }
 
 [commands.ops]
 description = "Browse AIS operations"
@@ -144,10 +159,9 @@ default = false
 [[install.components]]
 name = "vllm"
 label = "vLLM (graph-aware fork)"
-description = "Graph-aware vLLM server with APXM KV-pinning and priority scheduling"
-run = "git submodule update --init external/vllm && pip install -e external/vllm"
+description = "Graph-aware vLLM fork with APXM graph registration, request-side hints, and priority scheduling"
+run = "bash tools/scripts/install_external_vllm.sh"
 default = false
-requires = ["pip"]
 
 [[install.components]]
 name = "dspy"
