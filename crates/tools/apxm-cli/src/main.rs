@@ -1,8 +1,8 @@
 //! APXM command-line interface.
 //!
 //! Provides the `apxm` binary with subcommands for building, compiling,
-//! running agent workflows, environment setup (`install`, `doctor`), and
-//! LLM credential management (`register`).
+//! running graphs, environment setup (`install`, `doctor`), and
+//! backend registration and management.
 
 mod commands;
 mod frontend;
@@ -195,7 +195,7 @@ async fn run_cli_no_driver() -> Result<()> {
         Commands::QualityEval { args } => quality_eval_command(args),
         Commands::Gui { file, port, open } => gui_command(file, port, open),
         _ => Err(anyhow::anyhow!(
-            "Command requires the `driver` feature. Re-run with: cargo run -p apxm-cli --features driver -- <command>"
+            "Command requires the `driver` feature. Rebuild through `dekk apxm build`, then re-run the command."
         )),
     }
 }

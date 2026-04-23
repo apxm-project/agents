@@ -71,22 +71,34 @@ export type EventPayload =
   | {
       kind: typeof EK.SCHEDULER_DECISION.name;
       node_id: number;
-      action: string;
+      delay_ms: number;
+      reason: string;
+      span_id: string;
+      parent_span_id: string | null;
+    }
+  | {
+      kind: typeof EK.HEAD_OF_LINE_BLOCK.name;
+      blocker_node: number;
+      blocked_node: number;
+      wait_ms: number;
+      reason: string;
       span_id: string;
       parent_span_id: string | null;
     }
   | {
       kind: typeof EK.MEMORY_READ.name;
-      node_id: number;
-      tier: string;
+      node_id?: number;
+      scope?: string;
+      tier?: string;
       key: string;
       span_id: string;
       parent_span_id: string | null;
     }
   | {
       kind: typeof EK.MEMORY_WRITE.name;
-      node_id: number;
-      tier: string;
+      node_id?: number;
+      scope?: string;
+      tier?: string;
       key: string;
       span_id: string;
       parent_span_id: string | null;

@@ -6,6 +6,7 @@ export function eventSummary(payload: {
   [key: string]: unknown;
 }): string {
   const p = payload;
+  const memoryScope = String(p.scope ?? p.tier ?? "");
   switch (p.kind) {
     case EK.TOKEN.name:
       return truncate(String(p.text ?? ""), 80);
@@ -22,11 +23,13 @@ export function eventSummary(payload: {
     case "session_error":
       return `Session error: ${truncate(String(p.error ?? ""), 60)}`;
     case EK.SCHEDULER_DECISION.name:
-      return `Scheduler: node ${p.node_id} \u2192 ${p.action}`;
+      return `Scheduler: node ${p.node_id} delayed ${p.delay_ms}ms (${truncate(String(p.reason ?? ""), 40)})`;
+    case EK.HEAD_OF_LINE_BLOCK.name:
+      return `Head-of-line block: node ${p.blocked_node} waited ${p.wait_ms}ms behind node ${p.blocker_node}`;
     case EK.MEMORY_READ.name:
-      return `Memory read: ${p.tier}/${p.key}`;
+      return `Memory read: ${memoryScope}/${p.key}`;
     case EK.MEMORY_WRITE.name:
-      return `Memory write: ${p.tier}/${p.key}`;
+      return `Memory write: ${memoryScope}/${p.key}`;
     case "spawn_agent":
       return `Spawn agent: ${p.agent_type} (node ${p.node_id})`;
     case "agent_complete":

@@ -19,7 +19,6 @@ apxm-compiler.workspace = true
 apxm-artifact = { workspace = true, optional = true }
 apxm-credentials.workspace = true
 apxm-acp.workspace = true
-apxm-ais.workspace = true
 apxm-runtime.workspace = true
 clap.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }

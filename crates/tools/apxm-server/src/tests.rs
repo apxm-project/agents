@@ -11,9 +11,9 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use apxm_runtime::{Runtime, RuntimeConfig};
+use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use axum::Router;
 use dashmap::DashMap;
 use http_body_util::BodyExt;
 use tower::ServiceExt;
@@ -63,8 +63,7 @@ async fn post_json(
     let resp = app.oneshot(req).await.unwrap();
     let status = resp.status();
     let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    let json: serde_json::Value =
-        serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
     (status, json)
 }
 
@@ -78,8 +77,7 @@ async fn get_json(app: Router, path: &str) -> (StatusCode, serde_json::Value) {
     let resp = app.oneshot(req).await.unwrap();
     let status = resp.status();
     let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    let json: serde_json::Value =
-        serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
     (status, json)
 }
 

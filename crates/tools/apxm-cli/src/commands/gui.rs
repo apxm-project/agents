@@ -70,7 +70,7 @@ pub fn gui_command(file: Option<PathBuf>, port: u16, open: bool) -> Result<()> {
 
     let status = cmd.status().with_context(|| {
         format!(
-            "Failed to launch apxm-gui (looked for: {}). Build it with: cargo build -p apxm-gui --release",
+            "Failed to launch apxm-gui (looked for: {}). Build it with: dekk apxm build-gui",
             gui_bin.display()
         )
     })?;
@@ -81,4 +81,3 @@ pub fn gui_command(file: Option<PathBuf>, port: u16, open: bool) -> Result<()> {
 
     Ok(())
 }
-

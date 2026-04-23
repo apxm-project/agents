@@ -1,5 +1,6 @@
 //! Backend management (cloud / on-prem / local containers).
 
+#[cfg(feature = "driver")]
 use std::collections::HashSet;
 
 use anyhow::Result;
@@ -9,11 +10,13 @@ use colored::Colorize;
 use super::cli::*;
 use super::implementations::{Status, print_section_header, print_status_line};
 
+#[cfg(feature = "driver")]
 const DEFAULT_OLLAMA_ENDPOINT: &str = "http://localhost:11434";
 
 /// Fetch installed models from a running Ollama instance and register them.
 ///
 /// Returns `(added, skipped)` counts. `existing` model IDs are skipped.
+#[cfg(feature = "driver")]
 fn ollama_model_caps(base_url: &str, model_name: &str) -> (bool, bool, usize) {
     // Query /api/show for real capabilities — no hardcoding model family names.
     // Returns (supports_functions, supports_vision, context_window).
@@ -57,6 +60,7 @@ fn ollama_model_caps(base_url: &str, model_name: &str) -> (bool, bool, usize) {
     (supports_functions, supports_vision, ctx_window)
 }
 
+#[cfg(feature = "driver")]
 fn sync_ollama_models(
     store: &apxm_credentials::backend::BackendStore,
     backend_name: &str,
@@ -106,6 +110,7 @@ fn sync_ollama_models(
                 supports_vision,
                 supports_functions,
                 supports_thinking: false,
+                supports_custom_temperature: None,
                 max_output_tokens: None,
                 tags: vec![],
             };
@@ -119,6 +124,7 @@ fn sync_ollama_models(
     Ok((added, skipped))
 }
 
+#[cfg(feature = "driver")]
 pub async fn backend_command(action: BackendAction, json_output: bool) -> Result<()> {
     use apxm_core::types::{BackendConfig, BackendType, ProviderProtocol};
     use apxm_credentials::backend::BackendStore;
@@ -160,7 +166,7 @@ pub async fn backend_command(action: BackendAction, json_output: bool) -> Result
             let api_key = if api_key.is_some() || backend_type == BackendType::Local || is_ollama {
                 api_key
             } else {
-                eprint!("Enter API key for {name} (or press Enter to skip): ");
+                eprint!("Enter backend API key for {name} (or press Enter to skip): ");
                 let key = rpassword::read_password()
                     .map_err(|e| anyhow::anyhow!("Failed to read API key: {e}"))?;
                 if key.is_empty() { None } else { Some(key) }
@@ -214,7 +220,7 @@ pub async fn backend_command(action: BackendAction, json_output: bool) -> Result
                         print_status_line(
                             "Models",
                             Status::Warning,
-                            "Ollama not reachable — run: apxm backend sync-models after starting Ollama",
+                            "Ollama not reachable — run `dekk apxm backend sync-models <name>` after starting Ollama",
                         );
                     }
                 }
@@ -230,7 +236,9 @@ pub async fn backend_command(action: BackendAction, json_output: bool) -> Result
 
             if backends.is_empty() {
                 println!("No backends registered.");
-                println!("Add one with: apxm backend add <name> --type cloud --protocol openai");
+                println!(
+                    "Add one with: dekk apxm backend add <name> --type cloud --protocol openai"
+                );
                 return Ok(());
             }
 
@@ -308,7 +316,7 @@ pub async fn backend_command(action: BackendAction, json_output: bool) -> Result
         BackendAction::Migrate { yes } => {
             if !yes {
                 eprintln!(
-                    "This will migrate credentials from ~/.apxm/credentials.toml to ~/.apxm/config.toml"
+                    "This will migrate backend registrations from ~/.apxm/credentials.toml to ~/.apxm/config.toml"
                 );
                 eprint!("Continue? [y/N] ");
                 use std::io::{self, BufRead};
@@ -328,11 +336,15 @@ pub async fn backend_command(action: BackendAction, json_output: bool) -> Result
                 println!("{{\"status\":\"ok\",\"migrated\":{count}}}");
             } else {
                 print_section_header("Migration Complete");
-                print_status_line("Migrated", Status::Ok, &format!("{count} credentials"));
+                print_status_line(
+                    "Migrated",
+                    Status::Ok,
+                    &format!("{count} backend registrations"),
+                );
                 if count > 0 {
                     println!();
                     println!("Your legacy credentials.toml can now be safely removed.");
-                    println!("To view the migrated backends: apxm backend list");
+                    println!("To view the migrated backends: dekk apxm backend list");
                 }
             }
         }
@@ -508,6 +520,7 @@ pub async fn backend_command(action: BackendAction, json_output: bool) -> Result
                 supports_vision,
                 supports_functions,
                 supports_thinking,
+                supports_custom_temperature: None,
                 max_output_tokens: None,
                 tags: tag,
             };
@@ -530,4 +543,3 @@ pub async fn backend_command(action: BackendAction, json_output: bool) -> Result
 
     Ok(())
 }
-

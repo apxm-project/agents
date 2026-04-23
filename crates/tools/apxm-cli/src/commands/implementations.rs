@@ -3,9 +3,9 @@
 #[cfg(feature = "driver")]
 use std::path::PathBuf;
 
-use anyhow::Result;
 #[cfg(feature = "driver")]
 use anyhow::Context;
+use anyhow::Result;
 #[cfg(feature = "driver")]
 use apxm_driver::{ApXmConfig, ConfigError};
 use colored::Colorize;

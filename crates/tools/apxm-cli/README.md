@@ -1,10 +1,10 @@
 # apxm-cli
 
-Command-line interface for the APXM agent workflow toolchain.
+Command-line interface for the APXM graph compiler and runtime toolchain.
 
 ## Overview
 
-`apxm-cli` provides the `apxm` binary with subcommands for compiling, executing, validating, and managing agent workflows. It wraps `apxm-driver` for compile/run operations and uses dekk for environment detection.
+`apxm-cli` provides the `apxm` binary with subcommands for compiling, executing, validating, and inspecting APXM graphs. Invoke it through `dekk apxm ...` so the managed environment, toolchain, and helper scripts stay consistent. The crate wraps `apxm-driver` for compile/run operations and uses dekk for environment detection.
 
 ## Module Structure
 
@@ -13,8 +13,8 @@ Command-line interface for the APXM agent workflow toolchain.
 | `commands/cli` | Clap CLI definition (`Cli`, `Commands` enum) |
 | `commands/implementations` | Command handler functions |
 | `commands/mod` | Command dispatch and shared helpers |
-| `frontend/codegen` | `codegen frontend` -- generates Python frontend code from AIS definitions |
-| `frontend/codegen_ts` | `codegen typescript` -- generates TypeScript types from AIS definitions |
+| `frontend/codegen` | `codegen frontend` -- generates Python frontend code from the shared graph contract |
+| `frontend/codegen_ts` | `codegen typescript` -- generates TypeScript types from the shared graph contract |
 | `frontend/registry` | Frontend code generation registry |
 | `frontend/mod` | Frontend subcommand dispatch |
 
@@ -39,11 +39,11 @@ Command-line interface for the APXM agent workflow toolchain.
 | `tool` | Register/list/remove external tools |
 | `team` | Manage multi-agent teams |
 | `ops` | List/show AIS operations |
-| `template` | List/show workflow templates |
+| `template` | List/show graph templates |
 | `task` | Merge graph fragments |
 | `codegen` | Generate frontend (Python) and TypeScript code from AIS definitions |
 | `session` | Session management |
-| `workflow` | Workflow management |
+| `workflow` | Legacy `.apxmw` workflow-file management |
 | `cache` | Cache management |
 | `gui` | Launch the web visualization server |
 
@@ -57,6 +57,5 @@ Command-line interface for the APXM agent workflow toolchain.
 | Crate | Purpose |
 |-------|---------|
 | apxm-driver | Compilation and execution orchestration (behind `driver` feature) |
-| apxm-core | Shared types, error codes |
-| apxm-ais | Operation metadata for `ops` commands |
+| apxm-core | Shared graph contract, types, and error codes |
 | apxm-compiler | `AirModule` for validation and codegen |

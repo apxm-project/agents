@@ -1,13 +1,18 @@
 //! Compile and decompile commands.
 
-use std::env;
-use std::path::{Path, PathBuf};
-
-use anyhow::{Context, Result};
 #[cfg(feature = "driver")]
-use apxm_driver::compiler::Compiler;
+use std::env;
+#[cfg(feature = "driver")]
+use std::path::Path;
+use std::path::PathBuf;
+
+#[cfg(feature = "driver")]
+use anyhow::Context;
+use anyhow::Result;
 #[cfg(feature = "driver")]
 use apxm_driver::ApXmConfig;
+#[cfg(feature = "driver")]
+use apxm_driver::compiler::Compiler;
 
 #[cfg(feature = "driver")]
 use super::implementations::parse_opt_level;
@@ -64,6 +69,7 @@ fn emit_air_from_python(input: &Path) -> Result<(tempfile::NamedTempFile, Option
         match std::process::Command::new(candidate)
             .arg(input)
             .env("PYTHONPATH", &pythonpath)
+            .env("APXM_EMIT_AIR", "1")
             .output()
         {
             Ok(result) => {
@@ -73,7 +79,7 @@ fn emit_air_from_python(input: &Path) -> Result<(tempfile::NamedTempFile, Option
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
             Err(err) => {
                 return Err(anyhow::anyhow!(
-                    "Failed to run Python workflow {} with {}: {}",
+                    "Failed to run Python graph {} with {}: {}",
                     input.display(),
                     candidate,
                     err
@@ -89,22 +95,18 @@ fn emit_air_from_python(input: &Path) -> Result<(tempfile::NamedTempFile, Option
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(anyhow::anyhow!(
-            "Python workflow {} failed: {}",
+            "Python graph {} failed: {}",
             input.display(),
             stderr.trim()
         ));
     }
 
-    let air = String::from_utf8(output.stdout).with_context(|| {
-        format!(
-            "Python workflow {} did not emit valid UTF-8",
-            input.display()
-        )
-    })?;
+    let air = String::from_utf8(output.stdout)
+        .with_context(|| format!("Python graph {} did not emit valid UTF-8", input.display()))?;
     let trimmed = air.trim();
     if trimmed.is_empty() {
         return Err(anyhow::anyhow!(
-            "Python workflow {} produced no .air output",
+            "Python graph {} produced no .air output",
             input.display()
         ));
     }
@@ -114,7 +116,7 @@ fn emit_air_from_python(input: &Path) -> Result<(tempfile::NamedTempFile, Option
         || trimmed.starts_with("func.func"))
     {
         return Err(anyhow::anyhow!(
-            "Python workflow {} did not emit recognizable .air text on stdout.\n\
+            "Python graph {} did not emit recognizable .air text on stdout.\n\
              Expected MLIR text starting with 'module', 'func.func', ';', or '%'.",
             input.display()
         ));
@@ -258,10 +260,7 @@ pub fn compile_command(
                     .ok()
             });
         let mut artifact = module
-            .generate_artifact_with_manifest(
-                None,
-                manifest.as_deref(),
-            )
+            .generate_artifact_with_manifest(None, manifest.as_deref())
             .context("Failed to generate artifact")?;
 
         // Inject python_tools sidecar section if present
@@ -338,7 +337,9 @@ pub fn compile_command(
             });
 
             std::fs::write(&diag_path, serde_json::to_string_pretty(&diagnostics_json)?)
-                .with_context(|| format!("Failed to write diagnostics to {}", diag_path.display()))?;
+                .with_context(|| {
+                    format!("Failed to write diagnostics to {}", diag_path.display())
+                })?;
             println!("Wrote diagnostics to {}", diag_path.display());
         }
 
@@ -362,7 +363,11 @@ pub fn compile_command(
         use apxm_credentials::BackendStore;
         let has_vllm = BackendStore::open()
             .and_then(|bs| bs.list())
-            .map(|backends| backends.iter().any(|b| b.protocol == ProviderProtocol::Vllm))
+            .map(|backends| {
+                backends
+                    .iter()
+                    .any(|b| b.protocol == ProviderProtocol::Vllm)
+            })
             .unwrap_or(false);
         if !has_vllm {
             Compiler::validate_model_allowlist(&graph, config.models.allowlist.as_ref())?;
@@ -697,4 +702,3 @@ pub(super) fn graph_from_execution_dag(
         metadata,
     })
 }
-

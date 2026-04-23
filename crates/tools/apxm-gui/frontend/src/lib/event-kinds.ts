@@ -46,6 +46,7 @@ export const MEMORY_WRITE = kind("memory_write", "observability");
 export const CHECKPOINT_SAVED = kind("checkpoint_saved", "lifecycle");
 export const CHECKPOINT_RESTORED = kind("checkpoint_restored", "lifecycle");
 export const SCHEDULER_DECISION = kind("scheduler_decision", "observability");
+export const HEAD_OF_LINE_BLOCK = kind("head_of_line_block", "observability");
 export const GPU_UTILIZATION = kind("gpu_utilization", "observability");
 export const TOKEN_USAGE = kind("token_usage", "observability");
 export const MEMOIZATION_HIT = kind("memoization_hit", "observability");

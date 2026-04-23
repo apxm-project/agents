@@ -14,6 +14,7 @@ pub fn cache_command(action: CacheAction, json: bool) -> Result<()> {
     }
 }
 
+#[cfg(feature = "driver")]
 fn get_cache_db_path() -> Result<PathBuf> {
     let home =
         dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Cannot determine home directory"))?;
@@ -107,7 +108,7 @@ pub fn cache_stats_command(json: bool) -> Result<()> {
         println!("{{\"error\": \"Cache commands require the driver feature\"}}");
     } else {
         println!("Cache commands require the driver feature");
-        println!("Rebuild with: cargo build -p apxm-cli --features driver");
+        println!("Rebuild with: dekk apxm build");
     }
     Err(anyhow::anyhow!("Driver feature required"))
 }
@@ -237,8 +238,3 @@ pub fn cache_export_command(_output: Option<PathBuf>, json: bool) -> Result<()> 
     }
     Err(anyhow::anyhow!("Driver feature required"))
 }
-
-// ========================================================================
-// Workflow command handlers
-// ========================================================================
-

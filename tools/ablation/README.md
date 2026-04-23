@@ -1,7 +1,7 @@
 # ablation
 
 Phase-B compiler-pass ablation harness. See
-`docs/superpowers/plans/2026-04-22-apxm-compiler-ablation.md`.
+`docs/planning/plans/2026-04-22-apxm-compiler-ablation.md`.
 
 ## Run
 

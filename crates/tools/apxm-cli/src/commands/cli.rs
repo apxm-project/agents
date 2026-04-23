@@ -203,7 +203,7 @@ pub enum Commands {
         #[command(subcommand)]
         action: SessionAction,
     },
-    /// Manage and execute multi-graph workflows
+    /// Manage legacy multi-step workflow files
     Workflow {
         #[command(subcommand)]
         action: WorkflowAction,
@@ -213,8 +213,8 @@ pub enum Commands {
         #[command(subcommand)]
         action: CacheAction,
     },
-    /// Run the tier-3 quality-eval harness (shells to `python -m quality_eval`).
-    /// Trailing args are forwarded verbatim — see `python -m quality_eval --help`.
+    /// Run the tier-3 quality-eval harness.
+    /// Trailing args are forwarded verbatim — see `dekk apxm quality-eval -- --help`.
     #[command(name = "quality-eval", trailing_var_arg = true)]
     QualityEval {
         /// Arguments forwarded to the Python harness (--fixture / --all / --opt / ...)
@@ -247,7 +247,7 @@ pub enum TemplateAction {
 
 #[derive(Subcommand)]
 pub enum TaskAction {
-    /// Merge multiple graph files into a single composed workflow
+    /// Legacy graph-composition entrypoint
     Merge {
         /// Graph JSON files to merge
         #[arg(required = true)]
@@ -316,22 +316,22 @@ pub enum SessionAction {
 
 #[derive(Subcommand)]
 pub enum WorkflowAction {
-    /// Execute a workflow file
+    /// Execute a legacy workflow file
     Run {
-        /// Workflow file (.apxmw)
+        /// Legacy workflow file (.apxmw)
         file: PathBuf,
         /// Workflow arguments (name=value format)
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    /// Validate a workflow file
+    /// Validate a legacy workflow file
     Validate {
-        /// Workflow file (.apxmw)
+        /// Legacy workflow file (.apxmw)
         file: PathBuf,
     },
-    /// Show execution phases and critical path
+    /// Show execution phases and critical path for a legacy workflow file
     Analyze {
-        /// Workflow file (.apxmw)
+        /// Legacy workflow file (.apxmw)
         file: PathBuf,
     },
 }
@@ -390,7 +390,7 @@ pub enum BackendAction {
         /// API endpoint URL
         #[arg(long)]
         endpoint: Option<String>,
-        /// API key (omit to read from env or enter interactively)
+        /// Optional backend API key (omit to read from env or enter interactively)
         #[arg(long)]
         api_key: Option<String>,
         /// Extra headers as key=value pairs

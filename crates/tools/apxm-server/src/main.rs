@@ -29,7 +29,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use apxm_backends::llm::provider::{Provider, ProviderId};
+use apxm_backends::BackendRegistration;
 use apxm_runtime::{Runtime, RuntimeConfig};
 use axum::{Router, routing::get, routing::post};
 use dashmap::DashMap;
@@ -60,14 +60,14 @@ use crate::agent::{
     agent_card, deregister_agent, get_agent, list_agents, receive_message, register_agent,
 };
 use crate::capability::{list_capabilities, register_capability};
-use crate::checkpoints::{create_checkpoint, get_checkpoint, resume_checkpoint, CheckpointStore};
+use crate::checkpoints::{CheckpointStore, create_checkpoint, get_checkpoint, resume_checkpoint};
 use crate::execute::{execute, execute_stream};
 use crate::generate::{handle_generate, handle_generate_stream, handle_schema};
 use crate::health::{health, list_models};
 use crate::mcp::mcp_jsonrpc;
 use crate::memory::{delete_fact, search_facts, store_fact};
 use crate::state::AppState;
-use crate::tasks::{claim_task, complete_task, create_task, list_tasks, TaskQueueManager};
+use crate::tasks::{TaskQueueManager, claim_task, complete_task, create_task, list_tasks};
 
 pub(crate) const DEFAULT_ADDR: &str = "127.0.0.1:18800";
 pub(crate) const DEFAULT_PUBLIC_URL: &str = "http://localhost:18800";
@@ -147,41 +147,24 @@ async fn main() -> anyhow::Result<()> {
                 }
                 Ok(backends) => {
                     for backend in backends {
-                        let provider_id = match backend.protocol.to_string().parse::<ProviderId>() {
-                            Ok(id) => id,
-                            Err(e) => {
-                                warn!(name = %backend.name, error = %e, "skipping backend: unknown protocol");
-                                continue;
-                            }
-                        };
-                        let api_key = backend.api_key.as_deref().unwrap_or("");
-                        let config = backend
-                            .endpoint
-                            .as_ref()
-                            .map(|url| serde_json::json!({ "base_url": url }));
-                        match Provider::new(provider_id, api_key, config).await {
-                            Ok(provider) => {
-                                if let Err(e) =
-                                    runtime.llm_registry().register(&backend.name, provider)
+                        match BackendRegistration::from_backend_config(&backend) {
+                            Ok(registration) => {
+                                if let Err(e) = registration.register(runtime.llm_registry()).await
                                 {
                                     warn!(name = %backend.name, error = %e, "failed to register LLM backend");
                                     continue;
                                 }
-                                if let Some(model) = backend.models.first() {
-                                    if let Err(e) = runtime
-                                        .llm_registry()
-                                        .set_model_route(&model.id, &backend.name)
-                                    {
-                                        warn!(name = %backend.name, model = %model.id, error = %e, "failed to route model to backend");
-                                    }
-                                }
+                                runtime.llm_registry().register_backend_provider(
+                                    backend.name.clone(),
+                                    backend.protocol.as_str(),
+                                );
                                 if first_name.is_none() {
                                     first_name = Some(backend.name.clone());
                                 }
                                 loaded += 1;
                             }
                             Err(e) => {
-                                warn!(name = %backend.name, error = %e, "failed to create LLM provider");
+                                warn!(name = %backend.name, error = %e, "failed to build backend registration");
                             }
                         }
                     }

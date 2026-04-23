@@ -17,7 +17,9 @@ use tower_http::services::ServeDir;
 use tracing::{error, info};
 
 use apxm_compiler::AirModule;
-use apxm_core::types::{OptimizationLevel, OptimizationTarget};
+use apxm_core::types::compiler::{find_pass_metadata, list_pass_metadata};
+use apxm_core::types::operations::metadata::get_all_operations;
+use apxm_core::types::{OperationSpec, OptimizationLevel, OptimizationTarget};
 
 mod acp_client;
 mod air_parse;
@@ -441,13 +443,14 @@ fn display_name_to_serde_variant(display: &str) -> String {
 
 /// GET /api/ops — return the AIS operation catalog.
 async fn ops_handler() -> impl IntoResponse {
-    let ops: Vec<&apxm_ais::OperationSpec> = apxm_ais::get_all_operations().collect();
+    let ops: Vec<&OperationSpec> = get_all_operations().collect();
     Json(ops)
 }
 
 /// GET /api/passes — return the compiler pass pipeline metadata.
 async fn passes_handler() -> impl IntoResponse {
-    let passes: Vec<serde_json::Value> = apxm_ais::passes::get_all_passes()
+    let passes: Vec<serde_json::Value> = list_pass_metadata()
+        .iter()
         .map(|p| {
             serde_json::json!({
                 "name": p.name,
@@ -1058,7 +1061,7 @@ async fn compile_handler(
     let mut pass_metrics: Vec<PassMetricEntry> = pass_names
         .iter()
         .map(|name| {
-            let spec = apxm_ais::passes::find_pass_by_name(name);
+            let spec = find_pass_metadata(name);
             PassMetricEntry {
                 pass_name: name.clone(),
                 category: spec
@@ -1851,7 +1854,7 @@ async fn explain_handler(Query(params): Query<PathParam>) -> ApiResult<impl Into
 
 /// GET /api/agents — list builtin agent profiles from the AIS.
 async fn agents_handler() -> impl IntoResponse {
-    let profiles: Vec<serde_json::Value> = apxm_ais::get_all_operations()
+    let profiles: Vec<serde_json::Value> = get_all_operations()
         .filter(|op| {
             matches!(
                 format!("{:?}", op.category).as_str(),
@@ -1872,8 +1875,8 @@ async fn agents_handler() -> impl IntoResponse {
         })
         .collect();
 
-    // Return builtin agent definitions from apxm-ais
-    // The canonical agent list is defined via SpawnAgent/SpawnTeam operations
+    // Return builtin agent definitions for the GUI.
+    // These are presentation defaults, not the shared operation contract.
     let builtin_agents = vec![
         serde_json::json!({ "name": "architect", "description": "Designs system architecture and high-level solutions", "skills": ["design", "planning", "analysis"], "category": "engineering" }),
         serde_json::json!({ "name": "coder", "description": "Implements code based on specifications", "skills": ["coding", "implementation", "debugging"], "category": "engineering" }),

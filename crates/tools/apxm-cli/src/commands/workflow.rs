@@ -1,6 +1,5 @@
-//! Workflow execution commands.
+//! Legacy workflow-file execution commands.
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
@@ -27,7 +26,7 @@ pub fn workflow_command_no_driver(action: WorkflowAction, json: bool) -> Result<
         WorkflowAction::Validate { file } => workflow_validate_command(file, json),
         WorkflowAction::Analyze { file } => workflow_analyze_command(file, json),
         _ => Err(anyhow::anyhow!(
-            "Workflow run requires the `driver` feature. Re-run with: cargo run -p apxm-cli --features driver -- workflow run"
+            "Legacy workflow execution requires the `driver` feature. Rebuild through `dekk apxm build`, then re-run `dekk apxm workflow run ...`."
         )),
     }
 }
@@ -36,7 +35,7 @@ pub fn workflow_validate_command(file: PathBuf, json: bool) -> Result<()> {
     use apxm_runtime::workflow::WorkflowDef;
 
     let def = WorkflowDef::from_file(&file)
-        .with_context(|| format!("Failed to load workflow {}", file.display()))?;
+        .with_context(|| format!("Failed to load legacy workflow file {}", file.display()))?;
 
     let errors = def.validate();
 
@@ -49,7 +48,7 @@ pub fn workflow_validate_command(file: PathBuf, json: bool) -> Result<()> {
     } else {
         if errors.is_empty() {
             println!(
-                "{} Workflow is valid",
+                "{} Legacy workflow is valid",
                 apxm_core::constants::ui::icons::SUCCESS
             );
             println!("  Name: {}", def.name);
@@ -81,12 +80,12 @@ pub fn workflow_analyze_command(file: PathBuf, json: bool) -> Result<()> {
     use apxm_runtime::workflow::{WorkflowDef, execution_phases};
 
     let def = WorkflowDef::from_file(&file)
-        .with_context(|| format!("Failed to load workflow {}", file.display()))?;
+        .with_context(|| format!("Failed to load legacy workflow file {}", file.display()))?;
 
     let errors = def.validate();
     if !errors.is_empty() {
         return Err(anyhow::anyhow!(
-            "Workflow validation failed: {}",
+            "Legacy workflow validation failed: {}",
             errors.join(", ")
         ));
     }
@@ -103,7 +102,7 @@ pub fn workflow_analyze_command(file: PathBuf, json: bool) -> Result<()> {
         });
         println!("{}", serde_json::to_string_pretty(&output)?);
     } else {
-        println!("Workflow: {}", def.name.bold());
+        println!("Legacy workflow: {}", def.name.bold());
         println!();
         println!("  Total steps: {}", def.graphs.len());
         println!("  Execution phases: {}", phases.len());
@@ -128,17 +127,18 @@ pub fn workflow_analyze_command(file: PathBuf, json: bool) -> Result<()> {
 #[cfg(feature = "driver")]
 pub async fn workflow_run_command(file: PathBuf, args: Vec<String>) -> Result<()> {
     use apxm_runtime::workflow::{WorkflowDef, execution_phases};
+    use std::collections::HashMap;
     use std::time::Instant;
 
-    // Parse workflow
+    // Parse legacy workflow
     let def = WorkflowDef::from_file(&file)
-        .with_context(|| format!("Failed to load workflow {}", file.display()))?;
+        .with_context(|| format!("Failed to load legacy workflow file {}", file.display()))?;
 
-    // Validate workflow
+    // Validate legacy workflow
     let errors = def.validate();
     if !errors.is_empty() {
         return Err(anyhow::anyhow!(
-            "Workflow validation failed: {}",
+            "Legacy workflow validation failed: {}",
             errors.join(", ")
         ));
     }
@@ -167,7 +167,7 @@ pub async fn workflow_run_command(file: PathBuf, args: Vec<String>) -> Result<()
         }
     }
 
-    println!("Executing workflow: {}", def.name.bold());
+    println!("Executing legacy workflow: {}", def.name.bold());
     println!();
 
     let base_dir = file
@@ -342,7 +342,10 @@ pub async fn workflow_run_command(file: PathBuf, args: Vec<String>) -> Result<()
 
     let total_duration = start.elapsed();
 
-    println!("Workflow completed in {:.1}s", total_duration.as_secs_f64());
+    println!(
+        "Legacy workflow completed in {:.1}s",
+        total_duration.as_secs_f64()
+    );
     println!();
     println!("Results:");
     for (step_id, result) in &step_results {
