@@ -14,7 +14,6 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::pin::Pin;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tokio_stream::Stream;
 
@@ -485,9 +484,6 @@ impl LLMBackend for GraphAwareVllmBackend {
         Ok(())
     }
 }
-
-/// Arc-wrapped backend for shared use across threads.
-pub type SharedGraphAwareVllmBackend = Arc<GraphAwareVllmBackend>;
 
 #[cfg(test)]
 mod tests {

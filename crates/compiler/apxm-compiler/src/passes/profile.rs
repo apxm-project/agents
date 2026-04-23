@@ -323,18 +323,18 @@ mod tests {
         // ask_node should have latency but no retry (error_rate < threshold)
         let ask = &graph.nodes[0];
         assert_eq!(
-            ask.attributes.get(ATTR_PROFILE_LATENCY_MS),
+            ask.attributes.get(graph_attrs::PROFILE_LATENCY_MS),
             Some(&Value::Number(apxm_core::types::Number::Integer(250)))
         );
         assert!(
-            !ask.attributes.contains_key(ATTR_RETRY_COUNT),
+            !ask.attributes.contains_key(graph_attrs::RETRY_COUNT),
             "ask_node error_rate 0.02 < threshold, no retry"
         );
 
         // flaky_node should have retry injected
         let flaky = &graph.nodes[1];
         assert_eq!(
-            flaky.attributes.get(ATTR_RETRY_COUNT),
+            flaky.attributes.get(graph_attrs::RETRY_COUNT),
             Some(&Value::Number(apxm_core::types::Number::Integer(
                 DEFAULT_RETRY_COUNT
             )))
@@ -343,7 +343,7 @@ mod tests {
         // unknown_node should be untouched
         let unknown = &graph.nodes[2];
         assert!(
-            !unknown.attributes.contains_key(ATTR_PROFILE_LATENCY_MS),
+            !unknown.attributes.contains_key(graph_attrs::PROFILE_LATENCY_MS),
             "no profile data for unknown_node"
         );
     }
@@ -359,14 +359,14 @@ mod tests {
         assert!(
             !graph.nodes[0]
                 .attributes
-                .contains_key(ATTR_PROFILE_TOKEN_WARNING),
+                .contains_key(graph_attrs::PROFILE_TOKEN_WARNING),
             "1500 < 2000, no warning"
         );
 
         // flaky_node (3000 tokens) should get a warning
         let warning = graph.nodes[1]
             .attributes
-            .get(ATTR_PROFILE_TOKEN_WARNING)
+            .get(graph_attrs::PROFILE_TOKEN_WARNING)
             .expect("should have warning");
         match warning {
             Value::String(s) => assert!(s.contains("3000") && s.contains("2000")),
@@ -381,7 +381,7 @@ mod tests {
 
         // Pre-set a retry_count on flaky_node
         graph.nodes[1].attributes.insert(
-            ATTR_RETRY_COUNT.to_string(),
+            graph_attrs::RETRY_COUNT.to_string(),
             Value::Number(apxm_core::types::Number::Integer(5)),
         );
 
@@ -389,7 +389,7 @@ mod tests {
 
         // The existing retry_count should be preserved
         assert_eq!(
-            graph.nodes[1].attributes.get(ATTR_RETRY_COUNT),
+            graph.nodes[1].attributes.get(graph_attrs::RETRY_COUNT),
             Some(&Value::Number(apxm_core::types::Number::Integer(5)))
         );
     }

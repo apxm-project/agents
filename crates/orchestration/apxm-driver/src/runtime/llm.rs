@@ -65,8 +65,7 @@ pub async fn configure_llm_registry(
              \x20 dekk apxm backend add openai --type cloud --protocol openai\n\
              \x20 dekk apxm backend add anthropic --type cloud --protocol anthropic\n\
              \x20 dekk apxm backend add ollama --protocol ollama\n\n\
-             Verify with: dekk apxm backend list\n\
-             Full guide:  docs/getting-started.md"
+             Verify with: dekk apxm backend list"
                 .to_string(),
         ));
     }

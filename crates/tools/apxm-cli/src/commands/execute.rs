@@ -517,7 +517,7 @@ pub async fn run_command(
     }
 
     let artifact_graph = if emit_session.is_some() {
-        artifact.entry_dag().and_then(graph_from_execution_dag)
+        artifact.entry_dag().map(graph_from_execution_dag)
     } else {
         None
     };

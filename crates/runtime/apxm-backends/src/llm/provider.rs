@@ -63,10 +63,6 @@ impl ProviderId {
         }
     }
 
-    /// Convert to a `ProviderProtocol`.
-    pub fn to_protocol(&self) -> ProviderProtocol {
-        self.protocol()
-    }
 }
 
 impl std::fmt::Display for ProviderId {
@@ -265,15 +261,15 @@ mod tests {
 
     #[test]
     fn test_provider_id_to_protocol() {
-        assert_eq!(ProviderId::OpenAI.to_protocol(), ProviderProtocol::OpenAI);
+        assert_eq!(ProviderId::OpenAI.protocol(), ProviderProtocol::OpenAI);
         assert_eq!(
-            ProviderId::Anthropic.to_protocol(),
+            ProviderId::Anthropic.protocol(),
             ProviderProtocol::Anthropic
         );
-        assert_eq!(ProviderId::Google.to_protocol(), ProviderProtocol::Google);
-        assert_eq!(ProviderId::Ollama.to_protocol(), ProviderProtocol::Ollama);
-        assert_eq!(ProviderId::Vllm.to_protocol(), ProviderProtocol::Vllm);
-        assert_eq!(ProviderId::Mock.to_protocol(), ProviderProtocol::Mock);
+        assert_eq!(ProviderId::Google.protocol(), ProviderProtocol::Google);
+        assert_eq!(ProviderId::Ollama.protocol(), ProviderProtocol::Ollama);
+        assert_eq!(ProviderId::Vllm.protocol(), ProviderProtocol::Vllm);
+        assert_eq!(ProviderId::Mock.protocol(), ProviderProtocol::Mock);
     }
 
     #[test]

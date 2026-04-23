@@ -77,8 +77,8 @@ pub fn vllm_hints(module: &mut AirModule) -> usize {
             .map(str::to_owned);
 
         // --- Derived values ---------------------------------------------
-        let critical_path = (priority as i64) >= CRITICAL_PATH_PRIORITY_THRESHOLD;
         let priority_class = priority_class_from_priority(priority);
+        let critical_path = priority_class == apxm_llm::PRIORITY_CRITICAL_PATH;
         let pin_mode = if group.is_some() {
             apxm_llm::PIN_MODE_PREFIX
         } else {

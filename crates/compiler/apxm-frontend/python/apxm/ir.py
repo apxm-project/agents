@@ -398,10 +398,9 @@ def load_graph(path: str | os.PathLike[str]) -> ApxmGraph:
 
 # Required attributes per operation, derived from Rust AIS_OPERATIONS when
 # the native module is available. Falls back to generated operation specs.
-# Attribute names are canonicalized in the shared apxm-core contract.
-# Ops whose
-# required inputs come solely from graph edges (MERGE, WAIT_ALL, RETURN)
-# have empty sets here — the compiler resolves them from edge topology.
+# Attribute names are canonicalized in the shared apxm-core contract. Ops whose
+# required inputs come solely from graph edges (MERGE, WAIT_ALL, RETURN) have
+# empty sets here — the compiler resolves them from edge topology.
 try:
     from apxm._native import get_ais_operations as _get_ais_operations
 
