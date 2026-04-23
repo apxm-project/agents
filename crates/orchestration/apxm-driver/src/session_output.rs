@@ -929,6 +929,21 @@ impl ExecutionEventEmitter for SessionEventEmitter {
         });
     }
 
+    fn emit_head_of_line_block(
+        &self,
+        blocker_node: u64,
+        blocked_node: u64,
+        wait_ms: u64,
+        reason: &str,
+    ) {
+        self.write_trace_event(apxm_core::events::payload::HeadOfLineBlockPayload {
+            blocker_node,
+            blocked_node,
+            wait_ms,
+            reason: reason.to_string(),
+        });
+    }
+
     fn emit_gpu_utilization(&self, gpu_id: u32, utilization_pct: f32, memory_pct: f32) {
         self.write_trace_event(apxm_core::events::payload::GpuUtilizationPayload {
             gpu_id,

@@ -10,8 +10,8 @@ use std::time::Duration;
 
 use apxm_compiler::{AirEdge, AirModule, AirNode};
 use apxm_core::constants;
-use apxm_core::types::session::{LiveSessionState, SessionStatus};
 use apxm_core::types::AISOperationType;
+use apxm_core::types::session::{LiveSessionState, SessionStatus};
 use apxm_driver::session_output::SessionEventEmitter;
 use apxm_runtime::{ExecutionEventEmitter, TokenUsageSummary};
 
@@ -59,12 +59,9 @@ fn per_node_tokens_appear_in_live_json() {
         None,
     );
 
-    let live_path = session_root
-        .path()
-        .join(constants::session::files::LIVE);
+    let live_path = session_root.path().join(constants::session::files::LIVE);
     let live_data = fs::read_to_string(&live_path).expect("read live.json");
-    let live: LiveSessionState =
-        serde_json::from_str(&live_data).expect("parse LiveSessionState");
+    let live: LiveSessionState = serde_json::from_str(&live_data).expect("parse LiveSessionState");
 
     assert_eq!(
         live.completed_nodes.len(),

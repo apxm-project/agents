@@ -9,7 +9,6 @@ description = "APxM Driver - Configuration, linker, and orchestration for compil
 workspace = true
 
 [dependencies]
-apxm-ais.workspace = true
 apxm-core.workspace = true
 apxm-compiler.workspace = true
 apxm-runtime.workspace = true

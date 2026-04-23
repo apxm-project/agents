@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use apxm_acp::{AcpSession, AcpAgentProfile, PermissionMode};
+use apxm_acp::{AcpAgentProfile, AcpSession, PermissionMode};
 use apxm_core::types::aam::AamContext;
 
 fn mock_profile() -> AcpAgentProfile {

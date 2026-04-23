@@ -6,12 +6,11 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use apxm_ais::types::Number;
 use apxm_core::agent_profile::AgentProfileRegistry;
 use apxm_core::constants;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::paths::session_node_dir_name;
-use apxm_core::types::{AISOperationType, Value};
+use apxm_core::types::{AISOperationType, Number, Value};
 use apxm_runtime::memory::MemorySystem;
 
 #[derive(Clone, Debug)]

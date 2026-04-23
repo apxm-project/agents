@@ -89,9 +89,21 @@ fn build_fanout_synthesis_module() -> AirModule {
             },
         ],
         edges: vec![
-            AirEdge { from: 1, to: 2, dependency: DependencyType::Data },
-            AirEdge { from: 1, to: 3, dependency: DependencyType::Data },
-            AirEdge { from: 1, to: 4, dependency: DependencyType::Data },
+            AirEdge {
+                from: 1,
+                to: 2,
+                dependency: DependencyType::Data,
+            },
+            AirEdge {
+                from: 1,
+                to: 3,
+                dependency: DependencyType::Data,
+            },
+            AirEdge {
+                from: 1,
+                to: 4,
+                dependency: DependencyType::Data,
+            },
         ],
         parameters: vec![],
         metadata: HashMap::new(),
@@ -106,8 +118,7 @@ fn canonicalize(trace: &CallTrace) -> Vec<CallEvent> {
         e.parent_deps.sort();
     }
     events.sort_by(|a, b| {
-        (&a.parent_deps, &a.prompt, a.node_id)
-            .cmp(&(&b.parent_deps, &b.prompt, b.node_id))
+        (&a.parent_deps, &a.prompt, a.node_id).cmp(&(&b.parent_deps, &b.prompt, b.node_id))
     });
     events
 }
@@ -138,7 +149,10 @@ async fn compile_and_run_with_trace(
 /// upstream Asks via `{name1}/{name2}/...` placeholders.
 fn ask_attrs_many(template: &str, names: &[&str]) -> HashMap<String, Value> {
     HashMap::from([
-        (graph_attrs::TEMPLATE_STR.into(), Value::String(template.into())),
+        (
+            graph_attrs::TEMPLATE_STR.into(),
+            Value::String(template.into()),
+        ),
         (
             graph_attrs::INPUT_NAMES.into(),
             Value::Array(names.iter().map(|s| Value::String((*s).into())).collect()),
@@ -159,10 +173,7 @@ fn build_synth_fanin_module() -> AirModule {
                 id: 1,
                 name: "question".to_string(),
                 op: AISOperationType::ConstStr,
-                attributes: HashMap::from([(
-                    "value".into(),
-                    Value::String("what is 42?".into()),
-                )]),
+                attributes: HashMap::from([("value".into(), Value::String("what is 42?".into()))]),
             },
             AirNode {
                 id: 2,
@@ -193,12 +204,36 @@ fn build_synth_fanin_module() -> AirModule {
             },
         ],
         edges: vec![
-            AirEdge { from: 1, to: 2, dependency: DependencyType::Data },
-            AirEdge { from: 1, to: 3, dependency: DependencyType::Data },
-            AirEdge { from: 1, to: 4, dependency: DependencyType::Data },
-            AirEdge { from: 2, to: 5, dependency: DependencyType::Data },
-            AirEdge { from: 3, to: 5, dependency: DependencyType::Data },
-            AirEdge { from: 4, to: 5, dependency: DependencyType::Data },
+            AirEdge {
+                from: 1,
+                to: 2,
+                dependency: DependencyType::Data,
+            },
+            AirEdge {
+                from: 1,
+                to: 3,
+                dependency: DependencyType::Data,
+            },
+            AirEdge {
+                from: 1,
+                to: 4,
+                dependency: DependencyType::Data,
+            },
+            AirEdge {
+                from: 2,
+                to: 5,
+                dependency: DependencyType::Data,
+            },
+            AirEdge {
+                from: 3,
+                to: 5,
+                dependency: DependencyType::Data,
+            },
+            AirEdge {
+                from: 4,
+                to: 5,
+                dependency: DependencyType::Data,
+            },
         ],
         parameters: vec![],
         metadata: HashMap::new(),
