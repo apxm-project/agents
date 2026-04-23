@@ -28,9 +28,12 @@ pub use request::{
 };
 pub use response::{LLMResponse, TokenUsage};
 pub use traits::{LLMBackend, StreamChunk};
-pub use vllm::{ApxmGraphHints, GraphAwareVllmBackend, GraphMetadata, NodeSpec, PinPolicy};
+pub use vllm::{
+    ApxmGraphHints, CompilerHints, GraphAwareVllmBackend, GraphMetadata, NodeSpec, PinMode,
+    PinPolicy, PriorityClass,
+};
 
-use apxm_core::types::ProviderProtocol;
+use apxm_core::types::{ProviderProtocol, resolve_builtin_provider};
 use std::sync::Arc;
 
 /// Factory for creating LLM backends from provider configuration.
@@ -43,19 +46,17 @@ impl BackendFactory {
         api_key: &str,
         config: Option<serde_json::Value>,
     ) -> anyhow::Result<Arc<dyn LLMBackend>> {
-        let protocol = match provider.to_lowercase().as_str() {
-            "openai" => ProviderProtocol::OpenAI,
-            "anthropic" => ProviderProtocol::Anthropic,
-            "google" => ProviderProtocol::Google,
-            "ollama" => ProviderProtocol::Ollama,
-            "mock" => ProviderProtocol::Mock,
-            _ => {
-                return Err(anyhow::anyhow!(
-                    "Unknown provider: {}. Supported: openai, anthropic, google, ollama, mock",
-                    provider
-                ));
-            }
-        };
+        let protocol = resolve_builtin_provider(provider)
+            .map(|spec| spec.protocol)
+            .or_else(|| provider.parse::<ProviderProtocol>().ok())
+            .ok_or_else(|| {
+                let supported = ProviderProtocol::all_variants()
+                    .iter()
+                    .map(ProviderProtocol::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                anyhow::anyhow!("Unknown provider: {}. Supported: {}", provider, supported)
+            })?;
         Self::create_from_protocol(protocol, api_key, config).await
     }
 

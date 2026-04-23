@@ -198,17 +198,20 @@ async fn execute_python_tool(
         "Dispatching to Python tool worker"
     );
 
-    let json_result = bridge.call(capability_name, json_args, timeout).await.map_err(|e| {
-        tracing::error!(
-            capability = %capability_name,
-            error = %e,
-            "Python tool invocation failed"
-        );
-        RuntimeError::Capability {
-            capability: capability_name.to_string(),
-            message: format!("Python tool failed: {}", e),
-        }
-    })?;
+    let json_result = bridge
+        .call(capability_name, json_args, timeout)
+        .await
+        .map_err(|e| {
+            tracing::error!(
+                capability = %capability_name,
+                error = %e,
+                "Python tool invocation failed"
+            );
+            RuntimeError::Capability {
+                capability: capability_name.to_string(),
+                message: format!("Python tool failed: {}", e),
+            }
+        })?;
 
     // Convert serde_json::Value back to Value.
     json_to_value(json_result)
@@ -409,8 +412,10 @@ mod tests {
             graph_attrs::CAPABILITY.to_string(),
             Value::String("echo".to_string()),
         );
-        node.attributes
-            .insert("arg_message".to_string(), Value::String("via Rust".to_string()));
+        node.attributes.insert(
+            "arg_message".to_string(),
+            Value::String("via Rust".to_string()),
+        );
 
         let result = execute(&ctx, &node, vec![]).await.unwrap();
         assert_eq!(

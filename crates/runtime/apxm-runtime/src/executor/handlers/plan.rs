@@ -8,8 +8,8 @@
 //! - Goal-oriented planning
 
 use super::{
-    ExecutionContext, Node, Result, Value, execute_llm_request, extract_json_from_markdown,
-    get_optional_string_attribute,
+    ExecutionContext, Node, Result, Value, apply_llm_request_routing_from_node,
+    execute_llm_request, extract_json_from_markdown, get_optional_string_attribute,
     inner_plan::{InnerPlanOptions, execute_inner_plan},
 };
 use crate::aam::{Goal as AamGoal, GoalId, GoalStatus, TransitionLabel};
@@ -135,13 +135,12 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
 
         // Build request with progressive temperature
         let temperature = 0.7 + (attempt as f64 * 0.1);
-        let mut request = LLMRequest::new(user_prompt.clone())
-            .with_system_prompt(system_prompt.to_string())
-            .with_temperature(temperature);
-
-        if let Some(m) = &model {
-            request = request.with_model(m.clone());
-        }
+        let request = apply_llm_request_routing_from_node(
+            LLMRequest::new(user_prompt.clone())
+                .with_system_prompt(system_prompt.to_string())
+                .with_temperature(temperature),
+            node,
+        )?;
 
         if attempt > 0 {
             tracing::info!(
@@ -439,7 +438,10 @@ async fn generate_inner_plan(
         backend: None,
     })?;
 
-    let mut request = LLMRequest::new(user_prompt).with_system_prompt(system_prompt);
+    let mut request = apply_llm_request_routing_from_node(
+        LLMRequest::new(user_prompt).with_system_prompt(system_prompt),
+        node,
+    )?;
 
     if let Some(model_name) = model_override {
         request = request.with_model(model_name.to_string());

@@ -209,9 +209,7 @@ mod tests {
         let mgr = SessionManager::new(dir.path().to_path_buf()).unwrap();
 
         let checkpoint = sample_checkpoint();
-        let saved_path = mgr
-            .save_checkpoint("sess-001", None, &checkpoint)
-            .unwrap();
+        let saved_path = mgr.save_checkpoint("sess-001", None, &checkpoint).unwrap();
         assert!(saved_path.exists());
 
         let loaded = mgr.load_checkpoint("sess-001", None).unwrap();
@@ -233,9 +231,7 @@ mod tests {
         assert!(saved_path.exists());
 
         // Loading with scope returns the checkpoint
-        let loaded = mgr
-            .load_checkpoint("sess-001", Some("scope-a"))
-            .unwrap();
+        let loaded = mgr.load_checkpoint("sess-001", Some("scope-a")).unwrap();
         assert!(loaded.is_some());
 
         // Loading without scope returns None (different key)
@@ -272,18 +268,11 @@ mod tests {
         let mgr = SessionManager::new(dir.path().to_path_buf()).unwrap();
 
         let checkpoint = sample_checkpoint();
-        mgr.save_checkpoint("to-delete", None, &checkpoint)
-            .unwrap();
-        assert!(mgr
-            .load_checkpoint("to-delete", None)
-            .unwrap()
-            .is_some());
+        mgr.save_checkpoint("to-delete", None, &checkpoint).unwrap();
+        assert!(mgr.load_checkpoint("to-delete", None).unwrap().is_some());
 
         mgr.delete_checkpoint("to-delete", None).unwrap();
-        assert!(mgr
-            .load_checkpoint("to-delete", None)
-            .unwrap()
-            .is_none());
+        assert!(mgr.load_checkpoint("to-delete", None).unwrap().is_none());
     }
 
     #[test]

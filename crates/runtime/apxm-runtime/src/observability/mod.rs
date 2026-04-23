@@ -11,8 +11,8 @@
 
 mod metrics;
 
-pub use metrics::{MetricsCollector, OverheadBreakdown, SchedulerMetrics};
 pub use apxm_core::observability::{CallEvent, CallTrace};
+pub use metrics::{MetricsCollector, OverheadBreakdown, SchedulerMetrics};
 
 // Re-export the timing macros at crate root
 pub use crate::{timed, timed_async};

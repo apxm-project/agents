@@ -114,7 +114,8 @@ mod tests {
             crate::aam::Aam::new(),
         );
 
-        let node = make_node_with_inputs("hello {greeted}, meet {newcomer}", &["greeted", "newcomer"]);
+        let node =
+            make_node_with_inputs("hello {greeted}, meet {newcomer}", &["greeted", "newcomer"]);
         let result = execute(
             &ctx,
             &node,

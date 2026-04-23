@@ -32,16 +32,16 @@ pub mod model_router;
 pub mod observability;
 pub mod process;
 pub mod process_table;
+pub mod python_tools;
 mod runtime;
 pub mod sandbox;
 pub mod scheduler;
-pub mod vllm_attr_derivation;
-pub mod vllm_lifecycle;
 pub mod team;
 pub mod thread;
+pub mod vllm_attr_derivation;
+pub mod vllm_lifecycle;
 pub mod workflow;
 pub mod workspace;
-pub mod python_tools;
 
 pub use aam::{
     Aam, AamCheckpoint, CapabilityRecord, Goal, GoalId, GoalStatus, STAGED_BELIEF_PREFIX,
@@ -72,8 +72,8 @@ pub use process::{AgentProcess, ProcessId, ProcessKind, ProcessState};
 pub use process_table::{AgentPrompter, AgentSpawner, ProcessTable};
 pub use runtime::{Runtime, RuntimeConfig, RuntimeExecutionResult};
 pub use scheduler::{DataflowScheduler, SchedulerConfig};
-pub use vllm_lifecycle::VllmGraphLifecycle;
 pub use thread::{AgentThread, ThreadId, ThreadState};
+pub use vllm_lifecycle::VllmGraphLifecycle;
 
 // Re-export sandbox interface for host applications
 pub use sandbox::{

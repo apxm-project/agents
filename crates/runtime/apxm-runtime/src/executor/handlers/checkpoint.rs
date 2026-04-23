@@ -20,11 +20,6 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-const ATTR_SCOPE: &str = "scope";
-const ATTR_STORAGE: &str = "storage";
-const ATTR_TTL_SECONDS: &str = "ttl_seconds";
-const ATTR_ON_FAIL: &str = "on_fail";
-
 const SCOPE_FULL: &str = "full";
 const SCOPE_LOCAL: &str = "local";
 
@@ -70,19 +65,19 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         });
     }
 
-    let scope =
-        get_optional_string_attribute(node, ATTR_SCOPE)?.unwrap_or_else(|| SCOPE_FULL.to_string());
+    let scope = get_optional_string_attribute(node, graph_attrs::SCOPE)?
+        .unwrap_or_else(|| SCOPE_FULL.to_string());
     validate_scope(node, &scope)?;
 
-    let requested_storage = get_optional_string_attribute(node, ATTR_STORAGE)?
+    let requested_storage = get_optional_string_attribute(node, graph_attrs::STORAGE)?
         .unwrap_or_else(|| STORAGE_FS.to_string());
     validate_storage(node, &requested_storage)?;
 
-    let on_fail = get_optional_string_attribute(node, ATTR_ON_FAIL)?
+    let on_fail = get_optional_string_attribute(node, graph_attrs::ON_FAIL)?
         .unwrap_or_else(|| ON_FAIL_HALT.to_string());
     validate_on_fail(node, &on_fail)?;
 
-    let ttl_seconds = get_optional_u64_attribute(node, ATTR_TTL_SECONDS)?;
+    let ttl_seconds = get_optional_u64_attribute(node, graph_attrs::TTL_SECONDS)?;
 
     // The scheduler only invokes handlers once upstream inputs are available,
     // so consuming the first input gives this stub barrier semantics.
@@ -539,9 +534,12 @@ fn checkpoint_manifest(
         "byte_size".to_string(),
         unsigned_number_value(byte_size as u64),
     );
-    manifest.insert(ATTR_SCOPE.to_string(), Value::String(scope.to_string()));
     manifest.insert(
-        ATTR_STORAGE.to_string(),
+        graph_attrs::SCOPE.to_string(),
+        Value::String(scope.to_string()),
+    );
+    manifest.insert(
+        graph_attrs::STORAGE.to_string(),
         Value::String(effective_storage.to_string()),
     );
     manifest.insert(
@@ -549,10 +547,13 @@ fn checkpoint_manifest(
         Value::String(requested_storage.to_string()),
     );
     manifest.insert(
-        ATTR_TTL_SECONDS.to_string(),
+        graph_attrs::TTL_SECONDS.to_string(),
         optional_unsigned_number_value(ttl_seconds),
     );
-    manifest.insert(ATTR_ON_FAIL.to_string(), Value::String(on_fail.to_string()));
+    manifest.insert(
+        graph_attrs::ON_FAIL.to_string(),
+        Value::String(on_fail.to_string()),
+    );
     manifest.insert("saved".to_string(), Value::Bool(saved));
     manifest.insert("stub".to_string(), Value::Bool(true));
     manifest.insert(

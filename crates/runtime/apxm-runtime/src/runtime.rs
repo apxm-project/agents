@@ -1,6 +1,8 @@
 //! Runtime orchestrator - Main entry point for the APxM runtime
 
 use crate::model_router::{ModelRouter, ModelRouterConfig};
+use crate::python_tools;
+use crate::python_tools::{PythonToolBridge, PythonToolRegistry};
 use crate::sandbox::SandboxRegistry;
 use crate::{
     aam::Aam,
@@ -16,8 +18,6 @@ use crate::{
     vllm_attr_derivation::derive_vllm_attrs,
     vllm_lifecycle::VllmGraphLifecycle,
 };
-use crate::python_tools;
-use crate::python_tools::{PythonToolBridge, PythonToolRegistry};
 use apxm_artifact::Artifact;
 use apxm_backends::LLMRegistry;
 use apxm_core::constants::runtime::metadata;
@@ -295,7 +295,10 @@ impl Runtime {
     /// Note: This method does NOT support inner DAG execution (multi-level planning).
     /// If you need inner DAG support, wrap the Runtime in Arc and use
     /// `execute_with_inner_support()` instead.
-    pub async fn execute(&self, mut dag: ExecutionDag) -> Result<RuntimeExecutionResult, RuntimeError> {
+    pub async fn execute(
+        &self,
+        mut dag: ExecutionDag,
+    ) -> Result<RuntimeExecutionResult, RuntimeError> {
         log_info!(
             "runtime",
             nodes = dag.nodes.len(),
@@ -328,10 +331,7 @@ impl Runtime {
         let token_accountant = Arc::clone(&context.token_accountant);
 
         // Execute with dataflow scheduler for automatic parallelism
-        let exec_result = self
-            .scheduler
-            .execute(dag, executor, context, vec![])
-            .await;
+        let exec_result = self.scheduler.execute(dag, executor, context, vec![]).await;
 
         // Explicit happy-path release (Rule 5) — fire whether the scheduler
         // succeeded or returned a recoverable error, before propagating.
@@ -484,12 +484,8 @@ impl Runtime {
         // for the rationale (explicit happy-path release; Drop as safety net).
         let lifecycle = build_vllm_lifecycle(&self.llm_registry, &entry_dag).await?;
 
-        let context = self.build_context_with_bridge(
-            session_id,
-            event_emitter,
-            session_dir,
-            python_bridge,
-        );
+        let context =
+            self.build_context_with_bridge(session_id, event_emitter, session_dir, python_bridge);
         let executor = Arc::new(ExecutorEngine::new(context.clone()));
         let token_accountant = Arc::clone(&context.token_accountant);
         let exec_result = self

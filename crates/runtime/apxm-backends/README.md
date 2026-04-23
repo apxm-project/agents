@@ -18,7 +18,7 @@ LLM providers, storage backends, and prompt templates.
 | `llm/backends/vllm` | vLLM backend with graph-aware prefix hints |
 | `llm/backends/mock` | Deterministic mock backend for testing and benchmarks |
 | `llm/registry/` | `LLMRegistry` with health monitoring and model resolution |
-| `llm/provider` | `Provider` enum and `ProviderId` factory |
+| `llm/provider` | `Provider` enum plus `ProviderId` / `ProviderProtocol` routing |
 | `llm/assembler` | Request assembly and message formatting |
 | `llm/rate_limit` | Per-provider rate limiting |
 | `llm/retry/` | Exponential backoff with jitter and error classification |
@@ -41,7 +41,7 @@ LLM providers, storage backends, and prompt templates.
 ## Key Exports
 
 - `LLMRegistry` -- provider registry with health monitoring
-- `Provider` / `ProviderId` -- provider instances and identifiers
+- `Provider` / `ProviderId` / `ProviderProtocol` -- provider instances, built-in ids, and protocol routing
 - `LLMRequest` / `LLMResponse` -- request/response types
 - `RequestBuilder` -- fluent request construction
 - `GenerationConfig` -- temperature, max_tokens, top_p, etc.

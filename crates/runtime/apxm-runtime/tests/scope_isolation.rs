@@ -126,10 +126,11 @@ fn scope_isolation_delete_scoped_preserves_global() {
         .unwrap();
 
     // Scoped is gone
-    assert!(mgr
-        .load_checkpoint(session_id, Some("temp-scope"))
-        .unwrap()
-        .is_none());
+    assert!(
+        mgr.load_checkpoint(session_id, Some("temp-scope"))
+            .unwrap()
+            .is_none()
+    );
 
     // Global is still there
     assert!(mgr.load_checkpoint(session_id, None).unwrap().is_some());

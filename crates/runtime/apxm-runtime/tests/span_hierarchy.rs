@@ -49,8 +49,13 @@ async fn span_hierarchy_two_node_chain() {
         "test-trace",
     ));
 
-    let ctx = ExecutionContext::new(memory, llm_registry, capability_system, apxm_runtime::aam::Aam::new())
-        .with_event_emitter(Some(adapter));
+    let ctx = ExecutionContext::new(
+        memory,
+        llm_registry,
+        capability_system,
+        apxm_runtime::aam::Aam::new(),
+    )
+    .with_event_emitter(Some(adapter));
 
     // Build a two-node DAG: CONST_STR(1) and CONST_STR(2), both independent.
     // They execute sequentially in the sequential fallback path.
@@ -62,10 +67,9 @@ async fn span_hierarchy_two_node_chain() {
         output_tokens: vec![100],
         metadata: NodeMetadata::default(),
     };
-    node1.attributes.insert(
-        "value".to_string(),
-        Value::String("hello".to_string()),
-    );
+    node1
+        .attributes
+        .insert("value".to_string(), Value::String("hello".to_string()));
 
     let mut node2 = Node {
         id: 2,
@@ -75,10 +79,9 @@ async fn span_hierarchy_two_node_chain() {
         output_tokens: vec![101],
         metadata: NodeMetadata::default(),
     };
-    node2.attributes.insert(
-        "value".to_string(),
-        Value::String("world".to_string()),
-    );
+    node2
+        .attributes
+        .insert("value".to_string(), Value::String("world".to_string()));
 
     let dag = ExecutionDag {
         nodes: vec![node1, node2],
@@ -194,8 +197,13 @@ async fn span_hierarchy_single_node_has_span() {
         "test-trace-single",
     ));
 
-    let ctx = ExecutionContext::new(memory, llm_registry, capability_system, apxm_runtime::aam::Aam::new())
-        .with_event_emitter(Some(adapter));
+    let ctx = ExecutionContext::new(
+        memory,
+        llm_registry,
+        capability_system,
+        apxm_runtime::aam::Aam::new(),
+    )
+    .with_event_emitter(Some(adapter));
 
     let mut node = Node {
         id: 1,
@@ -205,10 +213,8 @@ async fn span_hierarchy_single_node_has_span() {
         output_tokens: vec![],
         metadata: NodeMetadata::default(),
     };
-    node.attributes.insert(
-        "value".to_string(),
-        Value::String("test".to_string()),
-    );
+    node.attributes
+        .insert("value".to_string(), Value::String("test".to_string()));
 
     let engine = ExecutorEngine::new(ctx);
     let result = engine.execute_node(&node, vec![]).await.unwrap();

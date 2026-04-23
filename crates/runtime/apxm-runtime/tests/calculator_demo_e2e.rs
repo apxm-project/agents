@@ -21,8 +21,7 @@ fn demo_path() -> PathBuf {
 
 /// Locate the apxm Python package root for PYTHONPATH.
 fn apxm_python_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../compiler/apxm-frontend/python")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../compiler/apxm-frontend/python")
 }
 
 #[test]

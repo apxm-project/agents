@@ -47,6 +47,7 @@ use super::{ExecutionContext, Result};
 use anyhow::Error as AnyhowError;
 use apxm_backends::{LLMRequest, LLMResponse};
 use apxm_core::{
+    constants::graph::attrs as graph_attrs,
     error::RuntimeError,
     types::{execution::Node, values::Value},
 };
@@ -103,6 +104,34 @@ pub fn get_optional_u64_attribute(node: &Node, key: &str) -> Result<Option<u64>>
     }
 }
 
+/// Apply per-node LLM routing hints to a request without conflating backend and model.
+pub fn apply_llm_request_routing_from_node(
+    mut request: LLMRequest,
+    node: &Node,
+) -> Result<LLMRequest> {
+    if let Some(backend) = get_optional_string_attribute(node, graph_attrs::BACKEND)? {
+        request = request.with_backend(backend);
+    }
+    if let Some(model) = get_optional_string_attribute(node, graph_attrs::MODEL)? {
+        request = request.with_model(model);
+    }
+    Ok(request)
+}
+
+/// Preserve the routing identity of an LLM request across retries or continuations.
+pub fn copy_llm_request_routing(mut request: LLMRequest, source: &LLMRequest) -> LLMRequest {
+    if let Some(operation) = source.operation_type {
+        request = request.with_operation_type(operation);
+    }
+    if let Some(backend) = &source.backend {
+        request = request.with_backend(backend.clone());
+    }
+    if let Some(model) = &source.model {
+        request = request.with_model(model.clone());
+    }
+    request
+}
+
 /// Extract a `Vec<u32>` from an array-valued node attribute.
 ///
 /// Returns an empty vec if the attribute is missing or not an array.
@@ -126,10 +155,7 @@ pub fn get_u32_array_attribute(node: &Node, key: &str) -> Vec<u32> {
 /// so sibling worker scopes (created per node by `scheduler/worker.rs`) can
 /// see it; this helper centralizes the lookup for HANDOFF and COMMUNICATE
 /// inline-agent fallbacks.
-pub async fn read_stm_with_scope_fallback(
-    ctx: &ExecutionContext,
-    key: &str,
-) -> Option<Value> {
+pub async fn read_stm_with_scope_fallback(ctx: &ExecutionContext, key: &str) -> Option<Value> {
     use apxm_core::constants::runtime::metadata;
     let parent_scope = ctx.metadata.get(metadata::PARENT_SCOPE_ID).cloned();
     let primary = parent_scope.as_deref().unwrap_or_else(|| ctx.scope_id());

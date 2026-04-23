@@ -94,6 +94,9 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
     if let Some(sp) = get_optional_string_attribute(node, graph_attrs::SYSTEM_PROMPT)? {
         agent_info.insert(response_keys::SYSTEM_PROMPT.to_string(), Value::String(sp));
     }
+    if let Some(backend) = get_optional_string_attribute(node, graph_attrs::BACKEND)? {
+        agent_info.insert(response_keys::BACKEND.to_string(), Value::String(backend));
+    }
     if let Some(m) = get_optional_string_attribute(node, graph_attrs::MODEL)? {
         agent_info.insert(response_keys::MODEL.to_string(), Value::String(m));
     }

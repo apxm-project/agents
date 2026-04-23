@@ -1,24 +1,28 @@
 //! Graph-aware vLLM backend.
 //!
 //! This backend wraps the OpenAI-compatible vLLM server and adds APXM graph
-//! hints to every request. It also provides methods to register and release
-//! graphs on the server side for KV-cache pinning optimizations.
+//! hints to every request. It also provides methods to register, inspect, and
+//! release graphs on the server side for graph-aware scheduling state.
 
-use super::graph_meta::GraphMetadata;
 use crate::llm::backends::openai::OpenAIBackend;
 use crate::llm::backends::traits::StreamChunk;
 use crate::llm::backends::{LLMBackend, LLMRequest, LLMResponse};
 use anyhow::{Context, Result};
-use apxm_core::constants::llm::config_keys;
-use apxm_core::types::ModelInfo;
+use apxm_core::constants::llm::{api_paths, apxm as apxm_llm, config_keys, vllm as vllm_keys};
+use apxm_core::types::{GraphMetadata, ModelInfo, PriorityClass};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tokio_stream::Stream;
 
 const DEFAULT_BASE_URL: &str = "http://localhost:8000/v1";
+const UNCONFIGURED_MODEL_SENTINEL: &str = "__apxm_vllm_model_required__";
+const VLLM_PRIORITY_CRITICAL_PATH: u8 = 0;
+const VLLM_PRIORITY_DEFAULT: u8 = 5;
+const VLLM_PRIORITY_LEGACY_SPECULATIVE: u8 = 10;
 
 /// Response from `POST /v1/apxm/graphs/register`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,6 +31,9 @@ pub struct GraphRegisterResponse {
     pub graph_id: String,
     pub execution_id: Option<String>,
     pub registered_nodes: u32,
+    pub critical_path_length: Option<u32>,
+    pub max_parallelism: Option<u32>,
+    pub default_pin_ttl_ms: Option<u32>,
 }
 
 /// Response from `DELETE /v1/apxm/graphs/{graph_id}`.
@@ -36,42 +43,20 @@ pub struct GraphReleaseResponse {
     pub graph_id: String,
     pub released_handles: u32,
     pub released_blocks: u32,
+    pub remaining_handles: Option<u32>,
+    pub remaining_blocks: Option<u32>,
 }
 
-/// Request for `POST /v1/apxm/pins`.
+/// Response from `GET /v1/apxm/graphs/{graph_id}`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PinCreateRequest {
-    pub graph_id: String,
-    pub node_id: u32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reuse_group: Option<String>,
-    pub ttl_ms: u64,
-}
-
-/// Response from `POST /v1/apxm/pins`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PinCreateResponse {
+pub struct GraphStatusResponse {
     pub object: String,
     pub graph_id: String,
-    pub node_id: u32,
-    pub reuse_group: Option<String>,
-    pub request_id: String,
-    pub ttl_ms: u64,
-    pub expiry_ts: f64,
-}
-
-/// Response from `GET /v1/apxm/pins/stats`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PinStatsResponse {
-    pub object: String,
-    pub active_pins: u64,
+    pub registered: bool,
+    pub pinned_handles: u64,
     pub pinned_blocks: u64,
-    pub pin_hits: u64,
-    pub pin_misses: u64,
-    pub pin_hit_ratio: f64,
-    pub pin_expirations: u64,
-    pub memory_pressure_releases: u64,
-    pub total_lookups: u64,
+    pub node_count: Option<u64>,
+    pub critical_path_length: Option<u64>,
 }
 
 /// Graph-aware vLLM backend.
@@ -80,7 +65,7 @@ pub struct PinStatsResponse {
 /// each request's `extra_body.apxm` field, enabling:
 ///
 /// - Critical-path priority scheduling
-/// - KV-cache pinning for prefix reuse
+/// - Graph-aware KV retention via per-request hinting
 /// - Graph-level pin TTL defaults
 /// - Eager prefill hints
 ///
@@ -93,17 +78,17 @@ pub struct PinStatsResponse {
 /// }))).await?;
 ///
 /// // Register graph before sending requests
-/// backend.register_graph(GraphMetadata::new("dag-123", "exec-abc")).await?;
+/// backend.register_graph(GraphMetadata::new("graph-123", "exec-abc")).await?;
 ///
 /// // Send request with hints
 /// let request = LLMRequest::new("Hello")
 ///     .with_apxm_hints(ApxmGraphHints::critical_path(
-///         "dag-123", "exec-abc", 1, "greet", vec![2], 30_000
+///         "graph-123", "exec-abc", 1, "greet", vec![2], 30_000
 ///     ));
 /// let response = backend.generate(request).await?;
 ///
 /// // Release graph when done
-/// backend.release_graph("dag-123").await?;
+/// backend.release_graph("graph-123").await?;
 /// ```
 pub struct GraphAwareVllmBackend {
     /// Inner OpenAI-compatible backend for actual requests.
@@ -116,7 +101,7 @@ pub struct GraphAwareVllmBackend {
     execution_counter: AtomicU64,
     /// Whether the server exposes the APXM extension endpoints (`/v1/apxm/*`).
     /// Probed on first `health_check`; if probe returns 404, this flips to `false`
-    /// and `register_graph`/`pin_prefix`/`release_graph` become silent no-ops.
+    /// and graph extension calls become silent no-ops.
     apxm_endpoints_available: AtomicBool,
     /// Tracks whether we've already emitted a one-time WARN about missing
     /// APXM endpoints (so we don't spam the log on every health check).
@@ -126,6 +111,10 @@ pub struct GraphAwareVllmBackend {
     /// `~/.apxm/config.toml`). Default `true`. Stock vLLM without
     /// `--enable-auto-tool-choice` should configure this to `false`.
     auto_tool_choice_supported: AtomicBool,
+    /// Whether the backend config included a concrete default model.
+    default_model_configured: bool,
+    /// Models that should suppress vLLM chat-template thinking output.
+    non_thinking_models: HashSet<String>,
 }
 
 impl GraphAwareVllmBackend {
@@ -136,6 +125,13 @@ impl GraphAwareVllmBackend {
     /// - `model`: Model name to use
     /// - `extra_headers`: Optional HTTP headers
     pub async fn new(api_key: &str, config: Option<serde_json::Value>) -> Result<Self> {
+        let default_model_configured = config
+            .as_ref()
+            .and_then(|c| c.get("model"))
+            .and_then(|m| m.as_str())
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false);
+
         let base_url = config
             .as_ref()
             .and_then(|c| c.get("base_url"))
@@ -154,8 +150,37 @@ impl GraphAwareVllmBackend {
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
 
+        let non_thinking_models: HashSet<String> = config
+            .as_ref()
+            .and_then(|c| c.get(config_keys::MODELS))
+            .and_then(|m| m.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|entry| {
+                        let id = entry.get("id").and_then(|v| v.as_str())?;
+                        let supports = entry
+                            .get(config_keys::SUPPORTS_THINKING)
+                            .and_then(|v| v.as_bool())?;
+                        if supports { None } else { Some(id.to_string()) }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let mut inner_config_map = config
+            .clone()
+            .and_then(|value| value.as_object().cloned())
+            .unwrap_or_default();
+        if !default_model_configured {
+            inner_config_map.insert(
+                "model".to_string(),
+                serde_json::Value::String(UNCONFIGURED_MODEL_SENTINEL.to_string()),
+            );
+        }
+
         // Pass config to inner OpenAI backend (vLLM is OpenAI-compatible)
-        let inner = OpenAIBackend::new(api_key, config).await?;
+        let inner =
+            OpenAIBackend::new(api_key, Some(serde_json::Value::Object(inner_config_map))).await?;
         let client = reqwest::Client::new();
 
         Ok(Self {
@@ -166,6 +191,8 @@ impl GraphAwareVllmBackend {
             apxm_endpoints_available: AtomicBool::new(true),
             health_check_warned: AtomicBool::new(false),
             auto_tool_choice_supported: AtomicBool::new(auto_tool_choice),
+            default_model_configured,
+            non_thinking_models,
         })
     }
 
@@ -175,7 +202,12 @@ impl GraphAwareVllmBackend {
     /// resulting wire URL is `{base}/apxm/graphs/register` which resolves
     /// to `/v1/apxm/graphs/register` on the server.
     pub fn graph_registration_url(&self) -> String {
-        format!("{}/apxm/graphs/register", self.base_url)
+        format!("{}{}", self.base_url, api_paths::APXM_GRAPHS_REGISTER)
+    }
+
+    /// Return the graph-status endpoint for one graph id.
+    pub fn graph_status_url(&self, graph_id: &str) -> String {
+        format!("{}{}/{}", self.base_url, api_paths::APXM_GRAPHS, graph_id)
     }
 
     /// Register a graph with the vLLM server for scheduling hints.
@@ -187,10 +219,13 @@ impl GraphAwareVllmBackend {
         // If the server doesn't expose `/v1/apxm/*`, become a silent no-op.
         if !self.apxm_endpoints_available.load(Ordering::Relaxed) {
             return Ok(GraphRegisterResponse {
-                object: "apxm.graph.registration".to_string(),
+                object: apxm_llm::OBJECT_GRAPH_REGISTRATION.to_string(),
                 graph_id: metadata.graph_id.clone(),
                 execution_id: metadata.execution_id.clone(),
                 registered_nodes: 0,
+                critical_path_length: metadata.critical_path_length,
+                max_parallelism: metadata.max_parallelism,
+                default_pin_ttl_ms: metadata.default_pin_ttl_ms,
             });
         }
         let url = self.graph_registration_url();
@@ -221,13 +256,15 @@ impl GraphAwareVllmBackend {
     pub async fn release_graph(&self, graph_id: &str) -> Result<GraphReleaseResponse> {
         if !self.apxm_endpoints_available.load(Ordering::Relaxed) {
             return Ok(GraphReleaseResponse {
-                object: "apxm.graph.release".to_string(),
+                object: apxm_llm::OBJECT_GRAPH_RELEASE.to_string(),
                 graph_id: graph_id.to_string(),
                 released_handles: 0,
                 released_blocks: 0,
+                remaining_handles: None,
+                remaining_blocks: None,
             });
         }
-        let url = format!("{}/apxm/graphs/{}", self.base_url, graph_id);
+        let url = self.graph_status_url(graph_id);
         let response = self
             .client
             .delete(&url)
@@ -247,134 +284,124 @@ impl GraphAwareVllmBackend {
             .context("Failed to parse graph release response")
     }
 
-    /// Pin KV-cache blocks for prefix reuse.
-    ///
-    /// Call this after an LLM request completes to pin its KV-cache for
-    /// downstream nodes. The pin will be automatically released when consumed,
-    /// when TTL expires, or when the graph is released.
-    pub async fn pin_prefix(
-        &self,
-        graph_id: &str,
-        node_id: u32,
-        reuse_group: Option<&str>,
-        ttl_ms: u64,
-    ) -> Result<PinCreateResponse> {
+    /// Get the current status for a registered graph.
+    pub async fn get_graph_status(&self, graph_id: &str) -> Result<GraphStatusResponse> {
         if !self.apxm_endpoints_available.load(Ordering::Relaxed) {
-            return Ok(PinCreateResponse {
-                object: "apxm.pin".to_string(),
+            return Ok(GraphStatusResponse {
+                object: apxm_llm::OBJECT_GRAPH_STATUS.to_string(),
                 graph_id: graph_id.to_string(),
-                node_id,
-                reuse_group: reuse_group.map(|s| s.to_string()),
-                request_id: String::new(),
-                ttl_ms,
-                expiry_ts: 0.0,
+                registered: false,
+                pinned_handles: 0,
+                pinned_blocks: 0,
+                node_count: None,
+                critical_path_length: None,
             });
         }
-        let url = format!("{}/apxm/pins", self.base_url);
-        let request = PinCreateRequest {
-            graph_id: graph_id.to_string(),
-            node_id,
-            reuse_group: reuse_group.map(|s| s.to_string()),
-            ttl_ms,
-        };
+        let url = self.graph_status_url(graph_id);
 
-        let response = self
-            .client
-            .post(&url)
-            .json(&request)
-            .send()
-            .await
-            .context("Failed to send pin creation request")?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("Pin creation failed: {} - {}", status, body);
-        }
-
-        response
-            .json()
-            .await
-            .context("Failed to parse pin creation response")
-    }
-
-    /// Get pin statistics from the vLLM server.
-    pub async fn get_pin_stats(&self) -> Result<PinStatsResponse> {
-        let url = format!("{}/apxm/pins/stats", self.base_url);
         let response = self
             .client
             .get(&url)
             .send()
             .await
-            .context("Failed to send pin stats request")?;
+            .context("Failed to send graph status request")?;
 
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("Pin stats request failed: {} - {}", status, body);
+            anyhow::bail!("Graph status request failed: {} - {}", status, body);
         }
 
         response
             .json()
             .await
-            .context("Failed to parse pin stats response")
+            .context("Failed to parse graph status response")
     }
 
-    /// Inject APXM hints into a request if present.
-    fn inject_hints(&self, mut request: LLMRequest) -> LLMRequest {
-        // Check if request already has APXM hints in extra_body
-        if let Some(ref extra) = request.extra_body {
-            if extra.get("apxm").is_some() {
-                return request; // Already has hints
-            }
-        }
-
-        // Check if there are graph hints attached to the request
-        if let Some(ref hints) = request.apxm_hints {
-            let hints_json = serde_json::to_value(hints).unwrap_or_default();
-            let mut extra = request
-                .extra_body
-                .take()
-                .unwrap_or_else(|| serde_json::json!({}));
-            if let serde_json::Value::Object(ref mut map) = extra {
-                map.insert("apxm".to_string(), hints_json);
-            }
-            request.extra_body = Some(extra);
-        }
-
+    fn request_model<'a>(&'a self, request: &'a LLMRequest) -> &'a str {
         request
+            .model
+            .as_deref()
+            .unwrap_or_else(|| self.inner.model())
+    }
+
+    /// Inject graph-aware vLLM request shaping into the provider-neutral request.
+    fn inject_hints(&self, mut request: LLMRequest) -> LLMRequest {
+        let mut extra = request
+            .extra_body
+            .take()
+            .unwrap_or_else(|| serde_json::json!({}));
+
+        if !extra.is_object() {
+            request.extra_body = Some(extra);
+            return request;
+        }
+
+        if let serde_json::Value::Object(ref mut map) = extra {
+            if let Some(ref hints) = request.apxm_hints {
+                if !map.contains_key("apxm") {
+                    map.insert(
+                        "apxm".to_string(),
+                        serde_json::to_value(hints).unwrap_or_default(),
+                    );
+                }
+
+                if !map.contains_key("priority")
+                    && let Some(priority_class) = &hints.priority_class
+                {
+                    let priority = match priority_class {
+                        PriorityClass::CriticalPath => VLLM_PRIORITY_CRITICAL_PATH,
+                        PriorityClass::Parallel => VLLM_PRIORITY_DEFAULT,
+                        PriorityClass::Speculative => VLLM_PRIORITY_LEGACY_SPECULATIVE,
+                    };
+                    map.insert("priority".to_string(), serde_json::json!(priority));
+                }
+            }
+
+            let model = self.request_model(&request);
+            if self.non_thinking_models.contains(model)
+                && !map.contains_key(config_keys::CHAT_TEMPLATE_KWARGS)
+            {
+                map.insert(
+                    config_keys::CHAT_TEMPLATE_KWARGS.to_string(),
+                    serde_json::json!({
+                        config_keys::ENABLE_THINKING: false,
+                    }),
+                );
+            }
+        }
+
+        request.extra_body = Some(extra);
+        request
+    }
+
+    fn ensure_model_selected(&self, request: &LLMRequest) -> Result<()> {
+        if request.model.is_none() && !self.default_model_configured {
+            anyhow::bail!(
+                "No model is configured for this vLLM backend. \
+Register one with `dekk apxm backend add-model <backend> <model-id>` \
+or set an explicit graph/default model before execution."
+            );
+        }
+        Ok(())
     }
 }
 
 #[async_trait]
 impl LLMBackend for GraphAwareVllmBackend {
     async fn generate(&self, request: LLMRequest) -> Result<LLMResponse> {
-        let injected_request = self.inject_hints(request.clone());
-        let response = self.inner.generate(injected_request).await?;
-
-        // Phase 3: Pin KV-cache if pin_policy.mode == "prefix"
-        if let Some(hints) = &request.apxm_hints {
-            if hints.pin_policy.mode == "prefix" {
-                // Extract graph_id, node_id, reuse_group, and ttl_ms
-                if let (Some(graph_id), Some(node_id)) = (&hints.graph_id, hints.node_id) {
-                    let reuse_group = hints.reuse_group.as_deref();
-                    let ttl_ms = hints.pin_policy.ttl_ms.unwrap_or(30_000) as u64;
-
-                    // Call pin_prefix API (fire and forget - don't fail the request)
-                    let _ = self
-                        .pin_prefix(graph_id, node_id, reuse_group, ttl_ms)
-                        .await;
-                }
-            }
-        }
-
-        Ok(response)
+        self.ensure_model_selected(&request)?;
+        let injected_request = self.inject_hints(request);
+        self.inner.generate(injected_request).await
     }
 
     fn generate_stream(
         &self,
         request: LLMRequest,
     ) -> Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send + '_>> {
+        if let Err(error) = self.ensure_model_selected(&request) {
+            return Box::pin(futures::stream::once(async move { Err(error) }));
+        }
         let request = self.inject_hints(request);
         self.inner.generate_stream(request)
     }
@@ -395,7 +422,7 @@ impl LLMBackend for GraphAwareVllmBackend {
         // `supports_graph_extensions()` reflecting reality. We only flip the
         // flag to false on a definitive 404 — transient failures don't disable
         // the extensions.
-        let url = format!("{}/apxm/pins/stats", self.base_url);
+        let url = self.graph_status_url(vllm_keys::APXM_PROBE_GRAPH_ID);
         if let Ok(response) = self.client.get(&url).send().await {
             if response.status() == reqwest::StatusCode::NOT_FOUND {
                 self.apxm_endpoints_available
@@ -404,7 +431,7 @@ impl LLMBackend for GraphAwareVllmBackend {
                     tracing::warn!(
                         endpoint = %url,
                         "vLLM server does not expose APXM extensions (/v1/apxm/*); \
-                         graph registration, prefix pinning, and graph release will be no-ops"
+                         graph registration, graph status, and graph release will be no-ops"
                     );
                 }
             }
@@ -487,10 +514,13 @@ mod tests {
     #[test]
     fn test_graph_register_response_serde() {
         let response = GraphRegisterResponse {
-            object: "apxm.graph.registration".to_string(),
+            object: apxm_llm::OBJECT_GRAPH_REGISTRATION.to_string(),
             graph_id: "test-graph".to_string(),
             execution_id: Some("exec-123".to_string()),
             registered_nodes: 5,
+            critical_path_length: Some(3),
+            max_parallelism: Some(2),
+            default_pin_ttl_ms: Some(30_000),
         };
         let json = serde_json::to_string(&response).unwrap();
         assert!(json.contains("test-graph"));
@@ -529,12 +559,13 @@ mod tests {
 
         // Verify the serialized hints
         let apxm = &extra["apxm"];
+        assert_eq!(extra["priority"], 0);
         assert_eq!(apxm["schema_version"], 1);
         assert_eq!(apxm["graph_id"], "graph-test");
         assert_eq!(apxm["execution_id"], "exec-test");
         assert_eq!(apxm["node_id"], 42);
         assert_eq!(apxm["node_name"], "test-node");
-        assert_eq!(apxm["priority_class"], "critical_path");
+        assert_eq!(apxm["priority_class"], apxm_llm::PRIORITY_CRITICAL_PATH);
         assert_eq!(apxm["downstream_nodes"], serde_json::json!([43, 44]));
     }
 
@@ -569,6 +600,7 @@ mod tests {
         // Verify both existing fields and new apxm field are present
         assert_eq!(extra["custom_field"], "custom_value");
         assert_eq!(extra["another_field"], 123);
+        assert_eq!(extra["priority"], 5);
         assert!(extra.get("apxm").is_some());
         assert_eq!(extra["apxm"]["node_id"], 10);
     }
@@ -607,6 +639,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_inject_hints_adds_thinking_suppression_for_flagged_model() {
+        use crate::llm::backends::LLMRequest;
+
+        let backend = GraphAwareVllmBackend::new(
+            "test-key",
+            Some(serde_json::json!({
+                "base_url": "http://localhost:8000/v1",
+                "model": "Qwen/Qwen3.5-4B",
+                "models": [
+                    {"id": "Qwen/Qwen3.5-4B", "supports_thinking": false}
+                ]
+            })),
+        )
+        .await
+        .unwrap();
+
+        let injected = backend.inject_hints(LLMRequest::new("Test prompt"));
+        let extra = injected.extra_body.unwrap();
+        assert_eq!(
+            extra[config_keys::CHAT_TEMPLATE_KWARGS][config_keys::ENABLE_THINKING],
+            serde_json::json!(false)
+        );
+    }
+
+    #[tokio::test]
     async fn test_supports_graph_extensions_flag() {
         let backend = GraphAwareVllmBackend::new(
             "test-key",
@@ -619,10 +676,32 @@ mod tests {
         // is only flipped to false on a definitive 404 from health_check.
         assert!(backend.supports_graph_extensions());
 
-        // Simulate the health_check seeing a 404 on /v1/apxm/pins/stats.
+        // Simulate the health_check seeing a missing APXM graph-status route.
         backend
             .apxm_endpoints_available
             .store(false, Ordering::Relaxed);
         assert!(!backend.supports_graph_extensions());
+    }
+
+    #[tokio::test]
+    async fn test_generate_requires_explicit_model_when_backend_has_no_default_model() {
+        use crate::llm::backends::LLMRequest;
+
+        let backend = GraphAwareVllmBackend::new(
+            "",
+            Some(serde_json::json!({"base_url": "http://localhost:8000/v1"})),
+        )
+        .await
+        .unwrap();
+
+        let error = backend
+            .generate(LLMRequest::new("Test prompt"))
+            .await
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("No model is configured for this vLLM backend")
+        );
     }
 }

@@ -1,8 +1,8 @@
 //! VERIFY operation - Verification with LLM
 
 use super::{
-    ExecutionContext, Node, Result, Value, execute_llm_request, get_input,
-    get_optional_string_attribute, get_string_attribute,
+    ExecutionContext, Node, Result, Value, apply_llm_request_routing_from_node,
+    execute_llm_request, get_input, get_optional_string_attribute, get_string_attribute,
 };
 use apxm_backends::LLMRequest;
 use apxm_core::constants::graph::attrs as graph_attrs;
@@ -41,7 +41,10 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
             "You are a verification expert. Analyze claims and evidence precisely. Respond with only 'true' or 'false' followed by a brief explanation.".to_string()
         });
 
-    let request = LLMRequest::new(verification_prompt).with_system_prompt(system_prompt);
+    let request = apply_llm_request_routing_from_node(
+        LLMRequest::new(verification_prompt).with_system_prompt(system_prompt),
+        node,
+    )?;
     let response = execute_llm_request(ctx, node.id, "VERIFY", &request).await?;
 
     let is_verified = response.content.to_lowercase().contains("true");

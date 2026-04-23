@@ -339,6 +339,7 @@ fn credential_to_backend(name: &str, cred: LegacyCredential) -> BackendConfig {
             supports_vision: false,
             supports_functions: false,
             supports_thinking: false,
+            supports_custom_temperature: None,
             max_output_tokens: None,
             tags: vec![],
         }]
@@ -565,6 +566,7 @@ mod tests {
                     supports_vision: false,
                     supports_functions: true,
                     supports_thinking: false,
+                    supports_custom_temperature: None,
                     max_output_tokens: None,
                     tags: vec!["production".to_string()],
                 },
@@ -577,6 +579,7 @@ mod tests {
                     supports_vision: false,
                     supports_functions: true,
                     supports_thinking: false,
+                    supports_custom_temperature: None,
                     max_output_tokens: None,
                     tags: vec!["fast".to_string(), "cheap".to_string()],
                 },
@@ -677,6 +680,7 @@ mod tests {
             supports_vision: true,
             supports_functions: true,
             supports_thinking: false,
+            supports_custom_temperature: None,
             max_output_tokens: None,
             tags: vec!["production".to_string()],
         };
@@ -702,6 +706,7 @@ mod tests {
             supports_vision: false,
             supports_functions: false,
             supports_thinking: false,
+            supports_custom_temperature: None,
             max_output_tokens: None,
             tags: vec![],
         };
@@ -736,6 +741,7 @@ mod tests {
             supports_vision: false,
             supports_functions: false,
             supports_thinking: false,
+            supports_custom_temperature: None,
             max_output_tokens: None,
             tags: vec![],
         };
@@ -745,6 +751,50 @@ mod tests {
             result,
             Err(BackendError::ModelAlreadyExists { .. })
         ));
+    }
+
+    #[test]
+    fn empty_backend_omits_inline_models_and_still_accepts_add_model() {
+        let tmp = TempDir::new().unwrap();
+        let store = test_store(tmp.path());
+
+        let backend = BackendConfig {
+            name: "empty-model-list".to_string(),
+            backend_type: BackendType::Local,
+            protocol: ProviderProtocol::Vllm,
+            endpoint: Some("http://localhost:8916".to_string()),
+            api_key: None,
+            headers: HashMap::new(),
+            models: vec![],
+            docker: None,
+            auto_tool_choice: None,
+        };
+        store.add(backend).unwrap();
+
+        let serialized = fs::read_to_string(store.path()).unwrap();
+        assert!(
+            !serialized.contains("models = []"),
+            "empty backends should omit inline models arrays:\n{serialized}"
+        );
+
+        let model = ModelConfig {
+            id: "google/gemma-3-4b-it".to_string(),
+            aliases: vec!["gemma".to_string()],
+            context_window: 32768,
+            cost_per_1k_input: 0.0,
+            cost_per_1k_output: 0.0,
+            supports_vision: false,
+            supports_functions: false,
+            supports_thinking: true,
+            supports_custom_temperature: None,
+            max_output_tokens: Some(4096),
+            tags: vec!["vllm".to_string(), "gemma".to_string()],
+        };
+        store.add_model("empty-model-list", model).unwrap();
+
+        let reopened = store.get("empty-model-list").unwrap().unwrap();
+        assert_eq!(reopened.models.len(), 1);
+        assert_eq!(reopened.models[0].id, "google/gemma-3-4b-it");
     }
 
     #[test]

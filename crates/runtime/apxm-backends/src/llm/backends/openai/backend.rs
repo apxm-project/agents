@@ -51,11 +51,10 @@ pub struct OpenAIBackend {
     base_url: String,
     /// Additional HTTP headers injected on every request.
     extra_headers: Vec<(String, String)>,
-    /// Model IDs declared with `supports_thinking = false` in
-    /// `~/.apxm/config.toml`. For these, `build_request_body` injects
-    /// `chat_template_kwargs.enable_thinking = false` so vLLM-served Qwen3
-    /// (and similarly-templated models) suppress `<think>...</think>` blocks.
-    non_thinking_models: HashSet<String>,
+    /// Model IDs declared with `supports_custom_temperature = false` in
+    /// backend registration config. These models reject an explicit custom
+    /// `temperature` field, so the request must rely on the provider default.
+    fixed_temperature_models: HashSet<String>,
     client: reqwest::Client,
 }
 
@@ -110,10 +109,10 @@ impl OpenAIBackend {
             .unwrap_or_default();
 
         // Parse per-model capability entries forwarded by BackendRegistration.
-        // Only the `supports_thinking = false` opt-out is consulted today; any
-        // other fields are ignored so future flags can land without breaking
-        // older backends.
-        let non_thinking_models: HashSet<String> = config
+        // The OpenAI-compatible adapter only consults protocol-level request
+        // shaping flags here; provider-specific body shaping belongs in the
+        // concrete backend specialization.
+        let fixed_temperature_models: HashSet<String> = config
             .as_ref()
             .and_then(|c| c.get(config_keys::MODELS))
             .and_then(|m| m.as_array())
@@ -122,7 +121,7 @@ impl OpenAIBackend {
                     .filter_map(|entry| {
                         let id = entry.get("id").and_then(|v| v.as_str())?;
                         let supports = entry
-                            .get(config_keys::SUPPORTS_THINKING)
+                            .get(config_keys::SUPPORTS_CUSTOM_TEMPERATURE)
                             .and_then(|v| v.as_bool())?;
                         if supports { None } else { Some(id.to_string()) }
                     })
@@ -135,7 +134,7 @@ impl OpenAIBackend {
             model,
             base_url,
             extra_headers,
-            non_thinking_models,
+            fixed_temperature_models,
             client: reqwest::Client::new(),
         })
     }
@@ -221,17 +220,7 @@ impl OpenAIBackend {
             .map(Self::message_to_openai_json)
             .collect();
 
-        // Some models (gpt-5, o1, o3, o4, reasoning models) only accept
-        // the default temperature and reject custom values with a 400 error.
-        // Detect these by model name prefix and skip the temperature field.
-        let is_reasoning_model = model.starts_with("o1")
-            || model.starts_with("o3")
-            || model.starts_with("o4")
-            || model.starts_with("gpt-5")
-            || model.contains("-codex")
-            || model.contains("reasoning");
-
-        let mut body = if is_reasoning_model {
+        let mut body = if self.fixed_temperature_models.contains(model) {
             json!({
                 "model": model,
                 "messages": messages,
@@ -296,32 +285,6 @@ impl OpenAIBackend {
                     }),
                 };
             }
-        }
-
-        // Add vLLM priority if present in APXM hints (Phase 0+1)
-        if let Some(hints) = &request.apxm_hints {
-            if let Some(priority_class) = &hints.priority_class {
-                // Map priority_class to vLLM integer priority
-                // Lower numbers = higher priority in vLLM
-                let priority = match priority_class.as_str() {
-                    "critical_path" => 0,
-                    "normal" => 5,
-                    "speculative" => 10,
-                    _ => 5,
-                };
-                body["priority"] = json!(priority);
-            }
-        }
-
-        // Disable Qwen3-style thinking-mode for models flagged
-        // `supports_thinking = false` in `~/.apxm/config.toml`. vLLM forwards
-        // `chat_template_kwargs` into the model's chat template, so this
-        // suppresses `<think>...</think>` blocks. Skipped silently when the
-        // model is not in the opt-out set.
-        if self.non_thinking_models.contains(model) {
-            body[config_keys::CHAT_TEMPLATE_KWARGS] = json!({
-                config_keys::ENABLE_THINKING: false,
-            });
         }
 
         // Merge in extra_body if provided (for vLLM extensions, etc.)
@@ -812,6 +775,7 @@ struct StreamFunctionDelta {
 mod tests {
     use super::*;
     use crate::llm::backends::{LLMRequest, ToolDefinition};
+    use apxm_core::constants::llm::apxm as apxm_llm;
 
     #[test]
     fn test_build_request_body_basic() {
@@ -820,7 +784,7 @@ mod tests {
             model: "gpt-4".to_string(),
             base_url: DEFAULT_BASE_URL.to_string(),
             extra_headers: vec![],
-            non_thinking_models: HashSet::new(),
+            fixed_temperature_models: HashSet::new(),
             client: reqwest::Client::new(),
         };
 
@@ -840,7 +804,7 @@ mod tests {
             model: "gpt-4-turbo".to_string(),
             base_url: DEFAULT_BASE_URL.to_string(),
             extra_headers: vec![],
-            non_thinking_models: HashSet::new(),
+            fixed_temperature_models: HashSet::new(),
             client: reqwest::Client::new(),
         };
 
@@ -862,7 +826,7 @@ mod tests {
             model: "gpt-4".to_string(),
             base_url: DEFAULT_BASE_URL.to_string(),
             extra_headers: vec![],
-            non_thinking_models: HashSet::new(),
+            fixed_temperature_models: HashSet::new(),
             client: reqwest::Client::new(),
         };
 
@@ -912,7 +876,7 @@ mod tests {
             model: "gpt-4".to_string(),
             base_url: DEFAULT_BASE_URL.to_string(),
             extra_headers: vec![],
-            non_thinking_models: HashSet::new(),
+            fixed_temperature_models: HashSet::new(),
             client: reqwest::Client::new(),
         };
 
@@ -929,57 +893,27 @@ mod tests {
     }
 
     #[test]
-    fn test_build_request_body_with_vllm_priority() {
-        use crate::llm::backends::vllm::ApxmGraphHints;
+    fn test_build_request_body_omits_temperature_for_fixed_temperature_model() {
+        let mut fixed_temperature_models = HashSet::new();
+        fixed_temperature_models.insert("gpt-5".to_string());
 
         let backend = OpenAIBackend {
             api_key: "test".to_string(),
-            model: "gpt-4".to_string(),
+            model: "gpt-5".to_string(),
             base_url: DEFAULT_BASE_URL.to_string(),
             extra_headers: vec![],
-            non_thinking_models: HashSet::new(),
+            fixed_temperature_models,
             client: reqwest::Client::new(),
         };
 
-        // Test critical_path priority
-        let hints = ApxmGraphHints::critical_path(
-            "graph-123",
-            "exec-456",
-            5,
-            "reason-node",
-            vec![6, 7],
-            30_000,
-        );
-        let request = LLMRequest::new("Analyze").with_apxm_hints(hints);
+        let request = LLMRequest::new("Analyze").with_temperature(0.2);
         let body = backend.build_request_body(&request);
 
-        assert_eq!(
-            body["priority"], 0,
-            "critical_path should map to priority 0"
-        );
-
-        // Test normal priority
-        let mut hints = ApxmGraphHints::default();
-        hints.priority_class = Some("normal".to_string());
-        let request = LLMRequest::new("Analyze").with_apxm_hints(hints);
-        let body = backend.build_request_body(&request);
-
-        assert_eq!(body["priority"], 5, "normal should map to priority 5");
-
-        // Test speculative priority
-        let mut hints = ApxmGraphHints::default();
-        hints.priority_class = Some("speculative".to_string());
-        let request = LLMRequest::new("Analyze").with_apxm_hints(hints);
-        let body = backend.build_request_body(&request);
-
-        assert_eq!(
-            body["priority"], 10,
-            "speculative should map to priority 10"
-        );
+        assert!(body.get("temperature").is_none());
     }
 
     #[test]
-    fn test_build_request_body_with_vllm_metadata_in_extra_body() {
+    fn test_build_request_body_preserves_extra_body_fields() {
         use crate::llm::backends::vllm::ApxmGraphHints;
 
         let backend = OpenAIBackend {
@@ -987,7 +921,7 @@ mod tests {
             model: "meta-llama/Llama-3.1-8B-Instruct".to_string(),
             base_url: DEFAULT_BASE_URL.to_string(),
             extra_headers: vec![],
-            non_thinking_models: HashSet::new(),
+            fixed_temperature_models: HashSet::new(),
             client: reqwest::Client::new(),
         };
 
@@ -1001,9 +935,9 @@ mod tests {
             30_000,
         );
 
-        // Serialize hints to JSON and add to extra_body (like vLLM backend does)
         let hints_json = serde_json::to_value(&hints).unwrap();
         let extra_body = json!({
+            "priority": 0,
             "apxm": hints_json
         });
 
@@ -1013,10 +947,7 @@ mod tests {
 
         let body = backend.build_request_body(&request);
 
-        // Verify priority field is set at top level
         assert_eq!(body["priority"], 0);
-
-        // Verify extra_body.apxm contains full metadata
         assert!(body.get("apxm").is_some(), "Should have apxm field in body");
         let apxm_meta = &body["apxm"];
 
@@ -1025,70 +956,25 @@ mod tests {
         assert_eq!(apxm_meta["execution_id"], "exec-xyz-789");
         assert_eq!(apxm_meta["node_id"], 12);
         assert_eq!(apxm_meta["node_name"], "planner");
-        assert_eq!(apxm_meta["priority_class"], "critical_path");
+        assert_eq!(
+            apxm_meta["priority_class"],
+            apxm_llm::PRIORITY_CRITICAL_PATH
+        );
         assert_eq!(apxm_meta["downstream_nodes"], json!([13, 14]));
-        assert_eq!(apxm_meta["pin_policy"]["mode"], "prefix");
+        assert_eq!(apxm_meta["pin_policy"]["mode"], apxm_llm::PIN_MODE_PREFIX);
         assert_eq!(apxm_meta["pin_policy"]["ttl_ms"], 30_000);
     }
 
-    #[test]
-    fn test_build_request_body_disables_thinking_for_flagged_model() {
-        // Model is flagged `supports_thinking = false` -> body must carry
-        // `chat_template_kwargs.enable_thinking = false`.
-        let mut non_thinking = HashSet::new();
-        non_thinking.insert("Qwen/Qwen3.5-4B".to_string());
-
-        let backend = OpenAIBackend {
-            api_key: "test".to_string(),
-            model: "Qwen/Qwen3.5-4B".to_string(),
-            base_url: DEFAULT_BASE_URL.to_string(),
-            extra_headers: vec![],
-            non_thinking_models: non_thinking,
-            client: reqwest::Client::new(),
-        };
-
-        let request = LLMRequest::new("Hello").with_temperature(0.5);
-        let body = backend.build_request_body(&request);
-
-        assert_eq!(
-            body["chat_template_kwargs"]["enable_thinking"],
-            json!(false),
-            "flagged model must carry chat_template_kwargs.enable_thinking=false; got body={body}"
-        );
-    }
-
-    #[test]
-    fn test_build_request_body_omits_thinking_kwargs_when_unflagged() {
-        // No model in `non_thinking_models` set -> chat_template_kwargs must
-        // be absent so we don't perturb providers that don't understand it.
-        let backend = OpenAIBackend {
-            api_key: "test".to_string(),
-            model: "gpt-4".to_string(),
-            base_url: DEFAULT_BASE_URL.to_string(),
-            extra_headers: vec![],
-            non_thinking_models: HashSet::new(),
-            client: reqwest::Client::new(),
-        };
-
-        let request = LLMRequest::new("Hello").with_temperature(0.5);
-        let body = backend.build_request_body(&request);
-
-        assert!(
-            body.get("chat_template_kwargs").is_none(),
-            "unflagged model must not carry chat_template_kwargs; got body={body}"
-        );
-    }
-
     #[tokio::test]
-    async fn test_new_parses_non_thinking_models_from_config() {
+    async fn test_new_parses_fixed_temperature_models_from_config() {
         // End-to-end check that the `models` array forwarded by
         // BackendRegistration::backend_config_json() lands in the backend's
-        // opt-out set and reaches the request body.
+        // request-shaping config and reaches the request body.
         let config = json!({
-            "model": "Qwen/Qwen3.5-4B",
+            "model": "gpt-5",
             "models": [
-                {"id": "Qwen/Qwen3.5-4B", "supports_thinking": false},
-                {"id": "gpt-4o", "supports_thinking": true},
+                {"id": "gpt-5", "supports_custom_temperature": false},
+                {"id": "gpt-4o", "supports_custom_temperature": true},
             ],
         });
 
@@ -1096,24 +982,19 @@ mod tests {
             .await
             .expect("OpenAIBackend::new should accept models array");
 
-        // Qwen3 -> opted out, body must carry the kwargs.
-        let qwen_req = LLMRequest::new("Hi").with_temperature(0.7);
-        let qwen_body = backend.build_request_body(&qwen_req);
-        assert_eq!(
-            qwen_body["chat_template_kwargs"]["enable_thinking"],
-            json!(false),
-        );
+        let fixed_req = LLMRequest::new("Hi").with_temperature(0.7);
+        let fixed_body = backend.build_request_body(&fixed_req);
+        assert!(fixed_body.get("temperature").is_none());
 
-        // gpt-4o -> not opted out (despite being in the array), body must not
-        // carry the kwargs.
+        // gpt-4o remains temperature-configurable.
         let mut gpt_req = LLMRequest::new("Hi").with_temperature(0.7);
         gpt_req.model = Some("gpt-4o".to_string());
         let gpt_body = backend.build_request_body(&gpt_req);
-        assert!(gpt_body.get("chat_template_kwargs").is_none());
+        assert_eq!(gpt_body["temperature"], json!(0.7));
     }
 
     #[test]
-    fn test_vllm_request_structure_matches_spec() {
+    fn test_request_structure_merges_extra_body_without_special_casing() {
         use crate::llm::backends::vllm::ApxmGraphHints;
 
         let backend = OpenAIBackend {
@@ -1121,7 +1002,7 @@ mod tests {
             model: "meta-llama/Llama-3.1-8B-Instruct".to_string(),
             base_url: DEFAULT_BASE_URL.to_string(),
             extra_headers: vec![],
-            non_thinking_models: HashSet::new(),
+            fixed_temperature_models: HashSet::new(),
             client: reqwest::Client::new(),
         };
 
@@ -1137,28 +1018,15 @@ mod tests {
 
         let body = backend.build_request_body(&request);
 
-        // Verify the structure matches the task specification:
-        // {
-        //   "model": "...",
-        //   "messages": [...],
-        //   "priority": 2,
-        //   "apxm": {
-        //     "schema_version": 1,
-        //     "graph_id": "...",
-        //     "node_id": 12,
-        //     "priority_class": "critical_path"
-        //   }
-        // }
-
         assert!(body.get("model").is_some());
         assert!(body.get("messages").is_some());
-        assert_eq!(body["priority"], 0); // critical_path = 0
+        assert!(body.get("priority").is_none());
 
         let apxm = &body["apxm"];
         assert_eq!(apxm["schema_version"], 1);
         assert_eq!(apxm["graph_id"], "graph-id");
         assert_eq!(apxm["node_id"], 12);
-        assert_eq!(apxm["priority_class"], "critical_path");
+        assert_eq!(apxm["priority_class"], apxm_llm::PRIORITY_CRITICAL_PATH);
     }
 }
 

@@ -16,10 +16,11 @@ use std::sync::{Arc, Mutex};
 
 use apxm_backends::llm::backends::{LLMBackend, StreamChunk};
 use apxm_backends::{LLMRequest, LLMResponse};
+use apxm_core::constants::llm::apxm as apxm_llm;
 use apxm_core::types::execution::NodeMetadata;
 use apxm_core::types::operations::AISOperationType;
 use apxm_core::types::values::Value;
-use apxm_core::types::{ExecutionDag, FinishReason, ModelInfo, Node, ToolCall, TokenUsage};
+use apxm_core::types::{ExecutionDag, FinishReason, ModelInfo, Node, TokenUsage, ToolCall};
 use apxm_runtime::{Runtime, RuntimeConfig};
 use async_trait::async_trait;
 use tokio_stream::Stream;
@@ -160,7 +161,7 @@ fn ask_node_with_vllm_hints(max_iters: usize) -> Node {
     // retry, not just the first one.
     attrs.insert(
         a::VLLM_PRIORITY_CLASS.to_string(),
-        Value::String("critical_path".into()),
+        Value::String(apxm_llm::PRIORITY_CRITICAL_PATH.into()),
     );
     attrs.insert(
         a::VLLM_REUSE_GROUP.to_string(),
@@ -178,7 +179,10 @@ fn ask_node_with_vllm_hints(max_iters: usize) -> Node {
         Value::Number(apxm_core::types::values::Number::Integer(1024)),
     );
     attrs.insert(a::VLLM_WARMUP.to_string(), Value::Bool(true));
-    attrs.insert(a::VLLM_PIN_MODE.to_string(), Value::String("prefix".into()));
+    attrs.insert(
+        a::VLLM_PIN_MODE.to_string(),
+        Value::String(apxm_llm::PIN_MODE_PREFIX.into()),
+    );
 
     Node {
         id: 1,
@@ -259,9 +263,7 @@ async fn apxm_hints_preserved_across_every_tool_loop_iteration() {
 
     // All snapshots must be byte-identical: the loop must clone the same
     // hints, not rebuild a different shape.
-    let first = snapshots[0]
-        .as_ref()
-        .expect("first call must carry hints");
+    let first = snapshots[0].as_ref().expect("first call must carry hints");
     for (i, snap) in snapshots.iter().enumerate().skip(1) {
         let other = snap.as_ref().expect("checked above");
         assert_eq!(
@@ -273,7 +275,10 @@ async fn apxm_hints_preserved_across_every_tool_loop_iteration() {
 
     // Spot-check that the compiler-stamped fields survived intact end-to-end.
     let obj = first.as_object().expect("hints must serialize as object");
-    assert_eq!(obj.get("priority_class"), Some(&serde_json::json!("critical_path")));
+    assert_eq!(
+        obj.get("priority_class"),
+        Some(&serde_json::json!(apxm_llm::PRIORITY_CRITICAL_PATH)),
+    );
     assert_eq!(obj.get("reuse_group"), Some(&serde_json::json!("group-A")));
     assert_eq!(
         obj.get("downstream_nodes"),
@@ -291,6 +296,6 @@ async fn apxm_hints_preserved_across_every_tool_loop_iteration() {
     );
     assert_eq!(
         obj.get("pin_policy").and_then(|p| p.get("mode")),
-        Some(&serde_json::json!("prefix")),
+        Some(&serde_json::json!(apxm_llm::PIN_MODE_PREFIX)),
     );
 }

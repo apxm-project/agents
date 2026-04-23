@@ -2,19 +2,17 @@
 //!
 //! `VllmGraphLifecycle` owns a single `register_graph` / `release_graph`
 //! pairing for one graph execution. The happy path calls
-//! `release().await` explicitly (Rule 5: `Drop` cannot `.await`); the
+//! `release().await` explicitly; the
 //! `Drop` impl is the panic safety net that fires a best-effort release on a
 //! detached `tokio::spawn`.
-//!
-//! Created in Step 4 of the APXM ↔ vLLM integration plan.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context, Result};
 use apxm_backends::llm::backends::traits::LLMBackend;
-use apxm_backends::llm::backends::vllm::{GraphMetadata, NodeSpec};
 use apxm_core::types::execution::ExecutionDag;
+use apxm_core::types::{GraphMetadata, NodeSpec};
 use serde_json::Value;
 
 /// Best-effort registration guard for one graph execution.

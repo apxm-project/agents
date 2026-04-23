@@ -134,10 +134,7 @@ async fn trycatch_error_path_catch_recovers() {
     let result = engine.execute_dag(dag).await.unwrap();
 
     let output = result.results.values().next().unwrap();
-    assert_eq!(
-        output,
-        &Value::String("gracefully recovered".to_string())
-    );
+    assert_eq!(output, &Value::String("gracefully recovered".to_string()));
 }
 
 /// Error in catch: both try and catch fail, error propagates.
@@ -166,7 +163,11 @@ async fn trycatch_error_in_catch_propagates() {
 async fn trycatch_missing_try_label_caught_by_catch() {
     let registry = Arc::new(FlowRegistry::new());
     // Only register catch, not try — the try-branch error gets caught
-    registry.register_flow("App", "catch_flow", success_dag("recovered from missing try"));
+    registry.register_flow(
+        "App",
+        "catch_flow",
+        success_dag("recovered from missing try"),
+    );
 
     let engine = make_engine(registry).await;
     let dag = trycatch_dag("nonexistent_try", "catch_flow");

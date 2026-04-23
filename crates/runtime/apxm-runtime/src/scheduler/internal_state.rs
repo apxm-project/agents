@@ -20,6 +20,8 @@ pub(crate) struct OpState {
     pub retries: u32,
     /// Last error message (if any).
     pub last_error: Option<String>,
+    /// Time when the operation became ready to run.
+    pub ready_at: Option<Instant>,
     /// Time when execution started.
     pub started_at: Option<Instant>,
     /// Time when execution finished.
@@ -39,6 +41,7 @@ impl OpState {
             status: OpStatus::Pending,
             retries: 0,
             last_error: None,
+            ready_at: None,
             started_at: None,
             finished_at: None,
             effects,
@@ -147,6 +150,7 @@ mod tests {
         assert_eq!(op.status, OpStatus::Pending);
         assert_eq!(op.retries, 0);
         assert!(op.last_error.is_none());
+        assert!(op.ready_at.is_none());
         assert!(op.started_at.is_none());
         assert!(op.finished_at.is_none());
         assert!(!op.effects.has_side_effects);
@@ -159,6 +163,7 @@ mod tests {
         assert_eq!(from_new.status, from_default.status);
         assert_eq!(from_new.retries, from_default.retries);
         assert_eq!(from_new.last_error, from_default.last_error);
+        assert_eq!(from_new.ready_at, from_default.ready_at);
     }
 
     #[test]
