@@ -525,7 +525,7 @@ pub fn decompile_command(artifact_path: PathBuf, output: Option<PathBuf>) -> Res
         .dag()
         .ok_or_else(|| anyhow::anyhow!("Artifact contains no DAGs"))?;
 
-    let graph = dag_to_graph(dag);
+    let graph = graph_from_execution_dag(dag);
     let json = serde_json::to_string_pretty(&graph)?;
 
     if let Some(out_path) = output {
@@ -536,54 +536,6 @@ pub fn decompile_command(artifact_path: PathBuf, output: Option<PathBuf>) -> Res
         println!("{}", json);
     }
     Ok(())
-}
-
-#[cfg(feature = "driver")]
-fn dag_to_graph(dag: &apxm_core::types::execution::ExecutionDag) -> apxm_compiler::AirModule {
-    use apxm_compiler::{AirEdge, AirNode};
-
-    let nodes: Vec<AirNode> = dag
-        .nodes
-        .iter()
-        .map(|n| AirNode {
-            id: n.id,
-            name: format!("node_{}", n.id),
-            op: n.op_type,
-            attributes: n.attributes.clone(),
-        })
-        .collect();
-
-    let edges: Vec<AirEdge> = dag
-        .edges
-        .iter()
-        .map(|e| AirEdge {
-            from: e.from,
-            to: e.to,
-            dependency: e.dependency_type.clone(),
-        })
-        .collect();
-
-    let parameters: Vec<apxm_compiler::AirParam> = dag
-        .metadata
-        .parameters
-        .iter()
-        .map(|p| apxm_compiler::AirParam {
-            name: p.name.clone(),
-            type_name: p.type_name.clone(),
-        })
-        .collect();
-
-    apxm_compiler::AirModule {
-        name: dag
-            .metadata
-            .name
-            .clone()
-            .unwrap_or_else(|| "decompiled".to_string()),
-        nodes,
-        edges,
-        parameters,
-        metadata: std::collections::HashMap::new(),
-    }
 }
 
 #[cfg(feature = "driver")]

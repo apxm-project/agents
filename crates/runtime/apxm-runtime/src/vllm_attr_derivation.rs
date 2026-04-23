@@ -23,9 +23,10 @@
 //! eight `_vllm_*` keys. The downstream runtime code
 //! (`ApxmGraphHints::from_node_attrs`, `inject_vllm_hints`) is unchanged.
 
+use crate::executor::pipeline::is_pure_llm_op;
 use apxm_core::constants::{graph::attrs, llm::apxm as apxm_llm};
 use apxm_core::types::execution::ExecutionDag;
-use apxm_core::types::{AISOperationType, Number, Value};
+use apxm_core::types::{Number, Value};
 
 /// Priority threshold above which a node is considered to be on the
 /// critical path (mirrors `ASSIGN_PRIORITY`'s "High" tier ≥ 70 and the
@@ -45,7 +46,7 @@ const PIPELINE_DOWNSTREAM_THRESHOLD: u32 = 2;
 pub fn derive_vllm_attrs(dag: &mut ExecutionDag) -> usize {
     let mut annotated = 0;
     for node in &mut dag.nodes {
-        if !is_llm_op(node.op_type) {
+        if !is_pure_llm_op(&node.op_type) {
             continue;
         }
 
@@ -167,14 +168,6 @@ fn priority_class_from_priority(priority: u8) -> &'static str {
     } else {
         apxm_llm::PRIORITY_PARALLEL
     }
-}
-
-#[inline]
-fn is_llm_op(op: AISOperationType) -> bool {
-    matches!(
-        op,
-        AISOperationType::Ask | AISOperationType::Think | AISOperationType::Reason
-    )
 }
 
 #[cfg(test)]
