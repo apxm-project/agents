@@ -169,11 +169,18 @@ Model weights, HF licenses, and accelerator drivers are external to APXM.
 
 ### 1. Choose where weights live
 
+`HF_HOME` controls where HuggingFace caches model blobs. Set it once and use
+the same value for download and serve so vLLM finds the cached weights:
+
 ```sh
-export HF_HOME=/var/tmp/hf-cache    # local SSD; fast cold start
+export HF_HOME=/var/tmp/hf-cache    # local SSD; faster cold start than NFS
 mkdir -p "$HF_HOME"
 df -h "$HF_HOME"                     # confirm enough free space for the model
 ```
+
+Sizing rule of thumb (bf16): ~2 bytes per parameter. A 31 B model is ~60 GB
+on disk; a 7 B model is ~14 GB. Add headroom if you plan to keep multiple
+checkpoints on the same volume.
 
 ### 2. Authenticate with HuggingFace (if the model is gated)
 
@@ -182,21 +189,22 @@ huggingface-cli login                # writes ~/.cache/huggingface/token
 export HF_TOKEN=$(cat ~/.cache/huggingface/token)
 ```
 
-For gated models (Gemma, Llama, etc.), accept the license on the model page in
-a browser using the same HF account before downloading.
+For gated models (Llama, some Gemma releases), accept the license on the
+model page in a browser using the same HF account before downloading.
+Gemma 4 is currently Apache 2.0 and not gated, so license acceptance is not
+required for `google/gemma-4-*`.
 
-### 3. Pre-download the weights (optional but recommended)
+### 3. Pre-download the weights (recommended)
 
 Pre-downloading separates "did the download fail" from "did the serve fail":
 
 ```sh
-external/vllm/.venv/bin/python - <<'PY'
+HF_HOME=/var/tmp/hf-cache external/vllm/.venv/bin/python - <<'PY'
 from huggingface_hub import snapshot_download
 snapshot_download(
     "google/gemma-4-31B-it",                       # substitute any model id
-    allow_patterns=["*.safetensors", "*.json", "tokenizer*"],
+    allow_patterns=["*.safetensors", "*.json", "tokenizer*", "*.model"],
     max_workers=8,
-    resume_download=True,
 )
 PY
 ```
@@ -204,21 +212,89 @@ PY
 `dekk apxm vllm serve` will also download on first run; pre-downloading just
 makes the first serve fast and keeps download errors out of the serve log.
 
-### 4. Serve the model
+### 4. Make sure `transformers` knows the model architecture
+
+Cutting-edge models often need a newer `transformers` than the one vLLM
+installed by default. If `transformers` does not recognize the
+`config.json#model_type`, vLLM exits during model-config validation with
+something like:
+
+```
+Value error, The checkpoint you are trying to load has model type `gemma4`
+but Transformers does not recognize this architecture.
+```
+
+Upgrade in the fork's venv (always via `uv`, never bare `pip`):
 
 ```sh
+cd external/vllm
+uv pip install --python .venv/bin/python -U 'transformers>=5.5.0'
+```
+
+Pick the minimum version listed in the model's release notes (Gemma 4
+needs `transformers >= 5.5.0`). For brand-new models you may need
+`transformers` from main.
+
+### 5. Serve the model
+
+```sh
+HF_HOME=/var/tmp/hf-cache \
 dekk apxm vllm serve google/gemma-4-31B-it \
+  --gpus 6,7 \
   --tensor-parallel-size 2 \
   --gpu-memory-utilization 0.9 \
   --max-model-len 8192 \
   --port 8916
 ```
 
-Pick `--tensor-parallel-size`, GPU selection, and context length to match the
-model and the available accelerators on the host. APXM does not dictate these
-— they are vLLM serving knobs.
+Knob guide:
 
-### 5. Register the backend and model with APXM
+- `--gpus` — comma-separated device ids; sets both `HIP_VISIBLE_DEVICES`
+  (GPU runtime) and `CUDA_VISIBLE_DEVICES` (NVIDIA). Pin only to GPUs you own on a
+  shared host.
+- `--tensor-parallel-size` — must equal the number of devices in `--gpus`.
+  Use TP > 1 for models that don't fit in one GPU's VRAM, or to lower
+  per-GPU memory pressure for very long contexts.
+- `--gpu-memory-utilization` — fraction of each GPU's VRAM vLLM may claim
+  for weights + KV cache. 0.9 is a safe default.
+- `--max-model-len` — caps the context window the server advertises. Lower
+  values reduce KV-cache memory (useful when sharing GPUs).
+
+These are vLLM serving knobs; APXM does not dictate them.
+
+### 6. Probe the running server
+
+Wait for `Application startup complete` in the serve log, then verify:
+
+```sh
+# Model is reachable
+curl -s http://localhost:8916/v1/models | jq -r '.data[].id'
+# Expect: google/gemma-4-31B-it
+
+# Fork APXM router is mounted (200 with registered:false confirms the route exists)
+curl -s http://localhost:8916/v1/apxm/graphs/__probe__ | jq .
+# Expect: {"object":"apxm.graph.status","graph_id":"__probe__","registered":false,...}
+
+# Round-trip a chat request
+curl -s -X POST http://localhost:8916/v1/chat/completions \
+  -H 'content-type: application/json' \
+  -d '{"model":"google/gemma-4-31B-it","messages":[{"role":"user","content":"Say hi in 5 words."}]}' \
+  | jq -r '.choices[0].message.content'
+
+# Full round-trip of the APXM graph contract
+curl -s -X POST http://localhost:8916/v1/apxm/graphs/register \
+  -H 'content-type: application/json' \
+  -d '{"graph_id":"smoke-1","execution_id":"e1","nodes":[{"node_id":1,"name":"hello","downstream_nodes":[]}]}'
+curl -s http://localhost:8916/v1/apxm/graphs/smoke-1
+curl -s -X DELETE http://localhost:8916/v1/apxm/graphs/smoke-1
+```
+
+If `/v1/apxm/graphs/__probe__` returns connection-refused, the server is not
+up yet. If it returns 404, you are talking to stock vLLM (no apxm router) —
+reinstall with `dekk apxm vllm install` and confirm the verifier prints
+*"OK: editable install resolves to external/vllm fork"*.
+
+### 7. Register the backend and model with APXM
 
 ```sh
 dekk apxm backend add vllm-fork --type onprem --protocol vllm
@@ -226,18 +302,35 @@ dekk apxm backend add-model vllm-fork google/gemma-4-31B-it
 dekk apxm backend test vllm-fork
 ```
 
-The default endpoint is `http://localhost:8916/v1`, which matches step 4. Use
+The default endpoint is `http://localhost:8916/v1`, matching step 5. Use
 `--endpoint` only if the server runs on a different host or port.
 
+`backend test` calls `health_check()`, which probes the fork's APXM router
+and hard-fails on stock vLLM. If it fails with *"does not expose /v1/apxm/*
+endpoints"*, you are pointed at a stock-vLLM server — restart the fork or
+fix the endpoint url. Override only if you accept silent loss of
+`extra_body.apxm` hints by setting `require_apxm_endpoints = false` on the
+backend in `~/.apxm/config.toml`.
+
 `backend add-model` registers routing metadata in APXM config. It does not
-download or serve anything — that is what step 3 and step 4 are for.
+download or serve anything — those are steps 3 and 5.
 
 ### Multiple models on one backend
 
-Repeat step 5's `add-model` line for each model id you want APXM to route to
+Repeat step 7's `add-model` line for each model id you want APXM to route to
 the same backend. Each model id must be served on the backend's endpoint
 (either by relaunching `vllm serve` with a different model or by running
 multiple backends on different ports).
+
+### Common failure modes
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `model type X but Transformers does not recognize this architecture` | `transformers` in the fork venv is older than the model needs | step 4: `uv pip install --python .venv/bin/python -U 'transformers>=N'` |
+| `OSError: [model] is not a local folder and is not a valid model identifier` | weights not downloaded; `HF_HOME` mismatch between download and serve | re-run step 3 with the same `HF_HOME` exported in step 5 |
+| `RuntimeError: ... requires a GPU with compute capability ...` | `--gpus` selects a device the build does not support | pin to a supported device or rebuild the fork for that platform |
+| `health_check` returns *"does not expose /v1/apxm/* endpoints"* | server is stock vLLM, not the fork | `dekk apxm vllm install` to rebuild the editable fork install |
+| Repeated `address already in use` on the serve port | previous serve still running | `lsof -i :8916` and stop it; `--port` to pick another port |
 
 ## Where The Runbook Lives
 
