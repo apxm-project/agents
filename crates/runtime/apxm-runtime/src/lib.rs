@@ -60,7 +60,9 @@ pub use context_stack::{
 };
 pub use executor::{
     CancellationToken, EmitterAdapter, ExecutionContext, ExecutionEvent, ExecutionEventEmitter,
-    ExecutorEngine, InnerPlanLinker, NoOpLinker, TokenUsageSummary,
+    ExecutorEngine, InnerPlanLinker, LoopGuardMiddleware, Next, NoOpLinker, NoOpWorkflowSpawner,
+    OperationMiddleware, TimeoutMiddleware, TokenUsageSummary, WorkflowSpawnResult,
+    WorkflowSpawner,
 };
 pub use memory::{Fact, FactFilter, FactResult, MemoryConfig, MemorySpace, MemorySystem};
 pub use model_router::{

@@ -55,6 +55,7 @@ pub const CAPABILITY: &str = "capability";
 pub const PARAMS_JSON: &str = "params_json";
 pub const TOOLS_ENABLED: &str = "tools_enabled";
 pub const TOOLS: &str = "tools";
+pub const TOOL_GROUPS: &str = "tool_groups";
 pub const CODE: &str = "code";
 pub const INTERPRETER: &str = "interpreter";
 pub const CAPABILITY_NAME: &str = "capability_name";
@@ -69,6 +70,7 @@ pub const PYTHON_HANDLER_ID: &str = "python_handler_id";
 pub const MESSAGE: &str = "message";
 pub const RECIPIENT: &str = "recipient";
 pub const TARGET: &str = "target";
+pub const TARGET_KIND: &str = "target_kind";
 pub const PROTOCOL: &str = "protocol";
 
 // -- Goals / reasoning --
@@ -88,6 +90,7 @@ pub const FALSE_LABEL: &str = "false_label";
 pub const CASE_LABELS: &str = "case_labels";
 pub const TRY_LABEL: &str = "try_label";
 pub const CATCH_LABEL: &str = "catch_label";
+pub const AWAIT_RESULT: &str = "await_result";
 pub const RECOVERY_TEMPLATE: &str = "recovery_template";
 pub const CASE_REGIONS: &str = "case_regions";
 pub const DEFAULT_REGION: &str = "default_region";
@@ -137,6 +140,8 @@ pub const TARGET_AGENT: &str = "target_agent";
 pub const PARTIES: &str = "parties";
 pub const PROPOSAL: &str = "proposal";
 pub const MAX_ROUNDS: &str = "max_rounds";
+pub const ARGS: &str = "args";
+pub const SESSION_ROOT: &str = "session_root";
 pub const HANDOFF: &str = "handoff";
 pub const HANDOFF_FROM: &str = "handoff_from";
 pub const HANDOFF_TO: &str = "handoff_to";
@@ -205,6 +210,8 @@ pub const TEMPLATE_BEARING_ATTRS: &[&str] = &[
     MESSAGE,
     GOAL,
     CONDITION,
+    CLAIM_TEXT,
+    EVIDENCE,
     TRACE_ID,
     DISCRIMINANT,
     RECOVERY_TEMPLATE,
@@ -253,6 +260,7 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     PARAMS_JSON,
     TOOLS_ENABLED,
     TOOLS,
+    TOOL_GROUPS,
     CODE,
     INTERPRETER,
     CAPABILITY_NAME,
@@ -262,6 +270,7 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     MESSAGE,
     RECIPIENT,
     TARGET,
+    TARGET_KIND,
     PROTOCOL,
     GOAL,
     GOAL_ID,
@@ -277,6 +286,7 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     CASE_LABELS,
     TRY_LABEL,
     CATCH_LABEL,
+    AWAIT_RESULT,
     RECOVERY_TEMPLATE,
     CASE_REGIONS,
     DEFAULT_REGION,
@@ -314,6 +324,8 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     PARTIES,
     PROPOSAL,
     MAX_ROUNDS,
+    ARGS,
+    SESSION_ROOT,
     HANDOFF,
     HANDOFF_FROM,
     HANDOFF_TO,

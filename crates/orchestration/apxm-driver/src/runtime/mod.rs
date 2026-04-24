@@ -1,12 +1,16 @@
 //! Runtime executor used by the driver to run compiled DAGs.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use apxm_artifact::Artifact;
 use apxm_core::types::execution::ExecutionDag;
-use apxm_runtime::{ExecutionEventEmitter, Runtime, RuntimeExecutionResult};
+use apxm_runtime::{
+    ExecutionEventEmitter, LoopGuardMiddleware, OperationMiddleware, Runtime,
+    RuntimeExecutionResult, TimeoutMiddleware,
+};
 
-use crate::{error::DriverError, linker::LinkerConfig};
+use crate::{config::MiddlewareConfig, error::DriverError, hooks, linker::LinkerConfig};
 
 mod llm;
 use llm::configure_llm_registry;
@@ -20,10 +24,13 @@ use apxm_runtime::NoOpLinker;
 use inner_plan::CompilerInnerPlanLinker;
 mod agents;
 use agents::configure_agent_registry;
+mod workflow_spawn;
+use workflow_spawn::DriverWorkflowSpawner;
 
 /// Runtime executor used by the driver to run compiled DAGs.
 pub struct RuntimeExecutor {
-    runtime: Runtime,
+    runtime: Arc<Runtime>,
+    configured_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
 }
 
 impl RuntimeExecutor {
@@ -68,6 +75,7 @@ impl RuntimeExecutor {
         configure_agent_registry(runtime.process_table(), runtime.capability_system_arc()).await?;
 
         runtime.set_instruction_config(config.apxm_config.instruction.clone());
+        runtime.set_middlewares(build_middlewares(&config.apxm_config.middlewares));
 
         // Use CompilerInnerPlanLinker when MLIR is available, otherwise fall back to
         // NoOpLinker (graph-direct mode). Mirrors how Linker handles MLIR unavailability.
@@ -96,12 +104,23 @@ impl RuntimeExecutor {
             runtime.set_inner_plan_linker(Arc::new(NoOpLinker));
         }
 
-        Ok(Self { runtime })
+        let configured_emitter = hooks::emitter_from_config(&config.apxm_config.hooks);
+        let workflow_spawner = Arc::new(DriverWorkflowSpawner::new(
+            configured_emitter.as_ref().map(Arc::clone),
+        ));
+        runtime.set_workflow_spawner(workflow_spawner.clone());
+        let runtime = Arc::new(runtime);
+        workflow_spawner.attach_runtime(Arc::downgrade(&runtime));
+
+        Ok(Self {
+            runtime,
+            configured_emitter,
+        })
     }
 
     pub async fn execute(&self, dag: ExecutionDag) -> Result<RuntimeExecutionResult, DriverError> {
         self.runtime
-            .execute(dag)
+            .execute_with_event_emitter(dag, self.compose_emitter(None))
             .await
             .map_err(DriverError::Runtime)
     }
@@ -114,7 +133,13 @@ impl RuntimeExecutor {
         artifact: Artifact,
     ) -> Result<RuntimeExecutionResult, DriverError> {
         self.runtime
-            .execute_artifact_auto(artifact)
+            .execute_artifact_with_session_and_emitter(
+                artifact,
+                vec![],
+                None,
+                self.compose_emitter(None),
+                None,
+            )
             .await
             .map_err(DriverError::Runtime)
     }
@@ -128,7 +153,13 @@ impl RuntimeExecutor {
         args: Vec<String>,
     ) -> Result<RuntimeExecutionResult, DriverError> {
         self.runtime
-            .execute_artifact_with_args(artifact, args)
+            .execute_artifact_with_session_and_emitter(
+                artifact,
+                args,
+                None,
+                self.compose_emitter(None),
+                None,
+            )
             .await
             .map_err(DriverError::Runtime)
     }
@@ -142,9 +173,22 @@ impl RuntimeExecutor {
         session_dir: Option<String>,
     ) -> Result<RuntimeExecutionResult, DriverError> {
         self.runtime
-            .execute_artifact_with_session_and_emitter(artifact, args, None, emitter, session_dir)
+            .execute_artifact_with_session_and_emitter(
+                artifact,
+                args,
+                None,
+                self.compose_emitter(emitter),
+                session_dir,
+            )
             .await
             .map_err(DriverError::Runtime)
+    }
+
+    fn compose_emitter(
+        &self,
+        emitter: Option<Arc<dyn ExecutionEventEmitter>>,
+    ) -> Option<Arc<dyn ExecutionEventEmitter>> {
+        hooks::compose_emitters(emitter, self.configured_emitter.as_ref().map(Arc::clone))
     }
 
     /// Get the LLM registry from the runtime
@@ -183,4 +227,19 @@ impl RuntimeExecutor {
     pub fn shutdown(&self) {
         self.runtime.shutdown();
     }
+}
+
+fn build_middlewares(configs: &[MiddlewareConfig]) -> Vec<Arc<dyn OperationMiddleware>> {
+    configs
+        .iter()
+        .map(|config| match config {
+            MiddlewareConfig::Timeout { default_timeout_ms } => Arc::new(TimeoutMiddleware::new(
+                default_timeout_ms.map(Duration::from_millis),
+            ))
+                as Arc<dyn OperationMiddleware>,
+            MiddlewareConfig::LoopGuard { max_repeats } => {
+                Arc::new(LoopGuardMiddleware::new(*max_repeats)) as Arc<dyn OperationMiddleware>
+            }
+        })
+        .collect()
 }

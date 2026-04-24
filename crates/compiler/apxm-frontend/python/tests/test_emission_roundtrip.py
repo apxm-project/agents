@@ -16,14 +16,15 @@ import tempfile
 
 import pytest
 
-from apxm import GraphRecorder
+from apxm import GraphRecorder, WorkflowTargetKind
 from apxm._generated.emission import (
-    emit_spawn_agent,
-    emit_spawn_team,
-    emit_communicate,
-    emit_register_capability,
     emit_autonomous,
     emit_checkpoint,
+    emit_communicate,
+    emit_register_capability,
+    emit_spawn_agent,
+    emit_spawn_team,
+    emit_workflow_spawn,
 )
 
 
@@ -101,6 +102,23 @@ class TestEmitterFunctions:
             "%ckpt", {"checkpoint_id": "before_analysis"}, []
         )
         assert '"before_analysis"' in result
+
+    def test_emit_workflow_spawn_primary_and_keywords(self):
+        result = emit_workflow_spawn(
+            "%child",
+            {
+                "target_kind": WorkflowTargetKind.GRAPH_PATH.value,
+                "target": "tests/quality_fixtures/qa_factual/graph.air",
+                "await_result": True,
+                "session_root": ".apxm/child-sessions",
+            },
+            [],
+        )
+        assert result.startswith("%child = ais.workflow_spawn")
+        assert f'"{WorkflowTargetKind.GRAPH_PATH.value}"' in result
+        assert '"tests/quality_fixtures/qa_factual/graph.air"' in result
+        assert 'await_result = true' in result
+        assert 'session_root = ".apxm/child-sessions"' in result
 
 
 # ---------------------------------------------------------------------------
@@ -187,6 +205,23 @@ class TestGraphToAirRoundTrip:
         air = g.to_air()
 
         assert 'ais.checkpoint "mid_point"' in air
+
+    def test_workflow_spawn_air(self):
+        g = GraphRecorder("spawn_child_test")
+        g.workflow_spawn(
+            name="child",
+            target_kind=WorkflowTargetKind.GRAPH_PATH,
+            target="tests/quality_fixtures/qa_factual/graph.air",
+            session_root=".apxm/child-sessions",
+        )
+        air = g.to_air()
+
+        assert (
+            f'ais.workflow_spawn "{WorkflowTargetKind.GRAPH_PATH.value}" '
+            '"tests/quality_fixtures/qa_factual/graph.air"'
+        ) in air
+        assert 'session_root = ".apxm/child-sessions"' in air
+        assert "await_result = true" in air
 
 
 @pytest.mark.skipif(

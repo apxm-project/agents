@@ -1,6 +1,11 @@
 //! Operation dispatcher - Routes operations to appropriate handlers
 
-use super::{Result, context::ExecutionContext, handlers::*};
+use super::{
+    Result,
+    context::ExecutionContext,
+    handlers::*,
+    middleware::{BoxFuture, Next},
+};
 use apxm_core::apxm_op;
 use apxm_core::error::RuntimeError;
 use apxm_core::types::{execution::Node, operations::AISOperationType, values::Value};
@@ -22,7 +27,34 @@ impl OperationDispatcher {
         ctx: &'a ExecutionContext,
         node: &'a Node,
         inputs: Vec<Value>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value>> + Send + 'a>> {
+    ) -> BoxFuture<'a, Result<Value>> {
+        let chain: Vec<_> = ctx
+            .middlewares
+            .iter()
+            .filter(|middleware| middleware.applies_to(node))
+            .cloned()
+            .collect();
+
+        if chain.is_empty() {
+            return Self::dispatch_inner_boxed(ctx, node, inputs);
+        }
+
+        Box::pin(async move {
+            Next {
+                chain: &chain,
+                idx: 0,
+                terminal: Self::dispatch_inner_boxed,
+            }
+            .run(ctx, node, inputs)
+            .await
+        })
+    }
+
+    pub(super) fn dispatch_inner_boxed<'a>(
+        ctx: &'a ExecutionContext,
+        node: &'a Node,
+        inputs: Vec<Value>,
+    ) -> BoxFuture<'a, Result<Value>> {
         Box::pin(Self::dispatch_inner(ctx, node, inputs))
     }
 
@@ -94,6 +126,7 @@ impl OperationDispatcher {
             AISOperationType::Return => return_op::execute(ctx, node, inputs).await,
             AISOperationType::Switch => switch::execute(ctx, node, inputs).await,
             AISOperationType::FlowCall => flow_call::execute(ctx, node, inputs).await,
+            AISOperationType::WorkflowSpawn => workflow_spawn::execute(ctx, node, inputs).await,
 
             // Error handling operations
             AISOperationType::TryCatch => try_catch::execute(ctx, node, inputs).await,
@@ -197,7 +230,19 @@ impl OperationDispatcher {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::{
+        aam::Aam,
+        capability::CapabilitySystem,
+        executor::{ExecutionContext, OperationMiddleware},
+        memory::{MemoryConfig, MemorySystem},
+    };
     use apxm_core::types::operations::AISOperationType;
+    use async_trait::async_trait;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
 
     #[test]
     fn all_operations_covered() {
@@ -206,8 +251,63 @@ mod tests {
         // match and CONTRACTS.md accordingly.
         assert_eq!(
             AISOperationType::all_operations().len(),
-            42,
+            43,
             "AISOperationType variant count changed — update dispatcher and CONTRACTS.md"
         );
+    }
+
+    async fn test_context() -> ExecutionContext {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(apxm_backends::LLMRegistry::new());
+        let capability_system = Arc::new(CapabilitySystem::new());
+        ExecutionContext::new(memory, llm_registry, capability_system, Aam::new())
+    }
+
+    struct AppliesOnlyToNop {
+        hits: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl OperationMiddleware for AppliesOnlyToNop {
+        fn name(&self) -> &str {
+            "nop-only"
+        }
+
+        fn applies_to(&self, node: &Node) -> bool {
+            matches!(node.op_type, AISOperationType::Nop)
+        }
+
+        async fn around(
+            &self,
+            ctx: &ExecutionContext,
+            node: &Node,
+            inputs: Vec<Value>,
+            next: Next<'_>,
+        ) -> Result<Value> {
+            self.hits.fetch_add(1, Ordering::Relaxed);
+            next.run(ctx, node, inputs).await
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_skips_middlewares_that_do_not_apply() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let ctx = test_context()
+            .await
+            .with_middleware(Arc::new(AppliesOnlyToNop {
+                hits: Arc::clone(&hits),
+            }));
+        let node = Node::new(2, AISOperationType::Print);
+
+        let value = OperationDispatcher::dispatch(&ctx, &node, vec![])
+            .await
+            .unwrap();
+
+        assert_eq!(hits.load(Ordering::Relaxed), 0);
+        assert_eq!(value, Value::Null);
     }
 }

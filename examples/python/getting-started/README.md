@@ -9,17 +9,18 @@ and emit `.air` for the compiler. If you're new to APXM, start here.
 
 ## Examples
 
-- **hello.py** -- Hello world: single ASK node. `dekk apxm execute examples/python/getting-started/hello.py`
-- **tool_use.py** -- Tool-augmented LLM call. `dekk apxm execute examples/python/getting-started/tool_use.py`
+- **hello.py** -- Hello world: single ASK node. `python examples/python/getting-started/hello.py`
+- **tool_use.py** -- Tool-augmented LLM call. `python examples/python/getting-started/tool_use.py`
+- **tool_groups_and_policy.py** -- Typed node-policy defaults for tool groups and token budgets. `python examples/python/getting-started/tool_groups_and_policy.py`
 
 ## Key API
 
 ```python
-from apxm import compile, GraphRecorder
+from apxm import GraphRecorder, NodePolicy, compile
 
-@compile()
+@compile(default_policy=NodePolicy(tool_groups=["web"], token_budget=256))
 def hello(g: GraphRecorder):
-    result = g.ask("greet", "Say hello in one sentence.")
+    result = g.ask(name="greet", prompt="Say hello in one sentence.")
     g.done(result)
 ```
 

@@ -4,7 +4,7 @@
 //! Both the compiler and runtime depend on this crate to ensure consistent operation
 //! semantics across the entire system.
 //!
-//! ## Operations (41 total)
+//! ## Operations (43 total)
 //!
 //! | Category | Operations |
 //! |----------|------------|
@@ -12,12 +12,12 @@
 //! | Memory | QMEM, UMEM |
 //! | LLM/Reasoning | ASK, THINK, REASON, PLAN, REFLECT, VERIFY |
 //! | Tools | INV, EXC, PRINT |
-//! | Control Flow | JUMP, BRANCH_ON_VALUE, LOOP_START, LOOP_END, RETURN, SWITCH, FLOW_CALL |
-//! | Synchronization | MERGE, FENCE, WAIT_ALL, CHECKPOINT |
+//! | Control Flow | JUMP, BRANCH_ON_VALUE, LOOP_START, LOOP_END, RETURN, SWITCH, FLOW_CALL, WORKFLOW_SPAWN |
+//! | Synchronization | MERGE, FENCE, WAIT_ALL |
 //! | Error Handling | TRY_CATCH, ERR |
-//! | Communication | COMMUNICATE |
+//! | Communication | COMMUNICATE, HANDOFF |
 //! | Goal/State | UPDATE_GOAL, GUARD, CLAIM, PAUSE, RESUME |
-//! | Coordination | DELEGATE, NEGOTIATE, SPAWN_AGENT, REGISTER_CAPABILITY, AUTONOMOUS |
+//! | Coordination | DELEGATE, NEGOTIATE, SPAWN_AGENT, SPAWN_TEAM, REGISTER_CAPABILITY, AUTONOMOUS, CHECKPOINT |
 //! | Identity | NOP, IDENTITY |
 //! | Internal | CONST_STR, YIELD |
 

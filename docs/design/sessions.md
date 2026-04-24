@@ -1,5 +1,12 @@
 # Sessions + Memory Architecture
 
+> Status: historical design note, not the current shipped API.
+> Current APXM execution uses path-based session control such as
+> `ExecutionOptions.session_root`, `run_workflow_file(..., session_root=...)`,
+> and `g.workflow_spawn(..., session_root=...)`. The `InMemorySession`,
+> `SQLiteSession`, `RedisSession`, and `session=` examples below are not
+> implemented in the current frontend/runtime.
+
 ## Problem
 
 APXM graphs execute statelessly: each `apxm.run()` starts with a blank AAM. Multi-turn agent loops (chatbots, iterative planners, research agents) need conversation history and learned facts to survive across invocations. OpenAI Agents SDK solves this with a `Session` protocol (`get_items`, `add_items`, `pop_item`, `clear_session`) backed by pluggable stores. APXM needs an equivalent that maps cleanly onto the existing AAM and memory subsystems rather than bolting on a parallel state layer.

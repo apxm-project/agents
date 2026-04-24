@@ -227,7 +227,7 @@ mod tests {
             name: "spawn".to_string(),
             op: AISOperationType::SpawnAgent,
             attributes: HashMap::from([(
-                ais_attrs::TEMPLATE_STR.to_string(),
+                graph_attrs::TEMPLATE_STR.to_string(),
                 Value::String("some text".to_string()),
             )]),
         }]);
@@ -273,7 +273,7 @@ mod tests {
     fn annotate_respects_model_attribute() {
         let mut node = make_llm_node(1, AISOperationType::Ask, "Hello world, this is a test.");
         node.attributes.insert(
-            ais_attrs::MODEL.to_string(),
+            graph_attrs::MODEL.to_string(),
             Value::String("gpt-4".to_string()),
         );
         let mut module = make_module(vec![node]);
@@ -282,7 +282,7 @@ mod tests {
 
         let mut node2 = make_llm_node(2, AISOperationType::Ask, "Hello world, this is a test.");
         node2.attributes.insert(
-            ais_attrs::MODEL.to_string(),
+            graph_attrs::MODEL.to_string(),
             Value::String("gpt-4o".to_string()),
         );
         let mut module2 = make_module(vec![node2]);

@@ -28,13 +28,14 @@ pub mod compiler;
 pub mod config;
 pub mod context_assembler;
 pub mod error;
+pub mod hooks;
 pub mod linker;
 pub mod runtime;
 pub mod session_output;
 pub mod skill_resolver;
 
 // --- Config ---
-pub use config::{ApXmConfig, ChatConfig, ConfigError, ToolConfig};
+pub use config::{ApXmConfig, ChatConfig, ConfigError, HookConfig, HookEvent, ToolConfig};
 
 // --- Linker ---
 pub use linker::{LinkResult, Linker, LinkerConfig};

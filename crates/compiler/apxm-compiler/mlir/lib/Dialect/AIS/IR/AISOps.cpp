@@ -846,6 +846,36 @@ LogicalResult FlowCallOp::verify() {
 }
 
 //===----------------------------------------------------------------------===//
+// WorkflowSpawnOp - Cross-Workflow Invocation
+//===----------------------------------------------------------------------===//
+
+LogicalResult WorkflowSpawnOp::verify() {
+  if (getTargetKind().empty())
+    return emitOpError("target_kind cannot be empty");
+
+  if (getTarget().empty())
+    return emitOpError("target cannot be empty");
+
+  auto targetKind = getTargetKind();
+  if (targetKind != "graph_path" && targetKind != "artifact_path" &&
+      targetKind != "workflow_path")
+    return emitOpError("target_kind must be one of: graph_path, artifact_path, workflow_path");
+
+  if (getAwaitResult().has_value() && !*getAwaitResult())
+    return emitOpError("await_result=false is not supported");
+
+  if (failed(verifyTypes<TokenType, HandleType, GoalType>(
+          *this, getArgs(),
+          "args must be !ais.token, !ais.handle, or !ais.goal types")))
+    return failure();
+
+  if (failed(verifyType<TokenType>(*this, getResult(), "result must be !ais.token type")))
+    return failure();
+
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
 // TableGen Generated Class Definitions
 //===----------------------------------------------------------------------===//
 

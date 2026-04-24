@@ -531,6 +531,18 @@ mod template_validation_tests {
     }
 
     #[test]
+    fn rejects_legacy_node_reference_syntax() {
+        let module = ask_after_const_module("Hello {{node_1}}", None, &[]);
+        let err = validate_module(&module).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("legacy node placeholder syntax")
+                || msg.contains("references no known input or parameter"),
+            "unexpected diagnostic: {msg}"
+        );
+    }
+
+    #[test]
     fn rejects_numeric_placeholder() {
         let module = ask_after_const_module("Hello {0}", Some("seed"), &[]);
         let err = validate_template_placeholders(&module).unwrap_err();
@@ -617,58 +629,45 @@ mod template_validation_tests {
 }
 
 fn validate_node_refs(module: &AirModule) -> Result<(), AirError> {
-    use apxm_core::types::operations::AISOperationType;
-
-    let node_ids: HashSet<u64> = module.nodes.iter().map(|n| n.id).collect();
-
-    fn extract_node_refs(s: &str) -> Vec<u64> {
-        let mut refs = Vec::new();
-        let mut rest = s;
-        while let Some(start) = rest.find("{{node_") {
-            rest = &rest[start + 7..];
-            if let Some(end) = rest.find("}}") {
-                if let Ok(id) = rest[..end].trim().parse::<u64>() {
-                    refs.push(id);
-                }
-                rest = &rest[end + 2..];
-            } else {
-                break;
-            }
-        }
-        refs
-    }
-
     for node in &module.nodes {
-        if node.op == AISOperationType::Merge {
-            if let Some(tokens_val) = node.attributes.get(graph_attrs::TOKENS) {
-                let tokens_str = serde_json::to_string(tokens_val).unwrap_or_default();
-                for ref_id in extract_node_refs(&tokens_str) {
-                    if !node_ids.contains(&ref_id) {
-                        return Err(AirError::Validation(format!(
-                            "node '{}' (id={}, op=MERGE) tokens references \
-                             {{{{node_{}}}}} but no node with id {} exists.",
-                            node.name, node.id, ref_id, ref_id
-                        )));
-                    }
-                }
-            }
-        }
-
-        if node.op == AISOperationType::Print {
-            if let Some(msg_val) = node.attributes.get(graph_attrs::MESSAGE) {
-                let msg_str = msg_val.as_str().unwrap_or("").to_string();
-                for ref_id in extract_node_refs(&msg_str) {
-                    if !node_ids.contains(&ref_id) {
-                        return Err(AirError::Validation(format!(
-                            "node '{}' (id={}, op=PRINT) message references \
-                             {{{{node_{}}}}} but no node with id {} exists.",
-                            node.name, node.id, ref_id, ref_id
-                        )));
-                    }
-                }
+        for (attr_key, attr_value) in &node.attributes {
+            if let Some(placeholder) = find_legacy_node_placeholder(attr_value) {
+                return Err(AirError::Validation(format!(
+                    "node '{}' (id={}, op={}, attr={}): legacy node placeholder syntax '{}' \
+                     is not supported. Use named placeholders like '{{source}}' with \
+                     input_names for template-bearing string attributes, and use Data edges \
+                     for structural inputs instead of node-id references.",
+                    node.name, node.id, node.op, attr_key, placeholder
+                )));
             }
         }
     }
 
     Ok(())
+}
+
+fn find_legacy_node_placeholder(value: &Value) -> Option<String> {
+    match value {
+        Value::String(text) => find_legacy_node_placeholder_in_str(text),
+        Value::Array(items) => items.iter().find_map(find_legacy_node_placeholder),
+        Value::Object(map) => map.values().find_map(find_legacy_node_placeholder),
+        _ => None,
+    }
+}
+
+fn find_legacy_node_placeholder_in_str(text: &str) -> Option<String> {
+    let mut rest = text;
+    while let Some(start) = rest.find("{{node_") {
+        let candidate = &rest[start..];
+        let Some(end) = candidate.find("}}") else {
+            break;
+        };
+        let placeholder = &candidate[..end + 2];
+        let inner = &placeholder["{{node_".len()..placeholder.len() - 2];
+        if inner.chars().all(|ch| ch.is_ascii_digit()) {
+            return Some(placeholder.to_string());
+        }
+        rest = &candidate[end + 2..];
+    }
+    None
 }

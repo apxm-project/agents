@@ -11,6 +11,7 @@ use crate::{
     context_stack::ContextStack,
     executor::{
         ExecutionContext, ExecutionEventEmitter, ExecutorEngine, InnerPlanLinker, NoOpLinker,
+        NoOpWorkflowSpawner, OperationMiddleware, WorkflowSpawner,
     },
     memory::{MemoryConfig, MemorySystem},
     process_table::ProcessTable,
@@ -30,7 +31,7 @@ use apxm_core::{
     },
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, path::Path, sync::Arc};
 
 /// Result of DAG execution
 #[derive(Debug, Clone)]
@@ -107,6 +108,7 @@ pub struct Runtime {
     scheduler: DataflowScheduler,
     session_lane_guard: SessionLaneGuard,
     inner_plan_linker: Arc<dyn InnerPlanLinker>,
+    workflow_spawner: Arc<dyn WorkflowSpawner>,
     instruction_config: apxm_core::InstructionConfig,
     sandbox_registry: Arc<SandboxRegistry>,
     process_table: Arc<ProcessTable>,
@@ -114,6 +116,8 @@ pub struct Runtime {
     model_router: Option<Arc<ModelRouter>>,
     /// Agent warm pool for reusing spawned agent sessions.
     agent_pool: Arc<AgentPool>,
+    /// Dispatcher middleware cloned into each execution context.
+    middlewares: Vec<Arc<dyn OperationMiddleware>>,
 }
 
 impl Runtime {
@@ -169,11 +173,13 @@ impl Runtime {
             scheduler,
             session_lane_guard: SessionLaneGuard::new(),
             inner_plan_linker: Arc::new(NoOpLinker),
+            workflow_spawner: Arc::new(NoOpWorkflowSpawner),
             instruction_config: apxm_core::InstructionConfig::default(),
             sandbox_registry: Arc::new(SandboxRegistry::new()),
             process_table: Arc::new(ProcessTable::new()),
             model_router: None,
             agent_pool,
+            middlewares: Vec::new(),
         })
     }
 
@@ -201,6 +207,7 @@ impl Runtime {
         );
         ctx.session_id = session_id;
         ctx.inner_plan_linker = Arc::clone(&self.inner_plan_linker);
+        ctx.workflow_spawner = Arc::clone(&self.workflow_spawner);
         ctx.dag_splicer = Arc::new(crate::executor::NoOpSplicer);
         ctx.flow_registry = Arc::clone(&self.flow_registry);
         ctx.instruction_config = self.instruction_config.clone();
@@ -209,7 +216,14 @@ impl Runtime {
         ctx.sandbox_registry = Arc::clone(&self.sandbox_registry);
         ctx.process_table = Arc::clone(&self.process_table);
         ctx.agent_pool = Arc::clone(&self.agent_pool);
+        ctx.middlewares = self.middlewares.clone();
         if let Some(dir) = session_dir {
+            if let Some(root) = Path::new(&dir).parent() {
+                ctx.metadata.insert(
+                    metadata::SESSION_ROOT.to_string(),
+                    root.to_string_lossy().to_string(),
+                );
+            }
             ctx.metadata.insert(metadata::SESSION_DIR.to_string(), dir);
         }
         if let Some(ref context_stack) = self.config.context_stack {
@@ -227,6 +241,11 @@ impl Runtime {
     /// Attach a custom inner plan linker implementation to the runtime.
     pub fn set_inner_plan_linker(&mut self, linker: Arc<dyn InnerPlanLinker>) {
         self.inner_plan_linker = linker;
+    }
+
+    /// Attach a workflow-spawn bridge implementation to the runtime.
+    pub fn set_workflow_spawner(&mut self, spawner: Arc<dyn WorkflowSpawner>) {
+        self.workflow_spawner = spawner;
     }
 
     /// Set the instruction configuration for system prompts.
@@ -256,6 +275,11 @@ impl Runtime {
         // CapabilitySystem::invoke_with_timeout() can route process-spawning
         // capabilities through the sandbox backend.
         self.capability_system.set_sandbox_registry(registry);
+    }
+
+    /// Replace the default dispatcher middleware chain for future executions.
+    pub fn set_middlewares(&mut self, middlewares: Vec<Arc<dyn OperationMiddleware>>) {
+        self.middlewares = middlewares;
     }
 
     /// Get a reference to the sandbox registry.
@@ -295,9 +319,15 @@ impl Runtime {
     /// Note: This method does NOT support inner DAG execution (multi-level planning).
     /// If you need inner DAG support, wrap the Runtime in Arc and use
     /// `execute_with_inner_support()` instead.
-    pub async fn execute(
+    pub async fn execute(&self, dag: ExecutionDag) -> Result<RuntimeExecutionResult, RuntimeError> {
+        self.execute_with_event_emitter(dag, None).await
+    }
+
+    /// Execute a DAG with an optional per-execution event emitter.
+    pub async fn execute_with_event_emitter(
         &self,
         mut dag: ExecutionDag,
+        event_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
     ) -> Result<RuntimeExecutionResult, RuntimeError> {
         log_info!(
             "runtime",
@@ -321,7 +351,13 @@ impl Runtime {
         let lifecycle = build_vllm_lifecycle(&self.llm_registry, &dag).await?;
 
         // Create execution context
-        let context = self.build_context(None, None, None);
+        let context = self.build_context(None, event_emitter, None);
+        let graph_emitter = context.event_emitter.as_ref().map(Arc::clone);
+        let execution_id = context.execution_id.clone();
+        let node_count = dag.nodes.len();
+        if let Some(emitter) = &graph_emitter {
+            emitter.emit_graph_start(&execution_id, node_count);
+        }
 
         // Create executor
         let executor = Arc::new(ExecutorEngine::new(context.clone()));
@@ -339,6 +375,10 @@ impl Runtime {
             if let Err(e) = lc.release().await {
                 tracing::warn!(error = %e, "vLLM graph release failed (non-fatal)");
             }
+        }
+
+        if let Some(emitter) = &graph_emitter {
+            emitter.emit_graph_end(&execution_id, node_count, exec_result.is_ok());
         }
 
         let (results, stats, scheduler_metrics, all_outputs, node_output_map) = exec_result?;
@@ -482,10 +522,16 @@ impl Runtime {
 
         // Step 4: register with vLLM-style graph-aware backends. See `execute()`
         // for the rationale (explicit happy-path release; Drop as safety net).
-        let lifecycle = build_vllm_lifecycle(&self.llm_registry, &entry_dag).await?;
-
         let context =
             self.build_context_with_bridge(session_id, event_emitter, session_dir, python_bridge);
+        let graph_emitter = context.event_emitter.as_ref().map(Arc::clone);
+        let execution_id = context.execution_id.clone();
+        let node_count = entry_dag.nodes.len();
+
+        let lifecycle = build_vllm_lifecycle(&self.llm_registry, &entry_dag).await?;
+        if let Some(emitter) = &graph_emitter {
+            emitter.emit_graph_start(&execution_id, node_count);
+        }
         let executor = Arc::new(ExecutorEngine::new(context.clone()));
         let token_accountant = Arc::clone(&context.token_accountant);
         let exec_result = self
@@ -497,6 +543,10 @@ impl Runtime {
             if let Err(e) = lc.release().await {
                 tracing::warn!(error = %e, "vLLM graph release failed (non-fatal)");
             }
+        }
+
+        if let Some(emitter) = &graph_emitter {
+            emitter.emit_graph_end(&execution_id, node_count, exec_result.is_ok());
         }
 
         let (results, stats, scheduler_metrics, all_outputs, node_output_map) = exec_result?;
@@ -818,6 +868,21 @@ mod tests {
             .unwrap();
 
         assert_eq!(result, Some(Value::String("test_value".to_string())));
+    }
+
+    #[tokio::test]
+    async fn test_build_context_derives_session_root_from_session_dir() {
+        let runtime = Runtime::new(RuntimeConfig::in_memory()).await.unwrap();
+        let ctx = runtime.build_context(None, None, Some("/tmp/apxm-sessions/run-1".to_string()));
+
+        assert_eq!(
+            ctx.metadata.get(metadata::SESSION_ROOT).map(String::as_str),
+            Some("/tmp/apxm-sessions")
+        );
+        assert_eq!(
+            ctx.metadata.get(metadata::SESSION_DIR).map(String::as_str),
+            Some("/tmp/apxm-sessions/run-1")
+        );
     }
 
     #[test]

@@ -637,6 +637,34 @@ def AIS_FlowCallOp : AIS_Op<"flow_call",
   let hasVerifier = 1;
 }
 
+def AIS_WorkflowSpawnOp : AIS_Op<"workflow_spawn",
+    [MemoryEffects<[MemRead<AIS_BeliefResource>, MemWrite<AIS_BeliefResource>]>]> {
+  let summary = "Spawn a child workflow, graph, or artifact execution";
+  let description = [{
+    Invokes an external graph file, artifact, or workflow file as a child
+    execution boundary. Arguments are passed through node attrs and the child
+    execution writes into its own session directory.
+
+    Example:
+    ```mlir
+    %result = ais.workflow_spawn "workflow_path" "workflows/review.apxmw"
+      (%topic : !ais.token) {await_result = true} : !ais.token
+    ```
+  }];
+  let arguments = (ins
+    StrAttr:$target_kind,
+    StrAttr:$target,
+    OptionalAttr<BoolAttr>:$await_result,
+    OptionalAttr<StrAttr>:$session_root,
+    Variadic<AIS_AnyTokenHandleOrGoal>:$args
+  );
+  let results = (outs AIS_TokenType:$result);
+  let assemblyFormat = [{
+    $target_kind $target (`(` $args^ `:` type($args) `)`)? attr-dict `:` type($result)
+  }];
+  let hasVerifier = 1;
+}
+
 def AIS_ReturnOp : AIS_Op<"return", [Terminator]> {
   let summary = "Return from subgraph";
   let arguments = (ins AIS_TokenType:$value);

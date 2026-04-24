@@ -77,6 +77,11 @@ impl ReadCapability {
                 }),
             )
             .with_returns("string")
+            .with_groups(vec![
+                "file".to_string(),
+                "file:read".to_string(),
+                "read".to_string(),
+            ])
             .with_latency(35),
             config,
         }
@@ -184,7 +189,7 @@ impl Default for ReadCapability {
 #[async_trait]
 impl CapabilityExecutor for ReadCapability {
     async fn execute(&self, args: HashMap<String, Value>) -> CapabilityResult<Value> {
-        let raw_path = require_string_arg(&args, "file_path", "path", &self.metadata.name)?;
+        let raw_path = require_string_arg(&args, "file_path", &self.metadata.name)?;
 
         let path = self.resolve_path(raw_path);
         self.validate_path(&path)?;

@@ -10,6 +10,7 @@ import subprocess
 from typing import Any
 
 from apxm._generated import constants as graph_keys
+from .config import ExecutionOptions
 from .ir import ApxmGraph
 from .utils import detect_cycle
 from apxm.providers import REGISTERED_PROVIDERS
@@ -131,30 +132,77 @@ class LLMUsage:
 @dataclass(slots=True)
 class ExecutionResult:
     content: str | None = None
+    execution_id: str | None = None
+    session_dir: str | None = None
+    metrics_path: str | None = None
+    profile_path: str | None = None
     results: dict[str, Any] = field(default_factory=dict)
     stats: ExecutionStats = field(default_factory=ExecutionStats)
     llm_usage: LLMUsage = field(default_factory=LLMUsage)
 
     @classmethod
     def from_response(cls, data: dict[str, Any]) -> ExecutionResult:
+        if not isinstance(data, dict):
+            raise TypeError("ExecutionResult response must be an object")
+
+        execution_id = data.get("execution_id")
+        if execution_id is not None and not isinstance(execution_id, str):
+            raise TypeError("ExecutionResult.execution_id must be a string or null")
+
+        session_dir = data.get("session_dir")
+        if session_dir is not None and not isinstance(session_dir, str):
+            raise TypeError("ExecutionResult.session_dir must be a string or null")
+
+        metrics_path = data.get("metrics_path")
+        if metrics_path is not None and not isinstance(metrics_path, str):
+            raise TypeError("ExecutionResult.metrics_path must be a string or null")
+
+        profile_path = data.get("profile_path")
+        if profile_path is not None and not isinstance(profile_path, str):
+            raise TypeError("ExecutionResult.profile_path must be a string or null")
+
+        results = data.get("results", {})
+        if not isinstance(results, dict):
+            raise TypeError("ExecutionResult.results must be an object")
+
+        stats = data.get(
+            "stats",
+            {
+                "executed_nodes": 0,
+                "failed_nodes": 0,
+                "duration_ms": 0,
+            },
+        )
+        if not isinstance(stats, dict):
+            raise TypeError("ExecutionResult.stats must be an object")
+
+        llm_usage = data.get(
+            "llm_usage",
+            {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_requests": 0,
+            },
+        )
+        if not isinstance(llm_usage, dict):
+            raise TypeError("ExecutionResult.llm_usage must be an object")
+
         return cls(
             content=data.get("content"),
-            results=data.get("results", {}),
-            stats=ExecutionStats(
-                **data.get("stats", {
-                    "executed_nodes": 0,
-                    "failed_nodes": 0,
-                    "duration_ms": 0,
-                }),
-            ),
-            llm_usage=LLMUsage(
-                **data.get("llm_usage", {
-                    "input_tokens": 0,
-                    "output_tokens": 0,
-                    "total_requests": 0,
-                }),
-            ),
+            execution_id=execution_id,
+            session_dir=session_dir,
+            metrics_path=metrics_path,
+            profile_path=profile_path,
+            results=results,
+            stats=ExecutionStats(**stats),
+            llm_usage=LLMUsage(**llm_usage),
         )
+
+
+@dataclass(slots=True)
+class WorkflowRunResult:
+    stdout: str
+    session_dir: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -173,9 +221,84 @@ def new_session() -> str:
 
 _client: Any = None  # httpx.AsyncClient | None
 
+_CLI_APXM_WRAPPER_SUBCOMMAND = "apxm"
+_CLI_CONFIG_FLAG = "--config"
+_CLI_JSON_FLAG = "--json"
+_CLI_EXECUTE_SUBCOMMAND = "execute"
+_CLI_WORKFLOW_SUBCOMMAND = "workflow"
+_CLI_RUN_SUBCOMMAND = "run"
+_CLI_EMIT_SESSION_FLAG = "--emit-session"
+_CLI_SESSION_ROOT_FLAG = "--session-root"
+_CLI_ARGS_JSON_FLAG = "--args-json"
+_CLI_BINARY_ENV = "APXM_BIN"
+
 
 def _server_url() -> str:
     return os.environ.get("APXM_SERVER_URL", "http://localhost:18800")
+
+
+def _build_cli_base_command(apxm_bin: str) -> list[str]:
+    if Path(apxm_bin).name == "dekk":
+        return [apxm_bin, _CLI_APXM_WRAPPER_SUBCOMMAND]
+    return [apxm_bin]
+
+
+def _append_session_root_flag(
+    cmd: list[str],
+    *,
+    target: str,
+    session_root: str | os.PathLike[str] | None,
+) -> None:
+    if session_root is None:
+        return
+    if target == _CLI_EXECUTE_SUBCOMMAND:
+        cmd.extend([_CLI_EMIT_SESSION_FLAG, os.fspath(session_root)])
+        return
+    if target == _CLI_WORKFLOW_SUBCOMMAND:
+        cmd.extend([_CLI_SESSION_ROOT_FLAG, os.fspath(session_root)])
+        return
+    raise ValueError(f"unsupported session-root target: {target}")
+
+
+def _cli_error_message(stdout: str, stderr: str, default_message: str) -> str:
+    try:
+        payload = json.loads(stdout)
+    except json.JSONDecodeError:
+        payload = None
+
+    if isinstance(payload, dict):
+        error = payload.get("error")
+        if isinstance(error, str) and error.strip():
+            return error.strip()
+
+    for stream in (stderr, stdout):
+        text = stream.strip()
+        if text:
+            return text
+
+    return default_message
+
+
+def _subprocess_env_for_apxm(apxm_bin: str) -> dict[str, str]:
+    env = os.environ.copy()
+    binary_path = Path(apxm_bin).resolve()
+    if binary_path.parent.name == "debug" and binary_path.parent.parent.name == "target":
+        lib_dir = binary_path.parent / "lib"
+        if lib_dir.is_dir():
+            _prepend_env_path(env, "LD_LIBRARY_PATH", str(lib_dir))
+            _prepend_env_path(env, "DYLD_LIBRARY_PATH", str(lib_dir))
+    return env
+
+
+def _prepend_env_path(env: dict[str, str], key: str, path: str) -> None:
+    current = env.get(key)
+    if not current:
+        env[key] = path
+        return
+    parts = current.split(os.pathsep)
+    if path in parts:
+        return
+    env[key] = path + os.pathsep + current
 
 
 async def _get_client() -> Any:
@@ -208,18 +331,41 @@ async def close() -> None:
 # ---------------------------------------------------------------------------
 
 def _find_apxm_binary() -> str:
-    """Locate the APXM CLI, preferring the dekk wrapper when available."""
-    dekk_bin = shutil.which("dekk")
-    if dekk_bin is not None:
-        return dekk_bin
+    """Locate a direct APXM CLI binary for machine-driven local execution."""
+    explicit = os.environ.get(_CLI_BINARY_ENV)
+    if explicit:
+        explicit_path = Path(explicit)
+        if explicit_path.is_file():
+            return str(explicit_path)
+        raise RuntimeError(
+            f"{_CLI_BINARY_ENV} points to a missing APXM binary: {explicit_path}"
+        )
 
     apxm_bin = shutil.which("apxm")
     if apxm_bin is not None:
         return apxm_bin
 
+    checkout_bin = _find_checkout_apxm_binary()
+    if checkout_bin is not None:
+        return str(checkout_bin)
+
     raise RuntimeError(
-        "Neither 'dekk' nor 'apxm' found on PATH. Install APXM with: dekk apxm install"
+        "No direct 'apxm' binary found. Set APXM_BIN, install 'apxm' on PATH, "
+        "or build the repo-local target/debug/apxm binary."
     )
+
+
+def _find_checkout_apxm_binary() -> Path | None:
+    seen: set[Path] = set()
+    for start in (Path.cwd(), Path(__file__).resolve()):
+        for ancestor in (start, *start.parents):
+            if ancestor in seen:
+                continue
+            seen.add(ancestor)
+            candidate = ancestor / "target" / "debug" / "apxm"
+            if candidate.is_file():
+                return candidate
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -274,14 +420,28 @@ class CompiledFlow:
 
     # -- execution ----------------------------------------------------------
 
-    async def run(self, *args: Any, session_id: str | None = None) -> ExecutionResult:
-        from .errors import CompilationError, ExecutionError, ServerError
+    async def run(
+        self,
+        *args: Any,
+        session_id: str | None = None,
+        execution: ExecutionOptions | None = None,
+    ) -> ExecutionResult:
+        from .errors import CompilationError, ServerError
 
         errors = validate_graph(self._graph)
         if errors:
             raise CompilationError("invalid graph: " + "; ".join(errors))
 
-        request_body = self._build_request(args, session_id=session_id)
+        execution = _merge_execution_options(session_id, execution)
+        request_body = self._build_request(args, execution=execution)
+
+        if execution.requires_local_cli():
+            if execution.session_id is not None:
+                raise ServerError(
+                    "session_id is only supported by the HTTP server path; "
+                    "remove local-only execution options or unset session_id"
+                )
+            return self._fallback_subprocess(*args, execution=execution)
 
         # Try HTTP first
         try:
@@ -303,14 +463,19 @@ class CompiledFlow:
                 raise
 
         # Subprocess fallback (stdin, no temp files)
-        if session_id is not None:
+        if execution.session_id is not None:
             raise ServerError(
                 "session_id requires the HTTP server. "
                 "Start it with: dekk apxm server"
             )
-        return self._fallback_subprocess(*args)
+        return self._fallback_subprocess(*args, execution=execution)
 
-    def run_sync(self, *args: Any, session_id: str | None = None) -> ExecutionResult:
+    def run_sync(
+        self,
+        *args: Any,
+        session_id: str | None = None,
+        execution: ExecutionOptions | None = None,
+    ) -> ExecutionResult:
         """Synchronous execution convenience method."""
         import asyncio
         import threading
@@ -321,7 +486,7 @@ class CompiledFlow:
         def _runner() -> None:
             nonlocal result, exc
             try:
-                result = asyncio.run(self.run(*args, session_id=session_id))
+                result = asyncio.run(self.run(*args, session_id=session_id, execution=execution))
             except BaseException as e:
                 exc = e
 
@@ -333,13 +498,25 @@ class CompiledFlow:
         assert result is not None
         return result
 
-    async def stream(self, *args: Any, session_id: str | None = None):
+    async def stream(
+        self,
+        *args: Any,
+        session_id: str | None = None,
+        execution: ExecutionOptions | None = None,
+    ):
         """Async generator yielding execution events via SSE."""
         from .errors import CompilationError, ServerError
 
         errors = validate_graph(self._graph)
         if errors:
             raise CompilationError("invalid graph: " + "; ".join(errors))
+
+        execution = _merge_execution_options(session_id, execution)
+        if execution.requires_local_cli():
+            raise ServerError(
+                "stream() requires the HTTP server path and does not support "
+                "local-only execution options like hooks or middlewares"
+            )
 
         try:
             import httpx
@@ -351,7 +528,7 @@ class CompiledFlow:
             )
 
         client = await _get_client()
-        request_body = self._build_request(args, session_id=session_id)
+        request_body = self._build_request(args, execution=execution)
 
         async with aconnect_sse(
             client, "POST", "/v1/execute/stream",
@@ -364,26 +541,46 @@ class CompiledFlow:
     # -- internal helpers ---------------------------------------------------
 
     def _build_request(
-        self, args: tuple[Any, ...], *, session_id: str | None = None
+        self,
+        args: tuple[Any, ...],
+        *,
+        execution: ExecutionOptions | None = None,
     ) -> dict[str, Any]:
+        execution = execution or ExecutionOptions()
         request: dict[str, Any] = {
             "graph": self._graph.to_dict(),
             "args": [str(a) for a in args],
         }
-        if session_id is not None:
-            request["session_id"] = session_id
+        request.update(execution.server_request_fields())
         return request
 
-    def _fallback_subprocess(self, *args: Any) -> ExecutionResult:
+    def _fallback_subprocess(
+        self,
+        *args: Any,
+        execution: ExecutionOptions | None = None,
+    ) -> ExecutionResult:
         from .errors import ExecutionError
         import tempfile
 
         apxm_bin = _find_apxm_binary()
+        execution = execution or ExecutionOptions()
 
         # Use pre-captured AIR text when available; otherwise fall back
         # to ApxmGraph.to_air(). Strip the sidecar comment (if present)
         # because the MLIR parser does not understand `;` comments.
-        air_text = self._air_text if self._air_text else self._graph.to_air()
+        runtime_graph = _graph_with_execution_overrides(self._graph, execution)
+        if runtime_graph is self._graph:
+            air_text = self._air_text if self._air_text else self._graph.to_air()
+        else:
+            air_text = runtime_graph.to_air()
+            if self._air_text:
+                sidecar_lines = [
+                    line
+                    for line in self._air_text.splitlines()
+                    if line.startswith("; __apxm_python_tools__")
+                ]
+                if sidecar_lines:
+                    air_text = "\n".join(sidecar_lines + [air_text])
         clean_lines = [
             line for line in air_text.splitlines()
             if not line.startswith("; __apxm_python_tools__")
@@ -391,67 +588,179 @@ class CompiledFlow:
         clean_air = "\n".join(clean_lines)
 
         # Write AIR text to a tempfile (.air) so the compiler can parse it
-        # directly. Using AIR (not JSON) ensures that compile parameters
-        # are encoded as {{name}} which the runtime can substitute.
+        # directly. Using AIR preserves the graph form the runtime executes,
+        # including named parameter references and operation attributes.
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".air", delete=False
         ) as tmp:
             tmp.write(clean_air)
             tmp_path = tmp.name
 
+        config_path: str | None = None
+        config_toml = execution.config_toml()
+        if config_toml:
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".toml", delete=False
+            ) as tmp:
+                tmp.write(config_toml)
+                config_path = tmp.name
+
         try:
-            if Path(apxm_bin).name == "dekk":
-                cmd = [apxm_bin, "apxm", "execute", tmp_path]
-            else:
-                cmd = [apxm_bin, "execute", tmp_path]
+            cmd = _build_cli_base_command(apxm_bin)
+
+            if config_path is not None:
+                cmd.extend([_CLI_CONFIG_FLAG, config_path])
+
+            cmd.extend([_CLI_JSON_FLAG, _CLI_EXECUTE_SUBCOMMAND, tmp_path])
+            _append_session_root_flag(
+                cmd,
+                target=_CLI_EXECUTE_SUBCOMMAND,
+                session_root=execution.session_root,
+            )
 
             for arg in args:
                 cmd.append(str(arg))
 
             result = subprocess.run(
-                cmd, capture_output=True, text=True, check=False
+                cmd,
+                capture_output=True,
+                text=True,
+                check=False,
+                env=_subprocess_env_for_apxm(apxm_bin),
             )
         finally:
             Path(tmp_path).unlink(missing_ok=True)
+            if config_path is not None:
+                Path(config_path).unlink(missing_ok=True)
 
         if result.returncode != 0:
             raise ExecutionError(
-                f"apxm execute failed (exit {result.returncode}): {result.stderr.strip()}"
+                f"apxm execute failed (exit {result.returncode}): "
+                f"{_cli_error_message(result.stdout, result.stderr, 'unknown cli error')}"
             )
 
-        stdout = result.stdout.strip()
-        if not stdout:
-            return ExecutionResult()
         try:
-            return ExecutionResult.from_response(json.loads(stdout))
-        except (json.JSONDecodeError, TypeError):
-            # The executor prints one line per result. When there is a
-            # single output line it is printed as the bare value; otherwise
-            # lines are formatted as "key=value". Find the terminal node
-            # result: prefer the entry with the highest numeric key
-            # (the terminal/return node in a topologically-ordered DAG).
-            lines = [ln for ln in stdout.splitlines() if ln.strip()]
-            best_key = -1
-            best_val = stdout
-            for ln in lines:
-                if "=" in ln:
-                    key_str, val = ln.split("=", 1)
-                    try:
-                        key_int = int(key_str)
-                    except ValueError:
-                        continue
-                    if key_int > best_key:
-                        best_key = key_int
-                        best_val = val
-                elif best_key < 0:
-                    best_val = ln
-            # Strip surrounding quotes if present
-            if len(best_val) >= 2 and best_val[0] == '"' and best_val[-1] == '"':
-                best_val = best_val[1:-1]
-            return ExecutionResult(content=best_val)
+            payload = json.loads(result.stdout)
+        except json.JSONDecodeError as exc:
+            raise ExecutionError(
+                "apxm execute --json returned invalid JSON output"
+            ) from exc
+
+        if not isinstance(payload, dict):
+            raise ExecutionError(
+                "apxm execute --json returned a non-object payload"
+            )
+
+        try:
+            return ExecutionResult.from_response(payload)
+        except (TypeError, ValueError, AttributeError) as exc:
+            raise ExecutionError(
+                "apxm execute --json returned an unexpected response shape"
+            ) from exc
 
 
-def run(coro, *args, mock: bool = False):
+def _merge_execution_options(
+    session_id: str | None,
+    execution: ExecutionOptions | None,
+) -> ExecutionOptions:
+    if execution is None:
+        return ExecutionOptions(session_id=session_id)
+    if session_id is not None and execution.session_id not in (None, session_id):
+        raise ValueError("session_id and execution.session_id must match when both are set")
+    if session_id is not None and execution.session_id is None:
+        execution = ExecutionOptions(
+            session_id=session_id,
+            session_root=execution.session_root,
+            token_budget=execution.token_budget,
+            output_schema=execution.output_schema,
+            max_schema_retries=execution.max_schema_retries,
+            hooks=list(execution.hooks),
+            middlewares=list(execution.middlewares),
+        )
+    return execution
+
+
+def _parse_workflow_run_output(stdout: str) -> WorkflowRunResult:
+    try:
+        payload = json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            "apxm workflow run --json returned invalid JSON output"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise ValueError("apxm workflow run --json returned a non-object payload")
+    session_dir = payload.get("session_dir")
+    if session_dir is not None and not isinstance(session_dir, str):
+        raise ValueError("apxm workflow run --json returned a non-string session_dir")
+    return WorkflowRunResult(stdout=stdout, session_dir=session_dir)
+
+
+def run_workflow_file(
+    path: str | os.PathLike[str],
+    *,
+    args: dict[str, Any] | None = None,
+    session_root: str | os.PathLike[str] | None = None,
+) -> WorkflowRunResult:
+    from .errors import ExecutionError
+
+    apxm_bin = _find_apxm_binary()
+    cmd = _build_cli_base_command(apxm_bin)
+    cmd.extend(
+        [_CLI_JSON_FLAG, _CLI_WORKFLOW_SUBCOMMAND, _CLI_RUN_SUBCOMMAND, os.fspath(path)]
+    )
+    _append_session_root_flag(
+        cmd,
+        target=_CLI_WORKFLOW_SUBCOMMAND,
+        session_root=session_root,
+    )
+    if args:
+        cmd.extend([_CLI_ARGS_JSON_FLAG, json.dumps(args)])
+
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=_subprocess_env_for_apxm(apxm_bin),
+    )
+    if result.returncode != 0:
+        raise ExecutionError(
+            f"apxm workflow run failed (exit {result.returncode}): "
+            f"{_cli_error_message(result.stdout, result.stderr, 'unknown cli error')}"
+        )
+
+    try:
+        return _parse_workflow_run_output(result.stdout)
+    except ValueError as exc:
+        raise ExecutionError(str(exc)) from exc
+
+
+def _graph_with_execution_overrides(
+    graph: ApxmGraph,
+    execution: ExecutionOptions,
+) -> ApxmGraph:
+    if (
+        execution.token_budget is None
+        and execution.output_schema is None
+        and execution.max_schema_retries is None
+    ):
+        return graph
+
+    graph_copy = ApxmGraph.from_dict(graph.to_dict())
+    llm_ops = getattr(graph_keys, "LLM_OPS", frozenset())
+    for node in graph_copy.nodes:
+        if node.op not in llm_ops:
+            continue
+        if execution.token_budget is not None:
+            node.attributes[graph_keys.TOKEN_BUDGET] = execution.token_budget
+        if execution.output_schema is not None:
+            node.attributes[graph_keys.OUTPUT_SCHEMA] = execution.output_schema
+        if execution.max_schema_retries is not None:
+            node.attributes[graph_keys.MAX_SCHEMA_RETRIES] = execution.max_schema_retries
+    return graph_copy
+
+
+def run(coro, *args, mock: bool = False, **kwargs: Any):
     """Execute an async workflow and return the result.
 
     When called with a single coroutine argument (e.g. ``run(flow())``) this is
@@ -472,6 +781,6 @@ def run(coro, *args, mock: bool = False):
 
     # If `coro` is a compiled flow (callable), invoke it with the args first.
     if callable(coro) and not asyncio.iscoroutine(coro):
-        coro = coro(*args)
+        coro = coro(*args, **kwargs)
 
     return asyncio.run(coro)

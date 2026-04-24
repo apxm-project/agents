@@ -62,7 +62,6 @@ impl ProviderId {
             ProviderId::Mock => ProviderProtocol::Mock,
         }
     }
-
 }
 
 impl std::fmt::Display for ProviderId {

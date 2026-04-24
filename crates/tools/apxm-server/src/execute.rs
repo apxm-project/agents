@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use apxm_artifact::Artifact;
@@ -7,6 +8,7 @@ use apxm_compiler::{Context as CompilerContext, Pipeline as CompilerPipeline};
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::events::payload::ErrorPayload;
 use apxm_core::events::{ApxmEvent, EventSource};
+use apxm_core::paths::ApxmPaths;
 use apxm_core::types::AISOperationType;
 use apxm_core::types::values::Value;
 use apxm_runtime::EmitterAdapter;
@@ -23,23 +25,26 @@ use crate::state::{AppState, ExecuteCompletePayload, TokioChannelEmitter};
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct ExecuteRequest {
-    graph: JsonValue,
+    pub(crate) graph: JsonValue,
     #[serde(default)]
-    args: Vec<String>,
+    pub(crate) args: Vec<String>,
     #[serde(default)]
-    session_id: Option<String>,
+    pub(crate) session_id: Option<String>,
     #[serde(default)]
-    token_budget: Option<u64>,
+    pub(crate) session_root: Option<String>,
     #[serde(default)]
-    output_schema: Option<JsonValue>,
+    pub(crate) token_budget: Option<u64>,
     #[serde(default)]
-    max_schema_retries: Option<u32>,
+    pub(crate) output_schema: Option<JsonValue>,
+    #[serde(default)]
+    pub(crate) max_schema_retries: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct ExecuteResponse {
     pub(crate) results: HashMap<String, JsonValue>,
     pub(crate) content: Option<String>,
+    pub(crate) session_dir: Option<String>,
     pub(crate) stats: JsonValue,
     pub(crate) llm_usage: JsonValue,
 }
@@ -48,21 +53,27 @@ pub(crate) async fn execute(
     State(state): State<AppState>,
     Json(req): Json<ExecuteRequest>,
 ) -> Result<Json<ExecuteResponse>, ApiError> {
-    let (graph, args, session_id) = prepare_request(req)?;
+    let (graph, args, session_id, session_dir) = prepare_request(req)?;
     let artifact = graph_to_artifact(graph)?;
     let execution = state
         .runtime
-        .execute_artifact_with_session(artifact, args, session_id)
+        .execute_artifact_with_session_and_emitter(
+            artifact,
+            args,
+            session_id,
+            None,
+            session_dir.clone(),
+        )
         .await
         .map_err(ApiError::runtime)?;
-    Ok(Json(to_execute_response(execution)))
+    Ok(Json(to_execute_response(execution, session_dir)))
 }
 
 pub(crate) async fn execute_stream(
     State(state): State<AppState>,
     Json(req): Json<ExecuteRequest>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>>, ApiError> {
-    let (graph, args, session_id) = prepare_request(req)?;
+    let (graph, args, session_id, session_dir) = prepare_request(req)?;
     let artifact = graph_to_artifact(graph)?;
     let (tx, mut rx) = mpsc::channel::<ApxmEvent>(128);
     let runtime = Arc::clone(&state.runtime);
@@ -81,7 +92,7 @@ pub(crate) async fn execute_stream(
                 args,
                 session_id,
                 Some(emitter),
-                None,
+                session_dir.clone(),
             )
             .await
         {
@@ -89,7 +100,7 @@ pub(crate) async fn execute_stream(
                 let _ = tx
                     .send(ApxmEvent::root(
                         ExecuteCompletePayload {
-                            result: to_execute_response(result),
+                            result: to_execute_response(result, session_dir),
                         },
                         EventSource::Server,
                         &trace_id,
@@ -123,7 +134,7 @@ pub(crate) async fn execute_stream(
 
 pub(crate) fn prepare_request(
     mut req: ExecuteRequest,
-) -> Result<(AirModule, Vec<String>, Option<String>), ApiError> {
+) -> Result<(AirModule, Vec<String>, Option<String>, Option<String>), ApiError> {
     let mut graph: AirModule = serde_json::from_value(req.graph)
         .map_err(|e| ApiError::bad_request(format!("invalid graph: {e}")))?;
     apply_runtime_attributes(
@@ -133,7 +144,61 @@ pub(crate) fn prepare_request(
         req.max_schema_retries,
     )
     .map_err(ApiError::bad_request)?;
-    Ok((graph, req.args, req.session_id))
+    let (session_id, session_dir) =
+        resolve_session_request(req.session_id.take(), req.session_root.take())?;
+    Ok((graph, req.args, session_id, session_dir))
+}
+
+fn resolve_session_request(
+    session_id: Option<String>,
+    session_root: Option<String>,
+) -> Result<(Option<String>, Option<String>), ApiError> {
+    let session_root = session_root
+        .map(|root| {
+            let trimmed = root.trim();
+            if trimmed.is_empty() {
+                Err(ApiError::bad_request("session_root must not be empty"))
+            } else {
+                Ok(PathBuf::from(trimmed))
+            }
+        })
+        .transpose()?;
+
+    if session_root.is_none() && session_id.is_none() {
+        return Ok((None, None));
+    }
+
+    let resolved_session_id = session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let base_dir = if let Some(root) = session_root {
+        root
+    } else {
+        ApxmPaths::discover()
+            .map_err(|e| ApiError::internal_message(format!("failed to discover APXM paths: {e}")))?
+            .sessions_dir()
+            .map_err(|e| {
+                ApiError::internal_message(format!("failed to resolve sessions dir: {e}"))
+            })?
+    };
+
+    std::fs::create_dir_all(&base_dir).map_err(|e| {
+        ApiError::internal_message(format!(
+            "failed to create sessions root '{}': {e}",
+            base_dir.display()
+        ))
+    })?;
+
+    let session_dir = base_dir.join(&resolved_session_id);
+    std::fs::create_dir_all(&session_dir).map_err(|e| {
+        ApiError::internal_message(format!(
+            "failed to create session dir '{}': {e}",
+            session_dir.display()
+        ))
+    })?;
+
+    Ok((
+        Some(resolved_session_id),
+        Some(session_dir.to_string_lossy().to_string()),
+    ))
 }
 
 pub(crate) fn apply_runtime_attributes(
@@ -194,7 +259,10 @@ pub(crate) fn graph_to_artifact(graph: AirModule) -> Result<Artifact, ApiError> 
         .map_err(|error| ApiError::internal_message(format!("failed to decode artifact: {error}")))
 }
 
-pub(crate) fn to_execute_response(result: apxm_runtime::RuntimeExecutionResult) -> ExecuteResponse {
+pub(crate) fn to_execute_response(
+    result: apxm_runtime::RuntimeExecutionResult,
+    session_dir: Option<String>,
+) -> ExecuteResponse {
     let mut mapped = HashMap::new();
     let mut content = None;
     for (token, value) in &result.results {
@@ -212,6 +280,7 @@ pub(crate) fn to_execute_response(result: apxm_runtime::RuntimeExecutionResult) 
     ExecuteResponse {
         results: mapped,
         content,
+        session_dir,
         stats: serde_json::json!({
             "executed_nodes": result.stats.executed_nodes,
             "failed_nodes": result.stats.failed_nodes,

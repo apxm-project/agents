@@ -120,6 +120,11 @@ impl SearchWebCapability {
                 }),
             )
             .with_returns("string")
+            .with_groups(vec![
+                "web".to_string(),
+                "search".to_string(),
+                "web:search".to_string(),
+            ])
             .with_latency(450),
             config,
             client: Client::new(),
@@ -213,8 +218,7 @@ impl Default for SearchWebCapability {
 #[async_trait]
 impl CapabilityExecutor for SearchWebCapability {
     async fn execute(&self, args: HashMap<String, Value>) -> CapabilityResult<Value> {
-        let query =
-            require_string_arg(&args, "query", "arg_query", &self.metadata.name)?.to_string();
+        let query = require_string_arg(&args, "query", &self.metadata.name)?.to_string();
 
         self.check_query_policy(&query)?;
 

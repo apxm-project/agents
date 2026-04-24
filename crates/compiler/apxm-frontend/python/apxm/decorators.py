@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Callable
 from .execution import CompiledFlow, ExecutionMode
 from .ir import Parameter
 from .proxy import GraphRecorder
+from .config import ExecutionOptions, NodePolicy
 
 if TYPE_CHECKING:
     from ._generated.models import ModelId
@@ -46,6 +47,7 @@ class _CompiledFunction:
         default_system_prompt: str | None = None,
         default_provider: ProviderSpec | None = None,
         default_backend: str | None = None,
+        default_policy: NodePolicy | dict[str, Any] | None = None,
         compile_kwargs: dict[str, Any],
     ) -> None:
         self._fn = fn
@@ -53,6 +55,7 @@ class _CompiledFunction:
         self._default_system_prompt = default_system_prompt
         self._default_provider = default_provider
         self._default_backend = default_backend
+        self._default_policy = default_policy
         self._signature = inspect.signature(fn)
         self._param_mapping = self._derive_parameters()
         self._graph, self._air_text = self._capture_graph()
@@ -67,18 +70,43 @@ class _CompiledFunction:
         self.__doc__ = fn.__doc__
 
     async def __call__(self, *args: Any, session_id: str | None = None, **kwargs: Any) -> Any:
+        execution = kwargs.pop("execution", None)
         runtime_args = self._normalize_runtime_args(*args, **kwargs)
-        return await self._compiled_flow.run(*runtime_args, session_id=session_id)
+        return await self._compiled_flow.run(
+            *runtime_args,
+            session_id=session_id,
+            execution=execution,
+        )
 
-    def run_sync(self, *args: Any, session_id: str | None = None, **kwargs: Any) -> Any:
+    def run_sync(
+        self,
+        *args: Any,
+        session_id: str | None = None,
+        execution: ExecutionOptions | None = None,
+        **kwargs: Any,
+    ) -> Any:
         """Synchronous execution convenience method."""
         runtime_args = self._normalize_runtime_args(*args, **kwargs)
-        return self._compiled_flow.run_sync(*runtime_args, session_id=session_id)
+        return self._compiled_flow.run_sync(
+            *runtime_args,
+            session_id=session_id,
+            execution=execution,
+        )
 
-    async def stream(self, *args: Any, session_id: str | None = None, **kwargs: Any):
+    async def stream(
+        self,
+        *args: Any,
+        session_id: str | None = None,
+        execution: ExecutionOptions | None = None,
+        **kwargs: Any,
+    ):
         """Async generator yielding execution events via SSE."""
         runtime_args = self._normalize_runtime_args(*args, **kwargs)
-        async for event in self._compiled_flow.stream(*runtime_args, session_id=session_id):
+        async for event in self._compiled_flow.stream(
+            *runtime_args,
+            session_id=session_id,
+            execution=execution,
+        ):
             yield event
 
     def _derive_parameters(self) -> dict[str, tuple[int, str]]:
@@ -108,7 +136,7 @@ class _CompiledFunction:
         if not params:
             raise ValueError("decorated function must accept a GraphRecorder as the first argument")
 
-        recorder = GraphRecorder(self._fn.__name__)
+        recorder = GraphRecorder(self._fn.__name__, policy=self._default_policy)
 
         # Add parameters to the graph based on function signature
         for param_name, (idx, type_name) in self._param_mapping.items():
@@ -184,6 +212,7 @@ def compile(
     default_system_prompt: str | None = None,
     default_provider: ProviderSpec | None = None,
     default_backend: str | None = None,
+    default_policy: NodePolicy | dict[str, Any] | None = None,
     **compile_kwargs: Any,
 ) -> Callable[[Callable[..., Any]], _CompiledFunction]:
     def decorator(fn: Callable[..., Any]) -> _CompiledFunction:
@@ -195,6 +224,7 @@ def compile(
             default_system_prompt=default_system_prompt,
             default_provider=default_provider,
             default_backend=default_backend,
+            default_policy=default_policy,
             compile_kwargs=compile_kwargs,
         )
 

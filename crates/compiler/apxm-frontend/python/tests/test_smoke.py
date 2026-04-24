@@ -30,6 +30,7 @@ def test_public_imports_and_all():
         "load_graph",
         "new_session",
         "run",
+        "WorkflowTargetKind",
     }
 
     assert ApxmGraph is apxm.ApxmGraph
@@ -39,15 +40,28 @@ def test_public_imports_and_all():
 
 
 def test_generated_constants_import():
-    from apxm._generated.constants import MODEL
+    from apxm._generated.constants import (
+        AWAIT_RESULT,
+        MODEL,
+        SESSION_ROOT,
+        TARGET_KIND,
+        TOOL_GROUPS,
+        WORKFLOW_TARGET_KIND_GRAPH_PATH,
+    )
 
     assert MODEL == "model"
+    assert TOOL_GROUPS == "tool_groups"
+    assert TARGET_KIND == "target_kind"
+    assert SESSION_ROOT == "session_root"
+    assert AWAIT_RESULT == "await_result"
+    assert WORKFLOW_TARGET_KIND_GRAPH_PATH == "graph_path"
 
 
 def test_generated_operations_import():
-    from apxm._generated.operations import ASK
+    from apxm._generated.operations import ASK, WORKFLOW_SPAWN
 
     assert ASK.op == "ASK"
+    assert WORKFLOW_SPAWN.op == "WORKFLOW_SPAWN"
 
 
 def test_generated_agents_import():

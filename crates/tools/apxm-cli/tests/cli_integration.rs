@@ -9,9 +9,31 @@ use std::path::Path;
 use std::process::Command;
 
 fn apxm() -> Command {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_apxm"));
+    let binary = std::path::PathBuf::from(env!("CARGO_BIN_EXE_apxm"));
+    let mut cmd = Command::new(&binary);
     // Prevent color codes in test output
     cmd.env("NO_COLOR", "1");
+    let lib_dir = binary
+        .parent()
+        .map(|parent| parent.join("lib"))
+        .expect("apxm binary should have a parent directory");
+    if lib_dir.is_dir() {
+        #[cfg(target_os = "macos")]
+        let lib_var = "DYLD_LIBRARY_PATH";
+        #[cfg(not(target_os = "macos"))]
+        let lib_var = "LD_LIBRARY_PATH";
+
+        let existing = std::env::var_os(lib_var);
+        let joined = match existing {
+            Some(existing) if !existing.is_empty() => {
+                let mut paths = vec![lib_dir];
+                paths.extend(std::env::split_paths(&existing));
+                std::env::join_paths(paths).unwrap()
+            }
+            _ => std::env::join_paths([lib_dir]).unwrap(),
+        };
+        cmd.env(lib_var, joined);
+    }
     cmd
 }
 
@@ -20,6 +42,17 @@ fn write_tmp_graph(content: &str) -> tempfile::NamedTempFile {
     f.write_all(content.as_bytes()).unwrap();
     f.flush().unwrap();
     f
+}
+
+fn write_tmp_file_named(name: &str, content: &str) -> tempfile::NamedTempFile {
+    let mut f = tempfile::Builder::new().suffix(name).tempfile().unwrap();
+    f.write_all(content.as_bytes()).unwrap();
+    f.flush().unwrap();
+    f
+}
+
+fn write_json_file(path: &Path, value: &serde_json::Value) {
+    std::fs::write(path, serde_json::to_vec_pretty(value).unwrap()).unwrap();
 }
 
 fn read_generated_snapshot(dir: &Path) -> BTreeMap<String, String> {
@@ -37,6 +70,88 @@ fn read_generated_snapshot(dir: &Path) -> BTreeMap<String, String> {
     snapshot
 }
 
+fn write_session_manifest(
+    sessions_root: &Path,
+    execution_id: &str,
+    timestamp: &str,
+) -> std::path::PathBuf {
+    use apxm_core::constants;
+
+    let session_dir = sessions_root.join(execution_id);
+    std::fs::create_dir_all(&session_dir).unwrap();
+    let manifest = serde_json::json!({
+        "execution_id": execution_id,
+        "graph_name": "test-graph",
+        "timestamp": timestamp,
+        "status": "completed",
+        "duration_ms": 1234,
+        "node_count": 1,
+        "success": true
+    });
+    std::fs::write(
+        session_dir.join(constants::session::files::MANIFEST),
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+    session_dir
+}
+
+fn write_tmp_driver_config(hook_log: &Path) -> tempfile::NamedTempFile {
+    use apxm_driver::config::{HookConfig, HookEvent, MiddlewareConfig};
+
+    fn render_scalar(value: &serde_json::Value) -> String {
+        match value {
+            serde_json::Value::String(value) => format!("{value:?}"),
+            serde_json::Value::Bool(value) => value.to_string(),
+            serde_json::Value::Number(value) => value.to_string(),
+            other => panic!("unsupported config scalar: {other}"),
+        }
+    }
+
+    fn render_table(header: &str, value: serde_json::Value, body: &mut String) {
+        let serde_json::Value::Object(map) = value else {
+            panic!("expected TOML table object");
+        };
+        body.push_str(header);
+        body.push('\n');
+        for (key, value) in map {
+            if value.is_null() {
+                continue;
+            }
+            body.push_str(&format!("{key} = {}\n", render_scalar(&value)));
+        }
+        body.push('\n');
+    }
+
+    let hook = HookConfig {
+        event: HookEvent::NodeComplete,
+        command: format!(
+            "printf '%s|%s|%s\\n' {{{{node_id}}}} {{{{op_type}}}} {{{{success}}}} >> {}",
+            hook_log.display()
+        ),
+        shell: None,
+    };
+    let middlewares = [
+        MiddlewareConfig::Timeout {
+            default_timeout_ms: Some(5000),
+        },
+        MiddlewareConfig::LoopGuard { max_repeats: 2 },
+    ];
+
+    let mut body = String::new();
+    render_table("[[hooks]]", serde_json::to_value(&hook).unwrap(), &mut body);
+
+    for middleware in middlewares {
+        render_table(
+            "[[middlewares]]",
+            serde_json::to_value(&middleware).unwrap(),
+            &mut body,
+        );
+    }
+
+    write_tmp_file_named(".toml", &body)
+}
+
 // ─── Valid graphs ───────────────────────────────────────────────────────────
 
 const VALID_ASK: &str = r#"{
@@ -51,7 +166,7 @@ const VALID_PIPELINE: &str = r#"{
   "name": "test-pipeline",
   "nodes": [
     {"id": 1, "name": "a", "op": "ASK", "attributes": {"template_str": "step 1"}},
-    {"id": 2, "name": "b", "op": "ASK", "attributes": {"template_str": "step 2: {{node_1}}"}}
+    {"id": 2, "name": "b", "op": "ASK", "attributes": {"template_str": "step 2: {a}", "input_names": ["a"]}}
   ],
   "edges": [{"from": 1, "to": 2, "dependency": "Data"}],
   "parameters": [],
@@ -63,12 +178,23 @@ const VALID_PARALLEL: &str = r#"{
   "nodes": [
     {"id": 1, "name": "a", "op": "ASK", "attributes": {"template_str": "task a"}},
     {"id": 2, "name": "b", "op": "ASK", "attributes": {"template_str": "task b"}},
-    {"id": 3, "name": "sync", "op": "WAIT_ALL", "attributes": {"tokens": ["{{node_1}}", "{{node_2}}"]}}
+    {"id": 3, "name": "sync", "op": "WAIT_ALL", "attributes": {}}
   ],
   "edges": [
     {"from": 1, "to": 3, "dependency": "Data"},
     {"from": 2, "to": 3, "dependency": "Data"}
   ],
+  "parameters": [],
+  "metadata": {}
+}"#;
+
+const CONST_GRAPH: &str = r#"{
+  "name": "const-graph",
+  "nodes": [
+    {"id": 1, "name": "value", "op": "CONST_STR", "attributes": {"value": "ok"}},
+    {"id": 2, "name": "done", "op": "RETURN", "attributes": {}}
+  ],
+  "edges": [{"from": 1, "to": 2, "dependency": "Data"}],
   "parameters": [],
   "metadata": {}
 }"#;
@@ -100,6 +226,95 @@ fn validate_valid_pipeline_json() {
     assert_eq!(v["valid"], true);
 }
 
+#[test]
+fn run_json_errors_are_emitted_as_json() {
+    let missing = tempfile::tempdir().unwrap().path().join("missing.apxmobj");
+    let out = apxm()
+        .args(["--json", "run", missing.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).trim().is_empty(),
+        "expected clean stderr, got: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(
+        v["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("Failed to read artifact")
+    );
+}
+
+#[test]
+fn execute_json_errors_are_emitted_as_json() {
+    let missing_config = tempfile::tempdir().unwrap().path().join("missing.toml");
+    let out = apxm()
+        .args([
+            "--json",
+            "--config",
+            missing_config.to_str().unwrap(),
+            "execute",
+            "placeholder.air",
+        ])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).trim().is_empty(),
+        "expected clean stderr, got: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(
+        v["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("Failed to load configuration")
+    );
+}
+
+#[test]
+fn execute_json_with_local_controls_succeeds_end_to_end() {
+    let graph = write_tmp_file_named(".json", CONST_GRAPH);
+    let temp = tempfile::tempdir().unwrap();
+    let hook_log = temp.path().join("hook.log");
+    let sessions_root = temp.path().join("sessions");
+    let config = write_tmp_driver_config(&hook_log);
+
+    let out = apxm()
+        .env("APXM_MOCK_BACKEND", "1")
+        .args([
+            "--json",
+            "--config",
+            config.path().to_str().unwrap(),
+            "execute",
+            graph.path().to_str().unwrap(),
+            "--emit-session",
+            sessions_root.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let body: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let session_dir = std::path::PathBuf::from(body["session_dir"].as_str().unwrap());
+    assert!(session_dir.is_dir());
+    assert_eq!(session_dir.parent().unwrap(), sessions_root);
+    assert_eq!(body["content"], "ok");
+
+    let hook_output = std::fs::read_to_string(&hook_log).unwrap();
+    let hook_rows = hook_output
+        .lines()
+        .map(|line| line.split('|').map(str::to_string).collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+    assert_eq!(hook_rows.len(), 2);
+    assert!(hook_rows.iter().all(|row| row.len() == 3));
+    assert!(hook_rows.iter().all(|row| row[2] == "true"));
+}
+
 // ─── validate: error cases ──────────────────────────────────────────────────
 
 #[test]
@@ -120,6 +335,29 @@ fn validate_empty_name() {
             .unwrap()
             .iter()
             .any(|e| e.as_str().unwrap().contains("name must not be empty"))
+    );
+}
+
+#[test]
+fn validate_rejects_legacy_node_placeholder_syntax() {
+    let f = write_tmp_graph(
+        r#"{"name":"legacy","nodes":[{"id":1,"name":"a","op":"ASK","attributes":{"template_str":"step 1"}},{"id":2,"name":"b","op":"ASK","attributes":{"template_str":"step 2: {{node_1}}"}}],"edges":[{"from":1,"to":2,"dependency":"Data"}],"parameters":[],"metadata":{}}"#,
+    );
+    let out = apxm()
+        .args(["--json", "validate", f.path().to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["valid"], false);
+    assert!(
+        v["errors"].as_array().unwrap().iter().any(|e| {
+            let msg = e.as_str().unwrap();
+            msg.contains("legacy node placeholder syntax")
+                || msg.contains("references no known input or parameter")
+        }),
+        "expected legacy placeholder error, got: {}",
+        String::from_utf8_lossy(&out.stdout)
     );
 }
 
@@ -750,10 +988,19 @@ fn task_merge_is_removed() {
         .unwrap();
     // Graph merge is no longer supported
     assert!(!out.status.success());
-    let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("no longer supported"),
-        "expected 'no longer supported' in stderr, got: {stderr}"
+        String::from_utf8_lossy(&out.stderr).trim().is_empty(),
+        "expected clean stderr, got: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let body: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("no longer supported"),
+        "expected 'no longer supported' in JSON error, got: {}",
+        String::from_utf8_lossy(&out.stdout)
     );
 }
 
@@ -790,12 +1037,14 @@ fn codegen_frontend_is_idempotent() {
     assert_eq!(first_json["output_dir"], output_dir_str);
 
     let first_snapshot = read_generated_snapshot(&output_dir);
-    assert_eq!(first_snapshot.len(), 5);
+    assert_eq!(first_snapshot.len(), 7);
     assert!(first_snapshot.contains_key("__init__.py"));
     assert!(first_snapshot.contains_key("agents.py"));
     assert!(first_snapshot.contains_key("constants.py"));
     assert!(first_snapshot.contains_key("emission.py"));
+    assert!(first_snapshot.contains_key("models.py"));
     assert!(first_snapshot.contains_key("operations.py"));
+    assert!(first_snapshot.contains_key("providers.py"));
 
     let second = apxm()
         .args([
@@ -915,6 +1164,235 @@ fn tool_remove_nonexistent_fails() {
         .output()
         .unwrap();
     assert!(!out.status.success());
+}
+
+// ─── session ───────────────────────────────────────────────────────────────
+
+#[test]
+fn session_list_prefers_local_root_over_global_home() {
+    let workspace = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+
+    write_session_manifest(
+        &workspace.path().join(".apxm").join("sessions"),
+        "local-run",
+        "2026-04-23T12:00:00Z",
+    );
+    write_session_manifest(
+        &home.path().join(".apxm").join("sessions"),
+        "global-run",
+        "2026-04-22T12:00:00Z",
+    );
+
+    let out = apxm()
+        .current_dir(workspace.path())
+        .env("HOME", home.path())
+        .args(["--json", "session", "list", "--limit", "10"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+
+    let sessions: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let sessions = sessions.as_array().unwrap();
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0]["execution_id"], "local-run");
+}
+
+#[test]
+fn session_inspect_falls_back_to_global_when_not_found_locally() {
+    let workspace = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+
+    write_session_manifest(
+        &workspace.path().join(".apxm").join("sessions"),
+        "local-run",
+        "2026-04-23T12:00:00Z",
+    );
+    let global_dir = write_session_manifest(
+        &home.path().join(".apxm").join("sessions"),
+        "global-run",
+        "2026-04-22T12:00:00Z",
+    );
+
+    let out = apxm()
+        .current_dir(workspace.path())
+        .env("HOME", home.path())
+        .args(["--json", "session", "inspect", "global-run"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+
+    let session: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(session["manifest"]["execution_id"], "global-run");
+    assert_eq!(session["path"], global_dir.display().to_string());
+}
+
+#[test]
+fn session_list_uses_explicit_session_root() {
+    let workspace = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let explicit_root = tempfile::tempdir().unwrap();
+
+    write_session_manifest(
+        &workspace.path().join(".apxm").join("sessions"),
+        "local-run",
+        "2026-04-23T12:00:00Z",
+    );
+    write_session_manifest(
+        &home.path().join(".apxm").join("sessions"),
+        "global-run",
+        "2026-04-22T12:00:00Z",
+    );
+    write_session_manifest(explicit_root.path(), "explicit-run", "2026-04-21T12:00:00Z");
+
+    let out = apxm()
+        .current_dir(workspace.path())
+        .env("HOME", home.path())
+        .args([
+            "--json",
+            "session",
+            "list",
+            "--limit",
+            "10",
+            "--session-root",
+            explicit_root.path().to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+
+    let sessions: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let sessions = sessions.as_array().unwrap();
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0]["execution_id"], "explicit-run");
+}
+
+#[test]
+fn session_clean_uses_explicit_session_root() {
+    let workspace = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let explicit_root = tempfile::tempdir().unwrap();
+
+    write_session_manifest(
+        &workspace.path().join(".apxm").join("sessions"),
+        "local-run",
+        "2026-04-23T12:00:00Z",
+    );
+    write_session_manifest(
+        &home.path().join(".apxm").join("sessions"),
+        "global-run",
+        "2026-04-22T12:00:00Z",
+    );
+    let explicit_dir =
+        write_session_manifest(explicit_root.path(), "explicit-run", "2026-04-01T12:00:00Z");
+
+    let out = apxm()
+        .current_dir(workspace.path())
+        .env("HOME", home.path())
+        .args([
+            "session",
+            "clean",
+            "--all",
+            "--session-root",
+            explicit_root.path().to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!explicit_dir.exists());
+    assert!(
+        workspace
+            .path()
+            .join(".apxm")
+            .join("sessions")
+            .join("local-run")
+            .exists()
+    );
+    assert!(
+        home.path()
+            .join(".apxm")
+            .join("sessions")
+            .join("global-run")
+            .exists()
+    );
+}
+
+#[test]
+fn workflow_run_nested_workflow_uses_explicit_root_for_parent_and_child() {
+    let temp = tempfile::tempdir().unwrap();
+    let workflow_root = temp.path();
+    let session_root = workflow_root.join("workflow-sessions");
+    let graph_path = workflow_root.join("graph.json");
+    let child_workflow_path = workflow_root.join("child.apxmw");
+    let parent_workflow_path = workflow_root.join("parent.apxmw");
+
+    write_json_file(
+        &graph_path,
+        &serde_json::json!({
+            "name": "const-graph",
+            "nodes": [
+                {"id": 1, "name": "value", "op": "CONST_STR", "attributes": {"value": "ok"}},
+                {"id": 2, "name": "done", "op": "RETURN", "attributes": {}}
+            ],
+            "edges": [{"from": 1, "to": 2, "dependency": "Data"}],
+            "parameters": [],
+            "metadata": {}
+        }),
+    );
+    write_json_file(
+        &child_workflow_path,
+        &serde_json::json!({
+            "name": "child",
+            "graphs": [
+                {"id": "child_step", "path": "graph.json"}
+            ],
+            "output": "{{child_step.output}}"
+        }),
+    );
+    write_json_file(
+        &parent_workflow_path,
+        &serde_json::json!({
+            "name": "parent",
+            "graphs": [
+                {"id": "child_workflow", "path": "child.apxmw"}
+            ],
+            "output": "{{child_workflow.output}}"
+        }),
+    );
+
+    let out = apxm()
+        .current_dir(workflow_root)
+        .env("APXM_MOCK_BACKEND", "1")
+        .args([
+            "--json",
+            "workflow",
+            "run",
+            parent_workflow_path.to_str().unwrap(),
+            "--session-root",
+            session_root.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let body: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+
+    let parent_session_dir = Path::new(body["session_dir"].as_str().unwrap());
+    assert!(parent_session_dir.is_dir());
+    assert_eq!(parent_session_dir.parent().unwrap(), session_root);
+    assert_eq!(body["output"], "ok");
+
+    let child_session_dir = Path::new(
+        body["step_results"]["child_workflow"]["session_dir"]
+            .as_str()
+            .unwrap(),
+    );
+    assert!(child_session_dir.is_dir());
+    assert_eq!(child_session_dir.parent().unwrap(), parent_session_dir);
 }
 
 // ─── doctor ────────────────────────────────────────────────────────────────

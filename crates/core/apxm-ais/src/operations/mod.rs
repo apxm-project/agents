@@ -1,7 +1,7 @@
 //! AIS Operations - Single Source of Truth
 //!
-//! This module contains the complete specification for all 42 AIS operations
-//! (39 public + 1 metadata + 2 internal). Both the compiler and runtime use
+//! This module contains the complete specification for all 43 AIS operations
+//! (40 public + 1 metadata + 2 internal). Both the compiler and runtime use
 //! these definitions to ensure consistent semantics.
 //!
 //! The `tablegen` submodule generates MLIR TableGen files from these definitions,

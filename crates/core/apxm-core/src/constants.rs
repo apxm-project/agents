@@ -34,6 +34,7 @@ pub mod runtime {
         pub const SCOPE_ID: &str = "scope_id";
         pub const PARENT_SCOPE_ID: &str = "parent_scope_id";
         pub const SESSION_DIR: &str = "session_dir";
+        pub const SESSION_ROOT: &str = "session_root";
         pub const DELEGATE_TASK_SPEC: &str = "delegate_task_spec";
         pub const DELEGATE_TARGET: &str = "delegate_target";
         pub const NEGOTIATE_PROPOSAL: &str = "negotiate_proposal";

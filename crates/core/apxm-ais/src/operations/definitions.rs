@@ -1,7 +1,7 @@
 //! AIS Operation Definitions - Single Source of Truth
 //!
-//! This module contains the complete specification for all 42 AIS operations
-//! (39 public + 1 metadata + 2 internal). Both the compiler and runtime use
+//! This module contains the complete specification for all 43 AIS operations
+//! (40 public + 1 metadata + 2 internal). Both the compiler and runtime use
 //! these definitions to ensure consistent semantics.
 
 use super::category::OperationCategory;
@@ -15,9 +15,9 @@ use std::fmt;
 
 /// Represents all AIS operation types.
 ///
-/// This enum is the canonical list of operations (42 total):
+/// This enum is the canonical list of operations (43 total):
 /// - 1 metadata operation (AgentOp)
-/// - 39 public operations
+/// - 40 public operations
 /// - 2 internal operations (ConstStr, Yield)
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -73,6 +73,8 @@ pub enum AISOperationType {
     Switch,
     /// Call a flow on another agent.
     FlowCall,
+    /// Spawn an external graph, artifact, or workflow as a child execution.
+    WorkflowSpawn,
 
     // Synchronization Operations (3)
     /// Merge multiple tokens into one.
@@ -169,6 +171,7 @@ impl fmt::Display for AISOperationType {
             AISOperationType::Return => write!(f, "RETURN"),
             AISOperationType::Switch => write!(f, "SWITCH"),
             AISOperationType::FlowCall => write!(f, "FLOW_CALL"),
+            AISOperationType::WorkflowSpawn => write!(f, "WORKFLOW_SPAWN"),
             // Synchronization
             AISOperationType::Merge => write!(f, "MERGE"),
             AISOperationType::Fence => write!(f, "FENCE"),
@@ -232,6 +235,7 @@ impl std::str::FromStr for AISOperationType {
             "return" => Ok(AISOperationType::Return),
             "switch" => Ok(AISOperationType::Switch),
             "flow_call" => Ok(AISOperationType::FlowCall),
+            "workflow_spawn" => Ok(AISOperationType::WorkflowSpawn),
             "merge" => Ok(AISOperationType::Merge),
             "fence" => Ok(AISOperationType::Fence),
             "wait_all" => Ok(AISOperationType::WaitAll),
@@ -283,6 +287,7 @@ impl AISOperationType {
             AISOperationType::Return => "return",
             AISOperationType::Switch => "switch",
             AISOperationType::FlowCall => "flow_call",
+            AISOperationType::WorkflowSpawn => "workflow_spawn",
             AISOperationType::Merge => "merge",
             AISOperationType::Fence => "fence",
             AISOperationType::WaitAll => "wait_all",
@@ -357,6 +362,7 @@ impl AISOperationType {
             38 => Some(AISOperationType::Checkpoint),
             39 => Some(AISOperationType::SpawnTeam),
             40 => Some(AISOperationType::Handoff),
+            41 => Some(AISOperationType::WorkflowSpawn),
             _ => None,
         }
     }
@@ -406,12 +412,13 @@ impl AISOperationType {
             AISOperationType::Checkpoint => Some(38),
             AISOperationType::SpawnTeam => Some(39),
             AISOperationType::Handoff => Some(40),
+            AISOperationType::WorkflowSpawn => Some(41),
             // Ops without wire indices
             _ => None,
         }
     }
 
-    /// Get all operation types (42 total: 27 original + 5 phase-1 + 7 phase-2 + 1 durable execution + 1 team + 1 handoff).
+    /// Get all operation types (43 total).
     pub fn all_operations() -> &'static [AISOperationType] {
         &[
             AISOperationType::Agent,
@@ -433,6 +440,7 @@ impl AISOperationType {
             AISOperationType::Return,
             AISOperationType::Switch,
             AISOperationType::FlowCall,
+            AISOperationType::WorkflowSpawn,
             AISOperationType::Merge,
             AISOperationType::Fence,
             AISOperationType::WaitAll,
@@ -803,7 +811,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             QMEM. Use FENCE after UMEM if subsequent QMEM nodes must see the write.",
         latency: OperationLatency::Low,
         example_json: Some(
-            r#"{"id": 3, "op": "UMEM", "attributes": {"key": "summary", "value": "{{node_2}}", "memory_tier": "stm"}}"#,
+            r#"{"id": 3, "op": "UMEM", "attributes": {"key": "summary", "value": "Rust favors explicit ownership and borrowing.", "memory_tier": "stm"}}"#,
         ),
         fields: &[
             OperationField::required(attrs::KEY, "Key to store the value under"),
@@ -834,10 +842,11 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         long_description: "Sends a prompt to the configured LLM and returns the response. \
             The lightest LLM operation — no chain-of-thought or extended thinking. Use for \
             straightforward questions, classifications, extractions, or reformulations. \
-            Template strings support {{node_N}} interpolation for dataflow inputs.",
+            Template strings support named `{input}` interpolation for dataflow inputs via \
+            the node's `input_names` array.",
         latency: OperationLatency::Medium,
         example_json: Some(
-            r#"{"id": 1, "op": "ASK", "attributes": {"template_str": "Summarize: {{node_0}}"}}"#,
+            r#"{"id": 1, "op": "ASK", "attributes": {"template_str": "Summarize: {source}", "input_names": ["source"]}}"#,
         ),
         fields: &[
             OperationField::required(attrs::TEMPLATE_STR, "Prompt template for the question"),
@@ -877,7 +886,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             deliberate reasoning. The budget controls how many tokens the model can spend thinking.",
         latency: OperationLatency::High,
         example_json: Some(
-            r#"{"id": 1, "op": "THINK", "attributes": {"template_str": "Solve step by step: {{node_0}}", "budget": 4096}}"#,
+            r#"{"id": 1, "op": "THINK", "attributes": {"template_str": "Solve step by step: {problem}", "input_names": ["problem"], "budget": 4096}}"#,
         ),
         fields: &[
             OperationField::required(attrs::TEMPLATE_STR, "Prompt template for deep reasoning"),
@@ -919,7 +928,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             new information. Supports structured JSON output mode.",
         latency: OperationLatency::Medium,
         example_json: Some(
-            r#"{"id": 1, "op": "REASON", "attributes": {"template_str": "Given {{node_0}}, update your analysis", "structured": true}}"#,
+            r#"{"id": 1, "op": "REASON", "attributes": {"template_str": "Given {evidence}, update your analysis", "input_names": ["evidence"], "structured": true}}"#,
         ),
         fields: &[
             OperationField::required(
@@ -1017,14 +1026,15 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         description: "Fact-check outputs against evidence",
         long_description: "Cross-references a claim against provided evidence using the LLM. \
             Returns a verification result with confidence score. Use after ASK/THINK/REASON \
-            nodes to validate outputs before acting on them.",
+            nodes to validate outputs before acting on them. Evidence may be supplied either \
+            as a literal attribute or via an incoming Data edge.",
         latency: OperationLatency::Medium,
         example_json: Some(
-            r#"{"id": 5, "op": "VERIFY", "attributes": {"claim": "{{node_3}}", "evidence": "{{node_4}}"}}"#,
+            r#"{"id": 5, "op": "VERIFY", "attributes": {"claim": "The solar system has eight planets."}}"#,
         ),
         fields: &[
             OperationField::required(attrs::CLAIM_TEXT, "Claim to verify"),
-            OperationField::required(attrs::EVIDENCE, "Evidence to check against"),
+            OperationField::optional(attrs::EVIDENCE, "Evidence to check against"),
         ],
         needs_submission: true,
         min_inputs: 0,
@@ -1039,11 +1049,12 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         description: "Call external tool with structured params; store result",
         long_description: "Invokes a registered capability (tool or function) by name. \
             The capability must be declared in the AGENT node's capabilities list or \
-            registered in the runtime's CapabilityRegistry. Parameters are passed as \
-            a JSON object. The tool's return value becomes this node's output token.",
+            registered in the runtime's CapabilityRegistry. Parameters are passed via the \
+            `params_json` attribute as a JSON object. The tool's return value becomes this \
+            node's output token.",
         latency: OperationLatency::Medium,
         example_json: Some(
-            r#"{"id": 2, "op": "INV_TOOL", "attributes": {"capability": "web_search", "parameters": {"query": "{{node_1}}"}}}"#,
+            r#"{"id": 2, "op": "INV_TOOL", "attributes": {"capability": "web_search", "params_json": "{\"query\":\"rust ownership\"}"}}"#,
         ),
         fields: &[
             OperationField::required_ref(
@@ -1051,7 +1062,10 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
                 "Name of the capability/tool to invoke",
                 ReferenceType::Capability,
             ),
-            OperationField::optional("parameters", "Parameters to pass to the tool"),
+            OperationField::optional(
+                attrs::PARAMS_JSON,
+                "JSON-encoded parameters to pass to the tool",
+            ),
         ],
         needs_submission: true,
         min_inputs: 0,
@@ -1097,12 +1111,12 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         name: "PrintOutput",
         category: OperationCategory::Tools,
         description: "Print output to stdout for debugging or user display",
-        long_description: "Writes a message to stdout. Supports {{node_N}} template \
-            interpolation. Useful for debugging graphs during development or displaying \
-            final results to the user. The message is also stored as the output token.",
+        long_description: "Writes a message to stdout. Supports named `{input}` template \
+            interpolation via `input_names`. Useful for debugging graphs during development \
+            or displaying final results to the user. The message is also stored as the output token.",
         latency: OperationLatency::None,
         example_json: Some(
-            r#"{"id": 4, "op": "PRINT", "attributes": {"message": "Result: {{node_3}}"}}"#,
+            r#"{"id": 4, "op": "PRINT", "attributes": {"message": "Result: {result}", "input_names": ["result"]}}"#,
         ),
         fields: &[OperationField::required(attrs::MESSAGE, "Message to print")],
         needs_submission: true,
@@ -1147,10 +1161,9 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             to label_false. Used for if/else patterns in agent workflows.",
         latency: OperationLatency::None,
         example_json: Some(
-            r#"{"id": 5, "op": "BRANCH_ON_VALUE", "attributes": {"token": "{{node_4}}", "value": "yes", "true_label": "6", "false_label": "7"}}"#,
+            r#"{"id": 5, "op": "BRANCH_ON_VALUE", "attributes": {"value": "yes", "true_label": "6", "false_label": "7"}}"#,
         ),
         fields: &[
-            OperationField::required("token", "Token to evaluate"),
             OperationField::required(attrs::VALUE, "Value to compare against"),
             OperationField::required(attrs::TRUE_LABEL, "Label if comparison is true"),
             OperationField::required(attrs::FALSE_LABEL, "Label if comparison is false"),
@@ -1199,15 +1212,11 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         name: "Return",
         category: OperationCategory::ControlFlow,
         description: "Return from subgraph with result token",
-        long_description: "Returns a value from a subgraph or flow. The token is provided \
-            via an incoming Data edge in the MLIR dialect. The optional token attribute \
-            allows JSON-based graphs to specify the source via {{node_N}} template syntax.",
+        long_description: "Returns a value from a subgraph or flow. The result value is \
+            provided via an incoming Data edge.",
         latency: OperationLatency::None,
-        example_json: Some(r#"{"id": 6, "op": "RETURN", "attributes": {"token": "{{node_5}}"}}"#),
-        fields: &[OperationField::optional(
-            "token",
-            "Result token reference (optional, resolved from edges)",
-        )], // structural
+        example_json: Some(r#"{"id": 6, "op": "RETURN", "attributes": {}}"#),
+        fields: &[],
         needs_submission: false,
         min_inputs: 1,
         produces_output: true,
@@ -1224,7 +1233,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             The matched branch's result becomes the output token.",
         latency: OperationLatency::None,
         example_json: Some(
-            r#"{"id": 3, "op": "SWITCH", "attributes": {"discriminant": "{{node_2}}", "cases": [{"label": "math", "node_id": 4}, {"label": "code", "node_id": 5}], "default": "6"}}"#,
+            r#"{"id": 3, "op": "SWITCH", "attributes": {"discriminant": "topic_kind", "cases": [{"label": "math", "node_id": 4}, {"label": "code", "node_id": 5}], "default": "6"}}"#,
         ),
         fields: &[
             OperationField::required("discriminant", "Token to match against case labels"),
@@ -1247,7 +1256,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             primary mechanism for multi-agent composition.",
         latency: OperationLatency::High,
         example_json: Some(
-            r#"{"id": 4, "op": "FLOW_CALL", "attributes": {"agent_name": "researcher", "flow_name": "analyze", "args": {"topic": "{{node_1}}"}}}"#,
+            r#"{"id": 4, "op": "FLOW_CALL", "attributes": {"agent_name": "researcher", "flow_name": "analyze", "args": {"topic": "{topic}"}, "input_names": ["topic"]}}"#,
         ),
         fields: &[
             OperationField::required(attrs::AGENT_NAME, "Name of the agent to call"),
@@ -1257,7 +1266,62 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         needs_submission: true,
         min_inputs: 0,
         produces_output: true,
-        emission: EMISSION_TOKEN_BRACKETED,
+        emission: MlirEmissionSpec {
+            primary_attr: Some(attrs::AGENT_NAME),
+            context_style: ContextStyle::Parenthesized,
+            result_type: MlirResultType::Token,
+            positional_attrs: &[attrs::FLOW_NAME],
+            keywords: &[attrs::ARGS, attrs::INPUT_NAMES],
+            syntactic_keywords: &[],
+        },
+    },
+    OperationSpec {
+        op_type: AISOperationType::WorkflowSpawn,
+        name: "WorkflowSpawn",
+        category: OperationCategory::ControlFlow,
+        description: "Spawn an external graph, artifact, or workflow as a child execution",
+        long_description: "Invokes an external graph file, precompiled artifact, or workflow file as a child execution boundary. \
+            Arguments are passed by name through the args map. The child run resolves its session root from the explicit node attribute when present, \
+            otherwise it inherits the parent execution root.",
+        latency: OperationLatency::High,
+        example_json: Some(
+            r#"{"id": 5, "op": "WORKFLOW_SPAWN", "attributes": {"target_kind": "workflow_path", "target": "workflows/review.apxmw", "args": {"topic": "{topic}"}, "input_names": ["topic"], "await_result": true}}"#,
+        ),
+        fields: &[
+            OperationField::required(
+                attrs::TARGET_KIND,
+                "Invocation target kind: graph_path, artifact_path, or workflow_path",
+            ),
+            OperationField::required(
+                attrs::TARGET,
+                "Path of the graph, artifact, or workflow to execute",
+            ),
+            OperationField::optional(attrs::ARGS, "Arguments to pass to the child execution"),
+            OperationField::optional(
+                attrs::SESSION_ROOT,
+                "Explicit session root for the child execution",
+            ),
+            OperationField::optional(
+                attrs::AWAIT_RESULT,
+                "Whether to wait for the child result (must be true in the current runtime)",
+            ),
+        ],
+        needs_submission: true,
+        min_inputs: 0,
+        produces_output: true,
+        emission: MlirEmissionSpec {
+            primary_attr: Some(attrs::TARGET_KIND),
+            context_style: ContextStyle::Parenthesized,
+            result_type: MlirResultType::Token,
+            positional_attrs: &[attrs::TARGET],
+            keywords: &[
+                attrs::ARGS,
+                attrs::INPUT_NAMES,
+                attrs::SESSION_ROOT,
+                attrs::AWAIT_RESULT,
+            ],
+            syntactic_keywords: &[],
+        },
     },
     // ========== Synchronization Operations (3) ==========
     OperationSpec {
@@ -1267,16 +1331,10 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         description: "Sync parallel paths; aggregate tokens into one",
         long_description: "Waits for multiple parallel branches to complete and combines \
             their output tokens into a single aggregated result. Inputs are provided via \
-            incoming Data edges in the MLIR dialect. The optional tokens attribute allows \
-            JSON-based graphs to specify sources via {{node_N}} template syntax.",
+            incoming Data edges.",
         latency: OperationLatency::None,
-        example_json: Some(
-            r#"{"id": 6, "op": "MERGE", "attributes": {"tokens": ["{{node_3}}", "{{node_4}}", "{{node_5}}"]}}"#,
-        ),
-        fields: &[OperationField::optional(
-            "tokens", // structural
-            "Token references to merge (optional, resolved from edges)",
-        )],
+        example_json: Some(r#"{"id": 6, "op": "MERGE", "attributes": {}}"#),
+        fields: &[],
         needs_submission: true,
         min_inputs: 1,
         produces_output: true,
@@ -1315,16 +1373,10 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         description: "Block until all specified tokens are available",
         long_description: "Blocks execution until all listed input tokens are ready. Unlike \
             MERGE, it does not combine the tokens — it simply acts as a synchronization barrier. \
-            Inputs are provided via incoming Data edges in the MLIR dialect. The optional tokens \
-            attribute allows JSON-based graphs to specify sources via {{node_N}} template syntax.",
+            Inputs are provided via incoming Data edges.",
         latency: OperationLatency::None,
-        example_json: Some(
-            r#"{"id": 5, "op": "WAIT_ALL", "attributes": {"tokens": ["{{node_2}}", "{{node_3}}"]}}"#,
-        ),
-        fields: &[OperationField::optional(
-            "tokens",
-            "Token references to wait for (optional, resolved from edges)",
-        )], // structural
+        example_json: Some(r#"{"id": 5, "op": "WAIT_ALL", "attributes": {}}"#),
+        fields: &[],
         needs_submission: true,
         min_inputs: 1,
         produces_output: true,
@@ -2031,13 +2083,13 @@ mod tests {
     fn test_operation_counts() {
         assert_eq!(
             AIS_OPERATIONS.len(),
-            42,
-            "Expected 42 total operations (1 metadata + 39 public + 2 internal)"
+            43,
+            "Expected 43 total operations (1 metadata + 40 public + 2 internal)"
         );
         assert_eq!(
             AISOperationType::all_operations().len(),
-            42,
-            "Expected 42 total operation types"
+            43,
+            "Expected 43 total operation types"
         );
     }
 
@@ -2106,8 +2158,12 @@ mod tests {
             AISOperationType::from_wire_index(40),
             Some(AISOperationType::Handoff)
         );
+        // Workflow spawn
+        assert_eq!(
+            AISOperationType::from_wire_index(41),
+            Some(AISOperationType::WorkflowSpawn)
+        );
         // Out-of-range returns None
-        assert_eq!(AISOperationType::from_wire_index(41), None);
         assert_eq!(AISOperationType::from_wire_index(u32::MAX), None);
     }
 
@@ -2167,15 +2223,19 @@ mod tests {
                 "from_wire_index(40) returned duplicate {op:?}"
             );
         }
+        // Workflow spawn: 41
+        {
+            let op = AISOperationType::from_wire_index(41)
+                .expect("wire index 41 should be WorkflowSpawn");
+            assert!(
+                seen.insert(op),
+                "from_wire_index(41) returned duplicate {op:?}"
+            );
+        }
         assert_eq!(
             seen.len(),
-            35,
-            "Expected 35 distinct wire-indexed operations (25 original + 7 phase-2 + 1 durable + 1 team + 1 handoff)"
-        );
-        assert_eq!(
-            AISOperationType::from_wire_index(41),
-            None,
-            "Index 41 should be out of range"
+            36,
+            "Expected 36 distinct wire-indexed operations (25 original + 7 phase-2 + 1 durable + 1 team + 1 handoff + 1 workflow spawn)"
         );
     }
 
@@ -2191,8 +2251,8 @@ mod tests {
                 "Wire-indexed op {op:?} (index {i}) is not in all_operations()"
             );
         }
-        // Phase 2 ops: 31-40 (includes Checkpoint at 38, SpawnTeam at 39, Handoff at 40)
-        for i in 31u32..41 {
+        // Extended wire-indexed ops: 31-41
+        for i in 31u32..42 {
             let op = AISOperationType::from_wire_index(i).unwrap();
             assert!(
                 all_ops.contains(&op),

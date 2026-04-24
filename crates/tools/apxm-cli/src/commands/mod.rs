@@ -1,5 +1,7 @@
 //! Command modules for APXM CLI.
 
+use std::fmt;
+
 pub mod cli;
 pub mod implementations;
 
@@ -54,3 +56,18 @@ pub use team::*;
 pub use template::*;
 pub use tool::*;
 pub use workflow::*;
+
+#[derive(Debug)]
+pub struct OutputAlreadyEmitted;
+
+impl fmt::Display for OutputAlreadyEmitted {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("command output already emitted")
+    }
+}
+
+impl std::error::Error for OutputAlreadyEmitted {}
+
+pub(crate) fn output_already_emitted() -> anyhow::Error {
+    anyhow::Error::new(OutputAlreadyEmitted)
+}

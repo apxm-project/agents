@@ -15,7 +15,7 @@ Python frontend for authoring APXM graphs.
 | `ir` | `ApxmGraph`, `GraphNode`, `GraphEdge`, `Parameter` data classes |
 | `module` | `FlowModule` for multi-flow agent definitions |
 | `sugar` | `AgentHandle` and `Team` convenience wrappers |
-| `config` | `AgentConfig`, `ToolsConfig`, `BashConfig`, `ReadConfig`, `WriteConfig` |
+| `config` | `AgentConfig`, `NodePolicy`, `ExecutionOptions`, hook and middleware config dataclasses |
 | `execution` | `CompiledFlow`, `ExecutionMode`, `WorkflowCheckpoint`, `validate_graph` |
 | `providers` | `ProviderSpec`, `list_providers`, `resolve_provider` |
 | `constants` | Generated graph-attribute constants from the shared `apxm-core` contract |
@@ -38,6 +38,8 @@ Python frontend for authoring APXM graphs.
 - `GraphRecorder` -- proxy object for recording `g.ask()`, `g.spawn_agent()`, etc.
 - `NodeRef` -- handle to a recorded operation node
 - `ApxmGraph` -- in-memory graph representation
+- `NodePolicy` -- typed graph/node defaults lowered to stable node attrs
+- `ExecutionOptions` -- execution-time hooks, built-in middleware, session-root, and request-time controls
 - `FlowModule` -- multi-flow module with entry flow and sub-flows
 - `AgentHandle` / `Team` -- sugar for multi-agent graphs
 
@@ -48,16 +50,64 @@ from apxm import compile, GraphRecorder
 
 @compile()
 def my_workflow(g: GraphRecorder):
-    answer = g.ask("step", "What is 2+2?")
+    answer = g.ask(name="step", prompt="What is 2+2?")
     g.done(answer)
+```
+
+## Policy Defaults And Local Runtime Controls
+
+```python
+from pathlib import Path
+from apxm import (
+    ExecutionOptions,
+    GraphRecorder,
+    HookConfig,
+    HookEvent,
+    NodePolicy,
+    TimeoutMiddlewareConfig,
+    compile,
+)
+
+@compile(default_policy=NodePolicy(tool_groups=["web"], token_budget=256))
+def workflow(g: GraphRecorder, topic: str):
+    draft = g.ask(name="draft", prompt=f"Research {{topic}}")
+    g.done(draft)
+
+options = ExecutionOptions(
+    session_root=Path(".apxm/sessions"),
+    hooks=[HookConfig(event=HookEvent.NODE_COMPLETE, command="echo {{node_id}}")],
+    middlewares=[TimeoutMiddlewareConfig(default_timeout_ms=5000)],
+)
+
+result = workflow.run_sync("middleware design", execution=options)
+```
+
+## Cross-Workflow Invocation
+
+Use `g.call(...)` for same-process registered subflows and `g.workflow_spawn(...)`
+when you want a separate child execution with its own session tree.
+
+```python
+from pathlib import Path
+from apxm import GraphRecorder, NodePolicy, WorkflowTargetKind, compile
+
+@compile(default_policy=NodePolicy(timeout_ms=5_000))
+def parent(g: GraphRecorder):
+    child = g.workflow_spawn(
+        target_kind=WorkflowTargetKind.GRAPH_PATH,
+        target=Path("tests/quality_fixtures/qa_factual/graph.air"),
+        session_root=Path(".apxm/child-sessions"),
+        node_policy=NodePolicy(timeout_ms=2_000),
+    )
+    g.done(child)
 ```
 
 ## Template Variable Resolution
 
-Templates support `{var_name}` for auto-wired references and `{N}` for positional:
+Templates support named `{var_name}` references only:
 ```python
-plan = g.ask("plan", "Create a plan for {topic}")  # auto-wires from 'topic' variable
-code = g.ask("code", "Implement: {0}", plan)        # positional reference to 'plan'
+plan = g.ask(name="plan", prompt="Create a plan for {topic}")  # auto-wires from 'topic' variable
+code = g.ask(name="code", prompt="Implement: {plan}")          # auto-wires from 'plan' variable
 ```
 
 ## Execution Flow
