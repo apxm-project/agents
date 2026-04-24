@@ -343,7 +343,9 @@ mod tests {
         // unknown_node should be untouched
         let unknown = &graph.nodes[2];
         assert!(
-            !unknown.attributes.contains_key(graph_attrs::PROFILE_LATENCY_MS),
+            !unknown
+                .attributes
+                .contains_key(graph_attrs::PROFILE_LATENCY_MS),
             "no profile data for unknown_node"
         );
     }

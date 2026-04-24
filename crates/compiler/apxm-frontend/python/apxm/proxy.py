@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import os
 import re
 from typing import TYPE_CHECKING, Any, Iterable
 
@@ -11,12 +12,11 @@ if TYPE_CHECKING:
 
 from apxm._generated import constants as c
 from . import constants as graph_keys
-from .config import AgentConfig
+from .config import AgentConfig, NodePolicy, WorkflowTargetKind
 from .normalize import normalize_attributes as _normalize_attributes
 from .normalize import normalize_provider as _normalize_provider
 from .normalize import normalize_value as _normalize_value
 from .ir import ApxmGraph, GraphEdge, GraphNode, Parameter
-
 
 class NodeRef:
     def __init__(self, recorder: "GraphRecorder", node_id: int, name: str) -> None:
@@ -29,7 +29,13 @@ class NodeRef:
 
 
 class GraphRecorder:
-    def __init__(self, name: str, *, metadata: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        name: str,
+        *,
+        metadata: dict[str, Any] | None = None,
+        policy: NodePolicy | dict[str, Any] | None = None,
+    ) -> None:
         self._name = name
         self._next_id = 1
         self._nodes: list[GraphNode] = []
@@ -52,6 +58,7 @@ class GraphRecorder:
         # that was already bound) emits a duplicate SPAWN_AGENT, which the
         # runtime rejects with "Agent already exists in process table".
         self._bound_agents: dict[str, Any] = {}
+        self._default_policy = _coerce_node_policy(policy)
 
     def _auto_name(self, op_type: str) -> str:
         """Generate a unique name based on operation type and counter."""
@@ -122,6 +129,69 @@ class GraphRecorder:
 
         return template, pairs
 
+    def _bind_flow_kwargs(
+        self,
+        parameters: list[Parameter],
+        kwargs: dict[str, Any],
+    ) -> list[tuple[str, Any]]:
+        """Bind caller kwargs onto the callee parameter names strictly by name."""
+        if not parameters:
+            return list(kwargs.items())
+
+        param_names = [param.name for param in parameters]
+        unknown = [key for key in kwargs if key not in param_names]
+        if unknown:
+            expected = ", ".join(param_names)
+            raise TypeError(
+                f"call() received unknown argument(s) for flow '{self._name}': "
+                f"{', '.join(unknown)}. Expected [{expected}]"
+            )
+
+        missing = [name for name in param_names if name not in kwargs]
+        if missing:
+            raise TypeError(f"missing required argument(s): {', '.join(missing)}")
+
+        return [(param_name, kwargs[param_name]) for param_name in param_names]
+
+    def _split_invocation_args(
+        self,
+        items: Iterable[tuple[str, Any]],
+    ) -> tuple[dict[str, Any], list[tuple[str, NodeRef]]]:
+        literal_args: dict[str, Any] = {}
+        node_ref_args: list[tuple[str, NodeRef]] = []
+
+        for key, val in items:
+            if isinstance(val, NodeRef):
+                node_ref_args.append((key, val))
+                literal_args[key] = f"{{{key}}}"
+            elif hasattr(val, 'get_last_node') and callable(val.get_last_node):
+                node_ref_args.append((key, val.get_last_node()))
+                literal_args[key] = f"{{{key}}}"
+            else:
+                literal_args[key] = val
+
+        return literal_args, node_ref_args
+
+    def _apply_policy(
+        self,
+        base_attrs: dict[str, Any],
+        attributes: dict[str, Any],
+    ) -> dict[str, Any]:
+        explicit_attrs = dict(attributes)
+        inline_policy = _extract_inline_node_policy(explicit_attrs)
+        resolved_policy = (
+            self._default_policy.overlay(inline_policy)
+            if self._default_policy is not None
+            else inline_policy
+        )
+
+        merged: dict[str, Any] = {}
+        if resolved_policy is not None:
+            merged.update(resolved_policy.to_node_attributes())
+        merged.update(base_attrs)
+        merged.update(_normalize_attributes(explicit_attrs))
+        return merged
+
     def ask(
         self,
         *,
@@ -151,7 +221,7 @@ class GraphRecorder:
         if backend is not None:
             attrs[graph_keys.BACKEND] = backend
         attrs.update(_compose_system_prompt(agent, graph_keys.OP_ASK))
-        attrs.update(_normalize_attributes(attributes))
+        attrs = self._apply_policy(attrs, attributes)
         node = self._add_node(name, graph_keys.OP_ASK, attrs)
 
         # Create auto-wire edges (in input_names order)
@@ -189,7 +259,7 @@ class GraphRecorder:
         if backend is not None:
             attrs[graph_keys.BACKEND] = backend
         attrs.update(_compose_system_prompt(agent, graph_keys.OP_THINK))
-        attrs.update(_normalize_attributes(attributes))
+        attrs = self._apply_policy(attrs, attributes)
         node = self._add_node(name, graph_keys.OP_THINK, attrs)
 
         # Create auto-wire edges (in input_names order)
@@ -227,7 +297,7 @@ class GraphRecorder:
         if backend is not None:
             attrs[graph_keys.BACKEND] = backend
         attrs.update(_compose_system_prompt(agent, graph_keys.OP_REASON))
-        attrs.update(_normalize_attributes(attributes))
+        attrs = self._apply_policy(attrs, attributes)
         node = self._add_node(name, graph_keys.OP_REASON, attrs)
 
         # Create auto-wire edges (in input_names order)
@@ -254,7 +324,7 @@ class GraphRecorder:
             attrs[graph_keys.MEMORY_TIER] = space
         if limit is not None:
             attrs[graph_keys.LIMIT] = limit
-        attrs.update(_normalize_attributes(attributes))
+        attrs = self._apply_policy(attrs, attributes)
         return self._add_node(name, graph_keys.OP_QMEM, attrs)
 
     def update_memory(
@@ -273,7 +343,7 @@ class GraphRecorder:
         attrs: dict[str, Any] = {graph_keys.VALUE: _normalize_value(data), graph_keys.KEY: key or name}
         if space is not None:
             attrs[graph_keys.MEMORY_TIER] = space
-        attrs.update(_normalize_attributes(attributes))
+        attrs = self._apply_policy(attrs, attributes)
         return self._add_node(name, graph_keys.OP_UMEM, attrs)
 
     def invoke(
@@ -293,7 +363,7 @@ class GraphRecorder:
             attrs[graph_keys.PARAMS_JSON] = json.dumps(params)
         elif params is not None:
             attrs[graph_keys.PARAMS_JSON] = params
-        attrs.update(_normalize_attributes(attributes))
+        attrs = self._apply_policy(attrs, attributes)
         return self._add_node(name, graph_keys.OP_INV_TOOL, attrs)
 
     def branch(
@@ -314,12 +384,12 @@ class GraphRecorder:
         node = self._add_node(
             name,
             graph_keys.OP_BRANCH_ON_VALUE,
-            _normalize_attributes(
+            self._apply_policy(
                 {
                     graph_keys.TRUE_LABEL: true_label,
                     graph_keys.FALSE_LABEL: false_label,
-                    **attributes,
-                }
+                },
+                attributes,
             ),
         )
         if condition_node is not None:
@@ -344,7 +414,7 @@ class GraphRecorder:
             graph_keys.DISCRIMINANT: discriminant,
             graph_keys.CASE_LABELS: list(cases),
         }
-        attrs.update(_normalize_attributes(attributes))
+        attrs = self._apply_policy(attrs, attributes)
         return self._add_node(name, graph_keys.OP_SWITCH, attrs)
 
     def wait_all(self, name: str | None = None, *dependencies: NodeRef | Iterable[NodeRef]) -> NodeRef:
@@ -368,7 +438,7 @@ class GraphRecorder:
     def fence(self, name: str | None = None, **attributes: Any) -> NodeRef:
         if name is None:
             name = self._auto_name(graph_keys.OP_FENCE)
-        return self._add_node(name, graph_keys.OP_FENCE, _normalize_attributes(attributes))
+        return self._add_node(name, graph_keys.OP_FENCE, self._apply_policy({}, attributes))
 
     def plan(self, name: str | None = None, *, goal: str | None = None, agent: AgentConfig | None = None, model: ModelId | None = None, provider: ProviderSpec | str | None = None, backend: str | None = None, **attributes: Any) -> NodeRef:
         if name is None:
@@ -386,7 +456,7 @@ class GraphRecorder:
         if backend is not None:
             attrs[graph_keys.BACKEND] = backend
         attrs.update(_compose_system_prompt(agent, graph_keys.OP_PLAN))
-        attrs.update(_normalize_attributes(attributes))
+        attrs = self._apply_policy(attrs, attributes)
         node = self._add_node(name, graph_keys.OP_PLAN, attrs)
         for _name, ref in auto_pairs:
             self.add_edge(ref, node)
@@ -408,7 +478,7 @@ class GraphRecorder:
         if backend is not None:
             attrs[graph_keys.BACKEND] = backend
         attrs.update(_compose_system_prompt(agent, graph_keys.OP_REFLECT))
-        attrs.update(_normalize_attributes(attributes))
+        attrs = self._apply_policy(attrs, attributes)
         node = self._add_node(name, graph_keys.OP_REFLECT, attrs)
         for _name, ref in auto_pairs:
             self.add_edge(ref, node)
@@ -440,10 +510,12 @@ class GraphRecorder:
                 if n not in seen_names:
                     all_pairs.append((n, r))
                     seen_names.add(n)
-            condition = f"Claim: {resolved_claim}\nEvidence: {resolved_evidence}"
+            attrs: dict[str, Any] = {
+                graph_keys.CLAIM_TEXT: resolved_claim,
+                graph_keys.EVIDENCE: resolved_evidence,
+            }
         else:
-            condition = resolved_claim
-        attrs: dict[str, Any] = {graph_keys.CONDITION: condition}
+            attrs = {graph_keys.CLAIM_TEXT: resolved_claim}
         if all_pairs:
             attrs[graph_keys.INPUT_NAMES] = [n for n, _ in all_pairs]
         if model is not None:
@@ -453,7 +525,7 @@ class GraphRecorder:
         if backend is not None:
             attrs[graph_keys.BACKEND] = backend
         attrs.update(_compose_system_prompt(agent, graph_keys.OP_VERIFY))
-        attrs.update(_normalize_attributes(attributes))
+        attrs = self._apply_policy(attrs, attributes)
         node = self._add_node(name, graph_keys.OP_VERIFY, attrs)
         for _name, ref in all_pairs:
             self.add_edge(ref, node)
@@ -475,7 +547,7 @@ class GraphRecorder:
             graph_keys.CONDITION: json.dumps(schema) if isinstance(schema, dict) else str(schema),
             graph_keys.GUARDRAIL_KIND: "input",
         }
-        attrs.update(_normalize_attributes(attributes))
+        attrs = self._apply_policy(attrs, attributes)
         return self._add_node(name, graph_keys.OP_VERIFY, attrs)
 
     def output_guardrail(
@@ -496,7 +568,7 @@ class GraphRecorder:
             graph_keys.GUARDRAIL_KIND: "output",
             graph_keys.MAX_RETRIES: max_retries,
         }
-        attrs.update(_normalize_attributes(attributes))
+        attrs = self._apply_policy(attrs, attributes)
         return self._add_node(name, graph_keys.OP_VERIFY, attrs)
 
     def checkpoint(self, name: str | None = None, **attributes: Any) -> NodeRef:
@@ -508,7 +580,7 @@ class GraphRecorder:
         if name is None:
             name = self._auto_name(graph_keys.OP_CHECKPOINT)
         attrs: dict[str, Any] = {graph_keys.CHECKPOINT: True}
-        attrs.update(_normalize_attributes(attributes))
+        attrs = self._apply_policy(attrs, attributes)
         return self._add_node(name, graph_keys.OP_FENCE, attrs)
 
     def execute(
@@ -527,7 +599,7 @@ class GraphRecorder:
         attrs: dict[str, Any] = {graph_keys.CODE: code}
         if sandbox_config is not None:
             attrs[graph_keys.SANDBOX_CONFIG] = _normalize_value(sandbox_config)
-        attrs.update(_normalize_attributes(attributes))
+        attrs = self._apply_policy(attrs, attributes)
         return self._add_node(name, graph_keys.OP_EXC, attrs)
 
     def print(
@@ -549,7 +621,7 @@ class GraphRecorder:
         attrs: dict[str, Any] = {graph_keys.MESSAGE: resolved_message}
         if auto_pairs:
             attrs[graph_keys.INPUT_NAMES] = [n for n, _ in auto_pairs]
-        attrs.update(_normalize_attributes(attributes))
+        attrs = self._apply_policy(attrs, attributes)
         node = self._add_node(name, graph_keys.OP_PRINT, attrs)
 
         # Create auto-wire edges (in input_names order)
@@ -565,7 +637,7 @@ class GraphRecorder:
         if label is None:
             raise ValueError("jump() missing required keyword argument: 'label'")
         attrs: dict[str, Any] = {graph_keys.LABEL: label}
-        attrs.update(_normalize_attributes(attributes))
+        attrs = self._apply_policy(attrs, attributes)
         return self._add_node(name, graph_keys.OP_JUMP, attrs)
 
     def loop_start(
@@ -581,14 +653,14 @@ class GraphRecorder:
         if count is None:
             raise ValueError("loop_start() missing required keyword argument: 'count'")
         attrs: dict[str, Any] = {graph_keys.COUNT: count}
-        attrs.update(_normalize_attributes(attributes))
+        attrs = self._apply_policy(attrs, attributes)
         return self._add_node(name, graph_keys.OP_LOOP_START, attrs)
 
     def loop_end(self, name: str | None = None, **attributes: Any) -> NodeRef:
         """End a bounded loop (LOOP_END)."""
         if name is None:
             name = self._auto_name(graph_keys.OP_LOOP_END)
-        return self._add_node(name, graph_keys.OP_LOOP_END, _normalize_attributes(attributes))
+        return self._add_node(name, graph_keys.OP_LOOP_END, self._apply_policy({}, attributes))
 
     def done(
         self,
@@ -599,7 +671,7 @@ class GraphRecorder:
         """Return from subgraph with a result token (RETURN)."""
         if name is None:
             name = self._auto_name(graph_keys.OP_RETURN)
-        node = self._add_node(name, graph_keys.OP_RETURN, _normalize_attributes(attributes))
+        node = self._add_node(name, graph_keys.OP_RETURN, self._apply_policy({}, attributes))
         if source is not None:
             if hasattr(source, "get_last_node"):
                 source = source.get_last_node()
@@ -627,15 +699,79 @@ class GraphRecorder:
             graph_keys.FLOW_NAME: flow_name,
         }
         if args is not None:
-            attrs[graph_keys.ARGS] = _normalize_value(args)
-        attrs.update(_normalize_attributes(attributes))
-        return self._add_node(name, graph_keys.OP_FLOW_CALL, attrs)
+            literal_args, node_ref_args = self._split_invocation_args(args.items())
+            attrs[graph_keys.ARGS] = _normalize_value(literal_args)
+            if node_ref_args:
+                attrs[graph_keys.INPUT_NAMES] = [param_name for param_name, _ in node_ref_args]
+        else:
+            node_ref_args = []
+        attrs = self._apply_policy(attrs, attributes)
+        node = self._add_node(name, graph_keys.OP_FLOW_CALL, attrs)
+        for _param_name, ref in node_ref_args:
+            self.add_edge(ref, node)
+        return node
+
+    def workflow_spawn(
+        self,
+        name: str | None = None,
+        *,
+        target_kind: WorkflowTargetKind | None = None,
+        target: str | os.PathLike[str] | None = None,
+        args: dict[str, Any] | None = None,
+        session_root: str | os.PathLike[str] | None = None,
+        await_result: bool = True,
+        node_policy: NodePolicy | dict[str, Any] | None = None,
+        **attributes: Any,
+    ) -> NodeRef:
+        """Spawn a child graph, artifact, or workflow execution."""
+        if name is None:
+            name = self._auto_name(graph_keys.OP_WORKFLOW_SPAWN)
+        if target_kind is None:
+            raise ValueError("workflow_spawn() missing required keyword argument: 'target_kind'")
+        if not isinstance(target_kind, WorkflowTargetKind):
+            raise TypeError("workflow_spawn() target_kind must be a WorkflowTargetKind")
+        if target_kind not in WorkflowTargetKind.spawn_path_kinds():
+            expected = "', '".join(kind.value for kind in WorkflowTargetKind.spawn_path_kinds())
+            raise ValueError(
+                "workflow_spawn() target_kind must be one of: "
+                f"'{expected}'"
+            )
+        if target is None:
+            raise ValueError("workflow_spawn() missing required keyword argument: 'target'")
+        if not await_result:
+            raise ValueError("workflow_spawn() requires await_result=True")
+
+        attrs: dict[str, Any] = {
+            graph_keys.TARGET_KIND: target_kind.value,
+            graph_keys.TARGET: os.fspath(target),
+            graph_keys.AWAIT_RESULT: True,
+        }
+        if session_root is not None:
+            attrs[graph_keys.SESSION_ROOT] = os.fspath(session_root)
+        if args is not None:
+            literal_args, node_ref_args = self._split_invocation_args(args.items())
+            attrs[graph_keys.ARGS] = _normalize_value(literal_args)
+            if node_ref_args:
+                attrs[graph_keys.INPUT_NAMES] = [param_name for param_name, _ in node_ref_args]
+        else:
+            node_ref_args = []
+
+        if node_policy is not None:
+            attrs = self._apply_policy(attrs, {"node_policy": node_policy, **attributes})
+        else:
+            attrs = self._apply_policy(attrs, attributes)
+
+        node = self._add_node(name, graph_keys.OP_WORKFLOW_SPAWN, attrs)
+        for _param_name, ref in node_ref_args:
+            self.add_edge(ref, node)
+        return node
 
     def call(
         self,
         flow: Any,
         *,
         name: str | None = None,
+        node_policy: NodePolicy | dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> NodeRef:
         """Invoke a compiled flow or FlowModule from this graph.
@@ -670,19 +806,8 @@ class GraphRecorder:
         if name is None:
             name = self._auto_name(f"call_{flow_name}")
 
-        # Separate NodeRef args (auto-wire) from literal args
-        literal_args: dict[str, Any] = {}
-        node_ref_args: list[tuple[str, NodeRef]] = []
-
-        for key, val in kwargs.items():
-            if isinstance(val, NodeRef):
-                node_ref_args.append((key, val))
-                literal_args[key] = f"{{{key}}}"
-            elif hasattr(val, 'get_last_node'):
-                node_ref_args.append((key, val.get_last_node()))
-                literal_args[key] = f"{{{key}}}"
-            else:
-                literal_args[key] = val
+        bound_kwargs = self._bind_flow_kwargs(graph.parameters, kwargs)
+        literal_args, node_ref_args = self._split_invocation_args(bound_kwargs)
 
         attrs: dict[str, Any] = {
             graph_keys.AGENT_NAME: flow_name,
@@ -695,6 +820,8 @@ class GraphRecorder:
         if node_ref_args:
             attrs[graph_keys.INPUT_NAMES] = [pn for pn, _ in node_ref_args]
 
+        if node_policy is not None:
+            attrs = self._apply_policy(attrs, {"node_policy": node_policy})
         node = self._add_node(name, graph_keys.OP_FLOW_CALL, attrs)
 
         # Auto-wire NodeRef arguments as data edges (in input_names order)
@@ -784,7 +911,7 @@ class GraphRecorder:
             graph_keys.TRY_LABEL: try_label,
             graph_keys.CATCH_LABEL: catch_label,
         }
-        attrs.update(_normalize_attributes(attributes))
+        attrs = self._apply_policy(attrs, attributes)
         return self._add_node(name, graph_keys.OP_TRY_CATCH, attrs)
 
     def err(
@@ -800,7 +927,7 @@ class GraphRecorder:
         if error_handler is None:
             raise ValueError("err() missing required keyword argument: 'error_handler'")
         attrs: dict[str, Any] = {graph_keys.RECOVERY_TEMPLATE: error_handler}
-        attrs.update(_normalize_attributes(attributes))
+        attrs = self._apply_policy(attrs, attributes)
         return self._add_node(name, graph_keys.OP_ERR, attrs)
 
     def communicate(
@@ -831,7 +958,7 @@ class GraphRecorder:
             attrs[graph_keys.INPUT_NAMES] = [n for n, _ in auto_pairs]
         if protocol is not None:
             attrs[graph_keys.PROTOCOL] = protocol
-        attrs.update(_normalize_attributes(attributes))
+        attrs = self._apply_policy(attrs, attributes)
         node = self._add_node(name, graph_keys.OP_COMMUNICATE, attrs)
 
         # Create auto-wire edges (in input_names order)
@@ -860,7 +987,7 @@ class GraphRecorder:
         }
         if priority is not None:
             attrs[graph_keys.PRIORITY] = priority
-        attrs.update(_normalize_attributes(attributes))
+        attrs = self._apply_policy(attrs, attributes)
         return self._add_node(name, graph_keys.OP_UPDATE_GOAL, attrs)
 
     def guard(
@@ -884,7 +1011,7 @@ class GraphRecorder:
         }
         if error_message is not None:
             attrs[graph_keys.ERROR_MESSAGE] = error_message
-        attrs.update(_normalize_attributes(attributes))
+        attrs = self._apply_policy(attrs, attributes)
         node = self._add_node(name, graph_keys.OP_GUARD, attrs)
         if source is not None:
             if hasattr(source, "get_last_node"):
@@ -914,7 +1041,7 @@ class GraphRecorder:
             attrs[graph_keys.MAX_WAIT_MS] = max_wait_ms
         if server_url is not None:
             attrs[graph_keys.SERVER_URL] = server_url
-        attrs.update(_normalize_attributes(attributes))
+        attrs = self._apply_policy(attrs, attributes)
         return self._add_node(name, graph_keys.OP_CLAIM, attrs)
 
     def pause(
@@ -936,7 +1063,7 @@ class GraphRecorder:
             attrs[graph_keys.CHECKPOINT_ID] = checkpoint_id
         if timeout_ms is not None:
             attrs[graph_keys.TIMEOUT_MS] = timeout_ms
-        attrs.update(_normalize_attributes(attributes))
+        attrs = self._apply_policy(attrs, attributes)
         return self._add_node(name, graph_keys.OP_PAUSE, attrs)
 
     def resume(
@@ -961,7 +1088,7 @@ class GraphRecorder:
             attrs[graph_keys.POLL_INTERVAL_MS] = poll_interval_ms
         if server_url is not None:
             attrs[graph_keys.SERVER_URL] = server_url
-        attrs.update(_normalize_attributes(attributes))
+        attrs = self._apply_policy(attrs, attributes)
         return self._add_node(name, graph_keys.OP_RESUME, attrs)
 
     def agent(
@@ -986,14 +1113,14 @@ class GraphRecorder:
             attrs[graph_keys.GOALS] = _normalize_value(goals)
         if capabilities is not None:
             attrs[graph_keys.CAPABILITIES] = _normalize_value(capabilities)
-        attrs.update(_normalize_attributes(attributes))
+        attrs = self._apply_policy(attrs, attributes)
         return self._add_node(name, graph_keys.OP_AGENT, attrs)
 
     def yield_(self, name: str | None = None, *, source: NodeRef | None = None, **attributes: Any) -> NodeRef:
         """Yield value from a switch-case region, compiler internal (YIELD)."""
         if name is None:
             name = self._auto_name(graph_keys.OP_YIELD)
-        node = self._add_node(name, graph_keys.OP_YIELD, _normalize_attributes(attributes))
+        node = self._add_node(name, graph_keys.OP_YIELD, self._apply_policy({}, attributes))
         if source is not None:
             if hasattr(source, "get_last_node"):
                 source = source.get_last_node()
@@ -1019,7 +1146,7 @@ class GraphRecorder:
             graph_keys.TASK_SPEC: task_spec,
             graph_keys.TARGET_AGENT: target_agent,
         }
-        attrs.update(_normalize_attributes(attributes))
+        attrs = self._apply_policy(attrs, attributes)
         return self._add_node(name, graph_keys.OP_DELEGATE, attrs)
 
     def negotiate(
@@ -1044,20 +1171,20 @@ class GraphRecorder:
         }
         if max_rounds is not None:
             attrs[graph_keys.MAX_ROUNDS] = max_rounds
-        attrs.update(_normalize_attributes(attributes))
+        attrs = self._apply_policy(attrs, attributes)
         return self._add_node(name, graph_keys.OP_NEGOTIATE, attrs)
 
     def nop(self, name: str | None = None, **attributes: Any) -> NodeRef:
         """No-op passthrough with no side effects or AAM transition (NOP)."""
         if name is None:
             name = self._auto_name(graph_keys.OP_NOP)
-        return self._add_node(name, graph_keys.OP_NOP, _normalize_attributes(attributes))
+        return self._add_node(name, graph_keys.OP_NOP, self._apply_policy({}, attributes))
 
     def identity(self, name: str | None = None, **attributes: Any) -> NodeRef:
         """Identity passthrough that records an AAM identity transition (IDENTITY)."""
         if name is None:
             name = self._auto_name(graph_keys.OP_IDENTITY)
-        return self._add_node(name, graph_keys.OP_IDENTITY, _normalize_attributes(attributes))
+        return self._add_node(name, graph_keys.OP_IDENTITY, self._apply_policy({}, attributes))
 
     def spawn_agent(
         self,
@@ -1108,7 +1235,7 @@ class GraphRecorder:
             attrs[graph_keys.CAPABILITIES] = _normalize_value(capabilities)
         if goals is not None:
             attrs[graph_keys.GOALS] = _normalize_value(goals)
-        attrs.update(_normalize_attributes(attributes))
+        attrs = self._apply_policy(attrs, attributes)
         return self._add_node(name, graph_keys.OP_SPAWN_AGENT, attrs)
 
     def register_capability(
@@ -1133,7 +1260,7 @@ class GraphRecorder:
                 attrs[graph_keys.PARAMETERS_SCHEMA] = json.dumps(parameters_schema)
             else:
                 attrs[graph_keys.PARAMETERS_SCHEMA] = parameters_schema
-        attrs.update(_normalize_attributes(attributes))
+        attrs = self._apply_policy(attrs, attributes)
         return self._add_node(name, graph_keys.OP_REGISTER_CAPABILITY, attrs)
 
     def autonomous(
@@ -1163,7 +1290,7 @@ class GraphRecorder:
         if backend is not None:
             attrs[graph_keys.BACKEND] = backend
         attrs.update(_compose_system_prompt(agent, graph_keys.OP_AUTONOMOUS))
-        attrs.update(_normalize_attributes(attributes))
+        attrs = self._apply_policy(attrs, attributes)
         return self._add_node(name, graph_keys.OP_AUTONOMOUS, attrs)
 
     def to_graph(self) -> ApxmGraph:
@@ -1253,3 +1380,25 @@ def _compose_system_prompt(agent: AgentConfig | None, op: str) -> dict[str, Any]
 
     return attrs
 
+
+def _coerce_node_policy(value: NodePolicy | dict[str, Any] | None) -> NodePolicy | None:
+    if value is None:
+        return None
+    if isinstance(value, NodePolicy):
+        return value
+    if isinstance(value, dict):
+        return NodePolicy(**value)
+    raise TypeError(
+        "policy must be a NodePolicy or dict[str, Any], "
+        f"got {type(value).__name__}"
+    )
+
+
+def _extract_inline_node_policy(attributes: dict[str, Any]) -> NodePolicy | None:
+    if "policy" in attributes and "node_policy" in attributes:
+        raise ValueError("use either policy=... or node_policy=..., not both")
+
+    raw_policy = attributes.pop("policy", None)
+    if raw_policy is None:
+        raw_policy = attributes.pop("node_policy", None)
+    return _coerce_node_policy(raw_policy)

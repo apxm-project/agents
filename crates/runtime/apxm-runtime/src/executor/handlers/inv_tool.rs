@@ -61,8 +61,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         "Executing INV_TOOL operation"
     );
 
-    // Convert inputs to HashMap<String, Value>
-    // Priority: 1) params_json attribute, 2) arg_* attributes, 3) positional inputs
+    // Convert inputs to HashMap<String, Value> strictly from params_json.
     let mut args = HashMap::new();
 
     // First, check for params_json attribute (from InvToolOp MLIR)
@@ -109,23 +108,12 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         }
     }
 
-    // If no args from params_json, check for arg_* attributes (named arguments)
-    if args.is_empty() {
-        let args_from_attrs = node
-            .attributes
-            .iter()
-            .filter(|(k, _)| k.starts_with("arg_"))
-            .map(|(k, v)| (k.trim_start_matches("arg_").to_string(), v.clone()))
-            .collect::<HashMap<String, Value>>();
-
-        if !args_from_attrs.is_empty() {
-            args = args_from_attrs;
-        } else {
-            // Fall back to positional arguments from inputs
-            for (i, input_value) in inputs.iter().enumerate() {
-                args.insert(format!("arg{}", i), input_value.clone());
-            }
-        }
+    if !node.attributes.contains_key(graph_attrs::PARAMS_JSON) && !inputs.is_empty() {
+        return Err(RuntimeError::Operation {
+            op_type: node.op_type,
+            message: "INV_TOOL inputs require a params_json object with named placeholders"
+                .to_string(),
+        });
     }
 
     // Check cancellation before expensive capability invocation
@@ -300,8 +288,8 @@ mod tests {
             Value::String("echo".to_string()),
         );
         node.attributes.insert(
-            "arg_message".to_string(),
-            Value::String("Hello World".to_string()),
+            graph_attrs::PARAMS_JSON.to_string(),
+            Value::String(r#"{"message":"Hello World"}"#.to_string()),
         );
 
         let result = execute(&ctx, &node, vec![]).await.unwrap();
@@ -354,8 +342,10 @@ mod tests {
             "timeout_ms".to_string(),
             Value::Number(apxm_core::types::values::Number::Integer(5000)),
         );
-        node.attributes
-            .insert("arg_message".to_string(), Value::String("Test".to_string()));
+        node.attributes.insert(
+            graph_attrs::PARAMS_JSON.to_string(),
+            Value::String(r#"{"message":"Test"}"#.to_string()),
+        );
 
         let result = execute(&ctx, &node, vec![]).await.unwrap();
         assert_eq!(result.as_string().map(|s| s.as_str()), Some("Echo: Test"));
@@ -413,8 +403,8 @@ mod tests {
             Value::String("echo".to_string()),
         );
         node.attributes.insert(
-            "arg_message".to_string(),
-            Value::String("via Rust".to_string()),
+            graph_attrs::PARAMS_JSON.to_string(),
+            Value::String(r#"{"message":"via Rust"}"#.to_string()),
         );
 
         let result = execute(&ctx, &node, vec![]).await.unwrap();

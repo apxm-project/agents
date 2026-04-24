@@ -2,6 +2,8 @@
 
 import pytest
 
+WEB_TOOL_GROUP = "web"
+
 
 def test_compile_decorator_basic():
     """Test basic @compile decorator."""
@@ -119,6 +121,48 @@ def test_compile_default_provider_does_not_override_per_node():
     explicit_node = by_name["explicit_routed"]
     assert explicit_node.attributes[gen_keys.PROVIDER] == "openai"
     assert explicit_node.attributes[gen_keys.BACKEND] == "openai-prod"
+
+
+def test_compile_default_policy_stamps_nodes():
+    from apxm import GraphRecorder, NodePolicy, compile
+
+    @compile(default_policy=NodePolicy(tool_groups=[WEB_TOOL_GROUP], token_budget=512))
+    def policy_workflow(g: GraphRecorder):
+        g.ask(name="step1", prompt="Research")
+
+    node = policy_workflow._graph.nodes[0]
+    assert node.attributes["tool_groups"] == [WEB_TOOL_GROUP]
+    assert node.attributes["tools_enabled"] is True
+    assert node.attributes["token_budget"] == 512
+
+
+def test_compiled_function_run_sync_forwards_execution_options(monkeypatch):
+    from apxm import ExecutionOptions, GraphRecorder, HookConfig, HookEvent, compile
+
+    @compile()
+    def flow(g: GraphRecorder):
+        g.ask(name="step1", prompt="Research")
+
+    captured: dict[str, object] = {}
+
+    class FakeCompiledFlow:
+        def run_sync(self, *args, session_id=None, execution=None):
+            captured["args"] = args
+            captured["session_id"] = session_id
+            captured["execution"] = execution
+            return "ok"
+
+    monkeypatch.setattr(flow, "_compiled_flow", FakeCompiledFlow())
+    execution = ExecutionOptions(
+        hooks=[HookConfig(event=HookEvent.NODE_COMPLETE, command="echo {{node_id}}")]
+    )
+
+    result = flow.run_sync(execution=execution)
+
+    assert result == "ok"
+    assert captured["args"] == ()
+    assert captured["session_id"] is None
+    assert captured["execution"] is execution
 
 
 def test_compile_with_team_sugar():

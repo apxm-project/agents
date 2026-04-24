@@ -1,17 +1,21 @@
 //! Session management (list, inspect, diff, clean).
 
 use std::collections::HashMap;
-use std::env;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+use apxm_core::paths::ApxmPaths;
 
 use super::cli::*;
 use super::implementations::parse_duration;
 
 pub fn session_command(action: SessionAction, json: bool) -> Result<()> {
     match action {
-        SessionAction::List { status, limit } => session_list_command(status, limit, json),
+        SessionAction::List {
+            status,
+            limit,
+            session_root,
+        } => session_list_command(status, limit, session_root, json),
         SessionAction::Inspect { session } => session_inspect_command(session, json),
         SessionAction::Diff { session1, session2 } => {
             session_diff_command(session1, session2, json)
@@ -20,20 +24,29 @@ pub fn session_command(action: SessionAction, json: bool) -> Result<()> {
             older_than,
             all,
             dry_run,
-        } => session_clean_command(older_than, all, dry_run),
+            session_root,
+        } => session_clean_command(older_than, all, dry_run, session_root),
     }
 }
 
-fn get_sessions_dir() -> Result<PathBuf> {
-    let home = env::var("HOME").context("HOME not set")?;
-    Ok(PathBuf::from(home).join(".apxm/sessions"))
+fn get_sessions_dir(explicit_root: Option<PathBuf>) -> Result<PathBuf> {
+    if let Some(path) = explicit_root {
+        return Ok(path);
+    }
+    let paths = ApxmPaths::discover().context("Failed to discover APXM paths")?;
+    Ok(paths.sessions_dir_for_read())
 }
 
-pub fn session_list_command(status_filter: Option<String>, limit: usize, json: bool) -> Result<()> {
+pub fn session_list_command(
+    status_filter: Option<String>,
+    limit: usize,
+    session_root: Option<PathBuf>,
+    json: bool,
+) -> Result<()> {
     use apxm_core::constants;
     use apxm_core::types::SessionManifest;
 
-    let sessions_dir = get_sessions_dir()?;
+    let sessions_dir = get_sessions_dir(session_root)?;
     if !sessions_dir.exists() {
         if json {
             println!("{{\"sessions\":[]}}");
@@ -212,10 +225,12 @@ fn resolve_session_path(session_id: &str) -> Result<PathBuf> {
         return Ok(path);
     }
 
-    let sessions_dir = get_sessions_dir()?;
-    let session_path = sessions_dir.join(session_id);
-    if session_path.exists() && session_path.is_dir() {
-        return Ok(session_path);
+    let paths = ApxmPaths::discover().context("Failed to discover APXM paths")?;
+    for sessions_dir in paths.session_lookup_dirs() {
+        let session_path = sessions_dir.join(session_id);
+        if session_path.exists() && session_path.is_dir() {
+            return Ok(session_path);
+        }
     }
 
     Err(anyhow::anyhow!("Session not found: {}", session_id))
@@ -381,8 +396,13 @@ fn load_node_timings(session_path: &Path) -> Result<HashMap<u64, u64>> {
     Ok(timings)
 }
 
-pub fn session_clean_command(older_than: Option<String>, all: bool, dry_run: bool) -> Result<()> {
-    let sessions_dir = get_sessions_dir()?;
+pub fn session_clean_command(
+    older_than: Option<String>,
+    all: bool,
+    dry_run: bool,
+    session_root: Option<PathBuf>,
+) -> Result<()> {
+    let sessions_dir = get_sessions_dir(session_root)?;
     if !sessions_dir.exists() {
         println!("No sessions directory found");
         return Ok(());

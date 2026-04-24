@@ -245,7 +245,7 @@ pub(crate) async fn a2a_send_task(
         .await
     {
         Ok(result) => {
-            let resp = to_execute_response(result);
+            let resp = to_execute_response(result, None);
             let output = resp
                 .content
                 .clone()

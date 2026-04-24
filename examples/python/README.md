@@ -25,6 +25,7 @@ print(my_workflow._graph.to_air())
 | `g.reason()` | REASON | Extended reasoning |
 | `g.text()` | TEXT | Constant text node |
 | `g.merge()` | MERGE | Combine multiple inputs |
+| `g.workflow_spawn()` | WORKFLOW_SPAWN | Run a child graph, artifact, or workflow as a separate execution |
 | `g.print()` | PRINT | Output to user |
 | `g.done()` | Terminal | Mark graph output |
 

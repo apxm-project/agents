@@ -25,6 +25,60 @@ pub struct ModelsConfig {
     pub allowlist: Option<Vec<String>>,
 }
 
+/// Configurable execution hook event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HookEvent {
+    GraphStart,
+    GraphEnd,
+    NodeStart,
+    NodeComplete,
+    NodeError,
+    ToolStart,
+    ToolEnd,
+}
+
+impl HookEvent {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::GraphStart => "graph_start",
+            Self::GraphEnd => "graph_end",
+            Self::NodeStart => "node_start",
+            Self::NodeComplete => "node_complete",
+            Self::NodeError => "node_error",
+            Self::ToolStart => "tool_start",
+            Self::ToolEnd => "tool_end",
+        }
+    }
+}
+
+/// Subprocess hook configuration declared in `config.toml`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HookConfig {
+    pub event: HookEvent,
+    pub command: String,
+    #[serde(default)]
+    pub shell: Option<String>,
+}
+
+/// Built-in runtime middleware configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MiddlewareConfig {
+    Timeout {
+        #[serde(default)]
+        default_timeout_ms: Option<u64>,
+    },
+    LoopGuard {
+        #[serde(default = "default_loop_guard_repeats")]
+        max_repeats: usize,
+    },
+}
+
+fn default_loop_guard_repeats() -> usize {
+    1
+}
+
 /// Application configuration loaded from TOML files.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
@@ -46,6 +100,14 @@ pub struct ApXmConfig {
     /// Model governance configuration.
     #[serde(default)]
     pub models: ModelsConfig,
+
+    /// Observer-only execution hooks. Failures are logged and swallowed.
+    #[serde(default)]
+    pub hooks: Vec<HookConfig>,
+
+    /// Built-in dispatcher middlewares for local runtime execution.
+    #[serde(default)]
+    pub middlewares: Vec<MiddlewareConfig>,
 }
 
 /// Configuration for the chat/runtime surface.
@@ -576,6 +638,21 @@ mod tests {
             backend = "openai"
             fallbacks = ["local"]
 
+            [[hooks]]
+            event = "node_complete"
+            command = "echo {{node_id}}"
+
+            [[hooks]]
+            event = "tool_end"
+            command = "echo {{tool_name}}"
+
+            [[middlewares]]
+            kind = "timeout"
+            default_timeout_ms = 7500
+
+            [[middlewares]]
+            kind = "loop_guard"
+            max_repeats = 2
 
             [tools.shell]
             enabled = true
@@ -648,6 +725,20 @@ mod tests {
                 .and_then(|chain| chain.fallbacks.first())
                 .map(String::as_str),
             Some("local")
+        );
+        assert_eq!(config.hooks.len(), 2);
+        assert_eq!(config.hooks[0].event, HookEvent::NodeComplete);
+        assert_eq!(config.hooks[1].event, HookEvent::ToolEnd);
+        assert_eq!(config.middlewares.len(), 2);
+        assert_eq!(
+            config.middlewares[0],
+            MiddlewareConfig::Timeout {
+                default_timeout_ms: Some(7500)
+            }
+        );
+        assert_eq!(
+            config.middlewares[1],
+            MiddlewareConfig::LoopGuard { max_repeats: 2 }
         );
         assert!(config.tools.contains_key("shell"));
     }

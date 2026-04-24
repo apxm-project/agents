@@ -280,6 +280,18 @@ fn get_tool_definitions_from_capabilities(ctx: &ExecutionContext) -> Vec<ToolDef
         .collect()
 }
 
+/// Get tool definitions from the capability system filtered by group.
+fn get_tool_definitions_from_groups(
+    ctx: &ExecutionContext,
+    groups: &[String],
+) -> Vec<ToolDefinition> {
+    ctx.capability_system
+        .list_capabilities_by_groups(groups)
+        .into_iter()
+        .map(|meta| ToolDefinition::new(&meta.name, &meta.description, meta.parameters_schema))
+        .collect()
+}
+
 /// Get specific tools by name from the capability system
 fn get_tools_by_names(ctx: &ExecutionContext, names: &[String]) -> Vec<ToolDefinition> {
     names
@@ -290,6 +302,36 @@ fn get_tools_by_names(ctx: &ExecutionContext, names: &[String]) -> Vec<ToolDefin
             })
         })
         .collect()
+}
+
+fn parse_string_array_attr(node: &Node, attr_name: &str) -> Option<Vec<String>> {
+    node.attributes
+        .get(attr_name)
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_string().map(ToString::to_string))
+                .collect()
+        })
+}
+
+fn resolve_ask_tools(ctx: &ExecutionContext, node: &Node) -> Vec<ToolDefinition> {
+    let tool_names = parse_string_array_attr(node, graph_attrs::TOOLS);
+    let tool_groups = parse_string_array_attr(node, graph_attrs::TOOL_GROUPS);
+    let tools_enabled_all = node
+        .attributes
+        .get(graph_attrs::TOOLS_ENABLED)
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    match (tool_names, tool_groups, tools_enabled_all) {
+        (Some(names), _, _) if !names.is_empty() => get_tools_by_names(ctx, &names),
+        (_, Some(groups), true) if !groups.is_empty() => {
+            get_tool_definitions_from_groups(ctx, &groups)
+        }
+        (_, _, true) => get_tool_definitions_from_capabilities(ctx),
+        _ => vec![],
+    }
 }
 
 /// Execute a single tool call.
@@ -644,27 +686,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     // TOOLS_ENABLED=true (use all registered capabilities). The default is
     // no tools — matches OpenAI/LangChain/CrewAI/PydanticAI behavior.
     if mode == LlmMode::Ask {
-        let tool_names: Option<Vec<String>> = node
-            .attributes
-            .get(graph_attrs::TOOLS)
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_string().map(|s| s.to_string()))
-                    .collect()
-            });
-
-        let tools_enabled_all = node
-            .attributes
-            .get(graph_attrs::TOOLS_ENABLED)
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-
-        let tools = match (tool_names, tools_enabled_all) {
-            (Some(names), _) if !names.is_empty() => get_tools_by_names(ctx, &names),
-            (_, true) => get_tool_definitions_from_capabilities(ctx),
-            _ => vec![],
-        };
+        let tools = resolve_ask_tools(ctx, node);
 
         if !tools.is_empty() {
             // Hard-fail if the resolved backend can't accept tool_choice="auto".
@@ -1310,6 +1332,32 @@ fn parse_structured_output(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::capability::CapabilitySystem;
+    use crate::capability::builtins::{ReadCapability, SearchWebCapability};
+    use crate::memory::{MemoryConfig, MemorySystem};
+    use std::sync::Arc;
+
+    async fn test_ctx_with_grouped_tools() -> ExecutionContext {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .expect("memory"),
+        );
+        let capability_system = Arc::new(CapabilitySystem::new());
+        capability_system
+            .register(Arc::new(ReadCapability::new()))
+            .expect("register read");
+        capability_system
+            .register(Arc::new(SearchWebCapability::new()))
+            .expect("register web");
+
+        ExecutionContext::new(
+            memory,
+            Arc::new(apxm_backends::LLMRegistry::new()),
+            capability_system,
+            crate::aam::Aam::new(),
+        )
+    }
 
     #[test]
     fn test_llm_mode_from_op_type() {
@@ -1464,5 +1512,60 @@ That's all."#;
         assert_eq!(result.tool_call_id, "id123");
         assert_eq!(result.content, "error message");
         assert!(!result.success);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_ask_tools_filters_by_group_when_enabled() {
+        let ctx = test_ctx_with_grouped_tools().await;
+        let mut node = Node::new(1, AISOperationType::Ask);
+        node.attributes
+            .insert(graph_attrs::TOOLS_ENABLED.to_string(), Value::Bool(true));
+        node.attributes.insert(
+            graph_attrs::TOOL_GROUPS.to_string(),
+            Value::Array(vec![Value::String("web".to_string())]),
+        );
+
+        let names: Vec<String> = resolve_ask_tools(&ctx, &node)
+            .into_iter()
+            .map(|tool| tool.name)
+            .collect();
+
+        assert_eq!(names, vec!["search_web".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_ask_tools_explicit_names_override_groups() {
+        let ctx = test_ctx_with_grouped_tools().await;
+        let mut node = Node::new(1, AISOperationType::Ask);
+        node.attributes
+            .insert(graph_attrs::TOOLS_ENABLED.to_string(), Value::Bool(true));
+        node.attributes.insert(
+            graph_attrs::TOOL_GROUPS.to_string(),
+            Value::Array(vec![Value::String("web".to_string())]),
+        );
+        node.attributes.insert(
+            graph_attrs::TOOLS.to_string(),
+            Value::Array(vec![Value::String("read".to_string())]),
+        );
+
+        let names: Vec<String> = resolve_ask_tools(&ctx, &node)
+            .into_iter()
+            .map(|tool| tool.name)
+            .collect();
+
+        assert_eq!(names, vec!["read".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_ask_tools_groups_do_not_enable_tools_by_themselves() {
+        let ctx = test_ctx_with_grouped_tools().await;
+        let mut node = Node::new(1, AISOperationType::Ask);
+        node.attributes.insert(
+            graph_attrs::TOOL_GROUPS.to_string(),
+            Value::Array(vec![Value::String("web".to_string())]),
+        );
+
+        let tools = resolve_ask_tools(&ctx, &node);
+        assert!(tools.is_empty());
     }
 }

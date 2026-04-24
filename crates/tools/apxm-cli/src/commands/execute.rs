@@ -8,6 +8,8 @@ use anyhow::Context;
 use anyhow::Result;
 #[cfg(feature = "driver")]
 use apxm_driver::{Linker, LinkerConfig};
+#[cfg(feature = "driver")]
+use apxm_runtime::RuntimeExecutionResult;
 
 #[cfg(feature = "driver")]
 use super::compile::{graph_from_execution_dag, prepare_graph_input};
@@ -37,6 +39,7 @@ fn setup_session(
     input: &std::path::Path,
     default_stem: &str,
     input_graph: Option<&apxm_compiler::AirModule>,
+    announce: bool,
 ) -> Result<(
     Option<apxm_driver::session_output::SessionOutputWriter>,
     Option<std::sync::Arc<apxm_driver::session_output::SessionEventEmitter>>,
@@ -85,7 +88,9 @@ fn setup_session(
             .context("Failed to write input graph")?;
     }
 
-    eprintln!("Session: {}", w.session_dir().display());
+    if announce {
+        eprintln!("Session: {}", w.session_dir().display());
+    }
 
     let project_root = std::env::current_dir().ok();
     let emitter = std::sync::Arc::new(
@@ -232,6 +237,7 @@ pub async fn execute_command(
     args: Vec<String>,
     opt_level: u8,
     config: Option<PathBuf>,
+    json: bool,
     emit_metrics: Option<PathBuf>,
     emit_session: Option<Option<PathBuf>>,
     emit_profile: Option<PathBuf>,
@@ -271,7 +277,7 @@ pub async fn execute_command(
 
     // Set up session output + live emitter BEFORE execution
     let (writer, emitter, execution_id) =
-        setup_session(&emit_session, &input, "graph", input_graph.as_ref())?;
+        setup_session(&emit_session, &input, "graph", input_graph.as_ref(), !json)?;
 
     if let (Some(graph), Some(writer)) = (input_graph.as_ref(), writer.as_ref()) {
         linker_config.runtime_config.context_stack =
@@ -328,8 +334,7 @@ pub async fn execute_command(
             if let Some(ref e) = emitter {
                 let _ = e.finalize_live(false);
             }
-            eprintln!("{}", err);
-            return Err(anyhow::anyhow!("Execution failed"));
+            return Err(anyhow::anyhow!("Execution failed: {}", err));
         }
     };
 
@@ -338,53 +343,33 @@ pub async fn execute_command(
         h.abort();
     }
 
-    // Emit metrics JSON if requested
-    #[allow(unused_mut)]
-    let mut metrics_json = serde_json::json!({
-        "input": input.display().to_string(),
-        "optimization_level": format!("O{}", opt_level),
-        "execution": {
-            "nodes_executed": result.execution.stats.executed_nodes,
-            "nodes_failed": result.execution.stats.failed_nodes,
-            "duration_ms": result.execution.stats.duration_ms,
-            "status": if result.execution.stats.failed_nodes == 0 { "success" } else { "partial_failure" }
-        },
-        "scheduler": result.execution.scheduler_metrics.to_json()
-    });
+    let metrics_json = build_metrics_json(
+        &input,
+        Some(opt_level),
+        &result.execution,
+        #[cfg(feature = "metrics")]
+        Some(&result.metrics),
+        #[cfg(not(feature = "metrics"))]
+        None,
+    );
 
-    // Merge token accounting snapshot into metrics.
-    // to_json() returns {"token_accounting": {...}}; we lift the inner object
-    // to the top level so the schema is metrics_json["token_accounting"].
-    let token_json = result.execution.token_snapshot.to_json();
-    if let Some(obj) = token_json.get("token_accounting").cloned() {
-        metrics_json["token_accounting"] = obj;
-    }
-
-    #[cfg(feature = "metrics")]
-    {
-        let llm_metrics = &result.execution.llm_metrics;
-        metrics_json["llm"] = serde_json::json!({
-            "total_requests": llm_metrics.total_requests,
-            "total_input_tokens": llm_metrics.total_input_tokens,
-            "total_output_tokens": llm_metrics.total_output_tokens,
-            "avg_latency_ms": llm_metrics.average_latency.as_millis(),
-            "p50_latency_ms": llm_metrics.p50_latency.as_millis(),
-            "p99_latency_ms": llm_metrics.p99_latency.as_millis()
-        });
-
-        let link_metrics = &result.metrics;
-        metrics_json["link_phases"] = serde_json::json!({
-            "compile_ms": link_metrics.compile_time.as_secs_f64() * 1000.0,
-            "runtime_ms": link_metrics.runtime_time.as_secs_f64() * 1000.0
-        });
-    }
+    let written_metrics_path = emit_metrics
+        .as_ref()
+        .map(|path| path.to_string_lossy().to_string());
 
     if let Some(metrics_path) = emit_metrics {
         std::fs::write(&metrics_path, serde_json::to_string_pretty(&metrics_json)?)
             .with_context(|| format!("Failed to write metrics to {}", metrics_path.display()))?;
-
-        println!("Wrote metrics to {}", metrics_path.display());
+        if !json {
+            eprintln!("Wrote metrics to {}", metrics_path.display());
+        }
     }
+
+    let session_dir_for_response = writer
+        .as_ref()
+        .map(|w| w.session_dir().to_string_lossy().to_string());
+
+    let mut written_profile_path: Option<String> = None;
 
     // Finalize session output after execution
     if let Some(writer) = writer {
@@ -416,7 +401,9 @@ pub async fn execute_command(
             )
             .context("Failed to finalize session")?;
 
-        eprintln!("Session complete: {}", writer.session_dir().display());
+        if !json {
+            eprintln!("Session complete: {}", writer.session_dir().display());
+        }
 
         // Extract and emit execution profile if requested
         if let Some(profile_path) = emit_profile {
@@ -429,33 +416,33 @@ pub async fn execute_command(
                     profile.save_to_file(&profile_path).with_context(|| {
                         format!("Failed to save profile to {}", profile_path.display())
                     })?;
-                    eprintln!("Wrote profile to {}", profile_path.display());
+                    written_profile_path = Some(profile_path.to_string_lossy().to_string());
+                    if !json {
+                        eprintln!("Wrote profile to {}", profile_path.display());
+                    }
                 }
                 Err(e) => {
-                    eprintln!("Warning: Failed to extract profile: {}", e);
+                    if !json {
+                        eprintln!("Warning: Failed to extract profile: {}", e);
+                    }
                 }
             }
         }
     }
 
-    // Print graph outputs
-    if result.execution.results.is_empty() {
+    if json {
+        let response = build_execution_response(
+            &result.execution,
+            execution_id.clone(),
+            session_dir_for_response,
+            written_metrics_path,
+            written_profile_path,
+        );
+        println!("{}", serde_json::to_string_pretty(&response)?);
+    } else if result.execution.results.is_empty() {
         eprintln!("Warning: No output values");
     } else {
-        for (key, value) in &result.execution.results {
-            // Skip printing null values (void operations like PRINT)
-            if matches!(value, apxm_core::types::values::Value::Null) {
-                continue;
-            }
-
-            if result.execution.results.len() == 1 {
-                // Single result: print just the value
-                println!("{}", value);
-            } else {
-                // Multiple results: print key=value pairs
-                println!("{}={}", key, value);
-            }
-        }
+        print_result_values(&result.execution.results);
     }
 
     // Gracefully shutdown runtime to close all agent processes
@@ -469,6 +456,7 @@ pub async fn run_command(
     input: PathBuf,
     args: Vec<String>,
     config: Option<PathBuf>,
+    json: bool,
     emit_metrics: Option<PathBuf>,
     emit_session: Option<Option<PathBuf>>,
     emit_profile: Option<PathBuf>,
@@ -523,8 +511,13 @@ pub async fn run_command(
     };
 
     // Set up session output + live emitter BEFORE execution
-    let (writer, emitter, execution_id) =
-        setup_session(&emit_session, &input, "artifact", artifact_graph.as_ref())?;
+    let (writer, emitter, execution_id) = setup_session(
+        &emit_session,
+        &input,
+        "artifact",
+        artifact_graph.as_ref(),
+        !json,
+    )?;
 
     if let (Some(graph), Some(writer)) = (artifact_graph.as_ref(), writer.as_ref()) {
         linker_config.runtime_config.context_stack =
@@ -564,25 +557,34 @@ pub async fn run_command(
         }
     };
 
-    // Build metrics JSON
-    let metrics_json = serde_json::json!({
-        "input": input.display().to_string(),
-        "execution": {
-            "nodes_executed": result.stats.executed_nodes,
-            "nodes_failed": result.stats.failed_nodes,
-            "duration_ms": result.stats.duration_ms,
-            "status": if result.stats.failed_nodes == 0 { "success" } else { "partial_failure" }
-        },
-        "scheduler": result.scheduler_metrics.to_json()
-    });
+    let metrics_json = build_metrics_json(
+        &input,
+        None,
+        &result,
+        #[cfg(feature = "metrics")]
+        None,
+        #[cfg(not(feature = "metrics"))]
+        None,
+    );
+
+    let written_metrics_path = emit_metrics
+        .as_ref()
+        .map(|path| path.to_string_lossy().to_string());
 
     // Emit metrics JSON if requested
     if let Some(metrics_path) = emit_metrics {
         std::fs::write(&metrics_path, serde_json::to_string_pretty(&metrics_json)?)
             .with_context(|| format!("Failed to write metrics to {}", metrics_path.display()))?;
-
-        println!("Wrote metrics to {}", metrics_path.display());
+        if !json {
+            eprintln!("Wrote metrics to {}", metrics_path.display());
+        }
     }
+
+    let session_dir_for_response = writer
+        .as_ref()
+        .map(|w| w.session_dir().to_string_lossy().to_string());
+
+    let mut written_profile_path: Option<String> = None;
 
     // Finalize session output after execution
     if let Some(writer) = writer {
@@ -609,7 +611,9 @@ pub async fn run_command(
             )
             .context("Failed to finalize session")?;
 
-        eprintln!("Session complete: {}", writer.session_dir().display());
+        if !json {
+            eprintln!("Session complete: {}", writer.session_dir().display());
+        }
 
         // Extract and emit execution profile if requested
         if let Some(profile_path) = emit_profile {
@@ -622,17 +626,241 @@ pub async fn run_command(
                     profile.save_to_file(&profile_path).with_context(|| {
                         format!("Failed to save profile to {}", profile_path.display())
                     })?;
-                    eprintln!("Wrote profile to {}", profile_path.display());
+                    written_profile_path = Some(profile_path.to_string_lossy().to_string());
+                    if !json {
+                        eprintln!("Wrote profile to {}", profile_path.display());
+                    }
                 }
                 Err(e) => {
-                    eprintln!("Warning: Failed to extract profile: {}", e);
+                    if !json {
+                        eprintln!("Warning: Failed to extract profile: {}", e);
+                    }
                 }
             }
         }
+    }
+
+    if json {
+        let response = build_execution_response(
+            &result,
+            execution_id.clone(),
+            session_dir_for_response,
+            written_metrics_path,
+            written_profile_path,
+        );
+        println!("{}", serde_json::to_string_pretty(&response)?);
+    } else if result.results.is_empty() {
+        eprintln!("Warning: No output values");
+    } else {
+        print_result_values(&result.results);
     }
 
     // Gracefully shutdown runtime to close all agent processes
     runtime.shutdown();
 
     Ok(())
+}
+
+#[cfg(feature = "driver")]
+fn print_result_values(results: &std::collections::HashMap<u64, apxm_core::types::Value>) {
+    for (key, value) in results {
+        if matches!(value, apxm_core::types::values::Value::Null) {
+            continue;
+        }
+
+        let rendered = value_rendered_text(value);
+
+        if results.len() == 1 {
+            println!("{}", rendered);
+        } else {
+            println!("{}={}", key, rendered);
+        }
+    }
+}
+
+#[cfg(feature = "driver")]
+fn value_rendered_text(value: &apxm_core::types::Value) -> String {
+    match value {
+        apxm_core::types::values::Value::String(text) => text.clone(),
+        _ => value.to_string(),
+    }
+}
+
+#[cfg(feature = "driver")]
+fn best_result_content(
+    results: &std::collections::HashMap<u64, apxm_core::types::Value>,
+) -> Option<String> {
+    let mut best: Option<(u64, String)> = None;
+    for (key, value) in results {
+        if matches!(value, apxm_core::types::values::Value::Null) {
+            continue;
+        }
+        let candidate = value_rendered_text(value);
+        match best {
+            Some((best_key, _)) if *key <= best_key => {}
+            _ => best = Some((*key, candidate)),
+        }
+    }
+    best.map(|(_, value)| value)
+}
+
+#[cfg(feature = "driver")]
+fn build_execution_response(
+    result: &RuntimeExecutionResult,
+    execution_id: Option<String>,
+    session_dir: Option<String>,
+    metrics_path: Option<String>,
+    profile_path: Option<String>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "content": best_result_content(&result.results),
+        "execution_id": execution_id,
+        "session_dir": session_dir,
+        "metrics_path": metrics_path,
+        "profile_path": profile_path,
+        "results": result.results,
+        "stats": {
+            "executed_nodes": result.stats.executed_nodes,
+            "failed_nodes": result.stats.failed_nodes,
+            "duration_ms": result.stats.duration_ms,
+        },
+        "llm_usage": llm_usage_json(result),
+    })
+}
+
+#[cfg(feature = "driver")]
+fn llm_usage_json(_result: &RuntimeExecutionResult) -> serde_json::Value {
+    #[cfg(feature = "metrics")]
+    {
+        return serde_json::json!({
+            "input_tokens": _result.llm_metrics.total_input_tokens,
+            "output_tokens": _result.llm_metrics.total_output_tokens,
+            "total_requests": _result.llm_metrics.total_requests,
+        });
+    }
+
+    #[cfg(not(feature = "metrics"))]
+    {
+        serde_json::json!({
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_requests": 0,
+        })
+    }
+}
+
+#[cfg(feature = "driver")]
+fn build_metrics_json(
+    input: &std::path::Path,
+    opt_level: Option<u8>,
+    result: &RuntimeExecutionResult,
+    #[cfg(feature = "metrics")] link_metrics: Option<&apxm_driver::LinkMetrics>,
+    #[cfg(not(feature = "metrics"))] _link_metrics: Option<()>,
+) -> serde_json::Value {
+    let mut metrics_json = serde_json::json!({
+        "input": input.display().to_string(),
+        "optimization_level": opt_level.map(|level| format!("O{}", level)),
+        "execution": {
+            "nodes_executed": result.stats.executed_nodes,
+            "nodes_failed": result.stats.failed_nodes,
+            "duration_ms": result.stats.duration_ms,
+            "status": if result.stats.failed_nodes == 0 { "success" } else { "partial_failure" }
+        },
+        "scheduler": result.scheduler_metrics.to_json(),
+        "llm": llm_usage_json(result),
+        "link_phases": serde_json::Value::Null,
+    });
+
+    let token_json = result.token_snapshot.to_json();
+    if let Some(obj) = token_json.get("token_accounting").cloned() {
+        metrics_json["token_accounting"] = obj;
+    }
+
+    #[cfg(feature = "metrics")]
+    {
+        let llm_metrics = &result.llm_metrics;
+        metrics_json["llm"] = serde_json::json!({
+            "total_requests": llm_metrics.total_requests,
+            "total_input_tokens": llm_metrics.total_input_tokens,
+            "total_output_tokens": llm_metrics.total_output_tokens,
+            "avg_latency_ms": llm_metrics.average_latency.as_millis(),
+            "p50_latency_ms": llm_metrics.p50_latency.as_millis(),
+            "p99_latency_ms": llm_metrics.p99_latency.as_millis()
+        });
+
+        if let Some(link_metrics) = link_metrics {
+            metrics_json["link_phases"] = serde_json::json!({
+                "compile_ms": link_metrics.compile_time.as_secs_f64() * 1000.0,
+                "runtime_ms": link_metrics.runtime_time.as_secs_f64() * 1000.0
+            });
+        }
+    }
+
+    metrics_json
+}
+
+#[cfg(all(test, feature = "driver"))]
+mod tests {
+    use super::{build_execution_response, build_metrics_json};
+    use apxm_core::types::{execution::ExecutionStats, values::Value};
+    use apxm_runtime::{
+        RuntimeExecutionResult, SchedulerMetrics,
+        executor::token_accounting::{TokenAccountingSnapshot, TokenUsageSummary},
+    };
+    use std::collections::HashMap;
+    use std::path::Path;
+
+    fn sample_result() -> RuntimeExecutionResult {
+        let mut results = HashMap::new();
+        results.insert(7, Value::String("done".to_string()));
+
+        RuntimeExecutionResult {
+            results,
+            stats: ExecutionStats {
+                executed_nodes: 3,
+                failed_nodes: 0,
+                duration_ms: 42,
+                node_statuses: vec![],
+            },
+            #[cfg(feature = "metrics")]
+            llm_metrics: apxm_backends::AggregatedMetrics::default(),
+            scheduler_metrics: SchedulerMetrics::default(),
+            all_outputs: None,
+            node_output_map: None,
+            token_snapshot: TokenAccountingSnapshot {
+                per_node: HashMap::new(),
+                per_flow: HashMap::new(),
+                per_agent: HashMap::new(),
+                total: TokenUsageSummary::default(),
+            },
+        }
+    }
+
+    #[test]
+    fn execution_response_includes_machine_paths_and_ids() {
+        let response = build_execution_response(
+            &sample_result(),
+            Some("exec-123".to_string()),
+            Some("/tmp/session".to_string()),
+            Some("/tmp/metrics.json".to_string()),
+            Some("/tmp/profile.json".to_string()),
+        );
+
+        assert_eq!(response["execution_id"], "exec-123");
+        assert_eq!(response["session_dir"], "/tmp/session");
+        assert_eq!(response["metrics_path"], "/tmp/metrics.json");
+        assert_eq!(response["profile_path"], "/tmp/profile.json");
+        assert_eq!(response["content"], "done");
+        assert_eq!(response["stats"]["executed_nodes"], 3);
+    }
+
+    #[test]
+    fn metrics_json_keeps_shared_schema_for_run_and_execute() {
+        let metrics = build_metrics_json(Path::new("demo.air"), None, &sample_result(), None);
+        assert_eq!(metrics["input"], "demo.air");
+        assert!(metrics.get("optimization_level").is_some());
+        assert!(metrics.get("llm").is_some());
+        assert!(metrics.get("token_accounting").is_some());
+        assert!(metrics.get("link_phases").is_some());
+    }
 }

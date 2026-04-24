@@ -118,6 +118,11 @@ impl WriteCapability {
                 }),
             )
             .with_returns("string")
+            .with_groups(vec![
+                "file".to_string(),
+                "file:write".to_string(),
+                "write".to_string(),
+            ])
             .with_latency(30),
             config,
         }
@@ -227,11 +232,9 @@ impl Default for WriteCapability {
 #[async_trait]
 impl CapabilityExecutor for WriteCapability {
     async fn execute(&self, args: HashMap<String, Value>) -> CapabilityResult<Value> {
-        let file_path = require_string_arg(&args, "file_path", "path", &self.metadata.name)?;
+        let file_path = require_string_arg(&args, "file_path", &self.metadata.name)?;
         let content = args
             .get("content")
-            .or_else(|| args.get("arg_content"))
-            .or_else(|| args.get("arg1"))
             .and_then(|value| value.as_string())
             .ok_or_else(|| RuntimeError::Capability {
                 capability: self.metadata.name.clone(),

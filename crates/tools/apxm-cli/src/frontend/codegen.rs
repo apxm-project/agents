@@ -6,6 +6,11 @@ use std::path::Path;
 use anyhow::Result;
 
 use apxm_core::constants::mlir::types as mlir_types;
+use apxm_core::types::{
+    WORKFLOW_SPAWN_PATH_TARGET_KINDS, WORKFLOW_TARGET_KIND_ARTIFACT_PATH,
+    WORKFLOW_TARGET_KIND_GRAPH_PATH, WORKFLOW_TARGET_KIND_REGISTERED_FLOW,
+    WORKFLOW_TARGET_KIND_WORKFLOW_PATH,
+};
 
 use super::registry::{
     FrontendAgentTemplate, FrontendConstant, FrontendEmissionSpec, FrontendModelSpec,
@@ -84,6 +89,32 @@ fn render_constants_module() -> String {
     for item in graph_attr_constants() {
         render_constant(&mut buf, &item);
     }
+
+    buf.push_str("\n# Workflow target kinds\n");
+    buf.push_str(&format!(
+        "WORKFLOW_TARGET_KIND_REGISTERED_FLOW: Final[str] = {}\n",
+        py_string(WORKFLOW_TARGET_KIND_REGISTERED_FLOW)
+    ));
+    buf.push_str(&format!(
+        "WORKFLOW_TARGET_KIND_GRAPH_PATH: Final[str] = {}\n",
+        py_string(WORKFLOW_TARGET_KIND_GRAPH_PATH)
+    ));
+    buf.push_str(&format!(
+        "WORKFLOW_TARGET_KIND_ARTIFACT_PATH: Final[str] = {}\n",
+        py_string(WORKFLOW_TARGET_KIND_ARTIFACT_PATH)
+    ));
+    buf.push_str(&format!(
+        "WORKFLOW_TARGET_KIND_WORKFLOW_PATH: Final[str] = {}\n",
+        py_string(WORKFLOW_TARGET_KIND_WORKFLOW_PATH)
+    ));
+    let workflow_spawn_target_kinds = WORKFLOW_SPAWN_PATH_TARGET_KINDS
+        .iter()
+        .map(|kind| py_string(kind))
+        .collect::<Vec<_>>()
+        .join(", ");
+    buf.push_str(&format!(
+        "WORKFLOW_SPAWN_PATH_TARGET_KINDS: Final[tuple[str, ...]] = ({workflow_spawn_target_kinds})\n"
+    ));
 
     // Valid parameter types
     let types = valid_param_types();
@@ -286,7 +317,10 @@ fn render_emission_module() -> String {
     buf.push_str("    if isinstance(v, (list, tuple)):\n");
     buf.push_str("        return \"[\" + \", \".join(_format_attr_value(x) for x in v) + \"]\"\n");
     buf.push_str("    if isinstance(v, dict):\n");
-    buf.push_str("        return _quote(json.dumps(v))\n");
+    buf.push_str("        items = []\n");
+    buf.push_str("        for key in sorted(v.keys()):\n");
+    buf.push_str("            items.append(f'{str(key)} = {_format_attr_value(v[key])}')\n");
+    buf.push_str("        return \"{\" + \", \".join(items) + \"}\"\n");
     buf.push_str("    return _quote(str(v))\n\n\n");
 
     let specs = emission_specs();
@@ -367,6 +401,23 @@ fn render_emission_fn(buf: &mut String, spec: &FrontendEmissionSpec) {
         buf.push_str("    primary = \"\"\n");
     }
 
+    if spec.positional_attrs.is_empty() {
+        buf.push_str("    positional = \"\"\n");
+    } else {
+        buf.push_str("    positional_parts = []\n");
+        for attr in &spec.positional_attrs {
+            buf.push_str(&format!(
+                "    if \"{}\" in attrs and attrs[\"{}\"] is not None:\n",
+                attr, attr
+            ));
+            buf.push_str(&format!(
+                "        positional_parts.append(f' {{_quote(str(attrs[\"{}\"]))}}')\n",
+                attr
+            ));
+        }
+        buf.push_str("    positional = \"\".join(positional_parts)\n");
+    }
+
     if spec.syntactic_keywords.is_empty() {
         buf.push_str("    syn_kw = \"\"\n");
     } else {
@@ -384,7 +435,8 @@ fn render_emission_fn(buf: &mut String, spec: &FrontendEmissionSpec) {
         buf.push_str("    syn_kw = \"\".join(syn_parts)\n");
     }
 
-    if !spec.keywords.is_empty() {
+    if !spec.keywords.is_empty() || !spec.positional_attrs.is_empty() || spec.primary_attr.is_some()
+    {
         buf.push_str("    kw_parts = []\n");
         for kw in &spec.keywords {
             buf.push_str(&format!(
@@ -396,6 +448,27 @@ fn render_emission_fn(buf: &mut String, spec: &FrontendEmissionSpec) {
                 kw, kw
             ));
         }
+        let mut consumed = spec.keywords.clone();
+        consumed.extend(spec.positional_attrs.iter().cloned());
+        if let Some(primary) = &spec.primary_attr {
+            consumed.push(primary.clone());
+        }
+        for (_, attr) in &spec.syntactic_keywords {
+            consumed.push(attr.clone());
+        }
+        consumed.sort();
+        consumed.dedup();
+        buf.push_str("    for key in sorted(attrs.keys()):\n");
+        buf.push_str(&format!(
+            "        if key in {{{}}} or attrs[key] is None:\n",
+            consumed
+                .iter()
+                .map(|value| py_string(value))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+        buf.push_str("            continue\n");
+        buf.push_str("        kw_parts.append(f'{key} = {_format_attr_value(attrs[key])}')\n");
         buf.push_str("    kw_str = f' {{{\", \".join(kw_parts)}}}' if kw_parts else \"\"\n");
     } else {
         buf.push_str("    kw_str = \"\"\n");
@@ -403,7 +476,7 @@ fn render_emission_fn(buf: &mut String, spec: &FrontendEmissionSpec) {
 
     if spec.result_type == "Void" {
         buf.push_str(&format!(
-            "    return f\"ais.{}{{primary}}{{syn_kw}}{{ctx}}{{kw_str}}\"\n\n\n",
+            "    return f\"ais.{}{{primary}}{{positional}}{{syn_kw}}{{ctx}}{{kw_str}}\"\n\n\n",
             spec.mlir_mnemonic
         ));
     } else {
@@ -413,7 +486,7 @@ fn render_emission_fn(buf: &mut String, spec: &FrontendEmissionSpec) {
         };
         let sep = if is_direct { " ->" } else { " :" };
         buf.push_str(&format!(
-            "    return f\"{{ssa_name}} = ais.{}{{primary}}{{syn_kw}}{{ctx}}{{kw_str}}{sep} {}\"\n\n\n",
+            "    return f\"{{ssa_name}} = ais.{}{{primary}}{{positional}}{{syn_kw}}{{ctx}}{{kw_str}}{sep} {}\"\n\n\n",
             spec.mlir_mnemonic, type_str
         ));
     }
@@ -830,12 +903,12 @@ mod tests {
         assert!(
             rendered
                 .models_py
-                .contains("CLAUDE_SONNET_4: Final[ModelId] = ModelId(\"claude-sonnet-4-5\")")
+                .contains("CLAUDE_SONNET_4_5: Final[ModelId] = ModelId(\"claude-sonnet-4-5\")")
         );
         assert!(
             rendered
                 .models_py
-                .contains("DEFAULT: Final[ModelId] = CLAUDE_SONNET_4")
+                .contains("DEFAULT: Final[ModelId] = CLAUDE_SONNET_4_6")
         );
     }
 
@@ -909,9 +982,8 @@ mod tests {
         assert!(rendered.models_py.contains("QWEN_2_5_14B: Final[ModelId]"));
         assert!(rendered.models_py.contains("LLAMA_3_1_8B: Final[ModelId]"));
         assert!(rendered.models_py.contains("LLAMA_3_1_70B: Final[ModelId]"));
-        // The default for vllm is QWEN_2_5_7B.
         assert!(
-            rendered
+            !rendered
                 .models_py
                 .contains("DEFAULT: Final[ModelId] = QWEN_2_5_7B")
         );
@@ -929,6 +1001,16 @@ mod tests {
             rendered
                 .constants_py
                 .contains("PYTHON_TYPE_TO_APXM: Final[dict[str, str]]")
+        );
+        assert!(
+            rendered
+                .constants_py
+                .contains("WORKFLOW_TARGET_KIND_GRAPH_PATH: Final[str] = \"graph_path\"")
+        );
+        assert!(
+            rendered
+                .constants_py
+                .contains("WORKFLOW_SPAWN_PATH_TARGET_KINDS: Final[tuple[str, ...]]")
         );
     }
 }

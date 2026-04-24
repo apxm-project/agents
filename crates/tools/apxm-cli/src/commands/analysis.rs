@@ -249,7 +249,7 @@ pub fn validate_command(
         });
         println!("{}", serde_json::to_string_pretty(&result).unwrap());
         if !valid {
-            return Err(anyhow::anyhow!("{} error(s) found", errors.len()));
+            return Err(super::output_already_emitted());
         }
     } else if valid {
         print_status_line(&input.display().to_string(), Status::Ok, "valid");

@@ -3,6 +3,9 @@
 import json
 import pytest
 
+WEB_TOOL_GROUP = "web"
+FILE_READ_TOOL_GROUP = "file:read"
+
 
 def test_simple_graph():
     """Test basic graph construction."""
@@ -19,6 +22,64 @@ def test_simple_graph():
     assert graph.nodes[0].name == "query"
     assert graph.nodes[0].op == "ASK"
     assert graph.nodes[0].attributes["template_str"] == "What is {topic}?"
+
+
+def test_agent_config_emits_tool_groups_and_enables_grouped_tools():
+    from apxm import AgentConfig
+
+    agent = AgentConfig(name="researcher", tool_groups=[WEB_TOOL_GROUP, FILE_READ_TOOL_GROUP])
+    attrs = agent.to_node_attributes()
+
+    assert attrs["tool_groups"] == [WEB_TOOL_GROUP, FILE_READ_TOOL_GROUP]
+    assert attrs["tools_enabled"] is True
+
+
+def test_agent_config_explicit_tools_enabled_overrides_tool_group_default():
+    from apxm import AgentConfig
+
+    agent = AgentConfig(name="researcher", tool_groups=[WEB_TOOL_GROUP], tools_enabled=False)
+    attrs = agent.to_node_attributes()
+
+    assert attrs["tool_groups"] == [WEB_TOOL_GROUP]
+    assert attrs["tools_enabled"] is False
+
+
+def test_graph_policy_applies_default_node_attrs():
+    from apxm import GraphRecorder, NodePolicy
+
+    g = GraphRecorder(
+        "policy_defaults",
+        policy=NodePolicy(tool_groups=[WEB_TOOL_GROUP], token_budget=128, timeout_ms=2500),
+    )
+    g.ask(name="research", prompt="Find sources")
+
+    graph = g.to_graph()
+    attrs = graph.nodes[0].attributes
+    assert attrs["tool_groups"] == [WEB_TOOL_GROUP]
+    assert attrs["tools_enabled"] is True
+    assert attrs["token_budget"] == 128
+    assert attrs["timeout_ms"] == 2500
+
+
+def test_node_policy_overrides_graph_policy():
+    from apxm import GraphRecorder, NodePolicy
+
+    g = GraphRecorder("policy_override", policy=NodePolicy(tool_groups=[WEB_TOOL_GROUP], token_budget=64))
+    g.ask(
+        name="research",
+        prompt="Find sources",
+        policy=NodePolicy(
+            tool_groups=[FILE_READ_TOOL_GROUP],
+            token_budget=256,
+            tools_enabled=False,
+        ),
+    )
+
+    graph = g.to_graph()
+    attrs = graph.nodes[0].attributes
+    assert attrs["tool_groups"] == [FILE_READ_TOOL_GROUP]
+    assert attrs["token_budget"] == 256
+    assert attrs["tools_enabled"] is False
 
 
 def test_graph_with_params():
@@ -209,6 +270,8 @@ def test_call_compiled_flow():
     assert len(flow_call_nodes) == 1
     assert flow_call_nodes[0].attributes["agent_name"] == "helper"
     assert flow_call_nodes[0].attributes["flow_name"] == "main"
+    assert flow_call_nodes[0].attributes["input_names"] == ["topic"]
+    assert flow_call_nodes[0].attributes["args"]["topic"] == "{topic}"
 
     # Should have data edge from step1 -> flow_call
     data_edges = [e for e in graph.edges if e.dependency == "Data"]
@@ -231,6 +294,92 @@ def test_call_with_literal_args():
     flow_call_node = [n for n in graph.nodes if n.op == "FLOW_CALL"][0]
     # Literal args should be serialized in the args attribute
     assert "AI safety" in str(flow_call_node.attributes.get("args", ""))
+    assert flow_call_node.attributes["args"]["topic"] == "AI safety"
+
+
+def test_flow_call_auto_wires_node_ref_args():
+    """Test direct flow_call() auto-wires NodeRef argument values."""
+    from apxm import GraphRecorder
+
+    g = GraphRecorder("main_flow")
+    step1 = g.ask(name="get_topic", prompt="What topic?")
+    step2 = g.flow_call(
+        agent_name="researcher",
+        flow_name="main",
+        args={"topic": step1, "audience": "engineers"},
+    )
+    g.done(step2)
+
+    graph = g.to_graph()
+    flow_call_node = [n for n in graph.nodes if n.op == "FLOW_CALL"][0]
+    assert flow_call_node.attributes["input_names"] == ["topic"]
+    assert flow_call_node.attributes["args"]["topic"] == "{topic}"
+    assert flow_call_node.attributes["args"]["audience"] == "engineers"
+
+    data_edges = [e for e in graph.edges if e.dependency == "Data"]
+    assert any(e.from_id == step1._node_id and e.to_id == step2._node_id for e in data_edges)
+
+
+def test_workflow_spawn_auto_wires_node_ref_args():
+    from apxm import GraphRecorder, WorkflowTargetKind
+
+    g = GraphRecorder("main_flow")
+    step1 = g.ask(name="get_topic", prompt="What topic?")
+    step2 = g.workflow_spawn(
+        target_kind=WorkflowTargetKind.WORKFLOW_PATH,
+        target="workflows/review.apxmw",
+        args={"topic": step1, "audience": "engineers"},
+    )
+    g.done(step2)
+
+    graph = g.to_graph()
+    spawn_node = [n for n in graph.nodes if n.op == "WORKFLOW_SPAWN"][0]
+    assert spawn_node.attributes["target_kind"] == WorkflowTargetKind.WORKFLOW_PATH.value
+    assert spawn_node.attributes["target"] == "workflows/review.apxmw"
+    assert spawn_node.attributes["await_result"] is True
+    assert spawn_node.attributes["input_names"] == ["topic"]
+    assert spawn_node.attributes["args"]["topic"] == "{topic}"
+    assert spawn_node.attributes["args"]["audience"] == "engineers"
+
+    data_edges = [e for e in graph.edges if e.dependency == "Data"]
+    assert any(e.from_id == step1._node_id and e.to_id == step2._node_id for e in data_edges)
+
+
+def test_workflow_spawn_applies_node_policy_and_session_root():
+    from apxm import GraphRecorder, NodePolicy, WorkflowTargetKind
+
+    g = GraphRecorder("main_flow")
+    node = g.workflow_spawn(
+        target_kind=WorkflowTargetKind.GRAPH_PATH,
+        target="graphs/review.air",
+        session_root=".apxm/custom",
+        node_policy=NodePolicy(timeout_ms=2_500, token_budget=64),
+    )
+
+    graph = g.to_graph()
+    spawn_node = [n for n in graph.nodes if n.id == node._node_id][0]
+    assert spawn_node.attributes["session_root"] == ".apxm/custom"
+    assert spawn_node.attributes["timeout_ms"] == 2500
+    assert spawn_node.attributes["token_budget"] == 64
+
+
+def test_workflow_spawn_rejects_invalid_kind_and_detached_mode():
+    from apxm import GraphRecorder, WorkflowTargetKind
+
+    g = GraphRecorder("main_flow")
+
+    with pytest.raises(ValueError, match="target_kind"):
+        g.workflow_spawn(
+            target_kind=WorkflowTargetKind.REGISTERED_FLOW,
+            target="foo.air",
+        )
+
+    with pytest.raises(ValueError, match="await_result=True"):
+        g.workflow_spawn(
+            target_kind=WorkflowTargetKind.GRAPH_PATH,
+            target="foo.air",
+            await_result=False,
+        )
 
 
 def test_embed_compiled_flow():
@@ -306,7 +455,7 @@ def test_call_loaded_graph():
     # Create and save helper graph
     helper_g = GraphRecorder("helper_flow")
     helper_g.param("input", "str")
-    helper_g.ask(name="process", prompt="Process {0}")
+    helper_g.ask(name="process", prompt="Process {input}")
     helper_graph = helper_g.to_graph()
 
     with tempfile.NamedTemporaryFile(suffix=".json", mode="w", delete=False) as f:
@@ -319,12 +468,28 @@ def test_call_loaded_graph():
         # Use in a new graph via call()
         g = GraphRecorder("main_flow")
         step1 = g.ask(name="get_input", prompt="What input?")
-        step2 = g.call(loaded, topic=step1)
+        step2 = g.call(loaded, input=step1)
         g.done(step2)
 
         graph = g.to_graph()
         flow_call_nodes = [n for n in graph.nodes if n.op == "FLOW_CALL"]
         assert len(flow_call_nodes) == 1
         assert flow_call_nodes[0].attributes["agent_name"] == "helper_flow"
+        assert flow_call_nodes[0].attributes["input_names"] == ["input"]
+        assert flow_call_nodes[0].attributes["args"]["input"] == "{input}"
     finally:
         Path(tmp_path).unlink(missing_ok=True)
+
+
+def test_call_rejects_unknown_argument_names():
+    from apxm import GraphRecorder
+
+    helper_g = GraphRecorder("helper_flow")
+    helper_g.param("input", "str")
+    helper_graph = helper_g.to_graph()
+
+    g = GraphRecorder("main_flow")
+    step1 = g.ask(name="get_input", prompt="What input?")
+
+    with pytest.raises(TypeError, match="unknown argument"):
+        g.call(helper_graph, topic=step1)

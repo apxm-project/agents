@@ -411,6 +411,7 @@ fn to_tablegen_name(op_type: AISOperationType) -> String {
         AISOperationType::Return => "Return",
         AISOperationType::Switch => "Switch",
         AISOperationType::FlowCall => "FlowCall",
+        AISOperationType::WorkflowSpawn => "WorkflowSpawn",
         AISOperationType::Merge => "Merge",
         AISOperationType::Fence => "Fence",
         AISOperationType::WaitAll => "WaitAll",

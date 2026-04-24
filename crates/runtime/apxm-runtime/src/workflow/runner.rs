@@ -151,11 +151,18 @@ impl WorkflowRunner {
                 }
 
                 // Resolve parameters using template resolution
-                let _resolved_params: HashMap<String, String> = step
+                let resolved_params: HashMap<String, String> = step
                     .params
                     .iter()
                     .map(|(k, v)| (k.clone(), template::resolve(v, &step_outputs, &args)))
                     .collect();
+                let invocation = step.spawn_invocation(
+                    &self.base_dir,
+                    resolved_params
+                        .iter()
+                        .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+                        .collect(),
+                );
 
                 let _step_session_dir = workflow_session_dir.join(&step.id);
                 let graph_path = self.base_dir.join(&step.path);
@@ -164,6 +171,7 @@ impl WorkflowRunner {
                     "workflow",
                     step = %step_id,
                     graph = %graph_path.display(),
+                    target = %invocation.target.label(),
                     "Starting step"
                 );
 

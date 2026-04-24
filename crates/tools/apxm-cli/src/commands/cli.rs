@@ -287,6 +287,9 @@ pub enum SessionAction {
         /// Limit number of sessions shown
         #[arg(long, default_value = "20")]
         limit: usize,
+        /// Explicit sessions root to inspect instead of local/global discovery
+        #[arg(long)]
+        session_root: Option<PathBuf>,
     },
     /// Show detailed information about a session
     Inspect {
@@ -311,6 +314,9 @@ pub enum SessionAction {
         /// Dry run (show what would be deleted)
         #[arg(long)]
         dry_run: bool,
+        /// Explicit sessions root to clean instead of local/global discovery
+        #[arg(long)]
+        session_root: Option<PathBuf>,
     },
 }
 
@@ -320,9 +326,15 @@ pub enum WorkflowAction {
     Run {
         /// Legacy workflow file (.apxmw)
         file: PathBuf,
+        /// Workflow arguments as a JSON object for machine callers
+        #[arg(long, conflicts_with = "args")]
+        args_json: Option<String>,
         /// Workflow arguments (name=value format)
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
+        /// Explicit sessions root for this workflow run
+        #[arg(long)]
+        session_root: Option<PathBuf>,
     },
     /// Validate a legacy workflow file
     Validate {

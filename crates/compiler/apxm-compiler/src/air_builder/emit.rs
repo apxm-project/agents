@@ -673,26 +673,28 @@ fn emit_node(
             Some(('(', ')')),
         ),
         AISOperationType::Verify => {
-            let template = get_string_attr(
-                &node.attributes,
-                &[graph_attrs::TEMPLATE_STR, graph_attrs::PROMPT],
-            )
-            .unwrap_or_else(|| "Verify claim against evidence".to_string());
+            let template = "Verify claim against evidence".to_string();
             let attrs = extra_attr_dict(
                 &node.attributes,
-                &[graph_attrs::TEMPLATE_STR, graph_attrs::PROMPT],
+                &[graph_attrs::CLAIM_TEXT, graph_attrs::EVIDENCE],
             );
 
-            let claim = if let Some(input) = inputs.first() {
-                input.clone()
-            } else {
-                emit_const_token(state, "claim")
-            };
-            let evidence = if let Some(input) = inputs.get(1) {
-                input.clone()
-            } else {
-                claim.clone()
-            };
+            let claim =
+                if let Some(text) = get_string_attr(&node.attributes, &[graph_attrs::CLAIM_TEXT]) {
+                    emit_const_token(state, &text)
+                } else if let Some(input) = inputs.first() {
+                    input.clone()
+                } else {
+                    emit_const_token(state, "claim")
+                };
+            let evidence =
+                if let Some(text) = get_string_attr(&node.attributes, &[graph_attrs::EVIDENCE]) {
+                    emit_const_token(state, &text)
+                } else if let Some(input) = inputs.first() {
+                    input.clone()
+                } else {
+                    emit_const_token(state, "evidence")
+                };
 
             let result = format!("%n{}", node.id);
             state.emit(format!(
@@ -826,6 +828,42 @@ fn emit_node(
             &[graph_attrs::FLOW_NAME, "flow", graph_attrs::TARGET],
             Some(('(', ')')),
         ),
+        AISOperationType::WorkflowSpawn => {
+            let target_kind = get_string_attr(&node.attributes, &[graph_attrs::TARGET_KIND])
+                .ok_or_else(|| {
+                    AirError::Emission(format!(
+                        "WORKFLOW_SPAWN node '{}' missing required attribute '{}'",
+                        node.name,
+                        graph_attrs::TARGET_KIND
+                    ))
+                })?;
+            let target =
+                get_string_attr(&node.attributes, &[graph_attrs::TARGET]).ok_or_else(|| {
+                    AirError::Emission(format!(
+                        "WORKFLOW_SPAWN node '{}' missing required attribute '{}'",
+                        node.name,
+                        graph_attrs::TARGET
+                    ))
+                })?;
+            let attrs = extra_attr_dict(
+                &node.attributes,
+                &[graph_attrs::TARGET_KIND, graph_attrs::TARGET],
+            );
+            let result = format!("%n{}", node.id);
+            let context = format_context(&inputs, '(', ')');
+
+            state.emit(format!(
+                "    {result} = ais.workflow_spawn {} {}{}{} : !ais.token",
+                quote_string(&target_kind),
+                quote_string(&target),
+                context,
+                attrs
+            ));
+            Ok(Some(MlirValueRef {
+                ssa: result,
+                ty: MlirValueType::Token,
+            }))
+        }
         AISOperationType::Jump => {
             let target =
                 get_string_attr(&node.attributes, &[graph_attrs::TARGET, graph_attrs::LABEL])

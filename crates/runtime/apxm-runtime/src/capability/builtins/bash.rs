@@ -82,6 +82,7 @@ impl BashCapability {
                 }),
             )
             .with_returns("string")
+            .with_groups(vec!["shell".to_string(), "exec".to_string()])
             .with_latency(250),
             config,
         }
@@ -175,7 +176,6 @@ impl BashCapability {
 
     fn timeout_secs(&self, args: &HashMap<String, Value>) -> u64 {
         args.get("timeout")
-            .or_else(|| args.get("arg_timeout"))
             .or_else(|| args.get("timeout_secs"))
             .and_then(|value| value.as_u64())
             .unwrap_or(self.config.timeout_secs)
@@ -183,7 +183,6 @@ impl BashCapability {
 
     fn needs_network(&self, args: &HashMap<String, Value>) -> bool {
         args.get("needs_network")
-            .or_else(|| args.get("arg_needs_network"))
             .and_then(|value| value.as_bool())
             .unwrap_or(false)
     }
@@ -196,8 +195,7 @@ impl BashCapability {
     }
 
     fn build_exec_request(&self, args: &HashMap<String, Value>) -> CapabilityResult<ExecRequest> {
-        let command =
-            require_string_arg(args, "command", "arg_command", &self.metadata.name)?.to_string();
+        let command = require_string_arg(args, "command", &self.metadata.name)?.to_string();
         self.validate_command(&command)?;
 
         let working_dir = self.working_directory();

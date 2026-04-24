@@ -89,6 +89,7 @@ pub fn operation_effects(op: &AISOperationType) -> OperationEffects {
         AISOperationType::Return => OperationEffects::new(),
         AISOperationType::Switch => OperationEffects::new(),
         AISOperationType::FlowCall => OperationEffects::new().read(Beliefs).write(Beliefs),
+        AISOperationType::WorkflowSpawn => OperationEffects::new().read(Beliefs).write(Beliefs),
 
         // Synchronization -- Fence is a pure ordering barrier, no AAM mutation
         AISOperationType::Fence => OperationEffects::new(),

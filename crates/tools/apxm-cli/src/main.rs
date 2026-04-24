@@ -9,8 +9,10 @@ mod frontend;
 
 use anyhow::Result;
 use commands::*;
+use serde_json::json;
 #[cfg(feature = "driver")]
 use std::path::PathBuf;
+use std::process::ExitCode;
 
 /// Resolve the --emit-session / --no-emit-session flag pair.
 ///
@@ -30,8 +32,12 @@ fn resolve_emit_session(
 /// Initialize the tracing subscriber based on the --trace flag or RUST_LOG env var.
 /// If neither is provided, no subscriber is registered (zero overhead).
 #[cfg(feature = "driver")]
-fn initialize_tracing(level: &Option<String>) {
+fn initialize_tracing(level: &Option<String>, json_mode: bool) {
     use tracing_subscriber::{EnvFilter, fmt, prelude::*};
+
+    if json_mode {
+        return;
+    }
 
     let filter_str = match level {
         Some(lvl) => format!(
@@ -59,24 +65,46 @@ fn initialize_tracing(level: &Option<String>) {
 
 #[cfg(feature = "driver")]
 #[tokio::main]
-async fn main() -> Result<()> {
-    run_cli().await
-}
-
-#[cfg(not(feature = "driver"))]
-fn main() -> Result<()> {
-    let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(run_cli_no_driver())
-}
-
-#[cfg(feature = "driver")]
-async fn run_cli() -> Result<()> {
+async fn main() -> ExitCode {
     use clap::Parser;
 
     let cli = Cli::parse();
+    let json_mode = cli.json;
+    match run_cli(cli).await {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) => {
+            emit_cli_error(&err, json_mode);
+            ExitCode::from(1)
+        }
+    }
+}
 
+#[cfg(not(feature = "driver"))]
+fn main() -> ExitCode {
+    use clap::Parser;
+
+    let cli = Cli::parse();
+    let json_mode = cli.json;
+    let rt = match tokio::runtime::Runtime::new() {
+        Ok(rt) => rt,
+        Err(err) => {
+            emit_cli_error(&anyhow::Error::new(err), json_mode);
+            return ExitCode::from(1);
+        }
+    };
+    match rt.block_on(run_cli_no_driver(cli)) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) => {
+            emit_cli_error(&err, json_mode);
+            ExitCode::from(1)
+        }
+    }
+}
+
+#[cfg(feature = "driver")]
+async fn run_cli(cli: Cli) -> Result<()> {
     // Initialize tracing if --trace flag is provided
-    initialize_tracing(&cli.trace);
+    initialize_tracing(&cli.trace, cli.json);
 
     match cli.command {
         Commands::Init { name } => init_command(&name),
@@ -118,6 +146,7 @@ async fn run_cli() -> Result<()> {
                 args,
                 opt_level,
                 cli.config,
+                cli.json,
                 emit_metrics,
                 resolve_emit_session(emit_session, no_emit_session),
                 emit_profile,
@@ -136,6 +165,7 @@ async fn run_cli() -> Result<()> {
                 input,
                 args,
                 cli.config,
+                cli.json,
                 emit_metrics,
                 resolve_emit_session(emit_session, no_emit_session),
                 emit_profile,
@@ -169,10 +199,7 @@ async fn run_cli() -> Result<()> {
 }
 
 #[cfg(not(feature = "driver"))]
-async fn run_cli_no_driver() -> Result<()> {
-    use clap::Parser;
-
-    let cli = Cli::parse();
+async fn run_cli_no_driver(cli: Cli) -> Result<()> {
     match cli.command {
         Commands::Init { name } => init_command(&name),
         Commands::Doctor => doctor_command(cli.config, cli.json),
@@ -200,6 +227,25 @@ async fn run_cli_no_driver() -> Result<()> {
         _ => Err(anyhow::anyhow!(
             "Command requires the `driver` feature. Rebuild through `dekk apxm build`, then re-run the command."
         )),
+    }
+}
+
+fn emit_cli_error(err: &anyhow::Error, json_mode: bool) {
+    if err
+        .downcast_ref::<commands::OutputAlreadyEmitted>()
+        .is_some()
+    {
+        return;
+    }
+
+    if json_mode {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({ "error": err.to_string() }))
+                .expect("serialize cli error")
+        );
+    } else {
+        eprintln!("{err}");
     }
 }
 

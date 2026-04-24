@@ -263,7 +263,7 @@ mod tests {
             .find(|s| s.op == "ASK")
             .unwrap();
         assert!(!ask.long_description.is_empty());
-        assert_eq!(ask.latency, "low");
+        assert_eq!(ask.latency, "medium");
         assert!(!ask.fields.is_empty());
     }
 

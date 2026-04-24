@@ -414,6 +414,19 @@ impl CapabilitySystem {
         self.registry.list_metadata()
     }
 
+    /// List capabilities whose declared groups intersect the requested set.
+    pub fn list_capabilities_by_groups(&self, groups: &[String]) -> Vec<CapabilityMetadata> {
+        if groups.is_empty() {
+            return Vec::new();
+        }
+
+        self.registry
+            .list_metadata()
+            .into_iter()
+            .filter(|meta| meta.groups.iter().any(|group| groups.contains(group)))
+            .collect()
+    }
+
     /// Check if capability exists
     pub fn has_capability(&self, name: &str) -> bool {
         self.registry.contains(name)
@@ -821,6 +834,62 @@ mod tests {
             executed_directly.load(Ordering::SeqCst),
             "Capability execute() should be called for non-sandboxed capabilities"
         );
+    }
+
+    #[test]
+    fn test_list_capabilities_by_groups_filters_to_matches() {
+        let system = CapabilitySystem::new();
+
+        struct GroupedCapability {
+            metadata: CapabilityMetadata,
+        }
+
+        #[async_trait::async_trait]
+        impl executor::CapabilityExecutor for GroupedCapability {
+            async fn execute(&self, _args: HashMap<String, Value>) -> CapabilityResult<Value> {
+                Ok(Value::Null)
+            }
+
+            fn metadata(&self) -> &CapabilityMetadata {
+                &self.metadata
+            }
+        }
+
+        let web = Arc::new(GroupedCapability {
+            metadata: CapabilityMetadata::new(
+                "web_tool",
+                "Web tool",
+                serde_json::json!({"type": "object"}),
+            )
+            .with_groups(vec!["web".to_string()]),
+        });
+        let file = Arc::new(GroupedCapability {
+            metadata: CapabilityMetadata::new(
+                "file_tool",
+                "File tool",
+                serde_json::json!({"type": "object"}),
+            )
+            .with_groups(vec!["file:read".to_string()]),
+        });
+        let ungrouped = Arc::new(GroupedCapability {
+            metadata: CapabilityMetadata::new(
+                "ungrouped_tool",
+                "Ungrouped tool",
+                serde_json::json!({"type": "object"}),
+            ),
+        });
+
+        system.register(web).unwrap();
+        system.register(file).unwrap();
+        system.register(ungrouped).unwrap();
+
+        let names: Vec<String> = system
+            .list_capabilities_by_groups(&["web".to_string()])
+            .into_iter()
+            .map(|meta| meta.name)
+            .collect();
+
+        assert_eq!(names, vec!["web_tool".to_string()]);
     }
 
     #[tokio::test]

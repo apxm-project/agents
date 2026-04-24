@@ -24,8 +24,10 @@ use super::dag_splicer::{DagSplicer, NoOpSplicer};
 use super::events::ExecutionEventEmitter;
 use super::inner_plan_linker::{InnerPlanLinker, NoOpLinker};
 use super::memoization::ResponseCache;
+use super::middleware::OperationMiddleware;
 use super::timing_tracker::TimingTracker;
 use super::token_accounting::TokenAccountant;
+use super::workflow_spawner::{NoOpWorkflowSpawner, WorkflowSpawner};
 use crate::model_router::ModelRouter;
 
 /// Execution context passed to all operation handlers.
@@ -40,6 +42,7 @@ pub struct ExecutionContext {
     pub scope_id: String,
     pub scope_registry: Arc<ScopeRegistry>,
     pub inner_plan_linker: Arc<dyn InnerPlanLinker>,
+    pub workflow_spawner: Arc<dyn WorkflowSpawner>,
     pub dag_splicer: Arc<dyn DagSplicer>,
     pub flow_registry: Arc<FlowRegistry>,
     pub current_agent: Option<Arc<Agent>>,
@@ -52,6 +55,8 @@ pub struct ExecutionContext {
     pub token_accountant: Arc<TokenAccountant>,
     pub timing_tracker: Arc<TimingTracker>,
     pub response_cache: Arc<ResponseCache>,
+    /// Dispatcher-level middleware that wraps every node execution.
+    pub middlewares: Vec<Arc<dyn OperationMiddleware>>,
     pub cancellation_token: CancellationToken,
     /// Only used for INV/tool nodes; LLM operations bypass sandboxing.
     pub sandbox_registry: Arc<SandboxRegistry>,
@@ -128,6 +133,7 @@ impl ExecutionContext {
             scope_id,
             scope_registry,
             inner_plan_linker: Arc::new(NoOpLinker),
+            workflow_spawner: Arc::new(NoOpWorkflowSpawner),
             dag_splicer: Arc::new(NoOpSplicer),
             flow_registry: Arc::new(FlowRegistry::new()),
             current_agent: None,
@@ -140,6 +146,7 @@ impl ExecutionContext {
             token_accountant: Arc::new(TokenAccountant::new()),
             timing_tracker: Arc::new(TimingTracker::new()),
             response_cache,
+            middlewares: Vec::new(),
             cancellation_token: CancellationToken::new(),
             sandbox_registry: Arc::new(SandboxRegistry::new()),
             process_table: Arc::new(ProcessTable::new()),
@@ -222,6 +229,18 @@ impl ExecutionContext {
         self
     }
 
+    /// Replace the dispatcher middleware chain for this context.
+    pub fn with_middlewares(mut self, middlewares: Vec<Arc<dyn OperationMiddleware>>) -> Self {
+        self.middlewares = middlewares;
+        self
+    }
+
+    /// Append one dispatcher middleware to this context.
+    pub fn with_middleware(mut self, middleware: Arc<dyn OperationMiddleware>) -> Self {
+        self.middlewares.push(middleware);
+        self
+    }
+
     /// Get elapsed time since execution started
     pub fn elapsed(&self) -> std::time::Duration {
         self.start_time.elapsed()
@@ -267,6 +286,7 @@ impl ExecutionContext {
             scope_id,
             scope_registry: Arc::clone(&self.scope_registry),
             inner_plan_linker: Arc::clone(&self.inner_plan_linker),
+            workflow_spawner: Arc::clone(&self.workflow_spawner),
             dag_splicer: Arc::clone(&self.dag_splicer),
             flow_registry: Arc::clone(&self.flow_registry),
             current_agent: self.current_agent.as_ref().map(Arc::clone),
@@ -279,6 +299,7 @@ impl ExecutionContext {
             token_accountant: Arc::clone(&self.token_accountant),
             timing_tracker: Arc::clone(&self.timing_tracker),
             response_cache: Arc::clone(&self.response_cache),
+            middlewares: self.middlewares.clone(),
             cancellation_token: self.cancellation_token.child(),
             sandbox_registry: Arc::clone(&self.sandbox_registry),
             process_table: Arc::clone(&self.process_table),
@@ -339,6 +360,22 @@ impl ExecutionContext {
 mod tests {
     use super::*;
     use crate::memory::MemoryConfig;
+    use apxm_core::types::{execution::Node, values::Value};
+
+    struct TestMiddleware;
+
+    #[async_trait::async_trait]
+    impl OperationMiddleware for TestMiddleware {
+        async fn around(
+            &self,
+            _ctx: &ExecutionContext,
+            _node: &Node,
+            _inputs: Vec<Value>,
+            _next: crate::executor::Next<'_>,
+        ) -> crate::executor::Result<Value> {
+            Ok(Value::Null)
+        }
+    }
 
     #[tokio::test]
     async fn test_execution_context_creation() {
@@ -358,6 +395,7 @@ mod tests {
         assert!(ctx.current_agent.is_none());
         assert_eq!(ctx.metadata.get(metadata::SCOPE_ID), Some(&ctx.scope_id));
         assert_eq!(ctx.scope_registry.len(), 1);
+        assert!(ctx.middlewares.is_empty());
     }
 
     #[tokio::test]
@@ -413,5 +451,23 @@ mod tests {
             parent.scope_registry.children_of(parent.scope_id()).len(),
             1
         );
+    }
+
+    #[tokio::test]
+    async fn test_child_context_inherits_middlewares() {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(LLMRegistry::new());
+        let capability_system = Arc::new(CapabilitySystem::new());
+
+        let parent = ExecutionContext::new(memory, llm_registry, capability_system, Aam::new())
+            .with_middleware(Arc::new(TestMiddleware));
+        let child = parent.child();
+
+        assert_eq!(parent.middlewares.len(), 1);
+        assert_eq!(child.middlewares.len(), 1);
     }
 }

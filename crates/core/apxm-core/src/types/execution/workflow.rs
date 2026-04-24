@@ -5,14 +5,120 @@
 //! `SubWorkflow` variant that can recursively contain other `WorkflowNode`s,
 //! breaking the fixed 4-level Agent -> Flow -> Task -> Node hierarchy.
 
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 use super::{Edge, Node};
 
+pub const WORKFLOW_TARGET_KIND_REGISTERED_FLOW: &str = "registered_flow";
+pub const WORKFLOW_TARGET_KIND_GRAPH_PATH: &str = "graph_path";
+pub const WORKFLOW_TARGET_KIND_ARTIFACT_PATH: &str = "artifact_path";
+pub const WORKFLOW_TARGET_KIND_WORKFLOW_PATH: &str = "workflow_path";
+pub const WORKFLOW_SPAWN_PATH_TARGET_KINDS: [&str; 3] = [
+    WORKFLOW_TARGET_KIND_GRAPH_PATH,
+    WORKFLOW_TARGET_KIND_ARTIFACT_PATH,
+    WORKFLOW_TARGET_KIND_WORKFLOW_PATH,
+];
+
+/// High-level invocation mode for composed workflow execution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowInvocationKind {
+    Embed,
+    FlowCall,
+    WorkflowSpawn,
+}
+
+/// Explicit target of a composed workflow invocation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "target_kind", rename_all = "snake_case")]
+pub enum WorkflowTarget {
+    RegisteredFlow {
+        agent_name: String,
+        flow_name: String,
+    },
+    GraphPath {
+        path: String,
+    },
+    ArtifactPath {
+        path: String,
+    },
+    WorkflowPath {
+        path: String,
+    },
+}
+
+impl WorkflowTarget {
+    pub fn kind_name(&self) -> &'static str {
+        match self {
+            WorkflowTarget::RegisteredFlow { .. } => WORKFLOW_TARGET_KIND_REGISTERED_FLOW,
+            WorkflowTarget::GraphPath { .. } => WORKFLOW_TARGET_KIND_GRAPH_PATH,
+            WorkflowTarget::ArtifactPath { .. } => WORKFLOW_TARGET_KIND_ARTIFACT_PATH,
+            WorkflowTarget::WorkflowPath { .. } => WORKFLOW_TARGET_KIND_WORKFLOW_PATH,
+        }
+    }
+
+    pub fn from_path_target_kind(
+        target_kind: &str,
+        path: impl Into<String>,
+    ) -> Result<Self, String> {
+        let path = path.into();
+        match target_kind {
+            WORKFLOW_TARGET_KIND_GRAPH_PATH => Ok(WorkflowTarget::GraphPath { path }),
+            WORKFLOW_TARGET_KIND_ARTIFACT_PATH => Ok(WorkflowTarget::ArtifactPath { path }),
+            WORKFLOW_TARGET_KIND_WORKFLOW_PATH => Ok(WorkflowTarget::WorkflowPath { path }),
+            _ => Err(format!(
+                "Unsupported workflow target_kind '{target_kind}'. Expected one of: {}",
+                WORKFLOW_SPAWN_PATH_TARGET_KINDS.join(", ")
+            )),
+        }
+    }
+
+    /// Human-readable label for diagnostics and manifests.
+    pub fn label(&self) -> String {
+        match self {
+            WorkflowTarget::RegisteredFlow {
+                agent_name,
+                flow_name,
+            } => format!("{agent_name}.{flow_name}"),
+            WorkflowTarget::GraphPath { path }
+            | WorkflowTarget::ArtifactPath { path }
+            | WorkflowTarget::WorkflowPath { path } => path.clone(),
+        }
+    }
+}
+
+/// Typed boundary record for nested workflow invocation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WorkflowInvocation {
+    pub kind: WorkflowInvocationKind,
+    pub target: WorkflowTarget,
+    #[serde(default)]
+    pub args: HashMap<String, serde_json::Value>,
+    #[serde(default = "default_await_result")]
+    pub await_result: bool,
+    #[serde(default)]
+    pub session_root: Option<String>,
+    #[serde(default)]
+    pub session_dir: Option<String>,
+}
+
+const fn default_await_result() -> bool {
+    true
+}
+
+impl WorkflowInvocation {
+    /// Returns true when the invocation creates a separate workflow execution.
+    pub fn is_cross_execution(&self) -> bool {
+        matches!(self.kind, WorkflowInvocationKind::WorkflowSpawn)
+    }
+}
+
 /// A workflow step that can recursively contain sub-workflows.
 ///
 /// This enum enables arbitrary nesting depth beyond the original fixed
-/// 4-level hierarchy.  Existing handlers continue to work with `Node`
+/// 4-level hierarchy. Existing handlers continue to work with `Node`
 /// directly; `WorkflowNode` is an overlay type that can be adopted
 /// incrementally.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,6 +138,9 @@ pub enum WorkflowNode {
         args: serde_json::Value,
     },
 
+    /// Spawn another workflow/graph/artifact as a separate execution.
+    WorkflowSpawn { invocation: WorkflowInvocation },
+
     /// An inline sub-workflow (recursive).
     SubWorkflow {
         name: String,
@@ -45,7 +154,9 @@ impl WorkflowNode {
     pub fn flatten(&self) -> Vec<Node> {
         match self {
             WorkflowNode::Operation(node) => vec![node.clone()],
-            WorkflowNode::FlowCall { .. } | WorkflowNode::Invocation { .. } => Vec::new(),
+            WorkflowNode::FlowCall { .. }
+            | WorkflowNode::Invocation { .. }
+            | WorkflowNode::WorkflowSpawn { .. } => Vec::new(),
             WorkflowNode::SubWorkflow { nodes, .. } => {
                 nodes.iter().flat_map(|n| n.flatten()).collect()
             }
@@ -54,14 +165,16 @@ impl WorkflowNode {
 
     /// Maximum nesting depth of this workflow node.
     ///
-    /// - Leaf variants (`Operation`, `FlowCall`, `Invocation`) have depth 0.
+    /// - Leaf variants (`Operation`, `FlowCall`, `Invocation`, `WorkflowSpawn`)
+    ///   have depth 0.
     /// - A `SubWorkflow` has depth 1 + max depth of its children
     ///   (or 1 if it has no children).
     pub fn depth(&self) -> usize {
         match self {
             WorkflowNode::Operation(_)
             | WorkflowNode::FlowCall { .. }
-            | WorkflowNode::Invocation { .. } => 0,
+            | WorkflowNode::Invocation { .. }
+            | WorkflowNode::WorkflowSpawn { .. } => 0,
             WorkflowNode::SubWorkflow { nodes, .. } => {
                 1 + nodes.iter().map(|n| n.depth()).max().unwrap_or(0)
             }
@@ -75,6 +188,7 @@ impl WorkflowNode {
             WorkflowNode::Operation(_)
                 | WorkflowNode::FlowCall { .. }
                 | WorkflowNode::Invocation { .. }
+                | WorkflowNode::WorkflowSpawn { .. }
         )
     }
 
@@ -89,6 +203,7 @@ impl WorkflowNode {
             WorkflowNode::Operation(_) => "operation",
             WorkflowNode::FlowCall { .. } => "flow_call",
             WorkflowNode::Invocation { .. } => "invocation",
+            WorkflowNode::WorkflowSpawn { .. } => "workflow_spawn",
             WorkflowNode::SubWorkflow { .. } => "sub_workflow",
         }
     }
@@ -98,7 +213,8 @@ impl WorkflowNode {
         match self {
             WorkflowNode::Operation(_)
             | WorkflowNode::FlowCall { .. }
-            | WorkflowNode::Invocation { .. } => 1,
+            | WorkflowNode::Invocation { .. }
+            | WorkflowNode::WorkflowSpawn { .. } => 1,
             WorkflowNode::SubWorkflow { nodes, .. } => {
                 1 + nodes.iter().map(|n| n.node_count()).sum::<usize>()
             }
@@ -110,7 +226,6 @@ impl WorkflowNode {
 mod tests {
     use super::*;
     use crate::types::{AISOperationType, NodeMetadata};
-    use std::collections::HashMap;
 
     fn make_node(id: u64, op: AISOperationType) -> Node {
         Node {
@@ -155,6 +270,25 @@ mod tests {
     }
 
     #[test]
+    fn workflow_spawn_leaf_depth_zero() {
+        let wn = WorkflowNode::WorkflowSpawn {
+            invocation: WorkflowInvocation {
+                kind: WorkflowInvocationKind::WorkflowSpawn,
+                target: WorkflowTarget::GraphPath {
+                    path: "graphs/reviewer.air".into(),
+                },
+                args: HashMap::from([("topic".into(), serde_json::json!("apxm"))]),
+                await_result: true,
+                session_root: None,
+                session_dir: None,
+            },
+        };
+        assert_eq!(wn.depth(), 0);
+        assert!(wn.is_leaf());
+        assert_eq!(wn.kind(), "workflow_spawn");
+    }
+
+    #[test]
     fn flatten_operation_returns_node() {
         let node = make_node(42, AISOperationType::Ask);
         let wn = WorkflowNode::Operation(node.clone());
@@ -179,6 +313,90 @@ mod tests {
             args: serde_json::Value::Null,
         };
         assert!(wn.flatten().is_empty());
+    }
+
+    #[test]
+    fn flatten_workflow_spawn_returns_empty() {
+        let wn = WorkflowNode::WorkflowSpawn {
+            invocation: WorkflowInvocation {
+                kind: WorkflowInvocationKind::WorkflowSpawn,
+                target: WorkflowTarget::WorkflowPath {
+                    path: "workflow/review.apxmw".into(),
+                },
+                args: HashMap::new(),
+                await_result: true,
+                session_root: None,
+                session_dir: None,
+            },
+        };
+        assert!(wn.flatten().is_empty());
+    }
+
+    #[test]
+    fn workflow_target_kind_names_are_stable() {
+        assert_eq!(
+            WorkflowTarget::RegisteredFlow {
+                agent_name: "agent".into(),
+                flow_name: "main".into(),
+            }
+            .kind_name(),
+            WORKFLOW_TARGET_KIND_REGISTERED_FLOW
+        );
+        assert_eq!(
+            WorkflowTarget::GraphPath {
+                path: "graphs/reviewer.air".into(),
+            }
+            .kind_name(),
+            WORKFLOW_TARGET_KIND_GRAPH_PATH
+        );
+        assert_eq!(
+            WorkflowTarget::ArtifactPath {
+                path: "build/reviewer.apxmobj".into(),
+            }
+            .kind_name(),
+            WORKFLOW_TARGET_KIND_ARTIFACT_PATH
+        );
+        assert_eq!(
+            WorkflowTarget::WorkflowPath {
+                path: "workflow/review.apxmw".into(),
+            }
+            .kind_name(),
+            WORKFLOW_TARGET_KIND_WORKFLOW_PATH
+        );
+    }
+
+    #[test]
+    fn workflow_spawn_target_kind_parser_accepts_supported_kinds() {
+        assert!(matches!(
+            WorkflowTarget::from_path_target_kind(
+                WORKFLOW_TARGET_KIND_GRAPH_PATH,
+                "graphs/reviewer.air"
+            ),
+            Ok(WorkflowTarget::GraphPath { .. })
+        ));
+        assert!(matches!(
+            WorkflowTarget::from_path_target_kind(
+                WORKFLOW_TARGET_KIND_ARTIFACT_PATH,
+                "build/reviewer.apxmobj"
+            ),
+            Ok(WorkflowTarget::ArtifactPath { .. })
+        ));
+        assert!(matches!(
+            WorkflowTarget::from_path_target_kind(
+                WORKFLOW_TARGET_KIND_WORKFLOW_PATH,
+                "workflow/review.apxmw"
+            ),
+            Ok(WorkflowTarget::WorkflowPath { .. })
+        ));
+    }
+
+    #[test]
+    fn workflow_spawn_target_kind_parser_rejects_unknown_kind() {
+        let error = WorkflowTarget::from_path_target_kind("registered_flow", "oops")
+            .expect_err("registered_flow is not a supported WORKFLOW_SPAWN target kind");
+        assert!(error.contains(WORKFLOW_TARGET_KIND_GRAPH_PATH));
+        assert!(error.contains(WORKFLOW_TARGET_KIND_ARTIFACT_PATH));
+        assert!(error.contains(WORKFLOW_TARGET_KIND_WORKFLOW_PATH));
     }
 
     #[test]
@@ -212,11 +430,6 @@ mod tests {
 
     #[test]
     fn nested_sub_workflows_depth() {
-        // depth-3 tree:
-        //   SubWorkflow (level1)
-        //     SubWorkflow (level2)
-        //       SubWorkflow (level3)
-        //         Operation (leaf, depth 0)
         let wn = WorkflowNode::SubWorkflow {
             name: "level1".into(),
             nodes: vec![WorkflowNode::SubWorkflow {
@@ -255,6 +468,18 @@ mod tests {
                     capability: "tool".into(),
                     args: serde_json::Value::Null,
                 },
+                WorkflowNode::WorkflowSpawn {
+                    invocation: WorkflowInvocation {
+                        kind: WorkflowInvocationKind::WorkflowSpawn,
+                        target: WorkflowTarget::ArtifactPath {
+                            path: "dist/reviewer.apxmobj".into(),
+                        },
+                        args: HashMap::new(),
+                        await_result: true,
+                        session_root: None,
+                        session_dir: None,
+                    },
+                },
             ],
             edges: vec![],
         };
@@ -289,7 +514,6 @@ mod tests {
             ],
             edges: vec![],
         };
-        // outer(1) + op(1) + inner(1) + op(1) + op(1) = 5
         assert_eq!(wn.node_count(), 5);
     }
 
@@ -312,6 +536,18 @@ mod tests {
                     flow_name: "sub".into(),
                     inputs: vec!["x".into()],
                 },
+                WorkflowNode::WorkflowSpawn {
+                    invocation: WorkflowInvocation {
+                        kind: WorkflowInvocationKind::WorkflowSpawn,
+                        target: WorkflowTarget::WorkflowPath {
+                            path: "workflow/review.apxmw".into(),
+                        },
+                        args: HashMap::from([("depth".into(), serde_json::json!(2))]),
+                        await_result: false,
+                        session_root: None,
+                        session_dir: None,
+                    },
+                },
                 WorkflowNode::SubWorkflow {
                     name: "child".into(),
                     nodes: vec![WorkflowNode::Invocation {
@@ -327,23 +563,58 @@ mod tests {
         let json = serde_json::to_string_pretty(&wn).unwrap();
         let restored: WorkflowNode = serde_json::from_str(&json).unwrap();
         assert_eq!(restored.depth(), 2);
-        assert_eq!(restored.node_count(), 5);
-        assert!(restored.flatten().len() == 1); // only the Operation
+        assert_eq!(restored.node_count(), 6);
+        assert_eq!(restored.flatten().len(), 1);
     }
 
     #[test]
     fn deeply_nested_stress() {
-        // Build 50 levels of nesting to make sure recursion works
         let mut current = WorkflowNode::Operation(make_node(1, AISOperationType::InvTool));
         for i in 0..50 {
             current = WorkflowNode::SubWorkflow {
-                name: format!("level_{}", i),
+                name: format!("level_{i}"),
                 nodes: vec![current],
                 edges: vec![],
             };
         }
         assert_eq!(current.depth(), 50);
         assert_eq!(current.flatten().len(), 1);
-        assert_eq!(current.node_count(), 51); // 50 SubWorkflows + 1 Operation
+        assert_eq!(current.node_count(), 51);
+    }
+
+    #[test]
+    fn workflow_target_label_formats_diagnostic_name() {
+        let target = WorkflowTarget::RegisteredFlow {
+            agent_name: "research".into(),
+            flow_name: "main".into(),
+        };
+        assert_eq!(target.label(), "research.main");
+    }
+
+    #[test]
+    fn workflow_invocation_cross_execution_only_for_spawn() {
+        let flow_call = WorkflowInvocation {
+            kind: WorkflowInvocationKind::FlowCall,
+            target: WorkflowTarget::RegisteredFlow {
+                agent_name: "research".into(),
+                flow_name: "main".into(),
+            },
+            args: HashMap::new(),
+            await_result: true,
+            session_root: None,
+            session_dir: None,
+        };
+        let spawned = WorkflowInvocation {
+            kind: WorkflowInvocationKind::WorkflowSpawn,
+            target: WorkflowTarget::WorkflowPath {
+                path: "workflows/review.apxmw".into(),
+            },
+            args: HashMap::new(),
+            await_result: true,
+            session_root: None,
+            session_dir: None,
+        };
+        assert!(!flow_call.is_cross_execution());
+        assert!(spawned.is_cross_execution());
     }
 }

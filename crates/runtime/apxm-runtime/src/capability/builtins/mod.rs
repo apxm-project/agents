@@ -24,17 +24,12 @@ pub(crate) fn default_true() -> bool {
 }
 
 /// Extract a required string argument from a capability argument map.
-///
-/// Looks up `primary_key`, then `alt_key`, then `"arg0"`.
 pub(crate) fn require_string_arg<'a>(
     args: &'a HashMap<String, Value>,
     primary_key: &str,
-    alt_key: &str,
     capability_name: &str,
 ) -> Result<&'a str, RuntimeError> {
     args.get(primary_key)
-        .or_else(|| args.get(alt_key))
-        .or_else(|| args.get("arg0"))
         .and_then(|v| v.as_string())
         .map(|s| s.as_str())
         .ok_or_else(|| RuntimeError::Capability {

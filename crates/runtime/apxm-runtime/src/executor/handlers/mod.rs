@@ -42,6 +42,7 @@ pub mod verify;
 pub mod wait_all;
 #[allow(dead_code)]
 pub mod warmup;
+pub mod workflow_spawn;
 
 use super::{ExecutionContext, Result};
 use anyhow::Error as AnyhowError;

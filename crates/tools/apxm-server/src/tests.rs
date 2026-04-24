@@ -20,6 +20,7 @@ use tower::ServiceExt;
 
 use crate::build_app;
 use crate::checkpoints::{Checkpoint, CheckpointStatus, CheckpointStore};
+use crate::execute::{ExecuteRequest, prepare_request};
 use crate::helpers::{jsonrpc_err, jsonrpc_ok, mcp_tool_result, now_ms};
 use crate::state::AppState;
 use crate::tasks::{QueuedTask, TaskQueueManager, TaskStatus};
@@ -262,6 +263,125 @@ async fn execute_empty_graph_returns_error() {
         status == StatusCode::BAD_REQUEST || status == StatusCode::UNPROCESSABLE_ENTITY,
         "expected 400/422 for empty request, got {status}"
     );
+}
+
+#[test]
+fn prepare_request_uses_explicit_session_root() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let session_root = temp.path().join("sessions");
+    let request = ExecuteRequest {
+        graph: serde_json::json!({
+            "name": "const_only",
+            "nodes": [
+                {
+                    "id": 1,
+                    "name": "value",
+                    "op": "CONST_STR",
+                    "attributes": { "value": "ok" }
+                }
+            ],
+            "edges": [],
+            "parameters": [],
+            "metadata": {}
+        }),
+        args: vec![],
+        session_id: Some("explicit-session".to_string()),
+        session_root: Some(session_root.to_string_lossy().to_string()),
+        token_budget: None,
+        output_schema: None,
+        max_schema_retries: None,
+    };
+
+    let (_graph, _args, session_id, session_dir) = prepare_request(request).expect("prepare");
+    let session_dir = session_dir.expect("session dir");
+
+    assert_eq!(session_id.as_deref(), Some("explicit-session"));
+    assert_eq!(
+        std::path::Path::new(&session_dir),
+        session_root.join("explicit-session")
+    );
+    assert!(std::path::Path::new(&session_dir).is_dir());
+}
+
+#[test]
+fn prepare_request_generates_session_id_for_root_only() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let session_root = temp.path().join("sessions");
+    let request = ExecuteRequest {
+        graph: serde_json::json!({
+            "name": "const_only",
+            "nodes": [
+                {
+                    "id": 1,
+                    "name": "value",
+                    "op": "CONST_STR",
+                    "attributes": { "value": "ok" }
+                }
+            ],
+            "edges": [],
+            "parameters": [],
+            "metadata": {}
+        }),
+        args: vec![],
+        session_id: None,
+        session_root: Some(session_root.to_string_lossy().to_string()),
+        token_budget: None,
+        output_schema: None,
+        max_schema_retries: None,
+    };
+
+    let (_graph, _args, session_id, session_dir) = prepare_request(request).expect("prepare");
+    let session_id = session_id.expect("generated session id");
+    let session_dir = session_dir.expect("session dir");
+
+    assert!(!session_id.is_empty());
+    assert_eq!(
+        std::path::Path::new(&session_dir),
+        session_root.join(&session_id)
+    );
+    assert!(std::path::Path::new(&session_dir).is_dir());
+}
+
+#[tokio::test]
+async fn execute_returns_session_dir_when_requested() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let session_root = temp.path().join("sessions");
+    let app = build_app(test_state().await);
+    let (status, body) = post_json(
+        app,
+        "/v1/execute",
+        serde_json::json!({
+            "graph": {
+                "name": "const_only",
+                "nodes": [
+                    {
+                        "id": 1,
+                        "name": "value",
+                        "op": "CONST_STR",
+                        "attributes": { "value": "ok" }
+                    }
+                ],
+                "edges": [],
+                "parameters": [],
+                "metadata": {}
+            },
+            "session_id": "server-session",
+            "session_root": session_root.to_string_lossy().to_string()
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "expected execution success: {body}");
+    assert_eq!(
+        body["session_dir"].as_str(),
+        Some(
+            session_root
+                .join("server-session")
+                .to_string_lossy()
+                .as_ref()
+        )
+    );
+    assert!(session_root.join("server-session").is_dir());
 }
 
 // ── /v1/memory (LTM facts) ────────────────────────────────────────────────

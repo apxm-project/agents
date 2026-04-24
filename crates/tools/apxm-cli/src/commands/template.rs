@@ -34,8 +34,8 @@ pub fn template_command(action: TemplateAction, json_output: bool) -> Result<()>
   "name": "pipeline",
   "nodes": [
     {"id": 1, "name": "draft", "op": "ASK", "attributes": {"template_str": "Write a short blog post about Rust"}},
-    {"id": 2, "name": "review", "op": "THINK", "attributes": {"template_str": "Review this draft for clarity and accuracy: {{node_1}}"}},
-    {"id": 3, "name": "refine", "op": "ASK", "attributes": {"template_str": "Improve the draft based on this review feedback: {{node_2}}"}}
+    {"id": 2, "name": "review", "op": "THINK", "attributes": {"template_str": "Review this draft for clarity and accuracy: {draft}", "input_names": ["draft"]}},
+    {"id": 3, "name": "refine", "op": "ASK", "attributes": {"template_str": "Improve the draft based on this review feedback: {review}", "input_names": ["review"]}}
   ],
   "edges": [
     {"from": 1, "to": 2, "dependency": "Data"},
@@ -54,7 +54,7 @@ pub fn template_command(action: TemplateAction, json_output: bool) -> Result<()>
     {"id": 1, "name": "research-a", "op": "ASK", "attributes": {"template_str": "Research topic A"}},
     {"id": 2, "name": "research-b", "op": "ASK", "attributes": {"template_str": "Research topic B"}},
     {"id": 3, "name": "research-c", "op": "ASK", "attributes": {"template_str": "Research topic C"}},
-    {"id": 4, "name": "merge", "op": "WAIT_ALL", "attributes": {"tokens": ["{{node_1}}", "{{node_2}}", "{{node_3}}"]}}
+    {"id": 4, "name": "merge", "op": "WAIT_ALL", "attributes": {}}
   ],
   "edges": [
     {"from": 1, "to": 4, "dependency": "Data"},
@@ -74,8 +74,8 @@ pub fn template_command(action: TemplateAction, json_output: bool) -> Result<()>
     {"id": 1, "name": "analyze-1", "op": "ASK", "attributes": {"template_str": "Analyze aspect 1 of the problem"}},
     {"id": 2, "name": "analyze-2", "op": "ASK", "attributes": {"template_str": "Analyze aspect 2 of the problem"}},
     {"id": 3, "name": "analyze-3", "op": "ASK", "attributes": {"template_str": "Analyze aspect 3 of the problem"}},
-    {"id": 4, "name": "sync", "op": "WAIT_ALL", "attributes": {"tokens": ["{{node_1}}", "{{node_2}}", "{{node_3}}"]}},
-    {"id": 5, "name": "synthesize", "op": "ASK", "attributes": {"template_str": "Synthesize all analyses into a final report: {{node_4}}"}}
+    {"id": 4, "name": "sync", "op": "WAIT_ALL", "attributes": {}},
+    {"id": 5, "name": "synthesize", "op": "ASK", "attributes": {"template_str": "Synthesize all analyses into a final report: {sync}", "input_names": ["sync"]}}
   ],
   "edges": [
     {"from": 1, "to": 4, "dependency": "Data"},
@@ -93,8 +93,8 @@ pub fn template_command(action: TemplateAction, json_output: bool) -> Result<()>
             graph_json: r#"{
   "name": "verify",
   "nodes": [
-    {"id": 1, "name": "generate", "op": "ASK", "attributes": {"template_str": "State 3 facts about the solar system"}},
-    {"id": 2, "name": "check", "op": "VERIFY", "attributes": {"claim": "{{node_1}}", "evidence": "Common astronomical knowledge"}}
+    {"id": 1, "name": "generate-evidence", "op": "ASK", "attributes": {"template_str": "How many planets are in the solar system? Answer with a short factual sentence."}},
+    {"id": 2, "name": "check", "op": "VERIFY", "attributes": {"claim": "The solar system has eight planets."}}
   ],
   "edges": [
     {"from": 1, "to": 2, "dependency": "Data"}
@@ -110,7 +110,7 @@ pub fn template_command(action: TemplateAction, json_output: bool) -> Result<()>
   "name": "conditional",
   "nodes": [
     {"id": 1, "name": "classify", "op": "ASK", "attributes": {"template_str": "Is this a technical question? Answer only 'yes' or 'no'"}},
-    {"id": 2, "name": "branch", "op": "BRANCH_ON_VALUE", "attributes": {"token": "{{node_1}}", "value": "yes", "true_label": "3", "false_label": "4"}},
+    {"id": 2, "name": "branch", "op": "BRANCH_ON_VALUE", "attributes": {"value": "yes", "true_label": "3", "false_label": "4"}},
     {"id": 3, "name": "technical-path", "op": "ASK", "attributes": {"template_str": "Give a detailed technical answer"}},
     {"id": 4, "name": "general-path", "op": "ASK", "attributes": {"template_str": "Give a friendly general answer"}}
   ],

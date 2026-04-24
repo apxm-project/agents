@@ -169,14 +169,8 @@ impl Default for MockSearchCapability {
 #[async_trait]
 impl CapabilityExecutor for MockSearchCapability {
     async fn execute(&self, args: HashMap<String, Value>) -> CapabilityResult<Value> {
-        // Accept query from various sources:
-        // - "query": standard schema key
-        // - "arg_query": named argument from attributes
-        // - "arg0": first positional argument
         let query = args
             .get("query")
-            .or_else(|| args.get("arg_query"))
-            .or_else(|| args.get("arg0"))
             .and_then(|v| v.as_string())
             .map(|s| s.as_str())
             .unwrap_or("unknown");

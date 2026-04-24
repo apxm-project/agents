@@ -18,7 +18,7 @@ Canonical AIS operation definitions shared by compiler and runtime.
 | `types` | `Value` type used in operation parameters |
 | `validation` | Operation field validation (`validate_operation`, `missing_required_fields`) |
 
-## Operations (41 total)
+## Operations (43 total)
 
 | Category | Operations |
 |----------|------------|
@@ -26,7 +26,7 @@ Canonical AIS operation definitions shared by compiler and runtime.
 | Memory | QMEM, UMEM |
 | LLM/Reasoning | ASK, THINK, REASON, PLAN, REFLECT, VERIFY |
 | Tools | INV, EXC, PRINT |
-| Control Flow | JUMP, BRANCH_ON_VALUE, LOOP_START, LOOP_END, RETURN, SWITCH, FLOW_CALL |
+| Control Flow | JUMP, BRANCH_ON_VALUE, LOOP_START, LOOP_END, RETURN, SWITCH, FLOW_CALL, WORKFLOW_SPAWN |
 | Synchronization | MERGE, FENCE, WAIT_ALL, CHECKPOINT |
 | Error Handling | TRY_CATCH, ERR |
 | Communication | COMMUNICATE |

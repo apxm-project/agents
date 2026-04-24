@@ -15,9 +15,12 @@ mod events;
 mod handlers;
 pub mod inner_plan_linker;
 pub mod memoization;
+mod middleware;
+pub mod middlewares;
 pub mod pipeline;
 pub mod timing_tracker;
 pub mod token_accounting;
+pub mod workflow_spawner;
 
 pub use cancellation::CancellationToken;
 pub use context::ExecutionContext;
@@ -29,8 +32,11 @@ pub use events::{ExecutionEvent, ExecutionEventEmitter};
 pub use handlers::warmup::{WarmupConfig, WarmupMetrics};
 pub use inner_plan_linker::{InnerPlanLinker, NoOpLinker};
 pub use memoization::ResponseCache;
+pub use middleware::{Next, OperationMiddleware};
+pub use middlewares::{LoopGuardMiddleware, TimeoutMiddleware};
 pub use timing_tracker::TimingTracker;
 pub use token_accounting::{TokenAccountant, TokenUsageSummary};
+pub use workflow_spawner::{NoOpWorkflowSpawner, WorkflowSpawnResult, WorkflowSpawner};
 
 use apxm_core::error::RuntimeError;
 

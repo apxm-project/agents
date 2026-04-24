@@ -147,6 +147,10 @@ pub trait ExecutionEventEmitter: Send + Sync {
     fn emit_tool_start(&self, name: &str, args: &HashMap<String, Value>);
     fn emit_tool_end(&self, name: &str, result: &Value);
 
+    // ── Graph lifecycle ─────────────────────────────────────────────
+    fn emit_graph_start(&self, _execution_id: &str, _node_count: usize) {}
+    fn emit_graph_end(&self, _execution_id: &str, _node_count: usize, _success: bool) {}
+
     // ── Operation lifecycle ─────────────────────────────────────────
     fn emit_operation_start(&self, _node_id: u64, _op_type: &str) {}
     fn emit_operation_end(

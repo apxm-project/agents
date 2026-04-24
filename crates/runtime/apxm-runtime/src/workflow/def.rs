@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
+use apxm_core::types::{WorkflowInvocation, WorkflowInvocationKind, WorkflowTarget};
+
 /// A workflow that composes multiple graphs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowDef {
@@ -42,6 +44,40 @@ pub struct GraphStep {
     /// Parameters to pass to the graph (param_name → template or literal)
     #[serde(default)]
     pub params: HashMap<String, String>,
+}
+
+impl GraphStep {
+    /// Resolve this step into an explicit workflow-spawn target.
+    pub fn resolved_target(&self, base_dir: &Path) -> WorkflowTarget {
+        let path = base_dir.join(&self.path);
+        match path.extension().and_then(|ext| ext.to_str()) {
+            Some("apxmobj") => WorkflowTarget::ArtifactPath {
+                path: path.display().to_string(),
+            },
+            Some("apxmw") => WorkflowTarget::WorkflowPath {
+                path: path.display().to_string(),
+            },
+            _ => WorkflowTarget::GraphPath {
+                path: path.display().to_string(),
+            },
+        }
+    }
+
+    /// Build the explicit invocation frame for this workflow step.
+    pub fn spawn_invocation(
+        &self,
+        base_dir: &Path,
+        args: HashMap<String, serde_json::Value>,
+    ) -> WorkflowInvocation {
+        WorkflowInvocation {
+            kind: WorkflowInvocationKind::WorkflowSpawn,
+            target: self.resolved_target(base_dir),
+            args,
+            await_result: true,
+            session_root: None,
+            session_dir: None,
+        }
+    }
 }
 
 impl WorkflowDef {
@@ -241,5 +277,42 @@ mod tests {
 
         let errors = def.validate();
         assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn graph_step_resolves_air_to_graph_target() {
+        let step = GraphStep {
+            id: "review".to_string(),
+            path: "graphs/reviewer.air".to_string(),
+            depends_on: vec![],
+            params: HashMap::new(),
+        };
+        let target = step.resolved_target(Path::new("/tmp/project"));
+        assert!(matches!(target, WorkflowTarget::GraphPath { .. }));
+        assert_eq!(target.label(), "/tmp/project/graphs/reviewer.air");
+    }
+
+    #[test]
+    fn graph_step_spawn_invocation_uses_workflow_spawn_kind() {
+        let step = GraphStep {
+            id: "review".to_string(),
+            path: "flows/review.apxmw".to_string(),
+            depends_on: vec![],
+            params: HashMap::from([("topic".to_string(), "{{topic}}".to_string())]),
+        };
+        let invocation = step.spawn_invocation(
+            Path::new("/workspace"),
+            HashMap::from([("topic".to_string(), serde_json::json!("apxm"))]),
+        );
+        assert_eq!(invocation.kind, WorkflowInvocationKind::WorkflowSpawn);
+        assert!(invocation.is_cross_execution());
+        assert!(matches!(
+            invocation.target,
+            WorkflowTarget::WorkflowPath { .. }
+        ));
+        assert_eq!(
+            invocation.args.get("topic"),
+            Some(&serde_json::json!("apxm"))
+        );
     }
 }

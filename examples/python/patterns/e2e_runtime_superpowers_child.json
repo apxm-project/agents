@@ -1,0 +1,28 @@
+{
+  "name": "e2e_runtime_superpowers_child",
+  "nodes": [
+    {
+      "id": 1,
+      "name": "child_value",
+      "op": "CONST_STR",
+      "attributes": {
+        "value": "child execution ok"
+      }
+    },
+    {
+      "id": 2,
+      "name": "done",
+      "op": "RETURN",
+      "attributes": {}
+    }
+  ],
+  "edges": [
+    {
+      "from": 1,
+      "to": 2,
+      "dependency": "Data"
+    }
+  ],
+  "parameters": [],
+  "metadata": {}
+}

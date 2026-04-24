@@ -36,6 +36,10 @@ pub struct CapabilityMetadata {
     #[serde(default)]
     pub tags: Vec<String>,
 
+    /// Tool groups used for least-privilege LLM exposure.
+    #[serde(default)]
+    pub groups: Vec<String>,
+
     /// Whether this capability is read-only (safe for full parallel execution).
     /// Write capabilities acquire per-resource locks during parallel dispatch.
     #[serde(default)]
@@ -66,6 +70,7 @@ impl CapabilityMetadata {
             latency_estimate_ms: default_latency(),
             requires_auth: false,
             tags: Vec::new(),
+            groups: Vec::new(),
             read_only: false,
             metadata: HashMap::new(),
         }
@@ -98,6 +103,12 @@ impl CapabilityMetadata {
     /// Add tags
     pub fn with_tags(mut self, tags: Vec<String>) -> Self {
         self.tags = tags;
+        self
+    }
+
+    /// Assign tool groups for grouped capability exposure.
+    pub fn with_groups(mut self, groups: Vec<String>) -> Self {
+        self.groups = groups;
         self
     }
 
@@ -147,6 +158,7 @@ mod tests {
         assert_eq!(metadata.latency_estimate_ms, 100);
         assert!(!metadata.requires_auth);
         assert!(!metadata.read_only);
+        assert!(metadata.groups.is_empty());
     }
 
     #[test]
@@ -158,12 +170,17 @@ mod tests {
             .with_cost(0.001)
             .with_latency(500)
             .with_auth()
-            .with_tags(vec!["http".to_string(), "network".to_string()]);
+            .with_tags(vec!["http".to_string(), "network".to_string()])
+            .with_groups(vec!["web".to_string(), "search".to_string()]);
 
         assert_eq!(metadata.returns, "object");
         assert_eq!(metadata.cost_estimate, 0.001);
         assert_eq!(metadata.latency_estimate_ms, 500);
         assert!(metadata.requires_auth);
         assert_eq!(metadata.tags.len(), 2);
+        assert_eq!(
+            metadata.groups,
+            vec!["web".to_string(), "search".to_string()]
+        );
     }
 }
