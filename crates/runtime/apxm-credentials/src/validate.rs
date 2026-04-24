@@ -1,7 +1,9 @@
 use crate::BackendError;
 use apxm_core::types::BackendConfig;
 use apxm_core::types::model_spec::default_model_for_provider;
-use apxm_core::types::provider_spec::{ProviderProtocol, resolve_builtin_provider};
+use apxm_core::types::provider_spec::{
+    ProviderProtocol, normalize_endpoint_for_protocol, resolve_builtin_provider,
+};
 
 /// Validate a backend by making a minimal API call.
 ///
@@ -20,7 +22,8 @@ pub async fn validate_backend(backend: &BackendConfig) -> Result<String, Backend
         .as_deref()
         .or(spec.default_base_url)
         .unwrap_or("");
-    let base = base.trim_end_matches('/');
+    let normalized = normalize_endpoint_for_protocol(backend.protocol, base);
+    let base = normalized.trim_end_matches('/');
 
     let client = reqwest::Client::new();
 
@@ -284,19 +287,19 @@ mod tests {
 
     #[test]
     fn vllm_url_no_double_v1() {
-        let base = "http://localhost:8000/v1";
+        let base = "http://localhost:8916/v1";
         let models = format!("{base}/models");
         let chat = format!("{base}/chat/completions");
-        assert_eq!(models, "http://localhost:8000/v1/models");
-        assert_eq!(chat, "http://localhost:8000/v1/chat/completions");
+        assert_eq!(models, "http://localhost:8916/v1/models");
+        assert_eq!(chat, "http://localhost:8916/v1/chat/completions");
     }
 
     #[test]
     fn trailing_slash_stripped_before_url_build() {
         // validate_backend trims trailing slash before dispatching
-        let base = "http://localhost:8000/v1";
+        let base = "http://localhost:8916/v1";
         let models = format!("{base}/models");
-        assert_eq!(models, "http://localhost:8000/v1/models");
+        assert_eq!(models, "http://localhost:8916/v1/models");
     }
 
     #[test]

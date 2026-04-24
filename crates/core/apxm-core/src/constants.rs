@@ -461,6 +461,12 @@ pub mod llm {
         /// requests. Stock vLLM rejects it unless launched with
         /// `--enable-auto-tool-choice`. Plumbed from `BackendConfig.auto_tool_choice`.
         pub const AUTO_TOOL_CHOICE: &str = "auto_tool_choice";
+        /// vLLM-only: when present and `false`, the graph-aware vLLM backend
+        /// allows a stock (non-fork) server. Default behavior (key absent or
+        /// `true`) is to hard-fail at `health_check` if `/v1/apxm/*` is missing,
+        /// because stock vLLM silently drops `extra_body.apxm` hints.
+        /// Plumbed from `BackendConfig.require_apxm_endpoints`.
+        pub const REQUIRE_APXM_ENDPOINTS: &str = "require_apxm_endpoints";
         /// Per-model array forwarded to the backend so it can apply
         /// model-specific request shaping (e.g. disabling thinking-mode for
         /// Qwen3). Each entry carries at least `id` and `supports_thinking`.

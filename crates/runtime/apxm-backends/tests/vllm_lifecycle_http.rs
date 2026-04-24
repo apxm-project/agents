@@ -12,7 +12,7 @@
 
 use apxm_backends::llm::backends::vllm::{ApxmGraphHints, GraphAwareVllmBackend, GraphMetadata};
 use apxm_backends::llm::backends::{LLMBackend, LLMRequest};
-use apxm_core::constants::llm::{api_paths, apxm as apxm_llm};
+use apxm_core::constants::llm::{api_paths, apxm as apxm_llm, config_keys};
 use serde_json::{Value, json};
 use wiremock::matchers::{method, path, path_regex};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
@@ -278,6 +278,93 @@ async fn vllm_lifecycle_explicit_release() {
         })
         .count();
     assert_eq!(delete_count, 1);
+
+    drop(server);
+}
+
+/// Stock-vLLM detection: a 404 from `/v1/apxm/graphs/__probe__` must hard-fail
+/// `health_check` by default, so APXM never silently runs without graph-aware
+/// scheduling on a server that drops `extra_body.apxm`.
+#[tokio::test]
+async fn vllm_health_check_hard_fails_when_apxm_endpoints_missing() {
+    let server = MockServer::start().await;
+
+    // Inner OpenAI health check probes /v1/models — keep it happy.
+    Mock::given(method("GET"))
+        .and(path(versioned_path(api_paths::MODELS)))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "object": "list",
+            "data": [],
+        })))
+        .mount(&server)
+        .await;
+
+    // Stock vLLM returns 404 for the APXM probe path.
+    let probe_path = format!(
+        "{}{}/{}",
+        api_paths::VERSION_PREFIX,
+        api_paths::APXM_GRAPHS,
+        apxm_core::constants::llm::vllm::APXM_PROBE_GRAPH_ID,
+    );
+    Mock::given(method("GET"))
+        .and(path(probe_path))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&server)
+        .await;
+
+    let backend = make_backend(&server.uri(), "Qwen/Qwen2.5-7B-Instruct").await;
+
+    LLMBackend::health_check(&backend)
+        .await
+        .expect_err("health_check must hard-fail on stock vLLM by default");
+
+    drop(server);
+}
+
+/// Opt-out path: `require_apxm_endpoints = false` allows stock vLLM and
+/// `health_check` succeeds. The graph extension calls then become no-ops
+/// (covered by other tests).
+#[tokio::test]
+async fn vllm_health_check_allows_stock_when_opt_out_set() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path(versioned_path(api_paths::MODELS)))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "object": "list",
+            "data": [],
+        })))
+        .mount(&server)
+        .await;
+
+    let probe_path = format!(
+        "{}{}/{}",
+        api_paths::VERSION_PREFIX,
+        api_paths::APXM_GRAPHS,
+        apxm_core::constants::llm::vllm::APXM_PROBE_GRAPH_ID,
+    );
+    Mock::given(method("GET"))
+        .and(path(probe_path))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&server)
+        .await;
+
+    let model = "Qwen/Qwen2.5-7B-Instruct";
+    let base_url = format!("{}/v1", server.uri());
+    let mut cfg = serde_json::Map::new();
+    cfg.insert("base_url".into(), Value::String(base_url));
+    cfg.insert("model".into(), Value::String(model.into()));
+    cfg.insert(
+        config_keys::REQUIRE_APXM_ENDPOINTS.into(),
+        Value::Bool(false),
+    );
+    let backend = GraphAwareVllmBackend::new("test-key", Some(Value::Object(cfg)))
+        .await
+        .expect("construct GraphAwareVllmBackend with opt-out");
+
+    LLMBackend::health_check(&backend)
+        .await
+        .expect("health_check must succeed when require_apxm_endpoints=false");
 
     drop(server);
 }

@@ -83,6 +83,7 @@ pub use model_spec::{
     resolve_builtin_model,
 };
 pub use provider_spec::{
-    BUILTIN_PROVIDERS, BuiltinProviderSpec, ProviderProtocol, ProviderSpec,
-    resolve_builtin_provider, resolve_provider_spec,
+    BUILTIN_PROVIDERS, DEFAULT_VLLM_BASE_URL, BuiltinProviderSpec, ProviderProtocol,
+    ProviderSpec, normalize_endpoint_for_protocol, resolve_builtin_provider,
+    resolve_provider_spec,
 };

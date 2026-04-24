@@ -184,6 +184,7 @@ pub async fn backend_command(action: BackendAction, json_output: bool) -> Result
                 models: vec![],
                 docker: None,
                 auto_tool_choice: None,
+                require_apxm_endpoints: None,
             };
 
             store.add(backend).map_err(|e| anyhow::anyhow!("{e}"))?;

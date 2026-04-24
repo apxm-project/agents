@@ -1,4 +1,6 @@
-use crate::types::{ModelInfo, ProviderProtocol, resolve_builtin_provider};
+use crate::types::{
+    ModelInfo, ProviderProtocol, normalize_endpoint_for_protocol, resolve_builtin_provider,
+};
 use dirs::home_dir;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -393,7 +395,8 @@ fn resolve_backend(config: &ApxmLlmBackendConfig) -> io::Result<ResolvedApxmBack
         .or_else(|| {
             resolve_builtin_provider(&provider_id)
                 .and_then(|spec| spec.default_base_url.map(ToString::to_string))
-        });
+        })
+        .map(|value| normalize_endpoint_for_protocol(protocol, &value));
     let options = resolve_string_map(&config.options, "options", &config.name)?;
     let extra_headers = resolve_string_map(&config.extra_headers, "extra_headers", &config.name)?;
     let models = config

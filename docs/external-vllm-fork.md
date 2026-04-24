@@ -1,9 +1,12 @@
 # External vLLM Fork
 
+**Why the fork:** stock vLLM silently ignores APXM's `extra_body.apxm`
+scheduling hints, so requests sent to a non-fork server execute without
+graph-aware scheduling, KV-retention pinning, or critical-path priority.
+APXM-aware behavior requires the fork at `external/vllm/` (branch `apxm`).
+
 This document captures the current APXM vLLM integration reality in this
-repository. It exists because several older plans, helper scripts, and Python
-prototype docs still describe an API shape that does not match the live fork in
-`external/vllm`.
+repository.
 
 ## Canonical Source Of Truth
 
@@ -64,17 +67,28 @@ When working inside the fork, follow `external/vllm/AGENTS.md`:
 - use `uv`
 - use `.venv/bin/python`
 - do not use bare `pip`
-- install with `uv pip install -e . --torch-backend=auto`
-- if the change is Python-only, prefer
-  `VLLM_USE_PRECOMPILED=1 uv pip install -e . --torch-backend=auto`
 
-APXM now exposes a maintained top-level entrypoint for that install and serve
-path:
+APXM never installs precompiled vLLM wheels. Precompiled wheels come from
+upstream source and would not contain the apxm patches in this fork. The
+install path always builds from the visible `external/vllm` checkout:
+
+```
+uv pip install --python .venv/bin/python --torch-backend=auto -r requirements/build.txt
+uv pip install --python .venv/bin/python -e . --torch-backend=auto --no-build-isolation
+```
+
+The first line pre-populates `.venv` with the hardware-correct torch
+(`--torch-backend=auto` resolves GPU runtime vs CUDA vs CPU per host). The second
+line builds the editable install against that same venv via
+`--no-build-isolation`, so `setup.py`'s device auto-detect (`torch.version.hip`
+etc.) sees the right torch and selects the right `VLLM_TARGET_DEVICE`.
+
+APXM exposes a maintained top-level entrypoint:
 
 - `dekk apxm vllm install`
 - `dekk apxm vllm serve <HF_MODEL_ID>`
 
-The fork still remains an independently managed visible checkout with its own
+The fork remains an independently managed visible checkout with its own
 `uv` plus `.venv` lifecycle under `external/vllm`.
 
 ## APXM Toolchain Note
@@ -94,52 +108,36 @@ The intended operator path is still the visible repo:
 - MLIR from this repo's `.dekk/env`
 - graph-aware vLLM from this repo's `external/vllm`
 
-## Current Documentation Drift
+## Documentation Drift
 
-The following surfaces are stale and should not be treated as operational truth:
+No outstanding drift. The previous mismatches were resolved by:
 
-- `crates/runtime/apxm-backends/python/apxm_vllm/`
-  - Historical Python prototype package, not the current `external/vllm` fork
-    contract.
+- removing the historical Python prototype at
+  `crates/runtime/apxm-backends/python/apxm_vllm/`
+- removing the obsolete killer-demo plans (`docs/planning/specs/...-killer-demo-design.md`,
+  `docs/planning/plans/...-killer-demo.md`) that described a 4-endpoint
+  `/v1/apxm/pins*` design instead of the live 3-endpoint graph contract
+- pointing `.dekk.toml`'s `vllm` install component at
+  `tools/scripts/install_external_vllm.sh`
+- centralising the maintained fork commands in `tools/scripts/vllm.py`
+  (`dekk apxm vllm install`, `dekk apxm vllm serve <HF_MODEL_ID>`)
 
-- `docs/planning/specs/2026-04-21-apxm-vllm-killer-demo-design.md`
-- `docs/planning/plans/2026-04-21-apxm-vllm-killer-demo.md`
-  - These documents describe an earlier four-endpoint design with
-    `/v1/apxm/pins` and `/v1/apxm/pins/stats`.
-  - The current fork does not expose those endpoints.
+## Integration Contract
 
-The following surfaces were updated to match the fork-local workflow:
-
-- `.dekk.toml`
-  - The optional `vllm` install component now runs
-    `bash tools/scripts/install_external_vllm.sh`.
-- `tools/scripts/vllm.py`
-  - The maintained dekk-facing fork commands now live here:
-    `dekk apxm vllm install` and `dekk apxm vllm serve <HF_MODEL_ID>`.
-
-## Current Integration Mismatch
-
-The Rust backend migration is now aligned to the live fork contract in
-`crates/runtime/apxm-backends/src/llm/backends/vllm/backend.rs`:
-
-- it registers graphs with `POST /v1/apxm/graphs/register`
-- it probes graph-status availability with `GET /v1/apxm/graphs/{graph_id}`
-- it releases graphs with `DELETE /v1/apxm/graphs/{graph_id}`
-- it relies on per-request `extra_body.apxm.pin_policy` hints instead of an
-  out-of-band pin endpoint
-
-That matches the live fork, which drives graph-aware behavior from:
+The Rust backend in
+`crates/runtime/apxm-backends/src/llm/backends/vllm/backend.rs` is aligned to
+the live fork contract:
 
 - graph registration via `POST /v1/apxm/graphs/register`
 - graph inspection via `GET /v1/apxm/graphs/{graph_id}`
 - graph release via `DELETE /v1/apxm/graphs/{graph_id}`
-- per-request `extra_body.apxm.pin_policy` hints
+- per-request `extra_body.apxm.pin_policy` hints (no out-of-band pin endpoint)
 
-The main remaining drift is documentation, benchmark planning language, and the
-historical Python prototype package under
-`crates/runtime/apxm-backends/python/apxm_vllm/`.
+`health_check()` probes `/v1/apxm/graphs/__probe__` and hard-fails on 404 by
+default — stock vLLM silently drops `extra_body.apxm`, so APXM refuses to run
+against it unless `require_apxm_endpoints = false` is set on the backend.
 
-Any future runtime or benchmark work should be aligned to that contract.
+Any future runtime or benchmark work should align to that contract.
 
 ## Canonical Operator Path
 
@@ -159,6 +157,87 @@ Keep these responsibilities separate:
 - `serve` chooses and downloads the model if needed
 - `backend add-model` registers APXM routing metadata only; it does not
   download model weights
+
+## Bringing Up A Model (User Guide)
+
+APXM is model-agnostic. The fork serves any vLLM-supported HuggingFace model;
+APXM simply registers the model id under a `vllm` backend and routes graph
+nodes to it. The example below uses `google/gemma-4-31B-it`, but the same
+steps apply to any model id (Qwen, Llama, Mistral, fine-tunes, etc.).
+
+Model weights, HF licenses, and accelerator drivers are external to APXM.
+
+### 1. Choose where weights live
+
+```sh
+export HF_HOME=/var/tmp/hf-cache    # local SSD; fast cold start
+mkdir -p "$HF_HOME"
+df -h "$HF_HOME"                     # confirm enough free space for the model
+```
+
+### 2. Authenticate with HuggingFace (if the model is gated)
+
+```sh
+huggingface-cli login                # writes ~/.cache/huggingface/token
+export HF_TOKEN=$(cat ~/.cache/huggingface/token)
+```
+
+For gated models (Gemma, Llama, etc.), accept the license on the model page in
+a browser using the same HF account before downloading.
+
+### 3. Pre-download the weights (optional but recommended)
+
+Pre-downloading separates "did the download fail" from "did the serve fail":
+
+```sh
+external/vllm/.venv/bin/python - <<'PY'
+from huggingface_hub import snapshot_download
+snapshot_download(
+    "google/gemma-4-31B-it",                       # substitute any model id
+    allow_patterns=["*.safetensors", "*.json", "tokenizer*"],
+    max_workers=8,
+    resume_download=True,
+)
+PY
+```
+
+`dekk apxm vllm serve` will also download on first run; pre-downloading just
+makes the first serve fast and keeps download errors out of the serve log.
+
+### 4. Serve the model
+
+```sh
+dekk apxm vllm serve google/gemma-4-31B-it \
+  --tensor-parallel-size 2 \
+  --gpu-memory-utilization 0.9 \
+  --max-model-len 8192 \
+  --port 8916
+```
+
+Pick `--tensor-parallel-size`, GPU selection, and context length to match the
+model and the available accelerators on the host. APXM does not dictate these
+— they are vLLM serving knobs.
+
+### 5. Register the backend and model with APXM
+
+```sh
+dekk apxm backend add vllm-fork --type onprem --protocol vllm
+dekk apxm backend add-model vllm-fork google/gemma-4-31B-it
+dekk apxm backend test vllm-fork
+```
+
+The default endpoint is `http://localhost:8916/v1`, which matches step 4. Use
+`--endpoint` only if the server runs on a different host or port.
+
+`backend add-model` registers routing metadata in APXM config. It does not
+download or serve anything — that is what step 3 and step 4 are for.
+
+### Multiple models on one backend
+
+Repeat step 5's `add-model` line for each model id you want APXM to route to
+the same backend. Each model id must be served on the backend's endpoint
+(either by relaunching `vllm serve` with a different model or by running
+multiple backends on different ports).
 
 ## Where The Runbook Lives
 

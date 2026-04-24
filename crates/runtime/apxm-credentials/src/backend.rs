@@ -5,6 +5,7 @@
 //! can include type information (cloud/onprem/local), model metadata, and Docker
 //! configurations for local deployments.
 
+use apxm_core::types::provider_spec::normalize_endpoint_for_protocol;
 use apxm_core::types::{BackendConfig, ModelConfig};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -183,6 +184,8 @@ impl BackendStore {
             .ok_or_else(|| BackendError::NotFound {
                 name: name.to_string(),
             })?;
+        let mut backend = backend;
+        normalize_endpoint(&mut backend);
         file.backends[pos] = backend;
         self.write_file(&file)
     }
@@ -265,7 +268,8 @@ impl BackendStore {
                 model: cred.model,
                 headers: cred.headers,
             };
-            let backend = credential_to_backend(&name, legacy_cred);
+            let mut backend = credential_to_backend(&name, legacy_cred);
+            normalize_endpoint(&mut backend);
             file.backends.push(backend);
             count += 1;
         }
@@ -357,6 +361,7 @@ fn credential_to_backend(name: &str, cred: LegacyCredential) -> BackendConfig {
         models,
         docker: None,
         auto_tool_choice: None,
+        require_apxm_endpoints: None,
     }
 }
 
@@ -364,24 +369,8 @@ fn credential_to_backend(name: &str, cred: LegacyCredential) -> BackendConfig {
 /// that need it (OpenAI, Anthropic, vLLM). This makes the endpoint consistent
 /// with the runtime, which builds paths like `${endpoint}/chat/completions`.
 fn normalize_endpoint(backend: &mut BackendConfig) {
-    use apxm_core::types::ProviderProtocol;
-
-    let needs_v1 = matches!(
-        backend.protocol,
-        ProviderProtocol::OpenAI | ProviderProtocol::Anthropic | ProviderProtocol::Vllm
-    );
-    if !needs_v1 {
-        return;
-    }
-
     if let Some(ref mut url) = backend.endpoint {
-        let trimmed = url.trim_end_matches('/');
-        if !trimmed.ends_with("/v1") {
-            *url = format!("{trimmed}/v1");
-        } else {
-            // Normalize trailing slash: "http://x/v1/" → "http://x/v1"
-            *url = trimmed.to_string();
-        }
+        *url = normalize_endpoint_for_protocol(backend.protocol, url);
     }
 }
 
@@ -416,6 +405,7 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
+            require_apxm_endpoints: None,
         };
 
         store.add(backend.clone()).unwrap();
@@ -440,6 +430,7 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
+            require_apxm_endpoints: None,
         };
 
         store.add(backend.clone()).unwrap();
@@ -462,6 +453,7 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
+            require_apxm_endpoints: None,
         };
 
         store.add(backend).unwrap();
@@ -484,6 +476,7 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
+            require_apxm_endpoints: None,
         };
 
         let backend2 = BackendConfig {
@@ -496,6 +489,7 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
+            require_apxm_endpoints: None,
         };
 
         store.add(backend1).unwrap();
@@ -522,6 +516,7 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
+            require_apxm_endpoints: None,
         };
 
         store.add(backend).unwrap();
@@ -536,6 +531,7 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
+            require_apxm_endpoints: None,
         };
 
         store.update("update-test", updated).unwrap();
@@ -586,6 +582,7 @@ mod tests {
             ],
             docker: None,
             auto_tool_choice: None,
+            require_apxm_endpoints: None,
         };
 
         store.add(backend).unwrap();
@@ -607,7 +604,7 @@ mod tests {
             name: "local-vllm".to_string(),
             backend_type: BackendType::Local,
             protocol: ProviderProtocol::Vllm,
-            endpoint: Some("http://localhost:8000".to_string()),
+            endpoint: Some("http://localhost:8916".to_string()),
             api_key: None,
             headers: HashMap::new(),
             models: vec![],
@@ -620,6 +617,7 @@ mod tests {
                 tensor_parallel: Some(2),
             }),
             auto_tool_choice: None,
+            require_apxm_endpoints: None,
         };
 
         store.add(backend).unwrap();
@@ -645,6 +643,7 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
+            require_apxm_endpoints: None,
         };
 
         store.add(backend).unwrap();
@@ -668,6 +667,7 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
+            require_apxm_endpoints: None,
         };
         store.add(backend).unwrap();
 
@@ -729,6 +729,7 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
+            require_apxm_endpoints: None,
         };
         store.add(backend).unwrap();
 
@@ -768,6 +769,7 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
+            require_apxm_endpoints: None,
         };
         store.add(backend).unwrap();
 
@@ -806,17 +808,18 @@ mod tests {
             name: "vllm-local".to_string(),
             backend_type: BackendType::Local,
             protocol: ProviderProtocol::Vllm,
-            endpoint: Some("http://localhost:8000".to_string()),
+            endpoint: Some("http://localhost:8916".to_string()),
             api_key: None,
             headers: HashMap::new(),
             models: vec![],
             docker: None,
             auto_tool_choice: None,
+            require_apxm_endpoints: None,
         };
 
         store.add(backend).unwrap();
         let got = store.get("vllm-local").unwrap().unwrap();
-        assert_eq!(got.endpoint.as_deref(), Some("http://localhost:8000/v1"));
+        assert_eq!(got.endpoint.as_deref(), Some("http://localhost:8916/v1"));
     }
 
     #[test]
@@ -834,6 +837,7 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
+            require_apxm_endpoints: None,
         };
 
         store.add(backend).unwrap();
@@ -850,17 +854,55 @@ mod tests {
             name: "trailing-slash".to_string(),
             backend_type: BackendType::Local,
             protocol: ProviderProtocol::Vllm,
-            endpoint: Some("http://localhost:8000/v1/".to_string()),
+            endpoint: Some("http://localhost:8916/v1/".to_string()),
             api_key: None,
             headers: HashMap::new(),
             models: vec![],
             docker: None,
             auto_tool_choice: None,
+            require_apxm_endpoints: None,
         };
 
         store.add(backend).unwrap();
         let got = store.get("trailing-slash").unwrap().unwrap();
-        assert_eq!(got.endpoint.as_deref(), Some("http://localhost:8000/v1"));
+        assert_eq!(got.endpoint.as_deref(), Some("http://localhost:8916/v1"));
+    }
+
+    #[test]
+    fn endpoint_normalized_on_update() {
+        let tmp = TempDir::new().unwrap();
+        let store = test_store(tmp.path());
+
+        let backend = BackendConfig {
+            name: "vllm-update".to_string(),
+            backend_type: BackendType::Local,
+            protocol: ProviderProtocol::Vllm,
+            endpoint: Some("http://localhost:8916/v1".to_string()),
+            api_key: None,
+            headers: HashMap::new(),
+            models: vec![],
+            docker: None,
+            auto_tool_choice: None,
+            require_apxm_endpoints: None,
+        };
+        store.add(backend).unwrap();
+
+        let updated = BackendConfig {
+            name: "vllm-update".to_string(),
+            backend_type: BackendType::Local,
+            protocol: ProviderProtocol::Vllm,
+            endpoint: Some("http://localhost:8916/".to_string()),
+            api_key: None,
+            headers: HashMap::new(),
+            models: vec![],
+            docker: None,
+            auto_tool_choice: None,
+            require_apxm_endpoints: None,
+        };
+
+        store.update("vllm-update", updated).unwrap();
+        let got = store.get("vllm-update").unwrap().unwrap();
+        assert_eq!(got.endpoint.as_deref(), Some("http://localhost:8916/v1"));
     }
 
     #[test]
@@ -878,6 +920,7 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
+            require_apxm_endpoints: None,
         };
 
         store.add(backend).unwrap();
@@ -901,6 +944,7 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
+            require_apxm_endpoints: None,
         };
 
         store.add(backend).unwrap();

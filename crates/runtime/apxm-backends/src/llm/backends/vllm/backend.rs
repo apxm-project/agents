@@ -9,6 +9,7 @@ use crate::llm::backends::traits::StreamChunk;
 use crate::llm::backends::{LLMBackend, LLMRequest, LLMResponse};
 use anyhow::{Context, Result};
 use apxm_core::constants::llm::{api_paths, apxm as apxm_llm, config_keys, vllm as vllm_keys};
+use apxm_core::types::provider_spec::{DEFAULT_VLLM_BASE_URL, normalize_endpoint_for_protocol};
 use apxm_core::types::{GraphMetadata, ModelInfo, PriorityClass};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -17,7 +18,7 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tokio_stream::Stream;
 
-const DEFAULT_BASE_URL: &str = "http://localhost:8000/v1";
+const DEFAULT_BASE_URL: &str = DEFAULT_VLLM_BASE_URL;
 const UNCONFIGURED_MODEL_SENTINEL: &str = "__apxm_vllm_model_required__";
 const VLLM_PRIORITY_CRITICAL_PATH: u8 = 0;
 const VLLM_PRIORITY_DEFAULT: u8 = 5;
@@ -72,7 +73,7 @@ pub struct GraphStatusResponse {
 ///
 /// ```ignore
 /// let backend = GraphAwareVllmBackend::new("", Some(json!({
-///     "base_url": "http://vllm-server:8000/v1",
+///     "base_url": "http://vllm-server:8916/v1",
 ///     "model": "meta-llama/Llama-3.1-8B-Instruct"
 /// }))).await?;
 ///
@@ -114,13 +115,18 @@ pub struct GraphAwareVllmBackend {
     default_model_configured: bool,
     /// Models that should suppress vLLM chat-template thinking output.
     non_thinking_models: HashSet<String>,
+    /// When `true` (the default), `health_check` returns `Err` if the server
+    /// does not expose `/v1/apxm/*`. Set to `false` via
+    /// `BackendConfig.require_apxm_endpoints = false` to allow stock vLLM
+    /// (which silently drops `extra_body.apxm` hints).
+    require_apxm_endpoints: bool,
 }
 
 impl GraphAwareVllmBackend {
     /// Create a new graph-aware vLLM backend.
     ///
     /// Config keys:
-    /// - `base_url`: vLLM server URL including `/v1` (default: `http://localhost:8000/v1`)
+    /// - `base_url`: vLLM server URL including `/v1` (default: `http://localhost:8916/v1`)
     /// - `model`: Model name to use
     /// - `extra_headers`: Optional HTTP headers
     pub async fn new(api_key: &str, config: Option<serde_json::Value>) -> Result<Self> {
@@ -136,8 +142,11 @@ impl GraphAwareVllmBackend {
             .and_then(|c| c.get("base_url"))
             .and_then(|u| u.as_str())
             .unwrap_or(DEFAULT_BASE_URL)
-            .trim_end_matches('/')
             .to_string();
+        let base_url = normalize_endpoint_for_protocol(
+            apxm_core::types::ProviderProtocol::Vllm,
+            &base_url,
+        );
 
         // `auto_tool_choice` defaults to `true` (matches OpenAI/Anthropic).
         // Stock vLLM without `--enable-auto-tool-choice` should set this to
@@ -146,6 +155,13 @@ impl GraphAwareVllmBackend {
         let auto_tool_choice = config
             .as_ref()
             .and_then(|c| c.get(config_keys::AUTO_TOOL_CHOICE))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+
+        // Default true: catch stock-vLLM mis-registration loudly.
+        let require_apxm_endpoints = config
+            .as_ref()
+            .and_then(|c| c.get(config_keys::REQUIRE_APXM_ENDPOINTS))
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
 
@@ -192,6 +208,7 @@ impl GraphAwareVllmBackend {
             auto_tool_choice_supported: AtomicBool::new(auto_tool_choice),
             default_model_configured,
             non_thinking_models,
+            require_apxm_endpoints,
         })
     }
 
@@ -417,20 +434,35 @@ impl LLMBackend for GraphAwareVllmBackend {
         // First do the standard inner health check.
         self.inner.health_check().await?;
 
-        // Probe the APXM extension surface so callers can rely on
-        // `supports_graph_extensions()` reflecting reality. We only flip the
-        // flag to false on a definitive 404 — transient failures don't disable
-        // the extensions.
+        // Probe the APXM extension surface. A definitive 404 means the server
+        // is stock vLLM, not the APXM fork — and stock vLLM silently drops
+        // `extra_body.apxm` scheduling hints, which would let APXM behave as
+        // if graph-aware scheduling is on while the server ignores it.
+        // Default behavior is hard-fail; opt out via
+        // `BackendConfig.require_apxm_endpoints = false`.
         let url = self.graph_status_url(vllm_keys::APXM_PROBE_GRAPH_ID);
         if let Ok(response) = self.client.get(&url).send().await {
             if response.status() == reqwest::StatusCode::NOT_FOUND {
                 self.apxm_endpoints_available
                     .store(false, Ordering::Relaxed);
+                if self.require_apxm_endpoints {
+                    anyhow::bail!(
+                        "vLLM server at {} does not expose /v1/apxm/* endpoints. \
+                         This is stock vLLM, which silently drops extra_body.apxm \
+                         scheduling hints. Install the graph-aware fork: \
+                         `dekk apxm vllm install`. \
+                         To allow stock vLLM intentionally, set \
+                         `require_apxm_endpoints = false` on this backend in \
+                         ~/.apxm/config.toml.",
+                        url
+                    );
+                }
                 if !self.health_check_warned.swap(true, Ordering::Relaxed) {
                     tracing::warn!(
                         endpoint = %url,
                         "vLLM server does not expose APXM extensions (/v1/apxm/*); \
-                         graph registration, graph status, and graph release will be no-ops"
+                         graph registration, graph status, and graph release will be no-ops \
+                         (require_apxm_endpoints = false)"
                     );
                 }
             }
@@ -530,7 +562,7 @@ mod tests {
 
         let backend = GraphAwareVllmBackend::new(
             "test-key",
-            Some(serde_json::json!({"base_url": "http://localhost:8000/v1"})),
+            Some(serde_json::json!({"base_url": "http://localhost:8916/v1"})),
         )
         .await
         .unwrap();
@@ -572,7 +604,7 @@ mod tests {
 
         let backend = GraphAwareVllmBackend::new(
             "test-key",
-            Some(serde_json::json!({"base_url": "http://localhost:8000/v1"})),
+            Some(serde_json::json!({"base_url": "http://localhost:8916/v1"})),
         )
         .await
         .unwrap();
@@ -608,7 +640,7 @@ mod tests {
 
         let backend = GraphAwareVllmBackend::new(
             "test-key",
-            Some(serde_json::json!({"base_url": "http://localhost:8000/v1"})),
+            Some(serde_json::json!({"base_url": "http://localhost:8916/v1"})),
         )
         .await
         .unwrap();
@@ -641,7 +673,7 @@ mod tests {
         let backend = GraphAwareVllmBackend::new(
             "test-key",
             Some(serde_json::json!({
-                "base_url": "http://localhost:8000/v1",
+                "base_url": "http://localhost:8916/v1",
                 "model": "Qwen/Qwen3.5-4B",
                 "models": [
                     {"id": "Qwen/Qwen3.5-4B", "supports_thinking": false}
@@ -663,7 +695,7 @@ mod tests {
     async fn test_supports_graph_extensions_flag() {
         let backend = GraphAwareVllmBackend::new(
             "test-key",
-            Some(serde_json::json!({"base_url": "http://localhost:8000/v1"})),
+            Some(serde_json::json!({"base_url": "http://localhost:8916/v1"})),
         )
         .await
         .unwrap();
@@ -685,7 +717,7 @@ mod tests {
 
         let backend = GraphAwareVllmBackend::new(
             "",
-            Some(serde_json::json!({"base_url": "http://localhost:8000/v1"})),
+            Some(serde_json::json!({"base_url": "http://localhost:8916/v1"})),
         )
         .await
         .unwrap();

@@ -49,7 +49,6 @@ test = { run = "cargo test --workspace --exclude apxm-compiler --exclude apxm-cl
 test-all = { run = "cargo test --workspace", description = "All tests (requires MLIR)", group = "Build & Test" }
 test-cli = { run = "cargo test -p apxm-cli --features driver,metrics --release", description = "Run CLI tests with driver (preserves MLIR-linked binary)", group = "Build & Test" }
 test-python-frontend = { run = "python -m pytest crates/compiler/apxm-frontend/python/tests -q", description = "Run Python frontend tests", group = "Build & Test" }
-test-python-backends = { run = "python -m pytest crates/runtime/apxm-backends/python/tests -q", description = "Run Python backend contract tests", group = "Build & Test" }
 test-quality-eval = { run = "python -m pytest tools/quality_eval/tests -q", description = "Run offline quality-eval harness tests", group = "Build & Test" }
 clean = { run = "cargo clean", description = "Clean", group = "Build & Test" }
 
@@ -159,7 +158,7 @@ default = false
 [[install.components]]
 name = "vllm"
 label = "vLLM (graph-aware fork)"
-description = "Graph-aware vLLM fork with APXM graph registration, request-side hints, and priority scheduling"
+description = "Required for graph-aware scheduling — stock vLLM silently drops extra_body.apxm request hints"
 run = "bash tools/scripts/install_external_vllm.sh"
 default = false
 
