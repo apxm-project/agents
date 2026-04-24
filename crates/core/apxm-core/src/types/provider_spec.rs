@@ -6,6 +6,8 @@
 
 use serde::{Deserialize, Serialize};
 
+pub const DEFAULT_VLLM_BASE_URL: &str = "http://localhost:8916/v1";
+
 /// The wire protocol a provider speaks.
 ///
 /// This determines which backend implementation handles requests.
@@ -132,7 +134,7 @@ pub const BUILTIN_PROVIDERS: &[BuiltinProviderSpec] = &[
     BuiltinProviderSpec {
         id: "vllm",
         api_key_env_var: None,
-        default_base_url: Some("http://localhost:8000/v1"),
+        default_base_url: Some(DEFAULT_VLLM_BASE_URL),
         requires_api_key: false,
         protocol: ProviderProtocol::Vllm,
         aliases: &["vllm-graph-aware"],
@@ -197,6 +199,22 @@ pub fn resolve_provider_spec(name: &str) -> Option<ProviderSpec> {
     resolve_builtin_provider(name).map(|b| b.to_provider_spec())
 }
 
+/// Normalize provider endpoints so versioned APIs always store a `/v1` suffix
+/// exactly once. This keeps validation, config loading, and runtime request
+/// construction consistent even when users hand-edit config files.
+pub fn normalize_endpoint_for_protocol(protocol: ProviderProtocol, endpoint: &str) -> String {
+    let trimmed = endpoint.trim_end_matches('/');
+    let needs_v1 = matches!(
+        protocol,
+        ProviderProtocol::OpenAI | ProviderProtocol::Anthropic | ProviderProtocol::Vllm
+    );
+    if needs_v1 && !trimmed.ends_with("/v1") {
+        format!("{trimmed}/v1")
+    } else {
+        trimmed.to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -254,7 +272,7 @@ mod tests {
         assert_eq!(spec.id, "vllm");
         assert_eq!(spec.protocol, ProviderProtocol::Vllm);
         assert!(!spec.requires_api_key);
-        assert_eq!(spec.default_base_url, Some("http://localhost:8000/v1"));
+        assert_eq!(spec.default_base_url, Some(DEFAULT_VLLM_BASE_URL));
     }
 
     #[test]
@@ -296,5 +314,21 @@ mod tests {
         ids.sort();
         ids.dedup();
         assert_eq!(ids.len(), BUILTIN_PROVIDERS.len());
+    }
+
+    #[test]
+    fn test_normalize_endpoint_for_protocol_adds_v1_once() {
+        assert_eq!(
+            normalize_endpoint_for_protocol(ProviderProtocol::Vllm, "http://localhost:8916"),
+            DEFAULT_VLLM_BASE_URL
+        );
+        assert_eq!(
+            normalize_endpoint_for_protocol(ProviderProtocol::Vllm, DEFAULT_VLLM_BASE_URL),
+            DEFAULT_VLLM_BASE_URL
+        );
+        assert_eq!(
+            normalize_endpoint_for_protocol(ProviderProtocol::Ollama, "http://localhost:11434/"),
+            "http://localhost:11434"
+        );
     }
 }

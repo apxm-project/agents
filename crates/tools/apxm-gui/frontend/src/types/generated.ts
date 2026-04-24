@@ -1020,7 +1020,7 @@ export const BUILTIN_PROVIDERS: readonly ProviderSpec[] = [
   {
     id: "vllm",
     protocol: "vllm" as ProviderProtocol,
-    defaultBaseUrl: "http://localhost:8000/v1",
+    defaultBaseUrl: "http://localhost:8916/v1",
     requiresApiKey: false,
     apiKeyEnvVar: null,
     aliases: ["vllm-graph-aware"],

@@ -22,6 +22,7 @@ dekk apxm doctor
 
 **Optional repo-local vLLM fork:**
 ```bash
+# Stock vLLM silently ignores APXM's extra_body.apxm scheduling hints.
 dekk apxm vllm install
 dekk apxm vllm serve <HF_MODEL_ID>
 ```
@@ -137,7 +138,7 @@ APXM_PRINT_IR_TRACE=1 APXM_PRINT_IR_DIR=/tmp/apxm-ir apxm compiler compile file.
 
 ## Configuration
 
-Create `.apxm/config.toml`:
+Create `~/.apxm/config.toml`:
 
 ```toml
 [chat]

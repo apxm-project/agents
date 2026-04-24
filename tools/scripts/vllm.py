@@ -18,6 +18,43 @@ INSTALL_SCRIPT = REPO_ROOT / "tools" / "scripts" / "install_external_vllm.sh"
 DEFAULT_BACKEND_NAME = "vllm-fork"
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8916
+VERIFY_FORK_CODE = """
+import importlib
+import sys
+from pathlib import Path
+
+expected = Path(sys.argv[1]).resolve()
+vllm = importlib.import_module("vllm")
+router = importlib.import_module("vllm.entrypoints.openai.apxm.api_router")
+api_server = importlib.import_module("vllm.entrypoints.openai.api_server")
+
+got = Path(vllm.__file__).resolve().parent.parent
+if got != expected:
+    print(
+        f"ERROR: vllm imports from {got}, expected fork at {expected}",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+router_path = Path(router.__file__).resolve()
+if expected not in router_path.parents:
+    print(
+        f"ERROR: APXM router imports from {router_path}, expected under {expected}",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+api_server_text = Path(api_server.__file__).read_text(encoding="utf-8")
+if "vllm.entrypoints.openai.apxm.api_router" not in api_server_text:
+    print(
+        "ERROR: OpenAI API server does not mount the APXM router from this checkout.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+print("OK: editable install resolves to external/vllm fork")
+print(f"OK: APXM router imports from {router_path}")
+"""
 
 
 def _run(cmd: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None) -> int:
@@ -33,10 +70,32 @@ def install_cmd(_args: argparse.Namespace) -> int:
     return _run(["bash", str(INSTALL_SCRIPT)], cwd=REPO_ROOT)
 
 
+def _verify_visible_fork() -> bool:
+    result = subprocess.run(
+        [str(VLLM_PYTHON), "-c", VERIFY_FORK_CODE, str(VLLM_DIR)],
+        cwd=VLLM_DIR,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0:
+        if result.stdout.strip():
+            _print(result.stdout.strip())
+        return True
+
+    if result.stdout.strip():
+        _print(result.stdout.strip())
+    if result.stderr.strip():
+        _print(result.stderr.strip())
+    _print("Run: dekk apxm vllm install")
+    return False
+
+
 def serve_cmd(args: argparse.Namespace, extra_args: list[str]) -> int:
     if not VLLM_PYTHON.exists():
         _print("external/vllm is not installed yet.")
         _print("Run: dekk apxm vllm install")
+        return 1
+    if not _verify_visible_fork():
         return 1
 
     env = dict(os.environ)
@@ -144,6 +203,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args, extra_args = parser.parse_known_args(argv)
+    if args.command == "install" and extra_args:
+        parser.error(f"unrecognized arguments: {' '.join(extra_args)}")
     return args.handler(args, extra_args)
 
 

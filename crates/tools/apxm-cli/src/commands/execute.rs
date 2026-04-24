@@ -754,7 +754,7 @@ fn build_metrics_json(
     input: &std::path::Path,
     opt_level: Option<u8>,
     result: &RuntimeExecutionResult,
-    #[cfg(feature = "metrics")] link_metrics: Option<&apxm_driver::LinkMetrics>,
+    #[cfg(feature = "metrics")] link_metrics: Option<&apxm_driver::linker::LinkMetrics>,
     #[cfg(not(feature = "metrics"))] _link_metrics: Option<()>,
 ) -> serde_json::Value {
     let mut metrics_json = serde_json::json!({

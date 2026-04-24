@@ -8,7 +8,10 @@ use crate::llm::Provider;
 use anyhow::{Result, anyhow};
 use apxm_core::constants::graph::attrs::{BASE_URL, MODEL};
 use apxm_core::constants::llm::config_keys;
-use apxm_core::types::{AISOperationType, BackendConfig, BackendType, ModelInfo, ProviderProtocol};
+use apxm_core::types::{
+    AISOperationType, BackendConfig, BackendType, ModelInfo, ProviderProtocol,
+    normalize_endpoint_for_protocol,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value as JsonValue, json};
 use std::collections::HashMap;
@@ -57,6 +60,11 @@ pub struct BackendRegistration {
     /// the backend's default (typically `true`). See `BackendConfig.auto_tool_choice`.
     #[serde(default)]
     pub auto_tool_choice: Option<bool>,
+    /// vLLM-only: hard-fail at `health_check` if the server doesn't expose
+    /// `/v1/apxm/*`. `None`/`Some(true)` mean fail-fast; `Some(false)` opts
+    /// out (allows stock vLLM). See `BackendConfig.require_apxm_endpoints`.
+    #[serde(default)]
+    pub require_apxm_endpoints: Option<bool>,
 }
 
 impl BackendRegistration {
@@ -80,7 +88,8 @@ impl BackendRegistration {
             .endpoint
             .as_deref()
             .map(|value| resolve_env_reference(value, "endpoint", &backend.name))
-            .transpose()?;
+            .transpose()?
+            .map(|value| normalize_endpoint_for_protocol(backend.protocol, &value));
 
         let extra_headers = backend
             .headers
@@ -119,6 +128,7 @@ impl BackendRegistration {
             options: HashMap::new(),
             extra_headers,
             auto_tool_choice: backend.auto_tool_choice,
+            require_apxm_endpoints: backend.require_apxm_endpoints,
         })
     }
 
@@ -155,6 +165,12 @@ impl BackendRegistration {
             map.insert(
                 config_keys::AUTO_TOOL_CHOICE.to_string(),
                 json!(auto_tool_choice),
+            );
+        }
+        if let Some(require_apxm_endpoints) = self.require_apxm_endpoints {
+            map.insert(
+                config_keys::REQUIRE_APXM_ENDPOINTS.to_string(),
+                json!(require_apxm_endpoints),
             );
         }
 
@@ -330,6 +346,7 @@ mod tests {
             }],
             docker: None,
             auto_tool_choice: Some(false),
+            require_apxm_endpoints: None,
         };
 
         let registration =
