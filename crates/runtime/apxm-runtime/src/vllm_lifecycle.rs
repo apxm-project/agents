@@ -29,9 +29,7 @@ pub struct VllmGraphLifecycle {
 
 impl VllmGraphLifecycle {
     /// Register `dag` with `backend` under `graph_id` / `exec_id` and
-    /// return the guard. The metadata payload is constructed from the DAG's
-    /// LLM-eligible nodes (Ask / Think / Reason); non-LLM nodes are skipped
-    /// in the per-node spec list but still counted toward `node_count`.
+    /// return the guard.
     pub async fn register(
         backend: Arc<dyn LLMBackend>,
         graph_id: String,

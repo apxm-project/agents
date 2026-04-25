@@ -82,22 +82,13 @@ pub trait LLMBackend: Send + Sync {
         Ok(())
     }
 
-    /// Returns true if the backend implements vLLM-style graph-aware extensions
-    /// (`register_graph`, graph status, `release_graph`). Default `false`.
-    ///
-    /// Use this in routing decisions instead of inspecting `metadata()` strings.
+    /// Whether the backend implements graph-aware extensions
+    /// (`register_graph`, `release_graph`). Default `false`.
     fn supports_graph_extensions(&self) -> bool {
         false
     }
 
-    /// Returns true if the backend accepts `tool_choice="auto"` on chat-completion
-    /// requests. Default `true` (matches OpenAI/Anthropic). Stock vLLM rejects
-    /// it with HTTP 400 unless launched with `--enable-auto-tool-choice` and
-    /// `--tool-call-parser <name>`; backends fronting such servers should
-    /// override this (driven by `BackendConfig.auto_tool_choice = false`).
-    ///
-    /// The runtime checks this before attaching tools+tool_choice to a request
-    /// and refuses to silently drop user-supplied `tools=[...]`.
+    /// Whether the backend accepts `tool_choice="auto"`. Default `true`.
     fn supports_auto_tool_choice(&self) -> bool {
         true
     }
