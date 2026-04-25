@@ -47,49 +47,10 @@ pub struct GraphReleaseResponse {
     pub remaining_blocks: Option<u32>,
 }
 
-/// Response from `GET /v1/apxm/graphs/{graph_id}`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GraphStatusResponse {
-    pub object: String,
-    pub graph_id: String,
-    pub registered: bool,
-    pub pinned_handles: u64,
-    pub pinned_blocks: u64,
-    pub node_count: Option<u64>,
-    pub critical_path_length: Option<u64>,
-}
-
 /// Graph-aware vLLM backend.
 ///
-/// Wraps an OpenAI-compatible vLLM server and injects APXM graph hints into
-/// each request's `extra_body.apxm` field, enabling:
-///
-/// - Critical-path priority scheduling
-/// - Graph-aware KV retention via per-request hinting
-/// - Graph-level pin TTL defaults
-/// - Eager prefill hints
-///
-/// # Example
-///
-/// ```ignore
-/// let backend = GraphAwareVllmBackend::new("", Some(json!({
-///     "base_url": "http://vllm-server:8916/v1",
-///     "model": "meta-llama/Llama-3.1-8B-Instruct"
-/// }))).await?;
-///
-/// // Register graph before sending requests
-/// backend.register_graph(GraphMetadata::new("graph-123", "exec-abc")).await?;
-///
-/// // Send request with hints
-/// let request = LLMRequest::new("Hello")
-///     .with_apxm_hints(ApxmGraphHints::critical_path(
-///         "graph-123", "exec-abc", 1, "greet", vec![2], 30_000
-///     ));
-/// let response = backend.generate(request).await?;
-///
-/// // Release graph when done
-/// backend.release_graph("graph-123").await?;
-/// ```
+/// Wraps an OpenAI-compatible vLLM server and injects APXM graph hints
+/// into each request via `extra_body.vllm_xargs.apxm`.
 pub struct GraphAwareVllmBackend {
     /// Inner OpenAI-compatible backend for actual requests.
     inner: OpenAIBackend,
@@ -99,26 +60,17 @@ pub struct GraphAwareVllmBackend {
     client: reqwest::Client,
     /// Counter for generating unique execution IDs.
     execution_counter: AtomicU64,
-    /// Whether the server exposes the APXM extension endpoints (`/v1/apxm/*`).
-    /// Probed on first `health_check`; if probe returns 404, this flips to `false`
-    /// and graph extension calls become silent no-ops.
+    /// Whether the server exposes `/v1/apxm/*`. Probed on `health_check`.
     apxm_endpoints_available: AtomicBool,
-    /// Tracks whether we've already emitted a one-time WARN about missing
-    /// APXM endpoints (so we don't spam the log on every health check).
+    /// Guards one-time WARN about missing APXM endpoints.
     health_check_warned: AtomicBool,
-    /// Whether the server accepts `tool_choice="auto"`. Driven by
-    /// `BackendConfig.auto_tool_choice` (TOML `auto_tool_choice = false` in
-    /// `~/.apxm/config.toml`). Default `true`. Stock vLLM without
-    /// `--enable-auto-tool-choice` should configure this to `false`.
+    /// Whether the server accepts `tool_choice="auto"`. Default `true`.
     auto_tool_choice_supported: AtomicBool,
     /// Whether the backend config included a concrete default model.
     default_model_configured: bool,
     /// Models that should suppress vLLM chat-template thinking output.
     non_thinking_models: HashSet<String>,
-    /// When `true` (the default), `health_check` returns `Err` if the server
-    /// does not expose `/v1/apxm/*`. Set to `false` via
-    /// `BackendConfig.require_apxm_endpoints = false` to allow stock vLLM
-    /// (which silently drops `extra_body.apxm` hints).
+    /// When `true` (default), `health_check` hard-fails without `/v1/apxm/*`.
     require_apxm_endpoints: bool,
 }
 
@@ -148,17 +100,12 @@ impl GraphAwareVllmBackend {
             &base_url,
         );
 
-        // `auto_tool_choice` defaults to `true` (matches OpenAI/Anthropic).
-        // Stock vLLM without `--enable-auto-tool-choice` should set this to
-        // `false` in `~/.apxm/config.toml` so the runtime won't send
-        // `tool_choice="auto"` and trigger a 400.
         let auto_tool_choice = config
             .as_ref()
             .and_then(|c| c.get(config_keys::AUTO_TOOL_CHOICE))
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
 
-        // Default true: catch stock-vLLM mis-registration loudly.
         let require_apxm_endpoints = config
             .as_ref()
             .and_then(|c| c.get(config_keys::REQUIRE_APXM_ENDPOINTS))
@@ -298,40 +245,6 @@ impl GraphAwareVllmBackend {
             .json()
             .await
             .context("Failed to parse graph release response")
-    }
-
-    /// Get the current status for a registered graph.
-    pub async fn get_graph_status(&self, graph_id: &str) -> Result<GraphStatusResponse> {
-        if !self.apxm_endpoints_available.load(Ordering::Relaxed) {
-            return Ok(GraphStatusResponse {
-                object: apxm_llm::OBJECT_GRAPH_STATUS.to_string(),
-                graph_id: graph_id.to_string(),
-                registered: false,
-                pinned_handles: 0,
-                pinned_blocks: 0,
-                node_count: None,
-                critical_path_length: None,
-            });
-        }
-        let url = self.graph_status_url(graph_id);
-
-        let response = self
-            .client
-            .get(&url)
-            .send()
-            .await
-            .context("Failed to send graph status request")?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("Graph status request failed: {} - {}", status, body);
-        }
-
-        response
-            .json()
-            .await
-            .context("Failed to parse graph status response")
     }
 
     fn request_model<'a>(&'a self, request: &'a LLMRequest) -> &'a str {

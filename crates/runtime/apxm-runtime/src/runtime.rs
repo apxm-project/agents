@@ -338,16 +338,9 @@ impl Runtime {
         #[cfg(feature = "metrics")]
         self.llm_registry.metrics().reset();
 
-        // Derive `_vllm_*` attributes from MLIR-stamped (bare-name) attrs in
-        // the wire format. Must run BEFORE register_graph + scheduling so the
-        // per-node hints in `extra_body.apxm.*` reflect the canonicalized
-        // shared-prefix groups, priorities, and pin modes. See
-        // `vllm_attr_derivation` module docs for the pipeline-ordering reason.
+        // Derive `_vllm_*` attributes before register_graph + scheduling.
         derive_vllm_attrs(&mut dag);
 
-        // Step 4: register the DAG with any graph-aware backends (e.g. vLLM).
-        // The guard is dropped at the end of this method; happy-path code calls
-        // `release().await` explicitly before that drop. Drop is the panic safety net.
         let lifecycle = build_vllm_lifecycle(&self.llm_registry, &dag).await?;
 
         // Create execution context
@@ -369,8 +362,6 @@ impl Runtime {
         // Execute with dataflow scheduler for automatic parallelism
         let exec_result = self.scheduler.execute(dag, executor, context, vec![]).await;
 
-        // Explicit happy-path release (Rule 5) — fire whether the scheduler
-        // succeeded or returned a recoverable error, before propagating.
         if let Some(lc) = &lifecycle {
             if let Err(e) = lc.release().await {
                 tracing::warn!(error = %e, "vLLM graph release failed (non-fatal)");
@@ -515,13 +506,9 @@ impl Runtime {
         #[cfg(feature = "metrics")]
         self.llm_registry.metrics().reset();
 
-        // Derive `_vllm_*` attributes from the wire-format MLIR-stamped attrs
-        // before register_graph + scheduling. See `execute()` and the
-        // `vllm_attr_derivation` module for the full rationale.
+        // Derive `_vllm_*` attributes before register_graph + scheduling.
         derive_vllm_attrs(&mut entry_dag);
 
-        // Step 4: register with vLLM-style graph-aware backends. See `execute()`
-        // for the rationale (explicit happy-path release; Drop as safety net).
         let context =
             self.build_context_with_bridge(session_id, event_emitter, session_dir, python_bridge);
         let graph_emitter = context.event_emitter.as_ref().map(Arc::clone);
@@ -673,10 +660,7 @@ async fn build_vllm_lifecycle(
     }
 }
 
-/// Artifact section kind for Python tool manifests. Aligned by value with
-/// `python_tools::CAPABILITY_NAME` since the Python frontend emits the
-/// sidecar under that section name; kept as a distinct const so the two
-/// concepts (section kind vs. error capability label) can diverge if needed.
+/// Artifact section kind for Python tool manifests.
 const PYTHON_TOOLS_SECTION_KIND: &str = python_tools::CAPABILITY_NAME;
 
 /// Extract a `PythonToolBridge` from an artifact's `python_tools` section, if present.

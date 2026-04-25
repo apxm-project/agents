@@ -132,9 +132,6 @@ impl ExecutorEngine {
     }
 
     /// Execute a DAG using the dataflow scheduler for automatic parallelism.
-    ///
-    /// Constructs a [`DataflowScheduler`] with default configuration, wraps
-    /// `self` in an `Arc`, and delegates the full execution to the scheduler.
     async fn execute_dag_parallel(&self, dag: ExecutionDag) -> Result<ExecutionResult> {
         let config = SchedulerConfig::default();
         let scheduler = DataflowScheduler::new(config);
@@ -382,8 +379,7 @@ pub struct ExecutionResult {
     pub results: HashMap<u64, Value>,
     /// Execution statistics
     pub stats: ExecutionStats,
-    /// Aggregate token usage collected during execution. Empty snapshot if no
-    /// LLM nodes ran. See [`crate::executor::token_accounting::TokenAccountant::snapshot`].
+    /// Aggregate token usage collected during execution. Empty if no LLM nodes ran.
     pub token_snapshot: crate::executor::token_accounting::TokenAccountingSnapshot,
 }
 
