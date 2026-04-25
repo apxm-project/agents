@@ -18,7 +18,7 @@ intended as user-facing examples.
 - **chained_llm.py** -- Long sequential LLM chains
 - **mixed_priority.py** -- Mixed priority scheduling
 - **priority_scheduling.py** -- Priority-based node scheduling
-- **multi_model.py** -- Multi-model routing baseline
+- **multi_model.py** -- Multi-route backend registry baseline
 - **benchmark_e2e.py** -- Repeated `dekk apxm execute` driver with CSV output
 - **comparison_report.py** -- Markdown summary for `benchmark_e2e.py` CSV output
 
@@ -57,6 +57,8 @@ python3 examples/python/_benchmarks/comparison_report.py \
 - Treat `demo_code_critique.py` as a benchmark source until fresh metrics are
   captured; do not use it for speedup or KV hit-rate claims without measured
   results.
+- `multi_model.py` requires registered aliases named `fast`,
+  `local-sensitive`, `powerful`, and `formatter`.
 
 ## Config
 

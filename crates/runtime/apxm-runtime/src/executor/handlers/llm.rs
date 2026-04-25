@@ -275,11 +275,22 @@ fn build_schema_retry_prompt(
 
 /// Get tool definitions from the capability system for LLM requests
 fn get_tool_definitions_from_capabilities(ctx: &ExecutionContext) -> Vec<ToolDefinition> {
-    ctx.capability_system
+    let mut tools: Vec<ToolDefinition> = ctx
+        .capability_system
         .list_capabilities()
         .into_iter()
         .map(|meta| ToolDefinition::new(&meta.name, &meta.description, meta.parameters_schema))
-        .collect()
+        .collect();
+    if let Some(bridge) = ctx.python_tool_bridge.as_ref() {
+        tools.extend(bridge.descriptors().map(|descriptor| {
+            ToolDefinition::new(
+                &descriptor.name,
+                &descriptor.description,
+                descriptor.schema.clone(),
+            )
+        }));
+    }
+    tools
 }
 
 /// Get tool definitions from the capability system filtered by group.
@@ -299,9 +310,23 @@ fn get_tools_by_names(ctx: &ExecutionContext, names: &[String]) -> Vec<ToolDefin
     names
         .iter()
         .filter_map(|name| {
-            ctx.capability_system.get_metadata(name).map(|meta| {
-                ToolDefinition::new(&meta.name, &meta.description, meta.parameters_schema)
-            })
+            if let Some(meta) = ctx.capability_system.get_metadata(name) {
+                return Some(ToolDefinition::new(
+                    &meta.name,
+                    &meta.description,
+                    meta.parameters_schema,
+                ));
+            }
+            ctx.python_tool_bridge
+                .as_ref()
+                .and_then(|bridge| bridge.registry().resolve(name))
+                .map(|descriptor| {
+                    ToolDefinition::new(
+                        &descriptor.name,
+                        &descriptor.description,
+                        descriptor.schema.clone(),
+                    )
+                })
         })
         .collect()
 }

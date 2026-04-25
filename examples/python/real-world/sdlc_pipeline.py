@@ -8,15 +8,14 @@ output as context, enforced by the compiler's data dependency analysis.
 Usage: dekk apxm execute examples/python/real-world/sdlc_pipeline.py
 """
 
-from apxm import compile, GraphRecorder
+from apxm import GraphRecorder, agent_cwd, compile
 from apxm._generated.agents import claude, codex
-import os
 
 
 @compile()
 def sdlc_pipeline(g: GraphRecorder):
     """Three-stage SDLC: architect designs, coder implements, reviewer verifies."""
-    cwd = os.environ.get("APXM_HOME", os.getcwd())
+    cwd = agent_cwd()
 
     # PARALLEL: agent spawns have no data deps -- compiler launches concurrently
     architect = g.spawn("architect", profile=claude, cwd=cwd)

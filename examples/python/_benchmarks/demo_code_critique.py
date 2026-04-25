@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""Composite code-critique demo graph for APXM x vLLM benchmarking.
+"""Composite code-critique graph for APXM x vLLM benchmarking.
 
-This is a pragmatic benchmark graph, not a full talk-packaging artifact. It
-captures the intended shape from the killer-demo notes:
+The graph exercises a stable benchmark shape:
 
 - one shared retrieval/setup step
 - three parallel draft generations
@@ -26,8 +25,15 @@ import sys
 from pathlib import Path
 
 
+def _find_repo_root(start: Path) -> Path:
+    for candidate in (start.resolve(), *start.resolve().parents):
+        if (candidate / "Cargo.toml").is_file() and (candidate / "crates").is_dir():
+            return candidate
+    return Path.cwd().resolve()
+
+
 def _bootstrap_repo_python_path() -> None:
-    repo_root = Path(__file__).resolve().parents[3]
+    repo_root = _find_repo_root(Path(__file__))
     frontend_python = repo_root / "crates" / "compiler" / "apxm-frontend" / "python"
     if frontend_python.exists():
         sys.path.insert(0, str(frontend_python))

@@ -103,7 +103,8 @@ purpose. The live ordering is in
 
 ## Design Notes
 
-Forward-looking design proposals — what APXM is becoming, not what it is today.
+Design notes capture context for areas that are not part of the runnable API
+unless the note explicitly says they are implemented.
 
 - [design/guardrails_handoffs.md](design/guardrails_handoffs.md) — input/output
   guardrails and inter-agent handoffs as first-class AIR constructs

@@ -21,6 +21,7 @@ from apxm._generated.emission import (
     emit_autonomous,
     emit_checkpoint,
     emit_communicate,
+    emit_inv_tool,
     emit_register_capability,
     emit_spawn_agent,
     emit_spawn_team,
@@ -93,6 +94,14 @@ class TestEmitterFunctions:
         assert '"my_tool"' in result
         assert 'description = "A test tool"' in result
         assert 'python_handler_id = "sha256:abc123"' in result
+
+    def test_emit_inv_tool_primary_and_params(self):
+        result = emit_inv_tool(
+            "%call",
+            {"capability": "my_tool", "params_json": '{"value": 42}'},
+            [],
+        )
+        assert result == '%call = ais.inv_tool "my_tool" ("{\\"value\\": 42}") : !ais.token'
 
     def test_emit_autonomous_primary(self):
         result = emit_autonomous(
@@ -265,6 +274,18 @@ class TestCompileRoundTrip:
         )
         air = g.to_air()
         result = _compile_air(air, tmp_air_dir, "rt_regcap")
+        assert result.returncode == 0, f"Compile failed:\n{result.stderr}"
+
+    def test_compile_inv_tool(self, tmp_air_dir):
+        g = GraphRecorder("rt_inv_tool")
+        g.register_capability(
+            name="reg",
+            capability_name="my_tool",
+            description="Test tool",
+        )
+        g.invoke(name="call", capability="my_tool", params={"value": 42})
+        air = g.to_air()
+        result = _compile_air(air, tmp_air_dir, "rt_inv_tool")
         assert result.returncode == 0, f"Compile failed:\n{result.stderr}"
 
     def test_compile_mixed_ops(self, tmp_air_dir):

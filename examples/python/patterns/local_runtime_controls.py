@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Local CLI-backed hooks, middleware, and explicit session root."""
 
-from pathlib import Path
-
 from apxm import (
     ExecutionOptions,
     GraphRecorder,
@@ -11,6 +9,7 @@ from apxm import (
     LoopGuardMiddlewareConfig,
     TimeoutMiddlewareConfig,
     compile,
+    local_apxm_path,
 )
 
 
@@ -21,12 +20,13 @@ def hello(g: GraphRecorder):
 
 
 if __name__ == "__main__":
+    hook_log = local_apxm_path("hook.log")
     options = ExecutionOptions(
-        session_root=Path(".apxm/sessions"),
+        session_root=local_apxm_path("sessions"),
         hooks=[
             HookConfig(
                 event=HookEvent.NODE_COMPLETE,
-                command="printf %s {{node_id}} >> .apxm/hook.log",
+                command=f"printf %s {{{{node_id}}}} >> {hook_log}",
             )
         ],
         middlewares=[

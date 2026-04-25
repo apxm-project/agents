@@ -12,13 +12,10 @@ Graph structure:
 - think: report — summarize what was fixed
 
 Usage:
-    PYTHONPATH=crates/compiler/apxm-frontend/python python3 examples/python/self-hosted/autofix_workflow.py > /tmp/autofix.air
-    dekk apxm compile /tmp/autofix.air -o /tmp/autofix.apxmobj
-    dekk apxm execute /tmp/autofix.air "examples/python"
+    dekk apxm execute examples/python/self-hosted/autofix_workflow.py "examples/python"
 """
 
-import os
-from apxm import compile, GraphRecorder
+from apxm import GraphRecorder, agent_cwd, compile
 from apxm._generated.agents import claude, codex
 
 
@@ -27,11 +24,11 @@ def autofix_workflow(g: GraphRecorder):
     """Autofix loop as an APXM workflow.
 
     Parameters:
-        scope (str): Scope to validate (e.g., "examples/python", "examples/python/acp-agents")
+        scope (str): Scope to validate (e.g., "examples/python")
     """
     g.param("scope", "str")
 
-    cwd = os.environ.get("APXM_HOME", os.getcwd())
+    cwd = agent_cwd()
 
     # Spawn agents
     validator = g.spawn("validator", profile=claude, cwd=cwd)

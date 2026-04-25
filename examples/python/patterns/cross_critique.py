@@ -4,18 +4,17 @@
 Claude and Codex propose next ACP features in parallel, then each critiques the other.
 True diamond dataflow with cross-agent context passing.
 
-Usage: python3 -m examples.python.acp-agents.cross_critique_pipeline
+Usage: dekk apxm execute examples/python/patterns/cross_critique.py
 """
 
-from apxm import compile, GraphRecorder
+from apxm import GraphRecorder, agent_cwd, compile
 from apxm._generated.agents import claude, codex
-import os
 
 
 @compile()
 def cross_critique_pipeline(g: GraphRecorder):
     """Diamond pattern: parallel proposals, then cross-critiques."""
-    cwd = os.environ.get("APXM_HOME", os.getcwd())
+    cwd = agent_cwd()
 
     # Spawn agents
     agent_a = g.spawn("agent_a", profile=claude, cwd=cwd)

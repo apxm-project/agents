@@ -36,7 +36,7 @@ class ToolLike(Protocol):
 
 @dataclass(slots=True)
 class AgentHooks:
-    """Lifecycle hooks for agent execution (placeholder for MVP)."""
+    """Lifecycle hooks for agent execution."""
 
     on_start: Any | None = None
     on_tool_call: Any | None = None
@@ -163,6 +163,8 @@ class Agent:
             ask_attrs[graph_keys.SYSTEM_PROMPT] = self.instructions
         if self.output_schema is not None:
             ask_attrs[graph_keys.OUTPUT_SCHEMA] = _normalize_value(self.output_schema)
+        if self._tools:
+            ask_attrs[graph_keys.TOOLS] = [tool.name for tool in self._tools]
         ask_attrs.update(
             {k: v for k, v in attributes.items() if v is not None}
         )
@@ -271,6 +273,8 @@ class BoundAgent:
             ask_attrs[graph_keys.SYSTEM_PROMPT] = agent.instructions
         if agent.output_schema is not None:
             ask_attrs[graph_keys.OUTPUT_SCHEMA] = _normalize_value(agent.output_schema)
+        if agent._tools:
+            ask_attrs[graph_keys.TOOLS] = [tool.name for tool in agent._tools]
         ask_attrs.update(
             {k: v for k, v in attributes.items() if v is not None}
         )

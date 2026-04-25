@@ -306,7 +306,7 @@ pub fn compile_command(
         // Inject python_tools sidecar section if present
         if let Some(sidecar_data) = &python_tools_sidecar {
             artifact.add_section(apxm_artifact::ArtifactSection {
-                kind: "python_tools".into(),
+                kind: apxm_runtime::python_tools::CAPABILITY_NAME.into(),
                 data: sidecar_data.clone(),
             });
         }

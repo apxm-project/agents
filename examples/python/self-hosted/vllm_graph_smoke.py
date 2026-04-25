@@ -8,20 +8,15 @@ Routing:
   Register one model under a vLLM backend with alias "smoke", or replace
   SMOKE_ROUTE with another explicit registered backend/model selector.
 
-Optional environment overrides:
-  - APXM_EMIT_AIR=1
+The APXM compiler driver sets the emit flag when it needs AIR.
 """
 
-import os
-
-from apxm import GraphRecorder, compile
+from apxm import GraphRecorder, compile, emit_air_if_requested
 from apxm._generated.providers import VLLM
 from apxm.backends import select_backend
-from apxm.constants import ENV_APXM_EMIT_AIR, ENV_FLAG_ENABLED
 
 
 SMOKE_MODEL_ALIAS = "smoke"
-ENV_EMIT_AIR = ENV_APXM_EMIT_AIR
 NODE_ARCHITECTURE = "architecture"
 NODE_SUMMARY = "summary"
 NODE_PRINT_OUTPUT = "print_output"
@@ -73,10 +68,10 @@ def vllm_graph_smoke(g: GraphRecorder):
 
 
 if __name__ == "__main__":
-    if os.environ.get(ENV_EMIT_AIR) == ENV_FLAG_ENABLED:
-        print(vllm_graph_smoke._air_text)
-    else:
-        import apxm
+    if emit_air_if_requested(vllm_graph_smoke):
+        raise SystemExit(0)
 
-        result = apxm.run(vllm_graph_smoke())
-        print(result.content)
+    import apxm
+
+    result = apxm.run(vllm_graph_smoke())
+    print(result.content)

@@ -14,13 +14,11 @@ Graph structure:
 - think: action_plan — extract concrete next steps
 
 Usage:
-    PYTHONPATH=crates/compiler/apxm-frontend/python python3 examples/python/self-hosted/explore.py > /tmp/explore.air
-    dekk apxm compile /tmp/explore.air -o /tmp/explore.apxmobj
-    dekk apxm execute /tmp/explore.air "Should we add distributed execution to APXM?"
+    dekk apxm execute examples/python/self-hosted/explore.py \
+      "Should we add distributed execution to APXM?"
 """
 
-import os
-from apxm import compile, GraphRecorder
+from apxm import GraphRecorder, agent_cwd, compile
 from apxm._generated.agents import claude, codex
 
 
@@ -33,7 +31,7 @@ def explore_workflow(g: GraphRecorder):
     """
     g.param("question", "str")
 
-    cwd = os.environ.get("APXM_HOME", os.getcwd())
+    cwd = agent_cwd()
 
     # Spawn 5 agents with different personas
     architect = g.spawn("architect", profile=claude, cwd=cwd)

@@ -4,12 +4,11 @@
 Codex analyzes APXM compiler deeply, Claude implements all fixes.
 Both work in the same repo. Codex reads and reports, Claude writes and commits.
 
-Usage: python3 -m examples.python.workflows.codex_claude_fix
+Usage: dekk apxm execute examples/python/real-world/codex_claude_fix.py
 """
 
-from apxm import compile, GraphRecorder
+from apxm import GraphRecorder, agent_cwd, compile
 from apxm._generated.agents import claude as claude_profile, codex as codex_profile
-import os
 
 
 @compile()
@@ -18,7 +17,7 @@ def codex_claude_fix(g: GraphRecorder):
 
     Demonstrates the new auto-wiring API with AgentHandle and cleaner syntax.
     """
-    cwd = os.environ.get("APXM_HOME", os.getcwd())
+    cwd = agent_cwd()
 
     # Spawn agents
     codex = g.spawn("codex_analyst", profile=codex_profile, cwd=cwd)

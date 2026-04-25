@@ -238,7 +238,7 @@ def _validate_tool_function(fn: Callable[..., Any]) -> bool:
     if inspect.iscoroutinefunction(fn):
         raise TypeError(
             f"@tool does not support async functions (got {fn.__qualname__}). "
-            "Use a sync function for MVP."
+            "Use a sync function."
         )
 
     sig = inspect.signature(fn)

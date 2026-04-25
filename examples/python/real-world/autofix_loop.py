@@ -15,7 +15,7 @@ Usage:
     dekk apxm execute examples/python/real-world/autofix_loop.py --emit-session
 """
 
-from apxm import compile, GraphRecorder
+from apxm import GraphRecorder, agent_cwd, compile
 from apxm._generated.agents import claude, codex
 
 
@@ -26,8 +26,7 @@ def autofix_loop(g: GraphRecorder):
     Simplified version using ASK and COMMUNICATE operations.
     Full version with bash/read capabilities would require capability registration.
     """
-    import os
-    cwd = os.environ.get("APXM_HOME", os.getcwd())
+    cwd = agent_cwd()
 
     # Spawn agents
     architect = g.spawn("architect", profile=claude, cwd=cwd)

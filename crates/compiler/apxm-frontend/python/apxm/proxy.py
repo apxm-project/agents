@@ -20,6 +20,7 @@ from .normalize import normalize_attributes as _normalize_attributes
 from .normalize import normalize_provider_spec as _normalize_provider_spec
 from .normalize import normalize_value as _normalize_value
 from .ir import ApxmGraph, GraphEdge, GraphNode, Parameter
+from .tools import FunctionTool
 
 class NodeRef:
     def __init__(self, recorder: "GraphRecorder", node_id: int, name: str) -> None:
@@ -56,6 +57,7 @@ class GraphRecorder:
         # Accumulate Python tool descriptors for artifact sidecar
         self._python_tools: list[dict[str, Any]] = []
         self._python_tool_ids: set[str] = set()  # dedup by handler_id
+        self._python_tool_registration_nodes: dict[str, NodeRef] = {}
         # Track bound agents by name so Agent.bind()/handoff() are idempotent —
         # without this, calling bind() twice (or handoff() against an Agent
         # that was already bound) emits a duplicate SPAWN_AGENT, which the
@@ -356,6 +358,65 @@ class GraphRecorder:
             attrs[graph_keys.PARAMS_JSON] = params
         attrs = self._apply_policy(attrs, attributes)
         return self._add_node(name, graph_keys.OP_INV_TOOL, attrs)
+
+    def register_tool(self, tool: FunctionTool, name: str | None = None, **attributes: Any) -> NodeRef:
+        """Register a Python @tool function as a runtime capability."""
+        if not isinstance(tool, FunctionTool):
+            raise TypeError("register_tool() expects a @tool-decorated FunctionTool")
+
+        existing = self._python_tool_registration_nodes.get(tool.handler_id)
+        if existing is not None:
+            return existing
+
+        node_name = name or self._auto_name(graph_keys.OP_REGISTER_CAPABILITY)
+        register = self.register_capability(
+            node_name,
+            capability_name=tool.name,
+            description=tool.description,
+            parameters_schema=tool.schema_json,
+            python_handler_id=tool.handler_id,
+            **attributes,
+        )
+        self.register_python_tool(tool)
+        self._python_tool_registration_nodes[tool.handler_id] = register
+        return register
+
+    def invoke_tool(
+        self,
+        tool: FunctionTool,
+        name: str | None = None,
+        *,
+        params: str | dict[str, Any] | None = None,
+        node_attributes: dict[str, Any] | None = None,
+        **tool_args: Any,
+    ) -> NodeRef:
+        """Register and invoke a Python @tool function.
+
+        Keyword arguments are treated as tool parameters so simple tools can be
+        called as ``g.invoke_tool(search_docs, query="...")``. Use ``params``
+        when a tool parameter name conflicts with recorder options.
+        """
+        if not isinstance(tool, FunctionTool):
+            raise TypeError("invoke_tool() expects a @tool-decorated FunctionTool")
+        if params is not None and tool_args:
+            raise TypeError("invoke_tool() accepts either params= or keyword tool arguments, not both")
+
+        invocation_params = params if params is not None else tool_args or None
+        invocation_attributes = dict(node_attributes or {})
+
+        registration = self.register_tool(tool)
+        invocation = self.invoke(
+            name,
+            capability=tool.name,
+            params=invocation_params,
+            **invocation_attributes,
+        )
+        self.add_edge(
+            registration,
+            invocation,
+            dependency=graph_keys.DEPENDENCY_CONTROL,
+        )
+        return invocation
 
     def branch(
         self,
@@ -1277,13 +1338,18 @@ class GraphRecorder:
         self._python_tool_ids.add(hid)
         module = getattr(tool.fn, "__module__", "__unknown__") or "__unknown__"
         qualname = getattr(tool.fn, "__qualname__", tool.fn.__name__)
-        self._python_tools.append({
-            "handler_id": hid,
-            "module": module,
-            "qualname": qualname,
-            "name": tool.name,
-            "schema": json.loads(tool.schema_json) if tool.schema_json else {},
-        })
+        descriptor = {
+            graph_keys.PYTHON_TOOL_MANIFEST_HANDLER_ID: hid,
+            graph_keys.PYTHON_TOOL_MANIFEST_MODULE: module,
+            graph_keys.PYTHON_TOOL_MANIFEST_QUALNAME: qualname,
+            graph_keys.PYTHON_TOOL_MANIFEST_NAME: tool.name,
+            graph_keys.PYTHON_TOOL_MANIFEST_DESCRIPTION: tool.description,
+            graph_keys.PYTHON_TOOL_MANIFEST_SCHEMA: json.loads(tool.schema_json) if tool.schema_json else {},
+        }
+        source_file = inspect.getsourcefile(tool.fn)
+        if source_file:
+            descriptor[graph_keys.PYTHON_TOOL_MANIFEST_SOURCE_FILE] = source_file
+        self._python_tools.append(descriptor)
 
     def to_air(self) -> str:
         """Emit canonical .air text IR for this graph.

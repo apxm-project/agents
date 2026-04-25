@@ -19,4 +19,4 @@ def research_brief(g: GraphRecorder, topic: str):
 
 
 if __name__ == "__main__":
-    print(research_brief._graph.to_json())
+    print(research_brief._air_text)

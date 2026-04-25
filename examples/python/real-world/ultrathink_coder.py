@@ -3,12 +3,11 @@
 
 3-way parallel planning + synthesis + implementation.
 
-Usage: python3 -m examples.python.workflows.ultrathink_coder
+Usage: dekk apxm execute examples/python/real-world/ultrathink_coder.py
 """
 
-from apxm import compile, GraphRecorder
+from apxm import GraphRecorder, agent_cwd, compile
 from apxm._generated.agents import claude, codex
-import os
 
 
 @compile()
@@ -23,7 +22,7 @@ def ultrathink_coder(g: GraphRecorder, task: str):
     task : str
         The coding task to implement.
     """
-    cwd = os.environ.get("APXM_HOME", os.getcwd())
+    cwd = agent_cwd()
 
     # Spawn the coder agent
     coder = g.spawn("coder", profile=claude, cwd=cwd)

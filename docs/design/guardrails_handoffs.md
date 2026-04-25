@@ -107,8 +107,7 @@ GUARDRAIL_CHECK(kind=input_tool) before the spawn.
 
 **LLM-driven selection** ("give the model a list of agents and let it pick")
 requires the model to see handoff targets as tool definitions. This is the
-TOOL_DISPATCH pattern identified in the OpenAI agents bridge investigation
-(`/home/raherrer/.claude/projects/-home-raherrer-projects-agents-apxm/memory/openai_agents_bridge.md`).
+TOOL_DISPATCH pattern used by SDKs that expose handoffs as tool calls.
 
 **Recommendation: defer SELECT_AGENT / TOOL_DISPATCH to a later phase.**
 LLM-driven handoffs can be implemented today by registering each handoff as a
@@ -117,7 +116,7 @@ regular tool via REGISTER_CAPABILITY + INV_TOOL. The LLM sees N tools
 it chooses. This is exactly how OpenAI's SDK implements it -- each Handoff
 becomes a tool. A dedicated SELECT_AGENT op would only add value if we need
 compiler-level optimization of agent selection (e.g., pruning unreachable
-agents), which is a post-MVP concern.
+agents), which belongs in a later phase.
 
 **New ops required: 0.** Handoffs compose from existing SPAWN_AGENT,
 COMMUNICATE, REGISTER_CAPABILITY, and INV_TOOL.
@@ -128,8 +127,7 @@ COMMUNICATE, REGISTER_CAPABILITY, and INV_TOOL.
 
 ### Existing Infrastructure
 
-APXM's retry infrastructure is rated **Excellent** in the resilience assessment
-(`/home/raherrer/.claude/projects/-home-raherrer-projects-agents-apxm/memory/error-handling-resilience-report.md`):
+APXM's retry infrastructure already covers the backend layer:
 
 - `RetryConfig` with exponential backoff (500ms-60s), jitter, 3 max retries
   (`crates/runtime/apxm-backends/src/llm/retry/mod.rs`)
@@ -197,7 +195,7 @@ SPAWN_AGENT ops, configured via new AIS attributes (`retries`, `backoff`,
 |---------|---------|-----------|
 | Guardrails | **Yes: `GUARDRAIL_CHECK`** | Distinct semantics from GUARD (callable vs expression); needs `mode`, `handler_id`, `guardrail_kind` |
 | Handoffs (static) | No | Composes from SPAWN_AGENT + COMMUNICATE |
-| Handoffs (LLM-driven) | Deferred | Use REGISTER_CAPABILITY + INV_TOOL for MVP; dedicated SELECT_AGENT is post-MVP |
+| Handoffs (LLM-driven) | Deferred | Use REGISTER_CAPABILITY + INV_TOOL first; dedicated SELECT_AGENT can come later |
 | Per-tool retries | No | New attributes on INV_TOOL; reuse `RetryStrategy` from apxm-backends |
 | Per-agent failure | No | New attributes on SPAWN_AGENT; runtime engine checks before marking failed |
 

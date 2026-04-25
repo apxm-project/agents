@@ -11,13 +11,11 @@ Graph structure:
 - analyzer → implementer → test_runner → summary
 
 Usage:
-    PYTHONPATH=crates/compiler/apxm-frontend/python python3 examples/python/self-hosted/refactor.py > /tmp/refactor.air
-    dekk apxm compile /tmp/refactor.air -o /tmp/refactor.apxmobj
-    dekk apxm execute /tmp/refactor.air "apxm-runtime" "Extract scheduler into its own module"
+    dekk apxm execute examples/python/self-hosted/refactor.py \
+      "apxm-runtime" "Extract scheduler into its own module"
 """
 
-import os
-from apxm import compile, GraphRecorder
+from apxm import GraphRecorder, agent_cwd, compile
 from apxm._generated.agents import claude, codex
 
 
@@ -32,7 +30,7 @@ def refactor_workflow(g: GraphRecorder):
     g.param("target", "str")
     g.param("goal", "str")
 
-    cwd = os.environ.get("APXM_HOME", os.getcwd())
+    cwd = agent_cwd()
 
     # Spawn agents
     analyzer = g.spawn("analyzer", profile=claude, cwd=cwd)

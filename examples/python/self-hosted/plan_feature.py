@@ -13,13 +13,11 @@ Graph structure:
 - think: final_plan — structured plan with file paths and test strategy
 
 Usage:
-    PYTHONPATH=crates/compiler/apxm-frontend/python python3 examples/python/self-hosted/plan_feature.py > /tmp/plan.air
-    dekk apxm compile /tmp/plan.air -o /tmp/plan.apxmobj
-    dekk apxm execute /tmp/plan.air "Add streaming support to LLM backends"
+    dekk apxm execute examples/python/self-hosted/plan_feature.py \
+      "Add streaming support to LLM backends"
 """
 
-import os
-from apxm import compile, GraphRecorder
+from apxm import GraphRecorder, agent_cwd, compile
 from apxm._generated.agents import claude, codex
 
 
@@ -32,7 +30,7 @@ def plan_feature_workflow(g: GraphRecorder):
     """
     g.param("feature", "str")
 
-    cwd = os.environ.get("APXM_HOME", os.getcwd())
+    cwd = agent_cwd()
 
     # Spawn architect
     architect = g.spawn("architect", profile=claude, cwd=cwd)

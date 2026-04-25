@@ -11,15 +11,14 @@ the result. APXM provides automatic resilience:
 Usage: dekk apxm execute examples/python/patterns/resilient_pipeline.py
 """
 
-from apxm import compile, GraphRecorder
+from apxm import GraphRecorder, agent_cwd, compile
 from apxm._generated.agents import claude
-import os
 
 
 @compile()
 def resilient_pipeline(g: GraphRecorder):
     """Resilient ACP pipeline: format task, send to worker, review result."""
-    cwd = os.environ.get("APXM_HOME", os.getcwd())
+    cwd = agent_cwd()
 
     # Spawn worker agent
     # APXM runtime tracks provider health and retries transient failures

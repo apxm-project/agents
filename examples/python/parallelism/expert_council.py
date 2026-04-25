@@ -3,7 +3,7 @@
 
 Three parallel ASK ops -> synthesis via THINK -> final verdict
 
-Usage: python3 -m examples.python.multi-agent.apxm_council
+Usage: dekk apxm execute examples/python/parallelism/expert_council.py
 """
 
 from apxm import compile, GraphRecorder

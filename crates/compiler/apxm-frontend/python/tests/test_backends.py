@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+from apxm.constants import ENV_APXM_CONFIG
+
 
 def _write_config(path):
     path.write_text(
@@ -57,7 +59,7 @@ endpoint = "http://mock"
 def backend_config(tmp_path, monkeypatch):
     config = tmp_path / "config.toml"
     _write_config(config)
-    monkeypatch.setenv("APXM_CONFIG", str(config))
+    monkeypatch.setenv(ENV_APXM_CONFIG, str(config))
     return config
 
 

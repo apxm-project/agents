@@ -31,12 +31,17 @@
 use super::traits::{LLMBackend, StreamChunk};
 use super::{LLMRequest, LLMResponse};
 use apxm_core::observability::{CallEvent, CallTrace};
-use apxm_core::types::{FinishReason, ModelCapabilities, ModelInfo, TokenUsage};
+use apxm_core::types::{FinishReason, ModelCapabilities, ModelInfo, TokenUsage, ToolCall};
 use async_trait::async_trait;
+use serde_json::json;
 use parking_lot::RwLock;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+const MOCK_CALCULATOR_TOOL_ADD: &str = "add";
+const MOCK_CALCULATOR_CALL_ID: &str = "mock_call_add";
+const MOCK_TOOL_RESULT_TAG: &str = "<tool_result";
 use tokio_stream::Stream;
 
 /// A recorded LLM call for inspection in tests.
@@ -332,7 +337,37 @@ impl MockLLMBackend {
     /// mock backend without requiring a configured tool bridge.
     ///
     /// Returns `None` if no calculator pattern matches.
-    fn try_calculator_pattern(&self, prompt: &str) -> Option<LLMResponse> {
+    fn try_calculator_pattern(&self, request: &LLMRequest, prompt: &str) -> Option<LLMResponse> {
+        if prompt.contains(MOCK_TOOL_RESULT_TAG) && prompt.contains("42") {
+            return Some(LLMResponse::new(
+                "The answer is 42.",
+                self.model.clone(),
+                TokenUsage::new(20, 10),
+                FinishReason::Stop,
+            ));
+        }
+
+        let has_add_tool = request
+            .tools
+            .as_ref()
+            .is_some_and(|tools| tools.iter().any(|tool| tool.name == MOCK_CALCULATOR_TOOL_ADD));
+
+        if has_add_tool && prompt.contains("17") && prompt.contains("25") {
+            return Some(
+                LLMResponse::new(
+                    "",
+                    self.model.clone(),
+                    TokenUsage::new(15, 5),
+                    FinishReason::ToolUse,
+                )
+                .with_tool_calls(vec![ToolCall::new(
+                    MOCK_CALCULATOR_CALL_ID,
+                    MOCK_CALCULATOR_TOOL_ADD,
+                    json!({"a": 17, "b": 25}),
+                )]),
+            );
+        }
+
         if prompt.contains("17") && prompt.contains("25") {
             return Some(LLMResponse::new(
                 "The answer is 42.",
@@ -412,7 +447,7 @@ impl LLMBackend for MockLLMBackend {
         let effective_prompt = self.extract_prompt(&request);
 
         // Check built-in calculator pattern before user-defined patterns
-        if let Some(calc_response) = self.try_calculator_pattern(&effective_prompt) {
+        if let Some(calc_response) = self.try_calculator_pattern(&request, &effective_prompt) {
             if self.latency_ms > 0 {
                 tokio::time::sleep(Duration::from_millis(self.latency_ms)).await;
             }
@@ -473,7 +508,7 @@ impl LLMBackend for MockLLMBackend {
         let effective_prompt = self.extract_prompt(&request);
 
         // Check built-in calculator pattern before user-defined patterns
-        if let Some(calc_response) = self.try_calculator_pattern(&effective_prompt) {
+        if let Some(calc_response) = self.try_calculator_pattern(&request, &effective_prompt) {
             let mock_resp = MockResponse::new(&calc_response.content).with_tokens(
                 calc_response.usage.input_tokens,
                 calc_response.usage.output_tokens,
