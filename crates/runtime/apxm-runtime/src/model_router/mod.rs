@@ -441,6 +441,7 @@ impl ModelRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::{MOCK_BACKEND_NAME, MOCK_MODEL_NAME};
     use apxm_backends::LLMRegistry;
     use registry::ModelEntry;
     use std::sync::{Arc, Mutex};
@@ -489,8 +490,8 @@ mod tests {
         let llm_registry = Arc::new(LLMRegistry::new());
         let model_registry = Arc::new(ModelRegistry::new());
         model_registry.register(ModelEntry {
-            name: "fast-model".to_string(),
-            backend: "openai".to_string(),
+            name: MOCK_MODEL_NAME.to_string(),
+            backend: MOCK_BACKEND_NAME.to_string(),
             cost_per_1k_input: 0.0,
             cost_per_1k_output: 0.0,
             context_window: 8_000,
@@ -507,12 +508,12 @@ mod tests {
         .unwrap();
 
         // Register circuit breaker for the backend
-        router.circuit_breakers.register("openai");
+        router.circuit_breakers.register(MOCK_BACKEND_NAME);
 
-        let request = LLMRequest::new("hi").with_model("fast-model");
+        let request = LLMRequest::new("hi").with_model(MOCK_MODEL_NAME);
         let decision = router.select(&request).unwrap();
-        assert_eq!(decision.backend, "openai");
-        assert_eq!(decision.model.as_deref(), Some("fast-model"));
+        assert_eq!(decision.backend, MOCK_BACKEND_NAME);
+        assert_eq!(decision.model.as_deref(), Some(MOCK_MODEL_NAME));
     }
 
     #[test]

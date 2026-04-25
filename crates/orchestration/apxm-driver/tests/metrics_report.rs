@@ -11,6 +11,9 @@ use apxm_core::constants::session::metrics_keys;
 use apxm_core::metrics::{MetricsReport, MetricsSource};
 use serde_json::Value;
 
+const MOCK_BACKEND_KIND: &str = "mock-backend-kind";
+const MOCK_BACKEND_NAME: &str = "mock-backend";
+
 fn empty_compiler_diagnostics() -> PipelineDiagnostics {
     PipelineDiagnostics::default()
 }
@@ -58,18 +61,21 @@ impl MetricsSource for StubBackendSource {
         }
         use metrics_keys::graph_status_keys as gsk;
         use metrics_keys::llm_keys;
+        let mut per_backend = serde_json::Map::new();
+        per_backend.insert(
+            MOCK_BACKEND_NAME.to_string(),
+            serde_json::json!({ llm_keys::TOTAL_REQUESTS: 1 }),
+        );
         serde_json::json!({
             metrics_keys::BACKENDS_AGGREGATE: {
                 llm_keys::TOTAL_REQUESTS: 1,
                 llm_keys::SUCCESSFUL_REQUESTS: 1,
                 llm_keys::FAILED_REQUESTS: 0
             },
-            metrics_keys::BACKENDS_PER_BACKEND: {
-                "mock": { llm_keys::TOTAL_REQUESTS: 1 }
-            },
+            metrics_keys::BACKENDS_PER_BACKEND: per_backend,
             metrics_keys::BACKENDS_GRAPHS: [{
-                gsk::BACKEND_KIND: "vllm",
-                gsk::BACKEND_NAME: "vllm-fork",
+                gsk::BACKEND_KIND: MOCK_BACKEND_KIND,
+                gsk::BACKEND_NAME: MOCK_BACKEND_NAME,
                 gsk::GRAPH_ID: "g1",
                 gsk::PINNED_BLOCKS: 7,
                 gsk::PINNED_HANDLES: 3,

@@ -6,7 +6,9 @@ This example shows the APXM metrics hierarchy:
 - `graph_metrics.nodes`: node-owned operation and process metrics.
 - `graph_metrics.aggregates`: derived rollups computed from node records.
 
-Run the live graph with a configured ACP profile:
+Run the live graph with a configured ACP profile. The graph uses
+`example-acp-profile` as a placeholder; replace it with any profile registered
+by the frontend you are testing.
 
 ```sh
 dekk apxm execute examples/metrics/spawn-agent-graph-metrics.json \

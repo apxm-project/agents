@@ -6,7 +6,7 @@
 //!
 //! ## Attributes
 //! - `agent_name`    (required): name for the new agent
-//! - `profile`       (optional): ACP agent profile (e.g. "claude", "codex").
+//! - `profile`       (optional): ACP agent profile registered by the frontend.
 //!   When present, spawns a real ACP subprocess via the ProcessTable's
 //!   `AgentSpawner`.
 //! - `mode`          (optional): agent mode to set after spawn (e.g. "architect")
@@ -129,7 +129,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
 
         let mode = get_optional_string_attribute(node, graph_attrs::MODE)?;
         let model = get_optional_string_attribute(node, graph_attrs::MODEL)?;
-        // Determine node workspace folder for context files (AGENTS.md/CLAUDE.md).
+        // Determine node workspace folder for frontend-specific context files.
         // The node workspace path is passed as APXM_NODE_WORKSPACE env var so the
         // agent can read its context files, while cwd stays at the project root
         // so the agent can build/test/commit normally.
@@ -166,7 +166,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
         let aam_context = project_aam_context(ctx, node.id, profile_name);
 
         // Build extra env for the agent subprocess.
-        // APXM_NODE_WORKSPACE points to the per-node context folder (AGENTS.md/CLAUDE.md).
+        // APXM_NODE_WORKSPACE points to the per-node context folder.
         // CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD tells claude-agent-acp to also
         // read CLAUDE.md from the node workspace folder while running in the project root.
         let mut extra_env = std::collections::HashMap::new();
@@ -649,7 +649,7 @@ mod tests {
         )
         .with_context_stack(context_stack);
 
-        let projected = project_aam_context(&ctx, 2, context_stack_consts::PROFILE_CLAUDE);
+        let projected = project_aam_context(&ctx, 2, context_stack_consts::DEFAULT_PROFILE);
 
         let system_prompt = projected.system_prompt.expect("system_prompt");
         assert!(system_prompt.contains("## Upstream: seed (#1)"));

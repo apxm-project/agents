@@ -11,6 +11,10 @@ use std::path::Path;
 use std::time::Duration;
 use tempfile::TempDir;
 
+const CLAUDE_PROFILE: &str = "claude";
+const CLAUDE_CONTEXT_FILE: &str = "CLAUDE.md";
+const MOCK_AGENT_PROFILE: &str = "mock-profile";
+
 fn make_graph(nodes: Vec<AirNode>, edges: Vec<AirEdge>) -> AirModule {
     AirModule {
         name: "session-output".to_string(),
@@ -38,9 +42,19 @@ fn make_node(
 fn setup_project_root() -> TempDir {
     let dir = tempfile::tempdir().expect("project root");
     let skills_root = dir.path().join(".agents/skills");
-    fs::create_dir_all(skills_root.join("claude")).expect("claude skill dir");
+    fs::create_dir_all(skills_root.join(CLAUDE_PROFILE)).expect("claude skill dir");
+    fs::create_dir_all(skills_root.join(MOCK_AGENT_PROFILE)).expect("mock skill dir");
     fs::create_dir_all(skills_root.join("spawn_agent")).expect("spawn_agent skill dir");
-    fs::write(skills_root.join("claude/SKILL.md"), "# Claude\n").expect("claude skill");
+    fs::write(
+        skills_root.join(CLAUDE_PROFILE).join("SKILL.md"),
+        "# Claude\n",
+    )
+    .expect("claude skill");
+    fs::write(
+        skills_root.join(MOCK_AGENT_PROFILE).join("SKILL.md"),
+        "# Mock Profile\n",
+    )
+    .expect("mock skill");
     fs::write(skills_root.join("spawn_agent/SKILL.md"), "# Spawn Agent\n")
         .expect("spawn_agent skill");
     dir
@@ -70,7 +84,7 @@ fn node_workspace_creation_writes_context_and_outputs() {
                 HashMap::from([
                     (
                         graph_attrs::PROFILE.to_string(),
-                        Value::String("claude".to_string()),
+                        Value::String(CLAUDE_PROFILE.to_string()),
                     ),
                     (
                         graph_attrs::TASK_SPEC.to_string(),
@@ -122,7 +136,7 @@ fn node_workspace_creation_writes_context_and_outputs() {
     assert!(seed_dir.is_dir());
     assert!(spawn_dir.is_dir());
 
-    let claude_md = fs::read_to_string(spawn_dir.join("CLAUDE.md")).expect("CLAUDE.md");
+    let claude_md = fs::read_to_string(spawn_dir.join(CLAUDE_CONTEXT_FILE)).expect("CLAUDE.md");
     assert!(claude_md.contains("Draft the node workspace rollout"));
     assert!(claude_md.contains("upstream design"));
     assert!(claude_md.contains("skills/claude/SKILL.md"));
@@ -236,7 +250,7 @@ fn spawn_agent_skill_resolution_copies_profile_and_operation_skills() {
             AISOperationType::SpawnAgent,
             HashMap::from([(
                 graph_attrs::PROFILE.to_string(),
-                Value::String("claude".to_string()),
+                Value::String(MOCK_AGENT_PROFILE.to_string()),
             )]),
         )],
         Vec::new(),
@@ -250,14 +264,14 @@ fn spawn_agent_skill_resolution_copies_profile_and_operation_skills() {
         .join(constants::session::files::NODES_DIR)
         .join(session_node_dir_name(2, "spawn_architect"))
         .join(constants::session::node::SKILLS_DIR);
-    let claude_skill = skills_dir.join("claude/SKILL.md");
+    let profile_skill = skills_dir.join(MOCK_AGENT_PROFILE).join("SKILL.md");
     let op_skill = skills_dir.join("spawn_agent/SKILL.md");
 
-    assert!(claude_skill.is_file());
+    assert!(profile_skill.is_file());
     assert!(op_skill.is_file());
     assert!(
-        !fs::symlink_metadata(&claude_skill)
-            .expect("claude metadata")
+        !fs::symlink_metadata(&profile_skill)
+            .expect("profile metadata")
             .file_type()
             .is_symlink()
     );

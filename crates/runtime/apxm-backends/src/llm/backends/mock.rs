@@ -706,7 +706,7 @@ mod call_trace_recording_tests {
         assert_eq!(recorded.events[0].node_id, 3);
         assert_eq!(recorded.events[0].node_name, "ask_x");
         assert_eq!(recorded.events[0].prompt, "hello");
-        assert_eq!(recorded.events[0].op, "ASK");
+        assert_eq!(recorded.events[0].op, Some(AISOperationType::Ask));
     }
 
     #[tokio::test]

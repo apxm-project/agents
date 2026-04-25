@@ -24,6 +24,11 @@ use apxm_runtime::ExecutionEventEmitter;
 use crate::context_assembler::{ContextAssembler, WorkspaceNodeMetadata};
 use crate::skill_resolver::SkillResolver;
 
+const CLAUDE_PROFILE: &str = "claude";
+const CODEX_PROFILE: &str = "codex";
+const CLAUDE_CONTEXT_FILE: &str = "CLAUDE.md";
+const CODEX_CONTEXT_FILE: &str = "AGENTS.md";
+
 /// Writes session output files to a directory.
 pub struct SessionOutputWriter {
     session_dir: PathBuf,
@@ -593,18 +598,18 @@ impl SessionEventEmitter {
                 .and_then(|v| v.as_str())
             {
                 match profile {
-                    "claude" => {
+                    CLAUDE_PROFILE => {
                         if let Ok(contents) =
                             assembler.assemble_claude_md(node_id, meta, &skill_names)
                         {
-                            let _ = fs::write(node_dir.join("CLAUDE.md"), contents);
+                            let _ = fs::write(node_dir.join(CLAUDE_CONTEXT_FILE), contents);
                         }
                     }
-                    "codex" => {
+                    CODEX_PROFILE => {
                         if let Ok(contents) =
                             assembler.assemble_agents_md(node_id, meta, &skill_names)
                         {
-                            let _ = fs::write(node_dir.join("AGENTS.md"), contents);
+                            let _ = fs::write(node_dir.join(CODEX_CONTEXT_FILE), contents);
                         }
                     }
                     _ => {}

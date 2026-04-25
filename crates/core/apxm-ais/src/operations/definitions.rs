@@ -476,11 +476,11 @@ impl AISOperationType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReferenceType {
-    /// ACP agent profile (e.g., "claude", "codex").
+    /// Registered ACP agent profile.
     Profile,
     /// Registered LLM backend (e.g., "openai", "corp-gateway").
     Backend,
-    /// LLM model identifier (e.g., "gpt-4", "claude-sonnet-4").
+    /// LLM model identifier accepted by the selected backend.
     Model,
     /// Registered tool/capability (e.g., "bash", "web_search").
     Capability,
@@ -1753,18 +1753,18 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         description: "Create a new agent instance at runtime, optionally as an ACP subprocess",
         long_description: "Spawns a new agent instance. Without 'profile', registers a local \
             process for flow-based agents. With 'profile', spawns a real ACP subprocess \
-            (Claude, Codex, Gemini, etc.) via the ProcessTable's AgentSpawner. The agent \
-            can then receive COMMUNICATE (protocol 'acp' or 'local') or DELEGATE messages. \
-            Returns the agent's identifier and metadata.",
+            through the ProcessTable's AgentSpawner. The agent can then receive COMMUNICATE \
+            (protocol 'acp' or 'local') or DELEGATE messages. Returns the agent's identifier \
+            and metadata.",
         latency: OperationLatency::Medium,
         example_json: Some(
-            r#"{"id": 1, "op": "SPAWN_AGENT", "attributes": {"agent_name": "reviewer", "profile": "claude", "mode": "architect"}}"#,
+            r#"{"id": 1, "op": "SPAWN_AGENT", "attributes": {"agent_name": "worker", "profile": "example-acp-profile", "mode": "architect"}}"#,
         ),
         fields: &[
             OperationField::required(attrs::AGENT_NAME, "Name for the new agent"),
             OperationField::optional_ref(
                 attrs::PROFILE,
-                "ACP agent profile (e.g. 'claude', 'codex'). When present, spawns an ACP subprocess",
+                "Registered ACP agent profile. When present, spawns an ACP subprocess",
                 ReferenceType::Profile,
             ),
             OperationField::optional(
@@ -1773,7 +1773,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             ),
             OperationField::optional_ref(
                 attrs::MODEL,
-                "Model override (e.g. 'claude-sonnet-4')",
+                "Model override accepted by the selected backend",
                 ReferenceType::Model,
             ),
             OperationField::optional(

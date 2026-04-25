@@ -265,6 +265,8 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
+    const MOCK_AGENT_PROFILE: &str = "mock-profile";
+
     #[test]
     fn assembles_agents_doc_with_upstream_output() {
         let dir = tempdir().expect("tempdir");
@@ -295,7 +297,7 @@ mod tests {
                 op_type: AISOperationType::SpawnAgent,
                 attributes: HashMap::from([(
                     graph_attrs::PROFILE.to_string(),
-                    Value::String("codex".to_string()),
+                    Value::String(MOCK_AGENT_PROFILE.to_string()),
                 )]),
             },
         );

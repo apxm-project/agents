@@ -3,6 +3,8 @@
 import pytest
 
 WEB_TOOL_GROUP = "web"
+MOCK_AGENT_PROFILE = "mock-agent-profile"
+MOCK_AGENT_PROFILE_ALT = "mock-agent-profile-alt"
 
 
 def test_compile_decorator_basic():
@@ -172,8 +174,8 @@ def test_compile_with_team_sugar():
     @compile()
     def team_workflow(g: GraphRecorder, task: str):
         team = g.team("workers")
-        alice = team.add("alice", profile="claude")
-        bob = team.add("bob", profile="codex")
+        alice = team.add("alice", profile=MOCK_AGENT_PROFILE)
+        bob = team.add("bob", profile=MOCK_AGENT_PROFILE_ALT)
 
         alice.ask(f"Alice: do {{task}}")
         bob.ask(f"Bob: do {{task}}")

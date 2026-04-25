@@ -649,13 +649,13 @@ export const SPAWN_AGENT: OpSpec = {
   name: "SpawnAgent",
   category: "coordination" as OpCategory,
   description: "Create a new agent instance at runtime, optionally as an ACP subprocess",
-  longDescription: "Spawns a new agent instance. Without 'profile', registers a local process for flow-based agents. With 'profile', spawns a real ACP subprocess (Claude, Codex, Gemini, etc.) via the ProcessTable's AgentSpawner. The agent can then receive COMMUNICATE (protocol 'acp' or 'local') or DELEGATE messages. Returns the agent's identifier and metadata.",
+  longDescription: "Spawns a new agent instance. Without 'profile', registers a local process for flow-based agents. With 'profile', spawns a real ACP subprocess through the ProcessTable's AgentSpawner. The agent can then receive COMMUNICATE (protocol 'acp' or 'local') or DELEGATE messages. Returns the agent's identifier and metadata.",
   latency: "medium",
   fields: [
     { name: "agent_name", description: "Name for the new agent", required: true, refType: null },
-    { name: "profile", description: "ACP agent profile (e.g. 'claude', 'codex'). When present, spawns an ACP subprocess", required: false, refType: "agent profile" },
+    { name: "profile", description: "Registered ACP agent profile. When present, spawns an ACP subprocess", required: false, refType: "agent profile" },
     { name: "mode", description: "Agent mode to set after spawn (e.g. 'architect', 'code')", required: false, refType: null },
-    { name: "model", description: "Model override (e.g. 'claude-sonnet-4')", required: false, refType: "model" },
+    { name: "model", description: "Model override accepted by the selected backend", required: false, refType: "model" },
     { name: "cwd", description: "Working directory for the agent subprocess (defaults to current dir)", required: false, refType: null },
     { name: "capabilities", description: "List of capabilities for the new agent", required: false, refType: null },
     { name: "goals", description: "Initial goals for the new agent", required: false, refType: null },
@@ -664,7 +664,7 @@ export const SPAWN_AGENT: OpSpec = {
   producesOutput: true,
   needsSubmission: true,
   minInputs: 0,
-  exampleJson: "{\"id\": 1, \"op\": \"SPAWN_AGENT\", \"attributes\": {\"agent_name\": \"reviewer\", \"profile\": \"claude\", \"mode\": \"architect\"}}",
+  exampleJson: "{\"id\": 1, \"op\": \"SPAWN_AGENT\", \"attributes\": {\"agent_name\": \"worker\", \"profile\": \"example-acp-profile\", \"mode\": \"architect\"}}",
 } as const;
 
 export const SPAWN_TEAM: OpSpec = {

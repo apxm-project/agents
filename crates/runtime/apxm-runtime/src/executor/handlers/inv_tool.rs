@@ -98,7 +98,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     // corresponding upstream input, looked up via the node's `input_names`
     // parallel array. Example:
     //   input_names: ["query"]
-    //   params_json: {"agent": "claude", "prompt": "{query}"}
+    //   params_json: {"agent": "mock-agent", "prompt": "{query}"}
     if !inputs.is_empty() {
         let input_names = input_names_from_node(node);
         for val in args.values_mut() {

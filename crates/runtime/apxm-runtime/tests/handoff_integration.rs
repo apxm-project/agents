@@ -41,12 +41,18 @@ fn make_node(
 
 #[derive(Default)]
 struct RecordingEmitter {
-    events: Mutex<Vec<(String, u64)>>,
+    events: Mutex<Vec<(RecordedEventKind, AISOperationType, u64)>>,
     current_span: Mutex<Option<String>>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RecordedEventKind {
+    Start,
+    End,
+}
+
 impl RecordingEmitter {
-    fn snapshot(&self) -> Vec<(String, u64)> {
+    fn snapshot(&self) -> Vec<(RecordedEventKind, AISOperationType, u64)> {
         self.events.lock().unwrap().clone()
     }
 }
@@ -68,7 +74,7 @@ impl apxm_runtime::ExecutionEventEmitter for RecordingEmitter {
         self.events
             .lock()
             .unwrap()
-            .push((format!("start:{op_type}"), node_id));
+            .push((RecordedEventKind::Start, op_type, node_id));
     }
 
     fn emit_operation_end(
@@ -83,7 +89,7 @@ impl apxm_runtime::ExecutionEventEmitter for RecordingEmitter {
         self.events
             .lock()
             .unwrap()
-            .push((format!("end:{op_type}"), node_id));
+            .push((RecordedEventKind::End, op_type, node_id));
     }
 }
 
@@ -179,20 +185,22 @@ async fn handoff_transfers_execution_to_target_agent() {
 
     // Verify events were emitted
     let events = emitter.snapshot();
-    let handoff_start_events: Vec<_> = events
-        .iter()
-        .filter(|(name, _)| name.contains("HANDOFF_START"))
-        .collect();
-    let handoff_end_events: Vec<_> = events
-        .iter()
-        .filter(|(name, _)| name.contains("HANDOFF_END"))
-        .collect();
-
     assert!(
-        !handoff_start_events.is_empty(),
-        "Expected HANDOFF_START event"
+        events.iter().any(|(kind, op_type, node_id)| {
+            *kind == RecordedEventKind::Start
+                && *op_type == AISOperationType::Handoff
+                && *node_id == 2
+        }),
+        "Expected HANDOFF start event"
     );
-    assert!(!handoff_end_events.is_empty(), "Expected HANDOFF_END event");
+    assert!(
+        events.iter().any(|(kind, op_type, node_id)| {
+            *kind == RecordedEventKind::End
+                && *op_type == AISOperationType::Handoff
+                && *node_id == 2
+        }),
+        "Expected HANDOFF end event"
+    );
 }
 
 #[tokio::test]

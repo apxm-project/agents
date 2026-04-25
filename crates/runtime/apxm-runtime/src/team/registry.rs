@@ -110,6 +110,9 @@ struct TeamsFile {
 mod tests {
     use super::*;
 
+    const MOCK_AGENT_PROFILE: &str = "mock-profile";
+    const MOCK_AGENT_PROFILE_ALT: &str = "mock-profile-alt";
+
     fn sample_team() -> TeamDefinition {
         TeamDefinition {
             name: "ultrathink".to_string(),
@@ -117,17 +120,17 @@ mod tests {
             members: vec![
                 TeamMember {
                     role: "architect".to_string(),
-                    profile: "claude".to_string(),
+                    profile: MOCK_AGENT_PROFILE.to_string(),
                     system_prompt: Some("You are a software architect...".to_string()),
                 },
                 TeamMember {
                     role: "adversary".to_string(),
-                    profile: "claude".to_string(),
+                    profile: MOCK_AGENT_PROFILE.to_string(),
                     system_prompt: Some("You are an adversarial reviewer...".to_string()),
                 },
                 TeamMember {
                     role: "impl_expert".to_string(),
-                    profile: "codex".to_string(),
+                    profile: MOCK_AGENT_PROFILE_ALT.to_string(),
                     system_prompt: None,
                 },
             ],
@@ -163,7 +166,7 @@ mod tests {
 
             [[member]]
             role = "dev"
-            profile = "claude"
+            profile = "mock-profile"
         "#;
         let parsed: TeamDefinition = toml::from_str(toml_str).unwrap();
         assert_eq!(parsed.members.len(), 1);

@@ -27,6 +27,8 @@ from apxm._generated.emission import (
     emit_workflow_spawn,
 )
 
+MOCK_AGENT_PROFILE = "mock-agent-profile"
+MOCK_AGENT_PROFILE_ALT = "mock-agent-profile-alt"
 
 # ---------------------------------------------------------------------------
 # Unit tests: emitter functions produce correct MLIR fragments
@@ -38,12 +40,12 @@ class TestEmitterFunctions:
     def test_emit_spawn_agent_primary_and_keywords(self):
         result = emit_spawn_agent(
             "%alice",
-            {"agent_name": "alice", "profile": "claude", "mode": "auto"},
+            {"agent_name": "alice", "profile": MOCK_AGENT_PROFILE, "mode": "auto"},
             [],
         )
         assert result.startswith("%alice = ais.spawn_agent")
         assert '"alice"' in result
-        assert 'profile = "claude"' in result
+        assert f'profile = "{MOCK_AGENT_PROFILE}"' in result
         assert 'mode = "auto"' in result
         assert result.endswith(": !ais.token")
 
@@ -156,16 +158,16 @@ class TestGraphToAirRoundTrip:
 
     def test_spawn_agent_air(self):
         g = GraphRecorder("spawn_test")
-        g.spawn_agent("alice", agent_name="alice", profile="claude", mode="auto")
+        g.spawn_agent("alice", agent_name="alice", profile=MOCK_AGENT_PROFILE, mode="auto")
         air = g.to_air()
 
         assert 'ais.spawn_agent "alice"' in air
-        assert 'profile = "claude"' in air
+        assert f'profile = "{MOCK_AGENT_PROFILE}"' in air
         assert 'mode = "auto"' in air
 
     def test_communicate_air(self):
         g = GraphRecorder("comm_test")
-        g.spawn_agent("alice", agent_name="alice", profile="claude")
+        g.spawn_agent("alice", agent_name="alice", profile=MOCK_AGENT_PROFILE)
         g.communicate(name="msg", target_agent="alice", message="Hello world")
         air = g.to_air()
 
@@ -233,14 +235,19 @@ class TestCompileRoundTrip:
 
     def test_compile_spawn_agent(self, tmp_air_dir):
         g = GraphRecorder("rt_spawn")
-        g.spawn_agent("alice", agent_name="alice", profile="claude", mode="architect")
+        g.spawn_agent(
+            "alice",
+            agent_name="alice",
+            profile=MOCK_AGENT_PROFILE,
+            mode="architect",
+        )
         air = g.to_air()
         result = _compile_air(air, tmp_air_dir, "rt_spawn")
         assert result.returncode == 0, f"Compile failed:\n{result.stderr}"
 
     def test_compile_communicate(self, tmp_air_dir):
         g = GraphRecorder("rt_comm")
-        g.spawn_agent("bob", agent_name="bob", profile="codex")
+        g.spawn_agent("bob", agent_name="bob", profile=MOCK_AGENT_PROFILE_ALT)
         g.communicate(name="msg", target_agent="bob", message="Analyze this")
         air = g.to_air()
         result = _compile_air(air, tmp_air_dir, "rt_comm")
@@ -261,7 +268,7 @@ class TestCompileRoundTrip:
     def test_compile_mixed_ops(self, tmp_air_dir):
         """Graph with spawn_agent + communicate + register_capability."""
         g = GraphRecorder("rt_mixed")
-        g.spawn_agent("alice", agent_name="alice", profile="claude")
+        g.spawn_agent("alice", agent_name="alice", profile=MOCK_AGENT_PROFILE)
         g.communicate(name="hello", target_agent="alice", message="Start work")
         g.register_capability(
             name="reg_tool",

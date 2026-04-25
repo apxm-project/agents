@@ -203,11 +203,12 @@ pub struct ProfileStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::{MOCK_AGENT_PROFILE, MOCK_AGENT_PROFILE_ALT};
 
     #[tokio::test]
     async fn test_pool_acquire_empty() {
         let pool = AgentPool::new(4, Duration::from_secs(300));
-        assert!(pool.acquire("claude").await.is_none());
+        assert!(pool.acquire(MOCK_AGENT_PROFILE).await.is_none());
     }
 
     #[tokio::test]
@@ -217,16 +218,16 @@ mod tests {
 
         // Release a session
         pool.release(
-            "claude",
+            MOCK_AGENT_PROFILE,
             session.clone() as Arc<Mutex<dyn std::any::Any + Send + Sync>>,
         );
 
         // Acquire it back
-        let acquired = pool.acquire("claude").await;
+        let acquired = pool.acquire(MOCK_AGENT_PROFILE).await;
         assert!(acquired.is_some());
 
         // Pool should now be empty
-        assert!(pool.acquire("claude").await.is_none());
+        assert!(pool.acquire(MOCK_AGENT_PROFILE).await.is_none());
     }
 
     #[tokio::test]
@@ -237,7 +238,7 @@ mod tests {
         for i in 0..3 {
             let session = Arc::new(Mutex::new(i));
             pool.release(
-                "claude",
+                MOCK_AGENT_PROFILE,
                 session as Arc<Mutex<dyn std::any::Any + Send + Sync>>,
             );
         }
@@ -253,7 +254,7 @@ mod tests {
         let session = Arc::new(Mutex::new(42u32));
 
         pool.release(
-            "claude",
+            MOCK_AGENT_PROFILE,
             session.clone() as Arc<Mutex<dyn std::any::Any + Send + Sync>>,
         );
 
@@ -261,7 +262,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         // Acquire should return None (session expired)
-        assert!(pool.acquire("claude").await.is_none());
+        assert!(pool.acquire(MOCK_AGENT_PROFILE).await.is_none());
     }
 
     #[tokio::test]
@@ -272,7 +273,7 @@ mod tests {
         for i in 0..3 {
             let session = Arc::new(Mutex::new(i));
             pool.release(
-                "claude",
+                MOCK_AGENT_PROFILE,
                 session as Arc<Mutex<dyn std::any::Any + Send + Sync>>,
             );
         }
@@ -295,14 +296,14 @@ mod tests {
         for i in 0..2 {
             let session = Arc::new(Mutex::new(i));
             pool.release(
-                "claude",
+                MOCK_AGENT_PROFILE,
                 session as Arc<Mutex<dyn std::any::Any + Send + Sync>>,
             );
         }
         for i in 0..3 {
             let session = Arc::new(Mutex::new(i));
             pool.release(
-                "codex",
+                MOCK_AGENT_PROFILE_ALT,
                 session as Arc<Mutex<dyn std::any::Any + Send + Sync>>,
             );
         }
@@ -320,13 +321,13 @@ mod tests {
 
         let session1 = Arc::new(Mutex::new(1));
         pool.release(
-            "claude",
+            MOCK_AGENT_PROFILE,
             session1 as Arc<Mutex<dyn std::any::Any + Send + Sync>>,
         );
 
         let session2 = Arc::new(Mutex::new(2));
         pool.release(
-            "codex",
+            MOCK_AGENT_PROFILE_ALT,
             session2 as Arc<Mutex<dyn std::any::Any + Send + Sync>>,
         );
 

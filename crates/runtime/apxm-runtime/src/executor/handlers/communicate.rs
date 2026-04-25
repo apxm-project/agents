@@ -565,7 +565,7 @@ async fn execute_acp(
             .attributes
             .get(graph_attrs::PROFILE)
             .and_then(|value| value.as_str())
-            .unwrap_or(context_stack_consts::PROFILE_CLAUDE);
+            .unwrap_or(context_stack_consts::DEFAULT_PROFILE);
         let assembly = stack.assemble(
             node.id,
             profile,
@@ -780,7 +780,10 @@ mod tests {
     use crate::capability::flow_registry::FlowRegistry;
     use crate::context_stack::{ContextStack, NodeMetadata as ContextNodeMetadata};
     use crate::memory::{MemoryConfig, MemorySystem};
-    use crate::process_table::{AgentPromptResponse, AgentPrompter};
+    use crate::testing::{
+        MOCK_AGENT_PROFILE, MOCK_MODEL_NAME, MOCK_SESSION_ID, MOCK_STOP_REASON,
+        MockUsageAgentPrompter, RecordingAgentPrompter,
+    };
     use apxm_backends::LLMRegistry;
     use apxm_core::paths::session_node_dir_name;
     use apxm_core::types::{
@@ -857,45 +860,6 @@ mod tests {
         assert_eq!(result, Value::String("ack from agent".to_string()));
     }
 
-    struct RecordingPrompter {
-        prompts: Arc<Mutex<Vec<String>>>,
-    }
-
-    #[async_trait::async_trait]
-    impl AgentPrompter for RecordingPrompter {
-        async fn prompt(
-            &self,
-            _process: &crate::process::AgentProcess,
-            message: &str,
-        ) -> Result<AgentPromptResponse> {
-            self.prompts
-                .lock()
-                .expect("prompt lock")
-                .push(message.to_string());
-            Ok(AgentPromptResponse::text(message.to_string()))
-        }
-    }
-
-    struct MockUsagePrompter;
-
-    #[async_trait::async_trait]
-    impl AgentPrompter for MockUsagePrompter {
-        async fn prompt(
-            &self,
-            _process: &crate::process::AgentProcess,
-            message: &str,
-        ) -> Result<AgentPromptResponse> {
-            Ok(
-                AgentPromptResponse::text(format!("mock response: {message}"))
-                    .with_session_id("mock-session")
-                    .with_turn(1)
-                    .with_model("mock-model")
-                    .with_stop_reason("end_turn")
-                    .with_token_usage(Some(10), Some(5)),
-            )
-        }
-    }
-
     #[tokio::test]
     async fn test_communicate_acp_prepends_context_stack_frames() {
         let dir = tempdir().expect("tempdir");
@@ -924,9 +888,7 @@ mod tests {
 
         let prompts = Arc::new(Mutex::new(Vec::new()));
         process_table
-            .set_agent_prompter(Arc::new(RecordingPrompter {
-                prompts: Arc::clone(&prompts),
-            }))
+            .set_agent_prompter(Arc::new(RecordingAgentPrompter::new(Arc::clone(&prompts))))
             .await;
 
         let context_stack = Arc::new(ContextStack::new(
@@ -977,7 +939,7 @@ mod tests {
         );
         node.attributes.insert(
             graph_attrs::PROFILE.to_string(),
-            Value::String("claude".to_string()),
+            Value::String(MOCK_AGENT_PROFILE.to_string()),
         );
 
         let result = execute(
@@ -1013,9 +975,7 @@ mod tests {
 
         let prompts = Arc::new(Mutex::new(Vec::new()));
         process_table
-            .set_agent_prompter(Arc::new(RecordingPrompter {
-                prompts: Arc::clone(&prompts),
-            }))
+            .set_agent_prompter(Arc::new(RecordingAgentPrompter::new(Arc::clone(&prompts))))
             .await;
 
         let ctx = ExecutionContext::new(
@@ -1068,7 +1028,14 @@ mod tests {
             .spawn_local("PeerAgent".to_string(), None)
             .expect("spawn local process");
         process_table
-            .set_agent_prompter(Arc::new(MockUsagePrompter))
+            .set_agent_prompter(Arc::new(
+                MockUsageAgentPrompter::new("mock response: ")
+                    .with_session_id(MOCK_SESSION_ID)
+                    .with_turn(1)
+                    .with_model(MOCK_MODEL_NAME)
+                    .with_stop_reason(MOCK_STOP_REASON)
+                    .with_token_usage(Some(10), Some(5)),
+            ))
             .await;
 
         let ctx = ExecutionContext::new(
@@ -1117,9 +1084,9 @@ mod tests {
         let turn = &node_metrics.processes.prompt_turns[0];
         assert_eq!(turn.process_id, process_id);
         assert_eq!(turn.protocol, comm_proto::ACP);
-        assert_eq!(turn.session_id.as_deref(), Some("mock-session"));
-        assert_eq!(turn.model.as_deref(), Some("mock-model"));
-        assert_eq!(turn.stop_reason.as_deref(), Some("end_turn"));
+        assert_eq!(turn.session_id.as_deref(), Some(MOCK_SESSION_ID));
+        assert_eq!(turn.model.as_deref(), Some(MOCK_MODEL_NAME));
+        assert_eq!(turn.stop_reason.as_deref(), Some(MOCK_STOP_REASON));
 
         let tokens = ctx.token_accountant.get_node(node.id).expect("tokens");
         assert_eq!(tokens.input_tokens, 10);
@@ -1142,9 +1109,7 @@ mod tests {
 
         let prompts = Arc::new(Mutex::new(Vec::new()));
         process_table
-            .set_agent_prompter(Arc::new(RecordingPrompter {
-                prompts: Arc::clone(&prompts),
-            }))
+            .set_agent_prompter(Arc::new(RecordingAgentPrompter::new(Arc::clone(&prompts))))
             .await;
 
         let ctx = ExecutionContext::new(
