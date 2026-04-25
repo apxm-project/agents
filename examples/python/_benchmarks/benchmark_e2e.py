@@ -24,6 +24,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -48,14 +49,28 @@ FILE_MANIFEST = "manifest.json"
 FILE_RESULTS = "results.json"
 FILE_METRICS = "metrics.json"
 
+
+class MetricsKey(StrEnum):
+    SCHEMA_VERSION = "schema_version"
+    RUNTIME = "runtime"
+    BACKENDS = "backends"
+    VLLM = "vllm"
+    GRAPHS = "graphs"
+    TOKEN_ACCOUNTING = "token_accounting"
+    TOTAL = "total"
+    INPUT_TOKENS = "input_tokens"
+    OUTPUT_TOKENS = "output_tokens"
+    TOTAL_TOKENS = "total_tokens"
+    CALL_COUNT = "call_count"
+    PINNED_BLOCKS = "pinned_blocks"
+    PINNED_HANDLES = "pinned_handles"
+    CRITICAL_PATH_LENGTH = "critical_path_length"
+
+
+SCHEMA_VERSION_V2 = 2
+
 KEY_DURATION_MS = "duration_ms"
 KEY_FINAL_OUTPUT = "final_output"
-KEY_TOKEN_ACCOUNTING = "token_accounting"
-KEY_TOTAL = "total"
-KEY_INPUT_TOKENS = "input_tokens"
-KEY_OUTPUT_TOKENS = "output_tokens"
-KEY_TOTAL_TOKENS = "total_tokens"
-KEY_CALL_COUNT = "call_count"
 
 CSV_FIELDS = [
     "timestamp_utc",
@@ -71,10 +86,104 @@ CSV_FIELDS = [
     "input_tokens",
     "output_tokens",
     "total_tokens",
+    "pinned_blocks",
+    "pinned_handles",
+    "critical_path_length",
     "session_dir",
     "output_excerpt",
     "stderr_excerpt",
 ]
+
+
+@dataclass
+class SessionSummary:
+    graph_duration_ms: int | None
+    llm_call_count: int | None
+    input_tokens: int | None
+    output_tokens: int | None
+    total_tokens: int | None
+    pinned_blocks: int | None
+    pinned_handles: int | None
+    critical_path_length: int | None
+    final_output: str
+
+    @classmethod
+    def from_session(cls, session_root: Path) -> SessionSummary:
+        graph_duration_ms: int | None = None
+        final_output = ""
+        llm_call_count: int | None = None
+        input_tokens: int | None = None
+        output_tokens: int | None = None
+        total_tokens: int | None = None
+        pinned_blocks: int | None = None
+        pinned_handles: int | None = None
+        critical_path_length: int | None = None
+
+        manifest_path = session_root / FILE_MANIFEST
+        if manifest_path.exists():
+            manifest = json.loads(manifest_path.read_text())
+            duration = manifest.get(KEY_DURATION_MS)
+            if isinstance(duration, int):
+                graph_duration_ms = duration
+
+        results_path = session_root / FILE_RESULTS
+        if results_path.exists():
+            results = json.loads(results_path.read_text())
+            out = results.get(KEY_FINAL_OUTPUT)
+            if isinstance(out, str):
+                final_output = out
+
+        metrics_path = session_root / FILE_METRICS
+        if metrics_path.exists():
+            metrics = json.loads(metrics_path.read_text())
+            version = metrics.get(MetricsKey.SCHEMA_VERSION)
+            if version != SCHEMA_VERSION_V2:
+                raise ValueError(
+                    f"Expected metrics schema_version={SCHEMA_VERSION_V2}, got {version}"
+                )
+
+            total = (
+                metrics.get(MetricsKey.RUNTIME, {})
+                .get(MetricsKey.TOKEN_ACCOUNTING, {})
+                .get(MetricsKey.TOTAL, {})
+            )
+            v = total.get(MetricsKey.CALL_COUNT)
+            if isinstance(v, int):
+                llm_call_count = v
+            v = total.get(MetricsKey.INPUT_TOKENS)
+            if isinstance(v, int):
+                input_tokens = v
+            v = total.get(MetricsKey.OUTPUT_TOKENS)
+            if isinstance(v, int):
+                output_tokens = v
+            v = total.get(MetricsKey.TOTAL_TOKENS)
+            if isinstance(v, int):
+                total_tokens = v
+
+            vllm_graphs = (
+                metrics.get(MetricsKey.BACKENDS, {})
+                .get(MetricsKey.VLLM, {})
+                .get(MetricsKey.GRAPHS, [])
+            )
+            if vllm_graphs:
+                pb = sum(g.get(MetricsKey.PINNED_BLOCKS, 0) for g in vllm_graphs)
+                ph = sum(g.get(MetricsKey.PINNED_HANDLES, 0) for g in vllm_graphs)
+                cpl = sum(g.get(MetricsKey.CRITICAL_PATH_LENGTH, 0) for g in vllm_graphs)
+                pinned_blocks = pb
+                pinned_handles = ph
+                critical_path_length = cpl
+
+        return cls(
+            graph_duration_ms=graph_duration_ms,
+            llm_call_count=llm_call_count,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+            pinned_blocks=pinned_blocks,
+            pinned_handles=pinned_handles,
+            critical_path_length=critical_path_length,
+            final_output=final_output,
+        )
 
 
 @dataclass
@@ -92,6 +201,9 @@ class RunRecord:
     input_tokens: int | None
     output_tokens: int | None
     total_tokens: int | None
+    pinned_blocks: int | None
+    pinned_handles: int | None
+    critical_path_length: int | None
     session_dir: str
     output_excerpt: str
     stderr_excerpt: str
@@ -111,6 +223,9 @@ class RunRecord:
             "input_tokens": "" if self.input_tokens is None else self.input_tokens,
             "output_tokens": "" if self.output_tokens is None else self.output_tokens,
             "total_tokens": "" if self.total_tokens is None else self.total_tokens,
+            "pinned_blocks": "" if self.pinned_blocks is None else self.pinned_blocks,
+            "pinned_handles": "" if self.pinned_handles is None else self.pinned_handles,
+            "critical_path_length": "" if self.critical_path_length is None else self.critical_path_length,
             "session_dir": self.session_dir,
             "output_excerpt": self.output_excerpt,
             "stderr_excerpt": self.stderr_excerpt,
@@ -198,53 +313,6 @@ def _read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text())
 
 
-def _read_session_summary(session_root: Path) -> dict[str, Any]:
-    summary: dict[str, Any] = {
-        "graph_duration_ms": None,
-        "llm_call_count": None,
-        "input_tokens": None,
-        "output_tokens": None,
-        "total_tokens": None,
-        "final_output": "",
-    }
-
-    manifest_path = session_root / FILE_MANIFEST
-    results_path = session_root / FILE_RESULTS
-    metrics_path = session_root / FILE_METRICS
-
-    if manifest_path.exists():
-        manifest = _read_json(manifest_path)
-        duration = manifest.get(KEY_DURATION_MS)
-        if isinstance(duration, int):
-            summary["graph_duration_ms"] = duration
-
-    if results_path.exists():
-        results = _read_json(results_path)
-        final_output = results.get(KEY_FINAL_OUTPUT)
-        if isinstance(final_output, str):
-            summary["final_output"] = final_output
-
-    if metrics_path.exists():
-        metrics = _read_json(metrics_path)
-        total = (
-            metrics.get(KEY_TOKEN_ACCOUNTING, {})
-            .get(KEY_TOTAL, {})
-        )
-        for key in (KEY_CALL_COUNT, KEY_INPUT_TOKENS, KEY_OUTPUT_TOKENS, KEY_TOTAL_TOKENS):
-            value = total.get(key)
-            if isinstance(value, int):
-                if key == KEY_CALL_COUNT:
-                    summary["llm_call_count"] = value
-                elif key == KEY_INPUT_TOKENS:
-                    summary["input_tokens"] = value
-                elif key == KEY_OUTPUT_TOKENS:
-                    summary["output_tokens"] = value
-                elif key == KEY_TOTAL_TOKENS:
-                    summary["total_tokens"] = value
-
-    return summary
-
-
 def _run_compile(graph: Path, opt_level: int) -> tuple[subprocess.CompletedProcess[str], float]:
     with tempfile.TemporaryDirectory(prefix="apxm-bench-compile-") as tmp_dir:
         artifact_path = Path(tmp_dir) / f"{graph.stem}-O{opt_level}.apxmobj"
@@ -316,6 +384,9 @@ def _run_once(
             input_tokens=None,
             output_tokens=None,
             total_tokens=None,
+            pinned_blocks=None,
+            pinned_handles=None,
+            critical_path_length=None,
             session_dir="",
             output_excerpt="",
             stderr_excerpt=_collapse_text(result.stderr or result.stdout),
@@ -324,10 +395,10 @@ def _run_once(
     session_base = session_parent / f"opt-{opt_level}" / f"run-{run_index}"
     result, wall_ms = _run_execute(graph, opt_level, session_base, trace)
     session_root: Path | None = None
-    session_summary: dict[str, Any] = {}
+    summary: SessionSummary | None = None
     if result.returncode == 0:
         session_root = _resolve_session_root(session_base)
-        session_summary = _read_session_summary(session_root)
+        summary = SessionSummary.from_session(session_root)
     return RunRecord(
         timestamp_utc=timestamp,
         graph=str(graph),
@@ -337,13 +408,16 @@ def _run_once(
         run_index=run_index,
         success=result.returncode == 0,
         wall_ms=wall_ms,
-        graph_duration_ms=session_summary.get("graph_duration_ms"),
-        llm_call_count=session_summary.get("llm_call_count"),
-        input_tokens=session_summary.get("input_tokens"),
-        output_tokens=session_summary.get("output_tokens"),
-        total_tokens=session_summary.get("total_tokens"),
+        graph_duration_ms=summary.graph_duration_ms if summary else None,
+        llm_call_count=summary.llm_call_count if summary else None,
+        input_tokens=summary.input_tokens if summary else None,
+        output_tokens=summary.output_tokens if summary else None,
+        total_tokens=summary.total_tokens if summary else None,
+        pinned_blocks=summary.pinned_blocks if summary else None,
+        pinned_handles=summary.pinned_handles if summary else None,
+        critical_path_length=summary.critical_path_length if summary else None,
         session_dir=str(session_root) if session_root is not None else "",
-        output_excerpt=_collapse_text(session_summary.get("final_output", "")),
+        output_excerpt=_collapse_text(summary.final_output if summary else ""),
         stderr_excerpt=_collapse_text(result.stderr or result.stdout),
     )
 

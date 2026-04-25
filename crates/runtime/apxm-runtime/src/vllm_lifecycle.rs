@@ -14,6 +14,7 @@ use apxm_backends::llm::backends::traits::LLMBackend;
 use apxm_core::types::execution::ExecutionDag;
 use apxm_core::types::{GraphMetadata, NodeSpec};
 use serde_json::Value;
+use tokio::sync::Mutex;
 
 /// Best-effort registration guard for one graph execution.
 ///
@@ -25,6 +26,8 @@ pub struct VllmGraphLifecycle {
     backend: Arc<dyn LLMBackend>,
     graph_id: String,
     released: AtomicBool,
+    /// Status snapshot captured just before release (if available).
+    pre_release_status: Mutex<Option<Value>>,
 }
 
 impl VllmGraphLifecycle {
@@ -75,13 +78,26 @@ impl VllmGraphLifecycle {
             backend,
             graph_id,
             released: AtomicBool::new(false),
+            pre_release_status: Mutex::new(None),
         })
     }
 
     /// Explicit (happy-path) release. Idempotent: subsequent calls (and the
     /// `Drop` guard) become no-ops.
+    ///
+    /// Captures graph status via `get_graph_status` before issuing the release.
+    /// The snapshot is available via `take_status()` afterwards.
     pub async fn release(&self) -> Result<()> {
         if !self.released.swap(true, Ordering::AcqRel) {
+            // Capture pin telemetry before releasing blocks.
+            let status = self
+                .backend
+                .get_graph_status(&self.graph_id)
+                .await
+                .ok()
+                .flatten();
+            *self.pre_release_status.lock().await = status;
+
             self.backend
                 .release_graph(&self.graph_id)
                 .await
@@ -93,6 +109,11 @@ impl VllmGraphLifecycle {
             );
         }
         Ok(())
+    }
+
+    /// Return (and consume) the pre-release status snapshot, if one was captured.
+    pub async fn take_status(&self) -> Option<Value> {
+        self.pre_release_status.lock().await.take()
     }
 
     /// Graph id this guard owns.

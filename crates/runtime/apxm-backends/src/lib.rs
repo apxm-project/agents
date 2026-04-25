@@ -36,6 +36,7 @@ pub mod storage;
 pub use llm::{
     // Observability
     AggregatedMetrics,
+    BackendMetricsSource,
     // Factory
     BackendFactory,
     BackendFallback,

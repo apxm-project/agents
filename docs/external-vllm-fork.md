@@ -380,6 +380,15 @@ token, do not relabel another checkpoint as `google/gemma-...` just to satisfy
 an example. Keep the exact served model ID visible in APXM config, examples, and
 operator commands.
 
+## Observing Pin Behavior
+
+When `--emit-metrics` (or `--emit-session`) is active, the `backends.vllm.graphs[]`
+array in `metrics.json` reports per-graph pin telemetry collected from the fork
+just before each graph is released. Each entry includes `pinned_blocks`,
+`pinned_handles`, `critical_path_length`, and `node_count`. This is the canonical
+place to observe whether the fork's KV-cache pinning is active and how many blocks
+are being retained for a given execution.
+
 ## Boundary Vocabulary Rule
 
 At the APXM to vLLM integration boundary, the correct term is:

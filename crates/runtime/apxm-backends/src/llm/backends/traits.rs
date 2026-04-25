@@ -93,6 +93,15 @@ pub trait LLMBackend: Send + Sync {
         true
     }
 
+    /// Returns `Some(JSON)` for graph-aware backends; `None` for backends
+    /// without per-graph status (default).
+    async fn get_graph_status(
+        &self,
+        _graph_id: &str,
+    ) -> anyhow::Result<Option<serde_json::Value>> {
+        Ok(None)
+    }
+
     /// Generate a unique execution id for graph registration. Default uses uuid v4.
     /// Backends with custom counters (e.g. vLLM) may override.
     fn next_execution_id(&self) -> String {

@@ -347,6 +347,7 @@ pub async fn execute_command(
         &input,
         Some(opt_level),
         &result.execution,
+        result.compiler_diagnostics.as_ref(),
         #[cfg(feature = "metrics")]
         Some(&result.metrics),
         #[cfg(not(feature = "metrics"))]
@@ -561,6 +562,7 @@ pub async fn run_command(
         &input,
         None,
         &result,
+        None,
         #[cfg(feature = "metrics")]
         None,
         #[cfg(not(feature = "metrics"))]
@@ -705,6 +707,34 @@ fn best_result_content(
 }
 
 #[cfg(feature = "driver")]
+fn llm_usage_json(_result: &RuntimeExecutionResult) -> serde_json::Value {
+    use apxm_core::constants::session::metrics_keys::llm_keys;
+    let mut map = serde_json::Map::new();
+    #[cfg(feature = "metrics")]
+    {
+        map.insert(
+            llm_keys::INPUT_TOKENS.to_owned(),
+            _result.llm_metrics.total_input_tokens.into(),
+        );
+        map.insert(
+            llm_keys::OUTPUT_TOKENS.to_owned(),
+            _result.llm_metrics.total_output_tokens.into(),
+        );
+        map.insert(
+            llm_keys::TOTAL_REQUESTS.to_owned(),
+            _result.llm_metrics.total_requests.into(),
+        );
+    }
+    #[cfg(not(feature = "metrics"))]
+    {
+        map.insert(llm_keys::INPUT_TOKENS.to_owned(), 0.into());
+        map.insert(llm_keys::OUTPUT_TOKENS.to_owned(), 0.into());
+        map.insert(llm_keys::TOTAL_REQUESTS.to_owned(), 0.into());
+    }
+    serde_json::Value::Object(map)
+}
+
+#[cfg(feature = "driver")]
 fn build_execution_response(
     result: &RuntimeExecutionResult,
     execution_id: Option<String>,
@@ -712,40 +742,179 @@ fn build_execution_response(
     metrics_path: Option<String>,
     profile_path: Option<String>,
 ) -> serde_json::Value {
-    serde_json::json!({
-        "content": best_result_content(&result.results),
-        "execution_id": execution_id,
-        "session_dir": session_dir,
-        "metrics_path": metrics_path,
-        "profile_path": profile_path,
-        "results": result.results,
-        "stats": {
-            "executed_nodes": result.stats.executed_nodes,
-            "failed_nodes": result.stats.failed_nodes,
-            "duration_ms": result.stats.duration_ms,
-        },
-        "llm_usage": llm_usage_json(result),
-    })
+    use apxm_core::constants::session::metrics_keys::{cli_response_keys as ck, execution_keys};
+
+    let mut stats_map = serde_json::Map::new();
+    stats_map.insert(
+        ck::STATS_EXECUTED_NODES.to_owned(),
+        result.stats.executed_nodes.into(),
+    );
+    stats_map.insert(
+        ck::STATS_FAILED_NODES.to_owned(),
+        result.stats.failed_nodes.into(),
+    );
+    stats_map.insert(
+        execution_keys::DURATION_MS.to_owned(),
+        (result.stats.duration_ms as u64).into(),
+    );
+
+    let mut response = serde_json::Map::new();
+    response.insert(
+        ck::CONTENT.to_owned(),
+        best_result_content(&result.results)
+            .map(serde_json::Value::String)
+            .unwrap_or(serde_json::Value::Null),
+    );
+    response.insert(
+        ck::EXECUTION_ID.to_owned(),
+        execution_id
+            .map(serde_json::Value::String)
+            .unwrap_or(serde_json::Value::Null),
+    );
+    response.insert(
+        ck::SESSION_DIR.to_owned(),
+        session_dir
+            .map(serde_json::Value::String)
+            .unwrap_or(serde_json::Value::Null),
+    );
+    response.insert(
+        ck::METRICS_PATH.to_owned(),
+        metrics_path
+            .map(serde_json::Value::String)
+            .unwrap_or(serde_json::Value::Null),
+    );
+    response.insert(
+        ck::PROFILE_PATH.to_owned(),
+        profile_path
+            .map(serde_json::Value::String)
+            .unwrap_or(serde_json::Value::Null),
+    );
+    response.insert(
+        ck::RESULTS.to_owned(),
+        serde_json::to_value(&result.results).unwrap_or(serde_json::Value::Null),
+    );
+    response.insert(ck::STATS.to_owned(), serde_json::Value::Object(stats_map));
+    response.insert(ck::LLM_USAGE.to_owned(), llm_usage_json(result));
+    serde_json::Value::Object(response)
+}
+
+/// Runtime metrics source for the unified `MetricsReport`.
+#[cfg(feature = "driver")]
+struct RuntimeMetricsSource<'a> {
+    execution: &'a RuntimeExecutionResult,
+    input: &'a std::path::Path,
+    opt_level: Option<u8>,
+    #[cfg(feature = "metrics")]
+    link_metrics: Option<&'a apxm_driver::linker::LinkMetrics>,
 }
 
 #[cfg(feature = "driver")]
-fn llm_usage_json(_result: &RuntimeExecutionResult) -> serde_json::Value {
-    #[cfg(feature = "metrics")]
-    {
-        return serde_json::json!({
-            "input_tokens": _result.llm_metrics.total_input_tokens,
-            "output_tokens": _result.llm_metrics.total_output_tokens,
-            "total_requests": _result.llm_metrics.total_requests,
-        });
+impl apxm_core::MetricsSource for RuntimeMetricsSource<'_> {
+    fn section_name(&self) -> &'static str {
+        apxm_core::constants::session::metrics_keys::SECTION_RUNTIME
     }
 
-    #[cfg(not(feature = "metrics"))]
-    {
-        serde_json::json!({
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "total_requests": 0,
-        })
+    fn collect(&self) -> serde_json::Value {
+        use apxm_core::constants::session::metrics_keys;
+        use metrics_keys::{execution_keys, link_phase_keys, llm_keys, runtime_meta_keys};
+
+        let mut map = serde_json::Map::new();
+
+        let mut exec = serde_json::Map::new();
+        exec.insert(
+            execution_keys::NODES_EXECUTED.to_owned(),
+            self.execution.stats.executed_nodes.into(),
+        );
+        exec.insert(
+            execution_keys::NODES_FAILED.to_owned(),
+            self.execution.stats.failed_nodes.into(),
+        );
+        exec.insert(
+            execution_keys::DURATION_MS.to_owned(),
+            (self.execution.stats.duration_ms as u64).into(),
+        );
+        let status = if self.execution.stats.failed_nodes == 0 {
+            execution_keys::STATUS_SUCCESS
+        } else {
+            execution_keys::STATUS_PARTIAL_FAILURE
+        };
+        exec.insert(
+            execution_keys::STATUS.to_owned(),
+            serde_json::Value::String(status.to_owned()),
+        );
+        map.insert(
+            metrics_keys::RUNTIME_EXECUTION.to_owned(),
+            serde_json::Value::Object(exec),
+        );
+
+        map.insert(
+            metrics_keys::RUNTIME_SCHEDULER.to_owned(),
+            self.execution.scheduler_metrics.to_json(),
+        );
+        let token_json = self.execution.token_snapshot.to_json();
+        if let Some(obj) = token_json.get(metrics_keys::TOKEN_ACCOUNTING).cloned() {
+            map.insert(metrics_keys::TOKEN_ACCOUNTING.to_owned(), obj);
+        }
+        #[cfg(feature = "metrics")]
+        {
+            let llm_metrics = &self.execution.llm_metrics;
+            let mut llm = serde_json::Map::new();
+            llm.insert(
+                llm_keys::TOTAL_REQUESTS.to_owned(),
+                llm_metrics.total_requests.into(),
+            );
+            llm.insert(
+                llm_keys::TOTAL_INPUT_TOKENS.to_owned(),
+                llm_metrics.total_input_tokens.into(),
+            );
+            llm.insert(
+                llm_keys::TOTAL_OUTPUT_TOKENS.to_owned(),
+                llm_metrics.total_output_tokens.into(),
+            );
+            llm.insert(
+                llm_keys::AVG_LATENCY_MS.to_owned(),
+                (llm_metrics.average_latency.as_millis() as u64).into(),
+            );
+            llm.insert(
+                llm_keys::P50_LATENCY_MS.to_owned(),
+                (llm_metrics.p50_latency.as_millis() as u64).into(),
+            );
+            llm.insert(
+                llm_keys::P99_LATENCY_MS.to_owned(),
+                (llm_metrics.p99_latency.as_millis() as u64).into(),
+            );
+            map.insert(
+                metrics_keys::RUNTIME_LLM.to_owned(),
+                serde_json::Value::Object(llm),
+            );
+
+            if let Some(link_metrics) = self.link_metrics {
+                let mut link = serde_json::Map::new();
+                link.insert(
+                    link_phase_keys::COMPILE_MS.to_owned(),
+                    (link_metrics.compile_time.as_secs_f64() * 1000.0).into(),
+                );
+                link.insert(
+                    link_phase_keys::RUNTIME_MS.to_owned(),
+                    (link_metrics.runtime_time.as_secs_f64() * 1000.0).into(),
+                );
+                map.insert(
+                    link_phase_keys::LINK_PHASES.to_owned(),
+                    serde_json::Value::Object(link),
+                );
+            }
+        }
+        map.insert(
+            runtime_meta_keys::INPUT.to_owned(),
+            serde_json::Value::String(self.input.display().to_string()),
+        );
+        if let Some(level) = self.opt_level {
+            map.insert(
+                runtime_meta_keys::OPTIMIZATION_LEVEL.to_owned(),
+                serde_json::Value::String(format!("O{}", level)),
+            );
+        }
+        serde_json::Value::Object(map)
     }
 }
 
@@ -754,54 +923,41 @@ fn build_metrics_json(
     input: &std::path::Path,
     opt_level: Option<u8>,
     result: &RuntimeExecutionResult,
+    compiler_diagnostics: Option<&serde_json::Value>,
     #[cfg(feature = "metrics")] link_metrics: Option<&apxm_driver::linker::LinkMetrics>,
     #[cfg(not(feature = "metrics"))] _link_metrics: Option<()>,
 ) -> serde_json::Value {
-    let mut metrics_json = serde_json::json!({
-        "input": input.display().to_string(),
-        "optimization_level": opt_level.map(|level| format!("O{}", level)),
-        "execution": {
-            "nodes_executed": result.stats.executed_nodes,
-            "nodes_failed": result.stats.failed_nodes,
-            "duration_ms": result.stats.duration_ms,
-            "status": if result.stats.failed_nodes == 0 { "success" } else { "partial_failure" }
-        },
-        "scheduler": result.scheduler_metrics.to_json(),
-        "llm": llm_usage_json(result),
-        "link_phases": serde_json::Value::Null,
+    let mut report = apxm_core::MetricsReport::new();
+
+    // Compiler diagnostics section (absent for artifact-only `run` path).
+    if let Some(diag_json) = compiler_diagnostics {
+        struct PrebuiltCompilerSource<'a>(&'a serde_json::Value);
+        impl apxm_core::MetricsSource for PrebuiltCompilerSource<'_> {
+            fn section_name(&self) -> &'static str {
+                apxm_core::constants::session::metrics_keys::SECTION_COMPILER
+            }
+            fn collect(&self) -> serde_json::Value {
+                self.0.clone()
+            }
+        }
+        report.add_source(&PrebuiltCompilerSource(diag_json));
+    }
+
+    report.add_source(&RuntimeMetricsSource {
+        execution: result,
+        input,
+        opt_level,
+        #[cfg(feature = "metrics")]
+        link_metrics,
     });
 
-    let token_json = result.token_snapshot.to_json();
-    if let Some(obj) = token_json.get("token_accounting").cloned() {
-        metrics_json["token_accounting"] = obj;
-    }
-
-    #[cfg(feature = "metrics")]
-    {
-        let llm_metrics = &result.llm_metrics;
-        metrics_json["llm"] = serde_json::json!({
-            "total_requests": llm_metrics.total_requests,
-            "total_input_tokens": llm_metrics.total_input_tokens,
-            "total_output_tokens": llm_metrics.total_output_tokens,
-            "avg_latency_ms": llm_metrics.average_latency.as_millis(),
-            "p50_latency_ms": llm_metrics.p50_latency.as_millis(),
-            "p99_latency_ms": llm_metrics.p99_latency.as_millis()
-        });
-
-        if let Some(link_metrics) = link_metrics {
-            metrics_json["link_phases"] = serde_json::json!({
-                "compile_ms": link_metrics.compile_time.as_secs_f64() * 1000.0,
-                "runtime_ms": link_metrics.runtime_time.as_secs_f64() * 1000.0
-            });
-        }
-    }
-
-    metrics_json
+    report.to_json()
 }
 
 #[cfg(all(test, feature = "driver"))]
 mod tests {
-    use super::{build_execution_response, build_metrics_json};
+    use super::build_execution_response;
+    use apxm_core::constants::session::metrics_keys;
     use apxm_core::types::{execution::ExecutionStats, values::Value};
     use apxm_runtime::{
         RuntimeExecutionResult, SchedulerMetrics,
@@ -833,6 +989,7 @@ mod tests {
                 per_agent: HashMap::new(),
                 total: TokenUsageSummary::default(),
             },
+            vllm_graphs: vec![],
         }
     }
 
@@ -855,12 +1012,36 @@ mod tests {
     }
 
     #[test]
-    fn metrics_json_keeps_shared_schema_for_run_and_execute() {
-        let metrics = build_metrics_json(Path::new("demo.air"), None, &sample_result(), None);
-        assert_eq!(metrics["input"], "demo.air");
-        assert!(metrics.get("optimization_level").is_some());
-        assert!(metrics.get("llm").is_some());
-        assert!(metrics.get("token_accounting").is_some());
-        assert!(metrics.get("link_phases").is_some());
+    fn metrics_json_uses_unified_schema_v2() {
+        let metrics = super::build_metrics_json(
+            Path::new("demo.air"),
+            None,
+            &sample_result(),
+            None,
+            None,
+        );
+        assert_eq!(metrics[metrics_keys::SCHEMA_VERSION], metrics_keys::SCHEMA_VERSION_VALUE);
+        let runtime = &metrics[metrics_keys::SECTION_RUNTIME];
+        assert!(runtime.get(metrics_keys::RUNTIME_EXECUTION).is_some());
+        assert!(runtime.get(metrics_keys::TOKEN_ACCOUNTING).is_some());
+        assert!(runtime.get(metrics_keys::RUNTIME_LLM).is_some());
+    }
+
+    #[test]
+    fn metrics_json_includes_compiler_section_when_diagnostics_present() {
+        let compiler_diag = serde_json::json!({
+            metrics_keys::COMPILER_PASSES: [],
+            metrics_keys::COMPILER_SUMMARY: { "total_passes": 0 }
+        });
+        let metrics = super::build_metrics_json(
+            Path::new("demo.air"),
+            Some(1),
+            &sample_result(),
+            Some(&compiler_diag),
+            None,
+        );
+        assert_eq!(metrics[metrics_keys::SCHEMA_VERSION], metrics_keys::SCHEMA_VERSION_VALUE);
+        assert!(metrics.get(metrics_keys::SECTION_COMPILER).is_some());
+        assert!(metrics.get(metrics_keys::SECTION_RUNTIME).is_some());
     }
 }

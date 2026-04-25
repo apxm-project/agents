@@ -100,6 +100,10 @@ pub mod observability {
             None
         }
 
+        pub fn aggregate_per_backend(&self) -> std::collections::HashMap<String, AggregatedMetrics> {
+            std::collections::HashMap::new()
+        }
+
         pub fn aggregate_model(&self, _model: &str) -> Option<AggregatedMetrics> {
             None
         }
@@ -131,6 +135,22 @@ pub mod observability {
             )
         }
     }
+
+    pub struct BackendMetricsSource {
+        pub aggregate: AggregatedMetrics,
+        pub per_backend: std::collections::HashMap<String, AggregatedMetrics>,
+        pub vllm_graphs: Vec<serde_json::Value>,
+    }
+
+    impl apxm_core::metrics::MetricsSource for BackendMetricsSource {
+        fn section_name(&self) -> &'static str {
+            apxm_core::constants::session::metrics_keys::SECTION_BACKENDS
+        }
+
+        fn collect(&self) -> serde_json::Value {
+            serde_json::Value::Null
+        }
+    }
 }
 pub mod provider;
 pub mod registration;
@@ -146,7 +166,9 @@ pub use backends::{
     BackendFactory, ContentPart, FunctionCall, GenerationConfig, LLMBackend, LLMRequest,
     LLMResponse, Message, Role, StreamChunk, TokenUsage, ToolChoice, ToolDefinition,
 };
-pub use observability::{AggregatedMetrics, MetricsTracker, RequestMetrics, RequestTracer};
+pub use observability::{
+    AggregatedMetrics, BackendMetricsSource, MetricsTracker, RequestMetrics, RequestTracer,
+};
 pub use provider::{Provider, ProviderId, RegisteredProvider};
 pub use rate_limit::{RateLimitConfig, RateLimitConfigError, RateLimitError};
 pub use registration::{

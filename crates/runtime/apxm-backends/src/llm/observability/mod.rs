@@ -2,10 +2,13 @@
 //!
 //! Provides request tracing, metrics collection, and performance monitoring.
 
+use apxm_core::constants::session::metrics_keys;
+use apxm_core::metrics::MetricsSource;
 use apxm_core::types::TokenUsage;
 use dashmap::DashMap;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -168,6 +171,19 @@ impl MetricsTracker {
         }
     }
 
+    /// Aggregate metrics per backend name.
+    pub fn aggregate_per_backend(&self) -> HashMap<String, AggregatedMetrics> {
+        let inner = self.inner.lock();
+        let mut result = HashMap::new();
+        for entry in inner.backend_metrics.iter() {
+            result.insert(
+                entry.key().clone(),
+                Self::compute_aggregated(entry.value()),
+            );
+        }
+        result
+    }
+
     /// Get success rate as a percentage.
     pub fn success_rate(&self) -> f64 {
         let metrics = self.aggregate();
@@ -227,6 +243,50 @@ impl RequestTracer {
             success,
             self.retry_count,
         )
+    }
+}
+
+/// Collected backend metrics for the unified metrics report.
+pub struct BackendMetricsSource {
+    pub aggregate: AggregatedMetrics,
+    pub per_backend: HashMap<String, AggregatedMetrics>,
+    pub vllm_graphs: Vec<serde_json::Value>,
+}
+
+impl MetricsSource for BackendMetricsSource {
+    fn section_name(&self) -> &'static str {
+        metrics_keys::SECTION_BACKENDS
+    }
+
+    fn collect(&self) -> serde_json::Value {
+        if self.aggregate.total_requests == 0
+            && self.per_backend.is_empty()
+            && self.vllm_graphs.is_empty()
+        {
+            return serde_json::Value::Null;
+        }
+
+        let mut map = serde_json::Map::new();
+        map.insert(
+            metrics_keys::BACKENDS_AGGREGATE.to_owned(),
+            serde_json::to_value(&self.aggregate).unwrap_or_default(),
+        );
+        map.insert(
+            metrics_keys::BACKENDS_PER_BACKEND.to_owned(),
+            serde_json::to_value(&self.per_backend).unwrap_or_default(),
+        );
+        if !self.vllm_graphs.is_empty() {
+            let mut vllm = serde_json::Map::new();
+            vllm.insert(
+                metrics_keys::VLLM_GRAPHS.to_owned(),
+                serde_json::Value::Array(self.vllm_graphs.clone()),
+            );
+            map.insert(
+                metrics_keys::BACKENDS_VLLM.to_owned(),
+                serde_json::Value::Object(vllm),
+            );
+        }
+        serde_json::Value::Object(map)
     }
 }
 
@@ -346,5 +406,107 @@ mod tests {
         assert_eq!(metrics.model, "model");
         assert_eq!(metrics.retry_count, 2);
         assert!(metrics.success);
+    }
+
+    #[test]
+    fn test_aggregate_per_backend() {
+        let tracker = MetricsTracker::new();
+
+        tracker.record(RequestMetrics::new(
+            "openai".to_string(),
+            "gpt-4".to_string(),
+            Duration::from_millis(500),
+            TokenUsage::new(100, 50),
+            true,
+            0,
+        ));
+        tracker.record(RequestMetrics::new(
+            "anthropic".to_string(),
+            "claude-3".to_string(),
+            Duration::from_millis(600),
+            TokenUsage::new(150, 60),
+            true,
+            0,
+        ));
+
+        let per_backend = tracker.aggregate_per_backend();
+        assert_eq!(per_backend.len(), 2);
+        assert_eq!(per_backend["openai"].total_requests, 1);
+        assert_eq!(per_backend["anthropic"].total_requests, 1);
+    }
+
+    #[test]
+    fn backend_metrics_source_null_when_empty() {
+        let source = BackendMetricsSource {
+            aggregate: AggregatedMetrics::default(),
+            per_backend: HashMap::new(),
+            vllm_graphs: vec![],
+        };
+        assert!(source.collect().is_null());
+    }
+
+    #[test]
+    fn backend_metrics_source_emits_all_keys_when_populated() {
+        let mut per_backend = HashMap::new();
+        per_backend.insert(
+            "vllm-fork".to_string(),
+            AggregatedMetrics {
+                total_requests: 3,
+                ..Default::default()
+            },
+        );
+
+        let source = BackendMetricsSource {
+            aggregate: AggregatedMetrics {
+                total_requests: 3,
+                ..Default::default()
+            },
+            per_backend,
+            vllm_graphs: {
+                use apxm_core::constants::session::metrics_keys::vllm_graph_status_keys as gsk;
+                let mut g = serde_json::Map::new();
+                g.insert(gsk::GRAPH_ID.to_owned(), "g1".into());
+                g.insert(gsk::PINNED_BLOCKS.to_owned(), 12.into());
+                vec![serde_json::Value::Object(g)]
+            },
+        };
+
+        let val = source.collect();
+        let obj = val.as_object().expect("collect must return an object");
+
+        assert!(obj.contains_key(metrics_keys::BACKENDS_AGGREGATE));
+        assert!(obj.contains_key(metrics_keys::BACKENDS_PER_BACKEND));
+        assert!(obj.contains_key(metrics_keys::BACKENDS_VLLM));
+
+        let vllm = obj[metrics_keys::BACKENDS_VLLM].as_object().unwrap();
+        assert!(vllm.contains_key(metrics_keys::VLLM_GRAPHS));
+    }
+
+    #[test]
+    fn backend_metrics_source_omits_vllm_when_no_graphs() {
+        let source = BackendMetricsSource {
+            aggregate: AggregatedMetrics {
+                total_requests: 1,
+                ..Default::default()
+            },
+            per_backend: HashMap::new(),
+            vllm_graphs: vec![],
+        };
+
+        let val = source.collect();
+        let obj = val.as_object().expect("collect must return an object");
+
+        assert!(obj.contains_key(metrics_keys::BACKENDS_AGGREGATE));
+        assert!(!obj.contains_key(metrics_keys::BACKENDS_VLLM));
+    }
+
+    #[test]
+    fn backend_metrics_source_section_name() {
+        let source = BackendMetricsSource {
+            aggregate: AggregatedMetrics::default(),
+            per_backend: HashMap::new(),
+            vllm_graphs: vec![],
+        };
+        assert_eq!(source.section_name(), metrics_keys::SECTION_BACKENDS);
     }
 }

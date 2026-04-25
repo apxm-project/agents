@@ -56,10 +56,21 @@ impl ExecutorEngine {
         let graph_id = self.context.execution_id.clone();
         self.register_graph_metadata(&dag, &graph_id).await;
 
-        let result = self.execute_dag_inner(dag).await;
+        let mut result = self.execute_dag_inner(dag).await;
+
+        // Capture graph status from graph-aware backends before releasing pins.
+        let vllm_graphs = self
+            .context
+            .llm_registry
+            .pre_release_status_all(&graph_id)
+            .await;
 
         // Release graph from backends (both success and error paths)
         self.context.llm_registry.release_graph_all(&graph_id).await;
+
+        if let Ok(ref mut exec_result) = result {
+            exec_result.vllm_graphs = vllm_graphs;
+        }
 
         result
     }
@@ -146,6 +157,7 @@ impl ExecutorEngine {
             results,
             stats,
             token_snapshot: self.context.token_accountant.snapshot(),
+            vllm_graphs: vec![],
         })
     }
 
@@ -300,6 +312,7 @@ impl ExecutorEngine {
             results: final_results,
             stats,
             token_snapshot: self.context.token_accountant.snapshot(),
+            vllm_graphs: vec![],
         })
     }
 
@@ -381,6 +394,8 @@ pub struct ExecutionResult {
     pub stats: ExecutionStats,
     /// Aggregate token usage collected during execution. Empty if no LLM nodes ran.
     pub token_snapshot: crate::executor::token_accounting::TokenAccountingSnapshot,
+    /// vLLM graph status snapshots captured before graph release.
+    pub vllm_graphs: Vec<serde_json::Value>,
 }
 
 #[cfg(test)]
