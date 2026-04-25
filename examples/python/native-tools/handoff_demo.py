@@ -3,8 +3,8 @@
 Agent A (researcher) gathers information, then hands off to Agent B
 (writer) who uses the context to produce a final response.
 
-Run with mock backend (no API key needed):
-    APXM_MOCK_BACKEND=1 python examples/python/native-tools/handoff_demo.py
+Usage:
+    python3 examples/python/native-tools/handoff_demo.py
 """
 
 from apxm import Agent, compile, run
@@ -37,5 +37,5 @@ def research_and_write(g, topic: str):
 
 
 if __name__ == "__main__":
-    output = run(research_and_write, "The history of agent architectures")
-    print(output)
+    output = run(research_and_write, "The history of agent architectures", mock=True)
+    print(output.content)

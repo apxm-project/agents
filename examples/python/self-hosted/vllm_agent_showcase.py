@@ -9,9 +9,10 @@ This example demonstrates one APXM execution graph that combines:
   telemetry.
 
 Usage:
+  RUN_DIR="$(mktemp -d)"
   dekk apxm execute \
-    --emit-session /tmp/apxm-vllm-agent-session \
-    --emit-metrics /tmp/apxm-vllm-agent-metrics.json \
+    --emit-session "${RUN_DIR}/session" \
+    --emit-metrics "${RUN_DIR}/metrics.json" \
     examples/python/self-hosted/vllm_agent_showcase.py
 
 Routing:
@@ -21,24 +22,21 @@ Routing:
 Optional environment overrides:
   - APXM_SHOWCASE_CWD
   - APXM_SHOWCASE_TASK
-  - APXM_EMIT_AIR=1
 """
 
 from __future__ import annotations
 
 import os
 
-from apxm import GraphRecorder, compile
+from apxm import GraphRecorder, agent_cwd, compile, emit_air_if_requested
 from apxm._generated.agents import claude, codex
 from apxm._generated.providers import VLLM
 from apxm.backends import select_backend
-from apxm.constants import ENV_APXM_EMIT_AIR, ENV_FLAG_ENABLED
 
 
 SHOWCASE_MODEL_ALIAS = "showcase"
 ENV_SHOWCASE_CWD = "APXM_SHOWCASE_CWD"
 ENV_SHOWCASE_TASK = "APXM_SHOWCASE_TASK"
-ENV_EMIT_AIR = ENV_APXM_EMIT_AIR
 
 NODE_CLAUDE_AGENT = "claude_architect"
 NODE_CODEX_AGENT = "codex_reviewer"
@@ -93,7 +91,7 @@ SHOWCASE_ROUTE = select_backend(protocol=VLLM.protocol, alias=SHOWCASE_MODEL_ALI
 def vllm_agent_showcase(g: GraphRecorder, task: str):
     """Run a parallel ACP agent council and local vLLM synthesis."""
 
-    cwd = os.environ.get(ENV_SHOWCASE_CWD, os.getcwd())
+    cwd = os.environ.get(ENV_SHOWCASE_CWD, agent_cwd())
 
     claude_agent = g.spawn(NODE_CLAUDE_AGENT, profile=claude, cwd=cwd)
     codex_agent = g.spawn(NODE_CODEX_AGENT, profile=codex, cwd=cwd)
@@ -128,11 +126,11 @@ def vllm_agent_showcase(g: GraphRecorder, task: str):
 
 
 if __name__ == "__main__":
-    if os.environ.get(ENV_EMIT_AIR) == ENV_FLAG_ENABLED:
-        print(vllm_agent_showcase._air_text)
-    else:
-        import apxm
+    if emit_air_if_requested(vllm_agent_showcase):
+        raise SystemExit(0)
 
-        task = os.environ.get(ENV_SHOWCASE_TASK, DEFAULT_SHOWCASE_TASK)
-        result = apxm.run(vllm_agent_showcase(task))
-        print(result.content)
+    import apxm
+
+    task = os.environ.get(ENV_SHOWCASE_TASK, DEFAULT_SHOWCASE_TASK)
+    result = apxm.run(vllm_agent_showcase(task))
+    print(result.content)

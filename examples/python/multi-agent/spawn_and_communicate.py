@@ -7,15 +7,14 @@ Part 2: Two-agent pipeline — analyst produces analysis, summarizer condenses i
 Usage: dekk apxm execute examples/python/multi-agent/spawn_and_communicate.py
 """
 
-from apxm import compile, GraphRecorder
+from apxm import GraphRecorder, agent_cwd, compile
 from apxm._generated.agents import claude
-import os
 
 
 @compile()
 def basic_spawn(g: GraphRecorder):
     """Spawn one Claude agent and send a single review request."""
-    cwd = os.environ.get("APXM_HOME", os.getcwd())
+    cwd = agent_cwd()
 
     reviewer = g.spawn("reviewer", profile=claude, cwd=cwd)
     review = reviewer.ask("Review the current directory structure and suggest improvements.")
@@ -26,7 +25,7 @@ def basic_spawn(g: GraphRecorder):
 @compile()
 def two_agent_pipeline(g: GraphRecorder):
     """Two-agent pipeline: analyst writes analysis, summarizer condenses it."""
-    cwd = os.environ.get("APXM_HOME", os.getcwd())
+    cwd = agent_cwd()
 
     # Spawn two agents
     analyst = g.spawn("analyst", profile=claude, cwd=cwd)

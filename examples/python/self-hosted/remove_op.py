@@ -10,13 +10,10 @@ Graph structure:
 - spawn verifier (claude) — runs build + tests to ensure nothing broke
 
 Usage:
-    PYTHONPATH=crates/compiler/apxm-frontend/python python3 examples/python/self-hosted/remove_op.py > /tmp/remove_op.air
-    dekk apxm compile /tmp/remove_op.air -o /tmp/remove_op.apxmobj
-    dekk apxm execute /tmp/remove_op.air "OBSOLETE_OP"
+    dekk apxm execute examples/python/self-hosted/remove_op.py "OBSOLETE_OP"
 """
 
-import os
-from apxm import compile, GraphRecorder
+from apxm import GraphRecorder, agent_cwd, compile
 from apxm._generated.agents import claude, codex
 
 
@@ -29,7 +26,7 @@ def remove_op_workflow(g: GraphRecorder):
     """
     g.param("op_name", "str")
 
-    cwd = os.environ.get("APXM_HOME", os.getcwd())
+    cwd = agent_cwd()
 
     # Step 1: Analyze impact
     impact_analysis = g.think(

@@ -1,14 +1,15 @@
-"""Calculator Agent demo — end-to-end execution with native Python tools.
-
-This is the MVP "killer demo" from the native_python_tools.md design doc.
+"""Calculator agent demo with native Python tools exposed to the LLM.
 
 Usage:
-  APXM_MOCK_BACKEND=1 python examples/python/getting-started/calculator_agent.py
+  python3 examples/python/getting-started/calculator_agent.py
   dekk apxm execute examples/python/getting-started/calculator_agent.py
 """
 
-from apxm import tool, Agent, compile, run
-from apxm._generated.models import Anthropic
+from apxm import Agent, GraphRecorder, compile, run, tool
+
+
+AGENT_CALCULATOR = "calculator"
+PROMPT_CALCULATE = "Use the available calculator tools to compute 17 + 25."
 
 
 @tool
@@ -23,20 +24,19 @@ def multiply(a: int, b: int) -> int:
     return a * b
 
 
-calc = Agent(
-    name="calc",
-    instructions="You are a calculator. Use the provided tools to compute answers.",
+calculator = Agent(
+    name=AGENT_CALCULATOR,
+    instructions="You are a calculator. Use the provided tools for arithmetic.",
     tools=[add, multiply],
-    model=Anthropic.CLAUDE_SONNET_4_6,
 )
 
 
 @compile()
-def math_flow(g, q: str):
-    result = calc.ask(g, "{q}")
+def math_flow(g: GraphRecorder):
+    result = calculator.ask(g, PROMPT_CALCULATE)
     g.done(result)
 
 
 if __name__ == "__main__":
-    result = run(math_flow, "What is 17 + 25?", mock=True)
+    result = run(math_flow, mock=True)
     print(result.content)

@@ -6,7 +6,8 @@
 
 use super::constants::{
     CAPABILITY_NAME, MANIFEST_TEMPFILE_PREFIX, MANIFEST_TEMPFILE_SUFFIX, PYTHON_BIN,
-    PYTHON_MODULE_FLAG, TRACE_TARGET, WORKER_MODULE,
+    PYTHON_FRONTEND_PATH, PYTHON_MODULE_FLAG, PYTHONUNBUFFERED, REPO_MARKER, TRACE_TARGET,
+    WORKER_MODULE,
 };
 use super::protocol::{
     CallRequest, CallResponse, CancelRequest, ErrorEnvelope, PROTOCOL_VERSION, WorkerRequest,
@@ -15,6 +16,7 @@ use super::protocol::{
 use apxm_core::error::RuntimeError;
 use parking_lot::RwLock;
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -28,6 +30,34 @@ fn cap_err(message: impl Into<String>) -> RuntimeError {
         capability: CAPABILITY_NAME.into(),
         message: message.into(),
     }
+}
+
+fn find_repo_root(start: &Path) -> Option<PathBuf> {
+    for candidate in start.ancestors() {
+        if candidate.join(REPO_MARKER).is_file() {
+            return Some(candidate.to_path_buf());
+        }
+    }
+    None
+}
+
+fn source_python_frontend_path() -> Option<PathBuf> {
+    let cwd = std::env::current_dir().ok()?;
+    let repo_root = find_repo_root(&cwd)?;
+    let mut path = repo_root;
+    for segment in PYTHON_FRONTEND_PATH {
+        path.push(segment);
+    }
+    path.is_dir().then_some(path)
+}
+
+fn pythonpath_with_source_frontend() -> Option<std::ffi::OsString> {
+    let frontend = source_python_frontend_path()?;
+    let mut entries = vec![frontend];
+    if let Some(existing) = std::env::var_os(apxm_core::constants::env::PYTHONPATH) {
+        entries.extend(std::env::split_paths(&existing));
+    }
+    std::env::join_paths(entries).ok()
 }
 
 /// Handle to the Python tool worker subprocess.
@@ -94,7 +124,11 @@ impl PythonToolWorker {
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
-            .kill_on_drop(true);
+            .kill_on_drop(true)
+            .env(PYTHONUNBUFFERED, apxm_core::constants::env::flag_values::ENABLED);
+        if let Some(pythonpath) = pythonpath_with_source_frontend() {
+            cmd.env(apxm_core::constants::env::PYTHONPATH, pythonpath);
+        }
         for (k, v) in extra_env {
             cmd.env(k, v);
         }

@@ -105,4 +105,9 @@ impl PythonToolBridge {
     pub fn registry(&self) -> &PythonToolRegistry {
         &self.registry
     }
+
+    /// Return tool descriptors exposed by this bridge.
+    pub fn descriptors(&self) -> impl Iterator<Item = &ToolDescriptor> {
+        self.registry.descriptors()
+    }
 }

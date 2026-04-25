@@ -25,4 +25,4 @@ def pipeline(g: GraphRecorder, topic: str):
 
 
 if __name__ == "__main__":
-    print(pipeline._graph.to_json())
+    print(pipeline._air_text)

@@ -7,15 +7,21 @@ Reusable workflow patterns for common agent tasks.
 These patterns solve recurring problems: iterative refinement, cross-critique,
 and resilient delegation. They can be composed into larger workflows.
 
+## Requirements
+
+Patterns that spawn agents use generated ACP profiles. Compile-only checks work
+without live agents, but execution requires the profile to be registered and
+its CLI/auth setup to pass `dekk apxm agent test <name>`.
+
 ## Examples
 
-- **iterative_refine.py** -- Generate, critique, and refine in a loop-free chain. `python examples/python/patterns/iterative_refine.py`
-- **cross_critique.py** -- Two agents critique each other's work. `python examples/python/patterns/cross_critique.py`
-- **resilient_pipeline.py** -- Spawn worker, send task, handle result with retry semantics. `python examples/python/patterns/resilient_pipeline.py`
-- **subflow_policy_call.py** -- Attach a stricter policy to the `FLOW_CALL` node that invokes a subflow. `python examples/python/patterns/subflow_policy_call.py`
-- **workflow_spawn.py** -- Run a child graph as a separate execution with its own session root. `python examples/python/patterns/workflow_spawn.py`
-- **local_runtime_controls.py** -- Run through the local CLI with hooks, built-in middleware, and an explicit session root. `python examples/python/patterns/local_runtime_controls.py`
-- **e2e_runtime_superpowers.py** -- Self-verifying end-to-end run that checks local parent sessions, explicit child sessions, hook output, middleware config, and workflow spawn together. `PYTHONPATH=crates/compiler/apxm-frontend/python APXM_MOCK_BACKEND=1 python examples/python/patterns/e2e_runtime_superpowers.py`
+- **iterative_refine.py** -- Generate, critique, and refine in a loop-free chain. `dekk apxm execute examples/python/patterns/iterative_refine.py`
+- **cross_critique.py** -- Two agents critique each other's work. `dekk apxm execute examples/python/patterns/cross_critique.py`
+- **resilient_pipeline.py** -- Spawn worker, send task, handle result with retry semantics. `dekk apxm execute examples/python/patterns/resilient_pipeline.py`
+- **subflow_policy_call.py** -- Attach a stricter policy to the `FLOW_CALL` node that invokes a subflow. `dekk apxm execute examples/python/patterns/subflow_policy_call.py`
+- **workflow_spawn.py** -- Run a child graph as a separate execution with its own session root. `dekk apxm execute examples/python/patterns/workflow_spawn.py`
+- **local_runtime_controls.py** -- In-process runtime-control smoke test with hooks, middleware, and an explicit session root. `python3 examples/python/patterns/local_runtime_controls.py`
+- **runtime_controls_e2e.py** -- In-process end-to-end check for parent sessions, explicit child sessions, hook output, middleware config, and workflow spawn. `python3 examples/python/patterns/runtime_controls_e2e.py`
 
 ## Key API
 

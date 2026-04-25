@@ -266,7 +266,7 @@ pub async fn execute_command(
 
     let opt = parse_opt_level(opt_level);
     let mut linker_config = LinkerConfig::from_apxm_config(apxm_config).with_opt_level(opt);
-    let (graph_input, _python_air, _python_tools_sidecar) = prepare_graph_input(&input)?;
+    let (graph_input, _python_air, python_tools_sidecar) = prepare_graph_input(&input)?;
 
     // Enable all-outputs collection when session output is requested
     if emit_session.is_some() {
@@ -319,11 +319,12 @@ pub async fn execute_command(
     });
 
     let result = match linker
-        .run_graph(
+        .run_graph_with_python_tools_sidecar(
             &graph_input,
             args,
             emitter_dyn,
             writer.as_ref().map(|w| w.session_dir()),
+            python_tools_sidecar,
         )
         .await
     {

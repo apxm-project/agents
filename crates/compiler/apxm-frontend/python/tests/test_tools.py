@@ -4,6 +4,8 @@ import json
 
 import pytest
 
+from apxm import GraphRecorder
+from apxm import constants as graph_keys
 from apxm.tools import (
     FunctionTool,
     ToolContext,
@@ -373,6 +375,85 @@ class TestImports:
         from apxm import FunctionTool as FT
 
         assert FT is FunctionTool
+
+
+# ---------------------------------------------------------------------------
+# Graph lowering
+# ---------------------------------------------------------------------------
+
+
+class TestGraphRecorderToolInvocation:
+    def test_invoke_tool_registers_and_invokes_with_keyword_args(self):
+        @tool
+        def lookup_docs(query: str) -> str:
+            """Look up documentation."""
+            return query
+
+        g = GraphRecorder("tool_graph")
+        result = g.invoke_tool(lookup_docs, query="APXM Python tools")
+        g.done(result)
+
+        graph = g.to_graph()
+        register = next(node for node in graph.nodes if node.op == graph_keys.OP_REGISTER_CAPABILITY)
+        invocation = next(node for node in graph.nodes if node.op == graph_keys.OP_INV_TOOL)
+
+        assert register.attributes[graph_keys.CAPABILITY_NAME] == lookup_docs.name
+        assert register.attributes[graph_keys.DESCRIPTION] == lookup_docs.description
+        assert register.attributes[graph_keys.PYTHON_HANDLER_ID] == lookup_docs.handler_id
+        assert invocation.attributes[graph_keys.CAPABILITY] == lookup_docs.name
+        assert json.loads(invocation.attributes[graph_keys.PARAMS_JSON]) == {
+            "query": "APXM Python tools"
+        }
+        assert any(
+            edge.from_id == register.id
+            and edge.to_id == invocation.id
+            and edge.dependency == graph_keys.DEPENDENCY_CONTROL
+            for edge in graph.edges
+        )
+
+    def test_invoke_tool_deduplicates_registration(self):
+        @tool
+        def normalize(value: str) -> str:
+            """Normalize a value."""
+            return value.strip()
+
+        g = GraphRecorder("tool_graph")
+        first = g.invoke_tool(normalize, value=" first ")
+        second = g.invoke_tool(normalize, value=" second ")
+        g.done(second)
+
+        graph = g.to_graph()
+        registers = [
+            node for node in graph.nodes if node.op == graph_keys.OP_REGISTER_CAPABILITY
+        ]
+        invocations = [node for node in graph.nodes if node.op == graph_keys.OP_INV_TOOL]
+
+        assert len(registers) == 1
+        assert [node.name for node in invocations] == [first.name, second.name]
+        assert all(
+            any(
+                edge.from_id == registers[0].id
+                and edge.to_id == invocation.id
+                and edge.dependency == graph_keys.DEPENDENCY_CONTROL
+                for edge in graph.edges
+            )
+            for invocation in invocations
+        )
+
+    def test_invoke_tool_rejects_mixed_params_styles(self):
+        @tool
+        def lookup_docs(query: str) -> str:
+            """Look up documentation."""
+            return query
+
+        g = GraphRecorder("tool_graph")
+        with pytest.raises(TypeError, match="either params="):
+            g.invoke_tool(lookup_docs, params={"query": "one"}, query="two")
+
+    def test_invoke_tool_requires_function_tool(self):
+        g = GraphRecorder("tool_graph")
+        with pytest.raises(TypeError, match="@tool-decorated FunctionTool"):
+            g.invoke_tool(lambda: None)  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------

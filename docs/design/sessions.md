@@ -96,10 +96,7 @@ The compiler emits no session-specific ops. It only validates that `session_awar
 
 **History growth.** Unbounded history blows up LLM context. Default cap: 100 turns. Configurable via `SessionSettings(max_history=N)`. Older turns are evicted FIFO. For long-running agents, integrate with the existing LTM facts system -- summarize old turns into facts, then evict the raw turns.
 
-## Phased Rollout
+## Implementation Notes
 
-**Phase 1 -- In-Memory (MVP).** `InMemorySession` + `FileBackend` (reuse existing `SessionManager`). History as a belief key. No concurrency controls. Unblocks `Agent.ask()` multi-turn loops.
-
-**Phase 2 -- SQLite.** `SQLiteBackend` with WAL mode, optimistic locking, schema versioning. `apxm session list/show/delete` CLI commands. Default backend. Compaction support.
-
-**Phase 3 -- Redis.** `RedisBackend` for distributed deployments. TTL-based expiry. Pub/sub session events for multi-node coordination. Optional encryption-at-rest for session state.
+This note is retained for design context only. Current runnable session control
+is path-based and documented at the top of this file.

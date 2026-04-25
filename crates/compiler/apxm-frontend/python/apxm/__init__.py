@@ -51,6 +51,7 @@ from .execution import (
     WorkflowRunResult,
     WorkflowCheckpoint,
     close,
+    emit_air_if_requested,
     new_session,
     run,
     run_workflow_file,
@@ -62,6 +63,7 @@ from .providers import ProviderSpec, list_providers, resolve_provider
 from .proxy import GraphRecorder, NodeRef
 from .sugar import AgentHandle, Team
 from .tools import FunctionTool, ToolContext, tool
+from .paths import agent_cwd, find_repo_root, local_apxm_path, repo_path
 
 __all__ = [
     "_generated",
@@ -69,6 +71,7 @@ __all__ = [
     "AgentConfig",
     "AgentHandle",
     "AgentHooks",
+    "agent_cwd",
     "Anthropic",
     "ApxmError",
     "ApxmGraph",
@@ -85,7 +88,9 @@ __all__ = [
     "ExecutionMode",
     "ExecutionResult",
     "ExecutionStats",
+    "emit_air_if_requested",
     "FlowModule",
+    "find_repo_root",
     "FunctionTool",
     "Google",
     "GraphEdge",
@@ -98,6 +103,7 @@ __all__ = [
     "get_backend",
     "list_providers",
     "list_backends",
+    "local_apxm_path",
     "LoopGuardMiddlewareConfig",
     "load_graph",
     "MiddlewareKind",
@@ -113,6 +119,7 @@ __all__ = [
     "RegisteredModel",
     "run",
     "resolve_provider",
+    "repo_path",
     "SearchWebConfig",
     "SearchDepth",
     "ServerError",

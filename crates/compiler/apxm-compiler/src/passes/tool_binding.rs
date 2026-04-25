@@ -91,7 +91,7 @@ pub fn tool_binding_check(
         }
     }
 
-    // Collect all invoked capability names from INV_TOOL nodes.
+    // Collect all invoked capability names from INV_TOOL nodes and ASK tool lists.
     let mut invoked: HashSet<String> = HashSet::new();
     for node in &module.nodes {
         if node.op == AISOperationType::InvTool {
@@ -118,6 +118,15 @@ pub fn tool_binding_check(
                     });
                 }
             }
+        }
+        if node.op == AISOperationType::Ask
+            && let Some(tools) = node.attributes.get(attrs::TOOLS).and_then(|v| v.as_array())
+        {
+            invoked.extend(
+                tools
+                    .iter()
+                    .filter_map(|tool| tool.as_str().map(ToString::to_string)),
+            );
         }
     }
 
@@ -152,7 +161,7 @@ pub fn tool_binding_check(
                     code: ErrorCode::UnusedCapability,
                     message: format!(
                         "REGISTER_CAPABILITY '{}' in node '{}' is never invoked by any \
-                         INV_TOOL node",
+                         INV_TOOL node or ASK tools list",
                         cap_name, reg_node,
                     ),
                     node_name: reg_node.clone(),
@@ -239,7 +248,7 @@ pub fn tool_binding_check_dag(
         }
     }
 
-    // Collect all invoked capability names from INV_TOOL nodes.
+    // Collect all invoked capability names from INV_TOOL nodes and ASK tool lists.
     let mut invoked: HashSet<String> = HashSet::new();
     for node in &dag.nodes {
         if node.op_type == AISOperationType::InvTool {
@@ -266,6 +275,15 @@ pub fn tool_binding_check_dag(
                     });
                 }
             }
+        }
+        if node.op_type == AISOperationType::Ask
+            && let Some(tools) = node.attributes.get(attrs::TOOLS).and_then(|v| v.as_array())
+        {
+            invoked.extend(
+                tools
+                    .iter()
+                    .filter_map(|tool| tool.as_str().map(ToString::to_string)),
+            );
         }
     }
 
@@ -300,7 +318,7 @@ pub fn tool_binding_check_dag(
                     code: ErrorCode::UnusedCapability,
                     message: format!(
                         "REGISTER_CAPABILITY '{}' in node {} is never invoked by any \
-                         INV_TOOL node",
+                         INV_TOOL node or ASK tools list",
                         cap_name, reg_node,
                     ),
                     node_name: reg_node.clone(),

@@ -10,6 +10,13 @@ import subprocess
 from typing import Any
 
 from apxm._generated import constants as graph_keys
+from apxm.constants import (
+    ENV_APXM_BIN,
+    ENV_APXM_EMIT_AIR,
+    ENV_APXM_MOCK_BACKEND,
+    ENV_APXM_SERVER_URL,
+    ENV_FLAG_ENABLED,
+)
 from .config import ExecutionOptions
 from .ir import ApxmGraph
 from .utils import detect_cycle
@@ -230,11 +237,27 @@ _CLI_RUN_SUBCOMMAND = "run"
 _CLI_EMIT_SESSION_FLAG = "--emit-session"
 _CLI_SESSION_ROOT_FLAG = "--session-root"
 _CLI_ARGS_JSON_FLAG = "--args-json"
-_CLI_BINARY_ENV = "APXM_BIN"
+_CLI_BINARY_ENV = ENV_APXM_BIN
+_DEFAULT_SERVER_URL = "http://localhost:18800"
 
 
 def _server_url() -> str:
-    return os.environ.get("APXM_SERVER_URL", "http://localhost:18800")
+    return os.environ.get(ENV_APXM_SERVER_URL, _DEFAULT_SERVER_URL)
+
+
+def emit_air_if_requested(flow: Any) -> bool:
+    """Emit a compiled Python graph for `dekk apxm compile` and return true."""
+
+    if os.environ.get(ENV_APXM_EMIT_AIR) != ENV_FLAG_ENABLED:
+        return False
+    air_text = getattr(flow, "_air_text", None)
+    if air_text is None:
+        graph = getattr(flow, "_graph", None)
+        air_text = graph.to_air() if graph is not None else None
+    if air_text is None:
+        raise TypeError("emit_air_if_requested expects a compiled APXM flow")
+    print(air_text)
+    return True
 
 
 def _build_cli_base_command(apxm_bin: str) -> list[str]:
@@ -350,7 +373,7 @@ def _find_apxm_binary() -> str:
         return str(checkout_bin)
 
     raise RuntimeError(
-        "No direct 'apxm' binary found. Set APXM_BIN, install 'apxm' on PATH, "
+        f"No direct 'apxm' binary found. Set {ENV_APXM_BIN}, install 'apxm' on PATH, "
         "or build the repo-local target/debug/apxm binary."
     )
 
@@ -770,14 +793,14 @@ def run(coro, *args, mock: bool = False, **kwargs: Any):
     (e.g. ``run(math_flow, "What is 17 + 25?")``) it invokes the flow with
     those args.
 
-    If *mock* is ``True`` (or the environment variable ``APXM_MOCK_BACKEND`` is
-    already set) the subprocess child will have ``APXM_MOCK_BACKEND=1`` so the
+    If *mock* is ``True`` (or the APXM mock backend environment flag is
+    already set) the subprocess child will have the mock flag enabled so the
     runtime uses the deterministic mock backend — no real API keys required.
     """
     import asyncio
 
     if mock:
-        os.environ["APXM_MOCK_BACKEND"] = "1"
+        os.environ[ENV_APXM_MOCK_BACKEND] = ENV_FLAG_ENABLED
 
     # If `coro` is a compiled flow (callable), invoke it with the args first.
     if callable(coro) and not asyncio.iscoroutine(coro):

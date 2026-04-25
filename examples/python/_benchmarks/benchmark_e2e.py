@@ -29,7 +29,14 @@ from pathlib import Path
 from typing import Any
 
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+def _find_repo_root(start: Path) -> Path:
+    for candidate in (start.resolve(), *start.resolve().parents):
+        if (candidate / "Cargo.toml").is_file() and (candidate / "crates").is_dir():
+            return candidate
+    return Path.cwd().resolve()
+
+
+REPO_ROOT = _find_repo_root(Path(__file__))
 BENCHMARK_DIR = Path(__file__).resolve().parent
 DEFAULT_GRAPH = BENCHMARK_DIR / "demo_code_critique.py"
 DEFAULT_RESULTS_DIR = BENCHMARK_DIR / "results"

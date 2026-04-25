@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import inspect
 import json
+import os
 from typing import TYPE_CHECKING, Any, Callable
 
-from .execution import CompiledFlow, ExecutionMode
+from .constants import ENV_APXM_EMIT_AIR, ENV_FLAG_ENABLED
+from .execution import CompiledFlow, ExecutionMode, ExecutionResult
 from .ir import Parameter
 from .proxy import GraphRecorder
 from .config import ExecutionOptions, NodePolicy
@@ -70,6 +72,9 @@ class _CompiledFunction:
         self.__doc__ = fn.__doc__
 
     async def __call__(self, *args: Any, session_id: str | None = None, **kwargs: Any) -> Any:
+        if os.environ.get(ENV_APXM_EMIT_AIR) == ENV_FLAG_ENABLED:
+            print(self._air_text)
+            return ExecutionResult(content="")
         execution = kwargs.pop("execution", None)
         runtime_args = self._normalize_runtime_args(*args, **kwargs)
         return await self._compiled_flow.run(
@@ -86,6 +91,9 @@ class _CompiledFunction:
         **kwargs: Any,
     ) -> Any:
         """Synchronous execution convenience method."""
+        if os.environ.get(ENV_APXM_EMIT_AIR) == ENV_FLAG_ENABLED:
+            print(self._air_text)
+            return ExecutionResult(content="")
         runtime_args = self._normalize_runtime_args(*args, **kwargs)
         return self._compiled_flow.run_sync(
             *runtime_args,

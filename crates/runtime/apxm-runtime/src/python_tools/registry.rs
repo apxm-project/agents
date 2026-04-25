@@ -19,8 +19,14 @@ pub struct ToolDescriptor {
     pub qualname: String,
     /// Human-friendly tool name (used as capability name).
     pub name: String,
+    /// Human-friendly tool description.
+    #[serde(default)]
+    pub description: String,
     /// JSON Schema for the tool's parameters.
     pub schema: serde_json::Value,
+    /// Source file for tools defined in executable scripts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_file: Option<String>,
 }
 
 /// Registry of Python-backed tools, keyed by capability name.
@@ -63,6 +69,11 @@ impl PythonToolRegistry {
         self.tools.get(capability_name)
     }
 
+    /// Iterate over registered tool descriptors.
+    pub fn descriptors(&self) -> impl Iterator<Item = &ToolDescriptor> {
+        self.tools.values()
+    }
+
     /// Check if a capability name refers to a Python tool.
     pub fn contains(&self, capability_name: &str) -> bool {
         self.tools.contains_key(capability_name)
@@ -101,13 +112,16 @@ mod tests {
                 "module": "myapp.tools",
                 "qualname": "add",
                 "name": "add",
-                "schema": {"type": "object", "properties": {"a": {"type": "integer"}, "b": {"type": "integer"}}}
+                "description": "Add two numbers",
+                "schema": {"type": "object", "properties": {"a": {"type": "integer"}, "b": {"type": "integer"}}},
+                "source_file": "/tmp/tools.py"
             },
             {
                 "handler_id": "sha256:def456",
                 "module": "myapp.tools",
                 "qualname": "multiply",
                 "name": "multiply",
+                "description": "Multiply two numbers",
                 "schema": {"type": "object", "properties": {"x": {"type": "number"}, "y": {"type": "number"}}}
             }
         ]"#

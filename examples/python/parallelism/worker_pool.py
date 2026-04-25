@@ -3,7 +3,7 @@
 
 Workers process tasks in parallel, then aggregate results.
 
-Usage: python3 -m examples.python.patterns.worker-pool.worker_pool
+Usage: dekk apxm execute examples/python/parallelism/worker_pool.py
 """
 
 from apxm import compile, GraphRecorder

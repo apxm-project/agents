@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
 """negotiate_consensus.py - Two agents negotiate to reach consensus
 
-Usage: python3 -m examples.python.patterns.multi-agent-negotiate.negotiate_consensus
+Usage: dekk apxm execute examples/python/multi-agent/negotiation.py
 """
 
-from apxm import compile, GraphRecorder
+from apxm import GraphRecorder, agent_cwd, compile
 from apxm._generated.agents import claude
-import os
 
 
 @compile()
 def negotiate_consensus(g: GraphRecorder):
     """Two agents negotiate a technical decision to reach consensus."""
-    cwd = os.environ.get("APXM_HOME", os.getcwd())
+    cwd = agent_cwd()
 
     # Spawn negotiating agents
     agent_a = g.spawn("agent_a", profile=claude, cwd=cwd)

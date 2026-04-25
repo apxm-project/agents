@@ -7,18 +7,31 @@ Measures: Cost vs quality tradeoffs, latency distribution across models
 Usage:
   dekk apxm execute multi_model.air -O2
 
-Note: Requires multiple backends configured:
-  - Fast model (e.g., Anthropic.CLAUDE_3_HAIKU, OpenAI.GPT_4O_MINI)
-  - Powerful model (e.g., Anthropic.CLAUDE_SONNET_4_5, OpenAI.GPT_4O)
-  - Local model (e.g., llama via ollama)
+Note: Requires registered backend model aliases:
+  - fast
+  - local-sensitive
+  - powerful
+  - formatter
 """
 
-from apxm import compile, GraphRecorder, Anthropic, OpenAI
+from apxm import GraphRecorder, compile
+from apxm.backends import select_backend
+
+
+ROUTE_ALIAS_FAST = "fast"
+ROUTE_ALIAS_LOCAL = "local-sensitive"
+ROUTE_ALIAS_POWERFUL = "powerful"
+ROUTE_ALIAS_FORMATTER = "formatter"
 
 
 @compile()
 def multi_model(g: GraphRecorder):
     """Route different tasks to appropriate models based on requirements."""
+
+    fast_route = select_backend(alias=ROUTE_ALIAS_FAST)
+    local_route = select_backend(alias=ROUTE_ALIAS_LOCAL)
+    powerful_route = select_backend(alias=ROUTE_ALIAS_POWERFUL)
+    formatter_route = select_backend(alias=ROUTE_ALIAS_FORMATTER)
 
     # Input: customer support ticket
     ticket_text = """Customer Support Ticket #12847
@@ -42,7 +55,7 @@ def multi_model(g: GraphRecorder):
         "- Category: [BILLING/TECHNICAL/FEATURE_REQUEST/BUG]\n"
         "- Sentiment: [POSITIVE/NEUTRAL/FRUSTRATED/ANGRY]\n\n"
         "Respond in 3 lines only.",
-        model=Anthropic.CLAUDE_3_HAIKU,
+        route=fast_route,
     )
 
     # Local model: extract structured data (sensitive - keep local)
@@ -56,7 +69,7 @@ def multi_model(g: GraphRecorder):
         "- Issue Type: \n"
         "- Days Since Issue: \n\n"
         "Output as JSON format only.",
-        # In real usage, pass route=select_backend(alias="local-sensitive").
+        route=local_route,
     )
 
     # Powerful model: deep analysis and solution
@@ -72,7 +85,7 @@ def multi_model(g: GraphRecorder):
         "4. Customer communication template\n"
         "5. Process improvements to prevent recurrence\n\n"
         "Be thorough and precise.",
-        model=Anthropic.CLAUDE_SONNET_4_5,
+        route=powerful_route,
     )
 
     # Fast model: format customer response
@@ -82,7 +95,7 @@ def multi_model(g: GraphRecorder):
         "Create a friendly, professional customer email response.\n"
         "Maximum 200 words. Be empathetic and clear.\n"
         "Include specific next steps.",
-        model=OpenAI.GPT_4O_MINI,
+        route=formatter_route,
     )
 
     # Final report

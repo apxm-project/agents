@@ -3,7 +3,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use apxm_artifact::Artifact;
+use apxm_artifact::{Artifact, ArtifactSection};
 use apxm_core::error::runtime::RuntimeError;
 use apxm_core::log_info;
 use apxm_core::types::{OptimizationLevel, PipelineConfig};
@@ -119,7 +119,7 @@ impl Linker {
     /// looked up in `~/.cache/apxm/artifacts/`.  On a cache hit the
     /// compilation step is skipped entirely.
     pub fn compile_graph(&self, input: &Path) -> Result<Artifact, DriverError> {
-        self.compile_graph_inner(input)
+        self.compile_graph_inner(input, None)
             .map(|(artifact, _)| artifact)
     }
 
@@ -131,12 +131,13 @@ impl Linker {
         &self,
         input: &Path,
     ) -> Result<(Artifact, Option<serde_json::Value>), DriverError> {
-        self.compile_graph_inner(input)
+        self.compile_graph_inner(input, None)
     }
 
     fn compile_graph_inner(
         &self,
         input: &Path,
+        python_tools_sidecar: Option<&[u8]>,
     ) -> Result<(Artifact, Option<serde_json::Value>), DriverError> {
         let Some(ref compiler) = self.compiler else {
             return Err(DriverError::Driver(
@@ -160,9 +161,9 @@ impl Linker {
             let (module, diagnostics) =
                 compiler.compile_air_with_config_and_diagnostics(&air_text, config)?;
             let diagnostics_json = Some(diagnostics.to_json());
-            let artifact_bytes = module.generate_artifact_bytes()?;
-            let artifact =
-                Artifact::from_bytes(&artifact_bytes).map_err(|e| state_err(e.to_string()))?;
+            let manifest = python_tools_manifest(python_tools_sidecar)?;
+            let mut artifact = module.generate_artifact_with_manifest(None, manifest.as_deref())?;
+            add_python_tools_section(&mut artifact, python_tools_sidecar);
 
             let dag = artifact
                 .dag()
@@ -225,10 +226,25 @@ impl Linker {
         event_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
         session_dir: Option<&Path>,
     ) -> Result<LinkResult, DriverError> {
+        self.run_graph_with_python_tools_sidecar(input, args, event_emitter, session_dir, None)
+            .await
+    }
+
+    /// Compile graph input and execute with an optional Python tools sidecar
+    /// extracted by the CLI's Python frontend bridge.
+    pub async fn run_graph_with_python_tools_sidecar(
+        &self,
+        input: &Path,
+        args: Vec<String>,
+        event_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
+        session_dir: Option<&Path>,
+        python_tools_sidecar: Option<Vec<u8>>,
+    ) -> Result<LinkResult, DriverError> {
         log_info!("driver", "Compiling graph {}", input.display());
         #[cfg(feature = "metrics")]
         let compile_start = std::time::Instant::now();
-        let (artifact, compiler_diagnostics) = self.compile_graph_with_diagnostics(input)?;
+        let (artifact, compiler_diagnostics) =
+            self.compile_graph_inner(input, python_tools_sidecar.as_deref())?;
         #[cfg(feature = "metrics")]
         let compile_time = compile_start.elapsed();
 
@@ -270,5 +286,22 @@ impl Linker {
     /// processes may leak.
     pub fn shutdown(&self) {
         self.runtime.shutdown();
+    }
+}
+
+fn python_tools_manifest(
+    python_tools_sidecar: Option<&[u8]>,
+) -> Result<Option<Vec<apxm_compiler::passes::PythonToolManifestEntry>>, DriverError> {
+    python_tools_sidecar
+        .map(|data| serde_json::from_slice(data).map_err(|e| state_err(e.to_string())))
+        .transpose()
+}
+
+fn add_python_tools_section(artifact: &mut Artifact, python_tools_sidecar: Option<&[u8]>) {
+    if let Some(data) = python_tools_sidecar {
+        artifact.add_section(ArtifactSection {
+            kind: apxm_runtime::python_tools::CAPABILITY_NAME.into(),
+            data: data.to_vec(),
+        });
     }
 }

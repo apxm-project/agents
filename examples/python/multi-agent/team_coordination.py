@@ -7,16 +7,15 @@ and team.merge() for coordinating multiple agents.
 Usage: dekk apxm execute examples/python/multi-agent/team_coordination.py
 """
 
-from apxm import compile, GraphRecorder
+from apxm import GraphRecorder, agent_cwd, compile
 from apxm._generated.agents import claude, codex
 from apxm.constants import DEPENDENCY_CONTROL
-import os
 
 
 @compile()
 def team_coordination(g: GraphRecorder):
     """3-agent team: architect designs, coder implements, reviewer verifies."""
-    cwd = os.environ.get("APXM_HOME", os.getcwd())
+    cwd = agent_cwd()
 
     # Create a team
     team = g.team("dev_team")

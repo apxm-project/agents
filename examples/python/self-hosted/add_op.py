@@ -11,13 +11,11 @@ Graph structure:
 - spawn reviewer (claude) — reviews both implementations, runs tests
 
 Usage:
-    PYTHONPATH=crates/compiler/apxm-frontend/python python3 examples/python/self-hosted/add_op.py > /tmp/add_op.air
-    dekk apxm compile /tmp/add_op.air -o /tmp/add_op.apxmobj
-    dekk apxm execute /tmp/add_op.air "CHECKPOINT" "Save execution state for later resume"
+    dekk apxm execute examples/python/self-hosted/add_op.py \
+      "CHECKPOINT" "Save execution state for later resume"
 """
 
-import os
-from apxm import compile, GraphRecorder
+from apxm import GraphRecorder, agent_cwd, compile
 from apxm._generated.agents import claude, codex
 
 
@@ -33,7 +31,7 @@ def add_op_workflow(g: GraphRecorder):
     g.param("op_name", "str")
     g.param("op_description", "str")
 
-    cwd = os.environ.get("APXM_HOME", os.getcwd())
+    cwd = agent_cwd()
 
     # Spawn agents
     architect = g.spawn("architect", profile=claude, cwd=cwd)

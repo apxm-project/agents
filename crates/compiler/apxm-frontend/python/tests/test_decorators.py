@@ -2,6 +2,7 @@
 
 import pytest
 
+from apxm.constants import ENV_APXM_CONFIG, ENV_APXM_EMIT_AIR, ENV_FLAG_ENABLED
 from .mocks import MOCK_AGENT_PROFILE, MOCK_AGENT_PROFILE_ALT
 
 WEB_TOOL_GROUP = "web"
@@ -52,6 +53,23 @@ def test_compile_decorator_basic():
 
     assert graph.name == "simple_workflow"
     assert len(graph.nodes) == 1
+
+
+def test_compiled_flow_emits_air_when_requested(monkeypatch, capsys):
+    """Python graph files emit AIR for the Dekk compiler driver."""
+    from apxm import GraphRecorder, compile, run
+
+    @compile()
+    def emit_workflow(g: GraphRecorder):
+        result = g.print(name="result", message="ok")
+        g.done(result)
+
+    monkeypatch.setenv(ENV_APXM_EMIT_AIR, ENV_FLAG_ENABLED)
+    result = run(emit_workflow())
+    captured = capsys.readouterr()
+
+    assert result.content == ""
+    assert "module" in captured.out
 
 
 def test_compile_with_typed_params():
@@ -121,7 +139,7 @@ def test_compile_default_provider_and_backend_stamping(tmp_path, monkeypatch):
 
     config = tmp_path / "config.toml"
     _write_backend_config(config)
-    monkeypatch.setenv("APXM_CONFIG", str(config))
+    monkeypatch.setenv(ENV_APXM_CONFIG, str(config))
     route = select_backend(protocol=VLLM.protocol, alias="bench")
 
     @compile(default_provider=VLLM, default_route=route)
@@ -149,7 +167,7 @@ def test_compile_default_provider_does_not_override_per_node(tmp_path, monkeypat
 
     config = tmp_path / "config.toml"
     _write_backend_config(config)
-    monkeypatch.setenv("APXM_CONFIG", str(config))
+    monkeypatch.setenv(ENV_APXM_CONFIG, str(config))
     default_route = select_backend(protocol=VLLM.protocol, alias="bench")
     explicit_route = select_backend(protocol=OPENAI.protocol, alias="default")
 

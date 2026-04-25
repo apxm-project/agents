@@ -48,7 +48,11 @@ def test_graph_imports():
         AgentHandle,
         BackendRoute,
         Team,
+        agent_cwd,
+        find_repo_root,
         list_backends,
+        local_apxm_path,
+        repo_path,
         select_backend,
     )
     assert GraphRecorder is not None
@@ -59,6 +63,10 @@ def test_graph_imports():
     assert AgentHandle is not None
     assert BackendRoute is not None
     assert Team is not None
+    assert callable(agent_cwd)
+    assert callable(find_repo_root)
+    assert callable(local_apxm_path)
+    assert callable(repo_path)
     assert callable(list_backends)
     assert callable(select_backend)
 
@@ -73,7 +81,8 @@ def test_import_error_types():
 
 def test_import_run():
     """Verify run() can be imported."""
-    from apxm import run, run_workflow_file
+    from apxm import emit_air_if_requested, run, run_workflow_file
+    assert callable(emit_air_if_requested)
     assert callable(run)
     assert callable(run_workflow_file)
 
@@ -99,3 +108,24 @@ def test_import_load_graph():
     from apxm import load_graph, FlowModule
     assert callable(load_graph)
     assert FlowModule is not None
+
+
+def test_path_helpers_find_repo_root_and_home_override(tmp_path, monkeypatch):
+    """Path helpers avoid fixed parent counts and respect APXM_HOME."""
+    from apxm.constants import ENV_APXM_HOME
+    from apxm.paths import agent_cwd, find_repo_root, local_apxm_path, repo_path
+
+    root = tmp_path / "checkout"
+    nested = root / "examples" / "python"
+    nested.mkdir(parents=True)
+    (root / "Cargo.toml").write_text("[workspace]\n", encoding="utf-8")
+    (root / "crates").mkdir()
+
+    assert find_repo_root(nested) == root
+    monkeypatch.chdir(nested)
+    assert repo_path("examples") == root / "examples"
+    assert local_apxm_path("sessions") == root / ".apxm" / "sessions"
+
+    override = tmp_path / "agent-cwd"
+    monkeypatch.setenv(ENV_APXM_HOME, str(override))
+    assert agent_cwd() == str(override)

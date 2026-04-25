@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 import pytest
 
+from apxm.constants import ENV_APXM_BIN
+
 
 def _assert_local_execute_cli_command(
     cmd: list[str],
@@ -577,7 +579,7 @@ def test_find_apxm_binary_prefers_explicit_env(monkeypatch, tmp_path):
 
     custom = tmp_path / "apxm-custom"
     custom.write_text("", encoding="utf-8")
-    monkeypatch.setenv("APXM_BIN", str(custom))
+    monkeypatch.setenv(ENV_APXM_BIN, str(custom))
     monkeypatch.setattr("shutil.which", lambda _name: None)
 
     assert _find_apxm_binary() == str(custom)
@@ -590,7 +592,7 @@ def test_find_apxm_binary_falls_back_to_repo_checkout(monkeypatch, tmp_path):
     binary.parent.mkdir(parents=True)
     binary.write_text("", encoding="utf-8")
 
-    monkeypatch.delenv("APXM_BIN", raising=False)
+    monkeypatch.delenv(ENV_APXM_BIN, raising=False)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("shutil.which", lambda _name: None)
 

@@ -109,7 +109,7 @@ The current documentation contract is:
 
 - removing the historical Python prototype at
   `crates/runtime/apxm-backends/python/apxm_vllm/`
-- removing obsolete killer-demo planning docs that described a 4-endpoint
+- removing obsolete planning docs that described a 4-endpoint
   `/v1/apxm/pins*` design instead of the live 3-endpoint graph contract
 - pointing `.dekk.toml`'s `vllm` install component at the maintained
   `tools/scripts/vllm.py install` controller
@@ -508,7 +508,7 @@ For a fork-local self-hosted setup, prefer a backend name such as:
 Then register one or more concrete served model IDs under that backend, for
 example:
 
-- `Qwen/Qwen2.5-7B-Instruct`
+- `google/gemma-4-31B-it`
 - `local-instruct-finetune`
 
 If official Google Gemma checkpoints are unavailable to the current Hugging Face

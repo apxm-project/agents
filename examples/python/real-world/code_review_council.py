@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """code_review_council.py - Parallel code review council
 
-Usage: python3 -m examples.python.multi-agent.code_review_council
+Usage: dekk apxm execute examples/python/real-world/code_review_council.py
 """
 
 from apxm import compile, GraphRecorder

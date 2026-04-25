@@ -33,10 +33,19 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import importlib.util
 import json
 import sys
 import traceback
+from pathlib import Path
 from typing import Any
+
+from apxm.constants import (
+    PYTHON_TOOL_MANIFEST_HANDLER_ID,
+    PYTHON_TOOL_MANIFEST_MODULE,
+    PYTHON_TOOL_MANIFEST_QUALNAME,
+    PYTHON_TOOL_MANIFEST_SOURCE_FILE,
+)
 
 # Protocol version understood by this worker.
 _WIRE_VERSION = 1
@@ -49,6 +58,8 @@ _WIRE_VERSION = 1
 # only needs ``_TOOL_REGISTRY`` (dict[str, FunctionTool]) where each value
 # has ``.fn`` (callable) and ``.validate_args(args)`` (optional).
 _registry: dict[str, Any] | None = None
+MODULE_MAIN = "__main__"
+SCRIPT_MODULE_PREFIX = "_apxm_tool_script_"
 
 
 def _get_registry() -> dict[str, Any]:
@@ -81,9 +92,10 @@ def _load_manifest(path: str) -> None:
         entries = json.load(fh)
 
     for entry in entries:
-        module_name = entry["module"]
+        module_name = entry[PYTHON_TOOL_MANIFEST_MODULE]
         try:
-            importlib.import_module(module_name)
+            module = _import_tool_module(entry)
+            _ensure_manifest_handler(module, entry)
         except Exception as exc:
             _write_line(
                 {
@@ -93,6 +105,45 @@ def _load_manifest(path: str) -> None:
                     "message": f"failed to import {module_name}: {exc}",
                 }
             )
+
+
+def _import_tool_module(entry: dict[str, Any]) -> Any:
+    module_name = entry[PYTHON_TOOL_MANIFEST_MODULE]
+    source_file = entry.get(PYTHON_TOOL_MANIFEST_SOURCE_FILE)
+    if module_name != MODULE_MAIN or not source_file:
+        return importlib.import_module(module_name)
+
+    source_path = Path(source_file).resolve()
+    synthetic_name = f"{SCRIPT_MODULE_PREFIX}{source_path.stem}"
+    loaded = sys.modules.get(synthetic_name)
+    if loaded is not None:
+        return loaded
+
+    spec = importlib.util.spec_from_file_location(synthetic_name, source_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load tool source file {source_path}")
+
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[synthetic_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _resolve_qualname(module: Any, qualname: str) -> Any:
+    target = module
+    for part in qualname.split("."):
+        if part == "<locals>":
+            raise AttributeError(f"cannot resolve local tool qualname {qualname!r}")
+        target = getattr(target, part)
+    return target
+
+
+def _ensure_manifest_handler(module: Any, entry: dict[str, Any]) -> None:
+    registry = _get_registry()
+    handler_id = entry[PYTHON_TOOL_MANIFEST_HANDLER_ID]
+    if handler_id in registry:
+        return
+    registry[handler_id] = _resolve_qualname(module, entry[PYTHON_TOOL_MANIFEST_QUALNAME])
 
 
 # ---------------------------------------------------------------------------

@@ -17,7 +17,8 @@ The A-PXM process model introduces formal OS-like abstractions for agent lifecyc
 
 ### Phase 1: Spawn
 
-When `SPAWN_AGENT` includes a `profile` attribute (e.g. `"claude"`), the runtime spawns a real ACP subprocess:
+When `SPAWN_AGENT` includes a registered `profile` attribute, the runtime
+spawns a real ACP subprocess:
 
 1. **Profile lookup**: the agent registry resolves the profile to a command and configuration.
 2. **Process spawn**: an OS child process is created with stdin/stdout pipes and its own address space.
@@ -56,7 +57,7 @@ Graceful shutdown proceeds through: transport close (EOF signal), grace period, 
 | **Identity** | Named in ProcessTable | Node ID in DAG |
 | **Lifetime** | Spawn to terminate | Node start to complete |
 | **Communication** | Via COMMUNICATE op | Via dataflow tokens |
-| **Example** | Claude reviewing code | An ASK node querying the LLM |
+| **Example** | External code reviewer | An ASK node querying the LLM |
 
 An `AgentProcess` is the A-PXM equivalent of an OS process. It encapsulates the agent's session, profile, lifecycle state, and parent relationship. All threads within a process share the process's [AAM](aam.md) state (beliefs, goals, capabilities) and capability system -- analogous to how OS threads share the process address space.
 

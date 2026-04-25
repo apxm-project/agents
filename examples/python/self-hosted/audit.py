@@ -15,13 +15,10 @@ Graph structure:
 - think: generate actionable recommendations
 
 Usage:
-    PYTHONPATH=crates/compiler/apxm-frontend/python python3 examples/python/self-hosted/audit.py > /tmp/audit.air
-    dekk apxm compile /tmp/audit.air -o /tmp/audit.apxmobj
-    dekk apxm execute /tmp/audit.air "full"
+    dekk apxm execute examples/python/self-hosted/audit.py "full"
 """
 
-import os
-from apxm import compile, GraphRecorder
+from apxm import GraphRecorder, agent_cwd, compile
 from apxm._generated.agents import claude
 
 
@@ -34,7 +31,7 @@ def audit(g: GraphRecorder):
     """
     g.param("scope", "str")
 
-    cwd = os.environ.get("APXM_HOME", os.getcwd())
+    cwd = agent_cwd()
 
     # Spawn architect agent
     architect = g.spawn("architect", profile=claude, cwd=cwd)
@@ -97,7 +94,7 @@ Output JSON:
     autofix_result = architect.ask(prompt="""Run APXM autofix validation and report:
 
 Execute:
-  PYTHONPATH=crates/compiler/apxm-frontend/python python3 scripts/apxm-autofix.py --report-only
+  python3 scripts/apxm-autofix.py --report-only
 
 Parse the output and report:
 - Validation status (all pass/some failures)

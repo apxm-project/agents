@@ -112,11 +112,11 @@ agent ProposalReview {
         ask("Summarize: " + proposal) -> context
 
         // 5 independent analyses -- written sequentially, executed based on dataflow
-        ask(backend: "claude", prompt: "Financial analysis: " + context) -> financial
-        ask(backend: "claude", prompt: "Legal review: " + context) -> legal
-        ask(backend: "claude", prompt: "Technical assessment: " + context) -> technical
-        ask(backend: "claude", prompt: "Market fit: " + context) -> market
-        ask(backend: "claude", prompt: "Risk assessment: " + context) -> risk
+        ask(prompt: "Financial analysis: " + context) -> financial
+        ask(prompt: "Legal review: " + context) -> legal
+        ask(prompt: "Technical assessment: " + context) -> technical
+        ask(prompt: "Market fit: " + context) -> market
+        ask(prompt: "Risk assessment: " + context) -> risk
 
         think(
             prompt: "Synthesize these analyses:\n"
