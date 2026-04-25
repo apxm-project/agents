@@ -39,6 +39,16 @@ pub enum HookEvent {
 }
 
 impl HookEvent {
+    pub const ALL: [Self; 7] = [
+        Self::GraphStart,
+        Self::GraphEnd,
+        Self::NodeStart,
+        Self::NodeComplete,
+        Self::NodeError,
+        Self::ToolStart,
+        Self::ToolEnd,
+    ];
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::GraphStart => "graph_start",
@@ -620,6 +630,27 @@ mod tests {
     const MOCK_PROVIDER_NAME_ALT: &str = "mock-provider-alt";
     const MOCK_MODEL_NAME: &str = "mock-model";
     const MOCK_MODEL_NAME_ALT: &str = "mock-model-alt";
+    const NOOP_COMMAND: &str = "true";
+
+    #[test]
+    fn hook_event_wire_names_roundtrip() {
+        for event in HookEvent::ALL {
+            let hook = HookConfig {
+                event,
+                command: NOOP_COMMAND.to_string(),
+                shell: None,
+            };
+            let encoded = toml::to_string(&hook).expect("hook config toml");
+            assert!(
+                encoded.contains(&format!("event = \"{}\"", event.as_str())),
+                "encoded hook should use stable snake_case event name: {encoded}"
+            );
+
+            let decoded: HookConfig = toml::from_str(&encoded).expect("hook config decode");
+            assert_eq!(decoded.event, event);
+            assert_eq!(decoded.command, NOOP_COMMAND);
+        }
+    }
 
     #[test]
     fn deserialize_basic_config() {
