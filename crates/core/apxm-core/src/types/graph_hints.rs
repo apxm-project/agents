@@ -388,6 +388,8 @@ impl GraphBackendKind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GraphStatusSnapshot {
     pub backend_kind: GraphBackendKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backend_name: Option<String>,
     pub graph_id: String,
     pub registered: bool,
     pub pinned_handles: u64,
@@ -402,6 +404,7 @@ impl GraphStatusSnapshot {
     pub fn new(backend_kind: GraphBackendKind, graph_id: impl Into<String>) -> Self {
         Self {
             backend_kind,
+            backend_name: None,
             graph_id: graph_id.into(),
             registered: false,
             pinned_handles: 0,
@@ -417,6 +420,11 @@ impl GraphStatusSnapshot {
 
     pub fn with_registered(mut self, registered: bool) -> Self {
         self.registered = registered;
+        self
+    }
+
+    pub fn with_backend_name(mut self, backend_name: impl Into<String>) -> Self {
+        self.backend_name = Some(backend_name.into());
         self
     }
 
@@ -444,6 +452,13 @@ impl GraphStatusSnapshot {
             keys::OBJECT.to_owned(),
             apxm_llm::OBJECT_GRAPH_STATUS.into(),
         );
+        map.insert(
+            keys::BACKEND_KIND.to_owned(),
+            self.backend_kind.as_str().into(),
+        );
+        if let Some(backend_name) = &self.backend_name {
+            map.insert(keys::BACKEND_NAME.to_owned(), backend_name.clone().into());
+        }
         map.insert(keys::GRAPH_ID.to_owned(), self.graph_id.clone().into());
         map.insert(keys::REGISTERED.to_owned(), self.registered.into());
         map.insert(keys::PINNED_HANDLES.to_owned(), self.pinned_handles.into());

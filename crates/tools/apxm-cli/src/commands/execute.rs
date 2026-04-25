@@ -1070,7 +1070,7 @@ mod tests {
     }
 
     #[test]
-    fn metrics_json_includes_vllm_graph_snapshots() {
+    fn metrics_json_includes_backend_graph_snapshots() {
         let mut result = sample_result();
         result.graph_status_snapshots.push(
             GraphStatusSnapshot::vllm(TEST_EXECUTION_ID)
@@ -1082,13 +1082,16 @@ mod tests {
         let metrics =
             super::build_metrics_json(Path::new(TEST_INPUT), Some(2), &result, None, None);
 
-        let graphs = metrics[metrics_keys::SECTION_BACKENDS][metrics_keys::BACKENDS_VLLM]
-            [metrics_keys::VLLM_GRAPHS]
+        let graphs = metrics[metrics_keys::SECTION_BACKENDS][metrics_keys::BACKENDS_GRAPHS]
             .as_array()
-            .expect("vllm graph snapshots are emitted");
+            .expect("backend graph snapshots are emitted");
         assert_eq!(graphs.len(), 1);
 
         use metrics_keys::graph_status_keys as gsk;
+        assert_eq!(
+            graphs[0][gsk::BACKEND_KIND],
+            apxm_core::constants::graph::backend_kind::VLLM
+        );
         assert_eq!(graphs[0][gsk::GRAPH_ID], TEST_EXECUTION_ID);
         assert_eq!(graphs[0][gsk::PINNED_HANDLES], 2);
         assert_eq!(graphs[0][gsk::PINNED_BLOCKS], 16);

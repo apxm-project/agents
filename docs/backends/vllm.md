@@ -1,0 +1,220 @@
+# vLLM Backend
+
+This is the Dekk-first operator path for the APXM graph-aware vLLM backend.
+The fork lives under `external/vllm`; operators should use `dekk apxm vllm`
+instead of calling the fork's private Python environment directly.
+
+## Scope
+
+APXM is model-agnostic. vLLM loads a model reference, APXM registers the served
+model id that the running OpenAI-compatible server reports, and graph nodes
+route to that backend/model pair.
+
+Use these terms consistently:
+
+- `<MODEL_REF>` is what vLLM loads. It can be a Hugging Face id, another
+  provider-backed reference that vLLM supports, or a local model directory.
+- `<SERVED_MODEL_ID>` is what `/v1/models` reports. APXM stores this value for
+  routing.
+- `<HF_MODEL_ID>` is only for `dekk apxm vllm download`, which pre-populates a
+  Hugging Face cache. Skip it for local model directories and non-Hugging Face
+  model sources.
+
+There is no APXM/vLLM default model. Examples must use placeholders unless they
+are explicitly labeled as examples.
+
+## Dekk Commands
+
+- `dekk apxm vllm install` builds the repo-local fork environment.
+- `dekk apxm vllm help [subcommand]` shows detailed controller options.
+- `dekk apxm vllm doctor` verifies imports, package versions, GPU visibility,
+  and port ownership.
+- `dekk apxm vllm download <HF_MODEL_ID>` downloads Hugging Face weights into
+  the configured cache.
+- `dekk apxm vllm start <MODEL_REF>` starts the forked server in the background.
+- `dekk apxm vllm serve <MODEL_REF>` runs the forked server in the foreground.
+- `dekk apxm vllm probe` checks `/v1/models` and the APXM graph endpoints.
+- `dekk apxm vllm enable <SERVED_MODEL_ID>` records the running endpoint and
+  served model id in APXM backend config.
+- `dekk apxm vllm status`, `logs`, and `stop` manage the repo-local server.
+
+## Bring Up A Backend
+
+Run these commands from the APXM repo root.
+
+### 1. Install And Verify The Fork
+
+```bash
+dekk apxm vllm install
+dekk apxm vllm doctor --port 8916
+```
+
+`doctor` must report that the editable vLLM install and APXM router resolve
+under `external/vllm`. If it points at a wheel, `/tmp` checkout, or unrelated
+environment, stop and reinstall through Dekk.
+
+### 2. Choose A Model Reference
+
+If the model is hosted on Hugging Face and you want to pre-populate the cache:
+
+```bash
+dekk apxm vllm download <HF_MODEL_ID> --hf-home /path/to/hf-cache
+```
+
+For local model directories, skip `download` and pass the directory path to
+`start`.
+
+### 3. Start The Server
+
+```bash
+dekk apxm vllm start <MODEL_REF> \
+  --served-model-name <SERVED_MODEL_ID> \
+  --hf-home /path/to/hf-cache \
+  --port 8916 \
+  --wait
+```
+
+Use `--served-model-name` only when you want the server to expose a stable model
+id different from `<MODEL_REF>`. GPU and memory flags such as `--gpus`,
+`--tensor-parallel-size`, `--gpu-memory-utilization`, and `--max-model-len` are
+passed through to vLLM.
+
+### 4. Probe The Running Server
+
+```bash
+dekk apxm vllm probe --port 8916
+```
+
+`probe` checks `/v1/models`, confirms the APXM graph router is mounted, and
+round-trips a temporary graph registration/status/release. A 404 from the APXM
+graph route means the process is not the APXM fork.
+
+### 5. Enable APXM Routing
+
+```bash
+dekk apxm vllm enable <SERVED_MODEL_ID> --port 8916
+```
+
+`enable` verifies that `/v1/models` reports the served model id, verifies the
+APXM graph route, adds the backend if needed, adds the served model id if
+needed, and runs `dekk apxm backend test` unless `--skip-test` is set. It does
+not start vLLM, download weights, or rewrite graph/chat routing policy.
+
+The default backend name is `vllm-fork`. If a graph or config file expects a
+different backend name, pass it explicitly:
+
+```bash
+dekk apxm vllm enable <SERVED_MODEL_ID> \
+  --backend-name vllm-local \
+  --port 8916
+```
+
+`enable` writes the normal global APXM backend store at `~/.apxm/config.toml`.
+Project-level config files or an explicit `--config` may use a different backend
+store, so keep the selected backend name and model id aligned with the workload
+you are about to run.
+
+## Example: Local Directory
+
+```bash
+dekk apxm vllm start /models/my-model \
+  --served-model-name my-model-local \
+  --port 8916 \
+  --wait
+dekk apxm vllm probe --port 8916
+dekk apxm vllm enable my-model-local --port 8916
+```
+
+Do not enable the filesystem path unless `/v1/models` reports that exact string.
+
+## Example: Hugging Face Cache
+
+```bash
+dekk apxm vllm download <HF_MODEL_ID> --hf-home /var/tmp/hf-cache
+dekk apxm vllm start <HF_MODEL_ID> \
+  --served-model-name <SERVED_MODEL_ID> \
+  --hf-home /var/tmp/hf-cache \
+  --port 8916 \
+  --wait
+dekk apxm vllm probe --port 8916
+dekk apxm vllm enable <SERVED_MODEL_ID> --port 8916
+```
+
+This is a Hugging Face example only. Other vLLM-supported model sources should
+follow their own authentication and storage rules.
+
+## Run Graphs With Metrics
+
+Use checked-in sources for fresh-checkout-safe examples:
+
+```bash
+dekk apxm execute \
+  --emit-session /tmp/apxm-talk-reuse \
+  --emit-metrics /tmp/apxm-talk-reuse-metrics.json \
+  examples/python/_benchmarks/shared_prefix_fanout.py
+```
+
+For the priority graph:
+
+```bash
+dekk apxm execute \
+  --emit-session /tmp/apxm-talk-priority \
+  --emit-metrics /tmp/apxm-talk-priority-metrics.json \
+  examples/python/_benchmarks/priority_scheduling.air
+```
+
+Session output creates a timestamped execution directory under the path you
+pass. To inspect traces, use the concrete session directory printed by the
+command, for example:
+
+```bash
+rg -n "memoization_hit|token_usage|scheduler_decision" \
+  /tmp/apxm-talk-reuse/*/trace.ndjson
+```
+
+Backend graph telemetry is emitted under `backends.graphs[]` in `metrics.json`
+or the path passed to `--emit-metrics`. Each entry reports `backend_kind`,
+`backend_name`, `graph_id`, `pinned_handles`, `pinned_blocks`,
+`critical_path_length`, and `node_count`. Those fields prove APXM captured
+graph status from the fork; they are not a KV-cache hit-rate or speedup metric
+by themselves.
+
+`runtime.token_accounting` is the per-node and aggregate token accounting
+section. It contains:
+
+- `total` for execution-wide LLM token usage
+- `per_node` keyed by APXM node id
+- `per_flow` keyed by flow name
+- `per_agent` keyed by APXM agent name when the request runs inside an agent
+  scope
+
+Use both sections together. `runtime.token_accounting.per_node` answers which
+APXM nodes spent tokens. `backends.graphs[]` answers whether the graph-aware
+backend retained graph state and pin metadata.
+
+Spawned coding agents such as Codex or Claude are ACP subprocesses. APXM can
+measure the APXM node lifecycle, latency, output, session files, and child
+execution links for those nodes. Provider token usage is only included in
+`runtime.token_accounting` when the spawned agent or its ACP adapter reports
+usage back to APXM. If the external agent does not expose token usage, keep the
+metrics honest: report node duration and outputs, but do not invent token or
+cost numbers. The long-term shape is for ACP adapters to normalize usage into
+the same per-node accounting contract.
+
+## Multiple Models
+
+One APXM backend entry represents one endpoint. Register multiple model ids
+under the same backend only when that endpoint's `/v1/models` reports each
+served id. If models run on different ports or hosts, use different backend
+names so each backend endpoint remains unambiguous.
+
+## Hard Stop Conditions
+
+Do not treat the backend as graph-aware if any of these are true:
+
+- `doctor` does not resolve imports under `external/vllm`
+- `probe` cannot reach the APXM graph endpoints
+- `enable` cannot find `<SERVED_MODEL_ID>` in `/v1/models`
+- the workload is routed to a different backend/model than the one you enabled
+
+At the APXM to vLLM boundary, the correct term is `graph`, not `workflow`.

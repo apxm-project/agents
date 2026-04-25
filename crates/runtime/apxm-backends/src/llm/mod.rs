@@ -151,7 +151,7 @@ pub mod observability {
 
         fn collect(&self) -> serde_json::Value {
             use apxm_core::constants::session::metrics_keys;
-            use apxm_core::types::{GraphBackendKind, GraphStatusSnapshot};
+            use apxm_core::types::GraphStatusSnapshot;
 
             if self.aggregate.total_requests == 0
                 && self.per_backend.is_empty()
@@ -169,21 +169,15 @@ pub mod observability {
                 metrics_keys::BACKENDS_PER_BACKEND.to_owned(),
                 serde_json::to_value(&self.per_backend).unwrap_or_default(),
             );
-            let vllm_graphs: Vec<_> = self
+            let graph_statuses: Vec<_> = self
                 .graph_status_snapshots
                 .iter()
-                .filter(|snapshot| snapshot.backend_kind == GraphBackendKind::Vllm)
                 .map(GraphStatusSnapshot::to_metrics_json)
                 .collect();
-            if !vllm_graphs.is_empty() {
-                let mut vllm = serde_json::Map::new();
-                vllm.insert(
-                    metrics_keys::VLLM_GRAPHS.to_owned(),
-                    serde_json::Value::Array(vllm_graphs),
-                );
+            if !graph_statuses.is_empty() {
                 map.insert(
-                    metrics_keys::BACKENDS_VLLM.to_owned(),
-                    serde_json::Value::Object(vllm),
+                    metrics_keys::BACKENDS_GRAPHS.to_owned(),
+                    serde_json::Value::Array(graph_statuses),
                 );
             }
             serde_json::Value::Object(map)

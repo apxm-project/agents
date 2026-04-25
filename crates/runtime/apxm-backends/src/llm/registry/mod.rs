@@ -641,7 +641,7 @@ impl LLMRegistry {
         let mut results = Vec::new();
         for (name, backend) in self.find_graph_aware_backends() {
             match backend.get_graph_status(graph_id).await {
-                Ok(Some(value)) => results.push(value),
+                Ok(Some(value)) => results.push(value.with_backend_name(name)),
                 Ok(None) => {}
                 Err(e) => {
                     tracing::warn!(

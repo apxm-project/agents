@@ -75,10 +75,7 @@ cat >&2 <<'EOF'
 Installed the fork from external/vllm using the fork-local uv workflow.
 
 Next:
-  dekk apxm vllm serve <HF_MODEL_ID>
-
-If you prefer the explicit direct command:
-  external/vllm/.venv/bin/python -m vllm.entrypoints.cli.main serve <HF_MODEL_ID>
+  dekk apxm vllm start <MODEL_REF> --served-model-name <SERVED_MODEL_ID> --wait
 
 If this host-native install is not viable for your GPU environment, use the
 direct-mounted Docker path documented in docs/external-vllm-fork.md so the
