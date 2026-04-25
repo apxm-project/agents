@@ -16,7 +16,6 @@ Language: Rust
 - **view**: `dekk apxm view <graph.air>` -- Open interactive graph visualizer in browser
 - **ops**: `dekk apxm ops list` / `dekk apxm ops show <OP>` -- Browse AIS operations
 - **template**: `dekk apxm template list` / `dekk apxm template show <name>` -- Starter graph patterns
-- **task/merge**: `dekk apxm task merge <a.air> <b.air> --name <name>` -- Merge graph fragments
 - **init**: `dekk apxm init <name>` -- Scaffold a new project
 - **doctor**: `dekk apxm doctor` -- Diagnose environment health
 - **backend/add**: `dekk apxm backend add <name> --type <type> --protocol <proto>` -- Register inference backend

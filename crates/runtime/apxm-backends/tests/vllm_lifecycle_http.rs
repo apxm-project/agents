@@ -14,6 +14,7 @@ use apxm_backends::llm::backends::vllm::{
     ApxmGraphHints, GraphAwareVllmBackend, GraphMetadata, GraphStatusResponse,
 };
 use apxm_backends::llm::backends::{LLMBackend, LLMRequest};
+use apxm_core::constants::http::headers;
 use apxm_core::constants::llm::{api_paths, apxm as apxm_llm, config_keys, openai as openai_keys};
 use serde_json::{Value, json};
 use wiremock::matchers::{method, path, path_regex};
@@ -102,6 +103,63 @@ async fn make_backend(server_uri: &str, model: &str) -> GraphAwareVllmBackend {
     )
     .await
     .expect("construct GraphAwareVllmBackend")
+}
+
+#[tokio::test]
+async fn vllm_graph_control_requests_use_backend_transport_headers() {
+    const API_KEY: &str = "graph-control-key";
+    const HEADER_NAME: &str = "x-apxm-gateway";
+    const HEADER_VALUE: &str = "tenant-a";
+
+    let graph_id = "graph-auth-headers";
+    let exec_id = "exec-auth-headers";
+    let model = "Qwen/Qwen2.5-7B-Instruct";
+    let server = start_mock_vllm(graph_id, exec_id, model).await;
+    let backend = GraphAwareVllmBackend::new(
+        API_KEY,
+        Some(json!({
+            "base_url": format!("{}/v1", server.uri()),
+            "model": model,
+            config_keys::EXTRA_HEADERS: {
+                HEADER_NAME: HEADER_VALUE,
+            },
+        })),
+    )
+    .await
+    .expect("construct GraphAwareVllmBackend");
+
+    backend
+        .register_graph(GraphMetadata::new(graph_id, exec_id))
+        .await
+        .expect("register_graph");
+    GraphAwareVllmBackend::release_graph(&backend, graph_id)
+        .await
+        .expect("release_graph");
+
+    let received = server.received_requests().await.unwrap_or_default();
+    let control_requests: Vec<&Request> = received
+        .iter()
+        .filter(|request| {
+            request
+                .url
+                .path()
+                .starts_with(&versioned_path(api_paths::APXM_GRAPHS))
+        })
+        .collect();
+    assert_eq!(control_requests.len(), 2);
+    for request in control_requests {
+        let expected_auth = format!("Bearer {API_KEY}");
+        let auth = request
+            .headers
+            .get(headers::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok());
+        assert_eq!(auth, Some(expected_auth.as_str()));
+        let gateway = request
+            .headers
+            .get(HEADER_NAME)
+            .and_then(|value| value.to_str().ok());
+        assert_eq!(gateway, Some(HEADER_VALUE));
+    }
 }
 
 fn apxm_payload_from_request(request: &Request) -> Option<Value> {

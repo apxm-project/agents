@@ -10,6 +10,23 @@ pub mod diagnostics {
     pub const MODE_AIR: &str = "air";
 }
 
+pub mod env {
+    pub const APXM_BACKEND: &str = "APXM_BACKEND";
+    /// Makes Python graph files emit AIR to stdout for the Rust compiler driver.
+    pub const APXM_EMIT_AIR: &str = "APXM_EMIT_AIR";
+    /// Enables the in-process mock backend used by tests and offline benchmarks.
+    pub const APXM_MOCK_BACKEND: &str = "APXM_MOCK_BACKEND";
+    /// Configures mock backend latency in milliseconds.
+    pub const APXM_MOCK_LATENCY_MS: &str = "APXM_MOCK_LATENCY_MS";
+    pub const LLVM_DIR: &str = "LLVM_DIR";
+    pub const MLIR_DIR: &str = "MLIR_DIR";
+    pub const PYTHONPATH: &str = "PYTHONPATH";
+
+    pub mod flag_values {
+        pub const ENABLED: &str = "1";
+    }
+}
+
 pub mod inner_plan {
     /// Payload key for graph JSON in structured inner-plan outputs.
     pub const GRAPH_PAYLOAD: &str = "graph";

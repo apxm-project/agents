@@ -22,6 +22,9 @@ from apxm._generated.operations import (  # noqa: F401
 
 from apxm._generated import operations as _ops
 
+ENV_APXM_EMIT_AIR = "APXM_EMIT_AIR"
+ENV_FLAG_ENABLED = "1"
+
 _g = globals()
 for _spec in _ops.ALL_OPERATIONS:
     _g[f"OP_{_spec.op}"] = _spec.op

@@ -8,6 +8,7 @@ Usage:
 Optional environment overrides:
   - APXM_VLLM_BACKEND
   - APXM_VLLM_MODEL
+  - APXM_EMIT_AIR=1
 
 Backend requirements:
   - APXM backend name defaults to: vllm-fork
@@ -18,13 +19,14 @@ Backend requirements:
 import os
 
 from apxm import GraphRecorder, compile
+from apxm.constants import ENV_APXM_EMIT_AIR, ENV_FLAG_ENABLED
+from scripts.apxm_vllm_contract import EnvVar, VllmDefaults, env_name
 
 
-DEFAULT_VLLM_BACKEND = "vllm-fork"
-ENV_VLLM_BACKEND = "APXM_VLLM_BACKEND"
-ENV_VLLM_MODEL = "APXM_VLLM_MODEL"
-ENV_EMIT_AIR = "APXM_EMIT_AIR"
-ENV_FLAG_ENABLED = "1"
+DEFAULT_VLLM_BACKEND = VllmDefaults().backend_name
+ENV_VLLM_BACKEND = env_name(EnvVar.APXM_VLLM_BACKEND)
+ENV_VLLM_MODEL = env_name(EnvVar.APXM_VLLM_MODEL)
+ENV_EMIT_AIR = ENV_APXM_EMIT_AIR
 NODE_ARCHITECTURE = "architecture"
 NODE_SUMMARY = "summary"
 NODE_PRINT_OUTPUT = "print_output"

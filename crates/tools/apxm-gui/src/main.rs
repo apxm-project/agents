@@ -288,7 +288,7 @@ async fn read_graph_content(path: &std::path::Path) -> Result<String, AppError> 
         if let Some(parent) = path.parent() {
             pythonpath_entries.push(parent.to_path_buf());
         }
-        if let Some(existing) = std::env::var_os("PYTHONPATH") {
+        if let Some(existing) = std::env::var_os(apxm_core::constants::env::PYTHONPATH) {
             pythonpath_entries.extend(std::env::split_paths(&existing));
         }
         let pythonpath = std::env::join_paths(pythonpath_entries).map_err(|e| {
@@ -300,7 +300,7 @@ async fn read_graph_content(path: &std::path::Path) -> Result<String, AppError> 
 
         let output = tokio::process::Command::new("python3")
             .arg(path)
-            .env("PYTHONPATH", &pythonpath)
+            .env(apxm_core::constants::env::PYTHONPATH, &pythonpath)
             .output()
             .await
             .map_err(|e| {

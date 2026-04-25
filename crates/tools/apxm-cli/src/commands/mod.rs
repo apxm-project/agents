@@ -13,6 +13,7 @@ pub mod cache;
 pub mod codegen;
 #[cfg(feature = "driver")]
 pub mod compile;
+pub(crate) mod dekk_hints;
 #[cfg(feature = "driver")]
 pub mod execute;
 pub mod gui;
@@ -21,7 +22,6 @@ pub mod quality_eval;
 pub mod replay;
 pub mod session;
 pub mod system;
-pub mod task;
 pub mod team;
 pub mod template;
 pub mod tool;
@@ -51,7 +51,6 @@ pub use quality_eval::*;
 pub use replay::*;
 pub use session::*;
 pub use system::*;
-pub use task::*;
 pub use team::*;
 pub use template::*;
 pub use tool::*;

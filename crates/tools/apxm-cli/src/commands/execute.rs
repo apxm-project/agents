@@ -7,12 +7,16 @@ use std::path::PathBuf;
 use anyhow::Context;
 use anyhow::Result;
 #[cfg(feature = "driver")]
+use apxm_core::constants::env as apxm_env;
+#[cfg(feature = "driver")]
 use apxm_driver::{Linker, LinkerConfig};
 #[cfg(feature = "driver")]
 use apxm_runtime::RuntimeExecutionResult;
 
 #[cfg(feature = "driver")]
 use super::compile::{graph_from_execution_dag, prepare_graph_input};
+#[cfg(feature = "driver")]
+use super::dekk_hints;
 #[cfg(feature = "driver")]
 use super::implementations::{load_config, parse_opt_level};
 
@@ -244,15 +248,19 @@ pub async fn execute_command(
 ) -> Result<()> {
     let apxm_config = load_config(config).context("Failed to load configuration")?;
 
-    if apxm_config.backends.is_empty() && std::env::var("APXM_MOCK_BACKEND").is_err() {
+    if apxm_config.backends.is_empty() && std::env::var(apxm_env::APXM_MOCK_BACKEND).is_err() {
         anyhow::bail!(
             "No backends configured.\n\n\
              Register a backend before executing this graph:\n\n\
-             \x20 dekk apxm backend add openai --type cloud --protocol openai\n\
-             \x20 dekk apxm backend add ollama --protocol ollama\n\
-             \x20 dekk apxm backend add vllm-fork --type onprem --protocol vllm --endpoint http://127.0.0.1:8916/v1\n\n\
-             Verify with: dekk apxm backend list\n\
-             If the backend requires authentication, provide it on the backend registration."
+             \x20 {}\n\
+             \x20 {}\n\
+             \x20 {}\n\n\
+             Verify with: {}\n\
+             If the backend requires authentication, provide it on the backend registration.",
+            dekk_hints::BACKEND_ADD_OPENAI,
+            dekk_hints::BACKEND_ADD_OLLAMA,
+            dekk_hints::VLLM_ENABLE_SERVED_MODEL,
+            dekk_hints::BACKEND_LIST
         );
     }
 
@@ -483,15 +491,19 @@ pub async fn run_command(
     // Initialize runtime
     let apxm_config = load_config(config).context("Failed to load configuration")?;
 
-    if apxm_config.backends.is_empty() && std::env::var("APXM_MOCK_BACKEND").is_err() {
+    if apxm_config.backends.is_empty() && std::env::var(apxm_env::APXM_MOCK_BACKEND).is_err() {
         anyhow::bail!(
             "No backends configured.\n\n\
              Register a backend before running this artifact:\n\n\
-             \x20 dekk apxm backend add openai --type cloud --protocol openai\n\
-             \x20 dekk apxm backend add ollama --protocol ollama\n\
-             \x20 dekk apxm backend add vllm-fork --type onprem --protocol vllm --endpoint http://127.0.0.1:8916/v1\n\n\
-             Verify with: dekk apxm backend list\n\
-             If the backend requires authentication, provide it on the backend registration."
+             \x20 {}\n\
+             \x20 {}\n\
+             \x20 {}\n\n\
+             Verify with: {}\n\
+             If the backend requires authentication, provide it on the backend registration.",
+            dekk_hints::BACKEND_ADD_OPENAI,
+            dekk_hints::BACKEND_ADD_OLLAMA,
+            dekk_hints::VLLM_ENABLE_SERVED_MODEL,
+            dekk_hints::BACKEND_LIST
         );
     }
 

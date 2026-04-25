@@ -189,7 +189,6 @@ async fn run_cli(cli: Cli) -> Result<()> {
         Commands::Analyze { input } => analyze_command(input, cli.json),
         Commands::Template { action } => template_command(action, cli.json),
         Commands::Explain { target } => explain_command(&target, cli.json),
-        Commands::Task { action } => task_command(action, cli.json),
         Commands::Codegen { action } => codegen_command(action, cli.json),
         Commands::Replay { session } => replay_command(session),
         Commands::Session { action } => session_command(action, cli.json),
@@ -218,7 +217,6 @@ async fn run_cli_no_driver(cli: Cli) -> Result<()> {
         Commands::Analyze { input } => analyze_command(input, cli.json),
         Commands::Template { action } => template_command(action, cli.json),
         Commands::Explain { target } => explain_command(&target, cli.json),
-        Commands::Task { action } => task_command(action, cli.json),
         Commands::Codegen { action } => codegen_command(action, cli.json),
         Commands::Replay { session } => replay_command(session),
         Commands::Session { action } => session_command(action, cli.json),
@@ -227,7 +225,8 @@ async fn run_cli_no_driver(cli: Cli) -> Result<()> {
         Commands::QualityEval { args } => quality_eval_command(args),
         Commands::Gui { file, port, open } => gui_command(file, port, open),
         _ => Err(anyhow::anyhow!(
-            "Command requires the `driver` feature. Rebuild through `dekk apxm build`, then re-run the command."
+            "Command requires the `driver` feature. Rebuild through `{}`, then re-run the command.",
+            commands::dekk_hints::BUILD
         )),
     }
 }

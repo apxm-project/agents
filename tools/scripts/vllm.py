@@ -7,6 +7,8 @@ import argparse
 import json
 import os
 import signal
+import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -17,61 +19,92 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from apxm_vllm_contract import (
+    ApiRoute,
+    ArgName,
+    BackendProtocol,
+    BackendType,
+    DekkToken,
+    EnvVar,
+    ForkModule,
+    ProbeContract,
+    ToolName,
+    VllmCommand,
+    VllmDefaults,
+    apxm_config_path,
+    arg_value,
+    build_layout,
+    display_hf_home,
+    effective_hf_home,
+    env_name,
+    env_reference,
+    graph_register_path,
+    local_endpoint,
+)
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = SCRIPT_DIR.parent.parent
-VLLM_DIR = REPO_ROOT / "external" / "vllm"
-VLLM_PYTHON = VLLM_DIR / ".venv" / "bin" / "python"
-INSTALL_SCRIPT = REPO_ROOT / "tools" / "scripts" / "install_external_vllm.sh"
-LOG_DIR = REPO_ROOT / ".apxm" / "vllm-logs"
-APXM_CONFIG = Path.home() / ".apxm" / "config.toml"
+LAYOUT = build_layout(__file__)
+DEFAULTS = VllmDefaults()
+PROBE = ProbeContract()
+REPO_ROOT = LAYOUT.repo_root
+VLLM_DIR = LAYOUT.vllm_dir
+VLLM_PYTHON = LAYOUT.vllm_python
+LOG_DIR = LAYOUT.log_dir
+APXM_CONFIG = apxm_config_path()
 
-DEFAULT_BACKEND_NAME = "vllm-fork"
-DEFAULT_HOST = "0.0.0.0"
-DEFAULT_PORT = 8916
-DEFAULT_HF_HOME = "/var/tmp/hf-cache"
-DEFAULT_REQUEST_TIMEOUT_SECONDS = 15
-DEFAULT_STARTUP_TIMEOUT_SECONDS = 900
-DEFAULT_STOP_TIMEOUT_SECONDS = 20.0
-DEFAULT_LOCAL_API_KEY = "EMPTY"
+DEFAULT_BACKEND_NAME = DEFAULTS.backend_name
+DEFAULT_HOST = DEFAULTS.host
+DEFAULT_PORT = DEFAULTS.port
+DEFAULT_REQUEST_TIMEOUT_SECONDS = DEFAULTS.request_timeout_seconds
+DEFAULT_STARTUP_TIMEOUT_SECONDS = DEFAULTS.startup_timeout_seconds
+DEFAULT_STOP_TIMEOUT_SECONDS = DEFAULTS.stop_timeout_seconds
 LOCALHOST = "127.0.0.1"
 LOCALHOST_NAME = "localhost"
-OPENAI_API_PREFIX = "v1"
-MODELS_PATH = "models"
 CONTENT_TYPE_HEADER = "content-type"
 AUTHORIZATION_HEADER = "authorization"
 JSON_CONTENT_TYPE = "application/json"
 BEARER_AUTH_SCHEME = "Bearer"
-APXM_GRAPHS_PATH = "apxm/graphs"
-APXM_GRAPH_REGISTER_PATH = f"{APXM_GRAPHS_PATH}/register"
-PROBE_GRAPH_ID = "__apxm_probe__"
-TEMP_GRAPH_ID_PREFIX = "dekk-probe"
-TEMP_EXECUTION_ID_PREFIX = "dekk-probe-exec"
-TEMP_NODE_NAME = "dekk-probe"
-ENV_HF_HOME = "HF_HOME"
-ENV_VLLM_API_KEY = "VLLM_API_KEY"
-ENV_HIP_VISIBLE_DEVICES = "HIP_VISIBLE_DEVICES"
-ENV_CUDA_VISIBLE_DEVICES = "CUDA_VISIBLE_DEVICES"
-CMD_DEKK = "dekk"
-CMD_APXM = "apxm"
-CMD_BACKEND = "backend"
-CMD_BACKEND_ADD = "add"
-CMD_BACKEND_ADD_MODEL = "add-model"
-CMD_BACKEND_TEST = "test"
-BACKEND_TYPE_ONPREM = "onprem"
-BACKEND_PROTOCOL_VLLM = "vllm"
+MODELS_PATH = ApiRoute.MODELS.value
+APXM_GRAPHS_PATH = ApiRoute.APXM_GRAPHS.value
+APXM_GRAPH_REGISTER_PATH = graph_register_path()
+PROBE_GRAPH_ID = PROBE.graph_id
+TEMP_GRAPH_ID_PREFIX = PROBE.temp_graph_id_prefix
+TEMP_EXECUTION_ID_PREFIX = PROBE.temp_execution_id_prefix
+TEMP_NODE_NAME = PROBE.temp_node_name
+ENV_HF_HOME = env_name(EnvVar.HF_HOME)
+ENV_APXM_VLLM_HF_HOME = env_name(EnvVar.APXM_VLLM_HF_HOME)
+ENV_VLLM_API_KEY = env_name(EnvVar.VLLM_API_KEY)
+ENV_HIP_VISIBLE_DEVICES = env_name(EnvVar.HIP_VISIBLE_DEVICES)
+ENV_CUDA_VISIBLE_DEVICES = env_name(EnvVar.CUDA_VISIBLE_DEVICES)
 PID_STATE_VERSION = 1
 PROC_ROOT = Path("/proc")
+GIT = ToolName.GIT.value
+LSOF = ToolName.LSOF.value
+TAIL = ToolName.TAIL.value
+UV = ToolName.UV.value
+MANAGED_BY = "dekk apxm vllm"
+COMMANDS_WITHOUT_EXTRA_ARGS = {
+    VllmCommand.INSTALL.value,
+    VllmCommand.HELP.value,
+    VllmCommand.DOCTOR.value,
+    VllmCommand.DOWNLOAD.value,
+    VllmCommand.STOP.value,
+    VllmCommand.STATUS.value,
+    VllmCommand.LOGS.value,
+    VllmCommand.PROBE.value,
+    VllmCommand.ENABLE.value,
+}
 
 VERIFY_FORK_CODE = """
 import importlib
+import json
 import sys
 from pathlib import Path
 
 expected = Path(sys.argv[1]).resolve()
-vllm = importlib.import_module("vllm")
-router = importlib.import_module("vllm.entrypoints.openai.apxm.api_router")
-api_server = importlib.import_module("vllm.entrypoints.openai.api_server")
+contract = json.loads(sys.argv[2])
+vllm = importlib.import_module(contract["vllm_module"])
+router = importlib.import_module(contract["router_module"])
+api_server = importlib.import_module(contract["api_server_module"])
 
 got = Path(vllm.__file__).resolve().parent.parent
 if got != expected:
@@ -90,7 +123,7 @@ if expected not in router_path.parents:
     sys.exit(1)
 
 api_server_text = Path(api_server.__file__).read_text(encoding="utf-8")
-if "vllm.entrypoints.openai.apxm.api_router" not in api_server_text:
+if contract["router_module"] not in api_server_text:
     print(
         "ERROR: OpenAI API server does not mount the APXM router from this checkout.",
         file=sys.stderr,
@@ -108,7 +141,7 @@ import sys
 from pathlib import Path
 
 payload = {}
-for name in ("vllm", "torch", "transformers", "huggingface_hub"):
+for name in json.loads(sys.argv[1])["modules"]:
     try:
         module = importlib.import_module(name)
         payload[name] = {
@@ -132,7 +165,7 @@ except Exception:
     pass
 
 try:
-    router = importlib.import_module("vllm.entrypoints.openai.apxm.api_router")
+    router = importlib.import_module(json.loads(sys.argv[1])["router_module"])
     payload["apxm_router"] = str(Path(router.__file__).resolve())
 except Exception as exc:
     payload["apxm_router_error"] = repr(exc)
@@ -148,7 +181,6 @@ model = sys.argv[1]
 max_workers = int(sys.argv[2])
 path = snapshot_download(
     model,
-    allow_patterns=["*.safetensors", "*.json", "tokenizer*", "*.model"],
     max_workers=max_workers,
 )
 print(path)
@@ -178,6 +210,32 @@ def _capture(
     return subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True)
 
 
+def _fork_contract_payload() -> str:
+    return json.dumps(
+        {
+            "vllm_module": ForkModule.VLLM.value,
+            "router_module": ForkModule.APXM_ROUTER.value,
+            "api_server_module": ForkModule.OPENAI_API_SERVER.value,
+        },
+        sort_keys=True,
+    )
+
+
+def _doctor_payload() -> str:
+    return json.dumps(
+        {
+            "modules": [
+                ForkModule.VLLM.value,
+                "torch",
+                "transformers",
+                "huggingface_hub",
+            ],
+            "router_module": ForkModule.APXM_ROUTER.value,
+        },
+        sort_keys=True,
+    )
+
+
 def _ensure_installed() -> bool:
     if VLLM_PYTHON.exists():
         return True
@@ -190,7 +248,7 @@ def _verify_visible_fork(*, verbose: bool) -> bool:
     if not _ensure_installed():
         return False
     result = _capture(
-        [str(VLLM_PYTHON), "-c", VERIFY_FORK_CODE, str(VLLM_DIR)],
+        [str(VLLM_PYTHON), "-c", VERIFY_FORK_CODE, str(VLLM_DIR), _fork_contract_payload()],
         cwd=VLLM_DIR,
     )
     if result.returncode == 0:
@@ -206,36 +264,54 @@ def _verify_visible_fork(*, verbose: bool) -> bool:
     return False
 
 
-def _hf_home(args: argparse.Namespace) -> str:
-    return getattr(args, "hf_home", None) or os.environ.get(ENV_HF_HOME) or DEFAULT_HF_HOME
+def _hf_home(args: argparse.Namespace) -> str | None:
+    return effective_hf_home(explicit=arg_value(args, ArgName.HF_HOME))
 
 
 def _serve_env(args: argparse.Namespace) -> dict[str, str]:
     env = dict(os.environ)
-    env[ENV_HF_HOME] = _hf_home(args)
+    hf_home = _hf_home(args)
+    if hf_home:
+        env[ENV_HF_HOME] = hf_home
     if args.gpus:
         env[ENV_HIP_VISIBLE_DEVICES] = args.gpus
         env[ENV_CUDA_VISIBLE_DEVICES] = args.gpus
+    if arg_value(args, ArgName.API_KEY):
+        env[ENV_VLLM_API_KEY] = str(arg_value(args, ArgName.API_KEY))
     return env
 
 
 def _api_key(args: argparse.Namespace) -> str | None:
-    return getattr(args, "api_key", None) or os.environ.get(ENV_VLLM_API_KEY)
+    api_key_env = arg_value(args, ArgName.API_KEY_ENV)
+    return (
+        arg_value(args, ArgName.API_KEY)
+        or (os.environ.get(api_key_env) if api_key_env else None)
+        or os.environ.get(ENV_VLLM_API_KEY)
+    )
+
+
+def _api_key_config_reference(args: argparse.Namespace) -> str | None:
+    api_key_env = arg_value(args, ArgName.API_KEY_ENV)
+    if api_key_env:
+        return env_reference(api_key_env)
+    if os.environ.get(ENV_VLLM_API_KEY):
+        return env_reference(EnvVar.VLLM_API_KEY)
+    return None
 
 
 def _endpoint(port: int) -> str:
-    return f"http://{LOCALHOST}:{port}/{OPENAI_API_PREFIX}"
+    return local_endpoint(host=LOCALHOST, port=port)
 
 
 def _endpoint_for_args(args: argparse.Namespace) -> str:
-    return _normalize_endpoint(getattr(args, "endpoint", None) or _endpoint(args.port))
+    return _normalize_endpoint(arg_value(args, ArgName.ENDPOINT) or _endpoint(args.port))
 
 
 def _normalize_endpoint(endpoint: str) -> str:
     normalized = endpoint.rstrip("/")
     normalized = normalized.replace(f"//{LOCALHOST_NAME}:", f"//{LOCALHOST}:")
-    if not normalized.endswith(f"/{OPENAI_API_PREFIX}"):
-        normalized = f"{normalized}/{OPENAI_API_PREFIX}"
+    if not normalized.endswith(f"/{ApiRoute.OPENAI_PREFIX.value}"):
+        normalized = f"{normalized}/{ApiRoute.OPENAI_PREFIX.value}"
     return normalized
 
 
@@ -271,6 +347,8 @@ def _pid_is_running(pid: int) -> bool:
 
 
 def _process_cmdline(pid: int) -> list[str]:
+    if not PROC_ROOT.exists():
+        return []
     try:
         raw = (PROC_ROOT / str(pid) / "cmdline").read_bytes()
     except OSError:
@@ -279,6 +357,8 @@ def _process_cmdline(pid: int) -> list[str]:
 
 
 def _process_cwd(pid: int) -> Path | None:
+    if not PROC_ROOT.exists():
+        return None
     try:
         return (PROC_ROOT / str(pid) / "cwd").resolve()
     except OSError:
@@ -294,14 +374,51 @@ def _is_repo_vllm_process(pid: int) -> bool:
         return False
     return (
         str(VLLM_PYTHON) in cmdline
-        and "vllm.entrypoints.cli.main" in cmdline
-        and "serve" in cmdline
+        and ForkModule.VLLM_CLI.value in cmdline
+        and VllmCommand.SERVE.value in cmdline
     )
+
+
+def _read_pid_state(port: int) -> dict[str, Any] | None:
+    try:
+        state = json.loads(_pid_state_file(port).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return state if isinstance(state, dict) else None
+
+
+def _state_matches_managed_process(port: int, pid: int) -> bool:
+    state = _read_pid_state(port)
+    if not state:
+        return False
+    return (
+        state.get("version") == PID_STATE_VERSION
+        and state.get("managed_by") == MANAGED_BY
+        and state.get("pid") == pid
+        and state.get("port") == port
+        and state.get("cwd") == str(VLLM_DIR)
+        and state.get("python") == str(VLLM_PYTHON)
+    )
+
+
+def _is_managed_repo_vllm_process(port: int, pid: int) -> bool:
+    if not _pid_is_running(pid):
+        return False
+    if PROC_ROOT.exists():
+        return _is_repo_vllm_process(pid)
+    if _state_matches_managed_process(port, pid):
+        _print(
+            "Process metadata is not available on this host; trusting the "
+            "Dekk-managed pid state file."
+        )
+        return True
+    return False
 
 
 def _write_pid_state(args: argparse.Namespace, process: subprocess.Popen[Any]) -> None:
     state = {
         "version": PID_STATE_VERSION,
+        "managed_by": MANAGED_BY,
         "pid": process.pid,
         "port": args.port,
         "model": args.model,
@@ -309,6 +426,7 @@ def _write_pid_state(args: argparse.Namespace, process: subprocess.Popen[Any]) -
         "backend_name": args.backend_name,
         "api_key_configured": bool(_api_key(args)),
         "cwd": str(VLLM_DIR),
+        "python": str(VLLM_PYTHON),
         "endpoint": _endpoint_for_args(args),
         "started_at": time.time(),
     }
@@ -330,7 +448,9 @@ def _remove_pid_state(port: int) -> None:
 
 
 def _port_pids(port: int) -> list[int]:
-    result = _capture(["lsof", f"-tiTCP:{port}", "-sTCP:LISTEN"])
+    if not shutil.which(LSOF):
+        return []
+    result = _capture([LSOF, f"-tiTCP:{port}", "-sTCP:LISTEN"])
     if result.returncode != 0:
         return []
     pids: list[int] = []
@@ -340,6 +460,26 @@ def _port_pids(port: int) -> list[int]:
         except ValueError:
             pass
     return sorted(set(pids))
+
+
+def _port_is_available(host: str, port: int) -> bool:
+    probe_host = host if host not in ("", "0.0.0.0") else LOCALHOST
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind((probe_host, port))
+        except OSError:
+            return False
+    return True
+
+
+def _port_owner_hint(port: int) -> str:
+    pids = _port_pids(port)
+    if pids:
+        return f"PID(s): {', '.join(map(str, pids))}"
+    if not shutil.which(LSOF):
+        return f"unknown owner; install {LSOF} for PID attribution"
+    return "unknown owner"
 
 
 def _http_json(
@@ -430,8 +570,8 @@ def _build_serve_cmd(args: argparse.Namespace, extra_args: list[str]) -> tuple[l
     cmd = [
         str(VLLM_PYTHON),
         "-m",
-        "vllm.entrypoints.cli.main",
-        "serve",
+        ForkModule.VLLM_CLI.value,
+        VllmCommand.SERVE.value,
         args.model,
         "--served-model-name",
         served_model_name,
@@ -451,8 +591,6 @@ def _build_serve_cmd(args: argparse.Namespace, extra_args: list[str]) -> tuple[l
         cmd.extend(["--gpu-memory-utilization", str(args.gpu_memory_utilization)])
     if args.download_dir:
         cmd.extend(["--download-dir", args.download_dir])
-    if _api_key(args):
-        cmd.extend(["--api-key", _api_key(args)])
     if args.enable_auto_tool_choice:
         cmd.append("--enable-auto-tool-choice")
     if args.tool_call_parser:
@@ -474,12 +612,75 @@ def _print_registration_hint(args: argparse.Namespace) -> None:
         f"--backend-name {args.backend_name} --port {args.port} --endpoint {endpoint}"
     )
     if _api_key(args):
-        _print("  Add --api-key <value> to enable/probe for authenticated servers.")
+        _print(f"  Keep {ENV_VLLM_API_KEY} set, or add --api-key-env <ENV_VAR> when enabling.")
     _print("")
 
 
+def _warn_if_public_bind_without_key(args: argparse.Namespace) -> None:
+    if args.host in {"0.0.0.0", "::"} and not _api_key(args):
+        _print(
+            "Warning: binding vLLM on a wildcard host without an API key. "
+            f"For shared or remote hosts, set {ENV_VLLM_API_KEY} or pass --api-key."
+        )
+
+
 def install_cmd(_args: argparse.Namespace) -> int:
-    return _run(["bash", str(INSTALL_SCRIPT)], cwd=REPO_ROOT)
+    if not (VLLM_DIR / "pyproject.toml").exists():
+        rc = _run(
+            [GIT, "-C", str(REPO_ROOT), "submodule", "update", "--init", str(VLLM_DIR.relative_to(REPO_ROOT))]
+        )
+        if rc != 0:
+            return rc
+    if not (VLLM_DIR / "pyproject.toml").exists():
+        _print("external/vllm is not available after submodule init")
+        return 1
+    if not shutil.which(UV):
+        _print("uv is required for the repo-local vLLM install.")
+        _print("Install uv through your system/Dekk environment, then rerun: dekk apxm vllm install")
+        return 1
+    if not VLLM_PYTHON.exists():
+        rc = _run([UV, "venv", "--python", sys.executable, str(LAYOUT.venv_dir)], cwd=VLLM_DIR)
+        if rc != 0:
+            return rc
+    install_steps = [
+        [
+            UV,
+            "pip",
+            "install",
+            "--python",
+            str(VLLM_PYTHON),
+            "--torch-backend=auto",
+            "-r",
+            "requirements/build.txt",
+        ],
+        [
+            UV,
+            "pip",
+            "install",
+            "--python",
+            str(VLLM_PYTHON),
+            "-e",
+            ".",
+            "--torch-backend=auto",
+            "--no-build-isolation",
+        ],
+    ]
+    for step in install_steps:
+        rc = _run(step, cwd=VLLM_DIR)
+        if rc != 0:
+            return rc
+    for label, cmd in (
+        ("HEAD", [GIT, "-C", str(VLLM_DIR), "rev-parse", "--short", "HEAD"]),
+        ("origin", [GIT, "-C", str(VLLM_DIR), "remote", "get-url", "origin"]),
+    ):
+        result = _capture(cmd)
+        if result.returncode == 0 and result.stdout.strip():
+            _print(f"external/vllm {label}={result.stdout.strip()}")
+    if not _verify_visible_fork(verbose=True):
+        return 1
+    _print("Installed the repo-local fork from external/vllm.")
+    _print("Next: dekk apxm vllm start <MODEL_REF> --served-model-name <SERVED_MODEL_ID> --wait")
+    return 0
 
 
 def help_cmd(args: argparse.Namespace) -> int:
@@ -493,12 +694,13 @@ def help_cmd(args: argparse.Namespace) -> int:
 def doctor_cmd(args: argparse.Namespace) -> int:
     if not _verify_visible_fork(verbose=True):
         return 1
-    result = _capture([str(VLLM_PYTHON), "-c", DOCTOR_CODE], cwd=VLLM_DIR)
+    result = _capture([str(VLLM_PYTHON), "-c", DOCTOR_CODE, _doctor_payload()], cwd=VLLM_DIR)
     if result.stdout.strip():
         print(result.stdout.strip())
     if result.stderr.strip():
         _print(result.stderr.strip())
-    print(f"HF_HOME={_hf_home(args)}")
+    print(f"HF_HOME={display_hf_home(_hf_home(args))}")
+    print(f"APXM_VLLM_HF_HOME={os.environ.get(ENV_APXM_VLLM_HF_HOME, '')}")
     print(f"server_pid_file={_pid_file(args.port)}")
     print(f"server_log_file={_log_file(args.port)}")
     pids = _port_pids(args.port)
@@ -510,10 +712,11 @@ def download_cmd(args: argparse.Namespace) -> int:
     if not _verify_visible_fork(verbose=True):
         return 1
     hf_home = _hf_home(args)
-    Path(hf_home).mkdir(parents=True, exist_ok=True)
     env = dict(os.environ)
-    env[ENV_HF_HOME] = hf_home
-    _print(f"Downloading {args.model} into HF_HOME={hf_home}")
+    if hf_home:
+        Path(hf_home).mkdir(parents=True, exist_ok=True)
+        env[ENV_HF_HOME] = hf_home
+    _print(f"Downloading {args.model} with HF_HOME={display_hf_home(hf_home)}")
     return _run(
         [str(VLLM_PYTHON), "-c", DOWNLOAD_CODE, args.model, str(args.max_workers)],
         cwd=VLLM_DIR,
@@ -526,10 +729,11 @@ def serve_cmd(args: argparse.Namespace, extra_args: list[str]) -> int:
         return 1
 
     cmd, env = _build_serve_cmd(args, extra_args)
+    _warn_if_public_bind_without_key(args)
     _print("Launching the visible repo-local fork from external/vllm")
     _print(f"working_dir={VLLM_DIR}")
     _print(f"python={VLLM_PYTHON}")
-    _print(f"hf_home={env[ENV_HF_HOME]} (used for Hugging Face-backed model refs)")
+    _print(f"hf_home={display_hf_home(env.get(ENV_HF_HOME))} (used for Hugging Face-backed model refs)")
     _print(f"backend_name={args.backend_name}")
     _print(f"model={args.model}")
     _print(f"registration_endpoint={_endpoint_for_args(args)}")
@@ -541,12 +745,13 @@ def start_cmd(args: argparse.Namespace, extra_args: list[str]) -> int:
     if not _verify_visible_fork(verbose=True):
         return 1
     pids = _port_pids(args.port)
-    if pids:
-        _print(f"Port {args.port} is already in use by PID(s): {', '.join(map(str, pids))}")
+    if pids or not _port_is_available(args.host, args.port):
+        _print(f"Port {args.port} is already in use by {_port_owner_hint(args.port)}")
         return 1
 
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     cmd, env = _build_serve_cmd(args, extra_args)
+    _warn_if_public_bind_without_key(args)
     log_path = _log_file(args.port)
     with log_path.open("ab") as log:
         process = subprocess.Popen(
@@ -587,13 +792,13 @@ def stop_cmd(args: argparse.Namespace) -> int:
     pids: list[int] = []
     pid = _read_pid(_pid_file(args.port))
     if pid is not None:
-        if _is_repo_vllm_process(pid):
+        if _is_managed_repo_vllm_process(args.port, pid):
             pids.append(pid)
         else:
             _print(f"Refusing stale or unmanaged pid-file PID {pid}")
     skipped_port_pids: list[int] = []
     for port_pid in _port_pids(args.port):
-        if _is_repo_vllm_process(port_pid):
+        if _is_managed_repo_vllm_process(args.port, port_pid):
             pids.append(port_pid)
         else:
             skipped_port_pids.append(port_pid)
@@ -640,14 +845,12 @@ def status_cmd(args: argparse.Namespace) -> int:
     backend_name = None
     served_model_name = None
     api_key_configured = None
-    try:
-        state = json.loads(_pid_state_file(args.port).read_text(encoding="utf-8"))
+    state = _read_pid_state(args.port)
+    if state:
         registration_endpoint = state.get("endpoint")
         backend_name = state.get("backend_name")
         served_model_name = state.get("served_model_name")
         api_key_configured = state.get("api_key_configured")
-    except (OSError, json.JSONDecodeError):
-        pass
     pid = _read_pid(_pid_file(args.port))
     if pid is not None:
         print(f"pid_file={_pid_file(args.port)}")
@@ -655,7 +858,10 @@ def status_cmd(args: argparse.Namespace) -> int:
         print(f"pid_running={str(_pid_is_running(pid)).lower()}")
     pids = _port_pids(args.port)
     print(f"port={args.port}")
+    print(f"port_available={str(_port_is_available(LOCALHOST, args.port)).lower()}")
     print(f"port_pids={','.join(map(str, pids)) if pids else ''}")
+    if not pids and not shutil.which(LSOF):
+        print(f"port_pid_attribution={LSOF}_not_available")
     print(f"local_probe_endpoint={_endpoint(args.port)}")
     if registration_endpoint:
         print(f"registration_endpoint={registration_endpoint}")
@@ -675,8 +881,18 @@ def logs_cmd(args: argparse.Namespace) -> int:
         _print(f"No log file found at {path}")
         return 1
     if args.follow:
-        return _run(["tail", "-f", str(path)], cwd=REPO_ROOT)
-    return _run(["tail", "-n", str(args.lines), str(path)], cwd=REPO_ROOT)
+        if shutil.which(TAIL):
+            return _run([TAIL, "-f", str(path)], cwd=REPO_ROOT)
+        _print(f"{TAIL} is not available on this host; use --lines without --follow.")
+        return 1
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError as exc:
+        _print(f"Could not read {path}: {exc}")
+        return 1
+    for line in lines[-args.lines :]:
+        print(line)
+    return 0
 
 
 def probe_cmd(args: argparse.Namespace) -> int:
@@ -738,23 +954,43 @@ def enable_cmd(args: argparse.Namespace) -> int:
     model = args.model
     endpoint = _endpoint_for_args(args)
     api_key = _api_key(args)
+    api_key_config = _api_key_config_reference(args)
+    if api_key and not api_key_config:
+        _print(
+            f"Refusing to persist a literal API key. Set {ENV_VLLM_API_KEY}, "
+            "or pass --api-key-env <ENV_VAR>, then rerun enable."
+        )
+        return 1
     add = [
-        CMD_DEKK,
-        CMD_APXM,
-        CMD_BACKEND,
-        CMD_BACKEND_ADD,
+        DekkToken.DEKK.value,
+        DekkToken.APXM.value,
+        DekkToken.BACKEND.value,
+        DekkToken.ADD.value,
         args.backend_name,
         "--type",
-        BACKEND_TYPE_ONPREM,
+        BackendType.ON_PREM.value,
         "--protocol",
-        BACKEND_PROTOCOL_VLLM,
+        BackendProtocol.VLLM.value,
         "--endpoint",
         endpoint,
-        "--api-key",
-        api_key or DEFAULT_LOCAL_API_KEY,
     ]
-    add_model = [CMD_DEKK, CMD_APXM, CMD_BACKEND, CMD_BACKEND_ADD_MODEL, args.backend_name, model]
-    test = [CMD_DEKK, CMD_APXM, CMD_BACKEND, CMD_BACKEND_TEST, args.backend_name]
+    if api_key_config:
+        add.extend(["--api-key", api_key_config])
+    add_model = [
+        DekkToken.DEKK.value,
+        DekkToken.APXM.value,
+        DekkToken.BACKEND.value,
+        DekkToken.ADD_MODEL.value,
+        args.backend_name,
+        model,
+    ]
+    test = [
+        DekkToken.DEKK.value,
+        DekkToken.APXM.value,
+        DekkToken.BACKEND.value,
+        DekkToken.TEST.value,
+        args.backend_name,
+    ]
     if not args.skip_test and not _verify_enable_target(endpoint, model, api_key=api_key):
         return 1
 
@@ -796,7 +1032,7 @@ def _add_model_args(parser: argparse.ArgumentParser) -> None:
         "--hf-home",
         help=(
             "Cache root for Hugging Face-backed model refs; optional for local "
-            f"paths (default: {DEFAULT_HF_HOME})"
+            f"paths (or set {ENV_APXM_VLLM_HF_HOME}/{ENV_HF_HOME})"
         ),
     )
     parser.add_argument("--served-model-name", help="Override the model id exposed by the server")
@@ -819,7 +1055,7 @@ def _add_model_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--download-dir", help="Model download/cache directory")
     parser.add_argument(
         "--api-key",
-        help=f"API key required by the vLLM server (or set {ENV_VLLM_API_KEY})",
+        help=f"API key required by the vLLM server; start/serve pass it via {ENV_VLLM_API_KEY}",
     )
     parser.add_argument("--tool-call-parser", help="Enable a specific tool-call parser")
     parser.add_argument(
@@ -839,45 +1075,49 @@ def build_parser() -> argparse.ArgumentParser:
         prog="dekk apxm vllm",
         description="Operate the repo-local external/vllm fork.",
     )
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers = parser.add_subparsers(dest=ArgName.COMMAND.value, required=True)
 
-    install = subparsers.add_parser("install", help="Install the repo-local vLLM fork")
-    install.set_defaults(handler=lambda ns, extra: install_cmd(ns))
+    install = subparsers.add_parser(VllmCommand.INSTALL.value, help="Install the repo-local vLLM fork")
+    install.set_defaults(**{ArgName.HANDLER.value: lambda ns, extra: install_cmd(ns)})
 
-    help_parser = subparsers.add_parser("help", help="Show controller or subcommand help")
+    help_parser = subparsers.add_parser(VllmCommand.HELP.value, help="Show controller or subcommand help")
     help_parser.add_argument("topic", nargs="?", help="Subcommand to describe")
-    help_parser.set_defaults(handler=lambda ns, extra: help_cmd(ns))
+    help_parser.set_defaults(**{ArgName.HANDLER.value: lambda ns, extra: help_cmd(ns)})
 
-    doctor = subparsers.add_parser("doctor", help="Verify fork, Python packages, GPU, and port")
+    doctor = subparsers.add_parser(VllmCommand.DOCTOR.value, help="Verify fork, Python packages, GPU, and port")
     doctor.add_argument(
         "--hf-home",
-        help=f"HF_HOME value to report/use for Hugging Face-backed refs (default: {DEFAULT_HF_HOME})",
+        help=f"HF_HOME value to report/use for Hugging Face-backed refs (or set {ENV_APXM_VLLM_HF_HOME}/{ENV_HF_HOME})",
     )
     doctor.add_argument("--port", type=int, default=DEFAULT_PORT, help="vLLM port")
-    doctor.set_defaults(handler=lambda ns, extra: doctor_cmd(ns))
+    doctor.set_defaults(**{ArgName.HANDLER.value: lambda ns, extra: doctor_cmd(ns)})
 
-    download = subparsers.add_parser("download", help="Download Hugging Face model weights into HF_HOME")
-    download.add_argument("model", help="Hugging Face model id to download")
-    download.add_argument("--hf-home", help=f"Hugging Face cache root (default: {DEFAULT_HF_HOME})")
-    download.add_argument("--max-workers", type=int, default=8, help="Parallel download workers")
-    download.set_defaults(handler=lambda ns, extra: download_cmd(ns))
+    download = subparsers.add_parser(VllmCommand.DOWNLOAD.value, help="Download Hugging Face model weights into HF_HOME")
+    download.add_argument(ArgName.MODEL.value, help="Hugging Face model id to download")
+    download.add_argument(
+        "--hf-home",
+        dest=ArgName.HF_HOME.value,
+        help=f"Hugging Face cache root (or set {ENV_APXM_VLLM_HF_HOME}/{ENV_HF_HOME})",
+    )
+    download.add_argument("--max-workers", type=int, default=DEFAULTS.download_workers, help="Parallel download workers")
+    download.set_defaults(**{ArgName.HANDLER.value: lambda ns, extra: download_cmd(ns)})
 
-    serve = subparsers.add_parser("serve", help="Serve a model in the foreground")
+    serve = subparsers.add_parser(VllmCommand.SERVE.value, help="Serve a model in the foreground")
     _add_model_args(serve)
-    serve.set_defaults(handler=serve_cmd)
+    serve.set_defaults(**{ArgName.HANDLER.value: serve_cmd})
 
-    start = subparsers.add_parser("start", help="Start a model server in the background")
+    start = subparsers.add_parser(VllmCommand.START.value, help="Start a model server in the background")
     _add_model_args(start)
     start.add_argument(
         "--wait",
-        dest="wait",
+        dest=ArgName.WAIT.value,
         action="store_true",
         default=True,
         help="Wait until /v1/models responds (default)",
     )
     start.add_argument(
         "--no-wait",
-        dest="wait",
+        dest=ArgName.WAIT.value,
         action="store_false",
         help="Return after launching the background process",
     )
@@ -887,29 +1127,29 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_STARTUP_TIMEOUT_SECONDS,
         help="Seconds to wait when --wait is set",
     )
-    start.set_defaults(handler=start_cmd)
+    start.set_defaults(**{ArgName.HANDLER.value: start_cmd})
 
-    stop = subparsers.add_parser("stop", help="Stop a repo-local vLLM server for a port")
+    stop = subparsers.add_parser(VllmCommand.STOP.value, help="Stop a repo-local vLLM server for a port")
     stop.add_argument("--port", type=int, default=DEFAULT_PORT, help="vLLM port")
     stop.add_argument("--timeout", type=float, default=DEFAULT_STOP_TIMEOUT_SECONDS, help="Seconds before SIGKILL")
-    stop.set_defaults(handler=lambda ns, extra: stop_cmd(ns))
+    stop.set_defaults(**{ArgName.HANDLER.value: lambda ns, extra: stop_cmd(ns)})
 
-    status = subparsers.add_parser("status", help="Show process and port status")
+    status = subparsers.add_parser(VllmCommand.STATUS.value, help="Show process and port status")
     status.add_argument("--port", type=int, default=DEFAULT_PORT, help="vLLM port")
-    status.set_defaults(handler=lambda ns, extra: status_cmd(ns))
+    status.set_defaults(**{ArgName.HANDLER.value: lambda ns, extra: status_cmd(ns)})
 
-    logs = subparsers.add_parser("logs", help="Show background server logs")
+    logs = subparsers.add_parser(VllmCommand.LOGS.value, help="Show background server logs")
     logs.add_argument("--port", type=int, default=DEFAULT_PORT, help="vLLM port")
-    logs.add_argument("--lines", type=int, default=80, help="Number of lines to show")
+    logs.add_argument("--lines", type=int, default=DEFAULTS.log_lines, help="Number of lines to show")
     logs.add_argument("--follow", action="store_true", help="Follow the log")
-    logs.set_defaults(handler=lambda ns, extra: logs_cmd(ns))
+    logs.set_defaults(**{ArgName.HANDLER.value: lambda ns, extra: logs_cmd(ns)})
 
     probe = subparsers.add_parser(
-        "probe",
+        VllmCommand.PROBE.value,
         help="Probe /models and APXM graph endpoints by registering and deleting a temporary graph",
     )
     probe.add_argument("--port", type=int, default=DEFAULT_PORT, help="vLLM port")
-    probe.add_argument("--endpoint", help="Override OpenAI-compatible endpoint")
+    probe.add_argument("--endpoint", dest=ArgName.ENDPOINT.value, help="Override OpenAI-compatible endpoint")
     probe.add_argument(
         "--api-key",
         help=f"API key required by the vLLM server (or set {ENV_VLLM_API_KEY})",
@@ -918,22 +1158,28 @@ def build_parser() -> argparse.ArgumentParser:
         "--graph-id",
         help="Temporary graph id to register and delete (default: generated)",
     )
-    probe.set_defaults(handler=lambda ns, extra: probe_cmd(ns))
+    probe.set_defaults(**{ArgName.HANDLER.value: lambda ns, extra: probe_cmd(ns)})
 
     def add_registration_args(registration: argparse.ArgumentParser) -> None:
-        registration.add_argument("model", help="Served model name exposed by /v1/models")
+        registration.add_argument(ArgName.MODEL.value, help="Served model name exposed by /v1/models")
         registration.add_argument("--backend-name", default=DEFAULT_BACKEND_NAME, help="APXM backend name")
         registration.add_argument("--port", type=int, default=DEFAULT_PORT, help="vLLM port")
-        registration.add_argument("--endpoint", help="Override APXM backend endpoint")
+        registration.add_argument("--endpoint", dest=ArgName.ENDPOINT.value, help="Override APXM backend endpoint")
         registration.add_argument(
             "--api-key",
-            help=f"API key required by the vLLM server (or set {ENV_VLLM_API_KEY})",
+            dest=ArgName.API_KEY.value,
+            help=f"API key required for the enable preflight; persisted only through an env reference",
+        )
+        registration.add_argument(
+            "--api-key-env",
+            dest=ArgName.API_KEY_ENV.value,
+            help=f"Environment variable name to persist as the backend API key reference (default: {ENV_VLLM_API_KEY} when set)",
         )
         registration.add_argument("--skip-test", action="store_true", help="Write backend/model config without probing the server")
 
-    enable = subparsers.add_parser("enable", help="Enable running vLLM as an APXM backend")
+    enable = subparsers.add_parser(VllmCommand.ENABLE.value, help="Enable running vLLM as an APXM backend")
     add_registration_args(enable)
-    enable.set_defaults(handler=lambda ns, extra: enable_cmd(ns))
+    enable.set_defaults(**{ArgName.HANDLER.value: lambda ns, extra: enable_cmd(ns)})
 
     return parser
 
@@ -941,11 +1187,12 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args, extra_args = parser.parse_known_args(argv)
-    if args.command in {"install", "help", "doctor", "download", "stop", "status", "logs", "probe", "enable"} and extra_args:
+    if arg_value(args, ArgName.COMMAND) in COMMANDS_WITHOUT_EXTRA_ARGS and extra_args:
         parser.error(f"unrecognized arguments: {' '.join(extra_args)}")
-    if hasattr(args, "model") and str(args.model).startswith("-"):
+    model = arg_value(args, ArgName.MODEL)
+    if model is not None and str(model).startswith("-"):
         parser.error("model value must not start with '-'")
-    return args.handler(args, extra_args)
+    return arg_value(args, ArgName.HANDLER)(args, extra_args)
 
 
 if __name__ == "__main__":

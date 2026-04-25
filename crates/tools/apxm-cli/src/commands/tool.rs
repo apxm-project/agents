@@ -5,6 +5,7 @@ use colored::Colorize;
 
 use super::agent::{load_tools, save_tools};
 use super::cli::*;
+use super::dekk_hints;
 use super::implementations::{Status, print_section_header, print_status_line};
 
 pub fn tool_command(action: ToolAction, json_output: bool) -> Result<()> {
@@ -19,7 +20,7 @@ pub fn tool_command(action: ToolAction, json_output: bool) -> Result<()> {
             }
             if tf.tools.is_empty() {
                 println!("No tools registered.");
-                println!("Add one with: dekk apxm tool add <name> --description \"...\"");
+                println!("Add one with: {}", dekk_hints::TOOL_ADD_WITH_DESCRIPTION);
                 return Ok(());
             }
             print_section_header("Registered Tools");

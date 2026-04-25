@@ -6,6 +6,8 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use colored::Colorize;
 
+use super::dekk_hints;
+
 pub fn gui_command(file: Option<PathBuf>, port: u16, open: bool) -> Result<()> {
     // Find the apxm-gui binary next to the current executable, or in PATH.
     let gui_bin = {
@@ -70,8 +72,9 @@ pub fn gui_command(file: Option<PathBuf>, port: u16, open: bool) -> Result<()> {
 
     let status = cmd.status().with_context(|| {
         format!(
-            "Failed to launch apxm-gui (looked for: {}). Build it with: dekk apxm build-gui",
-            gui_bin.display()
+            "Failed to launch apxm-gui (looked for: {}). Build it with: {}",
+            gui_bin.display(),
+            dekk_hints::BUILD_GUI
         )
     })?;
 

@@ -30,7 +30,8 @@ are explicitly labeled as examples.
 - `dekk apxm vllm doctor` verifies imports, package versions, GPU visibility,
   and port ownership.
 - `dekk apxm vllm download <HF_MODEL_ID>` downloads Hugging Face weights into
-  the configured cache.
+  the configured cache. Pass `--hf-home`, set `APXM_VLLM_HF_HOME`, or let
+  Hugging Face use its own default cache.
 - `dekk apxm vllm start <MODEL_REF>` starts the forked server in the background.
 - `dekk apxm vllm serve <MODEL_REF>` runs the forked server in the foreground.
 - `dekk apxm vllm probe` checks `/v1/models` and the APXM graph endpoints.
@@ -68,14 +69,14 @@ For local model directories, skip `download` and pass the directory path to
 
 ```bash
 dekk apxm vllm start <MODEL_REF> \
-  --served-model-name <SERVED_MODEL_ID> \
-  --hf-home /path/to/hf-cache \
   --port 8916 \
   --wait
 ```
 
-Use `--served-model-name` only when you want the server to expose a stable model
-id different from `<MODEL_REF>`. GPU and memory flags such as `--gpus`,
+Add `--served-model-name <SERVED_MODEL_ID>` when you want the server to expose
+a stable model id different from `<MODEL_REF>`. Add `--hf-home /path/to/cache`
+only for Hugging Face-backed model refs when you do not want the Hugging Face
+default cache. GPU and memory flags such as `--gpus`,
 `--tensor-parallel-size`, `--gpu-memory-utilization`, and `--max-model-len` are
 passed through to vLLM.
 
@@ -99,6 +100,10 @@ dekk apxm vllm enable <SERVED_MODEL_ID> --port 8916
 APXM graph route, adds the backend if needed, adds the served model id if
 needed, and runs `dekk apxm backend test` unless `--skip-test` is set. It does
 not start vLLM, download weights, or rewrite graph/chat routing policy.
+For authenticated servers, keep `VLLM_API_KEY` set or pass
+`--api-key-env <ENV_VAR>` so APXM stores an environment reference instead of a
+literal secret. Unauthenticated local/on-prem vLLM is valid; no fake API key is
+written.
 
 The default backend name is `vllm-fork`. If a graph or config file expects a
 different backend name, pass it explicitly:
@@ -130,10 +135,10 @@ Do not enable the filesystem path unless `/v1/models` reports that exact string.
 ## Example: Hugging Face Cache
 
 ```bash
-dekk apxm vllm download <HF_MODEL_ID> --hf-home /var/tmp/hf-cache
+dekk apxm vllm download <HF_MODEL_ID> --hf-home /path/to/hf-cache
 dekk apxm vllm start <HF_MODEL_ID> \
   --served-model-name <SERVED_MODEL_ID> \
-  --hf-home /var/tmp/hf-cache \
+  --hf-home /path/to/hf-cache \
   --port 8916 \
   --wait
 dekk apxm vllm probe --port 8916
@@ -145,21 +150,25 @@ follow their own authentication and storage rules.
 
 ## Run Graphs With Metrics
 
-Use checked-in sources for fresh-checkout-safe examples:
+Use a checked-in self-hosted smoke graph for a fresh-checkout-safe metrics
+test. The model id must be the served id you enabled in APXM:
 
 ```bash
+APXM_METRICS_DIR="$(mktemp -d)"
+APXM_VLLM_MODEL=<SERVED_MODEL_ID> \
 dekk apxm execute \
-  --emit-session /tmp/apxm-talk-reuse \
-  --emit-metrics /tmp/apxm-talk-reuse-metrics.json \
-  examples/python/_benchmarks/shared_prefix_fanout.py
+  --emit-session "${APXM_METRICS_DIR}/session" \
+  --emit-metrics "${APXM_METRICS_DIR}/metrics.json" \
+  examples/python/self-hosted/vllm_graph_smoke.py
 ```
 
-For the priority graph:
+Benchmark graphs can use different backend names and model ids. Before running
+one, align its config with the backend you enabled:
 
 ```bash
 dekk apxm execute \
-  --emit-session /tmp/apxm-talk-priority \
-  --emit-metrics /tmp/apxm-talk-priority-metrics.json \
+  --emit-session "${APXM_METRICS_DIR}/priority-session" \
+  --emit-metrics "${APXM_METRICS_DIR}/priority-metrics.json" \
   examples/python/_benchmarks/priority_scheduling.air
 ```
 
@@ -169,7 +178,7 @@ command, for example:
 
 ```bash
 rg -n "memoization_hit|token_usage|scheduler_decision" \
-  /tmp/apxm-talk-reuse/*/trace.ndjson
+  "${APXM_METRICS_DIR}/session"/*/trace.ndjson
 ```
 
 Backend graph telemetry is emitted under `backends.graphs[]` in `metrics.json`

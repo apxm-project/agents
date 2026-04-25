@@ -8,6 +8,7 @@ use crate::llm::backends::openai::OpenAIBackend;
 use crate::llm::backends::traits::StreamChunk;
 use crate::llm::backends::{LLMBackend, LLMRequest, LLMResponse};
 use anyhow::{Context, Result};
+use apxm_core::constants::http::headers;
 use apxm_core::constants::llm::{api_paths, apxm as apxm_llm, config_keys, vllm as vllm_keys};
 use apxm_core::types::provider_spec::{DEFAULT_VLLM_BASE_URL, normalize_endpoint_for_protocol};
 use apxm_core::types::{GraphMetadata, GraphStatusSnapshot, ModelInfo, PriorityClass};
@@ -203,8 +204,12 @@ impl GraphAwareVllmBackend {
         }
         let url = self.graph_registration_url();
         let response = self
-            .client
-            .post(&url)
+            .inner
+            .apply_transport_headers(
+                self.client
+                    .post(&url)
+                    .header(headers::CONTENT_TYPE, headers::CONTENT_TYPE_JSON),
+            )
             .json(&metadata)
             .send()
             .await
@@ -239,8 +244,8 @@ impl GraphAwareVllmBackend {
         }
         let url = self.graph_status_url(graph_id);
         let response = self
-            .client
-            .delete(&url)
+            .inner
+            .apply_transport_headers(self.client.delete(&url))
             .send()
             .await
             .context("Failed to send graph release request")?;
@@ -273,8 +278,8 @@ impl GraphAwareVllmBackend {
         let url = self.graph_status_url(graph_id);
 
         let response = self
-            .client
-            .get(&url)
+            .inner
+            .apply_transport_headers(self.client.get(&url))
             .send()
             .await
             .context("Failed to send graph status request")?;
@@ -360,8 +365,7 @@ impl GraphAwareVllmBackend {
         if request.model.is_none() && !self.default_model_configured {
             anyhow::bail!(
                 "No model is configured for this vLLM backend. \
-Register one with `dekk apxm backend add-model <backend> <model-id>` \
-or set an explicit graph/default model before execution."
+Register a model on the backend configuration or set an explicit graph/default model before execution."
             );
         }
         Ok(())
@@ -406,7 +410,12 @@ impl LLMBackend for GraphAwareVllmBackend {
         // Default behavior is hard-fail; opt out via
         // `BackendConfig.require_apxm_endpoints = false`.
         let url = self.graph_status_url(vllm_keys::APXM_PROBE_GRAPH_ID);
-        match self.client.get(&url).send().await {
+        match self
+            .inner
+            .apply_transport_headers(self.client.get(&url))
+            .send()
+            .await
+        {
             Ok(response) if response.status().is_success() => {
                 self.apxm_endpoints_available.store(true, Ordering::Relaxed);
             }
@@ -417,8 +426,7 @@ impl LLMBackend for GraphAwareVllmBackend {
                     anyhow::bail!(
                         "vLLM server at {} does not expose /v1/apxm/* endpoints. \
                          This is stock vLLM, which silently drops vllm_xargs.apxm \
-                         scheduling hints. Install the graph-aware fork: \
-                         `dekk apxm vllm install`. \
+                         scheduling hints. Install and run the graph-aware fork. \
                          To allow stock vLLM intentionally, set \
                          `require_apxm_endpoints = false` on this backend in \
                          ~/.apxm/config.toml.",
@@ -441,8 +449,7 @@ impl LLMBackend for GraphAwareVllmBackend {
                 if self.require_apxm_endpoints {
                     anyhow::bail!(
                         "vLLM server at {} exposes the APXM graph route but it is not ready \
-                         (status {}). Check the fork server logs and rerun \
-                         `dekk apxm vllm probe`.",
+                         (status {}). Check the fork server logs and rerun the vLLM probe.",
                         url,
                         status
                     );

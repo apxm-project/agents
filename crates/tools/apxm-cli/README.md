@@ -40,10 +40,9 @@ Command-line interface for the APXM graph compiler and runtime toolchain.
 | `team` | Manage multi-agent teams |
 | `ops` | List/show AIS operations |
 | `template` | List/show graph templates |
-| `task` | Merge graph fragments |
 | `codegen` | Generate frontend (Python) and TypeScript code from AIS definitions |
 | `session` | Session management |
-| `workflow` | Legacy `.apxmw` workflow-file management |
+| `workflow` | `.apxmw` workflow-file management |
 | `cache` | Cache management |
 | `gui` | Launch the web visualization server |
 

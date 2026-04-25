@@ -5,10 +5,12 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use apxm_compiler::Context as CompilerContext;
+use apxm_core::constants::env as apxm_env;
 use apxm_core::utils::build::MlirEnvReport;
 #[cfg(feature = "driver")]
 use apxm_driver::ApXmConfig;
 
+use super::dekk_hints;
 #[cfg(feature = "driver")]
 use super::implementations::load_config;
 use super::implementations::{
@@ -96,17 +98,18 @@ pub fn install_command() -> Result<()> {
     // Backend registration guidance after env setup
     println!();
     print_subsection_header("Backend Registration");
-    print_hint(
-        "Register a backend explicitly with `dekk apxm backend add <name> --type <cloud|onprem|local> --protocol <protocol>`.",
-    );
+    print_hint(&format!(
+        "Register a backend explicitly with `{}`.",
+        dekk_hints::BACKEND_ADD_GENERIC
+    ));
     print_hint(
         "If the backend needs authentication, attach it during backend registration instead of relying on ad hoc shell hints.",
     );
 
     println!();
     print_subsection_header("Next Steps");
-    println!("dekk apxm backend add <name> --type <cloud|onprem|local> --protocol <protocol>");
-    println!("dekk apxm doctor");
+    println!("{}", dekk_hints::BACKEND_ADD_GENERIC);
+    println!("{}", dekk_hints::DOCTOR);
 
     Ok(())
 }
@@ -183,9 +186,9 @@ pub fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> 
         };
 
     // --- Environment Variables ---
-    let env_apxm_backend = env::var("APXM_BACKEND").ok();
-    let env_mlir_dir = env::var("MLIR_DIR").ok();
-    let env_llvm_dir = env::var("LLVM_DIR").ok();
+    let env_apxm_backend = env::var(apxm_env::APXM_BACKEND).ok();
+    let env_mlir_dir = env::var(apxm_env::MLIR_DIR).ok();
+    let env_llvm_dir = env::var(apxm_env::LLVM_DIR).ok();
 
     // --- Config (driver feature only) ---
     #[cfg(feature = "driver")]
@@ -228,9 +231,9 @@ pub fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> 
                 "names": backend_names,
             },
             "environment": {
-                "APXM_BACKEND": env_apxm_backend,
-                "MLIR_DIR": env_mlir_dir,
-                "LLVM_DIR": env_llvm_dir,
+                apxm_env::APXM_BACKEND: env_apxm_backend,
+                apxm_env::MLIR_DIR: env_mlir_dir,
+                apxm_env::LLVM_DIR: env_llvm_dir,
             },
         });
         // Only include config section when driver feature is available
@@ -292,17 +295,18 @@ pub fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> 
         );
     } else {
         print_status_line("Backends", Status::Warning, "none registered");
-        print_hint(
-            "Register a backend first with `dekk apxm backend add <name> --type <cloud|onprem|local> --protocol <protocol>`.",
-        );
+        print_hint(&format!(
+            "Register a backend first with `{}`.",
+            dekk_hints::BACKEND_ADD_GENERIC
+        ));
     }
 
     // 3. Environment Variables
     print_section_header("Environment");
     for (name, value) in [
-        ("APXM_BACKEND", &env_apxm_backend),
-        ("MLIR_DIR", &env_mlir_dir),
-        ("LLVM_DIR", &env_llvm_dir),
+        (apxm_env::APXM_BACKEND, &env_apxm_backend),
+        (apxm_env::MLIR_DIR, &env_mlir_dir),
+        (apxm_env::LLVM_DIR, &env_llvm_dir),
     ] {
         match value {
             Some(v) => print_status_line(name, Status::Ok, v),
@@ -310,9 +314,10 @@ pub fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> 
         }
     }
     if env_mlir_dir.is_none() || env_llvm_dir.is_none() {
-        print_hint(
-            "Invoke project commands through `dekk apxm ...` so dekk injects the MLIR/LLVM environment.",
-        );
+        print_hint(&format!(
+            "Invoke project commands through `{}` so dekk injects the MLIR/LLVM environment.",
+            dekk_hints::APXM_ENV_HINT
+        ));
     }
 
     // 4. Config (driver feature only)
@@ -348,10 +353,14 @@ pub fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> 
         if !config_found {
             print_section_header("Backend Registration");
             print_status_line("Config file", Status::Warning, "not configured");
-            print_hint(
-                "Register a backend explicitly with `dekk apxm backend add <name> --type <cloud|onprem|local> --protocol <protocol>`.",
-            );
-            print_hint("Then rerun `dekk apxm doctor` to verify the registered backend set.");
+            print_hint(&format!(
+                "Register a backend explicitly with `{}`.",
+                dekk_hints::BACKEND_ADD_GENERIC
+            ));
+            print_hint(&format!(
+                "Then rerun `{}` to verify the registered backend set.",
+                dekk_hints::DOCTOR
+            ));
         }
     }
 
@@ -425,9 +434,11 @@ fn print_minimal_mlir_status() {
         }
         None => {
             print_status_line("Conda prefix", Status::Error, "<not set>");
-            print_hint(
-                "Run `dekk apxm install --no-interactive`, then invoke commands through `dekk apxm ...`.",
-            );
+            print_hint(&format!(
+                "Run `{}`, then invoke commands through `{}`.",
+                dekk_hints::INSTALL_NO_INTERACTIVE,
+                dekk_hints::APXM_ENV_HINT
+            ));
             return;
         }
     }
@@ -454,8 +465,8 @@ fn print_minimal_mlir_status() {
 
     if checks.iter().any(|(_, found)| !found) {
         print_subsection_header("Suggested Fix");
-        println!("dekk apxm install --no-interactive");
-        println!("dekk apxm doctor");
+        println!("{}", dekk_hints::INSTALL_NO_INTERACTIVE);
+        println!("{}", dekk_hints::DOCTOR);
         if let Some(ref prefix) = conda_prefix {
             println!("# Runtime environment prefix: {}", prefix.display());
         }

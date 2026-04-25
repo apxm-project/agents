@@ -72,7 +72,8 @@ impl BackendRegistration {
         let api_key = match backend.api_key.as_deref() {
             Some(key) => resolve_env_reference(key, "api_key", &backend.name)?,
             None if backend.backend_type == BackendType::Local
-                || backend.protocol == ProviderProtocol::Ollama =>
+                || backend.protocol == ProviderProtocol::Ollama
+                || backend.protocol == ProviderProtocol::Vllm =>
             {
                 String::new()
             }
@@ -232,7 +233,7 @@ impl BackendRegistration {
 }
 
 fn resolve_env_reference(value: &str, field: &str, backend_name: &str) -> Result<String> {
-    if let Some(var_name) = value.strip_prefix("env:") {
+    if let Some(var_name) = value.strip_prefix(config_keys::ENV_PREFIX) {
         env::var(var_name).map_err(|_| {
             anyhow!(
                 "Environment variable '{}' not set for {} in backend '{}'",

@@ -68,7 +68,7 @@ fn load_backend_config() -> Result<BackendConfig, String> {
     // Use line-based extraction for endpoint, api_key, and headers
     // since the strict TOML parser may fail on this config file.
     let mut endpoint = String::new();
-    let mut api_key = "dummy".to_string();
+    let mut api_key = String::new();
     let mut headers = Vec::new();
     let mut in_first_backend = false;
     let mut in_headers = false;
@@ -116,8 +116,10 @@ fn load_backend_config() -> Result<BackendConfig, String> {
             let val = trimmed[eq_pos + 1..].trim().trim_matches('"');
 
             if in_headers {
-                let resolved = if val.starts_with("env:") {
-                    std::env::var(&val[4..]).unwrap_or_default()
+                let resolved = if let Some(var_name) =
+                    val.strip_prefix(apxm_core::constants::llm::config_keys::ENV_PREFIX)
+                {
+                    std::env::var(var_name).unwrap_or_default()
                 } else {
                     val.to_string()
                 };
@@ -125,7 +127,15 @@ fn load_backend_config() -> Result<BackendConfig, String> {
             } else {
                 match key {
                     "endpoint" => endpoint = val.to_string(),
-                    "api_key" => api_key = val.to_string(),
+                    "api_key" => {
+                        api_key = if let Some(var_name) =
+                            val.strip_prefix(apxm_core::constants::llm::config_keys::ENV_PREFIX)
+                        {
+                            std::env::var(var_name).unwrap_or_default()
+                        } else {
+                            val.to_string()
+                        };
+                    }
                     _ => {}
                 }
             }
@@ -237,9 +247,17 @@ pub async fn chat_handler(
 
     let mut request = client
         .post(&url)
-        .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", config.api_key))
+        .header(
+            apxm_core::constants::http::headers::CONTENT_TYPE,
+            apxm_core::constants::http::headers::CONTENT_TYPE_JSON,
+        )
         .json(&body);
+    if !config.api_key.is_empty() {
+        request = request.header(
+            apxm_core::constants::http::headers::AUTHORIZATION,
+            format!("Bearer {}", config.api_key),
+        );
+    }
 
     for (k, v) in &config.headers {
         request = request.header(k.as_str(), v.as_str());

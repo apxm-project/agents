@@ -140,7 +140,8 @@ impl Linker {
     ) -> Result<(Artifact, Option<serde_json::Value>), DriverError> {
         let Some(ref compiler) = self.compiler else {
             return Err(DriverError::Driver(
-                "MLIR compiler required but is not available. Run `dekk apxm build` to rebuild with MLIR support.".to_string(),
+                "MLIR compiler required but is not available. Rebuild APXM with MLIR support."
+                    .to_string(),
             ));
         };
 

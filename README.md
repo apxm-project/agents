@@ -24,7 +24,9 @@ dekk apxm doctor
 ```bash
 # Stock vLLM does not consume APXM's vLLM extension hints.
 dekk apxm vllm install
-dekk apxm vllm serve <HF_MODEL_ID>
+dekk apxm vllm start <MODEL_REF> --served-model-name <SERVED_MODEL_ID> --wait
+dekk apxm vllm probe
+dekk apxm vllm enable <SERVED_MODEL_ID>
 ```
 
 **What the installer does:**
@@ -59,10 +61,9 @@ dekk apxm execute <file.air> --trace debug
 dekk apxm run <file.apxmobj>
 dekk apxm validate <file.air>
 dekk apxm analyze <file.air>
-dekk apxm backend add vllm-fork --type onprem --protocol vllm --endpoint http://127.0.0.1:8916/v1
-dekk apxm backend add-model vllm-fork <HF_MODEL_ID>
 dekk apxm vllm install
-dekk apxm vllm serve <HF_MODEL_ID>
+dekk apxm vllm start <MODEL_REF> --served-model-name <SERVED_MODEL_ID> --wait
+dekk apxm vllm enable <SERVED_MODEL_ID>
 ```
 
 Run `dekk apxm --help` for complete command reference.
@@ -207,7 +208,8 @@ Each check provides actionable fix suggestions when issues are found.
 ### Guides
 - [Documentation Index](docs/README.md) — Entry point for the current docs set
 - CLI Reference — Run `dekk apxm --help` for commands, options, and graph tooling
-- [External vLLM Fork](docs/external-vllm-fork.md) — Repo-local fork setup and backend registration
+- [vLLM Backend](docs/backends/vllm.md) — Dekk-first optional backend setup and metrics
+- [External vLLM Fork](docs/external-vllm-fork.md) — Architecture and fork integration notes
 
 ### PXM
 - [Overview](docs/pxm/readme.md) — High-level overview of APXM as a program execution model

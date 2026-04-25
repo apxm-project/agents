@@ -24,6 +24,7 @@ cmake = { command = "cmake", version = ">=3.20" }
 ninja = { command = "ninja" }
 cargo = { command = "cargo", version = ">=1.70" }
 python = { command = "python", version = ">=3.10" }
+uv = { command = "uv" }
 
 [env]
 LLM_GATEWAY_KEY = "env:LLM_GATEWAY_KEY"
@@ -66,7 +67,6 @@ view = { run = "apxm view", description = "Open interactive graph visualizer", s
 validate = { run = "apxm validate", description = "Validate graph against AIS contract", skill = true, group = "Authoring" }
 analyze = { run = "apxm analyze", description = "Analyze parallelism and critical path", group = "Authoring" }
 explain = { run = "apxm explain", description = "Human-readable summary of a graph", group = "Authoring" }
-merge = { run = "apxm task merge", description = "Merge graph fragments into one graph", group = "Authoring" }
 
 [commands.backend]
 description = "Manage inference backends (cloud/onprem/local)"
@@ -160,14 +160,14 @@ default = true
 name = "gui"
 label = "GUI Dashboard"
 description = "Web dashboard with multi-model agent chat (requires >=1 backend)"
-run = "bash scripts/install-gui.sh"
+run = "cargo build -p apxm-gui --release"
 default = false
 
 [[install.components]]
 name = "vllm"
 label = "vLLM (graph-aware fork)"
 description = "Required for graph-aware scheduling — stock vLLM does not consume APXM request hints"
-run = "bash tools/scripts/install_external_vllm.sh"
+run = "python tools/scripts/vllm.py install"
 default = false
 
 [[install.components]]

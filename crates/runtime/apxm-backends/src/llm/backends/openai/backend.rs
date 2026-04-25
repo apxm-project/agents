@@ -38,7 +38,7 @@ const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
 /// name = "apxm"
 /// provider = "openai"
 /// model = "gpt-4o-mini"   # or your model name
-/// api_key = "dummy"
+/// api_key = "env:OPENAI_API_KEY"
 /// base_url = "https://your-openai-compatible-gateway/v1"
 ///
 /// [llm_backends.extra_headers]
@@ -59,6 +59,25 @@ pub struct OpenAIBackend {
 }
 
 impl OpenAIBackend {
+    fn apply_auth_header(&self, req_builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        if self.api_key.is_empty() {
+            req_builder
+        } else {
+            req_builder.header(headers::AUTHORIZATION, format!("Bearer {}", self.api_key))
+        }
+    }
+
+    pub(crate) fn apply_transport_headers(
+        &self,
+        req_builder: reqwest::RequestBuilder,
+    ) -> reqwest::RequestBuilder {
+        let mut req_builder = self.apply_auth_header(req_builder);
+        for (name, value) in &self.extra_headers {
+            req_builder = req_builder.header(name.as_str(), value.as_str());
+        }
+        req_builder
+    }
+
     fn request_model<'a>(&'a self, request: &'a LLMRequest) -> &'a str {
         request.model.as_deref().unwrap_or(&self.model)
     }
@@ -367,16 +386,11 @@ impl LLMBackend for OpenAIBackend {
             "Sending request to OpenAI"
         );
 
-        let mut req_builder = self
-            .client
-            .post(&url)
-            .header(headers::AUTHORIZATION, format!("Bearer {}", self.api_key))
-            .header(headers::CONTENT_TYPE, headers::CONTENT_TYPE_JSON);
-
-        // Inject extra headers (e.g. on-premises X-Custom-Gateway-Key)
-        for (name, value) in &self.extra_headers {
-            req_builder = req_builder.header(name.as_str(), value.as_str());
-        }
+        let req_builder = self.apply_transport_headers(
+            self.client
+                .post(&url)
+                .header(headers::CONTENT_TYPE, headers::CONTENT_TYPE_JSON),
+        );
 
         let response = req_builder
             .json(&body)
@@ -455,14 +469,11 @@ impl LLMBackend for OpenAIBackend {
                 "Sending streaming request to OpenAI"
             );
 
-            let mut req_builder = self.client
-                .post(&url)
-                .header(headers::AUTHORIZATION, format!("Bearer {}", self.api_key))
-                .header(headers::CONTENT_TYPE, headers::CONTENT_TYPE_JSON);
-
-            for (name, value) in &self.extra_headers {
-                req_builder = req_builder.header(name.as_str(), value.as_str());
-            }
+            let req_builder = self.apply_transport_headers(
+                self.client
+                    .post(&url)
+                    .header(headers::CONTENT_TYPE, headers::CONTENT_TYPE_JSON),
+            );
 
             let response = req_builder.json(&body).send().await
                 .context("Failed to send streaming request to OpenAI")?
@@ -618,14 +629,7 @@ impl LLMBackend for OpenAIBackend {
     async fn health_check(&self) -> Result<()> {
         let url = format!("{}{}", self.base_url, api_paths::MODELS);
 
-        let mut req_builder = self
-            .client
-            .get(&url)
-            .header(headers::AUTHORIZATION, format!("Bearer {}", self.api_key));
-
-        for (name, value) in &self.extra_headers {
-            req_builder = req_builder.header(name.as_str(), value.as_str());
-        }
+        let req_builder = self.apply_transport_headers(self.client.get(&url));
 
         let response = req_builder
             .send()
