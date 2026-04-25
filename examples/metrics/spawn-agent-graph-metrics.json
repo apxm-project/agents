@@ -3,27 +3,27 @@
   "nodes": [
     {
       "id": 1,
-      "name": "spawn_reviewer",
+      "name": "spawn_mock_agent",
       "op": "SPAWN_AGENT",
       "attributes": {
-        "agent_name": "reviewer",
-        "profile": "claude"
+        "agent_name": "mock-agent",
+        "profile": "example-acp-profile"
       }
     },
     {
       "id": 2,
-      "name": "review_task",
+      "name": "mock_agent_task",
       "op": "CONST_STR",
       "attributes": {
-        "value": "Review this APXM metrics example and return one concise paragraph."
+        "value": "Inspect this APXM metrics example and return one concise paragraph."
       }
     },
     {
       "id": 3,
-      "name": "ask_reviewer",
+      "name": "ask_mock_agent",
       "op": "COMMUNICATE",
       "attributes": {
-        "recipient": "reviewer",
+        "recipient": "mock-agent",
         "protocol": "acp",
         "message": "{task}",
         "input_names": [
@@ -33,10 +33,10 @@
     },
     {
       "id": 4,
-      "name": "print_review",
+      "name": "print_mock_response",
       "op": "PRINT",
       "attributes": {
-        "message": "Reviewer response:\n{review}",
+        "message": "Mock agent response:\n{review}",
         "input_names": [
           "review"
         ]

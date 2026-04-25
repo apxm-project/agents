@@ -5,6 +5,8 @@ import pytest
 
 WEB_TOOL_GROUP = "web"
 FILE_READ_TOOL_GROUP = "file:read"
+MOCK_AGENT_PROFILE = "mock-agent-profile"
+MOCK_AGENT_PROFILE_ALT = "mock-agent-profile-alt"
 
 
 def test_simple_graph():
@@ -132,7 +134,7 @@ def test_spawn_and_communicate():
     from apxm.constants import OP_SPAWN_AGENT, OP_COMMUNICATE
 
     g = GraphRecorder("spawn_test")
-    spawn = g.spawn_agent("alice_spawn", agent_name="alice", profile="claude")
+    spawn = g.spawn_agent("alice_spawn", agent_name="alice", profile=MOCK_AGENT_PROFILE)
     comm = g.communicate(name="alice_msg", target_agent="alice", message="Hello")
     g.add_edge(spawn, comm, dependency="Control")
 
@@ -150,8 +152,8 @@ def test_team_sugar():
     g = GraphRecorder("team_test")
     team = g.team("research_team")
 
-    alice = team.add("alice", profile="claude")
-    bob = team.add("bob", profile="codex")
+    alice = team.add("alice", profile=MOCK_AGENT_PROFILE)
+    bob = team.add("bob", profile=MOCK_AGENT_PROFILE_ALT)
 
     alice.ask("Research X")
     bob.ask("Research Y")
@@ -176,7 +178,7 @@ def test_agent_handle_chaining():
     from apxm import GraphRecorder
 
     g = GraphRecorder("handle_test")
-    handle = g.spawn("alice", profile="claude")
+    handle = g.spawn("alice", profile=MOCK_AGENT_PROFILE)
     handle.ask("Do task 1").ask("Do task 2").ask("Do task 3")
 
     graph = g.to_graph()
@@ -217,7 +219,7 @@ def test_graph_to_air_preserves_full_literals():
 
     g = GraphRecorder("air_test")
     g.ask(name="emit", prompt=long_prompt)
-    g.spawn_agent("alice", agent_name="alice", profile="claude", mode="auto")
+    g.spawn_agent("alice", agent_name="alice", profile=MOCK_AGENT_PROFILE, mode="auto")
 
     air = g.to_air()
 
@@ -226,7 +228,7 @@ def test_graph_to_air_preserves_full_literals():
 
     # Check that spawn_agent emits known attributes
     assert 'ais.spawn_agent "alice"' in air
-    assert 'profile = "claude"' in air
+    assert f'profile = "{MOCK_AGENT_PROFILE}"' in air
     assert 'mode = "auto"' in air
 
     # Verify it's valid MLIR structure

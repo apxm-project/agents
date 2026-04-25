@@ -616,27 +616,33 @@ mod tests {
     use dirs::home_dir;
     use std::env;
 
+    const MOCK_PROVIDER_NAME: &str = "mock-provider";
+    const MOCK_PROVIDER_NAME_ALT: &str = "mock-provider-alt";
+    const MOCK_MODEL_NAME: &str = "mock-model";
+    const MOCK_MODEL_NAME_ALT: &str = "mock-model-alt";
+
     #[test]
     fn deserialize_basic_config() {
-        let toml = r#"
+        let toml = format!(
+            r#"
             [chat]
-            providers = ["openai", "local"]
-            default_backend = "openai"
+            providers = ["{MOCK_PROVIDER_NAME}", "{MOCK_PROVIDER_NAME_ALT}"]
+            default_backend = "{MOCK_PROVIDER_NAME}"
             default_exec_policy = "project:policy.toml"
-            default_model = "gpt-4o-mini"
-            planning_model = "claude-3-7-sonnet"
+            default_model = "{MOCK_MODEL_NAME}"
+            planning_model = "{MOCK_MODEL_NAME_ALT}"
 
             [chat.routing.operation_routes.plan]
-            backend = "openai"
+            backend = "{MOCK_PROVIDER_NAME}"
             model = "fast"
 
             [chat.routing.model_aliases.fast]
-            model = "claude-3-7-sonnet"
-            backend = "openai"
+            model = "{MOCK_MODEL_NAME_ALT}"
+            backend = "{MOCK_PROVIDER_NAME}"
 
             [[chat.routing.fallback_chains]]
-            backend = "openai"
-            fallbacks = ["local"]
+            backend = "{MOCK_PROVIDER_NAME}"
+            fallbacks = ["{MOCK_PROVIDER_NAME_ALT}"]
 
             [[hooks]]
             event = "node_complete"
@@ -657,19 +663,23 @@ mod tests {
             [tools.shell]
             enabled = true
             trusted_folders = ["/home/work"]
-        "#;
+        "#
+        );
 
-        let config: ApXmConfig = toml::from_str(toml).unwrap();
+        let config: ApXmConfig = toml::from_str(&toml).unwrap();
         assert_eq!(config.chat.providers.len(), 2);
-        assert_eq!(config.chat.default_backend.as_deref(), Some("openai"));
+        assert_eq!(
+            config.chat.default_backend.as_deref(),
+            Some(MOCK_PROVIDER_NAME)
+        );
         assert_eq!(
             config.chat.default_exec_policy.as_deref(),
             Some("project:policy.toml")
         );
-        assert_eq!(config.chat.default_model.as_deref(), Some("gpt-4o-mini"));
+        assert_eq!(config.chat.default_model.as_deref(), Some(MOCK_MODEL_NAME));
         assert_eq!(
             config.chat.planning_model.as_deref(),
-            Some("claude-3-7-sonnet")
+            Some(MOCK_MODEL_NAME_ALT)
         );
         assert_eq!(
             config
@@ -678,7 +688,7 @@ mod tests {
                 .operation_routes
                 .get("plan")
                 .and_then(|route| route.backend.as_deref()),
-            Some("openai")
+            Some(MOCK_PROVIDER_NAME)
         );
         assert_eq!(
             config
@@ -696,7 +706,7 @@ mod tests {
                 .model_aliases
                 .get("fast")
                 .map(|alias| alias.model.as_str()),
-            Some("claude-3-7-sonnet")
+            Some(MOCK_MODEL_NAME_ALT)
         );
         assert_eq!(
             config
@@ -705,7 +715,7 @@ mod tests {
                 .model_aliases
                 .get("fast")
                 .and_then(|alias| alias.backend.as_deref()),
-            Some("openai")
+            Some(MOCK_PROVIDER_NAME)
         );
         assert_eq!(
             config
@@ -714,7 +724,7 @@ mod tests {
                 .fallback_chains
                 .first()
                 .map(|chain| chain.backend.as_str()),
-            Some("openai")
+            Some(MOCK_PROVIDER_NAME)
         );
         assert_eq!(
             config
@@ -724,7 +734,7 @@ mod tests {
                 .first()
                 .and_then(|chain| chain.fallbacks.first())
                 .map(String::as_str),
-            Some("local")
+            Some(MOCK_PROVIDER_NAME_ALT)
         );
         assert_eq!(config.hooks.len(), 2);
         assert_eq!(config.hooks[0].event, HookEvent::NodeComplete);
@@ -842,12 +852,14 @@ mod tests {
 
     #[test]
     fn instruction_config_defaults_to_none() {
-        let toml = r#"
+        let toml = format!(
+            r#"
             [chat]
-            providers = ["openai"]
-        "#;
+            providers = ["{MOCK_PROVIDER_NAME}"]
+        "#
+        );
 
-        let config: ApXmConfig = toml::from_str(toml).unwrap();
+        let config: ApXmConfig = toml::from_str(&toml).unwrap();
         assert!(config.instruction.ask.is_none());
         assert!(config.instruction.think.is_none());
         assert!(config.instruction.reason.is_none());

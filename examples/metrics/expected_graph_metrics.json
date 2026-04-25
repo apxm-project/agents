@@ -45,10 +45,10 @@
           "process_spawns": [
             {
               "node_id": 1,
-              "agent_name": "reviewer",
+              "agent_name": "mock-agent",
               "process_id": "process-1",
               "parent_process_id": null,
-              "profile": "acp",
+              "profile": "mock-profile",
               "process_kind": "external",
               "duration_ms": 12,
               "success": true,
@@ -83,13 +83,13 @@
           "prompt_turns": [
             {
               "node_id": 2,
-              "agent_name": "reviewer",
+              "agent_name": "mock-agent",
               "process_id": "process-1",
               "protocol": "acp",
-              "session_id": "session-1",
+              "session_id": "mock-session",
               "turn": 1,
-              "model": "demo-model",
-              "stop_reason": "end_turn",
+              "model": "mock-model",
+              "stop_reason": "mock-stop",
               "duration_ms": 34,
               "input_tokens": 18,
               "output_tokens": 7,
@@ -128,7 +128,7 @@
     },
     "aggregates": {
       "by_agent": {
-        "reviewer": {
+        "mock-agent": {
           "spawn_count": 1,
           "spawn_failures": 0,
           "prompt_turns": 1,

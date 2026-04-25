@@ -8,6 +8,8 @@ use apxm_core::types::operations::AISOperationType;
 use apxm_runtime::context_stack::{ContextScope, ContextStack, NodeMetadata};
 use tempfile::tempdir;
 
+const MOCK_AGENT_PROFILE: &str = "mock-profile";
+
 #[test]
 fn context_stack_reads_real_session_output() {
     let dir = tempdir().expect("tempdir");
@@ -40,7 +42,7 @@ fn context_stack_reads_real_session_output() {
     );
 
     let stack = ContextStack::new(session_dir, Arc::new(metadata), Arc::new(vec![(1, 2)]));
-    let assembly = stack.assemble(2, "claude", 10_000);
+    let assembly = stack.assemble(2, MOCK_AGENT_PROFILE, 10_000);
 
     assert!(assembly.frames.iter().any(|frame| {
         matches!(frame.scope, ContextScope::Upstream(1)) && frame.content.contains("upstream data")

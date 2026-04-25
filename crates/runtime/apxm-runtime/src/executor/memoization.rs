@@ -634,16 +634,31 @@ impl MemoCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::MOCK_MODEL_NAME;
 
     #[test]
     fn test_compute_key_deterministic() {
-        let key = MemoCache::compute_key("hello", Some("system"), Some("gpt-4"), 0.0, None, None);
+        let key = MemoCache::compute_key(
+            "hello",
+            Some("system"),
+            Some(MOCK_MODEL_NAME),
+            0.0,
+            None,
+            None,
+        );
         assert!(key.is_some());
     }
 
     #[test]
     fn test_compute_key_non_deterministic() {
-        let key = MemoCache::compute_key("hello", Some("system"), Some("gpt-4"), 0.7, None, None);
+        let key = MemoCache::compute_key(
+            "hello",
+            Some("system"),
+            Some(MOCK_MODEL_NAME),
+            0.7,
+            None,
+            None,
+        );
         assert!(key.is_none());
     }
 
@@ -666,7 +681,13 @@ mod tests {
         let cache = MemoCache::new();
         let key = MemoCache::compute_key("prompt", None, None, 0.0, None, None).unwrap();
 
-        cache.put(key, "response".to_string(), 10, 5, "gpt-4".to_string());
+        cache.put(
+            key,
+            "response".to_string(),
+            10,
+            5,
+            MOCK_MODEL_NAME.to_string(),
+        );
 
         let cached = cache.get(key).expect("should hit cache");
         assert_eq!(cached.content, "response");
@@ -686,7 +707,13 @@ mod tests {
         let cache = MemoCache::new().with_ttl(Duration::from_millis(1));
         let key = MemoCache::compute_key("prompt", None, None, 0.0, None, None).unwrap();
 
-        cache.put(key, "response".to_string(), 10, 5, "gpt-4".to_string());
+        cache.put(
+            key,
+            "response".to_string(),
+            10,
+            5,
+            MOCK_MODEL_NAME.to_string(),
+        );
         std::thread::sleep(Duration::from_millis(5));
 
         assert!(cache.get(key).is_none());
@@ -739,7 +766,7 @@ mod tests {
             "two-tier-response".to_string(),
             15,
             10,
-            "gpt-4".to_string(),
+            MOCK_MODEL_NAME.to_string(),
         );
 
         // Give async L2 write time to complete
@@ -978,7 +1005,7 @@ mod tests {
             "response".to_string(),
             10,
             5,
-            "gpt-4".to_string(),
+            MOCK_MODEL_NAME.to_string(),
             Some(1), // 1 second TTL
         );
 

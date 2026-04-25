@@ -6,28 +6,28 @@
 //! # ~/.apxm/models.toml
 //!
 //! [defaults]
-//! model = "claude-sonnet-4-5"
-//! backend = "anthropic"
+//! model = "production-model"
+//! backend = "production-backend"
 //!
 //! [[models]]
-//! name = "claude-sonnet-4-5"
-//! backend = "anthropic"
+//! name = "production-model"
+//! backend = "production-backend"
 //! cost_per_1k_input = 0.003
 //! cost_per_1k_output = 0.015
 //! context_window = 200000
 //! tags = ["production", "smart"]
 //!
 //! [[models]]
-//! name = "claude-haiku-4-5"
-//! backend = "anthropic"
+//! name = "fast-model"
+//! backend = "fast-backend"
 //! cost_per_1k_input = 0.00025
 //! cost_per_1k_output = 0.00125
 //! context_window = 200000
 //! tags = ["fast", "cheap"]
 //!
 //! [[models]]
-//! name = "gpt-4o-mini"
-//! backend = "openai"
+//! name = "cheap-model"
+//! backend = "cheap-backend"
 //! cost_per_1k_input = 0.00015
 //! cost_per_1k_output = 0.0006
 //! context_window = 128000
@@ -358,20 +358,20 @@ mod tests {
     fn test_load_from_toml() {
         let toml_content = r#"
 [defaults]
-model = "claude-sonnet-4-5"
-backend = "anthropic"
+model = "production-model"
+backend = "production-backend"
 
 [[models]]
-name = "claude-sonnet-4-5"
-backend = "anthropic"
+name = "production-model"
+backend = "production-backend"
 cost_per_1k_input = 0.003
 cost_per_1k_output = 0.015
 context_window = 200000
 tags = ["production", "smart"]
 
 [[models]]
-name = "gpt-4o-mini"
-backend = "openai"
+name = "cheap-model"
+backend = "cheap-backend"
 cost_per_1k_input = 0.00015
 cost_per_1k_output = 0.0006
 context_window = 128000
@@ -389,13 +389,13 @@ fallback_tags = ["cheap"]
         reg.load_from_path(tmp.path()).unwrap();
 
         assert_eq!(reg.list().len(), 2);
-        assert_eq!(reg.default_model().unwrap(), "claude-sonnet-4-5");
-        assert_eq!(reg.default_backend().unwrap(), "anthropic");
+        assert_eq!(reg.default_model().unwrap(), "production-model");
+        assert_eq!(reg.default_backend().unwrap(), "production-backend");
         assert_eq!(reg.routing().prefer_tags, vec!["production"]);
 
         let cheap = reg.models_with_tags(&["cheap"]);
         assert_eq!(cheap.len(), 1);
-        assert_eq!(cheap[0].name, "gpt-4o-mini");
+        assert_eq!(cheap[0].name, "cheap-model");
     }
 
     #[test]

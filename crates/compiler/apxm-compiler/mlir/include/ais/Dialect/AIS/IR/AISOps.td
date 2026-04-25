@@ -874,7 +874,8 @@ def AIS_ResumeOp : AIS_Op<"resume",
 def AIS_SpawnAgentOp : AIS_Op<"spawn_agent"> {
   let summary = "Spawn an ACP agent subprocess";
   let description = [{
-    Spawns a new agent at runtime. With 'profile' (e.g. 'claude', 'codex'),
+    Spawns a new agent at runtime. With 'profile' (for example, a registered
+    ACP profile),
     launches a real ACP subprocess registered in the ProcessTable. The spawned
     agent can then receive COMMUNICATE messages. Returns a token carrying the
     agent name for use in downstream Control edges.

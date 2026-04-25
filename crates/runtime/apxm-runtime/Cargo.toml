@@ -57,6 +57,7 @@ sqlite = ["dep:rusqlite"]
 metrics = ["apxm-backends/metrics"]
 no-trace = ["apxm-core/no-trace"]
 python_tools_integration = []
+test-utils = []
 
 [dev-dependencies]
 wiremock = "0.6"

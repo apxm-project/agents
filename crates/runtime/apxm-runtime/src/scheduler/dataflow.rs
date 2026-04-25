@@ -306,6 +306,7 @@ fn spawn_workers(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::{MOCK_BACKEND_NAME, MOCK_BACKEND_NAME_ALT};
     use apxm_core::types::Node;
     use apxm_core::types::execution::{LatencyTierConfig, NodeMetadata};
     use apxm_core::types::operations::AISOperationType;
@@ -487,7 +488,7 @@ mod tests {
     #[test]
     fn test_latency_override_matching_backend() {
         let mut tiers = HashMap::new();
-        tiers.insert("gpt-4".to_string(), 2000);
+        tiers.insert(MOCK_BACKEND_NAME.to_string(), 2000);
         let tier_config = LatencyTierConfig {
             tiers,
             default_latency_ns: 0,
@@ -497,16 +498,18 @@ mod tests {
             DataflowScheduler::new(SchedulerConfig::new().with_latency_tiers(tier_config));
 
         let mut dag = ExecutionDag::new();
-        dag.add_node(make_backend_node(1, 100, "gpt-4")).unwrap();
-        dag.add_node(make_backend_node(2, 200, "claude")).unwrap();
+        dag.add_node(make_backend_node(1, 100, MOCK_BACKEND_NAME))
+            .unwrap();
+        dag.add_node(make_backend_node(2, 200, MOCK_BACKEND_NAME_ALT))
+            .unwrap();
         dag.entry_nodes = dag.find_entry_nodes();
         dag.exit_nodes = dag.find_exit_nodes();
 
         let dag = scheduler.apply_latency_overrides(dag);
 
-        // Node 1: backend "gpt-4" matches tier -> overridden to 2000
+        // Node 1: configured backend matches tier -> overridden to 2000
         assert_eq!(dag.nodes[0].metadata.estimated_latency, Some(2000));
-        // Node 2: backend "claude" not in tiers, no default -> unchanged
+        // Node 2: unmatched backend, no default -> unchanged
         assert_eq!(dag.nodes[1].metadata.estimated_latency, Some(200));
     }
 

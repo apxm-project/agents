@@ -38,6 +38,8 @@ mod runtime;
 pub mod sandbox;
 pub mod scheduler;
 pub mod team;
+#[cfg(any(test, feature = "test-utils"))]
+pub mod testing;
 pub mod thread;
 pub mod workflow;
 pub mod workspace;

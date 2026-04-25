@@ -374,6 +374,7 @@ impl fmt::Display for ContextAssembly {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::MOCK_AGENT_PROFILE;
     use tempfile::tempdir;
 
     #[test]
@@ -416,7 +417,7 @@ mod tests {
             Arc::new(vec![]),
         );
 
-        let assembly = stack.assemble(1, "claude", 10_000);
+        let assembly = stack.assemble(1, MOCK_AGENT_PROFILE, 10_000);
         assert!(
             assembly
                 .frames

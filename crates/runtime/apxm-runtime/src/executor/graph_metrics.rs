@@ -88,6 +88,9 @@ impl GraphMetricsTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::{
+        MOCK_AGENT_NAME, MOCK_AGENT_PROFILE, MOCK_MODEL_NAME, MOCK_SESSION_ID, MOCK_STOP_REASON,
+    };
     use apxm_core::constants::communicate_protocols as comm_proto;
     use apxm_core::types::{AISOperationType, SpawnedProcessKind};
     use std::path::Path;
@@ -102,10 +105,10 @@ mod tests {
         });
         tracker.record_spawn(ProcessSpawnMetric {
             node_id: 1,
-            agent_name: "reviewer".to_string(),
+            agent_name: MOCK_AGENT_NAME.to_string(),
             process_id: Some("process-1".to_string()),
             parent_process_id: None,
-            profile: Some("acp".to_string()),
+            profile: Some(MOCK_AGENT_PROFILE.to_string()),
             process_kind: SpawnedProcessKind::External,
             duration_ms: 12,
             success: true,
@@ -119,13 +122,13 @@ mod tests {
         });
         tracker.record_turn(ProcessPromptMetric {
             node_id: 2,
-            agent_name: "reviewer".to_string(),
+            agent_name: MOCK_AGENT_NAME.to_string(),
             process_id: "process-1".to_string(),
             protocol: comm_proto::ACP.to_string(),
-            session_id: Some("session-1".to_string()),
+            session_id: Some(MOCK_SESSION_ID.to_string()),
             turn: Some(1),
-            model: Some("demo-model".to_string()),
-            stop_reason: Some("end_turn".to_string()),
+            model: Some(MOCK_MODEL_NAME.to_string()),
+            stop_reason: Some(MOCK_STOP_REASON.to_string()),
             duration_ms: 34,
             input_tokens: Some(18),
             output_tokens: Some(7),
@@ -151,7 +154,10 @@ mod tests {
         assert_eq!(snapshot.graph.processes.prompt_turns, 1);
         assert_eq!(snapshot.graph.processes.total_tokens, 25);
         assert_eq!(snapshot.nodes[&2].processes.totals.input_tokens, 18);
-        assert_eq!(snapshot.aggregates.by_agent["reviewer"].response_bytes, 29);
+        assert_eq!(
+            snapshot.aggregates.by_agent[MOCK_AGENT_NAME].response_bytes,
+            29
+        );
     }
 
     #[test]

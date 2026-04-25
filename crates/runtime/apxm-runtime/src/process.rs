@@ -41,7 +41,7 @@ pub enum ProcessKind {
     External {
         /// Type-erased ACP session handle.
         session: Arc<Mutex<dyn std::any::Any + Send + Sync>>,
-        /// Agent profile name from the registry (e.g. "claude", "codex").
+        /// Agent profile name from the frontend registry.
         profile_name: String,
     },
 }
