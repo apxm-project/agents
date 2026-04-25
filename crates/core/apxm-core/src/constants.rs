@@ -175,6 +175,23 @@ pub mod runtime {
         pub const BACKEND: &str = "backend";
         pub const MODEL: &str = "model";
     }
+
+    /// Runtime-owned structured response contract for spawned-agent prompt turns.
+    ///
+    /// Adapters such as ACP populate these fields, but the contract belongs to
+    /// the APXM runtime so core execution and metrics stay frontend/backend
+    /// agnostic.
+    pub mod agent_result_keys {
+        pub const TEXT: &str = "text";
+        pub const AGENT: &str = "agent";
+        pub const STOP_REASON: &str = "stop_reason";
+        pub const SESSION_ID: &str = "session_id";
+        pub const AGENT_SESSION_ID: &str = "agent_session_id";
+        pub const TURN: &str = "turn";
+        pub const MODEL: &str = "model";
+        pub const INPUT_TOKENS: &str = "input_tokens";
+        pub const OUTPUT_TOKENS: &str = "output_tokens";
+    }
 }
 
 pub mod memory {
@@ -657,6 +674,7 @@ pub mod session {
         pub const RUNTIME_EXECUTION: &str = "execution";
         pub const RUNTIME_SCHEDULER: &str = "scheduler";
         pub const RUNTIME_LLM: &str = "llm";
+        pub const RUNTIME_GRAPH_METRICS: &str = "graph_metrics";
         pub const BACKENDS_AGGREGATE: &str = "aggregate";
         pub const BACKENDS_PER_BACKEND: &str = "per_backend";
         pub const BACKENDS_GRAPHS: &str = "graphs";
@@ -695,6 +713,16 @@ pub mod session {
             pub const AVG_LATENCY_MS: &str = "avg_latency_ms";
             pub const P50_LATENCY_MS: &str = "p50_latency_ms";
             pub const P99_LATENCY_MS: &str = "p99_latency_ms";
+        }
+
+        /// Wire keys nested under `runtime.graph_metrics`.
+        pub mod graph_metric_keys {
+            pub const GRAPH: &str = "graph";
+            pub const NODES: &str = "nodes";
+            pub const AGGREGATES: &str = "aggregates";
+            pub const BY_AGENT: &str = "by_agent";
+            pub const PROCESS_SPAWNS: &str = "process_spawns";
+            pub const PROMPT_TURNS: &str = "prompt_turns";
         }
 
         /// Wire keys nested under `runtime.link_phases` (compile vs runtime split).
@@ -750,6 +778,7 @@ pub mod session {
         pub const LIVE_JSON: &str = "live.json";
         pub const OUTPUT_JSON: &str = "output.json";
         pub const STATUS_JSON: &str = "status.json";
+        pub const METRICS_JSON: &str = "metrics.json";
         pub const TRACE_NDJSON: &str = "trace.ndjson";
         pub const PROMPT_TXT: &str = "prompt.txt";
         pub const RESPONSE_TXT: &str = "response.txt";

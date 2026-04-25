@@ -166,10 +166,7 @@ impl MockLLMBackend {
             ),
             None => (0, String::new()),
         };
-        let op = request
-            .operation_type
-            .map(|o| format!("{:?}", o).to_uppercase())
-            .unwrap_or_else(|| "UNKNOWN".to_string());
+        let op = request.operation_type;
         let model = request.model.clone().unwrap_or_else(|| "mock".to_string());
         let params = format!(
             "temp={},top_p={:?},max={:?}",

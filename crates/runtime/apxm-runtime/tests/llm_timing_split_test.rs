@@ -32,7 +32,7 @@ impl ExecutionEventEmitter for RecordingEmitter {
     fn emit_operation_end(
         &self,
         node_id: u64,
-        _op_type: &str,
+        _op_type: AISOperationType,
         duration: Duration,
         _success: bool,
         _tokens: Option<TokenUsageSummary>,

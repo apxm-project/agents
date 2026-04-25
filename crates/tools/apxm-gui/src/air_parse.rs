@@ -66,11 +66,12 @@ pub fn parse_air_text(source: &str) -> Result<Value, String> {
         // doesn't create a new node if the referenced value is already a Return op.
         if line.starts_with("func.return") {
             let used_refs = extract_operand_refs(line);
+            let return_op = op_display(AISOperationType::Return);
             let already_returns = used_refs.iter().any(|r| {
                 defs.get(r).map_or(false, |&def_id| {
                     nodes
                         .iter()
-                        .any(|n| n["id"] == def_id && n["op"] == "Return")
+                        .any(|n| n["id"] == def_id && n["op"] == return_op)
                 })
             });
             if !already_returns {
@@ -79,7 +80,7 @@ pub fn parse_air_text(source: &str) -> Result<Value, String> {
                 nodes.push(json!({
                     "id": id,
                     "name": "return",
-                    "op": "Return",
+                    "op": op_display(AISOperationType::Return),
                     "attributes": {}
                 }));
                 for used in &used_refs {
@@ -214,13 +215,13 @@ fn infer_agent_edges(nodes: &[Value], edges: &mut Vec<Value>) {
 
     let spawns: Vec<(u64, &str)> = nodes
         .iter()
-        .filter(|n| n["op"] == "SpawnAgent")
+        .filter(|n| n["op"] == op_display(AISOperationType::SpawnAgent))
         .filter_map(|n| Some((n["id"].as_u64()?, n["name"].as_str()?)))
         .collect();
 
     let communicates: Vec<(u64, &str)> = nodes
         .iter()
-        .filter(|n| n["op"] == "Communicate")
+        .filter(|n| n["op"] == op_display(AISOperationType::Communicate))
         .filter_map(|n| Some((n["id"].as_u64()?, n["name"].as_str()?)))
         .collect();
 
@@ -263,9 +264,13 @@ fn extract_agent_role(name: &str) -> String {
 /// Resolve MLIR mnemonic to the PascalCase display name from the shared core operation catalog.
 fn mnemonic_to_op_type(mnemonic: &str) -> String {
     match mnemonic.parse::<AISOperationType>() {
-        Ok(op) => get_operation_spec(op).name.to_string(),
+        Ok(op) => op_display(op),
         Err(_) => mnemonic.to_string(),
     }
+}
+
+fn op_display(op: AISOperationType) -> String {
+    get_operation_spec(op).name.to_string()
 }
 
 /// Extract `%name` references used as operands (in parentheses, brackets, or comma lists).

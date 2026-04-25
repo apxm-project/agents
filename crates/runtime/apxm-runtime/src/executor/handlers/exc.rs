@@ -38,8 +38,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         .unwrap_or(defaults::DEFAULT_TIMEOUT_MS / 1000);
 
     // AAM transition
-    let transition_label =
-        crate::aam::TransitionLabel::operation(node.id, format!("{:?}", node.op_type));
+    let transition_label = crate::aam::TransitionLabel::operation(node.id, node.op_type);
     ctx.aam.set_belief(
         format!("{}{}:started", belief_keys::EXC_PREFIX, node.id),
         Value::String(format!("Executing {} script", interpreter)),

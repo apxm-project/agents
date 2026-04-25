@@ -169,7 +169,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     ctx.aam.set_belief(
         format!("{}{}", belief_keys::AUTONOMOUS_NODE_PREFIX, node.id),
         final_result.clone(),
-        TransitionLabel::operation(node.id, node.op_type.to_string()),
+        TransitionLabel::operation(node.id, node.op_type),
     );
 
     tracing::info!(

@@ -643,6 +643,13 @@ impl apxm_core::MetricsSource for RuntimeMetricsSource<'_> {
         if let Some(obj) = token_json.get(metrics_keys::TOKEN_ACCOUNTING).cloned() {
             map.insert(metrics_keys::TOKEN_ACCOUNTING.to_owned(), obj);
         }
+        let graph_metrics_json = self.execution.graph_metrics_snapshot.to_json();
+        if let Some(obj) = graph_metrics_json
+            .get(metrics_keys::RUNTIME_GRAPH_METRICS)
+            .cloned()
+        {
+            map.insert(metrics_keys::RUNTIME_GRAPH_METRICS.to_owned(), obj);
+        }
         #[cfg(feature = "metrics")]
         {
             use metrics_keys::llm_keys;

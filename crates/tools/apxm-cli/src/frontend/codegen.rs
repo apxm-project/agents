@@ -15,7 +15,8 @@ use apxm_core::types::{
 use super::registry::{
     FrontendAgentTemplate, FrontendConstant, FrontendEmissionSpec, FrontendModelSpec,
     agent_templates, builtin_models, builtin_providers, emission_specs, graph_attr_constants,
-    graph_metadata_constants, operation_specs, provider_protocols, valid_param_types,
+    graph_metadata_constants, graph_metric_constants, operation_specs, provider_protocols,
+    valid_param_types,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -87,6 +88,11 @@ fn render_constants_module() -> String {
 
     buf.push_str("\n# Graph attribute keys\n");
     for item in graph_attr_constants() {
+        render_constant(&mut buf, &item);
+    }
+
+    buf.push_str("\n# Graph metrics keys\n");
+    for item in graph_metric_constants() {
         render_constant(&mut buf, &item);
     }
 
@@ -173,9 +179,10 @@ fn render_operations_module() -> String {
 
     let ops = operation_specs();
     for spec in &ops {
-        let ident = py_identifier(&spec.op).to_ascii_uppercase();
+        let op = spec.op.to_string();
+        let ident = py_identifier(&op).to_ascii_uppercase();
         buf.push_str(&format!("{ident}: Final = OpSpec(\n"));
-        buf.push_str(&format!("    op={},\n", py_string(&spec.op)));
+        buf.push_str(&format!("    op={},\n", py_string(&op)));
         buf.push_str(&format!("    name={},\n", py_string(spec.name)));
         buf.push_str(&format!("    category={},\n", py_string(spec.category)));
         buf.push_str(&format!(
@@ -209,7 +216,8 @@ fn render_operations_module() -> String {
 
     buf.push_str("ALL_OPERATIONS: Final[tuple[OpSpec, ...]] = (\n");
     for spec in &ops {
-        let ident = py_identifier(&spec.op).to_ascii_uppercase();
+        let op = spec.op.to_string();
+        let ident = py_identifier(&op).to_ascii_uppercase();
         buf.push_str(&format!("    {ident},\n"));
     }
     buf.push_str(")\n\n");
@@ -235,19 +243,17 @@ fn render_operations_module() -> String {
     // OP_* constants
     buf.push('\n');
     for spec in &ops {
-        let const_name = format!("OP_{}", spec.op);
-        buf.push_str(&format!(
-            "{const_name}: Final[str] = {}\n",
-            py_string(&spec.op)
-        ));
+        let op = spec.op.to_string();
+        let const_name = format!("OP_{op}");
+        buf.push_str(&format!("{const_name}: Final[str] = {}\n", py_string(&op)));
     }
 
     // LLM_OPS — pre-computed from reasoning category
-    let llm_ops: Vec<&str> = ops
+    let llm_ops: Vec<String> = ops
         .iter()
         .filter(|s| s.category == "reasoning")
-        .map(|s| s.op.as_str())
-        .collect();
+        .map(|s| s.op.to_string())
+        .collect::<Vec<_>>();
     buf.push_str(&format!(
         "\nLLM_OPS: Final[frozenset] = frozenset({{{}}})\n",
         llm_ops
@@ -331,18 +337,19 @@ fn render_emission_module() -> String {
     // EMITTERS dispatch dict
     buf.push_str("EMITTERS: dict[str, Callable] = {\n");
     for spec in &specs {
-        let fn_name = format!("emit_{}", spec.op.to_lowercase());
-        buf.push_str(&format!("    {}: {},\n", py_string(&spec.op), fn_name));
+        let op = spec.op.to_string();
+        let fn_name = format!("emit_{}", op.to_lowercase());
+        buf.push_str(&format!("    {}: {},\n", py_string(&op), fn_name));
     }
     buf.push_str("}\n");
 
     // VOID_OPS — operations that produce no output (produces_output == false)
     let ops = operation_specs();
-    let void_ops: Vec<&str> = ops
+    let void_ops: Vec<String> = ops
         .iter()
         .filter(|s| !s.produces_output)
-        .map(|s| s.op.as_str())
-        .collect();
+        .map(|s| s.op.to_string())
+        .collect::<Vec<_>>();
     buf.push_str(&format!(
         "\nVOID_OPS: Final[frozenset] = frozenset({{{}}})\n",
         void_ops
@@ -359,7 +366,8 @@ fn render_emission_module() -> String {
 }
 
 fn render_emission_fn(buf: &mut String, spec: &FrontendEmissionSpec) {
-    let fn_name = format!("emit_{}", spec.op.to_lowercase());
+    let op = spec.op.to_string();
+    let fn_name = format!("emit_{}", op.to_lowercase());
 
     // New signature: matches _emit_op() call convention
     buf.push_str(&format!(
@@ -368,7 +376,7 @@ fn render_emission_fn(buf: &mut String, spec: &FrontendEmissionSpec) {
     ));
     buf.push_str(&format!(
         "    \"\"\"Emit MLIR for {} operation.\"\"\"\n",
-        spec.op
+        op
     ));
 
     // Context formatting
@@ -1012,5 +1020,9 @@ mod tests {
                 .constants_py
                 .contains("WORKFLOW_SPAWN_PATH_TARGET_KINDS: Final[tuple[str, ...]]")
         );
+        let graph_metrics_key = apxm_core::constants::session::metrics_keys::RUNTIME_GRAPH_METRICS;
+        assert!(rendered.constants_py.contains(&format!(
+            "GRAPH_METRICS: Final[str] = {graph_metrics_key:?}"
+        )));
     }
 }

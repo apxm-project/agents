@@ -5,6 +5,7 @@
 mod agent;
 mod dag;
 mod edge;
+mod graph_metrics;
 mod node;
 mod status;
 mod task;
@@ -15,6 +16,11 @@ pub use agent::{
 };
 pub use dag::{DagMetadata, ExecutionDag, FlowParameter};
 pub use edge::{DependencyType, Edge};
+pub use graph_metrics::{
+    GraphMetricAggregates, GraphMetricTotals, GraphMetricsSnapshot, NodeMetrics,
+    NodeProcessMetrics, OperationMetric, OperationMetricTotals, ProcessMetricTotals,
+    ProcessPromptMetric, ProcessSpawnMetric, SpawnedProcessKind,
+};
 pub use node::{LatencyTierConfig, Node, NodeId, NodeMetadata};
 pub use status::{ExecutionStats, NodeStatus, OpStatus};
 pub use task::{Task, TaskDag, TaskId, TaskMetadata};

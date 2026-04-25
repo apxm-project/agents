@@ -13,7 +13,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
         .unwrap_or(100);
 
     // Record loop initialization in AAM
-    let label = crate::aam::TransitionLabel::operation(node.id, format!("{:?}", node.op_type));
+    let label = crate::aam::TransitionLabel::operation(node.id, node.op_type);
     ctx.aam.set_belief(
         format!(
             "{}{}:{}",

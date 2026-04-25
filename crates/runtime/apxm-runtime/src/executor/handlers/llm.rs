@@ -978,7 +978,7 @@ async fn execute_llm_once(
     match mode {
         LlmMode::Ask | LlmMode::Think => {
             // Record LLM result in AAM
-            let label = TransitionLabel::operation(node.id, format!("{:?}", node.op_type));
+            let label = TransitionLabel::operation(node.id, node.op_type);
             ctx.aam.set_belief(
                 format!(
                     "{}{}:{}",
@@ -1210,7 +1210,7 @@ async fn process_structured_output(
     enable_inner_plan: bool,
     bind_outputs: bool,
 ) -> Result<Value> {
-    let label = TransitionLabel::operation(node.id, format!("{:?}", node.op_type));
+    let label = TransitionLabel::operation(node.id, node.op_type);
 
     // Apply belief updates to LTM
     for (key, value) in structured.belief_updates {

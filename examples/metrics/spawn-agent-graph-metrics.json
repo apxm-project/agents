@@ -1,0 +1,76 @@
+{
+  "name": "spawn-agent-graph-metrics",
+  "nodes": [
+    {
+      "id": 1,
+      "name": "spawn_reviewer",
+      "op": "SPAWN_AGENT",
+      "attributes": {
+        "agent_name": "reviewer",
+        "profile": "claude"
+      }
+    },
+    {
+      "id": 2,
+      "name": "review_task",
+      "op": "CONST_STR",
+      "attributes": {
+        "value": "Review this APXM metrics example and return one concise paragraph."
+      }
+    },
+    {
+      "id": 3,
+      "name": "ask_reviewer",
+      "op": "COMMUNICATE",
+      "attributes": {
+        "recipient": "reviewer",
+        "protocol": "acp",
+        "message": "{task}",
+        "input_names": [
+          "task"
+        ]
+      }
+    },
+    {
+      "id": 4,
+      "name": "print_review",
+      "op": "PRINT",
+      "attributes": {
+        "message": "Reviewer response:\n{review}",
+        "input_names": [
+          "review"
+        ]
+      }
+    },
+    {
+      "id": 5,
+      "name": "done",
+      "op": "RETURN",
+      "attributes": {}
+    }
+  ],
+  "edges": [
+    {
+      "from": 1,
+      "to": 3,
+      "dependency": "Control"
+    },
+    {
+      "from": 2,
+      "to": 3,
+      "dependency": "Data"
+    },
+    {
+      "from": 3,
+      "to": 4,
+      "dependency": "Data"
+    },
+    {
+      "from": 4,
+      "to": 5,
+      "dependency": "Data"
+    }
+  ],
+  "parameters": [],
+  "metadata": {}
+}

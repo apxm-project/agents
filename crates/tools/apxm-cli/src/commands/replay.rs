@@ -56,6 +56,7 @@ pub fn replay_command(session: PathBuf) -> Result<()> {
     // Parse trace events and build timeline
     use apxm_core::events::ApxmEvent;
     use apxm_core::events::payload::{OperationEndPayload, OperationStartPayload};
+    use apxm_core::types::operations::AISOperationType;
 
     enum EventKind {
         Start,
@@ -65,7 +66,7 @@ pub fn replay_command(session: PathBuf) -> Result<()> {
     struct TimelineEntry {
         timestamp_ms: f64,
         node_name: String,
-        op_type: String,
+        op_type: AISOperationType,
         kind: EventKind,
     }
 
@@ -104,14 +105,14 @@ pub fn replay_command(session: PathBuf) -> Result<()> {
             entries.push(TimelineEntry {
                 timestamp_ms: elapsed_ms,
                 node_name: resolve_name(p.node_id),
-                op_type: p.op_type.clone(),
+                op_type: p.op_type,
                 kind: EventKind::Start,
             });
         } else if let Some(p) = event.payload.downcast_ref::<OperationEndPayload>() {
             entries.push(TimelineEntry {
                 timestamp_ms: elapsed_ms,
                 node_name: resolve_name(p.node_id),
-                op_type: p.op_type.clone(),
+                op_type: p.op_type,
                 kind: EventKind::End {
                     duration_ms: p.duration_ms,
                     success: p.success,

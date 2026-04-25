@@ -3,6 +3,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use apxm_core::types::TimingBreakdown;
+use apxm_core::types::operations::AISOperationType;
 use apxm_core::types::values::Value;
 use apxm_runtime::{ExecutionEventEmitter, TokenUsageSummary};
 
@@ -114,7 +115,7 @@ impl ExecutionEventEmitter for SubprocessHookEmitter {
         );
     }
 
-    fn emit_operation_start(&self, node_id: u64, op_type: &str) {
+    fn emit_operation_start(&self, node_id: u64, op_type: AISOperationType) {
         self.fire(
             HookEvent::NodeStart,
             [
@@ -127,7 +128,7 @@ impl ExecutionEventEmitter for SubprocessHookEmitter {
     fn emit_operation_end(
         &self,
         node_id: u64,
-        op_type: &str,
+        op_type: AISOperationType,
         duration: Duration,
         success: bool,
         tokens: Option<TokenUsageSummary>,
@@ -199,7 +200,14 @@ mod tests {
             shell: None,
         }]);
 
-        emitter.emit_operation_end(42, "ASK", Duration::from_millis(7), true, None, None);
+        emitter.emit_operation_end(
+            42,
+            AISOperationType::Ask,
+            Duration::from_millis(7),
+            true,
+            None,
+            None,
+        );
 
         assert_eq!(wait_for_file(&output), "42");
     }
@@ -212,6 +220,13 @@ mod tests {
             shell: None,
         }]);
 
-        emitter.emit_operation_end(9, "ASK", Duration::from_millis(1), false, None, None);
+        emitter.emit_operation_end(
+            9,
+            AISOperationType::Ask,
+            Duration::from_millis(1),
+            false,
+            None,
+            None,
+        );
     }
 }

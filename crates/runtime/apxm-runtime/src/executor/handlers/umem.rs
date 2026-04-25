@@ -60,7 +60,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     ctx.aam.set_belief(
         key,
         value.clone(),
-        TransitionLabel::operation(node.id, format!("{:?}", node.op_type)),
+        TransitionLabel::operation(node.id, node.op_type),
     );
 
     // Return the stored value

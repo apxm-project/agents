@@ -14,6 +14,7 @@ use apxm_core::events::payload::EventPayload;
 use apxm_core::events::payload::{OperationEndPayload, OperationStartPayload};
 use apxm_core::events::{ApxmEvent, EventSource};
 use apxm_core::paths::session_node_dir_name;
+use apxm_core::types::operations::AISOperationType;
 use apxm_core::types::values::Value;
 use apxm_core::types::{
     CompletedNodeInfo, LiveSessionState, NodeInfo, SessionManifest, SessionStatus,
@@ -545,7 +546,7 @@ impl SessionEventEmitter {
         let node_info = serde_json::json!({
             "id": node_id,
             "name": meta.name,
-            "op": format!("{:?}", meta.op_type),
+            "op": meta.op_type,
             "attributes": serde_json::to_value(&meta.attributes).unwrap_or_default(),
         });
         let _ = json_pretty_write(
@@ -782,24 +783,21 @@ impl ExecutionEventEmitter for SessionEventEmitter {
         });
     }
 
-    fn emit_operation_start(&self, node_id: u64, op_type: &str) {
+    fn emit_operation_start(&self, node_id: u64, op_type: AISOperationType) {
         self.ensure_node_workspace(node_id);
 
         if let Some(meta) = self.node_metadata.get(&node_id) {
             let node_info = NodeInfo {
                 id: node_id,
                 name: meta.name.clone(),
-                op: op_type.to_string(),
+                op: op_type,
             };
             if let Ok(mut running) = self.running_nodes.lock() {
                 running.push(node_info);
             }
         }
 
-        let payload = OperationStartPayload {
-            node_id,
-            op_type: op_type.to_string(),
-        };
+        let payload = OperationStartPayload { node_id, op_type };
         self.write_trace_event(payload.clone());
         self.write_node_trace_event(node_id, payload);
         let _ = self.write_live(Some(node_id));
@@ -808,7 +806,7 @@ impl ExecutionEventEmitter for SessionEventEmitter {
     fn emit_operation_end(
         &self,
         node_id: u64,
-        op_type: &str,
+        op_type: AISOperationType,
         duration: std::time::Duration,
         success: bool,
         tokens: Option<apxm_runtime::TokenUsageSummary>,
@@ -837,7 +835,7 @@ impl ExecutionEventEmitter for SessionEventEmitter {
             let completed_info = CompletedNodeInfo {
                 id: node_id,
                 name: meta.name.clone(),
-                op: op_type.to_string(),
+                op: op_type,
                 duration_ms: duration.as_millis() as u64,
                 status,
                 input_tokens,
@@ -852,7 +850,7 @@ impl ExecutionEventEmitter for SessionEventEmitter {
 
         let payload = OperationEndPayload {
             node_id,
-            op_type: op_type.to_string(),
+            op_type,
             duration_ms: duration.as_millis() as u64,
             success,
         };
@@ -870,6 +868,16 @@ impl ExecutionEventEmitter for SessionEventEmitter {
         let _ = json_pretty_write(
             &node_dir.join(constants::session::node::OUTPUT_JSON),
             &output_json,
+        );
+    }
+
+    fn emit_node_metrics(&self, node_id: u64, metrics: &apxm_core::types::NodeMetrics) {
+        let Some(node_dir) = self.node_workspace_dir(node_id) else {
+            return;
+        };
+        let _ = json_pretty_write(
+            &node_dir.join(constants::session::node::METRICS_JSON),
+            metrics,
         );
     }
 

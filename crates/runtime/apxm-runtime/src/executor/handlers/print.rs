@@ -23,7 +23,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     skin.print_text(&output);
 
     // Record print in AAM
-    let label = crate::aam::TransitionLabel::operation(node.id, format!("{:?}", node.op_type));
+    let label = crate::aam::TransitionLabel::operation(node.id, node.op_type);
     ctx.aam.set_belief(
         format!(
             "{}{}:{}",

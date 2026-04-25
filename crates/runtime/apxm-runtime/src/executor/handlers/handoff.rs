@@ -3,7 +3,7 @@
 //! Reads source/target agent names from attributes. If `transfer_state` is true
 //! (the default), copies context-stack frames from the source agent into the
 //! target agent's sub-flow so it can continue with full conversational context.
-//! Emits `HANDOFF_START` / `HANDOFF_END` events with span continuity.
+//! Emits typed handoff lifecycle events with span continuity.
 
 use super::{
     ExecutionContext, Node, Result, Value, execute_llm_request, get_string_attribute,
@@ -15,6 +15,7 @@ use apxm_backends::LLMRequest;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::constants::runtime::{belief_keys, metadata, response_keys};
 use apxm_core::error::RuntimeError;
+use apxm_core::types::operations::AISOperationType;
 
 /// Well-known flow names tried when looking up the target agent.
 const HANDOFF_FLOW_NAMES: &[&str] = &["communicate", "main"];
@@ -51,7 +52,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
 
     // Emit HANDOFF_START event
     if let Some(emitter) = &ctx.event_emitter {
-        emitter.emit_operation_start(node.id, "HANDOFF_START");
+        emitter.emit_operation_start(node.id, AISOperationType::Handoff);
     }
 
     // Record the handoff in AAM beliefs
@@ -236,7 +237,7 @@ fn finalize_handoff(
     if let Some(emitter) = &ctx.event_emitter {
         emitter.emit_operation_end(
             node.id,
-            "HANDOFF_END",
+            AISOperationType::Handoff,
             std::time::Duration::ZERO, // actual duration tracked by dispatcher
             true,
             None,

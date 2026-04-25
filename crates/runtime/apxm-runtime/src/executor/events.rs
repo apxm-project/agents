@@ -3,7 +3,9 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use apxm_core::types::NodeMetrics;
 use apxm_core::types::TimingBreakdown;
+use apxm_core::types::operations::AISOperationType;
 use apxm_core::types::values::Value;
 use serde::{Deserialize, Serialize};
 
@@ -33,11 +35,11 @@ pub enum ExecutionEvent {
     // ── Operation lifecycle ─────────────────────────────────────────
     OperationStart {
         node_id: u64,
-        op_type: String,
+        op_type: AISOperationType,
     },
     OperationEnd {
         node_id: u64,
-        op_type: String,
+        op_type: AISOperationType,
         #[serde(with = "duration_millis")]
         duration: Duration,
         success: bool,
@@ -152,11 +154,11 @@ pub trait ExecutionEventEmitter: Send + Sync {
     fn emit_graph_end(&self, _execution_id: &str, _node_count: usize, _success: bool) {}
 
     // ── Operation lifecycle ─────────────────────────────────────────
-    fn emit_operation_start(&self, _node_id: u64, _op_type: &str) {}
+    fn emit_operation_start(&self, _node_id: u64, _op_type: AISOperationType) {}
     fn emit_operation_end(
         &self,
         _node_id: u64,
-        _op_type: &str,
+        _op_type: AISOperationType,
         _duration: Duration,
         _success: bool,
         _tokens: Option<TokenUsageSummary>,
@@ -164,6 +166,7 @@ pub trait ExecutionEventEmitter: Send + Sync {
     ) {
     }
     fn emit_node_output(&self, _node_id: u64, _value: &Value) {}
+    fn emit_node_metrics(&self, _node_id: u64, _metrics: &NodeMetrics) {}
     fn emit_llm_prompt(&self, _node_id: u64, _prompt: &str) {}
     fn emit_llm_token_for_node(&self, _node_id: u64, content: &str) {
         self.emit_llm_token(content);

@@ -798,8 +798,16 @@ fn build_graph_metrics_json(
         "scheduler": result.execution.scheduler_metrics.to_json()
     });
     let token_json = result.execution.token_snapshot.to_json();
-    if let Some(obj) = token_json.get("token_accounting").cloned() {
-        metrics_json["token_accounting"] = obj;
+    use apxm_core::constants::session::metrics_keys;
+    if let Some(obj) = token_json.get(metrics_keys::TOKEN_ACCOUNTING).cloned() {
+        metrics_json[metrics_keys::TOKEN_ACCOUNTING] = obj;
+    }
+    let graph_metrics_json = result.execution.graph_metrics_snapshot.to_json();
+    if let Some(obj) = graph_metrics_json
+        .get(metrics_keys::RUNTIME_GRAPH_METRICS)
+        .cloned()
+    {
+        metrics_json[metrics_keys::RUNTIME_GRAPH_METRICS] = obj;
     }
     #[cfg(feature = "metrics")]
     {
@@ -836,8 +844,16 @@ fn build_artifact_metrics_json(
         "scheduler": execution.scheduler_metrics.to_json()
     });
     let token_json = execution.token_snapshot.to_json();
-    if let Some(obj) = token_json.get("token_accounting").cloned() {
-        metrics_json["token_accounting"] = obj;
+    use apxm_core::constants::session::metrics_keys;
+    if let Some(obj) = token_json.get(metrics_keys::TOKEN_ACCOUNTING).cloned() {
+        metrics_json[metrics_keys::TOKEN_ACCOUNTING] = obj;
+    }
+    let graph_metrics_json = execution.graph_metrics_snapshot.to_json();
+    if let Some(obj) = graph_metrics_json
+        .get(metrics_keys::RUNTIME_GRAPH_METRICS)
+        .cloned()
+    {
+        metrics_json[metrics_keys::RUNTIME_GRAPH_METRICS] = obj;
     }
     #[cfg(feature = "metrics")]
     {
