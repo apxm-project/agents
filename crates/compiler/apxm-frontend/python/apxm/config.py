@@ -8,6 +8,15 @@ from typing import Any
 from apxm._generated import constants as graph_keys
 from apxm.providers import resolve_provider
 
+_TOML_SECTION_HOOKS = "hooks"
+_TOML_SECTION_MIDDLEWARES = "middlewares"
+_HOOK_FIELD_EVENT = "event"
+_HOOK_FIELD_COMMAND = "command"
+_HOOK_FIELD_SHELL = "shell"
+_MIDDLEWARE_FIELD_KIND = "kind"
+_MIDDLEWARE_FIELD_TIMEOUT_MS = "default_timeout_ms"
+_MIDDLEWARE_FIELD_MAX_REPEATS = "max_repeats"
+
 
 def _drop_none(value: Any) -> Any:
     if isinstance(value, dict):
@@ -195,9 +204,9 @@ class HookConfig:
     def to_toml_table(self) -> dict[str, Any]:
         return _drop_none(
             {
-                "event": self.event.value,
-                "command": self.command,
-                "shell": self.shell,
+                _HOOK_FIELD_EVENT: self.event.value,
+                _HOOK_FIELD_COMMAND: self.command,
+                _HOOK_FIELD_SHELL: self.shell,
             }
         )
 
@@ -209,8 +218,8 @@ class TimeoutMiddlewareConfig:
     def to_toml_table(self) -> dict[str, Any]:
         return _drop_none(
             {
-                "kind": MiddlewareKind.TIMEOUT.value,
-                "default_timeout_ms": self.default_timeout_ms,
+                _MIDDLEWARE_FIELD_KIND: MiddlewareKind.TIMEOUT.value,
+                _MIDDLEWARE_FIELD_TIMEOUT_MS: self.default_timeout_ms,
             }
         )
 
@@ -221,8 +230,8 @@ class LoopGuardMiddlewareConfig:
 
     def to_toml_table(self) -> dict[str, Any]:
         return {
-            "kind": MiddlewareKind.LOOP_GUARD.value,
-            "max_repeats": self.max_repeats,
+            _MIDDLEWARE_FIELD_KIND: MiddlewareKind.LOOP_GUARD.value,
+            _MIDDLEWARE_FIELD_MAX_REPEATS: self.max_repeats,
         }
 
 
@@ -263,13 +272,13 @@ class ExecutionOptions:
         lines: list[str] = []
 
         for hook in self.hooks:
-            lines.append("[[hooks]]")
+            lines.append(f"[[{_TOML_SECTION_HOOKS}]]")
             for key, value in hook.to_toml_table().items():
                 lines.append(f"{key} = {_toml_value(value)}")
             lines.append("")
 
         for middleware in self.middlewares:
-            lines.append("[[middlewares]]")
+            lines.append(f"[[{_TOML_SECTION_MIDDLEWARES}]]")
             for key, value in middleware.to_toml_table().items():
                 lines.append(f"{key} = {_toml_value(value)}")
             lines.append("")
