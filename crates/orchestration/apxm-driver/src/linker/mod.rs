@@ -6,7 +6,7 @@ use std::sync::Arc;
 use apxm_artifact::Artifact;
 use apxm_core::error::runtime::RuntimeError;
 use apxm_core::log_info;
-use apxm_core::types::OptimizationLevel;
+use apxm_core::types::{OptimizationLevel, PipelineConfig};
 use apxm_runtime::{ExecutionEventEmitter, RuntimeConfig, RuntimeExecutionResult};
 
 use crate::{
@@ -143,10 +143,22 @@ impl Linker {
             ));
         };
 
-        // For .air files, use compiler.compile() which parses .air text directly
+        // For .air files, parse the MLIR text directly and run the optimization
+        // pipeline with diagnostics so the unified --emit-metrics report includes
+        // the compiler section even when execute() runs against a .py source
+        // (which is lowered to a temp .air file before reaching the linker).
         let ext = input.extension().and_then(|ext| ext.to_str());
         if matches!(ext, Some("air")) {
-            let module = compiler.compile(input)?;
+            let air_text = std::fs::read_to_string(input).map_err(|e| {
+                state_err(format!("Failed to read {}: {}", input.display(), e))
+            })?;
+            let config = PipelineConfig {
+                opt_level: compiler.opt_level(),
+                ..Default::default()
+            };
+            let (module, diagnostics) =
+                compiler.compile_air_with_config_and_diagnostics(&air_text, config)?;
+            let diagnostics_json = Some(diagnostics.to_json());
             let artifact_bytes = module.generate_artifact_bytes()?;
             let artifact =
                 Artifact::from_bytes(&artifact_bytes).map_err(|e| state_err(e.to_string()))?;
@@ -160,7 +172,7 @@ impl Linker {
                     err
                 )));
             }
-            return Ok((artifact, None));
+            return Ok((artifact, diagnostics_json));
         }
 
         let air_module = compiler.load_graph(input)?;
