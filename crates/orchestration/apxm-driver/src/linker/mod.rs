@@ -60,6 +60,8 @@ pub struct LinkResult {
     /// Metrics about compile/runtime overhead.
     #[cfg(feature = "metrics")]
     pub metrics: LinkMetrics,
+    /// Compiler diagnostics (in-memory only, not persisted in .apxmobj).
+    pub compiler_diagnostics: Option<serde_json::Value>,
 }
 
 /// Timing breakdown for a link+execute run.
@@ -117,6 +119,24 @@ impl Linker {
     /// looked up in `~/.cache/apxm/artifacts/`.  On a cache hit the
     /// compilation step is skipped entirely.
     pub fn compile_graph(&self, input: &Path) -> Result<Artifact, DriverError> {
+        self.compile_graph_inner(input).map(|(artifact, _)| artifact)
+    }
+
+    /// Compile graph input and return both artifact and compiler diagnostics.
+    ///
+    /// Same as `compile_graph` but also returns the per-pass diagnostics
+    /// (serialized as JSON) when available. Cache hits return `None` diagnostics.
+    pub fn compile_graph_with_diagnostics(
+        &self,
+        input: &Path,
+    ) -> Result<(Artifact, Option<serde_json::Value>), DriverError> {
+        self.compile_graph_inner(input)
+    }
+
+    fn compile_graph_inner(
+        &self,
+        input: &Path,
+    ) -> Result<(Artifact, Option<serde_json::Value>), DriverError> {
         let Some(ref compiler) = self.compiler else {
             return Err(DriverError::Driver(
                 "MLIR compiler required but is not available. Run `dekk apxm build` to rebuild with MLIR support.".to_string(),
@@ -140,7 +160,7 @@ impl Linker {
                     err
                 )));
             }
-            return Ok(artifact);
+            return Ok((artifact, None));
         }
 
         let air_module = compiler.load_graph(input)?;
@@ -155,10 +175,11 @@ impl Linker {
             log_info!("driver", "cache hit for graph hash {}", h);
             let artifact =
                 Artifact::from_bytes(&cached_bytes).map_err(|e| state_err(e.to_string()))?;
-            return Ok(artifact);
+            return Ok((artifact, None));
         }
 
-        let module = compiler.compile_graph(&air_module)?;
+        let (module, diagnostics) = compiler.compile_graph_with_diagnostics(&air_module)?;
+        let diagnostics_json = Some(diagnostics.to_json());
         let artifact_bytes = module.generate_artifact_bytes()?;
 
         // Store in cache for next time.
@@ -180,7 +201,7 @@ impl Linker {
                 err
             )));
         }
-        Ok(artifact)
+        Ok((artifact, diagnostics_json))
     }
 
     /// Compile graph input and execute with entry arguments.
@@ -194,7 +215,7 @@ impl Linker {
         log_info!("driver", "Compiling graph {}", input.display());
         #[cfg(feature = "metrics")]
         let compile_start = std::time::Instant::now();
-        let artifact = self.compile_graph(input)?;
+        let (artifact, compiler_diagnostics) = self.compile_graph_with_diagnostics(input)?;
         #[cfg(feature = "metrics")]
         let compile_time = compile_start.elapsed();
 
@@ -220,6 +241,7 @@ impl Linker {
                 compile_time,
                 runtime_time,
             },
+            compiler_diagnostics,
         })
     }
 

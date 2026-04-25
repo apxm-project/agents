@@ -593,6 +593,98 @@ pub mod session {
         pub const OUTPUT_TOKENS: &str = "output_tokens";
         pub const TOTAL_TOKENS: &str = "total_tokens";
         pub const CALL_COUNT: &str = "call_count";
+
+        pub const SCHEMA_VERSION: &str = "schema_version";
+        pub const SECTION_COMPILER: &str = "compiler";
+        pub const SECTION_RUNTIME: &str = "runtime";
+        pub const SECTION_BACKENDS: &str = "backends";
+        pub const RUNTIME_EXECUTION: &str = "execution";
+        pub const RUNTIME_SCHEDULER: &str = "scheduler";
+        pub const RUNTIME_LLM: &str = "llm";
+        pub const BACKENDS_AGGREGATE: &str = "aggregate";
+        pub const BACKENDS_PER_BACKEND: &str = "per_backend";
+        pub const BACKENDS_VLLM: &str = "vllm";
+        pub const VLLM_GRAPHS: &str = "graphs";
+        pub const SCHEMA_VERSION_VALUE: u32 = 2;
+
+        // Compiler diagnostics section keys
+        pub const COMPILER_PASSES: &str = "passes";
+        pub const COMPILER_SUMMARY: &str = "summary";
+        pub const SUMMARY_TOTAL_PASSES: &str = "total_passes";
+        pub const SUMMARY_INITIAL_OPS: &str = "initial_ops";
+        pub const SUMMARY_FINAL_OPS: &str = "final_ops";
+        pub const SUMMARY_TOTAL_OPS_ELIMINATED: &str = "total_ops_eliminated";
+        pub const SUMMARY_TOTAL_TOKENS_SAVED: &str = "total_tokens_saved";
+        pub const SUMMARY_FIRED_PASSES: &str = "fired_passes";
+        pub const SUMMARY_ACTIVE_PASSES: &str = "active_passes";
+
+        /// Wire keys nested under `runtime.execution`.
+        pub mod execution_keys {
+            pub const NODES_EXECUTED: &str = "nodes_executed";
+            pub const NODES_FAILED: &str = "nodes_failed";
+            pub const DURATION_MS: &str = "duration_ms";
+            pub const STATUS: &str = "status";
+            pub const STATUS_SUCCESS: &str = "success";
+            pub const STATUS_PARTIAL_FAILURE: &str = "partial_failure";
+        }
+
+        /// Wire keys nested under `runtime.llm`.
+        pub mod llm_keys {
+            pub const TOTAL_REQUESTS: &str = "total_requests";
+            pub const TOTAL_INPUT_TOKENS: &str = "total_input_tokens";
+            pub const TOTAL_OUTPUT_TOKENS: &str = "total_output_tokens";
+            pub const INPUT_TOKENS: &str = "input_tokens";
+            pub const OUTPUT_TOKENS: &str = "output_tokens";
+            pub const AVG_LATENCY_MS: &str = "avg_latency_ms";
+            pub const P50_LATENCY_MS: &str = "p50_latency_ms";
+            pub const P99_LATENCY_MS: &str = "p99_latency_ms";
+        }
+
+        /// Wire keys nested under `runtime.link_phases` (compile vs runtime split).
+        pub mod link_phase_keys {
+            pub const LINK_PHASES: &str = "link_phases";
+            pub const COMPILE_MS: &str = "compile_ms";
+            pub const RUNTIME_MS: &str = "runtime_ms";
+        }
+
+        /// Wire keys for vLLM fork's `GET /v1/apxm/graphs/{id}` response and
+        /// the entries under `backends.vllm.graphs[]`. Mirrors fields in
+        /// `apxm_backends::llm::backends::vllm::GraphStatusResponse`.
+        pub mod vllm_graph_status_keys {
+            pub const OBJECT: &str = "object";
+            pub const GRAPH_ID: &str = "graph_id";
+            pub const REGISTERED: &str = "registered";
+            pub const PINNED_BLOCKS: &str = "pinned_blocks";
+            pub const PINNED_HANDLES: &str = "pinned_handles";
+            pub const CRITICAL_PATH_LENGTH: &str = "critical_path_length";
+            pub const NODE_COUNT: &str = "node_count";
+            /// Object-tag value emitted by the fork.
+            pub const OBJECT_TAG_GRAPH_STATUS: &str = "apxm.graph_status";
+        }
+
+        /// Top-level meta fields attached to the runtime section by the CLI
+        /// (e.g. command-line invocation context).
+        pub mod runtime_meta_keys {
+            pub const INPUT: &str = "input";
+            pub const OPTIMIZATION_LEVEL: &str = "optimization_level";
+        }
+
+        /// CLI execution-response wire keys (the JSON returned to the caller of
+        /// `apxm execute`/`apxm run`). Distinct from `execution_keys` because
+        /// the response uses `executed_nodes`/`failed_nodes` while the metrics
+        /// report uses `nodes_executed`/`nodes_failed`.
+        pub mod cli_response_keys {
+            pub const CONTENT: &str = "content";
+            pub const EXECUTION_ID: &str = "execution_id";
+            pub const SESSION_DIR: &str = "session_dir";
+            pub const METRICS_PATH: &str = "metrics_path";
+            pub const PROFILE_PATH: &str = "profile_path";
+            pub const RESULTS: &str = "results";
+            pub const STATS: &str = "stats";
+            pub const STATS_EXECUTED_NODES: &str = "executed_nodes";
+            pub const STATS_FAILED_NODES: &str = "failed_nodes";
+            pub const LLM_USAGE: &str = "llm_usage";
+        }
     }
 
     pub mod node {

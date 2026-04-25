@@ -47,6 +47,18 @@ pub struct GraphReleaseResponse {
     pub remaining_blocks: Option<u32>,
 }
 
+/// Response from `GET /v1/apxm/graphs/{graph_id}`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphStatusResponse {
+    pub object: String,
+    pub graph_id: String,
+    pub registered: bool,
+    pub pinned_handles: u64,
+    pub pinned_blocks: u64,
+    pub node_count: Option<u64>,
+    pub critical_path_length: Option<u64>,
+}
+
 /// Graph-aware vLLM backend.
 ///
 /// Wraps an OpenAI-compatible vLLM server and injects APXM graph hints
@@ -247,6 +259,43 @@ impl GraphAwareVllmBackend {
             .context("Failed to parse graph release response")
     }
 
+    /// Get the current status for a registered graph (typed).
+    pub async fn get_graph_status_typed(
+        &self,
+        graph_id: &str,
+    ) -> Result<GraphStatusResponse> {
+        if !self.apxm_endpoints_available.load(Ordering::Relaxed) {
+            return Ok(GraphStatusResponse {
+                object: apxm_llm::OBJECT_GRAPH_STATUS.to_string(),
+                graph_id: graph_id.to_string(),
+                registered: false,
+                pinned_handles: 0,
+                pinned_blocks: 0,
+                node_count: None,
+                critical_path_length: None,
+            });
+        }
+        let url = self.graph_status_url(graph_id);
+
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .context("Failed to send graph status request")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("Graph status request failed: {} - {}", status, body);
+        }
+
+        response
+            .json()
+            .await
+            .context("Failed to parse graph status response")
+    }
+
     fn request_model<'a>(&'a self, request: &'a LLMRequest) -> &'a str {
         request
             .model
@@ -427,6 +476,19 @@ impl LLMBackend for GraphAwareVllmBackend {
     async fn release_graph(&self, graph_id: &str) -> Result<()> {
         GraphAwareVllmBackend::release_graph(self, graph_id).await?;
         Ok(())
+    }
+
+    async fn get_graph_status(
+        &self,
+        graph_id: &str,
+    ) -> anyhow::Result<Option<serde_json::Value>> {
+        if !self.apxm_endpoints_available.load(Ordering::Relaxed) {
+            return Ok(None);
+        }
+        match self.get_graph_status_typed(graph_id).await {
+            Ok(status) => Ok(Some(serde_json::to_value(status)?)),
+            Err(_) => Ok(None),
+        }
     }
 }
 

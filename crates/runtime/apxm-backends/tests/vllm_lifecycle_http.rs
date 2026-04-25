@@ -10,7 +10,9 @@
 //! The key behavioral assertion is that pinning intent travels in
 //! `extra_body.apxm.pin_policy`, not through a separate control-plane pin API.
 
-use apxm_backends::llm::backends::vllm::{ApxmGraphHints, GraphAwareVllmBackend, GraphMetadata};
+use apxm_backends::llm::backends::vllm::{
+    ApxmGraphHints, GraphAwareVllmBackend, GraphMetadata, GraphStatusResponse,
+};
 use apxm_backends::llm::backends::{LLMBackend, LLMRequest};
 use apxm_core::constants::llm::{api_paths, apxm as apxm_llm, config_keys};
 use serde_json::{Value, json};
@@ -282,6 +284,122 @@ async fn vllm_lifecycle_explicit_release() {
     drop(server);
 }
 
+/// Verify `get_graph_status` GET fires before `release_graph` DELETE.
+#[tokio::test]
+async fn vllm_get_graph_status_fires_before_release() {
+    let graph_id = "graph-status-before-release";
+    let exec_id = "exec-status-0001";
+    let model = "Qwen/Qwen2.5-7B-Instruct";
+
+    let server = MockServer::start().await;
+    let graph_release_pattern =
+        format!(r"^{}{}[^/]+$", versioned_path(api_paths::APXM_GRAPHS), "/");
+
+    // Register mock
+    Mock::given(method("POST"))
+        .and(path(versioned_path(api_paths::APXM_GRAPHS_REGISTER)))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(graph_register_body(graph_id, exec_id, 1)),
+        )
+        .mount(&server)
+        .await;
+
+    // Graph status GET mock
+    let graph_status_path = format!(
+        "{}{}/{}",
+        api_paths::VERSION_PREFIX,
+        api_paths::APXM_GRAPHS,
+        graph_id
+    );
+    // Typed + trait method each fire one GET = 2 total
+    let status_fixture = GraphStatusResponse {
+        object: apxm_llm::OBJECT_GRAPH_STATUS.to_owned(),
+        graph_id: graph_id.to_owned(),
+        registered: true,
+        pinned_handles: 4,
+        pinned_blocks: 12,
+        node_count: Some(3),
+        critical_path_length: Some(2),
+    };
+    Mock::given(method("GET"))
+        .and(path(&graph_status_path))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(serde_json::to_value(&status_fixture).unwrap()),
+        )
+        .expect(2)
+        .mount(&server)
+        .await;
+
+    // Release DELETE mock
+    Mock::given(method("DELETE"))
+        .and(path_regex(graph_release_pattern))
+        .respond_with(ResponseTemplate::new(200).set_body_json(graph_release_body(graph_id)))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let backend = make_backend(&server.uri(), model).await;
+
+    // Register
+    backend
+        .register_graph(apxm_backends::llm::backends::vllm::GraphMetadata::new(
+            graph_id, exec_id,
+        ))
+        .await
+        .expect("register_graph");
+
+    // Get status (typed) before release
+    let status: GraphStatusResponse = backend
+        .get_graph_status_typed(graph_id)
+        .await
+        .expect("get_graph_status_typed");
+    assert!(status.registered);
+    assert_eq!(status.pinned_blocks, 12);
+    assert_eq!(status.pinned_handles, 4);
+
+    // Also test the trait method
+    let trait_status =
+        apxm_backends::llm::backends::LLMBackend::get_graph_status(&backend, graph_id)
+            .await
+            .expect("trait get_graph_status");
+    assert!(trait_status.is_some());
+    let status_val = trait_status.unwrap();
+    assert_eq!(
+        status_val[apxm_core::constants::session::metrics_keys::vllm_graph_status_keys::PINNED_BLOCKS],
+        12
+    );
+
+    // Release
+    apxm_backends::llm::backends::vllm::GraphAwareVllmBackend::release_graph(&backend, graph_id)
+        .await
+        .expect("release_graph");
+
+    // Verify request ordering: first GET must come before DELETE
+    let received = server.received_requests().await.unwrap_or_default();
+    let mut first_get_idx = None;
+    let mut delete_idx = None;
+    for (i, req) in received.iter().enumerate() {
+        if req.method == wiremock::http::Method::GET
+            && req.url.path().contains(graph_id)
+            && first_get_idx.is_none()
+        {
+            first_get_idx = Some(i);
+        }
+        if req.method == wiremock::http::Method::DELETE && req.url.path().contains(graph_id) {
+            delete_idx = Some(i);
+        }
+    }
+    let get_i = first_get_idx.expect("GET request for graph status must have been sent");
+    let delete_i = delete_idx.expect("DELETE request for graph release must have been sent");
+    assert!(
+        get_i < delete_i,
+        "GET /graphs/{graph_id} (index {get_i}) must fire before DELETE (index {delete_i})"
+    );
+
+    drop(server);
+}
+
 /// Stock-vLLM detection: a 404 from `/v1/apxm/graphs/__probe__` must hard-fail
 /// `health_check` by default, so APXM never silently runs without graph-aware
 /// scheduling on a server that drops `extra_body.apxm`.
@@ -317,6 +435,105 @@ async fn vllm_health_check_hard_fails_when_apxm_endpoints_missing() {
     LLMBackend::health_check(&backend)
         .await
         .expect_err("health_check must hard-fail on stock vLLM by default");
+
+    drop(server);
+}
+
+/// `get_graph_status` returns pin telemetry from the fork before release.
+/// Verifies the GET fires, returns the expected shape, and DELETE follows.
+#[tokio::test]
+async fn vllm_graph_status_collected_before_release() {
+    let graph_id = "graph-pin-telemetry-001";
+    let exec_id = "exec-pin-telemetry-001";
+    let model = "Qwen/Qwen2.5-7B-Instruct";
+
+    let server = MockServer::start().await;
+    let graph_release_pattern =
+        format!(r"^{}{}[^/]+$", versioned_path(api_paths::APXM_GRAPHS), "/");
+
+    Mock::given(method("POST"))
+        .and(path(versioned_path(api_paths::APXM_GRAPHS_REGISTER)))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(graph_register_body(graph_id, exec_id, 5)),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    // GET /v1/apxm/graphs/{id} returns pin telemetry
+    let status_path = format!(
+        "{}{}/{}",
+        api_paths::VERSION_PREFIX,
+        api_paths::APXM_GRAPHS,
+        graph_id,
+    );
+    let status_fixture = GraphStatusResponse {
+        object: apxm_llm::OBJECT_GRAPH_STATUS.to_owned(),
+        graph_id: graph_id.to_owned(),
+        registered: true,
+        pinned_blocks: 7,
+        pinned_handles: 3,
+        critical_path_length: Some(4),
+        node_count: Some(5),
+    };
+    Mock::given(method("GET"))
+        .and(path(&status_path))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(serde_json::to_value(&status_fixture).unwrap()),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    Mock::given(method("DELETE"))
+        .and(path_regex(graph_release_pattern))
+        .respond_with(ResponseTemplate::new(200).set_body_json(graph_release_body(graph_id)))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let backend = make_backend(&server.uri(), model).await;
+
+    let metadata = GraphMetadata::new(graph_id, exec_id);
+    backend
+        .register_graph(metadata)
+        .await
+        .expect("register_graph");
+
+    // Collect status before release
+    let status = LLMBackend::get_graph_status(&backend, graph_id)
+        .await
+        .expect("get_graph_status should succeed");
+
+    assert!(status.is_some(), "expected Some(JSON) from get_graph_status");
+    let status_json = status.unwrap();
+    use apxm_core::constants::session::metrics_keys::vllm_graph_status_keys as gsk;
+    assert_eq!(status_json[gsk::PINNED_BLOCKS], 7);
+    assert_eq!(status_json[gsk::PINNED_HANDLES], 3);
+    assert_eq!(status_json[gsk::CRITICAL_PATH_LENGTH], 4);
+    assert_eq!(status_json[gsk::NODE_COUNT], 5);
+    assert_eq!(status_json[gsk::GRAPH_ID], graph_id);
+
+    // Release after status collection
+    GraphAwareVllmBackend::release_graph(&backend, graph_id)
+        .await
+        .expect("release_graph");
+
+    // Verify request ordering: POST register, GET status, DELETE release
+    let received = server.received_requests().await.unwrap_or_default();
+    let methods: Vec<&str> = received.iter().map(|r| r.method.as_str()).collect();
+    let post_idx = methods.iter().position(|&m| m == "POST").expect("POST");
+    let get_idx = methods.iter().position(|&m| m == "GET").expect("GET");
+    let delete_idx = methods.iter().position(|&m| m == "DELETE").expect("DELETE");
+    assert!(
+        post_idx < get_idx,
+        "register (POST) must precede status (GET)"
+    );
+    assert!(
+        get_idx < delete_idx,
+        "status (GET) must precede release (DELETE)"
+    );
 
     drop(server);
 }

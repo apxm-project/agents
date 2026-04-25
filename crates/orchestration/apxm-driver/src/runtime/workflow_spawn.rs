@@ -592,7 +592,7 @@ fn finalize_child_session(
                 execution.all_outputs.as_ref(),
                 execution.node_output_map.as_ref(),
                 &execution.results,
-                &build_metrics_json(execution),
+                &build_metrics_report(execution),
                 &execution.stats.node_statuses,
                 None,
             )
@@ -603,28 +603,74 @@ fn finalize_child_session(
     }
 }
 
-fn build_metrics_json(execution: &RuntimeExecutionResult) -> serde_json::Value {
-    let mut metrics = serde_json::json!({
-        "execution": {
-            "nodes_executed": execution.stats.executed_nodes,
-            "nodes_failed": execution.stats.failed_nodes,
-            "duration_ms": execution.stats.duration_ms,
-        },
-        "scheduler": execution.scheduler_metrics.to_json(),
-    });
-    let token_json = execution.token_snapshot.to_json();
-    if let Some(obj) = token_json.get("token_accounting").cloned() {
-        metrics["token_accounting"] = obj;
+/// Runtime metrics source for the unified `MetricsReport`.
+struct RuntimeMetricsSource<'a> {
+    execution: &'a RuntimeExecutionResult,
+}
+
+impl apxm_core::MetricsSource for RuntimeMetricsSource<'_> {
+    fn section_name(&self) -> &'static str {
+        apxm_core::constants::session::metrics_keys::SECTION_RUNTIME
     }
-    #[cfg(feature = "metrics")]
-    {
-        metrics["llm"] = serde_json::json!({
-            "total_requests": execution.llm_metrics.total_requests,
-            "total_input_tokens": execution.llm_metrics.total_input_tokens,
-            "total_output_tokens": execution.llm_metrics.total_output_tokens,
-        });
+
+    fn collect(&self) -> serde_json::Value {
+        use apxm_core::constants::session::metrics_keys;
+        use metrics_keys::{execution_keys, llm_keys};
+
+        let mut map = serde_json::Map::new();
+        let mut exec = serde_json::Map::new();
+        exec.insert(
+            execution_keys::NODES_EXECUTED.to_owned(),
+            self.execution.stats.executed_nodes.into(),
+        );
+        exec.insert(
+            execution_keys::NODES_FAILED.to_owned(),
+            self.execution.stats.failed_nodes.into(),
+        );
+        exec.insert(
+            execution_keys::DURATION_MS.to_owned(),
+            (self.execution.stats.duration_ms as u64).into(),
+        );
+        map.insert(
+            metrics_keys::RUNTIME_EXECUTION.to_owned(),
+            serde_json::Value::Object(exec),
+        );
+        map.insert(
+            metrics_keys::RUNTIME_SCHEDULER.to_owned(),
+            self.execution.scheduler_metrics.to_json(),
+        );
+        let token_json = self.execution.token_snapshot.to_json();
+        if let Some(obj) = token_json.get(metrics_keys::TOKEN_ACCOUNTING).cloned() {
+            map.insert(metrics_keys::TOKEN_ACCOUNTING.to_owned(), obj);
+        }
+        #[cfg(feature = "metrics")]
+        {
+            let mut llm = serde_json::Map::new();
+            llm.insert(
+                llm_keys::TOTAL_REQUESTS.to_owned(),
+                self.execution.llm_metrics.total_requests.into(),
+            );
+            llm.insert(
+                llm_keys::TOTAL_INPUT_TOKENS.to_owned(),
+                self.execution.llm_metrics.total_input_tokens.into(),
+            );
+            llm.insert(
+                llm_keys::TOTAL_OUTPUT_TOKENS.to_owned(),
+                self.execution.llm_metrics.total_output_tokens.into(),
+            );
+            map.insert(
+                metrics_keys::RUNTIME_LLM.to_owned(),
+                serde_json::Value::Object(llm),
+            );
+        }
+        serde_json::Value::Object(map)
     }
-    metrics
+}
+
+fn build_metrics_report(execution: &RuntimeExecutionResult) -> serde_json::Value {
+    let mut report = apxm_core::MetricsReport::new();
+    report.add_source(&RuntimeMetricsSource { execution });
+    report.to_json()
 }
 
 fn primary_result_value(execution: &RuntimeExecutionResult) -> apxm_core::types::Value {

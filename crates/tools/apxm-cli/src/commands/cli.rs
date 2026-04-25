@@ -42,6 +42,9 @@ pub enum Commands {
         /// Emit diagnostics JSON file with compilation statistics
         #[arg(long)]
         emit_diagnostics: Option<PathBuf>,
+        /// Emit unified metrics JSON (schema_version=2) with compiler section
+        #[arg(long)]
+        emit_metrics: Option<PathBuf>,
         /// Optimization level (0 = no optimizations, 1-3 = increasing optimization)
         #[arg(short = 'O', long = "opt-level", default_value = "1")]
         opt_level: u8,

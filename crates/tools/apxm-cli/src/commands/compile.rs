@@ -157,6 +157,7 @@ pub fn compile_command(
     input: PathBuf,
     output: Option<PathBuf>,
     emit_diagnostics: Option<PathBuf>,
+    emit_metrics: Option<PathBuf>,
     opt_level: u8,
     target: String,
     no_cse_llm: bool,
@@ -166,6 +167,7 @@ pub fn compile_command(
     pass_list_override: Option<Vec<String>>,
 ) -> Result<()> {
     use apxm_core::constants::diagnostics;
+    use apxm_core::constants::session::metrics_keys;
     use apxm_core::types::{OptimizationTarget, PipelineConfig};
 
     let opt = parse_opt_level(opt_level);
@@ -208,7 +210,8 @@ pub fn compile_command(
             || !disable_passes.is_empty()
             || pass_list_override.is_some();
 
-        let (module, air_pass_diagnostics) = if emit_diagnostics.is_some() {
+        let needs_diagnostics = emit_diagnostics.is_some() || emit_metrics.is_some();
+        let (module, air_pass_diagnostics) = if needs_diagnostics {
             let config = PipelineConfig {
                 opt_level: opt,
                 target: opt_target,
@@ -292,29 +295,10 @@ pub fn compile_command(
         println!("  Artifact size: {} bytes", bytes.len());
 
         // Emit diagnostics if requested.
-        // The .air path bypasses the AirModule lowering, so the diagnostics
-        // payload here is a strict subset of the graph-JSON path: per-pass
-        // metrics + summary, but no DAG node/edge counts or graph-name field.
-        // The ablation harness only consumes pass_metrics + pass_summary so
-        // this is sufficient.
-        if let (Some(diag_path), Some(diag)) = (emit_diagnostics, air_pass_diagnostics) {
-            let per_pass_metrics: Vec<serde_json::Value> = diag
-                .passes
-                .iter()
-                .map(|p| {
-                    serde_json::json!({
-                        "pass_name": p.pass_name,
-                        "duration_ms": p.duration_ms,
-                        "ops_before": p.ops_before,
-                        "ops_after": p.ops_after,
-                        "ops_delta": p.ops_delta,
-                        "fired_count": p.fired_count,
-                        "ir_size_delta": p.ir_size_delta,
-                        "tokens_saved": p.tokens_saved
-                    })
-                })
-                .collect();
-
+        if let (Some(diag_path), Some(diag)) =
+            (&emit_diagnostics, &air_pass_diagnostics)
+        {
+            let compiler_json = diag.to_json();
             let diagnostics_json = serde_json::json!({
                 "input": graph_input.display().to_string(),
                 "mode": diagnostics::MODE_AIR,
@@ -324,23 +308,33 @@ pub fn compile_command(
                     "artifact_gen_ms": artifact_time.as_secs_f64() * 1000.0,
                     "passes_ms": diag.total_duration_ms
                 },
-                "pass_metrics": per_pass_metrics,
-                "pass_summary": {
-                    "total_passes": diag.pass_count(),
-                    "initial_ops": diag.initial_ops,
-                    "final_ops": diag.final_ops,
-                    "total_ops_eliminated": diag.total_ops_eliminated(),
-                    "total_tokens_saved": diag.total_tokens_saved(),
-                    "fired_passes": diag.fired_passes().iter().map(|s| s.to_string()).collect::<Vec<_>>(),
-                    "active_passes": diag.active_passes().iter().map(|s| s.to_string()).collect::<Vec<_>>()
-                }
+                "pass_metrics": compiler_json[metrics_keys::COMPILER_PASSES].clone(),
+                "pass_summary": compiler_json[metrics_keys::COMPILER_SUMMARY].clone()
             });
 
-            std::fs::write(&diag_path, serde_json::to_string_pretty(&diagnostics_json)?)
+            std::fs::write(diag_path, serde_json::to_string_pretty(&diagnostics_json)?)
                 .with_context(|| {
                     format!("Failed to write diagnostics to {}", diag_path.display())
                 })?;
             println!("Wrote diagnostics to {}", diag_path.display());
+        }
+
+        // Emit unified metrics report (compiler-only).
+        if let Some(metrics_path) = emit_metrics {
+            use apxm_compiler::passes::metrics::CompilerMetricsSource;
+
+            let mut report = apxm_core::MetricsReport::new();
+            if let Some(ref diag) = air_pass_diagnostics {
+                report.add_source(&CompilerMetricsSource { diagnostics: diag });
+            }
+            std::fs::write(
+                &metrics_path,
+                serde_json::to_string_pretty(&report.to_json())?,
+            )
+            .with_context(|| {
+                format!("Failed to write metrics to {}", metrics_path.display())
+            })?;
+            println!("Wrote metrics to {}", metrics_path.display());
         }
 
         return Ok(());
@@ -382,7 +376,8 @@ pub fn compile_command(
         || warn
         || !disable_passes.is_empty()
         || pass_list_override.is_some();
-    let (module, pass_diagnostics) = if emit_diagnostics.is_some() {
+    let needs_diagnostics_graph = emit_diagnostics.is_some() || emit_metrics.is_some();
+    let (module, pass_diagnostics) = if needs_diagnostics_graph {
         let config = PipelineConfig {
             opt_level: opt,
             target: opt_target,
@@ -450,27 +445,13 @@ pub fn compile_command(
             .dag()
             .ok_or_else(|| anyhow::anyhow!("Artifact contains no DAGs"))?;
 
-        // Build per-pass metrics array from diagnostics
-        let per_pass_metrics: Vec<serde_json::Value> = pass_diagnostics
+        let compiler_json = pass_diagnostics
             .as_ref()
-            .map(|d| {
-                d.passes
-                    .iter()
-                    .map(|p| {
-                        serde_json::json!({
-                            "pass_name": p.pass_name,
-                            "duration_ms": p.duration_ms,
-                            "ops_before": p.ops_before,
-                            "ops_after": p.ops_after,
-                            "ops_delta": p.ops_delta,
-                            "fired_count": p.fired_count,
-                            "ir_size_delta": p.ir_size_delta,
-                            "tokens_saved": p.tokens_saved
-                        })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+            .map(|d| d.to_json())
+            .unwrap_or_else(|| {
+                use apxm_compiler::passes::metrics::PipelineDiagnostics;
+                PipelineDiagnostics::new().to_json()
+            });
 
         let diagnostics_json = serde_json::json!({
             "input": input.display().to_string(),
@@ -488,22 +469,32 @@ pub fn compile_command(
                 "exit_nodes": dag.exit_nodes.len(),
                 "total_edges": dag.edges.len()
             },
-            "pass_metrics": per_pass_metrics,
-            "pass_summary": {
-                "total_passes": pass_diagnostics.as_ref().map(|d| d.pass_count()).unwrap_or(0),
-                "initial_ops": pass_diagnostics.as_ref().map(|d| d.initial_ops).unwrap_or(0),
-                "final_ops": pass_diagnostics.as_ref().map(|d| d.final_ops).unwrap_or(0),
-                "total_ops_eliminated": pass_diagnostics.as_ref().map(|d| d.total_ops_eliminated()).unwrap_or(0),
-                "total_tokens_saved": pass_diagnostics.as_ref().map(|d| d.total_tokens_saved()).unwrap_or(0),
-                "fired_passes": pass_diagnostics.as_ref().map(|d| d.fired_passes().iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap_or_default(),
-                "active_passes": pass_diagnostics.as_ref().map(|d| d.active_passes().iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap_or_default()
-            }
+            "pass_metrics": compiler_json[metrics_keys::COMPILER_PASSES].clone(),
+            "pass_summary": compiler_json[metrics_keys::COMPILER_SUMMARY].clone()
         });
 
         std::fs::write(&diag_path, serde_json::to_string_pretty(&diagnostics_json)?)
             .with_context(|| format!("Failed to write diagnostics to {}", diag_path.display()))?;
 
         println!("Wrote diagnostics to {}", diag_path.display());
+    }
+
+    // Emit unified metrics report (compiler-only).
+    if let Some(metrics_path) = emit_metrics {
+        use apxm_compiler::passes::metrics::CompilerMetricsSource;
+
+        let mut report = apxm_core::MetricsReport::new();
+        if let Some(ref diag) = pass_diagnostics {
+            report.add_source(&CompilerMetricsSource { diagnostics: diag });
+        }
+        std::fs::write(
+            &metrics_path,
+            serde_json::to_string_pretty(&report.to_json())?,
+        )
+        .with_context(|| {
+            format!("Failed to write metrics to {}", metrics_path.display())
+        })?;
+        println!("Wrote metrics to {}", metrics_path.display());
     }
 
     println!("Wrote graph artifact to {}", out_path.display());

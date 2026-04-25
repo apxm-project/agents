@@ -50,6 +50,8 @@ pub struct RuntimeExecutionResult {
     /// Aggregate token usage collected during execution. Empty snapshot if no
     /// LLM nodes ran.
     pub token_snapshot: crate::executor::token_accounting::TokenAccountingSnapshot,
+    /// vLLM graph status snapshots captured before graph release.
+    pub vllm_graphs: Vec<serde_json::Value>,
 }
 
 /// Runtime configuration
@@ -362,9 +364,13 @@ impl Runtime {
         // Execute with dataflow scheduler for automatic parallelism
         let exec_result = self.scheduler.execute(dag, executor, context, vec![]).await;
 
+        let mut vllm_graphs = Vec::new();
         if let Some(lc) = &lifecycle {
             if let Err(e) = lc.release().await {
                 tracing::warn!(error = %e, "vLLM graph release failed (non-fatal)");
+            }
+            if let Some(status) = lc.take_status().await {
+                vllm_graphs.push(status);
             }
         }
 
@@ -389,6 +395,7 @@ impl Runtime {
             all_outputs,
             node_output_map,
             token_snapshot,
+            vllm_graphs,
         })
     }
 
@@ -436,9 +443,13 @@ impl Runtime {
             .execute(entry_dag, executor, context, vec![])
             .await;
 
+        let mut vllm_graphs = Vec::new();
         if let Some(lc) = &lifecycle {
             if let Err(e) = lc.release().await {
                 tracing::warn!(error = %e, "vLLM graph release failed (non-fatal)");
+            }
+            if let Some(status) = lc.take_status().await {
+                vllm_graphs.push(status);
             }
         }
 
@@ -455,6 +466,7 @@ impl Runtime {
             all_outputs,
             node_output_map,
             token_snapshot,
+            vllm_graphs,
         })
     }
 
@@ -526,9 +538,13 @@ impl Runtime {
             .execute(entry_dag, executor, context, arg_values)
             .await;
 
+        let mut vllm_graphs = Vec::new();
         if let Some(lc) = &lifecycle {
             if let Err(e) = lc.release().await {
                 tracing::warn!(error = %e, "vLLM graph release failed (non-fatal)");
+            }
+            if let Some(status) = lc.take_status().await {
+                vllm_graphs.push(status);
             }
         }
 
@@ -549,6 +565,7 @@ impl Runtime {
             all_outputs,
             node_output_map,
             token_snapshot,
+            vllm_graphs,
         })
     }
 

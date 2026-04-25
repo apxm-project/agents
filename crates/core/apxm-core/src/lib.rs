@@ -15,6 +15,7 @@ pub mod constants;
 pub mod error;
 pub mod events;
 pub mod logging;
+pub mod metrics;
 pub mod model_profiles;
 pub mod observability;
 pub mod paths;
@@ -31,6 +32,7 @@ pub use error::{
     security::SecurityError,
 };
 
+pub use metrics::{MetricsReport, MetricsSource};
 pub use plan::{InnerPlanPayload, Plan, PlanStep};
 
 pub use types::{
