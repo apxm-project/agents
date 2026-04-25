@@ -21,6 +21,7 @@ and resilient delegation. They can be composed into larger workflows.
 
 ```python
 from apxm import NodePolicy, WorkflowTargetKind
+from apxm._generated.agents import claude
 
 # Iterative refinement: generate -> critique -> refine
 draft = g.ask(name="draft", prompt="Write a proposal")
@@ -29,7 +30,7 @@ final = g.ask(name="final", prompt="Improve based on feedback: {draft}\n{critiqu
 
 # Resilient delegation
 worker = g.spawn("worker", profile=claude, cwd=cwd)
-result = g.communicate("task", target_agent="worker", message="{formatted}")
+result = worker.ask("{formatted}")
 
 # Tighten the call-site node relative to the graph default
 research = g.call(

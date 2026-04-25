@@ -46,7 +46,10 @@ def test_graph_imports():
         WorkflowTargetKind,
         compile,
         AgentHandle,
+        BackendRoute,
         Team,
+        list_backends,
+        select_backend,
     )
     assert GraphRecorder is not None
     assert NodeRef is not None
@@ -54,7 +57,10 @@ def test_graph_imports():
     assert WorkflowTargetKind.GRAPH_PATH.value is not None
     assert compile is not None
     assert AgentHandle is not None
+    assert BackendRoute is not None
     assert Team is not None
+    assert callable(list_backends)
+    assert callable(select_backend)
 
 
 def test_import_error_types():

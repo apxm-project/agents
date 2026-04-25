@@ -15,15 +15,17 @@ per-node so each task gets the right trade-off.
 ## Key API
 
 ```python
+from apxm import Anthropic
+
 # Fast model for triage
 triage = g.ask("triage", "Classify this ticket: {ticket}")
 
 # Powerful model for analysis
 solution = g.reason("solution", "Root cause analysis: {triage}\n{data}")
 
-# In production, specify model per-node:
-# g.ask("triage", "...", model="claude-haiku-4-5")
-# g.reason("solution", "...", model="claude-opus-4")
+# In production, use generated model ids or a registered BackendRoute:
+# g.ask("triage", "...", model=Anthropic.CLAUDE_HAIKU_4_5)
+# g.reason("solution", "...", model=Anthropic.CLAUDE_OPUS_4_6)
 ```
 
 ## Learn More

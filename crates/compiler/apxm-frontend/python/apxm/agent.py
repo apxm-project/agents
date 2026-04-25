@@ -7,10 +7,12 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from . import constants as graph_keys
 from .normalize import normalize_value as _normalize_value
-from .normalize import normalize_provider as _normalize_provider
+from .normalize import normalize_model_id as _normalize_model_id
+from .normalize import normalize_provider_spec as _normalize_provider_spec
 from .proxy import GraphRecorder, NodeRef
 
 if TYPE_CHECKING:
+    from .backends import BackendRoute
     from ._generated.models import ModelId
     from ._generated.providers import ProviderSpec
 
@@ -69,17 +71,22 @@ class Agent:
         *,
         instructions: str | None = None,
         tools: list[Any] | None = None,
+        route: BackendRoute | None = None,
         model: ModelId | None = None,
-        provider: ProviderSpec | str | None = None,
+        provider: ProviderSpec | None = None,
         backend: str | None = None,
         output_schema: type | dict[str, Any] | None = None,
         hooks: AgentHooks | None = None,
     ) -> None:
         self.name = name
         self.instructions = instructions
+        if backend is not None:
+            raise TypeError("pass route=select_backend(...) instead of raw backend=")
+        if route is not None and model is not None:
+            raise ValueError("pass either route= or model=, not both")
+        self.route = route
         self.model = model
         self.provider = provider
-        self.backend = backend
         self.output_schema = output_schema
         self.hooks = hooks
 
@@ -111,14 +118,9 @@ class Agent:
         """
         # -- 1. SPAWN_AGENT --
         spawn_attrs: dict[str, Any] = {graph_keys.AGENT_NAME: self.name}
-        if self.model is not None:
-            spawn_attrs[graph_keys.MODEL] = _normalize_value(self.model)
+        _apply_agent_route_attrs(spawn_attrs, self.route, self.model, self.provider)
         if self.instructions is not None:
             spawn_attrs[graph_keys.SYSTEM_PROMPT] = self.instructions
-        if self.provider is not None:
-            spawn_attrs[graph_keys.PROVIDER] = _normalize_provider(self.provider)
-        if self.backend is not None:
-            spawn_attrs[graph_keys.BACKEND] = self.backend
         spawn_node = g._add_node(
             g._auto_name(graph_keys.OP_SPAWN_AGENT),
             graph_keys.OP_SPAWN_AGENT,
@@ -137,14 +139,14 @@ class Agent:
             if tool.schema_json:
                 cap_attrs[graph_keys.PARAMETERS_SCHEMA] = tool.schema_json
             # python_handler_id links capability to the Python function at runtime
-            cap_attrs["python_handler_id"] = tool.handler_id
+            cap_attrs[graph_keys.PYTHON_HANDLER_ID] = tool.handler_id
 
             cap_node = g._add_node(
                 g._auto_name(graph_keys.OP_REGISTER_CAPABILITY),
                 graph_keys.OP_REGISTER_CAPABILITY,
                 cap_attrs,
             )
-            g.add_edge(prev_node, cap_node, dependency="Control")
+            g.add_edge(prev_node, cap_node, dependency=graph_keys.DEPENDENCY_CONTROL)
             prev_node = cap_node
 
             # Register tool for artifact sidecar embedding
@@ -156,14 +158,9 @@ class Agent:
         ask_attrs: dict[str, Any] = {graph_keys.TEMPLATE_STR: resolved}
         if auto_pairs:
             ask_attrs[graph_keys.INPUT_NAMES] = [n for n, _ in auto_pairs]
-        if self.model is not None:
-            ask_attrs[graph_keys.MODEL] = _normalize_value(self.model)
+        _apply_agent_route_attrs(ask_attrs, self.route, self.model, self.provider)
         if self.instructions is not None:
             ask_attrs[graph_keys.SYSTEM_PROMPT] = self.instructions
-        if self.provider is not None:
-            ask_attrs[graph_keys.PROVIDER] = _normalize_provider(self.provider)
-        if self.backend is not None:
-            ask_attrs[graph_keys.BACKEND] = self.backend
         if self.output_schema is not None:
             ask_attrs[graph_keys.OUTPUT_SCHEMA] = _normalize_value(self.output_schema)
         ask_attrs.update(
@@ -175,7 +172,7 @@ class Agent:
             graph_keys.OP_ASK,
             ask_attrs,
         )
-        g.add_edge(prev_node, ask_node, dependency="Control")
+        g.add_edge(prev_node, ask_node, dependency=graph_keys.DEPENDENCY_CONTROL)
 
         # Auto-wire data edges from template references
         for _name, ref in auto_pairs:
@@ -220,14 +217,9 @@ class BoundAgent:
         # can dispatch HANDOFF/COMMUNICATE against this agent without it being
         # registered as its own compiled flow.
         spawn_attrs: dict[str, Any] = {graph_keys.AGENT_NAME: agent.name}
-        if agent.model is not None:
-            spawn_attrs[graph_keys.MODEL] = _normalize_value(agent.model)
+        _apply_agent_route_attrs(spawn_attrs, agent.route, agent.model, agent.provider)
         if agent.instructions is not None:
             spawn_attrs[graph_keys.SYSTEM_PROMPT] = agent.instructions
-        if agent.provider is not None:
-            spawn_attrs[graph_keys.PROVIDER] = _normalize_provider(agent.provider)
-        if agent.backend is not None:
-            spawn_attrs[graph_keys.BACKEND] = agent.backend
         self._spawn_node = g._add_node(
             g._auto_name(graph_keys.OP_SPAWN_AGENT),
             graph_keys.OP_SPAWN_AGENT,
@@ -245,14 +237,14 @@ class BoundAgent:
                 cap_attrs[graph_keys.DESCRIPTION] = tool.description
             if tool.schema_json:
                 cap_attrs[graph_keys.PARAMETERS_SCHEMA] = tool.schema_json
-            cap_attrs["python_handler_id"] = tool.handler_id
+            cap_attrs[graph_keys.PYTHON_HANDLER_ID] = tool.handler_id
 
             cap_node = g._add_node(
                 g._auto_name(graph_keys.OP_REGISTER_CAPABILITY),
                 graph_keys.OP_REGISTER_CAPABILITY,
                 cap_attrs,
             )
-            g.add_edge(prev_node, cap_node, dependency="Control")
+            g.add_edge(prev_node, cap_node, dependency=graph_keys.DEPENDENCY_CONTROL)
             prev_node = cap_node
 
             # Register tool for artifact sidecar embedding
@@ -274,14 +266,9 @@ class BoundAgent:
         ask_attrs: dict[str, Any] = {graph_keys.TEMPLATE_STR: resolved}
         if auto_pairs:
             ask_attrs[graph_keys.INPUT_NAMES] = [n for n, _ in auto_pairs]
-        if agent.model is not None:
-            ask_attrs[graph_keys.MODEL] = _normalize_value(agent.model)
+        _apply_agent_route_attrs(ask_attrs, agent.route, agent.model, agent.provider)
         if agent.instructions is not None:
             ask_attrs[graph_keys.SYSTEM_PROMPT] = agent.instructions
-        if agent.provider is not None:
-            ask_attrs[graph_keys.PROVIDER] = _normalize_provider(agent.provider)
-        if agent.backend is not None:
-            ask_attrs[graph_keys.BACKEND] = agent.backend
         if agent.output_schema is not None:
             ask_attrs[graph_keys.OUTPUT_SCHEMA] = _normalize_value(agent.output_schema)
         ask_attrs.update(
@@ -293,7 +280,7 @@ class BoundAgent:
             graph_keys.OP_ASK,
             ask_attrs,
         )
-        g.add_edge(self._last_node, ask_node, dependency="Control")
+        g.add_edge(self._last_node, ask_node, dependency=graph_keys.DEPENDENCY_CONTROL)
 
         for _name, ref in auto_pairs:
             g.add_edge(ref, ask_node)
@@ -332,8 +319,8 @@ class BoundAgent:
             handoff_attrs[graph_keys.INPUT_NAMES] = [n for n, _ in auto_pairs]
 
         handoff_node = g._add_node(
-            g._auto_name("HANDOFF"),
-            "HANDOFF",
+            g._auto_name(graph_keys.OP_HANDOFF),
+            graph_keys.OP_HANDOFF,
             handoff_attrs,
         )
         # Data edges so the source's last node and the target's SPAWN_AGENT both
@@ -341,8 +328,12 @@ class BoundAgent:
         # to_air() (only Data edges become SSA uses), so they would not enforce
         # ordering on the runtime side and HANDOFF would race the SPAWN_AGENT
         # for the target's STM `_agent_info:<name>` write.
-        g.add_edge(self._last_node, handoff_node, dependency="Data")
-        g.add_edge(target_bound.get_spawn_node(), handoff_node, dependency="Data")
+        g.add_edge(self._last_node, handoff_node, dependency=graph_keys.DEPENDENCY_DATA)
+        g.add_edge(
+            target_bound.get_spawn_node(),
+            handoff_node,
+            dependency=graph_keys.DEPENDENCY_DATA,
+        )
 
         # Auto-wire data edges from template references
         for _name, ref in auto_pairs:
@@ -355,12 +346,29 @@ class BoundAgent:
         """Return the SPAWN_AGENT node."""
         return self._spawn_node
 
-    def get_last_node(self) -> NodeRef:
-        """Return the most recent node in this agent's chain."""
-        return self._last_node
-
     def __repr__(self) -> str:
         return f"BoundAgent(name={self._agent.name!r})"
+
+
+def _apply_agent_route_attrs(
+    attrs: dict[str, Any],
+    route: Any | None,
+    model: Any | None,
+    provider: Any | None,
+) -> None:
+    if route is not None:
+        from .backends import BackendRoute
+
+        if not isinstance(route, BackendRoute):
+            raise TypeError("route must be a BackendRoute returned by select_backend()")
+        attrs[graph_keys.BACKEND] = route.backend
+        if route.model is not None:
+            attrs[graph_keys.MODEL] = route.model
+    elif model is not None:
+        attrs[graph_keys.MODEL] = _normalize_model_id(model)
+
+    if provider is not None:
+        attrs[graph_keys.PROVIDER] = _normalize_provider_spec(provider)
 
 
 __all__ = ["Agent", "AgentHooks", "BoundAgent", "ToolLike"]

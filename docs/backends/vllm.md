@@ -119,6 +119,11 @@ Project-level config files or an explicit `--config` may use a different backend
 store, so keep the selected backend name and model id aligned with the workload
 you are about to run.
 
+Python graphs validate backend/model routes against the active APXM config when
+they are built. Use `apxm.backends.select_backend(...)` to select registered
+routes instead of reading ad hoc `APXM_VLLM_*` environment variables in graph
+code.
+
 ## Example: Local Directory
 
 ```bash
@@ -151,16 +156,21 @@ follow their own authentication and storage rules.
 ## Run Graphs With Metrics
 
 Use a checked-in self-hosted smoke graph for a fresh-checkout-safe metrics
-test. The model id must be the served id you enabled in APXM:
+test. Register a role alias on the served model, then let the Python frontend
+resolve that alias from the backend registry:
 
 ```bash
+dekk apxm vllm enable <SERVED_MODEL_ID> --port 8916 --alias smoke
 APXM_METRICS_DIR="$(mktemp -d)"
-APXM_VLLM_MODEL=<SERVED_MODEL_ID> \
 dekk apxm execute \
   --emit-session "${APXM_METRICS_DIR}/session" \
   --emit-metrics "${APXM_METRICS_DIR}/metrics.json" \
   examples/python/self-hosted/vllm_graph_smoke.py
 ```
+
+The `smoke` alias is an example role name, not a model default. If you prefer
+not to use aliases, edit the example to call
+`select_backend(protocol=VLLM.protocol, backend=<BACKEND_NAME>, model=<SERVED_MODEL_ID>)`.
 
 Benchmark graphs can use different backend names and model ids. Before running
 one, align its config with the backend you enabled:

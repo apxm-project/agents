@@ -37,14 +37,13 @@ def autofix_workflow(g: GraphRecorder):
     validator = g.spawn("validator", profile=claude, cwd=cwd)
 
     # Step 1: Run validation
-    validator.ask(prompt="""Run the APXM autofix validation for scope: examples/python
+    validate_result = validator.ask(prompt="""Run the APXM autofix validation for scope: examples/python
 
 Execute:
   python3 scripts/apxm-autofix.py --scope examples/python --report-only
 
 Report the full output (it will show validation results, task files created in /tmp/autofix-tasks/, etc.)
 """)
-    validate_result = validator.get_last_node()
 
     print1 = g.print(message="=== VALIDATION OUTPUT ===\n{validate_result}")
 
@@ -160,14 +159,11 @@ Report what you fixed and verification results.
     g.add_edge(print2, fix_compile_task, dependency="Control")
 
     # All fixers work in parallel
-    fixer1.ask("{fix_import_task}")
-    import_fixes = fixer1.get_last_node()
+    import_fixes = fixer1.ask("{fix_import_task}")
 
-    fixer2.ask("{fix_mlir_task}")
-    mlir_fixes = fixer2.get_last_node()
+    mlir_fixes = fixer2.ask("{fix_mlir_task}")
 
-    fixer3.ask("{fix_compile_task}")
-    compile_fixes = fixer3.get_last_node()
+    compile_fixes = fixer3.ask("{fix_compile_task}")
 
     print3 = g.print(message="=== IMPORT FIXES ===\n{import_fixes}")
     print4 = g.print(message="=== MLIR FIXES ===\n{mlir_fixes}")
@@ -187,14 +183,13 @@ Report what you fixed and verification results.
     # Step 6: Run final verification
     verifier = g.spawn("verifier", profile=claude, cwd=cwd)
 
-    verifier.ask(prompt="""Run final verification of all fixes:
+    verify_result = verifier.ask(prompt="""Run final verification of all fixes:
 
 Execute:
   python3 scripts/apxm-autofix.py --scope examples/python --verify-only
 
 Report the results (pass/fail counts, any remaining issues).
 """)
-    verify_result = verifier.get_last_node()
     g.add_edge(wait, verify_result, dependency="Control")
 
     print6 = g.print(message="=== VERIFICATION OUTPUT ===\n{verify_result}")

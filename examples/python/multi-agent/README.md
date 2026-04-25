@@ -22,8 +22,7 @@ from apxm._generated.agents import claude, codex
 
 # Spawn and communicate
 agent = g.spawn("coder", profile=codex, cwd=cwd)
-agent.ask("Implement this feature")
-result = agent.get_last_node()
+result = agent.ask("Implement this feature")
 
 # Team coordination
 team = g.team("dev_team")

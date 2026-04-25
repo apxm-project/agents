@@ -3,10 +3,10 @@
 import json
 import pytest
 
+from .mocks import MOCK_AGENT_PROFILE, MOCK_AGENT_PROFILE_ALT
+
 WEB_TOOL_GROUP = "web"
 FILE_READ_TOOL_GROUP = "file:read"
-MOCK_AGENT_PROFILE = "mock-agent-profile"
-MOCK_AGENT_PROFILE_ALT = "mock-agent-profile-alt"
 
 
 def test_simple_graph():
@@ -173,13 +173,15 @@ def test_team_sugar():
     assert len(wait_nodes) == 1
 
 
-def test_agent_handle_chaining():
-    """Test AgentHandle method chaining."""
-    from apxm import GraphRecorder
+def test_agent_handle_ask_returns_node_refs():
+    """Test AgentHandle ask() returns COMMUNICATE nodes."""
+    from apxm import GraphRecorder, NodeRef
 
     g = GraphRecorder("handle_test")
     handle = g.spawn("alice", profile=MOCK_AGENT_PROFILE)
-    handle.ask("Do task 1").ask("Do task 2").ask("Do task 3")
+    first = handle.ask("Do task 1")
+    second = handle.ask("Do task 2")
+    third = handle.ask("Do task 3")
 
     graph = g.to_graph()
 
@@ -187,6 +189,29 @@ def test_agent_handle_chaining():
     assert len(graph.nodes) == 4
     comm_nodes = [n for n in graph.nodes if n.op == "COMMUNICATE"]
     assert len(comm_nodes) == 3
+    assert isinstance(first, NodeRef)
+    assert isinstance(second, NodeRef)
+    assert isinstance(third, NodeRef)
+
+
+def test_agent_handle_ask_auto_wires_node_refs():
+    from apxm import GraphRecorder
+    from apxm._generated import constants as gen_keys
+
+    g = GraphRecorder("handle_auto_wire")
+    source = g.ask(name="source", prompt="Produce context")
+    handle = g.spawn("alice", profile=MOCK_AGENT_PROFILE)
+    response = handle.ask("Use this context: {source}")
+
+    graph = g.to_graph()
+    comm_node = next(node for node in graph.nodes if node.id == response._node_id)
+    assert comm_node.attributes[gen_keys.INPUT_NAMES] == ["source"]
+    assert any(
+        edge.from_id == source._node_id
+        and edge.to_id == response._node_id
+        and edge.dependency == "Data"
+        for edge in graph.edges
+    )
 
 
 def test_graph_to_json():
@@ -228,13 +253,31 @@ def test_graph_to_air_preserves_full_literals():
 
     # Check that spawn_agent emits known attributes
     assert 'ais.spawn_agent "alice"' in air
-    assert f'profile = "{MOCK_AGENT_PROFILE}"' in air
+    assert f'profile = "{MOCK_AGENT_PROFILE.name}"' in air
     assert 'mode = "auto"' in air
 
     # Verify it's valid MLIR structure
     assert "module {" in air
     assert "func.func @air_test" in air
     assert "func.return" in air
+
+
+def test_spawn_agent_rejects_raw_profile_string():
+    from apxm import GraphRecorder
+
+    g = GraphRecorder("strict_profile")
+
+    with pytest.raises(TypeError, match="AgentRef"):
+        g.spawn_agent("alice", agent_name="alice", profile=MOCK_AGENT_PROFILE.name)
+
+
+def test_spawn_sugar_rejects_raw_profile_string():
+    from apxm import GraphRecorder
+
+    g = GraphRecorder("strict_spawn_profile")
+
+    with pytest.raises(TypeError, match="AgentRef"):
+        g.spawn("alice", profile=MOCK_AGENT_PROFILE.name)
 
 
 def test_graph_validation():

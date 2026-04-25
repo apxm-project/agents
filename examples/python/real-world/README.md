@@ -18,14 +18,15 @@ optimization) into end-to-end workflows that solve real problems.
 ## Key API
 
 ```python
+from apxm._generated.agents import claude, codex
+
 # Multi-agent SDLC
 architect = g.spawn("architect", profile=claude, cwd=cwd)
 coder = g.spawn("coder", profile=codex, cwd=cwd)
 
-architect.ask("Design the feature")
-design = architect.get_last_node()
+design = architect.ask("Design the feature")
 
-coder_result = g.communicate(target_agent="coder", message="{design}")
+coder_result = coder.ask("{design}")
 ```
 
 ## Learn More

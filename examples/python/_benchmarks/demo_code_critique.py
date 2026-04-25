@@ -37,7 +37,7 @@ _bootstrap_repo_python_path()
 
 from apxm import GraphRecorder, compile
 
-from _config import VLLM, VLLM_BACKEND, Vllm
+from _config import VLLM, VLLM_ROUTE
 
 
 SHARED_CONTEXT = """You are reviewing a Python web service that creates orders.
@@ -80,8 +80,7 @@ Known issues:
 
 @compile(
     default_provider=VLLM,
-    default_backend=VLLM_BACKEND,
-    default_model=Vllm.QWEN_2_5_7B,
+    default_route=VLLM_ROUTE,
 )
 def demo_code_critique(g: GraphRecorder):
     """Build the composite code-critique demo graph."""

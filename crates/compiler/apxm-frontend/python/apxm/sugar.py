@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from apxm._generated import constants as c
 from . import constants as graph_keys
 from .proxy import GraphRecorder, NodeRef
 
+if TYPE_CHECKING:
+    from ._generated.agents import AgentRef
+    from ._generated.models import ModelId
+
 
 class AgentHandle:
-    """Handle to a spawned agent that supports method chaining for COMMUNICATE nodes."""
+    """Handle to a spawned agent that emits COMMUNICATE nodes."""
 
     def __init__(self, recorder: GraphRecorder, spawn_node: NodeRef, agent_name: str) -> None:
         self._recorder = recorder
@@ -19,10 +23,10 @@ class AgentHandle:
         self._last_node = spawn_node
         self._msg_counter = 0
 
-    def ask(self, message: str, **attributes: Any) -> "AgentHandle":
+    def ask(self, message: str, **attributes: Any) -> NodeRef:
         """Send a message to the spawned agent via COMMUNICATE node.
 
-        Returns self for method chaining.
+        Returns the COMMUNICATE node.
 
         The message can contain {var_name} references which will be auto-wired
         to NodeRef variables in the caller's scope.
@@ -33,35 +37,38 @@ class AgentHandle:
         # Auto-wire: resolve {var_name} to NodeRef
         resolved_message, auto_refs = self._recorder._resolve_template_refs(message)
 
-        comm_node = self._recorder._add_node(
-            node_name,
-            graph_keys.OP_COMMUNICATE,
-            {
-                c.RECIPIENT: self._agent_name,
-                c.MESSAGE: resolved_message,
-                c.PROTOCOL: "acp",  # AgentHandle always communicates via ACP protocol
-                **attributes,
-            },
-        )
+        attrs = {
+            c.RECIPIENT: self._agent_name,
+            c.MESSAGE: resolved_message,
+            c.PROTOCOL: graph_keys.COMMUNICATE_PROTOCOL_ACP,
+            **attributes,
+        }
+        if auto_refs:
+            attrs[graph_keys.INPUT_NAMES] = [name for name, _ in auto_refs]
+
+        comm_node = self._recorder._add_node(node_name, graph_keys.OP_COMMUNICATE, attrs)
 
         # Create control edge from previous node to this communicate node
-        self._recorder.add_edge(self._last_node, comm_node, dependency="Control")
+        self._recorder.add_edge(
+            self._last_node,
+            comm_node,
+            dependency=graph_keys.DEPENDENCY_CONTROL,
+        )
 
         # Create auto-wire data edges
-        for ref in auto_refs:
-            self._recorder.add_edge(ref, comm_node, dependency="Data")
+        for _name, ref in auto_refs:
+            self._recorder.add_edge(
+                ref,
+                comm_node,
+                dependency=graph_keys.DEPENDENCY_DATA,
+            )
 
         self._last_node = comm_node
-        return self
+        return comm_node
 
     def get_spawn_node(self) -> NodeRef:
         """Return the initial SPAWN_AGENT node."""
         return self._spawn_node
-
-    def get_last_node(self) -> NodeRef:
-        """Return the last node in the agent communication chain."""
-        return self._last_node
-
 
 class Team:
     """Workflow-local team of agents.
@@ -77,9 +84,9 @@ class Team:
     def add(
         self,
         agent_name: str,
-        profile: str | Any | None = None,
+        profile: AgentRef | None = None,
         mode: str | None = None,
-        model: str | None = None,
+        model: ModelId | None = None,
         cwd: str | None = None,
         **attributes: Any,
     ) -> AgentHandle:
@@ -87,12 +94,12 @@ class Team:
 
         Args:
             agent_name: Name of the agent instance
-            profile: Agent profile (string name or AgentRef object from apxm._generated.agents)
+            profile: Agent profile from apxm._generated.agents
             mode: Agent mode
             model: Model name
             cwd: Working directory
 
-        Returns an AgentHandle for method chaining.
+        Returns an AgentHandle for sending messages to the spawned agent.
         """
         member_index = len(self._members)
         spawn_name = f"{self._name}_{agent_name}_{member_index}"
@@ -120,7 +127,7 @@ class Team:
             raise ValueError(f"team '{self._name}' has no members")
 
         wait_name = name or f"{self._name}_wait_all"
-        last_nodes = [member.get_last_node() for member in self._members]
+        last_nodes = [member._last_node for member in self._members]
         return self._recorder.wait_all(wait_name, last_nodes)
 
     def merge(self, name: str | None = None) -> NodeRef:
@@ -132,7 +139,7 @@ class Team:
             raise ValueError(f"team '{self._name}' has no members")
 
         merge_name = name or f"{self._name}_merge"
-        last_nodes = [member.get_last_node() for member in self._members]
+        last_nodes = [member._last_node for member in self._members]
         return self._recorder.merge(merge_name, last_nodes)
 
 
@@ -140,19 +147,19 @@ class Team:
 def _spawn_with_handle(
     self: GraphRecorder,
     agent_name: str,
-    profile: str | Any | None = None,
+    profile: AgentRef | None = None,
     mode: str | None = None,
-    model: str | None = None,
+    model: ModelId | None = None,
     cwd: str | None = None,
     **attributes: Any,
 ) -> AgentHandle:
-    """Spawn an agent and return an AgentHandle for method chaining.
+    """Spawn an agent and return an AgentHandle.
 
     This is sugar over spawn_agent() that returns an AgentHandle instead of NodeRef.
 
     Args:
         agent_name: Name of the agent instance
-        profile: Agent profile (string name or AgentRef object from apxm._generated.agents)
+        profile: Agent profile from apxm._generated.agents
         mode: Agent mode
         model: Model name
         cwd: Working directory
@@ -173,9 +180,11 @@ def _create_team(self: GraphRecorder, name: str) -> Team:
     """Create a workflow-local team of agents.
 
     Example:
+        from apxm._generated.agents import claude, codex
+
         team = g.team("research_team")
-        alice = team.add("alice", profile="claude")
-        bob = team.add("bob", profile="codex")
+        alice = team.add("alice", profile=claude)
+        bob = team.add("bob", profile=codex)
         alice.ask("Research X")
         bob.ask("Research Y")
         results = team.merge()

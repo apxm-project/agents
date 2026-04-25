@@ -120,11 +120,9 @@ Be thorough but careful — don't break adjacent code.
     g.add_edge(print1, runtime_task, dependency="Control")
 
     # Step 3: Both devs work in parallel
-    compiler_dev.ask("{compiler_task}")
-    compiler_removal = compiler_dev.get_last_node()
+    compiler_removal = compiler_dev.ask("{compiler_task}")
 
-    runtime_dev.ask("{runtime_task}")
-    runtime_removal = runtime_dev.get_last_node()
+    runtime_removal = runtime_dev.ask("{runtime_task}")
 
     print2 = g.print(message="=== COMPILER REMOVAL ===\n{compiler_removal}")
     print3 = g.print(message="=== RUNTIME REMOVAL ===\n{runtime_removal}")
@@ -166,8 +164,7 @@ If there are failures, identify what was missed and suggest fixes.
     )
     g.add_edge(wait, verify_task, dependency="Control")
 
-    verifier.ask("{verify_task}")
-    verification = verifier.get_last_node()
+    verification = verifier.ask("{verify_task}")
 
     print4 = g.print(message="=== VERIFICATION ===\n{verification}")
 

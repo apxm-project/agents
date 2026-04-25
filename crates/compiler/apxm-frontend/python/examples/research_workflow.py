@@ -4,12 +4,14 @@
 This example demonstrates:
 - @compile decorator with parameter derivation
 - Named parameter placeholders ({topic} syntax)
-- AgentHandle sugar for spawn().ask() chaining
+- AgentHandle sugar for spawn().ask() response nodes
 - Team sugar for workflow-local teams
 - Graph serialization to canonical .air
 """
 
 from apxm import compile, GraphRecorder
+from apxm._generated.agents import claude
+from apxm.constants import DEPENDENCY_CONTROL
 
 
 @compile()
@@ -25,26 +27,24 @@ def research_workflow(g: GraphRecorder, topic: str):
     team = g.team("research_team")
 
     # Spawn specialized agents
-    researcher = team.add("researcher", profile="claude", mode="normal")
-    critic = team.add("critic", profile="claude", mode="extended")
-    synthesizer = team.add("synthesizer", profile="claude", mode="normal")
+    researcher = team.add("researcher", profile=claude, mode="normal")
+    critic = team.add("critic", profile=claude, mode="extended")
+    synthesizer = team.add("synthesizer", profile=claude, mode="normal")
 
     # Parallel research and critique
-    researcher.ask(name="research_findings", prompt="Research the topic: {topic}. Provide detailed findings.")
-    critic.ask(name="critique_findings", prompt="Critically analyze existing research on: {topic}. Identify gaps and limitations.")
+    researcher.ask("Research the topic: {topic}. Provide detailed findings.")
+    critic.ask("Critically analyze existing research on: {topic}. Identify gaps and limitations.")
 
     # Wait for both to complete
     sync = team.wait_all("research_sync")
 
     # Synthesize results
-    synthesis = g.communicate(
-        name="synthesis_request",
-        target_agent="synthesizer",
-        message="Synthesize the research findings and critique into a comprehensive report on {topic}.",
+    synthesis = synthesizer.ask(
+        "Synthesize the research findings and critique into a comprehensive report on {topic}."
     )
 
     # Control flow: sync completes before synthesis
-    g.add_edge(sync, synthesis, dependency="Control")
+    g.add_edge(sync, synthesis, dependency=DEPENDENCY_CONTROL)
 
     # Return final synthesis
     g.done(source=synthesis)

@@ -159,7 +159,7 @@ To add new checks, edit `examples/python/self-hosted/audit.py`:
    ```python
    new_check_task = g.text(value="""Your check instructions...""")
    architect.ask("{new_check_task}")
-   new_check_result = architect.get_last_node()
+   new_check_result = architect.ask(...)
    ```
 
 2. Update the synthesis step to include new check:

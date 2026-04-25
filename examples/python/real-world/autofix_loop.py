@@ -15,7 +15,7 @@ Usage:
     dekk apxm execute examples/python/real-world/autofix_loop.py --emit-session
 """
 
-from apxm import compile, GraphRecorder, AgentConfig
+from apxm import compile, GraphRecorder
 from apxm._generated.agents import claude, codex
 
 
@@ -35,7 +35,7 @@ def autofix_loop(g: GraphRecorder):
     reviewer = g.spawn("reviewer", profile=claude, cwd=cwd)
 
     # Step 1: Architect analyzes the autofix report
-    architect.ask(
+    strategy = architect.ask(
         "Analyze APXM validation failures and create a fix strategy.\n\n"
         "Run the autofix validation:\n"
         "  python3 scripts/apxm-autofix.py\n\n"
@@ -46,7 +46,6 @@ def autofix_loop(g: GraphRecorder):
         "3. Estimated complexity for each cluster\n\n"
         "Output a JSON strategy with priority_order and cluster_groups."
     )
-    strategy = architect.get_last_node()
 
     print1 = g.print(message="=== STRATEGY ===\n{strategy}")
 
@@ -63,8 +62,7 @@ def autofix_loop(g: GraphRecorder):
     )
     g.add_edge(print1, implement_task, dependency="Control")
 
-    implementer.ask("{implement_task}")
-    implementation = implementer.get_last_node()
+    implementation = implementer.ask("{implement_task}")
 
     print2 = g.print(message="=== IMPLEMENTATION ===\n{implementation}")
 
@@ -84,8 +82,7 @@ def autofix_loop(g: GraphRecorder):
     )
     g.add_edge(print2, review_task, dependency="Control")
 
-    reviewer.ask("{review_task}")
-    review = reviewer.get_last_node()
+    review = reviewer.ask("{review_task}")
 
     print3 = g.print(message="=== REVIEW ===\n{review}")
 

@@ -60,5 +60,7 @@ python3 examples/python/_benchmarks/comparison_report.py \
 
 ## Config
 
-- **vllm_bench_config.toml** -- vLLM backend configuration for benchmarks
+- Register a benchmark route with `dekk apxm backend add ...` and
+  `dekk apxm backend add-model ... --alias benchmark`; benchmark graphs resolve
+  that route with `select_backend(...)`.
 - **dspy_stress.training.json** -- DSPy training data for optimization

@@ -7,14 +7,17 @@ import re
 from typing import TYPE_CHECKING, Any, Iterable
 
 if TYPE_CHECKING:
+    from ._generated.agents import AgentRef
     from ._generated.models import ModelId
     from ._generated.providers import ProviderSpec
+    from .backends import BackendRoute
 
 from apxm._generated import constants as c
 from . import constants as graph_keys
 from .config import AgentConfig, NodePolicy, WorkflowTargetKind
+from .normalize import normalize_model_id as _normalize_model_id
 from .normalize import normalize_attributes as _normalize_attributes
-from .normalize import normalize_provider as _normalize_provider
+from .normalize import normalize_provider_spec as _normalize_provider_spec
 from .normalize import normalize_value as _normalize_value
 from .ir import ApxmGraph, GraphEdge, GraphNode, Parameter
 
@@ -73,7 +76,12 @@ class GraphRecorder:
         self._param_names.add(name)
         return self
 
-    def add_edge(self, from_ref: NodeRef, to_ref: NodeRef, dependency: str = "Data") -> None:
+    def add_edge(
+        self,
+        from_ref: NodeRef,
+        to_ref: NodeRef,
+        dependency: str = graph_keys.DEPENDENCY_DATA,
+    ) -> None:
         self._edges.append(
             GraphEdge(from_id=from_ref._node_id, to_id=to_ref._node_id, dependency=dependency)
         )
@@ -82,7 +90,7 @@ class GraphRecorder:
         """Collect auto-wire edges from `{name}` placeholders in template.
 
         Walks the caller's local scope to look up each `{name}`. For each
-        name that resolves to a NodeRef or AgentHandle, records `(name, ref)`
+        name that resolves to a NodeRef, records `(name, ref)`
         in edge order. The template itself is returned unchanged — every
         `{name}` placeholder remains a named reference (the runtime
         substitutes by looking up `name` in the node's `input_names`).
@@ -123,8 +131,6 @@ class GraphRecorder:
             val = caller_locals.get(var_name)
             if isinstance(val, NodeRef):
                 pairs.append((var_name, val))
-            elif hasattr(val, 'get_last_node') and callable(val.get_last_node):
-                pairs.append((var_name, val.get_last_node()))
             # Otherwise leave as-is — validator will diagnose if unresolved.
 
         return template, pairs
@@ -164,9 +170,6 @@ class GraphRecorder:
             if isinstance(val, NodeRef):
                 node_ref_args.append((key, val))
                 literal_args[key] = f"{{{key}}}"
-            elif hasattr(val, 'get_last_node') and callable(val.get_last_node):
-                node_ref_args.append((key, val.get_last_node()))
-                literal_args[key] = f"{{{key}}}"
             else:
                 literal_args[key] = val
 
@@ -199,7 +202,8 @@ class GraphRecorder:
         prompt: str | None = None,
         agent: AgentConfig | None = None,
         model: ModelId | None = None,
-        provider: ProviderSpec | str | None = None,
+        provider: ProviderSpec | None = None,
+        route: BackendRoute | None = None,
         backend: str | None = None,
         **attributes: Any,
     ) -> NodeRef:
@@ -214,12 +218,7 @@ class GraphRecorder:
         attrs: dict[str, Any] = {graph_keys.TEMPLATE_STR: resolved}
         if auto_pairs:
             attrs[graph_keys.INPUT_NAMES] = [n for n, _ in auto_pairs]
-        if model is not None:
-            attrs[graph_keys.MODEL] = _normalize_value(model)
-        if provider is not None:
-            attrs[graph_keys.PROVIDER] = _normalize_provider(provider)
-        if backend is not None:
-            attrs[graph_keys.BACKEND] = backend
+        _apply_routing_attrs(attrs, route=route, model=model, provider=provider, backend=backend)
         attrs.update(_compose_system_prompt(agent, graph_keys.OP_ASK))
         attrs = self._apply_policy(attrs, attributes)
         node = self._add_node(name, graph_keys.OP_ASK, attrs)
@@ -237,7 +236,8 @@ class GraphRecorder:
         prompt: str | None = None,
         agent: AgentConfig | None = None,
         model: ModelId | None = None,
-        provider: ProviderSpec | str | None = None,
+        provider: ProviderSpec | None = None,
+        route: BackendRoute | None = None,
         backend: str | None = None,
         **attributes: Any,
     ) -> NodeRef:
@@ -252,12 +252,7 @@ class GraphRecorder:
         attrs: dict[str, Any] = {graph_keys.TEMPLATE_STR: resolved}
         if auto_pairs:
             attrs[graph_keys.INPUT_NAMES] = [n for n, _ in auto_pairs]
-        if model is not None:
-            attrs[graph_keys.MODEL] = _normalize_value(model)
-        if provider is not None:
-            attrs[graph_keys.PROVIDER] = _normalize_provider(provider)
-        if backend is not None:
-            attrs[graph_keys.BACKEND] = backend
+        _apply_routing_attrs(attrs, route=route, model=model, provider=provider, backend=backend)
         attrs.update(_compose_system_prompt(agent, graph_keys.OP_THINK))
         attrs = self._apply_policy(attrs, attributes)
         node = self._add_node(name, graph_keys.OP_THINK, attrs)
@@ -275,7 +270,8 @@ class GraphRecorder:
         prompt: str | None = None,
         agent: AgentConfig | None = None,
         model: ModelId | None = None,
-        provider: ProviderSpec | str | None = None,
+        provider: ProviderSpec | None = None,
+        route: BackendRoute | None = None,
         backend: str | None = None,
         **attributes: Any,
     ) -> NodeRef:
@@ -290,12 +286,7 @@ class GraphRecorder:
         attrs: dict[str, Any] = {graph_keys.TEMPLATE_STR: resolved}
         if auto_pairs:
             attrs[graph_keys.INPUT_NAMES] = [n for n, _ in auto_pairs]
-        if model is not None:
-            attrs[graph_keys.MODEL] = _normalize_value(model)
-        if provider is not None:
-            attrs[graph_keys.PROVIDER] = _normalize_provider(provider)
-        if backend is not None:
-            attrs[graph_keys.BACKEND] = backend
+        _apply_routing_attrs(attrs, route=route, model=model, provider=provider, backend=backend)
         attrs.update(_compose_system_prompt(agent, graph_keys.OP_REASON))
         attrs = self._apply_policy(attrs, attributes)
         node = self._add_node(name, graph_keys.OP_REASON, attrs)
@@ -440,7 +431,7 @@ class GraphRecorder:
             name = self._auto_name(graph_keys.OP_FENCE)
         return self._add_node(name, graph_keys.OP_FENCE, self._apply_policy({}, attributes))
 
-    def plan(self, name: str | None = None, *, goal: str | None = None, agent: AgentConfig | None = None, model: ModelId | None = None, provider: ProviderSpec | str | None = None, backend: str | None = None, **attributes: Any) -> NodeRef:
+    def plan(self, name: str | None = None, *, goal: str | None = None, agent: AgentConfig | None = None, model: ModelId | None = None, provider: ProviderSpec | None = None, route: BackendRoute | None = None, backend: str | None = None, **attributes: Any) -> NodeRef:
         if name is None:
             name = self._auto_name(graph_keys.OP_PLAN)
         if goal is None:
@@ -449,12 +440,7 @@ class GraphRecorder:
         attrs: dict[str, Any] = {graph_keys.GOAL: resolved_goal}
         if auto_pairs:
             attrs[graph_keys.INPUT_NAMES] = [n for n, _ in auto_pairs]
-        if model is not None:
-            attrs[graph_keys.MODEL] = _normalize_value(model)
-        if provider is not None:
-            attrs[graph_keys.PROVIDER] = _normalize_provider(provider)
-        if backend is not None:
-            attrs[graph_keys.BACKEND] = backend
+        _apply_routing_attrs(attrs, route=route, model=model, provider=provider, backend=backend)
         attrs.update(_compose_system_prompt(agent, graph_keys.OP_PLAN))
         attrs = self._apply_policy(attrs, attributes)
         node = self._add_node(name, graph_keys.OP_PLAN, attrs)
@@ -462,7 +448,7 @@ class GraphRecorder:
             self.add_edge(ref, node)
         return node
 
-    def reflect(self, name: str | None = None, *, trace_id: str | None = None, agent: AgentConfig | None = None, model: ModelId | None = None, provider: ProviderSpec | str | None = None, backend: str | None = None, **attributes: Any) -> NodeRef:
+    def reflect(self, name: str | None = None, *, trace_id: str | None = None, agent: AgentConfig | None = None, model: ModelId | None = None, provider: ProviderSpec | None = None, route: BackendRoute | None = None, backend: str | None = None, **attributes: Any) -> NodeRef:
         if name is None:
             name = self._auto_name(graph_keys.OP_REFLECT)
         if trace_id is None:
@@ -471,12 +457,7 @@ class GraphRecorder:
         attrs: dict[str, Any] = {graph_keys.TRACE_ID: resolved_trace_id}
         if auto_pairs:
             attrs[graph_keys.INPUT_NAMES] = [n for n, _ in auto_pairs]
-        if model is not None:
-            attrs[graph_keys.MODEL] = _normalize_value(model)
-        if provider is not None:
-            attrs[graph_keys.PROVIDER] = _normalize_provider(provider)
-        if backend is not None:
-            attrs[graph_keys.BACKEND] = backend
+        _apply_routing_attrs(attrs, route=route, model=model, provider=provider, backend=backend)
         attrs.update(_compose_system_prompt(agent, graph_keys.OP_REFLECT))
         attrs = self._apply_policy(attrs, attributes)
         node = self._add_node(name, graph_keys.OP_REFLECT, attrs)
@@ -492,7 +473,8 @@ class GraphRecorder:
         evidence: str | None = None,
         agent: AgentConfig | None = None,
         model: ModelId | None = None,
-        provider: ProviderSpec | str | None = None,
+        provider: ProviderSpec | None = None,
+        route: BackendRoute | None = None,
         backend: str | None = None,
         **attributes: Any,
     ) -> NodeRef:
@@ -518,12 +500,7 @@ class GraphRecorder:
             attrs = {graph_keys.CLAIM_TEXT: resolved_claim}
         if all_pairs:
             attrs[graph_keys.INPUT_NAMES] = [n for n, _ in all_pairs]
-        if model is not None:
-            attrs[graph_keys.MODEL] = _normalize_value(model)
-        if provider is not None:
-            attrs[graph_keys.PROVIDER] = _normalize_provider(provider)
-        if backend is not None:
-            attrs[graph_keys.BACKEND] = backend
+        _apply_routing_attrs(attrs, route=route, model=model, provider=provider, backend=backend)
         attrs.update(_compose_system_prompt(agent, graph_keys.OP_VERIFY))
         attrs = self._apply_policy(attrs, attributes)
         node = self._add_node(name, graph_keys.OP_VERIFY, attrs)
@@ -673,8 +650,6 @@ class GraphRecorder:
             name = self._auto_name(graph_keys.OP_RETURN)
         node = self._add_node(name, graph_keys.OP_RETURN, self._apply_policy({}, attributes))
         if source is not None:
-            if hasattr(source, "get_last_node"):
-                source = source.get_last_node()
             self.add_edge(source, node)
         return node
 
@@ -1014,8 +989,6 @@ class GraphRecorder:
         attrs = self._apply_policy(attrs, attributes)
         node = self._add_node(name, graph_keys.OP_GUARD, attrs)
         if source is not None:
-            if hasattr(source, "get_last_node"):
-                source = source.get_last_node()
             self.add_edge(source, node)
         return node
 
@@ -1122,8 +1095,6 @@ class GraphRecorder:
             name = self._auto_name(graph_keys.OP_YIELD)
         node = self._add_node(name, graph_keys.OP_YIELD, self._apply_policy({}, attributes))
         if source is not None:
-            if hasattr(source, "get_last_node"):
-                source = source.get_last_node()
             self.add_edge(source, node)
         return node
 
@@ -1191,9 +1162,9 @@ class GraphRecorder:
         name: str | None = None,
         *,
         agent_name: str | None = None,
-        profile: str | Any | None = None,
+        profile: AgentRef | None = None,
         mode: str | None = None,
-        model: str | None = None,
+        model: ModelId | None = None,
         cwd: str | None = None,
         capabilities: list[str] | None = None,
         goals: list[str] | None = None,
@@ -1204,7 +1175,7 @@ class GraphRecorder:
         Args:
             name: Node name (auto-generated if not provided)
             agent_name: Name of the agent instance
-            profile: Agent profile (string name or AgentRef object from apxm._generated.agents)
+            profile: Agent profile from apxm._generated.agents
             mode: Agent mode (e.g., "ask", "explore")
             model: Model name
             cwd: Working directory for the agent
@@ -1217,18 +1188,11 @@ class GraphRecorder:
             raise ValueError("spawn_agent() missing required keyword argument: 'agent_name'")
         attrs: dict[str, Any] = {graph_keys.AGENT_NAME: agent_name}
         if profile is not None:
-            # Support both string and typed AgentRef from apxm._generated.agents
-            if isinstance(profile, str):
-                attrs[graph_keys.PROFILE] = profile
-            elif hasattr(profile, 'name'):
-                # AgentRef or similar typed object
-                attrs[graph_keys.PROFILE] = profile.name
-            else:
-                attrs[graph_keys.PROFILE] = str(profile)
+            attrs[graph_keys.PROFILE] = _agent_profile_name(profile)
         if mode is not None:
             attrs[graph_keys.MODE] = mode
         if model is not None:
-            attrs[graph_keys.MODEL] = model
+            attrs[graph_keys.MODEL] = _normalize_model_id(model)
         if cwd is not None:
             attrs[graph_keys.CWD] = cwd
         if capabilities is not None:
@@ -1271,7 +1235,8 @@ class GraphRecorder:
         max_iterations: int | None = None,
         agent: AgentConfig | None = None,
         model: ModelId | None = None,
-        provider: ProviderSpec | str | None = None,
+        provider: ProviderSpec | None = None,
+        route: BackendRoute | None = None,
         backend: str | None = None,
         **attributes: Any,
     ) -> NodeRef:
@@ -1283,17 +1248,15 @@ class GraphRecorder:
         attrs: dict[str, Any] = {graph_keys.PROMPT: prompt}
         if max_iterations is not None:
             attrs[graph_keys.MAX_ITERATIONS] = max_iterations
-        if model is not None:
-            attrs[graph_keys.MODEL] = _normalize_value(model)
-        if provider is not None:
-            attrs[graph_keys.PROVIDER] = _normalize_provider(provider)
-        if backend is not None:
-            attrs[graph_keys.BACKEND] = backend
+        _apply_routing_attrs(attrs, route=route, model=model, provider=provider, backend=backend)
         attrs.update(_compose_system_prompt(agent, graph_keys.OP_AUTONOMOUS))
         attrs = self._apply_policy(attrs, attributes)
         return self._add_node(name, graph_keys.OP_AUTONOMOUS, attrs)
 
     def to_graph(self) -> ApxmGraph:
+        from .backends import validate_graph_routes
+
+        validate_graph_routes(self._nodes)
         return ApxmGraph(
             name=self._name,
             nodes=list(self._nodes),
@@ -1379,6 +1342,44 @@ def _compose_system_prompt(agent: AgentConfig | None, op: str) -> dict[str, Any]
             attrs[graph_keys.SYSTEM_PROMPT] = composed
 
     return attrs
+
+
+def _agent_profile_name(profile: Any) -> str:
+    from ._generated.agents import AgentRef
+
+    if isinstance(profile, AgentRef):
+        return profile.name
+    raise TypeError(
+        "agent profile must be an AgentRef imported from apxm._generated.agents"
+    )
+
+
+def _apply_routing_attrs(
+    attrs: dict[str, Any],
+    *,
+    route: Any | None,
+    model: Any | None,
+    provider: Any | None,
+    backend: str | None,
+) -> None:
+    if backend is not None:
+        raise TypeError("pass route=select_backend(...) instead of raw backend=")
+    if route is not None and model is not None:
+        raise ValueError("pass either route= or model=, not both")
+
+    if route is not None:
+        from .backends import BackendRoute
+
+        if not isinstance(route, BackendRoute):
+            raise TypeError("route must be a BackendRoute returned by select_backend()")
+        attrs[graph_keys.BACKEND] = route.backend
+        if route.model is not None:
+            attrs[graph_keys.MODEL] = route.model
+    elif model is not None:
+        attrs[graph_keys.MODEL] = _normalize_model_id(model)
+
+    if provider is not None:
+        attrs[graph_keys.PROVIDER] = _normalize_provider_spec(provider)
 
 
 def _coerce_node_policy(value: NodePolicy | dict[str, Any] | None) -> NodePolicy | None:

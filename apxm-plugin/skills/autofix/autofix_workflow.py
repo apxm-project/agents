@@ -19,6 +19,7 @@ Usage:
 
 import os
 from apxm import compile, GraphRecorder
+from apxm._generated.agents import claude, codex
 
 
 @compile()
@@ -33,10 +34,10 @@ def autofix_workflow(g: GraphRecorder):
     cwd = os.environ.get("APXM_HOME", os.getcwd())
 
     # Spawn agents
-    validator = g.spawn("validator", profile="claude", cwd=cwd)
+    validator = g.spawn("validator", profile=claude, cwd=cwd)
 
     # Step 1: Run validation
-    validator.ask("""Run the APXM autofix validation for scope: examples/python
+    validate_result = validator.ask(prompt="""Run the APXM autofix validation for scope: examples/python
 
 Execute:
   python3 scripts/apxm-autofix.py --scope examples/python --report-only
@@ -44,8 +45,7 @@ Execute:
 Report the full output (it will show validation results, task files created in /tmp/autofix-tasks/, etc.)
 """)
 
-    print1 = g.print(name="print_validation", message="=== VALIDATION OUTPUT ===\n{validator}")
-    g.add_edge(validator.get_last_node(), print1)
+    print1 = g.print(message="=== VALIDATION OUTPUT ===\n{validate_result}")
 
     # Step 2: Classify failures into clusters
     classify = g.think(
@@ -53,7 +53,7 @@ Report the full output (it will show validation results, task files created in /
         prompt="""Analyze the autofix validation output and classify failures:
 
 Validation output from validator:
-{validator}
+{validate_result}
 
 Parse the output and create failure clusters:
 1. Group by error type (import_error, mlir_parse_error, compile_error, etc.)
@@ -81,20 +81,18 @@ Output JSON:
 If status is "pass", output {{"status": "pass", "clusters": []}}.
 """
     )
-    g.add_edge(validator.get_last_node(), classify)
     g.add_edge(print1, classify, dependency="Control")
 
-    print2 = g.print(name="print_classification", message="=== FAILURE CLASSIFICATION ===\n{classify}")
-    g.add_edge(classify, print2)
+    print2 = g.print(message="=== FAILURE CLASSIFICATION ===\n{classify}")
 
     # Step 3: Branch on whether there are failures
     # Note: In a real implementation, we'd use BRANCH_ON_VALUE to conditionally execute.
     # For this simplified version, we'll just spawn fixers regardless.
 
     # Step 4: Spawn parallel fixers (simplified to 3 fixers for common error types)
-    fixer1 = g.spawn("fixer_import", profile="claude", cwd=cwd)
-    fixer2 = g.spawn("fixer_mlir", profile="claude", cwd=cwd)
-    fixer3 = g.spawn("fixer_compile", profile="claude", cwd=cwd)
+    fixer1 = g.spawn("fixer_import", profile=claude, cwd=cwd)
+    fixer2 = g.spawn("fixer_mlir", profile=claude, cwd=cwd)
+    fixer3 = g.spawn("fixer_compile", profile=claude, cwd=cwd)
 
     # Build fix prompts for each cluster type
     fix_import_task = g.ask(
@@ -116,7 +114,6 @@ If there are no import_error failures, output "No import errors to fix".
 Report what you fixed and verification results.
 """
     )
-    g.add_edge(classify, fix_import_task)
     g.add_edge(print2, fix_import_task, dependency="Control")
 
     fix_mlir_task = g.ask(
@@ -138,7 +135,6 @@ If there are no mlir_parse_error failures, output "No MLIR errors to fix".
 Report what you fixed and verification results.
 """
     )
-    g.add_edge(classify, fix_mlir_task)
     g.add_edge(print2, fix_mlir_task, dependency="Control")
 
     fix_compile_task = g.ask(
@@ -160,66 +156,55 @@ If there are no compile_error failures, output "No compile errors to fix".
 Report what you fixed and verification results.
 """
     )
-    g.add_edge(classify, fix_compile_task)
     g.add_edge(print2, fix_compile_task, dependency="Control")
 
     # All fixers work in parallel
-    fixer1.ask("{fix_import_task}")
-    g.add_edge(fix_import_task, fixer1.get_last_node())
+    import_fixes = fixer1.ask("{fix_import_task}")
 
-    fixer2.ask("{fix_mlir_task}")
-    g.add_edge(fix_mlir_task, fixer2.get_last_node())
+    mlir_fixes = fixer2.ask("{fix_mlir_task}")
 
-    fixer3.ask("{fix_compile_task}")
-    g.add_edge(fix_compile_task, fixer3.get_last_node())
+    compile_fixes = fixer3.ask("{fix_compile_task}")
 
-    print3 = g.print(name="print_fix_import", message="=== IMPORT FIXES ===\n{fixer1}")
-    g.add_edge(fixer1.get_last_node(), print3)
-
-    print4 = g.print(name="print_fix_mlir", message="=== MLIR FIXES ===\n{fixer2}")
-    g.add_edge(fixer2.get_last_node(), print4)
-
-    print5 = g.print(name="print_fix_compile", message="=== COMPILE FIXES ===\n{fixer3}")
-    g.add_edge(fixer3.get_last_node(), print5)
+    print3 = g.print(message="=== IMPORT FIXES ===\n{import_fixes}")
+    print4 = g.print(message="=== MLIR FIXES ===\n{mlir_fixes}")
+    print5 = g.print(message="=== COMPILE FIXES ===\n{compile_fixes}")
 
     # Step 5: Wait for all fixers to complete
     wait = g.wait_all(
-        name="wait_all_fixers",
-        fixer1.get_last_node(),
-        fixer2.get_last_node(),
-        fixer3.get_last_node()
+        "wait_all_fixers",
+        import_fixes,
+        mlir_fixes,
+        compile_fixes
     )
     g.add_edge(print3, wait, dependency="Control")
     g.add_edge(print4, wait, dependency="Control")
     g.add_edge(print5, wait, dependency="Control")
 
     # Step 6: Run final verification
-    verifier = g.spawn("verifier", profile="claude", cwd=cwd)
+    verifier = g.spawn("verifier", profile=claude, cwd=cwd)
 
-    verifier.ask("""Run final verification of all fixes:
+    verify_result = verifier.ask(prompt="""Run final verification of all fixes:
 
 Execute:
   python3 scripts/apxm-autofix.py --scope examples/python --verify-only
 
 Report the results (pass/fail counts, any remaining issues).
 """)
-    verify_comm = verifier.get_last_node()
-    g.add_edge(wait, verify_comm, dependency="Control")
+    g.add_edge(wait, verify_result, dependency="Control")
 
-    print6 = g.print(name="print_verification", message="=== VERIFICATION OUTPUT ===\n{verifier}")
-    g.add_edge(verify_comm, print6)
+    print6 = g.print(message="=== VERIFICATION OUTPUT ===\n{verify_result}")
 
     # Step 7: Generate final report
     report = g.think(
         name="generate_report",
         prompt="""Generate autofix report:
 
-Initial validation: {validator}
+Initial validation: {validate_result}
 Classification: {classify}
-Import fixes: {fixer1}
-MLIR fixes: {fixer2}
-Compile fixes: {fixer3}
-Final verification: {verifier}
+Import fixes: {import_fixes}
+MLIR fixes: {mlir_fixes}
+Compile fixes: {compile_fixes}
+Final verification: {verify_result}
 
 Report:
 - Scope: examples/python
@@ -235,19 +220,15 @@ Report:
 If status is partial or failed, list remaining issues and suggested next steps.
 """
     )
-    g.add_edge(validator.get_last_node(), report)
-    g.add_edge(classify, report)
-    g.add_edge(fixer1.get_last_node(), report)
-    g.add_edge(fixer2.get_last_node(), report)
-    g.add_edge(fixer3.get_last_node(), report)
-    g.add_edge(verifier.get_last_node(), report)
     g.add_edge(print6, report, dependency="Control")
 
-    print7 = g.print(name="print_report", message="=== AUTOFIX REPORT ===\n{report}")
-    g.add_edge(report, print7)
+    print7 = g.print(message="=== AUTOFIX REPORT ===\n{report}")
 
     g.done(print7)
 
 
 if __name__ == "__main__":
-    print(autofix_workflow._graph.to_air())
+    import apxm
+
+    result = apxm.run(autofix_workflow("crates/runtime"))
+    print(result.content)

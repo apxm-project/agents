@@ -27,8 +27,10 @@ from apxm._generated.emission import (
     emit_workflow_spawn,
 )
 
-MOCK_AGENT_PROFILE = "mock-agent-profile"
-MOCK_AGENT_PROFILE_ALT = "mock-agent-profile-alt"
+from .mocks import MOCK_AGENT_PROFILE, MOCK_AGENT_PROFILE_ALT
+
+MOCK_AGENT_PROFILE_NAME = MOCK_AGENT_PROFILE.name
+MOCK_AGENT_PROFILE_ALT_NAME = MOCK_AGENT_PROFILE_ALT.name
 
 # ---------------------------------------------------------------------------
 # Unit tests: emitter functions produce correct MLIR fragments
@@ -40,12 +42,12 @@ class TestEmitterFunctions:
     def test_emit_spawn_agent_primary_and_keywords(self):
         result = emit_spawn_agent(
             "%alice",
-            {"agent_name": "alice", "profile": MOCK_AGENT_PROFILE, "mode": "auto"},
+            {"agent_name": "alice", "profile": MOCK_AGENT_PROFILE_NAME, "mode": "auto"},
             [],
         )
         assert result.startswith("%alice = ais.spawn_agent")
         assert '"alice"' in result
-        assert f'profile = "{MOCK_AGENT_PROFILE}"' in result
+        assert f'profile = "{MOCK_AGENT_PROFILE_NAME}"' in result
         assert 'mode = "auto"' in result
         assert result.endswith(": !ais.token")
 
@@ -162,7 +164,7 @@ class TestGraphToAirRoundTrip:
         air = g.to_air()
 
         assert 'ais.spawn_agent "alice"' in air
-        assert f'profile = "{MOCK_AGENT_PROFILE}"' in air
+        assert f'profile = "{MOCK_AGENT_PROFILE.name}"' in air
         assert 'mode = "auto"' in air
 
     def test_communicate_air(self):

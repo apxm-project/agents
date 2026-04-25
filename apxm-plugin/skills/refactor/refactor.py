@@ -18,6 +18,7 @@ Usage:
 
 import os
 from apxm import compile, GraphRecorder
+from apxm._generated.agents import claude, codex
 
 
 @compile()
@@ -34,12 +35,12 @@ def refactor_workflow(g: GraphRecorder):
     cwd = os.environ.get("APXM_HOME", os.getcwd())
 
     # Spawn agents
-    analyzer = g.spawn("analyzer", profile="claude", cwd=cwd)
-    implementer = g.spawn("implementer", profile="codex", cwd=cwd)
-    test_runner = g.spawn("test_runner", profile="claude", cwd=cwd)
+    analyzer = g.spawn("analyzer", profile=claude, cwd=cwd)
+    implementer = g.spawn("implementer", profile=codex, cwd=cwd)
+    test_runner = g.spawn("test_runner", profile=claude, cwd=cwd)
 
     # Step 1: Analyzer reads the code and identifies opportunities
-    analyzer.ask("""You are the code analyzer for APXM. Analyze this refactoring request:
+    analysis = analyzer.ask(prompt="""You are the code analyzer for APXM. Analyze this refactoring request:
 
 Target: {target}
 Goal: {goal}
@@ -72,15 +73,14 @@ Produce a refactoring analysis:
 Keep under 500 words but be specific about file paths and identifiers.
 """)
 
-    print1 = g.print(name="print_analysis", message="=== REFACTORING ANALYSIS ===\n{analyzer}")
-    g.add_edge(analyzer.get_last_node(), print1)
+    print1 = g.print(message="=== REFACTORING ANALYSIS ===\n{analysis}")
 
     # Step 2: Implementer does the refactoring
     implementer_task = g.ask(
         name="build_implementer_task",
         prompt="""Based on this analysis, implement the refactoring:
 
-Analysis: {analyzer}
+Analysis: {analysis}
 
 Follow the step-by-step plan. For each step:
 1. Make the change
@@ -101,21 +101,18 @@ After all changes:
 Be methodical. If something doesn't compile, fix it before moving on.
 """
     )
-    g.add_edge(analyzer.get_last_node(), implementer_task)
     g.add_edge(print1, implementer_task, dependency="Control")
 
-    implementer.ask("{implementer_task}")
-    g.add_edge(implementer_task, implementer.get_last_node())
+    impl_result = implementer.ask("{implementer_task}")
 
-    print2 = g.print(name="print_implementation", message="=== REFACTORING CHANGES ===\n{implementer}")
-    g.add_edge(implementer.get_last_node(), print2)
+    print2 = g.print(message="=== REFACTORING CHANGES ===\n{impl_result}")
 
     # Step 3: Test runner verifies nothing broke
     test_task = g.ask(
         name="build_test_task",
         prompt="""Verify the refactoring didn't break anything:
 
-Changes: {implementer}
+Changes: {impl_result}
 
 Run the test suite:
 
@@ -147,23 +144,20 @@ If there are failures:
 Keep iterating until all tests pass.
 """
     )
-    g.add_edge(implementer.get_last_node(), test_task)
     g.add_edge(print2, test_task, dependency="Control")
 
-    test_runner.ask("{test_task}")
-    g.add_edge(test_task, test_runner.get_last_node())
+    test_result = test_runner.ask("{test_task}")
 
-    print3 = g.print(name="print_test_results", message="=== TEST RESULTS ===\n{test_runner}")
-    g.add_edge(test_runner.get_last_node(), print3)
+    print3 = g.print(message="=== TEST RESULTS ===\n{test_result}")
 
     # Step 4: Summary
     summary = g.think(
         name="refactoring_summary",
         prompt="""Summarize the refactoring:
 
-Analysis: {analyzer}
-Implementation: {implementer}
-Test results: {test_runner}
+Analysis: {analysis}
+Implementation: {impl_result}
+Test results: {test_result}
 
 Summary:
 - Target: <what was refactored>
@@ -180,16 +174,15 @@ Summary:
 If status is incomplete or failed, list remaining issues.
 """
     )
-    g.add_edge(analyzer.get_last_node(), summary)
-    g.add_edge(implementer.get_last_node(), summary)
-    g.add_edge(test_runner.get_last_node(), summary)
     g.add_edge(print3, summary, dependency="Control")
 
-    print4 = g.print(name="print_summary", message="=== REFACTORING SUMMARY ===\n{summary}")
-    g.add_edge(summary, print4)
+    print4 = g.print(message="=== REFACTORING SUMMARY ===\n{summary}")
 
     g.done(print4)
 
 
 if __name__ == "__main__":
-    print(refactor_workflow._graph.to_air())
+    import apxm
+
+    result = apxm.run(refactor_workflow("apxm-runtime", "simplify error handling"))
+    print(result.content)

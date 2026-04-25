@@ -40,7 +40,7 @@ def refactor_workflow(g: GraphRecorder):
     test_runner = g.spawn("test_runner", profile=claude, cwd=cwd)
 
     # Step 1: Analyzer reads the code and identifies opportunities
-    analyzer.ask(prompt="""You are the code analyzer for APXM. Analyze this refactoring request:
+    analysis = analyzer.ask(prompt="""You are the code analyzer for APXM. Analyze this refactoring request:
 
 Target: {target}
 Goal: {goal}
@@ -72,7 +72,6 @@ Produce a refactoring analysis:
 
 Keep under 500 words but be specific about file paths and identifiers.
 """)
-    analysis = analyzer.get_last_node()
 
     print1 = g.print(message="=== REFACTORING ANALYSIS ===\n{analysis}")
 
@@ -104,8 +103,7 @@ Be methodical. If something doesn't compile, fix it before moving on.
     )
     g.add_edge(print1, implementer_task, dependency="Control")
 
-    implementer.ask("{implementer_task}")
-    impl_result = implementer.get_last_node()
+    impl_result = implementer.ask("{implementer_task}")
 
     print2 = g.print(message="=== REFACTORING CHANGES ===\n{impl_result}")
 
@@ -148,8 +146,7 @@ Keep iterating until all tests pass.
     )
     g.add_edge(print2, test_task, dependency="Control")
 
-    test_runner.ask("{test_task}")
-    test_result = test_runner.get_last_node()
+    test_result = test_runner.ask("{test_task}")
 
     print3 = g.print(message="=== TEST RESULTS ===\n{test_result}")
 

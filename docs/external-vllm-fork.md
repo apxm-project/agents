@@ -304,19 +304,18 @@ from the APXM graph route means the process is not the APXM fork.
 Enable APXM routing only after the server is reachable:
 
 ```sh
-dekk apxm vllm enable google/gemma-4-31B-it --port 8916
+dekk apxm vllm enable <SERVED_MODEL_ID> --port 8916 --alias smoke
 ```
 
 ### 7. Run an APXM smoke with metrics
 
 Use the checked-in self-hosted smoke graph so the example does not assume a
-benchmark-specific backend name. Set `APXM_VLLM_MODEL` to the served model id
-you enabled in step 6; in this Gemma lab run that value was
-`google/gemma-4-31B-it`.
+benchmark-specific backend name. The graph resolves the registered
+`smoke` alias with `select_backend(...)`; `<SERVED_MODEL_ID>` can be any model
+served by your vLLM endpoint.
 
 ```sh
 APXM_METRICS_DIR="$(mktemp -d)"
-APXM_VLLM_MODEL=<SERVED_MODEL_ID> \
 dekk apxm execute \
   --emit-session "${APXM_METRICS_DIR}/session" \
   --emit-metrics "${APXM_METRICS_DIR}/metrics.json" \

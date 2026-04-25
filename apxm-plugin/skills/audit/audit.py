@@ -40,7 +40,7 @@ def audit(g: GraphRecorder):
     architect = g.spawn("architect", profile=claude, cwd=cwd)
 
     # Step 1: Run build check
-    architect.ask("""Run APXM build and capture warnings/errors:
+    build_result = architect.ask(prompt="""Run APXM build and capture warnings/errors:
 
 Execute:
   dekk apxm build 2>&1
@@ -52,25 +52,23 @@ Parse the output and report:
 - Critical issues (if any)
 
 Output JSON:
-{
+{{
   "status": "clean" | "warnings" | "errors",
-  "warnings": {
+  "warnings": {{
     "dead_code": N,
     "unused_imports": N,
     "other": N
-  },
+  }},
   "errors": [],
   "total_warnings": N,
   "total_errors": N
-}
+}}
 """)
-    build_result = architect.get_last_node()
 
     print1 = g.print(message="=== BUILD STATUS ===\n{build_result}")
-    g.add_edge(build_result, print1)
 
     # Step 2: Run test check
-    architect.ask("""Run APXM test suite and report results:
+    test_result = architect.ask(prompt="""Run APXM test suite and report results:
 
 Execute:
   cargo test --workspace --quiet 2>&1
@@ -83,22 +81,20 @@ Parse the output and report:
 - Failed test names (if any)
 
 Output JSON:
-{
+{{
   "status": "pass" | "fail",
   "total": N,
   "passed": N,
   "failed": N,
   "failed_tests": ["test1", "test2", ...]
-}
+}}
 """)
-    test_result = architect.get_last_node()
     g.add_edge(print1, test_result, dependency="Control")
 
     print2 = g.print(message="=== TEST STATUS ===\n{test_result}")
-    g.add_edge(test_result, print2)
 
     # Step 3: Run autofix check
-    architect.ask("""Run APXM autofix validation and report:
+    autofix_result = architect.ask(prompt="""Run APXM autofix validation and report:
 
 Execute:
   PYTHONPATH=crates/compiler/apxm-frontend/python python3 scripts/apxm-autofix.py --report-only
@@ -111,26 +107,24 @@ Parse the output and report:
 - Failure types (import_error, mlir_parse_error, compile_error, etc.)
 
 Output JSON:
-{
+{{
   "status": "pass" | "fail",
   "total": N,
   "passed": N,
   "failed": N,
-  "failures_by_type": {
+  "failures_by_type": {{
     "import_error": N,
     "mlir_parse_error": N,
     "compile_error": N
-  }
-}
+  }}
+}}
 """)
-    autofix_result = architect.get_last_node()
     g.add_edge(print2, autofix_result, dependency="Control")
 
     print3 = g.print(message="=== AUTOFIX STATUS ===\n{autofix_result}")
-    g.add_edge(autofix_result, print3)
 
     # Step 4: Run policy check
-    architect.ask("""Run APXM policy checks and report violations:
+    policy_result = architect.ask(prompt="""Run APXM policy checks and report violations:
 
 Execute:
   python3 scripts/apxm-policy-check.py
@@ -141,24 +135,22 @@ Parse the output and report:
 - Critical violations (if any)
 
 Output JSON:
-{
+{{
   "status": "clean" | "violations",
-  "violations": {
+  "violations": {{
     "category1": N,
     "category2": N
-  },
+  }},
   "total_violations": N,
   "critical": []
-}
+}}
 """)
-    policy_result = architect.get_last_node()
     g.add_edge(print3, policy_result, dependency="Control")
 
     print4 = g.print(message="=== POLICY STATUS ===\n{policy_result}")
-    g.add_edge(policy_result, print4)
 
     # Step 5: Count TODOs/FIXMEs/stubs
-    architect.ask("""Count TODOs, FIXMEs, and stub handlers in runtime and compiler:
+    todo_result = architect.ask(prompt="""Count TODOs, FIXMEs, and stub handlers in runtime and compiler:
 
 Execute:
   grep -r "TODO\\|FIXME" crates/apxm-runtime crates/apxm-compiler --include="*.rs" | wc -l
@@ -170,20 +162,18 @@ Report:
 - High-priority items (if marked as such)
 
 Output JSON:
-{
+{{
   "todos_fixmes": N,
   "stub_handlers": N,
   "high_priority": []
-}
+}}
 """)
-    todo_result = architect.get_last_node()
     g.add_edge(print4, todo_result, dependency="Control")
 
     print5 = g.print(message="=== TODO/STUB STATUS ===\n{todo_result}")
-    g.add_edge(todo_result, print5)
 
     # Step 6: Check for missing ops in artifact emitter
-    architect.ask("""Check for missing AIS operations in artifact emitter:
+    missing_ops_result = architect.ask(prompt="""Check for missing AIS operations in artifact emitter:
 
 Compare:
 1. AIS operations defined in crates/core/apxm-ais/src/operations/definitions.rs (AISOperationType enum)
@@ -196,18 +186,16 @@ Execute:
   grep "Case<.*Op>" crates/compiler/apxm-compiler/mlir/lib/Dialect/AIS/Conversion/Artifact/ArtifactEmitter.cpp | wc -l
 
 Output JSON:
-{
+{{
   "total_ops": N,
   "mapped_ops": N,
   "missing_ops": ["Op1", "Op2", ...],
   "status": "complete" | "incomplete"
-}
+}}
 """)
-    missing_ops_result = architect.get_last_node()
     g.add_edge(print5, missing_ops_result, dependency="Control")
 
     print6 = g.print(message="=== MISSING OPS STATUS ===\n{missing_ops_result}")
-    g.add_edge(missing_ops_result, print6)
 
     # Step 7: Synthesize audit report
     synthesize = g.think(
@@ -268,12 +256,11 @@ Generate structured audit report:
 
 ## Overall Assessment
 <2-3 sentence summary of project health>
-""",
+"""
     )
     g.add_edge(print6, synthesize, dependency="Control")
 
     print7 = g.print(message="=== AUDIT REPORT ===\n{synthesize}")
-    g.add_edge(synthesize, print7)
 
     # Step 8: Generate actionable recommendations
     recommend = g.think(
@@ -307,15 +294,17 @@ Output recommendations sorted by (impact, effort):
 1. <area 1>: <rationale>
 2. <area 2>: <rationale>
 3. <area 3>: <rationale>
-""",
+"""
     )
     g.add_edge(print7, recommend, dependency="Control")
 
     print8 = g.print(message="=== RECOMMENDATIONS ===\n{recommend}")
-    g.add_edge(recommend, print8)
 
     g.done(print8)
 
 
 if __name__ == "__main__":
-    print(audit._graph.to_air())
+    import apxm
+
+    result = apxm.run(audit("full"))
+    print(result.content)

@@ -42,7 +42,7 @@ def add_op_workflow(g: GraphRecorder):
     reviewer = g.spawn("reviewer", profile=claude, cwd=cwd)
 
     # Step 1: Architect analyzes and creates implementation plan
-    architect.ask(prompt="""You are the architect for APXM. You need to create an implementation plan
+    architect_plan = architect.ask(prompt="""You are the architect for APXM. You need to create an implementation plan
 for adding a new AIS operation to the APXM codebase.
 
 Operation name: {op_name}
@@ -65,7 +65,6 @@ Create a structured plan with:
 
 Keep the plan under 400 words but be specific about attribute names and types.
 """)
-    architect_plan = architect.get_last_node()
 
     print1 = g.print(message="=== ARCHITECT PLAN ===\n{architect_plan}")
 
@@ -120,11 +119,9 @@ Follow APXM conventions: use apxm-core types, proper error handling with context
     )
 
     # Step 3: Both devs work in parallel
-    compiler_dev.ask("{compiler_prompt}")
-    compiler_impl = compiler_dev.get_last_node()
+    compiler_impl = compiler_dev.ask("{compiler_prompt}")
 
-    runtime_dev.ask("{runtime_prompt}")
-    runtime_impl = runtime_dev.get_last_node()
+    runtime_impl = runtime_dev.ask("{runtime_prompt}")
 
     print2 = g.print(message="=== COMPILER IMPL ===\n{compiler_impl}")
     print3 = g.print(message="=== RUNTIME IMPL ===\n{runtime_impl}")
@@ -166,8 +163,7 @@ If tests fail, suggest fixes.
     )
     g.add_edge(wait, review_task, dependency="Control")
 
-    reviewer.ask("{review_task}")
-    review_result = reviewer.get_last_node()
+    review_result = reviewer.ask("{review_task}")
 
     print4 = g.print(message="=== REVIEW ===\n{review_result}")
 
