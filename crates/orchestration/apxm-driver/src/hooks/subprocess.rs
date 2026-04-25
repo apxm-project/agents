@@ -298,6 +298,8 @@ mod tests {
             Some(TokenUsageSummary {
                 input_tokens: 3,
                 output_tokens: 5,
+                total_tokens: 8,
+                call_count: 1,
             }),
             Some(TimingBreakdown {
                 prefill_ms: 2.0,

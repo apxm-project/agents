@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use apxm_core::events::kind;
 use apxm_core::events::payload::{OperationEndPayload, OperationStartPayload};
 use apxm_core::events::{ApxmEvent, EventEmitter, EventSource};
 use apxm_core::types::execution::{ExecutionDag, Node, NodeMetadata};
@@ -104,8 +105,8 @@ async fn span_hierarchy_two_node_chain() {
     let op_events: Vec<_> = events
         .iter()
         .filter(|e| {
-            let kind = e.kind().name();
-            kind == "operation_start" || kind == "operation_end"
+            let event_kind = e.kind();
+            event_kind == kind::OPERATION_START || event_kind == kind::OPERATION_END
         })
         .collect();
 
@@ -134,13 +135,13 @@ async fn span_hierarchy_two_node_chain() {
     // Verify that different nodes get different parent_span_ids
     // (each node pushes its own span scope).
     let node1_start = op_events.iter().find(|e| {
-        e.kind().name() == "operation_start"
+        e.kind() == kind::OPERATION_START
             && e.payload
                 .downcast_ref::<OperationStartPayload>()
                 .map_or(false, |p| p.node_id == 1)
     });
     let node2_start = op_events.iter().find(|e| {
-        e.kind().name() == "operation_start"
+        e.kind() == kind::OPERATION_START
             && e.payload
                 .downcast_ref::<OperationStartPayload>()
                 .map_or(false, |p| p.node_id == 2)
@@ -166,7 +167,7 @@ async fn span_hierarchy_two_node_chain() {
     // Verify that start and end events for the same node share the same
     // parent_span_id (they are emitted within the same span scope).
     let node1_end = op_events.iter().find(|e| {
-        e.kind().name() == "operation_end"
+        e.kind() == kind::OPERATION_END
             && e.payload
                 .downcast_ref::<OperationEndPayload>()
                 .map_or(false, |p| p.node_id == 1)

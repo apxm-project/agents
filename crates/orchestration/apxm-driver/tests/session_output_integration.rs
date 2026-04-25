@@ -1,10 +1,16 @@
 use apxm_compiler::{AirEdge, AirModule, AirNode};
 use apxm_core::constants;
 use apxm_core::constants::graph::attrs as graph_attrs;
+use apxm_core::events::kind;
+use apxm_core::events::payload::{OperationEndPayload, OperationStartPayload};
+use apxm_core::events::{ApxmEvent, EventSource};
 use apxm_core::paths::session_node_dir_name;
-use apxm_core::types::{AISOperationType, DependencyType, NodeMetrics, OperationMetric, Value};
+use apxm_core::types::{
+    AISOperationType, DependencyType, NodeMetrics, OperationMetric, SessionStatus, Value,
+};
 use apxm_driver::session_output::SessionEventEmitter;
 use apxm_runtime::ExecutionEventEmitter;
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -14,6 +20,15 @@ use tempfile::TempDir;
 const CLAUDE_PROFILE: &str = "claude";
 const CLAUDE_CONTEXT_FILE: &str = "CLAUDE.md";
 const MOCK_AGENT_PROFILE: &str = "mock-profile";
+const EXECUTION_ID: &str = "exec-123";
+
+#[derive(Debug, Deserialize)]
+struct NodeStatusFile {
+    status: SessionStatus,
+    duration_ms: u128,
+    retries: u32,
+    error: Option<String>,
+}
 
 fn make_graph(nodes: Vec<AirNode>, edges: Vec<AirEdge>) -> AirModule {
     AirModule {
@@ -63,11 +78,27 @@ fn setup_project_root() -> TempDir {
 fn make_emitter(session_dir: &Path, project_root: &Path, graph: &AirModule) -> SessionEventEmitter {
     SessionEventEmitter::new(
         session_dir,
-        "exec-123".to_string(),
+        EXECUTION_ID.to_string(),
         Some(graph),
         Some(project_root),
     )
     .expect("session emitter")
+}
+
+fn read_trace(path: &Path) -> Vec<ApxmEvent> {
+    fs::read_to_string(path)
+        .expect("trace.ndjson")
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("trace event"))
+        .collect()
+}
+
+fn assert_runtime_source(event: &ApxmEvent) {
+    match &event.meta.source {
+        EventSource::Runtime => {}
+        other => panic!("expected runtime event source, got {other:?}"),
+    }
 }
 
 #[test]
@@ -192,6 +223,146 @@ fn llm_prompt_and_response_are_persisted() {
     assert_eq!(prompt, "Write the implementation plan");
     assert_eq!(response, "step one step two");
     assert!(output.contains("step one step two"));
+}
+
+#[test]
+fn node_lifecycle_events_are_persisted_to_root_and_node_traces() {
+    let session_root = tempfile::tempdir().expect("session root");
+    let project_root = setup_project_root();
+    let graph = make_graph(
+        vec![make_node(
+            1,
+            "seed",
+            AISOperationType::ConstStr,
+            HashMap::new(),
+        )],
+        Vec::new(),
+    );
+
+    let emitter = make_emitter(session_root.path(), project_root.path(), &graph);
+    emitter.emit_operation_start(1, AISOperationType::ConstStr);
+    emitter.emit_operation_end(
+        1,
+        AISOperationType::ConstStr,
+        Duration::from_millis(7),
+        true,
+        None,
+        None,
+    );
+
+    let root_events = read_trace(&session_root.path().join(constants::session::files::TRACE));
+    assert_eq!(root_events.len(), 2);
+    assert_eq!(root_events[0].kind(), kind::OPERATION_START);
+    assert_eq!(root_events[1].kind(), kind::OPERATION_END);
+
+    for event in &root_events {
+        assert_eq!(event.meta.trace_id, EXECUTION_ID);
+        assert_runtime_source(event);
+    }
+
+    let start_payload = root_events[0]
+        .payload
+        .downcast_ref::<OperationStartPayload>()
+        .expect("operation start payload");
+    assert_eq!(start_payload.node_id, 1);
+    assert_eq!(start_payload.op_type, AISOperationType::ConstStr);
+
+    let end_payload = root_events[1]
+        .payload
+        .downcast_ref::<OperationEndPayload>()
+        .expect("operation end payload");
+    assert_eq!(end_payload.node_id, 1);
+    assert_eq!(end_payload.op_type, AISOperationType::ConstStr);
+    assert_eq!(end_payload.duration_ms, 7);
+    assert!(end_payload.success);
+
+    let node_dir = session_root
+        .path()
+        .join(constants::session::files::NODES_DIR)
+        .join(session_node_dir_name(1, "seed"));
+    let node_events = read_trace(&node_dir.join(constants::session::node::TRACE_NDJSON));
+
+    assert_eq!(node_events.len(), 2);
+    assert_eq!(node_events[0].kind(), kind::OPERATION_START);
+    assert_eq!(node_events[1].kind(), kind::OPERATION_END);
+    assert_eq!(
+        node_events[0].payload.to_json(),
+        root_events[0].payload.to_json()
+    );
+    assert_eq!(
+        node_events[1].payload.to_json(),
+        root_events[1].payload.to_json()
+    );
+}
+
+#[test]
+fn failed_node_lifecycle_is_persisted_as_unsuccessful_operation_end() {
+    let session_root = tempfile::tempdir().expect("session root");
+    let project_root = setup_project_root();
+    let graph = make_graph(
+        vec![make_node(
+            1,
+            "seed",
+            AISOperationType::ConstStr,
+            HashMap::new(),
+        )],
+        Vec::new(),
+    );
+
+    let emitter = make_emitter(session_root.path(), project_root.path(), &graph);
+    emitter.emit_operation_start(1, AISOperationType::ConstStr);
+    emitter.emit_operation_end(
+        1,
+        AISOperationType::ConstStr,
+        Duration::from_millis(7),
+        false,
+        None,
+        None,
+    );
+
+    let root_events = read_trace(&session_root.path().join(constants::session::files::TRACE));
+    assert_eq!(root_events[1].kind(), kind::OPERATION_END);
+    let end_payload = root_events[1]
+        .payload
+        .downcast_ref::<OperationEndPayload>()
+        .expect("operation end payload");
+    assert!(!end_payload.success);
+
+    let node_dir = session_root
+        .path()
+        .join(constants::session::files::NODES_DIR)
+        .join(session_node_dir_name(1, "seed"));
+    let status: NodeStatusFile = serde_json::from_str(
+        &fs::read_to_string(node_dir.join(constants::session::node::STATUS_JSON))
+            .expect("status.json"),
+    )
+    .expect("status json");
+    assert_eq!(status.status, SessionStatus::Failed);
+    assert_eq!(status.duration_ms, 7);
+    assert_eq!(status.retries, 0);
+    assert!(status.error.is_some());
+}
+
+#[test]
+fn graph_lifecycle_callbacks_do_not_write_session_trace_events() {
+    let session_root = tempfile::tempdir().expect("session root");
+    let project_root = setup_project_root();
+    let graph = make_graph(
+        vec![make_node(
+            1,
+            "seed",
+            AISOperationType::ConstStr,
+            HashMap::new(),
+        )],
+        Vec::new(),
+    );
+
+    let emitter = make_emitter(session_root.path(), project_root.path(), &graph);
+    emitter.emit_graph_start(EXECUTION_ID, 1);
+    emitter.emit_graph_end(EXECUTION_ID, 1, true);
+
+    let root_events = read_trace(&session_root.path().join(constants::session::files::TRACE));
+    assert!(root_events.is_empty());
 }
 
 #[test]

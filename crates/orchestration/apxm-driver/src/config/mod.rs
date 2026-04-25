@@ -71,6 +71,14 @@ pub struct HookConfig {
     pub shell: Option<String>,
 }
 
+/// Stable TOML keys used by execution hook configuration.
+pub mod hook_toml_keys {
+    pub const TABLE: &str = "hooks";
+    pub const EVENT: &str = "event";
+    pub const COMMAND: &str = "command";
+    pub const SHELL: &str = "shell";
+}
+
 /// Built-in runtime middleware configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -623,6 +631,7 @@ pub enum ConfigError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use apxm_core::events::kind;
     use dirs::home_dir;
     use std::env;
 
@@ -631,6 +640,32 @@ mod tests {
     const MOCK_MODEL_NAME: &str = "mock-model";
     const MOCK_MODEL_NAME_ALT: &str = "mock-model-alt";
     const NOOP_COMMAND: &str = "true";
+    // Core ApxmEvent kinds are trace/event-bus names, not subprocess hook
+    // configuration events.
+    const APXM_EVENT_KIND_NAMES: [&str; 4] = [
+        kind::TOKEN.name(),
+        kind::TOOL_CALL.name(),
+        kind::OPERATION_START.name(),
+        kind::OPERATION_END.name(),
+    ];
+
+    #[test]
+    fn hook_event_all_contains_every_typed_event_kind() {
+        use HookEvent::*;
+
+        assert_eq!(
+            HookEvent::ALL,
+            [
+                GraphStart,
+                GraphEnd,
+                NodeStart,
+                NodeComplete,
+                NodeError,
+                ToolStart,
+                ToolEnd,
+            ]
+        );
+    }
 
     #[test]
     fn hook_event_wire_names_roundtrip() {
@@ -642,13 +677,36 @@ mod tests {
             };
             let encoded = toml::to_string(&hook).expect("hook config toml");
             assert!(
-                encoded.contains(&format!("event = \"{}\"", event.as_str())),
+                encoded.contains(&format!(
+                    "{} = \"{}\"",
+                    hook_toml_keys::EVENT,
+                    event.as_str()
+                )),
                 "encoded hook should use stable snake_case event name: {encoded}"
             );
 
             let decoded: HookConfig = toml::from_str(&encoded).expect("hook config decode");
             assert_eq!(decoded.event, event);
             assert_eq!(decoded.command, NOOP_COMMAND);
+        }
+    }
+
+    #[test]
+    fn apxm_event_kind_names_are_rejected_as_hook_events() {
+        for event in APXM_EVENT_KIND_NAMES {
+            let toml = format!(
+                r#"
+                {event_key} = "{event}"
+                {command_key} = "{NOOP_COMMAND}"
+                "#,
+                event_key = hook_toml_keys::EVENT,
+                command_key = hook_toml_keys::COMMAND,
+            );
+            let err = toml::from_str::<HookConfig>(&toml).expect_err("invalid hook event");
+            assert!(
+                err.to_string().contains(event),
+                "parse error should identify unsupported hook event {event}: {err}"
+            );
         }
     }
 
@@ -675,13 +733,13 @@ mod tests {
             backend = "{MOCK_PROVIDER_NAME}"
             fallbacks = ["{MOCK_PROVIDER_NAME_ALT}"]
 
-            [[hooks]]
-            event = "node_complete"
-            command = "echo {{node_id}}"
+            [[{hook_table}]]
+            {event_key} = "{node_complete_event}"
+            {command_key} = "echo {{node_id}}"
 
-            [[hooks]]
-            event = "tool_end"
-            command = "echo {{tool_name}}"
+            [[{hook_table}]]
+            {event_key} = "{tool_end_event}"
+            {command_key} = "echo {{tool_name}}"
 
             [[middlewares]]
             kind = "timeout"
@@ -694,7 +752,12 @@ mod tests {
             [tools.shell]
             enabled = true
             trusted_folders = ["/home/work"]
-        "#
+        "#,
+            hook_table = hook_toml_keys::TABLE,
+            event_key = hook_toml_keys::EVENT,
+            command_key = hook_toml_keys::COMMAND,
+            node_complete_event = HookEvent::NodeComplete.as_str(),
+            tool_end_event = HookEvent::ToolEnd.as_str(),
         );
 
         let config: ApXmConfig = toml::from_str(&toml).unwrap();

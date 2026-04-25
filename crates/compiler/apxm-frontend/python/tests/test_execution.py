@@ -204,6 +204,7 @@ def test_compiled_flow_build_request_no_session():
 
 def test_execution_options_render_local_cli_config():
     import tomllib
+    import apxm.config as config_mod
     from apxm import (
         ExecutionOptions,
         HookConfig,
@@ -225,18 +226,24 @@ def test_execution_options_render_local_cli_config():
 
     toml = options.config_toml()
     parsed = tomllib.loads(toml)
+    expected_hook = HookConfig(
+        event=HookEvent.NODE_COMPLETE,
+        command="echo {{node_id}}",
+    ).to_toml_table()
 
-    assert parsed["hooks"] == [
-        {"event": HookEvent.NODE_COMPLETE.value, "command": "echo {{node_id}}"},
-    ]
-    assert parsed["middlewares"] == [
+    assert parsed[config_mod._TOML_SECTION_HOOKS] == [expected_hook]
+    assert parsed[config_mod._TOML_SECTION_MIDDLEWARES] == [
         {
-            "kind": TimeoutMiddlewareConfig().to_toml_table()["kind"],
-            "default_timeout_ms": 5000,
+            config_mod._MIDDLEWARE_FIELD_KIND: TimeoutMiddlewareConfig().to_toml_table()[
+                config_mod._MIDDLEWARE_FIELD_KIND
+            ],
+            config_mod._MIDDLEWARE_FIELD_TIMEOUT_MS: 5000,
         },
         {
-            "kind": LoopGuardMiddlewareConfig().to_toml_table()["kind"],
-            "max_repeats": 2,
+            config_mod._MIDDLEWARE_FIELD_KIND: LoopGuardMiddlewareConfig().to_toml_table()[
+                config_mod._MIDDLEWARE_FIELD_KIND
+            ],
+            config_mod._MIDDLEWARE_FIELD_MAX_REPEATS: 2,
         },
     ]
     assert options.requires_local_cli() is True
@@ -245,6 +252,37 @@ def test_execution_options_render_local_cli_config():
     assert search_web.search_depth is SearchDepth.ADVANCED
     tools = ToolsConfig(search_web=search_web)
     assert tools.to_dict()["search_web"]["search_depth"] == SearchDepth.ADVANCED.value
+
+
+def test_hook_event_members_are_stable_frontend_contract():
+    from apxm import HookEvent
+
+    assert list(HookEvent) == [
+        HookEvent.GRAPH_START,
+        HookEvent.GRAPH_END,
+        HookEvent.NODE_START,
+        HookEvent.NODE_COMPLETE,
+        HookEvent.NODE_ERROR,
+        HookEvent.TOOL_START,
+        HookEvent.TOOL_END,
+    ]
+
+
+def test_execution_options_render_all_hook_events_in_local_cli_config():
+    import tomllib
+    import apxm.config as config_mod
+    from apxm import ExecutionOptions, HookConfig, HookEvent
+
+    hooks = [
+        HookConfig(event=event, command=f"emit-{event.value}")
+        for event in HookEvent
+    ]
+
+    parsed = tomllib.loads(ExecutionOptions(hooks=hooks).config_toml())
+
+    assert parsed[config_mod._TOML_SECTION_HOOKS] == [
+        hook.to_toml_table() for hook in hooks
+    ]
 
 
 def test_search_web_config_rejects_non_enum_search_depth():
