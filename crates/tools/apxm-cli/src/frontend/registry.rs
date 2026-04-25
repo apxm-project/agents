@@ -2,7 +2,8 @@ use apxm_acp::AgentRegistry;
 use apxm_core::constants;
 use apxm_core::types::model_spec::BUILTIN_MODELS;
 use apxm_core::types::operations::{
-    ContextStyle, MlirResultType, OperationCategory, OperationField, get_all_operations,
+    AISOperationType, ContextStyle, MlirResultType, OperationCategory, OperationField,
+    get_all_operations,
 };
 use apxm_core::types::provider_spec::{BUILTIN_PROVIDERS, ProviderProtocol};
 
@@ -22,7 +23,7 @@ pub struct FrontendFieldSpec {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FrontendOperationSpec {
-    pub op: String,
+    pub op: AISOperationType,
     pub name: &'static str,
     pub category: &'static str,
     pub description: &'static str,
@@ -45,7 +46,7 @@ pub struct FrontendAgentTemplate {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FrontendEmissionSpec {
-    pub op: String,
+    pub op: AISOperationType,
     pub mlir_mnemonic: String,
     pub primary_attr: Option<String>,
     pub context_style: String,
@@ -110,6 +111,42 @@ pub fn graph_attr_constants() -> Vec<FrontendConstant> {
         .collect()
 }
 
+pub fn graph_metric_constants() -> Vec<FrontendConstant> {
+    use constants::session::metrics_keys;
+    use metrics_keys::graph_metric_keys;
+
+    vec![
+        FrontendConstant {
+            name: "GRAPH_METRICS".to_string(),
+            value: metrics_keys::RUNTIME_GRAPH_METRICS,
+        },
+        FrontendConstant {
+            name: "GRAPH_METRIC_GRAPH".to_string(),
+            value: graph_metric_keys::GRAPH,
+        },
+        FrontendConstant {
+            name: "GRAPH_METRIC_NODES".to_string(),
+            value: graph_metric_keys::NODES,
+        },
+        FrontendConstant {
+            name: "GRAPH_METRIC_AGGREGATES".to_string(),
+            value: graph_metric_keys::AGGREGATES,
+        },
+        FrontendConstant {
+            name: "GRAPH_METRIC_BY_AGENT".to_string(),
+            value: graph_metric_keys::BY_AGENT,
+        },
+        FrontendConstant {
+            name: "GRAPH_METRIC_PROCESS_SPAWNS".to_string(),
+            value: graph_metric_keys::PROCESS_SPAWNS,
+        },
+        FrontendConstant {
+            name: "GRAPH_METRIC_PROMPT_TURNS".to_string(),
+            value: graph_metric_keys::PROMPT_TURNS,
+        },
+    ]
+}
+
 fn to_const_name(s: &str) -> String {
     s.replace('.', "_").to_ascii_uppercase()
 }
@@ -117,7 +154,7 @@ fn to_const_name(s: &str) -> String {
 pub fn operation_specs() -> Vec<FrontendOperationSpec> {
     get_all_operations()
         .map(|spec| FrontendOperationSpec {
-            op: spec.op_type.to_string(),
+            op: spec.op_type,
             name: spec.name,
             category: category_label(spec.category),
             description: spec.description,
@@ -193,7 +230,7 @@ pub fn emission_specs() -> Vec<FrontendEmissionSpec> {
                 MlirResultType::Void => "Void",
             };
             FrontendEmissionSpec {
-                op: spec.op_type.to_string(),
+                op: spec.op_type,
                 mlir_mnemonic: spec.op_type.mlir_mnemonic().to_string(),
                 primary_attr: spec.emission.primary_attr.map(|s| s.to_string()),
                 context_style: context_style.to_string(),
@@ -252,7 +289,7 @@ mod tests {
         assert!(
             operation_specs()
                 .iter()
-                .any(|item| item.op == "SPAWN_AGENT")
+                .any(|item| item.op == AISOperationType::SpawnAgent)
         );
     }
 
@@ -260,7 +297,7 @@ mod tests {
     fn operation_specs_have_full_projection() {
         let ask = operation_specs()
             .into_iter()
-            .find(|s| s.op == "ASK")
+            .find(|s| s.op == AISOperationType::Ask)
             .unwrap();
         assert!(!ask.long_description.is_empty());
         assert_eq!(ask.latency, "medium");

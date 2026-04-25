@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use apxm_core::constants::session;
 use apxm_core::paths::session_node_dir_name;
+use apxm_core::types::operations::AISOperationType;
 use apxm_runtime::context_stack::{ContextScope, ContextStack, NodeMetadata};
 use tempfile::tempdir;
 
@@ -27,14 +28,14 @@ fn context_stack_reads_real_session_output() {
         1,
         NodeMetadata {
             name: "seed".to_string(),
-            op_type: "ConstStr".to_string(),
+            op_type: AISOperationType::ConstStr,
         },
     );
     metadata.insert(
         2,
         NodeMetadata {
             name: "process".to_string(),
-            op_type: "Communicate".to_string(),
+            op_type: AISOperationType::Communicate,
         },
     );
 
@@ -94,21 +95,21 @@ fn context_stack_full_demand_paging() {
         1,
         NodeMetadata {
             name: "planner".to_string(),
-            op_type: "SpawnAgent".to_string(),
+            op_type: AISOperationType::SpawnAgent,
         },
     );
     metadata.insert(
         2,
         NodeMetadata {
             name: "coder".to_string(),
-            op_type: "SpawnAgent".to_string(),
+            op_type: AISOperationType::SpawnAgent,
         },
     );
     metadata.insert(
         3,
         NodeMetadata {
             name: "reviewer".to_string(),
-            op_type: "SpawnAgent".to_string(),
+            op_type: AISOperationType::SpawnAgent,
         },
     );
 

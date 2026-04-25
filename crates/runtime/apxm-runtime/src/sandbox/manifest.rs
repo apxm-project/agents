@@ -5,6 +5,7 @@
 //! level is needed and what capabilities each node requires.
 
 use super::types::IsolationLevel;
+use apxm_core::types::operations::AISOperationType;
 use serde::{Deserialize, Serialize};
 
 /// AIS operation sandbox tiers.
@@ -33,8 +34,8 @@ pub mod tier {
 pub struct NodeSandboxReq {
     /// The node ID in the graph.
     pub node_id: u32,
-    /// The AIS operation name (e.g. "INV", "ASK", "THINK").
-    pub op: String,
+    /// The AIS operation.
+    pub op: AISOperationType,
     /// The sandbox tier (0–3).
     pub tier: u8,
     /// The minimum isolation level for this node.

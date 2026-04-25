@@ -65,7 +65,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
     ctx.aam.set_belief(
         stage_key,
         array_value.clone(),
-        TransitionLabel::operation(node.id, format!("{:?}", node.op_type)),
+        TransitionLabel::operation(node.id, node.op_type),
     );
 
     Ok(array_value)

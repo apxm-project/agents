@@ -26,6 +26,7 @@ use apxm_core::constants::runtime::{belief_keys, metadata, response_keys};
 use apxm_core::error::RuntimeError;
 use apxm_core::types::aam::{AamContext, CapabilityProjection, GoalProjection};
 use apxm_core::types::goal::GoalStatus;
+use apxm_core::types::{ProcessSpawnMetric, SpawnedProcessKind};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -103,14 +104,28 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
 
     // When profile is present, spawn an ACP subprocess
     if let Some(profile_name) = &profile {
-        let spawner =
-            ctx.process_table
-                .agent_spawner()
-                .await
-                .ok_or_else(|| RuntimeError::Operation {
+        let spawn_start = std::time::Instant::now();
+        let spawner = match ctx.process_table.agent_spawner().await {
+            Some(spawner) => spawner,
+            None => {
+                let message = "No AgentSpawner configured. Cannot spawn ACP agent.".to_string();
+                ctx.graph_metrics.record_spawn(ProcessSpawnMetric {
+                    node_id: node.id,
+                    agent_name: agent_name.clone(),
+                    process_id: None,
+                    parent_process_id: parent_process_id.clone(),
+                    profile: Some(profile_name.clone()),
+                    process_kind: SpawnedProcessKind::External,
+                    duration_ms: spawn_start.elapsed().as_millis() as u64,
+                    success: false,
+                    error: Some(message.clone()),
+                });
+                return Err(RuntimeError::Operation {
                     op_type: node.op_type,
-                    message: "No AgentSpawner configured. Cannot spawn ACP agent.".to_string(),
-                })?;
+                    message,
+                });
+            }
+        };
 
         let mode = get_optional_string_attribute(node, graph_attrs::MODE)?;
         let model = get_optional_string_attribute(node, graph_attrs::MODEL)?;
@@ -185,10 +200,36 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
                 session,
                 profile_name.clone(),
             )
-            .map_err(|e| RuntimeError::Operation {
-                op_type: node.op_type,
-                message: format!("Failed to register ACP process '{}': {}", agent_name, e),
+            .map_err(|e| {
+                let message = format!("Failed to register ACP process '{}': {}", agent_name, e);
+                ctx.graph_metrics.record_spawn(ProcessSpawnMetric {
+                    node_id: node.id,
+                    agent_name: agent_name.clone(),
+                    process_id: None,
+                    parent_process_id: parent_process_id.clone(),
+                    profile: Some(profile_name.clone()),
+                    process_kind: SpawnedProcessKind::External,
+                    duration_ms: spawn_start.elapsed().as_millis() as u64,
+                    success: false,
+                    error: Some(message.clone()),
+                });
+                RuntimeError::Operation {
+                    op_type: node.op_type,
+                    message,
+                }
             })?;
+
+        ctx.graph_metrics.record_spawn(ProcessSpawnMetric {
+            node_id: node.id,
+            agent_name: agent_name.clone(),
+            process_id: Some(process_id.clone()),
+            parent_process_id: parent_process_id.clone(),
+            profile: Some(profile_name.clone()),
+            process_kind: SpawnedProcessKind::External,
+            duration_ms: spawn_start.elapsed().as_millis() as u64,
+            success: true,
+            error: None,
+        });
 
         agent_info.insert(
             response_keys::PROFILE.to_string(),
@@ -207,17 +248,40 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
         );
     } else {
         // No profile — register as a local process for tracking
+        let spawn_start = std::time::Instant::now();
         match ctx
             .process_table
-            .spawn_local(agent_name.clone(), parent_process_id)
+            .spawn_local(agent_name.clone(), parent_process_id.clone())
         {
             Ok(process_id) => {
+                ctx.graph_metrics.record_spawn(ProcessSpawnMetric {
+                    node_id: node.id,
+                    agent_name: agent_name.clone(),
+                    process_id: Some(process_id.clone()),
+                    parent_process_id: parent_process_id.clone(),
+                    profile: None,
+                    process_kind: SpawnedProcessKind::Local,
+                    duration_ms: spawn_start.elapsed().as_millis() as u64,
+                    success: true,
+                    error: None,
+                });
                 agent_info.insert(
                     response_keys::PROCESS_ID.to_string(),
                     Value::String(process_id),
                 );
             }
             Err(e) => {
+                ctx.graph_metrics.record_spawn(ProcessSpawnMetric {
+                    node_id: node.id,
+                    agent_name: agent_name.clone(),
+                    process_id: None,
+                    parent_process_id: parent_process_id.clone(),
+                    profile: None,
+                    process_kind: SpawnedProcessKind::Local,
+                    duration_ms: spawn_start.elapsed().as_millis() as u64,
+                    success: false,
+                    error: Some(e.to_string()),
+                });
                 // Log but don't fail — local agents work via FlowRegistry without a process entry
                 apxm_op!(warn,
                     agent_name = %agent_name,
@@ -560,14 +624,14 @@ mod tests {
             1,
             ContextNodeMetadata {
                 name: "seed".to_string(),
-                op_type: "ConstStr".to_string(),
+                op_type: AISOperationType::ConstStr,
             },
         );
         node_metadata.insert(
             2,
             ContextNodeMetadata {
                 name: "spawn".to_string(),
-                op_type: "SpawnAgent".to_string(),
+                op_type: AISOperationType::SpawnAgent,
             },
         );
 

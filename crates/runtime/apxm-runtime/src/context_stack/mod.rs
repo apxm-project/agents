@@ -9,6 +9,7 @@ use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use apxm_core::types::operations::AISOperationType;
 use serde::{Deserialize, Serialize};
 
 pub use budget::BudgetAllocator;
@@ -30,7 +31,7 @@ pub struct ContextStackConfig {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NodeMetadata {
     pub name: String,
-    pub op_type: String,
+    pub op_type: AISOperationType,
 }
 
 #[derive(Clone)]
@@ -234,9 +235,10 @@ impl ContextStack {
 
     fn local_frame_content(&self, node_id: u64, profile: &str) -> Option<String> {
         let meta = self.node_metadata.get(&node_id)?;
+        let op_type = meta.op_type.to_string();
         Some(format!(
             "- Node: {} (#{})\n- Operation: {}\n- Profile: {}",
-            meta.name, node_id, meta.op_type, profile
+            meta.name, node_id, op_type, profile
         ))
     }
 
@@ -260,6 +262,7 @@ impl ContextStack {
 
         // Also query memory for additional context
         if let (Some(memory), Some(exec_id)) = (&self.memory, &self.execution_id) {
+            let op_type = meta.op_type.to_string();
             // Query STM for node-specific context
             // Use block_in_place to avoid nested runtime panic when called from async context
             let handle = tokio::runtime::Handle::try_current().ok()?;
@@ -283,7 +286,7 @@ impl ContextStack {
                     .iter()
                     .filter(|e| {
                         // Filter events that might be related to this node
-                        e.event_type.contains(&meta.name) || e.event_type.contains(&meta.op_type)
+                        e.event_type.contains(&meta.name) || e.event_type.contains(&op_type)
                     })
                     .take(3) // Limit to most recent 3 events
                     .collect();
@@ -403,7 +406,7 @@ mod tests {
             1,
             NodeMetadata {
                 name: "missing".to_string(),
-                op_type: "ConstStr".to_string(),
+                op_type: AISOperationType::ConstStr,
             },
         );
 

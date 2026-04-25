@@ -22,6 +22,7 @@ use std::sync::Arc;
 use super::cancellation::CancellationToken;
 use super::dag_splicer::{DagSplicer, NoOpSplicer};
 use super::events::ExecutionEventEmitter;
+use super::graph_metrics::GraphMetricsTracker;
 use super::inner_plan_linker::{InnerPlanLinker, NoOpLinker};
 use super::memoization::ResponseCache;
 use super::middleware::OperationMiddleware;
@@ -56,6 +57,7 @@ pub struct ExecutionContext {
     pub token_budget: Option<u64>,
     pub consumed_tokens: Arc<std::sync::atomic::AtomicU64>,
     pub event_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
+    pub graph_metrics: Arc<GraphMetricsTracker>,
     pub token_accountant: Arc<TokenAccountant>,
     pub timing_tracker: Arc<TimingTracker>,
     pub response_cache: Arc<ResponseCache>,
@@ -149,6 +151,7 @@ impl ExecutionContext {
             token_budget: None,
             consumed_tokens: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             event_emitter: None,
+            graph_metrics: Arc::new(GraphMetricsTracker::new()),
             token_accountant: Arc::new(TokenAccountant::new()),
             timing_tracker: Arc::new(TimingTracker::new()),
             response_cache,
@@ -309,6 +312,7 @@ impl ExecutionContext {
             token_budget: self.token_budget,
             consumed_tokens: Arc::clone(&self.consumed_tokens),
             event_emitter: self.event_emitter.as_ref().map(Arc::clone),
+            graph_metrics: Arc::clone(&self.graph_metrics),
             token_accountant: Arc::clone(&self.token_accountant),
             timing_tracker: Arc::clone(&self.timing_tracker),
             response_cache: Arc::clone(&self.response_cache),

@@ -13,6 +13,132 @@ use std::sync::Arc;
 use crate::process::{AgentProcess, ProcessId, ProcessKind, ProcessState};
 use crate::thread::{AgentThread, ThreadId, ThreadState};
 
+/// Token usage reported by a spawned agent prompt turn.
+#[derive(Debug, Clone, Default)]
+pub struct AgentPromptTokenUsage {
+    pub input_tokens: Option<usize>,
+    pub output_tokens: Option<usize>,
+}
+
+/// Provider-neutral response returned by a spawned agent prompter.
+#[derive(Debug, Clone)]
+pub struct AgentPromptResponse {
+    pub text: String,
+    pub session_id: Option<String>,
+    pub agent_session_id: Option<String>,
+    pub turn: Option<u64>,
+    pub model: Option<String>,
+    pub stop_reason: Option<String>,
+    pub token_usage: AgentPromptTokenUsage,
+}
+
+impl AgentPromptResponse {
+    pub fn text(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            session_id: None,
+            agent_session_id: None,
+            turn: None,
+            model: None,
+            stop_reason: None,
+            token_usage: AgentPromptTokenUsage::default(),
+        }
+    }
+
+    pub fn with_session_id(mut self, session_id: impl Into<String>) -> Self {
+        self.session_id = Some(session_id.into());
+        self
+    }
+
+    pub fn with_agent_session_id(mut self, agent_session_id: impl Into<String>) -> Self {
+        self.agent_session_id = Some(agent_session_id.into());
+        self
+    }
+
+    pub fn with_turn(mut self, turn: u64) -> Self {
+        self.turn = Some(turn);
+        self
+    }
+
+    pub fn with_model(mut self, model: impl Into<String>) -> Self {
+        self.model = Some(model.into());
+        self
+    }
+
+    pub fn with_stop_reason(mut self, stop_reason: impl Into<String>) -> Self {
+        self.stop_reason = Some(stop_reason.into());
+        self
+    }
+
+    pub fn with_token_usage(
+        mut self,
+        input_tokens: Option<usize>,
+        output_tokens: Option<usize>,
+    ) -> Self {
+        self.token_usage = AgentPromptTokenUsage {
+            input_tokens,
+            output_tokens,
+        };
+        self
+    }
+
+    pub fn to_value(&self, agent_name: &str) -> apxm_core::types::values::Value {
+        use apxm_core::constants::runtime::agent_result_keys as result_keys;
+        use apxm_core::types::values::{Number, Value};
+
+        let mut result = std::collections::HashMap::new();
+        result.insert(
+            result_keys::TEXT.to_string(),
+            Value::String(self.text.clone()),
+        );
+        result.insert(
+            result_keys::AGENT.to_string(),
+            Value::String(agent_name.to_string()),
+        );
+        if let Some(stop_reason) = &self.stop_reason {
+            result.insert(
+                result_keys::STOP_REASON.to_string(),
+                Value::String(stop_reason.clone()),
+            );
+        }
+        if let Some(session_id) = &self.session_id {
+            result.insert(
+                result_keys::SESSION_ID.to_string(),
+                Value::String(session_id.clone()),
+            );
+        }
+        if let Some(agent_session_id) = &self.agent_session_id {
+            result.insert(
+                result_keys::AGENT_SESSION_ID.to_string(),
+                Value::String(agent_session_id.clone()),
+            );
+        }
+        if let Some(turn) = self.turn {
+            result.insert(
+                result_keys::TURN.to_string(),
+                Value::Number(Number::Integer(turn as i64)),
+            );
+        }
+        if let Some(model) = &self.model {
+            result.insert(result_keys::MODEL.to_string(), Value::String(model.clone()));
+        }
+        if let Some(input) = self.token_usage.input_tokens {
+            result.insert(
+                result_keys::INPUT_TOKENS.to_string(),
+                Value::Number(Number::Integer(input as i64)),
+            );
+        }
+        if let Some(output) = self.token_usage.output_tokens {
+            result.insert(
+                result_keys::OUTPUT_TOKENS.to_string(),
+                Value::Number(Number::Integer(output as i64)),
+            );
+        }
+
+        Value::Object(result)
+    }
+}
+
 /// Trait for spawning external agent processes.
 ///
 /// Implemented by apxm-acp (which has access to AcpSession, AgentRegistry, etc.)
@@ -44,7 +170,7 @@ pub trait AgentPrompter: Send + Sync {
         &self,
         process: &AgentProcess,
         message: &str,
-    ) -> Result<apxm_core::types::values::Value, RuntimeError>;
+    ) -> Result<AgentPromptResponse, RuntimeError>;
 }
 
 /// Unified registry of all running agent processes and their threads.

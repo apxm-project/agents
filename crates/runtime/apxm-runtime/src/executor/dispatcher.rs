@@ -8,7 +8,9 @@ use super::{
 };
 use apxm_core::apxm_op;
 use apxm_core::error::RuntimeError;
-use apxm_core::types::{execution::Node, operations::AISOperationType, values::Value};
+use apxm_core::types::{
+    OperationMetric, execution::Node, operations::AISOperationType, values::Value,
+};
 
 /// Operation dispatcher routes operations to their handlers
 pub struct OperationDispatcher;
@@ -75,8 +77,6 @@ impl OperationDispatcher {
             return Err(RuntimeError::SchedulerCancelled);
         }
 
-        let op_type_str = format!("{:?}", node.op_type);
-
         // Push a new child span for this node execution.
         let parent_span_id = ctx.event_emitter.as_ref().and_then(|e| e.current_span_id());
         let node_span_id = uuid::Uuid::new_v4().to_string();
@@ -86,7 +86,7 @@ impl OperationDispatcher {
 
         // Emit OperationStart event
         if let Some(emitter) = &ctx.event_emitter {
-            emitter.emit_operation_start(node.id, &op_type_str);
+            emitter.emit_operation_start(node.id, node.op_type);
         }
         let op_start = std::time::Instant::now();
 
@@ -171,12 +171,22 @@ impl OperationDispatcher {
 
         let op_duration = op_start.elapsed();
         let success = result.is_ok();
+        ctx.graph_metrics.record_operation(OperationMetric {
+            node_id: node.id,
+            op_type: node.op_type,
+            duration_ms: op_duration.as_millis() as u64,
+            success,
+        });
+        let node_metrics = ctx.graph_metrics.get_node(node.id);
 
         // Emit OperationEnd event
         if let Some(emitter) = &ctx.event_emitter {
+            if let Some(metrics) = &node_metrics {
+                emitter.emit_node_metrics(node.id, metrics);
+            }
             let tokens = ctx.token_accountant.get_node(node.id);
             let timing = ctx.timing_tracker.get_node(node.id);
-            emitter.emit_operation_end(node.id, &op_type_str, op_duration, success, tokens, timing);
+            emitter.emit_operation_end(node.id, node.op_type, op_duration, success, tokens, timing);
         }
 
         // Restore parent span after node execution completes.

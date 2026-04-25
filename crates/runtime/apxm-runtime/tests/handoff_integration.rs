@@ -64,7 +64,7 @@ impl apxm_runtime::ExecutionEventEmitter for RecordingEmitter {
     fn emit_tool_start(&self, _name: &str, _args: &HashMap<String, Value>) {}
     fn emit_tool_end(&self, _name: &str, _result: &Value) {}
 
-    fn emit_operation_start(&self, node_id: u64, op_type: &str) {
+    fn emit_operation_start(&self, node_id: u64, op_type: AISOperationType) {
         self.events
             .lock()
             .unwrap()
@@ -74,7 +74,7 @@ impl apxm_runtime::ExecutionEventEmitter for RecordingEmitter {
     fn emit_operation_end(
         &self,
         node_id: u64,
-        op_type: &str,
+        op_type: AISOperationType,
         _duration: Duration,
         _success: bool,
         _tokens: Option<apxm_runtime::TokenUsageSummary>,

@@ -59,9 +59,9 @@ pub use context_stack::{
 };
 pub use executor::{
     CancellationToken, EmitterAdapter, ExecutionContext, ExecutionEvent, ExecutionEventEmitter,
-    ExecutorEngine, InnerPlanLinker, LoopGuardMiddleware, Next, NoOpLinker, NoOpWorkflowSpawner,
-    OperationMiddleware, TimeoutMiddleware, TokenUsageSummary, WorkflowSpawnResult,
-    WorkflowSpawner,
+    ExecutorEngine, GraphMetricsTracker, InnerPlanLinker, LoopGuardMiddleware, Next, NoOpLinker,
+    NoOpWorkflowSpawner, OperationMiddleware, TimeoutMiddleware, TokenUsageSummary,
+    WorkflowSpawnResult, WorkflowSpawner,
 };
 pub use graph_lifecycle::BackendGraphLifecycle;
 pub use memory::{Fact, FactFilter, FactResult, MemoryConfig, MemorySpace, MemorySystem};
@@ -71,7 +71,9 @@ pub use model_router::{
 };
 pub use observability::{MetricsCollector, SchedulerMetrics};
 pub use process::{AgentProcess, ProcessId, ProcessKind, ProcessState};
-pub use process_table::{AgentPrompter, AgentSpawner, ProcessTable};
+pub use process_table::{
+    AgentPromptResponse, AgentPromptTokenUsage, AgentPrompter, AgentSpawner, ProcessTable,
+};
 pub use runtime::{Runtime, RuntimeConfig, RuntimeExecutionResult};
 pub use scheduler::{DataflowScheduler, SchedulerConfig};
 pub use thread::{AgentThread, ThreadId, ThreadState};

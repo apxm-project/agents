@@ -3,14 +3,17 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::types::operations::AISOperationType;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CallEvent {
     /// AIR node id this call originated from.
     pub node_id: u64,
     /// Source-level node name (e.g. "security_review").
     pub node_name: String,
-    /// AIS op kind (e.g. "ASK", "THINK", "TOOL_DISPATCH").
-    pub op: String,
+    /// AIS op kind that originated the backend call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub op: Option<AISOperationType>,
     /// Fully-substituted prompt text seen by the backend.
     pub prompt: String,
     /// Resolved model id (e.g. "gpt-4o-mini" or vLLM tag).
@@ -51,7 +54,7 @@ mod tests {
         t.push(CallEvent {
             node_id: 1,
             node_name: "ask_a".into(),
-            op: "ASK".into(),
+            op: Some(AISOperationType::Ask),
             prompt: "hello".into(),
             model: "mock".into(),
             params: "temp=0,top_p=1".into(),

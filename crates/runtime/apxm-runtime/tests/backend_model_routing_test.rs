@@ -230,7 +230,7 @@ async fn ask_backend_attr_overrides_default_backend_without_changing_model() {
 
     let trace = override_trace.read();
     assert_eq!(trace.len(), 1, "expected one backend call");
-    assert_eq!(trace.events[0].op, "ASK");
+    assert_eq!(trace.events[0].op, Some(AISOperationType::Ask));
     assert_eq!(trace.events[0].prompt, "test prompt");
     assert_eq!(
         trace.events[0].model, "requested-model",

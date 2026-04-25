@@ -14,6 +14,7 @@ pub mod session;
 
 use apxm_core::error::RuntimeError;
 pub use apxm_core::types::goal::{Goal, GoalId, GoalStatus};
+use apxm_core::types::operations::AISOperationType;
 use apxm_core::types::values::Value;
 pub use beliefs::{BeliefChangeSet, BeliefMap};
 pub use capabilities::{CapabilityChange, CapabilityMap, CapabilityRecord};
@@ -475,7 +476,10 @@ pub struct TransitionDelta {
 /// Labels for transitions recorded in episodic memory.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TransitionLabel {
-    Operation { op_id: u64, op_type: Option<String> },
+    Operation {
+        op_id: u64,
+        op_type: Option<AISOperationType>,
+    },
     Custom(String),
 }
 
@@ -484,10 +488,10 @@ impl TransitionLabel {
         TransitionLabel::Custom(label.into())
     }
 
-    pub fn operation(op_id: u64, op_type: impl Into<String>) -> Self {
+    pub fn operation(op_id: u64, op_type: AISOperationType) -> Self {
         TransitionLabel::Operation {
             op_id,
-            op_type: Some(op_type.into()),
+            op_type: Some(op_type),
         }
     }
 }

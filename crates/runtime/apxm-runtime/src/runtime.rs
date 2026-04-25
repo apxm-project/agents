@@ -50,6 +50,8 @@ pub struct RuntimeExecutionResult {
     /// Aggregate token usage collected during execution. Empty snapshot if no
     /// LLM nodes ran.
     pub token_snapshot: crate::executor::token_accounting::TokenAccountingSnapshot,
+    /// Spawned-agent process and prompt metrics collected during execution.
+    pub graph_metrics_snapshot: apxm_core::types::GraphMetricsSnapshot,
     /// Backend graph status snapshots captured before graph release.
     pub graph_status_snapshots: Vec<GraphStatusSnapshot>,
 }
@@ -364,6 +366,7 @@ impl Runtime {
         // Clone context before scheduler takes ownership, so we can snapshot
         // token accounting after execution completes
         let token_accountant = Arc::clone(&context.token_accountant);
+        let graph_metrics = Arc::clone(&context.graph_metrics);
 
         // Execute with dataflow scheduler for automatic parallelism
         let exec_result = self.scheduler.execute(dag, executor, context, vec![]).await;
@@ -381,6 +384,7 @@ impl Runtime {
 
         // Capture token accounting snapshot after execution completes
         let token_snapshot = token_accountant.snapshot();
+        let graph_metrics_snapshot = graph_metrics.snapshot();
 
         Ok(RuntimeExecutionResult {
             results,
@@ -391,6 +395,7 @@ impl Runtime {
             all_outputs,
             node_output_map,
             token_snapshot,
+            graph_metrics_snapshot,
             graph_status_snapshots,
         })
     }
@@ -440,6 +445,7 @@ impl Runtime {
         .await;
         let executor = Arc::new(ExecutorEngine::new(context.clone()));
         let token_accountant = Arc::clone(&context.token_accountant);
+        let graph_metrics = Arc::clone(&context.graph_metrics);
         let exec_result = self
             .scheduler
             .execute(entry_dag, executor, context, vec![])
@@ -450,6 +456,7 @@ impl Runtime {
         let (results, stats, scheduler_metrics, all_outputs, node_output_map) = exec_result?;
 
         let token_snapshot = token_accountant.snapshot();
+        let graph_metrics_snapshot = graph_metrics.snapshot();
 
         Ok(RuntimeExecutionResult {
             results,
@@ -460,6 +467,7 @@ impl Runtime {
             all_outputs,
             node_output_map,
             token_snapshot,
+            graph_metrics_snapshot,
             graph_status_snapshots,
         })
     }
@@ -531,6 +539,7 @@ impl Runtime {
         }
         let executor = Arc::new(ExecutorEngine::new(context.clone()));
         let token_accountant = Arc::clone(&context.token_accountant);
+        let graph_metrics = Arc::clone(&context.graph_metrics);
         let exec_result = self
             .scheduler
             .execute(entry_dag, executor, context, arg_values)
@@ -545,6 +554,7 @@ impl Runtime {
         let (results, stats, scheduler_metrics, all_outputs, node_output_map) = exec_result?;
 
         let token_snapshot = token_accountant.snapshot();
+        let graph_metrics_snapshot = graph_metrics.snapshot();
 
         Ok(RuntimeExecutionResult {
             results,
@@ -555,6 +565,7 @@ impl Runtime {
             all_outputs,
             node_output_map,
             token_snapshot,
+            graph_metrics_snapshot,
             graph_status_snapshots,
         })
     }

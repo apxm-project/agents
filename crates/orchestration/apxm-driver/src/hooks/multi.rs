@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use apxm_core::types::TimingBreakdown;
+use apxm_core::types::operations::AISOperationType;
 use apxm_core::types::values::Value;
 use apxm_runtime::{ExecutionEventEmitter, TokenUsageSummary};
 
@@ -93,7 +94,7 @@ impl ExecutionEventEmitter for MultiEmitter {
         });
     }
 
-    fn emit_operation_start(&self, node_id: u64, op_type: &str) {
+    fn emit_operation_start(&self, node_id: u64, op_type: AISOperationType) {
         self.for_each("emit_operation_start", |child| {
             child.emit_operation_start(node_id, op_type)
         });
@@ -102,7 +103,7 @@ impl ExecutionEventEmitter for MultiEmitter {
     fn emit_operation_end(
         &self,
         node_id: u64,
-        op_type: &str,
+        op_type: AISOperationType,
         duration: Duration,
         success: bool,
         tokens: Option<TokenUsageSummary>,
@@ -245,7 +246,7 @@ mod tests {
                 .push(format!("graph_start:{execution_id}:{node_count}"));
         }
 
-        fn emit_operation_start(&self, node_id: u64, op_type: &str) {
+        fn emit_operation_start(&self, node_id: u64, op_type: AISOperationType) {
             self.events
                 .lock()
                 .push(format!("operation_start:{node_id}:{op_type}"));
@@ -275,7 +276,7 @@ mod tests {
         ]);
 
         emitter.emit_graph_start("exec-1", 3);
-        emitter.emit_operation_start(7, "ASK");
+        emitter.emit_operation_start(7, AISOperationType::Ask);
 
         assert_eq!(
             events.lock().clone(),

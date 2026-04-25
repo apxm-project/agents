@@ -6,6 +6,7 @@ mod tests {
 
     use crate::events::event::{ApxmEvent, EventSource};
     use crate::events::payload::*;
+    use crate::types::operations::AISOperationType;
 
     fn roundtrip<T>(payload: T)
     where
@@ -110,14 +111,14 @@ mod tests {
         serde_operation_start,
         OperationStartPayload {
             node_id: 1,
-            op_type: "ASK".into(),
+            op_type: AISOperationType::Ask,
         }
     );
     roundtrip_test!(
         serde_operation_end,
         OperationEndPayload {
             node_id: 1,
-            op_type: "ASK".into(),
+            op_type: AISOperationType::Ask,
             duration_ms: 1234,
             success: true,
         }
@@ -350,7 +351,7 @@ mod tests {
         let event = ApxmEvent::root(
             OperationEndPayload {
                 node_id: 42,
-                op_type: "ASK".into(),
+                op_type: AISOperationType::Ask,
                 duration_ms: 12,
                 success: true,
             },

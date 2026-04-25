@@ -13,11 +13,7 @@ fn apxm() -> Command {
     let mut cmd = Command::new(&binary);
     // Prevent color codes in test output
     cmd.env("NO_COLOR", "1");
-    let lib_dir = binary
-        .parent()
-        .map(|parent| parent.join("lib"))
-        .expect("apxm binary should have a parent directory");
-    if lib_dir.is_dir() {
+    if let Some(lib_dir) = compiler_library_dir(&binary) {
         #[cfg(target_os = "macos")]
         let lib_var = "DYLD_LIBRARY_PATH";
         #[cfg(not(target_os = "macos"))]
@@ -35,6 +31,37 @@ fn apxm() -> Command {
         cmd.env(lib_var, joined);
     }
     cmd
+}
+
+fn compiler_library_dir(binary: &Path) -> Option<std::path::PathBuf> {
+    let profile_dir = binary.parent()?;
+    let installed_lib_dir = profile_dir.join("lib");
+    if installed_lib_dir.is_dir() {
+        return Some(installed_lib_dir);
+    }
+
+    let build_dir = profile_dir.join("build");
+    let library_name = compiler_library_name();
+    std::fs::read_dir(build_dir)
+        .ok()?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path().join("out").join("build").join("lib"))
+        .find(|candidate| candidate.join(library_name).is_file())
+}
+
+fn compiler_library_name() -> &'static str {
+    #[cfg(target_os = "macos")]
+    {
+        "libapxm_compiler_c.dylib"
+    }
+    #[cfg(target_os = "windows")]
+    {
+        "apxm_compiler_c.dll"
+    }
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+    {
+        "libapxm_compiler_c.so"
+    }
 }
 
 fn write_tmp_graph(content: &str) -> tempfile::NamedTempFile {

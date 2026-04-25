@@ -128,7 +128,7 @@ fn context_stack_config_from_graph(
                 node.id,
                 apxm_runtime::context_stack::NodeMetadata {
                     name: node.name.clone(),
-                    op_type: format!("{:?}", node.op),
+                    op_type: node.op,
                 },
             )
         })
@@ -867,6 +867,13 @@ impl apxm_core::MetricsSource for RuntimeMetricsSource<'_> {
         if let Some(obj) = token_json.get(metrics_keys::TOKEN_ACCOUNTING).cloned() {
             map.insert(metrics_keys::TOKEN_ACCOUNTING.to_owned(), obj);
         }
+        let graph_metrics_json = self.execution.graph_metrics_snapshot.to_json();
+        if let Some(obj) = graph_metrics_json
+            .get(metrics_keys::RUNTIME_GRAPH_METRICS)
+            .cloned()
+        {
+            map.insert(metrics_keys::RUNTIME_GRAPH_METRICS.to_owned(), obj);
+        }
         #[cfg(feature = "metrics")]
         {
             let llm_metrics = &self.execution.llm_metrics;
@@ -982,7 +989,9 @@ fn build_metrics_json(
 mod tests {
     use super::build_execution_response;
     use apxm_core::constants::session::metrics_keys;
-    use apxm_core::types::{GraphStatusSnapshot, execution::ExecutionStats, values::Value};
+    use apxm_core::types::{
+        GraphMetricsSnapshot, GraphStatusSnapshot, execution::ExecutionStats, values::Value,
+    };
     use apxm_runtime::{
         RuntimeExecutionResult, SchedulerMetrics,
         executor::token_accounting::{TokenAccountingSnapshot, TokenUsageSummary},
@@ -1019,6 +1028,7 @@ mod tests {
                 per_agent: HashMap::new(),
                 total: TokenUsageSummary::default(),
             },
+            graph_metrics_snapshot: GraphMetricsSnapshot::default(),
             graph_status_snapshots: vec![],
         }
     }

@@ -36,12 +36,14 @@ pub use compiler::{
 };
 pub use execution::{
     Agent, AgentFlow, AgentId, AgentMetadata, CapabilityDeclaration, DagMetadata, DependencyType,
-    Edge, ExecutionDag, ExecutionStats, LatencyTierConfig, MemoryDeclaration, Node, NodeId,
-    NodeMetadata, NodeStatus, OpStatus, Task, TaskDag, TaskId, TaskMetadata,
-    WORKFLOW_SPAWN_PATH_TARGET_KINDS, WORKFLOW_TARGET_KIND_ARTIFACT_PATH,
-    WORKFLOW_TARGET_KIND_GRAPH_PATH, WORKFLOW_TARGET_KIND_REGISTERED_FLOW,
-    WORKFLOW_TARGET_KIND_WORKFLOW_PATH, WorkflowInvocation, WorkflowInvocationKind, WorkflowNode,
-    WorkflowTarget,
+    Edge, ExecutionDag, ExecutionStats, GraphMetricAggregates, GraphMetricTotals,
+    GraphMetricsSnapshot, LatencyTierConfig, MemoryDeclaration, Node, NodeId, NodeMetadata,
+    NodeMetrics, NodeProcessMetrics, NodeStatus, OpStatus, OperationMetric, OperationMetricTotals,
+    ProcessMetricTotals, ProcessPromptMetric, ProcessSpawnMetric, SpawnedProcessKind, Task,
+    TaskDag, TaskId, TaskMetadata, WORKFLOW_SPAWN_PATH_TARGET_KINDS,
+    WORKFLOW_TARGET_KIND_ARTIFACT_PATH, WORKFLOW_TARGET_KIND_GRAPH_PATH,
+    WORKFLOW_TARGET_KIND_REGISTERED_FLOW, WORKFLOW_TARGET_KIND_WORKFLOW_PATH, WorkflowInvocation,
+    WorkflowInvocationKind, WorkflowNode, WorkflowTarget,
 };
 pub use goal::{Goal, GoalId, GoalStatus};
 pub use graph_hints::{

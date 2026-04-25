@@ -195,7 +195,7 @@ async fn execute_plan_once(
     original_goal: &str,
     model_override: Option<&str>,
 ) -> Result<Value> {
-    let transition_label = TransitionLabel::operation(node.id, format!("{:?}", node.op_type));
+    let transition_label = TransitionLabel::operation(node.id, node.op_type);
     // Execute LLM request
     let response = execute_llm_request(ctx, node.id, "PLAN", request).await?;
 

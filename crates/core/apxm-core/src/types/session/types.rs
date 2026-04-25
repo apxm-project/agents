@@ -2,6 +2,8 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+use crate::types::operations::AISOperationType;
+
 /// Status of a session or completed node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -79,7 +81,7 @@ pub struct LiveSessionState {
 pub struct NodeInfo {
     pub id: u64,
     pub name: String,
-    pub op: String,
+    pub op: AISOperationType,
 }
 
 /// Completed node info for live tracking.
@@ -87,7 +89,7 @@ pub struct NodeInfo {
 pub struct CompletedNodeInfo {
     pub id: u64,
     pub name: String,
-    pub op: String,
+    pub op: AISOperationType,
     pub duration_ms: u64,
     pub status: SessionStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]

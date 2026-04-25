@@ -7,6 +7,7 @@ use std::io;
 use serde::{Deserialize, Serialize};
 
 use super::kind::{self, EventKind};
+use crate::types::operations::AISOperationType;
 
 /// Parent trait for all event payloads.
 pub trait EventPayload: Send + Sync + 'static {
@@ -282,8 +283,8 @@ impl_event_payload!(ProviderEventPayload, kind::PROVIDER_EVENT);
 pub struct OperationStartPayload {
     /// The graph node ID.
     pub node_id: u64,
-    /// The operation type (e.g. `"ASK"`, `"THINK"`).
-    pub op_type: String,
+    /// The operation type.
+    pub op_type: AISOperationType,
 }
 impl_event_payload!(OperationStartPayload, kind::OPERATION_START);
 
@@ -293,7 +294,7 @@ pub struct OperationEndPayload {
     /// The graph node ID.
     pub node_id: u64,
     /// The operation type.
-    pub op_type: String,
+    pub op_type: AISOperationType,
     /// How long the operation took, in milliseconds.
     pub duration_ms: u64,
     /// Whether the operation succeeded.

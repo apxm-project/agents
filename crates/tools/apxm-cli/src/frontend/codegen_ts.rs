@@ -5,7 +5,7 @@ use anyhow::Result;
 
 use super::registry::{
     FrontendOperationSpec, agent_templates, builtin_providers, graph_attr_constants,
-    operation_specs, provider_protocols,
+    graph_metric_constants, operation_specs, provider_protocols,
 };
 
 pub fn render_generated_typescript() -> String {
@@ -19,6 +19,7 @@ pub fn render_generated_typescript() -> String {
     render_ts_operations(&mut buf, &ops);
     render_ts_categories(&mut buf, &ops);
     render_ts_attr_constants(&mut buf);
+    render_ts_graph_metric_constants(&mut buf);
     render_ts_provider_types(&mut buf);
     render_ts_agents(&mut buf);
 
@@ -61,9 +62,10 @@ fn render_ts_op_spec(buf: &mut String) {
 
 fn render_ts_operations(buf: &mut String, ops: &[FrontendOperationSpec]) {
     for spec in ops {
-        let ident = spec.op.to_ascii_uppercase();
+        let op = spec.op.to_string();
+        let ident = op.to_ascii_uppercase();
         buf.push_str(&format!("export const {ident}: OpSpec = {{\n"));
-        buf.push_str(&format!("  op: {},\n", ts_string(&spec.op)));
+        buf.push_str(&format!("  op: {},\n", ts_string(&op)));
         buf.push_str(&format!("  name: {},\n", ts_string(spec.name)));
         buf.push_str(&format!(
             "  category: {} as OpCategory,\n",
@@ -107,7 +109,10 @@ fn render_ts_operations(buf: &mut String, ops: &[FrontendOperationSpec]) {
 
     buf.push_str("export const ALL_OPERATIONS: readonly OpSpec[] = [\n");
     for spec in ops {
-        buf.push_str(&format!("  {},\n", spec.op.to_ascii_uppercase()));
+        buf.push_str(&format!(
+            "  {},\n",
+            spec.op.to_string().to_ascii_uppercase()
+        ));
     }
     buf.push_str("] as const;\n\n");
 }
@@ -128,6 +133,14 @@ fn render_ts_categories(buf: &mut String, ops: &[FrontendOperationSpec]) {
 fn render_ts_attr_constants(buf: &mut String) {
     buf.push_str("export const ATTR = {\n");
     for item in graph_attr_constants() {
+        buf.push_str(&format!("  {}: {},\n", item.name, ts_string(item.value)));
+    }
+    buf.push_str("} as const;\n\n");
+}
+
+fn render_ts_graph_metric_constants(buf: &mut String) {
+    buf.push_str("export const GRAPH_METRICS = {\n");
+    for item in graph_metric_constants() {
         buf.push_str(&format!("  {}: {},\n", item.name, ts_string(item.value)));
     }
     buf.push_str("} as const;\n\n");
@@ -264,5 +277,13 @@ mod tests {
         let ts = render_generated_typescript();
         assert!(ts.contains("export const ATTR ="));
         assert!(ts.contains("MODEL:"));
+    }
+
+    #[test]
+    fn typescript_contains_graph_metric_constants() {
+        let ts = render_generated_typescript();
+        let graph_metrics_key = apxm_core::constants::session::metrics_keys::RUNTIME_GRAPH_METRICS;
+        assert!(ts.contains("export const GRAPH_METRICS ="));
+        assert!(ts.contains(&format!("GRAPH_METRICS: {graph_metrics_key:?}")));
     }
 }

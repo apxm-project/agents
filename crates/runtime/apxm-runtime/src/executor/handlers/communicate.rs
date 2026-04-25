@@ -27,6 +27,7 @@ use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::constants::runtime::context_stack as context_stack_consts;
 use apxm_core::constants::runtime::{belief_keys, metadata, response_keys};
 use apxm_core::error::RuntimeError;
+use apxm_core::types::ProcessPromptMetric;
 
 /// Well-known flow names tried in order when looking up a recipient agent.
 const COMMUNICATE_FLOW_NAMES: &[&str] = &["communicate", "main"];
@@ -580,24 +581,71 @@ async fn execute_acp(
         prompt_text.clone()
     };
 
-    // Send prompt via the AgentPrompter trait
-    let response = prompter.prompt(&process, &enriched_prompt).await?;
-
-    // Extract plain text for downstream nodes; store full object in beliefs for observability
-    let text_output = if let Value::Object(ref map) = response {
-        map.get("text")
-            .and_then(|v| {
-                if let Value::String(s) = v {
-                    Some(s.clone())
-                } else {
-                    None
-                }
-            })
-            .map(Value::String)
-            .unwrap_or_else(|| response.clone())
-    } else {
-        response.clone()
+    // Send prompt via the AgentPrompter trait and record the node-owned
+    // spawned-agent turn before returning the node output.
+    let prompt_start = std::time::Instant::now();
+    let prompt_response = match prompter.prompt(&process, &enriched_prompt).await {
+        Ok(response) => response,
+        Err(error) => {
+            ctx.graph_metrics.record_turn(ProcessPromptMetric {
+                node_id: node.id,
+                agent_name: process.name.clone(),
+                process_id: process.id.clone(),
+                protocol: comm_proto::ACP.to_string(),
+                session_id: None,
+                turn: None,
+                model: None,
+                stop_reason: None,
+                duration_ms: prompt_start.elapsed().as_millis() as u64,
+                input_tokens: None,
+                output_tokens: None,
+                response_bytes: 0,
+                success: false,
+                error: Some(error.to_string()),
+            });
+            return Err(error);
+        }
     };
+
+    let prompt_duration_ms = prompt_start.elapsed().as_millis() as u64;
+    let response_bytes = prompt_response.text.len();
+    ctx.graph_metrics.record_turn(ProcessPromptMetric {
+        node_id: node.id,
+        agent_name: process.name.clone(),
+        process_id: process.id.clone(),
+        protocol: comm_proto::ACP.to_string(),
+        session_id: prompt_response.session_id.clone(),
+        turn: prompt_response.turn,
+        model: prompt_response.model.clone(),
+        stop_reason: prompt_response.stop_reason.clone(),
+        duration_ms: prompt_duration_ms,
+        input_tokens: prompt_response.token_usage.input_tokens,
+        output_tokens: prompt_response.token_usage.output_tokens,
+        response_bytes,
+        success: true,
+        error: None,
+    });
+
+    if let (Some(input_tokens), Some(output_tokens)) = (
+        prompt_response.token_usage.input_tokens,
+        prompt_response.token_usage.output_tokens,
+    ) {
+        ctx.token_accountant.record(
+            node.id,
+            input_tokens,
+            output_tokens,
+            None,
+            Some(&process.name),
+        );
+        if let Some(emitter) = &ctx.event_emitter {
+            emitter.emit_token_usage(node.id, input_tokens, output_tokens);
+        }
+    }
+
+    // Return plain text to downstream nodes; store the full typed response in
+    // beliefs for observability.
+    let text_output = Value::String(prompt_response.text.clone());
+    let response = prompt_response.to_value(&process.name);
 
     // Clear the pending belief
     ctx.aam.set_belief(
@@ -620,6 +668,7 @@ async fn execute_acp(
     tracing::info!(
         execution_id = %ctx.execution_id,
         recipient = %recipient,
+        response_len = response_bytes,
         "COMMUNICATE ACP completed"
     );
 
@@ -731,7 +780,7 @@ mod tests {
     use crate::capability::flow_registry::FlowRegistry;
     use crate::context_stack::{ContextStack, NodeMetadata as ContextNodeMetadata};
     use crate::memory::{MemoryConfig, MemorySystem};
-    use crate::process_table::AgentPrompter;
+    use crate::process_table::{AgentPromptResponse, AgentPrompter};
     use apxm_backends::LLMRegistry;
     use apxm_core::paths::session_node_dir_name;
     use apxm_core::types::{
@@ -818,15 +867,12 @@ mod tests {
             &self,
             _process: &crate::process::AgentProcess,
             message: &str,
-        ) -> Result<Value> {
+        ) -> Result<AgentPromptResponse> {
             self.prompts
                 .lock()
                 .expect("prompt lock")
                 .push(message.to_string());
-            Ok(Value::Object(HashMap::from([(
-                "text".to_string(),
-                Value::String(message.to_string()),
-            )])))
+            Ok(AgentPromptResponse::text(message.to_string()))
         }
     }
 
@@ -870,14 +916,14 @@ mod tests {
                     1,
                     ContextNodeMetadata {
                         name: "seed".to_string(),
-                        op_type: "ConstStr".to_string(),
+                        op_type: AISOperationType::ConstStr,
                     },
                 ),
                 (
                     2,
                     ContextNodeMetadata {
                         name: "communicate_peer".to_string(),
-                        op_type: "Communicate".to_string(),
+                        op_type: AISOperationType::Communicate,
                     },
                 ),
             ])),

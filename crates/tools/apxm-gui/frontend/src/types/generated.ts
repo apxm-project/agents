@@ -72,7 +72,7 @@ export const UMEM: OpSpec = {
   producesOutput: true,
   needsSubmission: true,
   minInputs: 0,
-  exampleJson: "{\"id\": 3, \"op\": \"UMEM\", \"attributes\": {\"key\": \"summary\", \"value\": \"{{node_2}}\", \"memory_tier\": \"stm\"}}",
+  exampleJson: "{\"id\": 3, \"op\": \"UMEM\", \"attributes\": {\"key\": \"summary\", \"value\": \"Rust favors explicit ownership and borrowing.\", \"memory_tier\": \"stm\"}}",
 } as const;
 
 export const ASK: OpSpec = {
@@ -80,7 +80,7 @@ export const ASK: OpSpec = {
   name: "Ask",
   category: "reasoning" as OpCategory,
   description: "Simple Q&A with LLM (no extended thinking) - LOW latency",
-  longDescription: "Sends a prompt to the configured LLM and returns the response. The lightest LLM operation — no chain-of-thought or extended thinking. Use for straightforward questions, classifications, extractions, or reformulations. Template strings support {{node_N}} interpolation for dataflow inputs.",
+  longDescription: "Sends a prompt to the configured LLM and returns the response. The lightest LLM operation — no chain-of-thought or extended thinking. Use for straightforward questions, classifications, extractions, or reformulations. Template strings support named `{input}` interpolation for dataflow inputs via the node's `input_names` array.",
   latency: "medium",
   fields: [
     { name: "template_str", description: "Prompt template for the question", required: true, refType: null },
@@ -90,7 +90,7 @@ export const ASK: OpSpec = {
   producesOutput: true,
   needsSubmission: true,
   minInputs: 0,
-  exampleJson: "{\"id\": 1, \"op\": \"ASK\", \"attributes\": {\"template_str\": \"Summarize: {{node_0}}\"}}",
+  exampleJson: "{\"id\": 1, \"op\": \"ASK\", \"attributes\": {\"template_str\": \"Summarize: {source}\", \"input_names\": [\"source\"]}}",
 } as const;
 
 export const THINK: OpSpec = {
@@ -109,7 +109,7 @@ export const THINK: OpSpec = {
   producesOutput: true,
   needsSubmission: true,
   minInputs: 0,
-  exampleJson: "{\"id\": 1, \"op\": \"THINK\", \"attributes\": {\"template_str\": \"Solve step by step: {{node_0}}\", \"budget\": 4096}}",
+  exampleJson: "{\"id\": 1, \"op\": \"THINK\", \"attributes\": {\"template_str\": \"Solve step by step: {problem}\", \"input_names\": [\"problem\"], \"budget\": 4096}}",
 } as const;
 
 export const REASON: OpSpec = {
@@ -128,7 +128,7 @@ export const REASON: OpSpec = {
   producesOutput: true,
   needsSubmission: true,
   minInputs: 0,
-  exampleJson: "{\"id\": 1, \"op\": \"REASON\", \"attributes\": {\"template_str\": \"Given {{node_0}}, update your analysis\", \"structured\": true}}",
+  exampleJson: "{\"id\": 1, \"op\": \"REASON\", \"attributes\": {\"template_str\": \"Given {evidence}, update your analysis\", \"input_names\": [\"evidence\"], \"structured\": true}}",
 } as const;
 
 export const PLAN: OpSpec = {
@@ -170,16 +170,16 @@ export const VERIFY: OpSpec = {
   name: "Verify",
   category: "reasoning" as OpCategory,
   description: "Fact-check outputs against evidence",
-  longDescription: "Cross-references a claim against provided evidence using the LLM. Returns a verification result with confidence score. Use after ASK/THINK/REASON nodes to validate outputs before acting on them.",
+  longDescription: "Cross-references a claim against provided evidence using the LLM. Returns a verification result with confidence score. Use after ASK/THINK/REASON nodes to validate outputs before acting on them. Evidence may be supplied either as a literal attribute or via an incoming Data edge.",
   latency: "medium",
   fields: [
     { name: "claim", description: "Claim to verify", required: true, refType: null },
-    { name: "evidence", description: "Evidence to check against", required: true, refType: null },
+    { name: "evidence", description: "Evidence to check against", required: false, refType: null },
   ],
   producesOutput: true,
   needsSubmission: true,
   minInputs: 0,
-  exampleJson: "{\"id\": 5, \"op\": \"VERIFY\", \"attributes\": {\"claim\": \"{{node_3}}\", \"evidence\": \"{{node_4}}\"}}",
+  exampleJson: "{\"id\": 5, \"op\": \"VERIFY\", \"attributes\": {\"claim\": \"The solar system has eight planets.\"}}",
 } as const;
 
 export const INV_TOOL: OpSpec = {
@@ -187,16 +187,16 @@ export const INV_TOOL: OpSpec = {
   name: "InvokeTool",
   category: "tools" as OpCategory,
   description: "Call external tool with structured params; store result",
-  longDescription: "Invokes a registered capability (tool or function) by name. The capability must be declared in the AGENT node's capabilities list or registered in the runtime's CapabilityRegistry. Parameters are passed as a JSON object. The tool's return value becomes this node's output token.",
+  longDescription: "Invokes a registered capability (tool or function) by name. The capability must be declared in the AGENT node's capabilities list or registered in the runtime's CapabilityRegistry. Parameters are passed via the `params_json` attribute as a JSON object. The tool's return value becomes this node's output token.",
   latency: "medium",
   fields: [
     { name: "capability", description: "Name of the capability/tool to invoke", required: true, refType: "capability" },
-    { name: "parameters", description: "Parameters to pass to the tool", required: false, refType: null },
+    { name: "params_json", description: "JSON-encoded parameters to pass to the tool", required: false, refType: null },
   ],
   producesOutput: true,
   needsSubmission: true,
   minInputs: 0,
-  exampleJson: "{\"id\": 2, \"op\": \"INV_TOOL\", \"attributes\": {\"capability\": \"web_search\", \"parameters\": {\"query\": \"{{node_1}}\"}}}",
+  exampleJson: "{\"id\": 2, \"op\": \"INV_TOOL\", \"attributes\": {\"capability\": \"web_search\", \"params_json\": \"{\\\"query\\\":\\\"rust ownership\\\"}\"}}",
 } as const;
 
 export const EXC: OpSpec = {
@@ -221,7 +221,7 @@ export const PRINT: OpSpec = {
   name: "PrintOutput",
   category: "tools" as OpCategory,
   description: "Print output to stdout for debugging or user display",
-  longDescription: "Writes a message to stdout. Supports {{node_N}} template interpolation. Useful for debugging graphs during development or displaying final results to the user. The message is also stored as the output token.",
+  longDescription: "Writes a message to stdout. Supports named `{input}` template interpolation via `input_names`. Useful for debugging graphs during development or displaying final results to the user. The message is also stored as the output token.",
   latency: "none",
   fields: [
     { name: "message", description: "Message to print", required: true, refType: null },
@@ -229,7 +229,7 @@ export const PRINT: OpSpec = {
   producesOutput: false,
   needsSubmission: true,
   minInputs: 0,
-  exampleJson: "{\"id\": 4, \"op\": \"PRINT\", \"attributes\": {\"message\": \"Result: {{node_3}}\"}}",
+  exampleJson: "{\"id\": 4, \"op\": \"PRINT\", \"attributes\": {\"message\": \"Result: {result}\", \"input_names\": [\"result\"]}}",
 } as const;
 
 export const JUMP: OpSpec = {
@@ -256,7 +256,6 @@ export const BRANCH_ON_VALUE: OpSpec = {
   longDescription: "Evaluates an input token against a value and branches to one of two labels. If the token matches the value, control goes to label_true; otherwise to label_false. Used for if/else patterns in agent workflows.",
   latency: "none",
   fields: [
-    { name: "token", description: "Token to evaluate", required: true, refType: null },
     { name: "value", description: "Value to compare against", required: true, refType: null },
     { name: "true_label", description: "Label if comparison is true", required: true, refType: null },
     { name: "false_label", description: "Label if comparison is false", required: true, refType: null },
@@ -264,7 +263,7 @@ export const BRANCH_ON_VALUE: OpSpec = {
   producesOutput: false,
   needsSubmission: false,
   minInputs: 1,
-  exampleJson: "{\"id\": 5, \"op\": \"BRANCH_ON_VALUE\", \"attributes\": {\"token\": \"{{node_4}}\", \"value\": \"yes\", \"true_label\": \"6\", \"false_label\": \"7\"}}",
+  exampleJson: "{\"id\": 5, \"op\": \"BRANCH_ON_VALUE\", \"attributes\": {\"value\": \"yes\", \"true_label\": \"6\", \"false_label\": \"7\"}}",
 } as const;
 
 export const LOOP_START: OpSpec = {
@@ -303,15 +302,14 @@ export const RETURN: OpSpec = {
   name: "Return",
   category: "control_flow" as OpCategory,
   description: "Return from subgraph with result token",
-  longDescription: "Returns a value from a subgraph or flow. The token is provided via an incoming Data edge in the MLIR dialect. The optional token attribute allows JSON-based graphs to specify the source via {{node_N}} template syntax.",
+  longDescription: "Returns a value from a subgraph or flow. The result value is provided via an incoming Data edge.",
   latency: "none",
   fields: [
-    { name: "token", description: "Result token reference (optional, resolved from edges)", required: false, refType: null },
   ],
   producesOutput: true,
   needsSubmission: false,
   minInputs: 1,
-  exampleJson: "{\"id\": 6, \"op\": \"RETURN\", \"attributes\": {\"token\": \"{{node_5}}\"}}",
+  exampleJson: "{\"id\": 6, \"op\": \"RETURN\", \"attributes\": {}}",
 } as const;
 
 export const SWITCH: OpSpec = {
@@ -329,7 +327,7 @@ export const SWITCH: OpSpec = {
   producesOutput: true,
   needsSubmission: false,
   minInputs: 1,
-  exampleJson: "{\"id\": 3, \"op\": \"SWITCH\", \"attributes\": {\"discriminant\": \"{{node_2}}\", \"cases\": [{\"label\": \"math\", \"node_id\": 4}, {\"label\": \"code\", \"node_id\": 5}], \"default\": \"6\"}}",
+  exampleJson: "{\"id\": 3, \"op\": \"SWITCH\", \"attributes\": {\"discriminant\": \"topic_kind\", \"cases\": [{\"label\": \"math\", \"node_id\": 4}, {\"label\": \"code\", \"node_id\": 5}], \"default\": \"6\"}}",
 } as const;
 
 export const FLOW_CALL: OpSpec = {
@@ -347,7 +345,27 @@ export const FLOW_CALL: OpSpec = {
   producesOutput: true,
   needsSubmission: true,
   minInputs: 0,
-  exampleJson: "{\"id\": 4, \"op\": \"FLOW_CALL\", \"attributes\": {\"agent_name\": \"researcher\", \"flow_name\": \"analyze\", \"args\": {\"topic\": \"{{node_1}}\"}}}",
+  exampleJson: "{\"id\": 4, \"op\": \"FLOW_CALL\", \"attributes\": {\"agent_name\": \"researcher\", \"flow_name\": \"analyze\", \"args\": {\"topic\": \"{topic}\"}, \"input_names\": [\"topic\"]}}",
+} as const;
+
+export const WORKFLOW_SPAWN: OpSpec = {
+  op: "WORKFLOW_SPAWN",
+  name: "WorkflowSpawn",
+  category: "control_flow" as OpCategory,
+  description: "Spawn an external graph, artifact, or workflow as a child execution",
+  longDescription: "Invokes an external graph file, precompiled artifact, or workflow file as a child execution boundary. Arguments are passed by name through the args map. The child run resolves its session root from the explicit node attribute when present, otherwise it inherits the parent execution root.",
+  latency: "high",
+  fields: [
+    { name: "target_kind", description: "Invocation target kind: graph_path, artifact_path, or workflow_path", required: true, refType: null },
+    { name: "target", description: "Path of the graph, artifact, or workflow to execute", required: true, refType: null },
+    { name: "args", description: "Arguments to pass to the child execution", required: false, refType: null },
+    { name: "session_root", description: "Explicit session root for the child execution", required: false, refType: null },
+    { name: "await_result", description: "Whether to wait for the child result (must be true in the current runtime)", required: false, refType: null },
+  ],
+  producesOutput: true,
+  needsSubmission: true,
+  minInputs: 0,
+  exampleJson: "{\"id\": 5, \"op\": \"WORKFLOW_SPAWN\", \"attributes\": {\"target_kind\": \"workflow_path\", \"target\": \"workflows/review.apxmw\", \"args\": {\"topic\": \"{topic}\"}, \"input_names\": [\"topic\"], \"await_result\": true}}",
 } as const;
 
 export const MERGE: OpSpec = {
@@ -355,15 +373,14 @@ export const MERGE: OpSpec = {
   name: "Merge",
   category: "synchronization" as OpCategory,
   description: "Sync parallel paths; aggregate tokens into one",
-  longDescription: "Waits for multiple parallel branches to complete and combines their output tokens into a single aggregated result. Inputs are provided via incoming Data edges in the MLIR dialect. The optional tokens attribute allows JSON-based graphs to specify sources via {{node_N}} template syntax.",
+  longDescription: "Waits for multiple parallel branches to complete and combines their output tokens into a single aggregated result. Inputs are provided via incoming Data edges.",
   latency: "none",
   fields: [
-    { name: "tokens", description: "Token references to merge (optional, resolved from edges)", required: false, refType: null },
   ],
   producesOutput: true,
   needsSubmission: true,
   minInputs: 1,
-  exampleJson: "{\"id\": 6, \"op\": \"MERGE\", \"attributes\": {\"tokens\": [\"{{node_3}}\", \"{{node_4}}\", \"{{node_5}}\"]}}",
+  exampleJson: "{\"id\": 6, \"op\": \"MERGE\", \"attributes\": {}}",
 } as const;
 
 export const FENCE: OpSpec = {
@@ -387,15 +404,14 @@ export const WAIT_ALL: OpSpec = {
   name: "WaitAll",
   category: "synchronization" as OpCategory,
   description: "Block until all specified tokens are available",
-  longDescription: "Blocks execution until all listed input tokens are ready. Unlike MERGE, it does not combine the tokens — it simply acts as a synchronization barrier. Inputs are provided via incoming Data edges in the MLIR dialect. The optional tokens attribute allows JSON-based graphs to specify sources via {{node_N}} template syntax.",
+  longDescription: "Blocks execution until all listed input tokens are ready. Unlike MERGE, it does not combine the tokens — it simply acts as a synchronization barrier. Inputs are provided via incoming Data edges.",
   latency: "none",
   fields: [
-    { name: "tokens", description: "Token references to wait for (optional, resolved from edges)", required: false, refType: null },
   ],
   producesOutput: true,
   needsSubmission: true,
   minInputs: 1,
-  exampleJson: "{\"id\": 5, \"op\": \"WAIT_ALL\", \"attributes\": {\"tokens\": [\"{{node_2}}\", \"{{node_3}}\"]}}",
+  exampleJson: "{\"id\": 5, \"op\": \"WAIT_ALL\", \"attributes\": {}}",
 } as const;
 
 export const TRY_CATCH: OpSpec = {
@@ -781,6 +797,7 @@ export const ALL_OPERATIONS: readonly OpSpec[] = [
   RETURN,
   SWITCH,
   FLOW_CALL,
+  WORKFLOW_SPAWN,
   MERGE,
   FENCE,
   WAIT_ALL,
@@ -858,6 +875,7 @@ export const ATTR = {
   PARAMS_JSON: "params_json",
   TOOLS_ENABLED: "tools_enabled",
   TOOLS: "tools",
+  TOOL_GROUPS: "tool_groups",
   CODE: "code",
   INTERPRETER: "interpreter",
   CAPABILITY_NAME: "capability_name",
@@ -867,6 +885,7 @@ export const ATTR = {
   MESSAGE: "message",
   RECIPIENT: "recipient",
   TARGET: "target",
+  TARGET_KIND: "target_kind",
   PROTOCOL: "protocol",
   GOAL: "goal",
   GOAL_ID: "goal_id",
@@ -882,6 +901,7 @@ export const ATTR = {
   CASE_LABELS: "case_labels",
   TRY_LABEL: "try_label",
   CATCH_LABEL: "catch_label",
+  AWAIT_RESULT: "await_result",
   RECOVERY_TEMPLATE: "recovery_template",
   CASE_REGIONS: "case_regions",
   DEFAULT_REGION: "default_region",
@@ -919,6 +939,8 @@ export const ATTR = {
   PARTIES: "parties",
   PROPOSAL: "proposal",
   MAX_ROUNDS: "max_rounds",
+  ARGS: "args",
+  SESSION_ROOT: "session_root",
   HANDOFF: "handoff",
   HANDOFF_FROM: "handoff_from",
   HANDOFF_TO: "handoff_to",
@@ -965,6 +987,16 @@ export const ATTR = {
   ORDERING: "ordering",
   PAYLOAD: "payload",
   ERROR_HANDLER: "error_handler",
+} as const;
+
+export const GRAPH_METRICS = {
+  GRAPH_METRICS: "graph_metrics",
+  GRAPH_METRIC_GRAPH: "graph",
+  GRAPH_METRIC_NODES: "nodes",
+  GRAPH_METRIC_AGGREGATES: "aggregates",
+  GRAPH_METRIC_BY_AGENT: "by_agent",
+  GRAPH_METRIC_PROCESS_SPAWNS: "process_spawns",
+  GRAPH_METRIC_PROMPT_TURNS: "prompt_turns",
 } as const;
 
 export type ProviderProtocol =

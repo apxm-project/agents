@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use apxm_core::events::payload::*;
 use apxm_core::events::{ApxmEvent, EventEmitter, EventSource};
+use apxm_core::types::operations::AISOperationType;
 use apxm_core::types::values::Value;
 use parking_lot::RwLock;
 
@@ -123,17 +124,14 @@ impl ExecutionEventEmitter for EmitterAdapter {
         });
     }
 
-    fn emit_operation_start(&self, node_id: u64, op_type: &str) {
-        self.emit(OperationStartPayload {
-            node_id,
-            op_type: op_type.to_string(),
-        });
+    fn emit_operation_start(&self, node_id: u64, op_type: AISOperationType) {
+        self.emit(OperationStartPayload { node_id, op_type });
     }
 
     fn emit_operation_end(
         &self,
         node_id: u64,
-        op_type: &str,
+        op_type: AISOperationType,
         duration: Duration,
         success: bool,
         _tokens: Option<crate::executor::token_accounting::TokenUsageSummary>,
@@ -141,7 +139,7 @@ impl ExecutionEventEmitter for EmitterAdapter {
     ) {
         self.emit(OperationEndPayload {
             node_id,
-            op_type: op_type.to_string(),
+            op_type,
             duration_ms: duration.as_millis() as u64,
             success,
         });

@@ -135,8 +135,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
                 restore_stm_snapshot(ctx, &checkpoint_id).await;
 
                 // Record resume in AAM
-                let label =
-                    crate::aam::TransitionLabel::operation(node.id, format!("{:?}", node.op_type));
+                let label = crate::aam::TransitionLabel::operation(node.id, node.op_type);
                 ctx.aam.set_belief(
                     format!("{}{}", belief_keys::RESUME_PREFIX, checkpoint_id),
                     Value::String("resumed".to_string()),

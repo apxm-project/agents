@@ -44,10 +44,10 @@ fn per_node_tokens_appear_in_live_json() {
     .expect("session emitter");
 
     emitter.set_total_nodes(1);
-    emitter.emit_operation_start(42, "ASK");
+    emitter.emit_operation_start(42, AISOperationType::Ask);
     emitter.emit_operation_end(
         42,
-        "ASK",
+        AISOperationType::Ask,
         Duration::from_millis(5),
         true,
         Some(TokenUsageSummary {

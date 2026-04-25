@@ -210,8 +210,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         match execute_reflect_once(ctx, node, &request).await {
             Ok(value) => {
                 // Record reflection result in AAM
-                let label =
-                    crate::aam::TransitionLabel::operation(node.id, format!("{:?}", node.op_type));
+                let label = crate::aam::TransitionLabel::operation(node.id, node.op_type);
                 let summary = match &value {
                     Value::String(s) => s.chars().take(200).collect::<String>(),
                     _ => format!("{:?}", value).chars().take(200).collect::<String>(),

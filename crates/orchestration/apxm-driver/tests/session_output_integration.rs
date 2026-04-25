@@ -2,7 +2,7 @@ use apxm_compiler::{AirEdge, AirModule, AirNode};
 use apxm_core::constants;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::paths::session_node_dir_name;
-use apxm_core::types::{AISOperationType, DependencyType, Value};
+use apxm_core::types::{AISOperationType, DependencyType, NodeMetrics, OperationMetric, Value};
 use apxm_driver::session_output::SessionEventEmitter;
 use apxm_runtime::ExecutionEventEmitter;
 use std::collections::HashMap;
@@ -97,11 +97,18 @@ fn node_workspace_creation_writes_context_and_outputs() {
     let emitter = make_emitter(session_root.path(), project_root.path(), &graph);
     emitter.set_total_nodes(3);
 
-    emitter.emit_operation_start(1, "CONST_STR");
+    emitter.emit_operation_start(1, AISOperationType::ConstStr);
     emitter.emit_node_output(1, &Value::String("upstream design".to_string()));
-    emitter.emit_operation_end(1, "CONST_STR", Duration::from_millis(5), true, None, None);
+    emitter.emit_operation_end(
+        1,
+        AISOperationType::ConstStr,
+        Duration::from_millis(5),
+        true,
+        None,
+        None,
+    );
 
-    emitter.emit_operation_start(2, "SPAWN_AGENT");
+    emitter.emit_operation_start(2, AISOperationType::SpawnAgent);
 
     let seed_dir = session_root
         .path()
@@ -142,12 +149,19 @@ fn llm_prompt_and_response_are_persisted() {
 
     let emitter = make_emitter(session_root.path(), project_root.path(), &graph);
 
-    emitter.emit_operation_start(1, "ASK");
+    emitter.emit_operation_start(1, AISOperationType::Ask);
     emitter.emit_llm_prompt(1, "Write the implementation plan");
     emitter.emit_llm_token_for_node(1, "step one ");
     emitter.emit_llm_token_for_node(1, "step two");
     emitter.emit_node_output(1, &Value::String("step one step two".to_string()));
-    emitter.emit_operation_end(1, "ASK", Duration::from_millis(8), true, None, None);
+    emitter.emit_operation_end(
+        1,
+        AISOperationType::Ask,
+        Duration::from_millis(8),
+        true,
+        None,
+        None,
+    );
 
     let ask_dir = session_root
         .path()
@@ -164,6 +178,51 @@ fn llm_prompt_and_response_are_persisted() {
     assert_eq!(prompt, "Write the implementation plan");
     assert_eq!(response, "step one step two");
     assert!(output.contains("step one step two"));
+}
+
+#[test]
+fn node_metrics_are_persisted() {
+    let session_root = tempfile::tempdir().expect("session root");
+    let project_root = setup_project_root();
+    let graph = make_graph(
+        vec![make_node(
+            1,
+            "spawn_architect",
+            AISOperationType::SpawnAgent,
+            HashMap::new(),
+        )],
+        Vec::new(),
+    );
+
+    let emitter = make_emitter(session_root.path(), project_root.path(), &graph);
+    emitter.emit_operation_start(1, AISOperationType::SpawnAgent);
+
+    let mut metrics = NodeMetrics::new(1);
+    metrics.record_operation(OperationMetric {
+        node_id: 1,
+        op_type: AISOperationType::SpawnAgent,
+        duration_ms: 12,
+        success: true,
+    });
+    emitter.emit_node_metrics(1, &metrics);
+    emitter.emit_operation_end(
+        1,
+        AISOperationType::SpawnAgent,
+        Duration::from_millis(12),
+        true,
+        None,
+        None,
+    );
+
+    let node_dir = session_root
+        .path()
+        .join(constants::session::files::NODES_DIR)
+        .join(session_node_dir_name(1, "spawn_architect"));
+    let metrics_json = fs::read_to_string(node_dir.join(constants::session::node::METRICS_JSON))
+        .expect("metrics.json");
+    assert!(metrics_json.contains("\"operation\""));
+    assert!(metrics_json.contains("\"processes\""));
+    assert!(metrics_json.contains("\"attempts\": 1"));
 }
 
 #[test]
@@ -184,7 +243,7 @@ fn spawn_agent_skill_resolution_copies_profile_and_operation_skills() {
     );
 
     let emitter = make_emitter(session_root.path(), project_root.path(), &graph);
-    emitter.emit_operation_start(2, "SPAWN_AGENT");
+    emitter.emit_operation_start(2, AISOperationType::SpawnAgent);
 
     let skills_dir = session_root
         .path()
