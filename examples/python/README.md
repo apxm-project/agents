@@ -39,9 +39,10 @@ node1 >> node2   # Control edge: node2 runs after node1
 ### Agent Operations
 
 ```python
+from apxm._generated.agents import claude
+
 agent = g.spawn("name", profile=claude, cwd=cwd)  # Returns AgentHandle
-agent.ask("message")                                # COMMUNICATE via ACP
-result = agent.get_last_node()                      # Get last response
+result = agent.ask("message")                       # COMMUNICATE via ACP
 
 team = g.team("name")                               # Create team
 member = team.add("name", profile=claude)            # Spawn into team

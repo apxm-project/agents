@@ -9,6 +9,7 @@ Usage: dekk apxm execute examples/python/multi-agent/team_coordination.py
 
 from apxm import compile, GraphRecorder
 from apxm._generated.agents import claude, codex
+from apxm.constants import DEPENDENCY_CONTROL
 import os
 
 
@@ -33,9 +34,9 @@ def team_coordination(g: GraphRecorder):
     # Wait for all to complete, then merge results
     sync = team.wait_all("sync")
     results = team.merge("results")
-    g.add_edge(sync, results, dependency="Control")
+    g.add_edge(sync, results, dependency=DEPENDENCY_CONTROL)
 
-    output = g.print(message="output", message="Team results merged: {results}")
+    output = g.print(name="output", message="Team results merged: {results}")
     g.done(output)
 
 

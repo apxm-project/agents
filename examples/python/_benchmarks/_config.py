@@ -1,12 +1,14 @@
-"""Benchmark routing config — single source of truth for backend identity.
+"""Benchmark routing config from the registered APXM backend inventory.
 
 Setup (run once):
     dekk apxm backend add vllm-bench --type local --protocol vllm \
         --endpoint http://localhost:8000
+    dekk apxm backend add-model vllm-bench <SERVED_MODEL_ID> --alias benchmark
 """
 from apxm._generated.providers import VLLM
-from apxm import Vllm
+from apxm.backends import select_backend
 
-VLLM_BACKEND: str = "vllm-bench"
+BENCHMARK_MODEL_ALIAS = "benchmark"
+VLLM_ROUTE = select_backend(protocol=VLLM.protocol, alias=BENCHMARK_MODEL_ALIAS)
 
-__all__ = ["VLLM", "Vllm", "VLLM_BACKEND"]
+__all__ = ["VLLM", "VLLM_ROUTE"]

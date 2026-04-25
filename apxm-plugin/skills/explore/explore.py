@@ -21,6 +21,7 @@ Usage:
 
 import os
 from apxm import compile, GraphRecorder
+from apxm._generated.agents import claude, codex
 
 
 @compile()
@@ -35,14 +36,14 @@ def explore_workflow(g: GraphRecorder):
     cwd = os.environ.get("APXM_HOME", os.getcwd())
 
     # Spawn 5 agents with different personas
-    architect = g.spawn("architect", profile="claude", cwd=cwd)
-    adversary = g.spawn("adversary", profile="claude", cwd=cwd)
-    implementer = g.spawn("implementer", profile="codex", cwd=cwd)
-    researcher = g.spawn("researcher", profile="claude", cwd=cwd)
-    user_advocate = g.spawn("user_advocate", profile="claude", cwd=cwd)
+    architect = g.spawn("architect", profile=claude, cwd=cwd)
+    adversary = g.spawn("adversary", profile=claude, cwd=cwd)
+    implementer = g.spawn("implementer", profile=codex, cwd=cwd)
+    researcher = g.spawn("researcher", profile=claude, cwd=cwd)
+    user_advocate = g.spawn("user_advocate", profile=claude, cwd=cwd)
 
     # All 5 agents work in parallel with different perspectives
-    architect.ask(prompt="""You are the APXM systems architect. Answer this question from a systems design perspective:
+    arch_result = architect.ask(prompt="""You are the APXM systems architect. Answer this question from a systems design perspective:
 
 Question: {question}
 
@@ -55,7 +56,7 @@ Consider:
 Be specific and reference actual APXM components. Keep under 300 words.
 """)
 
-    adversary.ask(prompt="""You are the adversary. Your job is to find problems with the proposed idea:
+    adv_result = adversary.ask(prompt="""You are the adversary. Your job is to find problems with the proposed idea:
 
 Question: {question}
 
@@ -70,7 +71,7 @@ Challenge it:
 Be brutally honest. If it's a bad idea, say so. Keep under 300 words.
 """)
 
-    implementer.ask(prompt="""You are the implementer. Answer this question with concrete Rust code:
+    impl_result = implementer.ask(prompt="""You are the implementer. Answer this question with concrete Rust code:
 
 Question: {question}
 
@@ -83,7 +84,7 @@ Show:
 Focus on *how* it would actually be built in Rust. Keep under 300 words.
 """)
 
-    researcher.ask(prompt="""You are the researcher. Answer this question based on what the industry and literature say:
+    res_result = researcher.ask(prompt="""You are the researcher. Answer this question based on what the industry and literature say:
 
 Question: {question}
 
@@ -97,7 +98,7 @@ Research:
 Cite examples from real systems. Keep under 300 words.
 """)
 
-    user_advocate.ask(prompt="""You are the user advocate. Answer this question from the user's perspective:
+    user_result = user_advocate.ask(prompt="""You are the user advocate. Answer this question from the user's perspective:
 
 Question: {question}
 
@@ -112,29 +113,20 @@ Think about real-world workflow authors using APXM. Keep under 300 words.
 """)
 
     # Print each perspective
-    print_arch = g.print(name="print_architect", message="=== ARCHITECT ===\n{architect}")
-    g.add_edge(architect.get_last_node(), print_arch)
-
-    print_adv = g.print(name="print_adversary", message="=== ADVERSARY ===\n{adversary}")
-    g.add_edge(adversary.get_last_node(), print_adv)
-
-    print_impl = g.print(name="print_implementer", message="=== IMPLEMENTER ===\n{implementer}")
-    g.add_edge(implementer.get_last_node(), print_impl)
-
-    print_res = g.print(name="print_researcher", message="=== RESEARCHER ===\n{researcher}")
-    g.add_edge(researcher.get_last_node(), print_res)
-
-    print_user = g.print(name="print_user_advocate", message="=== USER ADVOCATE ===\n{user_advocate}")
-    g.add_edge(user_advocate.get_last_node(), print_user)
+    print_arch = g.print(message="=== ARCHITECT ===\n{arch_result}")
+    print_adv = g.print(message="=== ADVERSARY ===\n{adv_result}")
+    print_impl = g.print(message="=== IMPLEMENTER ===\n{impl_result}")
+    print_res = g.print(message="=== RESEARCHER ===\n{res_result}")
+    print_user = g.print(message="=== USER ADVOCATE ===\n{user_result}")
 
     # Wait for all to complete
     wait = g.wait_all(
-        name="wait_all_perspectives",
-        architect.get_last_node(),
-        adversary.get_last_node(),
-        implementer.get_last_node(),
-        researcher.get_last_node(),
-        user_advocate.get_last_node()
+        "wait_all_perspectives",
+        arch_result,
+        adv_result,
+        impl_result,
+        res_result,
+        user_result
     )
     g.add_edge(print_arch, wait, dependency="Control")
     g.add_edge(print_adv, wait, dependency="Control")
@@ -147,11 +139,13 @@ Think about real-world workflow authors using APXM. Keep under 300 words.
         name="synthesis",
         prompt="""Synthesize the 5 perspectives on this question:
 
-Architect: {architect}
-Adversary: {adversary}
-Implementer: {implementer}
-Researcher: {researcher}
-User advocate: {user_advocate}
+Question: {question}
+
+Architect: {arch_result}
+Adversary: {adv_result}
+Implementer: {impl_result}
+Researcher: {res_result}
+User advocate: {user_result}
 
 Synthesize:
 1. What do all perspectives agree on?
@@ -164,16 +158,9 @@ Let the adversary win on scope reduction — if they identified over-engineering
 Give a clear, definitive answer. Keep under 400 words.
 """
     )
-    # Wire all 5 perspective inputs
-    g.add_edge(architect.get_last_node(), synthesis)
-    g.add_edge(adversary.get_last_node(), synthesis)
-    g.add_edge(implementer.get_last_node(), synthesis)
-    g.add_edge(researcher.get_last_node(), synthesis)
-    g.add_edge(user_advocate.get_last_node(), synthesis)
     g.add_edge(wait, synthesis, dependency="Control")
 
-    print_synth = g.print(name="print_synthesis", message="=== SYNTHESIS ===\n{synthesis}")
-    g.add_edge(synthesis, print_synth)
+    print_synth = g.print(message="=== SYNTHESIS ===\n{synthesis}")
 
     # Action plan: extract concrete next steps
     action_plan = g.think(
@@ -196,14 +183,15 @@ If the recommendation is NO or DIFFERENT-APPROACH:
 Output a structured action plan ready for execution. Keep under 300 words.
 """
     )
-    g.add_edge(synthesis, action_plan)
     g.add_edge(print_synth, action_plan, dependency="Control")
 
-    print_plan = g.print(name="print_action_plan", message="=== ACTION PLAN ===\n{action_plan}")
-    g.add_edge(action_plan, print_plan)
+    print_plan = g.print(message="=== ACTION PLAN ===\n{action_plan}")
 
     g.done(print_plan)
 
 
 if __name__ == "__main__":
-    print(explore_workflow._graph.to_air())
+    import apxm
+
+    result = apxm.run(explore_workflow("How does the scheduler work?"))
+    print(result.content)

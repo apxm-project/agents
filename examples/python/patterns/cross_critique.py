@@ -27,12 +27,8 @@ def cross_critique_pipeline(g: GraphRecorder):
         "to implement for the ACP multi-agent system? Propose your top idea with a one-paragraph "
         "justification. Be specific and concrete. Under 150 words."
     )
-    agent_a.ask(question)
-    agent_b.ask(question)
-
-    # Get proposals for later use
-    claude_proposal = agent_a.get_last_node()
-    codex_proposal = agent_b.get_last_node()
+    claude_proposal = agent_a.ask(question)
+    codex_proposal = agent_b.ask(question)
 
     # Print parallel proposals
     print1 = g.print(message="=== PROPOSALS (parallel) ===\nClaude:\n{claude_proposal}\n\nCodex:\n{codex_proposal}")

@@ -29,12 +29,8 @@ def parallel_agents(g: GraphRecorder):
 
     # Send same prompt to both agents (parallel execution)
     prompt = "Analyze the architecture of this project and suggest improvements."
-    claude_analyst.ask(prompt)
-    codex_analyst.ask(prompt)
-
-    # Get analyses
-    claude_analysis = claude_analyst.get_last_node()
-    codex_analysis = codex_analyst.get_last_node()
+    claude_analysis = claude_analyst.ask(prompt)
+    codex_analysis = codex_analyst.ask(prompt)
 
     # Merge the analyses
     merge_analyses = g.ask(

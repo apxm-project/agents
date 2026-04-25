@@ -43,7 +43,7 @@ def explore_workflow(g: GraphRecorder):
     user_advocate = g.spawn("user_advocate", profile=claude, cwd=cwd)
 
     # All 5 agents work in parallel with different perspectives
-    architect.ask(prompt="""You are the APXM systems architect. Answer this question from a systems design perspective:
+    arch_result = architect.ask(prompt="""You are the APXM systems architect. Answer this question from a systems design perspective:
 
 Question: {question}
 
@@ -55,9 +55,8 @@ Consider:
 
 Be specific and reference actual APXM components. Keep under 300 words.
 """)
-    arch_result = architect.get_last_node()
 
-    adversary.ask(prompt="""You are the adversary. Your job is to find problems with the proposed idea:
+    adv_result = adversary.ask(prompt="""You are the adversary. Your job is to find problems with the proposed idea:
 
 Question: {question}
 
@@ -71,9 +70,8 @@ Challenge it:
 
 Be brutally honest. If it's a bad idea, say so. Keep under 300 words.
 """)
-    adv_result = adversary.get_last_node()
 
-    implementer.ask(prompt="""You are the implementer. Answer this question with concrete Rust code:
+    impl_result = implementer.ask(prompt="""You are the implementer. Answer this question with concrete Rust code:
 
 Question: {question}
 
@@ -85,9 +83,8 @@ Show:
 
 Focus on *how* it would actually be built in Rust. Keep under 300 words.
 """)
-    impl_result = implementer.get_last_node()
 
-    researcher.ask(prompt="""You are the researcher. Answer this question based on what the industry and literature say:
+    res_result = researcher.ask(prompt="""You are the researcher. Answer this question based on what the industry and literature say:
 
 Question: {question}
 
@@ -100,9 +97,8 @@ Research:
 
 Cite examples from real systems. Keep under 300 words.
 """)
-    res_result = researcher.get_last_node()
 
-    user_advocate.ask(prompt="""You are the user advocate. Answer this question from the user's perspective:
+    user_result = user_advocate.ask(prompt="""You are the user advocate. Answer this question from the user's perspective:
 
 Question: {question}
 
@@ -115,7 +111,6 @@ Consider:
 
 Think about real-world workflow authors using APXM. Keep under 300 words.
 """)
-    user_result = user_advocate.get_last_node()
 
     # Print each perspective
     print_arch = g.print(message="=== ARCHITECT ===\n{arch_result}")

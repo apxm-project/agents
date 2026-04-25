@@ -17,6 +17,7 @@ Usage:
 
 import os
 from apxm import compile, GraphRecorder
+from apxm._generated.agents import claude, codex
 
 
 @compile()
@@ -61,13 +62,12 @@ Output a structured removal plan:
 """
     )
 
-    print1 = g.print(name="print_analysis", message="=== IMPACT ANALYSIS ===\n{impact_analysis}")
-    g.add_edge(impact_analysis, print1)
+    print1 = g.print(message="=== IMPACT ANALYSIS ===\n{impact_analysis}")
 
     # Spawn agents
-    compiler_dev = g.spawn("compiler_dev", profile="claude", cwd=cwd)
-    runtime_dev = g.spawn("runtime_dev", profile="codex", cwd=cwd)
-    verifier = g.spawn("verifier", profile="claude", cwd=cwd)
+    compiler_dev = g.spawn("compiler_dev", profile=claude, cwd=cwd)
+    runtime_dev = g.spawn("runtime_dev", profile=codex, cwd=cwd)
+    verifier = g.spawn("verifier", profile=claude, cwd=cwd)
 
     # Step 2: Build removal prompts
     compiler_task = g.ask(
@@ -94,7 +94,6 @@ Be careful:
 - Update any operation count constants if they exist
 """
     )
-    g.add_edge(impact_analysis, compiler_task)
     g.add_edge(print1, compiler_task, dependency="Control")
 
     runtime_task = g.ask(
@@ -118,24 +117,18 @@ Remove from:
 Be thorough but careful — don't break adjacent code.
 """
     )
-    g.add_edge(impact_analysis, runtime_task)
     g.add_edge(print1, runtime_task, dependency="Control")
 
     # Step 3: Both devs work in parallel
-    compiler_dev.ask("{compiler_task}")
-    g.add_edge(compiler_task, compiler_dev.get_last_node())
+    compiler_removal = compiler_dev.ask("{compiler_task}")
 
-    runtime_dev.ask("{runtime_task}")
-    g.add_edge(runtime_task, runtime_dev.get_last_node())
+    runtime_removal = runtime_dev.ask("{runtime_task}")
 
-    print2 = g.print(name="print_compiler_removal", message="=== COMPILER REMOVAL ===\n{compiler_dev}")
-    g.add_edge(compiler_dev.get_last_node(), print2)
-
-    print3 = g.print(name="print_runtime_removal", message="=== RUNTIME REMOVAL ===\n{runtime_dev}")
-    g.add_edge(runtime_dev.get_last_node(), print3)
+    print2 = g.print(message="=== COMPILER REMOVAL ===\n{compiler_removal}")
+    print3 = g.print(message="=== RUNTIME REMOVAL ===\n{runtime_removal}")
 
     # Step 4: Verify nothing broke
-    wait = g.wait_all(name="wait_removals", compiler_dev.get_last_node(), runtime_dev.get_last_node())
+    wait = g.wait_all("wait_removals", compiler_removal, runtime_removal)
     g.add_edge(print2, wait, dependency="Control")
     g.add_edge(print3, wait, dependency="Control")
 
@@ -143,8 +136,8 @@ Be thorough but careful — don't break adjacent code.
         name="build_verify_task",
         prompt="""Verify the removal was clean:
 
-Compiler changes: {compiler_dev}
-Runtime changes: {runtime_dev}
+Compiler changes: {compiler_removal}
+Runtime changes: {runtime_removal}
 
 Run the verification steps:
 
@@ -169,15 +162,11 @@ Report:
 If there are failures, identify what was missed and suggest fixes.
 """
     )
-    g.add_edge(compiler_dev.get_last_node(), verify_task)
-    g.add_edge(runtime_dev.get_last_node(), verify_task)
     g.add_edge(wait, verify_task, dependency="Control")
 
-    verifier.ask("{verify_task}")
-    g.add_edge(verify_task, verifier.get_last_node())
+    verification = verifier.ask("{verify_task}")
 
-    print4 = g.print(name="print_verification", message="=== VERIFICATION ===\n{verifier}")
-    g.add_edge(verifier.get_last_node(), print4)
+    print4 = g.print(message="=== VERIFICATION ===\n{verification}")
 
     # Final summary
     final = g.think(
@@ -185,9 +174,9 @@ If there are failures, identify what was missed and suggest fixes.
         prompt="""Generate removal summary:
 
 Impact analysis: {impact_analysis}
-Compiler changes: {compiler_dev}
-Runtime changes: {runtime_dev}
-Verification: {verifier}
+Compiler changes: {compiler_removal}
+Runtime changes: {runtime_removal}
+Verification: {verification}
 
 Summary:
 - Operation removed: <name>
@@ -199,17 +188,15 @@ Summary:
 - Status: <complete/needs-fixes>
 """
     )
-    g.add_edge(impact_analysis, final)
-    g.add_edge(compiler_dev.get_last_node(), final)
-    g.add_edge(runtime_dev.get_last_node(), final)
-    g.add_edge(verifier.get_last_node(), final)
     g.add_edge(print4, final, dependency="Control")
 
-    print5 = g.print(name="print_summary", message="=== REMOVAL SUMMARY ===\n{final}")
-    g.add_edge(final, print5)
+    print5 = g.print(message="=== REMOVAL SUMMARY ===\n{final}")
 
     g.done(print5)
 
 
 if __name__ == "__main__":
-    print(remove_op_workflow._graph.to_air())
+    import apxm
+
+    result = apxm.run(remove_op_workflow("DEPRECATED_OP"))
+    print(result.content)

@@ -20,6 +20,7 @@ Usage:
 
 import os
 from apxm import compile, GraphRecorder
+from apxm._generated.agents import claude, codex
 
 
 @compile()
@@ -34,10 +35,10 @@ def plan_feature_workflow(g: GraphRecorder):
     cwd = os.environ.get("APXM_HOME", os.getcwd())
 
     # Spawn architect
-    architect = g.spawn("architect", profile="claude", cwd=cwd)
+    architect = g.spawn("architect", profile=claude, cwd=cwd)
 
     # Step 1: Architect produces initial plan
-    architect.ask("""You are the APXM architect. Create an implementation plan for this feature:
+    initial_plan = architect.ask(prompt="""You are the APXM architect. Create an implementation plan for this feature:
 
 Feature: {feature}
 
@@ -59,8 +60,7 @@ Be specific — include function names, file paths, and type signatures where po
 Keep under 500 words.
 """)
 
-    print1 = g.print(name="print_initial_plan", message="=== INITIAL PLAN ===\n{architect}")
-    g.add_edge(architect.get_last_node(), print1)
+    print1 = g.print(message="=== INITIAL PLAN ===\n{initial_plan}")
 
     # Step 2: Gap analysis — what's missing vs what exists
     gap_analysis = g.think(
@@ -68,7 +68,7 @@ Keep under 500 words.
         prompt="""Analyze what's missing vs what exists:
 
 Feature: {feature}
-Initial plan: {architect}
+Initial plan: {initial_plan}
 
 Gap analysis:
 1. What components already exist that we can reuse?
@@ -89,11 +89,9 @@ Output a structured gap analysis with:
 - Missing pieces (critical vs nice-to-have)
 """
     )
-    g.add_edge(architect.get_last_node(), gap_analysis)
     g.add_edge(print1, gap_analysis, dependency="Control")
 
-    print2 = g.print(name="print_gap_analysis", message="=== GAP ANALYSIS ===\n{gap_analysis}")
-    g.add_edge(gap_analysis, print2)
+    print2 = g.print(message="=== GAP ANALYSIS ===\n{gap_analysis}")
 
     # Step 3: Risk analysis — what could go wrong
     risk_analysis = g.think(
@@ -101,7 +99,7 @@ Output a structured gap analysis with:
         prompt="""Identify risks and mitigation strategies:
 
 Feature: {feature}
-Initial plan: {architect}
+Initial plan: {initial_plan}
 
 Risk analysis:
 1. Technical risks:
@@ -125,18 +123,16 @@ For each risk, provide:
 - Mitigation strategy
 """
     )
-    g.add_edge(architect.get_last_node(), risk_analysis)
     g.add_edge(print1, risk_analysis, dependency="Control")
 
-    print3 = g.print(name="print_risk_analysis", message="=== RISK ANALYSIS ===\n{risk_analysis}")
-    g.add_edge(risk_analysis, print3)
+    print3 = g.print(message="=== RISK ANALYSIS ===\n{risk_analysis}")
 
     # Step 4: Crate ordering — bottom-up dependency order
     crate_ordering = g.think(
         name="crate_ordering",
         prompt="""Determine the order to modify crates based on dependencies:
 
-Initial plan: {architect}
+Initial plan: {initial_plan}
 
 APXM crate dependency order (bottom-up):
 1. apxm-core (no dependencies on other APXM crates)
@@ -155,16 +151,14 @@ Output the implementation order:
 - Estimated effort per crate (hours)
 """
     )
-    g.add_edge(architect.get_last_node(), crate_ordering)
     g.add_edge(print1, crate_ordering, dependency="Control")
 
-    print4 = g.print(name="print_crate_ordering", message="=== CRATE ORDERING ===\n{crate_ordering}")
-    g.add_edge(crate_ordering, print4)
+    print4 = g.print(message="=== CRATE ORDERING ===\n{crate_ordering}")
 
     # Step 5: Merge all analyses
     merge = g.merge(
-        name="merge_analyses",
-        architect.get_last_node(),
+        "merge_analyses",
+        initial_plan,
         gap_analysis,
         risk_analysis,
         crate_ordering
@@ -178,7 +172,7 @@ Output the implementation order:
         name="final_plan",
         prompt="""Create the final implementation plan:
 
-Initial plan: {architect}
+Initial plan: {initial_plan}
 Gap analysis: {gap_analysis}
 Risk analysis: {risk_analysis}
 Crate ordering: {crate_ordering}
@@ -220,17 +214,15 @@ For each crate:
 Keep the plan actionable and specific. Include file paths and function names.
 """
     )
-    g.add_edge(architect.get_last_node(), final_plan)
-    g.add_edge(gap_analysis, final_plan)
-    g.add_edge(risk_analysis, final_plan)
-    g.add_edge(crate_ordering, final_plan)
     g.add_edge(merge, final_plan, dependency="Control")
 
-    print5 = g.print(name="print_final_plan", message="=== FINAL PLAN ===\n{final_plan}")
-    g.add_edge(final_plan, print5)
+    print5 = g.print(message="=== FINAL PLAN ===\n{final_plan}")
 
     g.done(print5)
 
 
 if __name__ == "__main__":
-    print(plan_feature_workflow._graph.to_air())
+    import apxm
+
+    result = apxm.run(plan_feature_workflow("Add retry logic to LLM calls"))
+    print(result.content)

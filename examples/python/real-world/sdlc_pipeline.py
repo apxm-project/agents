@@ -23,13 +23,12 @@ def sdlc_pipeline(g: GraphRecorder):
     coder = g.spawn("coder", profile=codex, cwd=cwd)
 
     # Stage 1: Architect designs
-    architect.ask(
+    design = architect.ask(
         "You are the architect for the APXM project. Design a CHECKPOINT operation "
         "for the AIS instruction set. A CHECKPOINT saves execution state so a graph "
         "can be resumed later. Provide: (1) required attributes, (2) runtime handler "
         "behavior, (3) suggested wire index. Be structured and concise, under 250 words."
     )
-    design = architect.get_last_node()
 
     print1 = g.print(message="=== ARCHITECT DESIGN ===\n{design}")
 
@@ -62,8 +61,7 @@ def sdlc_pipeline(g: GraphRecorder):
     )
     g.add_edge(print2, review_prompt, dependency="Control")
 
-    architect.ask("{review_prompt}")
-    final_review = architect.get_last_node()
+    final_review = architect.ask("{review_prompt}")
 
     print3 = g.print(message="=== ARCHITECT REVIEW ===\n{final_review}")
     g.done(print3)

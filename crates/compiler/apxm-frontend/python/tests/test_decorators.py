@@ -2,9 +2,40 @@
 
 import pytest
 
+from .mocks import MOCK_AGENT_PROFILE, MOCK_AGENT_PROFILE_ALT
+
 WEB_TOOL_GROUP = "web"
-MOCK_AGENT_PROFILE = "mock-agent-profile"
-MOCK_AGENT_PROFILE_ALT = "mock-agent-profile-alt"
+
+
+def _write_backend_config(path):
+    path.write_text(
+        """
+[[backends]]
+name = "vllm-bench"
+type = "local"
+protocol = "vllm"
+endpoint = "http://localhost:8915/v1"
+
+[backends.headers]
+
+[[backends.models]]
+id = "bench-model"
+aliases = ["bench"]
+
+[[backends]]
+name = "openai-prod"
+type = "cloud"
+protocol = "openai"
+api_key = "env:OPENAI_API_KEY"
+
+[backends.headers]
+
+[[backends.models]]
+id = "gpt-route"
+aliases = ["default"]
+""",
+        encoding="utf-8",
+    )
 
 
 def test_compile_decorator_basic():
@@ -81,13 +112,19 @@ def test_named_placeholders_are_preserved():
     assert "{1}" not in template
 
 
-def test_compile_default_provider_and_backend_stamping():
+def test_compile_default_provider_and_backend_stamping(tmp_path, monkeypatch):
     """Test @compile(default_provider, default_backend) stamps LLM nodes."""
     from apxm import GraphRecorder, compile
     from apxm._generated import constants as gen_keys
     from apxm._generated.providers import VLLM
+    from apxm.backends import select_backend
 
-    @compile(default_provider=VLLM, default_backend="vllm-bench")
+    config = tmp_path / "config.toml"
+    _write_backend_config(config)
+    monkeypatch.setenv("APXM_CONFIG", str(config))
+    route = select_backend(protocol=VLLM.protocol, alias="bench")
+
+    @compile(default_provider=VLLM, default_route=route)
     def vllm_workflow(g: GraphRecorder, topic: str):
         g.ask(name="step1", prompt=f"Research {{topic}}")
         g.ask(name="step2", prompt=f"Summarize {{topic}}")
@@ -100,18 +137,31 @@ def test_compile_default_provider_and_backend_stamping():
     for node in llm_nodes:
         assert node.attributes[gen_keys.PROVIDER] == "vllm"
         assert node.attributes[gen_keys.BACKEND] == "vllm-bench"
+        assert node.attributes[gen_keys.MODEL] == "bench-model"
 
 
-def test_compile_default_provider_does_not_override_per_node():
+def test_compile_default_provider_does_not_override_per_node(tmp_path, monkeypatch):
     """Per-node provider/backend wins over @compile() defaults."""
     from apxm import GraphRecorder, compile
     from apxm._generated import constants as gen_keys
-    from apxm._generated.providers import VLLM
+    from apxm._generated.providers import OPENAI, VLLM
+    from apxm.backends import select_backend
 
-    @compile(default_provider=VLLM, default_backend="vllm-bench")
+    config = tmp_path / "config.toml"
+    _write_backend_config(config)
+    monkeypatch.setenv("APXM_CONFIG", str(config))
+    default_route = select_backend(protocol=VLLM.protocol, alias="bench")
+    explicit_route = select_backend(protocol=OPENAI.protocol, alias="default")
+
+    @compile(default_provider=VLLM, default_route=default_route)
     def mixed_workflow(g: GraphRecorder):
         g.ask(name="default_routed", prompt="hello")
-        g.ask(name="explicit_routed", prompt="hi", provider="openai", backend="openai-prod")
+        g.ask(
+            name="explicit_routed",
+            prompt="hi",
+            provider=OPENAI,
+            route=explicit_route,
+        )
 
     graph = mixed_workflow._graph
     by_name = {n.name: n for n in graph.nodes}
@@ -119,10 +169,12 @@ def test_compile_default_provider_does_not_override_per_node():
     default_node = by_name["default_routed"]
     assert default_node.attributes[gen_keys.PROVIDER] == "vllm"
     assert default_node.attributes[gen_keys.BACKEND] == "vllm-bench"
+    assert default_node.attributes[gen_keys.MODEL] == "bench-model"
 
     explicit_node = by_name["explicit_routed"]
     assert explicit_node.attributes[gen_keys.PROVIDER] == "openai"
     assert explicit_node.attributes[gen_keys.BACKEND] == "openai-prod"
+    assert explicit_node.attributes[gen_keys.MODEL] == "gpt-route"
 
 
 def test_compile_default_policy_stamps_nodes():

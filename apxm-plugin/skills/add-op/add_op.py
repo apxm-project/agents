@@ -18,6 +18,7 @@ Usage:
 
 import os
 from apxm import compile, GraphRecorder
+from apxm._generated.agents import claude, codex
 
 
 @compile()
@@ -35,13 +36,13 @@ def add_op_workflow(g: GraphRecorder):
     cwd = os.environ.get("APXM_HOME", os.getcwd())
 
     # Spawn agents
-    architect = g.spawn("architect", profile="claude", cwd=cwd)
-    compiler_dev = g.spawn("compiler_dev", profile="claude", cwd=cwd)
-    runtime_dev = g.spawn("runtime_dev", profile="codex", cwd=cwd)
-    reviewer = g.spawn("reviewer", profile="claude", cwd=cwd)
+    architect = g.spawn("architect", profile=claude, cwd=cwd)
+    compiler_dev = g.spawn("compiler_dev", profile=claude, cwd=cwd)
+    runtime_dev = g.spawn("runtime_dev", profile=codex, cwd=cwd)
+    reviewer = g.spawn("reviewer", profile=claude, cwd=cwd)
 
     # Step 1: Architect analyzes and creates implementation plan
-    architect.ask("""You are the architect for APXM. You need to create an implementation plan
+    architect_plan = architect.ask(prompt="""You are the architect for APXM. You need to create an implementation plan
 for adding a new AIS operation to the APXM codebase.
 
 Operation name: {op_name}
@@ -65,8 +66,7 @@ Create a structured plan with:
 Keep the plan under 400 words but be specific about attribute names and types.
 """)
 
-    print1 = g.print(name="print_plan", message="=== ARCHITECT PLAN ===\n{architect}")
-    g.add_edge(architect.get_last_node(), print1)
+    print1 = g.print(message="=== ARCHITECT PLAN ===\n{architect_plan}")
 
     # Step 2: Build implementation prompts for parallel execution
     compiler_prompt = g.ask(
@@ -74,7 +74,7 @@ Keep the plan under 400 words but be specific about attribute names and types.
         prompt="""Based on this plan, implement the compiler-side changes:
 
 Plan:
-{architect}
+{architect_plan}
 
 You need to modify:
 1. crates/core/apxm-ais/src/definitions.rs
@@ -91,15 +91,13 @@ Make sure the wire index matches the plan. Use the same attribute names.
 Only modify what's necessary — don't refactor surrounding code.
 """
     )
-    g.add_edge(architect.get_last_node(), compiler_prompt)
-    g.add_edge(print1, compiler_prompt, dependency="Control")
 
     runtime_prompt = g.ask(
         name="build_runtime_prompt",
         prompt="""Based on this plan, implement the runtime-side changes:
 
 Plan:
-{architect}
+{architect_plan}
 
 You need to:
 1. Create crates/runtime/apxm-runtime/src/executor/handlers/<op_name>.rs
@@ -119,24 +117,17 @@ You need to:
 Follow APXM conventions: use apxm-core types, proper error handling with context.
 """
     )
-    g.add_edge(architect.get_last_node(), runtime_prompt)
-    g.add_edge(print1, runtime_prompt, dependency="Control")
 
     # Step 3: Both devs work in parallel
-    compiler_dev.ask("{compiler_prompt}")
-    g.add_edge(compiler_prompt, compiler_dev.get_last_node())
+    compiler_impl = compiler_dev.ask("{compiler_prompt}")
 
-    runtime_dev.ask("{runtime_prompt}")
-    g.add_edge(runtime_prompt, runtime_dev.get_last_node())
+    runtime_impl = runtime_dev.ask("{runtime_prompt}")
 
-    print2 = g.print(name="print_compiler_impl", message="=== COMPILER IMPL ===\n{compiler_dev}")
-    g.add_edge(compiler_dev.get_last_node(), print2)
-
-    print3 = g.print(name="print_runtime_impl", message="=== RUNTIME IMPL ===\n{runtime_dev}")
-    g.add_edge(runtime_dev.get_last_node(), print3)
+    print2 = g.print(message="=== COMPILER IMPL ===\n{compiler_impl}")
+    print3 = g.print(message="=== RUNTIME IMPL ===\n{runtime_impl}")
 
     # Step 4: Wait for both to complete, then review
-    wait = g.wait_all(name="wait_implementations", compiler_dev.get_last_node(), runtime_dev.get_last_node())
+    wait = g.wait_all("wait_implementations", compiler_impl, runtime_impl)
     g.add_edge(print2, wait, dependency="Control")
     g.add_edge(print3, wait, dependency="Control")
 
@@ -145,10 +136,10 @@ Follow APXM conventions: use apxm-core types, proper error handling with context
         prompt="""Review both implementations and verify they work together:
 
 Compiler implementation:
-{compiler_dev}
+{compiler_impl}
 
 Runtime implementation:
-{runtime_dev}
+{runtime_impl}
 
 Check:
 1. Wire index consistency across all files
@@ -170,25 +161,21 @@ Report:
 If tests fail, suggest fixes.
 """
     )
-    g.add_edge(compiler_dev.get_last_node(), review_task)
-    g.add_edge(runtime_dev.get_last_node(), review_task)
     g.add_edge(wait, review_task, dependency="Control")
 
-    reviewer.ask("{review_task}")
-    g.add_edge(review_task, reviewer.get_last_node())
+    review_result = reviewer.ask("{review_task}")
 
-    print4 = g.print(name="print_review", message="=== REVIEW ===\n{reviewer}")
-    g.add_edge(reviewer.get_last_node(), print4)
+    print4 = g.print(message="=== REVIEW ===\n{review_result}")
 
     # Final synthesis
     final = g.think(
         name="synthesis",
         prompt="""Synthesize the add-op workflow results:
 
-Plan: {architect}
-Compiler impl: {compiler_dev}
-Runtime impl: {runtime_dev}
-Review: {reviewer}
+Plan: {architect_plan}
+Compiler impl: {compiler_impl}
+Runtime impl: {runtime_impl}
+Review: {review_result}
 
 Summary:
 - Operation name and wire index
@@ -197,17 +184,15 @@ Summary:
 - Next steps (if any)
 """
     )
-    g.add_edge(architect.get_last_node(), final)
-    g.add_edge(compiler_dev.get_last_node(), final)
-    g.add_edge(runtime_dev.get_last_node(), final)
-    g.add_edge(reviewer.get_last_node(), final)
     g.add_edge(print4, final, dependency="Control")
 
-    print5 = g.print(name="print_final", message="=== FINAL SUMMARY ===\n{final}")
-    g.add_edge(final, print5)
+    print5 = g.print(message="=== FINAL SUMMARY ===\n{final}")
 
     g.done(print5)
 
 
 if __name__ == "__main__":
-    print(add_op_workflow._graph.to_air())
+    import apxm
+
+    result = apxm.run(add_op_workflow("SUMMARIZE", "Summarize input text"))
+    print(result.content)

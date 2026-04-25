@@ -4,7 +4,7 @@
 Usage: python3 -m examples.python.basics.hello
 """
 
-from apxm import compile, GraphRecorder, Anthropic
+from apxm import compile, GraphRecorder
 
 
 @compile()
@@ -13,7 +13,6 @@ def hello_world(g: GraphRecorder):
     greeting = g.ask(
         name="greeting",
         prompt="Generate a friendly greeting for someone learning about AI agents",
-        # model=Anthropic.CLAUDE_SONNET_4_6,  # optional: override default
     )
     g.done(greeting)
 

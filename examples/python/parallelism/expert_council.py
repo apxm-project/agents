@@ -4,7 +4,7 @@
 Three parallel ASK ops -> synthesis via THINK -> final verdict
 
 Usage: python3 -m examples.python.multi-agent.apxm_council
-"""the 
+"""
 
 from apxm import compile, GraphRecorder
 
@@ -36,7 +36,6 @@ def council_agent(g: GraphRecorder):
     output = g.print(message="{synthesis}")
 
     g.done(output)
-    
 
 
 if __name__ == "__main__":

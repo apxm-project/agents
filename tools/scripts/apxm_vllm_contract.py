@@ -16,9 +16,7 @@ from pathlib import Path
 class EnvVar(str, Enum):
     """Environment variables consumed by the APXM/vLLM path."""
 
-    APXM_VLLM_BACKEND = "APXM_VLLM_BACKEND"
     APXM_VLLM_HF_HOME = "APXM_VLLM_HF_HOME"
-    APXM_VLLM_MODEL = "APXM_VLLM_MODEL"
     CUDA_VISIBLE_DEVICES = "CUDA_VISIBLE_DEVICES"
     HF_HOME = "HF_HOME"
     HIP_VISIBLE_DEVICES = "HIP_VISIBLE_DEVICES"
@@ -96,6 +94,7 @@ class VllmCommand(str, Enum):
 class ArgName(str, Enum):
     """argparse destination names used by the controller."""
 
+    ALIAS = "alias"
     API_KEY = "api_key"
     API_KEY_ENV = "api_key_env"
     COMMAND = "command"

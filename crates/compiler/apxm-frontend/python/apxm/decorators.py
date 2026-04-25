@@ -10,14 +10,9 @@ from .proxy import GraphRecorder
 from .config import ExecutionOptions, NodePolicy
 
 if TYPE_CHECKING:
+    from .backends import BackendRoute
     from ._generated.models import ModelId
     from ._generated.providers import ProviderSpec
-
-
-try:
-    from ._generated.constants import VALID_PARAM_TYPES as _VALID_TYPES
-except ImportError:
-    _VALID_TYPES = frozenset({"str", "int", "float", "bool", "json"})
 
 _PYTHON_TYPE_TO_APXM: dict[type | str, str] = {
     str: "str",
@@ -43,6 +38,7 @@ class _CompiledFunction:
         *,
         opt_level: int,
         mode: ExecutionMode,
+        default_route: BackendRoute | None = None,
         default_model: ModelId | None = None,
         default_system_prompt: str | None = None,
         default_provider: ProviderSpec | None = None,
@@ -51,10 +47,14 @@ class _CompiledFunction:
         compile_kwargs: dict[str, Any],
     ) -> None:
         self._fn = fn
+        if default_backend is not None:
+            raise TypeError("pass default_route=select_backend(...) instead of raw default_backend=")
+        if default_route is not None and default_model is not None:
+            raise ValueError("pass either default_route= or default_model=, not both")
+        self._default_route = default_route
         self._default_model = default_model
         self._default_system_prompt = default_system_prompt
         self._default_provider = default_provider
-        self._default_backend = default_backend
         self._default_policy = default_policy
         self._signature = inspect.signature(fn)
         self._param_mapping = self._derive_parameters()
@@ -154,29 +154,37 @@ class _CompiledFunction:
         # Stamp per-graph defaults onto LLM nodes that don't already have them
         if (
             self._default_model is not None
+            or self._default_route is not None
             or self._default_system_prompt is not None
             or self._default_provider is not None
-            or self._default_backend is not None
         ):
             from .constants import LLM_OPS
             from ._generated import constants as gen_keys
-            from .normalize import normalize_provider as _normalize_provider
-            from .normalize import normalize_value as _normalize_value
+            from .normalize import normalize_model_id as _normalize_model_id
+            from .normalize import normalize_provider_spec as _normalize_provider_spec
 
-            model_str = _normalize_value(self._default_model) if self._default_model is not None else None
-            provider_value = _normalize_provider(self._default_provider) if self._default_provider is not None else None
+            route = self._default_route
+            model_str = _normalize_model_id(self._default_model) if self._default_model is not None else None
+            provider_value = _normalize_provider_spec(self._default_provider) if self._default_provider is not None else None
 
             for node in graph.nodes:
                 if node.op not in LLM_OPS:
                     continue
+                if route is not None:
+                    if gen_keys.BACKEND not in node.attributes:
+                        node.attributes[gen_keys.BACKEND] = route.backend
+                    if route.model is not None and gen_keys.MODEL not in node.attributes:
+                        node.attributes[gen_keys.MODEL] = route.model
                 if model_str is not None and gen_keys.MODEL not in node.attributes:
                     node.attributes[gen_keys.MODEL] = model_str
                 if self._default_system_prompt is not None and gen_keys.SYSTEM_PROMPT not in node.attributes:
                     node.attributes[gen_keys.SYSTEM_PROMPT] = self._default_system_prompt
                 if provider_value is not None and gen_keys.PROVIDER not in node.attributes:
                     node.attributes[gen_keys.PROVIDER] = provider_value
-                if self._default_backend is not None and gen_keys.BACKEND not in node.attributes:
-                    node.attributes[gen_keys.BACKEND] = self._default_backend
+
+            from .backends import validate_graph_routes
+
+            validate_graph_routes(graph.nodes)
 
         # Emit AIR from the stamped graph so subprocess fallback preserves
         # default backend/model/provider attributes. Re-attach the python tool
@@ -208,6 +216,7 @@ def compile(
     *,
     opt_level: int = 2,
     mode: ExecutionMode = ExecutionMode.COMPILED,
+    default_route: BackendRoute | None = None,
     default_model: ModelId | None = None,
     default_system_prompt: str | None = None,
     default_provider: ProviderSpec | None = None,
@@ -220,6 +229,7 @@ def compile(
             fn,
             opt_level=opt_level,
             mode=mode,
+            default_route=default_route,
             default_model=default_model,
             default_system_prompt=default_system_prompt,
             default_provider=default_provider,

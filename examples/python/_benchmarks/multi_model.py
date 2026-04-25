@@ -56,7 +56,7 @@ def multi_model(g: GraphRecorder):
         "- Issue Type: \n"
         "- Days Since Issue: \n\n"
         "Output as JSON format only.",
-        # In real usage, would specify: backend="local-ollama"
+        # In real usage, pass route=select_backend(alias="local-sensitive").
     )
 
     # Powerful model: deep analysis and solution

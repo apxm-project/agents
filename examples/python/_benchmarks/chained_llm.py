@@ -11,13 +11,12 @@ Usage:
 
 from apxm import compile, GraphRecorder
 
-from _config import VLLM, Vllm, VLLM_BACKEND
+from _config import VLLM, VLLM_ROUTE
 
 
 @compile(
     default_provider=VLLM,
-    default_backend=VLLM_BACKEND,
-    default_model=Vllm.QWEN_2_5_7B,
+    default_route=VLLM_ROUTE,
 )
 def chained_llm(g: GraphRecorder):
     """Sequential chain of ASK → THINK → REASON operations."""

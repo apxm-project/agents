@@ -40,7 +40,7 @@ def audit(g: GraphRecorder):
     architect = g.spawn("architect", profile=claude, cwd=cwd)
 
     # Step 1: Run build check
-    architect.ask(prompt="""Run APXM build and capture warnings/errors:
+    build_result = architect.ask(prompt="""Run APXM build and capture warnings/errors:
 
 Execute:
   dekk apxm build 2>&1
@@ -64,12 +64,11 @@ Output JSON:
   "total_errors": N
 }}
 """)
-    build_result = architect.get_last_node()
 
     print1 = g.print(message="=== BUILD STATUS ===\n{build_result}")
 
     # Step 2: Run test check
-    architect.ask(prompt="""Run APXM test suite and report results:
+    test_result = architect.ask(prompt="""Run APXM test suite and report results:
 
 Execute:
   cargo test --workspace --quiet 2>&1
@@ -90,13 +89,12 @@ Output JSON:
   "failed_tests": ["test1", "test2", ...]
 }}
 """)
-    test_result = architect.get_last_node()
     g.add_edge(print1, test_result, dependency="Control")
 
     print2 = g.print(message="=== TEST STATUS ===\n{test_result}")
 
     # Step 3: Run autofix check
-    architect.ask(prompt="""Run APXM autofix validation and report:
+    autofix_result = architect.ask(prompt="""Run APXM autofix validation and report:
 
 Execute:
   PYTHONPATH=crates/compiler/apxm-frontend/python python3 scripts/apxm-autofix.py --report-only
@@ -121,13 +119,12 @@ Output JSON:
   }}
 }}
 """)
-    autofix_result = architect.get_last_node()
     g.add_edge(print2, autofix_result, dependency="Control")
 
     print3 = g.print(message="=== AUTOFIX STATUS ===\n{autofix_result}")
 
     # Step 4: Run policy check
-    architect.ask(prompt="""Run APXM policy checks and report violations:
+    policy_result = architect.ask(prompt="""Run APXM policy checks and report violations:
 
 Execute:
   python3 scripts/apxm-policy-check.py
@@ -148,13 +145,12 @@ Output JSON:
   "critical": []
 }}
 """)
-    policy_result = architect.get_last_node()
     g.add_edge(print3, policy_result, dependency="Control")
 
     print4 = g.print(message="=== POLICY STATUS ===\n{policy_result}")
 
     # Step 5: Count TODOs/FIXMEs/stubs
-    architect.ask(prompt="""Count TODOs, FIXMEs, and stub handlers in runtime and compiler:
+    todo_result = architect.ask(prompt="""Count TODOs, FIXMEs, and stub handlers in runtime and compiler:
 
 Execute:
   grep -r "TODO\\|FIXME" crates/apxm-runtime crates/apxm-compiler --include="*.rs" | wc -l
@@ -172,13 +168,12 @@ Output JSON:
   "high_priority": []
 }}
 """)
-    todo_result = architect.get_last_node()
     g.add_edge(print4, todo_result, dependency="Control")
 
     print5 = g.print(message="=== TODO/STUB STATUS ===\n{todo_result}")
 
     # Step 6: Check for missing ops in artifact emitter
-    architect.ask(prompt="""Check for missing AIS operations in artifact emitter:
+    missing_ops_result = architect.ask(prompt="""Check for missing AIS operations in artifact emitter:
 
 Compare:
 1. AIS operations defined in crates/core/apxm-ais/src/operations/definitions.rs (AISOperationType enum)
@@ -198,7 +193,6 @@ Output JSON:
   "status": "complete" | "incomplete"
 }}
 """)
-    missing_ops_result = architect.get_last_node()
     g.add_edge(print5, missing_ops_result, dependency="Control")
 
     print6 = g.print(message="=== MISSING OPS STATUS ===\n{missing_ops_result}")

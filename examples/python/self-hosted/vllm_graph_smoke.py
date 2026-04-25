@@ -2,30 +2,25 @@
 """Small APXM smoke graph for a self-hosted vLLM fork backend.
 
 Usage:
-  APXM_VLLM_MODEL=<SERVED_MODEL_ID> \
-    dekk apxm execute examples/python/self-hosted/vllm_graph_smoke.py
+  dekk apxm execute examples/python/self-hosted/vllm_graph_smoke.py
+
+Routing:
+  Register one model under a vLLM backend with alias "smoke", or replace
+  SMOKE_ROUTE with another explicit registered backend/model selector.
 
 Optional environment overrides:
-  - APXM_VLLM_BACKEND
-  - APXM_VLLM_MODEL
   - APXM_EMIT_AIR=1
-
-Backend requirements:
-  - APXM backend name defaults to: vllm-fork
-  - Model id must be the served model id registered under that backend
-  - Endpoint shape: OpenAI-compatible vLLM fork with /v1 base URL
 """
 
 import os
 
 from apxm import GraphRecorder, compile
+from apxm._generated.providers import VLLM
+from apxm.backends import select_backend
 from apxm.constants import ENV_APXM_EMIT_AIR, ENV_FLAG_ENABLED
-from scripts.apxm_vllm_contract import EnvVar, VllmDefaults, env_name
 
 
-DEFAULT_VLLM_BACKEND = VllmDefaults().backend_name
-ENV_VLLM_BACKEND = env_name(EnvVar.APXM_VLLM_BACKEND)
-ENV_VLLM_MODEL = env_name(EnvVar.APXM_VLLM_MODEL)
+SMOKE_MODEL_ALIAS = "smoke"
 ENV_EMIT_AIR = ENV_APXM_EMIT_AIR
 NODE_ARCHITECTURE = "architecture"
 NODE_SUMMARY = "summary"
@@ -48,21 +43,10 @@ OUTPUT_TEMPLATE = (
 )
 
 
-def required_env(name: str) -> str:
-    value = os.environ.get(name)
-    if not value:
-        raise RuntimeError(f"{name} must be set to the served model id")
-    return value
+SMOKE_ROUTE = select_backend(protocol=VLLM.protocol, alias=SMOKE_MODEL_ALIAS)
 
 
-VLLM_BACKEND = os.environ.get(ENV_VLLM_BACKEND, DEFAULT_VLLM_BACKEND)
-VLLM_MODEL = required_env(ENV_VLLM_MODEL)
-
-
-@compile(
-    default_backend=VLLM_BACKEND,
-    default_model=VLLM_MODEL,
-)
+@compile(default_route=SMOKE_ROUTE)
 def vllm_graph_smoke(g: GraphRecorder):
     """Minimal graph-aware smoke test for a self-hosted model."""
 
@@ -80,8 +64,8 @@ def vllm_graph_smoke(g: GraphRecorder):
         name=NODE_PRINT_OUTPUT,
         message=OUTPUT_TEMPLATE.format(
             header=OUTPUT_HEADER,
-            backend=VLLM_BACKEND,
-            model=VLLM_MODEL,
+            backend=SMOKE_ROUTE.backend,
+            model=SMOKE_ROUTE.model,
         ),
     )
 

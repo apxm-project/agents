@@ -113,7 +113,8 @@ AIS is implemented as an MLIR dialect with custom operations, types, and verifie
 ```mlir
 %0 = "ais.ask"(%prompt, %ctx) {
   latency_budget = 1000 : i64,
-  model = "default"
+  backend = "registered-route",
+  model = "served-model-id"
 } : (!ais.string, !ais.context) -> !ais.future<!ais.string>
 ```
 

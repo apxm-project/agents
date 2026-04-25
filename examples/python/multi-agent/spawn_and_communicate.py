@@ -18,9 +18,7 @@ def basic_spawn(g: GraphRecorder):
     cwd = os.environ.get("APXM_HOME", os.getcwd())
 
     reviewer = g.spawn("reviewer", profile=claude, cwd=cwd)
-    reviewer.ask("Review the current directory structure and suggest improvements.")
-
-    review = reviewer.get_last_node()
+    review = reviewer.ask("Review the current directory structure and suggest improvements.")
     output = g.print(message="{review}")
     g.done(output)
 
@@ -35,11 +33,10 @@ def two_agent_pipeline(g: GraphRecorder):
     summarizer = g.spawn("summarizer", profile=claude, cwd=cwd)
 
     # Analyst conducts analysis
-    analyst.ask(
+    analysis = analyst.ask(
         "Conduct a thorough technical analysis of APXM as an AI execution framework. "
         "Cover: architecture, capabilities, use cases, limitations. 400 words."
     )
-    analysis = analyst.get_last_node()
 
     # Summarizer receives analysis via COMMUNICATE
     summary = g.communicate(

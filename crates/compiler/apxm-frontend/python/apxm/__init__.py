@@ -4,6 +4,17 @@ from __future__ import annotations
 
 from . import _generated
 from .agent import Agent, AgentHooks, BoundAgent
+from .backends import (
+    BackendRegistryError,
+    BackendRoute,
+    RegisteredBackend,
+    RegisteredModel,
+    config_path,
+    get_backend,
+    list_backends,
+    select,
+    select_backend,
+)
 try:
     from ._generated.models import Anthropic, Google, ModelId, OpenAI, Vllm
 except ImportError:
@@ -61,6 +72,8 @@ __all__ = [
     "Anthropic",
     "ApxmError",
     "ApxmGraph",
+    "BackendRegistryError",
+    "BackendRoute",
     "BashConfig",
     "BoundAgent",
     "close",
@@ -81,7 +94,10 @@ __all__ = [
     "HookConfig",
     "HookEvent",
     "LLMUsage",
+    "config_path",
+    "get_backend",
     "list_providers",
+    "list_backends",
     "LoopGuardMiddlewareConfig",
     "load_graph",
     "MiddlewareKind",
@@ -93,11 +109,15 @@ __all__ = [
     "Parameter",
     "ProviderSpec",
     "ReadConfig",
+    "RegisteredBackend",
+    "RegisteredModel",
     "run",
     "resolve_provider",
     "SearchWebConfig",
     "SearchDepth",
     "ServerError",
+    "select",
+    "select_backend",
     "Team",
     "TimeoutMiddlewareConfig",
     "tool",

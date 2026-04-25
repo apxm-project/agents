@@ -984,6 +984,8 @@ def enable_cmd(args: argparse.Namespace) -> int:
         args.backend_name,
         model,
     ]
+    for alias in arg_value(args, ArgName.ALIAS, []):
+        add_model.extend(["--alias", alias])
     test = [
         DekkToken.DEKK.value,
         DekkToken.APXM.value,
@@ -1174,6 +1176,13 @@ def build_parser() -> argparse.ArgumentParser:
             "--api-key-env",
             dest=ArgName.API_KEY_ENV.value,
             help=f"Environment variable name to persist as the backend API key reference (default: {ENV_VLLM_API_KEY} when set)",
+        )
+        registration.add_argument(
+            "--alias",
+            action="append",
+            default=[],
+            dest=ArgName.ALIAS.value,
+            help="Alternative routing alias to register for the served model",
         )
         registration.add_argument("--skip-test", action="store_true", help="Write backend/model config without probing the server")
 

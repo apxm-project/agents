@@ -23,7 +23,7 @@ classifiers = [
     "Topic :: Software Development :: Code Generators",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
-dependencies = []
+dependencies = ["tomli>=2.0; python_version<'3.11'"]
 
 [project.urls]
 Homepage = "https://github.com/randreshg/apxm"

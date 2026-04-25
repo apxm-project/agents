@@ -42,6 +42,24 @@ def normalize_provider(value: Any) -> str:
     return str(value)
 
 
+def normalize_model_id(value: Any) -> str:
+    """Extract a generated ModelId value for public frontend APIs."""
+    from ._generated.models import ModelId
+
+    if isinstance(value, ModelId):
+        return str(value)
+    raise TypeError("model must be a ModelId imported from apxm._generated.models")
+
+
+def normalize_provider_spec(value: Any) -> str:
+    """Extract a generated ProviderSpec id for public frontend APIs."""
+    from ._generated.providers import ProviderSpec
+
+    if isinstance(value, ProviderSpec):
+        return value.id
+    raise TypeError("provider must be a ProviderSpec imported from apxm._generated.providers")
+
+
 def normalize_attributes(attributes: dict[str, Any]) -> dict[str, Any]:
     """Normalize all non-None attribute values in a dict."""
     return {key: normalize_value(value) for key, value in attributes.items() if value is not None}

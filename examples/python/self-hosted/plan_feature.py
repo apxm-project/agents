@@ -38,7 +38,7 @@ def plan_feature_workflow(g: GraphRecorder):
     architect = g.spawn("architect", profile=claude, cwd=cwd)
 
     # Step 1: Architect produces initial plan
-    architect.ask(prompt="""You are the APXM architect. Create an implementation plan for this feature:
+    initial_plan = architect.ask(prompt="""You are the APXM architect. Create an implementation plan for this feature:
 
 Feature: {feature}
 
@@ -59,7 +59,6 @@ Produce a plan with:
 Be specific — include function names, file paths, and type signatures where possible.
 Keep under 500 words.
 """)
-    initial_plan = architect.get_last_node()
 
     print1 = g.print(message="=== INITIAL PLAN ===\n{initial_plan}")
 
