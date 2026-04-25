@@ -6,6 +6,7 @@ use apxm_backends::{
     BackendFallback, BackendRegistration, LLMRegistry, ModelAliasRegistration, OperationRoute,
     RegistryPolicy,
 };
+use apxm_core::constants::env as apxm_env;
 use apxm_core::types::AISOperationType;
 use std::env;
 
@@ -14,10 +15,10 @@ pub async fn configure_llm_registry(
     config: &ApXmConfig,
 ) -> Result<(), DriverError> {
     // Check for mock backend override (for benchmarking)
-    if env::var("APXM_MOCK_BACKEND").is_ok() {
+    if env::var(apxm_env::APXM_MOCK_BACKEND).is_ok() {
         use apxm_backends::llm::backends::MockLLMBackend;
 
-        let latency_ms = env::var("APXM_MOCK_LATENCY_MS")
+        let latency_ms = env::var(apxm_env::APXM_MOCK_LATENCY_MS)
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(500);
@@ -61,11 +62,8 @@ pub async fn configure_llm_registry(
     if config.backends.is_empty() {
         return Err(DriverError::Driver(
             "No backends configured.\n\n\
-             Register at least one LLM backend:\n\n\
-             \x20 dekk apxm backend add openai --type cloud --protocol openai\n\
-             \x20 dekk apxm backend add anthropic --type cloud --protocol anthropic\n\
-             \x20 dekk apxm backend add ollama --protocol ollama\n\n\
-             Verify with: dekk apxm backend list"
+             Register at least one LLM backend in APXM backend configuration, \
+             then verify the configured backend list before executing a graph."
                 .to_string(),
         ));
     }

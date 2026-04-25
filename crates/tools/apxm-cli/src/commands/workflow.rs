@@ -1,4 +1,4 @@
-//! Legacy workflow-file execution commands.
+//! Workflow-file execution commands.
 
 use anyhow::{Context, Result};
 #[cfg(feature = "driver")]
@@ -8,6 +8,8 @@ use apxm_driver::{Linker, LinkerConfig};
 use colored::Colorize;
 
 use super::cli::*;
+#[cfg(not(feature = "driver"))]
+use super::dekk_hints;
 #[cfg(feature = "driver")]
 use std::collections::HashMap;
 #[cfg(feature = "driver")]
@@ -45,7 +47,9 @@ pub fn workflow_command_no_driver(action: WorkflowAction, json: bool) -> Result<
         WorkflowAction::Validate { file } => workflow_validate_command(file, json),
         WorkflowAction::Analyze { file } => workflow_analyze_command(file, json),
         _ => Err(anyhow::anyhow!(
-            "Legacy workflow execution requires the `driver` feature. Rebuild through `dekk apxm build`, then re-run `dekk apxm workflow run ...`."
+            "Workflow execution requires the `driver` feature. Rebuild through `{}`, then re-run `{}`.",
+            dekk_hints::BUILD,
+            dekk_hints::WORKFLOW_RUN
         )),
     }
 }
@@ -54,7 +58,7 @@ pub fn workflow_validate_command(file: PathBuf, json: bool) -> Result<()> {
     use apxm_runtime::workflow::WorkflowDef;
 
     let def = WorkflowDef::from_file(&file)
-        .with_context(|| format!("Failed to load legacy workflow file {}", file.display()))?;
+        .with_context(|| format!("Failed to load workflow file {}", file.display()))?;
 
     let errors = def.validate();
 
@@ -67,7 +71,7 @@ pub fn workflow_validate_command(file: PathBuf, json: bool) -> Result<()> {
     } else {
         if errors.is_empty() {
             println!(
-                "{} Legacy workflow is valid",
+                "{} Workflow is valid",
                 apxm_core::constants::ui::icons::SUCCESS
             );
             println!("  Name: {}", def.name);
@@ -99,12 +103,12 @@ pub fn workflow_analyze_command(file: PathBuf, json: bool) -> Result<()> {
     use apxm_runtime::workflow::{WorkflowDef, execution_phases};
 
     let def = WorkflowDef::from_file(&file)
-        .with_context(|| format!("Failed to load legacy workflow file {}", file.display()))?;
+        .with_context(|| format!("Failed to load workflow file {}", file.display()))?;
 
     let errors = def.validate();
     if !errors.is_empty() {
         return Err(anyhow::anyhow!(
-            "Legacy workflow validation failed: {}",
+            "Workflow validation failed: {}",
             errors.join(", ")
         ));
     }
@@ -121,7 +125,7 @@ pub fn workflow_analyze_command(file: PathBuf, json: bool) -> Result<()> {
         });
         println!("{}", serde_json::to_string_pretty(&output)?);
     } else {
-        println!("Legacy workflow: {}", def.name.bold());
+        println!("Workflow: {}", def.name.bold());
         println!();
         println!("  Total steps: {}", def.graphs.len());
         println!("  Execution phases: {}", phases.len());
@@ -175,7 +179,7 @@ pub async fn workflow_run_command(
     println!("Session directory: {}", session_dir.display());
     println!();
     println!(
-        "Legacy workflow completed in {:.1}s",
+        "Workflow completed in {:.1}s",
         result.duration_ms as f64 / 1000.0
     );
     println!();
@@ -222,11 +226,11 @@ fn execute_workflow_file<'a>(
         use apxm_runtime::workflow::{WorkflowDef, execution_phases};
 
         let def = WorkflowDef::from_file(file)
-            .with_context(|| format!("Failed to load legacy workflow file {}", file.display()))?;
+            .with_context(|| format!("Failed to load workflow file {}", file.display()))?;
         let errors = def.validate();
         if !errors.is_empty() {
             return Err(anyhow::anyhow!(
-                "Legacy workflow validation failed: {}",
+                "Workflow validation failed: {}",
                 errors.join(", ")
             ));
         }
@@ -234,7 +238,7 @@ fn execute_workflow_file<'a>(
 
         let indent = "  ".repeat(depth);
         if render_progress {
-            println!("{indent}Executing legacy workflow: {}", def.name.bold());
+            println!("{indent}Executing workflow: {}", def.name.bold());
             println!();
         }
 

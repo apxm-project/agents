@@ -186,11 +186,6 @@ pub enum Commands {
         /// Error code (e.g., E511) or path to graph file (.json graph)
         target: String,
     },
-    /// Compose graph fragments (tasks)
-    Task {
-        #[command(subcommand)]
-        action: TaskAction,
-    },
     /// Generate frontend assets from Rust-owned registries
     Codegen {
         #[command(subcommand)]
@@ -206,7 +201,7 @@ pub enum Commands {
         #[command(subcommand)]
         action: SessionAction,
     },
-    /// Manage legacy multi-step workflow files
+    /// Manage multi-step workflow files
     Workflow {
         #[command(subcommand)]
         action: WorkflowAction,
@@ -245,22 +240,6 @@ pub enum TemplateAction {
     Show {
         /// Template name (e.g., ask, pipeline, fan-out, map-reduce)
         name: String,
-    },
-}
-
-#[derive(Subcommand)]
-pub enum TaskAction {
-    /// Legacy graph-composition entrypoint
-    Merge {
-        /// Graph JSON files to merge
-        #[arg(required = true)]
-        graphs: Vec<PathBuf>,
-        /// Name for the merged graph
-        #[arg(long)]
-        name: String,
-        /// Output file (defaults to stdout with --json, or <name>.json)
-        #[arg(long, short)]
-        output: Option<PathBuf>,
     },
 }
 
@@ -325,9 +304,9 @@ pub enum SessionAction {
 
 #[derive(Subcommand)]
 pub enum WorkflowAction {
-    /// Execute a legacy workflow file
+    /// Execute a workflow file
     Run {
-        /// Legacy workflow file (.apxmw)
+        /// Workflow file (.apxmw)
         file: PathBuf,
         /// Workflow arguments as a JSON object for machine callers
         #[arg(long, conflicts_with = "args")]
@@ -339,14 +318,14 @@ pub enum WorkflowAction {
         #[arg(long)]
         session_root: Option<PathBuf>,
     },
-    /// Validate a legacy workflow file
+    /// Validate a workflow file
     Validate {
-        /// Legacy workflow file (.apxmw)
+        /// Workflow file (.apxmw)
         file: PathBuf,
     },
-    /// Show execution phases and critical path for a legacy workflow file
+    /// Show execution phases and critical path for a workflow file
     Analyze {
-        /// Legacy workflow file (.apxmw)
+        /// Workflow file (.apxmw)
         file: PathBuf,
     },
 }

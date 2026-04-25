@@ -10,6 +10,8 @@ use std::path::PathBuf;
 use anyhow::Context;
 use anyhow::Result;
 #[cfg(feature = "driver")]
+use apxm_core::constants::env as apxm_env;
+#[cfg(feature = "driver")]
 use apxm_driver::ApXmConfig;
 #[cfg(feature = "driver")]
 use apxm_driver::compiler::Compiler;
@@ -58,7 +60,7 @@ fn emit_air_from_python(input: &Path) -> Result<(tempfile::NamedTempFile, Option
     if let Some(parent) = input.parent() {
         pythonpath_entries.push(parent.to_path_buf());
     }
-    if let Some(existing) = env::var_os("PYTHONPATH") {
+    if let Some(existing) = env::var_os(apxm_env::PYTHONPATH) {
         pythonpath_entries.extend(env::split_paths(&existing));
     }
 
@@ -68,8 +70,8 @@ fn emit_air_from_python(input: &Path) -> Result<(tempfile::NamedTempFile, Option
     for candidate in ["python3", "python"] {
         match std::process::Command::new(candidate)
             .arg(input)
-            .env("PYTHONPATH", &pythonpath)
-            .env("APXM_EMIT_AIR", "1")
+            .env(apxm_env::PYTHONPATH, &pythonpath)
+            .env(apxm_env::APXM_EMIT_AIR, apxm_env::flag_values::ENABLED)
             .output()
         {
             Ok(result) => {
@@ -138,6 +140,41 @@ fn emit_air_from_python(input: &Path) -> Result<(tempfile::NamedTempFile, Option
 /// Python tools sidecar data extracted from the AIR comment, if any.
 #[cfg(feature = "driver")]
 type PythonToolsSidecar = Option<Vec<u8>>;
+
+#[cfg(feature = "driver")]
+fn allowlist_with_registered_vllm_models(configured: Option<&Vec<String>>) -> Option<Vec<String>> {
+    let mut allowlist = configured.cloned()?;
+
+    use apxm_core::types::ProviderProtocol;
+    use apxm_credentials::BackendStore;
+    use std::collections::HashSet;
+
+    let mut seen: HashSet<String> = allowlist.iter().cloned().collect();
+    let Ok(store) = BackendStore::open() else {
+        return Some(allowlist);
+    };
+    let Ok(backends) = store.list() else {
+        return Some(allowlist);
+    };
+
+    for backend in backends
+        .iter()
+        .filter(|backend| backend.protocol == ProviderProtocol::Vllm)
+    {
+        for model in &backend.models {
+            if seen.insert(model.id.clone()) {
+                allowlist.push(model.id.clone());
+            }
+            for alias in &model.aliases {
+                if seen.insert(alias.clone()) {
+                    allowlist.push(alias.clone());
+                }
+            }
+        }
+    }
+
+    Some(allowlist)
+}
 
 #[cfg(feature = "driver")]
 pub(super) fn prepare_graph_input(
@@ -336,7 +373,6 @@ pub fn compile_command(
         return Ok(());
     }
 
-    // OLD PATH: AirModule-based compilation
     let graph = if input.is_dir() {
         load_graph_from_directory(&input)?
     } else {
@@ -345,23 +381,12 @@ pub fn compile_command(
             .map_err(|e| anyhow::anyhow!("Failed to parse graph: {e}"))?
     };
 
-    // Validate model allowlist if configured.
-    // Skip the check entirely if any registered backend uses the vLLM protocol —
-    // vLLM models are user-deployed and not in any builtin allowlist.
+    // Validate model allowlist if configured. vLLM models are user-deployed, so
+    // registered vLLM model ids and aliases extend the configured allowlist
+    // without disabling validation for unrelated models.
     if let Ok(config) = ApXmConfig::load_default() {
-        use apxm_core::types::ProviderProtocol;
-        use apxm_credentials::BackendStore;
-        let has_vllm = BackendStore::open()
-            .and_then(|bs| bs.list())
-            .map(|backends| {
-                backends
-                    .iter()
-                    .any(|b| b.protocol == ProviderProtocol::Vllm)
-            })
-            .unwrap_or(false);
-        if !has_vllm {
-            Compiler::validate_model_allowlist(&graph, config.models.allowlist.as_ref())?;
-        }
+        let allowlist = allowlist_with_registered_vllm_models(config.models.allowlist.as_ref());
+        Compiler::validate_model_allowlist(&graph, allowlist.as_ref())?;
     }
 
     // When diagnostics are requested, use the per-pass metrics path.
@@ -569,8 +594,7 @@ fn load_graph_from_directory(dir: &std::path::Path) -> Result<apxm_compiler::Air
     }
 
     Err(anyhow::anyhow!(
-        "Directory '{}' contains {} graph files — multi-graph merge is no longer supported. \
-         Provide a single graph file instead.",
+        "Directory '{}' contains {} graph files. Provide a single graph file instead.",
         dir.display(),
         graphs.len()
     ))

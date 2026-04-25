@@ -972,51 +972,6 @@ fn explain_node_metadata() {
     assert!(node["latency_ms"].is_number());
 }
 
-// ─── task merge ─────────────────────────────────────────────────────────────
-
-#[test]
-fn task_merge_is_removed() {
-    let g1 = write_tmp_graph(VALID_ASK);
-    let g2 = write_tmp_graph(VALID_PIPELINE);
-    let out = apxm()
-        .args([
-            "--json",
-            "task",
-            "merge",
-            g1.path().to_str().unwrap(),
-            g2.path().to_str().unwrap(),
-            "--name",
-            "merged-test",
-        ])
-        .output()
-        .unwrap();
-    // Graph merge is no longer supported
-    assert!(!out.status.success());
-    assert!(
-        String::from_utf8_lossy(&out.stderr).trim().is_empty(),
-        "expected clean stderr, got: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let body: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert!(
-        body["error"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("no longer supported"),
-        "expected 'no longer supported' in JSON error, got: {}",
-        String::from_utf8_lossy(&out.stdout)
-    );
-}
-
-#[test]
-fn task_merge_file_not_found() {
-    let out = apxm()
-        .args(["task", "merge", "/nonexistent/a.json", "--name", "fail"])
-        .output()
-        .unwrap();
-    assert!(!out.status.success());
-}
-
 // ─── codegen ───────────────────────────────────────────────────────────────
 
 #[test]

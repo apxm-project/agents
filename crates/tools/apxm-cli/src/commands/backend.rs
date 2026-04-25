@@ -8,6 +8,7 @@ use apxm_credentials::docker::{ContainerStatus, DockerManager};
 use colored::Colorize;
 
 use super::cli::*;
+use super::dekk_hints;
 use super::implementations::{Status, print_section_header, print_status_line};
 
 #[cfg(feature = "driver")]
@@ -145,6 +146,10 @@ pub async fn backend_command(action: BackendAction, json_output: bool) -> Result
             let protocol =
                 ProviderProtocol::from_str(&protocol).map_err(|e| anyhow::anyhow!("{e}"))?;
             let is_ollama = protocol == ProviderProtocol::Ollama;
+            let api_key_not_required = matches!(
+                protocol,
+                ProviderProtocol::Ollama | ProviderProtocol::Vllm | ProviderProtocol::Mock
+            );
 
             // Ollama smart defaults: type=local if not specified
             let backend_type = if r#type.is_empty() && is_ollama {
@@ -162,8 +167,11 @@ pub async fn backend_command(action: BackendAction, json_output: bool) -> Result
                 endpoint
             };
 
-            // API key not needed for Ollama or local backends
-            let api_key = if api_key.is_some() || backend_type == BackendType::Local || is_ollama {
+            // API key not needed for local backends or protocols that support unauthenticated local/on-prem serving.
+            let api_key = if api_key.is_some()
+                || backend_type == BackendType::Local
+                || api_key_not_required
+            {
                 api_key
             } else {
                 eprint!("Enter backend API key for {name} (or press Enter to skip): ");
@@ -221,7 +229,10 @@ pub async fn backend_command(action: BackendAction, json_output: bool) -> Result
                         print_status_line(
                             "Models",
                             Status::Warning,
-                            "Ollama not reachable — run `dekk apxm backend sync-models <name>` after starting Ollama",
+                            &format!(
+                                "Ollama not reachable - run `{}` after starting Ollama",
+                                dekk_hints::BACKEND_SYNC_MODELS
+                            ),
                         );
                     }
                 }
@@ -237,9 +248,7 @@ pub async fn backend_command(action: BackendAction, json_output: bool) -> Result
 
             if backends.is_empty() {
                 println!("No backends registered.");
-                println!(
-                    "Add one with: dekk apxm backend add <name> --type cloud --protocol openai"
-                );
+                println!("Add one with: {}", dekk_hints::BACKEND_ADD_OPENAI);
                 return Ok(());
             }
 
@@ -345,7 +354,10 @@ pub async fn backend_command(action: BackendAction, json_output: bool) -> Result
                 if count > 0 {
                     println!();
                     println!("Your legacy credentials.toml can now be safely removed.");
-                    println!("To view the migrated backends: dekk apxm backend list");
+                    println!(
+                        "To view the migrated backends: {}",
+                        dekk_hints::BACKEND_LIST
+                    );
                 }
             }
         }

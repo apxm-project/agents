@@ -77,8 +77,7 @@ pub fn validate_command(
 
     if is_air {
         return Err(anyhow::anyhow!(
-            "Direct .air file validation is no longer supported. \
-             Use 'apxm compile' to compile .air files instead."
+            "Validate accepts graph JSON inputs. Use 'apxm compile' to compile .air files."
         ));
     }
 

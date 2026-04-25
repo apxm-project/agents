@@ -9,7 +9,6 @@
 //! - `apxm_validate`      -- validate an AirModule JSON against the AIS contract
 //! - `apxm_compile`       -- compile an AirModule JSON to an optimized artifact
 //! - `apxm_execute`       -- compile + execute a graph in one shot
-//! - `apxm_merge`         -- merge multiple AirModule sub-graphs into one
 //! - `apxm_get_contract`  -- return the full AIS contract (ops, attrs, types)
 //!
 //! # Running
@@ -188,25 +187,6 @@ fn handle_tools_list() -> Result<Value, Value> {
             }
         }),
         json!({
-            "name": "apxm_merge",
-            "description": "Merge multiple AirModule sub-graphs into a single graph. Node IDs are remapped to avoid collisions and a WAIT_ALL synchronization node is appended.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "name": {
-                        "type": "string",
-                        "description": "Name for the merged graph"
-                    },
-                    "graphs": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "Array of AirModule JSON strings to merge"
-                    }
-                },
-                "required": ["name", "graphs"]
-            }
-        }),
-        json!({
             "name": "apxm_get_contract",
             "description": "Return the full AIS contract: all valid operations with required attributes, valid dependency types, parameter types, and graph schema. Use this to discover what operations and attributes are available when building graphs.",
             "inputSchema": {
@@ -247,7 +227,6 @@ fn handle_tools_call(params: Value) -> Result<Value, Value> {
         "apxm_validate" => tool_validate(args),
         "apxm_compile" => tool_compile(args),
         "apxm_execute" => tool_execute(args),
-        "apxm_merge" => tool_merge(args),
         "apxm_get_contract" => tool_get_contract(),
         "apxm_analyze" => tool_analyze(args),
         _ => Err(format!("unknown tool: {name}")),
@@ -599,14 +578,6 @@ fn tool_execute(args: Value) -> Result<String, String> {
         }
     });
     Ok(serde_json::to_string_pretty(&result).unwrap())
-}
-
-// ---------------------------------------------------------------------------
-// Tool: apxm_merge
-// ---------------------------------------------------------------------------
-
-fn tool_merge(_args: Value) -> Result<String, String> {
-    Err("apxm_merge is no longer supported; use `apxm task merge` via the CLI instead".to_string())
 }
 
 // ---------------------------------------------------------------------------

@@ -5,6 +5,8 @@ use std::path::PathBuf;
 use anyhow::Result;
 
 use super::cli::*;
+#[cfg(not(feature = "driver"))]
+use super::dekk_hints;
 
 pub fn cache_command(action: CacheAction, json: bool) -> Result<()> {
     match action {
@@ -108,7 +110,7 @@ pub fn cache_stats_command(json: bool) -> Result<()> {
         println!("{{\"error\": \"Cache commands require the driver feature\"}}");
     } else {
         println!("Cache commands require the driver feature");
-        println!("Rebuild with: dekk apxm build");
+        println!("Rebuild with: {}", dekk_hints::BUILD);
     }
     Err(anyhow::anyhow!("Driver feature required"))
 }

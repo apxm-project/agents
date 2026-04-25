@@ -111,9 +111,9 @@ The current documentation contract is:
   `crates/runtime/apxm-backends/python/apxm_vllm/`
 - removing obsolete killer-demo planning docs that described a 4-endpoint
   `/v1/apxm/pins*` design instead of the live 3-endpoint graph contract
-- pointing `.dekk.toml`'s `vllm` install component at
-  `tools/scripts/install_external_vllm.sh`
-- centralising the maintained fork commands in `tools/scripts/vllm.py`
+- pointing `.dekk.toml`'s `vllm` install component at the maintained
+  `tools/scripts/vllm.py install` controller
+- centralizing the maintained fork commands in `tools/scripts/vllm.py`
   (`dekk apxm vllm install`, `doctor`, `download`, `serve`, `start`,
   `status`, `logs`, `probe`, `enable`, and `stop`)
 
@@ -212,8 +212,10 @@ dekk apxm vllm download <HF_MODEL_ID> --hf-home /path/to/hf-cache
 graph route, adds the backend if needed, adds the served model id if needed,
 and runs `dekk apxm backend test` unless `--skip-test` is set. It writes APXM's
 normal backend store (`~/.apxm/config.toml`), and it does not start vLLM,
-download weights, or rewrite graph/chat routing policy. To make a workload use
-the backend, route that workload to the backend/model you registered.
+download weights, or rewrite graph/chat routing policy. For authenticated
+servers, keep `VLLM_API_KEY` set or pass `--api-key-env <ENV_VAR>` so APXM
+stores an environment reference instead of a literal secret. To make a workload
+use the backend, route that workload to the backend/model you registered.
 
 For a local model path, do not enable the filesystem path unless vLLM exposes
 that exact string from `/v1/models`. Prefer an explicit served name:
@@ -230,7 +232,7 @@ dekk apxm vllm enable my-model-local --port 8916
 Gemma 4 is the worked example we validated; it is not a special APXM backend
 or a required model.
 
-## Validated Example: Gemma 4
+## Lab Validation: Gemma 4
 
 This is one validated bring-up path for the repo-local APXM vLLM fork using
 Gemma 4. Substitute any vLLM-supported model reference that fits the machine.
@@ -249,7 +251,7 @@ This must report that the editable install resolves to `external/vllm`, not a
 wheel or hidden checkout:
 
 ```sh
-dekk apxm vllm doctor --hf-home /var/tmp/hf-cache --port 8916
+dekk apxm vllm doctor --hf-home /path/to/hf-cache --port 8916
 ```
 
 `doctor` also prints package versions, GPU visibility, the configured
@@ -262,7 +264,7 @@ Use local SSD for the Hugging Face cache. The 31 B checkpoint is roughly
 
 ```sh
 dekk apxm vllm download google/gemma-4-31B-it \
-  --hf-home /var/tmp/hf-cache
+  --hf-home /path/to/hf-cache
 ```
 
 ### 4. Start Gemma 4
@@ -274,7 +276,7 @@ multiple devices.
 ```sh
 dekk apxm vllm start google/gemma-4-31B-it \
   --served-model-name google/gemma-4-31B-it \
-  --hf-home /var/tmp/hf-cache \
+  --hf-home /path/to/hf-cache \
   --gpus 0 \
   --tensor-parallel-size 1 \
   --gpu-memory-utilization 0.90 \
@@ -307,18 +309,24 @@ dekk apxm vllm enable google/gemma-4-31B-it --port 8916
 
 ### 7. Run an APXM smoke with metrics
 
-Use a benchmark graph that exercises LLM fan-out and graph hints:
+Use the checked-in self-hosted smoke graph so the example does not assume a
+benchmark-specific backend name. Set `APXM_VLLM_MODEL` to the served model id
+you enabled in step 6; in this Gemma lab run that value was
+`google/gemma-4-31B-it`.
 
 ```sh
-dekk apxm run \
-  --emit-metrics .apxm/vllm-logs/gemma4-metrics.json \
-  examples/python/_benchmarks/shared_prefix_fanout.O2.apxmobj
+APXM_METRICS_DIR="$(mktemp -d)"
+APXM_VLLM_MODEL=<SERVED_MODEL_ID> \
+dekk apxm execute \
+  --emit-session "${APXM_METRICS_DIR}/session" \
+  --emit-metrics "${APXM_METRICS_DIR}/metrics.json" \
+  examples/python/self-hosted/vllm_graph_smoke.py
 ```
 
 Check that backend graph telemetry is present:
 
 ```sh
-jq '.backends.graphs' .apxm/vllm-logs/gemma4-metrics.json
+jq '.backends.graphs' "${APXM_METRICS_DIR}/metrics.json"
 ```
 
 If that array is missing, APXM did not capture pre-release graph status.
@@ -331,7 +339,7 @@ If that array is missing, APXM did not capture pre-release graph status.
 the same value for download and serve so vLLM finds the cached weights:
 
 ```sh
-dekk apxm vllm doctor --hf-home /var/tmp/hf-cache
+dekk apxm vllm doctor --hf-home /path/to/hf-cache
 ```
 
 Sizing rule of thumb (bf16): ~2 bytes per parameter. A 31 B model is ~60 GB
@@ -347,9 +355,7 @@ export HF_TOKEN=$(cat ~/.cache/huggingface/token)
 
 For Hugging Face-hosted gated models, log in and accept the model license with
 the same account before downloading. For local model directories or non-Hugging
-Face sources, follow that source's access flow instead. Gemma 4 is currently
-Apache 2.0 and not gated, so license acceptance is not required for
-`google/gemma-4-*`.
+Face sources, follow that source's access flow instead.
 
 ### 3. Pre-download Hugging Face weights when using an HF model id
 
@@ -357,7 +363,7 @@ Pre-downloading separates "did the download fail" from "did the serve fail":
 
 ```sh
 dekk apxm vllm download <HF_MODEL_ID> \
-  --hf-home /var/tmp/hf-cache
+  --hf-home /path/to/hf-cache
 ```
 
 `dekk apxm vllm start` will also let vLLM download on first run;
@@ -382,20 +388,20 @@ Run `doctor` first. If the installed fork environment is too old for a model,
 rebuild through the APXM controller:
 
 ```sh
-dekk apxm vllm doctor --hf-home /var/tmp/hf-cache
+dekk apxm vllm doctor --hf-home /path/to/hf-cache
 dekk apxm vllm install
 ```
 
-Pick the minimum version listed in the model's release notes (Gemma 4
-needs `transformers >= 5.5.0`). If a brand-new model needs a dependency newer
-than the installer provides, update the installer or fork requirements rather
-than documenting one-off environment mutation.
+Pick the minimum version listed in the model's release notes. If a brand-new
+model needs a dependency newer than the installer provides, update the fork
+requirements and rebuild through `dekk apxm vllm install` rather than
+documenting one-off environment mutation.
 
 ### 5. Serve the model
 
 ```sh
 dekk apxm vllm start <MODEL_REF> \
-  --hf-home /var/tmp/hf-cache \
+  --hf-home /path/to/hf-cache \
   --served-model-name <SERVED_MODEL_ID> \
   --gpus 6,7 \
   --tensor-parallel-size 2 \
@@ -476,12 +482,6 @@ The maintained operator-facing backend runbook now lives in:
 
 The deck directory is speaker-facing rehearsal material. It may reference this
 backend runbook, but it should not own the durable backend setup path.
-
-The older scratch worktree notes are still useful as supplementary operational
-history:
-
-- `.claude/worktrees/vllm-killer-demo/SESSION_STATUS.md`
-- `.claude/worktrees/vllm-killer-demo/FORK_BUILDOUT_PLAN.md`
 
 This document exists so the main repo has a stable pointer to the current
 truth.

@@ -52,7 +52,6 @@ The `apxm-mcp-server` binary exposes these tools over stdio:
 - `apxm_validate` -- validate an AirModule JSON
 - `apxm_compile` -- compile to optimized artifact
 - `apxm_execute` -- compile + execute in one shot
-- `apxm_merge` -- merge sub-graphs
 - `apxm_get_contract` -- return the full AIS contract
 
 ## Dependencies

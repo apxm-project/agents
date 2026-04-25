@@ -124,9 +124,7 @@ fn select_by_strategy(
     if backends.read().is_empty() {
         anyhow::bail!(
             "No backends registered in the LLM registry.\n\
-             Check ~/.apxm/config.toml has [[backends]] entries.\n\
-             Run: dekk apxm backend add <name> --protocol <protocol>\n\
-             Run: dekk apxm doctor"
+             Check that the APXM backend configuration has [[backends]] entries."
         );
     }
 
