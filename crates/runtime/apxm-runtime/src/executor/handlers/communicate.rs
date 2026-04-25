@@ -876,6 +876,26 @@ mod tests {
         }
     }
 
+    struct MockUsagePrompter;
+
+    #[async_trait::async_trait]
+    impl AgentPrompter for MockUsagePrompter {
+        async fn prompt(
+            &self,
+            _process: &crate::process::AgentProcess,
+            message: &str,
+        ) -> Result<AgentPromptResponse> {
+            Ok(
+                AgentPromptResponse::text(format!("mock response: {message}"))
+                    .with_session_id("mock-session")
+                    .with_turn(1)
+                    .with_model("mock-model")
+                    .with_stop_reason("end_turn")
+                    .with_token_usage(Some(10), Some(5)),
+            )
+        }
+    }
+
     #[tokio::test]
     async fn test_communicate_acp_prepends_context_stack_frames() {
         let dir = tempdir().expect("tempdir");
@@ -1032,6 +1052,78 @@ mod tests {
         let recorded = prompts.lock().expect("prompt lock");
         assert_eq!(recorded.len(), 1);
         assert_eq!(recorded[0], "Respond from attribute");
+    }
+
+    #[tokio::test]
+    async fn test_communicate_acp_records_metrics_with_mock_prompter() {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(LLMRegistry::new());
+        let capability_system = Arc::new(CapabilitySystem::new());
+        let process_table = Arc::new(crate::process_table::ProcessTable::new());
+        let process_id = process_table
+            .spawn_local("PeerAgent".to_string(), None)
+            .expect("spawn local process");
+        process_table
+            .set_agent_prompter(Arc::new(MockUsagePrompter))
+            .await;
+
+        let ctx = ExecutionContext::new(
+            memory,
+            llm_registry,
+            capability_system,
+            crate::aam::Aam::new(),
+        )
+        .with_process_table(process_table);
+
+        let mut node = apxm_core::types::execution::Node {
+            id: 7,
+            op_type: AISOperationType::Communicate,
+            attributes: HashMap::new(),
+            input_tokens: vec![],
+            output_tokens: vec![100],
+            metadata: NodeMetadata::default(),
+        };
+        node.attributes.insert(
+            graph_attrs::RECIPIENT.to_string(),
+            Value::String("PeerAgent".to_string()),
+        );
+        node.attributes.insert(
+            graph_attrs::PROTOCOL.to_string(),
+            Value::String(comm_proto::ACP.to_string()),
+        );
+
+        let result = execute(&ctx, &node, vec![Value::String("hello".to_string())])
+            .await
+            .unwrap();
+
+        assert_eq!(
+            result,
+            Value::String("mock response: hello".to_string()),
+            "handler should return the mock prompter text"
+        );
+
+        let snapshot = ctx.graph_metrics.snapshot();
+        let node_metrics = snapshot.nodes.get(&node.id).expect("node metrics");
+        assert_eq!(node_metrics.processes.totals.prompt_turns, 1);
+        assert_eq!(node_metrics.processes.totals.input_tokens, 10);
+        assert_eq!(node_metrics.processes.totals.output_tokens, 5);
+        assert_eq!(snapshot.graph.processes.total_tokens, 15);
+        assert_eq!(snapshot.aggregates.by_agent["PeerAgent"].prompt_turns, 1);
+
+        let turn = &node_metrics.processes.prompt_turns[0];
+        assert_eq!(turn.process_id, process_id);
+        assert_eq!(turn.protocol, comm_proto::ACP);
+        assert_eq!(turn.session_id.as_deref(), Some("mock-session"));
+        assert_eq!(turn.model.as_deref(), Some("mock-model"));
+        assert_eq!(turn.stop_reason.as_deref(), Some("end_turn"));
+
+        let tokens = ctx.token_accountant.get_node(node.id).expect("tokens");
+        assert_eq!(tokens.input_tokens, 10);
+        assert_eq!(tokens.output_tokens, 5);
     }
 
     #[tokio::test]
