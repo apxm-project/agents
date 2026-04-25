@@ -35,7 +35,6 @@ LLVM_PREFIX = "{environment}"
 APXM_HOME = "{project}"
 PYTHONPATH = "{project}/tools"
 LD_LIBRARY_PATH = "{project}/target/release/lib:{project}/target/release:{environment}/lib"
-APXM_BACKEND = "corp-gateway"
 
 [paths]
 bin = ["{project}/bin", "{project}/target/release", "{home}/.cargo/bin"]
@@ -88,7 +87,16 @@ add-model = { run = "apxm backend add-model", description = "Add model to backen
 description = "Operate the visible external/vllm fork"
 group = "Configuration"
 install = { run = "python tools/scripts/vllm.py install", description = "Install the repo-local external/vllm fork" }
+help = { run = "python tools/scripts/vllm.py help", description = "Show detailed vLLM controller help" }
+doctor = { run = "python tools/scripts/vllm.py doctor", description = "Verify fork imports, package versions, GPU visibility, and port state" }
+download = { run = "python tools/scripts/vllm.py download", description = "Download Hugging Face model weights into the configured cache" }
 serve = { run = "python tools/scripts/vllm.py serve", description = "Serve a model from the repo-local external/vllm fork" }
+start = { run = "python tools/scripts/vllm.py start", description = "Start a repo-local vLLM model server in the background" }
+stop = { run = "python tools/scripts/vllm.py stop", description = "Stop the repo-local vLLM server for a port" }
+status = { run = "python tools/scripts/vllm.py status", description = "Show repo-local vLLM process and port status" }
+logs = { run = "python tools/scripts/vllm.py logs", description = "Show repo-local vLLM background server logs" }
+probe = { run = "python tools/scripts/vllm.py probe", description = "Probe OpenAI models and APXM graph endpoints" }
+enable = { run = "python tools/scripts/vllm.py enable", description = "Enable the running repo-local vLLM endpoint as an APXM backend" }
 
 [commands.ops]
 description = "Browse AIS operations"
@@ -158,7 +166,7 @@ default = false
 [[install.components]]
 name = "vllm"
 label = "vLLM (graph-aware fork)"
-description = "Required for graph-aware scheduling — stock vLLM silently drops extra_body.apxm request hints"
+description = "Required for graph-aware scheduling — stock vLLM does not consume APXM request hints"
 run = "bash tools/scripts/install_external_vllm.sh"
 default = false
 

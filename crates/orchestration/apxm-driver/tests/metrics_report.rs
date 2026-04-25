@@ -67,15 +67,15 @@ impl MetricsSource for StubBackendSource {
             metrics_keys::BACKENDS_PER_BACKEND: {
                 "mock": { llm_keys::TOTAL_REQUESTS: 1 }
             },
-            metrics_keys::BACKENDS_VLLM: {
-                metrics_keys::VLLM_GRAPHS: [{
-                    gsk::GRAPH_ID: "g1",
-                    gsk::PINNED_BLOCKS: 7,
-                    gsk::PINNED_HANDLES: 3,
-                    gsk::CRITICAL_PATH_LENGTH: 4,
-                    gsk::NODE_COUNT: 5
-                }]
-            }
+            metrics_keys::BACKENDS_GRAPHS: [{
+                gsk::BACKEND_KIND: "vllm",
+                gsk::BACKEND_NAME: "vllm-fork",
+                gsk::GRAPH_ID: "g1",
+                gsk::PINNED_BLOCKS: 7,
+                gsk::PINNED_HANDLES: 3,
+                gsk::CRITICAL_PATH_LENGTH: 4,
+                gsk::NODE_COUNT: 5
+            }]
         })
     }
 }
@@ -141,17 +141,17 @@ fn metrics_report_includes_all_three_sections() {
         "missing backends.per_backend"
     );
     assert!(
-        backends.get(metrics_keys::BACKENDS_VLLM).is_some(),
-        "missing backends.vllm"
+        backends.get(metrics_keys::BACKENDS_GRAPHS).is_some(),
+        "missing backends.graphs"
     );
-
-    // vllm.graphs shape
-    let vllm = &backends[metrics_keys::BACKENDS_VLLM];
-    let graphs = vllm[metrics_keys::VLLM_GRAPHS]
+    // Graph-aware backend snapshot shape
+    let graphs = backends[metrics_keys::BACKENDS_GRAPHS]
         .as_array()
         .expect("graphs is array");
     assert_eq!(graphs.len(), 1);
     use metrics_keys::graph_status_keys as gsk;
+    assert!(graphs[0].get(gsk::BACKEND_KIND).is_some());
+    assert!(graphs[0].get(gsk::BACKEND_NAME).is_some());
     assert!(graphs[0].get(gsk::PINNED_BLOCKS).is_some());
     assert!(graphs[0].get(gsk::PINNED_HANDLES).is_some());
     assert!(graphs[0].get(gsk::CRITICAL_PATH_LENGTH).is_some());

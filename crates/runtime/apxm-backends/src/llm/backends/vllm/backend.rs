@@ -406,8 +406,11 @@ impl LLMBackend for GraphAwareVllmBackend {
         // Default behavior is hard-fail; opt out via
         // `BackendConfig.require_apxm_endpoints = false`.
         let url = self.graph_status_url(vllm_keys::APXM_PROBE_GRAPH_ID);
-        if let Ok(response) = self.client.get(&url).send().await {
-            if response.status() == reqwest::StatusCode::NOT_FOUND {
+        match self.client.get(&url).send().await {
+            Ok(response) if response.status().is_success() => {
+                self.apxm_endpoints_available.store(true, Ordering::Relaxed);
+            }
+            Ok(response) if response.status() == reqwest::StatusCode::NOT_FOUND => {
                 self.apxm_endpoints_available
                     .store(false, Ordering::Relaxed);
                 if self.require_apxm_endpoints {
@@ -429,6 +432,36 @@ impl LLMBackend for GraphAwareVllmBackend {
                          graph registration, graph status, and graph release will be no-ops \
                          (require_apxm_endpoints = false)"
                     );
+                }
+            }
+            Ok(response) => {
+                let status = response.status();
+                self.apxm_endpoints_available
+                    .store(false, Ordering::Relaxed);
+                if self.require_apxm_endpoints {
+                    anyhow::bail!(
+                        "vLLM server at {} exposes the APXM graph route but it is not ready \
+                         (status {}). Check the fork server logs and rerun \
+                         `dekk apxm vllm probe`.",
+                        url,
+                        status
+                    );
+                }
+                if !self.health_check_warned.swap(true, Ordering::Relaxed) {
+                    tracing::warn!(
+                        endpoint = %url,
+                        status = %status,
+                        "vLLM APXM graph route is present but unavailable \
+                         (require_apxm_endpoints = false)"
+                    );
+                }
+            }
+            Err(err) => {
+                self.apxm_endpoints_available
+                    .store(false, Ordering::Relaxed);
+                if self.require_apxm_endpoints {
+                    return Err(err)
+                        .context("failed to probe vLLM APXM graph route during health_check");
                 }
             }
         }
@@ -493,7 +526,7 @@ impl LLMBackend for GraphAwareVllmBackend {
                     .with_pin_counts(status.pinned_handles, status.pinned_blocks)
                     .with_shape(status.node_count, status.critical_path_length),
             )),
-            Err(_) => Ok(None),
+            Err(err) => Err(err),
         }
     }
 }

@@ -642,8 +642,7 @@ pub mod session {
         pub const RUNTIME_LLM: &str = "llm";
         pub const BACKENDS_AGGREGATE: &str = "aggregate";
         pub const BACKENDS_PER_BACKEND: &str = "per_backend";
-        pub const BACKENDS_VLLM: &str = "vllm";
-        pub const VLLM_GRAPHS: &str = "graphs";
+        pub const BACKENDS_GRAPHS: &str = "graphs";
         pub const SCHEMA_VERSION_VALUE: u32 = 2;
 
         // Compiler diagnostics section keys
@@ -691,6 +690,8 @@ pub mod session {
         /// Wire keys for serialized graph-status snapshots in backend metrics.
         pub mod graph_status_keys {
             pub const OBJECT: &str = "object";
+            pub const BACKEND_KIND: &str = "backend_kind";
+            pub const BACKEND_NAME: &str = "backend_name";
             pub const GRAPH_ID: &str = "graph_id";
             pub const REGISTERED: &str = "registered";
             pub const PINNED_BLOCKS: &str = "pinned_blocks";

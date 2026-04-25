@@ -109,6 +109,11 @@ Forward-looking design proposals — what APXM is becoming, not what it is today
   guardrails and inter-agent handoffs as first-class AIR constructs
 - [design/sessions.md](design/sessions.md) — durable sessions and checkpoint scope
 
+## Backend Guides
+
+- [backends/vllm.md](backends/vllm.md) — Dekk-first setup, registration, and
+  metrics guidance for the repo-local graph-aware vLLM fork
+
 ## Trying It Out
 
 ```
