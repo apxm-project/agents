@@ -11,7 +11,7 @@ intended as user-facing examples.
 - **fusion_stress.py** -- 10 ASK/THINK pairs for FuseAskOps pass
 - **dead_context_stress.py** -- 5 contexts, 1 used, for DeadContextElimination
 - **shared_prefix_fanout.py** -- Shared prefix across 4 parallel nodes
-- **demo_code_critique.py** -- Composite code-critique demo graph for APXM x vLLM runs
+- **demo_code_critique.py** -- Composite code-critique benchmark graph for APXM x vLLM runs; checked in, but not yet a finalized measured talk asset
 - **prefix_fanout_large.py** -- Large-scale prefix sharing (stress test)
 - **cse_stress.py** -- Common subexpression elimination
 - **memo_cache_stress.py** -- Memoization cache effectiveness
@@ -28,7 +28,7 @@ intended as user-facing examples.
 dekk apxm execute examples/python/_benchmarks/fusion_stress.py -O0
 dekk apxm execute examples/python/_benchmarks/fusion_stress.py -O2
 
-# Killer-demo graph
+# Composite benchmark graph
 dekk apxm execute examples/python/_benchmarks/demo_code_critique.py -O0
 dekk apxm execute examples/python/_benchmarks/demo_code_critique.py -O2
 
@@ -54,6 +54,9 @@ python3 examples/python/_benchmarks/comparison_report.py \
 - `demo_code_critique.py` bootstraps the in-repo Python frontend path so
   `python3 examples/python/_benchmarks/demo_code_critique.py` can emit AIR
   directly from a fresh checkout.
+- Treat `demo_code_critique.py` as a benchmark source until fresh metrics are
+  captured; do not use it for speedup or KV hit-rate claims without measured
+  results.
 
 ## Config
 

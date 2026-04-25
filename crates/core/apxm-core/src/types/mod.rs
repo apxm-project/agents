@@ -45,7 +45,8 @@ pub use execution::{
 };
 pub use goal::{Goal, GoalId, GoalStatus};
 pub use graph_hints::{
-    ApxmGraphHints, CompilerHints, GraphMetadata, NodeSpec, PinMode, PinPolicy, PriorityClass,
+    ApxmGraphHints, CompilerHints, GraphBackendKind, GraphMetadata, GraphStatusSnapshot, NodeSpec,
+    PinMode, PinPolicy, PriorityClass,
 };
 pub use identifiers::{
     BackendId, CapabilityName, CheckpointId, ExecutionId, MessageId, ModelId, NodeIdType, OpIdType,
@@ -83,7 +84,6 @@ pub use model_spec::{
     resolve_builtin_model,
 };
 pub use provider_spec::{
-    BUILTIN_PROVIDERS, DEFAULT_VLLM_BASE_URL, BuiltinProviderSpec, ProviderProtocol,
-    ProviderSpec, normalize_endpoint_for_protocol, resolve_builtin_provider,
-    resolve_provider_spec,
+    BUILTIN_PROVIDERS, BuiltinProviderSpec, DEFAULT_VLLM_BASE_URL, ProviderProtocol, ProviderSpec,
+    normalize_endpoint_for_protocol, resolve_builtin_provider, resolve_provider_spec,
 };

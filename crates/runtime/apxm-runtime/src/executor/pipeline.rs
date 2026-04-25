@@ -14,7 +14,7 @@
 //!
 //! # Future work
 //!
-//! - Actual streaming transport to vLLM
+//! - Actual streaming transport to backend providers
 //! - Support for THINK/REASON ops
 //! - Multi-consumer fan-out
 //! - Integration with KV cache pinning
@@ -22,10 +22,14 @@
 use apxm_core::types::{AISOperationType, Value};
 use std::collections::HashMap;
 
+const ATTR_PIPELINE_CANDIDATE: &str = "pipeline_candidate";
+const ATTR_PIPELINE_CONSUMER_ID: &str = "pipeline_consumer_id";
+const ATTR_PIPELINE_PRODUCER_ID: &str = "pipeline_producer_id";
+
 /// Check if a node is pipeline-eligible based on graph attributes
 pub fn is_pipeline_candidate(node_attrs: &HashMap<String, Value>) -> bool {
     node_attrs
-        .get("pipeline_candidate")
+        .get(ATTR_PIPELINE_CANDIDATE)
         .and_then(|v| v.as_bool())
         .unwrap_or(false)
 }
@@ -33,14 +37,14 @@ pub fn is_pipeline_candidate(node_attrs: &HashMap<String, Value>) -> bool {
 /// Get the consumer node ID for a pipeline producer
 pub fn get_pipeline_consumer_id(node_attrs: &HashMap<String, Value>) -> Option<u64> {
     node_attrs
-        .get("pipeline_consumer_id")
+        .get(ATTR_PIPELINE_CONSUMER_ID)
         .and_then(|v| v.as_u64())
 }
 
 /// Get the producer node ID for a pipeline consumer
 pub fn get_pipeline_producer_id(node_attrs: &HashMap<String, Value>) -> Option<u64> {
     node_attrs
-        .get("pipeline_producer_id")
+        .get(ATTR_PIPELINE_PRODUCER_ID)
         .and_then(|v| v.as_u64())
 }
 
@@ -61,10 +65,10 @@ mod tests {
         let mut attrs = HashMap::new();
         assert!(!is_pipeline_candidate(&attrs));
 
-        attrs.insert("pipeline_candidate".to_string(), Value::Bool(true));
+        attrs.insert(ATTR_PIPELINE_CANDIDATE.to_string(), Value::Bool(true));
         assert!(is_pipeline_candidate(&attrs));
 
-        attrs.insert("pipeline_candidate".to_string(), Value::Bool(false));
+        attrs.insert(ATTR_PIPELINE_CANDIDATE.to_string(), Value::Bool(false));
         assert!(!is_pipeline_candidate(&attrs));
     }
 
@@ -73,7 +77,10 @@ mod tests {
         let mut attrs = HashMap::new();
         assert_eq!(get_pipeline_consumer_id(&attrs), None);
 
-        attrs.insert("pipeline_consumer_id".to_string(), Value::Number(42.into()));
+        attrs.insert(
+            ATTR_PIPELINE_CONSUMER_ID.to_string(),
+            Value::Number(42.into()),
+        );
         assert_eq!(get_pipeline_consumer_id(&attrs), Some(42));
     }
 

@@ -13,19 +13,19 @@ use crate::{
         ExecutionContext, ExecutionEventEmitter, ExecutorEngine, InnerPlanLinker, NoOpLinker,
         NoOpWorkflowSpawner, OperationMiddleware, WorkflowSpawner,
     },
+    graph_lifecycle::BackendGraphLifecycle,
     memory::{MemoryConfig, MemorySystem},
     process_table::ProcessTable,
     scheduler::{DataflowScheduler, SchedulerConfig, SessionLaneGuard},
-    vllm_attr_derivation::derive_vllm_attrs,
-    vllm_lifecycle::VllmGraphLifecycle,
 };
 use apxm_artifact::Artifact;
 use apxm_backends::LLMRegistry;
-use apxm_core::constants::runtime::metadata;
+use apxm_core::constants::{graph::metadata as graph_meta, runtime::metadata};
 use apxm_core::log_info;
 use apxm_core::{
     error::RuntimeError,
     types::{
+        GraphStatusSnapshot,
         execution::{Agent, AgentFlow, ExecutionDag, ExecutionStats},
         values::Value,
     },
@@ -50,8 +50,8 @@ pub struct RuntimeExecutionResult {
     /// Aggregate token usage collected during execution. Empty snapshot if no
     /// LLM nodes ran.
     pub token_snapshot: crate::executor::token_accounting::TokenAccountingSnapshot,
-    /// vLLM graph status snapshots captured before graph release.
-    pub vllm_graphs: Vec<serde_json::Value>,
+    /// Backend graph status snapshots captured before graph release.
+    pub graph_status_snapshots: Vec<GraphStatusSnapshot>,
 }
 
 /// Runtime configuration
@@ -328,7 +328,7 @@ impl Runtime {
     /// Execute a DAG with an optional per-execution event emitter.
     pub async fn execute_with_event_emitter(
         &self,
-        mut dag: ExecutionDag,
+        dag: ExecutionDag,
         event_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
     ) -> Result<RuntimeExecutionResult, RuntimeError> {
         log_info!(
@@ -340,13 +340,17 @@ impl Runtime {
         #[cfg(feature = "metrics")]
         self.llm_registry.metrics().reset();
 
-        // Derive `_vllm_*` attributes before register_graph + scheduling.
-        derive_vllm_attrs(&mut dag);
-
-        let lifecycle = build_vllm_lifecycle(&self.llm_registry, &dag).await?;
-
         // Create execution context
-        let context = self.build_context(None, event_emitter, None);
+        let context = self
+            .build_context(None, event_emitter, None)
+            .with_graph_id(graph_id_from_dag(&dag));
+        let lifecycles = build_graph_lifecycles(
+            &self.llm_registry,
+            &dag,
+            &context.graph_id,
+            &context.execution_id,
+        )
+        .await;
         let graph_emitter = context.event_emitter.as_ref().map(Arc::clone);
         let execution_id = context.execution_id.clone();
         let node_count = dag.nodes.len();
@@ -364,15 +368,7 @@ impl Runtime {
         // Execute with dataflow scheduler for automatic parallelism
         let exec_result = self.scheduler.execute(dag, executor, context, vec![]).await;
 
-        let mut vllm_graphs = Vec::new();
-        if let Some(lc) = &lifecycle {
-            if let Err(e) = lc.release().await {
-                tracing::warn!(error = %e, "vLLM graph release failed (non-fatal)");
-            }
-            if let Some(status) = lc.take_status().await {
-                vllm_graphs.push(status);
-            }
-        }
+        let graph_status_snapshots = release_graph_lifecycles(&lifecycles).await;
 
         if let Some(emitter) = &graph_emitter {
             emitter.emit_graph_end(&execution_id, node_count, exec_result.is_ok());
@@ -395,7 +391,7 @@ impl Runtime {
             all_outputs,
             node_output_map,
             token_snapshot,
-            vllm_graphs,
+            graph_status_snapshots,
         })
     }
 
@@ -405,7 +401,7 @@ impl Runtime {
         artifact: Artifact,
     ) -> Result<RuntimeExecutionResult, RuntimeError> {
         let python_bridge = python_tool_bridge_from_artifact(&artifact)?;
-        let mut entry_dag = find_entry_dag(&artifact)?;
+        let entry_dag = find_entry_dag(&artifact)?;
 
         let agents = reconstruct_agents_from_artifact(&artifact);
         let num_registered_agents = agents.len();
@@ -432,10 +428,16 @@ impl Runtime {
         #[cfg(feature = "metrics")]
         self.llm_registry.metrics().reset();
 
-        derive_vllm_attrs(&mut entry_dag);
-        let lifecycle = build_vllm_lifecycle(&self.llm_registry, &entry_dag).await?;
-
-        let context = self.build_context_with_bridge(None, None, None, python_bridge);
+        let context = self
+            .build_context_with_bridge(None, None, None, python_bridge)
+            .with_graph_id(graph_id_from_dag(&entry_dag));
+        let lifecycles = build_graph_lifecycles(
+            &self.llm_registry,
+            &entry_dag,
+            &context.graph_id,
+            &context.execution_id,
+        )
+        .await;
         let executor = Arc::new(ExecutorEngine::new(context.clone()));
         let token_accountant = Arc::clone(&context.token_accountant);
         let exec_result = self
@@ -443,15 +445,7 @@ impl Runtime {
             .execute(entry_dag, executor, context, vec![])
             .await;
 
-        let mut vllm_graphs = Vec::new();
-        if let Some(lc) = &lifecycle {
-            if let Err(e) = lc.release().await {
-                tracing::warn!(error = %e, "vLLM graph release failed (non-fatal)");
-            }
-            if let Some(status) = lc.take_status().await {
-                vllm_graphs.push(status);
-            }
-        }
+        let graph_status_snapshots = release_graph_lifecycles(&lifecycles).await;
 
         let (results, stats, scheduler_metrics, all_outputs, node_output_map) = exec_result?;
 
@@ -466,7 +460,7 @@ impl Runtime {
             all_outputs,
             node_output_map,
             token_snapshot,
-            vllm_graphs,
+            graph_status_snapshots,
         })
     }
 
@@ -507,7 +501,7 @@ impl Runtime {
         };
 
         let python_bridge = python_tool_bridge_from_artifact(&artifact)?;
-        let mut entry_dag = find_entry_dag(&artifact)?;
+        let entry_dag = find_entry_dag(&artifact)?;
         validate_args(&entry_dag, &args)?;
 
         for agent in reconstruct_agents_from_artifact(&artifact) {
@@ -518,16 +512,20 @@ impl Runtime {
         #[cfg(feature = "metrics")]
         self.llm_registry.metrics().reset();
 
-        // Derive `_vllm_*` attributes before register_graph + scheduling.
-        derive_vllm_attrs(&mut entry_dag);
-
-        let context =
-            self.build_context_with_bridge(session_id, event_emitter, session_dir, python_bridge);
+        let context = self
+            .build_context_with_bridge(session_id, event_emitter, session_dir, python_bridge)
+            .with_graph_id(graph_id_from_dag(&entry_dag));
         let graph_emitter = context.event_emitter.as_ref().map(Arc::clone);
         let execution_id = context.execution_id.clone();
         let node_count = entry_dag.nodes.len();
 
-        let lifecycle = build_vllm_lifecycle(&self.llm_registry, &entry_dag).await?;
+        let lifecycles = build_graph_lifecycles(
+            &self.llm_registry,
+            &entry_dag,
+            &context.graph_id,
+            &context.execution_id,
+        )
+        .await;
         if let Some(emitter) = &graph_emitter {
             emitter.emit_graph_start(&execution_id, node_count);
         }
@@ -538,15 +536,7 @@ impl Runtime {
             .execute(entry_dag, executor, context, arg_values)
             .await;
 
-        let mut vllm_graphs = Vec::new();
-        if let Some(lc) = &lifecycle {
-            if let Err(e) = lc.release().await {
-                tracing::warn!(error = %e, "vLLM graph release failed (non-fatal)");
-            }
-            if let Some(status) = lc.take_status().await {
-                vllm_graphs.push(status);
-            }
-        }
+        let graph_status_snapshots = release_graph_lifecycles(&lifecycles).await;
 
         if let Some(emitter) = &graph_emitter {
             emitter.emit_graph_end(&execution_id, node_count, exec_result.is_ok());
@@ -565,7 +555,7 @@ impl Runtime {
             all_outputs,
             node_output_map,
             token_snapshot,
-            vllm_graphs,
+            graph_status_snapshots,
         })
     }
 
@@ -640,41 +630,64 @@ impl Runtime {
     }
 }
 
-/// Build a [`VllmGraphLifecycle`] for the first graph-aware backend, if any.
+/// Build graph lifecycle guards for every graph-aware backend.
 ///
-/// Returns `Ok(None)` when no registered backend opts into the vLLM-style
-/// `/v1/apxm/*` extensions (typed via `LLMBackend::supports_graph_extensions()`,
-/// no string matching). Errors from `register_graph` are demoted to warnings
-/// so that a vLLM control-plane outage does not kill the user's execution
-/// — graph hints simply fall back to vanilla OpenAI semantics.
-async fn build_vllm_lifecycle(
+/// An empty vector means no registered backend opts into graph extensions.
+/// Errors from `register_graph` are demoted to warnings so backend graph
+/// control-plane outages do not kill the user's execution.
+async fn build_graph_lifecycles(
     registry: &LLMRegistry,
     dag: &ExecutionDag,
-) -> Result<Option<VllmGraphLifecycle>, RuntimeError> {
-    let candidates = registry.find_graph_aware_backends();
-    let Some((_, backend)) = candidates.into_iter().next() else {
-        return Ok(None);
-    };
-
-    let graph_id = dag
-        .metadata
-        .name
-        .clone()
-        .unwrap_or_else(|| format!("dag-{}", uuid::Uuid::new_v4()));
-    let exec_id = backend.next_execution_id();
-
-    match VllmGraphLifecycle::register(backend.clone(), graph_id.clone(), exec_id, dag).await {
-        Ok(lc) => Ok(Some(lc)),
-        Err(e) => {
-            tracing::warn!(
-                graph_id = %graph_id,
-                backend = %backend.name(),
-                error = %e,
-                "vLLM register_graph failed; continuing without graph-aware hints"
-            );
-            Ok(None)
+    graph_id: &str,
+    exec_id: &str,
+) -> Vec<BackendGraphLifecycle> {
+    let mut lifecycles = Vec::new();
+    for (backend_name, backend) in registry.find_graph_aware_backends() {
+        match BackendGraphLifecycle::register(
+            backend.clone(),
+            graph_id.to_string(),
+            exec_id.to_string(),
+            dag,
+        )
+        .await
+        {
+            Ok(lifecycle) => lifecycles.push(lifecycle),
+            Err(e) => {
+                tracing::warn!(
+                    graph_id = %graph_id,
+                    backend = %backend_name,
+                    error = %e,
+                    "Backend register_graph failed; continuing without graph-aware hints"
+                );
+            }
         }
     }
+    lifecycles
+}
+
+async fn release_graph_lifecycles(
+    lifecycles: &[BackendGraphLifecycle],
+) -> Vec<GraphStatusSnapshot> {
+    let mut graph_status_snapshots = Vec::new();
+    for lifecycle in lifecycles {
+        if let Err(e) = lifecycle.release().await {
+            tracing::warn!(error = %e, "Backend graph release failed (non-fatal)");
+        }
+        if let Some(status) = lifecycle.take_status().await {
+            graph_status_snapshots.push(status);
+        }
+    }
+    graph_status_snapshots
+}
+
+fn graph_id_from_dag(dag: &ExecutionDag) -> String {
+    dag.metadata.name.clone().unwrap_or_else(|| {
+        format!(
+            "{}{}",
+            graph_meta::GENERATED_GRAPH_ID_PREFIX,
+            uuid::Uuid::new_v4()
+        )
+    })
 }
 
 /// Artifact section kind for Python tool manifests.

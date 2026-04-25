@@ -100,7 +100,9 @@ pub mod observability {
             None
         }
 
-        pub fn aggregate_per_backend(&self) -> std::collections::HashMap<String, AggregatedMetrics> {
+        pub fn aggregate_per_backend(
+            &self,
+        ) -> std::collections::HashMap<String, AggregatedMetrics> {
             std::collections::HashMap::new()
         }
 
@@ -139,7 +141,7 @@ pub mod observability {
     pub struct BackendMetricsSource {
         pub aggregate: AggregatedMetrics,
         pub per_backend: std::collections::HashMap<String, AggregatedMetrics>,
-        pub vllm_graphs: Vec<serde_json::Value>,
+        pub graph_status_snapshots: Vec<apxm_core::types::GraphStatusSnapshot>,
     }
 
     impl apxm_core::metrics::MetricsSource for BackendMetricsSource {
@@ -148,7 +150,43 @@ pub mod observability {
         }
 
         fn collect(&self) -> serde_json::Value {
-            serde_json::Value::Null
+            use apxm_core::constants::session::metrics_keys;
+            use apxm_core::types::{GraphBackendKind, GraphStatusSnapshot};
+
+            if self.aggregate.total_requests == 0
+                && self.per_backend.is_empty()
+                && self.graph_status_snapshots.is_empty()
+            {
+                return serde_json::Value::Null;
+            }
+
+            let mut map = serde_json::Map::new();
+            map.insert(
+                metrics_keys::BACKENDS_AGGREGATE.to_owned(),
+                serde_json::to_value(&self.aggregate).unwrap_or_default(),
+            );
+            map.insert(
+                metrics_keys::BACKENDS_PER_BACKEND.to_owned(),
+                serde_json::to_value(&self.per_backend).unwrap_or_default(),
+            );
+            let vllm_graphs: Vec<_> = self
+                .graph_status_snapshots
+                .iter()
+                .filter(|snapshot| snapshot.backend_kind == GraphBackendKind::Vllm)
+                .map(GraphStatusSnapshot::to_metrics_json)
+                .collect();
+            if !vllm_graphs.is_empty() {
+                let mut vllm = serde_json::Map::new();
+                vllm.insert(
+                    metrics_keys::VLLM_GRAPHS.to_owned(),
+                    serde_json::Value::Array(vllm_graphs),
+                );
+                map.insert(
+                    metrics_keys::BACKENDS_VLLM.to_owned(),
+                    serde_json::Value::Object(vllm),
+                );
+            }
+            serde_json::Value::Object(map)
         }
     }
 }

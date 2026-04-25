@@ -119,7 +119,8 @@ impl Linker {
     /// looked up in `~/.cache/apxm/artifacts/`.  On a cache hit the
     /// compilation step is skipped entirely.
     pub fn compile_graph(&self, input: &Path) -> Result<Artifact, DriverError> {
-        self.compile_graph_inner(input).map(|(artifact, _)| artifact)
+        self.compile_graph_inner(input)
+            .map(|(artifact, _)| artifact)
     }
 
     /// Compile graph input and return both artifact and compiler diagnostics.
@@ -149,9 +150,8 @@ impl Linker {
         // (which is lowered to a temp .air file before reaching the linker).
         let ext = input.extension().and_then(|ext| ext.to_str());
         if matches!(ext, Some("air")) {
-            let air_text = std::fs::read_to_string(input).map_err(|e| {
-                state_err(format!("Failed to read {}: {}", input.display(), e))
-            })?;
+            let air_text = std::fs::read_to_string(input)
+                .map_err(|e| state_err(format!("Failed to read {}: {}", input.display(), e)))?;
             let config = PipelineConfig {
                 opt_level: compiler.opt_level(),
                 ..Default::default()

@@ -951,6 +951,18 @@ fn build_metrics_json(
         link_metrics,
     });
 
+    #[cfg(feature = "metrics")]
+    let backend_aggregate = result.llm_metrics.clone();
+    #[cfg(not(feature = "metrics"))]
+    let backend_aggregate = apxm_backends::AggregatedMetrics::default();
+    if backend_aggregate.total_requests > 0 || !result.graph_status_snapshots.is_empty() {
+        report.add_source(&apxm_backends::BackendMetricsSource {
+            aggregate: backend_aggregate,
+            per_backend: std::collections::HashMap::new(),
+            graph_status_snapshots: result.graph_status_snapshots.clone(),
+        });
+    }
+
     report.to_json()
 }
 
@@ -958,13 +970,19 @@ fn build_metrics_json(
 mod tests {
     use super::build_execution_response;
     use apxm_core::constants::session::metrics_keys;
-    use apxm_core::types::{execution::ExecutionStats, values::Value};
+    use apxm_core::types::{GraphStatusSnapshot, execution::ExecutionStats, values::Value};
     use apxm_runtime::{
         RuntimeExecutionResult, SchedulerMetrics,
         executor::token_accounting::{TokenAccountingSnapshot, TokenUsageSummary},
     };
     use std::collections::HashMap;
     use std::path::Path;
+
+    const TEST_EXECUTION_ID: &str = "exec-123";
+    const TEST_INPUT: &str = "demo.air";
+    const TEST_SESSION_DIR: &str = "/tmp/session";
+    const TEST_METRICS_PATH: &str = "/tmp/metrics.json";
+    const TEST_PROFILE_PATH: &str = "/tmp/profile.json";
 
     fn sample_result() -> RuntimeExecutionResult {
         let mut results = HashMap::new();
@@ -989,7 +1007,7 @@ mod tests {
                 per_agent: HashMap::new(),
                 total: TokenUsageSummary::default(),
             },
-            vllm_graphs: vec![],
+            graph_status_snapshots: vec![],
         }
     }
 
@@ -997,33 +1015,36 @@ mod tests {
     fn execution_response_includes_machine_paths_and_ids() {
         let response = build_execution_response(
             &sample_result(),
-            Some("exec-123".to_string()),
-            Some("/tmp/session".to_string()),
-            Some("/tmp/metrics.json".to_string()),
-            Some("/tmp/profile.json".to_string()),
+            Some(TEST_EXECUTION_ID.to_string()),
+            Some(TEST_SESSION_DIR.to_string()),
+            Some(TEST_METRICS_PATH.to_string()),
+            Some(TEST_PROFILE_PATH.to_string()),
         );
 
-        assert_eq!(response["execution_id"], "exec-123");
-        assert_eq!(response["session_dir"], "/tmp/session");
-        assert_eq!(response["metrics_path"], "/tmp/metrics.json");
-        assert_eq!(response["profile_path"], "/tmp/profile.json");
-        assert_eq!(response["content"], "done");
-        assert_eq!(response["stats"]["executed_nodes"], 3);
+        use metrics_keys::cli_response_keys as response_keys;
+        assert_eq!(response[response_keys::EXECUTION_ID], TEST_EXECUTION_ID);
+        assert_eq!(response[response_keys::SESSION_DIR], TEST_SESSION_DIR);
+        assert_eq!(response[response_keys::METRICS_PATH], TEST_METRICS_PATH);
+        assert_eq!(response[response_keys::PROFILE_PATH], TEST_PROFILE_PATH);
+        assert_eq!(response[response_keys::CONTENT], "done");
+        assert_eq!(
+            response[response_keys::STATS][response_keys::STATS_EXECUTED_NODES],
+            3
+        );
     }
 
     #[test]
     fn metrics_json_uses_unified_schema_v2() {
-        let metrics = super::build_metrics_json(
-            Path::new("demo.air"),
-            None,
-            &sample_result(),
-            None,
-            None,
+        let metrics =
+            super::build_metrics_json(Path::new(TEST_INPUT), None, &sample_result(), None, None);
+        assert_eq!(
+            metrics[metrics_keys::SCHEMA_VERSION],
+            metrics_keys::SCHEMA_VERSION_VALUE
         );
-        assert_eq!(metrics[metrics_keys::SCHEMA_VERSION], metrics_keys::SCHEMA_VERSION_VALUE);
         let runtime = &metrics[metrics_keys::SECTION_RUNTIME];
         assert!(runtime.get(metrics_keys::RUNTIME_EXECUTION).is_some());
         assert!(runtime.get(metrics_keys::TOKEN_ACCOUNTING).is_some());
+        #[cfg(feature = "metrics")]
         assert!(runtime.get(metrics_keys::RUNTIME_LLM).is_some());
     }
 
@@ -1031,17 +1052,67 @@ mod tests {
     fn metrics_json_includes_compiler_section_when_diagnostics_present() {
         let compiler_diag = serde_json::json!({
             metrics_keys::COMPILER_PASSES: [],
-            metrics_keys::COMPILER_SUMMARY: { "total_passes": 0 }
+            metrics_keys::COMPILER_SUMMARY: { metrics_keys::SUMMARY_TOTAL_PASSES: 0 }
         });
         let metrics = super::build_metrics_json(
-            Path::new("demo.air"),
+            Path::new(TEST_INPUT),
             Some(1),
             &sample_result(),
             Some(&compiler_diag),
             None,
         );
-        assert_eq!(metrics[metrics_keys::SCHEMA_VERSION], metrics_keys::SCHEMA_VERSION_VALUE);
+        assert_eq!(
+            metrics[metrics_keys::SCHEMA_VERSION],
+            metrics_keys::SCHEMA_VERSION_VALUE
+        );
         assert!(metrics.get(metrics_keys::SECTION_COMPILER).is_some());
         assert!(metrics.get(metrics_keys::SECTION_RUNTIME).is_some());
+    }
+
+    #[test]
+    fn metrics_json_includes_vllm_graph_snapshots() {
+        let mut result = sample_result();
+        result.graph_status_snapshots.push(
+            GraphStatusSnapshot::vllm(TEST_EXECUTION_ID)
+                .with_registered(true)
+                .with_pin_counts(2, 16)
+                .with_shape(Some(4), Some(3)),
+        );
+
+        let metrics =
+            super::build_metrics_json(Path::new(TEST_INPUT), Some(2), &result, None, None);
+
+        let graphs = metrics[metrics_keys::SECTION_BACKENDS][metrics_keys::BACKENDS_VLLM]
+            [metrics_keys::VLLM_GRAPHS]
+            .as_array()
+            .expect("vllm graph snapshots are emitted");
+        assert_eq!(graphs.len(), 1);
+
+        use metrics_keys::graph_status_keys as gsk;
+        assert_eq!(graphs[0][gsk::GRAPH_ID], TEST_EXECUTION_ID);
+        assert_eq!(graphs[0][gsk::PINNED_HANDLES], 2);
+        assert_eq!(graphs[0][gsk::PINNED_BLOCKS], 16);
+    }
+
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn metrics_json_includes_backend_aggregate_when_llm_metrics_present() {
+        let mut result = sample_result();
+        result.llm_metrics = apxm_backends::AggregatedMetrics {
+            total_requests: 2,
+            successful_requests: 2,
+            total_input_tokens: 10,
+            total_output_tokens: 20,
+            ..Default::default()
+        };
+
+        let metrics =
+            super::build_metrics_json(Path::new(TEST_INPUT), Some(2), &result, None, None);
+
+        assert_eq!(
+            metrics[metrics_keys::SECTION_BACKENDS][metrics_keys::BACKENDS_AGGREGATE]
+                [metrics_keys::llm_keys::TOTAL_REQUESTS],
+            2
+        );
     }
 }

@@ -22,7 +22,7 @@ dekk apxm doctor
 
 **Optional repo-local vLLM fork:**
 ```bash
-# Stock vLLM silently ignores APXM's extra_body.apxm scheduling hints.
+# Stock vLLM does not consume APXM's vLLM extension hints.
 dekk apxm vllm install
 dekk apxm vllm serve <HF_MODEL_ID>
 ```

@@ -298,7 +298,11 @@ fn execute_json_with_local_controls_succeeds_end_to_end() {
         .output()
         .unwrap();
 
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let body: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     let session_dir = std::path::PathBuf::from(body["session_dir"].as_str().unwrap());
     assert!(session_dir.is_dir());
@@ -1378,7 +1382,11 @@ fn workflow_run_nested_workflow_uses_explicit_root_for_parent_and_child() {
         .output()
         .unwrap();
 
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let body: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
 
     let parent_session_dir = Path::new(body["session_dir"].as_str().unwrap());

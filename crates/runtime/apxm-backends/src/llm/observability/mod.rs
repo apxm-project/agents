@@ -4,7 +4,7 @@
 
 use apxm_core::constants::session::metrics_keys;
 use apxm_core::metrics::MetricsSource;
-use apxm_core::types::TokenUsage;
+use apxm_core::types::{GraphBackendKind, GraphStatusSnapshot, TokenUsage};
 use dashmap::DashMap;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -176,10 +176,7 @@ impl MetricsTracker {
         let inner = self.inner.lock();
         let mut result = HashMap::new();
         for entry in inner.backend_metrics.iter() {
-            result.insert(
-                entry.key().clone(),
-                Self::compute_aggregated(entry.value()),
-            );
+            result.insert(entry.key().clone(), Self::compute_aggregated(entry.value()));
         }
         result
     }
@@ -250,7 +247,7 @@ impl RequestTracer {
 pub struct BackendMetricsSource {
     pub aggregate: AggregatedMetrics,
     pub per_backend: HashMap<String, AggregatedMetrics>,
-    pub vllm_graphs: Vec<serde_json::Value>,
+    pub graph_status_snapshots: Vec<GraphStatusSnapshot>,
 }
 
 impl MetricsSource for BackendMetricsSource {
@@ -261,7 +258,7 @@ impl MetricsSource for BackendMetricsSource {
     fn collect(&self) -> serde_json::Value {
         if self.aggregate.total_requests == 0
             && self.per_backend.is_empty()
-            && self.vllm_graphs.is_empty()
+            && self.graph_status_snapshots.is_empty()
         {
             return serde_json::Value::Null;
         }
@@ -275,11 +272,17 @@ impl MetricsSource for BackendMetricsSource {
             metrics_keys::BACKENDS_PER_BACKEND.to_owned(),
             serde_json::to_value(&self.per_backend).unwrap_or_default(),
         );
-        if !self.vllm_graphs.is_empty() {
+        let vllm_graphs: Vec<_> = self
+            .graph_status_snapshots
+            .iter()
+            .filter(|snapshot| snapshot.backend_kind == GraphBackendKind::Vllm)
+            .map(GraphStatusSnapshot::to_metrics_json)
+            .collect();
+        if !vllm_graphs.is_empty() {
             let mut vllm = serde_json::Map::new();
             vllm.insert(
                 metrics_keys::VLLM_GRAPHS.to_owned(),
-                serde_json::Value::Array(self.vllm_graphs.clone()),
+                serde_json::Value::Array(vllm_graphs),
             );
             map.insert(
                 metrics_keys::BACKENDS_VLLM.to_owned(),
@@ -440,7 +443,7 @@ mod tests {
         let source = BackendMetricsSource {
             aggregate: AggregatedMetrics::default(),
             per_backend: HashMap::new(),
-            vllm_graphs: vec![],
+            graph_status_snapshots: vec![],
         };
         assert!(source.collect().is_null());
     }
@@ -462,13 +465,7 @@ mod tests {
                 ..Default::default()
             },
             per_backend,
-            vllm_graphs: {
-                use apxm_core::constants::session::metrics_keys::vllm_graph_status_keys as gsk;
-                let mut g = serde_json::Map::new();
-                g.insert(gsk::GRAPH_ID.to_owned(), "g1".into());
-                g.insert(gsk::PINNED_BLOCKS.to_owned(), 12.into());
-                vec![serde_json::Value::Object(g)]
-            },
+            graph_status_snapshots: vec![GraphStatusSnapshot::vllm("g1").with_pin_counts(0, 12)],
         };
 
         let val = source.collect();
@@ -490,7 +487,7 @@ mod tests {
                 ..Default::default()
             },
             per_backend: HashMap::new(),
-            vllm_graphs: vec![],
+            graph_status_snapshots: vec![],
         };
 
         let val = source.collect();
@@ -505,7 +502,7 @@ mod tests {
         let source = BackendMetricsSource {
             aggregate: AggregatedMetrics::default(),
             per_backend: HashMap::new(),
-            vllm_graphs: vec![],
+            graph_status_snapshots: vec![],
         };
         assert_eq!(source.section_name(), metrics_keys::SECTION_BACKENDS);
     }

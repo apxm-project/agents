@@ -2,10 +2,10 @@
 //!
 //! Before dispatching a fan-out group of LLM calls that share a prefix, this module
 //! sends a lightweight "warmup" request that prefills the shared prefix and generates
-//! zero or one token. This allows vLLM's prefix cache to warm up before the actual
-//! requests arrive, improving cache hit rates on downstream nodes.
+//! zero or one token. Prefix-cache-aware backends can retain that prefix before
+//! the actual requests arrive, reducing downstream recomputation.
 //!
-//! ## Warmup Strategy (from docs/strategy/09-VLLM-GRAPH-AWARENESS.md section 5.3)
+//! ## Warmup Strategy
 //!
 //! For large shared contexts, APXM may send a warmup request that:
 //! - Prefills the shared prefix

@@ -80,8 +80,8 @@ impl<'ctx> Pipeline<'ctx> {
         crate::token_estimate::annotate_token_estimates(&mut module);
 
         // Rust-side vllm_hints pass: stamps `_vllm_*` attrs on LLM nodes so
-        // the runtime can splice them into LLMRequest.extra_body.apxm.* for
-        // GraphAware vLLM backends. Listed in `build_pass_list()` after
+        // the runtime can pass typed APXM graph hints to graph-aware backends.
+        // Listed in `build_pass_list()` after
         // ASSIGN_PRIORITY but dispatched here on the AirModule, since the
         // MLIR PassManager only knows about MLIR-side passes.
         if !matches!(self.config.opt_level, OptimizationLevel::O0) {

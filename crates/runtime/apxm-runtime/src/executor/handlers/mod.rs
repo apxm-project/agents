@@ -133,24 +133,6 @@ pub fn copy_llm_request_routing(mut request: LLMRequest, source: &LLMRequest) ->
     request
 }
 
-/// Extract a `Vec<u32>` from an array-valued node attribute.
-///
-/// Returns an empty vec if the attribute is missing or not an array.
-pub fn get_u32_array_attribute(node: &Node, key: &str) -> Vec<u32> {
-    node.attributes
-        .get(key)
-        .and_then(|v| match v {
-            Value::Array(items) => Some(
-                items
-                    .iter()
-                    .filter_map(|item| item.as_u64().map(|u| u as u32))
-                    .collect(),
-            ),
-            _ => None,
-        })
-        .unwrap_or_default()
-}
-
 /// Read an STM key looking in the parent (flow-root) scope first, then the
 /// current scope. SPAWN_AGENT writes `_agent_info:<name>` to the parent scope
 /// so sibling worker scopes (created per node by `scheduler/worker.rs`) can

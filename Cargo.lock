@@ -218,6 +218,7 @@ dependencies = [
  "anyhow",
  "apxm-acp",
  "apxm-artifact",
+ "apxm-backends",
  "apxm-compiler",
  "apxm-core",
  "apxm-credentials",

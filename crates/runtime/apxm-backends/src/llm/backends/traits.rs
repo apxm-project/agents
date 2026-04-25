@@ -1,7 +1,9 @@
 //! Core LLMBackend trait defining the unified interface.
 
 use super::{LLMRequest, LLMResponse};
-use apxm_core::types::{ModelCapabilities, ModelInfo, TokenUsage};
+use apxm_core::types::{
+    GraphMetadata, GraphStatusSnapshot, ModelCapabilities, ModelInfo, TokenUsage,
+};
 use async_trait::async_trait;
 use serde_json::Value;
 use std::pin::Pin;
@@ -72,12 +74,12 @@ pub trait LLMBackend: Send + Sync {
         })
     }
 
-    /// Register a graph for KV-cache scheduling hints (vLLM graph-aware only).
-    async fn register_graph(&self, _metadata: Value) -> anyhow::Result<()> {
+    /// Register graph metadata for graph-aware backend scheduling.
+    async fn register_graph(&self, _metadata: GraphMetadata) -> anyhow::Result<()> {
         Ok(())
     }
 
-    /// Release a graph's pinned KV-cache blocks (vLLM graph-aware only).
+    /// Release backend state associated with a registered graph.
     async fn release_graph(&self, _graph_id: &str) -> anyhow::Result<()> {
         Ok(())
     }
@@ -93,12 +95,12 @@ pub trait LLMBackend: Send + Sync {
         true
     }
 
-    /// Returns `Some(JSON)` for graph-aware backends; `None` for backends
-    /// without per-graph status (default).
+    /// Returns `Some(GraphStatusSnapshot)` for graph-aware backends; `None`
+    /// for backends without per-graph status (default).
     async fn get_graph_status(
         &self,
         _graph_id: &str,
-    ) -> anyhow::Result<Option<serde_json::Value>> {
+    ) -> anyhow::Result<Option<GraphStatusSnapshot>> {
         Ok(None)
     }
 

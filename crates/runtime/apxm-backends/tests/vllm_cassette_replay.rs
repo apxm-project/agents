@@ -4,7 +4,7 @@
 //!
 //! The fixture at `tests/fixtures/vllm_qwen35_happy.json` contains a single
 //! happy-path exchange: one `POST /v1/chat/completions` request with
-//! `extra_body.apxm` scheduling hints and the corresponding OpenAI-format
+//! `vllm_xargs.apxm` scheduling hints and the corresponding OpenAI-format
 //! response from a Qwen/Qwen3.5-4B model.
 //!
 //! ## Re-recording
@@ -22,6 +22,7 @@
 
 use apxm_backends::llm::backends::vllm::{ApxmGraphHints, GraphAwareVllmBackend};
 use apxm_backends::llm::backends::{LLMBackend, LLMRequest};
+use apxm_core::constants::llm::{apxm as apxm_llm, openai as openai_keys};
 use serde_json::{Value, json};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -73,20 +74,23 @@ async fn cassette_replay_qwen35_happy_path() {
     let prompt = request_fixture["messages"][0]["content"]
         .as_str()
         .expect("fixture request prompt");
-    let apxm_hints = &request_fixture["extra_body"]["apxm"];
+    let apxm_hints =
+        &request_fixture[openai_keys::EXTRA_BODY][apxm_llm::VLLM_XARGS][apxm_llm::HINTS_FIELD];
 
     let hints = ApxmGraphHints::critical_path(
-        apxm_hints["graph_id"].as_str().unwrap(),
-        apxm_hints["execution_id"].as_str().unwrap(),
-        apxm_hints["node_id"].as_u64().unwrap() as u32,
-        apxm_hints["node_name"].as_str().unwrap(),
-        apxm_hints["downstream_nodes"]
+        apxm_hints[apxm_llm::GRAPH_ID].as_str().unwrap(),
+        apxm_hints[apxm_llm::EXECUTION_ID].as_str().unwrap(),
+        apxm_hints[apxm_llm::NODE_ID].as_u64().unwrap() as u32,
+        apxm_hints[apxm_llm::NODE_NAME].as_str().unwrap(),
+        apxm_hints[apxm_llm::DOWNSTREAM_NODES]
             .as_array()
             .unwrap()
             .iter()
             .map(|v| v.as_u64().unwrap() as u32)
             .collect(),
-        apxm_hints["pin_policy"]["ttl_ms"].as_u64().unwrap() as u32,
+        apxm_hints[apxm_llm::PIN_POLICY][apxm_llm::PIN_POLICY_TTL_MS]
+            .as_u64()
+            .unwrap() as u32,
     );
 
     let request = LLMRequest::new(prompt)
@@ -120,25 +124,30 @@ async fn cassette_replay_qwen35_happy_path() {
         "expected exactly one chat/completions request"
     );
 
-    // Verify the outgoing request carried extra_body.apxm with the right graph_id.
+    // Verify the outgoing request carried vllm_xargs.apxm with the right graph_id.
     let sent_body: Value =
         serde_json::from_slice(&chat_reqs[0].body).expect("parse sent request body");
     let sent_apxm = sent_body
-        .get("extra_body")
-        .and_then(|eb| eb.get("apxm"))
-        .or_else(|| sent_body.get("apxm"));
+        .get(apxm_llm::VLLM_XARGS)
+        .and_then(|xargs| xargs.get(apxm_llm::HINTS_FIELD))
+        .or_else(|| {
+            sent_body
+                .get(openai_keys::EXTRA_BODY)
+                .and_then(|extra_body| extra_body.get(apxm_llm::VLLM_XARGS))
+                .and_then(|xargs| xargs.get(apxm_llm::HINTS_FIELD))
+        });
     assert!(
         sent_apxm.is_some(),
-        "outgoing request must carry extra_body.apxm or top-level apxm"
+        "outgoing request must carry vllm_xargs.apxm"
     );
     let sent_apxm = sent_apxm.unwrap();
     assert_eq!(
-        sent_apxm["graph_id"].as_str(),
+        sent_apxm[apxm_llm::GRAPH_ID].as_str(),
         Some("cassette-graph-001"),
         "sent graph_id must match fixture"
     );
     assert_eq!(
-        sent_apxm["node_id"].as_u64(),
+        sent_apxm[apxm_llm::NODE_ID].as_u64(),
         Some(1),
         "sent node_id must match fixture"
     );

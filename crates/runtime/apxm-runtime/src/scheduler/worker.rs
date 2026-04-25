@@ -82,7 +82,7 @@ pub async fn worker_loop(
         };
 
         // Acquire concurrency permit (backpressure). LLM ops draw from a
-        // separate semaphore so remote-batched serving (vLLM, etc.) can fan
+        // separate semaphore so remote-batched serving backends can fan
         // out without inflating compute parallelism — and vice versa, so a
         // burst of LLM nodes cannot starve compute-bound work.
         let semaphore = if is_pure_llm_op(&node.op_type) {

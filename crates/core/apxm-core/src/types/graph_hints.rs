@@ -1,4 +1,8 @@
-use crate::constants::{graph::attrs, llm::apxm as apxm_llm};
+use crate::constants::{
+    graph::backend_kind,
+    graph::{attrs, metadata as graph_meta},
+    llm::apxm as apxm_llm,
+};
 use crate::types::values::Value;
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -250,10 +254,21 @@ impl ApxmGraphHints {
                     .get(attrs::VLLM_CRITICAL_PATH)
                     .and_then(|value| value.as_bool())
                     .and_then(|critical_path| critical_path.then_some(PriorityClass::CriticalPath))
+            })
+            .or_else(|| {
+                attrs_map.get(attrs::PRIORITY).and_then(|value| {
+                    let priority = value.as_i64()?;
+                    if priority >= graph_meta::CRITICAL_PATH_PRIORITY_THRESHOLD {
+                        Some(PriorityClass::CriticalPath)
+                    } else {
+                        Some(PriorityClass::Parallel)
+                    }
+                })
             });
 
         let downstream_nodes = attrs_map
             .get(attrs::VLLM_DOWNSTREAM_NODES)
+            .or_else(|| attrs_map.get(attrs::DOWNSTREAM_NODES))
             .and_then(|value| value.as_array())
             .map(|values| {
                 values
@@ -265,6 +280,7 @@ impl ApxmGraphHints {
 
         let reuse_group = attrs_map
             .get(attrs::VLLM_REUSE_GROUP)
+            .or_else(|| attrs_map.get(attrs::REUSE_GROUP))
             .and_then(|value| value.as_string())
             .map(ToOwned::to_owned);
 
@@ -286,11 +302,13 @@ impl ApxmGraphHints {
 
         let shared_prefix_est_tokens = attrs_map
             .get(attrs::VLLM_EST_TOKENS)
+            .or_else(|| attrs_map.get(attrs::SHARED_PREFIX_EST_TOKENS))
             .and_then(|value| value.as_u64())
             .map(|value| value as u32);
 
         let warmup_candidate = attrs_map
             .get(attrs::VLLM_WARMUP)
+            .or_else(|| attrs_map.get(attrs::WARMUP_CANDIDATE))
             .and_then(|value| value.as_bool());
 
         let pipeline_candidate = attrs_map
@@ -349,6 +367,98 @@ pub struct GraphMetadata {
     pub nodes: Vec<NodeSpec>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_pin_ttl_ms: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GraphBackendKind {
+    Vllm,
+    Generic,
+}
+
+impl GraphBackendKind {
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Vllm => backend_kind::VLLM,
+            Self::Generic => backend_kind::GENERIC,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphStatusSnapshot {
+    pub backend_kind: GraphBackendKind,
+    pub graph_id: String,
+    pub registered: bool,
+    pub pinned_handles: u64,
+    pub pinned_blocks: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node_count: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub critical_path_length: Option<u64>,
+}
+
+impl GraphStatusSnapshot {
+    pub fn new(backend_kind: GraphBackendKind, graph_id: impl Into<String>) -> Self {
+        Self {
+            backend_kind,
+            graph_id: graph_id.into(),
+            registered: false,
+            pinned_handles: 0,
+            pinned_blocks: 0,
+            node_count: None,
+            critical_path_length: None,
+        }
+    }
+
+    pub fn vllm(graph_id: impl Into<String>) -> Self {
+        Self::new(GraphBackendKind::Vllm, graph_id)
+    }
+
+    pub fn with_registered(mut self, registered: bool) -> Self {
+        self.registered = registered;
+        self
+    }
+
+    pub fn with_pin_counts(mut self, handles: u64, blocks: u64) -> Self {
+        self.pinned_handles = handles;
+        self.pinned_blocks = blocks;
+        self
+    }
+
+    pub fn with_shape(
+        mut self,
+        node_count: Option<u64>,
+        critical_path_length: Option<u64>,
+    ) -> Self {
+        self.node_count = node_count;
+        self.critical_path_length = critical_path_length;
+        self
+    }
+
+    pub fn to_metrics_json(&self) -> serde_json::Value {
+        use crate::constants::session::metrics_keys::graph_status_keys as keys;
+
+        let mut map = serde_json::Map::new();
+        map.insert(
+            keys::OBJECT.to_owned(),
+            apxm_llm::OBJECT_GRAPH_STATUS.into(),
+        );
+        map.insert(keys::GRAPH_ID.to_owned(), self.graph_id.clone().into());
+        map.insert(keys::REGISTERED.to_owned(), self.registered.into());
+        map.insert(keys::PINNED_HANDLES.to_owned(), self.pinned_handles.into());
+        map.insert(keys::PINNED_BLOCKS.to_owned(), self.pinned_blocks.into());
+        if let Some(node_count) = self.node_count {
+            map.insert(keys::NODE_COUNT.to_owned(), node_count.into());
+        }
+        if let Some(critical_path_length) = self.critical_path_length {
+            map.insert(
+                keys::CRITICAL_PATH_LENGTH.to_owned(),
+                critical_path_length.into(),
+            );
+        }
+        serde_json::Value::Object(map)
+    }
 }
 
 impl GraphMetadata {
@@ -433,13 +543,22 @@ mod tests {
         );
 
         let json = serde_json::to_value(&hints).unwrap();
-        assert_eq!(json["graph_id"], "graph-abc");
-        assert_eq!(json["node_id"], 5);
-        assert_eq!(json["priority_class"], apxm_llm::PRIORITY_CRITICAL_PATH);
-        assert_eq!(json["pin_policy"]["mode"], apxm_llm::PIN_MODE_PREFIX);
-        assert_eq!(json["pin_policy"]["ttl_ms"], 30_000);
-        assert_eq!(json["downstream_nodes"], serde_json::json!([6, 7]));
-        assert_eq!(json["schema_version"], 1);
+        assert_eq!(json[apxm_llm::GRAPH_ID], "graph-abc");
+        assert_eq!(json[apxm_llm::NODE_ID], 5);
+        assert_eq!(
+            json[apxm_llm::PRIORITY_CLASS],
+            apxm_llm::PRIORITY_CRITICAL_PATH
+        );
+        assert_eq!(
+            json[apxm_llm::PIN_POLICY][apxm_llm::PIN_POLICY_MODE],
+            apxm_llm::PIN_MODE_PREFIX
+        );
+        assert_eq!(
+            json[apxm_llm::PIN_POLICY][apxm_llm::PIN_POLICY_TTL_MS],
+            30_000
+        );
+        assert_eq!(json[apxm_llm::DOWNSTREAM_NODES], serde_json::json!([6, 7]));
+        assert_eq!(json[apxm_llm::SCHEMA_VERSION], 1);
     }
 
     #[test]

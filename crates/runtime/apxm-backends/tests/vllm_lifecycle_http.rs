@@ -4,17 +4,17 @@
 //! the external fork in `external/vllm`:
 //!
 //! - `POST /v1/apxm/graphs/register`  — graph registration
-//! - `POST /v1/chat/completions`      — node inference with `extra_body.apxm`
+//! - `POST /v1/chat/completions`      — node inference with `vllm_xargs.apxm`
 //! - `DELETE /v1/apxm/graphs/{id}`    — graph release
 //!
 //! The key behavioral assertion is that pinning intent travels in
-//! `extra_body.apxm.pin_policy`, not through a separate control-plane pin API.
+//! `vllm_xargs.apxm.pin_policy`, not through a separate control-plane pin API.
 
 use apxm_backends::llm::backends::vllm::{
     ApxmGraphHints, GraphAwareVllmBackend, GraphMetadata, GraphStatusResponse,
 };
 use apxm_backends::llm::backends::{LLMBackend, LLMRequest};
-use apxm_core::constants::llm::{api_paths, apxm as apxm_llm, config_keys};
+use apxm_core::constants::llm::{api_paths, apxm as apxm_llm, config_keys, openai as openai_keys};
 use serde_json::{Value, json};
 use wiremock::matchers::{method, path, path_regex};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
@@ -40,24 +40,24 @@ fn chat_completion_body(model: &str) -> Value {
 
 fn graph_register_body(graph_id: &str, exec_id: &str, registered_nodes: u32) -> Value {
     json!({
-        "object": apxm_llm::OBJECT_GRAPH_REGISTRATION,
-        "graph_id": graph_id,
-        "execution_id": exec_id,
-        "registered_nodes": registered_nodes,
-        "critical_path_length": Value::Null,
-        "max_parallelism": Value::Null,
-        "default_pin_ttl_ms": Value::Null,
+        apxm_llm::OBJECT: apxm_llm::OBJECT_GRAPH_REGISTRATION,
+        apxm_llm::GRAPH_ID: graph_id,
+        apxm_llm::EXECUTION_ID: exec_id,
+        apxm_llm::REGISTERED_NODES: registered_nodes,
+        apxm_llm::CRITICAL_PATH_LENGTH: Value::Null,
+        apxm_llm::MAX_PARALLELISM: Value::Null,
+        apxm_llm::DEFAULT_PIN_TTL_MS: Value::Null,
     })
 }
 
 fn graph_release_body(graph_id: &str) -> Value {
     json!({
-        "object": apxm_llm::OBJECT_GRAPH_RELEASE,
-        "graph_id": graph_id,
-        "released_handles": 0_u32,
-        "released_blocks": 0_u32,
-        "remaining_handles": 0_u32,
-        "remaining_blocks": 0_u32,
+        apxm_llm::OBJECT: apxm_llm::OBJECT_GRAPH_RELEASE,
+        apxm_llm::GRAPH_ID: graph_id,
+        apxm_llm::RELEASED_HANDLES: 0_u32,
+        apxm_llm::RELEASED_BLOCKS: 0_u32,
+        apxm_llm::REMAINING_HANDLES: 0_u32,
+        apxm_llm::REMAINING_BLOCKS: 0_u32,
     })
 }
 
@@ -111,10 +111,21 @@ fn apxm_payload_from_request(request: &Request) -> Option<Value> {
         return None;
     }
     let body = serde_json::from_slice::<Value>(&request.body).ok()?;
-    body.get("extra_body")
-        .and_then(|eb| eb.get("apxm"))
+    body.get(apxm_llm::VLLM_XARGS)
+        .and_then(|xargs| xargs.get(apxm_llm::HINTS_FIELD))
         .cloned()
-        .or_else(|| body.get("apxm").cloned())
+        .or_else(|| {
+            body.get(openai_keys::EXTRA_BODY)
+                .and_then(|extra_body| extra_body.get(apxm_llm::VLLM_XARGS))
+                .and_then(|xargs| xargs.get(apxm_llm::HINTS_FIELD))
+                .cloned()
+        })
+        .or_else(|| body.get(apxm_llm::HINTS_FIELD).cloned())
+        .or_else(|| {
+            body.get(openai_keys::EXTRA_BODY)
+                .and_then(|extra_body| extra_body.get(apxm_llm::HINTS_FIELD))
+                .cloned()
+        })
 }
 
 fn chat_completion_requests_with_apxm(reqs: &[Request]) -> Vec<&Request> {
@@ -153,16 +164,25 @@ async fn vllm_lifecycle_happy_path_register_generate_release() {
     let with_apxm = chat_completion_requests_with_apxm(&received);
     assert!(
         !with_apxm.is_empty(),
-        "expected at least one {} request carrying extra_body.apxm",
+        "expected at least one {} request carrying vllm_xargs.apxm",
         versioned_path(api_paths::CHAT_COMPLETIONS)
     );
 
     let apxm = apxm_payload_from_request(with_apxm[0]).expect("apxm payload present");
-    assert_eq!(apxm["graph_id"], graph_id);
-    assert_eq!(apxm["node_id"], 1);
-    assert_eq!(apxm["priority_class"], apxm_llm::PRIORITY_CRITICAL_PATH);
-    assert_eq!(apxm["pin_policy"]["mode"], apxm_llm::PIN_MODE_PREFIX);
-    assert_eq!(apxm["pin_policy"]["ttl_ms"], 30_000);
+    assert_eq!(apxm[apxm_llm::GRAPH_ID], graph_id);
+    assert_eq!(apxm[apxm_llm::NODE_ID], 1);
+    assert_eq!(
+        apxm[apxm_llm::PRIORITY_CLASS],
+        apxm_llm::PRIORITY_CRITICAL_PATH
+    );
+    assert_eq!(
+        apxm[apxm_llm::PIN_POLICY][apxm_llm::PIN_POLICY_MODE],
+        apxm_llm::PIN_MODE_PREFIX
+    );
+    assert_eq!(
+        apxm[apxm_llm::PIN_POLICY][apxm_llm::PIN_POLICY_TTL_MS],
+        30_000
+    );
 
     drop(server);
 }
@@ -232,18 +252,27 @@ async fn vllm_lifecycle_per_node_hint_passthrough() {
         .collect();
 
     assert_eq!(payloads.len(), 2);
-    payloads.sort_by_key(|payload| payload["node_id"].as_u64().unwrap_or_default());
+    payloads.sort_by_key(|payload| payload[apxm_llm::NODE_ID].as_u64().unwrap_or_default());
 
-    assert_eq!(payloads[0]["node_id"], 10);
+    assert_eq!(payloads[0][apxm_llm::NODE_ID], 10);
     assert_eq!(
-        payloads[0]["priority_class"],
+        payloads[0][apxm_llm::PRIORITY_CLASS],
         apxm_llm::PRIORITY_CRITICAL_PATH
     );
-    assert_eq!(payloads[0]["pin_policy"]["mode"], apxm_llm::PIN_MODE_PREFIX);
+    assert_eq!(
+        payloads[0][apxm_llm::PIN_POLICY][apxm_llm::PIN_POLICY_MODE],
+        apxm_llm::PIN_MODE_PREFIX
+    );
 
-    assert_eq!(payloads[1]["node_id"], 20);
-    assert_eq!(payloads[1]["priority_class"], apxm_llm::PRIORITY_PARALLEL);
-    assert_eq!(payloads[1]["pin_policy"]["mode"], apxm_llm::PIN_MODE_NONE);
+    assert_eq!(payloads[1][apxm_llm::NODE_ID], 20);
+    assert_eq!(
+        payloads[1][apxm_llm::PRIORITY_CLASS],
+        apxm_llm::PRIORITY_PARALLEL
+    );
+    assert_eq!(
+        payloads[1][apxm_llm::PIN_POLICY][apxm_llm::PIN_POLICY_MODE],
+        apxm_llm::PIN_MODE_NONE
+    );
 }
 
 #[tokio::test]
@@ -364,11 +393,8 @@ async fn vllm_get_graph_status_fires_before_release() {
             .await
             .expect("trait get_graph_status");
     assert!(trait_status.is_some());
-    let status_val = trait_status.unwrap();
-    assert_eq!(
-        status_val[apxm_core::constants::session::metrics_keys::vllm_graph_status_keys::PINNED_BLOCKS],
-        12
-    );
+    let status_snapshot = trait_status.unwrap();
+    assert_eq!(status_snapshot.pinned_blocks, 12);
 
     // Release
     apxm_backends::llm::backends::vllm::GraphAwareVllmBackend::release_graph(&backend, graph_id)
@@ -400,9 +426,9 @@ async fn vllm_get_graph_status_fires_before_release() {
     drop(server);
 }
 
-/// Stock-vLLM detection: a 404 from `/v1/apxm/graphs/__probe__` must hard-fail
+/// Stock-vLLM detection: a 404 from `/v1/apxm/graphs/__apxm_probe__` must hard-fail
 /// `health_check` by default, so APXM never silently runs without graph-aware
-/// scheduling on a server that drops `extra_body.apxm`.
+/// scheduling on a server that drops `vllm_xargs.apxm`.
 #[tokio::test]
 async fn vllm_health_check_hard_fails_when_apxm_endpoints_missing() {
     let server = MockServer::start().await;
@@ -506,9 +532,12 @@ async fn vllm_graph_status_collected_before_release() {
         .await
         .expect("get_graph_status should succeed");
 
-    assert!(status.is_some(), "expected Some(JSON) from get_graph_status");
-    let status_json = status.unwrap();
-    use apxm_core::constants::session::metrics_keys::vllm_graph_status_keys as gsk;
+    assert!(
+        status.is_some(),
+        "expected Some(snapshot) from get_graph_status"
+    );
+    let status_json = status.unwrap().to_metrics_json();
+    use apxm_core::constants::session::metrics_keys::graph_status_keys as gsk;
     assert_eq!(status_json[gsk::PINNED_BLOCKS], 7);
     assert_eq!(status_json[gsk::PINNED_HANDLES], 3);
     assert_eq!(status_json[gsk::CRITICAL_PATH_LENGTH], 4);

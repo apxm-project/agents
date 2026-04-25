@@ -299,8 +299,17 @@ mod tests {
 
         // Each pass entry has expected structural keys
         let first_pass = passes[0].as_object().expect("pass entry must be object");
-        for key in ["pass_name", "duration_ms", "ops_before", "ops_after", "ops_delta"] {
-            assert!(first_pass.contains_key(key), "pass entry missing key: {key}");
+        for key in [
+            "pass_name",
+            "duration_ms",
+            "ops_before",
+            "ops_after",
+            "ops_delta",
+        ] {
+            assert!(
+                first_pass.contains_key(key),
+                "pass entry missing key: {key}"
+            );
         }
 
         // Summary has expected sub-keys
@@ -330,12 +339,15 @@ mod tests {
     #[test]
     fn compiler_metrics_source_section_name() {
         let diag = PipelineDiagnostics::new();
-        let source = CompilerMetricsSource {
-            diagnostics: &diag,
-        };
+        let source = CompilerMetricsSource { diagnostics: &diag };
         assert_eq!(source.section_name(), metrics_keys::SECTION_COMPILER);
         let collected = source.collect();
-        assert!(collected.as_object().unwrap().contains_key(metrics_keys::COMPILER_PASSES));
+        assert!(
+            collected
+                .as_object()
+                .unwrap()
+                .contains_key(metrics_keys::COMPILER_PASSES)
+        );
     }
 
     #[test]
