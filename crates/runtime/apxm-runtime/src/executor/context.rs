@@ -34,6 +34,10 @@ use crate::model_router::ModelRouter;
 #[derive(Clone)]
 pub struct ExecutionContext {
     pub execution_id: String,
+    /// Stable graph identifier for graph-aware backends and per-request hints.
+    /// Worker child contexts inherit this so every node request points at the
+    /// same registered graph.
+    pub graph_id: String,
     pub session_id: Option<String>,
     pub memory: Arc<MemorySystem>,
     pub llm_registry: Arc<LLMRegistry>,
@@ -88,6 +92,7 @@ impl ExecutionContext {
         aam: Aam,
     ) -> Self {
         let execution_id = uuid::Uuid::now_v7().to_string();
+        let graph_id = execution_id.clone();
         let scope_id = uuid::Uuid::now_v7().to_string();
         let scope_registry = Arc::new(ScopeRegistry::new());
         scope_registry.register(scope_id.clone(), None, aam.clone(), ScopeSpec::default());
@@ -125,6 +130,7 @@ impl ExecutionContext {
 
         Self {
             execution_id,
+            graph_id,
             session_id: None,
             memory,
             llm_registry,
@@ -184,6 +190,12 @@ impl ExecutionContext {
     /// Create context with specific execution ID
     pub fn with_execution_id(mut self, execution_id: String) -> Self {
         self.execution_id = execution_id;
+        self
+    }
+
+    /// Create context with specific graph ID for graph-aware backend state.
+    pub fn with_graph_id(mut self, graph_id: String) -> Self {
+        self.graph_id = graph_id;
         self
     }
 
@@ -278,6 +290,7 @@ impl ExecutionContext {
 
         Self {
             execution_id: uuid::Uuid::now_v7().to_string(),
+            graph_id: self.graph_id.clone(),
             session_id: self.session_id.clone(),
             memory: Arc::clone(&self.memory),
             llm_registry: Arc::clone(&self.llm_registry),
@@ -427,11 +440,14 @@ mod tests {
         let capability_system = Arc::new(CapabilitySystem::new());
 
         let parent = ExecutionContext::new(memory, llm_registry, capability_system, Aam::new())
-            .with_session_id("session_123".to_string());
+            .with_session_id("session_123".to_string())
+            .with_graph_id("registered-graph".to_string());
         let child = parent.child();
 
         // Should have different execution ID
         assert_ne!(child.execution_id, parent.execution_id);
+        // Should keep the same graph ID for graph-aware backend hints.
+        assert_eq!(child.graph_id, parent.graph_id);
         // Child should execute in its own scope
         assert_ne!(child.scope_id, parent.scope_id);
         // Should inherit session ID

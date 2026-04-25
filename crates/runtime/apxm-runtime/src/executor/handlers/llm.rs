@@ -29,8 +29,10 @@ use crate::executor::memoization::ResponseCache;
 use apxm_backends::{LLMRequest, ToolChoice, ToolDefinition};
 use apxm_core::InnerPlanPayload;
 use apxm_core::apxm_llm;
-use apxm_core::constants::graph::attrs as graph_attrs;
-use apxm_core::constants::runtime::belief_keys;
+use apxm_core::constants::{
+    graph::{attrs as graph_attrs, metadata as graph_meta},
+    runtime::belief_keys,
+};
 use apxm_core::error::RuntimeError;
 use apxm_core::types::operations::AISOperationType;
 use apxm_core::types::{ApxmGraphHints, PriorityClass, ToolCall, ToolResult};
@@ -568,22 +570,19 @@ fn default_priority() -> u32 {
     50
 }
 
-/// Build APXM graph hints from a node's compiler-stamped `_vllm_*` attributes
-/// and attach them to `request`. Hints are then enriched with runtime-only
-/// identifiers (execution id, human-readable node name, runtime-derived
-/// priority class fallback) that the compiler cannot supply.
-fn inject_vllm_hints(ctx: &ExecutionContext, node: &Node, request: LLMRequest) -> LLMRequest {
+/// Build APXM graph hints from a node's graph attributes and attach them to
+/// `request`. Hints are then enriched with runtime-only identifiers
+/// (execution id, human-readable node name, runtime-derived priority class
+/// fallback) that the compiler cannot supply.
+fn attach_graph_hints(ctx: &ExecutionContext, node: &Node, request: LLMRequest) -> LLMRequest {
     let node_name = node
         .metadata
         .name
         .clone()
-        .unwrap_or_else(|| format!("node_{}", node.id));
+        .unwrap_or_else(|| format!("{}{}", graph_meta::GENERATED_NODE_NAME_PREFIX, node.id));
 
-    let mut hints = ApxmGraphHints::from_node_attrs(
-        ctx.execution_id.clone(),
-        node_name.clone(),
-        &node.attributes,
-    );
+    let mut hints =
+        ApxmGraphHints::from_node_attrs(ctx.graph_id.clone(), node_name.clone(), &node.attributes);
 
     // Enrich with runtime-only fields the compiler cannot stamp.
     hints.execution_id = Some(ctx.execution_id.clone());
@@ -593,19 +592,23 @@ fn inject_vllm_hints(ctx: &ExecutionContext, node: &Node, request: LLMRequest) -
     // If the compiler did not stamp a class, derive one from the node priority.
     if hints.priority_class.is_none() {
         let priority_value = node.metadata.priority;
-        hints.priority_class = Some(match priority_value {
-            90.. => PriorityClass::CriticalPath,
-            _ => PriorityClass::Parallel,
-        });
+        hints.priority_class = Some(
+            if i64::from(priority_value) >= graph_meta::CRITICAL_PATH_PRIORITY_THRESHOLD {
+                PriorityClass::CriticalPath
+            } else {
+                PriorityClass::Parallel
+            },
+        );
     }
 
     apxm_llm!(debug,
         execution_id = %ctx.execution_id,
+        graph_id = %ctx.graph_id,
         node_id = node.id,
         priority_class = ?hints.priority_class,
         reuse_group = ?hints.reuse_group,
         downstream = hints.downstream_nodes.len(),
-        "Built APXM graph hints for vLLM scheduling"
+        "Built APXM graph hints for backend scheduling"
     );
 
     request.with_apxm_hints(hints)
@@ -690,10 +693,10 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
 
         if !tools.is_empty() {
             // Hard-fail if the resolved backend can't accept tool_choice="auto".
-            // Stock vLLM (no `--enable-auto-tool-choice`) returns HTTP 400; we
-            // surface a clear, actionable error instead of silently dropping
-            // tools. Configure `auto_tool_choice = false` in
-            // `~/.apxm/config.toml` for such servers.
+            // Some OpenAI-compatible servers reject it; surface a clear,
+            // actionable error instead of silently dropping tools. Configure
+            // `auto_tool_choice = false` in `~/.apxm/config.toml` for such
+            // servers.
             let backend_name = ctx
                 .llm_registry
                 .resolve_backend_name(&request)
@@ -734,10 +737,8 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         }
     }
 
-    // Inject APXM graph hints for vLLM scheduling. Hints are built from the
-    // node's compiler-stamped `_vllm_*` attributes and enriched with runtime
-    // identifiers (graph/execution id, numeric node id, name).
-    request = inject_vllm_hints(ctx, node, request);
+    // Attach APXM graph hints for graph-aware backends.
+    request = attach_graph_hints(ctx, node, request);
 
     // Execute with retries
     let mut last_error = None;
@@ -1174,9 +1175,9 @@ async fn execute_ask_with_tools(
         if let Some(choice) = &initial_request.tool_choice {
             current_request = current_request.with_tool_choice(choice.clone());
         }
-        // Preserve compiler-stamped APXM graph hints across tool-call retries.
-        // The backend skips re-injection when `extra_body.apxm` is already set,
-        // so retries need an explicit clone here.
+        // Preserve APXM graph hints across tool-call retries. Graph-aware
+        // backends may skip re-injection when the APXM hint field already
+        // exists, so retries need an explicit clone here.
         if let Some(hints) = &initial_request.apxm_hints {
             current_request = current_request.with_apxm_hints(hints.clone());
         }
@@ -1364,6 +1365,26 @@ mod tests {
         assert_eq!(LlmMode::from(&AISOperationType::Ask), LlmMode::Ask);
         assert_eq!(LlmMode::from(&AISOperationType::Think), LlmMode::Think);
         assert_eq!(LlmMode::from(&AISOperationType::Reason), LlmMode::Reason);
+    }
+
+    #[tokio::test]
+    async fn test_attach_graph_hints_uses_context_graph_id() {
+        let ctx = test_ctx_with_grouped_tools()
+            .await
+            .with_execution_id("exec-under-test".to_string())
+            .with_graph_id("registered-graph-id".to_string());
+        let mut node = Node::new(42, AISOperationType::Ask);
+        node.metadata.name = Some("ask_node".to_string());
+        node.metadata.priority = 95;
+
+        let request = attach_graph_hints(&ctx, &node, LLMRequest::new("prompt"));
+        let hints = request.apxm_hints.expect("graph hints should be attached");
+
+        assert_eq!(hints.graph_id.as_deref(), Some("registered-graph-id"));
+        assert_eq!(hints.execution_id.as_deref(), Some("exec-under-test"));
+        assert_eq!(hints.node_id, Some(42));
+        assert_eq!(hints.node_name.as_deref(), Some("ask_node"));
+        assert_eq!(hints.priority_class, Some(PriorityClass::CriticalPath));
     }
 
     #[test]

@@ -4,8 +4,8 @@
 //! reads the upstream MLIR-emitted attributes (`ais.shared_prefix_group`,
 //! `ais.shared_prefix_est_tokens`, `ais.warmup_candidate`, `ais.downstream_nodes`,
 //! `priority`) and stamps a parallel set of `_vllm_*` attributes that the
-//! runtime later splices into `LLMRequest.extra_body.apxm.*` for the
-//! GraphAware vLLM backend.
+//! runtime later converts into typed APXM graph hints for graph-aware
+//! backends.
 //!
 //! All attribute keys come from `apxm_core::constants::graph::attrs::*` —
 //! no string literals.

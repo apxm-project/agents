@@ -1,12 +1,10 @@
 //! Executor engine - Main orchestrator for DAG execution
 
-use super::{
-    ExecutionContext, Result, dispatcher::OperationDispatcher, handlers::get_u32_array_attribute,
-};
+use super::{ExecutionContext, Result, dispatcher::OperationDispatcher};
+use crate::graph_lifecycle::graph_metadata_from_dag;
 use crate::scheduler::{DataflowScheduler, SchedulerConfig};
-use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::types::{
-    GraphMetadata, NodeSpec, PriorityClass,
+    GraphStatusSnapshot,
     execution::{ExecutionDag, ExecutionStats, Node, NodeStatus, OpStatus},
     values::Value,
 };
@@ -52,14 +50,14 @@ impl ExecutorEngine {
             "Starting DAG execution"
         );
 
-        // Register graph with backends for KV-cache scheduling hints
-        let graph_id = self.context.execution_id.clone();
+        // Register graph metadata with graph-aware backends.
+        let graph_id = self.context.graph_id.clone();
         self.register_graph_metadata(&dag, &graph_id).await;
 
         let mut result = self.execute_dag_inner(dag).await;
 
         // Capture graph status from graph-aware backends before releasing pins.
-        let vllm_graphs = self
+        let graph_status_snapshots = self
             .context
             .llm_registry
             .pre_release_status_all(&graph_id)
@@ -69,7 +67,7 @@ impl ExecutorEngine {
         self.context.llm_registry.release_graph_all(&graph_id).await;
 
         if let Ok(ref mut exec_result) = result {
-            exec_result.vllm_graphs = vllm_graphs;
+            exec_result.graph_status_snapshots = graph_status_snapshots;
         }
 
         result
@@ -95,51 +93,9 @@ impl ExecutorEngine {
 
     /// Build and register graph metadata with all backends.
     async fn register_graph_metadata(&self, dag: &ExecutionDag, graph_id: &str) {
-        let node_specs: Vec<NodeSpec> = dag
-            .nodes
-            .iter()
-            .map(|node| {
-                let downstream_nodes = get_u32_array_attribute(node, graph_attrs::DOWNSTREAM_NODES);
+        let metadata = graph_metadata_from_dag(graph_id, &self.context.execution_id, dag);
 
-                let reuse_group = node
-                    .attributes
-                    .get(graph_attrs::REUSE_GROUP)
-                    .and_then(|v| v.as_string())
-                    .map(|s| s.to_string());
-
-                let priority = node.metadata.priority;
-                let is_critical_path = priority >= 90;
-                let priority_class = Some(if is_critical_path {
-                    PriorityClass::CriticalPath
-                } else {
-                    PriorityClass::Parallel
-                });
-
-                NodeSpec {
-                    node_id: node.id as u32,
-                    node_name: node.metadata.name.clone(),
-                    estimated_prompt_tokens: node
-                        .attributes
-                        .get(graph_attrs::SHARED_PREFIX_EST_TOKENS)
-                        .and_then(|v| v.as_u64())
-                        .map(|u| u as u32),
-                    downstream_nodes,
-                    priority_class,
-                    reuse_group,
-                    is_critical_path,
-                }
-            })
-            .collect();
-
-        let metadata =
-            GraphMetadata::new(graph_id, &self.context.execution_id).with_nodes(node_specs);
-
-        if let Ok(metadata_json) = serde_json::to_value(&metadata) {
-            self.context
-                .llm_registry
-                .register_graph_all(metadata_json)
-                .await;
-        }
+        self.context.llm_registry.register_graph_all(metadata).await;
     }
 
     /// Execute a DAG using the dataflow scheduler for automatic parallelism.
@@ -157,7 +113,7 @@ impl ExecutorEngine {
             results,
             stats,
             token_snapshot: self.context.token_accountant.snapshot(),
-            vllm_graphs: vec![],
+            graph_status_snapshots: vec![],
         })
     }
 
@@ -312,7 +268,7 @@ impl ExecutorEngine {
             results: final_results,
             stats,
             token_snapshot: self.context.token_accountant.snapshot(),
-            vllm_graphs: vec![],
+            graph_status_snapshots: vec![],
         })
     }
 
@@ -394,8 +350,8 @@ pub struct ExecutionResult {
     pub stats: ExecutionStats,
     /// Aggregate token usage collected during execution. Empty if no LLM nodes ran.
     pub token_snapshot: crate::executor::token_accounting::TokenAccountingSnapshot,
-    /// vLLM graph status snapshots captured before graph release.
-    pub vllm_graphs: Vec<serde_json::Value>,
+    /// Backend graph status snapshots captured before graph release.
+    pub graph_status_snapshots: Vec<GraphStatusSnapshot>,
 }
 
 #[cfg(test)]

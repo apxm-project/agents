@@ -1,7 +1,6 @@
 # eval_harness
 
-Phase-A evaluation utilities. See
-`docs/planning/plans/2026-04-21-apxm-evaluation-framework.md`.
+Evaluation utilities for comparing APXM execution traces.
 
 ## trace_diff
 

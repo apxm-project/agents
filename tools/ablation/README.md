@@ -1,7 +1,6 @@
 # ablation
 
-Phase-B compiler-pass ablation harness. See
-`docs/planning/plans/2026-04-22-apxm-compiler-ablation.md`.
+Compiler-pass ablation harness for measuring pass contribution.
 
 ## Run
 

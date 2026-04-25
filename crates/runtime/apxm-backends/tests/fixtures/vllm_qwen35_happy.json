@@ -10,20 +10,22 @@
     "temperature": 0.1,
     "tools": [],
     "extra_body": {
-      "apxm": {
-        "schema_version": 1,
-        "graph_id": "cassette-graph-001",
-        "execution_id": "cassette-exec-001",
-        "node_id": 1,
-        "node_name": "geography-ask",
-        "priority_class": "critical_path",
-        "downstream_nodes": [2, 3],
-        "reuse_group": null,
-        "pin_policy": {
-          "mode": "prefix",
-          "ttl_ms": 30000
-        },
-        "compiler_hints": {}
+      "vllm_xargs": {
+        "apxm": {
+          "schema_version": 1,
+          "graph_id": "cassette-graph-001",
+          "execution_id": "cassette-exec-001",
+          "node_id": 1,
+          "node_name": "geography-ask",
+          "priority_class": "critical_path",
+          "downstream_nodes": [2, 3],
+          "reuse_group": null,
+          "pin_policy": {
+            "mode": "prefix",
+            "ttl_ms": 30000
+          },
+          "compiler_hints": {}
+        }
       }
     }
   },

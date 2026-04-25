@@ -1,7 +1,7 @@
 //! Step 5 verification: LLM concurrency is decoupled from compute concurrency.
 //!
-//! These tests cover Risk R6 from the APXM ↔ vLLM integration plan: with both
-//! semaphores set to 1, an LLM node must release its permit before the
+//! These tests cover LLM backend concurrency isolation: with both semaphores
+//! set to 1, an LLM node must release its permit before the
 //! downstream non-LLM child node tries to acquire one. If the worker held the
 //! LLM permit across child scheduling, the child could still run because the
 //! child takes the *compute* semaphore — but historically a single-semaphore

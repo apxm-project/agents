@@ -49,6 +49,9 @@ __pycache__/
 # APXM compiled artifacts
 *.apxmobj
 
+# Slide decks (sources + generators + outputs kept local-only)
+/docs/decks/
+
 
 # Python cache
 .python-cache

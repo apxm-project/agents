@@ -1,8 +1,8 @@
 # External vLLM Fork
 
-**Why the fork:** stock vLLM silently ignores APXM's `extra_body.apxm`
-scheduling hints, so requests sent to a non-fork server execute without
-graph-aware scheduling, KV-retention pinning, or critical-path priority.
+**Why the fork:** stock vLLM does not consume APXM's vLLM extension hints,
+so requests sent to a non-fork server execute without graph-aware scheduling,
+KV-retention pinning, or critical-path priority.
 APXM-aware behavior requires the fork at `external/vllm/` (branch `apxm`).
 
 This document captures the current APXM vLLM integration reality in this
@@ -55,10 +55,10 @@ The router lives in `external/vllm/vllm/entrypoints/openai/apxm/api_router.py`
 and is mounted from
 `external/vllm/vllm/entrypoints/openai/api_server.py`.
 
-Per-request APXM scheduling hints are sent inside OpenAI-compatible request
-bodies via `extra_body.apxm` or related flattened `apxm_*` fields. The fork uses
-those request hints directly for graph-aware scheduling and KV-retention
-behavior.
+OpenAI-compatible clients supply per-request APXM scheduling hints through
+`extra_body`; the fork reads the nested `vllm_xargs.apxm` object and also
+accepts related legacy flattened `apxm_*` fields. The fork uses those request
+hints directly for graph-aware scheduling and KV-retention behavior.
 
 ## Build And Install Rules
 
@@ -114,8 +114,7 @@ No outstanding drift. The previous mismatches were resolved by:
 
 - removing the historical Python prototype at
   `crates/runtime/apxm-backends/python/apxm_vllm/`
-- removing the obsolete killer-demo plans (`docs/planning/specs/...-killer-demo-design.md`,
-  `docs/planning/plans/...-killer-demo.md`) that described a 4-endpoint
+- removing obsolete killer-demo planning docs that described a 4-endpoint
   `/v1/apxm/pins*` design instead of the live 3-endpoint graph contract
 - pointing `.dekk.toml`'s `vllm` install component at
   `tools/scripts/install_external_vllm.sh`
@@ -131,11 +130,13 @@ the live fork contract:
 - graph registration via `POST /v1/apxm/graphs/register`
 - graph inspection via `GET /v1/apxm/graphs/{graph_id}`
 - graph release via `DELETE /v1/apxm/graphs/{graph_id}`
-- per-request `extra_body.apxm.pin_policy` hints (no out-of-band pin endpoint)
+- per-request `vllm_xargs.apxm.pin_policy` hints supplied through OpenAI
+  `extra_body` (no out-of-band pin endpoint)
 
-`health_check()` probes `/v1/apxm/graphs/__probe__` and hard-fails on 404 by
-default — stock vLLM silently drops `extra_body.apxm`, so APXM refuses to run
-against it unless `require_apxm_endpoints = false` is set on the backend.
+`health_check()` probes `/v1/apxm/graphs/__apxm_probe__` and hard-fails on 404
+by default — stock vLLM does not consume APXM's vLLM extension hints, so APXM
+refuses to run against it unless `require_apxm_endpoints = false` is set on the
+backend.
 
 Any future runtime or benchmark work should align to that contract.
 
@@ -272,8 +273,8 @@ curl -s http://localhost:8916/v1/models | jq -r '.data[].id'
 # Expect: google/gemma-4-31B-it
 
 # Fork APXM router is mounted (200 with registered:false confirms the route exists)
-curl -s http://localhost:8916/v1/apxm/graphs/__probe__ | jq .
-# Expect: {"object":"apxm.graph.status","graph_id":"__probe__","registered":false,...}
+curl -s http://localhost:8916/v1/apxm/graphs/__apxm_probe__ | jq .
+# Expect: {"object":"apxm.graph.status","graph_id":"__apxm_probe__","registered":false,...}
 
 # Round-trip a chat request
 curl -s -X POST http://localhost:8916/v1/chat/completions \
@@ -289,8 +290,8 @@ curl -s http://localhost:8916/v1/apxm/graphs/smoke-1
 curl -s -X DELETE http://localhost:8916/v1/apxm/graphs/smoke-1
 ```
 
-If `/v1/apxm/graphs/__probe__` returns connection-refused, the server is not
-up yet. If it returns 404, you are talking to stock vLLM (no apxm router) —
+If `/v1/apxm/graphs/__apxm_probe__` returns connection-refused, the server is
+not up yet. If it returns 404, you are talking to stock vLLM (no apxm router) —
 reinstall with `dekk apxm vllm install` and confirm the verifier prints
 *"OK: editable install resolves to external/vllm fork"*.
 
@@ -308,9 +309,9 @@ The default endpoint is `http://localhost:8916/v1`, matching step 5. Use
 `backend test` calls `health_check()`, which probes the fork's APXM router
 and hard-fails on stock vLLM. If it fails with *"does not expose /v1/apxm/*
 endpoints"*, you are pointed at a stock-vLLM server — restart the fork or
-fix the endpoint url. Override only if you accept silent loss of
-`extra_body.apxm` hints by setting `require_apxm_endpoints = false` on the
-backend in `~/.apxm/config.toml`.
+fix the endpoint url. Override only if you accept loss of APXM vLLM extension
+hints by setting `require_apxm_endpoints = false` on the backend in
+`~/.apxm/config.toml`.
 
 `backend add-model` registers routing metadata in APXM config. It does not
 download or serve anything — those are steps 3 and 5.
@@ -339,7 +340,8 @@ The maintained operator-facing rehearsal docs now live in:
 - `docs/talks/2026-apxm-vllm/`
   - current talk bundle
   - keeps the external fork visible
-  - avoids claiming unsupported Timeline or composite-demo assets
+  - avoids claiming unsupported Timeline views or measured composite-demo
+    results
 
 The older scratch worktree notes are still useful as supplementary operational
 history:
@@ -386,8 +388,9 @@ When `--emit-metrics` (or `--emit-session`) is active, the `backends.vllm.graphs
 array in `metrics.json` reports per-graph pin telemetry collected from the fork
 just before each graph is released. Each entry includes `pinned_blocks`,
 `pinned_handles`, `critical_path_length`, and `node_count`. This is the canonical
-place to observe whether the fork's KV-cache pinning is active and how many blocks
-are being retained for a given execution.
+place to observe whether the fork's KV-cache pinning is active and how many
+blocks are being retained for a given execution. It is not a KV-cache hit-rate
+or speedup metric; those require separate measurement.
 
 ## Boundary Vocabulary Rule
 

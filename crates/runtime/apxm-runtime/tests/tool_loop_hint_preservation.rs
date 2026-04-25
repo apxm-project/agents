@@ -4,7 +4,8 @@
 //! Without the explicit `apxm_hints` clone added at the bottom of the loop,
 //! only the first chat completion would carry hints — every follow-up
 //! request would arrive with `apxm_hints == None` because the backend's
-//! `inject_hints` skips re-injection once `extra_body.apxm` is set.
+//! `inject_hints` skips re-injection once the backend-specific APXM hint field
+//! is set.
 //!
 //! This test wires a custom recording backend through the runtime, runs an
 //! Ask node that forces N rounds of tool calls, and asserts that every
@@ -143,8 +144,8 @@ impl LLMBackend for ToolLoopMock {
 /// Build an Ask node that:
 /// - forces tools on (TOOLS_ENABLED=true, no explicit TOOLS list → all caps),
 /// - caps tool iterations at `max_iters + 1` so the loop runs to natural exit,
-/// - carries vLLM compiler hints we can verify survive every retry.
-fn ask_node_with_vllm_hints(max_iters: usize) -> Node {
+/// - carries graph hints we can verify survive every retry.
+fn ask_node_with_graph_hints(max_iters: usize) -> Node {
     use apxm_core::constants::graph::attrs as a;
 
     let mut attrs: HashMap<String, Value> = HashMap::new();
@@ -157,32 +158,26 @@ fn ask_node_with_vllm_hints(max_iters: usize) -> Node {
         )),
     );
 
-    // Compiler-stamped vLLM hints — these must reach the backend on every
-    // retry, not just the first one.
+    // Graph hints must reach the backend on every retry, not just the first one.
     attrs.insert(
-        a::VLLM_PRIORITY_CLASS.to_string(),
-        Value::String(apxm_llm::PRIORITY_CRITICAL_PATH.into()),
+        a::PRIORITY.to_string(),
+        Value::Number(apxm_core::types::values::Number::Integer(
+            apxm_core::constants::graph::metadata::CRITICAL_PATH_PRIORITY_THRESHOLD,
+        )),
     );
+    attrs.insert(a::REUSE_GROUP.to_string(), Value::String("group-A".into()));
     attrs.insert(
-        a::VLLM_REUSE_GROUP.to_string(),
-        Value::String("group-A".into()),
-    );
-    attrs.insert(
-        a::VLLM_DOWNSTREAM_NODES.to_string(),
+        a::DOWNSTREAM_NODES.to_string(),
         Value::Array(vec![
             Value::Number(apxm_core::types::values::Number::Integer(2)),
             Value::Number(apxm_core::types::values::Number::Integer(3)),
         ]),
     );
     attrs.insert(
-        a::VLLM_EST_TOKENS.to_string(),
+        a::SHARED_PREFIX_EST_TOKENS.to_string(),
         Value::Number(apxm_core::types::values::Number::Integer(1024)),
     );
-    attrs.insert(a::VLLM_WARMUP.to_string(), Value::Bool(true));
-    attrs.insert(
-        a::VLLM_PIN_MODE.to_string(),
-        Value::String(apxm_llm::PIN_MODE_PREFIX.into()),
-    );
+    attrs.insert(a::WARMUP_CANDIDATE.to_string(), Value::Bool(true));
 
     Node {
         id: 1,
@@ -195,7 +190,7 @@ fn ask_node_with_vllm_hints(max_iters: usize) -> Node {
 }
 
 fn ask_dag(max_iters: usize) -> ExecutionDag {
-    let ask = ask_node_with_vllm_hints(max_iters);
+    let ask = ask_node_with_graph_hints(max_iters);
     let mut dag = ExecutionDag::new();
     dag.add_node(ask).unwrap();
     dag.entry_nodes = dag.find_entry_nodes();
@@ -273,29 +268,33 @@ async fn apxm_hints_preserved_across_every_tool_loop_iteration() {
         );
     }
 
-    // Spot-check that the compiler-stamped fields survived intact end-to-end.
+    // Spot-check that the graph hint fields survived intact end-to-end.
     let obj = first.as_object().expect("hints must serialize as object");
     assert_eq!(
-        obj.get("priority_class"),
+        obj.get(apxm_llm::PRIORITY_CLASS),
         Some(&serde_json::json!(apxm_llm::PRIORITY_CRITICAL_PATH)),
     );
-    assert_eq!(obj.get("reuse_group"), Some(&serde_json::json!("group-A")));
     assert_eq!(
-        obj.get("downstream_nodes"),
+        obj.get(apxm_llm::REUSE_GROUP),
+        Some(&serde_json::json!("group-A"))
+    );
+    assert_eq!(
+        obj.get(apxm_llm::DOWNSTREAM_NODES),
         Some(&serde_json::json!([2, 3])),
     );
     assert_eq!(
-        obj.get("compiler_hints")
-            .and_then(|c| c.get("shared_prefix_est_tokens")),
+        obj.get(apxm_llm::COMPILER_HINTS)
+            .and_then(|c| c.get(apxm_llm::SHARED_PREFIX_EST_TOKENS)),
         Some(&serde_json::json!(1024)),
     );
     assert_eq!(
-        obj.get("compiler_hints")
-            .and_then(|c| c.get("warmup_candidate")),
+        obj.get(apxm_llm::COMPILER_HINTS)
+            .and_then(|c| c.get(apxm_llm::WARMUP_CANDIDATE)),
         Some(&serde_json::json!(true)),
     );
     assert_eq!(
-        obj.get("pin_policy").and_then(|p| p.get("mode")),
+        obj.get(apxm_llm::PIN_POLICY)
+            .and_then(|p| p.get(apxm_llm::PIN_POLICY_MODE)),
         Some(&serde_json::json!(apxm_llm::PIN_MODE_PREFIX)),
     );
 }

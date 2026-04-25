@@ -295,9 +295,7 @@ pub fn compile_command(
         println!("  Artifact size: {} bytes", bytes.len());
 
         // Emit diagnostics if requested.
-        if let (Some(diag_path), Some(diag)) =
-            (&emit_diagnostics, &air_pass_diagnostics)
-        {
+        if let (Some(diag_path), Some(diag)) = (&emit_diagnostics, &air_pass_diagnostics) {
             let compiler_json = diag.to_json();
             let diagnostics_json = serde_json::json!({
                 "input": graph_input.display().to_string(),
@@ -331,9 +329,7 @@ pub fn compile_command(
                 &metrics_path,
                 serde_json::to_string_pretty(&report.to_json())?,
             )
-            .with_context(|| {
-                format!("Failed to write metrics to {}", metrics_path.display())
-            })?;
+            .with_context(|| format!("Failed to write metrics to {}", metrics_path.display()))?;
             println!("Wrote metrics to {}", metrics_path.display());
         }
 
@@ -491,9 +487,7 @@ pub fn compile_command(
             &metrics_path,
             serde_json::to_string_pretty(&report.to_json())?,
         )
-        .with_context(|| {
-            format!("Failed to write metrics to {}", metrics_path.display())
-        })?;
+        .with_context(|| format!("Failed to write metrics to {}", metrics_path.display()))?;
         println!("Wrote metrics to {}", metrics_path.display());
     }
 

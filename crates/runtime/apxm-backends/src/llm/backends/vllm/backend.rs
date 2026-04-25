@@ -10,7 +10,7 @@ use crate::llm::backends::{LLMBackend, LLMRequest, LLMResponse};
 use anyhow::{Context, Result};
 use apxm_core::constants::llm::{api_paths, apxm as apxm_llm, config_keys, vllm as vllm_keys};
 use apxm_core::types::provider_spec::{DEFAULT_VLLM_BASE_URL, normalize_endpoint_for_protocol};
-use apxm_core::types::{GraphMetadata, ModelInfo, PriorityClass};
+use apxm_core::types::{GraphMetadata, GraphStatusSnapshot, ModelInfo, PriorityClass};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -62,7 +62,7 @@ pub struct GraphStatusResponse {
 /// Graph-aware vLLM backend.
 ///
 /// Wraps an OpenAI-compatible vLLM server and injects APXM graph hints
-/// into each request via `extra_body.vllm_xargs.apxm`.
+/// into each request via `vllm_xargs.apxm`.
 pub struct GraphAwareVllmBackend {
     /// Inner OpenAI-compatible backend for actual requests.
     inner: OpenAIBackend,
@@ -107,10 +107,8 @@ impl GraphAwareVllmBackend {
             .and_then(|u| u.as_str())
             .unwrap_or(DEFAULT_BASE_URL)
             .to_string();
-        let base_url = normalize_endpoint_for_protocol(
-            apxm_core::types::ProviderProtocol::Vllm,
-            &base_url,
-        );
+        let base_url =
+            normalize_endpoint_for_protocol(apxm_core::types::ProviderProtocol::Vllm, &base_url);
 
         let auto_tool_choice = config
             .as_ref()
@@ -260,10 +258,7 @@ impl GraphAwareVllmBackend {
     }
 
     /// Get the current status for a registered graph (typed).
-    pub async fn get_graph_status_typed(
-        &self,
-        graph_id: &str,
-    ) -> Result<GraphStatusResponse> {
+    pub async fn get_graph_status_typed(&self, graph_id: &str) -> Result<GraphStatusResponse> {
         if !self.apxm_endpoints_available.load(Ordering::Relaxed) {
             return Ok(GraphStatusResponse {
                 object: apxm_llm::OBJECT_GRAPH_STATUS.to_string(),
@@ -317,14 +312,19 @@ impl GraphAwareVllmBackend {
 
         if let serde_json::Value::Object(ref mut map) = extra {
             if let Some(ref hints) = request.apxm_hints {
-                if !map.contains_key("apxm") {
-                    map.insert(
-                        "apxm".to_string(),
+                let vllm_xargs = map
+                    .entry(apxm_llm::VLLM_XARGS.to_owned())
+                    .or_insert_with(|| serde_json::json!({}));
+                if let serde_json::Value::Object(vllm_xargs_map) = vllm_xargs
+                    && !vllm_xargs_map.contains_key(apxm_llm::HINTS_FIELD)
+                {
+                    vllm_xargs_map.insert(
+                        apxm_llm::HINTS_FIELD.to_owned(),
                         serde_json::to_value(hints).unwrap_or_default(),
                     );
                 }
 
-                if !map.contains_key("priority")
+                if !map.contains_key(apxm_llm::REQUEST_PRIORITY)
                     && let Some(priority_class) = &hints.priority_class
                 {
                     let priority = match priority_class {
@@ -332,7 +332,10 @@ impl GraphAwareVllmBackend {
                         PriorityClass::Parallel => VLLM_PRIORITY_DEFAULT,
                         PriorityClass::Speculative => VLLM_PRIORITY_LEGACY_SPECULATIVE,
                     };
-                    map.insert("priority".to_string(), serde_json::json!(priority));
+                    map.insert(
+                        apxm_llm::REQUEST_PRIORITY.to_owned(),
+                        serde_json::json!(priority),
+                    );
                 }
             }
 
@@ -398,7 +401,7 @@ impl LLMBackend for GraphAwareVllmBackend {
 
         // Probe the APXM extension surface. A definitive 404 means the server
         // is stock vLLM, not the APXM fork — and stock vLLM silently drops
-        // `extra_body.apxm` scheduling hints, which would let APXM behave as
+        // `vllm_xargs.apxm` scheduling hints, which would let APXM behave as
         // if graph-aware scheduling is on while the server ignores it.
         // Default behavior is hard-fail; opt out via
         // `BackendConfig.require_apxm_endpoints = false`.
@@ -410,7 +413,7 @@ impl LLMBackend for GraphAwareVllmBackend {
                 if self.require_apxm_endpoints {
                     anyhow::bail!(
                         "vLLM server at {} does not expose /v1/apxm/* endpoints. \
-                         This is stock vLLM, which silently drops extra_body.apxm \
+                         This is stock vLLM, which silently drops vllm_xargs.apxm \
                          scheduling hints. Install the graph-aware fork: \
                          `dekk apxm vllm install`. \
                          To allow stock vLLM intentionally, set \
@@ -466,10 +469,8 @@ impl LLMBackend for GraphAwareVllmBackend {
         format!("exec-{}-{}", timestamp, counter)
     }
 
-    async fn register_graph(&self, metadata: serde_json::Value) -> Result<()> {
-        let graph_meta: GraphMetadata =
-            serde_json::from_value(metadata).context("Failed to deserialize GraphMetadata")?;
-        GraphAwareVllmBackend::register_graph(self, graph_meta).await?;
+    async fn register_graph(&self, metadata: GraphMetadata) -> Result<()> {
+        GraphAwareVllmBackend::register_graph(self, metadata).await?;
         Ok(())
     }
 
@@ -481,12 +482,17 @@ impl LLMBackend for GraphAwareVllmBackend {
     async fn get_graph_status(
         &self,
         graph_id: &str,
-    ) -> anyhow::Result<Option<serde_json::Value>> {
+    ) -> anyhow::Result<Option<GraphStatusSnapshot>> {
         if !self.apxm_endpoints_available.load(Ordering::Relaxed) {
             return Ok(None);
         }
         match self.get_graph_status_typed(graph_id).await {
-            Ok(status) => Ok(Some(serde_json::to_value(status)?)),
+            Ok(status) => Ok(Some(
+                GraphStatusSnapshot::vllm(status.graph_id)
+                    .with_registered(status.registered)
+                    .with_pin_counts(status.pinned_handles, status.pinned_blocks)
+                    .with_shape(status.node_count, status.critical_path_length),
+            )),
             Err(_) => Ok(None),
         }
     }
@@ -555,21 +561,32 @@ mod tests {
 
         let injected = backend.inject_hints(request);
 
-        // Verify extra_body has apxm field
+        // Verify extra_body has vLLM extra args with APXM hints.
         assert!(injected.extra_body.is_some());
         let extra = injected.extra_body.unwrap();
-        assert!(extra.get("apxm").is_some());
+        assert!(
+            extra
+                .get(apxm_llm::VLLM_XARGS)
+                .and_then(|value| value.get(apxm_llm::HINTS_FIELD))
+                .is_some()
+        );
 
         // Verify the serialized hints
-        let apxm = &extra["apxm"];
-        assert_eq!(extra["priority"], 0);
-        assert_eq!(apxm["schema_version"], 1);
-        assert_eq!(apxm["graph_id"], "graph-test");
-        assert_eq!(apxm["execution_id"], "exec-test");
-        assert_eq!(apxm["node_id"], 42);
-        assert_eq!(apxm["node_name"], "test-node");
-        assert_eq!(apxm["priority_class"], apxm_llm::PRIORITY_CRITICAL_PATH);
-        assert_eq!(apxm["downstream_nodes"], serde_json::json!([43, 44]));
+        let apxm = &extra[apxm_llm::VLLM_XARGS][apxm_llm::HINTS_FIELD];
+        assert_eq!(extra[apxm_llm::REQUEST_PRIORITY], 0);
+        assert_eq!(apxm[apxm_llm::SCHEMA_VERSION], 1);
+        assert_eq!(apxm[apxm_llm::GRAPH_ID], "graph-test");
+        assert_eq!(apxm[apxm_llm::EXECUTION_ID], "exec-test");
+        assert_eq!(apxm[apxm_llm::NODE_ID], 42);
+        assert_eq!(apxm[apxm_llm::NODE_NAME], "test-node");
+        assert_eq!(
+            apxm[apxm_llm::PRIORITY_CLASS],
+            apxm_llm::PRIORITY_CRITICAL_PATH
+        );
+        assert_eq!(
+            apxm[apxm_llm::DOWNSTREAM_NODES],
+            serde_json::json!([43, 44])
+        );
     }
 
     #[tokio::test]
@@ -600,12 +617,20 @@ mod tests {
 
         let extra = injected.extra_body.unwrap();
 
-        // Verify both existing fields and new apxm field are present
+        // Verify both existing fields and new APXM hint field are present.
         assert_eq!(extra["custom_field"], "custom_value");
         assert_eq!(extra["another_field"], 123);
-        assert_eq!(extra["priority"], 5);
-        assert!(extra.get("apxm").is_some());
-        assert_eq!(extra["apxm"]["node_id"], 10);
+        assert_eq!(extra[apxm_llm::REQUEST_PRIORITY], 5);
+        assert!(
+            extra
+                .get(apxm_llm::VLLM_XARGS)
+                .and_then(|value| value.get(apxm_llm::HINTS_FIELD))
+                .is_some()
+        );
+        assert_eq!(
+            extra[apxm_llm::VLLM_XARGS][apxm_llm::HINTS_FIELD][apxm_llm::NODE_ID],
+            10
+        );
     }
 
     #[tokio::test]
@@ -622,12 +647,23 @@ mod tests {
 
         let hints = ApxmGraphHints::default();
 
-        // Create request with apxm already in extra_body
-        let existing_extra = serde_json::json!({
-            "apxm": {
-                "already": "present"
-            }
-        });
+        let existing_key = "already";
+        let existing_value = "present";
+        let existing_extra = {
+            let mut hints_map = serde_json::Map::new();
+            hints_map.insert(existing_key.to_owned(), serde_json::json!(existing_value));
+            let mut vllm_xargs_map = serde_json::Map::new();
+            vllm_xargs_map.insert(
+                apxm_llm::HINTS_FIELD.to_owned(),
+                serde_json::Value::Object(hints_map),
+            );
+            let mut extra_map = serde_json::Map::new();
+            extra_map.insert(
+                apxm_llm::VLLM_XARGS.to_owned(),
+                serde_json::Value::Object(vllm_xargs_map),
+            );
+            serde_json::Value::Object(extra_map)
+        };
 
         let request = LLMRequest::new("Test")
             .with_apxm_hints(hints)
@@ -637,8 +673,11 @@ mod tests {
 
         let extra = injected.extra_body.unwrap();
 
-        // Verify original apxm is preserved (not overwritten)
-        assert_eq!(extra["apxm"]["already"], "present");
+        // Verify original APXM hints are preserved (not overwritten).
+        assert_eq!(
+            extra[apxm_llm::VLLM_XARGS][apxm_llm::HINTS_FIELD][existing_key],
+            existing_value
+        );
     }
 
     #[tokio::test]

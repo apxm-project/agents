@@ -56,13 +56,13 @@ impl MetricsSource for StubBackendSource {
         if !self.has_data {
             return Value::Null;
         }
+        use metrics_keys::graph_status_keys as gsk;
         use metrics_keys::llm_keys;
-        use metrics_keys::vllm_graph_status_keys as gsk;
         serde_json::json!({
             metrics_keys::BACKENDS_AGGREGATE: {
                 llm_keys::TOTAL_REQUESTS: 1,
-                "successful": 1,
-                "failed": 0
+                llm_keys::SUCCESSFUL_REQUESTS: 1,
+                llm_keys::FAILED_REQUESTS: 0
             },
             metrics_keys::BACKENDS_PER_BACKEND: {
                 "mock": { llm_keys::TOTAL_REQUESTS: 1 }
@@ -84,9 +84,7 @@ impl MetricsSource for StubBackendSource {
 fn metrics_report_includes_all_three_sections() {
     let mut report = MetricsReport::new();
     let diag = empty_compiler_diagnostics();
-    report.add_source(&CompilerMetricsSource {
-        diagnostics: &diag,
-    });
+    report.add_source(&CompilerMetricsSource { diagnostics: &diag });
     report.add_source(&StubRuntimeSource);
     report.add_source(&StubBackendSource { has_data: true });
 
@@ -153,7 +151,7 @@ fn metrics_report_includes_all_three_sections() {
         .as_array()
         .expect("graphs is array");
     assert_eq!(graphs.len(), 1);
-    use metrics_keys::vllm_graph_status_keys as gsk;
+    use metrics_keys::graph_status_keys as gsk;
     assert!(graphs[0].get(gsk::PINNED_BLOCKS).is_some());
     assert!(graphs[0].get(gsk::PINNED_HANDLES).is_some());
     assert!(graphs[0].get(gsk::CRITICAL_PATH_LENGTH).is_some());
@@ -163,9 +161,7 @@ fn metrics_report_includes_all_three_sections() {
 fn metrics_report_compile_only_omits_runtime() {
     let mut report = MetricsReport::new();
     let diag = empty_compiler_diagnostics();
-    report.add_source(&CompilerMetricsSource {
-        diagnostics: &diag,
-    });
+    report.add_source(&CompilerMetricsSource { diagnostics: &diag });
 
     let json = report.to_json();
     let obj = json.as_object().expect("report is an object");
@@ -192,9 +188,7 @@ fn metrics_report_compile_only_omits_runtime() {
 fn metrics_report_handles_no_llm_calls() {
     let mut report = MetricsReport::new();
     let diag = empty_compiler_diagnostics();
-    report.add_source(&CompilerMetricsSource {
-        diagnostics: &diag,
-    });
+    report.add_source(&CompilerMetricsSource { diagnostics: &diag });
     report.add_source(&StubRuntimeSource);
     report.add_source(&StubBackendSource { has_data: false });
 

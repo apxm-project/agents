@@ -21,6 +21,18 @@ pub mod graph {
     pub mod metadata {
         /// Graph metadata flag indicating entry flow.
         pub const IS_ENTRY: &str = "is_entry";
+        /// Prefix for generated graph ids when the input graph has no stable name.
+        pub const GENERATED_GRAPH_ID_PREFIX: &str = "dag-";
+        /// Prefix for generated node display names when a node has no metadata name.
+        pub const GENERATED_NODE_NAME_PREFIX: &str = "node_";
+        /// Priority value at or above which graph-aware backends should treat a
+        /// node as critical-path work.
+        pub const CRITICAL_PATH_PRIORITY_THRESHOLD: i64 = 70;
+    }
+
+    pub mod backend_kind {
+        pub const VLLM: &str = "vllm";
+        pub const GENERIC: &str = "generic";
     }
 
     pub mod attrs {
@@ -422,6 +434,32 @@ pub mod llm {
         pub const OBJECT_GRAPH_REGISTRATION: &str = "apxm.graph.registration";
         pub const OBJECT_GRAPH_STATUS: &str = "apxm.graph.status";
         pub const OBJECT_GRAPH_RELEASE: &str = "apxm.graph.release";
+        pub const OBJECT: &str = "object";
+        pub const REQUEST_PRIORITY: &str = "priority";
+        pub const VLLM_XARGS: &str = "vllm_xargs";
+        pub const HINTS_FIELD: &str = "apxm";
+        pub const SCHEMA_VERSION: &str = "schema_version";
+        pub const GRAPH_ID: &str = "graph_id";
+        pub const EXECUTION_ID: &str = "execution_id";
+        pub const NODE_ID: &str = "node_id";
+        pub const NODE_NAME: &str = "node_name";
+        pub const PRIORITY_CLASS: &str = "priority_class";
+        pub const DOWNSTREAM_NODES: &str = "downstream_nodes";
+        pub const REUSE_GROUP: &str = "reuse_group";
+        pub const PIN_POLICY: &str = "pin_policy";
+        pub const PIN_POLICY_MODE: &str = "mode";
+        pub const PIN_POLICY_TTL_MS: &str = "ttl_ms";
+        pub const COMPILER_HINTS: &str = "compiler_hints";
+        pub const SHARED_PREFIX_EST_TOKENS: &str = "shared_prefix_est_tokens";
+        pub const WARMUP_CANDIDATE: &str = "warmup_candidate";
+        pub const REGISTERED_NODES: &str = "registered_nodes";
+        pub const CRITICAL_PATH_LENGTH: &str = "critical_path_length";
+        pub const MAX_PARALLELISM: &str = "max_parallelism";
+        pub const DEFAULT_PIN_TTL_MS: &str = "default_pin_ttl_ms";
+        pub const RELEASED_HANDLES: &str = "released_handles";
+        pub const RELEASED_BLOCKS: &str = "released_blocks";
+        pub const REMAINING_HANDLES: &str = "remaining_handles";
+        pub const REMAINING_BLOCKS: &str = "remaining_blocks";
 
         pub const PRIORITY_CRITICAL_PATH: &str = "critical_path";
         pub const PRIORITY_PARALLEL: &str = "parallel";
@@ -464,7 +502,7 @@ pub mod llm {
         /// vLLM-only: when present and `false`, the graph-aware vLLM backend
         /// allows a stock (non-fork) server. Default behavior (key absent or
         /// `true`) is to hard-fail at `health_check` if `/v1/apxm/*` is missing,
-        /// because stock vLLM silently drops `extra_body.apxm` hints.
+        /// because stock vLLM silently drops `vllm_xargs.apxm` hints.
         /// Plumbed from `BackendConfig.require_apxm_endpoints`.
         pub const REQUIRE_APXM_ENDPOINTS: &str = "require_apxm_endpoints";
         /// Per-model array forwarded to the backend so it can apply
@@ -492,6 +530,7 @@ pub mod llm {
     }
 
     pub mod openai {
+        pub const EXTRA_BODY: &str = "extra_body";
         pub const TOP_P: &str = "top_p";
         pub const FREQUENCY_PENALTY: &str = "frequency_penalty";
         pub const PRESENCE_PENALTY: &str = "presence_penalty";
@@ -631,6 +670,8 @@ pub mod session {
         /// Wire keys nested under `runtime.llm`.
         pub mod llm_keys {
             pub const TOTAL_REQUESTS: &str = "total_requests";
+            pub const SUCCESSFUL_REQUESTS: &str = "successful_requests";
+            pub const FAILED_REQUESTS: &str = "failed_requests";
             pub const TOTAL_INPUT_TOKENS: &str = "total_input_tokens";
             pub const TOTAL_OUTPUT_TOKENS: &str = "total_output_tokens";
             pub const INPUT_TOKENS: &str = "input_tokens";
@@ -647,10 +688,8 @@ pub mod session {
             pub const RUNTIME_MS: &str = "runtime_ms";
         }
 
-        /// Wire keys for vLLM fork's `GET /v1/apxm/graphs/{id}` response and
-        /// the entries under `backends.vllm.graphs[]`. Mirrors fields in
-        /// `apxm_backends::llm::backends::vllm::GraphStatusResponse`.
-        pub mod vllm_graph_status_keys {
+        /// Wire keys for serialized graph-status snapshots in backend metrics.
+        pub mod graph_status_keys {
             pub const OBJECT: &str = "object";
             pub const GRAPH_ID: &str = "graph_id";
             pub const REGISTERED: &str = "registered";
@@ -659,7 +698,8 @@ pub mod session {
             pub const CRITICAL_PATH_LENGTH: &str = "critical_path_length";
             pub const NODE_COUNT: &str = "node_count";
             /// Object-tag value emitted by the fork.
-            pub const OBJECT_TAG_GRAPH_STATUS: &str = "apxm.graph_status";
+            pub const OBJECT_TAG_GRAPH_STATUS: &str =
+                crate::constants::llm::apxm::OBJECT_GRAPH_STATUS;
         }
 
         /// Top-level meta fields attached to the runtime section by the CLI

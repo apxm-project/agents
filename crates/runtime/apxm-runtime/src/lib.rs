@@ -27,6 +27,7 @@ pub mod agent_pool;
 pub mod capability;
 pub mod context_stack;
 pub mod executor;
+pub mod graph_lifecycle;
 pub mod memory;
 pub mod model_router;
 pub mod observability;
@@ -38,8 +39,6 @@ pub mod sandbox;
 pub mod scheduler;
 pub mod team;
 pub mod thread;
-pub mod vllm_attr_derivation;
-pub mod vllm_lifecycle;
 pub mod workflow;
 pub mod workspace;
 
@@ -64,6 +63,7 @@ pub use executor::{
     OperationMiddleware, TimeoutMiddleware, TokenUsageSummary, WorkflowSpawnResult,
     WorkflowSpawner,
 };
+pub use graph_lifecycle::BackendGraphLifecycle;
 pub use memory::{Fact, FactFilter, FactResult, MemoryConfig, MemorySpace, MemorySystem};
 pub use model_router::{
     BackendHealth, CircuitBreakerConfig, CircuitState, ModelEntry, ModelRouter, ModelRouterConfig,
@@ -75,7 +75,6 @@ pub use process_table::{AgentPrompter, AgentSpawner, ProcessTable};
 pub use runtime::{Runtime, RuntimeConfig, RuntimeExecutionResult};
 pub use scheduler::{DataflowScheduler, SchedulerConfig};
 pub use thread::{AgentThread, ThreadId, ThreadState};
-pub use vllm_lifecycle::VllmGraphLifecycle;
 
 // Re-export sandbox interface for host applications
 pub use sandbox::{

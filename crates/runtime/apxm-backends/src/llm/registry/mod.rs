@@ -596,7 +596,7 @@ impl LLMRegistry {
     /// Register graph metadata with all backends (best-effort).
     ///
     /// Backends that don't support graph registration (default impl) silently succeed.
-    pub async fn register_graph_all(&self, metadata: serde_json::Value) {
+    pub async fn register_graph_all(&self, metadata: apxm_core::types::GraphMetadata) {
         for (name, backend) in self.backend_snapshot() {
             if let Err(e) = backend.register_graph(metadata.clone()).await {
                 tracing::warn!(
@@ -634,7 +634,10 @@ impl LLMRegistry {
     ///
     /// Iterates `find_graph_aware_backends()`, calls `get_graph_status(graph_id)`
     /// on each, and collects the `Some(_)` values. Failures are logged and skipped.
-    pub async fn pre_release_status_all(&self, graph_id: &str) -> Vec<serde_json::Value> {
+    pub async fn pre_release_status_all(
+        &self,
+        graph_id: &str,
+    ) -> Vec<apxm_core::types::GraphStatusSnapshot> {
         let mut results = Vec::new();
         for (name, backend) in self.find_graph_aware_backends() {
             match backend.get_graph_status(graph_id).await {
@@ -658,17 +661,20 @@ impl LLMRegistry {
     #[cfg(feature = "metrics")]
     pub fn collect_backend_metrics(
         &self,
-        vllm_graphs: Vec<serde_json::Value>,
+        graph_status_snapshots: Vec<apxm_core::types::GraphStatusSnapshot>,
     ) -> Option<crate::llm::observability::BackendMetricsSource> {
         let aggregate = self.metrics.aggregate();
         let per_backend = self.metrics.aggregate_per_backend();
-        if aggregate.total_requests == 0 && per_backend.is_empty() && vllm_graphs.is_empty() {
+        if aggregate.total_requests == 0
+            && per_backend.is_empty()
+            && graph_status_snapshots.is_empty()
+        {
             return None;
         }
         Some(crate::llm::observability::BackendMetricsSource {
             aggregate,
             per_backend,
-            vllm_graphs,
+            graph_status_snapshots,
         })
     }
 

@@ -21,7 +21,7 @@ pub struct SchedulerConfig {
     ///
     /// Decoupled from `max_inflight` so that compute-bound parallelism (CPU
     /// cores) can stay tight while LLM requests can fan out wide enough to
-    /// keep continuous-batching backends like vLLM saturated.
+    /// keep continuous-batching backends saturated.
     #[serde(default = "default_llm_inflight")]
     pub llm_inflight: usize,
 

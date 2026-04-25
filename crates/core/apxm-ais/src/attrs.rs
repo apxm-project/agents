@@ -187,7 +187,7 @@ pub const MLIR_DERIVED_BARE_ATTRS: &[&str] = &[
 ];
 
 // vLLM payload keys: written by vllm_hints() pass onto LLM nodes; consumed
-// by the runtime when constructing extra_body.apxm.* on each LLMRequest.
+// by the runtime when constructing APXM graph hints for each LLMRequest.
 pub const VLLM_PRIORITY_CLASS: &str = "_vllm_priority_class";
 pub const VLLM_DOWNSTREAM_NODES: &str = "_vllm_downstream_nodes";
 pub const VLLM_REUSE_GROUP: &str = "_vllm_reuse_group";

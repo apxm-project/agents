@@ -99,7 +99,7 @@ pub struct BackendConfig {
     /// For `protocol = "vllm"`: when `None` or `Some(true)`, `health_check()`
     /// hard-fails if the server does not expose `/v1/apxm/*`. This catches the
     /// case where a stock (non-fork) vLLM is registered: stock vLLM silently
-    /// drops `extra_body.apxm` scheduling hints, so APXM would behave as if
+    /// drops `vllm_xargs.apxm` scheduling hints, so APXM would behave as if
     /// graph-aware scheduling is on while the server ignores it. Set to
     /// `false` in `~/.apxm/config.toml` to allow stock vLLM intentionally.
     #[serde(default)]

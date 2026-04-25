@@ -192,12 +192,30 @@ impl LLMBackend for Provider {
         self.backend_ref().capabilities()
     }
 
-    async fn register_graph(&self, metadata: serde_json::Value) -> anyhow::Result<()> {
+    async fn register_graph(
+        &self,
+        metadata: apxm_core::types::GraphMetadata,
+    ) -> anyhow::Result<()> {
         self.backend_ref().register_graph(metadata).await
     }
 
     async fn release_graph(&self, graph_id: &str) -> anyhow::Result<()> {
         self.backend_ref().release_graph(graph_id).await
+    }
+
+    fn supports_graph_extensions(&self) -> bool {
+        self.backend_ref().supports_graph_extensions()
+    }
+
+    fn supports_auto_tool_choice(&self) -> bool {
+        self.backend_ref().supports_auto_tool_choice()
+    }
+
+    async fn get_graph_status(
+        &self,
+        graph_id: &str,
+    ) -> anyhow::Result<Option<apxm_core::types::GraphStatusSnapshot>> {
+        self.backend_ref().get_graph_status(graph_id).await
     }
 }
 
