@@ -43,6 +43,7 @@ PYTHON_TOOL_MANIFEST_NAME = "name"
 PYTHON_TOOL_MANIFEST_DESCRIPTION = "description"
 PYTHON_TOOL_MANIFEST_SCHEMA = "schema"
 PYTHON_TOOL_MANIFEST_SOURCE_FILE = "source_file"
+PYTHON_TOOLS_AIR_COMMENT_PREFIX = "; __apxm_python_tools__ "
 
 _g = globals()
 for _spec in _ops.ALL_OPERATIONS:

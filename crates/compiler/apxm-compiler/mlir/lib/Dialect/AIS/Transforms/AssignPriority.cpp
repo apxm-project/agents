@@ -24,7 +24,6 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
 #include "llvm/ADT/DenseMap.h"
-#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 
 #include <algorithm>
@@ -41,8 +40,17 @@ struct PriorityAnalysis {
   llvm::DenseMap<Operation*, unsigned> longestPath;
   llvm::DenseMap<Operation*, unsigned> fanOut;
   llvm::DenseMap<Operation*, unsigned> opToId;
+  llvm::DenseMap<Operation*, llvm::SmallVector<Operation*, 8>> downstream;
   unsigned criticalPathLength = 0;
 };
+
+static bool isAisOperation(Operation *op) {
+  return op && op->getDialect() && op->getDialect()->getNamespace() == "ais";
+}
+
+static bool isArtifactOperation(Operation *op) {
+  return isAisOperation(op) || isa<func::ReturnOp>(op);
+}
 
 /// Compute the longest path from each operation to a sink node (operation with no users).
 /// This gives us the "depth" of each operation in the DAG.
@@ -53,28 +61,38 @@ static PriorityAnalysis analyzeDag(func::FuncOp func) {
   llvm::SmallVector<Operation*> ops;
   for (Block &block : func) {
     for (Operation &op : block) {
-      if (!op.getDialect() || op.getDialect()->getNamespace() != "ais")
+      if (!isArtifactOperation(&op))
         continue;
       ops.push_back(&op);
     }
   }
 
-  // Assign sequential IDs matching ArtifactEmitter walk order
-  unsigned nextId = 0;
+  // Assign 1-based IDs matching ArtifactEmitter node IDs and walk order.
+  unsigned nextId = 1;
   for (Operation* op : ops) {
     analysis.opToId[op] = nextId++;
+    analysis.downstream[op] = {};
+  }
+
+  // Compute downstream consumers by scanning operands, matching ArtifactEmitter
+  // edge construction.
+  for (Operation* consumer : ops) {
+    for (Value operand : consumer->getOperands()) {
+      Operation* producer = operand.getDefiningOp();
+      if (!isArtifactOperation(producer))
+        continue;
+
+      auto &consumers = analysis.downstream[producer];
+      if (std::find(consumers.begin(), consumers.end(), consumer) == consumers.end()) {
+        consumers.push_back(consumer);
+      }
+    }
   }
 
   // Compute fan-out (number of unique consumers for each operation)
   for (Operation* op : ops) {
-    llvm::SmallPtrSet<Operation*, 8> uniqueConsumers;
-    for (Value result : op->getResults()) {
-      for (Operation* user : result.getUsers()) {
-        if (user->getDialect() && user->getDialect()->getNamespace() == "ais")
-          uniqueConsumers.insert(user);
-      }
-    }
-    analysis.fanOut[op] = uniqueConsumers.size();
+    auto it = analysis.downstream.find(op);
+    analysis.fanOut[op] = it == analysis.downstream.end() ? 0 : it->second.size();
   }
 
   // Compute longest path using reverse topological order (bottom-up)
@@ -83,13 +101,9 @@ static PriorityAnalysis analyzeDag(func::FuncOp func) {
   llvm::DenseMap<Operation*, bool> visited;
 
   for (Operation* op : ops) {
-    unsigned aisUsers = 0;
-    for (Operation* user : op->getUsers()) {
-      if (user->getDialect() && user->getDialect()->getNamespace() == "ais") {
-        aisUsers++;
-      }
-    }
-    if (aisUsers == 0) {
+    auto it = analysis.downstream.find(op);
+    bool hasDownstream = it != analysis.downstream.end() && !it->second.empty();
+    if (!hasDownstream) {
       worklist.push_back(op);
       analysis.longestPath[op] = 1;
       visited[op] = true;
@@ -105,7 +119,7 @@ static PriorityAnalysis analyzeDag(func::FuncOp func) {
     // Update all predecessors
     for (Value operand : current->getOperands()) {
       if (auto* predOp = operand.getDefiningOp()) {
-        if (predOp->getDialect() && predOp->getDialect()->getNamespace() == "ais") {
+        if (isArtifactOperation(predOp)) {
           unsigned newDepth = currentDepth + 1;
           if (newDepth > analysis.longestPath[predOp]) {
             analysis.longestPath[predOp] = newDepth;
@@ -147,7 +161,7 @@ struct AssignPriorityPass : impl::AssignPriorityBase<AssignPriorityPass> {
       // Assign priorities to all AIS operations
       for (Block &block : func) {
         for (Operation &op : block) {
-          if (!op.getDialect() || op.getDialect()->getNamespace() != "ais")
+          if (!isAisOperation(&op))
             continue;
 
           Operation *opPtr = &op;
@@ -178,15 +192,22 @@ struct AssignPriorityPass : impl::AssignPriorityBase<AssignPriorityPass> {
                          builder.getI32IntegerAttr(static_cast<int32_t>(priority)));
 
           // Emit downstream_nodes: collect IDs of AIS ops that consume this op's results
-          llvm::SmallVector<Attribute> downstreamIds;
-          for (Operation* user : opPtr->getUsers()) {
-            if (user->getDialect() && user->getDialect()->getNamespace() == "ais") {
+          llvm::SmallVector<unsigned> downstreamNodeIds;
+          if (auto downstreamIt = analysis.downstream.find(opPtr);
+              downstreamIt != analysis.downstream.end()) {
+            for (Operation* user : downstreamIt->second) {
               auto it = analysis.opToId.find(user);
               if (it != analysis.opToId.end()) {
-                downstreamIds.push_back(
-                    builder.getI32IntegerAttr(static_cast<int32_t>(it->second)));
+                downstreamNodeIds.push_back(it->second);
               }
             }
+          }
+          std::sort(downstreamNodeIds.begin(), downstreamNodeIds.end());
+          llvm::SmallVector<Attribute> downstreamIds;
+          downstreamIds.reserve(downstreamNodeIds.size());
+          for (unsigned downstreamNodeId : downstreamNodeIds) {
+            downstreamIds.push_back(
+                builder.getI32IntegerAttr(static_cast<int32_t>(downstreamNodeId)));
           }
           opPtr->setAttr(apxm::constants::attrs::DOWNSTREAM_NODES,
                          builder.getArrayAttr(downstreamIds));

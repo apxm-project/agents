@@ -419,6 +419,7 @@ impl LLMBackend for OllamaBackend {
             streaming: true,
             vision: false,
             functions: true,
+            structured_outputs: false,
             batch: false,
             fine_tuning: false,
         }

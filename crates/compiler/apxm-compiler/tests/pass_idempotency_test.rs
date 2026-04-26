@@ -41,7 +41,10 @@ fn build_shared_prefix_fanout() -> AirModule {
                 id: 1,
                 name: "preface".to_string(),
                 op: AISOperationType::ConstStr,
-                attributes: HashMap::from([("value".into(), Value::String("preface".into()))]),
+                attributes: HashMap::from([(
+                    graph_attrs::VALUE.into(),
+                    Value::String("preface".into()),
+                )]),
             },
             AirNode {
                 id: 2,

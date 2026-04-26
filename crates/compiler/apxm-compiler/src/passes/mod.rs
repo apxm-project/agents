@@ -18,7 +18,6 @@ pub mod profile;
 mod registry;
 pub mod tool_binding;
 pub mod validate_model_allowlist;
-pub mod vllm_hints;
 
 pub use bind_tool_handlers::{
     BIND_TOOL_HANDLERS_PASS_NAME, bind_python_handlers_to_dag, bind_tool_handlers,
@@ -34,4 +33,3 @@ pub use tool_binding::{
     PythonToolManifestEntry, TOOL_BINDING_PASS_NAME, tool_binding_check, tool_binding_check_dag,
 };
 pub use validate_model_allowlist::validate_model_allowlist;
-pub use vllm_hints::{VLLM_HINTS_PASS_NAME, vllm_hints};

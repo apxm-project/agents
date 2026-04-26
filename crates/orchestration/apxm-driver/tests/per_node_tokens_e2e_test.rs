@@ -55,6 +55,7 @@ fn per_node_tokens_appear_in_live_json() {
             output_tokens: 20,
             total_tokens: 30,
             call_count: 1,
+            ..TokenUsageSummary::default()
         }),
         None,
     );

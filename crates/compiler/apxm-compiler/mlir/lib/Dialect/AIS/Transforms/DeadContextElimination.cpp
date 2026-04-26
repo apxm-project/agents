@@ -111,14 +111,12 @@ private:
     if (contextSize == 0)
       return 0;
 
-    // Empty template OR no `{` at all → all context is dead.
+    // Without explicit named placeholders, preserve operands. The context can
+    // still be semantically relevant to runtime request construction, and
+    // dropping it would also erase graph data-dependency edges.
     if (templateStr.empty() || !templateStr.contains('{')) {
-      APXM_AIS_DEBUG("Removing " << contextSize << " unused context values "
-                     "(template has no placeholders)");
-      OpBuilder builder(op);
-      op->setOperands({});
-      placeholders::writeInputNames(op.getOperation(), {}, builder);
-      return contextSize;
+      APXM_AIS_DEBUG("  Template has no placeholders; preserving context");
+      return 0;
     }
 
     // Collect every {name} appearing in the template — dedup by appearance.

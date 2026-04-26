@@ -143,6 +143,12 @@ pub struct LLMRequest {
     pub presence_penalty: Option<f64>,
     /// Stop sequences where generation stops
     pub stop_sequences: Vec<String>,
+    /// JSON schema that the backend should enforce when supported.
+    pub output_schema: Option<serde_json::Value>,
+    /// Optional hidden-reasoning budget for backends/models that support it.
+    pub thinking_token_budget: Option<u64>,
+    /// Optional explicit thinking-mode control for backends/models that support it.
+    pub enable_thinking: Option<bool>,
     /// Custom metadata passed through to provider
     pub metadata: HashMap<String, serde_json::Value>,
     /// Explicitly requested backend (for routing)
@@ -179,6 +185,9 @@ impl LLMRequest {
             frequency_penalty: None,
             presence_penalty: None,
             stop_sequences: Vec::new(),
+            output_schema: None,
+            thinking_token_budget: None,
+            enable_thinking: None,
             metadata: HashMap::new(),
             backend: None,
             model: None,
@@ -277,6 +286,24 @@ impl LLMRequest {
     /// Add a stop sequence.
     pub fn add_stop_sequence(mut self, stop: impl Into<String>) -> Self {
         self.stop_sequences.push(stop.into());
+        self
+    }
+
+    /// Set a structured output schema.
+    pub fn with_output_schema(mut self, schema: serde_json::Value) -> Self {
+        self.output_schema = Some(schema);
+        self
+    }
+
+    /// Set a hidden-reasoning token budget.
+    pub fn with_thinking_token_budget(mut self, budget: u64) -> Self {
+        self.thinking_token_budget = Some(budget);
+        self
+    }
+
+    /// Set explicit thinking-mode behavior.
+    pub fn with_enable_thinking(mut self, enabled: bool) -> Self {
+        self.enable_thinking = Some(enabled);
         self
     }
 

@@ -166,6 +166,21 @@ fn resolve_token_budget(ctx: &ExecutionContext, node: &Node) -> Option<u64> {
         .or(ctx.token_budget)
 }
 
+fn resolve_node_output_token_limit(node: &Node) -> Result<Option<usize>> {
+    let Some(tokens) = get_optional_u64_attribute(node, graph_attrs::TOKEN_BUDGET)? else {
+        return Ok(None);
+    };
+    usize::try_from(tokens)
+        .map(Some)
+        .map_err(|_| RuntimeError::LLM {
+            message: format!(
+                "{} exceeds the platform maximum for request max_tokens",
+                graph_attrs::TOKEN_BUDGET
+            ),
+            backend: None,
+        })
+}
+
 fn charge_tokens(ctx: &ExecutionContext, budget: Option<u64>, delta: usize) -> Result<()> {
     let Some(limit) = budget else {
         return Ok(());
@@ -599,7 +614,11 @@ fn default_priority() -> u32 {
 /// `request`. Hints are then enriched with runtime-only identifiers
 /// (execution id, human-readable node name, runtime-derived priority class
 /// fallback) that the compiler cannot supply.
-fn attach_graph_hints(ctx: &ExecutionContext, node: &Node, request: LLMRequest) -> LLMRequest {
+pub(crate) fn attach_graph_hints(
+    ctx: &ExecutionContext,
+    node: &Node,
+    request: LLMRequest,
+) -> LLMRequest {
     let node_name = node
         .metadata
         .name
@@ -703,7 +722,17 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     if mode == LlmMode::Think
         && let Some(budget_tokens) = budget
     {
-        request = request.with_metadata_value("thinking_budget", serde_json::json!(budget_tokens));
+        request = request
+            .with_thinking_token_budget(budget_tokens)
+            .with_enable_thinking(true);
+    }
+
+    if let Some(max_tokens) = resolve_node_output_token_limit(node)? {
+        request = request.with_max_tokens(max_tokens);
+    }
+
+    if let Some(schema) = output_schema.as_ref() {
+        request = request.with_output_schema(schema.clone());
     }
 
     let system_prompt = resolve_system_prompt(ctx, node, mode)?;
@@ -852,17 +881,14 @@ async fn execute_llm_once(
         return execute_ask_with_tools(ctx, node, request).await;
     }
 
-    // Check nocache attribute to skip caching entirely
-    let nocache = node
+    let memoizable = node
         .attributes
-        .get("nocache")
+        .get(graph_attrs::MEMOIZABLE)
         .and_then(|v| v.as_bool())
-        .unwrap_or(false);
+        .unwrap_or(true);
 
     // Check memoization cache for deterministic (temperature=0) calls
-    let memo_key = if nocache {
-        None
-    } else {
+    let memo_key = if memoizable {
         // Extract tool names if present
         let tools_list: Option<Vec<String>> = request
             .tools
@@ -881,6 +907,8 @@ async fn execute_llm_once(
             tools_list.as_deref(),
             output_schema_str.as_deref(),
         )
+    } else {
+        None
     };
     if let Some(key) = memo_key
         && let Some(cached) = ctx.response_cache.get(key)
@@ -947,10 +975,9 @@ async fn execute_llm_once(
             .get(graph_attrs::FLOW_NAME)
             .and_then(|v| v.as_string());
         let agent_name = ctx.current_agent.as_ref().map(|a| a.name.as_str());
-        ctx.token_accountant.record(
+        ctx.token_accountant.record_usage(
             node.id,
-            response.usage.input_tokens,
-            response.usage.output_tokens,
+            &response.usage,
             flow_name.map(|s| s.as_str()),
             agent_name,
         );
@@ -1093,10 +1120,9 @@ async fn execute_ask_with_tools(
                 .get(graph_attrs::FLOW_NAME)
                 .and_then(|v| v.as_string());
             let agent_name = ctx.current_agent.as_ref().map(|a| a.name.as_str());
-            ctx.token_accountant.record(
+            ctx.token_accountant.record_usage(
                 node.id,
-                response.usage.input_tokens,
-                response.usage.output_tokens,
+                &response.usage,
                 flow_name.map(|s| s.as_str()),
                 agent_name,
             );
@@ -1390,6 +1416,17 @@ mod tests {
         assert_eq!(LlmMode::from(&AISOperationType::Ask), LlmMode::Ask);
         assert_eq!(LlmMode::from(&AISOperationType::Think), LlmMode::Think);
         assert_eq!(LlmMode::from(&AISOperationType::Reason), LlmMode::Reason);
+    }
+
+    #[test]
+    fn test_node_token_budget_lowers_to_output_limit() {
+        let mut node = Node::new(7, AISOperationType::Ask);
+        node.attributes.insert(
+            graph_attrs::TOKEN_BUDGET.to_string(),
+            Value::Number(apxm_core::types::values::Number::Integer(128)),
+        );
+
+        assert_eq!(resolve_node_output_token_limit(&node).unwrap(), Some(128));
     }
 
     #[tokio::test]

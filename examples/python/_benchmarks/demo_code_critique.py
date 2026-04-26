@@ -63,7 +63,7 @@ from .models import User, Order
 
 app = FastAPI()
 
-@app.post("/users/{uid}/orders")
+@app.post("/users/<uid>/orders")
 async def create_order(uid: int, payload: dict):
     db: Session = next(get_db())
     user = db.query(User).get(uid)
@@ -72,7 +72,7 @@ async def create_order(uid: int, payload: dict):
     order = Order(user_id=uid, total=payload["total"])
     db.add(order)
     db.commit()
-    return {"order_id": order.id}
+    return dict(order_id=order.id)
 ```
 
 Known issues:

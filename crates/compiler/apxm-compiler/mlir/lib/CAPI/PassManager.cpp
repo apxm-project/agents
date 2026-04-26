@@ -119,8 +119,8 @@ bool apxm_pass_manager_has_pass(ApxmPassManager* pm, const char* pass_name) {
   // Simple implementation - in real system would use pass registry
   static const char* known_passes[] = {
     "normalize", "build-prompt", "fuse-ask-ops", "condense-ops",
-    "scheduling", "canonicalizer", "cse", "symbol-dce", "inline",
-    "unconsumed-value-warning"
+    "scheduling", "shared-prefix-analysis", "canonicalizer", "cse",
+    "symbol-dce", "inline", "unconsumed-value-warning"
   };
 
   for (auto name : known_passes) {

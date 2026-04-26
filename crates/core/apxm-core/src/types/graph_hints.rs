@@ -245,30 +245,17 @@ impl ApxmGraphHints {
     ) -> Self {
         let numeric_node_id = node_label.parse::<u32>().ok();
 
-        let priority_class = attrs_map
-            .get(attrs::VLLM_PRIORITY_CLASS)
-            .and_then(|value| value.as_string())
-            .and_then(|value| PriorityClass::from_str(value).ok())
-            .or_else(|| {
-                attrs_map
-                    .get(attrs::VLLM_CRITICAL_PATH)
-                    .and_then(|value| value.as_bool())
-                    .and_then(|critical_path| critical_path.then_some(PriorityClass::CriticalPath))
-            })
-            .or_else(|| {
-                attrs_map.get(attrs::PRIORITY).and_then(|value| {
-                    let priority = value.as_i64()?;
-                    if priority >= graph_meta::CRITICAL_PATH_PRIORITY_THRESHOLD {
-                        Some(PriorityClass::CriticalPath)
-                    } else {
-                        Some(PriorityClass::Parallel)
-                    }
-                })
-            });
+        let priority_class = attrs_map.get(attrs::PRIORITY).and_then(|value| {
+            let priority = value.as_i64()?;
+            if priority >= graph_meta::CRITICAL_PATH_PRIORITY_THRESHOLD {
+                Some(PriorityClass::CriticalPath)
+            } else {
+                Some(PriorityClass::Parallel)
+            }
+        });
 
         let downstream_nodes = attrs_map
-            .get(attrs::VLLM_DOWNSTREAM_NODES)
-            .or_else(|| attrs_map.get(attrs::DOWNSTREAM_NODES))
+            .get(attrs::DOWNSTREAM_NODES)
             .and_then(|value| value.as_array())
             .map(|values| {
                 values
@@ -279,40 +266,23 @@ impl ApxmGraphHints {
             .unwrap_or_default();
 
         let reuse_group = attrs_map
-            .get(attrs::VLLM_REUSE_GROUP)
-            .or_else(|| attrs_map.get(attrs::REUSE_GROUP))
+            .get(attrs::REUSE_GROUP)
             .and_then(|value| value.as_string())
             .map(ToOwned::to_owned);
 
-        let pin_policy = match attrs_map
-            .get(attrs::VLLM_PIN_MODE)
-            .and_then(|value| value.as_string())
-            .and_then(|value| PinMode::from_str(value).ok())
-        {
-            Some(PinMode::Prefix) => PinPolicy::prefix_default(),
-            Some(PinMode::None) => PinPolicy::none(),
-            None => {
-                if reuse_group.is_some() {
-                    PinPolicy::prefix_default()
-                } else {
-                    PinPolicy::none()
-                }
-            }
+        let pin_policy = if reuse_group.is_some() {
+            PinPolicy::prefix_default()
+        } else {
+            PinPolicy::none()
         };
 
         let shared_prefix_est_tokens = attrs_map
-            .get(attrs::VLLM_EST_TOKENS)
-            .or_else(|| attrs_map.get(attrs::SHARED_PREFIX_EST_TOKENS))
+            .get(attrs::SHARED_PREFIX_EST_TOKENS)
             .and_then(|value| value.as_u64())
             .map(|value| value as u32);
 
         let warmup_candidate = attrs_map
-            .get(attrs::VLLM_WARMUP)
-            .or_else(|| attrs_map.get(attrs::WARMUP_CANDIDATE))
-            .and_then(|value| value.as_bool());
-
-        let pipeline_candidate = attrs_map
-            .get(attrs::VLLM_PIPELINE)
+            .get(attrs::WARMUP_CANDIDATE)
             .and_then(|value| value.as_bool());
 
         Self {
@@ -328,7 +298,7 @@ impl ApxmGraphHints {
             compiler_hints: CompilerHints {
                 shared_prefix_est_tokens,
                 warmup_candidate,
-                pipeline_candidate,
+                pipeline_candidate: None,
             },
         }
     }
@@ -509,6 +479,7 @@ impl GraphMetadata {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     #[test]
     fn priority_class_serializes_canonical_strings() {
@@ -574,6 +545,44 @@ mod tests {
         );
         assert_eq!(json[apxm_llm::DOWNSTREAM_NODES], serde_json::json!([6, 7]));
         assert_eq!(json[apxm_llm::SCHEMA_VERSION], 1);
+    }
+
+    #[test]
+    fn from_node_attrs_uses_backend_agnostic_graph_attrs() {
+        let attrs_map = HashMap::from([
+            (
+                attrs::PRIORITY.to_owned(),
+                Value::Number(crate::types::Number::Integer(
+                    graph_meta::CRITICAL_PATH_PRIORITY_THRESHOLD,
+                )),
+            ),
+            (
+                attrs::DOWNSTREAM_NODES.to_owned(),
+                Value::Array(vec![
+                    Value::Number(crate::types::Number::Integer(2)),
+                    Value::Number(crate::types::Number::Integer(3)),
+                ]),
+            ),
+            (
+                attrs::REUSE_GROUP.to_owned(),
+                Value::String("shared-prefix-a".to_owned()),
+            ),
+            (
+                attrs::SHARED_PREFIX_EST_TOKENS.to_owned(),
+                Value::Number(crate::types::Number::Integer(1024)),
+            ),
+            (attrs::WARMUP_CANDIDATE.to_owned(), Value::Bool(true)),
+        ]);
+
+        let hints =
+            ApxmGraphHints::from_node_attrs("graph-abc".to_owned(), "7".to_owned(), &attrs_map);
+
+        assert_eq!(hints.priority_class, Some(PriorityClass::CriticalPath));
+        assert_eq!(hints.downstream_nodes, vec![2, 3]);
+        assert_eq!(hints.reuse_group.as_deref(), Some("shared-prefix-a"));
+        assert_eq!(hints.pin_policy.mode, PinMode::Prefix);
+        assert_eq!(hints.compiler_hints.shared_prefix_est_tokens, Some(1024));
+        assert_eq!(hints.compiler_hints.warmup_candidate, Some(true));
     }
 
     #[test]

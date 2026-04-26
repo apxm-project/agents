@@ -55,6 +55,9 @@ pub struct OpenAIBackend {
     /// backend registration config. These models reject an explicit custom
     /// `temperature` field, so the request must rely on the provider default.
     fixed_temperature_models: HashSet<String>,
+    /// Whether this OpenAI-compatible endpoint accepts structured-output
+    /// request fields. Runtime schema validation still applies when disabled.
+    structured_outputs_supported: bool,
     client: reqwest::Client,
 }
 
@@ -148,12 +151,19 @@ impl OpenAIBackend {
             })
             .unwrap_or_default();
 
+        let structured_outputs_supported = config
+            .as_ref()
+            .and_then(|c| c.get(config_keys::SUPPORTS_STRUCTURED_OUTPUTS))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+
         Ok(OpenAIBackend {
             api_key: api_key.to_string(),
             model,
             base_url,
             extra_headers,
             fixed_temperature_models,
+            structured_outputs_supported,
             client: reqwest::Client::new(),
         })
     }
@@ -166,7 +176,8 @@ impl OpenAIBackend {
             Role::Assistant => roles::ASSISTANT,
             Role::Tool => roles::TOOL,
         };
-        let mut obj = json!({ "role": role });
+        let mut obj = json!({});
+        obj[openai_keys::ROLE] = json!(role);
 
         if let Some(ref tool_call_id) = msg.tool_call_id {
             obj["tool_call_id"] = json!(tool_call_id);
@@ -217,14 +228,14 @@ impl OpenAIBackend {
         }
 
         if image_parts.is_empty() {
-            obj["content"] = json!(text_parts.join(""));
+            obj[openai_keys::CONTENT] = json!(text_parts.join(""));
         } else {
             let mut content_arr: Vec<serde_json::Value> = text_parts
                 .iter()
                 .map(|t| json!({ "type": "text", "text": t }))
                 .collect();
             content_arr.extend(image_parts);
-            obj["content"] = json!(content_arr);
+            obj[openai_keys::CONTENT] = json!(content_arr);
         }
 
         obj
@@ -239,18 +250,12 @@ impl OpenAIBackend {
             .map(Self::message_to_openai_json)
             .collect();
 
-        let mut body = if self.fixed_temperature_models.contains(model) {
-            json!({
-                "model": model,
-                "messages": messages,
-            })
-        } else {
-            json!({
-                "model": model,
-                "messages": messages,
-                "temperature": request.temperature,
-            })
-        };
+        let mut body = json!({});
+        body[openai_keys::MODEL] = json!(model);
+        body[openai_keys::MESSAGES] = json!(messages);
+        if !self.fixed_temperature_models.contains(model) {
+            body[openai_keys::TEMPERATURE] = json!(request.temperature);
+        }
 
         // Add optional parameters
         if let Some(max_tokens) = request.max_tokens {
@@ -271,6 +276,21 @@ impl OpenAIBackend {
 
         if !request.stop_sequences.is_empty() {
             body[openai_keys::STOP] = json!(request.stop_sequences);
+        }
+
+        if self.structured_outputs_supported
+            && let Some(output_schema) = &request.output_schema
+        {
+            body[openai_keys::RESPONSE_FORMAT] = json!({});
+            body[openai_keys::RESPONSE_FORMAT][openai_keys::RESPONSE_FORMAT_TYPE] =
+                json!(openai_keys::RESPONSE_FORMAT_JSON_SCHEMA);
+            body[openai_keys::RESPONSE_FORMAT][openai_keys::JSON_SCHEMA] = json!({});
+            body[openai_keys::RESPONSE_FORMAT][openai_keys::JSON_SCHEMA]
+                [openai_keys::JSON_SCHEMA_NAME] = json!(openai_keys::APXM_OUTPUT_SCHEMA_NAME);
+            body[openai_keys::RESPONSE_FORMAT][openai_keys::JSON_SCHEMA]
+                [openai_keys::JSON_SCHEMA_SCHEMA] = json!(output_schema);
+            body[openai_keys::RESPONSE_FORMAT][openai_keys::JSON_SCHEMA]
+                [openai_keys::JSON_SCHEMA_STRICT] = json!(true);
         }
 
         // Add tools if provided
@@ -362,9 +382,11 @@ impl OpenAIBackend {
             FinishReason::from_string(&choice.finish_reason)
         };
 
-        let usage = TokenUsage::new(
-            response.usage.prompt_tokens,
-            response.usage.completion_tokens,
+        let input_tokens = response.usage.input_token_count();
+        let output_tokens = response.usage.output_token_count();
+        let usage = TokenUsage::new(input_tokens, output_tokens).with_details(
+            response.usage.cached_input_tokens(),
+            response.usage.reasoning_output_tokens(),
         );
 
         Ok(LLMResponse::new(content, model, usage, finish_reason).with_tool_calls(tool_calls))
@@ -532,10 +554,13 @@ impl LLMBackend for OpenAIBackend {
                         if let Ok(parsed) = serde_json::from_str::<StreamChunkPayload>(data) {
                             // Emit usage if present at top level.
                             if let Some(ref usage_obj) = parsed.usage {
-                                let input = usage_obj.prompt_tokens as usize;
-                                let output = usage_obj.completion_tokens as usize;
+                                let input = usage_obj.input_token_count();
+                                let output = usage_obj.output_token_count();
                                 if input > 0 || output > 0 {
-                                    last_usage = TokenUsage::new(input, output);
+                                    last_usage = TokenUsage::new(input, output).with_details(
+                                        usage_obj.cached_input_tokens(),
+                                        usage_obj.reasoning_output_tokens(),
+                                    );
                                     yield StreamChunk::Usage(last_usage.clone());
                                 }
                             }
@@ -673,6 +698,7 @@ impl LLMBackend for OpenAIBackend {
                 || self.model.contains("turbo")
                 || self.model.contains("gpt-4o"),
             functions: true,
+            structured_outputs: self.structured_outputs_supported,
             batch: false,
             fine_tuning: self.model.starts_with("gpt-3.5"),
         }
@@ -716,8 +742,86 @@ struct OpenAIFunction {
 
 #[derive(Debug, Deserialize)]
 struct Usage {
+    #[serde(default)]
     prompt_tokens: usize,
-    completion_tokens: usize,
+    #[serde(default)]
+    completion_tokens: Option<usize>,
+    #[serde(default)]
+    input_tokens: usize,
+    #[serde(default)]
+    output_tokens: Option<usize>,
+    #[serde(default)]
+    prompt_tokens_details: Option<PromptTokensDetails>,
+    #[serde(default)]
+    input_tokens_details: Option<InputTokensDetails>,
+    #[serde(default)]
+    completion_tokens_details: Option<CompletionTokensDetails>,
+    #[serde(default)]
+    output_tokens_details: Option<OutputTokensDetails>,
+}
+
+impl Usage {
+    fn input_token_count(&self) -> usize {
+        if self.prompt_tokens > 0 {
+            self.prompt_tokens
+        } else {
+            self.input_tokens
+        }
+    }
+
+    fn output_token_count(&self) -> usize {
+        self.completion_tokens
+            .or(self.output_tokens)
+            .unwrap_or_default()
+    }
+
+    fn cached_input_tokens(&self) -> usize {
+        self.prompt_tokens_details
+            .as_ref()
+            .and_then(|details| details.cached_tokens)
+            .or_else(|| {
+                self.input_tokens_details
+                    .as_ref()
+                    .map(|details| details.cached_tokens)
+            })
+            .unwrap_or(0)
+    }
+
+    fn reasoning_output_tokens(&self) -> usize {
+        self.completion_tokens_details
+            .as_ref()
+            .map(|details| details.reasoning_tokens)
+            .or_else(|| {
+                self.output_tokens_details
+                    .as_ref()
+                    .map(|details| details.reasoning_tokens)
+            })
+            .unwrap_or(0)
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct PromptTokensDetails {
+    #[serde(default)]
+    cached_tokens: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct InputTokensDetails {
+    #[serde(default)]
+    cached_tokens: usize,
+}
+
+#[derive(Debug, Deserialize)]
+struct CompletionTokensDetails {
+    #[serde(default)]
+    reasoning_tokens: usize,
+}
+
+#[derive(Debug, Deserialize)]
+struct OutputTokensDetails {
+    #[serde(default)]
+    reasoning_tokens: usize,
 }
 
 // OpenAI streaming response types (constructed by serde, not user code)
@@ -734,9 +838,61 @@ struct StreamChunkPayload {
 #[derive(Deserialize)]
 struct StreamUsage {
     #[serde(default)]
-    prompt_tokens: u64,
+    prompt_tokens: usize,
     #[serde(default)]
-    completion_tokens: u64,
+    completion_tokens: Option<usize>,
+    #[serde(default)]
+    input_tokens: usize,
+    #[serde(default)]
+    output_tokens: Option<usize>,
+    #[serde(default)]
+    prompt_tokens_details: Option<PromptTokensDetails>,
+    #[serde(default)]
+    input_tokens_details: Option<InputTokensDetails>,
+    #[serde(default)]
+    completion_tokens_details: Option<CompletionTokensDetails>,
+    #[serde(default)]
+    output_tokens_details: Option<OutputTokensDetails>,
+}
+
+impl StreamUsage {
+    fn input_token_count(&self) -> usize {
+        if self.prompt_tokens > 0 {
+            self.prompt_tokens
+        } else {
+            self.input_tokens
+        }
+    }
+
+    fn output_token_count(&self) -> usize {
+        self.completion_tokens
+            .or(self.output_tokens)
+            .unwrap_or_default()
+    }
+
+    fn cached_input_tokens(&self) -> usize {
+        self.prompt_tokens_details
+            .as_ref()
+            .and_then(|details| details.cached_tokens)
+            .or_else(|| {
+                self.input_tokens_details
+                    .as_ref()
+                    .map(|details| details.cached_tokens)
+            })
+            .unwrap_or(0)
+    }
+
+    fn reasoning_output_tokens(&self) -> usize {
+        self.completion_tokens_details
+            .as_ref()
+            .map(|details| details.reasoning_tokens)
+            .or_else(|| {
+                self.output_tokens_details
+                    .as_ref()
+                    .map(|details| details.reasoning_tokens)
+            })
+            .unwrap_or(0)
+    }
 }
 
 #[allow(dead_code)]
@@ -781,16 +937,21 @@ mod tests {
     use crate::llm::backends::{LLMRequest, ToolDefinition};
     use apxm_core::constants::llm::apxm as apxm_llm;
 
-    #[test]
-    fn test_build_request_body_basic() {
-        let backend = OpenAIBackend {
+    fn test_backend(model: &str) -> OpenAIBackend {
+        OpenAIBackend {
             api_key: "test".to_string(),
-            model: "gpt-4".to_string(),
+            model: model.to_string(),
             base_url: DEFAULT_BASE_URL.to_string(),
             extra_headers: vec![],
             fixed_temperature_models: HashSet::new(),
+            structured_outputs_supported: true,
             client: reqwest::Client::new(),
-        };
+        }
+    }
+
+    #[test]
+    fn test_build_request_body_basic() {
+        let backend = test_backend("gpt-4");
 
         let request = LLMRequest::new("Hello").with_temperature(0.9);
 
@@ -803,14 +964,7 @@ mod tests {
 
     #[test]
     fn test_build_request_body_with_system() {
-        let backend = OpenAIBackend {
-            api_key: "test".to_string(),
-            model: "gpt-4-turbo".to_string(),
-            base_url: DEFAULT_BASE_URL.to_string(),
-            extra_headers: vec![],
-            fixed_temperature_models: HashSet::new(),
-            client: reqwest::Client::new(),
-        };
+        let backend = test_backend("gpt-4-turbo");
 
         let request = LLMRequest::new("Hello")
             .with_system_prompt("You are helpful")
@@ -825,14 +979,7 @@ mod tests {
 
     #[test]
     fn test_build_request_body_with_tools() {
-        let backend = OpenAIBackend {
-            api_key: "test".to_string(),
-            model: "gpt-4".to_string(),
-            base_url: DEFAULT_BASE_URL.to_string(),
-            extra_headers: vec![],
-            fixed_temperature_models: HashSet::new(),
-            client: reqwest::Client::new(),
-        };
+        let backend = test_backend("gpt-4");
 
         let tools = vec![
             ToolDefinition::new(
@@ -875,14 +1022,7 @@ mod tests {
 
     #[test]
     fn test_build_request_body_with_specific_tool_choice() {
-        let backend = OpenAIBackend {
-            api_key: "test".to_string(),
-            model: "gpt-4".to_string(),
-            base_url: DEFAULT_BASE_URL.to_string(),
-            extra_headers: vec![],
-            fixed_temperature_models: HashSet::new(),
-            client: reqwest::Client::new(),
-        };
+        let backend = test_backend("gpt-4");
 
         let tools = vec![ToolDefinition::new("bash", "Execute shell", json!({}))];
 
@@ -907,6 +1047,7 @@ mod tests {
             base_url: DEFAULT_BASE_URL.to_string(),
             extra_headers: vec![],
             fixed_temperature_models,
+            structured_outputs_supported: true,
             client: reqwest::Client::new(),
         };
 
@@ -917,17 +1058,60 @@ mod tests {
     }
 
     #[test]
+    fn test_build_request_body_with_output_schema() {
+        let backend = test_backend("gpt-4");
+
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "answer": {"type": "string"}
+            },
+            "required": ["answer"],
+            "additionalProperties": false
+        });
+        let request = LLMRequest::new("Return JSON").with_output_schema(schema.clone());
+        let body = backend.build_request_body(&request);
+
+        assert_eq!(
+            body[openai_keys::RESPONSE_FORMAT][openai_keys::RESPONSE_FORMAT_TYPE],
+            openai_keys::RESPONSE_FORMAT_JSON_SCHEMA
+        );
+        assert_eq!(
+            body[openai_keys::RESPONSE_FORMAT][openai_keys::JSON_SCHEMA]
+                [openai_keys::JSON_SCHEMA_NAME],
+            openai_keys::APXM_OUTPUT_SCHEMA_NAME
+        );
+        assert_eq!(
+            body[openai_keys::RESPONSE_FORMAT][openai_keys::JSON_SCHEMA]
+                [openai_keys::JSON_SCHEMA_SCHEMA],
+            schema
+        );
+        assert_eq!(
+            body[openai_keys::RESPONSE_FORMAT][openai_keys::JSON_SCHEMA]
+                [openai_keys::JSON_SCHEMA_STRICT],
+            true
+        );
+    }
+
+    #[test]
+    fn test_build_request_body_keeps_output_schema_runtime_only_when_disabled() {
+        let mut backend = test_backend("openai-compatible-model");
+        backend.structured_outputs_supported = false;
+
+        let request = LLMRequest::new("Return JSON").with_output_schema(json!({
+            "type": "object",
+            "additionalProperties": true,
+        }));
+        let body = backend.build_request_body(&request);
+
+        assert!(body.get(openai_keys::RESPONSE_FORMAT).is_none());
+    }
+
+    #[test]
     fn test_build_request_body_preserves_extra_body_fields() {
         use crate::llm::backends::vllm::ApxmGraphHints;
 
-        let backend = OpenAIBackend {
-            api_key: "test".to_string(),
-            model: "meta-llama/Llama-3.1-8B-Instruct".to_string(),
-            base_url: DEFAULT_BASE_URL.to_string(),
-            extra_headers: vec![],
-            fixed_temperature_models: HashSet::new(),
-            client: reqwest::Client::new(),
-        };
+        let backend = test_backend("meta-llama/Llama-3.1-8B-Instruct");
 
         // Create APXM hints
         let hints = ApxmGraphHints::critical_path(
@@ -1001,14 +1185,7 @@ mod tests {
     fn test_request_structure_merges_extra_body_without_special_casing() {
         use crate::llm::backends::vllm::ApxmGraphHints;
 
-        let backend = OpenAIBackend {
-            api_key: "test".to_string(),
-            model: "meta-llama/Llama-3.1-8B-Instruct".to_string(),
-            base_url: DEFAULT_BASE_URL.to_string(),
-            extra_headers: vec![],
-            fixed_temperature_models: HashSet::new(),
-            client: reqwest::Client::new(),
-        };
+        let backend = test_backend("meta-llama/Llama-3.1-8B-Instruct");
 
         let hints =
             ApxmGraphHints::critical_path("graph-id", "exec-id", 12, "node-name", vec![], 30_000);
@@ -1069,5 +1246,77 @@ mod usage_parsing_tests {
 
         assert_eq!(response.usage.input_tokens, 11);
         assert_eq!(response.usage.output_tokens, 22);
+    }
+
+    #[tokio::test]
+    async fn openai_response_usage_preserves_provider_detail_counts() {
+        let wire_json = r#"{
+            "id": "chatcmpl-test",
+            "object": "chat.completion",
+            "model": "gpt-4o-mini",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "hi"},
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 40,
+                "prompt_tokens_details": {"cached_tokens": 64},
+                "completion_tokens_details": {"reasoning_tokens": 12}
+            }
+        }"#;
+
+        let parsed: OpenAIResponse =
+            serde_json::from_str(wire_json).expect("OpenAI fixture must deserialize");
+
+        let backend = OpenAIBackend::new("test-key", None)
+            .await
+            .expect("OpenAIBackend::new should succeed with no config");
+
+        let response = backend
+            .parse_response(parsed, "gpt-4o-mini")
+            .expect("parse_response should preserve token details");
+
+        assert_eq!(response.usage.input_tokens, 100);
+        assert_eq!(response.usage.output_tokens, 40);
+        assert_eq!(response.usage.cached_input_tokens, 64);
+        assert_eq!(response.usage.reasoning_output_tokens, 12);
+    }
+
+    #[tokio::test]
+    async fn responses_style_usage_preserves_provider_detail_counts() {
+        let wire_json = r#"{
+            "id": "chatcmpl-test",
+            "object": "chat.completion",
+            "model": "gpt-4o-mini",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "hi"},
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "input_tokens": 80,
+                "output_tokens": 30,
+                "input_tokens_details": {"cached_tokens": 50},
+                "output_tokens_details": {"reasoning_tokens": 10}
+            }
+        }"#;
+
+        let parsed: OpenAIResponse =
+            serde_json::from_str(wire_json).expect("response-style fixture must deserialize");
+
+        let backend = OpenAIBackend::new("test-key", None)
+            .await
+            .expect("OpenAIBackend::new should succeed with no config");
+
+        let response = backend
+            .parse_response(parsed, "gpt-4o-mini")
+            .expect("parse_response should preserve response-style token details");
+
+        assert_eq!(response.usage.input_tokens, 80);
+        assert_eq!(response.usage.output_tokens, 30);
+        assert_eq!(response.usage.cached_input_tokens, 50);
+        assert_eq!(response.usage.reasoning_output_tokens, 10);
     }
 }

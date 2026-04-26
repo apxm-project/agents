@@ -5,7 +5,7 @@ import json
 import os
 from typing import TYPE_CHECKING, Any, Callable
 
-from .constants import ENV_APXM_EMIT_AIR, ENV_FLAG_ENABLED
+from .constants import ENV_APXM_EMIT_AIR, ENV_FLAG_ENABLED, PYTHON_TOOLS_AIR_COMMENT_PREFIX
 from .execution import CompiledFlow, ExecutionMode, ExecutionResult
 from .ir import Parameter
 from .proxy import GraphRecorder
@@ -100,6 +100,10 @@ class _CompiledFunction:
             session_id=session_id,
             execution=execution,
         )
+
+    def to_air(self) -> str:
+        """Return the complete AIR text for this compiled graph."""
+        return self._air_text
 
     async def stream(
         self,
@@ -201,7 +205,7 @@ class _CompiledFunction:
         python_tools = getattr(recorder, "_python_tools", None)
         if python_tools:
             manifest = json.dumps(python_tools, separators=(",", ":"))
-            air_text = f"; __apxm_python_tools__ {manifest}\n{air_text}"
+            air_text = f"{PYTHON_TOOLS_AIR_COMMENT_PREFIX}{manifest}\n{air_text}"
 
         return graph, air_text
 

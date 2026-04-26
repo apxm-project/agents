@@ -295,9 +295,9 @@ const PASS_CATEGORY_COLORS: Record<string, string> = {
 
 const OPT_LEVEL_PASSES: Record<number, string[]> = {
   0: [],
-  1: ["normalize", "build-prompt", "dspy-optimize", "unconsumed-value-warning", "scheduling", "fuse-ask-ops", "assign-priority", "canonicalizer", "cse", "symbol-dce"],
-  2: ["normalize", "build-prompt", "dspy-optimize", "unconsumed-value-warning", "prompt-canonicalization", "template-specialization", "schema-narrowing", "scheduling", "fuse-ask-ops", "condense-ops", "dead-context-elimination", "assign-priority", "canonicalizer", "cse", "symbol-dce"],
-  3: ["normalize", "build-prompt", "dspy-optimize", "unconsumed-value-warning", "prompt-canonicalization", "template-specialization", "schema-narrowing", "scheduling", "fuse-ask-ops", "condense-ops", "dead-context-elimination", "assign-priority", "canonicalizer", "cse", "symbol-dce", "(convergence ×10)"],
+  1: ["normalize", "build-prompt", "canonicalizer", "tool-binding", "bind-tool-handlers", "cse", "symbol-dce", "assign-priority"],
+  2: ["normalize", "build-prompt", "template-specialization", "dead-context-elimination", "cse", "scheduling (targeted)", "canonicalizer", "tool-binding", "bind-tool-handlers", "cse", "symbol-dce", "assign-priority"],
+  3: ["normalize", "build-prompt", "template-specialization", "dead-context-elimination", "cse", "template-specialization", "dead-context-elimination", "scheduling", "canonicalizer", "tool-binding", "bind-tool-handlers", "cse", "symbol-dce", "(convergence x10)", "assign-priority"],
 };
 
 function CompilerTab() {
@@ -368,9 +368,9 @@ function CompilerTab() {
         <div className="ref-compiler__level-detail">
           <p className="ref-compiler__level-desc">
             {selectedLevel === 0 && "No optimization passes. Raw graph is emitted directly."}
-            {selectedLevel === 1 && "Standard optimization: normalize, prompt building, scheduling, fusion, and cleanup."}
-            {selectedLevel === 2 && "Aggressive optimization: adds prompt canonicalization, template specialization, schema narrowing, dead context elimination."}
-            {selectedLevel === 3 && "Maximum optimization: O2 passes with convergence loop (up to 10 iterations) for deep optimization."}
+            {selectedLevel === 1 && "Basic optimization: normalize, prompt building, canonical cleanup, CSE, and priority metadata."}
+            {selectedLevel === 2 && "Standard optimization: adds template specialization, dead context elimination, and target-aware scheduling metadata."}
+            {selectedLevel === 3 && "Aggressive optimization: repeats contract-safe cleanup and scheduling metadata."}
           </p>
           <div className="ref-compiler__level-passes">
             {levelPasses.map((p, i) => (
@@ -387,9 +387,9 @@ function CompilerTab() {
         <div className="ref-compiler__targets">
           {[
             { name: "Balanced", desc: "Default: equal weight to latency, cost, and throughput." },
-            { name: "Latency", desc: "Minimize end-to-end latency with more fusion and parallel scheduling." },
-            { name: "Cost", desc: "Minimize LLM API cost via more CSE and model substitution." },
-            { name: "Tokens", desc: "Minimize token usage through context compression and dead context elimination." },
+            { name: "Latency", desc: "Minimize end-to-end latency with production-safe scheduling hints." },
+            { name: "Cost", desc: "Minimize LLM API cost through duplicate-work cleanup." },
+            { name: "Tokens", desc: "Minimize token usage through dead context elimination." },
             { name: "Parallelism", desc: "Maximize parallel execution with aggressive scheduling." },
           ].map((t) => (
             <div key={t.name} className="ref-target-card">

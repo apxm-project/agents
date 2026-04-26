@@ -14,9 +14,9 @@ mod generated {
 pub use generated::{
     AIS_PASSES, ALL_PASSES, ASSIGN_PRIORITY, BUILD_PROMPT, CANONICALIZER, CONDENSE_OPS, CSE,
     DEAD_CONTEXT_ELIMINATION, DSPY_OPTIMIZE, FUSE_ASK_OPS, NORMALIZE, PROMPT_CANONICALIZATION,
-    PassCategory, PassOption, PassSpec, SCHEDULING, SCHEMA_NARROWING, SYMBOL_DCE,
-    TEMPLATE_SPECIALIZATION, UNCONSUMED_VALUE_WARNING, find_pass_by_name, get_ais_passes,
-    get_all_passes,
+    PassCategory, PassOption, PassSpec, SCHEDULING, SCHEMA_NARROWING, SHARED_PREFIX_ANALYSIS,
+    SYMBOL_DCE, TEMPLATE_SPECIALIZATION, UNCONSUMED_VALUE_WARNING, find_pass_by_name,
+    get_ais_passes, get_all_passes,
 };
 
 /// Stable read-only compiler pass metadata for downstream tools.
@@ -62,7 +62,9 @@ pub fn find_pass_metadata(name: &str) -> Option<&'static PassMetadata> {
 
 #[cfg(test)]
 mod tests {
-    use super::{NORMALIZE, find_pass_metadata, get_all_passes, list_pass_metadata};
+    use super::{
+        NORMALIZE, PROMPT_CANONICALIZATION, find_pass_metadata, get_all_passes, list_pass_metadata,
+    };
 
     #[test]
     fn pass_metadata_catalog_is_populated() {
@@ -74,11 +76,8 @@ mod tests {
     #[test]
     fn find_pass_metadata_matches_by_name() {
         let pass =
-            find_pass_metadata("prompt-canonicalization").expect("known pass must be exposed");
-        assert_eq!(
-            pass.summary,
-            "Reorder prompts to maximize shared-prefix KV-cache reuse"
-        );
+            find_pass_metadata(PROMPT_CANONICALIZATION.name).expect("known pass must be exposed");
+        assert_eq!(pass.summary, PROMPT_CANONICALIZATION.summary);
     }
 
     #[test]

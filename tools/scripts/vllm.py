@@ -31,6 +31,7 @@ from apxm_vllm_contract import (
     ToolName,
     VllmCommand,
     VllmDefaults,
+    VllmServeFlag,
     apxm_config_path,
     arg_value,
     build_layout,
@@ -595,6 +596,27 @@ def _build_serve_cmd(args: argparse.Namespace, extra_args: list[str]) -> tuple[l
         cmd.append("--enable-auto-tool-choice")
     if args.tool_call_parser:
         cmd.extend(["--tool-call-parser", args.tool_call_parser])
+    if args.reasoning_parser:
+        cmd.extend([VllmServeFlag.REASONING_PARSER.value, args.reasoning_parser])
+    if args.default_chat_template_kwargs:
+        try:
+            parsed_kwargs = json.loads(args.default_chat_template_kwargs)
+        except json.JSONDecodeError as exc:
+            raise SystemExit(
+                f"--default-chat-template-kwargs must be a JSON object: {exc}"
+            ) from exc
+        if not isinstance(parsed_kwargs, dict):
+            raise SystemExit("--default-chat-template-kwargs must be a JSON object")
+        cmd.extend(
+            [
+                VllmServeFlag.DEFAULT_CHAT_TEMPLATE_KWARGS.value,
+                args.default_chat_template_kwargs,
+            ]
+        )
+    if args.enable_prompt_tokens_details:
+        cmd.append(VllmServeFlag.ENABLE_PROMPT_TOKENS_DETAILS.value)
+    if args.enable_force_include_usage:
+        cmd.append(VllmServeFlag.ENABLE_FORCE_INCLUDE_USAGE.value)
     if args.trust_remote_code:
         cmd.append("--trust-remote-code")
     cmd.extend(extra_args)
@@ -1064,6 +1086,28 @@ def _add_model_args(parser: argparse.ArgumentParser) -> None:
         "--enable-auto-tool-choice",
         action="store_true",
         help="Enable auto tool choice support",
+    )
+    parser.add_argument(
+        "--reasoning-parser",
+        dest=ArgName.REASONING_PARSER.value,
+        help="Enable a vLLM reasoning parser, for example gemma4 for Gemma 4 thinking models",
+    )
+    parser.add_argument(
+        "--default-chat-template-kwargs",
+        dest=ArgName.DEFAULT_CHAT_TEMPLATE_KWARGS.value,
+        help="JSON object forwarded to vLLM as default chat-template kwargs",
+    )
+    parser.add_argument(
+        "--enable-prompt-tokens-details",
+        dest=ArgName.ENABLE_PROMPT_TOKENS_DETAILS.value,
+        action="store_true",
+        help="Ask vLLM to include prompt_tokens_details such as cached_tokens in usage",
+    )
+    parser.add_argument(
+        "--enable-force-include-usage",
+        dest=ArgName.ENABLE_FORCE_INCLUDE_USAGE.value,
+        action="store_true",
+        help="Ask vLLM to include usage on every supported request",
     )
     parser.add_argument(
         "--trust-remote-code",

@@ -66,8 +66,8 @@ pub enum Commands {
         #[arg(long = "disable-pass", value_name = "PASS")]
         disable_passes: Vec<String>,
         /// Override the entire pass list with a comma-separated sequence.
-        /// When set, --opt-level / --target / --no-cse-llm / --warn no longer
-        /// determine pass selection — only ordering matters here.
+        /// When set, --opt-level / --target / --warn no longer determine pass
+        /// selection. --no-cse-llm and --disable-pass still filter the list.
         #[arg(long = "pass-list", value_name = "A,B,C", value_delimiter = ',')]
         pass_list_override: Option<Vec<String>>,
     },

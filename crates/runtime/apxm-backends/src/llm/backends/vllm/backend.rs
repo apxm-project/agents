@@ -8,8 +8,11 @@ use crate::llm::backends::openai::OpenAIBackend;
 use crate::llm::backends::traits::StreamChunk;
 use crate::llm::backends::{LLMBackend, LLMRequest, LLMResponse};
 use anyhow::{Context, Result};
+use apxm_core::constants::graph::attrs::{BASE_URL, MODEL};
 use apxm_core::constants::http::headers;
-use apxm_core::constants::llm::{api_paths, apxm as apxm_llm, config_keys, vllm as vllm_keys};
+use apxm_core::constants::llm::{
+    api_paths, apxm as apxm_llm, backend_metadata, config_keys, vllm as vllm_keys, vllm_request,
+};
 use apxm_core::types::provider_spec::{DEFAULT_VLLM_BASE_URL, normalize_endpoint_for_protocol};
 use apxm_core::types::{GraphMetadata, GraphStatusSnapshot, ModelInfo, PriorityClass};
 use async_trait::async_trait;
@@ -97,14 +100,14 @@ impl GraphAwareVllmBackend {
     pub async fn new(api_key: &str, config: Option<serde_json::Value>) -> Result<Self> {
         let default_model_configured = config
             .as_ref()
-            .and_then(|c| c.get("model"))
+            .and_then(|c| c.get(MODEL))
             .and_then(|m| m.as_str())
             .map(|value| !value.trim().is_empty())
             .unwrap_or(false);
 
         let base_url = config
             .as_ref()
-            .and_then(|c| c.get("base_url"))
+            .and_then(|c| c.get(BASE_URL))
             .and_then(|u| u.as_str())
             .unwrap_or(DEFAULT_BASE_URL)
             .to_string();
@@ -146,7 +149,7 @@ impl GraphAwareVllmBackend {
             .unwrap_or_default();
         if !default_model_configured {
             inner_config_map.insert(
-                "model".to_string(),
+                MODEL.to_string(),
                 serde_json::Value::String(UNCONFIGURED_MODEL_SENTINEL.to_string()),
             );
         }
@@ -345,6 +348,29 @@ impl GraphAwareVllmBackend {
             }
 
             let model = self.request_model(&request);
+            if let Some(thinking_budget) = request.thinking_token_budget
+                && !map.contains_key(vllm_request::THINKING_TOKEN_BUDGET)
+            {
+                map.insert(
+                    vllm_request::THINKING_TOKEN_BUDGET.to_string(),
+                    serde_json::json!(thinking_budget),
+                );
+            }
+            if let Some(enable_thinking) = request.enable_thinking
+                && !self.non_thinking_models.contains(model)
+            {
+                let kwargs = map
+                    .entry(config_keys::CHAT_TEMPLATE_KWARGS.to_string())
+                    .or_insert_with(|| serde_json::json!({}));
+                if let serde_json::Value::Object(kwargs_map) = kwargs
+                    && !kwargs_map.contains_key(config_keys::ENABLE_THINKING)
+                {
+                    kwargs_map.insert(
+                        config_keys::ENABLE_THINKING.to_string(),
+                        serde_json::json!(enable_thinking),
+                    );
+                }
+            }
             if self.non_thinking_models.contains(model)
                 && !map.contains_key(config_keys::CHAT_TEMPLATE_KWARGS)
             {
@@ -392,7 +418,7 @@ impl LLMBackend for GraphAwareVllmBackend {
     }
 
     fn name(&self) -> &str {
-        "vllm-graph-aware"
+        backend_metadata::VLLM_GRAPH_AWARE
     }
 
     fn model(&self) -> &str {
@@ -487,7 +513,10 @@ impl LLMBackend for GraphAwareVllmBackend {
     fn metadata(&self) -> serde_json::Value {
         let mut meta = self.inner.metadata();
         if let serde_json::Value::Object(ref mut map) = meta {
-            map.insert("backend_type".to_string(), "vllm-graph-aware".into());
+            map.insert(
+                backend_metadata::BACKEND_TYPE.to_string(),
+                backend_metadata::VLLM_GRAPH_AWARE.into(),
+            );
         }
         meta
     }
@@ -742,6 +771,34 @@ mod tests {
         assert_eq!(
             extra[config_keys::CHAT_TEMPLATE_KWARGS][config_keys::ENABLE_THINKING],
             serde_json::json!(false)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_inject_hints_adds_thinking_controls() {
+        use crate::llm::backends::LLMRequest;
+
+        let backend = GraphAwareVllmBackend::new(
+            "test-key",
+            Some(serde_json::json!({
+                "base_url": "http://localhost:8916/v1",
+                "model": "google/gemma-4-31B-it"
+            })),
+        )
+        .await
+        .unwrap();
+
+        let injected = backend.inject_hints(
+            LLMRequest::new("Think")
+                .with_thinking_token_budget(1024)
+                .with_enable_thinking(true),
+        );
+        let extra = injected.extra_body.unwrap();
+
+        assert_eq!(extra[vllm_request::THINKING_TOKEN_BUDGET], 1024);
+        assert_eq!(
+            extra[config_keys::CHAT_TEMPLATE_KWARGS][config_keys::ENABLE_THINKING],
+            serde_json::json!(true)
         );
     }
 

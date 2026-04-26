@@ -134,6 +134,12 @@ def _format_float(value: float | None, digits: int = 1) -> str:
     return f"{value:.{digits}f}"
 
 
+def _format_measurement(value: float | None, suffix: str = "", digits: int = 1) -> str:
+    if value is None:
+        return "unavailable"
+    return f"{value:.{digits}f}{suffix}"
+
+
 def _format_ci(bounds: tuple[float, float] | None, digits: int = 1) -> str:
     if bounds is None:
         return "-"
@@ -159,6 +165,16 @@ def _summarize_by_opt(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
             for row in success_rows
             if (total := _to_int(row.get("total_tokens", ""))) is not None
         ]
+        cached_input_totals = [
+            total
+            for row in success_rows
+            if (total := _to_int(row.get("cached_input_tokens", ""))) is not None
+        ]
+        reasoning_output_totals = [
+            total
+            for row in success_rows
+            if (total := _to_int(row.get("reasoning_output_tokens", ""))) is not None
+        ]
         llm_calls = [
             count
             for row in success_rows
@@ -175,6 +191,12 @@ def _summarize_by_opt(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
                 "mean_duration_ms": statistics.fmean(durations) if durations else None,
                 "median_duration_ms": statistics.median(durations) if durations else None,
                 "mean_total_tokens": statistics.fmean(token_totals) if token_totals else None,
+                "mean_cached_input_tokens": statistics.fmean(cached_input_totals)
+                if cached_input_totals
+                else None,
+                "mean_reasoning_output_tokens": statistics.fmean(reasoning_output_totals)
+                if reasoning_output_totals
+                else None,
                 "mean_llm_calls": statistics.fmean(llm_calls) if llm_calls else None,
             }
         )
@@ -188,19 +210,28 @@ def _render_markdown(
     compare_opt_levels: tuple[int, int] | None,
     bootstrap_samples: int,
 ) -> str:
+    modes = sorted({row.get("mode", "") or "unknown" for row in rows})
+    execute_only = modes == ["execute"]
+
     lines: list[str] = []
     lines.append("# APXM graph benchmark report")
     lines.append("")
     lines.append(f"- Source CSV: `{csv_path}`")
     lines.append(f"- Rows: {len(rows)}")
+    lines.append(f"- Modes: {', '.join(modes)}")
+    if not execute_only:
+        lines.append(
+            "- Claim status: compile-only rows validate compiler behavior; "
+            "they do not support runtime speed, token, or cost claims."
+        )
     lines.append("")
     lines.append("## Per-opt-level summary")
     lines.append("")
     lines.append(
         "| opt | successful / total | success % | mean duration ms | median duration ms | "
-        "mean total tokens | mean LLM calls |"
+        "mean total tokens | mean cached input | mean reasoning output | mean LLM calls |"
     )
-    lines.append("|---:|---:|---:|---:|---:|---:|---:|")
+    lines.append("|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
 
     for summary in summaries:
         ci = _bootstrap_mean_ci(summary["durations"], bootstrap_samples)
@@ -214,6 +245,8 @@ def _render_markdown(
             f"{mean_with_ci} | "
             f"{_format_float(summary['median_duration_ms'])} | "
             f"{_format_float(summary['mean_total_tokens'])} | "
+            f"{_format_float(summary['mean_cached_input_tokens'])} | "
+            f"{_format_float(summary['mean_reasoning_output_tokens'])} | "
             f"{_format_float(summary['mean_llm_calls'])} |"
         )
 
@@ -236,6 +269,55 @@ def _render_markdown(
                 target["durations"],
                 bootstrap_samples,
             )
+            token_delta = None
+            token_reduction = None
+            if base["mean_total_tokens"] is not None and target["mean_total_tokens"] is not None:
+                token_delta = base["mean_total_tokens"] - target["mean_total_tokens"]
+                if base["mean_total_tokens"] > 0:
+                    token_reduction = token_delta / base["mean_total_tokens"]
+            call_delta = None
+            call_reduction = None
+            if base["mean_llm_calls"] is not None and target["mean_llm_calls"] is not None:
+                call_delta = base["mean_llm_calls"] - target["mean_llm_calls"]
+                if base["mean_llm_calls"] > 0:
+                    call_reduction = call_delta / base["mean_llm_calls"]
+            cached_delta = None
+            if (
+                base["mean_cached_input_tokens"] is not None
+                and target["mean_cached_input_tokens"] is not None
+            ):
+                cached_delta = target["mean_cached_input_tokens"] - base[
+                    "mean_cached_input_tokens"
+                ]
+            reasoning_delta = None
+            if (
+                base["mean_reasoning_output_tokens"] is not None
+                and target["mean_reasoning_output_tokens"] is not None
+            ):
+                reasoning_delta = target["mean_reasoning_output_tokens"] - base[
+                    "mean_reasoning_output_tokens"
+                ]
+            has_replicates = len(base["durations"]) >= 2 and len(target["durations"]) >= 2
+            token_reduction_label = (
+                "-"
+                if token_reduction is None
+                else f"{token_reduction * 100:.1f}%"
+            )
+            call_reduction_label = (
+                "-"
+                if call_reduction is None
+                else f"{call_reduction * 100:.1f}%"
+            )
+            savings_supported = execute_only and has_replicates and (
+                (token_reduction is not None and token_reduction > 0)
+                or (call_reduction is not None and call_reduction > 0)
+            )
+            speed_supported = (
+                execute_only
+                and has_replicates
+                and speedup is not None
+                and speedup > 1.0
+            )
 
             lines.append("")
             lines.append("## Comparison")
@@ -247,10 +329,54 @@ def _render_markdown(
                 f"- Target: O{target['opt_level']}"
             )
             lines.append(
-                f"- Mean-duration speedup: {_format_float(speedup, digits=2)}x"
+                f"- Mean-duration speedup: {_format_measurement(speedup, suffix='x', digits=2)}"
             )
             lines.append(
                 f"- Bootstrap 95% CI for speedup: {_format_ci(speedup_ci, digits=2)}"
+            )
+            lines.append(
+                f"- Success-rate delta: "
+                f"{(target['success_rate'] - base['success_rate']) * 100:.1f} percentage points"
+            )
+            lines.append(
+                f"- Mean-token reduction: {_format_measurement(token_delta, suffix=' tokens')} "
+                f"({token_reduction_label})"
+            )
+            lines.append(
+                f"- Mean-call reduction: {_format_measurement(call_delta, suffix=' calls')} "
+                f"({call_reduction_label})"
+            )
+            lines.append(
+                f"- Mean cached-input increase: "
+                f"{_format_measurement(cached_delta, suffix=' tokens')}"
+            )
+            lines.append(
+                f"- Mean reasoning-output increase: "
+                f"{_format_measurement(reasoning_delta, suffix=' tokens')}"
+            )
+            lines.append(
+                "- Speedup claim: "
+                + (
+                    "supported by mean runtime duration"
+                    if speed_supported
+                    else "not supported; use repeated live rows before claiming speedup"
+                )
+            )
+            lines.append(
+                "- Token/call reduction claim: "
+                + (
+                    "supported by measured token or call reduction"
+                    if savings_supported
+                    else "not supported by repeated live token/call deltas"
+                )
+            )
+            lines.append(
+                "- Cost-reduction claim: "
+                + (
+                    "allowed only as a priced or hardware-cost model using the measured deltas"
+                    if savings_supported
+                    else "not supported by token/call deltas"
+                )
             )
 
     return "\n".join(lines) + "\n"

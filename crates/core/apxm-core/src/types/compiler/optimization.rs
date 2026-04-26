@@ -53,11 +53,11 @@ impl std::fmt::Display for OptimizationLevel {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum OptimizationTarget {
-    /// Minimize end-to-end latency (more fusion, parallel scheduling)
+    /// Minimize end-to-end latency using production-safe scheduling hints
     Latency,
-    /// Minimize LLM API cost (more CSE, model substitution)
+    /// Minimize LLM API cost using production-safe cleanup passes
     Cost,
-    /// Minimize token usage (context compression, dead context elimination)
+    /// Minimize token usage using dead context elimination
     Tokens,
     /// Maximize parallel execution (aggressive scheduling)
     Parallelism,
@@ -115,6 +115,9 @@ pub struct PipelineConfig {
     pub verify: bool,
 
     /// Skip CSE (Common Subexpression Elimination) for LLM operations.
+    ///
+    /// This also filters explicit pass lists so deterministic-only experiments
+    /// cannot accidentally enable LLM CSE when this guard is set.
     #[serde(default)]
     pub no_cse_llm: bool,
 
@@ -162,10 +165,10 @@ pub struct PipelineConfig {
 
     /// Replace the entire default pass list with this explicit sequence.
     ///
-    /// When `Some`, `opt_level` / `target` / `no_cse_llm` / `warn_unconsumed`
+    /// When `Some`, `opt_level` / `target` / `warn_unconsumed`
     /// no longer determine pass selection — only ordering matters here.
-    /// `disable_passes` still applies after the override. Wired through CLI
-    /// `--pass-list <a,b,c>`.
+    /// `no_cse_llm` and `disable_passes` still filter the override. Wired
+    /// through CLI `--pass-list <a,b,c>`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pass_list_override: Option<Vec<String>>,
 }

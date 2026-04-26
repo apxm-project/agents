@@ -80,6 +80,29 @@ default cache. GPU and memory flags such as `--gpus`,
 `--tensor-parallel-size`, `--gpu-memory-utilization`, and `--max-model-len` are
 passed through to vLLM.
 
+For reasoning-capable models, pass the parser and template settings explicitly.
+APXM does not infer these from the served model id:
+
+```bash
+dekk apxm vllm start <MODEL_REF> \
+  --served-model-name <SERVED_MODEL_ID> \
+  --reasoning-parser <REASONING_PARSER> \
+  --default-chat-template-kwargs '{"enable_thinking": true}' \
+  --enable-prompt-tokens-details \
+  --enable-force-include-usage \
+  --port 8916 \
+  --wait
+```
+
+For the internal Gemma 4 run, `<REASONING_PARSER>` is `gemma4`. That is an
+example parser selection, not an APXM default. `--enable-prompt-tokens-details`
+lets vLLM include prompt-cache details such as `cached_tokens` in
+OpenAI-compatible usage responses. Current vLLM chat-completion usage reports
+prompt-cache details, but reasoning-token detail is only reported when the
+served API response includes a provider detail field such as
+`completion_tokens_details.reasoning_tokens` or
+`output_tokens_details.reasoning_tokens`.
+
 ### 4. Probe The Running Server
 
 ```bash
@@ -206,6 +229,8 @@ section. It contains:
 - `per_flow` keyed by flow name
 - `per_agent` keyed by APXM agent name when the request runs inside an agent
   scope
+- `cached_input_tokens` and `reasoning_output_tokens` when the backend reports
+  those provider detail counts
 
 Use both sections together. `runtime.token_accounting.per_node` answers which
 APXM nodes spent tokens. `backends.graphs[]` answers whether the graph-aware

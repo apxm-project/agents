@@ -10,13 +10,13 @@
  * Example transformation:
  *
  * Before:
- *   %a = ais.ask "As security reviewer, review: {0}" [%diff] : !ais.token
- *   %b = ais.ask "As style reviewer, review: {0}" [%diff] : !ais.token
+ *   %a = ais.ask "As security reviewer, review: {diff}" [%diff] : !ais.token
+ *   %b = ais.ask "As style reviewer, review: {diff}" [%diff] : !ais.token
  *
  * After:
- *   %a = ais.ask "{0}\n---\nReview focus: security" [%diff] : !ais.token
+ *   %a = ais.ask "{diff}\n---\nReview focus: security" [%diff] : !ais.token
  *        {ais.shared_prefix_group = "diff_review", ais.warmup_candidate = true}
- *   %b = ais.ask "{0}\n---\nReview focus: style" [%diff] : !ais.token
+ *   %b = ais.ask "{diff}\n---\nReview focus: style" [%diff] : !ais.token
  *        {ais.shared_prefix_group = "diff_review"}
  *
  * This transformation enables vLLM's prefix caching to reuse the expensive
@@ -37,6 +37,7 @@
 
 #include "ais/Dialect/AIS/IR/AISOps.h"
 #include "ais/Dialect/AIS/Support/AISDebug.h"
+#include "ais/Dialect/AIS/Transforms/Placeholders.h"
 
 #include "mlir/IR/Builders.h"
 #include "llvm/ADT/DenseMap.h"
@@ -91,18 +92,30 @@ static unsigned estimateTokens(StringRef str) {
          / apxm::constants::tokens::CHARS_PER_TOKEN;
 }
 
-/// Extract the instruction-specific part of a template by identifying unique prefix/suffix
-static std::pair<StringRef, StringRef> extractInstructionParts(StringRef templateStr) {
+/// Parts extracted from a template around its context placeholders.
+struct PromptParts {
+  StringRef contextHeader;
+  StringRef instructionPrefix;
+  StringRef instructionSuffix;
+};
+
+/// Extract prompt text around placeholders.
+///
+/// If the text immediately before the first placeholder is a separate
+/// paragraph ending with ':', treat that paragraph as the context header and
+/// keep it adjacent to the moved context placeholder. This avoids rewrites like
+/// `Shared context: Return ...` after the placeholder is moved to the front.
+static PromptParts extractPromptParts(StringRef templateStr) {
   // Find all placeholders to identify template structure
   size_t firstPlaceholder = templateStr.find('{');
 
   if (firstPlaceholder == StringRef::npos) {
     // No placeholders - entire string is unique instruction
-    return {templateStr, ""};
+    return {"", templateStr, ""};
   }
 
   // Text before first placeholder is unique prefix
-  StringRef prefix = templateStr.take_front(firstPlaceholder);
+  StringRef prefix = templateStr.take_front(firstPlaceholder).trim();
 
   // Find last placeholder to get suffix
   size_t lastCloseBrace = templateStr.rfind('}');
@@ -110,7 +123,18 @@ static std::pair<StringRef, StringRef> extractInstructionParts(StringRef templat
                        ? templateStr.drop_front(lastCloseBrace + 1)
                        : "";
 
-  return {prefix.trim(), suffix.trim()};
+  StringRef contextHeader;
+  StringRef instructionPrefix = prefix;
+
+  if (prefix.ends_with(":")) {
+    size_t paragraphBreak = prefix.rfind("\n\n");
+    if (paragraphBreak != StringRef::npos && paragraphBreak + 2 < prefix.size()) {
+      contextHeader = prefix.drop_front(paragraphBreak + 2).trim();
+      instructionPrefix = prefix.take_front(paragraphBreak).trim();
+    }
+  }
+
+  return {contextHeader, instructionPrefix, suffix.trim()};
 }
 
 struct PromptCanonicalizationPass : impl::PromptCanonicalizationBase<PromptCanonicalizationPass> {
@@ -229,36 +253,46 @@ private:
     }
 
     // Extract instruction-specific parts
-    auto [prefix, suffix] = extractInstructionParts(currentTemplate);
+    PromptParts parts = extractPromptParts(currentTemplate);
 
     // If there's no unique instruction part, template is already context-first
-    if (prefix.empty() && suffix.empty()) {
+    if (parts.contextHeader.empty() && parts.instructionPrefix.empty()
+        && parts.instructionSuffix.empty()) {
       APXM_AIS_DEBUG("  Template already context-first: \"" << currentTemplate << "\"");
       return false;
     }
 
-    // Reorder to: {0} (context first) + separator + instruction
+    auto inputNames = placeholders::readInputNames(op);
+    size_t contextSize = op->getNumOperands();
+    if (inputNames.size() != contextSize) {
+      APXM_AIS_DEBUG("  Skipping op with input_names/context mismatch");
+      return false;
+    }
+
+    // Reorder to: named context placeholders first + separator + instruction
     std::string canonicalized;
     llvm::raw_string_ostream os(canonicalized);
 
-    // Emit context placeholders first
+    // Emit context header and placeholders first.
+    if (!parts.contextHeader.empty())
+      os << parts.contextHeader << "\n";
+
     bool first = true;
-    size_t contextSize = op->getNumOperands();
     for (size_t i = 0; i < contextSize; ++i) {
       if (!first) os << " ";
-      os << "{" << i << "}";
+      os << "{" << inputNames[i] << "}";
       first = false;
     }
 
     // Add separator and instruction
-    if (!prefix.empty() || !suffix.empty()) {
+    if (!parts.instructionPrefix.empty() || !parts.instructionSuffix.empty()) {
       os << "\n---\n";
-      if (!prefix.empty())
-        os << prefix;
-      if (!suffix.empty()) {
-        if (!prefix.empty())
-          os << " ";
-        os << suffix;
+      if (!parts.instructionPrefix.empty())
+        os << parts.instructionPrefix;
+      if (!parts.instructionSuffix.empty()) {
+        if (!parts.instructionPrefix.empty())
+          os << "\n\n";
+        os << parts.instructionSuffix;
       }
     }
 

@@ -339,6 +339,7 @@ impl LLMBackend for GoogleBackend {
             streaming: true,
             vision: true,
             functions: true,
+            structured_outputs: false,
             batch: false,
             fine_tuning: false,
         }

@@ -1378,7 +1378,7 @@ class GraphRecorder:
         air = self.to_graph().to_air()
         if self._python_tools:
             manifest = json.dumps(self._python_tools, separators=(",", ":"))
-            air = f"; __apxm_python_tools__ {manifest}\n{air}"
+            air = f"{graph_keys.PYTHON_TOOLS_AIR_COMMENT_PREFIX}{manifest}\n{air}"
         return air
 
     def _add_node(self, name: str, op: str, attributes: dict[str, Any]) -> NodeRef:

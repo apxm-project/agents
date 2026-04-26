@@ -50,6 +50,9 @@ Node inference still uses the OpenAI-compatible chat route:
 APXM scheduling hints travel through the OpenAI request body under
 `extra_body.vllm_xargs.apxm`. The Rust backend should keep graph registration,
 per-node hints, status capture, and release aligned to that request shape.
+Reasoning parsers and chat-template kwargs are vLLM serve-time choices. APXM
+operator tooling may pass them through, but APXM core/runtime must not infer
+them from a model id.
 
 ## Naming Rules
 

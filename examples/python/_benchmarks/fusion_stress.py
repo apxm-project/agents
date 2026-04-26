@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-"""fusion_stress.py - Benchmark for ASK operation fusion
+"""fusion_stress.py - Explicit benchmark source for ASK operation fusion
 
 Tests: FuseAskOps optimization pass
-Measures: LLM call count reduction via sequential pair fusion
+Measures: compile-time ASK chain fusion when the pass is explicitly requested
 
-Graph structure: 10 sequential pairs of ask("question {i}") → think("elaborate on {prev}")
-- O0: 20 LLM calls (10 ask + 10 think, all separate)
-- O2 with FuseAskOps: should reduce to ~10 LLM calls (pairs fused)
+Graph structure: sequential ASK chain
+- Default O-levels: no fusion
+- Explicit pass-list with FuseAskOps: adjacent ASK nodes may fuse
 
 Metrics:
-- Total LLM calls (should halve from O0 to O2)
-- Total execution time (should improve with fewer round-trips)
-- Average latency per operation
+- Compiled node count
+- FuseAskOps diagnostics
 
 Usage:
-  dekk apxm execute fusion_stress.air -O0  # No fusion (20 LLM calls)
-  dekk apxm execute fusion_stress.air -O2  # With fusion (~10 LLM calls)
+  dekk apxm compile fusion_stress.py \
+    --pass-list normalize,build-prompt,fuse-ask-ops,canonicalizer \
+    -o /tmp/fusion_stress.apxmobj
 """
 
 from apxm import compile, GraphRecorder
@@ -23,7 +23,7 @@ from apxm import compile, GraphRecorder
 
 @compile()
 def fusion_stress(g: GraphRecorder):
-    """Sequential chain of 10 ask→think pairs to stress test fusion optimization."""
+    """Sequential ASK chain to stress test explicit fusion."""
 
     # Start with initial question
     current = g.ask(
@@ -31,8 +31,8 @@ def fusion_stress(g: GraphRecorder):
         prompt="What is the capital of France? Answer in one word."
     )
 
-    # Chain of 10 ask→think pairs
-    # Each pair should be fusible into a single LLM call.
+    # Chain of ASK nodes. Each producer has one consumer, which is the shape
+    # FuseAskOps understands when the pass is explicitly requested.
     # Auto-wire reads the caller's local variable scope, so referencing
     # `{prev}` in the template wires the edge from whatever NodeRef the
     # local `prev` currently holds.
@@ -44,24 +44,21 @@ def fusion_stress(g: GraphRecorder):
             f"Answer in 3-4 words (iteration {i})."
         )
 
-        # THINK: Elaborate on the previous ASK answer.
         prev = ask_node
-        think_node = g.think(
-            name=f"think_{i}",
+        elaborate_node = g.ask(
+            name=f"elaborate_{i}",
             prompt=f"{{prev}} Elaborate on why this landmark is historically significant. "
             f"Provide 2-3 sentences (iteration {i})."
         )
 
-        current = think_node
+        current = elaborate_node
 
-    # Final output (current is the last think node).
+    # Final output (current is the last ASK node).
     final = current  # bind local for template auto-wire
     output = g.print(
         message="=== FUSION STRESS TEST RESULT ===\n\n"
         "Final elaboration:\n{final}\n\n"
-        "This workflow executed 10 ask\u2192think pairs.\n"
-        "O0: 20 separate LLM calls\n"
-        "O2 with FuseAskOps: ~10 fused LLM calls"
+        "This workflow is an explicit FuseAskOps stress source."
     )
 
     g.done(output)

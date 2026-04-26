@@ -124,6 +124,7 @@ fn emitter_adapter_maps_supported_hooks_to_typed_event_kinds() {
             output_tokens: 5,
             total_tokens: 8,
             call_count: 1,
+            ..TokenUsageSummary::default()
         }),
         Some(TimingBreakdown {
             prefill_ms: 2.0,
