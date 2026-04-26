@@ -55,7 +55,7 @@ team.merge("results")                                # Merge outputs
 examples/python/
     getting-started/     First contact (hello world, tool use)
     parallelism/         Implicit DAG-based parallel execution
-    optimization/        Compiler passes (CSE, DCE, template specialization)
+    optimization/        Compiler passes, graph hints, and metrics
     multi-agent/         Native multi-agent coordination
     multi-provider/      Per-node model routing
     memory/              Three-tier memory and RAG

@@ -43,7 +43,7 @@
   },
   {
     "inputs": {
-      "context_0": "From: henry@bigcorp.com\nSubject: CRITICAL - Data loss in production\n\nWe just noticed that all customer records from the last 24 hours are missing from our dashboard. This is affecting our entire sales team of 200 people. We need immediate assistance."
+      "context_0": "From: henry@bigcorp.com\nSubject: CRITICAL - Data loss in production\n\nWe just noticed that all customer records from the last 24 hours are missing from our dashboard. This is affecting our entire operations team of 200 people. We need immediate assistance."
     },
     "output": "Priority: URGENT\nCategory: BUG\nSentiment: ANGRY"
   },

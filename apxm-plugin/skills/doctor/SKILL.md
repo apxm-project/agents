@@ -17,7 +17,7 @@ dekk apxm doctor --json            # machine-readable JSON report
 
 ## What Gets Checked
 
-- **MLIR/LLVM**: Whether the MLIR toolchain is found, its resolved prefix path, and version (21+ required for compilation)
+- **MLIR/LLVM**: Whether the Dekk-managed MLIR toolchain is found, its resolved prefix path, and version
 - **Credentials**: Number of registered LLM credentials and which providers are configured
 - **Environment variables**: `APXM_BACKEND`, `MLIR_DIR`, `LLVM_DIR` — whether they're set
 - **Config file**: Whether `~/.apxm/config.toml` exists, and how many LLM backends are configured

@@ -1,18 +1,20 @@
 # APXM – Agent Programming eXecution Model
 
-APXM is a full toolchain for building autonomous agents:
+APXM is a full toolchain for building autonomous agent workflows:
 
-- **ApxmGraph IR** as the canonical frontend format
-- **AIS dialect** as the compiler/lowering representation for that graph contract
-- **Compiler** that lowers graph → AIS MLIR → executable artifacts
-- **Runtime** with scheduler, memory system, and LLM registry
-- **CLI** for compile/run graph execution
+- **AIR** as the canonical human-readable graph source
+- **AIS MLIR dialect** as the compiler representation
+- **`.apxmobj` artifacts** as deterministic compiled workflows
+- **Runtime** with scheduling, memory, tools, backend routing, and graph metrics
+- **Dekk-first CLI** for install, compile, execute, and backend setup
 
 ---
 
 ## Quick Start
 
 **New installation:**
+Install Dekk first if it is not already available on your machine.
+
 ```bash
 git clone https://github.com/randreshg/apxm
 cd apxm
@@ -24,6 +26,7 @@ dekk apxm doctor
 ```bash
 # Stock vLLM does not consume APXM's vLLM extension hints.
 dekk apxm vllm install
+dekk apxm vllm doctor
 dekk apxm vllm start <MODEL_REF> --served-model-name <SERVED_MODEL_ID> --wait
 dekk apxm vllm probe
 dekk apxm vllm enable <SERVED_MODEL_ID>
@@ -91,24 +94,21 @@ APXM provides three core LLM operations with different reasoning characteristics
 
 | Operation | Purpose | Example |
 |-----------|---------|---------|
-| `ask` | Simple Q&A with LLM | `ask("What is 2+2?") -> answer` |
-| `think` | Extended thinking with token budget | `think("Analyze this problem", budget: 1000) -> analysis` |
-| `reason` | Structured reasoning with belief updates | `reason("Solve step by step", context) -> solution` |
+| `ask` | Simple Q&A with LLM | `ais.ask "What is APXM?"` |
+| `think` | Extended thinking with token budget | `ais.think "Analyze {problem}" {budget = 1000}` |
+| `reason` | Structured reasoning with belief updates | `ais.reason "Update beliefs from {evidence}"` |
 
-```json
-{
-  "name": "llm_ops",
-  "nodes": [
-    { "id": 1, "name": "ask", "op": "ASK", "attributes": { "template_str": "Explain the domain background of {topic}" } },
-    { "id": 2, "name": "think", "op": "THINK", "attributes": { "template_str": "Analyze the implications", "budget": 2000 } },
-    { "id": 3, "name": "reason", "op": "REASON", "attributes": { "template_str": "Execute step 1: {think}", "input_names": ["think"] } }
-  ],
-  "edges": [
-    { "from": 1, "to": 2, "dependency": "Data" },
-    { "from": 2, "to": 3, "dependency": "Data" }
-  ],
-  "parameters": [{ "name": "topic", "type_name": "str" }],
-  "metadata": { "is_entry": true }
+```mlir
+module {
+  func.func @llm_ops(%topic: !ais.token) -> !ais.token attributes {ais.entry = true} {
+    %background = ais.ask "Explain the domain background of {topic}" [%topic : !ais.token]
+      {input_names = ["topic"]} : !ais.token
+    %analysis = ais.think "Analyze the implications of {background}" [%background : !ais.token]
+      {input_names = ["background"], budget = 2000 : i64} : !ais.token
+    %answer = ais.reason "Summarize the next action from {analysis}" [%analysis : !ais.token]
+      {input_names = ["analysis"]} : !ais.token
+    ais.return %answer : !ais.token
+  }
 }
 ```
 
@@ -129,33 +129,22 @@ The `+` operator merges tokens; use the comma form for context operands.
 
 ```bash
 # Write per-pass MLIR snapshots to the given directory.
-APXM_PRINT_IR_DIR=/tmp/apxm-ir apxm compiler compile file.air -o output.apxmobj
+APXM_PRINT_IR_DIR=/tmp/apxm-ir dekk apxm compile file.air -o output.apxmobj
 
 # Optional: print a one-line trace of IR printing config.
-APXM_PRINT_IR_TRACE=1 APXM_PRINT_IR_DIR=/tmp/apxm-ir apxm compiler compile file.air -o output.apxmobj
+APXM_PRINT_IR_TRACE=1 APXM_PRINT_IR_DIR=/tmp/apxm-ir dekk apxm compile file.air -o output.apxmobj
 ```
 
 ---
 
 ## Configuration
 
-Create `~/.apxm/config.toml`:
+Register backends through the CLI so generated frontend bindings and runtime
+configuration stay aligned:
 
-```toml
-[chat]
-providers = ["ollama"]
-default_backend = "ollama"
-default_model = "gpt-oss:20b-cloud"
-
-[[backends]]
-name = "ollama"
-type = "local"
-protocol = "ollama"
-endpoint = "http://localhost:11434"
-
-[[backends.models]]
-id = "gpt-oss:20b-cloud"
-aliases = ["ollama"]
+```bash
+dekk apxm backend add <name> --type <cloud|onprem|local> --protocol <protocol> --endpoint <URL>
+dekk apxm backend add-model <name> <SERVED_MODEL_ID> --alias <ROLE>
 ```
 
 ---
@@ -182,7 +171,7 @@ crates/
     apxm-cli      # CLI tool
     apxm-server   # HTTP/MCP server
     apxm-gui      # Browser UI
-examples/         # Sample ApxmGraph programs
+examples/         # Python and AIR graph sources
 docs/             # Documentation
 ```
 

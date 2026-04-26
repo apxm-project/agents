@@ -469,7 +469,7 @@ pub async fn backend_command(action: BackendAction, json_output: bool) -> Result
                     );
                 }
                 if added == 0 && skipped == 0 {
-                    println!("  No models found. Install one with: ollama pull llama3.3");
+                    println!("  No models found. Install a model with: ollama pull <MODEL_REF>");
                 }
             }
         }

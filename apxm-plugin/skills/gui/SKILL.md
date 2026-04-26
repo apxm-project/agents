@@ -1,20 +1,20 @@
 ---
-name: view
-description: Open the interactive graph visualizer in a browser
+name: gui
+description: Open the APXM GUI in a browser
 user-invocable: true
 ---
 
-# View
+# GUI
 
-Launches an interactive, web-based graph visualizer for exploring APXM workflow graphs. Opens in your browser with a dark-themed canvas showing nodes colored by AIS category, edges styled by dependency type, and a detail inspector panel. Useful for understanding graph structure, verifying connections, and exploring complex workflows visually before compiling.
+Launches the APXM GUI for exploring APXM workflow graphs. Opens in your browser with a canvas showing nodes by AIS category, dependency-typed edges, and detail panels for source, graph, and runtime state.
 
 The visualizer is a React + TypeScript app using ReactFlow for rendering and ELK (Eclipse Layout Kernel) for automatic hierarchical DAG layout. It fetches AIS operation metadata from the CLI at runtime, so new operations appear automatically without viewer changes.
 
 ## Commands
 
 ```bash
-dekk apxm view graph.air              # open graph in browser
-dekk apxm view graph.air --no-open    # start server without opening browser (navigate to http://127.0.0.1:4174)
+dekk apxm gui graph.air --open        # open graph in browser
+dekk apxm gui graph.air --port 18801  # start server without opening browser
 ```
 
 ## Interactive Features
@@ -46,8 +46,8 @@ dekk apxm view graph.air --no-open    # start server without opening browser (na
 
 ## Architecture
 
-- **Server**: Vite dev server on `http://127.0.0.1:4174` with API middleware
-- **API endpoints**: `GET /api/graph` (returns the loaded graph JSON), `GET /api/ops` (returns AIS op metadata from the CLI)
+- **Server**: Axum server with embedded React assets
+- **API endpoints**: graph APIs return parsed graph data derived from AIR; operation APIs return AIS metadata from the CLI
 - **Layout**: ELK layered algorithm with crossing minimization, 56px node spacing, 96px layer spacing
 - **Auto-install**: npm dependencies are installed automatically on first run if `node_modules/` is missing
 

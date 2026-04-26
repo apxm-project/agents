@@ -12,7 +12,7 @@ Backend persistence and Docker lifecycle management for APXM.
 |--------|-------------|
 | `backend` | `BackendStore` for reading/writing backend entries in `config.toml` |
 | `docker` | Docker container start/stop/status for local LLM backends |
-| `mask` | API key masking for display (`sk-...abc`) |
+| `mask` | API key masking for display |
 | `validate` | Backend entry validation (required fields, endpoint format) |
 
 ## Key Exports
@@ -29,8 +29,8 @@ Backends are stored in `~/.apxm/config.toml` with `0o600` file permissions. Writ
 name = "openai"
 type = "cloud"
 protocol = "openai"
-api_key = "sk-..."
-models = ["gpt-4o"]
+api_key = "<API_KEY>"
+models = ["<SERVED_MODEL_ID>"]
 ```
 
 ## Dependencies

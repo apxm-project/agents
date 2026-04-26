@@ -1,4 +1,4 @@
-//! Lightweight parser for `.air` (MLIR textual format) into graph JSON.
+//! Lightweight parser for `.air` (MLIR textual format) into GUI graph data.
 //!
 //! Extracts nodes and SSA data-flow edges from single-block AIS IR so the GUI
 //! can visualise `.air` files without requiring a full MLIR toolchain.

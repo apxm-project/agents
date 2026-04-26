@@ -3,7 +3,7 @@
 
 Demonstrates default APXM compiler optimizations:
 1. Parallel scheduling -- independent nodes run concurrently
-2. CSE -- duplicate deterministic work can be removed
+2. Shared-prefix analysis -- graph-aware backend hints
 3. Template specialization -- constant prompt inputs can be folded
 4. Dead context elimination -- unused inputs are pruned
 
@@ -17,7 +17,7 @@ from apxm import compile, GraphRecorder
 
 @compile()
 def optimization_showcase(g: GraphRecorder):
-    """Showcase: scheduling hints, CSE, template specialization, and DCE."""
+    """Showcase scheduling hints, template specialization, and DCE."""
 
     topic = g.ask(
         name="topic",

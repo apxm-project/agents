@@ -1,21 +1,23 @@
 #!/usr/bin/env python3
-"""cse_stress.py - Benchmark for Common Subexpression Elimination
+"""cse_stress.py - Explicit-pass CSE stress source
 
-Tests: CSE (Common Subexpression Elimination) optimization pass
-Measures: Elimination of duplicate LLM calls with identical prompts
+Tests: generic CSE only when requested through an explicit pass list.
+Measures: whether duplicate deterministic prompts can be folded in a controlled
+ablation. Generic CSE is not part of default O-level pipelines.
 
 Graph structure: Same prompt "Analyze {topic}" fed to 3 different downstream paths
 - O0: 3 identical LLM calls (no deduplication)
-- O2 with CSE: should reduce to 1 LLM call + result reuse (3→1)
+- explicit CSE pass: may reduce to 1 LLM call + result reuse when semantics allow
 
 Metrics:
-- Total unique LLM calls (should drop from 3 to 1)
-- Total execution time (should improve with fewer LLM calls)
-- Cache hit rate (CSE uses internal result caching)
+- Total unique LLM calls
+- Total execution time
+- Metrics proving whether result reuse occurred
 
 Usage:
-  dekk apxm execute cse_stress.air -O0  # No CSE (3 identical LLM calls)
-  dekk apxm execute cse_stress.air -O2  # With CSE (1 LLM call, reused 3x)
+  dekk apxm execute examples/python/_benchmarks/cse_stress.py -O0
+  dekk apxm compile examples/python/_benchmarks/cse_stress.py \
+    --pass-list normalize,build-prompt,cse,canonicalizer
 """
 
 from apxm import compile, GraphRecorder
@@ -23,14 +25,12 @@ from apxm import compile, GraphRecorder
 
 @compile()
 def cse_stress(g: GraphRecorder):
-    """Three branches with identical ASK prompts to test CSE optimization."""
+    """Three branches with identical ASK prompts for explicit CSE testing."""
 
     # Define a topic constant
     topic = "microservices architecture patterns"
 
     # The SAME prompt executed three times in parallel
-    # In O0: 3 separate LLM calls
-    # In O2 with CSE: 1 LLM call, result shared across all 3 paths
 
     analysis_1 = g.ask(
         name="analysis_security",
@@ -84,7 +84,7 @@ def cse_stress(g: GraphRecorder):
         "Action Items:\n{actions}\n\n"
         "This workflow executed the SAME prompt 3 times in parallel.\n"
         "O0: 3 separate LLM calls (no deduplication)\n"
-        "O2 with CSE: 1 LLM call, result reused 3 times"
+        "Explicit CSE pass: reuse must be verified from emitted metrics"
     )
     # Control edge keeps the merge node as a synchronization barrier.
     g.add_edge(final_report, output, dependency="Control")
@@ -93,7 +93,7 @@ def cse_stress(g: GraphRecorder):
 
 
 if __name__ == "__main__":
-    # Output the graph as JSON
+    # Output AIR.
     print(cse_stress._graph.to_air())
     # To execute directly:
     # import apxm

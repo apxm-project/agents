@@ -5,7 +5,7 @@
 //!
 //! Run with:
 //!
-//!     dekk apxm test --features python_tools_integration python_tools
+//!     dekk apxm test-all --features python_tools_integration python_tools
 
 #![cfg(feature = "python_tools_integration")]
 

@@ -45,7 +45,7 @@ Feature: {feature}
 Read the APXM project structure:
 - CLAUDE.md for architecture overview
 - Cargo.toml for workspace crates
-- docs/implementation/architecture.md for design principles
+- docs/README.md and docs/compiler/pipeline.md for current design notes
 - Existing code in relevant crates
 
 Produce a plan with:

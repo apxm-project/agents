@@ -15,17 +15,17 @@ Backends are stored in `~/.apxm/config.toml` with 0600 permissions.
 ### Add a backend
 
 ```bash
-dekk apxm backend add my-openai --type cloud --protocol openai --api-key sk-...
+dekk apxm backend add my-openai --type cloud --protocol openai --api-key <API_KEY>
 dekk apxm backend add local --type local --protocol ollama --endpoint http://localhost:11434
 dekk apxm backend add corp --type onprem --protocol openai \
   --endpoint https://gateway.company.com/v1 \
-  --api-key sk-... --header "X-Custom-Gateway-Key=xyz"
+  --api-key <API_KEY> --header "X-Custom-Gateway-Key=<VALUE>"
 ```
 
 ### Add a model to a backend
 
 ```bash
-dekk apxm backend add-model my-openai gpt-4o --context-window 128000 --supports-functions --alias fast --tag production
+dekk apxm backend add-model my-openai <SERVED_MODEL_ID> --context-window <TOKENS> --supports-functions --alias fast --tag production
 ```
 
 ### List, test, remove
@@ -47,13 +47,7 @@ dekk apxm backend logs local-vllm
 dekk apxm backend restart local-vllm
 ```
 
-### Migrate from legacy credentials
-
-```bash
-dekk apxm backend migrate --yes
-```
-
 ## References
 
-- [Config Reference](docs/reference/config.md)
-- [Backend Guide](docs/guides/backends.md)
+- [vLLM Backend](docs/backends/vllm.md)
+- Run `dekk apxm backend --help` for the current command surface

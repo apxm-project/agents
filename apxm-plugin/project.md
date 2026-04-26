@@ -9,11 +9,11 @@ Language: Rust
 - **compile**: `dekk apxm compile <graph.air>` -- Compile graph to optimized .apxmobj artifact
 - **execute**: `dekk apxm execute <graph.air>` -- Compile and run a graph in one step
 - **run**: `dekk apxm run <artifact.apxmobj>` -- Execute a pre-compiled artifact
-- **decompile**: `dekk apxm decompile <artifact.apxmobj>` -- Reverse-map artifact back to graph JSON
+- **decompile**: `dekk apxm decompile <artifact.apxmobj>` -- Reverse-map artifact back to AIR
 - **validate**: `dekk apxm validate <graph.air>` -- Validate graph against AIS contract
 - **analyze**: `dekk apxm analyze <graph.air>` -- Parallelism analysis, critical path, speedup estimate
 - **explain**: `dekk apxm explain <graph.air>` -- Human-readable walkthrough of a graph
-- **view**: `dekk apxm view <graph.air>` -- Open interactive graph visualizer in browser
+- **gui**: `dekk apxm gui <graph.air> --open` -- Open interactive graph visualizer in browser
 - **ops**: `dekk apxm ops list` / `dekk apxm ops show <OP>` -- Browse AIS operations
 - **template**: `dekk apxm template list` / `dekk apxm template show <name>` -- Starter graph patterns
 - **init**: `dekk apxm init <name>` -- Scaffold a new project

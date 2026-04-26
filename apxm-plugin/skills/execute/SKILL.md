@@ -6,7 +6,7 @@ user-invocable: true
 
 # Execute
 
-Compiles a graph JSON and immediately runs it through the dataflow scheduler — the "compile and run" shortcut. This is the primary command for development: you edit your graph, run `execute`, and see results. Under the hood it performs the full compilation pipeline (parse, lower to MLIR, optimize, emit artifact) and then hands the artifact to the runtime executor.
+Compiles an AIR graph and immediately runs it through the dataflow scheduler — the "compile and run" shortcut. This is the primary command for development: you edit your graph, run `execute`, and see results. Under the hood it performs the full compilation pipeline (parse, lower to MLIR, optimize, emit artifact) and then hands the artifact to the runtime executor.
 
 The runtime uses a parallel dataflow scheduler that executes independent nodes concurrently, routes data tokens between operations, manages LLM backend calls, and handles retries and timeouts.
 

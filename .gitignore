@@ -2,6 +2,7 @@
 # will have compiled files and executables
 /debug
 /target
+/crates/target/
 
 # Rust internal compiler error dumps
 rustc-ice-*.txt

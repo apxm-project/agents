@@ -17,7 +17,7 @@
 //!
 //! # Running
 //! ```bash
-//! APXM_BACKEND=openai OPENAI_API_KEY=sk-... apxm-server --port 18800
+//! APXM_BACKEND=<backend> <PROVIDER_API_KEY>=<API_KEY> apxm-server --port 18800
 //! ```
 //!
 //! # Architecture

@@ -32,8 +32,6 @@ Command-line interface for the APXM graph compiler and runtime toolchain.
 | `explain` | Human-readable summary of a graph |
 | `replay` | Replay a session trace as timeline |
 | `doctor` | Diagnose MLIR/LLVM/conda dependencies |
-| `activate` | Print shell exports for MLIR/LLVM env setup |
-| `install` | Install/update conda env from `environment.yaml` |
 | `backend` | Add/list/remove/test LLM backends |
 | `agent` | Add/list/remove/test agent profiles |
 | `tool` | Register/list/remove external tools |

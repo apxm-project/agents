@@ -70,7 +70,7 @@ def chained_llm(g: GraphRecorder):
 
 
 if __name__ == "__main__":
-    # Output the graph as JSON
+    # Output AIR.
     print(chained_llm._graph.to_air())
     # To execute directly:
     # import apxm

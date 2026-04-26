@@ -1,26 +1,24 @@
 #!/usr/bin/env python3
 """memo_cache_stress.py - Benchmark for Memoization Cache Effectiveness
 
-Tests: MemoCache optimization (runtime result caching)
-Measures: Cache hit rate for repeated identical prompts
+Tests: runtime memoization under repeated identical prompts.
+Measures: emitted cache-hit and cache-miss metrics.
 
 Graph structure: 3 prompts executed twice each (6 total executions)
-- First run (cold cache): 3 LLM calls (cache misses)
-- Second run (same prompts): 0 LLM calls (cache hits)
-- Overall: 6 executions → 3 LLM calls → 50% cache hit rate
+- First group: expected cache misses
+- Second group: eligible for cache hits when runtime memoization is enabled
 
 Metrics:
-- Total LLM calls (should be 3, not 6)
-- Cache hit rate (should be 50% - 3 hits, 3 misses)
-- Time savings from cache hits
+- Total LLM calls
+- Cache hits and misses
+- Time delta between cache lookups and LLM calls
 - Average cache lookup latency vs LLM call latency
 
 Note: This tests RUNTIME caching within a single execution.
-For cross-execution caching, see the persistent KV-cache benchmarks.
 
 Usage:
-  dekk apxm execute memo_cache_stress.air -O0  # No caching (6 LLM calls)
-  dekk apxm execute memo_cache_stress.air -O2  # With MemoCache (3 LLM calls)
+  dekk apxm execute examples/python/_benchmarks/memo_cache_stress.py -O0
+  dekk apxm execute examples/python/_benchmarks/memo_cache_stress.py -O2
 """
 
 from apxm import compile, GraphRecorder
@@ -127,14 +125,7 @@ def memo_cache_stress(g: GraphRecorder):
         "  Match: {comparison_c}\n\n"
         "---\n"
         "This workflow executed 3 prompts TWICE (6 total executions).\n\n"
-        "O0 (no caching): 6 LLM calls (100% misses)\n"
-        "O2 (with MemoCache): 3 LLM calls (50% cache hit rate)\n\n"
-        "Expected metrics:\n"
-        "- Total LLM calls: 3 (not 6)\n"
-        "- Cache hits: 3\n"
-        "- Cache misses: 3\n"
-        "- Cache hit rate: 50%\n"
-        "- Time savings: ~3x LLM call latency"
+        "Compare emitted cache-hit, cache-miss, LLM-call, and latency metrics."
     )
     # Control edge keeps the merge as a synchronization barrier without
     # adding an extra Data input to print's input_names.
@@ -144,7 +135,7 @@ def memo_cache_stress(g: GraphRecorder):
 
 
 if __name__ == "__main__":
-    # Output the graph as JSON
+    # Output AIR.
     print(memo_cache_stress._graph.to_air())
     # To execute directly:
     # import apxm
