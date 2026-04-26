@@ -10,9 +10,12 @@ from typing import Any
 from apxm._generated import constants as c
 from apxm._generated import operations
 from apxm._generated.emission import EMITTERS, TEMPLATE_ATTRS, VOID_OPS
+from apxm.constants import DEPENDENCY_CONTROL, DEPENDENCY_DATA, DEPENDENCY_EFFECT
+from apxm._generated.operations import ASK, COMMUNICATE, REASON, SPAWN_AGENT, THINK
 
 
-_DEPENDENCY_TYPES = {"Data", "Effect", "Control"}
+_DEPENDENCY_TYPES = {DEPENDENCY_DATA, DEPENDENCY_EFFECT, DEPENDENCY_CONTROL}
+_LLM_TURN_OPS = frozenset({ASK.op, THINK.op, REASON.op})
 
 
 @dataclass(slots=True)
@@ -497,6 +500,9 @@ def validate_against_apxm(graph: ApxmGraph) -> ValidationResult:
                 f"edge references non-existent to_id {edge.to_id}"
             )
 
+    errors.extend(_validate_spawn_communicate_dependencies(graph))
+    errors.extend(_validate_llm_operation_attributes(graph))
+
     # --- parameter checks --------------------------------------------------
     param_names: set[str] = set()
     for param in graph.parameters:
@@ -531,3 +537,103 @@ def validate_against_apxm(graph: ApxmGraph) -> ValidationResult:
         errors=errors,
         warnings=warnings,
     )
+
+
+def _validate_llm_operation_attributes(graph: ApxmGraph) -> list[str]:
+    errors: list[str] = []
+    for node in graph.nodes:
+        if c.LLM_OPERATION not in node.attributes:
+            continue
+        value = node.attributes[c.LLM_OPERATION]
+        if not isinstance(value, str):
+            errors.append(
+                f"node '{node.name}' ({node.op}) has non-string "
+                f"{c.LLM_OPERATION!r} attribute"
+            )
+            continue
+        if value not in _LLM_TURN_OPS:
+            valid = ", ".join(sorted(_LLM_TURN_OPS))
+            errors.append(
+                f"node '{node.name}' ({node.op}) has invalid "
+                f"{c.LLM_OPERATION!r} value {value!r}; expected one of {valid}"
+            )
+    return errors
+
+
+def _validate_spawn_communicate_dependencies(graph: ApxmGraph) -> list[str]:
+    spawned: dict[str, int] = {}
+    errors: list[str] = []
+
+    for node in graph.nodes:
+        if node.op != SPAWN_AGENT.op:
+            continue
+        agent_name = node.attributes.get(c.AGENT_NAME)
+        if isinstance(agent_name, str):
+            spawned[agent_name] = node.id
+
+    data_edges = [
+        (edge.from_id, edge.to_id)
+        for edge in graph.edges
+        if edge.dependency == DEPENDENCY_DATA
+    ]
+    control_edges = {
+        (edge.from_id, edge.to_id)
+        for edge in graph.edges
+        if edge.dependency == DEPENDENCY_CONTROL
+    }
+
+    for node in graph.nodes:
+        if node.op != COMMUNICATE.op:
+            continue
+        recipient = node.attributes.get(c.RECIPIENT)
+        if not isinstance(recipient, str) or recipient not in spawned:
+            continue
+        spawn_id = spawned[recipient]
+        message_input_count = _input_names_count(node.attributes.get(c.INPUT_NAMES))
+        data_sources = [
+            from_id for from_id, to_id in data_edges if to_id == node.id
+        ]
+        structural_sources = data_sources[message_input_count:]
+        if any(_has_data_path(spawn_id, source_id, data_edges) for source_id in structural_sources):
+            continue
+        if (spawn_id, node.id) in control_edges:
+            hint = "Control edges do not carry the spawn token into AIR operands"
+        else:
+            hint = "no Data dependency path from the matching SPAWN_AGENT was found"
+        errors.append(
+            f"node '{node.name}' ({node.op}) targets spawned agent '{recipient}' "
+            f"but does not depend on its SPAWN_AGENT token: {hint}"
+        )
+
+    return errors
+
+
+def _has_data_path(
+    source_id: int,
+    target_id: int,
+    data_edges: list[tuple[int, int]],
+) -> bool:
+    adjacency: dict[int, list[int]] = {}
+    for from_id, to_id in data_edges:
+        adjacency.setdefault(from_id, []).append(to_id)
+
+    visited: set[int] = set()
+    pending = [source_id]
+    while pending:
+        current = pending.pop()
+        if current in visited:
+            continue
+        visited.add(current)
+        for next_id in adjacency.get(current, []):
+            if next_id == target_id:
+                return True
+            pending.append(next_id)
+    return False
+
+
+def _input_names_count(value: Any) -> int:
+    if isinstance(value, list):
+        return len(value)
+    if isinstance(value, str):
+        return 1
+    return 0

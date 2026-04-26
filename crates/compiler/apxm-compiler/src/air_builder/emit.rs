@@ -46,13 +46,7 @@ fn node_uses_flow_params(node: &AirNode, params: &[AirParam]) -> bool {
         return false;
     }
 
-    let template_attrs = [
-        graph_attrs::TEMPLATE_STR,
-        graph_attrs::PROMPT,
-        graph_attrs::TEMPLATE,
-    ];
-
-    for attr_name in &template_attrs {
+    for attr_name in graph_attrs::TEMPLATE_BEARING_ATTRS {
         if let Some(value) = node.attributes.get(*attr_name) {
             if let Some(text) = value.as_str() {
                 for param in params {

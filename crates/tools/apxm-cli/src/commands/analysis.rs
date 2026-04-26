@@ -9,6 +9,8 @@ use colored::Colorize;
 use super::implementations::{
     Status, category_str, find_op_spec, op_latency_ms, print_section_header, print_status_line,
 };
+use apxm_core::constants::graph::attrs as graph_attrs;
+use apxm_core::types::AISOperationType;
 
 pub fn validate_command(
     input: PathBuf,
@@ -372,12 +374,24 @@ impl<'a> GraphAnalysis<'a> {
             .unwrap_or_else(|| "?".to_string())
     }
 
+    fn node_latency_op(&self, id: u64) -> String {
+        let Some(node) = self.node_by_id(id) else {
+            return "?".to_string();
+        };
+        node.attributes
+            .get(graph_attrs::LLM_OPERATION)
+            .and_then(|value| value.as_str())
+            .and_then(|value| value.parse::<AISOperationType>().ok())
+            .map(|operation| operation.to_string())
+            .unwrap_or_else(|| node.op.to_string())
+    }
+
     pub(crate) fn node_name(&self, id: u64) -> &str {
         self.node_by_id(id).map(|n| n.name.as_str()).unwrap_or("?")
     }
 
     fn node_latency_ms(&self, id: u64) -> u64 {
-        op_latency_ms(&self.node_op(id))
+        op_latency_ms(&self.node_latency_op(id))
     }
 
     pub(crate) fn max_parallelism(&self) -> usize {
@@ -675,15 +689,19 @@ pub fn explain_command(target: &str, json_output: bool) -> Result<()> {
                 }
                 apxm_core::error::ErrorCode::CommunicateBeforeSpawn => {
                     println!("{}", "Description:".bright_blue().bold());
-                    println!("  COMMUNICATE node has no path FROM its SPAWN_AGENT.");
+                    println!("  COMMUNICATE node does not consume the matching SPAWN_AGENT token.");
                     println!();
                     println!("{}", "Why this is a problem:".bright_blue().bold());
-                    println!("  Without a dependency edge, COMMUNICATE may run in parallel with");
-                    println!("  (or before) SPAWN_AGENT, causing a race condition.");
+                    println!("  COMMUNICATE is the session transport. It needs a structural Data");
+                    println!(
+                        "  dependency from SPAWN_AGENT so the spawned session token is an operand."
+                    );
                     println!();
                     println!("{}", "How to fix:".bright_green().bold());
-                    println!("  Add a Control or Data edge from SPAWN_AGENT to COMMUNICATE");
-                    println!("  to ensure correct ordering.");
+                    println!("  Use the agent handle API, or add a Data dependency from the");
+                    println!(
+                        "  SPAWN_AGENT chain to COMMUNICATE. Control edges are not sufficient."
+                    );
                 }
                 apxm_core::error::ErrorCode::EmptyTemplate => {
                     println!("{}", "Description:".bright_blue().bold());

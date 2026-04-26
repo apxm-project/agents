@@ -1074,7 +1074,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             primary_attr: Some(attrs::CAPABILITY),
             context_style: ContextStyle::Bracketed,
             result_type: MlirResultType::Token,
-            positional_attrs: &[],
+            positional_attrs: &[attrs::PARAMS_JSON],
             keywords: &[],
             syntactic_keywords: &[],
         },
@@ -1456,6 +1456,10 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             OperationField::optional(
                 attrs::PROTOCOL,
                 "Dispatch protocol: local (default), http, https, acp, broadcast",
+            ),
+            OperationField::optional(
+                attrs::LLM_OPERATION,
+                "Semantic LLM operation for analysis when this communication sends an agent prompt",
             ),
         ],
         needs_submission: true,

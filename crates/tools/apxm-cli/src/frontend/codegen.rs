@@ -5,9 +5,10 @@ use std::path::Path;
 
 use anyhow::Result;
 
+use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::constants::mlir::types as mlir_types;
 use apxm_core::types::{
-    WORKFLOW_SPAWN_PATH_TARGET_KINDS, WORKFLOW_TARGET_KIND_ARTIFACT_PATH,
+    AISOperationType, WORKFLOW_SPAWN_PATH_TARGET_KINDS, WORKFLOW_TARGET_KIND_ARTIFACT_PATH,
     WORKFLOW_TARGET_KIND_GRAPH_PATH, WORKFLOW_TARGET_KIND_REGISTERED_FLOW,
     WORKFLOW_TARGET_KIND_WORKFLOW_PATH,
 };
@@ -360,7 +361,15 @@ fn render_emission_module() -> String {
     ));
 
     // TEMPLATE_ATTRS — attrs that can contain template placeholders
-    buf.push_str("\nTEMPLATE_ATTRS: Final[frozenset] = frozenset({\"template_str\", \"prompt\", \"template\", \"value\"})\n");
+    let template_attrs = graph_attrs::TEMPLATE_BEARING_ATTRS
+        .iter()
+        .map(|attr| py_string(attr))
+        .collect::<Vec<_>>()
+        .join(", ");
+    buf.push_str(&format!(
+        "\nTEMPLATE_ATTRS: Final[frozenset] = frozenset({{{}}})\n",
+        template_attrs
+    ));
 
     buf
 }
@@ -378,6 +387,11 @@ fn render_emission_fn(buf: &mut String, spec: &FrontendEmissionSpec) {
         "    \"\"\"Emit MLIR for {} operation.\"\"\"\n",
         op
     ));
+
+    if spec.op == AISOperationType::InvTool {
+        render_inv_tool_emission_fn(buf);
+        return;
+    }
 
     // Context formatting
     let delims = match spec.context_style.as_str() {
@@ -498,6 +512,24 @@ fn render_emission_fn(buf: &mut String, spec: &FrontendEmissionSpec) {
             spec.mlir_mnemonic, type_str
         ));
     }
+}
+
+fn render_inv_tool_emission_fn(buf: &mut String) {
+    buf.push_str(&format!(
+        "    primary = f' {{_quote(str(attrs[{}]))}}' if {} in attrs else \"\"\n",
+        py_string(graph_attrs::CAPABILITY),
+        py_string(graph_attrs::CAPABILITY)
+    ));
+    buf.push_str(&format!(
+        "    params_json = _quote(str(attrs.get({}, json.dumps({{}}))))\n",
+        py_string(graph_attrs::PARAMS_JSON)
+    ));
+    buf.push_str("    positional = f\" ({params_json})\"\n");
+    buf.push_str("    syn_kw = \"\"\n");
+    buf.push_str("    kw_str = \"\"\n");
+    buf.push_str(
+        "    return f\"{ssa_name} = ais.inv_tool{primary}{positional}{syn_kw}{kw_str} : !ais.token\"\n\n\n",
+    );
 }
 
 fn render_providers_module() -> String {

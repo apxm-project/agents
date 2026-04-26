@@ -18,12 +18,12 @@ concurrently -- you just declare the edges.
 
 ```python
 # Nodes with no edges between them run in parallel automatically
-section_1 = g.ask("s1", "Write section 1 from plan: {plan}")
-section_2 = g.ask("s2", "Write section 2 from plan: {plan}")
-section_3 = g.ask("s3", "Write section 3 from plan: {plan}")
+section_1 = g.ask(name="s1", prompt="Write section 1 from plan: {plan}")
+section_2 = g.ask(name="s2", prompt="Write section 2 from plan: {plan}")
+section_3 = g.ask(name="s3", prompt="Write section 3 from plan: {plan}")
 
 # Assembly waits for all -- DAG enforces the barrier
-result = g.think("assemble", "{s1}\n{s2}\n{s3}")
+result = g.think(name="assemble", prompt="{s1}\n{s2}\n{s3}")
 ```
 
 ## Learn More

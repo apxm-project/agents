@@ -33,8 +33,8 @@ use super::{LLMRequest, LLMResponse};
 use apxm_core::observability::{CallEvent, CallTrace};
 use apxm_core::types::{FinishReason, ModelCapabilities, ModelInfo, TokenUsage, ToolCall};
 use async_trait::async_trait;
-use serde_json::json;
 use parking_lot::RwLock;
+use serde_json::json;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -347,10 +347,11 @@ impl MockLLMBackend {
             ));
         }
 
-        let has_add_tool = request
-            .tools
-            .as_ref()
-            .is_some_and(|tools| tools.iter().any(|tool| tool.name == MOCK_CALCULATOR_TOOL_ADD));
+        let has_add_tool = request.tools.as_ref().is_some_and(|tools| {
+            tools
+                .iter()
+                .any(|tool| tool.name == MOCK_CALCULATOR_TOOL_ADD)
+        });
 
         if has_add_tool && prompt.contains("17") && prompt.contains("25") {
             return Some(

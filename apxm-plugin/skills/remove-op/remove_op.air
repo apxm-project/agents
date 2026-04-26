@@ -1,22 +1,22 @@
 module {
   func.func @remove_op_workflow(%arg0: !ais.token {ais.param_name = "op_name", ais.param_type = "str"}) -> !ais.token attributes {ais.entry} {
-    %think = ais.think "impact_analysis" : !ais.token
-    ais.print "=== IMPACT ANALYSIS ===\n{impact_analysis}" [%think : !ais.token]
-    %compiler_dev = ais.spawn_agent "compiler_dev" {profile = "claude", cwd = "/home/apxm/projects/agents/apxm"} : !ais.token
-    %runtime_dev = ais.spawn_agent "runtime_dev" {profile = "codex", cwd = "/home/apxm/projects/agents/apxm"} : !ais.token
-    %verifier = ais.spawn_agent "verifier" {profile = "claude", cwd = "/home/apxm/projects/agents/apxm"} : !ais.token
-    %ask = ais.ask "build_compiler_task" [%think : !ais.token] : !ais.token
-    %ask_1 = ais.ask "build_runtime_task" [%think : !ais.token] : !ais.token
-    %compiler_dev_msg_1 = ais.communicate "{compiler_task}" to "compiler_dev" (%ask : !ais.token) : !ais.token
-    %runtime_dev_msg_1 = ais.communicate "{runtime_task}" to "runtime_dev" (%ask_1 : !ais.token) : !ais.token
-    ais.print "=== COMPILER REMOVAL ===\n{compiler_dev}" [%compiler_dev_msg_1 : !ais.token]
-    ais.print "=== RUNTIME REMOVAL ===\n{runtime_dev}" [%runtime_dev_msg_1 : !ais.token]
+    %impact_analysis = ais.think "Analyze the impact of removing operation: {{op_name}}\n\nCheck:\n1. Where is this operation defined?\n   - crates/core/apxm-ais/src/definitions.rs (enum variant)\n   - crates/compiler/apxm-compiler/mlir/AISOps.td (TableGen def)\n   - crates/compiler/apxm-compiler/src/lower/ArtifactEmitter.cpp (lowering)\n   - crates/runtime/apxm-runtime/src/executor/handlers/<op>.rs (handler)\n   - crates/runtime/apxm-runtime/src/executor/mod.rs (dispatcher)\n\n2. What code uses this operation?\n   - Search examples/ for usage\n   - Search tests/ for test cases\n   - Check if any built-in workflows depend on it\n\n3. Wire index collision risk:\n   - What's its wire index?\n   - Can we mark it as reserved/deprecated instead of removing?\n\nOutput a structured removal plan:\n- Files to modify\n- Lines to delete\n- Wire index handling strategy (remove vs deprecate)\n- Example/test files to update\n- Estimated risk (low/medium/high)\n" : !ais.token
+    ais.print "=== IMPACT ANALYSIS ===\n{impact_analysis}" [%impact_analysis : !ais.token] {input_names = ["impact_analysis"]}
+    %compiler_dev = ais.spawn_agent "compiler_dev" {profile = "claude", cwd = "."} : !ais.token
+    %runtime_dev = ais.spawn_agent "runtime_dev" {profile = "codex", cwd = "."} : !ais.token
+    %verifier = ais.spawn_agent "verifier" {profile = "claude", cwd = "."} : !ais.token
+    %build_compiler_task = ais.ask "Remove operation from the compiler:\n\nAnalysis: {impact_analysis}\n\nRemove from:\n1. crates/core/apxm-ais/src/definitions.rs\n   - Remove enum variant\n   - Remove from from_wire_index() match (or add a comment \"// Reserved: <wire_index>\")\n\n2. crates/compiler/apxm-compiler/mlir/AISOps.td\n   - Remove def AIS_<OpName>Op block\n   - Add comment if wire index is reserved\n\n3. crates/compiler/apxm-compiler/src/lower/ArtifactEmitter.cpp\n   - Remove case from emitAISOperation() switch\n\nBe careful:\n- Don't accidentally remove similar-named operations\n- Preserve wire index comments for protocol stability\n- Update any operation count constants if they exist\n" [%impact_analysis : !ais.token] {input_names = ["impact_analysis"]} : !ais.token
+    %build_runtime_task = ais.ask "Remove operation from the runtime:\n\nAnalysis: {impact_analysis}\n\nRemove from:\n1. crates/runtime/apxm-runtime/src/executor/handlers/<op>.rs\n   - Delete the entire file\n\n2. crates/runtime/apxm-runtime/src/executor/mod.rs\n   - Remove mod <op> declaration\n   - Remove match arm from execute_node()\n\n3. Remove test files:\n   - Any tests in handlers/<op>.rs tests module\n   - Any integration tests that use this operation\n\nBe thorough but careful — don't break adjacent code.\n" [%impact_analysis : !ais.token] {input_names = ["impact_analysis"]} : !ais.token
+    %compiler_dev_msg_1 = ais.communicate "{compiler_task}" to "compiler_dev" (%build_compiler_task, %compiler_dev : !ais.token, !ais.token) {protocol = "acp", input_names = ["compiler_task"]} : !ais.token
+    %runtime_dev_msg_1 = ais.communicate "{runtime_task}" to "runtime_dev" (%build_runtime_task, %runtime_dev : !ais.token, !ais.token) {protocol = "acp", input_names = ["runtime_task"]} : !ais.token
+    ais.print "=== COMPILER REMOVAL ===\n{compiler_removal}" [%compiler_dev_msg_1 : !ais.token] {input_names = ["compiler_removal"]}
+    ais.print "=== RUNTIME REMOVAL ===\n{runtime_removal}" [%runtime_dev_msg_1 : !ais.token] {input_names = ["runtime_removal"]}
     %wait_removals = ais.wait_all %compiler_dev_msg_1, %runtime_dev_msg_1 : !ais.token, !ais.token -> !ais.token
-    %ask_2 = ais.ask "build_verify_task" [%compiler_dev_msg_1, %runtime_dev_msg_1 : !ais.token, !ais.token] : !ais.token
-    %verifier_msg_1 = ais.communicate "{verify_task}" to "verifier" (%ask_2 : !ais.token) : !ais.token
-    ais.print "=== VERIFICATION ===\n{verifier}" [%verifier_msg_1 : !ais.token]
-    %think_1 = ais.think "removal_summary" [%think, %compiler_dev_msg_1, %runtime_dev_msg_1, %verifier_msg_1 : !ais.token, !ais.token, !ais.token, !ais.token] : !ais.token
-    ais.print "=== REMOVAL SUMMARY ===\n{final}" [%think_1 : !ais.token]
-    func.return %think_1 : !ais.token
+    %build_verify_task = ais.ask "Verify the removal was clean:\n\nCompiler changes: {compiler_removal}\nRuntime changes: {runtime_removal}\n\nRun the verification steps:\n\n1. Build the project:\n   dekk apxm build\n\n2. Run all tests:\n   cargo test\n\n3. Run autofix to catch any missed references:\n   python3 scripts/apxm-autofix.py\n\n4. Check for lingering references:\n   grep -r \"<op_name>\" crates/ examples/\n\nReport:\n- Build status (success/failure)\n- Test results (passed/failed, which tests)\n- Any lingering references found\n- Whether the removal is complete\n\nIf there are failures, identify what was missed and suggest fixes.\n" [%compiler_dev_msg_1, %runtime_dev_msg_1 : !ais.token, !ais.token] {input_names = ["compiler_removal", "runtime_removal"]} : !ais.token
+    %verifier_msg_1 = ais.communicate "{verify_task}" to "verifier" (%build_verify_task, %verifier : !ais.token, !ais.token) {protocol = "acp", input_names = ["verify_task"]} : !ais.token
+    ais.print "=== VERIFICATION ===\n{verification}" [%verifier_msg_1 : !ais.token] {input_names = ["verification"]}
+    %removal_summary = ais.think "Generate removal summary:\n\nImpact analysis: {impact_analysis}\nCompiler changes: {compiler_removal}\nRuntime changes: {runtime_removal}\nVerification: {verification}\n\nSummary:\n- Operation removed: <name>\n- Wire index: <number> (removed/deprecated)\n- Files modified: <list>\n- Build status: <success/failure>\n- Test status: <passed/failed>\n- Remaining issues: <none/list>\n- Status: <complete/needs-fixes>\n" [%impact_analysis, %compiler_dev_msg_1, %runtime_dev_msg_1, %verifier_msg_1 : !ais.token, !ais.token, !ais.token, !ais.token] {input_names = ["impact_analysis", "compiler_removal", "runtime_removal", "verification"]} : !ais.token
+    ais.print "=== REMOVAL SUMMARY ===\n{final}" [%removal_summary : !ais.token] {input_names = ["final"]}
+    func.return %removal_summary : !ais.token
   }
 }

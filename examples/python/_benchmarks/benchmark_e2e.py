@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import shutil
 import statistics
 import subprocess
@@ -51,6 +52,7 @@ FLAG_OUTPUT = "-o"
 FLAG_OPT_LEVEL = "-O"
 FLAG_EMIT_SESSION = "--emit-session"
 FLAG_TRACE = "--trace"
+ENV_APXM_CONFIG = "APXM_CONFIG"
 
 FILE_MANIFEST = "manifest.json"
 FILE_RESULTS = "results.json"
@@ -278,6 +280,12 @@ def _parse_args() -> argparse.Namespace:
         help="Reporting label for the configured backend",
     )
     parser.add_argument(
+        "--apxm-config",
+        type=Path,
+        default=None,
+        help="APXM config path exported to Dekk and Python graph emission",
+    )
+    parser.add_argument(
         "--trace",
         default=None,
         help="Optional APXM trace level for execute mode",
@@ -320,12 +328,27 @@ def _read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text())
 
 
-def _run_compile(graph: Path, opt_level: int) -> tuple[subprocess.CompletedProcess[str], float]:
+def _command_prefix(apxm_config: Path | None) -> list[str]:
+    return [DEKK, APXM]
+
+
+def _command_env(apxm_config: Path | None) -> dict[str, str] | None:
+    if apxm_config is None:
+        return None
+    env = os.environ.copy()
+    env[ENV_APXM_CONFIG] = str(apxm_config)
+    return env
+
+
+def _run_compile(
+    graph: Path,
+    opt_level: int,
+    apxm_config: Path | None,
+) -> tuple[subprocess.CompletedProcess[str], float]:
     with tempfile.TemporaryDirectory(prefix="apxm-bench-compile-") as tmp_dir:
         artifact_path = Path(tmp_dir) / f"{graph.stem}-O{opt_level}.apxmobj"
         cmd = [
-            DEKK,
-            APXM,
+            *_command_prefix(apxm_config),
             CMD_COMPILE,
             str(graph),
             FLAG_OUTPUT,
@@ -334,7 +357,13 @@ def _run_compile(graph: Path, opt_level: int) -> tuple[subprocess.CompletedProce
             str(opt_level),
         ]
         start = time.perf_counter()
-        result = subprocess.run(cmd, capture_output=True, text=True, cwd=REPO_ROOT)
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            cwd=REPO_ROOT,
+            env=_command_env(apxm_config),
+        )
         wall_ms = (time.perf_counter() - start) * 1000.0
     return result, wall_ms
 
@@ -344,11 +373,11 @@ def _run_execute(
     opt_level: int,
     session_base: Path,
     trace: str | None,
+    apxm_config: Path | None,
 ) -> tuple[subprocess.CompletedProcess[str], float]:
     session_base.mkdir(parents=True, exist_ok=True)
     cmd = [
-        DEKK,
-        APXM,
+        *_command_prefix(apxm_config),
         CMD_EXECUTE,
         FLAG_OPT_LEVEL,
         str(opt_level),
@@ -358,7 +387,13 @@ def _run_execute(
     cmd.extend([FLAG_EMIT_SESSION, str(session_base), str(graph)])
 
     start = time.perf_counter()
-    result = subprocess.run(cmd, capture_output=True, text=True, cwd=REPO_ROOT)
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        cwd=REPO_ROOT,
+        env=_command_env(apxm_config),
+    )
     wall_ms = (time.perf_counter() - start) * 1000.0
     return result, wall_ms
 
@@ -371,12 +406,13 @@ def _run_once(
     backend_label: str,
     trace: str | None,
     session_parent: Path,
+    apxm_config: Path | None,
 ) -> RunRecord:
     timestamp = datetime.now(timezone.utc).isoformat()
     mode = "compile" if compile_only else "execute"
 
     if compile_only:
-        result, wall_ms = _run_compile(graph, opt_level)
+        result, wall_ms = _run_compile(graph, opt_level, apxm_config)
         return RunRecord(
             timestamp_utc=timestamp,
             graph=str(graph),
@@ -400,7 +436,7 @@ def _run_once(
         )
 
     session_base = session_parent / f"opt-{opt_level}" / f"run-{run_index}"
-    result, wall_ms = _run_execute(graph, opt_level, session_base, trace)
+    result, wall_ms = _run_execute(graph, opt_level, session_base, trace, apxm_config)
     session_root: Path | None = None
     summary: SessionSummary | None = None
     if result.returncode == 0:
@@ -485,6 +521,7 @@ def main() -> int:
                 backend_label=args.backend_label,
                 trace=args.trace,
                 session_parent=args.session_base.resolve(),
+                apxm_config=args.apxm_config.resolve() if args.apxm_config else None,
             )
             records.append(record)
 

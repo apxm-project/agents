@@ -55,6 +55,7 @@ pub fn validate_module(module: &AirModule) -> Result<(), AirError> {
     validate_token_space(module)?;
     validate_agent_references(module)?;
     validate_required_attributes(module)?;
+    validate_llm_operation_attributes(module)?;
     validate_template_placeholders(module)?;
     validate_node_refs(module)?;
 
@@ -247,9 +248,74 @@ fn validate_agent_references(module: &AirModule) -> Result<(), AirError> {
                 node.name, node.id, recipient, hint
             )));
         }
+        let spawn_id = spawned
+            .get(&recipient)
+            .copied()
+            .expect("recipient existence checked above");
+        if !has_structural_spawn_dependency(module, spawn_id, node) {
+            let has_control_edge = module.edges.iter().any(|edge| {
+                edge.from == spawn_id
+                    && edge.to == node.id
+                    && matches!(edge.dependency, DependencyType::Control)
+            });
+            let hint = if has_control_edge {
+                "A Control edge was found, but Control edges do not carry the \
+                 spawn token into AIR operands."
+            } else {
+                "No Data dependency path from the matching SPAWN_AGENT was found."
+            };
+            return Err(AirError::Validation(format!(
+                "node '{}' (id={}, op={}) targets spawned agent '{}' but does \
+                 not depend on its SPAWN_AGENT token. {} Use the agent handle \
+                 API or add a Data dependency from the spawn chain.",
+                node.name, node.id, node.op, recipient, hint
+            )));
+        }
     }
 
     Ok(())
+}
+
+fn has_structural_spawn_dependency(
+    module: &AirModule,
+    spawn_id: u64,
+    node: &crate::air_builder::AirNode,
+) -> bool {
+    let data_sources = data_input_sources(module, node.id);
+    let message_input_count = collect_input_names(node).len();
+    data_sources
+        .iter()
+        .skip(message_input_count)
+        .any(|source_id| has_data_path(module, spawn_id, *source_id))
+}
+
+fn has_data_path(module: &AirModule, from: u64, to: u64) -> bool {
+    if from == to {
+        return true;
+    }
+
+    let mut adjacency: HashMap<u64, Vec<u64>> = HashMap::new();
+    for edge in &module.edges {
+        if matches!(edge.dependency, DependencyType::Data) {
+            adjacency.entry(edge.from).or_default().push(edge.to);
+        }
+    }
+
+    let mut visited = HashSet::new();
+    let mut queue = VecDeque::from([from]);
+    while let Some(current) = queue.pop_front() {
+        if !visited.insert(current) {
+            continue;
+        }
+        for next in adjacency.get(&current).into_iter().flatten().copied() {
+            if next == to {
+                return true;
+            }
+            queue.push_back(next);
+        }
+    }
+
+    false
 }
 
 fn validate_required_attributes(module: &AirModule) -> Result<(), AirError> {
@@ -270,6 +336,54 @@ fn validate_required_attributes(module: &AirModule) -> Result<(), AirError> {
             return Err(AirError::Validation(format!(
                 "node '{}' (id={}, op={}) is missing required attribute '{}'.",
                 node.name, node.id, node.op, attr
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_llm_operation_attributes(module: &AirModule) -> Result<(), AirError> {
+    use apxm_core::types::operations::AISOperationType;
+
+    for node in &module.nodes {
+        let Some(value) = node.attributes.get(graph_attrs::LLM_OPERATION) else {
+            continue;
+        };
+        let Some(operation_name) = value.as_str() else {
+            return Err(AirError::Validation(format!(
+                "node '{}' (id={}, op={}) has non-string '{}' attribute.",
+                node.name,
+                node.id,
+                node.op,
+                graph_attrs::LLM_OPERATION
+            )));
+        };
+        let Ok(operation) = operation_name.parse::<AISOperationType>() else {
+            return Err(AirError::Validation(format!(
+                "node '{}' (id={}, op={}) has invalid '{}' value '{}'.",
+                node.name,
+                node.id,
+                node.op,
+                graph_attrs::LLM_OPERATION,
+                operation_name
+            )));
+        };
+        if !matches!(
+            operation,
+            AISOperationType::Ask | AISOperationType::Think | AISOperationType::Reason
+        ) {
+            return Err(AirError::Validation(format!(
+                "node '{}' (id={}, op={}) has '{}' value '{}', but only {}, {}, or {} \
+                 are valid LLM turn operations.",
+                node.name,
+                node.id,
+                node.op,
+                graph_attrs::LLM_OPERATION,
+                operation,
+                AISOperationType::Ask,
+                AISOperationType::Think,
+                AISOperationType::Reason
             )));
         }
     }
@@ -307,7 +421,12 @@ fn validate_template_placeholders(module: &AirModule) -> Result<(), AirError> {
 
     for node in &module.nodes {
         let input_names = collect_input_names(node);
-        let in_count = data_in_count.get(&node.id).copied().unwrap_or(0);
+        let structural_data_count = structural_data_input_count(module, node);
+        let in_count = data_in_count
+            .get(&node.id)
+            .copied()
+            .unwrap_or(0)
+            .saturating_sub(structural_data_count);
 
         // Length sanity: input_names mirrors the incoming Data edges.
         if !input_names.is_empty() && input_names.len() != in_count {
@@ -339,6 +458,26 @@ fn validate_template_placeholders(module: &AirModule) -> Result<(), AirError> {
     }
 
     Ok(())
+}
+
+fn structural_data_input_count(module: &AirModule, node: &crate::air_builder::AirNode) -> usize {
+    use apxm_core::types::operations::AISOperationType;
+
+    if node.op != AISOperationType::Communicate {
+        return 0;
+    }
+
+    let data_source_count = data_input_sources(module, node.id).len();
+    data_source_count.saturating_sub(collect_input_names(node).len())
+}
+
+fn data_input_sources(module: &AirModule, node_id: u64) -> Vec<u64> {
+    module
+        .edges
+        .iter()
+        .filter(|edge| edge.to == node_id && matches!(edge.dependency, DependencyType::Data))
+        .map(|edge| edge.from)
+        .collect()
 }
 
 /// Extract a node's `input_names` parallel array as borrowed string slices.
@@ -452,6 +591,117 @@ fn levenshtein_at_most_1(a: &str, b: &str) -> bool {
         }
     }
     true
+}
+
+#[cfg(test)]
+mod agent_reference_validation_tests {
+    use super::*;
+    use crate::air_builder::{AirEdge, AirNode};
+    use apxm_core::types::AISOperationType;
+    use std::collections::HashMap;
+
+    fn spawn_and_communicate_module(edges: Vec<AirEdge>) -> AirModule {
+        AirModule {
+            name: "agent_refs".into(),
+            nodes: vec![
+                AirNode {
+                    id: 1,
+                    name: "spawn_worker".into(),
+                    op: AISOperationType::SpawnAgent,
+                    attributes: HashMap::from([(
+                        graph_attrs::AGENT_NAME.into(),
+                        Value::String("worker".into()),
+                    )]),
+                },
+                AirNode {
+                    id: 2,
+                    name: "send_worker".into(),
+                    op: AISOperationType::Communicate,
+                    attributes: HashMap::from([(
+                        graph_attrs::RECIPIENT.into(),
+                        Value::String("worker".into()),
+                    )]),
+                },
+            ],
+            edges,
+            parameters: Vec::new(),
+            metadata: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn accepts_communicate_with_spawn_data_path() {
+        let module = spawn_and_communicate_module(vec![AirEdge {
+            from: 1,
+            to: 2,
+            dependency: DependencyType::Data,
+        }]);
+
+        validate_agent_references(&module).expect("data path should satisfy spawn dependency");
+    }
+
+    #[test]
+    fn rejects_communicate_without_spawn_data_path() {
+        let module = spawn_and_communicate_module(Vec::new());
+
+        let err = validate_agent_references(&module).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("does not depend on its SPAWN_AGENT token"),
+            "unexpected diagnostic: {msg}"
+        );
+    }
+
+    #[test]
+    fn rejects_control_edge_from_spawn_to_communicate() {
+        let module = spawn_and_communicate_module(vec![AirEdge {
+            from: 1,
+            to: 2,
+            dependency: DependencyType::Control,
+        }]);
+
+        let err = validate_agent_references(&module).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("Control edges do not carry the spawn token"),
+            "unexpected diagnostic: {msg}"
+        );
+    }
+
+    #[test]
+    fn accepts_communicate_llm_turn_operation() {
+        let mut module = spawn_and_communicate_module(vec![AirEdge {
+            from: 1,
+            to: 2,
+            dependency: DependencyType::Data,
+        }]);
+        module.nodes[1].attributes.insert(
+            graph_attrs::LLM_OPERATION.into(),
+            Value::String(AISOperationType::Reason.to_string()),
+        );
+
+        validate_module(&module).expect("REASON is a valid LLM turn operation");
+    }
+
+    #[test]
+    fn rejects_non_llm_turn_operation_attribute() {
+        let mut module = spawn_and_communicate_module(vec![AirEdge {
+            from: 1,
+            to: 2,
+            dependency: DependencyType::Data,
+        }]);
+        module.nodes[1].attributes.insert(
+            graph_attrs::LLM_OPERATION.into(),
+            Value::String(AISOperationType::Plan.to_string()),
+        );
+
+        let err = validate_module(&module).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("valid LLM turn operations"),
+            "unexpected diagnostic: {msg}"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -597,6 +847,68 @@ mod template_validation_tests {
             msg.contains("input_names has 2 entries but the node has 1"),
             "unexpected diagnostic: {msg}"
         );
+    }
+
+    #[test]
+    fn communicate_input_names_ignore_direct_spawn_token_edge() {
+        let module = AirModule {
+            name: "communicate_template".into(),
+            nodes: vec![
+                AirNode {
+                    id: 1,
+                    name: "spawn_worker".into(),
+                    op: AISOperationType::SpawnAgent,
+                    attributes: HashMap::from([(
+                        graph_attrs::AGENT_NAME.into(),
+                        Value::String("worker".into()),
+                    )]),
+                },
+                AirNode {
+                    id: 2,
+                    name: "task".into(),
+                    op: AISOperationType::ConstStr,
+                    attributes: HashMap::from([(
+                        graph_attrs::VALUE.into(),
+                        Value::String("hello".into()),
+                    )]),
+                },
+                AirNode {
+                    id: 3,
+                    name: "send_worker".into(),
+                    op: AISOperationType::Communicate,
+                    attributes: HashMap::from([
+                        (
+                            graph_attrs::RECIPIENT.into(),
+                            Value::String("worker".into()),
+                        ),
+                        (
+                            graph_attrs::MESSAGE.into(),
+                            Value::String("Process {task}".into()),
+                        ),
+                        (
+                            graph_attrs::INPUT_NAMES.into(),
+                            Value::Array(vec![Value::String("task".into())]),
+                        ),
+                    ]),
+                },
+            ],
+            edges: vec![
+                AirEdge {
+                    from: 2,
+                    to: 3,
+                    dependency: DependencyType::Data,
+                },
+                AirEdge {
+                    from: 1,
+                    to: 3,
+                    dependency: DependencyType::Data,
+                },
+            ],
+            parameters: Vec::new(),
+            metadata: HashMap::new(),
+        };
+
+        validate_module(&module).expect("spawn token edge is structural");
     }
 
     #[test]

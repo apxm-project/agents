@@ -19,8 +19,8 @@ reduce cost and latency without changing your code.
 
 ```python
 # Fusion: adjacent ASK->THINK pairs merge into single LLM calls
-q = g.ask("q", "Question")
-e = g.think("e", "Elaborate: {q}")  # Fused with q at O2
+q = g.ask(name="q", prompt="Question")
+e = g.think(name="e", prompt="Elaborate: {q}")  # Fused with q at O2
 
 # Dead context: unused inputs are pruned
 ctx1 | analysis  # Used (referenced as {ctx1})

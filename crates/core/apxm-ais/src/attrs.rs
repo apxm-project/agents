@@ -72,6 +72,12 @@ pub const RECIPIENT: &str = "recipient";
 pub const TARGET: &str = "target";
 pub const TARGET_KIND: &str = "target_kind";
 pub const PROTOCOL: &str = "protocol";
+/// Semantic LLM operation represented by an agent communication turn.
+///
+/// `COMMUNICATE` remains the routing/session operation, but frontends can set
+/// this to `ASK`, `THINK`, or `REASON` so analysis and backend telemetry keep
+/// the corresponding LLM latency and mode semantics.
+pub const LLM_OPERATION: &str = "llm_operation";
 
 // -- Goals / reasoning --
 pub const GOAL: &str = "goal";
@@ -272,6 +278,7 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     TARGET,
     TARGET_KIND,
     PROTOCOL,
+    LLM_OPERATION,
     GOAL,
     GOAL_ID,
     PRIORITY,

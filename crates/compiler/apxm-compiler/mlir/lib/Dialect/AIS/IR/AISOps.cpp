@@ -30,6 +30,7 @@
 #include "mlir/IR/OpImplementation.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "llvm/ADT/DenseSet.h"
 
 using namespace mlir;
 using namespace mlir::ais;
@@ -52,6 +53,52 @@ LogicalResult verifyTypes(Operation *op, ValueRange values, StringRef errorMsg) 
       }))
     return op->emitOpError(errorMsg);
   return success();
+}
+
+bool functionSpawnsRecipient(Operation *op, StringRef recipient) {
+  auto func = op->getParentOfType<func::FuncOp>();
+  if (!func)
+    return false;
+
+  bool found = false;
+  func.walk([&](SpawnAgentOp spawn) {
+    if (spawn.getAgentName() == recipient)
+      found = true;
+  });
+  return found;
+}
+
+bool hasSpawnDataDependency(ValueRange operands, StringRef recipient) {
+  SmallVector<Value, 8> pending(operands.begin(), operands.end());
+  llvm::SmallDenseSet<Value, 16> visited;
+
+  while (!pending.empty()) {
+    Value current = pending.pop_back_val();
+    if (!visited.insert(current).second)
+      continue;
+
+    Operation *def = current.getDefiningOp();
+    if (!def)
+      continue;
+
+    if (auto spawn = llvm::dyn_cast<SpawnAgentOp>(def)) {
+      if (spawn.getAgentName() == recipient)
+        return true;
+    }
+
+    for (Value operand : def->getOperands())
+      pending.push_back(operand);
+  }
+
+  return false;
+}
+
+unsigned getInputNamesCount(Operation *op) {
+  auto inputNames =
+      op->getAttrOfType<ArrayAttr>(apxm::constants::attrs::INPUT_NAMES);
+  if (!inputNames)
+    return 0;
+  return inputNames.size();
 }
 }  // namespace
 
@@ -601,6 +648,22 @@ LogicalResult CommunicateOp::verify() {
           *this, getAttachments(),
           "attachment operands must be !ais.token, !ais.handle, or !ais.goal types")))
     return failure();
+
+  if (functionSpawnsRecipient(*this, getRecipient())) {
+    unsigned messageInputCount = getInputNamesCount(getOperation());
+    if (messageInputCount > getAttachments().size()) {
+      return emitOpError()
+             << "has " << messageInputCount
+             << " input_names entries but only " << getAttachments().size()
+             << " attachment operands";
+    }
+    ValueRange structuralOperands = getAttachments().drop_front(messageInputCount);
+    if (!hasSpawnDataDependency(structuralOperands, getRecipient())) {
+      return emitOpError()
+             << "targets spawned agent '" << getRecipient()
+             << "' but does not consume a structural data dependency from its spawn_agent";
+    }
+  }
 
   return success();
 }

@@ -200,8 +200,7 @@ pub fn tool_binding_check(
     }
 
     // TODO(W214/SchemaDrift): schema-vs-signature drift check when Python
-    // frontend is in-process. Requires runtime access to loaded handler
-    // signatures which is not available at compile time in MVP.
+    // frontend metadata exposes loaded handler signatures to the compiler.
 
     if !errors.is_empty() {
         let error_messages: Vec<String> = errors.iter().map(|e| e.message.clone()).collect();

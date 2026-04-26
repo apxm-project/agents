@@ -50,17 +50,9 @@ def cross_critique_pipeline(g: GraphRecorder):
     g.add_edge(print1, claude_critique_prompt, dependency="Control")
 
     # Send cross-critiques
-    codex_critiques = g.communicate(
-        name="codex_critiques_claude",
-        target_agent="agent_b",
-        message="{codex_critique_prompt}"
-    )
+    codex_critiques = agent_b.ask("{codex_critique_prompt}")
 
-    claude_critiques = g.communicate(
-        name="claude_critiques_codex",
-        target_agent="agent_a",
-        message="{claude_critique_prompt}"
-    )
+    claude_critiques = agent_a.ask("{claude_critique_prompt}")
 
     # Print critiques
     print2 = g.print(message="=== CRITIQUES ===\nCodex critiques Claude:\n{codex_critiques}\n\nClaude critiques Codex:\n{claude_critiques}")

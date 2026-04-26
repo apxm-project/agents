@@ -125,7 +125,10 @@ impl PythonToolWorker {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .kill_on_drop(true)
-            .env(PYTHONUNBUFFERED, apxm_core::constants::env::flag_values::ENABLED);
+            .env(
+                PYTHONUNBUFFERED,
+                apxm_core::constants::env::flag_values::ENABLED,
+            );
         if let Some(pythonpath) = pythonpath_with_source_frontend() {
             cmd.env(apxm_core::constants::env::PYTHONPATH, pythonpath);
         }

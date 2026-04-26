@@ -585,6 +585,17 @@ def test_find_apxm_binary_prefers_explicit_env(monkeypatch, tmp_path):
     assert _find_apxm_binary() == str(custom)
 
 
+def test_find_apxm_binary_accepts_explicit_path_command(monkeypatch, tmp_path):
+    from apxm.execution import _find_apxm_binary
+
+    command = tmp_path / "dekk"
+    command.write_text("", encoding="utf-8")
+    monkeypatch.setenv(ENV_APXM_BIN, "dekk")
+    monkeypatch.setattr("shutil.which", lambda name: str(command) if name == "dekk" else None)
+
+    assert _find_apxm_binary() == str(command)
+
+
 def test_find_apxm_binary_falls_back_to_repo_checkout(monkeypatch, tmp_path):
     from apxm.execution import _find_apxm_binary
 
@@ -599,11 +610,41 @@ def test_find_apxm_binary_falls_back_to_repo_checkout(monkeypatch, tmp_path):
     assert _find_apxm_binary() == str(binary)
 
 
+def test_find_apxm_binary_prefers_release_checkout_binary(monkeypatch, tmp_path):
+    from apxm.execution import _find_apxm_binary
+
+    release_binary = tmp_path / "target" / "release" / "apxm"
+    debug_binary = tmp_path / "target" / "debug" / "apxm"
+    release_binary.parent.mkdir(parents=True)
+    debug_binary.parent.mkdir(parents=True)
+    release_binary.write_text("", encoding="utf-8")
+    debug_binary.write_text("", encoding="utf-8")
+
+    monkeypatch.delenv(ENV_APXM_BIN, raising=False)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("shutil.which", lambda _name: None)
+
+    assert _find_apxm_binary() == str(release_binary)
+
+
 def test_subprocess_env_for_checkout_binary_includes_lib_dir(tmp_path):
     from apxm.execution import _subprocess_env_for_apxm
 
     binary = tmp_path / "target" / "debug" / "apxm"
     lib_dir = tmp_path / "target" / "debug" / "lib"
+    lib_dir.mkdir(parents=True)
+    binary.parent.mkdir(parents=True, exist_ok=True)
+    binary.write_text("", encoding="utf-8")
+
+    env = _subprocess_env_for_apxm(str(binary))
+    assert env["LD_LIBRARY_PATH"].split(":")[0] == str(lib_dir)
+
+
+def test_subprocess_env_for_release_checkout_binary_includes_lib_dir(tmp_path):
+    from apxm.execution import _subprocess_env_for_apxm
+
+    binary = tmp_path / "target" / "release" / "apxm"
+    lib_dir = tmp_path / "target" / "release" / "lib"
     lib_dir.mkdir(parents=True)
     binary.parent.mkdir(parents=True, exist_ok=True)
     binary.write_text("", encoding="utf-8")

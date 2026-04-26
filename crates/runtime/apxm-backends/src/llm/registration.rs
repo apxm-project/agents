@@ -333,8 +333,8 @@ mod tests {
             api_key: None,
             headers: HashMap::from([("x-tenant".to_string(), "lab".to_string())]),
             models: vec![ModelConfig {
-                id: "DataPilot/ArrowMint-Gemma3-4B-ChocoMint-instruct-v0.2".to_string(),
-                aliases: vec!["gemma-smoke".to_string()],
+                id: "example/local-model".to_string(),
+                aliases: vec!["local-smoke".to_string()],
                 context_window: 8192,
                 cost_per_1k_input: 0.0,
                 cost_per_1k_output: 0.0,
@@ -362,14 +362,14 @@ mod tests {
         assert_eq!(registration.api_key, "");
         assert_eq!(
             registration.models.first().map(|model| model.id.as_str()),
-            Some("DataPilot/ArrowMint-Gemma3-4B-ChocoMint-instruct-v0.2")
+            Some("example/local-model")
         );
         assert_eq!(
             registration
                 .models
                 .first()
                 .map(|model| model.aliases.clone()),
-            Some(vec!["gemma-smoke".to_string()])
+            Some(vec!["local-smoke".to_string()])
         );
         assert_eq!(registration.auto_tool_choice, Some(false));
         assert_eq!(

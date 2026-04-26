@@ -26,9 +26,8 @@ from apxm import (
     emit_air_if_requested,
     find_repo_root,
     local_apxm_path,
-    repo_path,
 )
-from apxm.constants import ENV_APXM_BIN, ENV_APXM_MOCK_BACKEND, ENV_FLAG_ENABLED
+from apxm.constants import ENV_APXM_MOCK_BACKEND, ENV_FLAG_ENABLED
 
 
 REPO_ROOT = find_repo_root()
@@ -103,7 +102,6 @@ def _read_hook_events() -> list[dict[str, str]]:
 
 def main() -> None:
     os.environ.setdefault(ENV_APXM_MOCK_BACKEND, ENV_FLAG_ENABLED)
-    os.environ.setdefault(ENV_APXM_BIN, str(repo_path("target", "debug", "apxm")))
     os.chdir(REPO_ROOT)
     _clean_artifacts()
 

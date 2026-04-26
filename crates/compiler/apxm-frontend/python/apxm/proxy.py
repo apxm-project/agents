@@ -4,7 +4,7 @@ import inspect
 import json
 import os
 import re
-from typing import TYPE_CHECKING, Any, Iterable
+from typing import TYPE_CHECKING, Any, Iterable, Mapping
 
 if TYPE_CHECKING:
     from ._generated.agents import AgentRef
@@ -63,6 +63,7 @@ class GraphRecorder:
         # that was already bound) emits a duplicate SPAWN_AGENT, which the
         # runtime rejects with "Agent already exists in process table".
         self._bound_agents: dict[str, Any] = {}
+        self._agent_session_nodes: dict[str, NodeRef] = {}
         self._default_policy = _coerce_node_policy(policy)
 
     def _auto_name(self, op_type: str) -> str:
@@ -88,7 +89,12 @@ class GraphRecorder:
             GraphEdge(from_id=from_ref._node_id, to_id=to_ref._node_id, dependency=dependency)
         )
 
-    def _resolve_template_refs(self, template: str) -> tuple[str, list[tuple[str, NodeRef]]]:
+    def _resolve_template_refs(
+        self,
+        template: str,
+        *,
+        template_scope: Mapping[str, Any] | None = None,
+    ) -> tuple[str, list[tuple[str, NodeRef]]]:
         """Collect auto-wire edges from `{name}` placeholders in template.
 
         Walks the caller's local scope to look up each `{name}`. For each
@@ -104,17 +110,19 @@ class GraphRecorder:
         Returns:
             (template_unchanged, [(name, NodeRef), ...] in edge order)
         """
-        caller_frame = inspect.currentframe()
-        if caller_frame is None:
-            return template, []
+        if template_scope is None:
+            caller_frame = inspect.currentframe()
+            if caller_frame is None:
+                return template, []
 
-        caller_locals: dict[str, Any] = {}
-        try:
-            # _resolve_template_refs -> ask/think/etc -> user code
-            if caller_frame.f_back and caller_frame.f_back.f_back:
-                caller_locals = caller_frame.f_back.f_back.f_locals
-        finally:
-            del caller_frame
+            caller_locals: Mapping[str, Any] = {}
+            try:
+                if caller_frame.f_back and caller_frame.f_back.f_back:
+                    caller_locals = caller_frame.f_back.f_back.f_locals
+            finally:
+                del caller_frame
+        else:
+            caller_locals = template_scope
 
         pairs: list[tuple[str, NodeRef]] = []
         seen: set[str] = set()
@@ -973,6 +981,7 @@ class GraphRecorder:
         target_agent: str | None = None,
         message: str | None = None,
         protocol: str | None = None,
+        _template_scope: Mapping[str, Any] | None = None,
         **attributes: Any,
     ) -> NodeRef:
         """Send a message to another agent (COMMUNICATE)."""
@@ -984,7 +993,10 @@ class GraphRecorder:
             raise ValueError("communicate() missing required keyword argument: 'message'")
 
         # Auto-wire: resolve {var_name} to NodeRef
-        resolved_message, auto_pairs = self._resolve_template_refs(message)
+        resolved_message, auto_pairs = self._resolve_template_refs(
+            message,
+            template_scope=_template_scope,
+        )
 
         attrs: dict[str, Any] = {
             graph_keys.RECIPIENT: target_agent,
@@ -1000,6 +1012,11 @@ class GraphRecorder:
         # Create auto-wire edges (in input_names order)
         for _name, ref in auto_pairs:
             self.add_edge(ref, node)
+
+        session_node = self._agent_session_nodes.get(target_agent)
+        if session_node is not None:
+            self.add_edge(session_node, node, dependency=graph_keys.DEPENDENCY_DATA)
+            self._agent_session_nodes[target_agent] = node
 
         return node
 
@@ -1261,7 +1278,9 @@ class GraphRecorder:
         if goals is not None:
             attrs[graph_keys.GOALS] = _normalize_value(goals)
         attrs = self._apply_policy(attrs, attributes)
-        return self._add_node(name, graph_keys.OP_SPAWN_AGENT, attrs)
+        node = self._add_node(name, graph_keys.OP_SPAWN_AGENT, attrs)
+        self._agent_session_nodes[agent_name] = node
+        return node
 
     def register_capability(
         self,
