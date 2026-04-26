@@ -13,7 +13,7 @@ module {
     ais.print "=== USER-VISIBLE OUTPUT (Critical Path) ===\n\n{critical_final}\n\nThis is the CRITICAL PATH result that the user sees.\nWith priority scheduling, this should complete FIRST,\neven if background tasks are still running." [%critical_final : !ais.token]
     ais.print "=== BACKGROUND ANALYTICS (Low Priority) ===\n\nNaming conventions: {bg_task_1}\n\nAuthentication: {bg_task_2}\n\nDatabase choice: {bg_task_3}\n\nCaching strategy: {bg_task_4}\n\nMonitoring: {bg_task_5}\n\nThis background work completed after the critical path." [%bg_naming_analysis, %bg_auth_research, %bg_database_analysis, %bg_caching_research, %bg_monitoring_analysis : !ais.token, !ais.token, !ais.token, !ais.token, !ais.token]
     %all_done = ais.wait_all %critical_final, %bg_naming_analysis : !ais.token, !ais.token -> !ais.token
-    ais.print "=== PRIORITY SCHEDULING STRESS TEST ===\n\nCritical path (ask→think→reason→final): COMPLETED\nBackground tasks (5 parallel speculative nodes): COMPLETED\n\nO0: All 9 nodes scheduled with equal priority (random order)\nO2: Critical path prioritized → faster user-visible response\n\nMetric: Critical path completion time should be LOWER in O2 under contention."
+    ais.print "=== PRIORITY SCHEDULING STRESS TEST ===\n\nCritical path (ask→think→reason→final): COMPLETED\nBackground tasks (5 parallel speculative nodes): COMPLETED\n\nO0: all nodes scheduled without priority hints\nO2: critical path receives priority hints\n\nMetric: compare critical-path completion time under measured contention."
     func.return %all_done : !ais.token
   }
 }

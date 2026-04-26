@@ -57,14 +57,14 @@ Create `crates/runtime/apxm-backends/src/llm/backends/my_protocol.rs`:
 
 ```bash
 dekk apxm codegen frontend      # Updates providers.py
-dekk apxm codegen typescript     # Updates generated.ts
+dekk apxm codegen typescript    # Updates generated.ts
 ```
 
 ### 5. Register and test
 
 ```bash
-apxm backend add my-key --type cloud --protocol my-protocol --api-key sk-...
-apxm backend test my-key
+dekk apxm backend add my-key --type cloud --protocol my-protocol --api-key <API_KEY>
+dekk apxm backend test my-key
 ```
 
 ## Key Files

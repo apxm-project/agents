@@ -1,22 +1,21 @@
 #!/usr/bin/env python3
-"""prefix_fanout_large.py - Benchmark for Prompt Canonicalization + Prefix Reuse
+"""prefix_fanout_large.py - Large shared-prefix benchmark source
 
-Tests: PromptCanonicalization optimization pass with large shared context
-Measures: Shared prefix reuse across parallel fan-out operations
+Tests: shared-prefix analysis with a large shared context.
+Measures: emitted graph hints, backend cache telemetry, and wall-clock results.
 
 Graph structure: 1 large context (4000 tokens), 8-way fan-out for different reviews
-- O0: Each review gets full context → 8 × 4000 = 32,000 tokens prefilled
-- O2 with PromptCanonicalization: Shared prefix → 1 × 4000 + 8 × small suffix ≈ 5,000 tokens
+- O0: each review sends the full context independently.
+- O2: compiler emits shared-prefix hints when it can prove the common prefix.
 
 Metrics:
-- Total prefill tokens (should drop from ~32k to ~5k)
-- Prefix cache hit rate (7/8 reviews should hit cache)
-- Total execution time (should improve with KV-cache reuse)
-- Token savings percentage (~84% reduction expected)
+- Prefill and cached input tokens reported by the backend
+- Shared-prefix graph telemetry
+- Total execution time
 
 Usage:
-  dekk apxm execute prefix_fanout_large.air -O0  # No canonicalization (32k tokens)
-  dekk apxm execute prefix_fanout_large.air -O2  # With canonicalization (~5k tokens)
+  dekk apxm execute examples/python/_benchmarks/prefix_fanout_large.py -O0
+  dekk apxm execute examples/python/_benchmarks/prefix_fanout_large.py -O2
 """
 
 from apxm import compile, GraphRecorder
@@ -354,9 +353,8 @@ SUMMARY:
         "Accessibility: {review_accessibility}\n\n"
         "---\n"
         "This workflow sent a 4000-token context to 8 parallel review nodes.\n"
-        "O0: 8 \u00d7 4000 = 32,000 tokens prefilled\n"
-        "O2 with PromptCanonicalization: 1 \u00d7 4000 + 8 \u00d7 100 \u2248 4,800 tokens\n"
-        "Token savings: ~84% reduction via KV-cache prefix reuse"
+        "O0: each review sends the full context independently\n"
+        "O2: shared-prefix hints and backend cache telemetry must be measured"
     )
     # Control edge keeps the merge as a synchronization barrier.
     g.add_edge(final_report, output, dependency="Control")
@@ -365,7 +363,7 @@ SUMMARY:
 
 
 if __name__ == "__main__":
-    # Output the graph as JSON
+    # Output AIR.
     print(prefix_fanout_large._graph.to_air())
     # To execute directly:
     # import apxm

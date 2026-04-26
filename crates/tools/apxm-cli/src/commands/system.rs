@@ -1,4 +1,4 @@
-//! System / environment commands (init, doctor, install, activate).
+//! System commands for project initialization and environment diagnostics.
 
 use std::env;
 use std::path::PathBuf;
@@ -16,111 +16,6 @@ use super::implementations::load_config;
 use super::implementations::{
     Status, print_hint, print_section_header, print_status_line, print_subsection_header,
 };
-
-pub fn activate_command(shell: &str) -> Result<()> {
-    let prefix = detect_conda_prefix().ok_or_else(|| {
-        anyhow::anyhow!("Could not detect conda prefix. Activate your env or install it first.")
-    })?;
-
-    match shell {
-        "sh" | "bash" | "zsh" => {
-            println!(
-                "export MLIR_DIR={}",
-                prefix.join("lib/cmake/mlir").display()
-            );
-            println!(
-                "export LLVM_DIR={}",
-                prefix.join("lib/cmake/llvm").display()
-            );
-            println!("export MLIR_PREFIX={}", prefix.display());
-            println!("export LLVM_PREFIX={}", prefix.display());
-            println!("export PATH={}/bin:$PATH", prefix.display());
-        }
-        "fish" => {
-            println!(
-                "set -gx MLIR_DIR {}",
-                prefix.join("lib/cmake/mlir").display()
-            );
-            println!(
-                "set -gx LLVM_DIR {}",
-                prefix.join("lib/cmake/llvm").display()
-            );
-            println!("set -gx MLIR_PREFIX {}", prefix.display());
-            println!("set -gx LLVM_PREFIX {}", prefix.display());
-            println!("set -gx PATH {}/bin $PATH", prefix.display());
-        }
-        _ => {
-            return Err(anyhow::anyhow!(
-                "Unsupported shell '{}'. Use sh, bash, zsh, or fish.",
-                shell
-            ));
-        }
-    }
-
-    Ok(())
-}
-
-pub fn install_command() -> Result<()> {
-    print_section_header("APXM Install");
-
-    if !command_available("mamba") {
-        print_status_line("mamba", Status::Error, "not found");
-        return Err(anyhow::anyhow!(
-            "mamba not found in PATH. Install mamba first."
-        ));
-    }
-
-    print_status_line("mamba", Status::Ok, "found");
-    let installer = "mamba";
-
-    print_status_line("env", Status::Ok, "creating/updating");
-
-    let create_status = std::process::Command::new(installer)
-        .args(["env", "create", "-f", "environment.yaml"])
-        .status()
-        .map_err(|e| anyhow::anyhow!("Failed to run {installer}: {e}"))?;
-
-    if !create_status.success() {
-        let update_status = std::process::Command::new(installer)
-            .args(["env", "update", "-f", "environment.yaml", "-n", "apxm"])
-            .status()
-            .map_err(|e| anyhow::anyhow!("Failed to run {installer}: {e}"))?;
-
-        if !update_status.success() {
-            return Err(anyhow::anyhow!(
-                "{installer} env create/update failed. Check output."
-            ));
-        }
-    }
-
-    print_status_line("env", Status::Ok, "ready");
-
-    // Backend registration guidance after env setup
-    println!();
-    print_subsection_header("Backend Registration");
-    print_hint(&format!(
-        "Register a backend explicitly with `{}`.",
-        dekk_hints::BACKEND_ADD_GENERIC
-    ));
-    print_hint(
-        "If the backend needs authentication, attach it during backend registration instead of relying on ad hoc shell hints.",
-    );
-
-    println!();
-    print_subsection_header("Next Steps");
-    println!("{}", dekk_hints::BACKEND_ADD_GENERIC);
-    println!("{}", dekk_hints::DOCTOR);
-
-    Ok(())
-}
-
-pub fn command_available(cmd: &str) -> bool {
-    std::process::Command::new(cmd)
-        .arg("--version")
-        .output()
-        .map(|output| output.status.success())
-        .unwrap_or(false)
-}
 
 pub fn init_command(name: &str) -> Result<()> {
     let base = PathBuf::from(name);

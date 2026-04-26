@@ -64,10 +64,11 @@ Keep backend identity separate from model identity:
 - `<SERVED_MODEL_ID>` is what `/v1/models` reports and what APXM stores for
   routing.
 
-There is no APXM/vLLM default model. Gemma is a validated example model, not a
-special APXM backend or required model. Local model directories, Hugging Face
-ids, and other vLLM-supported sources should keep their actual served ids
-visible in APXM config and examples.
+There is no APXM/vLLM default model. Public docs should use `<MODEL_REF>` and
+`<SERVED_MODEL_ID>` placeholders unless they are explicitly showing a local
+operator example. Local model directories, Hugging Face ids, and other
+vLLM-supported sources should keep their actual served ids visible in APXM
+config and examples.
 
 ## Metrics Boundary
 

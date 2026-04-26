@@ -58,26 +58,19 @@ Add `pub mod <new_op>;` in alphabetical order.
 1. Add match arm: `AISOperationType::NewOp => new_op::execute(ctx, node, inputs).await,`
 2. Update `all_operations_covered` test count (currently 39)
 
-## Step 6: MLIR lowering
-
-**File**: `crates/apxm-graph/src/lower_mlir.rs`
-
-Add match arm in `lower_node()`. Read the file and follow the pattern of a similar op.
-
-## Step 7: C++ compiler (skip if Rust-only)
+## Step 6: C++ compiler (skip if Rust-only)
 
 - `crates/compiler/apxm-compiler/mlir/lib/Dialect/AIS/Conversion/Artifact/ArtifactEmitter.cpp` — add `OperationKind` enum value + `.Case<>()` in `mapOperation()`
 - `crates/compiler/apxm-compiler/mlir/include/ais/Dialect/AIS/IR/AISOps.td` — add TableGen op def
 
-## Step 8: Docs
+## Step 7: Docs
 
-**File**: `docs/implementation/internals/contracts.md`
-
-Add row to wire index table (section 1.1) or Rust-only table (section 1.2).
+Update the AIS operation docs and generated frontend bindings so the new
+operation is visible through `dekk apxm ops`.
 
 ## Verify
 
 ```bash
-cargo build -p apxm-ais -p apxm-core -p apxm-runtime -p apxm-graph
-cargo test -p apxm-ais -p apxm-runtime -p apxm-graph
+dekk apxm build
+dekk apxm test
 ```

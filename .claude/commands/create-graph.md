@@ -21,18 +21,17 @@ dekk apxm template list
 If a template matches the workflow pattern, fetch it:
 
 ```bash
-dekk apxm template show <template-name> --json
+dekk apxm template show <template-name> > flows/<name>.air
 ```
 
-Use this as the starting skeleton. If no template fits, start from the minimal graph structure:
+Use this as the starting skeleton. If no template fits, start from a minimal AIR module:
 
-```json
-{
-  "name": "...",
-  "nodes": [],
-  "edges": [],
-  "parameters": [],
-  "metadata": {}
+```mlir
+module {
+  func.func @main() -> !ais.token attributes {ais.entry} {
+    %answer = ais.ask "Replace this prompt" : !ais.token
+    func.return %answer : !ais.token
+  }
 }
 ```
 
@@ -44,20 +43,15 @@ For each step in the workflow, create a node with the appropriate AIS operation.
 dekk apxm ops show <OP_NAME>
 ```
 
-Each node needs: `id` (unique int), `name` (descriptive), `op` (AIS operation name), `attributes` (op-specific).
+Each node is an AIS MLIR operation. Use descriptive SSA names and operation-specific attributes.
 
 ## Step 4: Design edges
 
-Connect nodes with edges. Each edge has:
-- `from`: source node id
-- `to`: target node id
-- `dependency`: one of `Data`, `Control`, `Effect`
-
-Use `Data` for value flow, `Control` for ordering, `Effect` for side-effect ordering.
+Connect nodes with SSA operands for data flow. Use the operation form documented by `dekk apxm ops show <OP_NAME>`.
 
 ## Step 5: Write the graph file
 
-Write the complete graph JSON to the user's chosen path (default: `flows/<name>.json`).
+Write the complete AIR source to the user's chosen path (default: `flows/<name>.air`).
 
 ## Step 6: Validate
 

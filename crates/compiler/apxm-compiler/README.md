@@ -4,7 +4,7 @@ MLIR-based compiler for the APXM graph contract and AIS MLIR dialect.
 
 ## Overview
 
-`apxm-compiler` compiles APXM workflows through an MLIR-based pipeline. It parses `.air` (MLIR text) or JSON graph inputs, builds an intermediate `AirModule` representation, lowers to the AIS MLIR dialect, applies optimization passes, and generates executable `.apxmobj` artifacts.
+`apxm-compiler` compiles APXM workflows through an MLIR-based pipeline. It parses canonical AIR (MLIR text), builds an intermediate `AirModule` representation where needed, lowers to the AIS MLIR dialect, applies optimization passes, and generates executable `.apxmobj` artifacts. Python frontend sources are compiled by first emitting AIR.
 
 ```
 Python (@compile)
@@ -61,7 +61,7 @@ contracts are enforced.
 - `prompt-canonicalization` -- explicit-only prefix-cache layout experiment
 - `condense-ops` -- explicit-only memory batching experiment
 - `schema-narrowing` -- explicit-only field narrowing experiment
-- canonicalizer, CSE, and symbol-DCE (standard MLIR passes)
+- canonicalizer and symbol-DCE (standard MLIR passes); generic CSE remains explicit-only
 
 ## MLIR Dialect
 
@@ -127,7 +127,7 @@ Optimized MLIR  →  apxm_codegen_emit_artifact() [FFI]  →  ExecutionDag  → 
 
 ## Requirements
 
-- LLVM 21 / MLIR 21 (via conda: `environment.yaml`)
+- LLVM 22 / MLIR 22 (managed by Dekk)
 - CMake 3.20+
 - C++17 compiler
 

@@ -33,14 +33,14 @@ dekk apxm codegen typescript     # Updates generated.ts (ALL_AGENTS)
 
 ```bash
 # CLI shows the new agent
-apxm agent templates
+dekk apxm agent templates
 
-# Python binding exists
-python -c "from apxm._generated.agents import ALL_AGENTS; print([a.name for a in ALL_AGENTS])"
+# Python binding tests still pass
+dekk apxm test-python-frontend
 
 # Register and test
-apxm agent add my-agent
-apxm agent test my-agent
+dekk apxm agent add my-agent
+dekk apxm agent test my-agent
 ```
 
 ## Key Files

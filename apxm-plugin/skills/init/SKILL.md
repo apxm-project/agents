@@ -19,7 +19,7 @@ dekk apxm init my-project         # create my-project/ with scaffolded structure
 ```
 my-project/
   agents/       # agent profile definitions
-  flows/        # workflow graph JSON files
+  flows/        # workflow AIR files
   nodes/        # reusable node fragments
   prompts/      # prompt templates
   tools/        # external tool definitions
@@ -29,4 +29,4 @@ my-project/
 ## When to Use
 
 - Starting a new agent workflow project from scratch
-- When you want the conventional directory layout that `compile` understands (it can auto-discover graphs from `flows/` and `nodes/`)
+- When you want the conventional directory layout for organizing graph sources, node fragments, prompts, and tools

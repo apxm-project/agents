@@ -44,7 +44,7 @@ dekk apxm explain graph.air --json    # structured JSON output
 
 - `dekk apxm analyze graph.air` — quantitative parallelism analysis and speedup estimates
 - `dekk apxm validate graph.air` — structural validation
-- `dekk apxm view graph.air` — interactive visual graph explorer
+- `dekk apxm gui graph.air --open` — interactive visual graph explorer
 - `dekk apxm ops show ASK` — detailed info about a specific AIS operation
 
 ## When to Use
@@ -52,4 +52,4 @@ dekk apxm explain graph.air --json    # structured JSON output
 - Understanding an unfamiliar graph written by someone else
 - Generating documentation for a workflow
 - Reviewing data flow and dependency structure in text form
-- As a complement to `view` when you prefer text over visual
+- As a complement to `gui` when you prefer text over visual

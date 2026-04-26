@@ -1,20 +1,20 @@
 ---
 name: validate
-description: Validate a graph JSON against the AIS contract
+description: Validate an AIR graph against the AIS contract
 user-invocable: true
 ---
 
 # Validate
 
-Checks a graph JSON file against the AIS (Agent Instruction Set) contract without compiling it. This is a fast, static check that catches structural errors — invalid operations, missing attributes, broken edges, cycles — before you spend time on compilation. Think of it as the "linter" for agent workflows.
+Checks an AIR graph against the AIS (Agent Instruction Set) contract without running it. This is a fast, static check that catches structural errors — invalid operations, missing attributes, broken edges, cycles — before you spend time on execution. Think of it as the "linter" for agent workflows.
 
 Validation is the first thing to run after editing a graph. If `validate` passes, the graph is structurally sound and ready for `compile` or `execute`.
 
 ## Commands
 
 ```bash
-dekk apxm validate graph.ais              # human-readable validation output
-dekk apxm validate graph.ais --json       # machine-readable JSON (for tooling)
+dekk apxm validate graph.air              # human-readable validation output
+dekk apxm validate graph.air --json       # machine-readable JSON (for tooling)
 ```
 
 ## What Gets Checked
@@ -39,11 +39,11 @@ dekk apxm validate graph.ais --json       # machine-readable JSON (for tooling)
 
 **Human-readable** (default):
 ```
-✓ graph.ais — valid
+✓ graph.air — valid
 ```
 or:
 ```
-✗ graph.ais — 2 errors
+✗ graph.air — 2 errors
   ✗ node 'greeting' (id=1, op=ASK) missing required attribute 'template_str'
   ✗ edge 5->10 references non-existent source node 5
 ```
@@ -51,7 +51,7 @@ or:
 **JSON** (`--json`):
 ```json
 {
-  "file": "graph.ais",
+  "file": "graph.air",
   "valid": false,
   "errors": ["node 'greeting' (id=1, op=ASK) missing required attribute 'template_str'"],
   "warnings": []
@@ -62,14 +62,14 @@ Exit code is 0 if valid, non-zero if errors. Warnings do not affect the exit cod
 
 ## Related Commands
 
-- `dekk apxm analyze graph.ais` — parallelism analysis, critical path, speedup estimate
-- `dekk apxm explain graph.ais` — human-readable walkthrough of what the graph does
+- `dekk apxm analyze graph.air` — parallelism analysis, critical path, speedup estimate
+- `dekk apxm explain graph.air` — human-readable walkthrough of what the graph does
 - `dekk apxm ops show ASK` — see required/optional attributes for any operation
-- `dekk apxm view graph.ais` — interactive visual graph explorer
+- `dekk apxm gui graph.air --open` — interactive visual graph explorer
 
 ## When to Use
 
-- After editing a graph JSON, before compiling
+- After editing an AIR graph, before compiling
 - In CI pipelines as a fast pre-compilation check
 - When debugging "why won't my graph compile" — validate first to isolate structural issues
 - With `--json` for integration into automated tooling

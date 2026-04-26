@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""shared_prefix_fanout.py - Benchmark for prefix reuse optimization
+"""shared_prefix_fanout.py - Shared-prefix benchmark source
 
-Tests: PromptCanonicalization pass - shared prefix across parallel nodes
-Measures: Prefix cache hit rate, total latency vs sequential execution
+Tests: compiler-emitted shared-prefix hints across parallel nodes.
+Measures: emitted graph hints, backend cache telemetry, and total latency.
 
 Usage:
-  dekk apxm execute shared_prefix_fanout.air -O0  # No optimization
-  dekk apxm execute shared_prefix_fanout.air -O2  # With PromptCanonicalization
+  dekk apxm execute examples/python/_benchmarks/shared_prefix_fanout.py -O0
+  dekk apxm execute examples/python/_benchmarks/shared_prefix_fanout.py -O2
 """
 
 from apxm import compile, GraphRecorder
@@ -112,7 +112,7 @@ def shared_prefix_fanout(g: GraphRecorder):
 
 
 if __name__ == "__main__":
-    # Output the graph as JSON
+    # Output AIR.
     print(shared_prefix_fanout._graph.to_air())
     # To execute directly:
     # import apxm

@@ -7,7 +7,7 @@ imperative orchestration code, you declare *what* your agents should do and the
 compiler figures out *how* to run it efficiently:
 
 - **Implicit parallelism** -- independent nodes run concurrently without manual threading
-- **Compiler optimizations** -- CSE, dead context elimination, template specialization
+- **Compiler optimizations** -- prompt construction, dead context elimination, template specialization, scheduling hints, and graph metrics
 - **Multi-agent coordination** -- native spawn, communicate, and team primitives
 - **Multi-provider routing** -- assign the right model to each task (fast, powerful, local)
 
@@ -16,7 +16,7 @@ compiler figures out *how* to run it efficiently:
 ```bash
 # From project root
 dekk apxm doctor
-dekk apxm execute examples/python/getting-started/hello.py
+dekk apxm compile examples/python/getting-started/tool_use.py -o /tmp/apxm-tool-use.apxmobj
 ```
 
 Use Dekk for normal runs. It sets up the APXM environment consistently across
@@ -41,7 +41,7 @@ Optional, depending on the example:
   `codex` profile launches `npx @zed-industries/codex-acp@^0.10.0`.
 - The APXM vLLM fork for `self-hosted/vllm_graph_smoke.py`; see
   `docs/backends/vllm.md`.
-- `jq`, `rg`, and `marp` only for inspection/reporting commands that mention
+- `jq` and `rg` only for inspection/reporting commands that mention
   them.
 
 For backend-free validation, prefer compile-only checks or examples that set
@@ -63,7 +63,7 @@ dekk apxm run hello.apxmobj
 
 1. **[getting-started/](python/getting-started/)** -- First contact: hello world, tool use
 2. **[parallelism/](python/parallelism/)** -- Fan-out patterns, implicit DAG scheduling
-3. **[optimization/](python/optimization/)** -- Compiler passes: CSE, DCE, template specialization
+3. **[optimization/](python/optimization/)** -- Compiler passes, graph hints, and metrics
 4. **[multi-agent/](python/multi-agent/)** -- Spawn, communicate, team coordination
 5. **[multi-provider/](python/multi-provider/)** -- Route tasks to different models
 6. **[memory/](python/memory/)** -- Three-tier memory and RAG

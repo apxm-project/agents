@@ -7,12 +7,12 @@ Measures: Removal of unused context from LLM prompts to save tokens
 Graph structure: 5 upstream nodes producing context, 1 downstream think node
 referencing only the database context.
 - O0: All 5 contexts passed to LLM (~5000 tokens wasted on unused context)
-- O2 with DeadContextElimination: Only the database context passed (~4000 tokens saved)
+- O2 with DeadContextElimination: only referenced context is retained statically
 
 Metrics:
 - Total input tokens (should drop significantly from O0 to O2)
 - Number of context inputs wired to downstream node
-- Token savings percentage
+- Static context payload reduction
 
 Usage:
   dekk apxm execute dead_context_stress.air -O0  # No elimination (all 5 contexts sent)
@@ -226,15 +226,14 @@ List the top 3 entities and their relationships in 2-3 sentences.
         "This workflow created 5 large context chunks (~1000 tokens each).\n"
         "The downstream 'analysis' node only references context_1 in its template.\n\n"
         "O0: All 5 contexts sent to LLM (~5000 tokens)\n"
-        "O2 with DeadContextElimination: Only context_1 sent (~1000 tokens)\n"
-        "Token savings: ~80% reduction in input tokens"
+        "O2 with DeadContextElimination: only referenced context retained statically"
     )
 
     g.done(output)
 
 
 if __name__ == "__main__":
-    # Output the graph as JSON
+    # Output AIR.
     print(dead_context_stress._graph.to_air())
     # To execute directly:
     # import apxm

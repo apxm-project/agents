@@ -342,7 +342,7 @@ async fn read_graph_content(path: &std::path::Path) -> Result<String, AppError> 
     }
 }
 
-/// Parse file content into graph JSON — auto-detects MLIR text vs JSON.
+/// Parse file content into the GUI graph data shape.
 fn parse_graph_content(content: &str) -> Result<serde_json::Value, AppError> {
     let trimmed = content.trim_start();
     let is_mlir = trimmed.starts_with("module") || trimmed.starts_with("func.func");
@@ -359,7 +359,7 @@ fn parse_graph_content(content: &str) -> Result<serde_json::Value, AppError> {
         let val: serde_json::Value = serde_json::from_str(content).map_err(|e| {
             AppError(
                 StatusCode::BAD_REQUEST,
-                format!("failed to parse graph JSON: {e}"),
+                format!("failed to parse graph data: {e}"),
             )
         })?;
         // Validate it has the expected shape
@@ -1775,7 +1775,7 @@ async fn validate_handler(
 // Decompile handler
 // ---------------------------------------------------------------------------
 
-/// POST /api/decompile — reverse-map a compiled artifact back to graph JSON.
+/// POST /api/decompile — reverse-map a compiled artifact back to AIR.
 async fn decompile_handler(
     axum::extract::Json(req): axum::extract::Json<serde_json::Value>,
 ) -> ApiResult<impl IntoResponse> {

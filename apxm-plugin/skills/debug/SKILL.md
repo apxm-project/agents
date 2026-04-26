@@ -44,4 +44,4 @@ dekk apxm execute graph.air --emit-metrics metrics.json
 
 ## References
 
-- [Debugging Guide](docs/guides/debugging.md)
+- Run `dekk apxm execute graph.air --emit-metrics metrics.json` for runtime metrics

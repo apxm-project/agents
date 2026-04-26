@@ -6,7 +6,7 @@ user-invocable: true
 
 # Analyze
 
-Performs dataflow analysis on a graph JSON to reveal its parallelism structure. Computes execution phases (groups of nodes that can run concurrently), identifies the critical path (longest dependency chain that bounds total execution time), and estimates the speedup from parallel execution versus sequential.
+Performs dataflow analysis on an AIR graph to reveal its parallelism structure. Computes execution phases (groups of nodes that can run concurrently), identifies the critical path (longest dependency chain that bounds total execution time), and estimates the speedup from parallel execution versus sequential.
 
 This is the "profiler" for graph design — it tells you how well your workflow exploits parallelism before you run it.
 
@@ -47,7 +47,7 @@ Analysis uses BFS layering over the DAG. Nodes are grouped into phases based on 
 
 - `dekk apxm validate graph.air` — structural validation (run before analyze)
 - `dekk apxm explain graph.air` — human-readable walkthrough of what the graph does
-- `dekk apxm view graph.air` — interactive visual graph explorer
+- `dekk apxm gui graph.air --open` — interactive visual graph explorer
 
 ## When to Use
 

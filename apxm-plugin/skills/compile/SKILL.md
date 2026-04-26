@@ -1,12 +1,12 @@
 ---
 name: compile
-description: Compile a graph JSON into an optimized .apxmobj artifact
+description: Compile an AIR graph into an optimized .apxmobj artifact
 user-invocable: true
 ---
 
 # Compile
 
-Takes a Python graph, AIR/MLIR source, graph JSON, or project directory and compiles it through the MLIR-based optimization pipeline into a `.apxmobj` binary artifact. This is the "compiler" half of APXM: it parses your workflow, lowers it to the AIS MLIR dialect, runs production-safe optimization passes, and emits a deterministic, hash-verified binary.
+Takes a Python frontend graph, `.air` source, or project directory and compiles it through the MLIR-based optimization pipeline into a `.apxmobj` binary artifact. This is the "compiler" half of APXM: it parses your workflow, lowers it to the AIS MLIR dialect, runs production-safe optimization passes, and emits a deterministic, hash-verified binary.
 
 The compiled artifact is self-contained: it includes all DAGs, sub-flows, parameter schemas, and metadata needed for execution. Artifacts are content-addressable — identical source graphs produce byte-identical artifacts.
 
@@ -32,7 +32,7 @@ dekk apxm compile myproject/                           # compile all graphs in a
 
 ## Compilation Pipeline
 
-1. **Load** — Parse graph JSON (or discover and merge `.air` files from a directory)
+1. **Load** — Parse AIR source (or discover the project entry `.air` from a directory)
 2. **Lower** — Convert `ApxmGraph` to AIS dialect MLIR with type inference and verifier attachment
 3. **Parse** — Feed MLIR text through the MLIR parser
 4. **Verify** — Run MLIR verifiers (type checking, latency budget validation, capability existence)

@@ -109,7 +109,6 @@ unless the note explicitly says they are implemented.
 
 - [design/guardrails_handoffs.md](design/guardrails_handoffs.md) — input/output
   guardrails and inter-agent handoffs as first-class AIR constructs
-- [design/sessions.md](design/sessions.md) — durable sessions and checkpoint scope
 
 ## Backend Guides
 

@@ -129,14 +129,6 @@ pub enum Commands {
     },
     /// Diagnose compiler/runtime dependencies
     Doctor,
-    /// Print shell exports for MLIR/LLVM env setup
-    Activate {
-        /// Shell format (sh, zsh, bash, fish)
-        #[arg(long, default_value = "sh")]
-        shell: String,
-    },
-    /// Install or update the conda environment from environment.yaml
-    Install,
     /// Manage inference backends (cloud/onprem/local)
     Backend {
         #[command(subcommand)]

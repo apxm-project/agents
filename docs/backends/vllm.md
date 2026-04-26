@@ -111,13 +111,12 @@ dekk apxm vllm start <MODEL_REF> \
   --wait
 ```
 
-For the internal Gemma 4 run, `<REASONING_PARSER>` is `gemma4`. That is an
-example parser selection, not an APXM default. `--enable-prompt-tokens-details`
-lets vLLM include prompt-cache details such as `cached_tokens` in
-OpenAI-compatible usage responses. Current vLLM chat-completion usage reports
-prompt-cache details, but reasoning-token detail is only reported when the
-served API response includes a provider detail field such as
-`completion_tokens_details.reasoning_tokens` or
+The parser value is model-specific and must be selected from the model server's
+supported reasoning parser list. `--enable-prompt-tokens-details` lets vLLM
+include prompt-cache details such as `cached_tokens` in OpenAI-compatible usage
+responses. Current vLLM chat-completion usage reports prompt-cache details, but
+reasoning-token detail is only reported when the served API response includes a
+provider detail field such as `completion_tokens_details.reasoning_tokens` or
 `output_tokens_details.reasoning_tokens`.
 
 ### 4. Probe The Running Server

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""fusion_stress.py - Legacy explicit benchmark source for ASK-chain mutation
+"""fusion_stress.py - Explicit benchmark source for ASK-chain mutation
 
-Tests: legacy FuseAskOps experiment
+Tests: FuseAskOps only when explicitly requested
 Measures: compile-time ASK-chain mutation when the pass is explicitly requested
 
 Graph structure: sequential ASK chain
@@ -23,7 +23,7 @@ from apxm import compile, GraphRecorder
 
 @compile()
 def fusion_stress(g: GraphRecorder):
-    """Sequential ASK chain to stress test the legacy explicit pass."""
+    """Sequential ASK chain to stress test the explicit pass."""
 
     # Start with initial question
     current = g.ask(
@@ -58,14 +58,14 @@ def fusion_stress(g: GraphRecorder):
     output = g.print(
         message="=== ASK-CHAIN STRESS TEST RESULT ===\n\n"
         "Final elaboration:\n{final}\n\n"
-        "This workflow is a legacy explicit FuseAskOps stress source."
+        "This workflow is an explicit FuseAskOps stress source."
     )
 
     g.done(output)
 
 
 if __name__ == "__main__":
-    # Output the graph as JSON
+    # Output AIR.
     print(fusion_stress._graph.to_air())
     # To execute directly:
     # import apxm

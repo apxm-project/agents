@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""shared_prefix.py -- Demonstrate shared prefix / KV-cache reuse
+"""shared_prefix.py -- Demonstrate shared-prefix graph hints
 
 A shared system prompt is prepended to 3 parallel specialized queries.
-The PromptCanonicalization pass reorders so the shared prefix comes
-first, enabling KV-cache reuse across the parallel branches.
+The compiler can emit shared-prefix hints for graph-aware backends. Backend
+cache behavior must be verified from emitted metrics.
 
 Usage: dekk apxm execute examples/python/optimization/shared_prefix.py
 """
@@ -13,7 +13,7 @@ from apxm import compile, GraphRecorder
 
 @compile()
 def shared_prefix_demo(g: GraphRecorder):
-    """Shared prefix -> 3 parallel queries. Compiler enables KV-cache reuse."""
+    """Shared prefix -> 3 parallel queries with backend-agnostic hints."""
 
     prefix = (
         "You are reviewing an authentication module. It uses bcrypt for "

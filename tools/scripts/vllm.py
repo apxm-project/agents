@@ -1091,7 +1091,7 @@ def _add_model_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--reasoning-parser",
         dest=ArgName.REASONING_PARSER.value,
-        help="Enable a vLLM reasoning parser, for example gemma4 for Gemma 4 thinking models",
+        help="Enable a model-specific vLLM reasoning parser",
     )
     parser.add_argument(
         "--default-chat-template-kwargs",

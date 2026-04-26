@@ -6,17 +6,17 @@ Measures: Critical path completion time under resource contention
 
 Graph structure: Critical path (ask→think→reason→final) vs 5 parallel background tasks
 - O0: All 9 nodes get equal scheduling priority (random order)
-- O2 with priority: Critical path nodes scheduled first (faster user-visible response)
+- O2: Critical path nodes receive priority hints
 
 Metrics:
 - Critical path completion time (time until 'final' node completes)
 - Background task completion time (time until all 5 background nodes complete)
 - Total execution time
-- Speedup of critical path (should improve under contention)
+- Critical-path improvement under measured backend contention
 
 Usage:
-  dekk apxm execute priority_scheduling.air -O0  # No priority (equal scheduling)
-  dekk apxm execute priority_scheduling.air -O2  # With priority (critical path first)
+  dekk apxm execute examples/python/_benchmarks/priority_scheduling.py -O0
+  dekk apxm execute examples/python/_benchmarks/priority_scheduling.py -O2
 """
 
 from apxm import compile, GraphRecorder
@@ -157,7 +157,7 @@ def priority_scheduling(g: GraphRecorder):
 
 
 if __name__ == "__main__":
-    # Output the graph as JSON
+    # Output AIR.
     print(priority_scheduling._graph.to_air())
     # To execute directly:
     # import apxm

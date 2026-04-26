@@ -702,7 +702,7 @@ mod tests {
             "test-key",
             Some(serde_json::json!({
                 "base_url": "http://localhost:8916/v1",
-                "model": "google/gemma-4-31B-it"
+                "model": "served-test-model"
             })),
         )
         .await

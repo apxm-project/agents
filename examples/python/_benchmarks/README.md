@@ -4,17 +4,17 @@ Internal performance tests for APXM compiler optimization passes.
 
 These benchmarks measure the effectiveness of specific compiler passes by
 comparing controlled compiler configurations. They are not intended as
-user-facing examples. Semantic ASK-chain rewrites are legacy explicit
-pass-list experiments, not O2 defaults or production claims.
+user-facing examples. Semantic ASK-chain rewrites are explicit pass-list
+experiments, not O2 defaults or production claims.
 
 ## Files
 
-- **fusion_stress.py** -- Legacy explicit-only ASK-chain mutation stress source
+- **fusion_stress.py** -- Explicit-only ASK-chain mutation stress source
 - **dead_context_stress.py** -- 5 contexts, 1 used, for DeadContextElimination
 - **shared_prefix_fanout.py** -- Shared prefix across 4 parallel nodes
 - **demo_code_critique.py** -- Composite code-critique benchmark graph for APXM x vLLM runs; checked in, but not yet a finalized measured talk asset
 - **prefix_fanout_large.py** -- Large-scale prefix sharing (stress test)
-- **cse_stress.py** -- Common subexpression elimination
+- **cse_stress.py** -- Explicit-pass CSE stress source
 - **memo_cache_stress.py** -- Memoization cache effectiveness
 - **chained_llm.py** -- Long sequential LLM chains
 - **mixed_priority.py** -- Mixed priority scheduling
@@ -56,9 +56,9 @@ python3 examples/python/_benchmarks/comparison_report.py \
 - `demo_code_critique.py` bootstraps the in-repo Python frontend path so
   `python3 examples/python/_benchmarks/demo_code_critique.py` can emit AIR
   directly from a fresh checkout.
-- Treat `demo_code_critique.py` as a benchmark source until fresh metrics are
-  captured; do not use it for speedup or KV hit-rate claims without measured
-  results.
+- Treat these files as benchmark sources until fresh metrics are captured; do
+  not use them for speedup, token-savings, or cache hit-rate claims without
+  measured results.
 - `multi_model.py` requires registered aliases named `fast`,
   `local-sensitive`, `powerful`, and `formatter`.
 

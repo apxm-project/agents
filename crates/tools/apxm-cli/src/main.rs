@@ -1,7 +1,7 @@
 //! APXM command-line interface.
 //!
 //! Provides the `apxm` binary with subcommands for building, compiling,
-//! running graphs, environment setup (`install`, `doctor`), and
+//! running graphs, environment diagnostics, and
 //! backend registration and management.
 
 mod commands;
@@ -176,8 +176,6 @@ async fn run_cli(cli: Cli) -> Result<()> {
             .await
         }
         Commands::Doctor => doctor_command(cli.config, cli.json),
-        Commands::Activate { shell } => activate_command(&shell),
-        Commands::Install => install_command(),
         Commands::Backend { action } => backend_command(action, cli.json).await,
         Commands::Tool { action } => tool_command(action, cli.json),
         Commands::Agent { action } => agent_command(action, cli.json).await,
@@ -205,8 +203,6 @@ async fn run_cli_no_driver(cli: Cli) -> Result<()> {
     match cli.command {
         Commands::Init { name } => init_command(&name),
         Commands::Doctor => doctor_command(cli.config, cli.json),
-        Commands::Activate { shell } => activate_command(&shell),
-        Commands::Install => install_command(),
         Commands::Tool { action } => tool_command(action, cli.json),
         Commands::Agent { action } => agent_command(action, cli.json).await,
         Commands::Team { action } => team_command(action, cli.json),
