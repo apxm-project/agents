@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use apxm_core::types::BackendConfig;
+use apxm_core::types::{APXM_CONFIG_ENV_VAR, BackendConfig};
 use dirs::home_dir;
 use serde::{Deserialize, Serialize};
 use std::env;
@@ -324,6 +324,9 @@ impl ApXmConfig {
     /// Load configuration for the current working directory, falling back to the
     /// global config when no project-level file exists.
     pub fn load_scoped() -> Result<Self> {
+        if let Some(path) = explicit_config_path() {
+            return Self::from_file(path);
+        }
         if let Some(path) = project_config_path() {
             return Self::from_file(path);
         }
@@ -353,6 +356,15 @@ impl ApXmConfig {
 
         tools_config
     }
+}
+
+fn explicit_config_path() -> Option<PathBuf> {
+    let path = env::var(APXM_CONFIG_ENV_VAR).ok()?;
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(PathBuf::from(trimmed))
 }
 
 fn project_config_path() -> Option<PathBuf> {
@@ -977,6 +989,46 @@ mod tests {
         };
         let expected = PathBuf::from(home).join(".apxm").join("config.toml");
         assert_eq!(ApXmConfig::default_path().unwrap(), expected);
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn load_scoped_prefers_explicit_apxm_config_env() {
+        let dir = tempfile::tempdir().expect("temp config dir");
+        let config_path = dir.path().join("config.toml");
+        std::fs::write(
+            &config_path,
+            format!(
+                r#"
+                [chat]
+                providers = ["{MOCK_PROVIDER_NAME}"]
+                default_backend = "{MOCK_PROVIDER_NAME}"
+                default_model = "{MOCK_MODEL_NAME}"
+                "#
+            ),
+        )
+        .expect("write explicit config");
+
+        let original = env::var(APXM_CONFIG_ENV_VAR).ok();
+        unsafe {
+            env::set_var(APXM_CONFIG_ENV_VAR, &config_path);
+        }
+
+        let config = ApXmConfig::load_scoped().expect("load explicit config");
+        assert_eq!(
+            config.chat.default_backend.as_deref(),
+            Some(MOCK_PROVIDER_NAME)
+        );
+        assert_eq!(config.chat.default_model.as_deref(), Some(MOCK_MODEL_NAME));
+
+        match original {
+            Some(value) => unsafe {
+                env::set_var(APXM_CONFIG_ENV_VAR, value);
+            },
+            None => unsafe {
+                env::remove_var(APXM_CONFIG_ENV_VAR);
+            },
+        }
     }
 
     #[test]

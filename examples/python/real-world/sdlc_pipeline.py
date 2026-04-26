@@ -43,10 +43,7 @@ def sdlc_pipeline(g: GraphRecorder):
     )
     g.add_edge(print1, implement_prompt, dependency="Control")
 
-    coder_result = g.communicate(
-        target_agent="coder",
-        message="{implement_prompt}"
-    )
+    coder_result = coder.ask("{implement_prompt}")
 
     print2 = g.print(message="=== CODER IMPLEMENTATION ===\n{coder_result}")
 

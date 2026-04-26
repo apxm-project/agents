@@ -25,33 +25,25 @@ def negotiate_consensus(g: GraphRecorder):
     )
 
     # Initial proposals (parallel)
-    proposal_a_comm = g.communicate(
-        name="proposal_a",
-        target_agent="agent_a",
-        message="You are Agent A. Propose your preferred solution for: {topic}. "
+    proposal_a_comm = agent_a.ask(
+        "You are Agent A. Propose your preferred solution for: {topic}. "
         "Be specific about your recommendation and why."
     )
 
-    proposal_b_comm = g.communicate(
-        name="proposal_b",
-        target_agent="agent_b",
-        message="You are Agent B. Propose your preferred solution for: {topic}. "
+    proposal_b_comm = agent_b.ask(
+        "You are Agent B. Propose your preferred solution for: {topic}. "
         "Be specific about your recommendation and why."
     )
 
     # Negotiation round: A responds to B's proposal
-    response_a_comm = g.communicate(
-        name="response_a",
-        target_agent="agent_a",
-        message="Agent B proposed: {proposal_b_comm}\n\n"
+    response_a_comm = agent_a.ask(
+        "Agent B proposed: {proposal_b_comm}\n\n"
         "Respond: do you agree, partially agree, or disagree? What compromise can you offer?"
     )
 
     # Consensus: B responds to A's proposal and response
-    consensus_comm = g.communicate(
-        name="consensus",
-        target_agent="agent_b",
-        message="Agent A proposed: {proposal_a_comm} and responded: {response_a_comm}\n\n"
+    consensus_comm = agent_b.ask(
+        "Agent A proposed: {proposal_a_comm} and responded: {response_a_comm}\n\n"
         "Can you reach consensus? State the agreed solution."
     )
 

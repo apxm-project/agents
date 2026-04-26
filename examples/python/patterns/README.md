@@ -11,7 +11,10 @@ and resilient delegation. They can be composed into larger workflows.
 
 Patterns that spawn agents use generated ACP profiles. Compile-only checks work
 without live agents, but execution requires the profile to be registered and
-its CLI/auth setup to pass `dekk apxm agent test <name>`.
+its CLI/auth setup to pass `dekk apxm agent test <name>`. The checked-in
+`claude` profile runs
+`npx -y @agentclientprotocol/claude-agent-acp@^0.24.2` and needs Claude Code
+configured locally.
 
 ## Examples
 

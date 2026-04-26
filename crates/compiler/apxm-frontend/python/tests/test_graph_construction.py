@@ -131,18 +131,114 @@ def test_graph_edges():
 def test_spawn_and_communicate():
     """Test spawn_agent and communicate nodes."""
     from apxm import GraphRecorder
-    from apxm.constants import OP_SPAWN_AGENT, OP_COMMUNICATE
+    from apxm.constants import DEPENDENCY_DATA, OP_COMMUNICATE, OP_SPAWN_AGENT
 
     g = GraphRecorder("spawn_test")
     spawn = g.spawn_agent("alice_spawn", agent_name="alice", profile=MOCK_AGENT_PROFILE)
     comm = g.communicate(name="alice_msg", target_agent="alice", message="Hello")
-    g.add_edge(spawn, comm, dependency="Control")
 
     graph = g.to_graph()
 
     assert len(graph.nodes) == 2
     assert graph.nodes[0].op == OP_SPAWN_AGENT
     assert graph.nodes[1].op == OP_COMMUNICATE
+    assert any(
+        edge.from_id == spawn._node_id
+        and edge.to_id == comm._node_id
+        and edge.dependency == DEPENDENCY_DATA
+        for edge in graph.edges
+    )
+
+
+def test_spawn_and_communicate_requires_data_dependency():
+    from apxm import ApxmGraph, GraphNode, validate_graph
+    from apxm.constants import AGENT_NAME, MESSAGE, OP_COMMUNICATE, OP_SPAWN_AGENT, RECIPIENT
+
+    graph = ApxmGraph(
+        name="spawn_validation",
+        nodes=[
+            GraphNode(
+                id=1,
+                name="alice_spawn",
+                op=OP_SPAWN_AGENT,
+                attributes={AGENT_NAME: "alice"},
+            ),
+            GraphNode(
+                id=2,
+                name="alice_msg",
+                op=OP_COMMUNICATE,
+                attributes={RECIPIENT: "alice", MESSAGE: "Hello"},
+            ),
+        ],
+    )
+
+    errors = validate_graph(graph)
+
+    assert any("SPAWN_AGENT token" in error for error in errors)
+
+
+def test_spawn_and_communicate_rejects_control_dependency():
+    from apxm import ApxmGraph, GraphEdge, GraphNode, validate_graph
+    from apxm.constants import (
+        AGENT_NAME,
+        DEPENDENCY_CONTROL,
+        MESSAGE,
+        OP_COMMUNICATE,
+        OP_SPAWN_AGENT,
+        RECIPIENT,
+    )
+
+    graph = ApxmGraph(
+        name="spawn_control_validation",
+        nodes=[
+            GraphNode(
+                id=1,
+                name="alice_spawn",
+                op=OP_SPAWN_AGENT,
+                attributes={AGENT_NAME: "alice"},
+            ),
+            GraphNode(
+                id=2,
+                name="alice_msg",
+                op=OP_COMMUNICATE,
+                attributes={RECIPIENT: "alice", MESSAGE: "Hello"},
+            ),
+        ],
+        edges=[GraphEdge(from_id=1, to_id=2, dependency=DEPENDENCY_CONTROL)],
+    )
+
+    errors = validate_graph(graph)
+
+    assert any("Control edges do not carry the spawn token" in error for error in errors)
+
+
+def test_contract_validation_requires_spawn_data_dependency():
+    from apxm import ApxmGraph, GraphNode
+    from apxm.constants import AGENT_NAME, MESSAGE, OP_COMMUNICATE, OP_SPAWN_AGENT, RECIPIENT
+    from apxm.ir import validate_against_apxm
+
+    graph = ApxmGraph(
+        name="spawn_contract_validation",
+        nodes=[
+            GraphNode(
+                id=1,
+                name="alice_spawn",
+                op=OP_SPAWN_AGENT,
+                attributes={AGENT_NAME: "alice"},
+            ),
+            GraphNode(
+                id=2,
+                name="alice_msg",
+                op=OP_COMMUNICATE,
+                attributes={RECIPIENT: "alice", MESSAGE: "Hello"},
+            ),
+        ],
+    )
+
+    result = validate_against_apxm(graph)
+
+    assert not result.valid
+    assert any("SPAWN_AGENT token" in error for error in result.errors)
 
 
 def test_team_sugar():
@@ -176,6 +272,7 @@ def test_team_sugar():
 def test_agent_handle_ask_returns_node_refs():
     """Test AgentHandle ask() returns COMMUNICATE nodes."""
     from apxm import GraphRecorder, NodeRef
+    from apxm.constants import DEPENDENCY_DATA, OP_COMMUNICATE
 
     g = GraphRecorder("handle_test")
     handle = g.spawn("alice", profile=MOCK_AGENT_PROFILE)
@@ -187,11 +284,60 @@ def test_agent_handle_ask_returns_node_refs():
 
     # 1 spawn + 3 communicates
     assert len(graph.nodes) == 4
-    comm_nodes = [n for n in graph.nodes if n.op == "COMMUNICATE"]
+    comm_nodes = [n for n in graph.nodes if n.op == OP_COMMUNICATE]
     assert len(comm_nodes) == 3
+    assert any(
+        edge.from_id == handle.get_spawn_node()._node_id
+        and edge.to_id == first._node_id
+        and edge.dependency == DEPENDENCY_DATA
+        for edge in graph.edges
+    )
     assert isinstance(first, NodeRef)
     assert isinstance(second, NodeRef)
     assert isinstance(third, NodeRef)
+
+
+def test_agent_handle_records_semantic_llm_operations():
+    from apxm import GraphRecorder
+    from apxm.constants import LLM_OPERATION, OP_ASK, OP_REASON, OP_THINK
+
+    g = GraphRecorder("handle_llm_operations")
+    handle = g.spawn("alice", profile=MOCK_AGENT_PROFILE)
+    ask = handle.ask("Ask")
+    think = handle.think("Think")
+    reason = handle.reason("Reason")
+
+    graph = g.to_graph()
+    attrs_by_id = {node.id: node.attributes for node in graph.nodes}
+
+    assert attrs_by_id[ask._node_id][LLM_OPERATION] == OP_ASK
+    assert attrs_by_id[think._node_id][LLM_OPERATION] == OP_THINK
+    assert attrs_by_id[reason._node_id][LLM_OPERATION] == OP_REASON
+
+
+def test_validate_graph_rejects_invalid_llm_operation():
+    from apxm import ApxmGraph, GraphNode, validate_graph
+    from apxm.constants import LLM_OPERATION, MESSAGE, OP_COMMUNICATE, OP_PLAN, RECIPIENT
+
+    graph = ApxmGraph(
+        name="invalid_llm_operation",
+        nodes=[
+            GraphNode(
+                id=1,
+                name="agent_msg",
+                op=OP_COMMUNICATE,
+                attributes={
+                    RECIPIENT: "external",
+                    MESSAGE: "Hello",
+                    LLM_OPERATION: OP_PLAN,
+                },
+            )
+        ],
+    )
+
+    errors = validate_graph(graph)
+
+    assert any(LLM_OPERATION in error and "expected one of" in error for error in errors)
 
 
 def test_agent_handle_ask_auto_wires_node_refs():

@@ -18,7 +18,10 @@
 //! For BROADCAST, `recipient` is ignored. The message is sent to every agent
 //! currently registered in the FlowRegistry; results are collected in parallel.
 
-use super::{ExecutionContext, Node, Result, Value, execute_llm_request, get_string_attribute};
+use super::{
+    ExecutionContext, Node, Result, Value, execute_llm_request, get_string_attribute,
+    template::{input_names_from_node, render_named},
+};
 use crate::aam::{ScopeSpec, TransitionLabel};
 use crate::executor::ExecutorEngine;
 use apxm_backends::LLMRequest;
@@ -27,7 +30,7 @@ use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::constants::runtime::context_stack as context_stack_consts;
 use apxm_core::constants::runtime::{belief_keys, metadata, response_keys};
 use apxm_core::error::RuntimeError;
-use apxm_core::types::ProcessPromptMetric;
+use apxm_core::types::{AISOperationType, ProcessPromptMetric};
 
 /// Well-known flow names tried in order when looking up a recipient agent.
 const COMMUNICATE_FLOW_NAMES: &[&str] = &["communicate", "main"];
@@ -48,6 +51,81 @@ fn message_from_attributes(node: &Node) -> Option<Value> {
         })
 }
 
+fn resolve_message(node: &Node, protocol: &str, inputs: &[Value]) -> Result<Value> {
+    let input_names = input_names_from_node(node);
+    let attr_message = message_from_attributes(node);
+    let message_input_count = input_names.len();
+    let message_inputs = if message_input_count == 0 {
+        inputs
+    } else {
+        &inputs[..message_input_count.min(inputs.len())]
+    };
+
+    if let Some(Value::String(template)) = attr_message.as_ref() {
+        if !input_names.is_empty() {
+            return Ok(Value::String(render_named(
+                template,
+                message_inputs,
+                &input_names,
+            )?));
+        }
+        return Ok(Value::String(template.clone()));
+    }
+
+    let fallback = if protocol == comm_proto::ACP {
+        message_inputs
+            .iter()
+            .find(|v| matches!(v, Value::String(_)))
+            .cloned()
+            .or_else(|| message_inputs.first().cloned())
+    } else {
+        message_inputs.first().cloned()
+    };
+
+    Ok(fallback.or(attr_message).unwrap_or(Value::Null))
+}
+
+fn communication_llm_operation(node: &Node) -> Result<AISOperationType> {
+    let Some(raw_value) = node.attributes.get(graph_attrs::LLM_OPERATION) else {
+        return Ok(AISOperationType::Ask);
+    };
+    let value = raw_value
+        .as_string()
+        .ok_or_else(|| RuntimeError::Operation {
+            op_type: node.op_type,
+            message: format!(
+                "COMMUNICATE '{}' must be a string",
+                graph_attrs::LLM_OPERATION
+            ),
+        })?;
+    let operation = value
+        .parse::<AISOperationType>()
+        .map_err(|_| RuntimeError::Operation {
+            op_type: node.op_type,
+            message: format!(
+                "COMMUNICATE has invalid '{}' value '{}'",
+                graph_attrs::LLM_OPERATION,
+                value
+            ),
+        })?;
+    if !matches!(
+        operation,
+        AISOperationType::Ask | AISOperationType::Think | AISOperationType::Reason
+    ) {
+        return Err(RuntimeError::Operation {
+            op_type: node.op_type,
+            message: format!(
+                "COMMUNICATE '{}' must be {}, {}, or {}",
+                graph_attrs::LLM_OPERATION,
+                AISOperationType::Ask,
+                AISOperationType::Think,
+                AISOperationType::Reason
+            ),
+        });
+    }
+    Ok(operation)
+}
+
 pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -> Result<Value> {
     // Accept both the historical "target" attribute and the current "recipient"
     // emitted by the compiler.
@@ -56,23 +134,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         .unwrap_or_default();
     let protocol = get_string_attribute(node, graph_attrs::PROTOCOL)
         .unwrap_or_else(|_| comm_proto::LOCAL.to_string());
-    // For ACP protocol: prefer the first String input (the actual prompt).
-    // Control edges from SPAWN_AGENT carry Object metadata — skip them.
-    let message = if protocol == comm_proto::ACP {
-        inputs
-            .iter()
-            .find(|v| matches!(v, Value::String(_)))
-            .cloned()
-            .or_else(|| inputs.first().cloned())
-            .or_else(|| message_from_attributes(node))
-            .unwrap_or(Value::Null)
-    } else {
-        inputs
-            .first()
-            .cloned()
-            .or_else(|| message_from_attributes(node))
-            .unwrap_or(Value::Null)
-    };
+    let message = resolve_message(node, &protocol, &inputs)?;
 
     match protocol.as_str() {
         comm_proto::HTTP | comm_proto::HTTPS => {
@@ -288,7 +350,8 @@ async fn communicate_inline_agent(
 
     let prompt = message.as_string().cloned().unwrap_or_default();
 
-    let mut request = LLMRequest::new(prompt).with_operation_type(node.op_type);
+    let mut request =
+        LLMRequest::new(prompt).with_operation_type(communication_llm_operation(node)?);
     if let Some(sp) = system_prompt {
         request = request.with_system_prompt(sp);
     }
@@ -793,6 +856,39 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
     use tempfile::tempdir;
+
+    fn communicate_node_with_llm_operation(value: Value) -> Node {
+        let mut node = Node {
+            id: 1,
+            op_type: AISOperationType::Communicate,
+            attributes: HashMap::new(),
+            input_tokens: vec![],
+            output_tokens: vec![100],
+            metadata: NodeMetadata::default(),
+        };
+        node.attributes
+            .insert(graph_attrs::LLM_OPERATION.to_string(), value);
+        node
+    }
+
+    #[test]
+    fn communication_llm_operation_accepts_llm_turn_operations() {
+        let node =
+            communicate_node_with_llm_operation(Value::String(AISOperationType::Think.to_string()));
+
+        assert_eq!(
+            communication_llm_operation(&node).expect("valid operation"),
+            AISOperationType::Think
+        );
+    }
+
+    #[test]
+    fn communication_llm_operation_rejects_non_llm_turn_operations() {
+        let node =
+            communicate_node_with_llm_operation(Value::String(AISOperationType::Plan.to_string()));
+
+        assert!(communication_llm_operation(&node).is_err());
+    }
 
     fn create_echo_dag() -> ExecutionDag {
         let mut const_node = apxm_core::types::execution::Node {

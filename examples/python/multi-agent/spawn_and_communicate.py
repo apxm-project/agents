@@ -37,12 +37,8 @@ def two_agent_pipeline(g: GraphRecorder):
         "Cover: architecture, capabilities, use cases, limitations. 400 words."
     )
 
-    # Summarizer receives analysis via COMMUNICATE
-    summary = g.communicate(
-        name="summary_request",
-        target_agent="summarizer",
-        message="Produce a 3-bullet executive summary:\n\n{analysis}"
-    )
+    # Summarizer receives analysis via the spawned-agent handle.
+    summary = summarizer.ask("Produce a 3-bullet executive summary:\n\n{analysis}")
 
     output = g.print(message="=== ANALYSIS ===\n{analysis}\n\n=== SUMMARY ===\n{summary}")
     g.done(output)

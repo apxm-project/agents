@@ -13,8 +13,12 @@ teams with barrier synchronization and result merging.
 These examples import generated ACP profiles from `apxm._generated.agents`.
 Use `dekk apxm agent list` to confirm the profiles exist and
 `dekk apxm agent test <name>` before executing a graph. The checked-in
-`claude` and `codex` profiles require Node/npm and their respective
-authenticated CLIs.
+profiles require Node/npm plus the corresponding authenticated agent setup:
+
+- `claude` runs `npx -y @agentclientprotocol/claude-agent-acp@^0.24.2` and
+  needs Claude Code to be configured locally.
+- `codex` runs `npx @zed-industries/codex-acp@^0.10.0` and needs the Codex ACP
+  adapter and OpenAI/Codex credentials to be configured locally.
 
 ## Examples
 

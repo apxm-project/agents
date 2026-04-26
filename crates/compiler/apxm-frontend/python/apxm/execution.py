@@ -9,7 +9,7 @@ import shutil
 import subprocess
 from typing import Any
 
-from apxm._generated import constants as graph_keys
+from . import constants as graph_keys
 from apxm.constants import (
     ENV_APXM_BIN,
     ENV_APXM_EMIT_AIR,
@@ -21,6 +21,14 @@ from .config import ExecutionOptions
 from .ir import ApxmGraph
 from .utils import detect_cycle
 from apxm.providers import REGISTERED_PROVIDERS
+
+_LLM_TURN_OPS = frozenset(
+    {
+        graph_keys.OP_ASK,
+        graph_keys.OP_THINK,
+        graph_keys.OP_REASON,
+    }
+)
 
 
 class ExecutionMode(Enum):
@@ -57,6 +65,9 @@ def validate_graph(graph: ApxmGraph) -> list[str]:
     if cycle_count:
         errors.append("graph contains a cycle")
 
+    errors.extend(_validate_spawn_communicate_dependencies(graph))
+    errors.extend(_validate_llm_operation_attributes(graph))
+
     # Validate providers on LLM nodes
     for node in graph.nodes:
         if node.op not in getattr(graph_keys, "LLM_OPS", frozenset()):
@@ -73,6 +84,108 @@ def validate_graph(graph: ApxmGraph) -> list[str]:
             )
 
     return errors
+
+
+def _validate_llm_operation_attributes(graph: ApxmGraph) -> list[str]:
+    errors: list[str] = []
+    for node in graph.nodes:
+        if graph_keys.LLM_OPERATION not in node.attributes:
+            continue
+        value = node.attributes[graph_keys.LLM_OPERATION]
+        if not isinstance(value, str):
+            errors.append(
+                f"node '{node.name}' ({node.op}) has non-string "
+                f"{graph_keys.LLM_OPERATION!r} attribute"
+            )
+            continue
+        if value not in _LLM_TURN_OPS:
+            valid = ", ".join(sorted(_LLM_TURN_OPS))
+            errors.append(
+                f"node '{node.name}' ({node.op}) has invalid "
+                f"{graph_keys.LLM_OPERATION!r} value {value!r}; expected one of {valid}"
+            )
+    return errors
+
+
+def _validate_spawn_communicate_dependencies(graph: ApxmGraph) -> list[str]:
+    spawned: dict[str, int] = {}
+    errors: list[str] = []
+
+    for node in graph.nodes:
+        if node.op != graph_keys.OP_SPAWN_AGENT:
+            continue
+        agent_name = node.attributes.get(graph_keys.AGENT_NAME)
+        if isinstance(agent_name, str):
+            spawned[agent_name] = node.id
+
+    data_edges = [
+        (edge.from_id, edge.to_id)
+        for edge in graph.edges
+        if edge.dependency == graph_keys.DEPENDENCY_DATA
+    ]
+    control_edges = {
+        (edge.from_id, edge.to_id)
+        for edge in graph.edges
+        if edge.dependency == graph_keys.DEPENDENCY_CONTROL
+    }
+
+    for node in graph.nodes:
+        if node.op != graph_keys.OP_COMMUNICATE:
+            continue
+        recipient = node.attributes.get(graph_keys.RECIPIENT)
+        if not isinstance(recipient, str) or recipient not in spawned:
+            continue
+        spawn_id = spawned[recipient]
+        message_input_count = _input_names_count(node.attributes.get(graph_keys.INPUT_NAMES))
+        data_sources = [
+            from_id for from_id, to_id in data_edges if to_id == node.id
+        ]
+        structural_sources = data_sources[message_input_count:]
+        if any(_has_data_path(spawn_id, source_id, data_edges) for source_id in structural_sources):
+            continue
+        if (spawn_id, node.id) in control_edges:
+            hint = (
+                "Control edges do not carry the spawn token into AIR operands"
+            )
+        else:
+            hint = "no Data dependency path from the matching SPAWN_AGENT was found"
+        errors.append(
+            f"node '{node.name}' ({node.op}) targets spawned agent '{recipient}' "
+            f"but does not depend on its SPAWN_AGENT token: {hint}"
+        )
+
+    return errors
+
+
+def _has_data_path(
+    source_id: int,
+    target_id: int,
+    data_edges: list[tuple[int, int]],
+) -> bool:
+    adjacency: dict[int, list[int]] = {}
+    for from_id, to_id in data_edges:
+        adjacency.setdefault(from_id, []).append(to_id)
+
+    visited: set[int] = set()
+    pending = [source_id]
+    while pending:
+        current = pending.pop()
+        if current in visited:
+            continue
+        visited.add(current)
+        for next_id in adjacency.get(current, []):
+            if next_id == target_id:
+                return True
+            pending.append(next_id)
+    return False
+
+
+def _input_names_count(value: Any) -> int:
+    if isinstance(value, list):
+        return len(value)
+    if isinstance(value, str):
+        return 1
+    return 0
 
 
 @dataclass(slots=True)
@@ -229,6 +342,8 @@ def new_session() -> str:
 _client: Any = None  # httpx.AsyncClient | None
 
 _CLI_APXM_WRAPPER_SUBCOMMAND = "apxm"
+_CLI_DEKK_BINARY = "dekk"
+_CLI_APXM_BINARY = "apxm"
 _CLI_CONFIG_FLAG = "--config"
 _CLI_JSON_FLAG = "--json"
 _CLI_EXECUTE_SUBCOMMAND = "execute"
@@ -238,6 +353,9 @@ _CLI_EMIT_SESSION_FLAG = "--emit-session"
 _CLI_SESSION_ROOT_FLAG = "--session-root"
 _CLI_ARGS_JSON_FLAG = "--args-json"
 _CLI_BINARY_ENV = ENV_APXM_BIN
+_CARGO_TARGET_DIR = "target"
+_CARGO_RELEASE_PROFILE = "release"
+_CARGO_DEBUG_PROFILE = "debug"
 _DEFAULT_SERVER_URL = "http://localhost:18800"
 
 
@@ -261,7 +379,7 @@ def emit_air_if_requested(flow: Any) -> bool:
 
 
 def _build_cli_base_command(apxm_bin: str) -> list[str]:
-    if Path(apxm_bin).name == "dekk":
+    if Path(apxm_bin).name == _CLI_DEKK_BINARY:
         return [apxm_bin, _CLI_APXM_WRAPPER_SUBCOMMAND]
     return [apxm_bin]
 
@@ -305,7 +423,10 @@ def _cli_error_message(stdout: str, stderr: str, default_message: str) -> str:
 def _subprocess_env_for_apxm(apxm_bin: str) -> dict[str, str]:
     env = os.environ.copy()
     binary_path = Path(apxm_bin).resolve()
-    if binary_path.parent.name == "debug" and binary_path.parent.parent.name == "target":
+    if (
+        binary_path.parent.name in (_CARGO_RELEASE_PROFILE, _CARGO_DEBUG_PROFILE)
+        and binary_path.parent.parent.name == _CARGO_TARGET_DIR
+    ):
         lib_dir = binary_path.parent / "lib"
         if lib_dir.is_dir():
             _prepend_env_path(env, "LD_LIBRARY_PATH", str(lib_dir))
@@ -360,11 +481,14 @@ def _find_apxm_binary() -> str:
         explicit_path = Path(explicit)
         if explicit_path.is_file():
             return str(explicit_path)
+        explicit_bin = shutil.which(explicit)
+        if explicit_bin is not None:
+            return explicit_bin
         raise RuntimeError(
             f"{_CLI_BINARY_ENV} points to a missing APXM binary: {explicit_path}"
         )
 
-    apxm_bin = shutil.which("apxm")
+    apxm_bin = shutil.which(_CLI_APXM_BINARY)
     if apxm_bin is not None:
         return apxm_bin
 
@@ -372,9 +496,13 @@ def _find_apxm_binary() -> str:
     if checkout_bin is not None:
         return str(checkout_bin)
 
+    dekk_bin = shutil.which(_CLI_DEKK_BINARY)
+    if dekk_bin is not None:
+        return dekk_bin
+
     raise RuntimeError(
         f"No direct 'apxm' binary found. Set {ENV_APXM_BIN}, install 'apxm' on PATH, "
-        "or build the repo-local target/debug/apxm binary."
+        "install 'dekk' on PATH, or build the repo-local APXM binary."
     )
 
 
@@ -385,9 +513,10 @@ def _find_checkout_apxm_binary() -> Path | None:
             if ancestor in seen:
                 continue
             seen.add(ancestor)
-            candidate = ancestor / "target" / "debug" / "apxm"
-            if candidate.is_file():
-                return candidate
+            for profile in (_CARGO_RELEASE_PROFILE, _CARGO_DEBUG_PROFILE):
+                candidate = ancestor / _CARGO_TARGET_DIR / profile / _CLI_APXM_BINARY
+                if candidate.is_file():
+                    return candidate
     return None
 
 

@@ -211,7 +211,7 @@ Use both sections together. `runtime.token_accounting.per_node` answers which
 APXM nodes spent tokens. `backends.graphs[]` answers whether the graph-aware
 backend retained graph state and pin metadata.
 
-Spawned coding agents such as Codex or Claude are ACP subprocesses. APXM can
+Spawned coding agents such as Claude Code or Codex are ACP subprocesses. APXM can
 measure the APXM node lifecycle, latency, output, session files, and child
 execution links for those nodes. Provider token usage is only included in
 `runtime.token_accounting` when the spawned agent or its ACP adapter reports

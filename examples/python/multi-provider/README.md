@@ -34,8 +34,12 @@ from apxm.backends import select_backend
 fast_route = select_backend(alias="fast")
 powerful_route = select_backend(alias="powerful")
 
-triage = g.ask("triage", "Classify this ticket: {ticket}", route=fast_route)
-solution = g.reason("solution", "Root cause analysis: {triage}\n{data}", route=powerful_route)
+triage = g.ask(name="triage", prompt="Classify this ticket: {ticket}", route=fast_route)
+solution = g.reason(
+    name="solution",
+    prompt="Root cause analysis: {triage}\n{data}",
+    route=powerful_route,
+)
 ```
 
 ## Learn More

@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+import inspect
+from typing import TYPE_CHECKING, Any, Mapping
 
-from apxm._generated import constants as c
 from . import constants as graph_keys
+from ._generated.operations import ASK, REASON, THINK, OpSpec
 from .proxy import GraphRecorder, NodeRef
 
 if TYPE_CHECKING:
     from ._generated.agents import AgentRef
     from ._generated.models import ModelId
+
+_AGENT_ASK_OPERATION = ASK
+_AGENT_THINK_OPERATION = THINK
+_AGENT_REASON_OPERATION = REASON
+_AGENT_MESSAGE_NODE_SEGMENT = "msg"
 
 
 class AgentHandle:
@@ -23,7 +29,13 @@ class AgentHandle:
         self._last_node = spawn_node
         self._msg_counter = 0
 
-    def ask(self, message: str, **attributes: Any) -> NodeRef:
+    def ask(
+        self,
+        message: str | None = None,
+        *,
+        prompt: str | None = None,
+        **attributes: Any,
+    ) -> NodeRef:
         """Send a message to the spawned agent via COMMUNICATE node.
 
         Returns the COMMUNICATE node.
@@ -31,37 +43,82 @@ class AgentHandle:
         The message can contain {var_name} references which will be auto-wired
         to NodeRef variables in the caller's scope.
         """
-        self._msg_counter += 1
-        node_name = f"{self._agent_name}_msg_{self._msg_counter}"
+        if message is None and prompt is None:
+            raise ValueError("ask() missing required message")
+        if message is not None and prompt is not None:
+            raise ValueError("ask() accepts either message or prompt, not both")
+        message_text = message if message is not None else prompt
+        assert message_text is not None
 
-        # Auto-wire: resolve {var_name} to NodeRef
-        resolved_message, auto_refs = self._recorder._resolve_template_refs(message)
-
-        attrs = {
-            c.RECIPIENT: self._agent_name,
-            c.MESSAGE: resolved_message,
-            c.PROTOCOL: graph_keys.COMMUNICATE_PROTOCOL_ACP,
+        return self._turn(
+            message_text,
+            llm_operation=_AGENT_ASK_OPERATION,
+            template_scope=_caller_locals(),
             **attributes,
-        }
-        if auto_refs:
-            attrs[graph_keys.INPUT_NAMES] = [name for name, _ in auto_refs]
-
-        comm_node = self._recorder._add_node(node_name, graph_keys.OP_COMMUNICATE, attrs)
-
-        # Create control edge from previous node to this communicate node
-        self._recorder.add_edge(
-            self._last_node,
-            comm_node,
-            dependency=graph_keys.DEPENDENCY_CONTROL,
         )
 
-        # Create auto-wire data edges
-        for _name, ref in auto_refs:
-            self._recorder.add_edge(
-                ref,
-                comm_node,
-                dependency=graph_keys.DEPENDENCY_DATA,
-            )
+    def think(
+        self,
+        message: str | None = None,
+        *,
+        prompt: str | None = None,
+        **attributes: Any,
+    ) -> NodeRef:
+        if message is None and prompt is None:
+            raise ValueError("think() missing required message")
+        if message is not None and prompt is not None:
+            raise ValueError("think() accepts either message or prompt, not both")
+        message_text = message if message is not None else prompt
+        assert message_text is not None
+
+        return self._turn(
+            message_text,
+            llm_operation=_AGENT_THINK_OPERATION,
+            template_scope=_caller_locals(),
+            **attributes,
+        )
+
+    def reason(
+        self,
+        message: str | None = None,
+        *,
+        prompt: str | None = None,
+        **attributes: Any,
+    ) -> NodeRef:
+        if message is None and prompt is None:
+            raise ValueError("reason() missing required message")
+        if message is not None and prompt is not None:
+            raise ValueError("reason() accepts either message or prompt, not both")
+        message_text = message if message is not None else prompt
+        assert message_text is not None
+
+        return self._turn(
+            message_text,
+            llm_operation=_AGENT_REASON_OPERATION,
+            template_scope=_caller_locals(),
+            **attributes,
+        )
+
+    def _turn(
+        self,
+        message: str,
+        *,
+        llm_operation: OpSpec,
+        template_scope: Mapping[str, Any],
+        **attributes: Any,
+    ) -> NodeRef:
+        self._msg_counter += 1
+        node_name = f"{self._agent_name}_{_AGENT_MESSAGE_NODE_SEGMENT}_{self._msg_counter}"
+        turn_attributes = {graph_keys.LLM_OPERATION: llm_operation.op, **attributes}
+
+        comm_node = self._recorder.communicate(
+            name=node_name,
+            target_agent=self._agent_name,
+            message=message,
+            protocol=graph_keys.COMMUNICATE_PROTOCOL_ACP,
+            _template_scope=template_scope,
+            **turn_attributes,
+        )
 
         self._last_node = comm_node
         return comm_node
@@ -69,6 +126,19 @@ class AgentHandle:
     def get_spawn_node(self) -> NodeRef:
         """Return the initial SPAWN_AGENT node."""
         return self._spawn_node
+
+
+def _caller_locals() -> Mapping[str, Any]:
+    caller_frame = inspect.currentframe()
+    if caller_frame is None:
+        return {}
+    try:
+        if caller_frame.f_back and caller_frame.f_back.f_back:
+            return dict(caller_frame.f_back.f_back.f_locals)
+        return {}
+    finally:
+        del caller_frame
+
 
 class Team:
     """Workflow-local team of agents.

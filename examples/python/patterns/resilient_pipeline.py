@@ -35,13 +35,9 @@ def resilient_pipeline(g: GraphRecorder):
         prompt="Format this as a precise coding instruction for an agent:\n{task}"
     )
 
-    # Send to worker
+    # Send to worker.
     # Each COMMUNICATE is atomic -- exponential backoff on failure (500ms-60s)
-    result = g.communicate(
-        name="worker_result",
-        target_agent="worker",
-        message="{formatted}"
-    )
+    result = worker.ask("{formatted}")
 
     # Review result
     summary = g.think(

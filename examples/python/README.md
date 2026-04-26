@@ -8,9 +8,9 @@ from apxm import compile, GraphRecorder
 @compile()
 def my_workflow(g: GraphRecorder, param: str) -> dict:
     """Docstring becomes workflow description."""
-    node1 = g.ask("node1", "Question: {param}")
-    node2 = g.think("node2", "Analysis: {node1}")
-    result = g.merge("result", node1, node2)
+    node1 = g.ask(name="node1", prompt="Question: {param}")
+    node2 = g.think(name="node2", prompt="Analysis: {node1}")
+    result = g.merge("result", [node1, node2])
     g.done(result)
 
 print(my_workflow._graph.to_air())
@@ -40,7 +40,7 @@ node1 >> node2   # Control edge: node2 runs after node1
 ```python
 from apxm._generated.agents import claude
 
-agent = g.spawn("name", profile=claude, cwd=cwd)  # Returns AgentHandle
+agent = g.spawn("name", profile=claude, cwd=cwd)    # Returns AgentHandle
 result = agent.ask("message")                       # COMMUNICATE via ACP
 
 team = g.team("name")                               # Create team
