@@ -80,6 +80,23 @@ default cache. GPU and memory flags such as `--gpus`,
 `--tensor-parallel-size`, `--gpu-memory-utilization`, and `--max-model-len` are
 passed through to vLLM.
 
+For graph-aware latency experiments, launch the backend with vLLM prefix caching
+and priority scheduling enabled:
+
+```bash
+dekk apxm vllm start <MODEL_REF> \
+  --served-model-name <SERVED_MODEL_ID> \
+  --enable-prefix-caching \
+  --scheduling-policy priority \
+  --port 8916 \
+  --wait
+```
+
+APXM can emit priority and reuse hints, but those hints only become scheduling
+or cache behavior when the backend is configured to honor the corresponding
+vLLM features. Treat prefix-cache counters as latency evidence, not
+provider-visible token or dollar-cost reduction by themselves.
+
 For reasoning-capable models, pass the parser and template settings explicitly.
 APXM does not infer these from the served model id:
 

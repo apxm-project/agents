@@ -104,7 +104,7 @@ In pure functional models (lambda calculus, Haskell, ML), a unit of compute is a
 - **Typing**: Strong, static, with type inference (Hindley-Milner).
 - **Referential transparency**: Expressions can be replaced with their values without changing program behavior, enabling deforestation, fusion, and specialization.
 
-**Influence on A-PXM:** A-PXM borrows the functional model's key insight: **making data flow explicit enables optimization**. In Haskell, referential transparency lets the compiler fuse `map f . map g` into `map (f . g)`. In A-PXM, explicit data edges in the DAG let the compiler fuse producer-consumer ASK chains into single API calls.
+**Influence on A-PXM:** A-PXM borrows the functional model's key insight: **making data flow explicit enables optimization**. In Haskell, referential transparency lets the compiler fuse `map f . map g` into `map (f . g)`. In A-PXM, explicit data edges in the DAG let the compiler eliminate duplicate deterministic work, prune unused context, schedule independent nodes, and report producer-consumer ASK chains as optimization candidates. Automatic ASK fusion remains experimental until a typed quality and request-semantics contract exists.
 
 ---
 

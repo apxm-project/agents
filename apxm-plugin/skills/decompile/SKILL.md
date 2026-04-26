@@ -8,7 +8,7 @@ user-invocable: true
 
 Takes a compiled `.apxmobj` artifact and reconstructs it back into a graph JSON file. This is the reverse of `compile` — useful for inspecting what the optimizer did to your graph, verifying that the compiled artifact matches expectations, or recovering a graph when you only have the artifact.
 
-The decompiled graph shows the *optimized* structure: fused nodes, eliminated dead code, reordered operations. Comparing it to the original source graph reveals exactly what the compiler changed.
+The decompiled graph shows the *optimized* structure: eliminated dead code, duplicate-work removal, and scheduling metadata. Comparing it to the original source graph reveals exactly what the compiler changed.
 
 ## Commands
 
@@ -30,4 +30,4 @@ dekk apxm decompile workflow.apxmobj -o recovered.air  # write to file
 - Debugging optimizer behavior: compile at O2, decompile, diff against source
 - Recovering a graph from a compiled artifact when the source is lost
 - Verifying artifact contents before distribution
-- Understanding what `FuseAskOps` or `CSE` actually changed in your workflow
+- Understanding what duplicate-work elimination, DCE, or scheduling passes changed in your workflow

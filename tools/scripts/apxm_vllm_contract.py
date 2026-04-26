@@ -101,11 +101,13 @@ class ArgName(str, Enum):
     DEFAULT_CHAT_TEMPLATE_KWARGS = "default_chat_template_kwargs"
     ENDPOINT = "endpoint"
     ENABLE_FORCE_INCLUDE_USAGE = "enable_force_include_usage"
+    ENABLE_PREFIX_CACHING = "enable_prefix_caching"
     ENABLE_PROMPT_TOKENS_DETAILS = "enable_prompt_tokens_details"
     HANDLER = "handler"
     HF_HOME = "hf_home"
     MODEL = "model"
     REASONING_PARSER = "reasoning_parser"
+    SCHEDULING_POLICY = "scheduling_policy"
     SERVED_MODEL_NAME = "served_model_name"
     WAIT = "wait"
 
@@ -115,8 +117,10 @@ class VllmServeFlag(str, Enum):
 
     DEFAULT_CHAT_TEMPLATE_KWARGS = "--default-chat-template-kwargs"
     ENABLE_FORCE_INCLUDE_USAGE = "--enable-force-include-usage"
+    ENABLE_PREFIX_CACHING = "--enable-prefix-caching"
     ENABLE_PROMPT_TOKENS_DETAILS = "--enable-prompt-tokens-details"
     REASONING_PARSER = "--reasoning-parser"
+    SCHEDULING_POLICY = "--scheduling-policy"
 
 
 @dataclass(frozen=True)

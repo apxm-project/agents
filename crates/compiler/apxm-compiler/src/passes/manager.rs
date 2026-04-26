@@ -10,6 +10,11 @@ use crate::ffi;
 use crate::ffi::{apxm_module_drain_pass_stats, apxm_module_total_template_tokens};
 use apxm_core::error::compiler::Result;
 use apxm_core::types::OptimizationLevel;
+use apxm_core::types::compiler::metadata::{
+    BUILD_PROMPT, CANONICALIZER, CONDENSE_OPS, CSE, DEAD_CONTEXT_ELIMINATION, DSPY_OPTIMIZE,
+    FUSE_ASK_OPS, NORMALIZE, PROMPT_CANONICALIZATION, SCHEDULING, SCHEMA_NARROWING, SYMBOL_DCE,
+    TEMPLATE_SPECIALIZATION, UNCONSUMED_VALUE_WARNING,
+};
 use std::ffi::CString;
 use std::time::Instant;
 
@@ -62,59 +67,59 @@ impl<'ctx> PassManager<'ctx> {
     }
 
     pub fn normalize(&mut self) -> Result<&mut Self> {
-        self.add_pass("normalize")
+        self.add_pass(NORMALIZE.name)
     }
 
     pub fn build_prompt(&mut self) -> Result<&mut Self> {
-        self.add_pass("build-prompt")
+        self.add_pass(BUILD_PROMPT.name)
     }
 
     pub fn dspy_optimize(&mut self) -> Result<&mut Self> {
-        self.add_pass("dspy-optimize")
+        self.add_pass(DSPY_OPTIMIZE.name)
     }
 
     pub fn scheduling(&mut self) -> Result<&mut Self> {
-        self.add_pass("scheduling")
+        self.add_pass(SCHEDULING.name)
     }
 
     pub fn fuse_ask_ops(&mut self) -> Result<&mut Self> {
-        self.add_pass("fuse-ask-ops")
+        self.add_pass(FUSE_ASK_OPS.name)
     }
 
     pub fn condense_ops(&mut self) -> Result<&mut Self> {
-        self.add_pass("condense-ops")
+        self.add_pass(CONDENSE_OPS.name)
     }
 
     pub fn canonicalizer(&mut self) -> Result<&mut Self> {
-        self.add_pass("canonicalizer")
+        self.add_pass(CANONICALIZER.name)
     }
 
     pub fn cse(&mut self) -> Result<&mut Self> {
-        self.add_pass("cse")
+        self.add_pass(CSE.name)
     }
 
     pub fn symbol_dce(&mut self) -> Result<&mut Self> {
-        self.add_pass("symbol-dce")
+        self.add_pass(SYMBOL_DCE.name)
     }
 
     pub fn unconsumed_value_warning(&mut self) -> Result<&mut Self> {
-        self.add_pass("unconsumed-value-warning")
+        self.add_pass(UNCONSUMED_VALUE_WARNING.name)
     }
 
     pub fn template_specialization(&mut self) -> Result<&mut Self> {
-        self.add_pass("template-specialization")
+        self.add_pass(TEMPLATE_SPECIALIZATION.name)
     }
 
     pub fn dead_context_elimination(&mut self) -> Result<&mut Self> {
-        self.add_pass("dead-context-elimination")
+        self.add_pass(DEAD_CONTEXT_ELIMINATION.name)
     }
 
     pub fn schema_narrowing(&mut self) -> Result<&mut Self> {
-        self.add_pass("schema-narrowing")
+        self.add_pass(SCHEMA_NARROWING.name)
     }
 
     pub fn prompt_canonicalization(&mut self) -> Result<&mut Self> {
-        self.add_pass("prompt-canonicalization")
+        self.add_pass(PROMPT_CANONICALIZATION.name)
     }
 
     pub fn run(&self, module: &Module) -> Result<()> {
