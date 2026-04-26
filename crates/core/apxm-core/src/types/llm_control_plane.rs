@@ -16,7 +16,6 @@ pub const APXM_MODEL_ENV_VAR: &str = "APXM_MODEL";
 
 const APXM_DIR_NAME: &str = ".apxm";
 const APXM_CONFIG_FILE_NAME: &str = "config.toml";
-const APXM_CREDENTIALS_FILE_NAME: &str = "credentials.toml";
 const ENV_VALUE_PREFIX: &str = "env:";
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -92,22 +91,6 @@ pub struct ApxmRegisteredModelConfig {
     pub info: Option<ModelInfo>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ApxmCredentialConfig {
-    pub provider: String,
-    pub api_key: Option<String>,
-    pub base_url: Option<String>,
-    pub model: Option<String>,
-    #[serde(default)]
-    pub headers: HashMap<String, String>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, Default)]
-#[serde(default)]
-pub struct ApxmCredentialsFile {
-    pub credentials: HashMap<String, ApxmCredentialConfig>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ResolvedApxmModelConfig {
     pub id: String,
@@ -142,7 +125,6 @@ pub struct ResolvedApxmModelAlias {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ApxmLlmControlPlane {
     pub config_path: Option<PathBuf>,
-    pub credentials_path: Option<PathBuf>,
     #[serde(default)]
     pub backends: HashMap<String, ResolvedApxmBackendConfig>,
     pub default_backend: Option<String>,
@@ -168,20 +150,13 @@ impl ApxmLlmControlPlane {
 
     pub fn has_registration(cwd: &Path) -> bool {
         resolve_config_path(cwd).is_some_and(|path| path.exists())
-            || default_credentials_path().is_some_and(|path| path.exists())
     }
 
     pub fn load_scoped(cwd: &Path) -> io::Result<Self> {
         let config_path = resolve_config_path(cwd);
-        let credentials_path = default_credentials_path();
 
         let config = match config_path.as_ref() {
             Some(path) if path.exists() => Some(load_toml_file::<ApxmLlmConfigFile>(path)?),
-            _ => None,
-        };
-
-        let credentials = match credentials_path.as_ref() {
-            Some(path) if path.exists() => Some(load_toml_file::<ApxmCredentialsFile>(path)?),
             _ => None,
         };
 
@@ -197,20 +172,10 @@ impl ApxmLlmControlPlane {
         let mut model_aliases = HashMap::new();
         let mut ordered_backend_names = Vec::new();
 
-        let credential_backends = credentials
+        let backend_configs = config
             .as_ref()
-            .map(|file| credentials_to_backend_configs(&file.credentials))
+            .map(|cfg| cfg.llm_backends.clone())
             .unwrap_or_default();
-        let credentials_loaded = !credential_backends.is_empty();
-
-        let backend_configs = if credentials_loaded {
-            credential_backends
-        } else {
-            config
-                .as_ref()
-                .map(|cfg| cfg.llm_backends.clone())
-                .unwrap_or_default()
-        };
 
         for backend in backend_configs {
             if let Some(allowed) = &allowed_backends
@@ -273,7 +238,6 @@ impl ApxmLlmControlPlane {
 
         Ok(Self {
             config_path,
-            credentials_path: credentials_loaded.then_some(credentials_path).flatten(),
             backends,
             default_backend,
             default_model,
@@ -336,10 +300,6 @@ fn default_config_path() -> Option<PathBuf> {
     home_dir().map(|home| home.join(APXM_DIR_NAME).join(APXM_CONFIG_FILE_NAME))
 }
 
-fn default_credentials_path() -> Option<PathBuf> {
-    home_dir().map(|home| home.join(APXM_DIR_NAME).join(APXM_CREDENTIALS_FILE_NAME))
-}
-
 fn load_toml_file<T>(path: &Path) -> io::Result<T>
 where
     T: for<'de> Deserialize<'de>,
@@ -351,25 +311,6 @@ where
             format!("Failed to parse {}: {error}", path.display()),
         )
     })
-}
-
-fn credentials_to_backend_configs(
-    credentials: &HashMap<String, ApxmCredentialConfig>,
-) -> Vec<ApxmLlmBackendConfig> {
-    credentials
-        .iter()
-        .map(|(name, credential)| ApxmLlmBackendConfig {
-            name: name.clone(),
-            provider: Some(credential.provider.clone()),
-            protocol: None,
-            default_model: credential.model.clone(),
-            models: Vec::new(),
-            api_key: credential.api_key.clone(),
-            endpoint: credential.base_url.clone(),
-            options: HashMap::new(),
-            extra_headers: credential.headers.clone(),
-        })
-        .collect()
 }
 
 fn resolve_backend(config: &ApxmLlmBackendConfig) -> io::Result<ResolvedApxmBackendConfig> {

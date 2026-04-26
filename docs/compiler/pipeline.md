@@ -37,10 +37,10 @@ each name to the right backend.
                                                    ▼
                                   ┌─────────────────────────────────┐
                                   │       Optimization phase        │
+                                  │   dspy-optimize (config-gated) │
                                   │   template-specialization       │
                                   │   dead-context-elimination      │
                                   │   canonicalizer                 │
-                                  │   CSE                           │
                                   │   symbol-DCE                    │
                                   └────────────────┬────────────────┘
                                                    ▼
@@ -76,10 +76,10 @@ which optimization level, is decided in `build_pass_list()`.
 |-------------------------------|--------------------------------------------------------------------------------|
 | `normalize-agent-graph`       | Canonical form — dedup context, lowercase attribute names, sort sets           |
 | `build-prompt`                | Fill empty prompt templates from upstream context where it can be inferred     |
-| `dspy-optimize`               | Explicit-only: apply ML-tuned prompt rewrites when DSPy config is wired        |
+| `dspy-optimize`               | Config-gated compiler prompt tuning; no-op without training data              |
 | `unconsumed-value-warning`    | Diagnostic: warn on values produced but never read by a downstream node        |
 | `capability-scheduling`       | Annotate nodes with tier, cost, and latency labels for the runtime scheduler   |
-| `fuse-ask-ops`                | Legacy explicit-only ASK mutation experiment; keep out of default pipelines   |
+| `fuse-ask-ops`                | Explicit-only ASK mutation experiment; keep out of default pipelines          |
 | `assign-priority`             | Stamp critical-path priority on nodes to drive scheduler ordering              |
 | `prompt-canonicalization`     | Explicit-only: reorder prompt fragments for backend prefix-cache experiments   |
 | `template-specialization`     | Fold known constants into prompt templates                                     |
@@ -117,29 +117,37 @@ The actual sequence each `(level, target)` produces is defined by
 
 - **O0** — passthrough. No optimization. Useful for debugging the lowering and for
   baseline performance comparisons.
-- **O1** — basic. Normalization, prompt construction, canonicalization, tool
-  checks, CSE, symbol DCE, and priority metadata. The `Cost` and `Tokens`
-  targets add dead-context-elimination.
+- **O1** — basic. Normalization, prompt construction, config-gated prompt
+  tuning, template specialization, dead-context-elimination, canonicalization,
+  tool checks, symbol DCE, and priority metadata.
 - **O2** — standard. Adds template-specialization and dead-context-elimination
-  before canonicalization, then tool checks, CSE, symbol DCE, and priority
-  metadata. `Latency` and `Parallelism` targets also enable production-safe
-  scheduling metadata and analysis-only shared-prefix hints. This is the
-  default safe optimization level for production artifacts.
+  before canonicalization, then tool checks, symbol DCE, scheduling metadata,
+  analysis-only shared-prefix hints, and priority metadata. This is the default
+  safe optimization level for production artifacts.
 - **O3** — aggressive but still contract-safe. Repeats template-specialization,
   dead-context-elimination, scheduling metadata, canonicalization, tool checks,
-  CSE, and symbol DCE up to the configured iteration cap. Use it for diagnostics
+  and symbol DCE up to the configured iteration cap. Use it for diagnostics
   or measured production workloads that benefit from repeated cleanup.
 
-CSE is the current non-heuristic duplicate-work optimization. Use
-`--no-cse-llm` when benchmarking or deploying intentionally stochastic LLM nodes
-until LLM purity/determinism is represented as a typed IR contract.
+Generic MLIR CSE is available through explicit pass lists, but it is not part of
+the default O-levels until LLM purity/determinism is represented as a typed IR
+contract.
+
+## Config-Gated Prompt Tuning
+
+`dspy-optimize` is included in O1/O2/O3 immediately after `build-prompt`. It is
+a no-op unless compiler-owned prompt tuning config and training data are
+available. The compiler reads that config from the APXM config file, normalizes
+training data into `.apxm/cache/compiler/training`, writes optimizer cache
+artifacts under `.apxm/cache/compiler/dspy`, and strips transient optimizer
+metadata before artifact serialization.
 
 ## Explicit-Only Passes
 
 The following passes remain implemented and can be invoked with `--pass-list`
 for controlled experiments, but they are not part of O1/O2/O3 defaults:
 
-- `fuse-ask-ops`: legacy explicit-only experiment that mutates ASK chains. It
+- `fuse-ask-ops`: explicit-only experiment that mutates ASK chains. It
   is not a production optimization claim; producer-consumer ASK opportunities
   should be reported as analysis until typed quality and request-semantics
   contracts exist.
@@ -147,9 +155,6 @@ for controlled experiments, but they are not part of O1/O2/O3 defaults:
   prompt layout rewrites need an explicit backend/graph-hint contract.
 - `schema-narrowing`: current implementation is not field-use schema narrowing.
 - `condense-ops`: memory batching needs typed memory-store semantics.
-- `dspy-optimize`: DSPy is the right direction for quality-aware prompt
-  optimization, but the CLI/API config, optimizer request schema, cache key,
-  and quality-gated benchmark path must be completed before slide-safe claims.
 
 ## Where to Read More
 

@@ -156,7 +156,7 @@ pub(crate) async fn register_capability(
             client: reqwest::Client::new(),
         })
     } else {
-        // Static capability — always returns the same value (legacy behaviour)
+        // Static capability — always returns the same configured value.
         let response_value = Value::try_from(req.static_response)
             .map_err(|e| ApiError::bad_request(e.to_string()))?;
         info!(name = %req.name, "registering static capability");

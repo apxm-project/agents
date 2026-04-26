@@ -414,14 +414,13 @@ part of the automatic O-level pipelines."#,
 pub const DSPY_OPTIMIZE: PassSpec = PassSpec::new(
     "dspy-optimize",
     "DspyOptimize",
-    "Explicit-only DSPy prompt optimization",
+    "Config-gated compiler prompt optimization",
     r#"Invokes DSPy (Stanford NLP) to automatically optimize LLM prompt templates.
 Uses MIPROv2, BootstrapFewShot, or COPRO optimizers to discover better
 instructions from training examples.
 
-This pass is explicit-only until the CLI/API config, optimizer request schema,
-cache key, and quality-gated benchmark contract are complete. It is a no-op
-when no training data is available.
+This pass is part of O1/O2/O3 and is a no-op unless compiler-owned prompt
+tuning configuration and training data are available.
 
 Placement: immediately after build-prompt (which synthesizes named placeholders).
 Subsequent passes (template-specialization, dead-context-elimination,
@@ -470,7 +469,7 @@ pub const CSE: PassSpec = PassSpec::new(
     "cse",
     "CSE",
     "MLIR common subexpression elimination",
-    "Standard MLIR CSE pass. Use --no-cse-llm for intentionally stochastic LLM nodes until LLM purity is typed in the IR.",
+    "Standard MLIR CSE pass. Available through explicit pass lists; not part of default O-levels until LLM purity is typed in the IR.",
     PassCategory::Optimization,
     "mlir::createCSEPass()",
 )

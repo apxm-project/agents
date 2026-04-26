@@ -109,7 +109,7 @@ fn build_app(state: AppState) -> Router {
         .route("/v1/checkpoints/{id}/resume", post(resume_checkpoint))
         // A2A v0.3 — AgentCard discovery + REST task lifecycle
         .route("/.well-known/agent.json", get(agent_card))
-        .route("/a2a", post(a2a_jsonrpc)) // legacy JSON-RPC compat
+        .route("/a2a", post(a2a_jsonrpc)) // JSON-RPC task endpoint
         .route("/a2a/tasks/send", post(a2a_send_task)) // REST: submit task + execute
         .route("/a2a/tasks/{id}", get(a2a_get_task)) // REST: poll task result
         // LLM generation (Phase A3 — LLM backend routes)

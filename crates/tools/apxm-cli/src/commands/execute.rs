@@ -246,7 +246,7 @@ pub async fn execute_command(
     emit_session: Option<Option<PathBuf>>,
     emit_profile: Option<PathBuf>,
 ) -> Result<()> {
-    let apxm_config = load_config(config).context("Failed to load configuration")?;
+    let apxm_config = load_config(config.clone()).context("Failed to load configuration")?;
 
     if apxm_config.backends.is_empty() && std::env::var(apxm_env::APXM_MOCK_BACKEND).is_err() {
         anyhow::bail!(
@@ -265,7 +265,12 @@ pub async fn execute_command(
     }
 
     let opt = parse_opt_level(opt_level);
-    let mut linker_config = LinkerConfig::from_apxm_config(apxm_config).with_opt_level(opt);
+    let pipeline_config = apxm_core::types::PipelineConfig {
+        opt_level: opt,
+        ..Default::default()
+    };
+    let mut linker_config =
+        LinkerConfig::from_apxm_config(apxm_config).with_pipeline_config(pipeline_config);
     let (graph_input, _python_air, python_tools_sidecar) = prepare_graph_input(&input)?;
 
     // Enable all-outputs collection when session output is requested

@@ -11,8 +11,10 @@ apxm-core.workspace = true
 apxm-artifact.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+toml.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
+blake3.workspace = true
 bpe-openai = "0.3"
 
 [dev-dependencies]

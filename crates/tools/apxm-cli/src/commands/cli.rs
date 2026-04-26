@@ -46,7 +46,7 @@ pub enum Commands {
         #[arg(long)]
         emit_metrics: Option<PathBuf>,
         /// Optimization level (0 = no optimizations, 1-3 = increasing optimization)
-        #[arg(short = 'O', long = "opt-level", default_value = "1")]
+        #[arg(short = 'O', long = "opt-level", default_value = "2")]
         opt_level: u8,
         /// Optimization target: latency, cost, tokens, parallelism, balanced
         #[arg(long, default_value = "balanced")]
@@ -88,8 +88,7 @@ pub enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
         /// Optimization level (0 = no optimizations, 1-3 = increasing optimization)
-        /// -O0 disables FuseReasoning, -O1+ enables it
-        #[arg(short = 'O', long = "opt-level", default_value = "1")]
+        #[arg(short = 'O', long = "opt-level", default_value = "2")]
         opt_level: u8,
         /// Emit metrics JSON file with runtime execution statistics
         #[arg(long)]
@@ -400,12 +399,6 @@ pub enum BackendAction {
     Test {
         /// Backend name to test (omit to test all)
         name: Option<String>,
-    },
-    /// Migrate from legacy credentials.toml
-    Migrate {
-        /// Skip confirmation prompt
-        #[arg(long)]
-        yes: bool,
     },
     /// Start a local backend container
     Start {

@@ -129,13 +129,7 @@ async fn cassette_replay_qwen35_happy_path() {
         serde_json::from_slice(&chat_reqs[0].body).expect("parse sent request body");
     let sent_apxm = sent_body
         .get(apxm_llm::VLLM_XARGS)
-        .and_then(|xargs| xargs.get(apxm_llm::HINTS_FIELD))
-        .or_else(|| {
-            sent_body
-                .get(openai_keys::EXTRA_BODY)
-                .and_then(|extra_body| extra_body.get(apxm_llm::VLLM_XARGS))
-                .and_then(|xargs| xargs.get(apxm_llm::HINTS_FIELD))
-        });
+        .and_then(|xargs| xargs.get(apxm_llm::HINTS_FIELD));
     assert!(
         sent_apxm.is_some(),
         "outgoing request must carry vllm_xargs.apxm"

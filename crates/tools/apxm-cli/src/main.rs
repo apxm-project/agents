@@ -132,6 +132,7 @@ async fn run_cli(cli: Cli) -> Result<()> {
             warn,
             disable_passes,
             pass_list_override,
+            cli.config,
         ),
         Commands::Decompile { artifact, output } => decompile_command(artifact, output),
         Commands::Execute {
@@ -315,10 +316,12 @@ mod tests {
 
     #[test]
     fn find_op_spec_inv() {
-        // The canonical name is INV_TOOL (to_string() on AISOperationType::InvTool).
-        // "INV" is the legacy .fromStr alias but not the Display name.
         let spec = find_op_spec("INV_TOOL");
         assert!(spec.is_some(), "INV_TOOL should be a valid operation");
+        assert!(
+            find_op_spec("INV").is_none(),
+            "INV is not a canonical operation"
+        );
     }
 
     #[test]

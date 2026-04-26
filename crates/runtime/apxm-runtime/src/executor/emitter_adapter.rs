@@ -1,8 +1,8 @@
 //! Bridges [`ExecutionEventEmitter`] to the universal [`EventEmitter`] trait.
 //!
-//! Converts each typed method call on the legacy emitter trait into a concrete
-//! core payload struct, wraps it in an [`ApxmEvent`], and forwards it through
-//! the pluggable [`EventEmitter`] sink.
+//! Converts each typed method call on the execution emitter trait into a
+//! concrete core payload struct, wraps it in an [`ApxmEvent`], and forwards it
+//! through the pluggable [`EventEmitter`] sink.
 
 use std::collections::HashMap;
 use std::sync::Arc;

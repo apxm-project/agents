@@ -37,8 +37,8 @@ impl FromStr for PinMode {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
-            apxm_llm::PIN_MODE_PREFIX | apxm_llm::PIN_MODE_PREFIX_LEGACY => Ok(Self::Prefix),
-            apxm_llm::PIN_MODE_NONE | apxm_llm::PIN_MODE_NONE_LEGACY => Ok(Self::None),
+            apxm_llm::PIN_MODE_PREFIX => Ok(Self::Prefix),
+            apxm_llm::PIN_MODE_NONE => Ok(Self::None),
             _ => Err(format!("unknown pin mode: {value}")),
         }
     }
@@ -67,7 +67,6 @@ impl<'de> Deserialize<'de> for PinMode {
 pub enum PriorityClass {
     CriticalPath,
     Parallel,
-    Speculative,
 }
 
 impl PriorityClass {
@@ -75,7 +74,6 @@ impl PriorityClass {
         match self {
             Self::CriticalPath => apxm_llm::PRIORITY_CRITICAL_PATH,
             Self::Parallel => apxm_llm::PRIORITY_PARALLEL,
-            Self::Speculative => apxm_llm::PRIORITY_SPECULATIVE_LEGACY,
         }
     }
 }
@@ -92,8 +90,7 @@ impl FromStr for PriorityClass {
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
             apxm_llm::PRIORITY_CRITICAL_PATH => Ok(Self::CriticalPath),
-            apxm_llm::PRIORITY_PARALLEL | apxm_llm::PRIORITY_NORMAL_LEGACY => Ok(Self::Parallel),
-            apxm_llm::PRIORITY_SPECULATIVE_LEGACY => Ok(Self::Speculative),
+            apxm_llm::PRIORITY_PARALLEL => Ok(Self::Parallel),
             _ => Err(format!("unknown priority class: {value}")),
         }
     }
@@ -494,27 +491,15 @@ mod tests {
     }
 
     #[test]
-    fn priority_class_accepts_legacy_strings() {
-        assert_eq!(
-            serde_json::from_str::<PriorityClass>("\"normal\"").unwrap(),
-            PriorityClass::Parallel
-        );
-        assert_eq!(
-            serde_json::from_str::<PriorityClass>("\"speculative\"").unwrap(),
-            PriorityClass::Speculative
-        );
+    fn priority_class_rejects_unsupported_strings() {
+        assert!(serde_json::from_str::<PriorityClass>("\"normal\"").is_err());
+        assert!(serde_json::from_str::<PriorityClass>("\"speculative\"").is_err());
     }
 
     #[test]
-    fn pin_mode_accepts_legacy_strings() {
-        assert_eq!(
-            serde_json::from_str::<PinMode>("\"pin_strong\"").unwrap(),
-            PinMode::Prefix
-        );
-        assert_eq!(
-            serde_json::from_str::<PinMode>("\"pin_weak\"").unwrap(),
-            PinMode::None
-        );
+    fn pin_mode_rejects_unsupported_strings() {
+        assert!(serde_json::from_str::<PinMode>("\"pin_strong\"").is_err());
+        assert!(serde_json::from_str::<PinMode>("\"pin_weak\"").is_err());
     }
 
     #[test]

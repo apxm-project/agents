@@ -2,15 +2,18 @@
 
 use crate::air_builder::AirModule;
 use crate::api::{Context, Module};
+use crate::optimization::CompilerOptimizationContext;
 use crate::passes::{PassManager, PipelineDiagnostics, resolve_pass_list};
 use apxm_core::error::compiler::{CompilerError, Result};
 use apxm_core::error::{Error, codes::ErrorCode};
 use apxm_core::types::{OptimizationLevel, PipelineConfig};
+use std::ffi::CString;
 
 /// Pipeline API for compiling and optimizing modules.
 pub struct Pipeline<'ctx> {
     context: &'ctx Context,
     config: PipelineConfig,
+    optimization_context: CompilerOptimizationContext,
 }
 
 impl<'ctx> Pipeline<'ctx> {
@@ -19,12 +22,18 @@ impl<'ctx> Pipeline<'ctx> {
         Self {
             context,
             config: PipelineConfig::default(),
+            optimization_context: CompilerOptimizationContext::default(),
         }
     }
 
     /// Creates a new pipeline with custom configuration.
     pub fn with_config(context: &'ctx Context, config: PipelineConfig) -> Self {
-        Self { context, config }
+        let optimization_context = CompilerOptimizationContext::from_pipeline_config(&config);
+        Self {
+            context,
+            config,
+            optimization_context,
+        }
     }
 
     pub fn with_opt_level(context: &'ctx Context, level: OptimizationLevel) -> Self {
@@ -32,7 +41,20 @@ impl<'ctx> Pipeline<'ctx> {
             opt_level: level,
             ..Default::default()
         };
-        Self { context, config }
+        Self::with_config(context, config)
+    }
+
+    /// Creates a pipeline with a caller-provided compiler optimization context.
+    pub fn with_config_and_optimization_context(
+        context: &'ctx Context,
+        config: PipelineConfig,
+        optimization_context: CompilerOptimizationContext,
+    ) -> Self {
+        Self {
+            context,
+            config,
+            optimization_context,
+        }
     }
 
     pub fn compile(&self, source: &str) -> Result<Module> {
@@ -89,6 +111,8 @@ impl<'ctx> Pipeline<'ctx> {
     }
 
     fn process_module(&self, module: Module) -> Result<Module> {
+        self.apply_transient_module_config(&module)?;
+
         if self.config.verify {
             module.verify()?;
         }
@@ -106,6 +130,7 @@ impl<'ctx> Pipeline<'ctx> {
         unsafe {
             crate::ffi::apxm_module_strip_all_pass_stats(module.as_ptr());
         }
+        self.strip_transient_module_config(&module)?;
 
         if self.config.verify {
             module.verify()?;
@@ -118,6 +143,8 @@ impl<'ctx> Pipeline<'ctx> {
         &self,
         module: Module,
     ) -> Result<(Module, PipelineDiagnostics)> {
+        self.apply_transient_module_config(&module)?;
+
         if self.config.verify {
             module.verify()?;
         }
@@ -133,6 +160,7 @@ impl<'ctx> Pipeline<'ctx> {
             .filter(|n| crate::passes::is_mlir_pass(n))
             .collect();
         let diagnostics = pm.run_with_metrics(&module, &pass_names)?;
+        self.strip_transient_module_config(&module)?;
 
         if self.config.verify {
             module.verify()?;
@@ -143,5 +171,102 @@ impl<'ctx> Pipeline<'ctx> {
 
     pub fn config(&self) -> &PipelineConfig {
         &self.config
+    }
+
+    fn apply_transient_module_config(&self, module: &Module) -> Result<()> {
+        use apxm_core::constants::dspy;
+
+        let Some(prompt_optimization) = self.optimization_context.prompt_optimization()? else {
+            return Ok(());
+        };
+
+        set_module_string_attr(
+            module,
+            dspy::ATTR_TRAINING_DATA_PATH,
+            &prompt_optimization.training_data_path.to_string_lossy(),
+        )?;
+        set_module_string_attr(
+            module,
+            dspy::ATTR_OPTIMIZER,
+            prompt_optimization.optimizer.as_str(),
+        )?;
+        set_module_string_attr(module, dspy::ATTR_AUTO, prompt_optimization.budget.as_str())?;
+        set_module_string_attr(
+            module,
+            dspy::ATTR_METRIC,
+            prompt_optimization.metric.as_str(),
+        )?;
+        set_module_string_attr(
+            module,
+            dspy::ATTR_BACKEND_JSON,
+            &prompt_optimization.backend_json,
+        )?;
+        set_module_string_attr(
+            module,
+            dspy::ATTR_CACHE_DIR,
+            &prompt_optimization.cache_dir.to_string_lossy(),
+        )?;
+        if prompt_optimization.no_cache {
+            set_module_bool_attr(module, dspy::ATTR_NO_CACHE, true)?;
+        }
+        Ok(())
+    }
+
+    fn strip_transient_module_config(&self, module: &Module) -> Result<()> {
+        use apxm_core::constants::dspy;
+
+        for attr in [
+            dspy::ATTR_TRAINING_DATA_PATH,
+            dspy::ATTR_BACKEND_JSON,
+            dspy::ATTR_CACHE_DIR,
+            dspy::ATTR_OPTIMIZER,
+            dspy::ATTR_AUTO,
+            dspy::ATTR_METRIC,
+            dspy::ATTR_NO_CACHE,
+        ] {
+            remove_module_attr(module, attr)?;
+        }
+        Ok(())
+    }
+}
+
+fn ffi_attr_error(action: &str, name: &str) -> CompilerError {
+    CompilerError::Unsupported(Box::new(Error::new_generic(
+        ErrorCode::InternalError,
+        format!("Failed to {action} transient module attribute {name}"),
+    )))
+}
+
+fn set_module_string_attr(module: &Module, name: &str, value: &str) -> Result<()> {
+    let c_name = CString::new(name).map_err(|_| ffi_attr_error("set", name))?;
+    let c_value = CString::new(value).map_err(|_| ffi_attr_error("set", name))?;
+    let ok = unsafe {
+        crate::ffi::apxm_module_set_string_attr(module.as_ptr(), c_name.as_ptr(), c_value.as_ptr())
+    };
+    if ok {
+        Ok(())
+    } else {
+        Err(ffi_attr_error("set", name))
+    }
+}
+
+fn set_module_bool_attr(module: &Module, name: &str, value: bool) -> Result<()> {
+    let c_name = CString::new(name).map_err(|_| ffi_attr_error("set", name))?;
+    let ok =
+        unsafe { crate::ffi::apxm_module_set_bool_attr(module.as_ptr(), c_name.as_ptr(), value) };
+    if ok {
+        Ok(())
+    } else {
+        Err(ffi_attr_error("set", name))
+    }
+}
+
+fn remove_module_attr(module: &Module, name: &str) -> Result<()> {
+    let c_name = CString::new(name).map_err(|_| ffi_attr_error("remove", name))?;
+    let ok = unsafe { crate::ffi::apxm_module_remove_attr(module.as_ptr(), c_name.as_ptr()) };
+    if ok {
+        Ok(())
+    } else {
+        Err(ffi_attr_error("remove", name))
     }
 }

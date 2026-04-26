@@ -18,7 +18,7 @@ pub struct Compiler {
 impl Compiler {
     /// Initialize a new compiler context for linking.
     pub fn new() -> Result<Self, DriverError> {
-        Self::with_opt_level(OptimizationLevel::O1)
+        Self::with_opt_level(OptimizationLevel::O2)
     }
 
     /// Initialize a new compiler context with a specific optimization level.

@@ -25,7 +25,13 @@ import tempfile
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from enum import StrEnum
+try:
+    from enum import StrEnum
+except ImportError:  # Python 3.10 in some Dekk-managed test environments.
+    from enum import Enum
+
+    class StrEnum(str, Enum):
+        pass
 from pathlib import Path
 from typing import Any
 
@@ -101,6 +107,7 @@ CSV_FIELDS = [
     "timestamp_utc",
     "graph",
     "mode",
+    "variant",
     "backend_label",
     "opt_level",
     "run_index",
@@ -228,6 +235,7 @@ class RunRecord:
     timestamp_utc: str
     graph: str
     mode: str
+    variant: str
     backend_label: str
     opt_level: int
     run_index: int
@@ -254,6 +262,7 @@ class RunRecord:
             "timestamp_utc": self.timestamp_utc,
             "graph": self.graph,
             "mode": self.mode,
+            "variant": self.variant,
             "backend_label": self.backend_label,
             "opt_level": self.opt_level,
             "run_index": self.run_index,
@@ -318,6 +327,11 @@ def _parse_args() -> argparse.Namespace:
         "--backend-label",
         default="configured",
         help="Reporting label for the configured backend",
+    )
+    parser.add_argument(
+        "--variant",
+        default="default",
+        help="Reporting label for this compiler/runtime configuration.",
     )
     parser.add_argument(
         "--apxm-config",
@@ -450,6 +464,7 @@ def _run_once(
     trial_id: int,
     run_order: int,
     compile_only: bool,
+    variant: str,
     backend_label: str,
     trace: str | None,
     session_parent: Path,
@@ -464,6 +479,7 @@ def _run_once(
             timestamp_utc=timestamp,
             graph=str(graph),
             mode=mode,
+            variant=variant,
             backend_label=backend_label,
             opt_level=opt_level,
             run_index=run_index,
@@ -487,7 +503,9 @@ def _run_once(
         )
 
     session_base = session_parent / f"opt-{opt_level}" / f"run-{run_index}"
-    result, wall_ms = _run_execute(graph, opt_level, session_base, trace, apxm_config)
+    result, wall_ms = _run_execute(
+        graph, opt_level, session_base, trace, apxm_config
+    )
     session_root: Path | None = None
     summary: SessionSummary | None = None
     if result.returncode == 0:
@@ -497,6 +515,7 @@ def _run_once(
         timestamp_utc=timestamp,
         graph=str(graph),
         mode=mode,
+        variant=variant,
         backend_label=backend_label,
         opt_level=opt_level,
         run_index=run_index,
@@ -537,7 +556,10 @@ def _summarize(records: list[RunRecord]) -> None:
     for record in records:
         by_opt.setdefault(record.opt_level, []).append(record)
 
+    variants = sorted({record.variant for record in records})
     print("# benchmark_e2e summary")
+    if variants != ["default"]:
+        print(f"- variants: {', '.join(variants)}")
     for opt_level in sorted(by_opt):
         rows = by_opt[opt_level]
         successes = [row for row in rows if row.success]
@@ -583,7 +605,7 @@ def _display_number(value: int | float | None, suffix: str = "") -> str:
 def _print_run_summary(record: RunRecord) -> None:
     status = STATUS_SUCCEEDED if record.success else STATUS_FAILED
     print(
-        f"- {RUN_SUMMARY_PREFIX}: O{record.opt_level} trial {record.trial_id} "
+        f"- {RUN_SUMMARY_PREFIX}: {record.variant} O{record.opt_level} trial {record.trial_id} "
         f"run {record.run_index} order {record.run_order} {status}; "
         f"wall={record.wall_ms:.1f} ms; "
         f"graph={_display_number(record.graph_duration_ms, ' ms')}; "
@@ -630,6 +652,7 @@ def main() -> int:
             trial_id=trial_id,
             run_order=run_order,
             compile_only=args.compile_only,
+            variant=args.variant,
             backend_label=args.backend_label,
             trace=args.trace,
             session_parent=args.session_base.resolve(),

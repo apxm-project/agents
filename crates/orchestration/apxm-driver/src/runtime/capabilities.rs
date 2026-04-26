@@ -17,7 +17,7 @@ pub fn configure_capability_registry(
         tracing::warn!("Failed to load user tools from ~/.apxm/tools.json: {}", e);
     }
 
-    // NOTE: ACP agents are invoked via SPAWN_AGENT + COMMUNICATE, not the legacy tool-invocation path.
+    // NOTE: ACP agents are invoked via SPAWN_AGENT + COMMUNICATE.
     // The ACP tool entry is intentionally not registered.
 
     Ok(())

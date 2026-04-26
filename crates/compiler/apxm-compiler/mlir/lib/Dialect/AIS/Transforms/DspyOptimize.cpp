@@ -33,6 +33,53 @@ namespace {
 
 APXM_AIS_DEBUG_SETUP(dspy_optimize)
 
+static std::string pythonStringLiteral(llvm::StringRef value) {
+  std::string out = "\"";
+  for (char c : value) {
+    switch (c) {
+    case '\\':
+      out += "\\\\";
+      break;
+    case '"':
+      out += "\\\"";
+      break;
+    case '\n':
+      out += "\\n";
+      break;
+    case '\r':
+      out += "\\r";
+      break;
+    case '\t':
+      out += "\\t";
+      break;
+    default:
+      out += c;
+      break;
+    }
+  }
+  out += "\"";
+  return out;
+}
+
+static std::string dspyBootstrapCode() {
+  llvm::SmallString<256> toolsPath;
+#ifdef APXM_WORKSPACE_ROOT
+  toolsPath = APXM_WORKSPACE_ROOT;
+  llvm::sys::path::append(toolsPath, "tools");
+#endif
+
+  std::string code =
+      "import importlib.util, runpy, sys\n"
+      "tools_path = ";
+  code += pythonStringLiteral(toolsPath);
+  code +=
+      "\n"
+      "if importlib.util.find_spec('apxm_dspy') is None and tools_path:\n"
+      "    sys.path.insert(0, tools_path)\n"
+      "runpy.run_module('apxm_dspy', run_name='__main__')\n";
+  return code;
+}
+
 struct DspyOptimizePass : impl::DspyOptimizeBase<DspyOptimizePass> {
   using DspyOptimizeBase::DspyOptimizeBase;
 
@@ -69,18 +116,30 @@ struct DspyOptimizePass : impl::DspyOptimizeBase<DspyOptimizePass> {
     // 2. Check for backend config (JSON string attribute)
     auto backendAttr =
         module->getAttrOfType<StringAttr>(apxm::constants::attrs::DSPY_BACKEND_JSON);
+    auto cacheDirAttr =
+        module->getAttrOfType<StringAttr>(apxm::constants::attrs::DSPY_CACHE_DIR);
     auto optimizerAttr =
         module->getAttrOfType<StringAttr>(apxm::constants::attrs::DSPY_OPTIMIZER);
     auto autoAttr =
         module->getAttrOfType<StringAttr>(apxm::constants::attrs::DSPY_AUTO);
     auto metricAttr =
         module->getAttrOfType<StringAttr>(apxm::constants::attrs::DSPY_METRIC);
+    auto noCacheAttr =
+        module->getAttrOfType<BoolAttr>(apxm::constants::attrs::DSPY_NO_CACHE);
+
+    if (!backendAttr) {
+      module->emitError(
+          "dspy-optimize: compiler prompt optimization is enabled but no "
+          "backend config was provided");
+      signalPassFailure();
+      return;
+    }
 
     // 3. Find python3
     auto pythonOrErr = llvm::sys::findProgramByName("python3");
     if (!pythonOrErr) {
-      module->emitWarning("dspy-optimize: python3 not found in PATH, skipping");
-      APXM_AIS_DEBUG_FOOTER(DspyOptimize);
+      module->emitError("dspy-optimize: python3 not found in PATH");
+      signalPassFailure();
       return;
     }
     std::string python = *pythonOrErr;
@@ -113,23 +172,34 @@ struct DspyOptimizePass : impl::DspyOptimizeBase<DspyOptimizePass> {
 
     // 5. Build batch request JSON
     llvm::json::Object requestObj;
-    requestObj["training_data_path"] = trainingAttr.getValue().str();
+    requestObj[apxm::constants::dspy_json::TRAINING_DATA_PATH] =
+        trainingAttr.getValue().str();
     if (backendAttr)
-      requestObj["backend_json"] = backendAttr.getValue().str();
+      requestObj[apxm::constants::dspy_json::BACKEND_JSON] =
+          backendAttr.getValue().str();
+    if (cacheDirAttr)
+      requestObj[apxm::constants::dspy_json::CACHE_DIR] =
+          cacheDirAttr.getValue().str();
     if (optimizerAttr)
-      requestObj["optimizer"] = optimizerAttr.getValue().str();
+      requestObj[apxm::constants::dspy_json::OPTIMIZER] =
+          optimizerAttr.getValue().str();
     if (autoAttr)
-      requestObj["auto"] = autoAttr.getValue().str();
+      requestObj[apxm::constants::dspy_json::AUTO] = autoAttr.getValue().str();
     if (metricAttr)
-      requestObj["metric"] = metricAttr.getValue().str();
+      requestObj[apxm::constants::dspy_json::METRIC] =
+          metricAttr.getValue().str();
+    if (noCacheAttr)
+      requestObj[apxm::constants::dspy_json::NO_CACHE] =
+          noCacheAttr.getValue();
 
     llvm::json::Array templatesArr;
     for (auto &info : opsToOptimize) {
       llvm::json::Object tmplObj;
-      tmplObj["template_str"] = info.templateStr;
+      tmplObj[apxm::constants::dspy_json::TEMPLATE_STR] = info.templateStr;
       templatesArr.push_back(std::move(tmplObj));
     }
-    requestObj["templates"] = std::move(templatesArr);
+    requestObj[apxm::constants::dspy_json::TEMPLATES] =
+        std::move(templatesArr);
 
     // 6. Write request to temp file
     llvm::SmallString<128> requestPath, responsePath;
@@ -160,14 +230,18 @@ struct DspyOptimizePass : impl::DspyOptimizeBase<DspyOptimizePass> {
       reqFile << llvm::json::Value(std::move(requestObj));
     }
 
-    // 7. Execute python3 -m apxm_dspy with file redirects
+    // 7. Execute the compiler-owned DSPy adapter with file redirects. The
+    // adapter can be installed in the Dekk environment; when running from a
+    // source tree, the bootstrap adds `<repo>/tools` without mutating the
+    // user's shell environment.
     std::optional<llvm::StringRef> redirects[] = {
         llvm::StringRef(requestPath),  // stdin
         llvm::StringRef(responsePath), // stdout
         std::nullopt                   // stderr (inherit for progress output)
     };
 
-    llvm::SmallVector<llvm::StringRef> args = {python, "-m", "apxm_dspy"};
+    std::string bootstrap = dspyBootstrapCode();
+    llvm::SmallVector<llvm::StringRef> args = {python, "-c", bootstrap};
     std::string errMsg;
     int rc = llvm::sys::ExecuteAndWait(
         python, args,
@@ -189,10 +263,9 @@ struct DspyOptimizePass : impl::DspyOptimizeBase<DspyOptimizePass> {
       else
         reason = "exited with code " + std::to_string(rc);
 
-      module->emitWarning("dspy-optimize: subprocess " + reason +
-                          " — using original templates");
+      module->emitError("dspy-optimize: subprocess " + reason);
       llvm::sys::fs::remove(responsePath);
-      APXM_AIS_DEBUG_FOOTER(DspyOptimize);
+      signalPassFailure();
       return;
     }
 
@@ -201,31 +274,31 @@ struct DspyOptimizePass : impl::DspyOptimizeBase<DspyOptimizePass> {
     llvm::sys::fs::remove(responsePath);
 
     if (!bufOrErr) {
-      module->emitWarning("dspy-optimize: failed to read response file");
-      APXM_AIS_DEBUG_FOOTER(DspyOptimize);
+      module->emitError("dspy-optimize: failed to read response file");
+      signalPassFailure();
       return;
     }
 
     auto responseJson = llvm::json::parse((*bufOrErr)->getBuffer());
     if (!responseJson) {
-      module->emitWarning("dspy-optimize: invalid JSON response");
-      APXM_AIS_DEBUG_FOOTER(DspyOptimize);
+      module->emitError("dspy-optimize: invalid JSON response");
+      signalPassFailure();
       return;
     }
 
     auto *respObj = responseJson->getAsObject();
     if (!respObj) {
-      module->emitWarning("dspy-optimize: response is not a JSON object");
-      APXM_AIS_DEBUG_FOOTER(DspyOptimize);
+      module->emitError("dspy-optimize: response is not a JSON object");
+      signalPassFailure();
       return;
     }
 
-    auto status = respObj->getString("status");
-    if (!status || *status != "ok") {
-      auto errorMsg = respObj->getString("error");
+    auto status = respObj->getString(apxm::constants::dspy_json::STATUS);
+    if (!status || *status != apxm::constants::dspy_json::STATUS_OK) {
+      auto errorMsg = respObj->getString(apxm::constants::dspy_json::ERROR);
       std::string msg = errorMsg ? errorMsg->str() : "unknown error";
-      module->emitWarning("dspy-optimize: " + msg);
-      APXM_AIS_DEBUG_FOOTER(DspyOptimize);
+      module->emitError("dspy-optimize: " + msg);
+      signalPassFailure();
       return;
     }
 
@@ -233,7 +306,8 @@ struct DspyOptimizePass : impl::DspyOptimizeBase<DspyOptimizePass> {
     OpBuilder builder(module.getContext());
 
     // Single template mode
-    if (auto optimizedTmpl = respObj->getString("optimized_template")) {
+    if (auto optimizedTmpl = respObj->getString(
+            apxm::constants::dspy_json::OPTIMIZED_TEMPLATE)) {
       if (!opsToOptimize.empty()) {
         auto &info = opsToOptimize[0];
         llvm::TypeSwitch<Operation *>(info.op)
@@ -246,14 +320,16 @@ struct DspyOptimizePass : impl::DspyOptimizeBase<DspyOptimizePass> {
     }
 
     // Batch mode
-    if (auto *resultsArr = respObj->getArray("results")) {
+    if (auto *resultsArr =
+            respObj->getArray(apxm::constants::dspy_json::RESULTS)) {
       for (size_t i = 0;
            i < resultsArr->size() && i < opsToOptimize.size(); ++i) {
         auto *resultObj = (*resultsArr)[i].getAsObject();
         if (!resultObj)
           continue;
 
-        auto optTmpl = resultObj->getString("optimized_template");
+        auto optTmpl = resultObj->getString(
+            apxm::constants::dspy_json::OPTIMIZED_TEMPLATE);
         if (!optTmpl)
           continue;
 

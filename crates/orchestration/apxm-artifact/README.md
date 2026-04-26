@@ -24,7 +24,7 @@ An artifact can contain multiple DAGs for multi-flow agent definitions:
 
 - `entry_dag()` -- returns the `@entry` DAG (first with `is_entry=true`)
 - `flow_dags()` -- returns non-entry DAGs for flow registration
-- `dag()` -- legacy single-DAG accessor (returns first DAG)
+- `into_entry_dag()` -- consumes the artifact and returns the explicit `@entry` DAG
 
 ## Module Structure
 

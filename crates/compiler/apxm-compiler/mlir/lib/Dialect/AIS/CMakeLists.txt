@@ -89,3 +89,7 @@ add_mlir_library(APXMAISTransforms
 
 set_target_properties(APXMAISIR PROPERTIES POSITION_INDEPENDENT_CODE ON)
 set_target_properties(APXMAISTransforms PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_compile_definitions(APXMAISTransforms
+  PRIVATE
+  APXM_WORKSPACE_ROOT="${APXM_WORKSPACE_ROOT}"
+)

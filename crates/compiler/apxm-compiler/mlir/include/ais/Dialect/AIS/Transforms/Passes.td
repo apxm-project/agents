@@ -254,15 +254,13 @@ def SchemaNarrowing : Pass<"schema-narrowing", "mlir::ModuleOp"> {
 }
 
 def DspyOptimize : Pass<"dspy-optimize", "mlir::ModuleOp"> {
-  let summary = "Explicit-only DSPy prompt optimization";
+  let summary = "Config-gated compiler prompt optimization";
   let description = [{
     Invokes python3 -m apxm_dspy as a subprocess to run DSPy's prompt
     optimizers (MIPROv2, BootstrapFewShot, COPRO) on template strings.
-    No-op when no training data is available.
 
-    This pass is not part of the automatic O-level pipelines until the
-    CLI/API config, optimizer request schema, cache key, and quality-gated
-    benchmark contract are complete.
+    The pass is part of O1/O2/O3 and is a no-op unless compiler-owned prompt
+    tuning configuration and training data are available.
   }];
   let constructor = "mlir::ais::createDspyOptimizePass()";
 }

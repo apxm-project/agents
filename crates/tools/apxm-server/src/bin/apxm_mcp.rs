@@ -510,7 +510,7 @@ fn tool_execute(args: Value) -> Result<String, String> {
     let compile_ms = compile_start.elapsed().as_millis();
 
     // Build args from parameters map
-    let entry_dag = artifact.entry_dag().or_else(|| artifact.dag());
+    let entry_dag = artifact.entry_dag();
     let args: Vec<String> = if let Some(dag) = entry_dag {
         dag.metadata
             .parameters

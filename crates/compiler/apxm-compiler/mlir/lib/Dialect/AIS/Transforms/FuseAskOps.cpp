@@ -166,7 +166,7 @@ static std::string fuseTemplates(StringRef producerTemplate,
   return std::string(fused);
 }
 
-// Legacy template fusion (for direct connections without merge chains)
+// Direct template fusion for connections without merge chains.
 static std::string fuseTemplates(StringRef producerTemplate, StringRef consumerTemplate) {
   return fuseTemplates(producerTemplate, {}, consumerTemplate);
 }
@@ -275,7 +275,7 @@ struct FuseAskOpsPass : impl::FuseAskOpsBase<FuseAskOpsPass> {
     module.walk([&](AskOp consumer) {
       stats.scanned++;
 
-      // First, try direct fusion (legacy path - ask result used directly by consumer)
+      // First, try direct fusion when an ask result is used directly by a consumer.
       auto directProducer = llvm::find_if(consumer.getOperands(), [&](Value operand) {
         return isFusibleProducer(operand.getDefiningOp<AskOp>(), consumer);
       });
@@ -400,7 +400,7 @@ struct FuseAskOpsPass : impl::FuseAskOpsBase<FuseAskOpsPass> {
           // If the consumer template references the merge result by name,
           // substitute its placeholder with the merge chain's expanded text
           // (producer template + interpolation strings). Otherwise fall back
-          // to the prepend-with-separator legacy form.
+          // to the prepend-with-separator form.
           std::string mergeChainExpansion;
           {
             mergeChainExpansion.append(

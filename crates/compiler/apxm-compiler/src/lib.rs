@@ -24,6 +24,7 @@ pub mod air_builder;
 pub mod api;
 pub mod codegen;
 mod ffi;
+pub mod optimization;
 pub mod passes;
 pub mod template;
 pub mod token_estimate;

@@ -17,6 +17,9 @@ ApxmModule *apxm_module_parse(ApxmCompilerContext *ctx, const char *mlir_text);
 ApxmModule *apxm_module_parse_file(ApxmCompilerContext *ctx, const char *file_path);
 bool apxm_module_verify(ApxmModule *module);
 char *apxm_module_to_string(ApxmModule *module);
+bool apxm_module_set_string_attr(ApxmModule *module, const char *name, const char *value);
+bool apxm_module_set_bool_attr(ApxmModule *module, const char *name, bool value);
+bool apxm_module_remove_attr(ApxmModule *module, const char *name);
 void apxm_module_destroy(ApxmModule *module);
 
 #ifdef __cplusplus

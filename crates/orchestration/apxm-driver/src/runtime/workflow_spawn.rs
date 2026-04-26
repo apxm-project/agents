@@ -102,10 +102,7 @@ impl DriverWorkflowSpawner {
             writer.session_dir(),
             &execution_id,
             input_graph.as_ref(),
-            artifact
-                .entry_dag()
-                .or_else(|| artifact.dag())
-                .map(|dag| dag.nodes.len()),
+            artifact.entry_dag().map(|dag| dag.nodes.len()),
             runtime.memory_system_arc(),
             self.configured_emitter.as_ref().map(Arc::clone),
         )?;
@@ -160,10 +157,7 @@ impl DriverWorkflowSpawner {
             writer.session_dir(),
             &execution_id,
             None,
-            artifact
-                .entry_dag()
-                .or_else(|| artifact.dag())
-                .map(|dag| dag.nodes.len()),
+            artifact.entry_dag().map(|dag| dag.nodes.len()),
             runtime.memory_system_arc(),
             self.configured_emitter.as_ref().map(Arc::clone),
         )?;
@@ -400,8 +394,7 @@ fn ordered_args_from_artifact(
     let named = normalize_named_args(args.clone());
     let entry = artifact
         .entry_dag()
-        .or_else(|| artifact.dag())
-        .ok_or_else(|| RuntimeError::State("Artifact contains no DAGs".to_string()))?;
+        .ok_or_else(|| RuntimeError::State("Artifact contains no entry DAG".to_string()))?;
 
     let declared = &entry.metadata.parameters;
     let unknown: Vec<String> = named

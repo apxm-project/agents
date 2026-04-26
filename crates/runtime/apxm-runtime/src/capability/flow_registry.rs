@@ -31,8 +31,8 @@ impl FlowRegistry {
 
     /// Register an agent and all of its flows.
     ///
-    /// This stores the full runtime `Agent` model and also populates the
-    /// legacy `(agent, flow) -> ExecutionDag` map for existing flow-call lookup.
+    /// This stores the full runtime `Agent` model and populates the
+    /// `(agent, flow) -> ExecutionDag` lookup used by flow calls.
     pub fn register_agent(&self, agent: Agent) {
         let agent_name = agent.name.clone();
         let stale_keys: Vec<(String, String)> = self

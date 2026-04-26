@@ -18,6 +18,7 @@ const ENV_HOME: &str = "APXM_HOME";
 const PROJECT_DIR: &str = ".apxm";
 const ARTIFACTS_DIR: &str = "artifacts";
 const CACHE_DIR: &str = "cache";
+const COMPILER_DIR: &str = "compiler";
 const LOGS_DIR: &str = "logs";
 const SESSIONS_DIR: &str = "sessions";
 
@@ -119,6 +120,16 @@ impl ApxmPaths {
         self.project_dir.join("config.toml")
     }
 
+    /// Directory for compiler-owned project configuration and training data.
+    pub fn compiler_dir(&self) -> io::Result<PathBuf> {
+        Self::ensure_subdir_at(&self.project_dir, COMPILER_DIR)
+    }
+
+    /// Path to the compiler-owned project configuration file.
+    pub fn compiler_config_path(&self) -> PathBuf {
+        self.project_dir.join(COMPILER_DIR).join("config.toml")
+    }
+
     /// Directory for compiled artifacts, e.g. `.apxm/artifacts`.
     pub fn artifacts_dir(&self) -> io::Result<PathBuf> {
         Self::ensure_subdir_at(&self.project_dir, ARTIFACTS_DIR)
@@ -128,6 +139,14 @@ impl ApxmPaths {
     /// falling back to global storage when local creation fails.
     pub fn cache_dir(&self) -> io::Result<PathBuf> {
         self.ensure_subdir_with_fallback(CACHE_DIR)
+    }
+
+    /// Directory for a component under `.apxm/cache`.
+    pub fn cache_component_dir(&self, component: &str) -> io::Result<PathBuf> {
+        let cache_dir = self.cache_dir()?;
+        let path = cache_dir.join(component);
+        fs::create_dir_all(&path)?;
+        Ok(path)
     }
 
     /// Directory for logs, preferring local project storage and falling back

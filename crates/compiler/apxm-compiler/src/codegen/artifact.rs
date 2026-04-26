@@ -104,17 +104,13 @@ fn parse_single_dag(reader: &mut BinaryReader) -> Result<ExecutionDag, CompilerE
     })
 }
 
-/// Parse wire format and return the @entry DAG (or first DAG if no @entry)
-/// Legacy function for backward compatibility with single-DAG consumers
+/// Parse wire format and return the explicit @entry DAG.
 pub fn parse_wire_dag(bytes: &[u8]) -> Result<ExecutionDag, CompilerError> {
     let dags = parse_wire_dags(bytes)?;
 
-    // Prefer @entry DAG, fall back to first
-    dags.iter()
+    dags.into_iter()
         .find(|d| d.metadata.is_entry)
-        .cloned()
-        .or_else(|| dags.into_iter().next())
-        .ok_or_else(|| invalid_input_error("No DAGs found in artifact"))
+        .ok_or_else(|| invalid_input_error("No entry DAG found in artifact"))
 }
 
 fn read_node(reader: &mut BinaryReader) -> Result<Node, CompilerError> {

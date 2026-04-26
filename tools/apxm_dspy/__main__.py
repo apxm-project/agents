@@ -2,33 +2,41 @@
 
 import json
 import sys
+from contextlib import redirect_stdout
 
-from .types import Status
+from .types import ResponseKey, Status
 
 
 def main():
     try:
         request = json.load(sys.stdin)
     except json.JSONDecodeError as e:
-        json.dump({"status": Status.ERROR, "error": f"Invalid JSON input: {e}"}, sys.stdout)
+        json.dump(
+            {ResponseKey.STATUS: Status.ERROR, ResponseKey.ERROR: f"Invalid JSON input: {e}"},
+            sys.stdout,
+        )
         sys.exit(1)
 
     try:
         import dspy  # noqa: F401
     except ImportError:
-        json.dump({
-            "status": Status.ERROR,
-            "error": "dspy-ai not installed. Run: pip install dspy-ai>=2.6.0",
-        }, sys.stdout)
+        json.dump(
+            {
+                ResponseKey.STATUS: Status.ERROR,
+                ResponseKey.ERROR: "dspy-ai not installed. Run: pip install dspy-ai>=2.6.0",
+            },
+            sys.stdout,
+        )
         sys.exit(1)
 
     from .optimizer import optimize_templates
 
     try:
-        result = optimize_templates(request)
+        with redirect_stdout(sys.stderr):
+            result = optimize_templates(request)
         json.dump(result, sys.stdout)
     except Exception as e:
-        json.dump({"status": Status.ERROR, "error": str(e)}, sys.stdout)
+        json.dump({ResponseKey.STATUS: Status.ERROR, ResponseKey.ERROR: str(e)}, sys.stdout)
         sys.exit(1)
 
 

@@ -15,7 +15,7 @@ use apxm_backends::llm::backends::vllm::{
 };
 use apxm_backends::llm::backends::{LLMBackend, LLMRequest};
 use apxm_core::constants::http::headers;
-use apxm_core::constants::llm::{api_paths, apxm as apxm_llm, config_keys, openai as openai_keys};
+use apxm_core::constants::llm::{api_paths, apxm as apxm_llm, config_keys};
 use serde_json::{Value, json};
 use wiremock::matchers::{method, path, path_regex};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
@@ -172,18 +172,6 @@ fn apxm_payload_from_request(request: &Request) -> Option<Value> {
     body.get(apxm_llm::VLLM_XARGS)
         .and_then(|xargs| xargs.get(apxm_llm::HINTS_FIELD))
         .cloned()
-        .or_else(|| {
-            body.get(openai_keys::EXTRA_BODY)
-                .and_then(|extra_body| extra_body.get(apxm_llm::VLLM_XARGS))
-                .and_then(|xargs| xargs.get(apxm_llm::HINTS_FIELD))
-                .cloned()
-        })
-        .or_else(|| body.get(apxm_llm::HINTS_FIELD).cloned())
-        .or_else(|| {
-            body.get(openai_keys::EXTRA_BODY)
-                .and_then(|extra_body| extra_body.get(apxm_llm::HINTS_FIELD))
-                .cloned()
-        })
 }
 
 fn chat_completion_requests_with_apxm(reqs: &[Request]) -> Vec<&Request> {
@@ -621,54 +609,6 @@ async fn vllm_graph_status_collected_before_release() {
         get_idx < delete_idx,
         "status (GET) must precede release (DELETE)"
     );
-
-    drop(server);
-}
-
-/// Opt-out path: `require_apxm_endpoints = false` allows stock vLLM and
-/// `health_check` succeeds. The graph extension calls then become no-ops
-/// (covered by other tests).
-#[tokio::test]
-async fn vllm_health_check_allows_stock_when_opt_out_set() {
-    let server = MockServer::start().await;
-
-    Mock::given(method("GET"))
-        .and(path(versioned_path(api_paths::MODELS)))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "object": "list",
-            "data": [],
-        })))
-        .mount(&server)
-        .await;
-
-    let probe_path = format!(
-        "{}{}/{}",
-        api_paths::VERSION_PREFIX,
-        api_paths::APXM_GRAPHS,
-        apxm_core::constants::llm::vllm::APXM_PROBE_GRAPH_ID,
-    );
-    Mock::given(method("GET"))
-        .and(path(probe_path))
-        .respond_with(ResponseTemplate::new(404))
-        .mount(&server)
-        .await;
-
-    let model = "Qwen/Qwen2.5-7B-Instruct";
-    let base_url = format!("{}/v1", server.uri());
-    let mut cfg = serde_json::Map::new();
-    cfg.insert("base_url".into(), Value::String(base_url));
-    cfg.insert("model".into(), Value::String(model.into()));
-    cfg.insert(
-        config_keys::REQUIRE_APXM_ENDPOINTS.into(),
-        Value::Bool(false),
-    );
-    let backend = GraphAwareVllmBackend::new("test-key", Some(Value::Object(cfg)))
-        .await
-        .expect("construct GraphAwareVllmBackend with opt-out");
-
-    LLMBackend::health_check(&backend)
-        .await
-        .expect("health_check must succeed when require_apxm_endpoints=false");
 
     drop(server);
 }

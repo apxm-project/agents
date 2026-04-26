@@ -33,7 +33,6 @@ pub use events::{ExecutionEvent, ExecutionEventEmitter};
 pub use graph_metrics::GraphMetricsTracker;
 pub use handlers::warmup::{WarmupConfig, WarmupMetrics};
 pub use inner_plan_linker::{InnerPlanLinker, NoOpLinker};
-pub use memoization::ResponseCache;
 pub use middleware::{Next, OperationMiddleware};
 pub use middlewares::{LoopGuardMiddleware, TimeoutMiddleware};
 pub use timing_tracker::TimingTracker;

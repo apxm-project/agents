@@ -183,8 +183,7 @@ mod tests {
     fn test_deserialization_with_missing_fields() {
         // Minimal JSON with only required fields should deserialize correctly,
         // filling in defaults for omitted optional fields.
-        // Use the canonical serde name INV_TOOL ("INV" is a legacy fromStr alias,
-        // not the serialized form — the Display / serde name is INV_TOOL).
+        // Use the canonical serde name. The Display / serde name is INV_TOOL.
         let json = r#"{"id":10,"op_type":"INV_TOOL"}"#;
         let node: Node = serde_json::from_str(json).expect("deserialize minimal node");
 

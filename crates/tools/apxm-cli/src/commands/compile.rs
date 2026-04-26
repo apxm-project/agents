@@ -12,12 +12,10 @@ use anyhow::Result;
 #[cfg(feature = "driver")]
 use apxm_core::constants::env as apxm_env;
 #[cfg(feature = "driver")]
-use apxm_driver::ApXmConfig;
-#[cfg(feature = "driver")]
 use apxm_driver::compiler::Compiler;
 
 #[cfg(feature = "driver")]
-use super::implementations::parse_opt_level;
+use super::implementations::{load_config, parse_opt_level};
 
 #[cfg(feature = "driver")]
 fn is_python_graph_input(input: &Path) -> bool {
@@ -142,25 +140,46 @@ fn emit_air_from_python(input: &Path) -> Result<(tempfile::NamedTempFile, Option
 type PythonToolsSidecar = Option<Vec<u8>>;
 
 #[cfg(feature = "driver")]
-fn allowlist_with_registered_vllm_models(configured: Option<&Vec<String>>) -> Option<Vec<String>> {
-    let mut allowlist = configured.cloned()?;
-
-    use apxm_core::types::ProviderProtocol;
+fn model_allowlist_with_registered_models(
+    configured: Option<&Vec<String>>,
+    apxm_config: Option<&apxm_driver::config::ApXmConfig>,
+) -> Option<Vec<String>> {
+    let mut allowlist = configured.cloned().unwrap_or_default();
     use apxm_credentials::BackendStore;
     use std::collections::HashSet;
 
     let mut seen: HashSet<String> = allowlist.iter().cloned().collect();
+    if let Some(config) = apxm_config {
+        for backend in &config.backends {
+            for model in &backend.models {
+                if seen.insert(model.id.clone()) {
+                    allowlist.push(model.id.clone());
+                }
+                for alias in &model.aliases {
+                    if seen.insert(alias.clone()) {
+                        allowlist.push(alias.clone());
+                    }
+                }
+            }
+        }
+    }
+
     let Ok(store) = BackendStore::open() else {
-        return Some(allowlist);
+        return if allowlist.is_empty() {
+            None
+        } else {
+            Some(allowlist)
+        };
     };
     let Ok(backends) = store.list() else {
-        return Some(allowlist);
+        return if allowlist.is_empty() {
+            None
+        } else {
+            Some(allowlist)
+        };
     };
 
-    for backend in backends
-        .iter()
-        .filter(|backend| backend.protocol == ProviderProtocol::Vllm)
-    {
+    for backend in &backends {
         for model in &backend.models {
             if seen.insert(model.id.clone()) {
                 allowlist.push(model.id.clone());
@@ -173,7 +192,11 @@ fn allowlist_with_registered_vllm_models(configured: Option<&Vec<String>>) -> Op
         }
     }
 
-    Some(allowlist)
+    if allowlist.is_empty() {
+        None
+    } else {
+        Some(allowlist)
+    }
 }
 
 #[cfg(feature = "driver")]
@@ -202,6 +225,7 @@ pub fn compile_command(
     warn: bool,
     disable_passes: Vec<String>,
     pass_list_override: Option<Vec<String>>,
+    config: Option<PathBuf>,
 ) -> Result<()> {
     use apxm_core::constants::diagnostics;
     use apxm_core::constants::session::metrics_keys;
@@ -211,6 +235,7 @@ pub fn compile_command(
     let opt_target: OptimizationTarget = target
         .parse()
         .with_context(|| format!("Invalid optimization target: {}", target))?;
+    let apxm_config = load_config(config.clone()).ok();
     let (graph_input, _python_air, python_tools_sidecar) = if input.is_dir() {
         (input.clone(), None, None)
     } else {
@@ -381,11 +406,12 @@ pub fn compile_command(
             .map_err(|e| anyhow::anyhow!("Failed to parse graph: {e}"))?
     };
 
-    // Validate model allowlist if configured. vLLM models are user-deployed, so
-    // registered vLLM model ids and aliases extend the configured allowlist
-    // without disabling validation for unrelated models.
-    if let Ok(config) = ApXmConfig::load_default() {
-        let allowlist = allowlist_with_registered_vllm_models(config.models.allowlist.as_ref());
+    // Validate concrete model ids and aliases against the configured or
+    // registered backend model set. This stays provider-neutral: local,
+    // cloud, and on-prem backends all contribute the same way.
+    if let Some(config) = apxm_config.as_ref() {
+        let allowlist =
+            model_allowlist_with_registered_models(config.models.allowlist.as_ref(), Some(config));
         Compiler::validate_model_allowlist(&graph, allowlist.as_ref())?;
     }
 
@@ -463,8 +489,8 @@ pub fn compile_command(
         let artifact = apxm_artifact::Artifact::from_bytes(&bytes)
             .map_err(|e| anyhow::anyhow!("Failed to parse artifact: {}", e))?;
         let dag = artifact
-            .dag()
-            .ok_or_else(|| anyhow::anyhow!("Artifact contains no DAGs"))?;
+            .entry_dag()
+            .ok_or_else(|| anyhow::anyhow!("Artifact contains no entry DAG"))?;
 
         let compiler_json = pass_diagnostics
             .as_ref()
@@ -532,8 +558,8 @@ pub fn decompile_command(artifact_path: PathBuf, output: Option<PathBuf>) -> Res
     let artifact = apxm_artifact::Artifact::from_bytes(&bytes)
         .map_err(|e| anyhow::anyhow!("Failed to parse artifact: {}", e))?;
     let dag = artifact
-        .dag()
-        .ok_or_else(|| anyhow::anyhow!("Artifact contains no DAGs"))?;
+        .entry_dag()
+        .ok_or_else(|| anyhow::anyhow!("Artifact contains no entry DAG"))?;
 
     let graph = graph_from_execution_dag(dag);
     let json = serde_json::to_string_pretty(&graph)?;

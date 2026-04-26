@@ -781,12 +781,12 @@ mod template_validation_tests {
     }
 
     #[test]
-    fn rejects_legacy_node_reference_syntax() {
+    fn rejects_node_id_placeholder_syntax() {
         let module = ask_after_const_module("Hello {{node_1}}", None, &[]);
         let err = validate_module(&module).unwrap_err();
         let msg = format!("{err}");
         assert!(
-            msg.contains("legacy node placeholder syntax")
+            msg.contains("node-id placeholder syntax")
                 || msg.contains("references no known input or parameter"),
             "unexpected diagnostic: {msg}"
         );
@@ -943,9 +943,9 @@ mod template_validation_tests {
 fn validate_node_refs(module: &AirModule) -> Result<(), AirError> {
     for node in &module.nodes {
         for (attr_key, attr_value) in &node.attributes {
-            if let Some(placeholder) = find_legacy_node_placeholder(attr_value) {
+            if let Some(placeholder) = find_node_id_placeholder(attr_value) {
                 return Err(AirError::Validation(format!(
-                    "node '{}' (id={}, op={}, attr={}): legacy node placeholder syntax '{}' \
+                    "node '{}' (id={}, op={}, attr={}): node-id placeholder syntax '{}' \
                      is not supported. Use named placeholders like '{{source}}' with \
                      input_names for template-bearing string attributes, and use Data edges \
                      for structural inputs instead of node-id references.",
@@ -958,16 +958,16 @@ fn validate_node_refs(module: &AirModule) -> Result<(), AirError> {
     Ok(())
 }
 
-fn find_legacy_node_placeholder(value: &Value) -> Option<String> {
+fn find_node_id_placeholder(value: &Value) -> Option<String> {
     match value {
-        Value::String(text) => find_legacy_node_placeholder_in_str(text),
-        Value::Array(items) => items.iter().find_map(find_legacy_node_placeholder),
-        Value::Object(map) => map.values().find_map(find_legacy_node_placeholder),
+        Value::String(text) => find_node_id_placeholder_in_str(text),
+        Value::Array(items) => items.iter().find_map(find_node_id_placeholder),
+        Value::Object(map) => map.values().find_map(find_node_id_placeholder),
         _ => None,
     }
 }
 
-fn find_legacy_node_placeholder_in_str(text: &str) -> Option<String> {
+fn find_node_id_placeholder_in_str(text: &str) -> Option<String> {
     let mut rest = text;
     while let Some(start) = rest.find("{{node_") {
         let candidate = &rest[start..];
