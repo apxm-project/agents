@@ -192,7 +192,6 @@ pub async fn backend_command(action: BackendAction, json_output: bool) -> Result
                 models: vec![],
                 docker: None,
                 auto_tool_choice: None,
-                require_apxm_endpoints: None,
             };
 
             store.add(backend).map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -321,44 +320,6 @@ pub async fn backend_command(action: BackendAction, json_output: bool) -> Result
             }
             if !all_ok {
                 return Err(anyhow::anyhow!("Some backends failed validation"));
-            }
-        }
-        BackendAction::Migrate { yes } => {
-            if !yes {
-                eprintln!(
-                    "This will migrate backend registrations from ~/.apxm/credentials.toml to ~/.apxm/config.toml"
-                );
-                eprint!("Continue? [y/N] ");
-                use std::io::{self, BufRead};
-                let mut line = String::new();
-                io::stdin().lock().read_line(&mut line)?;
-                if !line.trim().eq_ignore_ascii_case("y") {
-                    println!("Aborted.");
-                    return Ok(());
-                }
-            }
-
-            let count = store
-                .migrate_from_credentials()
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
-
-            if json_output {
-                println!("{{\"status\":\"ok\",\"migrated\":{count}}}");
-            } else {
-                print_section_header("Migration Complete");
-                print_status_line(
-                    "Migrated",
-                    Status::Ok,
-                    &format!("{count} backend registrations"),
-                );
-                if count > 0 {
-                    println!();
-                    println!("Your legacy credentials.toml can now be safely removed.");
-                    println!(
-                        "To view the migrated backends: {}",
-                        dekk_hints::BACKEND_LIST
-                    );
-                }
             }
         }
         BackendAction::Start { name } => {

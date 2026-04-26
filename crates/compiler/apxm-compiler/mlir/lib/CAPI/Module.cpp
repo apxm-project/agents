@@ -14,6 +14,7 @@
 
 #include "ais/CAPI/Module.h"
 #include "ais/CAPI/Error.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/Parser/Parser.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -71,6 +72,37 @@ char* apxm_module_to_string(ApxmModule* module) {
 
   os.flush();
   return strdup(str.c_str());
+}
+
+bool apxm_module_set_string_attr(ApxmModule* module,
+                                 const char* name,
+                                 const char* value) {
+  if (!module || !module->module || !name || !value) {
+    return false;
+  }
+  mlir::ModuleOp moduleOp = *module->module;
+  moduleOp->setAttr(name, mlir::StringAttr::get(moduleOp.getContext(), value));
+  return true;
+}
+
+bool apxm_module_set_bool_attr(ApxmModule* module,
+                               const char* name,
+                               bool value) {
+  if (!module || !module->module || !name) {
+    return false;
+  }
+  mlir::ModuleOp moduleOp = *module->module;
+  moduleOp->setAttr(name, mlir::BoolAttr::get(moduleOp.getContext(), value));
+  return true;
+}
+
+bool apxm_module_remove_attr(ApxmModule* module, const char* name) {
+  if (!module || !module->module || !name) {
+    return false;
+  }
+  mlir::ModuleOp moduleOp = *module->module;
+  moduleOp->removeAttr(name);
+  return true;
 }
 
 void apxm_module_destroy(ApxmModule* module) {

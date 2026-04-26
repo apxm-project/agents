@@ -138,8 +138,8 @@ dekk apxm vllm enable <SERVED_MODEL_ID> --port 8916
 
 `enable` verifies that `/v1/models` reports the served model id, verifies the
 APXM graph route, adds the backend if needed, adds the served model id if
-needed, and runs `dekk apxm backend test` unless `--skip-test` is set. It does
-not start vLLM, download weights, or rewrite graph/chat routing policy.
+needed, and runs `dekk apxm backend test`. It does not start vLLM, download
+weights, or rewrite graph/chat routing policy.
 For authenticated servers, keep `VLLM_API_KEY` set or pass
 `--api-key-env <ENV_VAR>` so APXM stores an environment reference instead of a
 literal secret. Unauthenticated local/on-prem vLLM is valid; no fake API key is

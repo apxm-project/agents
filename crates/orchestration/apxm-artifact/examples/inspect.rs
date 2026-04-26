@@ -10,8 +10,8 @@ fn main() -> anyhow::Result<()> {
     let artifact = Artifact::read_from_path(&path)?;
     let metadata = artifact.metadata();
     let dag = artifact
-        .dag()
-        .ok_or_else(|| anyhow::anyhow!("Artifact contains no DAGs"))?;
+        .entry_dag()
+        .ok_or_else(|| anyhow::anyhow!("Artifact contains no entry DAG"))?;
 
     println!("Artifact: {}", path);
     println!(

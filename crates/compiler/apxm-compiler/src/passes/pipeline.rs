@@ -2,9 +2,9 @@
 //!
 //! Optimization levels:
 //!   O0 - No optimization (passthrough)
-//!   O1 - Basic: normalize, build-prompt, canonicalization, tool checks, CSE, symbol-DCE
+//!   O1 - Basic: normalize, build-prompt, prompt optimization, safe cleanup, tool checks
 //!   O2 - Standard: O1 + template specialization, dead context elimination,
-//!        and target-aware scheduling metadata
+//!        scheduling metadata, and shared-prefix analysis
 //!   O3 - Aggressive: O2-safe passes iterated to fixed-point convergence
 
 use super::PassManager;
@@ -22,7 +22,6 @@ const MAX_CONVERGENCE_ITERATIONS: usize = 10;
 // AIS authoring definitions.
 const NORMALIZE: &str = passes::NORMALIZE.name;
 const BUILD_PROMPT: &str = passes::BUILD_PROMPT.name;
-#[cfg(test)]
 const DSPY_OPTIMIZE: &str = passes::DSPY_OPTIMIZE.name;
 const ASSIGN_PRIORITY: &str = passes::ASSIGN_PRIORITY.name;
 const SCHEDULING: &str = passes::SCHEDULING.name;
@@ -98,12 +97,12 @@ pub fn build_pipeline_with_config(
 ///   narrowing and can affect output validation.
 /// - `prompt-canonicalization`: rewrites prompt layout for backend cache
 ///   behavior and needs an explicit backend/graph-hint contract.
-/// - `dspy-optimize`: requires explicit training/config plumbing before it is
-///   a production optimization path.
+/// - `cse`: generic MLIR CSE is not LLM-safe until deterministic/memoizable
+///   contracts are typed. Use explicit pass lists for ablation only.
 ///
 pub fn build_pass_list(
     level: OptimizationLevel,
-    no_cse_llm: bool,
+    _no_cse_llm: bool,
     target: OptimizationTarget,
 ) -> Vec<String> {
     let mut passes = Vec::new();
@@ -117,6 +116,9 @@ pub fn build_pass_list(
                 [
                     NORMALIZE,
                     BUILD_PROMPT,
+                    DSPY_OPTIMIZE,
+                    TEMPLATE_SPECIALIZATION,
+                    DEAD_CONTEXT_ELIMINATION,
                     CANONICALIZER,
                     TOOL_BINDING,
                     BIND_TOOL_HANDLERS,
@@ -125,18 +127,6 @@ pub fn build_pass_list(
                 .map(|s| s.to_string()),
             );
 
-            // Target-specific adjustments for O1
-            if matches!(
-                target,
-                OptimizationTarget::Cost | OptimizationTarget::Tokens
-            ) {
-                // Add more aggressive DCE for cost/tokens targets
-                passes.insert(passes.len() - 3, DEAD_CONTEXT_ELIMINATION.to_string());
-            }
-
-            if !no_cse_llm {
-                passes.push(CSE.to_string());
-            }
             passes.push(SYMBOL_DCE.to_string());
             passes.push(ASSIGN_PRIORITY.to_string());
         }
@@ -145,15 +135,13 @@ pub fn build_pass_list(
                 [
                     NORMALIZE,
                     BUILD_PROMPT,
+                    DSPY_OPTIMIZE,
                     TEMPLATE_SPECIALIZATION,
                     DEAD_CONTEXT_ELIMINATION,
                 ]
                 .iter()
                 .map(|s| s.to_string()),
             );
-            if !no_cse_llm {
-                passes.push(CSE.to_string());
-            }
 
             // Target-specific pass ordering for O2
             match target {
@@ -174,9 +162,9 @@ pub fn build_pass_list(
                     );
                 }
                 OptimizationTarget::Latency | OptimizationTarget::Parallelism => {
-                    // Prioritize backend-agnostic graph scheduling. Prompt/cache
-                    // rewrites remain explicit; shared-prefix analysis only
-                    // emits metadata for prompts that are already prefix-compatible.
+                    // Prioritize backend-agnostic graph scheduling. Shared-prefix
+                    // analysis only emits metadata for prompts that are already
+                    // prefix-compatible.
                     passes.extend(
                         [SCHEDULING, CANONICALIZER, TOOL_BINDING, BIND_TOOL_HANDLERS]
                             .iter()
@@ -193,16 +181,11 @@ pub fn build_pass_list(
                 }
             }
 
-            if !no_cse_llm {
-                passes.push(CSE.to_string());
-            }
             passes.push(SYMBOL_DCE.to_string());
-            if matches!(
-                target,
-                OptimizationTarget::Latency | OptimizationTarget::Parallelism
-            ) {
-                passes.push(SHARED_PREFIX_ANALYSIS.to_string());
+            if !passes.iter().any(|pass| pass == SCHEDULING) {
+                passes.push(SCHEDULING.to_string());
             }
+            passes.push(SHARED_PREFIX_ANALYSIS.to_string());
             passes.push(ASSIGN_PRIORITY.to_string());
         }
         OptimizationLevel::O3 => {
@@ -210,15 +193,13 @@ pub fn build_pass_list(
                 [
                     NORMALIZE,
                     BUILD_PROMPT,
+                    DSPY_OPTIMIZE,
                     TEMPLATE_SPECIALIZATION,
                     DEAD_CONTEXT_ELIMINATION,
                 ]
                 .iter()
                 .map(|s| s.to_string()),
             );
-            if !no_cse_llm {
-                passes.push(CSE.to_string());
-            }
 
             let convergence_passes: Vec<String> = match target {
                 OptimizationTarget::Tokens => vec![
@@ -258,17 +239,12 @@ pub fn build_pass_list(
 
             for _ in 0..MAX_CONVERGENCE_ITERATIONS {
                 passes.extend(convergence_passes.clone());
-                if !no_cse_llm {
-                    passes.push(CSE.to_string());
-                }
                 passes.push(SYMBOL_DCE.to_string());
             }
-            if matches!(
-                target,
-                OptimizationTarget::Latency | OptimizationTarget::Parallelism
-            ) {
-                passes.push(SHARED_PREFIX_ANALYSIS.to_string());
+            if !passes.iter().any(|pass| pass == SCHEDULING) {
+                passes.push(SCHEDULING.to_string());
             }
+            passes.push(SHARED_PREFIX_ANALYSIS.to_string());
             passes.push(ASSIGN_PRIORITY.to_string());
         }
     }
@@ -344,13 +320,14 @@ mod tests {
         // Check structural ordering, not exact count
         assert_eq!(passes[0], NORMALIZE);
         assert_eq!(passes[1], BUILD_PROMPT);
-        assert_eq!(passes[2], CANONICALIZER);
+        assert_eq!(passes[2], DSPY_OPTIMIZE);
+        assert_eq!(passes[3], TEMPLATE_SPECIALIZATION);
         assert!(passes.contains(&ASSIGN_PRIORITY.to_string()));
         assert_eq!(passes.last().unwrap(), ASSIGN_PRIORITY);
         let symbol_idx = passes.iter().position(|p| p == SYMBOL_DCE).unwrap();
         let priority_idx = passes.iter().position(|p| p == ASSIGN_PRIORITY).unwrap();
         assert!(symbol_idx < priority_idx);
-        assert!(passes.contains(&CSE.to_string()));
+        assert!(!passes.contains(&CSE.to_string()));
         assert_default_excludes_semantic_rewrites(&passes);
     }
 
@@ -380,7 +357,8 @@ mod tests {
         // Check preamble ordering
         assert_eq!(passes[0], NORMALIZE);
         assert_eq!(passes[1], BUILD_PROMPT);
-        assert_eq!(passes[2], TEMPLATE_SPECIALIZATION);
+        assert_eq!(passes[2], DSPY_OPTIMIZE);
+        assert_eq!(passes[3], TEMPLATE_SPECIALIZATION);
         assert!(passes.contains(&ASSIGN_PRIORITY.to_string()));
         assert_default_excludes_semantic_rewrites(&passes);
         // UNCONSUMED_VALUE_WARNING is opt-in via --warn (Task 6); it must NOT appear
@@ -401,9 +379,9 @@ mod tests {
     }
 
     #[test]
-    fn target_cost_keeps_cse_enabled() {
+    fn target_cost_keeps_generic_cse_disabled() {
         let passes = build_pass_list(OptimizationLevel::O2, false, OptimizationTarget::Cost);
-        assert!(passes.contains(&CSE.to_string()));
+        assert!(!passes.contains(&CSE.to_string()));
         assert!(passes.contains(&DEAD_CONTEXT_ELIMINATION.to_string()));
     }
 
@@ -432,7 +410,8 @@ mod tests {
         // Check structural ordering, not exact count
         assert_eq!(balanced[0], NORMALIZE);
         assert_eq!(balanced[1], BUILD_PROMPT);
-        assert_eq!(balanced[2], TEMPLATE_SPECIALIZATION);
+        assert_eq!(balanced[2], DSPY_OPTIMIZE);
+        assert_eq!(balanced[3], TEMPLATE_SPECIALIZATION);
         assert!(balanced.contains(&ASSIGN_PRIORITY.to_string()));
         assert_default_excludes_semantic_rewrites(&balanced);
     }
@@ -458,10 +437,9 @@ mod tests {
     }
 
     #[test]
-    fn cse_runs_before_assign_priority() {
-        // Regression guard for the assign-priority/CSE ordering bug:
-        // assign-priority stamps each op with downstream metadata, which makes
-        // structurally-identical ops look distinct to a later CSE pass.
+    fn default_o_levels_do_not_run_generic_cse() {
+        // Generic MLIR CSE remains explicit-only until LLM determinism and
+        // memoization are represented in the graph contract.
         for target in [
             OptimizationTarget::Balanced,
             OptimizationTarget::Latency,
@@ -474,14 +452,9 @@ mod tests {
                 OptimizationLevel::O3,
             ] {
                 let passes = build_pass_list(level, false, target);
-                let priority_idx = passes
-                    .iter()
-                    .position(|p| p == ASSIGN_PRIORITY)
-                    .expect("ASSIGN_PRIORITY must appear at O1+");
-                let cse_before = passes[..priority_idx].iter().any(|p| p == CSE);
                 assert!(
-                    cse_before,
-                    "CSE must run before ASSIGN_PRIORITY at {level:?}/{target:?}"
+                    !passes.iter().any(|p| p == CSE),
+                    "generic CSE must not run by default at {level:?}/{target:?}"
                 );
             }
         }
@@ -529,7 +502,6 @@ mod tests {
     #[test]
     fn explicit_semantic_passes_are_available_via_override() {
         let explicit = [
-            DSPY_OPTIMIZE,
             PROMPT_CANONICALIZATION,
             SCHEMA_NARROWING,
             FUSE_ASK_OPS,
@@ -541,6 +513,38 @@ mod tests {
         };
         let expected: Vec<String> = explicit.iter().map(|p| (*p).to_string()).collect();
         assert_eq!(resolve_pass_list(&config), expected);
+    }
+
+    #[test]
+    fn dspy_optimize_is_in_o1_o2_o3_after_build_prompt() {
+        for level in [
+            OptimizationLevel::O1,
+            OptimizationLevel::O2,
+            OptimizationLevel::O3,
+        ] {
+            let passes = build_pass_list(level, false, OptimizationTarget::Balanced);
+            let build_prompt_idx = passes.iter().position(|p| p == BUILD_PROMPT).unwrap();
+            let dspy_idx = passes.iter().position(|p| p == DSPY_OPTIMIZE).unwrap();
+            assert_eq!(dspy_idx, build_prompt_idx + 1);
+        }
+    }
+
+    #[test]
+    fn dspy_optimize_is_not_in_o0() {
+        let passes = build_pass_list(OptimizationLevel::O0, false, OptimizationTarget::Balanced);
+        assert!(!passes.iter().any(|p| p == DSPY_OPTIMIZE));
+    }
+
+    #[test]
+    fn default_dspy_does_not_mutate_explicit_pass_list() {
+        let config = apxm_core::types::PipelineConfig {
+            pass_list_override: Some(vec![NORMALIZE.to_string(), BUILD_PROMPT.to_string()]),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_pass_list(&config),
+            vec![NORMALIZE.to_string(), BUILD_PROMPT.to_string()]
+        );
     }
 
     #[test]
@@ -631,7 +635,7 @@ mod tests {
     }
 
     #[test]
-    fn scheduling_pass_is_targeted_before_o3() {
+    fn scheduling_pass_starts_at_o2() {
         use OptimizationTarget::*;
         for target in [Balanced, Latency, Cost, Tokens, Parallelism] {
             let o1 = build_pass_list(OptimizationLevel::O1, false, target);
@@ -641,11 +645,9 @@ mod tests {
                 !o1.iter().any(|p| p == SCHEDULING),
                 "SCHEDULING must not appear in O1 (target={target:?})"
             );
-            let o2_has_scheduling = o2.iter().any(|p| p == SCHEDULING);
-            assert_eq!(
-                o2_has_scheduling,
-                matches!(target, Latency | Parallelism),
-                "SCHEDULING must be O2 target-specific (target={target:?})"
+            assert!(
+                o2.iter().any(|p| p == SCHEDULING),
+                "SCHEDULING must appear in O2 (target={target:?})"
             );
             assert!(
                 o3.iter().any(|p| p == SCHEDULING),
@@ -688,7 +690,6 @@ mod tests {
 
     fn assert_default_excludes_semantic_rewrites(pass_list: &[String]) {
         for pass_name in [
-            DSPY_OPTIMIZE,
             PROMPT_CANONICALIZATION,
             SCHEMA_NARROWING,
             FUSE_ASK_OPS,

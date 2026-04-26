@@ -10,7 +10,7 @@ import type { TraceEvent } from "@/types/events";
  * into the flat TraceEvent shape the frontend expects.
  */
 function normalizeTraceEvent(raw: Record<string, unknown>): TraceEvent {
-  // Already flat format (legacy or pre-normalized)
+  // Already flat format from a pre-normalized source.
   if (typeof raw.kind === "string" && typeof raw.timestamp === "string") {
     return raw as TraceEvent;
   }

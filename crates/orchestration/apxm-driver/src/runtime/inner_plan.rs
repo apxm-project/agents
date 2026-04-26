@@ -85,8 +85,8 @@ impl InnerPlanLinker for CompilerInnerPlanLinker {
             RuntimeError::State(format!("Inner plan artifact parsing failed: {}", e))
         })?;
 
-        let dag = artifact.into_dag().ok_or_else(|| {
-            RuntimeError::State("Inner plan artifact contains no DAGs".to_string())
+        let dag = artifact.into_entry_dag().ok_or_else(|| {
+            RuntimeError::State("Inner plan artifact contains no entry DAG".to_string())
         })?;
 
         // Validate the inner DAG before returning it to the runtime.
@@ -135,8 +135,8 @@ impl InnerPlanLinker for CompilerInnerPlanLinker {
         let artifact = Artifact::from_bytes(&artifact_bytes).map_err(|e| {
             RuntimeError::State(format!("Inner plan task artifact parsing failed: {}", e))
         })?;
-        let execution_dag = artifact.into_dag().ok_or_else(|| {
-            RuntimeError::State("Inner plan task artifact contains no DAGs".to_string())
+        let execution_dag = artifact.into_entry_dag().ok_or_else(|| {
+            RuntimeError::State("Inner plan task artifact contains no entry DAG".to_string())
         })?;
         execution_dag.validate()?;
 

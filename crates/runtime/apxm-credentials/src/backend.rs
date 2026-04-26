@@ -1,9 +1,8 @@
-//! Backend configuration management (unified replacement for credentials).
+//! Backend configuration management.
 //!
-//! This module provides the [`BackendStore`] for managing the new unified
-//! backend configuration system. Unlike the legacy credentials system, backends
-//! can include type information (cloud/onprem/local), model metadata, and Docker
-//! configurations for local deployments.
+//! This module provides the [`BackendStore`] for managing the APXM backend
+//! registry. Backends include deployment type, protocol, model metadata, and
+//! Docker configuration for local deployments.
 
 use apxm_core::types::provider_spec::normalize_endpoint_for_protocol;
 use apxm_core::types::{BackendConfig, ModelConfig};
@@ -60,8 +59,8 @@ struct BackendConfigFile {
 /// Backend configuration store.
 ///
 /// Manages the unified backend configuration at `~/.apxm/config.toml`.
-/// Replaces the legacy credential-based system with a hierarchical
-/// Backend → Model → Endpoint structure.
+/// Stores backend registrations as a hierarchical Backend → Model → Endpoint
+/// structure.
 pub struct BackendStore {
     config_path: PathBuf,
     dir: PathBuf,
@@ -82,10 +81,10 @@ impl BackendStore {
             fs::create_dir_all(&self.dir)?;
             fs::set_permissions(&self.dir, fs::Permissions::from_mode(DIR_PERMISSIONS))?;
         }
-        // Create .gitignore as safety net
+        // Create .gitignore as a safety net for local machine configuration.
         let gitignore = self.dir.join(".gitignore");
         if !gitignore.exists() {
-            fs::write(&gitignore, "config.toml\ncredentials.toml\n")?;
+            fs::write(&gitignore, "config.toml\n")?;
         }
         Ok(())
     }
@@ -210,158 +209,9 @@ impl BackendStore {
         self.write_file(&file)
     }
 
-    /// Migrate from legacy credentials.toml to backends.
-    ///
-    /// Returns the number of credentials migrated.
-    pub fn migrate_from_credentials(&self) -> Result<usize, BackendError> {
-        use serde::Deserialize;
-        use std::collections::BTreeMap;
-
-        // Define minimal credential structure for reading
-        #[derive(Debug, Clone, Deserialize)]
-        struct Credential {
-            provider: String,
-            #[serde(skip_serializing_if = "Option::is_none")]
-            api_key: Option<String>,
-            #[serde(skip_serializing_if = "Option::is_none")]
-            base_url: Option<String>,
-            #[serde(skip_serializing_if = "Option::is_none")]
-            model: Option<String>,
-            #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-            headers: BTreeMap<String, String>,
-        }
-
-        #[derive(Debug, Default, Deserialize)]
-        struct CredentialsFile {
-            #[serde(default)]
-            credentials: BTreeMap<String, Credential>,
-        }
-
-        // Read credentials.toml directly
-        let home = dirs::home_dir().ok_or(BackendError::HomeDirMissing)?;
-        let credentials_path = home.join(".apxm").join("credentials.toml");
-
-        if !credentials_path.exists() {
-            return Ok(0);
-        }
-
-        let contents = fs::read_to_string(&credentials_path)?;
-        let creds_file: CredentialsFile = toml::from_str(&contents)?;
-
-        if creds_file.credentials.is_empty() {
-            return Ok(0);
-        }
-
-        let mut file = self.read_file()?;
-        let mut count = 0;
-
-        for (name, cred) in creds_file.credentials {
-            // Skip if already migrated
-            if file.backends.iter().any(|b| b.name == name) {
-                continue;
-            }
-
-            let legacy_cred = LegacyCredential {
-                provider: cred.provider,
-                api_key: cred.api_key,
-                base_url: cred.base_url,
-                model: cred.model,
-                headers: cred.headers,
-            };
-            let mut backend = credential_to_backend(&name, legacy_cred);
-            normalize_endpoint(&mut backend);
-            file.backends.push(backend);
-            count += 1;
-        }
-
-        if count > 0 {
-            self.write_file(&file)?;
-        }
-
-        Ok(count)
-    }
-
     /// Get the path to the config file.
     pub fn path(&self) -> &Path {
         &self.config_path
-    }
-}
-
-/// Minimal credential structure for migration (matches credentials.toml format).
-#[derive(Debug)]
-struct LegacyCredential {
-    provider: String,
-    api_key: Option<String>,
-    base_url: Option<String>,
-    model: Option<String>,
-    headers: std::collections::BTreeMap<String, String>,
-}
-
-/// Convert a legacy Credential (from credentials.toml) to a BackendConfig.
-fn credential_to_backend(name: &str, cred: LegacyCredential) -> BackendConfig {
-    use apxm_core::types::ProviderProtocol;
-    use apxm_core::types::{BackendType, ModelConfig};
-    use std::collections::HashMap;
-
-    // Infer protocol from provider string
-    let protocol = match cred.provider.to_lowercase().as_str() {
-        "openai" => ProviderProtocol::OpenAI,
-        "anthropic" => ProviderProtocol::Anthropic,
-        "google" => ProviderProtocol::Google,
-        "ollama" => ProviderProtocol::Ollama,
-        "vllm" => ProviderProtocol::Vllm,
-        _ => ProviderProtocol::OpenAI, // Default fallback
-    };
-
-    // Infer backend type from endpoint
-    let backend_type = if let Some(url) = &cred.base_url {
-        if url.contains("localhost") || url.contains("127.0.0.1") {
-            BackendType::Local
-        } else if url.contains("openai.com")
-            || url.contains("anthropic.com")
-            || url.contains("googleapis.com")
-        {
-            BackendType::Cloud
-        } else {
-            BackendType::OnPrem
-        }
-    } else {
-        BackendType::Cloud
-    };
-
-    // Convert BTreeMap to HashMap
-    let headers: HashMap<String, String> = cred.headers.into_iter().collect();
-
-    // Create model config if model is specified
-    let models = if let Some(model_id) = cred.model {
-        vec![ModelConfig {
-            id: model_id,
-            aliases: vec![],
-            context_window: 0,
-            cost_per_1k_input: 0.0,
-            cost_per_1k_output: 0.0,
-            supports_vision: false,
-            supports_functions: false,
-            supports_thinking: false,
-            supports_custom_temperature: None,
-            max_output_tokens: None,
-            tags: vec![],
-        }]
-    } else {
-        vec![]
-    };
-
-    BackendConfig {
-        name: name.to_string(),
-        backend_type,
-        protocol,
-        endpoint: cred.base_url,
-        api_key: cred.api_key,
-        headers,
-        models,
-        docker: None,
-        auto_tool_choice: None,
-        require_apxm_endpoints: None,
     }
 }
 
@@ -405,7 +255,6 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
-            require_apxm_endpoints: None,
         };
 
         store.add(backend.clone()).unwrap();
@@ -430,7 +279,6 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
-            require_apxm_endpoints: None,
         };
 
         store.add(backend.clone()).unwrap();
@@ -453,7 +301,6 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
-            require_apxm_endpoints: None,
         };
 
         store.add(backend).unwrap();
@@ -476,7 +323,6 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
-            require_apxm_endpoints: None,
         };
 
         let backend2 = BackendConfig {
@@ -489,7 +335,6 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
-            require_apxm_endpoints: None,
         };
 
         store.add(backend1).unwrap();
@@ -516,7 +361,6 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
-            require_apxm_endpoints: None,
         };
 
         store.add(backend).unwrap();
@@ -531,7 +375,6 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
-            require_apxm_endpoints: None,
         };
 
         store.update("update-test", updated).unwrap();
@@ -582,7 +425,6 @@ mod tests {
             ],
             docker: None,
             auto_tool_choice: None,
-            require_apxm_endpoints: None,
         };
 
         store.add(backend).unwrap();
@@ -617,7 +459,6 @@ mod tests {
                 tensor_parallel: Some(2),
             }),
             auto_tool_choice: None,
-            require_apxm_endpoints: None,
         };
 
         store.add(backend).unwrap();
@@ -643,7 +484,6 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
-            require_apxm_endpoints: None,
         };
 
         store.add(backend).unwrap();
@@ -667,7 +507,6 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
-            require_apxm_endpoints: None,
         };
         store.add(backend).unwrap();
 
@@ -729,7 +568,6 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
-            require_apxm_endpoints: None,
         };
         store.add(backend).unwrap();
 
@@ -769,7 +607,6 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
-            require_apxm_endpoints: None,
         };
         store.add(backend).unwrap();
 
@@ -814,7 +651,6 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
-            require_apxm_endpoints: None,
         };
 
         store.add(backend).unwrap();
@@ -837,7 +673,6 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
-            require_apxm_endpoints: None,
         };
 
         store.add(backend).unwrap();
@@ -860,7 +695,6 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
-            require_apxm_endpoints: None,
         };
 
         store.add(backend).unwrap();
@@ -883,7 +717,6 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
-            require_apxm_endpoints: None,
         };
         store.add(backend).unwrap();
 
@@ -897,7 +730,6 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
-            require_apxm_endpoints: None,
         };
 
         store.update("vllm-update", updated).unwrap();
@@ -920,7 +752,6 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
-            require_apxm_endpoints: None,
         };
 
         store.add(backend).unwrap();
@@ -944,7 +775,6 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
-            require_apxm_endpoints: None,
         };
 
         store.add(backend).unwrap();

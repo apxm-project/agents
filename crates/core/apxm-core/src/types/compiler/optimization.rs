@@ -136,17 +136,14 @@ pub struct PipelineConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token_budget: Option<u64>,
 
-    /// Optional path to DSPy training data for prompt optimization.
+    /// Optional APXM config file path used for compiler-owned optimization
+    /// settings.
     ///
-    /// When set, the `dspy-optimize` pass uses this training data to run
-    /// DSPy optimizers (MIPROv2, BootstrapFewShot) on template strings.
-    /// Without training data, the pass is a no-op.
+    /// The compiler interprets only compiler-specific sections from this file;
+    /// runtime/frontend configuration remains outside the compiler pipeline
+    /// contract.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub dspy_training_data: Option<PathBuf>,
-
-    /// Force DSPy re-optimization even if cached results exist.
-    #[serde(default)]
-    pub dspy_no_cache: bool,
+    pub compiler_config_path: Option<PathBuf>,
 
     /// Enable the diagnostic `unconsumed-value-warning` pass.
     ///
@@ -182,8 +179,7 @@ impl Default for PipelineConfig {
             no_cse_llm: false,
             profile_path: None,
             token_budget: None,
-            dspy_training_data: None,
-            dspy_no_cache: false,
+            compiler_config_path: None,
             warn_unconsumed: false,
             disable_passes: Vec::new(),
             pass_list_override: None,
@@ -201,8 +197,7 @@ impl PipelineConfig {
             no_cse_llm: false,
             profile_path: None,
             token_budget: None,
-            dspy_training_data: None,
-            dspy_no_cache: false,
+            compiler_config_path: None,
             warn_unconsumed: false,
             disable_passes: Vec::new(),
             pass_list_override: None,
@@ -218,8 +213,7 @@ impl PipelineConfig {
             no_cse_llm: false,
             profile_path: None,
             token_budget: None,
-            dspy_training_data: None,
-            dspy_no_cache: false,
+            compiler_config_path: None,
             warn_unconsumed: false,
             disable_passes: Vec::new(),
             pass_list_override: None,
@@ -256,15 +250,9 @@ impl PipelineConfig {
         self
     }
 
-    /// Builder: Set DSPy training data path for prompt optimization
-    pub fn with_dspy_training_data(mut self, path: PathBuf) -> Self {
-        self.dspy_training_data = Some(path);
-        self
-    }
-
-    /// Builder: Force DSPy re-optimization (bypass cache)
-    pub fn with_dspy_no_cache(mut self, no_cache: bool) -> Self {
-        self.dspy_no_cache = no_cache;
+    /// Builder: Set APXM config path for compiler-owned optimization settings.
+    pub fn with_compiler_config_path(mut self, path: PathBuf) -> Self {
+        self.compiler_config_path = Some(path);
         self
     }
 }

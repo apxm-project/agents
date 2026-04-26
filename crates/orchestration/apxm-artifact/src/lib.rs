@@ -117,11 +117,6 @@ impl Artifact {
         self.dags.iter().filter(|d| !d.metadata.is_entry)
     }
 
-    /// Legacy: Get first DAG (backward compat for single-DAG artifacts)
-    pub fn dag(&self) -> Option<&ExecutionDag> {
-        self.dags.first()
-    }
-
     pub fn sections(&self) -> &[ArtifactSection] {
         &self.sections
     }
@@ -136,11 +131,9 @@ impl Artifact {
         self.dags
     }
 
-    /// Legacy: Consume and return entry DAG only
-    pub fn into_dag(self) -> Option<ExecutionDag> {
-        self.entry_dag()
-            .cloned()
-            .or_else(|| self.dags.into_iter().next())
+    /// Consume artifact and return the explicit @entry DAG.
+    pub fn into_entry_dag(self) -> Option<ExecutionDag> {
+        self.dags.into_iter().find(|dag| dag.metadata.is_entry)
     }
 
     fn payload(&self) -> Result<Vec<u8>, Box<bincode::ErrorKind>> {
@@ -282,7 +275,7 @@ mod tests {
             exit_nodes: vec![1],
             metadata: DagMetadata {
                 name: Some("test".into()),
-                is_entry: false,
+                is_entry: true,
                 parameters: vec![],
             },
         }
@@ -311,7 +304,9 @@ mod tests {
 
         assert_eq!(decoded.metadata.module_name, metadata.module_name);
         assert_eq!(decoded.metadata.compiler_version, metadata.compiler_version);
-        let decoded_dag = decoded.dag().expect("test artifact should have a DAG");
+        let decoded_dag = decoded
+            .entry_dag()
+            .expect("test artifact should have an entry DAG");
         assert_eq!(decoded_dag.nodes.len(), dag.nodes.len());
         assert_eq!(decoded_dag.nodes[0].metadata.task_source_id, Some(42));
         // Note: name is marked #[serde(skip)] so it's not serialized (runtime-only field)

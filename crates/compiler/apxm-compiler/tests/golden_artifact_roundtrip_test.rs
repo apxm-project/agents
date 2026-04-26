@@ -132,13 +132,13 @@ fn golden_artifact_roundtrip_fusion_stress_o2() {
     let bytes1 = m1.generate_artifact_bytes().expect("artifact #1");
 
     let art1 = Artifact::from_bytes(&bytes1).expect("parse #1");
-    let dag1 = art1.dag().expect("dag #1");
+    let dag1 = art1.entry_dag().expect("entry dag #1");
     let air2 = dag_to_graph(dag1);
     let m2 = pipeline.compile_graph(&air2).expect("compile #2");
     let _bytes2 = m2.generate_artifact_bytes().expect("artifact #2");
 
     let art2 = Artifact::from_bytes(&_bytes2).expect("parse #2");
-    let dag2 = art2.dag().expect("dag #2");
+    let dag2 = art2.entry_dag().expect("entry dag #2");
     let air3 = dag_to_graph(dag2);
     let m3 = pipeline.compile_graph(&air3).expect("compile #3");
     let _bytes3 = m3.generate_artifact_bytes().expect("artifact #3");

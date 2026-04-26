@@ -24,7 +24,7 @@ use super::dag_splicer::{DagSplicer, NoOpSplicer};
 use super::events::ExecutionEventEmitter;
 use super::graph_metrics::GraphMetricsTracker;
 use super::inner_plan_linker::{InnerPlanLinker, NoOpLinker};
-use super::memoization::ResponseCache;
+use super::memoization::MemoCache;
 use super::middleware::OperationMiddleware;
 use super::timing_tracker::TimingTracker;
 use super::token_accounting::TokenAccountant;
@@ -60,7 +60,7 @@ pub struct ExecutionContext {
     pub graph_metrics: Arc<GraphMetricsTracker>,
     pub token_accountant: Arc<TokenAccountant>,
     pub timing_tracker: Arc<TimingTracker>,
-    pub response_cache: Arc<ResponseCache>,
+    pub response_cache: Arc<MemoCache>,
     /// Dispatcher-level middleware that wraps every node execution.
     pub middlewares: Vec<Arc<dyn OperationMiddleware>>,
     pub cancellation_token: CancellationToken,
@@ -108,7 +108,7 @@ impl ExecutionContext {
             .map(|cache_dir| cache_dir.join(cache::DB_FILE))
         {
             #[cfg(feature = "sqlite")]
-            Ok(db_path) => match ResponseCache::new_with_sqlite(&db_path) {
+            Ok(db_path) => match MemoCache::new_with_sqlite(&db_path) {
                 Ok(cache) => Arc::new(cache),
                 Err(e) => {
                     tracing::warn!(
@@ -116,17 +116,17 @@ impl ExecutionContext {
                         db_path,
                         e
                     );
-                    Arc::new(ResponseCache::new())
+                    Arc::new(MemoCache::new())
                 }
             },
             #[cfg(not(feature = "sqlite"))]
-            Ok(_) => Arc::new(ResponseCache::new()),
+            Ok(_) => Arc::new(MemoCache::new()),
             Err(e) => {
                 tracing::warn!(
                     "Failed to resolve cache directory: {}. Using L1-only cache.",
                     e
                 );
-                Arc::new(ResponseCache::new())
+                Arc::new(MemoCache::new())
             }
         };
 

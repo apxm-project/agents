@@ -1019,7 +1019,7 @@ def enable_cmd(args: argparse.Namespace) -> int:
         DekkToken.TEST.value,
         args.backend_name,
     ]
-    if not args.skip_test and not _verify_enable_target(endpoint, model, api_key=api_key):
+    if not _verify_enable_target(endpoint, model, api_key=api_key):
         return 1
 
     existing = _backend_config(args.backend_name)
@@ -1041,9 +1041,6 @@ def enable_cmd(args: argparse.Namespace) -> int:
         _print(f"Model {model} already exists on backend {args.backend_name}; skipping model add.")
     elif _run(add_model, cwd=REPO_ROOT) != 0:
         return 1
-    if args.skip_test:
-        _print("Skipping backend test by request.")
-        return 0
     return _run(test, cwd=REPO_ROOT)
 
 
@@ -1243,7 +1240,6 @@ def build_parser() -> argparse.ArgumentParser:
             dest=ArgName.ALIAS.value,
             help="Alternative routing alias to register for the served model",
         )
-        registration.add_argument("--skip-test", action="store_true", help="Write backend/model config without probing the server")
 
     enable = subparsers.add_parser(VllmCommand.ENABLE.value, help="Enable running vLLM as an APXM backend")
     add_registration_args(enable)

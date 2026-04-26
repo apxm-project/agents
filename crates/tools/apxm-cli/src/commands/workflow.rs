@@ -964,8 +964,7 @@ fn load_artifact_step_args(
 ) -> Result<Vec<String>> {
     let entry = artifact
         .entry_dag()
-        .or_else(|| artifact.dag())
-        .ok_or_else(|| anyhow::anyhow!("Artifact contains no DAGs"))?;
+        .ok_or_else(|| anyhow::anyhow!("Artifact contains no entry DAG"))?;
     Ok(entry
         .metadata
         .parameters

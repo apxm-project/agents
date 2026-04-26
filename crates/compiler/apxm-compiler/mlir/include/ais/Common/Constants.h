@@ -43,7 +43,6 @@ constexpr llvm::StringLiteral MEM = "mem";
 
 // Invocation operations
 constexpr llvm::StringLiteral INVOKE = "invoke";
-constexpr llvm::StringLiteral INV = "inv";
 constexpr llvm::StringLiteral LLM = "llm";
 constexpr llvm::StringLiteral TOOL = "tool";
 
@@ -134,11 +133,31 @@ constexpr llvm::StringLiteral INPUT_NAMES = "input_names";
 // ---- DSPy module-level config (input from Rust) ----
 constexpr llvm::StringLiteral DSPY_TRAINING_DATA_PATH = "ais.dspy_training_data_path";
 constexpr llvm::StringLiteral DSPY_BACKEND_JSON = "ais.dspy_backend_json";
+constexpr llvm::StringLiteral DSPY_CACHE_DIR = "ais.dspy_cache_dir";
 constexpr llvm::StringLiteral DSPY_OPTIMIZER = "ais.dspy_optimizer";
 constexpr llvm::StringLiteral DSPY_AUTO = "ais.dspy_auto";
 constexpr llvm::StringLiteral DSPY_METRIC = "ais.dspy_metric";
+constexpr llvm::StringLiteral DSPY_NO_CACHE = "ais.dspy_no_cache";
 
 }  // namespace attrs
+
+/// JSON contract for the Python DSPy optimizer subprocess.
+namespace dspy_json {
+constexpr llvm::StringLiteral TRAINING_DATA_PATH = "training_data_path";
+constexpr llvm::StringLiteral BACKEND_JSON = "backend_json";
+constexpr llvm::StringLiteral CACHE_DIR = "cache_dir";
+constexpr llvm::StringLiteral OPTIMIZER = "optimizer";
+constexpr llvm::StringLiteral AUTO = "auto";
+constexpr llvm::StringLiteral METRIC = "metric";
+constexpr llvm::StringLiteral NO_CACHE = "no_cache";
+constexpr llvm::StringLiteral TEMPLATE_STR = "template_str";
+constexpr llvm::StringLiteral TEMPLATES = "templates";
+constexpr llvm::StringLiteral STATUS = "status";
+constexpr llvm::StringLiteral STATUS_OK = "ok";
+constexpr llvm::StringLiteral ERROR = "error";
+constexpr llvm::StringLiteral RESULTS = "results";
+constexpr llvm::StringLiteral OPTIMIZED_TEMPLATE = "optimized_template";
+}  // namespace dspy_json
 
 /// Priority levels for scheduling (AssignPriority pass).
 namespace priority {

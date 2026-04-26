@@ -26,7 +26,6 @@ const DEFAULT_BASE_URL: &str = DEFAULT_VLLM_BASE_URL;
 const UNCONFIGURED_MODEL_SENTINEL: &str = "__apxm_vllm_model_required__";
 const VLLM_PRIORITY_CRITICAL_PATH: u8 = 0;
 const VLLM_PRIORITY_DEFAULT: u8 = 5;
-const VLLM_PRIORITY_LEGACY_SPECULATIVE: u8 = 10;
 
 /// Response from `POST /v1/apxm/graphs/register`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -78,16 +77,12 @@ pub struct GraphAwareVllmBackend {
     execution_counter: AtomicU64,
     /// Whether the server exposes `/v1/apxm/*`. Probed on `health_check`.
     apxm_endpoints_available: AtomicBool,
-    /// Guards one-time WARN about missing APXM endpoints.
-    health_check_warned: AtomicBool,
     /// Whether the server accepts `tool_choice="auto"`. Default `true`.
     auto_tool_choice_supported: AtomicBool,
     /// Whether the backend config included a concrete default model.
     default_model_configured: bool,
     /// Models that should suppress vLLM chat-template thinking output.
     non_thinking_models: HashSet<String>,
-    /// When `true` (default), `health_check` hard-fails without `/v1/apxm/*`.
-    require_apxm_endpoints: bool,
 }
 
 impl GraphAwareVllmBackend {
@@ -117,12 +112,6 @@ impl GraphAwareVllmBackend {
         let auto_tool_choice = config
             .as_ref()
             .and_then(|c| c.get(config_keys::AUTO_TOOL_CHOICE))
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true);
-
-        let require_apxm_endpoints = config
-            .as_ref()
-            .and_then(|c| c.get(config_keys::REQUIRE_APXM_ENDPOINTS))
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
 
@@ -165,11 +154,9 @@ impl GraphAwareVllmBackend {
             client,
             execution_counter: AtomicU64::new(0),
             apxm_endpoints_available: AtomicBool::new(true),
-            health_check_warned: AtomicBool::new(false),
             auto_tool_choice_supported: AtomicBool::new(auto_tool_choice),
             default_model_configured,
             non_thinking_models,
-            require_apxm_endpoints,
         })
     }
 
@@ -193,18 +180,6 @@ impl GraphAwareVllmBackend {
     /// requests. The server stores the metadata and uses it for KV-cache
     /// pinning decisions.
     pub async fn register_graph(&self, metadata: GraphMetadata) -> Result<GraphRegisterResponse> {
-        // If the server doesn't expose `/v1/apxm/*`, become a silent no-op.
-        if !self.apxm_endpoints_available.load(Ordering::Relaxed) {
-            return Ok(GraphRegisterResponse {
-                object: apxm_llm::OBJECT_GRAPH_REGISTRATION.to_string(),
-                graph_id: metadata.graph_id.clone(),
-                execution_id: metadata.execution_id.clone(),
-                registered_nodes: 0,
-                critical_path_length: metadata.critical_path_length,
-                max_parallelism: metadata.max_parallelism,
-                default_pin_ttl_ms: metadata.default_pin_ttl_ms,
-            });
-        }
         let url = self.graph_registration_url();
         let response = self
             .inner
@@ -235,16 +210,6 @@ impl GraphAwareVllmBackend {
     /// Call this when a graph execution completes or is cancelled to free
     /// pinned KV blocks.
     pub async fn release_graph(&self, graph_id: &str) -> Result<GraphReleaseResponse> {
-        if !self.apxm_endpoints_available.load(Ordering::Relaxed) {
-            return Ok(GraphReleaseResponse {
-                object: apxm_llm::OBJECT_GRAPH_RELEASE.to_string(),
-                graph_id: graph_id.to_string(),
-                released_handles: 0,
-                released_blocks: 0,
-                remaining_handles: None,
-                remaining_blocks: None,
-            });
-        }
         let url = self.graph_status_url(graph_id);
         let response = self
             .inner
@@ -267,17 +232,6 @@ impl GraphAwareVllmBackend {
 
     /// Get the current status for a registered graph (typed).
     pub async fn get_graph_status_typed(&self, graph_id: &str) -> Result<GraphStatusResponse> {
-        if !self.apxm_endpoints_available.load(Ordering::Relaxed) {
-            return Ok(GraphStatusResponse {
-                object: apxm_llm::OBJECT_GRAPH_STATUS.to_string(),
-                graph_id: graph_id.to_string(),
-                registered: false,
-                pinned_handles: 0,
-                pinned_blocks: 0,
-                node_count: None,
-                critical_path_length: None,
-            });
-        }
         let url = self.graph_status_url(graph_id);
 
         let response = self
@@ -338,7 +292,6 @@ impl GraphAwareVllmBackend {
                     let priority = match priority_class {
                         PriorityClass::CriticalPath => VLLM_PRIORITY_CRITICAL_PATH,
                         PriorityClass::Parallel => VLLM_PRIORITY_DEFAULT,
-                        PriorityClass::Speculative => VLLM_PRIORITY_LEGACY_SPECULATIVE,
                     };
                     map.insert(
                         apxm_llm::REQUEST_PRIORITY.to_owned(),
@@ -430,11 +383,9 @@ impl LLMBackend for GraphAwareVllmBackend {
         self.inner.health_check().await?;
 
         // Probe the APXM extension surface. A definitive 404 means the server
-        // is stock vLLM, not the APXM fork — and stock vLLM silently drops
-        // `vllm_xargs.apxm` scheduling hints, which would let APXM behave as
-        // if graph-aware scheduling is on while the server ignores it.
-        // Default behavior is hard-fail; opt out via
-        // `BackendConfig.require_apxm_endpoints = false`.
+        // is stock vLLM, not the APXM fork. APXM requires the graph-aware
+        // contract for `protocol = "vllm"` so scheduling hints cannot be
+        // silently ignored.
         let url = self.graph_status_url(vllm_keys::APXM_PROBE_GRAPH_ID);
         match self
             .inner
@@ -448,54 +399,29 @@ impl LLMBackend for GraphAwareVllmBackend {
             Ok(response) if response.status() == reqwest::StatusCode::NOT_FOUND => {
                 self.apxm_endpoints_available
                     .store(false, Ordering::Relaxed);
-                if self.require_apxm_endpoints {
-                    anyhow::bail!(
-                        "vLLM server at {} does not expose /v1/apxm/* endpoints. \
-                         This is stock vLLM, which silently drops vllm_xargs.apxm \
-                         scheduling hints. Install and run the graph-aware fork. \
-                         To allow stock vLLM intentionally, set \
-                         `require_apxm_endpoints = false` on this backend in \
-                         ~/.apxm/config.toml.",
-                        url
-                    );
-                }
-                if !self.health_check_warned.swap(true, Ordering::Relaxed) {
-                    tracing::warn!(
-                        endpoint = %url,
-                        "vLLM server does not expose APXM extensions (/v1/apxm/*); \
-                         graph registration, graph status, and graph release will be no-ops \
-                         (require_apxm_endpoints = false)"
-                    );
-                }
+                anyhow::bail!(
+                    "vLLM server at {} does not expose /v1/apxm/* endpoints. \
+                     This is stock vLLM, which silently drops vllm_xargs.apxm \
+                     scheduling hints. Install and run the graph-aware fork.",
+                    url
+                );
             }
             Ok(response) => {
                 let status = response.status();
                 self.apxm_endpoints_available
                     .store(false, Ordering::Relaxed);
-                if self.require_apxm_endpoints {
-                    anyhow::bail!(
-                        "vLLM server at {} exposes the APXM graph route but it is not ready \
-                         (status {}). Check the fork server logs and rerun the vLLM probe.",
-                        url,
-                        status
-                    );
-                }
-                if !self.health_check_warned.swap(true, Ordering::Relaxed) {
-                    tracing::warn!(
-                        endpoint = %url,
-                        status = %status,
-                        "vLLM APXM graph route is present but unavailable \
-                         (require_apxm_endpoints = false)"
-                    );
-                }
+                anyhow::bail!(
+                    "vLLM server at {} exposes the APXM graph route but it is not ready \
+                     (status {}). Check the fork server logs and rerun the vLLM probe.",
+                    url,
+                    status
+                );
             }
             Err(err) => {
                 self.apxm_endpoints_available
                     .store(false, Ordering::Relaxed);
-                if self.require_apxm_endpoints {
-                    return Err(err)
-                        .context("failed to probe vLLM APXM graph route during health_check");
-                }
+                return Err(err)
+                    .context("failed to probe vLLM APXM graph route during health_check");
             }
         }
 

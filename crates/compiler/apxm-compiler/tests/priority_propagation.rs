@@ -196,7 +196,7 @@ fn test_downstream_nodes_match_artifact_node_ids() {
     let module = pipeline.compile_graph(&graph).expect("compilation failed");
     let bytes = module.generate_artifact_bytes().expect("artifact");
     let artifact = Artifact::from_bytes(&bytes).expect("parse artifact");
-    let dag = artifact.dag().expect("dag");
+    let dag = artifact.entry_dag().expect("entry dag");
 
     for node in &dag.nodes {
         if !node.attributes.contains_key(graph_attrs::DOWNSTREAM_NODES) {
@@ -274,7 +274,7 @@ fn test_shared_prefix_analysis_marks_latency_fanout() {
     let module = pipeline.compile_graph(&graph).expect("compilation failed");
     let bytes = module.generate_artifact_bytes().expect("artifact");
     let artifact = Artifact::from_bytes(&bytes).expect("parse artifact");
-    let dag = artifact.dag().expect("dag");
+    let dag = artifact.entry_dag().expect("entry dag");
 
     let llm_nodes: Vec<_> = dag
         .nodes

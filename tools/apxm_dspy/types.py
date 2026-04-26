@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
-from enum import StrEnum
+try:
+    from enum import StrEnum
+except ImportError:  # Python 3.10 in some Dekk-managed test environments.
+    from enum import Enum
+
+    class StrEnum(str, Enum):
+        pass
 
 
 class Optimizer(StrEnum):
@@ -47,6 +53,55 @@ class Status(StrEnum):
     ERROR = "error"
 
 
+class RequestKey(StrEnum):
+    """Optimizer request keys shared with the compiler subprocess contract."""
+
+    TRAINING_DATA = "training_data"
+    TRAINING_DATA_PATH = "training_data_path"
+    BACKEND = "backend"
+    BACKEND_JSON = "backend_json"
+    CACHE_DIR = "cache_dir"
+    OPTIMIZER = "optimizer"
+    AUTO = "auto"
+    METRIC = "metric"
+    MODEL = "model"
+    TEMPLATE_STR = "template_str"
+    TEMPLATES = "templates"
+    NO_CACHE = "no_cache"
+
+
+class ResponseKey(StrEnum):
+    """Optimizer response keys shared with the compiler subprocess contract."""
+
+    STATUS = "status"
+    ERROR = "error"
+    RESULTS = "results"
+    OPTIMIZED_TEMPLATE = "optimized_template"
+    OPTIMIZED_INSTRUCTIONS = "optimized_instructions"
+    ORIGINAL_TEMPLATE = "original_template"
+    ORIGINAL_TEMPLATE_CHARS = "original_template_chars"
+    OPTIMIZED_TEMPLATE_CHARS = "optimized_template_chars"
+    TEMPLATE_CHAR_DELTA = "template_char_delta"
+    OPTIMIZED_INSTRUCTION_CHARS = "optimized_instruction_chars"
+    TRAINING_EXAMPLES = "training_examples"
+    CACHE_HIT = "cache_hit"
+    OPTIMIZER = "optimizer"
+    COUNT = "count"
+
+
+class BackendKey(StrEnum):
+    """Backend config keys consumed by the DSPy adapter."""
+
+    PROTOCOL = "protocol"
+    MODEL = "model"
+    API_KEY = "api_key"
+    ENDPOINT = "endpoint"
+    HEADERS = "headers"
+
+
+ENV_NO_CACHE = "APXM_NO_CACHE"
+ENV_VALUE_PREFIX = "env:"
+TRUE_ENV_VALUES = frozenset(("1", "true"))
 # DSPy LM provider prefix for each protocol
 PROTOCOL_TO_DSPY_PREFIX: dict[Protocol, str] = {
     Protocol.OPENAI: "openai",

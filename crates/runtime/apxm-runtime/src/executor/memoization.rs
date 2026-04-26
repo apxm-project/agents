@@ -47,9 +47,6 @@ pub struct MemoStats {
     pub l2_entries: usize,
 }
 
-// Legacy ResponseCache re-export for backward compatibility
-pub type ResponseCache = MemoCache;
-
 /// Two-tier memoization cache with DashMap (L1) and optional SQLite (L2).
 #[derive(Debug)]
 pub struct MemoCache {

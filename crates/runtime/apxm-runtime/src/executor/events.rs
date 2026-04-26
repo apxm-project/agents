@@ -11,11 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::executor::token_accounting::TokenUsageSummary;
 
-/// Runtime execution event (legacy enum).
-///
-/// Prefer using concrete payload structs from `apxm_core::events::payload`
-/// with `EmitterAdapter` for new code. This enum is retained for backward
-/// compatibility with session output serialization.
+/// Runtime execution event enum for simple emitters and tests.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ExecutionEvent {

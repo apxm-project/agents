@@ -225,7 +225,7 @@ impl std::str::FromStr for AISOperationType {
             "plan" => Ok(AISOperationType::Plan),
             "reflect" => Ok(AISOperationType::Reflect),
             "verify" => Ok(AISOperationType::Verify),
-            "inv_tool" | "inv" => Ok(AISOperationType::InvTool),
+            "inv_tool" => Ok(AISOperationType::InvTool),
             "exc" => Ok(AISOperationType::Exc),
             "print" => Ok(AISOperationType::Print),
             "jump" => Ok(AISOperationType::Jump),
@@ -1851,7 +1851,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         category: OperationCategory::Coordination,
         description: "Register a new capability (tool) in the runtime registry",
         long_description: "Dynamically registers a new capability in the runtime's capability \
-            registry. The capability becomes available for INV operations after registration. \
+            registry. The capability becomes available for INV_TOOL operations after registration. \
             Returns a confirmation with the registered capability name.",
         latency: OperationLatency::Low,
         example_json: Some(

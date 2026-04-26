@@ -935,7 +935,6 @@ struct StreamFunctionDelta {
 mod tests {
     use super::*;
     use crate::llm::backends::{LLMRequest, ToolDefinition};
-    use apxm_core::constants::llm::apxm as apxm_llm;
 
     fn test_backend(model: &str) -> OpenAIBackend {
         OpenAIBackend {
@@ -1109,48 +1108,21 @@ mod tests {
 
     #[test]
     fn test_build_request_body_preserves_extra_body_fields() {
-        use crate::llm::backends::vllm::ApxmGraphHints;
-
         let backend = test_backend("meta-llama/Llama-3.1-8B-Instruct");
 
-        // Create APXM hints
-        let hints = ApxmGraphHints::critical_path(
-            "dag-abc-123",
-            "exec-xyz-789",
-            12,
-            "planner",
-            vec![13, 14],
-            30_000,
-        );
-
-        let hints_json = serde_json::to_value(&hints).unwrap();
         let extra_body = json!({
             "priority": 0,
-            "apxm": hints_json
+            "custom_gateway": {
+                "tenant": "engineering"
+            }
         });
 
-        let request = LLMRequest::new("Plan the architecture")
-            .with_apxm_hints(hints.clone())
-            .with_extra_body(extra_body);
+        let request = LLMRequest::new("Plan the architecture").with_extra_body(extra_body);
 
         let body = backend.build_request_body(&request);
 
         assert_eq!(body["priority"], 0);
-        assert!(body.get("apxm").is_some(), "Should have apxm field in body");
-        let apxm_meta = &body["apxm"];
-
-        assert_eq!(apxm_meta["schema_version"], 1);
-        assert_eq!(apxm_meta["graph_id"], "dag-abc-123");
-        assert_eq!(apxm_meta["execution_id"], "exec-xyz-789");
-        assert_eq!(apxm_meta["node_id"], 12);
-        assert_eq!(apxm_meta["node_name"], "planner");
-        assert_eq!(
-            apxm_meta["priority_class"],
-            apxm_llm::PRIORITY_CRITICAL_PATH
-        );
-        assert_eq!(apxm_meta["downstream_nodes"], json!([13, 14]));
-        assert_eq!(apxm_meta["pin_policy"]["mode"], apxm_llm::PIN_MODE_PREFIX);
-        assert_eq!(apxm_meta["pin_policy"]["ttl_ms"], 30_000);
+        assert_eq!(body["custom_gateway"]["tenant"], json!("engineering"));
     }
 
     #[tokio::test]
@@ -1183,31 +1155,18 @@ mod tests {
 
     #[test]
     fn test_request_structure_merges_extra_body_without_special_casing() {
-        use crate::llm::backends::vllm::ApxmGraphHints;
-
         let backend = test_backend("meta-llama/Llama-3.1-8B-Instruct");
 
-        let hints =
-            ApxmGraphHints::critical_path("graph-id", "exec-id", 12, "node-name", vec![], 30_000);
+        let extra_body = json!({"custom_gateway": {"request_class": "batch"}});
 
-        let hints_json = serde_json::to_value(&hints).unwrap();
-        let extra_body = json!({"apxm": hints_json});
-
-        let request = LLMRequest::new("Hello")
-            .with_apxm_hints(hints)
-            .with_extra_body(extra_body);
+        let request = LLMRequest::new("Hello").with_extra_body(extra_body);
 
         let body = backend.build_request_body(&request);
 
         assert!(body.get("model").is_some());
         assert!(body.get("messages").is_some());
         assert!(body.get("priority").is_none());
-
-        let apxm = &body["apxm"];
-        assert_eq!(apxm["schema_version"], 1);
-        assert_eq!(apxm["graph_id"], "graph-id");
-        assert_eq!(apxm["node_id"], 12);
-        assert_eq!(apxm["priority_class"], apxm_llm::PRIORITY_CRITICAL_PATH);
+        assert_eq!(body["custom_gateway"]["request_class"], json!("batch"));
     }
 }
 

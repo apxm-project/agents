@@ -60,11 +60,6 @@ pub struct BackendRegistration {
     /// the backend's default (typically `true`). See `BackendConfig.auto_tool_choice`.
     #[serde(default)]
     pub auto_tool_choice: Option<bool>,
-    /// vLLM-only: hard-fail at `health_check` if the server doesn't expose
-    /// `/v1/apxm/*`. `None`/`Some(true)` mean fail-fast; `Some(false)` opts
-    /// out (allows stock vLLM). See `BackendConfig.require_apxm_endpoints`.
-    #[serde(default)]
-    pub require_apxm_endpoints: Option<bool>,
 }
 
 impl BackendRegistration {
@@ -129,7 +124,6 @@ impl BackendRegistration {
             options: HashMap::new(),
             extra_headers,
             auto_tool_choice: backend.auto_tool_choice,
-            require_apxm_endpoints: backend.require_apxm_endpoints,
         })
     }
 
@@ -168,13 +162,6 @@ impl BackendRegistration {
                 json!(auto_tool_choice),
             );
         }
-        if let Some(require_apxm_endpoints) = self.require_apxm_endpoints {
-            map.insert(
-                config_keys::REQUIRE_APXM_ENDPOINTS.to_string(),
-                json!(require_apxm_endpoints),
-            );
-        }
-
         // Forward per-model capability flags that backends consult at request
         // time. Only emit entries whose flags actually differ from the default
         // so we don't bloat the JSON for the common case.
@@ -347,7 +334,6 @@ mod tests {
             }],
             docker: None,
             auto_tool_choice: Some(false),
-            require_apxm_endpoints: None,
         };
 
         let registration =

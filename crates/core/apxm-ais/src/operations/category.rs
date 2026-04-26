@@ -12,7 +12,7 @@ pub enum OperationCategory {
     Memory,
     /// Reasoning operations: ASK, THINK, REASON, PLAN, REFLECT, VERIFY
     Reasoning,
-    /// Tool operations: INV, EXC, PRINT
+    /// Tool operations: INV_TOOL, EXC, PRINT
     Tools,
     /// Control flow operations: JUMP, BRANCH_ON_VALUE, LOOP_START, LOOP_END, RETURN, SWITCH, FLOW_CALL, GUARD, RESUME
     ControlFlow,

@@ -12,6 +12,8 @@ pub mod diagnostics {
 
 pub mod env {
     pub const APXM_BACKEND: &str = "APXM_BACKEND";
+    /// Path to the APXM project/run configuration file.
+    pub const APXM_CONFIG: &str = "APXM_CONFIG";
     /// Makes Python graph files emit AIR to stdout for the Rust compiler driver.
     pub const APXM_EMIT_AIR: &str = "APXM_EMIT_AIR";
     /// Enables the in-process mock backend used by tests and offline benchmarks.
@@ -490,13 +492,9 @@ pub mod llm {
 
         pub const PRIORITY_CRITICAL_PATH: &str = "critical_path";
         pub const PRIORITY_PARALLEL: &str = "parallel";
-        pub const PRIORITY_NORMAL_LEGACY: &str = "normal";
-        pub const PRIORITY_SPECULATIVE_LEGACY: &str = "speculative";
 
         pub const PIN_MODE_PREFIX: &str = "prefix";
         pub const PIN_MODE_NONE: &str = "none";
-        pub const PIN_MODE_PREFIX_LEGACY: &str = "pin_strong";
-        pub const PIN_MODE_NONE_LEGACY: &str = "pin_weak";
     }
 
     pub mod vllm {
@@ -526,12 +524,6 @@ pub mod llm {
         /// requests. Stock vLLM rejects it unless launched with
         /// `--enable-auto-tool-choice`. Plumbed from `BackendConfig.auto_tool_choice`.
         pub const AUTO_TOOL_CHOICE: &str = "auto_tool_choice";
-        /// vLLM-only: when present and `false`, the graph-aware vLLM backend
-        /// allows a stock (non-fork) server. Default behavior (key absent or
-        /// `true`) is to hard-fail at `health_check` if `/v1/apxm/*` is missing,
-        /// because stock vLLM silently drops `vllm_xargs.apxm` hints.
-        /// Plumbed from `BackendConfig.require_apxm_endpoints`.
-        pub const REQUIRE_APXM_ENDPOINTS: &str = "require_apxm_endpoints";
         /// Per-model array forwarded to the backend so it can apply
         /// model-specific request shaping (e.g. disabling thinking-mode for
         /// Qwen3). Each entry carries at least `id` and `supports_thinking`.
@@ -619,11 +611,19 @@ pub mod extensions {
 pub mod cache {
     /// SQLite cache database filename.
     pub const DB_FILE: &str = "cache.db";
+    /// Compiler cache subdirectory.
+    pub const COMPILER_DIR: &str = "compiler";
     /// DSPy optimization cache subdirectory.
     pub const DSPY_DIR: &str = "dspy";
+    /// DSPy training data cache subdirectory.
+    pub const DSPY_TRAINING_DIR: &str = "training";
 }
 
 pub mod dspy {
+    /// APXM config table containing compiler-owned configuration.
+    pub const CONFIG_TABLE_COMPILER: &str = "compiler";
+    /// APXM config subsection containing DSPy optimizer configuration.
+    pub const CONFIG_TABLE_DSPY: &str = "dspy";
     /// Graph metadata key for DSPy configuration.
     pub const METADATA_KEY: &str = "dspy";
     /// Training data path field in DSPy metadata.
@@ -640,12 +640,16 @@ pub mod dspy {
     pub const ATTR_TRAINING_DATA_PATH: &str = "ais.dspy_training_data_path";
     /// MLIR module attribute: backend config JSON.
     pub const ATTR_BACKEND_JSON: &str = "ais.dspy_backend_json";
+    /// MLIR module attribute: compiler-owned DSPy result cache directory.
+    pub const ATTR_CACHE_DIR: &str = "ais.dspy_cache_dir";
     /// MLIR module attribute: optimizer name.
     pub const ATTR_OPTIMIZER: &str = "ais.dspy_optimizer";
     /// MLIR module attribute: auto-tuning level.
     pub const ATTR_AUTO: &str = "ais.dspy_auto";
     /// MLIR module attribute: metric function.
     pub const ATTR_METRIC: &str = "ais.dspy_metric";
+    /// MLIR module attribute: cache bypass flag.
+    pub const ATTR_NO_CACHE: &str = "ais.dspy_no_cache";
     /// MLIR module attribute: count of optimized templates.
     pub const ATTR_OPTIMIZED: &str = "ais.dspy_optimized";
 }

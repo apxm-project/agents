@@ -57,8 +57,7 @@ impl std::str::FromStr for BackendType {
 /// Complete backend configuration.
 ///
 /// Unifies credential, endpoint, and model information into a single
-/// structure. Replaces the fragmented `credentials.toml` + `models.toml`
-/// system.
+/// backend registry structure.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackendConfig {
     /// Unique backend identifier (e.g., "openai", "corp-gateway", "local-vllm")
@@ -95,15 +94,6 @@ pub struct BackendConfig {
     /// `None` is treated as `true` (the trait default).
     #[serde(default)]
     pub auto_tool_choice: Option<bool>,
-
-    /// For `protocol = "vllm"`: when `None` or `Some(true)`, `health_check()`
-    /// hard-fails if the server does not expose `/v1/apxm/*`. This catches the
-    /// case where a stock (non-fork) vLLM is registered: stock vLLM silently
-    /// drops `vllm_xargs.apxm` scheduling hints, so APXM would behave as if
-    /// graph-aware scheduling is on while the server ignores it. Set to
-    /// `false` in `~/.apxm/config.toml` to allow stock vLLM intentionally.
-    #[serde(default)]
-    pub require_apxm_endpoints: Option<bool>,
 }
 
 /// Model metadata and capabilities.
@@ -223,7 +213,6 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
-            require_apxm_endpoints: None,
         };
 
         let json = serde_json::to_string(&config).unwrap();
@@ -290,7 +279,6 @@ mod tests {
             }],
             docker: None,
             auto_tool_choice: None,
-            require_apxm_endpoints: None,
         };
 
         assert_eq!(config.models.len(), 1);

@@ -59,10 +59,10 @@ pub use intents::{
 };
 pub use llm_control_plane::{
     APXM_CONFIG_ENV_VAR, APXM_LLM_BACKEND_ENV_VAR, APXM_MODEL_ENV_VAR, APXM_USE_LLM_ENV_VAR,
-    ApxmBackendFallbackConfig, ApxmCredentialConfig, ApxmCredentialsFile, ApxmLlmBackendConfig,
-    ApxmLlmChatConfig, ApxmLlmConfigFile, ApxmLlmControlPlane, ApxmLlmRoutingConfig,
-    ApxmModelAliasConfig, ApxmOperationRouteConfig, ApxmRegisteredModelConfig,
-    ResolvedApxmBackendConfig, ResolvedApxmModelAlias, ResolvedApxmModelConfig,
+    ApxmBackendFallbackConfig, ApxmLlmBackendConfig, ApxmLlmChatConfig, ApxmLlmConfigFile,
+    ApxmLlmControlPlane, ApxmLlmRoutingConfig, ApxmModelAliasConfig, ApxmOperationRouteConfig,
+    ApxmRegisteredModelConfig, ResolvedApxmBackendConfig, ResolvedApxmModelAlias,
+    ResolvedApxmModelConfig,
 };
 pub use models::{
     FinishReason, LLMResponse, ModelCapabilities, ModelInfo, TimingBreakdown, TokenUsage, ToolCall,

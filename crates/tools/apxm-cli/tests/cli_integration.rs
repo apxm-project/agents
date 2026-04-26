@@ -370,9 +370,9 @@ fn validate_empty_name() {
 }
 
 #[test]
-fn validate_rejects_legacy_node_placeholder_syntax() {
+fn validate_rejects_node_id_placeholder_syntax() {
     let f = write_tmp_graph(
-        r#"{"name":"legacy","nodes":[{"id":1,"name":"a","op":"ASK","attributes":{"template_str":"step 1"}},{"id":2,"name":"b","op":"ASK","attributes":{"template_str":"step 2: {{node_1}}"}}],"edges":[{"from":1,"to":2,"dependency":"Data"}],"parameters":[],"metadata":{}}"#,
+        r#"{"name":"node_id_placeholder","nodes":[{"id":1,"name":"a","op":"ASK","attributes":{"template_str":"step 1"}},{"id":2,"name":"b","op":"ASK","attributes":{"template_str":"step 2: {{node_1}}"}}],"edges":[{"from":1,"to":2,"dependency":"Data"}],"parameters":[],"metadata":{}}"#,
     );
     let out = apxm()
         .args(["--json", "validate", f.path().to_str().unwrap()])
@@ -384,10 +384,10 @@ fn validate_rejects_legacy_node_placeholder_syntax() {
     assert!(
         v["errors"].as_array().unwrap().iter().any(|e| {
             let msg = e.as_str().unwrap();
-            msg.contains("legacy node placeholder syntax")
+            msg.contains("node-id placeholder syntax")
                 || msg.contains("references no known input or parameter")
         }),
-        "expected legacy placeholder error, got: {}",
+        "expected node-id placeholder error, got: {}",
         String::from_utf8_lossy(&out.stdout)
     );
 }

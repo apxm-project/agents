@@ -136,9 +136,9 @@ fn test_backend_injects_apxm_hints_into_extra_body() {
     );
 
     // Verify the hint injection creates proper extra_body structure
-    let extra_body = serde_json::json!({"apxm": hints_json});
+    let extra_body = serde_json::json!({apxm_llm::VLLM_XARGS: {apxm_llm::HINTS_FIELD: hints_json}});
     assert!(extra_body.is_object());
-    assert!(extra_body.get("apxm").is_some());
+    assert!(extra_body.get(apxm_llm::VLLM_XARGS).is_some());
 }
 
 #[test]

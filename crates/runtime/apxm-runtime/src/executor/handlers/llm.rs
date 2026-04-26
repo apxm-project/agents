@@ -25,7 +25,7 @@ use super::{
     template::{input_names_from_node, render_named},
 };
 use crate::aam::{Goal as AamGoal, GoalId, GoalStatus, TransitionLabel};
-use crate::executor::memoization::ResponseCache;
+use crate::executor::memoization::MemoCache;
 use apxm_backends::{LLMRequest, ToolChoice, ToolDefinition};
 use apxm_core::InnerPlanPayload;
 use apxm_core::apxm_llm;
@@ -899,7 +899,7 @@ async fn execute_llm_once(
         let output_schema = output_schema_from_node(node)?;
         let output_schema_str = output_schema.as_ref().map(|s| s.to_string());
 
-        ResponseCache::compute_key(
+        MemoCache::compute_key(
             &request.prompt,
             request.system_prompt.as_deref(),
             request.model.as_deref(),
@@ -998,7 +998,7 @@ async fn execute_llm_once(
         let ttl = request
             .operation_type
             .as_ref()
-            .map(|op| ResponseCache::ttl_for_op(op));
+            .map(|op| MemoCache::ttl_for_op(op));
 
         ctx.response_cache.put_with_ttl(
             key,

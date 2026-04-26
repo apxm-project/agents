@@ -4,8 +4,11 @@ use std::path::Path;
 use std::sync::Arc;
 
 use apxm_artifact::{Artifact, ArtifactSection};
+use apxm_core::constants::env as apxm_env;
 use apxm_core::error::runtime::RuntimeError;
 use apxm_core::log_info;
+use apxm_core::paths::ApxmPaths;
+use apxm_core::types::OptimizationTarget;
 use apxm_core::types::{OptimizationLevel, PipelineConfig};
 use apxm_runtime::{ExecutionEventEmitter, RuntimeConfig, RuntimeExecutionResult};
 
@@ -15,6 +18,13 @@ use crate::{
 
 fn state_err(msg: impl Into<String>) -> DriverError {
     DriverError::Runtime(RuntimeError::State(msg.into()))
+}
+
+fn compiler_project_config_exists() -> bool {
+    ApxmPaths::discover()
+        .ok()
+        .map(|paths| paths.compiler_config_path().is_file())
+        .unwrap_or(false)
 }
 
 /// Linker configuration that drives compiler and runtime orchestration.
@@ -29,6 +39,9 @@ pub struct LinkerConfig {
     /// Optimization level for compilation.
     pub opt_level: OptimizationLevel,
 
+    /// Full compiler pipeline configuration.
+    pub pipeline_config: PipelineConfig,
+
     /// When `true`, skip the artifact cache entirely.
     pub no_cache: bool,
 }
@@ -39,7 +52,11 @@ impl LinkerConfig {
         Self {
             apxm_config,
             runtime_config: RuntimeConfig::default(),
-            opt_level: OptimizationLevel::O1,
+            opt_level: OptimizationLevel::O2,
+            pipeline_config: PipelineConfig {
+                opt_level: OptimizationLevel::O2,
+                ..Default::default()
+            },
             no_cache: false,
         }
     }
@@ -47,6 +64,14 @@ impl LinkerConfig {
     /// Set the optimization level.
     pub fn with_opt_level(mut self, opt_level: OptimizationLevel) -> Self {
         self.opt_level = opt_level;
+        self.pipeline_config.opt_level = opt_level;
+        self
+    }
+
+    /// Set the full compiler pipeline configuration.
+    pub fn with_pipeline_config(mut self, pipeline_config: PipelineConfig) -> Self {
+        self.opt_level = pipeline_config.opt_level;
+        self.pipeline_config = pipeline_config;
         self
     }
 }
@@ -77,6 +102,7 @@ pub struct Linker {
     /// MLIR compiler — None when MLIR toolchain is not available (graph-direct mode).
     compiler: Option<Compiler>,
     runtime: RuntimeExecutor,
+    pipeline_config: PipelineConfig,
     no_cache: bool,
 }
 
@@ -101,13 +127,31 @@ impl Linker {
             }
         };
         let runtime = RuntimeExecutor::new(&config).await?;
+        let pipeline_config = config.pipeline_config;
         let no_cache = config.no_cache;
 
         Ok(Self {
             compiler,
             runtime,
+            pipeline_config,
             no_cache,
         })
+    }
+
+    fn artifact_cache_enabled(&self) -> bool {
+        !self.no_cache
+            && std::env::var_os(apxm_env::APXM_CONFIG).is_none()
+            && !compiler_project_config_exists()
+            && self.pipeline_config.opt_level == OptimizationLevel::O2
+            && self.pipeline_config.target == OptimizationTarget::Balanced
+            && self.pipeline_config.verify
+            && !self.pipeline_config.no_cse_llm
+            && self.pipeline_config.profile_path.is_none()
+            && self.pipeline_config.token_budget.is_none()
+            && self.pipeline_config.compiler_config_path.is_none()
+            && !self.pipeline_config.warn_unconsumed
+            && self.pipeline_config.disable_passes.is_empty()
+            && self.pipeline_config.pass_list_override.is_none()
     }
 
     /// Compile graph input into an executable artifact.
@@ -154,10 +198,7 @@ impl Linker {
         if matches!(ext, Some("air")) {
             let air_text = std::fs::read_to_string(input)
                 .map_err(|e| state_err(format!("Failed to read {}: {}", input.display(), e)))?;
-            let config = PipelineConfig {
-                opt_level: compiler.opt_level(),
-                ..Default::default()
-            };
+            let config = self.pipeline_config.clone();
             let (module, diagnostics) =
                 compiler.compile_air_with_config_and_diagnostics(&air_text, config)?;
             let diagnostics_json = Some(diagnostics.to_json());
@@ -166,8 +207,8 @@ impl Linker {
             add_python_tools_section(&mut artifact, python_tools_sidecar);
 
             let dag = artifact
-                .dag()
-                .ok_or_else(|| state_err("Artifact contains no DAGs"))?;
+                .entry_dag()
+                .ok_or_else(|| state_err("Artifact contains no entry DAG"))?;
             if let Err(err) = dag.validate() {
                 return Err(state_err(format!(
                     "Artifact DAG validation failed: {}",
@@ -182,7 +223,8 @@ impl Linker {
         // Try the artifact cache first.
         let hash = cache::graph_hash(&air_module).ok();
 
-        if !self.no_cache
+        let artifact_cache_enabled = self.artifact_cache_enabled();
+        if artifact_cache_enabled
             && let Some(ref h) = hash
             && let Some(cached_bytes) = cache::load_cached(h)?
         {
@@ -192,14 +234,13 @@ impl Linker {
             return Ok((artifact, None));
         }
 
-        let (module, diagnostics) = compiler.compile_graph_with_diagnostics(&air_module)?;
+        let (module, diagnostics) = compiler
+            .compile_graph_with_config_and_diagnostics(&air_module, self.pipeline_config.clone())?;
         let diagnostics_json = Some(diagnostics.to_json());
         let artifact_bytes = module.generate_artifact_bytes()?;
 
         // Store in cache for next time.
-        if !self.no_cache
-            && let Some(ref h) = hash
-        {
+        if artifact_cache_enabled && let Some(ref h) = hash {
             let _ = cache::store_cached(h, &artifact_bytes);
         }
 
@@ -207,8 +248,8 @@ impl Linker {
             Artifact::from_bytes(&artifact_bytes).map_err(|e| state_err(e.to_string()))?;
 
         let dag = artifact
-            .dag()
-            .ok_or_else(|| state_err("Artifact contains no DAGs"))?;
+            .entry_dag()
+            .ok_or_else(|| state_err("Artifact contains no entry DAG"))?;
         if let Err(err) = dag.validate() {
             return Err(state_err(format!(
                 "Artifact DAG validation failed: {}",

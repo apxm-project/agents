@@ -520,19 +520,19 @@ mod tests {
     }
 
     #[test]
-    fn backward_compatible_per_request_mode() {
+    fn per_request_mode_uses_default_cost_unit() {
         let start = Instant::now();
         let clock = Arc::new(ManualClock::new(start));
         let mut configs = HashMap::new();
         // Create config with token_based = false (default)
-        configs.insert("legacy".to_string(), config(3, 1.0));
+        configs.insert("per-request".to_string(), config(3, 1.0));
 
         let limiter = RateLimiter::new(configs, clock).unwrap();
 
-        // Using cost of 1.0 per request (backward compatible)
-        assert_eq!(limiter.check_and_consume("legacy", 1.0), Ok(()));
-        assert_eq!(limiter.check_and_consume("legacy", 1.0), Ok(()));
-        assert_eq!(limiter.check_and_consume("legacy", 1.0), Ok(()));
-        assert!(limiter.check_and_consume("legacy", 1.0).is_err());
+        // Using cost of 1.0 per request.
+        assert_eq!(limiter.check_and_consume("per-request", 1.0), Ok(()));
+        assert_eq!(limiter.check_and_consume("per-request", 1.0), Ok(()));
+        assert_eq!(limiter.check_and_consume("per-request", 1.0), Ok(()));
+        assert!(limiter.check_and_consume("per-request", 1.0).is_err());
     }
 }
