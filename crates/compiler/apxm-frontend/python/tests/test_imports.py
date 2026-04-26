@@ -2,6 +2,8 @@
 
 def test_import_constants():
     """Verify constants can be imported from _generated."""
+    import apxm.constants as public_constants
+    from apxm import WorkflowTargetKind
     from apxm._generated.constants import (
         AGENT_NAME,
         AWAIT_RESULT,
@@ -12,29 +14,30 @@ def test_import_constants():
         WORKFLOW_TARGET_KIND_GRAPH_PATH,
         WORKFLOW_SPAWN_PATH_TARGET_KINDS,
     )
-    assert MODEL == "model"
-    assert AGENT_NAME == "agent_name"
-    assert TEMPLATE_STR == "template_str"
-    assert TARGET_KIND == "target_kind"
-    assert SESSION_ROOT == "session_root"
-    assert AWAIT_RESULT == "await_result"
-    assert WORKFLOW_TARGET_KIND_GRAPH_PATH == "graph_path"
+    assert MODEL == public_constants.MODEL
+    assert AGENT_NAME == public_constants.AGENT_NAME
+    assert TEMPLATE_STR == public_constants.TEMPLATE_STR
+    assert TARGET_KIND == public_constants.TARGET_KIND
+    assert SESSION_ROOT == public_constants.SESSION_ROOT
+    assert AWAIT_RESULT == public_constants.AWAIT_RESULT
+    assert WORKFLOW_TARGET_KIND_GRAPH_PATH == WorkflowTargetKind.GRAPH_PATH.value
     assert WORKFLOW_TARGET_KIND_GRAPH_PATH in WORKFLOW_SPAWN_PATH_TARGET_KINDS
 
 
 def test_import_operations():
     """Verify operations can be imported from _generated."""
+    from apxm.constants import OP_ASK, OP_SPAWN_AGENT, OP_THINK, OP_WORKFLOW_SPAWN
     from apxm._generated.operations import ASK, SPAWN_AGENT, THINK, WORKFLOW_SPAWN
-    assert ASK.op == "ASK"
-    assert THINK.op == "THINK"
-    assert SPAWN_AGENT.op == "SPAWN_AGENT"
-    assert WORKFLOW_SPAWN.op == "WORKFLOW_SPAWN"
+    assert ASK.op == OP_ASK
+    assert THINK.op == OP_THINK
+    assert SPAWN_AGENT.op == OP_SPAWN_AGENT
+    assert WORKFLOW_SPAWN.op == OP_WORKFLOW_SPAWN
 
 
 def test_import_agents():
     """Verify agents can be imported from _generated."""
-    from apxm._generated.agents import claude
-    assert claude.name == "claude"
+    from apxm._generated.agents import ALL_AGENTS, claude
+    assert claude in ALL_AGENTS
 
 
 def test_graph_imports():
@@ -103,10 +106,9 @@ def test_import_execution_result():
     assert callable(new_session)
 
 
-def test_import_load_graph():
-    """Verify load_graph and FlowModule can be imported."""
-    from apxm import load_graph, FlowModule
-    assert callable(load_graph)
+def test_import_flow_module():
+    """Verify FlowModule can be imported."""
+    from apxm import FlowModule
     assert FlowModule is not None
 
 

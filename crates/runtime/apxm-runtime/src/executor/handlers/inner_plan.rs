@@ -51,14 +51,14 @@ pub async fn execute_inner_plan(
             }
         }
     } else {
-        let trimmed = inner_plan.graph.as_deref().unwrap_or("").trim();
+        let trimmed = inner_plan.air.as_deref().unwrap_or("").trim();
         if trimmed.is_empty() {
             return Err(RuntimeError::State(
-                "Inner plan must include non-empty graph or task_dag".to_string(),
+                "Inner plan must include non-empty air or task_dag".to_string(),
             ));
         }
 
-        let source_name = format!("inner_plan_{}.json", ctx.execution_id);
+        let source_name = format!("inner_plan_{}.air", ctx.execution_id);
         match ctx
             .inner_plan_linker
             .link_inner_plan(trimmed, &source_name)

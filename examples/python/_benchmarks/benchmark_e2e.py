@@ -56,6 +56,7 @@ CMD_EXECUTE = "execute"
 CMD_COMPILE = "compile"
 FLAG_OUTPUT = "-o"
 FLAG_OPT_LEVEL = "-O"
+FLAG_EMIT_DIAGNOSTICS = "--emit-diagnostics"
 FLAG_EMIT_SESSION = "--emit-session"
 FLAG_TRACE = "--trace"
 ENV_APXM_CONFIG = "APXM_CONFIG"
@@ -63,10 +64,13 @@ ENV_APXM_CONFIG = "APXM_CONFIG"
 FILE_MANIFEST = "manifest.json"
 FILE_RESULTS = "results.json"
 FILE_METRICS = "metrics.json"
+DIR_COMPILER_DIAGNOSTICS = "compiler-diagnostics"
 RUN_SUMMARY_PREFIX = "benchmark_e2e run"
 PENDING_VALUE = "pending"
 STATUS_SUCCEEDED = "succeeded"
 STATUS_FAILED = "failed"
+LIST_SEPARATOR = ";"
+PASS_DSPY_OPTIMIZE = "dspy-optimize"
 
 
 class MetricsKey(StrEnum):
@@ -85,6 +89,19 @@ class MetricsKey(StrEnum):
     PINNED_BLOCKS = "pinned_blocks"
     PINNED_HANDLES = "pinned_handles"
     CRITICAL_PATH_LENGTH = "critical_path_length"
+
+
+class DiagnosticsKey(StrEnum):
+    PASS_METRICS = "pass_metrics"
+    PASS_SUMMARY = "pass_summary"
+    PASS_NAME = "pass_name"
+    FIRED_COUNT = "fired_count"
+    DURATION_MS = "duration_ms"
+    TOTAL_PASSES = "total_passes"
+    FIRED_PASSES = "fired_passes"
+    ACTIVE_PASSES = "active_passes"
+    TOTAL_OPS_ELIMINATED = "total_ops_eliminated"
+    TOTAL_TOKENS_SAVED = "total_tokens_saved"
 
 
 SCHEMA_VERSION_V2 = 2
@@ -125,6 +142,14 @@ CSV_FIELDS = [
     "pinned_blocks",
     "pinned_handles",
     "critical_path_length",
+    "diagnostics_path",
+    "pass_count",
+    "fired_passes",
+    "active_passes",
+    "total_ops_eliminated",
+    "total_tokens_saved",
+    "dspy_fired_count",
+    "compiler_passes_ms",
     "session_dir",
     "output_excerpt",
     "stderr_excerpt",
@@ -231,6 +256,51 @@ class SessionSummary:
 
 
 @dataclass
+class CompilerDiagnosticsSummary:
+    diagnostics_path: str
+    pass_count: int | None
+    fired_passes: str
+    active_passes: str
+    total_ops_eliminated: int | None
+    total_tokens_saved: int | None
+    dspy_fired_count: int | None
+    compiler_passes_ms: float | None
+
+    @classmethod
+    def empty(cls) -> CompilerDiagnosticsSummary:
+        return cls(
+            diagnostics_path="",
+            pass_count=None,
+            fired_passes="",
+            active_passes="",
+            total_ops_eliminated=None,
+            total_tokens_saved=None,
+            dspy_fired_count=None,
+            compiler_passes_ms=None,
+        )
+
+    def as_fields(self) -> dict[str, Any]:
+        return {
+            "diagnostics_path": self.diagnostics_path,
+            "pass_count": "" if self.pass_count is None else self.pass_count,
+            "fired_passes": self.fired_passes,
+            "active_passes": self.active_passes,
+            "total_ops_eliminated": ""
+            if self.total_ops_eliminated is None
+            else self.total_ops_eliminated,
+            "total_tokens_saved": ""
+            if self.total_tokens_saved is None
+            else self.total_tokens_saved,
+            "dspy_fired_count": ""
+            if self.dspy_fired_count is None
+            else self.dspy_fired_count,
+            "compiler_passes_ms": ""
+            if self.compiler_passes_ms is None
+            else f"{self.compiler_passes_ms:.3f}",
+        }
+
+
+@dataclass
 class RunRecord:
     timestamp_utc: str
     graph: str
@@ -253,6 +323,7 @@ class RunRecord:
     pinned_blocks: int | None
     pinned_handles: int | None
     critical_path_length: int | None
+    compiler_diagnostics: CompilerDiagnosticsSummary
     session_dir: str
     output_excerpt: str
     stderr_excerpt: str
@@ -284,6 +355,7 @@ class RunRecord:
             "pinned_blocks": "" if self.pinned_blocks is None else self.pinned_blocks,
             "pinned_handles": "" if self.pinned_handles is None else self.pinned_handles,
             "critical_path_length": "" if self.critical_path_length is None else self.critical_path_length,
+            **self.compiler_diagnostics.as_fields(),
             "session_dir": self.session_dir,
             "output_excerpt": self.output_excerpt,
             "stderr_excerpt": self.stderr_excerpt,
@@ -310,6 +382,17 @@ def _parse_args() -> argparse.Namespace:
         "--compile-only",
         action="store_true",
         help="Run `dekk apxm compile` instead of `dekk apxm execute`",
+    )
+    parser.add_argument(
+        "--emit-compiler-diagnostics",
+        action="store_true",
+        help="In compile-only mode, ask `dekk apxm compile` for per-pass diagnostics.",
+    )
+    parser.add_argument(
+        "--diagnostics-dir",
+        type=Path,
+        default=None,
+        help="Directory for compile-only diagnostics JSON files.",
     )
     parser.add_argument(
         "--output",
@@ -387,6 +470,60 @@ def _read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text())
 
 
+def _string_list(value: Any) -> str:
+    if not isinstance(value, list):
+        return ""
+    return LIST_SEPARATOR.join(str(item) for item in value)
+
+
+def _diagnostics_summary(path: Path | None) -> CompilerDiagnosticsSummary:
+    if path is None or not path.is_file():
+        return CompilerDiagnosticsSummary.empty()
+
+    data = _read_json(path)
+    pass_metrics = data.get(DiagnosticsKey.PASS_METRICS, [])
+    if not isinstance(pass_metrics, list):
+        pass_metrics = []
+    pass_summary = data.get(DiagnosticsKey.PASS_SUMMARY, {})
+    if not isinstance(pass_summary, dict):
+        pass_summary = {}
+
+    dspy_fired_count: int | None = None
+    for metric in pass_metrics:
+        if not isinstance(metric, dict):
+            continue
+        if metric.get(DiagnosticsKey.PASS_NAME) != PASS_DSPY_OPTIMIZE:
+            continue
+        fired_count = metric.get(DiagnosticsKey.FIRED_COUNT)
+        if isinstance(fired_count, int):
+            dspy_fired_count = (dspy_fired_count or 0) + fired_count
+
+    compiler_passes_ms = 0.0
+    saw_duration = False
+    for metric in pass_metrics:
+        if not isinstance(metric, dict):
+            continue
+        duration = metric.get(DiagnosticsKey.DURATION_MS)
+        if isinstance(duration, int | float):
+            compiler_passes_ms += float(duration)
+            saw_duration = True
+
+    def _int_summary(key: DiagnosticsKey) -> int | None:
+        value = pass_summary.get(key)
+        return value if isinstance(value, int) else None
+
+    return CompilerDiagnosticsSummary(
+        diagnostics_path=str(path),
+        pass_count=_int_summary(DiagnosticsKey.TOTAL_PASSES) or len(pass_metrics),
+        fired_passes=_string_list(pass_summary.get(DiagnosticsKey.FIRED_PASSES)),
+        active_passes=_string_list(pass_summary.get(DiagnosticsKey.ACTIVE_PASSES)),
+        total_ops_eliminated=_int_summary(DiagnosticsKey.TOTAL_OPS_ELIMINATED),
+        total_tokens_saved=_int_summary(DiagnosticsKey.TOTAL_TOKENS_SAVED),
+        dspy_fired_count=dspy_fired_count,
+        compiler_passes_ms=compiler_passes_ms if saw_duration else None,
+    )
+
+
 def _command_prefix(apxm_config: Path | None) -> list[str]:
     return [DEKK, APXM]
 
@@ -403,9 +540,14 @@ def _run_compile(
     graph: Path,
     opt_level: int,
     apxm_config: Path | None,
+    diagnostics_path: Path | None,
 ) -> tuple[subprocess.CompletedProcess[str], float]:
     with tempfile.TemporaryDirectory(prefix="apxm-bench-compile-") as tmp_dir:
         artifact_path = Path(tmp_dir) / f"{graph.stem}-O{opt_level}.apxmobj"
+        diagnostics_args: list[str] = []
+        if diagnostics_path is not None:
+            diagnostics_path.parent.mkdir(parents=True, exist_ok=True)
+            diagnostics_args = [FLAG_EMIT_DIAGNOSTICS, str(diagnostics_path)]
         cmd = [
             *_command_prefix(apxm_config),
             CMD_COMPILE,
@@ -414,6 +556,7 @@ def _run_compile(
             str(artifact_path),
             FLAG_OPT_LEVEL,
             str(opt_level),
+            *diagnostics_args,
         ]
         start = time.perf_counter()
         result = subprocess.run(
@@ -469,12 +612,31 @@ def _run_once(
     trace: str | None,
     session_parent: Path,
     apxm_config: Path | None,
+    emit_compiler_diagnostics: bool,
+    diagnostics_parent: Path,
 ) -> RunRecord:
     timestamp = datetime.now(timezone.utc).isoformat()
     mode = "compile" if compile_only else "execute"
 
     if compile_only:
-        result, wall_ms = _run_compile(graph, opt_level, apxm_config)
+        diagnostics_path = (
+            diagnostics_parent
+            / graph.stem
+            / f"O{opt_level}-run-{run_index}-order-{run_order}.json"
+            if emit_compiler_diagnostics
+            else None
+        )
+        result, wall_ms = _run_compile(
+            graph,
+            opt_level,
+            apxm_config,
+            diagnostics_path,
+        )
+        compiler_diagnostics = (
+            _diagnostics_summary(diagnostics_path)
+            if result.returncode == 0
+            else CompilerDiagnosticsSummary.empty()
+        )
         return RunRecord(
             timestamp_utc=timestamp,
             graph=str(graph),
@@ -497,6 +659,7 @@ def _run_once(
             pinned_blocks=None,
             pinned_handles=None,
             critical_path_length=None,
+            compiler_diagnostics=compiler_diagnostics,
             session_dir="",
             output_excerpt="",
             stderr_excerpt=_collapse_text(result.stderr or result.stdout),
@@ -533,6 +696,7 @@ def _run_once(
         pinned_blocks=summary.pinned_blocks if summary else None,
         pinned_handles=summary.pinned_handles if summary else None,
         critical_path_length=summary.critical_path_length if summary else None,
+        compiler_diagnostics=CompilerDiagnosticsSummary.empty(),
         session_dir=str(session_root) if session_root is not None else "",
         output_excerpt=_collapse_text(summary.final_output if summary else ""),
         stderr_excerpt=_collapse_text(result.stderr or result.stdout),
@@ -604,6 +768,12 @@ def _display_number(value: int | float | None, suffix: str = "") -> str:
 
 def _print_run_summary(record: RunRecord) -> None:
     status = STATUS_SUCCEEDED if record.success else STATUS_FAILED
+    diagnostic_part = ""
+    if record.compiler_diagnostics.diagnostics_path:
+        diagnostic_part = (
+            f"; passes={_display_number(record.compiler_diagnostics.pass_count)}"
+            f"; dspy_fired={_display_number(record.compiler_diagnostics.dspy_fired_count)}"
+        )
     print(
         f"- {RUN_SUMMARY_PREFIX}: {record.variant} O{record.opt_level} trial {record.trial_id} "
         f"run {record.run_index} order {record.run_order} {status}; "
@@ -611,7 +781,8 @@ def _print_run_summary(record: RunRecord) -> None:
         f"graph={_display_number(record.graph_duration_ms, ' ms')}; "
         f"llm_calls={_display_number(record.llm_call_count)}; "
         f"tokens={_display_number(record.total_tokens)}; "
-        f"session={record.session_dir or PENDING_VALUE}",
+        f"session={record.session_dir or PENDING_VALUE}"
+        f"{diagnostic_part}",
         flush=True,
     )
 
@@ -625,8 +796,15 @@ def main() -> int:
         raise SystemExit(f"error: graph not found: {graph}")
     if args.iterations < 1:
         raise SystemExit("error: --iterations must be >= 1")
+    if args.emit_compiler_diagnostics and not args.compile_only:
+        raise SystemExit("error: --emit-compiler-diagnostics requires --compile-only")
 
     opt_levels = args.opt_levels or [0, 2]
+    diagnostics_parent = (
+        args.diagnostics_dir.resolve()
+        if args.diagnostics_dir is not None
+        else args.output.resolve().parent / DIR_COMPILER_DIAGNOSTICS
+    )
     records: list[RunRecord] = []
     run_order = 0
 
@@ -657,6 +835,8 @@ def main() -> int:
             trace=args.trace,
             session_parent=args.session_base.resolve(),
             apxm_config=args.apxm_config.resolve() if args.apxm_config else None,
+            emit_compiler_diagnostics=args.emit_compiler_diagnostics,
+            diagnostics_parent=diagnostics_parent,
         )
         records.append(record)
         _print_run_summary(record)

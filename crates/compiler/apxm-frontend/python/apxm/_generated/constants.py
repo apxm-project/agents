@@ -4,7 +4,7 @@ from typing import Final
 
 # Graph metadata keys
 IS_ENTRY: Final[str] = "is_entry"
-GRAPH_PAYLOAD: Final[str] = "graph"
+AIR_PAYLOAD: Final[str] = "air"
 
 # Graph attribute keys
 AGENT_NAME: Final[str] = "agent_name"

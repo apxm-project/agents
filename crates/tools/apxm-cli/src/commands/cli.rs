@@ -7,10 +7,10 @@ use super::implementations::parse_header;
 
 #[derive(Parser)]
 #[command(name = "apxm")]
-#[command(about = "APxM CLI (minimal) - compile and run AirModule inputs", long_about = None)]
+#[command(about = "APxM CLI - compile AIR source and run APXM artifacts", long_about = None)]
 pub struct Cli {
     /// Optional config path (defaults to .apxm/config.toml or ~/.apxm/config.toml)
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub config: Option<PathBuf>,
 
     /// Enable runtime tracing (levels: trace, debug, info, warn, error)
@@ -32,9 +32,9 @@ pub enum Commands {
         /// Project name (creates a directory with this name)
         name: String,
     },
-    /// Compile AirModule to an artifact
+    /// Compile canonical AIR source to an artifact
     Compile {
-        /// Input graph file or directory (.json graph or .apxmobj artifact)
+        /// Input graph source (.py frontend, .air, or directory containing one .air)
         input: PathBuf,
         /// Output artifact path
         #[arg(short, long)]
@@ -71,18 +71,18 @@ pub enum Commands {
         #[arg(long = "pass-list", value_name = "A,B,C", value_delimiter = ',')]
         pass_list_override: Option<Vec<String>>,
     },
-    /// Decompile an artifact back to graph JSON
+    /// Decompile an artifact back to AIR
     Decompile {
         /// Input artifact file (.apxmobj)
         artifact: PathBuf,
-        /// Output JSON file (defaults to stdout)
+        /// Output AIR file (defaults to stdout)
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
-    /// Compile and execute an AirModule file through the runtime
+    /// Compile and execute AIR source through the runtime
     #[command(trailing_var_arg = true)]
     Execute {
-        /// Input graph file (.json graph)
+        /// Input graph source (.py frontend, .air, or directory containing one .air)
         input: PathBuf,
         /// Arguments to pass to the entry flow
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -162,9 +162,9 @@ pub enum Commands {
         #[command(subcommand)]
         action: OpsAction,
     },
-    /// Validate an AirModule file against the AIS contract
+    /// Validate canonical AIR source against the AIS contract
     Validate {
-        /// Input graph file (.json graph)
+        /// Input graph source (.air)
         input: PathBuf,
         /// Skip Tier 2 environment checks (registered backends, profiles, etc.)
         #[arg(long)]
@@ -172,7 +172,7 @@ pub enum Commands {
     },
     /// Analyze an AirModule for parallelism, critical path, and execution phases
     Analyze {
-        /// Input graph file (.json graph)
+        /// Input graph source (.air)
         input: PathBuf,
     },
     /// Browse graph templates (starter patterns)
@@ -182,7 +182,7 @@ pub enum Commands {
     },
     /// Explain what a graph does OR explain an error code
     Explain {
-        /// Error code (e.g., E511) or path to graph file (.json graph)
+        /// Error code (e.g., E511) or path to graph source (.air)
         target: String,
     },
     /// Generate frontend assets from Rust-owned registries

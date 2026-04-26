@@ -38,7 +38,7 @@ import json
 import sys
 import traceback
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from apxm.constants import (
     PYTHON_TOOL_MANIFEST_HANDLER_ID,
@@ -48,7 +48,31 @@ from apxm.constants import (
 )
 
 # Protocol version understood by this worker.
-_WIRE_VERSION = 1
+WIRE_VERSION: Final[int] = 1
+WIRE_FIELD_VERSION: Final[str] = "v"
+WIRE_FIELD_TYPE: Final[str] = "type"
+WIRE_FIELD_LEVEL: Final[str] = "level"
+WIRE_FIELD_MESSAGE: Final[str] = "message"
+WIRE_FIELD_REQUEST_ID: Final[str] = "req_id"
+WIRE_FIELD_TOOL_ID: Final[str] = "tool_id"
+WIRE_FIELD_ARGS: Final[str] = "args"
+WIRE_FIELD_DEADLINE_MS: Final[str] = "deadline_ms"
+WIRE_FIELD_OK: Final[str] = "ok"
+WIRE_FIELD_VALUE: Final[str] = "value"
+WIRE_FIELD_ERROR: Final[str] = "error"
+WIRE_FIELD_ERROR_KIND: Final[str] = "kind"
+WIRE_FIELD_ERROR_TRACEBACK: Final[str] = "traceback"
+
+WIRE_TYPE_CALL: Final[str] = "call"
+WIRE_TYPE_CANCEL: Final[str] = "cancel"
+WIRE_TYPE_LOG: Final[str] = "log"
+WIRE_TYPE_RESULT: Final[str] = "result"
+
+WIRE_LEVEL_ERROR: Final[str] = "error"
+
+WIRE_ERROR_UNKNOWN_HANDLER: Final[str] = "unknown_handler"
+WIRE_ERROR_TIMEOUT: Final[str] = "timeout"
+WIRE_ERROR_CANCELLED: Final[str] = "cancelled"
 
 # ---------------------------------------------------------------------------
 # Registry interface
@@ -99,10 +123,10 @@ def _load_manifest(path: str) -> None:
         except Exception as exc:
             _write_line(
                 {
-                    "v": _WIRE_VERSION,
-                    "type": "log",
-                    "level": "error",
-                    "message": f"failed to import {module_name}: {exc}",
+                    WIRE_FIELD_VERSION: WIRE_VERSION,
+                    WIRE_FIELD_TYPE: WIRE_TYPE_LOG,
+                    WIRE_FIELD_LEVEL: WIRE_LEVEL_ERROR,
+                    WIRE_FIELD_MESSAGE: f"failed to import {module_name}: {exc}",
                 }
             )
 
@@ -191,9 +215,9 @@ async def _handle_call(msg: dict[str, Any]) -> None:
     CancelledError is caught internally so that cancellation always emits a
     structured result rather than silently dropping the request.
     """
-    req_id: str = msg["req_id"]
-    tool_id: str = msg["tool_id"]
-    args: dict[str, Any] = msg.get("args", {})
+    req_id: str = msg[WIRE_FIELD_REQUEST_ID]
+    tool_id: str = msg[WIRE_FIELD_TOOL_ID]
+    args: dict[str, Any] = msg.get(WIRE_FIELD_ARGS, {})
 
     registry = _get_registry()
     tool = registry.get(tool_id)
@@ -201,20 +225,20 @@ async def _handle_call(msg: dict[str, Any]) -> None:
     if tool is None:
         await _write_line_async(
             {
-                "v": _WIRE_VERSION,
-                "type": "result",
-                "req_id": req_id,
-                "ok": False,
-                "error": {
-                    "kind": "unknown_handler",
-                    "message": f"no handler registered for tool_id={tool_id!r}",
-                    "traceback": "",
+                WIRE_FIELD_VERSION: WIRE_VERSION,
+                WIRE_FIELD_TYPE: WIRE_TYPE_RESULT,
+                WIRE_FIELD_REQUEST_ID: req_id,
+                WIRE_FIELD_OK: False,
+                WIRE_FIELD_ERROR: {
+                    WIRE_FIELD_ERROR_KIND: WIRE_ERROR_UNKNOWN_HANDLER,
+                    WIRE_FIELD_MESSAGE: f"no handler registered for tool_id={tool_id!r}",
+                    WIRE_FIELD_ERROR_TRACEBACK: "",
                 },
             }
         )
         return
 
-    deadline_ms = msg.get("deadline_ms")
+    deadline_ms = msg.get(WIRE_FIELD_DEADLINE_MS)
     try:
         # Re-validate args if the tool exposes a validator (defense in depth).
         fn = tool.fn if hasattr(tool, "fn") else tool
@@ -238,24 +262,24 @@ async def _handle_call(msg: dict[str, Any]) -> None:
 
         await _write_line_async(
             {
-                "v": _WIRE_VERSION,
-                "type": "result",
-                "req_id": req_id,
-                "ok": True,
-                "value": value,
+                WIRE_FIELD_VERSION: WIRE_VERSION,
+                WIRE_FIELD_TYPE: WIRE_TYPE_RESULT,
+                WIRE_FIELD_REQUEST_ID: req_id,
+                WIRE_FIELD_OK: True,
+                WIRE_FIELD_VALUE: value,
             }
         )
     except asyncio.TimeoutError:
         await _write_line_async(
             {
-                "v": _WIRE_VERSION,
-                "type": "result",
-                "req_id": req_id,
-                "ok": False,
-                "error": {
-                    "kind": "timeout",
-                    "message": f"tool call exceeded deadline ({deadline_ms}ms)",
-                    "traceback": "",
+                WIRE_FIELD_VERSION: WIRE_VERSION,
+                WIRE_FIELD_TYPE: WIRE_TYPE_RESULT,
+                WIRE_FIELD_REQUEST_ID: req_id,
+                WIRE_FIELD_OK: False,
+                WIRE_FIELD_ERROR: {
+                    WIRE_FIELD_ERROR_KIND: WIRE_ERROR_TIMEOUT,
+                    WIRE_FIELD_MESSAGE: f"tool call exceeded deadline ({deadline_ms}ms)",
+                    WIRE_FIELD_ERROR_TRACEBACK: "",
                 },
             }
         )
@@ -265,28 +289,28 @@ async def _handle_call(msg: dict[str, Any]) -> None:
         # Use sync write since the event loop may be tearing down.
         _write_line(
             {
-                "v": _WIRE_VERSION,
-                "type": "result",
-                "req_id": req_id,
-                "ok": False,
-                "error": {
-                    "kind": "cancelled",
-                    "message": "call was cancelled",
-                    "traceback": "",
+                WIRE_FIELD_VERSION: WIRE_VERSION,
+                WIRE_FIELD_TYPE: WIRE_TYPE_RESULT,
+                WIRE_FIELD_REQUEST_ID: req_id,
+                WIRE_FIELD_OK: False,
+                WIRE_FIELD_ERROR: {
+                    WIRE_FIELD_ERROR_KIND: WIRE_ERROR_CANCELLED,
+                    WIRE_FIELD_MESSAGE: "call was cancelled",
+                    WIRE_FIELD_ERROR_TRACEBACK: "",
                 },
             }
         )
     except Exception as exc:
         await _write_line_async(
             {
-                "v": _WIRE_VERSION,
-                "type": "result",
-                "req_id": req_id,
-                "ok": False,
-                "error": {
-                    "kind": type(exc).__name__,
-                    "message": str(exc),
-                    "traceback": traceback.format_exc(),
+                WIRE_FIELD_VERSION: WIRE_VERSION,
+                WIRE_FIELD_TYPE: WIRE_TYPE_RESULT,
+                WIRE_FIELD_REQUEST_ID: req_id,
+                WIRE_FIELD_OK: False,
+                WIRE_FIELD_ERROR: {
+                    WIRE_FIELD_ERROR_KIND: type(exc).__name__,
+                    WIRE_FIELD_MESSAGE: str(exc),
+                    WIRE_FIELD_ERROR_TRACEBACK: traceback.format_exc(),
                 },
             }
         )
@@ -325,15 +349,15 @@ async def _run(manifest_path: str | None = None) -> None:
         except json.JSONDecodeError:
             continue
 
-        msg_type = msg.get("type")
-        req_id = msg.get("req_id")
+        msg_type = msg.get(WIRE_FIELD_TYPE)
+        req_id = msg.get(WIRE_FIELD_REQUEST_ID)
 
-        if msg_type == "call" and req_id is not None:
+        if msg_type == WIRE_TYPE_CALL and req_id is not None:
             task = asyncio.create_task(_handle_call(msg))
             inflight[req_id] = task
             task.add_done_callback(lambda t, rid=req_id: inflight.pop(rid, None))
 
-        elif msg_type == "cancel" and req_id is not None:
+        elif msg_type == WIRE_TYPE_CANCEL and req_id is not None:
             task = inflight.get(req_id)
             if task is not None and not task.done():
                 task.cancel()

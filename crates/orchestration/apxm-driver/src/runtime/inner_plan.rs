@@ -47,32 +47,21 @@ impl CompilerInnerPlanLinker {
 impl InnerPlanLinker for CompilerInnerPlanLinker {
     async fn link_inner_plan(
         &self,
-        graph_payload: &str,
+        air_payload: &str,
         source_name: &str,
     ) -> Result<ExecutionDag, RuntimeError> {
         log_debug!(
             "driver::inner_plan",
             source = %source_name,
-            payload_length = graph_payload.len(),
-            "Linking inner plan graph JSON"
+            payload_length = air_payload.len(),
+            "Linking inner plan AIR"
         );
-
-        let air_module = serde_json::from_str::<AirModule>(graph_payload).map_err(|e| {
-            RuntimeError::State(format!("Inner plan graph JSON parsing failed: {}", e))
-        })?;
-
-        let air_text = air_module.to_air().map_err(|e| {
-            RuntimeError::State(format!(
-                "Inner plan AIR emission failed for '{}': {}",
-                source_name, e
-            ))
-        })?;
 
         let context = self.context.lock();
         let pipeline = Pipeline::with_opt_level(&context, OptimizationLevel::O1);
-        let module = pipeline.compile(&air_text).map_err(|e| {
+        let module = pipeline.compile(air_payload).map_err(|e| {
             RuntimeError::State(format!(
-                "Inner plan graph compilation failed for '{}': {}",
+                "Inner plan AIR compilation failed for '{}': {}",
                 source_name, e
             ))
         })?;

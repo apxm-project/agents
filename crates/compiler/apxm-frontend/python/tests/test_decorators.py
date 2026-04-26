@@ -2,10 +2,22 @@
 
 import pytest
 
-from apxm.constants import ENV_APXM_CONFIG, ENV_APXM_EMIT_AIR, ENV_FLAG_ENABLED
+from apxm.constants import (
+    ENV_APXM_CONFIG,
+    ENV_APXM_EMIT_AIR,
+    ENV_FLAG_ENABLED,
+    OP_COMMUNICATE,
+    OP_MERGE,
+    OP_SPAWN_AGENT,
+    TEMPLATE_STR,
+    TOKEN_BUDGET,
+    TOOL_GROUPS,
+    TOOLS_ENABLED,
+)
 from .mocks import MOCK_AGENT_PROFILE, MOCK_AGENT_PROFILE_ALT
 
 WEB_TOOL_GROUP = "web"
+CAPTURED_RUN_ARGS = "captured_run_args"
 
 
 def _write_backend_config(path):
@@ -111,7 +123,7 @@ def test_compile_with_typed_params():
 
     # The template should preserve the named placeholder verbatim
     node = graph.nodes[0]
-    assert "{topic}" in node.attributes["template_str"]
+    assert "{topic}" in node.attributes[TEMPLATE_STR]
 
 
 def test_compile_with_multiple_params():
@@ -142,7 +154,7 @@ def test_named_placeholders_are_preserved():
 
     graph = placeholder_workflow._graph
     node = graph.nodes[0]
-    template = node.attributes["template_str"]
+    template = node.attributes[TEMPLATE_STR]
 
     # Named placeholders are kept; the validator resolves them against
     # input_names / module parameters at compile time.
@@ -225,9 +237,9 @@ def test_compile_default_policy_stamps_nodes():
         g.ask(name="step1", prompt="Research")
 
     node = policy_workflow._graph.nodes[0]
-    assert node.attributes["tool_groups"] == [WEB_TOOL_GROUP]
-    assert node.attributes["tools_enabled"] is True
-    assert node.attributes["token_budget"] == 512
+    assert node.attributes[TOOL_GROUPS] == [WEB_TOOL_GROUP]
+    assert node.attributes[TOOLS_ENABLED] is True
+    assert node.attributes[TOKEN_BUDGET] == 512
 
 
 def test_compiled_function_run_sync_forwards_execution_options(monkeypatch):
@@ -241,7 +253,7 @@ def test_compiled_function_run_sync_forwards_execution_options(monkeypatch):
 
     class FakeCompiledFlow:
         def run_sync(self, *args, session_id=None, execution=None):
-            captured["args"] = args
+            captured[CAPTURED_RUN_ARGS] = args
             captured["session_id"] = session_id
             captured["execution"] = execution
             return "ok"
@@ -254,7 +266,7 @@ def test_compiled_function_run_sync_forwards_execution_options(monkeypatch):
     result = flow.run_sync(execution=execution)
 
     assert result == "ok"
-    assert captured["args"] == ()
+    assert captured[CAPTURED_RUN_ARGS] == ()
     assert captured["session_id"] is None
     assert captured["execution"] is execution
 
@@ -277,9 +289,9 @@ def test_compile_with_team_sugar():
     graph = team_workflow._graph
 
     # Check structure
-    spawn_nodes = [n for n in graph.nodes if n.op == "SPAWN_AGENT"]
-    comm_nodes = [n for n in graph.nodes if n.op == "COMMUNICATE"]
-    merge_nodes = [n for n in graph.nodes if n.op == "MERGE"]
+    spawn_nodes = [n for n in graph.nodes if n.op == OP_SPAWN_AGENT]
+    comm_nodes = [n for n in graph.nodes if n.op == OP_COMMUNICATE]
+    merge_nodes = [n for n in graph.nodes if n.op == OP_MERGE]
 
     assert len(spawn_nodes) == 2
     assert len(comm_nodes) == 2

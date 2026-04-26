@@ -94,6 +94,11 @@ pub struct BackendConfig {
     /// `None` is treated as `true` (the trait default).
     #[serde(default)]
     pub auto_tool_choice: Option<bool>,
+
+    /// Whether this backend accepts provider-enforced structured output
+    /// schemas. `None` means use the backend adapter default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_structured_outputs: Option<bool>,
 }
 
 /// Model metadata and capabilities.
@@ -139,6 +144,11 @@ pub struct ModelConfig {
     /// reasoning models reject custom temperatures and must omit the field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supports_custom_temperature: Option<bool>,
+
+    /// Whether this model accepts provider-enforced structured output schemas.
+    /// `None` means use backend-level policy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_structured_outputs: Option<bool>,
 
     /// Maximum output tokens per request (None = provider default, typically 4096-8192)
     #[serde(default)]
@@ -213,6 +223,7 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
+            supports_structured_outputs: None,
         };
 
         let json = serde_json::to_string(&config).unwrap();
@@ -233,6 +244,7 @@ mod tests {
         assert!(!config.supports_functions);
         assert!(!config.supports_thinking);
         assert_eq!(config.supports_custom_temperature, None);
+        assert_eq!(config.supports_structured_outputs, None);
     }
 
     #[test]
@@ -274,11 +286,13 @@ mod tests {
                 supports_functions: true,
                 supports_thinking: false,
                 supports_custom_temperature: None,
+                supports_structured_outputs: None,
                 max_output_tokens: None,
                 tags: vec!["production".to_string()],
             }],
             docker: None,
             auto_tool_choice: None,
+            supports_structured_outputs: None,
         };
 
         assert_eq!(config.models.len(), 1);

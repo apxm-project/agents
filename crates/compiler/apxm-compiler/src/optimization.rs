@@ -29,20 +29,10 @@ mod toml_keys {
     pub const NO_CACHE: &str = "no_cache";
     pub const BACKEND: &str = "backend";
     pub const MODEL: &str = "model";
-    pub const CHAT: &str = "chat";
-    pub const DEFAULT_BACKEND: &str = "default_backend";
-    pub const DEFAULT_MODEL: &str = "default_model";
-    pub const ROUTING: &str = "routing";
-    pub const MODEL_ALIASES: &str = "model_aliases";
-    pub const BACKENDS: &str = "backends";
-    pub const NAME: &str = "name";
     pub const PROTOCOL: &str = "protocol";
     pub const ENDPOINT: &str = "endpoint";
     pub const API_KEY: &str = "api_key";
     pub const HEADERS: &str = "headers";
-    pub const MODELS: &str = "models";
-    pub const ID: &str = "id";
-    pub const ALIASES: &str = "aliases";
 }
 
 /// Prompt optimizer implementation.
@@ -152,7 +142,7 @@ impl CompilerOptimizationContext {
         };
         let cache_dir = compiler_cache_dir()?;
         let normalized_training = normalize_training_data(&training_path, &cache_dir)?;
-        let backend_json = resolve_backend_json(prompt_table, &root)?;
+        let backend_json = resolve_backend_json(prompt_table)?;
 
         Ok(Some(PromptOptimizationRequest {
             training_data_path: normalized_training,
@@ -178,7 +168,15 @@ impl CompilerOptimizationContext {
         } else {
             None
         };
-        let compiler_path = if explicit.is_none() && env_path.is_none() {
+        let project_path = if explicit.is_none() && env_path.is_none() {
+            ApxmPaths::discover()
+                .ok()
+                .map(|paths| paths.project_config_path())
+                .filter(|path| path.is_file())
+        } else {
+            None
+        };
+        let compiler_path = if explicit.is_none() && env_path.is_none() && project_path.is_none() {
             ApxmPaths::discover()
                 .ok()
                 .map(|paths| paths.compiler_config_path())
@@ -186,13 +184,13 @@ impl CompilerOptimizationContext {
         } else {
             None
         };
-        let Some(path) = explicit.or(env_path).or(compiler_path) else {
+        let Some(path) = explicit.or(env_path).or(project_path).or(compiler_path) else {
             return Ok(None);
         };
         let text = fs::read_to_string(&path).map_err(|err| {
             compiler_config_error(format!("Failed to read {}: {err}", path.display()))
         })?;
-        let value = text.parse::<toml::Value>().map_err(|err| {
+        let value = parse_config_document(&text).map_err(|err| {
             compiler_config_error(format!("Failed to parse {}: {err}", path.display()))
         })?;
         Ok(Some((path, value)))
@@ -229,8 +227,10 @@ fn prompt_tuning_table(root: &toml::Value) -> Option<&toml::value::Table> {
             toml_keys::PROMPT_TUNING,
         ],
     )
-    .or_else(|| table_at(root, &[toml_keys::COMPILER, toml_keys::PROMPT_TUNING]))
-    .or_else(|| table_at(root, &[toml_keys::OPTIMIZATION, toml_keys::PROMPT_TUNING]))
+}
+
+fn parse_config_document(text: &str) -> std::result::Result<toml::Value, toml::de::Error> {
+    toml::from_str::<toml::value::Table>(text).map(toml::Value::Table)
 }
 
 fn table_at<'a>(root: &'a toml::Value, path: &[&str]) -> Option<&'a toml::value::Table> {
@@ -315,7 +315,7 @@ fn normalize_training_data(source: &Path, compiler_cache: &Path) -> Result<PathB
     let extension = source
         .extension()
         .and_then(|ext| ext.to_str())
-        .unwrap_or(apxm_core::constants::extensions::JSON);
+        .unwrap_or(apxm_core::constants::extensions::JSON_DATA);
     let destination = training_dir.join(format!("{hash}.{extension}"));
     if !destination.is_file() {
         fs::write(&destination, bytes).map_err(|err| {
@@ -328,38 +328,17 @@ fn normalize_training_data(source: &Path, compiler_cache: &Path) -> Result<PathB
     Ok(destination)
 }
 
-fn resolve_backend_json(prompt_table: &toml::value::Table, root: &toml::Value) -> Result<String> {
-    let chat = root.get(toml_keys::CHAT).and_then(toml::Value::as_table);
-    let requested_model = string_field(prompt_table, toml_keys::MODEL)
-        .or_else(|| chat.and_then(|chat| string_field(chat, toml_keys::DEFAULT_MODEL)));
-    let alias = requested_model.and_then(|model| resolve_model_alias(root, model));
-    let model_ref = alias
-        .as_ref()
-        .map(|selection| selection.model.as_str())
-        .or(requested_model);
-    let backend_name = string_field(prompt_table, toml_keys::BACKEND)
-        .or_else(|| {
-            alias
-                .as_ref()
-                .and_then(|selection| selection.backend.as_deref())
-        })
-        .or_else(|| chat.and_then(|chat| string_field(chat, toml_keys::DEFAULT_BACKEND)));
-
-    let backends = root
-        .get(toml_keys::BACKENDS)
-        .and_then(toml::Value::as_array)
+fn resolve_backend_json(prompt_table: &toml::value::Table) -> Result<String> {
+    let backend_table = prompt_table
+        .get(toml_keys::BACKEND)
+        .and_then(toml::Value::as_table)
         .ok_or_else(|| {
-            compiler_config_error("Compiler prompt tuning requires registered backends")
+            compiler_config_error(
+                "Compiler prompt tuning requires [compiler.optimization.prompt_tuning.backend]",
+            )
         })?;
-    let backend = select_backend(backends, backend_name, model_ref)?;
-    let backend_table = backend.as_table().ok_or_else(|| {
-        compiler_config_error("Compiler prompt tuning backend entry must be a table")
-    })?;
-    let model = model_ref
-        .or_else(|| first_model_id(backend_table))
-        .ok_or_else(|| {
-            compiler_config_error("Compiler prompt tuning requires a registered model")
-        })?;
+    let model = string_field(backend_table, toml_keys::MODEL)
+        .ok_or_else(|| compiler_config_error("Compiler prompt tuning backend requires a model"))?;
     let protocol = string_field(backend_table, toml_keys::PROTOCOL).ok_or_else(|| {
         compiler_config_error("Compiler prompt tuning backend requires a protocol")
     })?;
@@ -386,97 +365,113 @@ fn resolve_backend_json(prompt_table: &toml::value::Table, root: &toml::Value) -
     serde_json::to_string(&request).map_err(CompilerError::Json)
 }
 
-#[derive(Debug, Clone)]
-struct ModelSelection {
-    model: String,
-    backend: Option<String>,
-}
-
-fn resolve_model_alias(root: &toml::Value, model: &str) -> Option<ModelSelection> {
-    let alias = table_at(
-        root,
-        &[
-            toml_keys::CHAT,
-            toml_keys::ROUTING,
-            toml_keys::MODEL_ALIASES,
-            model,
-        ],
-    )?;
-    let model = string_field(alias, toml_keys::MODEL)?.to_string();
-    let backend = string_field(alias, toml_keys::BACKEND).map(str::to_string);
-    Some(ModelSelection { model, backend })
-}
-
-fn select_backend<'a>(
-    backends: &'a [toml::Value],
-    backend_name: Option<&str>,
-    model_ref: Option<&str>,
-) -> Result<&'a toml::Value> {
-    if let Some(name) = backend_name {
-        return backends
-            .iter()
-            .find(|backend| {
-                backend
-                    .as_table()
-                    .and_then(|table| string_field(table, toml_keys::NAME))
-                    == Some(name)
-            })
-            .ok_or_else(|| {
-                compiler_config_error(format!(
-                    "Compiler prompt tuning backend {name:?} is not registered"
-                ))
-            });
-    }
-
-    if let Some(model) = model_ref {
-        if let Some(backend) = backends.iter().find(|backend| {
-            backend
-                .as_table()
-                .is_some_and(|table| backend_has_model(table, model))
-        }) {
-            return Ok(backend);
-        }
-    }
-
-    backends.first().ok_or_else(|| {
-        compiler_config_error("Compiler prompt tuning requires at least one backend")
-    })
-}
-
-fn backend_has_model(backend: &toml::value::Table, model_ref: &str) -> bool {
-    backend
-        .get(toml_keys::MODELS)
-        .and_then(toml::Value::as_array)
-        .is_some_and(|models| {
-            models.iter().any(|model| {
-                let Some(model_table) = model.as_table() else {
-                    return false;
-                };
-                string_field(model_table, toml_keys::ID) == Some(model_ref)
-                    || model_table
-                        .get(toml_keys::ALIASES)
-                        .and_then(toml::Value::as_array)
-                        .is_some_and(|aliases| {
-                            aliases
-                                .iter()
-                                .any(|alias| alias.as_str() == Some(model_ref))
-                        })
-            })
-        })
-}
-
-fn first_model_id(backend: &toml::value::Table) -> Option<&str> {
-    backend
-        .get(toml_keys::MODELS)
-        .and_then(toml::Value::as_array)?
-        .first()?
-        .as_table()
-        .and_then(|model| string_field(model, toml_keys::ID))
-}
-
 fn compiler_config_error(message: impl Into<String>) -> CompilerError {
     CompilerError::InvalidInput(Box::new(Error::new_generic(
         ErrorCode::InvalidConfiguration,
         message,
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use apxm_core::types::PipelineConfig;
+    use std::io::Write;
+
+    const CONFIG_FILE_NAME: &str = "config.toml";
+    const CONFIG_WITHOUT_PROMPT_TUNING: &str = r#"
+[chat]
+default_backend = "local"
+default_model = "demo-model"
+
+[[backends]]
+name = "local"
+protocol = "openai"
+endpoint = "http://localhost:8000/v1"
+
+[[backends.models]]
+id = "demo-model"
+"#;
+
+    const CONFIG_WITH_COMPILER_PROMPT_TUNING: &str = r#"
+[chat]
+default_backend = "runtime-backend"
+default_model = "runtime-model"
+
+[compiler.optimization.prompt_tuning]
+enabled = true
+training_data = "training.json"
+
+[compiler.optimization.prompt_tuning.backend]
+protocol = "openai"
+model = "compiler-model"
+endpoint = "http://compiler.example/v1"
+api_key = "env:APXM_COMPILER_TEST_KEY"
+
+[compiler.optimization.prompt_tuning.backend.headers]
+x-tenant = "compiler"
+
+[[backends]]
+name = "runtime-backend"
+type = "local"
+protocol = "vllm"
+endpoint = "http://runtime.example/v1"
+api_key = "runtime-secret"
+
+[[backends.models]]
+id = "runtime-model"
+"#;
+
+    const TRAINING_JSON: &str = r#"[{"inputs":{"question":"q"},"output":"a"}]"#;
+
+    fn write_config(text: &str) -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().expect("create compiler config test dir");
+        let path = dir.path().join(CONFIG_FILE_NAME);
+        let mut file = fs::File::create(&path).expect("create compiler config");
+        file.write_all(text.as_bytes())
+            .expect("write compiler config");
+        (dir, path)
+    }
+
+    fn write_config_with_training(text: &str) -> (tempfile::TempDir, PathBuf) {
+        let (dir, path) = write_config(text);
+        fs::write(dir.path().join("training.json"), TRAINING_JSON)
+            .expect("write compiler training data");
+        (dir, path)
+    }
+
+    #[test]
+    fn compiler_config_accepts_apxm_document_without_prompt_tuning() {
+        let (_dir, path) = write_config(CONFIG_WITHOUT_PROMPT_TUNING);
+        let config = PipelineConfig::default().with_compiler_config_path(path);
+        let context = CompilerOptimizationContext::from_pipeline_config(&config);
+
+        let request = context
+            .prompt_optimization()
+            .expect("parse APXM config document");
+
+        assert!(request.is_none());
+    }
+
+    #[test]
+    fn compiler_prompt_tuning_uses_compiler_owned_backend_config() {
+        let (_dir, path) = write_config_with_training(CONFIG_WITH_COMPILER_PROMPT_TUNING);
+        let config = PipelineConfig::default().with_compiler_config_path(path);
+        let context = CompilerOptimizationContext::from_pipeline_config(&config);
+
+        let request = context
+            .prompt_optimization()
+            .expect("parse compiler prompt tuning")
+            .expect("prompt tuning request");
+        let backend: serde_json::Value =
+            serde_json::from_str(&request.backend_json).expect("parse backend JSON");
+
+        assert_eq!(backend[toml_keys::PROTOCOL], "openai");
+        assert_eq!(backend[toml_keys::MODEL], "compiler-model");
+        assert_eq!(backend[toml_keys::ENDPOINT], "http://compiler.example/v1");
+        assert_eq!(backend[toml_keys::API_KEY], "env:APXM_COMPILER_TEST_KEY");
+        assert_eq!(backend[toml_keys::HEADERS]["x-tenant"], "compiler");
+        assert!(!request.backend_json.contains("runtime-secret"));
+        assert!(!request.backend_json.contains("runtime-model"));
+    }
 }

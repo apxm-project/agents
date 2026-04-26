@@ -1,6 +1,6 @@
 //! Inner plan linker interface for runtime
 //!
-//! This module provides the interface for linking inner plan graph payloads
+//! This module provides the interface for linking inner plan AIR payloads
 //! during runtime execution. The linker acts as a bridge between the
 //! runtime and the compiler, delegating parsing/validation to the compiler.
 
@@ -13,16 +13,16 @@ use async_trait::async_trait;
 /// Result type for inner plan linking
 pub type LinkResult = Result<ExecutionDag, RuntimeError>;
 
-/// Trait for linking inner plan graph payloads into ExecutionDAGs
+/// Trait for linking inner plan AIR payloads into ExecutionDAGs
 ///
 /// The linker bridges the runtime and compiler:
-/// - Runtime calls linker with graph JSON payload
+/// - Runtime calls linker with AIR text
 /// - Linker delegates to compiler for parsing/validation
 /// - Linker returns validated DAG to runtime
 #[async_trait]
 pub trait InnerPlanLinker: Send + Sync {
-    /// Link inner plan graph payload into an ExecutionDAG.
-    async fn link_inner_plan(&self, graph_payload: &str, source_name: &str) -> LinkResult;
+    /// Link inner plan AIR payload into an ExecutionDAG.
+    async fn link_inner_plan(&self, air_payload: &str, source_name: &str) -> LinkResult;
 
     /// Link a structured inner-plan task DAG into an ExecutionDAG.
     async fn link_task_dag(&self, dag: TaskDag) -> LinkResult;

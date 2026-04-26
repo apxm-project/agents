@@ -65,7 +65,7 @@ fn compiler_library_name() -> &'static str {
 }
 
 fn write_tmp_graph(content: &str) -> tempfile::NamedTempFile {
-    let mut f = tempfile::NamedTempFile::new().unwrap();
+    let mut f = tempfile::Builder::new().suffix(".air").tempfile().unwrap();
     f.write_all(content.as_bytes()).unwrap();
     f.flush().unwrap();
     f
@@ -76,6 +76,17 @@ fn write_tmp_file_named(name: &str, content: &str) -> tempfile::NamedTempFile {
     f.write_all(content.as_bytes()).unwrap();
     f.flush().unwrap();
     f
+}
+
+#[cfg(feature = "driver")]
+fn python3_available() -> bool {
+    Command::new("python3")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
 }
 
 fn write_json_file(path: &Path, value: &serde_json::Value) {
@@ -179,57 +190,225 @@ fn write_tmp_driver_config(hook_log: &Path) -> tempfile::NamedTempFile {
     write_tmp_file_named(".toml", &body)
 }
 
+#[cfg(feature = "driver")]
+#[test]
+fn compile_python_air_preserves_tool_data_edges() {
+    if !python3_available() {
+        return;
+    }
+
+    let source = r##"print(r'''; __apxm_python_tools__ []
+module {
+  func.func @tool_data_edge() -> !ais.token attributes {ais.entry} {
+    %reg = ais.register_capability "fixture_tool" {description = "fixture tool"} : !ais.token
+    %tool = ais.inv_tool "fixture_tool" ("{}") : !ais.token
+    %ask = ais.ask "Use {artifact}" [%tool : !ais.token] {input_names = ["artifact"]} : !ais.token
+    func.return %ask : !ais.token
+  }
+}
+''')"##;
+    let graph = write_tmp_file_named(".py", source);
+    let tmp = tempfile::tempdir().unwrap();
+    let artifact = tmp.path().join("tool_data_edge.apxmobj");
+
+    let compile = apxm()
+        .args([
+            "compile",
+            graph.path().to_str().unwrap(),
+            "--opt-level",
+            "0",
+            "-o",
+            artifact.to_str().unwrap(),
+        ])
+        .output()
+        .expect("apxm compile must run");
+    assert!(
+        compile.status.success(),
+        "compile failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let decompile = apxm()
+        .args(["decompile", artifact.to_str().unwrap()])
+        .output()
+        .expect("apxm decompile must run");
+    assert!(
+        decompile.status.success(),
+        "decompile failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&decompile.stdout),
+        String::from_utf8_lossy(&decompile.stderr)
+    );
+
+    let air = String::from_utf8_lossy(&decompile.stdout);
+    assert!(air.contains("%n2 = ais.inv_tool"));
+    assert!(air.contains("%n3 = ais.ask"));
+    assert!(air.contains("[%n2 : !ais.token]"));
+    assert!(air.contains("input_names = [\"artifact\"]"));
+}
+
+#[cfg(feature = "driver")]
+#[test]
+fn compile_saved_python_air_sidecar_preserves_tool_data_edges() {
+    let source = r##"; __apxm_python_tools__ []
+module {
+  func.func @tool_data_edge() -> !ais.token attributes {ais.entry} {
+    %reg = ais.register_capability "fixture_tool" {description = "fixture tool"} : !ais.token
+    %tool = ais.inv_tool "fixture_tool" ("{}") : !ais.token
+    %ask = ais.ask "Use {artifact}" [%tool : !ais.token] {input_names = ["artifact"]} : !ais.token
+    func.return %ask : !ais.token
+  }
+}
+"##;
+    let graph = write_tmp_file_named(".air", source);
+    let tmp = tempfile::tempdir().unwrap();
+    let artifact = tmp.path().join("tool_data_edge.apxmobj");
+
+    let compile = apxm()
+        .args([
+            "compile",
+            graph.path().to_str().unwrap(),
+            "--opt-level",
+            "0",
+            "-o",
+            artifact.to_str().unwrap(),
+        ])
+        .output()
+        .expect("apxm compile must run");
+    assert!(
+        compile.status.success(),
+        "compile failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let decompile = apxm()
+        .args(["decompile", artifact.to_str().unwrap()])
+        .output()
+        .expect("apxm decompile must run");
+    assert!(
+        decompile.status.success(),
+        "decompile failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&decompile.stdout),
+        String::from_utf8_lossy(&decompile.stderr)
+    );
+
+    let air = String::from_utf8_lossy(&decompile.stdout);
+    assert!(air.contains("%n2 = ais.inv_tool"));
+    assert!(air.contains("%n3 = ais.ask"));
+    assert!(air.contains("[%n2 : !ais.token]"));
+    assert!(air.contains("input_names = [\"artifact\"]"));
+}
+
+#[cfg(feature = "driver")]
+#[test]
+fn compile_python_comprehension_preserves_outer_context_edges() {
+    if !python3_available() {
+        return;
+    }
+
+    let source = r##"
+from apxm import GraphRecorder, compile, run, tool
+
+@tool
+def fixture_tool() -> str:
+    return "fixture"
+
+@compile()
+def comprehension_flow(g: GraphRecorder):
+    artifact = g.invoke_tool(fixture_tool, name="Fixture")
+    extracts = [
+        g.ask(name=f"Extract_{index}", prompt="Use {artifact}", memoizable=False)
+        for index in range(2)
+    ]
+    g.done(extracts[0])
+
+if __name__ == "__main__":
+    run(comprehension_flow())
+"##;
+    let graph = write_tmp_file_named(".py", source);
+    let tmp = tempfile::tempdir().unwrap();
+    let artifact = tmp.path().join("comprehension_flow.apxmobj");
+
+    let compile = apxm()
+        .args([
+            "compile",
+            graph.path().to_str().unwrap(),
+            "--opt-level",
+            "1",
+            "--pass-list",
+            "normalize",
+            "-o",
+            artifact.to_str().unwrap(),
+        ])
+        .output()
+        .expect("apxm compile must run");
+    assert!(
+        compile.status.success(),
+        "compile failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let decompile = apxm()
+        .args(["decompile", artifact.to_str().unwrap()])
+        .output()
+        .expect("apxm decompile must run");
+    assert!(
+        decompile.status.success(),
+        "decompile failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&decompile.stdout),
+        String::from_utf8_lossy(&decompile.stderr)
+    );
+
+    let air = String::from_utf8_lossy(&decompile.stdout);
+    assert!(air.contains("ais.inv_tool"));
+    assert_eq!(air.matches("ais.ask").count(), 2);
+    assert_eq!(air.matches("input_names = [\"artifact\"]").count(), 2);
+    assert_eq!(air.matches(": !ais.token]").count(), 2);
+}
+
 // ─── Valid graphs ───────────────────────────────────────────────────────────
 
-const VALID_ASK: &str = r#"{
-  "name": "test-ask",
-  "nodes": [{"id": 1, "name": "q", "op": "ASK", "attributes": {"template_str": "Hello"}}],
-  "edges": [],
-  "parameters": [],
-  "metadata": {}
-}"#;
+const VALID_ASK: &str = r#"module {
+  func.func @test_ask() -> !ais.token attributes {ais.entry} {
+    %q = ais.ask "Hello" : !ais.token
+    func.return %q : !ais.token
+  }
+}
+"#;
 
-const VALID_PIPELINE: &str = r#"{
-  "name": "test-pipeline",
-  "nodes": [
-    {"id": 1, "name": "a", "op": "ASK", "attributes": {"template_str": "step 1"}},
-    {"id": 2, "name": "b", "op": "ASK", "attributes": {"template_str": "step 2: {a}", "input_names": ["a"]}}
-  ],
-  "edges": [{"from": 1, "to": 2, "dependency": "Data"}],
-  "parameters": [],
-  "metadata": {}
-}"#;
+const VALID_PIPELINE: &str = r#"module {
+  func.func @test_pipeline() -> !ais.token attributes {ais.entry} {
+    %a = ais.ask "step 1" : !ais.token
+    %b = ais.ask "step 2: {a}" [%a : !ais.token] {input_names = ["a"]} : !ais.token
+    func.return %b : !ais.token
+  }
+}
+"#;
 
-const VALID_PARALLEL: &str = r#"{
-  "name": "test-parallel",
-  "nodes": [
-    {"id": 1, "name": "a", "op": "ASK", "attributes": {"template_str": "task a"}},
-    {"id": 2, "name": "b", "op": "ASK", "attributes": {"template_str": "task b"}},
-    {"id": 3, "name": "sync", "op": "WAIT_ALL", "attributes": {}}
-  ],
-  "edges": [
-    {"from": 1, "to": 3, "dependency": "Data"},
-    {"from": 2, "to": 3, "dependency": "Data"}
-  ],
-  "parameters": [],
-  "metadata": {}
-}"#;
+const VALID_PARALLEL: &str = r#"module {
+  func.func @test_parallel() -> !ais.token attributes {ais.entry} {
+    %a = ais.ask "task a" : !ais.token
+    %b = ais.ask "task b" : !ais.token
+    %sync = ais.wait_all %a, %b : !ais.token, !ais.token -> !ais.token
+    func.return %sync : !ais.token
+  }
+}
+"#;
 
-const CONST_GRAPH: &str = r#"{
-  "name": "const-graph",
-  "nodes": [
-    {"id": 1, "name": "value", "op": "CONST_STR", "attributes": {"value": "ok"}},
-    {"id": 2, "name": "done", "op": "RETURN", "attributes": {}}
-  ],
-  "edges": [{"from": 1, "to": 2, "dependency": "Data"}],
-  "parameters": [],
-  "metadata": {}
-}"#;
+const CONST_GRAPH: &str = r#"module {
+  func.func @const_graph() -> !ais.token attributes {ais.entry} {
+    %value = ais.const_str "ok" : !ais.token
+    func.return %value : !ais.token
+  }
+}
+"#;
 
 // ─── validate: valid graphs ─────────────────────────────────────────────────
 
 #[test]
-fn validate_valid_ask_json() {
+fn validate_valid_ask_air() {
     let f = write_tmp_graph(VALID_ASK);
     let out = apxm()
         .args(["--json", "validate", f.path().to_str().unwrap()])
@@ -242,7 +421,7 @@ fn validate_valid_ask_json() {
 }
 
 #[test]
-fn validate_valid_pipeline_json() {
+fn validate_valid_pipeline_air() {
     let f = write_tmp_graph(VALID_PIPELINE);
     let out = apxm()
         .args(["--json", "validate", f.path().to_str().unwrap()])
@@ -304,8 +483,8 @@ fn execute_json_errors_are_emitted_as_json() {
 }
 
 #[test]
-fn execute_json_with_local_controls_succeeds_end_to_end() {
-    let graph = write_tmp_file_named(".json", CONST_GRAPH);
+fn execute_air_with_local_controls_succeeds_end_to_end() {
+    let graph = write_tmp_file_named(".air", CONST_GRAPH);
     let temp = tempfile::tempdir().unwrap();
     let hook_log = temp.path().join("hook.log");
     let sessions_root = temp.path().join("sessions");
@@ -349,54 +528,8 @@ fn execute_json_with_local_controls_succeeds_end_to_end() {
 // ─── validate: error cases ──────────────────────────────────────────────────
 
 #[test]
-fn validate_empty_name() {
-    let f = write_tmp_graph(
-        r#"{"name":"","nodes":[{"id":1,"name":"n","op":"ASK","attributes":{"template_str":"x"}}],"edges":[],"parameters":[]}"#,
-    );
-    let out = apxm()
-        .args(["--json", "validate", f.path().to_str().unwrap()])
-        .output()
-        .unwrap();
-    assert!(!out.status.success());
-    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(v["valid"], false);
-    assert!(
-        v["errors"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|e| e.as_str().unwrap().contains("name must not be empty"))
-    );
-}
-
-#[test]
-fn validate_rejects_node_id_placeholder_syntax() {
-    let f = write_tmp_graph(
-        r#"{"name":"node_id_placeholder","nodes":[{"id":1,"name":"a","op":"ASK","attributes":{"template_str":"step 1"}},{"id":2,"name":"b","op":"ASK","attributes":{"template_str":"step 2: {{node_1}}"}}],"edges":[{"from":1,"to":2,"dependency":"Data"}],"parameters":[],"metadata":{}}"#,
-    );
-    let out = apxm()
-        .args(["--json", "validate", f.path().to_str().unwrap()])
-        .output()
-        .unwrap();
-    assert!(!out.status.success());
-    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(v["valid"], false);
-    assert!(
-        v["errors"].as_array().unwrap().iter().any(|e| {
-            let msg = e.as_str().unwrap();
-            msg.contains("node-id placeholder syntax")
-                || msg.contains("references no known input or parameter")
-        }),
-        "expected node-id placeholder error, got: {}",
-        String::from_utf8_lossy(&out.stdout)
-    );
-}
-
-#[test]
-fn validate_unknown_op() {
-    let f = write_tmp_graph(
-        r#"{"name":"t","nodes":[{"id":1,"name":"n","op":"FAKE_OP","attributes":{}}],"edges":[],"parameters":[]}"#,
-    );
+fn validate_rejects_graph_json_source() {
+    let f = write_tmp_file_named(".json", VALID_ASK);
     let out = apxm()
         .args(["--json", "validate", f.path().to_str().unwrap()])
         .output()
@@ -408,147 +541,30 @@ fn validate_unknown_op() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|e| e.as_str().unwrap().contains("unknown op"))
-    );
-}
-
-#[test]
-fn validate_missing_required_attribute() {
-    let f = write_tmp_graph(
-        r#"{"name":"t","nodes":[{"id":1,"name":"n","op":"ASK","attributes":{}}],"edges":[],"parameters":[]}"#,
-    );
-    let out = apxm()
-        .args(["--json", "validate", f.path().to_str().unwrap()])
-        .output()
-        .unwrap();
-    assert!(!out.status.success());
-    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert!(
-        v["errors"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|e| e.as_str().unwrap().contains("template_str"))
-    );
-}
-
-#[test]
-fn validate_duplicate_node_id() {
-    let f = write_tmp_graph(
-        r#"{"name":"t","nodes":[{"id":1,"name":"a","op":"ASK","attributes":{"template_str":"x"}},{"id":1,"name":"b","op":"ASK","attributes":{"template_str":"y"}}],"edges":[],"parameters":[]}"#,
-    );
-    let out = apxm()
-        .args(["--json", "validate", f.path().to_str().unwrap()])
-        .output()
-        .unwrap();
-    assert!(!out.status.success());
-    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert!(
-        v["errors"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|e| e.as_str().unwrap().contains("duplicate node id"))
-    );
-}
-
-#[test]
-fn validate_self_loop() {
-    let f = write_tmp_graph(
-        r#"{"name":"t","nodes":[{"id":1,"name":"n","op":"ASK","attributes":{"template_str":"x"}}],"edges":[{"from":1,"to":1,"dependency":"Data"}],"parameters":[]}"#,
-    );
-    let out = apxm()
-        .args(["--json", "validate", f.path().to_str().unwrap()])
-        .output()
-        .unwrap();
-    assert!(!out.status.success());
-    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert!(
-        v["errors"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|e| e.as_str().unwrap().contains("self-loop"))
-    );
-}
-
-#[test]
-fn validate_invalid_dependency_type() {
-    let f = write_tmp_graph(
-        r#"{"name":"t","nodes":[{"id":1,"name":"a","op":"ASK","attributes":{"template_str":"x"}},{"id":2,"name":"b","op":"ASK","attributes":{"template_str":"y"}}],"edges":[{"from":1,"to":2,"dependency":"Invalid"}],"parameters":[]}"#,
-    );
-    let out = apxm()
-        .args(["--json", "validate", f.path().to_str().unwrap()])
-        .output()
-        .unwrap();
-    assert!(!out.status.success());
-    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert!(
-        v["errors"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|e| e.as_str().unwrap().contains("invalid dependency type"))
-    );
-}
-
-#[test]
-fn validate_edge_nonexistent_target() {
-    let f = write_tmp_graph(
-        r#"{"name":"t","nodes":[{"id":1,"name":"n","op":"ASK","attributes":{"template_str":"x"}}],"edges":[{"from":1,"to":99,"dependency":"Data"}],"parameters":[]}"#,
-    );
-    let out = apxm()
-        .args(["--json", "validate", f.path().to_str().unwrap()])
-        .output()
-        .unwrap();
-    assert!(!out.status.success());
-    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert!(
-        v["errors"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|e| e.as_str().unwrap().contains("target node"))
-    );
-}
-
-#[test]
-fn validate_cycle_detection() {
-    let f = write_tmp_graph(
-        r#"{"name":"t","nodes":[{"id":1,"name":"a","op":"ASK","attributes":{"template_str":"x"}},{"id":2,"name":"b","op":"ASK","attributes":{"template_str":"y"}}],"edges":[{"from":1,"to":2,"dependency":"Data"},{"from":2,"to":1,"dependency":"Data"}],"parameters":[]}"#,
-    );
-    let out = apxm()
-        .args(["--json", "validate", f.path().to_str().unwrap()])
-        .output()
-        .unwrap();
-    assert!(!out.status.success());
-    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert!(
-        v["errors"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|e| e.as_str().unwrap().contains("cycle"))
+            .any(|e| e.as_str().unwrap().contains("canonical .air"))
     );
 }
 
 #[test]
 fn validate_file_not_found() {
     let out = apxm()
-        .args(["validate", "/nonexistent/path.json"])
+        .args(["validate", "/nonexistent/path.air"])
         .output()
         .unwrap();
     assert!(!out.status.success());
 }
 
 #[test]
-fn validate_invalid_json() {
-    let f = write_tmp_graph("{not valid json");
+fn validate_invalid_air() {
+    let f = write_tmp_graph("not valid AIR");
     let out = apxm()
-        .args(["validate", f.path().to_str().unwrap()])
+        .args(["--json", "validate", f.path().to_str().unwrap()])
         .output()
         .unwrap();
     assert!(!out.status.success());
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["valid"], false);
+    assert!(!v["errors"].as_array().unwrap().is_empty());
 }
 
 #[test]
@@ -712,17 +728,12 @@ fn template_list_json() {
 }
 
 #[test]
-fn template_show_ask_json() {
-    let out = apxm()
-        .args(["--json", "template", "show", "ask"])
-        .output()
-        .unwrap();
+fn template_show_ask_air() {
+    let out = apxm().args(["template", "show", "ask"]).output().unwrap();
     assert!(out.status.success());
-    // Output should be valid JSON graph
-    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert!(v["name"].is_string());
-    assert!(v["nodes"].is_array());
-    assert!(v["edges"].is_array());
+    let air = String::from_utf8_lossy(&out.stdout);
+    assert!(air.contains("module {"));
+    assert!(air.contains("func.func @simple_ask"));
 }
 
 #[test]
@@ -736,9 +747,9 @@ fn template_show_unknown() {
 
 #[test]
 fn template_roundtrip_validate() {
-    // Get template JSON and feed it to validate
+    // Get template AIR and feed it to validate
     let show_out = apxm()
-        .args(["--json", "template", "show", "map-reduce"])
+        .args(["template", "show", "map-reduce"])
         .output()
         .unwrap();
     assert!(show_out.status.success());
@@ -757,7 +768,7 @@ fn template_roundtrip_validate() {
 
 #[test]
 fn validate_no_nodes() {
-    let f = write_tmp_graph(r#"{"name":"t","nodes":[],"edges":[],"parameters":[]}"#);
+    let f = write_tmp_graph("module { }");
     let out = apxm()
         .args(["--json", "validate", f.path().to_str().unwrap()])
         .output()
@@ -770,7 +781,7 @@ fn validate_no_nodes() {
 #[test]
 fn validate_edge_nonexistent_source() {
     let f = write_tmp_graph(
-        r#"{"name":"t","nodes":[{"id":1,"name":"n","op":"ASK","attributes":{"template_str":"x"}}],"edges":[{"from":99,"to":1,"dependency":"Data"}],"parameters":[]}"#,
+        "module { func.func @broken() -> !ais.token { func.return %missing : !ais.token } }",
     );
     let out = apxm()
         .args(["--json", "validate", f.path().to_str().unwrap()])
@@ -778,40 +789,34 @@ fn validate_edge_nonexistent_source() {
         .unwrap();
     assert!(!out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert!(
-        v["errors"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|e| e.as_str().unwrap().contains("source"))
-    );
+    assert!(!v["errors"].as_array().unwrap().is_empty());
 }
 
 #[test]
 fn validate_duplicate_parameter_name() {
     let f = write_tmp_graph(
-        r#"{"name":"t","nodes":[{"id":1,"name":"n","op":"ASK","attributes":{"template_str":"x"}}],"edges":[],"parameters":[{"name":"p","type_name":"str"},{"name":"p","type_name":"int"}]}"#,
+        "module { func.func @dup(%arg0: !ais.token {ais.param_name = \"p\", ais.param_type = \"str\"}, %arg1: !ais.token {ais.param_name = \"p\", ais.param_type = \"int\"}) -> !ais.token attributes {ais.entry} { func.return %arg0 : !ais.token } }",
     );
     let out = apxm()
         .args(["--json", "validate", f.path().to_str().unwrap()])
         .output()
         .unwrap();
-    // Should have warning or error about duplicate parameter
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    let has_dup = v["errors"]
-        .as_array()
-        .unwrap_or(&vec![])
-        .iter()
-        .chain(v["warnings"].as_array().unwrap_or(&vec![]).iter())
-        .any(|e| e.as_str().unwrap_or("").contains("duplicate"));
-    assert!(has_dup);
+    assert_eq!(v["valid"], false);
 }
 
 #[test]
 fn validate_disconnected_graph() {
-    // Two nodes with no edges — valid but might get a warning
     let f = write_tmp_graph(
-        r#"{"name":"t","nodes":[{"id":1,"name":"a","op":"ASK","attributes":{"template_str":"x"}},{"id":2,"name":"b","op":"ASK","attributes":{"template_str":"y"}}],"edges":[],"parameters":[]}"#,
+        r#"module {
+  func.func @disconnected() -> !ais.token attributes {ais.entry} {
+    %a = ais.ask "x" : !ais.token
+    %b = ais.ask "y" : !ais.token
+    %merged = ais.merge %a, %b : !ais.token, !ais.token -> !ais.token
+    func.return %merged : !ais.token
+  }
+}
+"#,
     );
     let out = apxm()
         .args(["--json", "validate", f.path().to_str().unwrap()])
@@ -825,30 +830,30 @@ fn validate_disconnected_graph() {
 #[test]
 fn validate_parameter_invalid_type() {
     let f = write_tmp_graph(
-        r#"{"name":"t","nodes":[{"id":1,"name":"n","op":"ASK","attributes":{"template_str":"x"}}],"edges":[],"parameters":[{"name":"p","type_name":"invalid_type"}]}"#,
+        "module { func.func @param_type(%arg0: !ais.token {ais.param_name = \"p\", ais.param_type = \"invalid_type\"}) -> !ais.token attributes {ais.entry} { func.return %arg0 : !ais.token } }",
     );
     let out = apxm()
         .args(["--json", "validate", f.path().to_str().unwrap()])
         .output()
         .unwrap();
-    // Should succeed but with warning about non-standard type
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert!(
-        v["warnings"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|w| w.as_str().unwrap().contains("non-standard"))
-    );
+    assert_eq!(v["valid"], true);
 }
 
 // ─── analyze: edge cases ────────────────────────────────────────────────────
 
 #[test]
 fn analyze_disconnected_components() {
-    // Two independent nodes — both should be in phase 1
     let f = write_tmp_graph(
-        r#"{"name":"t","nodes":[{"id":1,"name":"a","op":"ASK","attributes":{"template_str":"x"}},{"id":2,"name":"b","op":"ASK","attributes":{"template_str":"y"}}],"edges":[],"parameters":[]}"#,
+        r#"module {
+  func.func @parallel_components() -> !ais.token attributes {ais.entry} {
+    %a = ais.ask "x" : !ais.token
+    %b = ais.ask "y" : !ais.token
+    %merged = ais.merge %a, %b : !ais.token, !ais.token -> !ais.token
+    func.return %merged : !ais.token
+  }
+}
+"#,
     );
     let out = apxm()
         .args(["--json", "analyze", f.path().to_str().unwrap()])
@@ -857,7 +862,7 @@ fn analyze_disconnected_components() {
     assert!(out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["max_parallelism"], 2);
-    assert_eq!(v["depth"], 1);
+    assert_eq!(v["depth"], 2);
 }
 
 #[test]
@@ -977,7 +982,7 @@ fn explain_human_readable() {
 #[test]
 fn explain_file_not_found() {
     let out = apxm()
-        .args(["explain", "/nonexistent/file.json"])
+        .args(["explain", "/nonexistent/file.air"])
         .output()
         .unwrap();
     assert!(!out.status.success());
@@ -1312,29 +1317,17 @@ fn workflow_run_nested_workflow_uses_explicit_root_for_parent_and_child() {
     let temp = tempfile::tempdir().unwrap();
     let workflow_root = temp.path();
     let session_root = workflow_root.join("workflow-sessions");
-    let graph_path = workflow_root.join("graph.json");
+    let graph_path = workflow_root.join("graph.air");
     let child_workflow_path = workflow_root.join("child.apxmw");
     let parent_workflow_path = workflow_root.join("parent.apxmw");
 
-    write_json_file(
-        &graph_path,
-        &serde_json::json!({
-            "name": "const-graph",
-            "nodes": [
-                {"id": 1, "name": "value", "op": "CONST_STR", "attributes": {"value": "ok"}},
-                {"id": 2, "name": "done", "op": "RETURN", "attributes": {}}
-            ],
-            "edges": [{"from": 1, "to": 2, "dependency": "Data"}],
-            "parameters": [],
-            "metadata": {}
-        }),
-    );
+    std::fs::write(&graph_path, CONST_GRAPH).unwrap();
     write_json_file(
         &child_workflow_path,
         &serde_json::json!({
             "name": "child",
             "graphs": [
-                {"id": "child_step", "path": "graph.json"}
+                {"id": "child_step", "path": "graph.air"}
             ],
             "output": "{{child_step.output}}"
         }),

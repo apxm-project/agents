@@ -10,6 +10,7 @@
 
 #include "ais/CAPI/PassManager.h"
 #include "ais/CAPI/Module.h"
+#include "ais/Common/Constants.h"
 #include "ais/Dialect/AIS/Transforms/Passes.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/Transforms/Passes.h"
@@ -200,10 +201,14 @@ int apxm_module_drain_pass_stats(ApxmModule* module,
       moduleOp->removeAttr(key);
     }
   };
-  // Attribute keys are dialect-prefixed (`ais.`) on the write side; see
-  // mlir/lib/Dialect/AIS/Transforms/PassStatsHelpers.cpp.
-  drain(std::string("ais.") + pass_name + "_fired_count", fired_count_out);
-  drain(std::string("ais.") + pass_name + "_ir_size_delta", ir_size_delta_out);
+  drain((apxm::constants::attrs::DIALECT_ATTR_PREFIX + llvm::StringRef(pass_name) +
+         apxm::constants::attrs::PASS_STATS_FIRED_SUFFIX)
+            .str(),
+        fired_count_out);
+  drain((apxm::constants::attrs::DIALECT_ATTR_PREFIX + llvm::StringRef(pass_name) +
+         apxm::constants::attrs::PASS_STATS_IR_SIZE_DELTA_SUFFIX)
+            .str(),
+        ir_size_delta_out);
   return 0;
 }
 
@@ -215,8 +220,9 @@ int apxm_module_strip_all_pass_stats(ApxmModule* module) {
   llvm::SmallVector<llvm::StringRef, 16> toRemove;
   for (mlir::NamedAttribute attr : moduleOp->getAttrs()) {
     llvm::StringRef name = attr.getName().getValue();
-    if (!name.starts_with("ais.")) continue;
-    if (name.ends_with("_fired_count") || name.ends_with("_ir_size_delta")) {
+    if (!name.starts_with(apxm::constants::attrs::DIALECT_ATTR_PREFIX)) continue;
+    if (name.ends_with(apxm::constants::attrs::PASS_STATS_FIRED_SUFFIX) ||
+        name.ends_with(apxm::constants::attrs::PASS_STATS_IR_SIZE_DELTA_SUFFIX)) {
       toRemove.push_back(name);
     }
   }
@@ -238,7 +244,7 @@ int apxm_module_total_template_tokens(ApxmModule* module, uint64_t* total_out) {
   // overflow on very large graphs.
   moduleOp->walk([&](mlir::Operation* op) {
     if (auto attr = op->getAttrOfType<mlir::IntegerAttr>(
-            "ais.est_template_tokens")) {
+            apxm::constants::attrs::EST_TEMPLATE_TOKENS)) {
       uint64_t v = attr.getValue().getZExtValue();
       if (total > UINT64_MAX - v) {
         total = UINT64_MAX;

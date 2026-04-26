@@ -5,6 +5,9 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 
+#[cfg(feature = "driver")]
+use super::compile::air_graph_from_source;
+
 pub fn replay_command(session: PathBuf) -> Result<()> {
     use apxm_core::constants;
     use apxm_core::types::SessionManifest;
@@ -47,9 +50,7 @@ pub fn replay_command(session: PathBuf) -> Result<()> {
 
     // Read node names from the input graph (best-effort)
     let input_path = session.join(constants::session::files::INPUT_GRAPH);
-    let node_names: HashMap<u64, String> = std::fs::read_to_string(&input_path)
-        .ok()
-        .and_then(|text| serde_json::from_str::<apxm_compiler::AirModule>(&text).ok())
+    let node_names: HashMap<u64, String> = load_session_input_graph(&input_path)
         .map(|graph| graph.nodes.iter().map(|n| (n.id, n.name.clone())).collect())
         .unwrap_or_default();
 
@@ -156,4 +157,17 @@ pub fn replay_command(session: PathBuf) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn load_session_input_graph(input_path: &std::path::Path) -> Option<apxm_compiler::AirModule> {
+    #[cfg(feature = "driver")]
+    {
+        air_graph_from_source(input_path).ok()
+    }
+
+    #[cfg(not(feature = "driver"))]
+    {
+        let _ = input_path;
+        None
+    }
 }

@@ -6,10 +6,11 @@ runtime interpolation.
 ## Why This Matters
 
 APXM's compiler applies production-safe optimization passes to your agent
-workflow. Default `-O2` keeps exact duplicate-work elimination, dead-context
-elimination, and template specialization active. Semantic ASK-chain mutation
-and prompt-layout canonicalization are explicit experiments until their typed
-contracts are enforced.
+workflow. Default `-O2` keeps config-gated DSPy prompt optimization, dead-context
+elimination, template specialization, scheduling metadata, and shared-prefix
+analysis active. Semantic ASK-chain mutation, generic CSE, and prompt-layout
+canonicalization are explicit experiments until their typed contracts are
+enforced.
 
 ## Examples
 
@@ -26,7 +27,7 @@ ctx2 | analysis  # Dead -- template doesn't reference {ctx2}
 
 # Compare optimization levels
 # dekk apxm execute workflow.py -O0   # No optimizations
-# dekk apxm execute workflow.py -O2   # All optimizations
+# dekk apxm execute workflow.py -O2   # Standard production-safe optimizations
 ```
 
 ## Learn More

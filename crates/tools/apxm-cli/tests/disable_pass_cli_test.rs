@@ -1,6 +1,6 @@
 //! Smoke-test the --disable-pass / --pass-list CLI plumbing for ablation studies.
 //!
-//! Compiles a small inline JSON graph at O1 with a named pass dropped, then reads
+//! Compiles a small inline AIR graph at O1 with a named pass dropped, then reads
 //! the `--emit-diagnostics` JSON and confirms the disabled pass is absent from the
 //! `pass_metrics` array. A second case exercises `--pass-list` to confirm the
 //! override replaces the default selection wholesale.
@@ -29,19 +29,17 @@ fn apxm() -> Command {
 
 /// Two-ASK pipeline. The graph compiles cleanly at O1 and lets the test inspect
 /// which pass names appear in diagnostics.
-const SMALL_PIPELINE: &str = r#"{
-  "name": "disable-pass-test",
-  "nodes": [
-    {"id": 1, "name": "a", "op": "ASK", "attributes": {"template_str": "step 1"}},
-    {"id": 2, "name": "b", "op": "ASK", "attributes": {"template_str": "step 2"}}
-  ],
-  "edges": [{"from": 1, "to": 2, "dependency": "Data"}],
-  "parameters": [],
-  "metadata": {}
-}"#;
+const SMALL_PIPELINE: &str = r#"module {
+  func.func @disable_pass_test() -> !ais.token attributes {ais.entry} {
+    %a = ais.ask "step 1" : !ais.token
+    %b = ais.ask "step 2" [%a : !ais.token] : !ais.token
+    func.return %b : !ais.token
+  }
+}
+"#;
 
 fn write_tmp_graph(content: &str) -> tempfile::NamedTempFile {
-    let mut f = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+    let mut f = tempfile::Builder::new().suffix(".air").tempfile().unwrap();
     f.write_all(content.as_bytes()).unwrap();
     f.flush().unwrap();
     f

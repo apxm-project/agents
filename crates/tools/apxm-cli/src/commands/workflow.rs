@@ -8,6 +8,8 @@ use apxm_driver::{Linker, LinkerConfig};
 use colored::Colorize;
 
 use super::cli::*;
+#[cfg(feature = "driver")]
+use super::compile::air_graph_from_source;
 #[cfg(not(feature = "driver"))]
 use super::dekk_hints;
 #[cfg(feature = "driver")]
@@ -711,18 +713,7 @@ async fn execute_artifact_step(
 
 #[cfg(feature = "driver")]
 fn load_graph_for_session(input: &Path) -> Result<apxm_compiler::AirModule> {
-    use apxm_driver::compiler::Compiler;
-
-    if let Ok(compiler) = Compiler::new()
-        && let Ok(graph) = compiler.load_graph(input)
-    {
-        return Ok(graph);
-    }
-
-    let text = std::fs::read_to_string(input)
-        .with_context(|| format!("Failed to read graph {}", input.display()))?;
-    serde_json::from_str::<apxm_compiler::AirModule>(&text)
-        .with_context(|| format!("Failed to parse graph {}", input.display()))
+    air_graph_from_source(input)
 }
 
 #[cfg(feature = "driver")]
@@ -934,22 +925,7 @@ fn load_graph_step_args(
     graph_path: &Path,
     resolved_params: &HashMap<String, String>,
 ) -> Result<Vec<String>> {
-    use apxm_driver::compiler::Compiler;
-
-    if let Ok(compiler) = Compiler::new()
-        && let Ok(graph) = compiler.load_graph(graph_path)
-    {
-        return Ok(graph
-            .parameters
-            .iter()
-            .map(|p| resolved_params.get(&p.name).cloned().unwrap_or_default())
-            .collect());
-    }
-
-    let graph_text = std::fs::read_to_string(graph_path)
-        .with_context(|| format!("Failed to read graph {}", graph_path.display()))?;
-    let graph: apxm_compiler::AirModule = serde_json::from_str(&graph_text)
-        .with_context(|| format!("Failed to parse graph {}", graph_path.display()))?;
+    let graph = air_graph_from_source(graph_path)?;
     Ok(graph
         .parameters
         .iter()

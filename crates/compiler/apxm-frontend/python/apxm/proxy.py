@@ -22,6 +22,10 @@ from .normalize import normalize_value as _normalize_value
 from .ir import ApxmGraph, GraphEdge, GraphNode, Parameter
 from .tools import FunctionTool
 
+_TEMPLATE_PLACEHOLDER_RE = re.compile(r"\{(\w+)\}")
+_MAX_TEMPLATE_SCOPE_DEPTH = 32
+
+
 class NodeRef:
     def __init__(self, recorder: "GraphRecorder", node_id: int, name: str) -> None:
         self._recorder = recorder
@@ -110,24 +114,16 @@ class GraphRecorder:
         Returns:
             (template_unchanged, [(name, NodeRef), ...] in edge order)
         """
+        scope_chain: Iterable[Mapping[str, Any]]
         if template_scope is None:
-            caller_frame = inspect.currentframe()
-            if caller_frame is None:
-                return template, []
-
-            caller_locals: Mapping[str, Any] = {}
-            try:
-                if caller_frame.f_back and caller_frame.f_back.f_back:
-                    caller_locals = caller_frame.f_back.f_back.f_locals
-            finally:
-                del caller_frame
+            scope_chain = self._template_scope_chain()
         else:
-            caller_locals = template_scope
+            scope_chain = (template_scope,)
 
         pairs: list[tuple[str, NodeRef]] = []
         seen: set[str] = set()
 
-        for match in re.finditer(r'\{(\w+)\}', template):
+        for match in _TEMPLATE_PLACEHOLDER_RE.finditer(template):
             var_name = match.group(1)
             if var_name in seen:
                 continue
@@ -138,12 +134,46 @@ class GraphRecorder:
             if var_name in self._param_names:
                 continue
 
-            val = caller_locals.get(var_name)
+            val = self._resolve_name_from_scope_chain(var_name, scope_chain)
             if isinstance(val, NodeRef):
                 pairs.append((var_name, val))
             # Otherwise leave as-is — validator will diagnose if unresolved.
 
         return template, pairs
+
+    @staticmethod
+    def _template_scope_chain() -> tuple[Mapping[str, Any], ...]:
+        caller_frame = inspect.currentframe()
+        if caller_frame is None:
+            return ()
+
+        scopes: list[Mapping[str, Any]] = []
+        try:
+            frame = caller_frame.f_back
+            if frame is not None:
+                frame = frame.f_back
+            if frame is not None:
+                frame = frame.f_back
+
+            depth = 0
+            while frame is not None and depth < _MAX_TEMPLATE_SCOPE_DEPTH:
+                scopes.append(frame.f_locals)
+                frame = frame.f_back
+                depth += 1
+        finally:
+            del caller_frame
+
+        return tuple(scopes)
+
+    @staticmethod
+    def _resolve_name_from_scope_chain(
+        name: str,
+        scope_chain: Iterable[Mapping[str, Any]],
+    ) -> Any:
+        for scope in scope_chain:
+            if name in scope:
+                return scope[name]
+        return None
 
     def _bind_flow_kwargs(
         self,

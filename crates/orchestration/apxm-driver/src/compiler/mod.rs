@@ -2,6 +2,7 @@
 
 use apxm_compiler::AirModule;
 use apxm_compiler::{Context, Module, Pipeline, PipelineDiagnostics};
+use apxm_core::constants::extensions;
 use apxm_core::types::{OptimizationLevel, PipelineConfig};
 use apxm_core::utils::build::MlirEnvReport;
 use std::fs;
@@ -52,16 +53,16 @@ impl Compiler {
             ));
         }
 
-        // .air files: parse as MLIR text and run optimization pipeline
-        if matches!(ext, Some("air")) {
-            let air_text = fs::read_to_string(path)?;
-            let pipeline = Pipeline::with_opt_level(&self.context, self.opt_level);
-            let module = pipeline.compile(&air_text).map_err(DriverError::Compiler)?;
-            return Ok(module);
+        if !matches!(ext, Some(extensions::AIR)) {
+            return Err(DriverError::Driver(format!(
+                "Unsupported graph source '{}'. Compile canonical .air source, or run .apxmobj artifacts with 'dekk apxm run'.",
+                path.display()
+            )));
         }
 
-        let module = self.load_graph(path)?;
-        self.compile_graph(&module)
+        let air_text = fs::read_to_string(path)?;
+        let pipeline = Pipeline::with_opt_level(&self.context, self.opt_level);
+        pipeline.compile(&air_text).map_err(DriverError::Compiler)
     }
 
     /// Compile a `.air` text source with a custom pipeline configuration.
@@ -220,23 +221,6 @@ impl Compiler {
         pipeline
             .compile_graph_with_diagnostics(module)
             .map_err(DriverError::Compiler)
-    }
-
-    /// Load a JSON graph file from disk into an `AirModule`.
-    ///
-    /// For `.air` (MLIR text) inputs use [`compile()`](Self::compile) instead — those
-    /// are parsed directly as MLIR without round-tripping through `AirModule`.
-    pub fn load_graph(&self, path: &Path) -> Result<AirModule, DriverError> {
-        if matches!(path.extension().and_then(|ext| ext.to_str()), Some("air")) {
-            return Err(DriverError::Driver(
-                ".air files should be compiled directly via compile(), not loaded as AirModule."
-                    .to_string(),
-            ));
-        }
-
-        let text = fs::read_to_string(path)?;
-        serde_json::from_str::<AirModule>(&text)
-            .map_err(|e| DriverError::Driver(format!("Graph parse error: {e}")))
     }
 
     /// Emit canonical .air text IR for a module.

@@ -15,6 +15,7 @@ pub mod values;
 pub mod config;
 pub mod execution;
 pub mod graph_hints;
+pub mod graph_metrics;
 pub mod intents;
 
 // ── Domain ─────────────────────────────────────────────────
@@ -25,6 +26,7 @@ pub mod model_spec;
 pub mod models;
 pub mod provider_spec;
 pub mod session;
+pub mod source_format;
 
 pub use aam::{
     AamContext, CapabilityProjection, CapabilityRecord, CompletionPolicy, GoalProjection, GoalTree,
@@ -50,6 +52,7 @@ pub use graph_hints::{
     ApxmGraphHints, CompilerHints, GraphBackendKind, GraphMetadata, GraphStatusSnapshot, NodeSpec,
     PinMode, PinPolicy, PriorityClass,
 };
+pub use graph_metrics::{LatencyClass, NodeGraphMetrics};
 pub use identifiers::{
     BackendId, CapabilityName, CheckpointId, ExecutionId, MessageId, ModelId, NodeIdType, OpIdType,
     ProfileId, SessionId, TokenIdType, TraceId,
@@ -77,6 +80,7 @@ pub use operations::metadata::{
 pub use operations::{AISOperation, AISOperationType, OperationCategory, validate_operation};
 
 pub use session::{CompletedNodeInfo, LiveSessionState, NodeInfo, SessionManifest, SessionStatus};
+pub use source_format::{ApxmPathFormat, ArtifactFormat, GraphSourceFormat};
 pub use values::{Number, Token, TokenId, TokenStatus, Value};
 
 pub use backend::{BackendConfig, BackendType, DockerConfig, ModelConfig};

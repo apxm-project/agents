@@ -57,7 +57,7 @@ from .execution import (
     run_workflow_file,
     validate_graph,
 )
-from .ir import ApxmGraph, GraphEdge, GraphNode, Parameter, load_graph
+from .ir import ApxmGraph, GraphEdge, GraphNode, Parameter
 from .module import FlowModule
 from .providers import ProviderSpec, list_providers, resolve_provider
 from .proxy import GraphRecorder, NodeRef
@@ -105,7 +105,6 @@ __all__ = [
     "list_backends",
     "local_apxm_path",
     "LoopGuardMiddlewareConfig",
-    "load_graph",
     "MiddlewareKind",
     "ModelId",
     "new_session",

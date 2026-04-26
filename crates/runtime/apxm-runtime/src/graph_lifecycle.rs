@@ -143,6 +143,7 @@ pub(crate) fn graph_metadata_from_dag(
                 },
                 priority_class,
                 reuse_group: hints.reuse_group,
+                graph_metrics: hints.graph_metrics,
                 is_critical_path,
             }
         })

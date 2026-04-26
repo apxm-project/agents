@@ -12,6 +12,7 @@ from typing import Any
 from . import constants as graph_keys
 from apxm.constants import (
     ENV_APXM_BIN,
+    ENV_APXM_CONFIG,
     ENV_APXM_EMIT_AIR,
     ENV_APXM_MOCK_BACKEND,
     ENV_APXM_SERVER_URL,
@@ -357,6 +358,8 @@ _CARGO_TARGET_DIR = "target"
 _CARGO_RELEASE_PROFILE = "release"
 _CARGO_DEBUG_PROFILE = "debug"
 _DEFAULT_SERVER_URL = "http://localhost:18800"
+_APXM_DIR_NAME = ".apxm"
+_APXM_CONFIG_FILE_NAME = "config.toml"
 
 
 def _server_url() -> str:
@@ -432,6 +435,34 @@ def _subprocess_env_for_apxm(apxm_bin: str) -> dict[str, str]:
             _prepend_env_path(env, "LD_LIBRARY_PATH", str(lib_dir))
             _prepend_env_path(env, "DYLD_LIBRARY_PATH", str(lib_dir))
     return env
+
+
+def _active_apxm_config_path() -> Path | None:
+    explicit = os.environ.get(ENV_APXM_CONFIG, "").strip()
+    if explicit:
+        return Path(explicit)
+
+    cwd = Path.cwd().resolve()
+    for candidate_root in (cwd, *cwd.parents):
+        candidate = candidate_root / _APXM_DIR_NAME / _APXM_CONFIG_FILE_NAME
+        if candidate.is_file():
+            return candidate
+
+    home = Path.home() / _APXM_DIR_NAME / _APXM_CONFIG_FILE_NAME
+    return home if home.is_file() else None
+
+
+def _execution_overlay_config_toml(overlay_toml: str) -> str:
+    active_path = _active_apxm_config_path()
+    if active_path is None:
+        return overlay_toml
+
+    base_toml = active_path.read_text()
+    if not base_toml.strip():
+        return overlay_toml
+    if not overlay_toml.strip():
+        return base_toml
+    return base_toml.rstrip() + "\n\n" + overlay_toml
 
 
 def _prepend_env_path(env: dict[str, str], key: str, path: str) -> None:
@@ -550,7 +581,7 @@ class CompiledFlow:
 
     def save(self, path: str | os.PathLike[str]) -> None:
         envelope = {
-            graph_keys.GRAPH_PAYLOAD: self._graph.to_dict(),
+            graph_keys.AIR_PAYLOAD: self._air_text if self._air_text else self._graph.to_air(),
             "mode": self.mode.value,
             "opt_level": self._opt_level,
         }
@@ -561,10 +592,10 @@ class CompiledFlow:
         path = Path(path)
         text = path.read_text(encoding="utf-8")
         data = json.loads(text)
-        graph = ApxmGraph.from_dict(data[graph_keys.GRAPH_PAYLOAD])
         mode = ExecutionMode(data.get("mode", ExecutionMode.AOT.value))
         opt_level = int(data.get("opt_level", 2))
-        return cls(graph, mode=mode, opt_level=opt_level)
+        air_text = data[graph_keys.AIR_PAYLOAD]
+        return cls(ApxmGraph(name=path.stem), mode=mode, opt_level=opt_level, air_text=air_text)
 
     def register_tool(self, tool: Any) -> "CompiledFlow":
         self._registered_tools.append(tool)
@@ -580,9 +611,10 @@ class CompiledFlow:
     ) -> ExecutionResult:
         from .errors import CompilationError, ServerError
 
-        errors = validate_graph(self._graph)
-        if errors:
-            raise CompilationError("invalid graph: " + "; ".join(errors))
+        if self._air_text is None:
+            errors = validate_graph(self._graph)
+            if errors:
+                raise CompilationError("invalid graph: " + "; ".join(errors))
 
         execution = _merge_execution_options(session_id, execution)
         request_body = self._build_request(args, execution=execution)
@@ -659,9 +691,10 @@ class CompiledFlow:
         """Async generator yielding execution events via SSE."""
         from .errors import CompilationError, ServerError
 
-        errors = validate_graph(self._graph)
-        if errors:
-            raise CompilationError("invalid graph: " + "; ".join(errors))
+        if self._air_text is None:
+            errors = validate_graph(self._graph)
+            if errors:
+                raise CompilationError("invalid graph: " + "; ".join(errors))
 
         execution = _merge_execution_options(session_id, execution)
         if execution.requires_local_cli():
@@ -699,8 +732,13 @@ class CompiledFlow:
         execution: ExecutionOptions | None = None,
     ) -> dict[str, Any]:
         execution = execution or ExecutionOptions()
+        runtime_graph = _graph_with_execution_overrides(self._graph, execution)
+        if runtime_graph is self._graph:
+            air_text = self._air_text if self._air_text else self._graph.to_air()
+        else:
+            air_text = runtime_graph.to_air()
         request: dict[str, Any] = {
-            "graph": self._graph.to_dict(),
+            graph_keys.AIR_PAYLOAD: air_text,
             "args": [str(a) for a in args],
         }
         request.update(execution.server_request_fields())
@@ -754,7 +792,7 @@ class CompiledFlow:
             with tempfile.NamedTemporaryFile(
                 mode="w", suffix=".toml", delete=False
             ) as tmp:
-                tmp.write(config_toml)
+                tmp.write(_execution_overlay_config_toml(config_toml))
                 config_path = tmp.name
 
         try:

@@ -19,6 +19,7 @@ use super::{
     ExecutionContext, Node, Result, Value, get_optional_string_attribute, get_string_attribute,
 };
 use crate::aam::TransitionLabel;
+use crate::constants::env as runtime_env;
 use apxm_core::apxm_op;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::constants::runtime::context_stack as context_stack_consts;
@@ -129,10 +130,9 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
 
         let mode = get_optional_string_attribute(node, graph_attrs::MODE)?;
         let model = get_optional_string_attribute(node, graph_attrs::MODEL)?;
-        // Determine node workspace folder for frontend-specific context files.
-        // The node workspace path is passed as APXM_NODE_WORKSPACE env var so the
-        // agent can read its context files, while cwd stays at the project root
-        // so the agent can build/test/commit normally.
+        // Determine node workspace folder for APXM context files. The spawned
+        // agent adapter may read this generic APXM-owned path while cwd stays
+        // at the project root for normal build/test workflows.
         let node_workspace = if let Some(session_dir) = ctx.metadata.get(metadata::SESSION_DIR) {
             let nodes_dir =
                 PathBuf::from(session_dir).join(apxm_core::constants::session::files::NODES_DIR);
@@ -159,24 +159,18 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
         } else {
             // Default: project root so agent can build/test/commit.
             // Context files are in node_workspace (passed via env).
-            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp"))
+            std::env::current_dir().unwrap_or_else(|_| std::env::temp_dir())
         };
 
         // Project current AAM state into AamContext for the spawned agent
         let aam_context = project_aam_context(ctx, node.id, profile_name);
 
-        // Build extra env for the agent subprocess.
-        // APXM_NODE_WORKSPACE points to the per-node context folder.
-        // CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD tells claude-agent-acp to also
-        // read CLAUDE.md from the node workspace folder while running in the project root.
+        // Build generic APXM-owned env for the agent subprocess. Adapter-specific
+        // environment belongs in the registered ACP profile, not in runtime.
         let mut extra_env = std::collections::HashMap::new();
         if let Some(ref ws) = node_workspace {
             let ws_str = ws.to_string_lossy().into_owned();
-            extra_env.insert("APXM_NODE_WORKSPACE".to_string(), ws_str.clone());
-            extra_env.insert(
-                "CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD".to_string(),
-                ws_str,
-            );
+            extra_env.insert(runtime_env::APXM_NODE_WORKSPACE.to_string(), ws_str);
         }
 
         let session = spawner

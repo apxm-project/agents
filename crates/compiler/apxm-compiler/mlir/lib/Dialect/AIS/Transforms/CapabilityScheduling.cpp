@@ -168,7 +168,8 @@ private:
 
     op->setAttr(apxm::constants::attrs::TIER, AISTierAttr::get(op->getContext(), AISTierKind::reasoning));
     op->setAttr(apxm::constants::attrs::INTENT, AISIntentAttr::get(op->getContext(), AISIntentKind::reasoning));
-    op->setAttr(apxm::constants::attrs::LATENCY, StringAttr::get(op->getContext(), "low"));
+    op->setAttr(apxm::constants::attrs::LATENCY,
+                AISLatencyAttr::get(op->getContext(), AISLatencyKind::low));
     op->setAttr(apxm::constants::attrs::ESTIMATED_COST,
                 AISEstimatedCostAttr::get(op->getContext(), static_cast<int32_t>(cost)));
 
@@ -186,7 +187,8 @@ private:
 
     op->setAttr(apxm::constants::attrs::TIER, AISTierAttr::get(op->getContext(), AISTierKind::reasoning));
     op->setAttr(apxm::constants::attrs::INTENT, AISIntentAttr::get(op->getContext(), AISIntentKind::reasoning));
-    op->setAttr(apxm::constants::attrs::LATENCY, StringAttr::get(op->getContext(), "high"));
+    op->setAttr(apxm::constants::attrs::LATENCY,
+                AISLatencyAttr::get(op->getContext(), AISLatencyKind::high));
     op->setAttr(apxm::constants::attrs::ESTIMATED_COST,
                 AISEstimatedCostAttr::get(op->getContext(), static_cast<int32_t>(cost)));
     // Think ops are never parallel-safe due to high latency
@@ -201,7 +203,8 @@ private:
 
     op->setAttr(apxm::constants::attrs::TIER, AISTierAttr::get(op->getContext(), AISTierKind::reasoning));
     op->setAttr(apxm::constants::attrs::INTENT, AISIntentAttr::get(op->getContext(), AISIntentKind::reasoning));
-    op->setAttr(apxm::constants::attrs::LATENCY, StringAttr::get(op->getContext(), "medium"));
+    op->setAttr(apxm::constants::attrs::LATENCY,
+                AISLatencyAttr::get(op->getContext(), AISLatencyKind::medium));
     op->setAttr(apxm::constants::attrs::ESTIMATED_COST,
                 AISEstimatedCostAttr::get(op->getContext(), static_cast<int32_t>(cost)));
     // Reason ops might support parallel execution if context is small

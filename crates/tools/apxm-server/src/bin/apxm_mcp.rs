@@ -2,13 +2,13 @@
 //!
 //! Implements JSON-RPC 2.0 over stdin/stdout per the Model Context Protocol
 //! (2024-11-05) so that external agents (Claude Code, Codex, etc.) can
-//! validate, compile, and execute APXM graphs.
+//! validate, compile, and execute APXM AIR.
 //!
 //! # Tools
 //!
-//! - `apxm_validate`      -- validate an AirModule JSON against the AIS contract
-//! - `apxm_compile`       -- compile an AirModule JSON to an optimized artifact
-//! - `apxm_execute`       -- compile + execute a graph in one shot
+//! - `apxm_validate`      -- validate AIR against the AIS contract
+//! - `apxm_compile`       -- compile AIR to an optimized artifact
+//! - `apxm_execute`       -- compile + execute AIR in one shot
 //! - `apxm_get_contract`  -- return the full AIS contract (ops, attrs, types)
 //!
 //! # Running
@@ -17,14 +17,14 @@
 //! apxm-mcp-server          # reads JSON-RPC lines from stdin, writes to stdout
 //! ```
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::io::{self, BufRead, Write};
 use std::time::Instant;
 
 use apxm_artifact::Artifact;
-use apxm_compiler::AirModule;
 use apxm_compiler::{Context as CompilerContext, Pipeline as CompilerPipeline};
 use apxm_core::constants::jsonrpc;
+use apxm_core::types::execution::ExecutionDag;
 use apxm_core::types::{AIS_OPERATIONS, OptimizationLevel};
 use serde_json::{Value, json};
 
@@ -135,27 +135,27 @@ fn handle_tools_list() -> Result<Value, Value> {
     let tools = vec![
         json!({
             "name": "apxm_validate",
-            "description": "Validate an AirModule JSON against the APXM AIS contract. Checks node ops, edges, parameters, cycles, and required attributes.",
+            "description": "Validate canonical APXM AIR against the AIS contract.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "graph_json": {
+                    "air": {
                         "type": "string",
-                        "description": "The AirModule as a JSON string"
+                        "description": "Canonical APXM AIR text"
                     }
                 },
-                "required": ["graph_json"]
+                "required": ["air"]
             }
         }),
         json!({
             "name": "apxm_compile",
-            "description": "Compile an AirModule JSON to an optimized APXM artifact (.apxmobj). Returns the artifact path and compilation stats.",
+            "description": "Compile canonical APXM AIR to an optimized APXM artifact (.apxmobj). Returns the artifact path and compilation stats.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "graph_json": {
+                    "air": {
                         "type": "string",
-                        "description": "The AirModule as a JSON string"
+                        "description": "Canonical APXM AIR text"
                     },
                     "opt_level": {
                         "type": "integer",
@@ -164,18 +164,18 @@ fn handle_tools_list() -> Result<Value, Value> {
                         "maximum": 3
                     }
                 },
-                "required": ["graph_json"]
+                "required": ["air"]
             }
         }),
         json!({
             "name": "apxm_execute",
-            "description": "Compile and execute an AirModule in one shot. Requires APXM runtime environment (LLM backend configured via APXM_BACKEND).",
+            "description": "Compile and execute APXM AIR in one shot. Requires APXM runtime environment.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "graph_json": {
+                    "air": {
                         "type": "string",
-                        "description": "The AirModule as a JSON string"
+                        "description": "Canonical APXM AIR text"
                     },
                     "parameters": {
                         "type": "object",
@@ -183,12 +183,12 @@ fn handle_tools_list() -> Result<Value, Value> {
                         "additionalProperties": { "type": "string" }
                     }
                 },
-                "required": ["graph_json"]
+                "required": ["air"]
             }
         }),
         json!({
             "name": "apxm_get_contract",
-            "description": "Return the full AIS contract: all valid operations with required attributes, valid dependency types, parameter types, and graph schema. Use this to discover what operations and attributes are available when building graphs.",
+            "description": "Return the full AIS contract: all valid operations with required attributes, valid dependency types, parameter types, and AIR input contract.",
             "inputSchema": {
                 "type": "object",
                 "properties": {},
@@ -197,16 +197,16 @@ fn handle_tools_list() -> Result<Value, Value> {
         }),
         json!({
             "name": "apxm_analyze",
-            "description": "Analyze an AirModule to extract parallelism opportunities, critical path, and execution phases. Use this to optimize execution plans — find which steps can run in parallel, identify bottlenecks, and estimate speedup.",
+            "description": "Analyze APXM AIR to extract parallelism opportunities, critical path, and execution phases.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "graph_json": {
+                    "air": {
                         "type": "string",
-                        "description": "The AirModule as a JSON string"
+                        "description": "Canonical APXM AIR text"
                     }
                 },
-                "required": ["graph_json"]
+                "required": ["air"]
             }
         }),
     ];
@@ -249,150 +249,17 @@ fn handle_tools_call(params: Value) -> Result<Value, Value> {
 // ---------------------------------------------------------------------------
 
 fn tool_validate(args: Value) -> Result<String, String> {
-    let graph_json = args
-        .get("graph_json")
-        .and_then(Value::as_str)
-        .ok_or("missing required argument: graph_json")?;
-
     let mut errors: Vec<String> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
 
-    let graph = match serde_json::from_str::<AirModule>(graph_json) {
-        Ok(g) => g,
-        Err(e) => {
-            errors.push(format!("graph deserialization failed: {e}"));
-            let result = json!({
-                "valid": false,
-                "errors": errors,
-                "warnings": warnings,
-            });
-            return Ok(serde_json::to_string_pretty(&result).unwrap());
-        }
-    };
-
-    if graph.name.is_empty() {
-        errors.push("graph name must not be empty".to_string());
-    }
-
-    if graph.nodes.is_empty() {
-        errors.push("graph must contain at least one node".to_string());
-    }
-
-    let mut node_ids: HashSet<u64> = HashSet::new();
-
-    for node in &graph.nodes {
-        if node.id == 0 {
-            errors.push(format!(
-                "node '{}' has invalid id (0 or missing)",
-                node.name
-            ));
-        }
-        if !node_ids.insert(node.id) {
-            errors.push(format!("duplicate node id {}", node.id));
-        }
-        if node.name.is_empty() {
-            errors.push(format!("node id={} has empty name", node.id));
-        }
-
-        let spec = AIS_OPERATIONS.iter().find(|s| s.op_type == node.op);
-        if let Some(spec) = spec {
-            for field in spec.fields.iter().filter(|f| f.required) {
-                if !node.attributes.contains_key(field.name) {
-                    errors.push(format!(
-                        "node '{}' (id={}, op={}) missing required attribute '{}'",
-                        node.name, node.id, node.op, field.name
-                    ));
-                }
+    let air = get_air_arg(&args)?;
+    match compile_air_to_artifact(air, OptimizationLevel::O1) {
+        Ok(artifact) => {
+            if artifact.entry_dag().is_none() {
+                warnings.push("AIR compiled but produced no entry DAG".to_string());
             }
         }
-    }
-
-    for edge in &graph.edges {
-        if edge.from == edge.to {
-            errors.push(format!("edge {}->{} is a self-loop", edge.from, edge.to));
-        }
-        if !node_ids.contains(&edge.from) {
-            errors.push(format!(
-                "edge references non-existent source node {}",
-                edge.from
-            ));
-        }
-        if !node_ids.contains(&edge.to) {
-            errors.push(format!(
-                "edge references non-existent target node {}",
-                edge.to
-            ));
-        }
-    }
-
-    if !node_ids.is_empty() && !graph.edges.is_empty() {
-        let mut in_degree: HashMap<u64, usize> = node_ids.iter().map(|&id| (id, 0)).collect();
-        let mut adjacency: HashMap<u64, Vec<u64>> = HashMap::new();
-
-        for edge in &graph.edges {
-            if node_ids.contains(&edge.from) && node_ids.contains(&edge.to) {
-                adjacency.entry(edge.from).or_default().push(edge.to);
-                *in_degree.entry(edge.to).or_insert(0) += 1;
-            }
-        }
-
-        let mut queue: VecDeque<u64> = in_degree
-            .iter()
-            .filter_map(|(&id, &deg)| if deg == 0 { Some(id) } else { None })
-            .collect();
-        let mut visited = 0usize;
-        while let Some(node_id) = queue.pop_front() {
-            visited += 1;
-            if let Some(neighbors) = adjacency.get(&node_id) {
-                for &neighbor in neighbors {
-                    if let Some(current) = in_degree.get_mut(&neighbor) {
-                        *current = current.saturating_sub(1);
-                        if *current == 0 {
-                            queue.push_back(neighbor);
-                        }
-                    }
-                }
-            }
-        }
-
-        if visited != node_ids.len() {
-            let cycle_nodes = node_ids.len() - visited;
-            errors.push(format!(
-                "graph contains a cycle ({cycle_nodes} nodes involved)"
-            ));
-        }
-    }
-
-    let valid_types: HashSet<&str> = ["str", "int", "float", "bool", "json"]
-        .into_iter()
-        .collect();
-    let mut param_names: HashSet<String> = HashSet::new();
-    for param in &graph.parameters {
-        if param.name.is_empty() {
-            errors.push("parameter with empty name".to_string());
-        }
-        if !param_names.insert(param.name.clone()) {
-            errors.push(format!("duplicate parameter name '{}'", param.name));
-        }
-        if !valid_types.contains(param.type_name.as_str()) {
-            warnings.push(format!(
-                "parameter '{}' has non-standard type_name '{}'",
-                param.name, param.type_name
-            ));
-        }
-    }
-
-    match graph.validate() {
-        Ok(()) => {}
-        Err(e) => {
-            let msg = e.to_string();
-            if !errors
-                .iter()
-                .any(|existing| msg.contains(&existing[..existing.len().min(30)]))
-            {
-                errors.push(format!("air-builder validation: {msg}"));
-            }
-        }
+        Err(err) => errors.push(err),
     }
 
     let valid = errors.is_empty();
@@ -409,11 +276,7 @@ fn tool_validate(args: Value) -> Result<String, String> {
 // ---------------------------------------------------------------------------
 
 fn tool_compile(args: Value) -> Result<String, String> {
-    let graph_json = args
-        .get("graph_json")
-        .and_then(Value::as_str)
-        .ok_or("missing required argument: graph_json")?;
-
+    let air = get_air_arg(&args)?;
     let opt_level_num = args.get("opt_level").and_then(Value::as_u64).unwrap_or(2);
     let opt_level = match opt_level_num {
         0 => OptimizationLevel::O0,
@@ -423,37 +286,19 @@ fn tool_compile(args: Value) -> Result<String, String> {
         _ => return Err(format!("opt_level must be 0-3, got {opt_level_num}")),
     };
 
-    let graph: AirModule =
-        serde_json::from_str(graph_json).map_err(|e| format!("invalid graph: {e}"))?;
-
-    let node_count = graph.nodes.len();
-    let edge_count = graph.edges.len();
-    let graph_name = graph.name.clone();
-
     let start = Instant::now();
-
-    let air_text = graph
-        .to_air()
-        .map_err(|e| format!("failed to lower graph to AIR: {e}"))?;
-
-    let context =
-        CompilerContext::new().map_err(|e| format!("compiler context init failed: {e}"))?;
-    let pipeline = CompilerPipeline::with_opt_level(&context, opt_level);
-    let module = pipeline
-        .compile(&air_text)
-        .map_err(|e| format!("compilation failed: {e}"))?;
-
-    let artifact_bytes = module
-        .generate_artifact_bytes()
-        .map_err(|e| format!("artifact generation failed: {e}"))?;
-
-    // Validate the artifact is well-formed
-    let artifact = Artifact::from_bytes(&artifact_bytes)
-        .map_err(|e| format!("artifact decode failed: {e}"))?;
-
+    let artifact = compile_air_to_artifact(air, opt_level)?;
     let compile_ms = start.elapsed().as_millis();
+    let artifact_bytes = artifact
+        .to_bytes()
+        .map_err(|e| format!("artifact encode failed: {e}"))?;
+    let dag = artifact.entry_dag();
+    let node_count = dag.map(|d| d.nodes.len()).unwrap_or(0);
+    let edge_count = dag.map(|d| d.edges.len()).unwrap_or(0);
+    let graph_name = dag
+        .and_then(|d| d.metadata.name.as_deref())
+        .unwrap_or("artifact");
 
-    // Write artifact to a temp file
     let artifact_path = std::env::temp_dir().join(format!("{graph_name}.apxmobj"));
     artifact
         .write_to_path(&artifact_path)
@@ -477,10 +322,7 @@ fn tool_compile(args: Value) -> Result<String, String> {
 // ---------------------------------------------------------------------------
 
 fn tool_execute(args: Value) -> Result<String, String> {
-    let graph_json = args
-        .get("graph_json")
-        .and_then(Value::as_str)
-        .ok_or("missing required argument: graph_json")?;
+    let air = get_air_arg(&args)?;
 
     let parameters = args
         .get("parameters")
@@ -488,25 +330,8 @@ fn tool_execute(args: Value) -> Result<String, String> {
         .cloned()
         .unwrap_or_default();
 
-    let graph: AirModule =
-        serde_json::from_str(graph_json).map_err(|e| format!("invalid graph: {e}"))?;
-
-    // Compile
     let compile_start = Instant::now();
-    let air_text = graph
-        .to_air()
-        .map_err(|e| format!("failed to lower graph to AIR: {e}"))?;
-    let context =
-        CompilerContext::new().map_err(|e| format!("compiler context init failed: {e}"))?;
-    let pipeline = CompilerPipeline::with_opt_level(&context, OptimizationLevel::O1);
-    let module = pipeline
-        .compile(&air_text)
-        .map_err(|e| format!("compilation failed: {e}"))?;
-    let artifact_bytes = module
-        .generate_artifact_bytes()
-        .map_err(|e| format!("artifact generation failed: {e}"))?;
-    let artifact = Artifact::from_bytes(&artifact_bytes)
-        .map_err(|e| format!("artifact decode failed: {e}"))?;
+    let artifact = compile_air_to_artifact(air, OptimizationLevel::O1)?;
     let compile_ms = compile_start.elapsed().as_millis();
 
     // Build args from parameters map
@@ -640,9 +465,9 @@ fn tool_get_contract() -> Result<String, String> {
         "operations": Value::Object(operations),
         "dependency_types": ["Data", "Control", "Effect"],
         "parameter_types": ["str", "int", "float", "bool", "json"],
-        "graph_schema": {
-            "required_fields": ["name", "nodes", "edges"],
-            "optional_fields": ["parameters", "metadata"],
+        "air_contract": {
+            "required_argument": "air",
+            "description": "Canonical APXM graph source as AIR text",
         }
     });
     Ok(serde_json::to_string_pretty(&result).unwrap())
@@ -653,13 +478,11 @@ fn tool_get_contract() -> Result<String, String> {
 // ---------------------------------------------------------------------------
 
 fn tool_analyze(args: Value) -> Result<String, String> {
-    let graph_json = args
-        .get("graph_json")
-        .and_then(Value::as_str)
-        .ok_or("missing required argument: graph_json")?;
-
-    let graph: AirModule =
-        serde_json::from_str(graph_json).map_err(|e| format!("invalid graph: {e}"))?;
+    let air = get_air_arg(&args)?;
+    let artifact = compile_air_to_artifact(air, OptimizationLevel::O1)?;
+    let graph = artifact
+        .entry_dag()
+        .ok_or_else(|| "compiled AIR produced no entry DAG".to_string())?;
 
     // Build adjacency and reverse-adjacency maps
     let node_ids: HashSet<u64> = graph.nodes.iter().map(|n| n.id).collect();
@@ -720,7 +543,7 @@ fn tool_analyze(args: Value) -> Result<String, String> {
             .and_then(|n| {
                 use apxm_core::types::OperationLatency;
                 for spec in AIS_OPERATIONS {
-                    if spec.op_type == n.op {
+                    if spec.op_type == n.op_type {
                         return Some(match spec.latency {
                             OperationLatency::None => 10,
                             OperationLatency::Low => 100,
@@ -782,9 +605,9 @@ fn tool_analyze(args: Value) -> Result<String, String> {
                 .map(|&id| {
                     let node = graph.nodes.iter().find(|n| n.id == id);
                     let op = node
-                        .map(|n| n.op.to_string())
+                        .map(|n| n.op_type.to_string())
                         .unwrap_or_else(|| "?".to_string());
-                    let name = node.map(|n| n.name.as_str()).unwrap_or("?");
+                    let name = node.and_then(|n| n.metadata.name.as_deref()).unwrap_or("?");
                     json!({"id": id, "name": name, "op": op, "latency_ms": node_latency(id)})
                 })
                 .collect();
@@ -812,7 +635,7 @@ fn tool_analyze(args: Value) -> Result<String, String> {
     let max_parallelism = phases.iter().map(|p| p.len()).max().unwrap_or(1);
 
     let result = json!({
-        "graph_name": graph.name,
+        "graph_name": graph.metadata.name.as_deref().unwrap_or("artifact"),
         "node_count": graph.nodes.len(),
         "edge_count": graph.edges.len(),
         "entry_nodes": entry_nodes,
@@ -841,7 +664,7 @@ fn build_suggestions(
     max_parallelism: usize,
     speedup: f64,
     critical_path: &[u64],
-    graph: &AirModule,
+    graph: &ExecutionDag,
 ) -> Vec<String> {
     let mut suggestions = Vec::new();
 
@@ -876,7 +699,7 @@ fn build_suggestions(
                 .find(|n| n.id == id)
                 .map(|n| {
                     for spec in AIS_OPERATIONS {
-                        if spec.op_type == n.op {
+                        if spec.op_type == n.op_type {
                             return match spec.latency {
                                 apxm_core::types::OperationLatency::High => 5000u64,
                                 apxm_core::types::OperationLatency::Medium => 1000,
@@ -892,9 +715,10 @@ fn build_suggestions(
         if let Some(&bn) = bottleneck
             && let Some(node) = graph.nodes.iter().find(|n| n.id == bn)
         {
+            let node_name = node.metadata.name.as_deref().unwrap_or("?");
             suggestions.push(format!(
                 "Critical path bottleneck: node {} ('{}', op={})",
-                bn, node.name, node.op
+                bn, node_name, node.op_type
             ));
         }
     }
@@ -905,6 +729,30 @@ fn build_suggestions(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+fn get_air_arg(args: &Value) -> Result<&str, String> {
+    let air = args
+        .get("air")
+        .and_then(Value::as_str)
+        .ok_or("missing required argument: air")?;
+    if air.trim().is_empty() {
+        return Err("air must not be empty".to_string());
+    }
+    Ok(air)
+}
+
+fn compile_air_to_artifact(air: &str, opt_level: OptimizationLevel) -> Result<Artifact, String> {
+    let context =
+        CompilerContext::new().map_err(|e| format!("compiler context init failed: {e}"))?;
+    let pipeline = CompilerPipeline::with_opt_level(&context, opt_level);
+    let module = pipeline
+        .compile(air)
+        .map_err(|e| format!("compilation failed: {e}"))?;
+    let artifact_bytes = module
+        .generate_artifact_bytes()
+        .map_err(|e| format!("artifact generation failed: {e}"))?;
+    Artifact::from_bytes(&artifact_bytes).map_err(|e| format!("artifact decode failed: {e}"))
+}
 
 fn rpc_error(code: i64, message: impl Into<String>) -> Value {
     json!({

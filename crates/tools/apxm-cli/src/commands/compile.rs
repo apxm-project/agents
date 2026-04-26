@@ -12,6 +12,10 @@ use anyhow::Result;
 #[cfg(feature = "driver")]
 use apxm_core::constants::env as apxm_env;
 #[cfg(feature = "driver")]
+use apxm_core::constants::extensions;
+#[cfg(feature = "driver")]
+use apxm_core::types::ApxmPathFormat;
+#[cfg(feature = "driver")]
 use apxm_driver::compiler::Compiler;
 
 #[cfg(feature = "driver")]
@@ -19,7 +23,7 @@ use super::implementations::{load_config, parse_opt_level};
 
 #[cfg(feature = "driver")]
 fn is_python_graph_input(input: &Path) -> bool {
-    input.extension().and_then(|ext| ext.to_str()) == Some("py")
+    ApxmPathFormat::from_path(input).is_python_frontend()
 }
 
 /// Sentinel prefix emitted by the Python frontend in a `;` comment when
@@ -48,7 +52,10 @@ fn extract_python_tools_sidecar(air: &str) -> (String, Option<Vec<u8>>) {
 }
 
 #[cfg(feature = "driver")]
-fn emit_air_from_python(input: &Path) -> Result<(tempfile::NamedTempFile, Option<Vec<u8>>)> {
+fn emit_air_from_python(
+    input: &Path,
+    config_path: Option<&Path>,
+) -> Result<(tempfile::NamedTempFile, Option<Vec<u8>>)> {
     use std::io::Write;
 
     let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
@@ -66,12 +73,15 @@ fn emit_air_from_python(input: &Path) -> Result<(tempfile::NamedTempFile, Option
         .context("Failed to build PYTHONPATH for APXM Python frontend")?;
     let mut output = None;
     for candidate in ["python3", "python"] {
-        match std::process::Command::new(candidate)
+        let mut command = std::process::Command::new(candidate);
+        command
             .arg(input)
             .env(apxm_env::PYTHONPATH, &pythonpath)
-            .env(apxm_env::APXM_EMIT_AIR, apxm_env::flag_values::ENABLED)
-            .output()
-        {
+            .env(apxm_env::APXM_EMIT_AIR, apxm_env::flag_values::ENABLED);
+        if let Some(config_path) = config_path {
+            command.env(apxm_env::APXM_CONFIG, config_path);
+        }
+        match command.output() {
             Ok(result) => {
                 output = Some(result);
                 break;
@@ -140,75 +150,101 @@ fn emit_air_from_python(input: &Path) -> Result<(tempfile::NamedTempFile, Option
 type PythonToolsSidecar = Option<Vec<u8>>;
 
 #[cfg(feature = "driver")]
-fn model_allowlist_with_registered_models(
-    configured: Option<&Vec<String>>,
-    apxm_config: Option<&apxm_driver::config::ApXmConfig>,
-) -> Option<Vec<String>> {
-    let mut allowlist = configured.cloned().unwrap_or_default();
-    use apxm_credentials::BackendStore;
-    use std::collections::HashSet;
+fn is_mlir_air_text(text: &str) -> bool {
+    use apxm_core::constants::mlir::syntax as mlir_syntax;
 
-    let mut seen: HashSet<String> = allowlist.iter().cloned().collect();
-    if let Some(config) = apxm_config {
-        for backend in &config.backends {
-            for model in &backend.models {
-                if seen.insert(model.id.clone()) {
-                    allowlist.push(model.id.clone());
-                }
-                for alias in &model.aliases {
-                    if seen.insert(alias.clone()) {
-                        allowlist.push(alias.clone());
-                    }
-                }
-            }
-        }
-    }
-
-    let Ok(store) = BackendStore::open() else {
-        return if allowlist.is_empty() {
-            None
-        } else {
-            Some(allowlist)
-        };
-    };
-    let Ok(backends) = store.list() else {
-        return if allowlist.is_empty() {
-            None
-        } else {
-            Some(allowlist)
-        };
-    };
-
-    for backend in &backends {
-        for model in &backend.models {
-            if seen.insert(model.id.clone()) {
-                allowlist.push(model.id.clone());
-            }
-            for alias in &model.aliases {
-                if seen.insert(alias.clone()) {
-                    allowlist.push(alias.clone());
-                }
-            }
-        }
-    }
-
-    if allowlist.is_empty() {
-        None
-    } else {
-        Some(allowlist)
-    }
+    text.lines()
+        .map(str::trim_start)
+        .find(|line| !line.is_empty() && !line.starts_with(mlir_syntax::LINE_COMMENT_PREFIX))
+        .is_some_and(|line| {
+            line.starts_with(mlir_syntax::MODULE_KEYWORD)
+                || line.starts_with(mlir_syntax::FUNC_FUNC_PREFIX)
+        })
 }
 
 #[cfg(feature = "driver")]
 pub(super) fn prepare_graph_input(
     input: &Path,
+    config_path: Option<&Path>,
 ) -> Result<(PathBuf, Option<tempfile::NamedTempFile>, PythonToolsSidecar)> {
     if is_python_graph_input(input) {
-        let (tmp, sidecar) = emit_air_from_python(input)?;
+        let (tmp, sidecar) = emit_air_from_python(input, config_path)?;
         return Ok((tmp.path().to_path_buf(), Some(tmp), sidecar));
     }
 
+    let input_format = ApxmPathFormat::from_path(input);
+    if input_format.is_json_data() {
+        return Err(anyhow::anyhow!(
+            ".json is structured data for metrics, sessions, manifests, diagnostics, and API envelopes. \
+             Graph source input must be .air, or a Python frontend source that emits .air."
+        ));
+    }
+
+    if input_format.is_air_source() {
+        let air = std::fs::read_to_string(input)
+            .with_context(|| format!("Failed to read {}", input.display()))?;
+        let (clean_air, sidecar) = extract_python_tools_sidecar(&air);
+        if sidecar.is_some() {
+            use std::io::Write;
+
+            let mut tmp = tempfile::Builder::new()
+                .suffix(".air")
+                .tempfile()
+                .context("Failed to create temporary .air file")?;
+            tmp.write_all(clean_air.as_bytes())
+                .context("Failed to write stripped .air to temporary file")?;
+            tmp.flush()
+                .context("Failed to flush stripped .air temporary file")?;
+            return Ok((tmp.path().to_path_buf(), Some(tmp), sidecar));
+        }
+    }
+
+    if !input_format.is_air_source() {
+        return Err(anyhow::anyhow!(
+            "Unsupported graph input '{}'. Use .air for canonical graph source, .py for a frontend source, or .apxmobj with 'dekk apxm run'.",
+            input.display()
+        ));
+    }
+
     Ok((input.to_path_buf(), None, None))
+}
+
+#[cfg(feature = "driver")]
+fn resolve_directory_air_source(dir: &Path) -> Result<PathBuf> {
+    let mut graphs = Vec::new();
+    let subdirs = ["flows", "nodes", ""];
+
+    for subdir in &subdirs {
+        let search_dir = if subdir.is_empty() {
+            dir.to_path_buf()
+        } else {
+            dir.join(subdir)
+        };
+        if !search_dir.is_dir() {
+            continue;
+        }
+
+        for entry in std::fs::read_dir(&search_dir)
+            .with_context(|| format!("Failed to read {}", search_dir.display()))?
+        {
+            let path = entry?.path();
+            if ApxmPathFormat::from_path(&path).is_air_source() {
+                graphs.push(path);
+            }
+        }
+    }
+
+    match graphs.len() {
+        0 => Err(anyhow::anyhow!(
+            "No .air graph source found in directory '{}'",
+            dir.display()
+        )),
+        1 => Ok(graphs.remove(0)),
+        count => Err(anyhow::anyhow!(
+            "Directory '{}' contains {count} .air graph sources. Provide a single .air file instead.",
+            dir.display()
+        )),
+    }
 }
 
 #[cfg(feature = "driver")]
@@ -232,31 +268,34 @@ pub fn compile_command(
     use apxm_core::types::{OptimizationTarget, PipelineConfig};
 
     let opt = parse_opt_level(opt_level);
+    let compiler_config_path = config.clone();
     let opt_target: OptimizationTarget = target
         .parse()
         .with_context(|| format!("Invalid optimization target: {}", target))?;
-    let apxm_config = load_config(config.clone()).ok();
-    let (graph_input, _python_air, python_tools_sidecar) = if input.is_dir() {
-        (input.clone(), None, None)
+    let _apxm_config = load_config(config.clone())?;
+    let input_source = if input.is_dir() {
+        resolve_directory_air_source(&input)?
     } else {
-        prepare_graph_input(&input)?
+        input.clone()
+    };
+    let (graph_input, _python_air, python_tools_sidecar) = if input_source.is_dir() {
+        unreachable!("directory inputs are resolved to a canonical .air source before compilation")
+    } else {
+        prepare_graph_input(&input_source, compiler_config_path.as_deref())?
     };
 
     let compile_start = std::time::Instant::now();
     let compiler = Compiler::with_opt_level(opt).context("Failed to initialize compiler")?;
 
     // Check if this is a new-format .air file (valid MLIR)
-    let is_new_air = if !input.is_dir()
-        && graph_input.extension().and_then(|e| e.to_str()) == Some("air")
-    {
-        if let Ok(text) = std::fs::read_to_string(&graph_input) {
-            text.trim_start().starts_with("module") || text.trim_start().starts_with("func.func")
+    let is_new_air =
+        if !input_source.is_dir() && ApxmPathFormat::from_path(&graph_input).is_air_source() {
+            std::fs::read_to_string(&graph_input)
+                .map(|text| is_mlir_air_text(&text))
+                .unwrap_or(false)
         } else {
             false
-        }
-    } else {
-        false
-    };
+        };
 
     // For new .air format (valid MLIR), compile directly without AirModule.
     // The .air path skips graph lowering, but still honors PipelineConfig
@@ -267,6 +306,7 @@ pub fn compile_command(
             .with_context(|| format!("Failed to read {}", graph_input.display()))?;
         let needs_custom_config = no_cse_llm
             || opt_target != OptimizationTarget::Balanced
+            || compiler_config_path.is_some()
             || profile.is_some()
             || warn
             || !disable_passes.is_empty()
@@ -280,6 +320,7 @@ pub fn compile_command(
                 verify: true,
                 no_cse_llm,
                 profile_path: profile.clone(),
+                compiler_config_path: compiler_config_path.clone(),
                 warn_unconsumed: warn,
                 disable_passes: disable_passes.clone(),
                 pass_list_override: pass_list_override.clone(),
@@ -296,6 +337,7 @@ pub fn compile_command(
                 verify: true,
                 no_cse_llm,
                 profile_path: profile.clone(),
+                compiler_config_path: compiler_config_path.clone(),
                 warn_unconsumed: warn,
                 disable_passes: disable_passes.clone(),
                 pass_list_override: pass_list_override.clone(),
@@ -341,9 +383,7 @@ pub fn compile_command(
             .map_err(|err| anyhow::anyhow!("Failed to serialize artifact: {err}"))?;
         let artifact_time = artifact_start.elapsed();
 
-        let out_path = output.unwrap_or_else(|| {
-            graph_input.with_extension(apxm_core::constants::extensions::ARTIFACT)
-        });
+        let out_path = output.unwrap_or_else(|| graph_input.with_extension(extensions::ARTIFACT));
         std::fs::write(&out_path, &bytes)
             .with_context(|| format!("Failed to write {}", out_path.display()))?;
 
@@ -398,157 +438,10 @@ pub fn compile_command(
         return Ok(());
     }
 
-    let graph = if input.is_dir() {
-        load_graph_from_directory(&input)?
-    } else {
-        compiler
-            .load_graph(&graph_input)
-            .map_err(|e| anyhow::anyhow!("Failed to parse graph: {e}"))?
-    };
-
-    // Validate concrete model ids and aliases against the configured or
-    // registered backend model set. This stays provider-neutral: local,
-    // cloud, and on-prem backends all contribute the same way.
-    if let Some(config) = apxm_config.as_ref() {
-        let allowlist =
-            model_allowlist_with_registered_models(config.models.allowlist.as_ref(), Some(config));
-        Compiler::validate_model_allowlist(&graph, allowlist.as_ref())?;
-    }
-
-    // When diagnostics are requested, use the per-pass metrics path.
-    // Otherwise use the fast bulk-run path.
-    let needs_custom_config = no_cse_llm
-        || opt_target != OptimizationTarget::Balanced
-        || profile.is_some()
-        || warn
-        || !disable_passes.is_empty()
-        || pass_list_override.is_some();
-    let needs_diagnostics_graph = emit_diagnostics.is_some() || emit_metrics.is_some();
-    let (module, pass_diagnostics) = if needs_diagnostics_graph {
-        let config = PipelineConfig {
-            opt_level: opt,
-            target: opt_target,
-            verify: true,
-            no_cse_llm,
-            profile_path: profile.clone(),
-            warn_unconsumed: warn,
-            disable_passes: disable_passes.clone(),
-            pass_list_override: pass_list_override.clone(),
-            ..Default::default()
-        };
-        let (m, d) = compiler
-            .compile_graph_with_config_and_diagnostics(&graph, config)
-            .map_err(|e| anyhow::anyhow!("Failed to compile graph: {e}"))?;
-        (m, Some(d))
-    } else if needs_custom_config {
-        let config = PipelineConfig {
-            opt_level: opt,
-            target: opt_target,
-            verify: true,
-            no_cse_llm,
-            profile_path: profile.clone(),
-            warn_unconsumed: warn,
-            disable_passes: disable_passes.clone(),
-            pass_list_override: pass_list_override.clone(),
-            ..Default::default()
-        };
-        let m = compiler
-            .compile_graph_with_config(&graph, config)
-            .map_err(|e| anyhow::anyhow!("Failed to compile graph: {e}"))?;
-        (m, None)
-    } else {
-        let m = compiler
-            .compile_graph(&graph)
-            .map_err(|e| anyhow::anyhow!("Failed to compile graph: {e}"))?;
-        (m, None)
-    };
-    let compile_time = compile_start.elapsed();
-
-    let artifact_start = std::time::Instant::now();
-    let bytes = module
-        .generate_artifact_bytes()
-        .context("Failed to generate artifact")?;
-    let artifact_time = artifact_start.elapsed();
-
-    let out_path = output.unwrap_or_else(|| {
-        if input.is_dir() {
-            input.join(format!(
-                "{}.{}",
-                graph.name,
-                apxm_core::constants::extensions::ARTIFACT
-            ))
-        } else {
-            input.with_extension(apxm_core::constants::extensions::ARTIFACT)
-        }
-    });
-    std::fs::write(&out_path, &bytes)
-        .with_context(|| format!("Failed to write {}", out_path.display()))?;
-
-    // Emit diagnostics if requested
-    if let Some(diag_path) = emit_diagnostics {
-        let artifact = apxm_artifact::Artifact::from_bytes(&bytes)
-            .map_err(|e| anyhow::anyhow!("Failed to parse artifact: {}", e))?;
-        let dag = artifact
-            .entry_dag()
-            .ok_or_else(|| anyhow::anyhow!("Artifact contains no entry DAG"))?;
-
-        let compiler_json = pass_diagnostics
-            .as_ref()
-            .map(|d| d.to_json())
-            .unwrap_or_else(|| {
-                use apxm_compiler::passes::metrics::PipelineDiagnostics;
-                PipelineDiagnostics::new().to_json()
-            });
-
-        let diagnostics_json = serde_json::json!({
-            "input": input.display().to_string(),
-            "mode": diagnostics::MODE_GRAPH,
-            "graph_name": graph.name,
-            "optimization_level": format!("O{}", opt_level),
-            "compilation_phases": {
-                "total_ms": compile_time.as_secs_f64() * 1000.0,
-                "artifact_gen_ms": artifact_time.as_secs_f64() * 1000.0,
-                "passes_ms": pass_diagnostics.as_ref().map(|d| d.total_duration_ms).unwrap_or(0.0)
-            },
-            "dag_statistics": {
-                "total_nodes": dag.nodes.len(),
-                "entry_nodes": dag.entry_nodes.len(),
-                "exit_nodes": dag.exit_nodes.len(),
-                "total_edges": dag.edges.len()
-            },
-            "pass_metrics": compiler_json[metrics_keys::COMPILER_PASSES].clone(),
-            "pass_summary": compiler_json[metrics_keys::COMPILER_SUMMARY].clone()
-        });
-
-        std::fs::write(&diag_path, serde_json::to_string_pretty(&diagnostics_json)?)
-            .with_context(|| format!("Failed to write diagnostics to {}", diag_path.display()))?;
-
-        println!("Wrote diagnostics to {}", diag_path.display());
-    }
-
-    // Emit unified metrics report (compiler-only).
-    if let Some(metrics_path) = emit_metrics {
-        use apxm_compiler::passes::metrics::CompilerMetricsSource;
-
-        let mut report = apxm_core::MetricsReport::new();
-        if let Some(ref diag) = pass_diagnostics {
-            report.add_source(&CompilerMetricsSource { diagnostics: diag });
-        }
-        std::fs::write(
-            &metrics_path,
-            serde_json::to_string_pretty(&report.to_json())?,
-        )
-        .with_context(|| format!("Failed to write metrics to {}", metrics_path.display()))?;
-        println!("Wrote metrics to {}", metrics_path.display());
-    }
-
-    println!("Wrote graph artifact to {}", out_path.display());
-    println!(
-        "Compiled in {:.2}ms, artifact generated in {:.2}ms",
-        compile_time.as_secs_f64() * 1000.0,
-        artifact_time.as_secs_f64() * 1000.0
-    );
-    Ok(())
+    Err(anyhow::anyhow!(
+        "Input '{}' is not canonical AIR. Graph source must be .air, or a Python frontend source that emits .air.",
+        input_source.display()
+    ))
 }
 
 #[cfg(feature = "driver")]
@@ -562,68 +455,63 @@ pub fn decompile_command(artifact_path: PathBuf, output: Option<PathBuf>) -> Res
         .ok_or_else(|| anyhow::anyhow!("Artifact contains no entry DAG"))?;
 
     let graph = graph_from_execution_dag(dag);
-    let json = serde_json::to_string_pretty(&graph)?;
+    let air = graph
+        .to_air()
+        .map_err(|err| anyhow::anyhow!("Failed to emit AIR from artifact: {err}"))?;
 
     if let Some(out_path) = output {
-        std::fs::write(&out_path, &json)
+        std::fs::write(&out_path, &air)
             .with_context(|| format!("Failed to write {}", out_path.display()))?;
         println!("Decompiled to {}", out_path.display());
     } else {
-        println!("{}", json);
+        println!("{}", air);
     }
     Ok(())
 }
 
 #[cfg(feature = "driver")]
-fn load_graph_from_directory(dir: &std::path::Path) -> Result<apxm_compiler::AirModule> {
-    let mut graphs = Vec::new();
-    let subdirs = ["flows", "nodes", ""];
+pub(super) fn air_graph_from_source(input: &Path) -> Result<apxm_compiler::AirModule> {
+    let compiler = Compiler::with_opt_level(apxm_core::types::OptimizationLevel::O0)
+        .context("Failed to initialize compiler for AIR inspection")?;
+    let module = compiler.compile(input).map_err(|err| {
+        anyhow::anyhow!("Failed to compile AIR source '{}': {err}", input.display())
+    })?;
+    let artifact = module
+        .generate_artifact_with_manifest(None, None)
+        .context("Failed to generate inspection artifact")?;
+    let dag = artifact
+        .entry_dag()
+        .ok_or_else(|| anyhow::anyhow!("Inspection artifact contains no entry DAG"))?;
+    Ok(graph_from_execution_dag(dag))
+}
 
-    for subdir in &subdirs {
-        let search_dir = if subdir.is_empty() {
-            dir.to_path_buf()
-        } else {
-            dir.join(subdir)
-        };
-        if !search_dir.is_dir() {
-            continue;
-        }
-        for entry in std::fs::read_dir(&search_dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            if matches!(
-                path.extension().and_then(|e| e.to_str()),
-                Some("json") | Some("air")
-            ) {
-                let text = std::fs::read_to_string(&path)
-                    .with_context(|| format!("Failed to read {}", path.display()))?;
-                if text.contains("\"nodes\"") {
-                    let graph: apxm_compiler::AirModule =
-                        serde_json::from_str(&text).map_err(|e| {
-                            anyhow::anyhow!("Failed to parse {}: {}", path.display(), e)
-                        })?;
-                    graphs.push(graph);
-                }
-            }
-        }
+#[cfg(all(test, feature = "driver"))]
+mod tests {
+    use super::*;
+    use apxm_core::constants::mlir::syntax as mlir_syntax;
+
+    #[test]
+    fn mlir_air_text_accepts_leading_sidecar_comments() {
+        let text = format!(
+            "{} frontend sidecar\n\n{} {{\n}}\n",
+            mlir_syntax::LINE_COMMENT_PREFIX,
+            mlir_syntax::MODULE_KEYWORD
+        );
+
+        assert!(is_mlir_air_text(&text));
     }
 
-    if graphs.is_empty() {
-        return Err(anyhow::anyhow!(
-            "No graph files (.air) found in directory '{}'",
-            dir.display()
-        ));
+    #[test]
+    fn mlir_air_text_accepts_standalone_function() {
+        let text = format!("{} @main() {{}}\n", mlir_syntax::FUNC_FUNC_PREFIX);
+
+        assert!(is_mlir_air_text(&text));
     }
 
-    if graphs.len() == 1 {
-        return Ok(graphs.into_iter().next().unwrap());
+    #[test]
+    fn mlir_air_text_rejects_json_graph() {
+        assert!(!is_mlir_air_text("{\"nodes\": []}"));
     }
-
-    Err(anyhow::anyhow!(
-        "Directory '{}' contains {} graph files. Provide a single graph file instead.",
-        dir.display(),
-        graphs.len()
-    ))
 }
 
 /// Convert an ExecutionDag back to an AirModule (used by decompile + session output).
@@ -672,7 +560,7 @@ pub(super) fn graph_from_execution_dag(
     let mut metadata = HashMap::new();
     if dag.metadata.is_entry {
         metadata.insert(
-            "is_entry".to_string(),
+            apxm_core::constants::graph::metadata::IS_ENTRY.to_string(),
             apxm_core::types::values::Value::Bool(true),
         );
     }

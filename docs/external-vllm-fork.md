@@ -32,8 +32,9 @@ steps, not the supported workflow.
 
 If APXM needs graph-aware vLLM behavior, it must talk to a server launched from
 this fork or an equivalent build that exposes the same contract. A stock vLLM
-server is valid only when graph-aware behavior is explicitly disabled in backend
-configuration.
+server is not valid for the APXM graph-aware `vllm` backend because that backend
+requires the `/v1/apxm/*` graph endpoints. Use another OpenAI-compatible backend
+route if graph-aware behavior is intentionally not required.
 
 ## HTTP Contract
 

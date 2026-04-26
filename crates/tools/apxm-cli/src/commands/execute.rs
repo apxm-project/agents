@@ -14,7 +14,7 @@ use apxm_driver::{Linker, LinkerConfig};
 use apxm_runtime::RuntimeExecutionResult;
 
 #[cfg(feature = "driver")]
-use super::compile::{graph_from_execution_dag, prepare_graph_input};
+use super::compile::{air_graph_from_source, graph_from_execution_dag, prepare_graph_input};
 #[cfg(feature = "driver")]
 use super::dekk_hints;
 #[cfg(feature = "driver")]
@@ -22,19 +22,7 @@ use super::implementations::{load_config, parse_opt_level};
 
 #[cfg(feature = "driver")]
 fn load_graph_for_session(input: &std::path::Path) -> Result<apxm_compiler::AirModule> {
-    use apxm_driver::compiler::Compiler;
-
-    // Try to load via compiler first so .air gets its dedicated error message.
-    if let Ok(compiler) = Compiler::new() {
-        if let Ok(graph) = compiler.load_graph(input) {
-            return Ok(graph);
-        }
-    }
-
-    // Fallback: parse as JSON directly when the compiler is unavailable.
-    let text = std::fs::read_to_string(input).context("Failed to read graph file")?;
-    serde_json::from_str::<apxm_compiler::AirModule>(&text)
-        .map_err(|e| anyhow::anyhow!("Failed to parse graph: {}", e))
+    air_graph_from_source(input)
 }
 
 #[cfg(feature = "driver")]
@@ -267,11 +255,13 @@ pub async fn execute_command(
     let opt = parse_opt_level(opt_level);
     let pipeline_config = apxm_core::types::PipelineConfig {
         opt_level: opt,
+        compiler_config_path: config.clone(),
         ..Default::default()
     };
     let mut linker_config =
         LinkerConfig::from_apxm_config(apxm_config).with_pipeline_config(pipeline_config);
-    let (graph_input, _python_air, python_tools_sidecar) = prepare_graph_input(&input)?;
+    let (graph_input, _python_air, python_tools_sidecar) =
+        prepare_graph_input(&input, config.as_deref())?;
 
     // Enable all-outputs collection when session output is requested
     if emit_session.is_some() {

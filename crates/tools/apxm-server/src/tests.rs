@@ -27,6 +27,17 @@ use crate::tasks::{QueuedTask, TaskQueueManager, TaskStatus};
 
 // ── Test helpers ──────────────────────────────────────────────────────────
 
+fn const_only_air() -> String {
+    r#"module {
+  func.func @const_only() -> !ais.token attributes {ais.entry} {
+    %value = ais.const_str "ok" : !ais.token
+    func.return %value : !ais.token
+  }
+}
+"#
+    .to_string()
+}
+
 /// Build a test AppState backed by a real (but unconfigured) Runtime.
 ///
 /// The runtime has no LLM backends registered, so any graph that calls
@@ -236,29 +247,29 @@ async fn mcp_unknown_method_returns_error_code() {
     assert_eq!(code, -32601, "expected method-not-found code: {body}");
 }
 
-// ── /v1/execute (graph execution) ─────────────────────────────────────────
+// ── /v1/execute (AIR execution) ───────────────────────────────────────────
 
 #[tokio::test]
-async fn execute_invalid_graph_returns_400() {
+async fn execute_invalid_air_returns_400() {
     let app = build_app(test_state().await);
     let (status, body) = post_json(
         app,
         "/v1/execute",
         serde_json::json!({
-            "graph": { "not": "a valid graph" }
+            "air": "not valid AIR"
         }),
     )
     .await;
-    // Invalid graph → compiler rejects → 400 Bad Request
+    // Invalid AIR -> compiler rejects -> 400 Bad Request
     assert_eq!(status, StatusCode::BAD_REQUEST, "expected 400: {body}");
     assert!(body["error"].is_string(), "expected error message: {body}");
 }
 
 #[tokio::test]
-async fn execute_empty_graph_returns_error() {
+async fn execute_empty_air_returns_error() {
     let app = build_app(test_state().await);
     let (status, _body) = post_json(app, "/v1/execute", serde_json::json!({})).await;
-    // Missing graph field → 400 or 422
+    // Missing air field -> 400 or 422
     assert!(
         status == StatusCode::BAD_REQUEST || status == StatusCode::UNPROCESSABLE_ENTITY,
         "expected 400/422 for empty request, got {status}"
@@ -270,29 +281,13 @@ fn prepare_request_uses_explicit_session_root() {
     let temp = tempfile::tempdir().expect("tempdir");
     let session_root = temp.path().join("sessions");
     let request = ExecuteRequest {
-        graph: serde_json::json!({
-            "name": "const_only",
-            "nodes": [
-                {
-                    "id": 1,
-                    "name": "value",
-                    "op": "CONST_STR",
-                    "attributes": { "value": "ok" }
-                }
-            ],
-            "edges": [],
-            "parameters": [],
-            "metadata": {}
-        }),
+        air: const_only_air(),
         args: vec![],
         session_id: Some("explicit-session".to_string()),
         session_root: Some(session_root.to_string_lossy().to_string()),
-        token_budget: None,
-        output_schema: None,
-        max_schema_retries: None,
     };
 
-    let (_graph, _args, session_id, session_dir) = prepare_request(request).expect("prepare");
+    let (_air, _args, session_id, session_dir) = prepare_request(request).expect("prepare");
     let session_dir = session_dir.expect("session dir");
 
     assert_eq!(session_id.as_deref(), Some("explicit-session"));
@@ -308,29 +303,13 @@ fn prepare_request_generates_session_id_for_root_only() {
     let temp = tempfile::tempdir().expect("tempdir");
     let session_root = temp.path().join("sessions");
     let request = ExecuteRequest {
-        graph: serde_json::json!({
-            "name": "const_only",
-            "nodes": [
-                {
-                    "id": 1,
-                    "name": "value",
-                    "op": "CONST_STR",
-                    "attributes": { "value": "ok" }
-                }
-            ],
-            "edges": [],
-            "parameters": [],
-            "metadata": {}
-        }),
+        air: const_only_air(),
         args: vec![],
         session_id: None,
         session_root: Some(session_root.to_string_lossy().to_string()),
-        token_budget: None,
-        output_schema: None,
-        max_schema_retries: None,
     };
 
-    let (_graph, _args, session_id, session_dir) = prepare_request(request).expect("prepare");
+    let (_air, _args, session_id, session_dir) = prepare_request(request).expect("prepare");
     let session_id = session_id.expect("generated session id");
     let session_dir = session_dir.expect("session dir");
 
@@ -351,20 +330,7 @@ async fn execute_returns_session_dir_when_requested() {
         app,
         "/v1/execute",
         serde_json::json!({
-            "graph": {
-                "name": "const_only",
-                "nodes": [
-                    {
-                        "id": 1,
-                        "name": "value",
-                        "op": "CONST_STR",
-                        "attributes": { "value": "ok" }
-                    }
-                ],
-                "edges": [],
-                "parameters": [],
-                "metadata": {}
-            },
+            "air": const_only_air(),
             "session_id": "server-session",
             "session_root": session_root.to_string_lossy().to_string()
         }),

@@ -29,9 +29,9 @@ pub struct ModelRegistration {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub info: Option<ModelInfo>,
     /// Whether the model supports extended thinking/reasoning. `None` means
-    /// "use backend default". When `Some(false)` the OpenAI-compatible backend
-    /// will inject `chat_template_kwargs.enable_thinking = false` so vLLM
-    /// suppresses Qwen3 `<think>` blocks. Sourced from `ModelConfig.supports_thinking`.
+    /// "use backend default". When `Some(false)`, compatible backends may send
+    /// an explicit chat-template control to suppress thinking output. Sourced
+    /// from `ModelConfig.supports_thinking`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supports_thinking: Option<bool>,
     /// Whether the model accepts an explicit custom `temperature` field.
@@ -39,6 +39,9 @@ pub struct ModelRegistration {
     /// `temperature` and rely on the provider default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supports_custom_temperature: Option<bool>,
+    /// Whether the model accepts provider-enforced structured output schemas.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_structured_outputs: Option<bool>,
 }
 
 /// Typed backend registration input for the LLM registry.
@@ -60,6 +63,10 @@ pub struct BackendRegistration {
     /// the backend's default (typically `true`). See `BackendConfig.auto_tool_choice`.
     #[serde(default)]
     pub auto_tool_choice: Option<bool>,
+    /// Whether this backend accepts provider-enforced structured output
+    /// schemas. `None` means use the backend adapter default.
+    #[serde(default)]
+    pub supports_structured_outputs: Option<bool>,
 }
 
 impl BackendRegistration {
@@ -111,6 +118,7 @@ impl BackendRegistration {
                 }),
                 supports_thinking: Some(model.supports_thinking),
                 supports_custom_temperature: model.supports_custom_temperature,
+                supports_structured_outputs: model.supports_structured_outputs,
             })
             .collect();
 
@@ -124,6 +132,7 @@ impl BackendRegistration {
             options: HashMap::new(),
             extra_headers,
             auto_tool_choice: backend.auto_tool_choice,
+            supports_structured_outputs: backend.supports_structured_outputs,
         })
     }
 
@@ -162,6 +171,12 @@ impl BackendRegistration {
                 json!(auto_tool_choice),
             );
         }
+        if let Some(supports_structured_outputs) = self.supports_structured_outputs {
+            map.insert(
+                config_keys::SUPPORTS_STRUCTURED_OUTPUTS.to_string(),
+                json!(supports_structured_outputs),
+            );
+        }
         // Forward per-model capability flags that backends consult at request
         // time. Only emit entries whose flags actually differ from the default
         // so we don't bloat the JSON for the common case.
@@ -170,7 +185,7 @@ impl BackendRegistration {
             .iter()
             .filter_map(|m| {
                 let mut entry = Map::new();
-                entry.insert("id".to_string(), json!(m.id));
+                entry.insert(config_keys::ID.to_string(), json!(m.id));
                 if let Some(supports_thinking) = m.supports_thinking {
                     entry.insert(
                         config_keys::SUPPORTS_THINKING.to_string(),
@@ -181,6 +196,12 @@ impl BackendRegistration {
                     entry.insert(
                         config_keys::SUPPORTS_CUSTOM_TEMPERATURE.to_string(),
                         json!(supports_custom_temperature),
+                    );
+                }
+                if let Some(supports_structured_outputs) = m.supports_structured_outputs {
+                    entry.insert(
+                        config_keys::SUPPORTS_STRUCTURED_OUTPUTS.to_string(),
+                        json!(supports_structured_outputs),
                     );
                 }
                 (entry.len() > 1).then_some(JsonValue::Object(entry))
@@ -329,11 +350,13 @@ mod tests {
                 supports_functions: true,
                 supports_thinking: false,
                 supports_custom_temperature: Some(false),
+                supports_structured_outputs: None,
                 max_output_tokens: Some(2048),
                 tags: Vec::new(),
             }],
             docker: None,
             auto_tool_choice: Some(false),
+            supports_structured_outputs: None,
         };
 
         let registration =

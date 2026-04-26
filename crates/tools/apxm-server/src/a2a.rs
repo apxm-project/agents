@@ -10,7 +10,7 @@ use axum::response::IntoResponse;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
-use crate::execute::{graph_to_artifact, to_execute_response};
+use crate::execute::{air_module_to_artifact, to_execute_response};
 use crate::helpers::{jsonrpc_err, jsonrpc_ok, now_ms};
 use crate::mcp::McpRequest;
 use crate::state::AppState;
@@ -224,7 +224,7 @@ pub(crate) async fn a2a_send_task(
         metadata: HashMap::new(),
     };
 
-    let artifact = match graph_to_artifact(graph) {
+    let artifact = match air_module_to_artifact(graph) {
         Ok(a) => a,
         Err(e) => {
             if let Some(mut record) = state.a2a_tasks.get_mut(&req.id) {

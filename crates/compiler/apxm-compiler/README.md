@@ -51,7 +51,7 @@ The compiler exposes these MLIR passes. The default O-level pipelines only use
 the production-safe subset; semantic rewrites remain explicit until their typed
 contracts are enforced.
 
-- `normalize-agent-graph` -- canonical form normalization
+- `normalize` -- canonical form normalization
 - `build-prompt` -- prompt template materialization
 - `assign-priority` -- priority annotation for scheduling
 - `dead-context-elimination` -- removes unused context propagation

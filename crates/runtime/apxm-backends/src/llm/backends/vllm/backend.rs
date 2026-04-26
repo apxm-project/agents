@@ -11,21 +11,50 @@ use anyhow::{Context, Result};
 use apxm_core::constants::graph::attrs::{BASE_URL, MODEL};
 use apxm_core::constants::http::headers;
 use apxm_core::constants::llm::{
-    api_paths, apxm as apxm_llm, backend_metadata, config_keys, vllm as vllm_keys, vllm_request,
+    api_paths, apxm as apxm_llm, backend_metadata, config_keys, vllm as vllm_keys,
 };
 use apxm_core::types::provider_spec::{DEFAULT_VLLM_BASE_URL, normalize_endpoint_for_protocol};
-use apxm_core::types::{GraphMetadata, GraphStatusSnapshot, ModelInfo, PriorityClass};
+use apxm_core::types::{
+    GraphMetadata, GraphStatusSnapshot, ModelCapabilities, ModelInfo, PriorityClass,
+};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tokio_stream::Stream;
 
 const DEFAULT_BASE_URL: &str = DEFAULT_VLLM_BASE_URL;
 const UNCONFIGURED_MODEL_SENTINEL: &str = "__apxm_vllm_model_required__";
-const VLLM_PRIORITY_CRITICAL_PATH: u8 = 0;
-const VLLM_PRIORITY_DEFAULT: u8 = 5;
+
+mod request_keys {
+    pub const THINKING_TOKEN_BUDGET: &str = "thinking_token_budget";
+    pub const STRUCTURED_OUTPUTS: &str = "structured_outputs";
+    pub const STRUCTURED_OUTPUT_JSON: &str = "json";
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VllmRequestPriority {
+    CriticalPath,
+    Default,
+}
+
+impl From<PriorityClass> for VllmRequestPriority {
+    fn from(value: PriorityClass) -> Self {
+        match value {
+            PriorityClass::CriticalPath => Self::CriticalPath,
+            PriorityClass::Parallel => Self::Default,
+        }
+    }
+}
+
+impl From<VllmRequestPriority> for u8 {
+    fn from(value: VllmRequestPriority) -> Self {
+        match value {
+            VllmRequestPriority::CriticalPath => 0,
+            VllmRequestPriority::Default => 5,
+        }
+    }
+}
 
 /// Response from `POST /v1/apxm/graphs/register`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -81,8 +110,8 @@ pub struct GraphAwareVllmBackend {
     auto_tool_choice_supported: AtomicBool,
     /// Whether the backend config included a concrete default model.
     default_model_configured: bool,
-    /// Models that should suppress vLLM chat-template thinking output.
-    non_thinking_models: HashSet<String>,
+    /// Whether vLLM should receive native `structured_outputs`.
+    structured_outputs_supported: bool,
 }
 
 impl GraphAwareVllmBackend {
@@ -115,22 +144,11 @@ impl GraphAwareVllmBackend {
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
 
-        let non_thinking_models: HashSet<String> = config
+        let structured_outputs_supported = config
             .as_ref()
-            .and_then(|c| c.get(config_keys::MODELS))
-            .and_then(|m| m.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|entry| {
-                        let id = entry.get("id").and_then(|v| v.as_str())?;
-                        let supports = entry
-                            .get(config_keys::SUPPORTS_THINKING)
-                            .and_then(|v| v.as_bool())?;
-                        if supports { None } else { Some(id.to_string()) }
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+            .and_then(|c| c.get(config_keys::SUPPORTS_STRUCTURED_OUTPUTS))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
 
         let mut inner_config_map = config
             .clone()
@@ -142,6 +160,10 @@ impl GraphAwareVllmBackend {
                 serde_json::Value::String(UNCONFIGURED_MODEL_SENTINEL.to_string()),
             );
         }
+        inner_config_map.insert(
+            config_keys::SUPPORTS_STRUCTURED_OUTPUTS.to_string(),
+            serde_json::Value::Bool(false),
+        );
 
         // Pass config to inner OpenAI backend (vLLM is OpenAI-compatible)
         let inner =
@@ -156,7 +178,7 @@ impl GraphAwareVllmBackend {
             apxm_endpoints_available: AtomicBool::new(true),
             auto_tool_choice_supported: AtomicBool::new(auto_tool_choice),
             default_model_configured,
-            non_thinking_models,
+            structured_outputs_supported,
         })
     }
 
@@ -253,13 +275,6 @@ impl GraphAwareVllmBackend {
             .context("Failed to parse graph status response")
     }
 
-    fn request_model<'a>(&'a self, request: &'a LLMRequest) -> &'a str {
-        request
-            .model
-            .as_deref()
-            .unwrap_or_else(|| self.inner.model())
-    }
-
     /// Inject graph-aware vLLM request shaping into the provider-neutral request.
     fn inject_hints(&self, mut request: LLMRequest) -> LLMRequest {
         let mut extra = request
@@ -289,10 +304,7 @@ impl GraphAwareVllmBackend {
                 if !map.contains_key(apxm_llm::REQUEST_PRIORITY)
                     && let Some(priority_class) = &hints.priority_class
                 {
-                    let priority = match priority_class {
-                        PriorityClass::CriticalPath => VLLM_PRIORITY_CRITICAL_PATH,
-                        PriorityClass::Parallel => VLLM_PRIORITY_DEFAULT,
-                    };
+                    let priority = u8::from(VllmRequestPriority::from(*priority_class));
                     map.insert(
                         apxm_llm::REQUEST_PRIORITY.to_owned(),
                         serde_json::json!(priority),
@@ -300,18 +312,27 @@ impl GraphAwareVllmBackend {
                 }
             }
 
-            let model = self.request_model(&request);
-            if let Some(thinking_budget) = request.thinking_token_budget
-                && !map.contains_key(vllm_request::THINKING_TOKEN_BUDGET)
+            if self.structured_outputs_supported
+                && !map.contains_key(request_keys::STRUCTURED_OUTPUTS)
+                && let Some(output_schema) = &request.output_schema
             {
                 map.insert(
-                    vllm_request::THINKING_TOKEN_BUDGET.to_string(),
+                    request_keys::STRUCTURED_OUTPUTS.to_string(),
+                    serde_json::json!({
+                        request_keys::STRUCTURED_OUTPUT_JSON: output_schema,
+                    }),
+                );
+            }
+
+            if let Some(thinking_budget) = request.thinking_token_budget
+                && !map.contains_key(request_keys::THINKING_TOKEN_BUDGET)
+            {
+                map.insert(
+                    request_keys::THINKING_TOKEN_BUDGET.to_string(),
                     serde_json::json!(thinking_budget),
                 );
             }
-            if let Some(enable_thinking) = request.enable_thinking
-                && !self.non_thinking_models.contains(model)
-            {
+            if let Some(enable_thinking) = request.enable_thinking {
                 let kwargs = map
                     .entry(config_keys::CHAT_TEMPLATE_KWARGS.to_string())
                     .or_insert_with(|| serde_json::json!({}));
@@ -323,16 +344,6 @@ impl GraphAwareVllmBackend {
                         serde_json::json!(enable_thinking),
                     );
                 }
-            }
-            if self.non_thinking_models.contains(model)
-                && !map.contains_key(config_keys::CHAT_TEMPLATE_KWARGS)
-            {
-                map.insert(
-                    config_keys::CHAT_TEMPLATE_KWARGS.to_string(),
-                    serde_json::json!({
-                        config_keys::ENABLE_THINKING: false,
-                    }),
-                );
             }
         }
 
@@ -433,7 +444,9 @@ impl LLMBackend for GraphAwareVllmBackend {
     }
 
     fn capabilities(&self) -> apxm_core::types::ModelCapabilities {
-        self.inner.capabilities()
+        let mut capabilities: ModelCapabilities = self.inner.capabilities();
+        capabilities.structured_outputs = self.structured_outputs_supported;
+        capabilities
     }
 
     fn metadata(&self) -> serde_json::Value {
@@ -568,7 +581,10 @@ mod tests {
 
         // Verify the serialized hints
         let apxm = &extra[apxm_llm::VLLM_XARGS][apxm_llm::HINTS_FIELD];
-        assert_eq!(extra[apxm_llm::REQUEST_PRIORITY], 0);
+        assert_eq!(
+            extra[apxm_llm::REQUEST_PRIORITY],
+            u8::from(VllmRequestPriority::CriticalPath)
+        );
         assert_eq!(apxm[apxm_llm::SCHEMA_VERSION], 1);
         assert_eq!(apxm[apxm_llm::GRAPH_ID], "graph-test");
         assert_eq!(apxm[apxm_llm::EXECUTION_ID], "exec-test");
@@ -615,7 +631,10 @@ mod tests {
         // Verify both existing fields and new APXM hint field are present.
         assert_eq!(extra["custom_field"], "custom_value");
         assert_eq!(extra["another_field"], 123);
-        assert_eq!(extra[apxm_llm::REQUEST_PRIORITY], 5);
+        assert_eq!(
+            extra[apxm_llm::REQUEST_PRIORITY],
+            u8::from(VllmRequestPriority::Default)
+        );
         assert!(
             extra
                 .get(apxm_llm::VLLM_XARGS)
@@ -676,31 +695,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_inject_hints_adds_thinking_suppression_for_flagged_model() {
-        use crate::llm::backends::LLMRequest;
-
-        let backend = GraphAwareVllmBackend::new(
-            "test-key",
-            Some(serde_json::json!({
-                "base_url": "http://localhost:8916/v1",
-                "model": "Qwen/Qwen3.5-4B",
-                "models": [
-                    {"id": "Qwen/Qwen3.5-4B", "supports_thinking": false}
-                ]
-            })),
-        )
-        .await
-        .unwrap();
-
-        let injected = backend.inject_hints(LLMRequest::new("Test prompt"));
-        let extra = injected.extra_body.unwrap();
-        assert_eq!(
-            extra[config_keys::CHAT_TEMPLATE_KWARGS][config_keys::ENABLE_THINKING],
-            serde_json::json!(false)
-        );
-    }
-
-    #[tokio::test]
     async fn test_inject_hints_adds_thinking_controls() {
         use crate::llm::backends::LLMRequest;
 
@@ -721,11 +715,94 @@ mod tests {
         );
         let extra = injected.extra_body.unwrap();
 
-        assert_eq!(extra[vllm_request::THINKING_TOKEN_BUDGET], 1024);
+        assert_eq!(extra[request_keys::THINKING_TOKEN_BUDGET], 1024);
         assert_eq!(
             extra[config_keys::CHAT_TEMPLATE_KWARGS][config_keys::ENABLE_THINKING],
             serde_json::json!(true)
         );
+    }
+
+    #[tokio::test]
+    async fn test_inject_hints_lowers_output_schema_to_vllm_structured_outputs() {
+        use crate::llm::backends::LLMRequest;
+
+        let backend = GraphAwareVllmBackend::new(
+            "test-key",
+            Some(serde_json::json!({
+                "base_url": "http://localhost:8916/v1",
+                "model": "test-model"
+            })),
+        )
+        .await
+        .unwrap();
+
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "summary": {"type": "string"}
+            },
+            "required": ["summary"]
+        });
+        let injected =
+            backend.inject_hints(LLMRequest::new("Return JSON").with_output_schema(schema.clone()));
+        let extra = injected.extra_body.unwrap();
+
+        assert_eq!(
+            extra[request_keys::STRUCTURED_OUTPUTS][request_keys::STRUCTURED_OUTPUT_JSON],
+            schema
+        );
+    }
+
+    #[tokio::test]
+    async fn test_inject_hints_respects_structured_outputs_capability() {
+        use crate::llm::backends::LLMRequest;
+
+        let backend = GraphAwareVllmBackend::new(
+            "test-key",
+            Some(serde_json::json!({
+                "base_url": "http://localhost:8916/v1",
+                "model": "test-model",
+                config_keys::SUPPORTS_STRUCTURED_OUTPUTS: false
+            })),
+        )
+        .await
+        .unwrap();
+
+        let injected = backend.inject_hints(
+            LLMRequest::new("Return JSON")
+                .with_output_schema(serde_json::json!({"type": "object"})),
+        );
+        let extra = injected.extra_body.unwrap();
+
+        assert!(extra.get(request_keys::STRUCTURED_OUTPUTS).is_none());
+    }
+
+    #[tokio::test]
+    async fn test_capabilities_report_vllm_structured_outputs_policy() {
+        let backend = GraphAwareVllmBackend::new(
+            "test-key",
+            Some(serde_json::json!({
+                BASE_URL: "http://localhost:8916/v1",
+                MODEL: "test-model"
+            })),
+        )
+        .await
+        .unwrap();
+
+        assert!(backend.capabilities().structured_outputs);
+
+        let disabled = GraphAwareVllmBackend::new(
+            "test-key",
+            Some(serde_json::json!({
+                BASE_URL: "http://localhost:8916/v1",
+                MODEL: "test-model",
+                config_keys::SUPPORTS_STRUCTURED_OUTPUTS: false
+            })),
+        )
+        .await
+        .unwrap();
+
+        assert!(!disabled.capabilities().structured_outputs);
     }
 
     #[tokio::test]

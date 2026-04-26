@@ -4,7 +4,15 @@ import json
 from pathlib import Path
 import pytest
 
-from apxm.constants import ENV_APXM_BIN
+from apxm.constants import (
+    AIR_PAYLOAD,
+    ARGS,
+    ENV_APXM_BIN,
+    MAX_SCHEMA_RETRIES,
+    OUTPUT_SCHEMA,
+    SESSION_ROOT,
+    TOKEN_BUDGET,
+)
 
 
 def _assert_local_execute_cli_command(
@@ -55,6 +63,14 @@ def _assert_workflow_run_cli_command(
     else:
         args_flag_index = cmd.index(execution_mod._CLI_ARGS_JSON_FLAG)
         assert json.loads(cmd[args_flag_index + 1]) == expected_args
+
+
+def _toml_table(section: str, values: dict[str, object]) -> str:
+    import apxm.config as config_mod
+
+    lines = [f"[[{section}]]"]
+    lines.extend(f"{key} = {config_mod._toml_value(value)}" for key, value in values.items())
+    return "\n".join(lines)
 
 
 def test_execution_result_from_response():
@@ -163,29 +179,37 @@ def test_compiled_flow_build_request():
     from apxm import ExecutionOptions, GraphRecorder
     from apxm.execution import CompiledFlow
 
+    import apxm.config as config_mod
+
     g = GraphRecorder("test_flow")
     g.ask(name="step1", prompt="Do something")
     graph = g.to_graph()
 
+    args = ("arg1", "arg2")
+    session_id_field = config_mod.ExecutionOptions.__dataclass_fields__["session_id"].name
+    session_id = "test-session"
+    session_root = "/tmp/apxm/sessions"
+    output_schema = {"type": "object"}
+    max_schema_retries = 3
     flow = CompiledFlow(graph)
     request = flow._build_request(
-        ("arg1", "arg2"),
+        args,
         execution=ExecutionOptions(
-            session_id="test-session",
-            session_root="/tmp/apxm/sessions",
+            session_id=session_id,
+            session_root=session_root,
             token_budget=256,
-            output_schema={"type": "object"},
-            max_schema_retries=3,
+            output_schema=output_schema,
+            max_schema_retries=max_schema_retries,
         ),
     )
 
-    assert request["graph"]["name"] == "test_flow"
-    assert request["args"] == ["arg1", "arg2"]
-    assert request["session_id"] == "test-session"
-    assert request["session_root"] == "/tmp/apxm/sessions"
-    assert request["token_budget"] == 256
-    assert request["output_schema"] == {"type": "object"}
-    assert request["max_schema_retries"] == 3
+    assert request[AIR_PAYLOAD].strip()
+    assert request[ARGS] == list(args)
+    assert request[session_id_field] == session_id
+    assert request[SESSION_ROOT] == session_root
+    assert request[TOKEN_BUDGET] == 256
+    assert request[OUTPUT_SCHEMA] == output_schema
+    assert request[MAX_SCHEMA_RETRIES] == max_schema_retries
 
 
 def test_compiled_flow_build_request_no_session():
@@ -200,12 +224,14 @@ def test_compiled_flow_build_request_no_session():
     flow = CompiledFlow(graph)
     request = flow._build_request(())
 
-    assert "session_id" not in request
-    assert request["args"] == []
+    import apxm.config as config_mod
+
+    session_id_field = config_mod.ExecutionOptions.__dataclass_fields__["session_id"].name
+    assert session_id_field not in request
+    assert request[ARGS] == []
 
 
 def test_execution_options_render_local_cli_config():
-    import tomllib
     import apxm.config as config_mod
     from apxm import (
         ExecutionOptions,
@@ -227,27 +253,20 @@ def test_execution_options_render_local_cli_config():
     )
 
     toml = options.config_toml()
-    parsed = tomllib.loads(toml)
     expected_hook = HookConfig(
         event=HookEvent.NODE_COMPLETE,
         command="echo {{node_id}}",
     ).to_toml_table()
+    expected_timeout = TimeoutMiddlewareConfig(default_timeout_ms=5000).to_toml_table()
+    expected_loop_guard = LoopGuardMiddlewareConfig(max_repeats=2).to_toml_table()
 
-    assert parsed[config_mod._TOML_SECTION_HOOKS] == [expected_hook]
-    assert parsed[config_mod._TOML_SECTION_MIDDLEWARES] == [
-        {
-            config_mod._MIDDLEWARE_FIELD_KIND: TimeoutMiddlewareConfig().to_toml_table()[
-                config_mod._MIDDLEWARE_FIELD_KIND
-            ],
-            config_mod._MIDDLEWARE_FIELD_TIMEOUT_MS: 5000,
-        },
-        {
-            config_mod._MIDDLEWARE_FIELD_KIND: LoopGuardMiddlewareConfig().to_toml_table()[
-                config_mod._MIDDLEWARE_FIELD_KIND
-            ],
-            config_mod._MIDDLEWARE_FIELD_MAX_REPEATS: 2,
-        },
-    ]
+    assert toml == "\n\n".join(
+        [
+            _toml_table(config_mod._TOML_SECTION_HOOKS, expected_hook),
+            _toml_table(config_mod._TOML_SECTION_MIDDLEWARES, expected_timeout),
+            _toml_table(config_mod._TOML_SECTION_MIDDLEWARES, expected_loop_guard),
+        ]
+    ) + "\n"
     assert options.requires_local_cli() is True
 
     search_web = SearchWebConfig(search_depth=SearchDepth.ADVANCED)
@@ -271,7 +290,6 @@ def test_hook_event_members_are_stable_frontend_contract():
 
 
 def test_execution_options_render_all_hook_events_in_local_cli_config():
-    import tomllib
     import apxm.config as config_mod
     from apxm import ExecutionOptions, HookConfig, HookEvent
 
@@ -280,11 +298,12 @@ def test_execution_options_render_all_hook_events_in_local_cli_config():
         for event in HookEvent
     ]
 
-    parsed = tomllib.loads(ExecutionOptions(hooks=hooks).config_toml())
+    toml = ExecutionOptions(hooks=hooks).config_toml()
 
-    assert parsed[config_mod._TOML_SECTION_HOOKS] == [
-        hook.to_toml_table() for hook in hooks
-    ]
+    assert toml == "\n\n".join(
+        _toml_table(config_mod._TOML_SECTION_HOOKS, hook.to_toml_table())
+        for hook in hooks
+    ) + "\n"
 
 
 def test_search_web_config_rejects_non_enum_search_depth():
@@ -297,10 +316,11 @@ def test_search_web_config_rejects_non_enum_search_depth():
 def test_execution_options_session_root_does_not_force_local_cli():
     from apxm import ExecutionOptions
 
-    options = ExecutionOptions(session_root=".apxm/sessions")
+    session_root = ".apxm/sessions"
+    options = ExecutionOptions(session_root=session_root)
 
     assert options.requires_local_cli() is False
-    assert options.server_request_fields()["session_root"] == ".apxm/sessions"
+    assert options.server_request_fields()[SESSION_ROOT] == session_root
 
 
 def test_hook_config_rejects_non_enum_events():
@@ -666,7 +686,7 @@ def test_run_wrapper():
 
 
 def test_compiled_flow_save_load_roundtrip():
-    """Test save/load roundtrip preserves graph."""
+    """Test save/load roundtrip preserves canonical AIR."""
     import tempfile
     from pathlib import Path
     from apxm import GraphRecorder
@@ -685,8 +705,8 @@ def test_compiled_flow_save_load_roundtrip():
     try:
         flow.save(tmp_path)
         loaded = CompiledFlow.load(tmp_path)
-        assert loaded._graph.name == "roundtrip_test"
-        assert len(loaded._graph.nodes) == 1
-        assert len(loaded._graph.parameters) == 1
+        saved = json.loads(Path(tmp_path).read_text(encoding="utf-8"))
+        assert loaded._air_text == saved[AIR_PAYLOAD]
+        assert loaded._air_text == graph.to_air()
     finally:
         Path(tmp_path).unlink(missing_ok=True)

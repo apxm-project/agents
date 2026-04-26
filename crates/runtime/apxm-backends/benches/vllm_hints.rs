@@ -2,6 +2,7 @@
 
 use apxm_backends::llm::backends::LLMRequest;
 use apxm_backends::llm::backends::vllm::{ApxmGraphHints, GraphMetadata, NodeSpec};
+use apxm_core::types::{NodeGraphMetrics, PriorityClass};
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 
 fn bench_request_with_hints(c: &mut Criterion) {
@@ -66,8 +67,9 @@ fn bench_graph_registration_payload(c: &mut Criterion) {
                     node_name: Some("architect".to_string()),
                     estimated_prompt_tokens: Some(500),
                     downstream_nodes: vec![2, 3],
-                    priority_class: Some("critical_path".to_string()),
+                    priority_class: Some(PriorityClass::CriticalPath),
                     reuse_group: Some("planning".to_string()),
+                    graph_metrics: NodeGraphMetrics::default(),
                     is_critical_path: true,
                 },
                 NodeSpec {
@@ -75,8 +77,9 @@ fn bench_graph_registration_payload(c: &mut Criterion) {
                     node_name: Some("coder-1".to_string()),
                     estimated_prompt_tokens: Some(1500),
                     downstream_nodes: vec![4],
-                    priority_class: Some("parallel".to_string()),
+                    priority_class: Some(PriorityClass::Parallel),
                     reuse_group: None,
+                    graph_metrics: NodeGraphMetrics::default(),
                     is_critical_path: false,
                 },
                 NodeSpec {
@@ -84,8 +87,9 @@ fn bench_graph_registration_payload(c: &mut Criterion) {
                     node_name: Some("coder-2".to_string()),
                     estimated_prompt_tokens: Some(1500),
                     downstream_nodes: vec![4],
-                    priority_class: Some("parallel".to_string()),
+                    priority_class: Some(PriorityClass::Parallel),
                     reuse_group: None,
+                    graph_metrics: NodeGraphMetrics::default(),
                     is_critical_path: false,
                 },
                 NodeSpec {
@@ -93,8 +97,9 @@ fn bench_graph_registration_payload(c: &mut Criterion) {
                     node_name: Some("reviewer".to_string()),
                     estimated_prompt_tokens: Some(800),
                     downstream_nodes: vec![],
-                    priority_class: Some("critical_path".to_string()),
+                    priority_class: Some(PriorityClass::CriticalPath),
                     reuse_group: None,
+                    graph_metrics: NodeGraphMetrics::default(),
                     is_critical_path: true,
                 },
             ]);
