@@ -2,17 +2,14 @@
 //!
 //! Optimization levels:
 //!   O0 - No optimization (passthrough)
-//!   O1 - Basic: normalize, build-prompt, scheduling, fusion, canonicalization, CSE, DCE
-//!   O2 - Standard: O1 + template specialization, dead context elimination, schema narrowing, condense-ops
-//!   O3 - Aggressive: O2 passes iterated to fixed-point convergence
-//!
-//! NOTE: Currently, the C++ FuseAskOps pass uses a default maxTemplateTokens of 2000.
-//! To make this target-aware, we need to extend the FFI to accept pass options.
+//!   O1 - Basic: normalize, build-prompt, canonicalization, tool checks, CSE, symbol-DCE
+//!   O2 - Standard: O1 + template specialization, dead context elimination,
+//!        and target-aware scheduling metadata
+//!   O3 - Aggressive: O2-safe passes iterated to fixed-point convergence
 
 use super::PassManager;
 use super::bind_tool_handlers::BIND_TOOL_HANDLERS_PASS_NAME;
 use super::tool_binding::TOOL_BINDING_PASS_NAME;
-use super::vllm_hints::VLLM_HINTS_PASS_NAME;
 use apxm_core::error::compiler::Result;
 use apxm_core::types::compiler::metadata as passes;
 use apxm_core::types::{OptimizationLevel, OptimizationTarget};
@@ -25,25 +22,25 @@ const MAX_CONVERGENCE_ITERATIONS: usize = 10;
 // AIS authoring definitions.
 const NORMALIZE: &str = passes::NORMALIZE.name;
 const BUILD_PROMPT: &str = passes::BUILD_PROMPT.name;
+#[cfg(test)]
 const DSPY_OPTIMIZE: &str = passes::DSPY_OPTIMIZE.name;
 const ASSIGN_PRIORITY: &str = passes::ASSIGN_PRIORITY.name;
 const SCHEDULING: &str = passes::SCHEDULING.name;
+const SHARED_PREFIX_ANALYSIS: &str = passes::SHARED_PREFIX_ANALYSIS.name;
+#[cfg(test)]
 const FUSE_ASK_OPS: &str = passes::FUSE_ASK_OPS.name;
+#[cfg(test)]
 const CONDENSE_OPS: &str = passes::CONDENSE_OPS.name;
 const UNCONSUMED_VALUE_WARNING: &str = passes::UNCONSUMED_VALUE_WARNING.name;
 const TEMPLATE_SPECIALIZATION: &str = passes::TEMPLATE_SPECIALIZATION.name;
 const DEAD_CONTEXT_ELIMINATION: &str = passes::DEAD_CONTEXT_ELIMINATION.name;
+#[cfg(test)]
 const SCHEMA_NARROWING: &str = passes::SCHEMA_NARROWING.name;
+#[cfg(test)]
 const PROMPT_CANONICALIZATION: &str = passes::PROMPT_CANONICALIZATION.name;
 const CANONICALIZER: &str = passes::CANONICALIZER.name;
 const CSE: &str = passes::CSE.name;
 const SYMBOL_DCE: &str = passes::SYMBOL_DCE.name;
-
-/// Rust-only post-MLIR pass that stamps `_vllm_*` hint attrs onto LLM nodes.
-/// Filtered out before being handed to the MLIR PassManager (see
-/// [`build_pipeline_with_config`]); appears in [`build_pass_list`] purely so
-/// downstream callers (diagnostics, ordering tests) see it in pipeline order.
-const VLLM_HINTS: &str = VLLM_HINTS_PASS_NAME;
 
 /// Rust-only validation pass that checks tool capability bindings.
 /// Runs after the canonicalizer to validate INV_TOOL/REGISTER_CAPABILITY
@@ -57,31 +54,10 @@ const BIND_TOOL_HANDLERS: &str = BIND_TOOL_HANDLERS_PASS_NAME;
 /// Names that are tracked in the pipeline list but are *not* dispatched
 /// through the MLIR PassManager — they run as Rust-side transforms on the
 /// `AirModule` instead.
-const RUST_ONLY_PASSES: &[&str] = &[VLLM_HINTS, TOOL_BINDING, BIND_TOOL_HANDLERS];
+const RUST_ONLY_PASSES: &[&str] = &[TOOL_BINDING, BIND_TOOL_HANDLERS];
 
 pub fn is_mlir_pass(name: &str) -> bool {
     !RUST_ONLY_PASSES.contains(&name)
-}
-
-/// Insert an early CSE pass immediately before the first ASSIGN_PRIORITY in
-/// `passes`. Skipped when CSE is globally disabled (`no_cse_llm`) or when
-/// ASSIGN_PRIORITY isn't part of this pipeline level.
-///
-/// Why: `assign-priority` writes a per-op `downstream_nodes` ArrayAttr
-/// listing the IDs of consumer ops. Three structurally-identical ASKs end
-/// up with three *different* `downstream_nodes` arrays, so a downstream CSE
-/// pass no longer treats them as equal and skips deduplication. Running CSE
-/// once before assign-priority dedupes the structurally-identical ops while
-/// they still look the same, then assign-priority stamps the survivor with
-/// the union of consumers. Verified against `cse_stress.air` in the tier-2
-/// ablation harness.
-fn insert_early_cse(passes: &mut Vec<String>, no_cse_llm: bool) {
-    if no_cse_llm {
-        return;
-    }
-    if let Some(idx) = passes.iter().position(|p| p == ASSIGN_PRIORITY) {
-        passes.insert(idx, CSE.to_string());
-    }
 }
 
 pub fn build_pipeline(pm: &mut PassManager, level: OptimizationLevel) -> Result<()> {
@@ -110,12 +86,20 @@ pub fn build_pipeline_with_config(
 /// [`PassManager::run_with_metrics`] (which runs passes individually for diagnostics)
 /// derive their pass sequence from this function.
 ///
-/// The `target` parameter controls what to optimize for:
-/// - `Latency`: More aggressive fusion, prioritize parallel scheduling
-/// - `Cost`: More aggressive CSE and dead code elimination
-/// - `Tokens`: Prioritize dead-context-elimination and schema-narrowing
-/// - `Parallelism`: Aggressive scheduling, remove sequential constraints
-/// - `Balanced`: Default behavior (no special tuning)
+/// The `target` parameter controls safe pass ordering only. Heuristic-free
+/// semantic rewrites stay out of the automatic O-levels until their contracts
+/// are typed and enforced by the compiler.
+///
+/// Passes intentionally excluded from default O1/O2/O3 pipelines:
+/// - `fuse-ask-ops`: merges LLM calls without semantic-quality heuristics.
+/// - `condense-ops`: changes memory-query/write grouping without a typed
+///   memory batching capability contract.
+/// - `schema-narrowing`: current implementation is not real field-use
+///   narrowing and can affect output validation.
+/// - `prompt-canonicalization`: rewrites prompt layout for backend cache
+///   behavior and needs an explicit backend/graph-hint contract.
+/// - `dspy-optimize`: requires explicit training/config plumbing before it is
+///   a production optimization path.
 ///
 pub fn build_pass_list(
     level: OptimizationLevel,
@@ -133,10 +117,6 @@ pub fn build_pass_list(
                 [
                     NORMALIZE,
                     BUILD_PROMPT,
-                    DSPY_OPTIMIZE,
-                    FUSE_ASK_OPS,
-                    ASSIGN_PRIORITY,
-                    VLLM_HINTS,
                     CANONICALIZER,
                     TOOL_BINDING,
                     BIND_TOOL_HANDLERS,
@@ -154,129 +134,97 @@ pub fn build_pass_list(
                 passes.insert(passes.len() - 3, DEAD_CONTEXT_ELIMINATION.to_string());
             }
 
-            insert_early_cse(&mut passes, no_cse_llm);
             if !no_cse_llm {
                 passes.push(CSE.to_string());
             }
             passes.push(SYMBOL_DCE.to_string());
+            passes.push(ASSIGN_PRIORITY.to_string());
         }
         OptimizationLevel::O2 => {
             passes.extend(
                 [
                     NORMALIZE,
                     BUILD_PROMPT,
-                    DSPY_OPTIMIZE,
-                    PROMPT_CANONICALIZATION,
                     TEMPLATE_SPECIALIZATION,
+                    DEAD_CONTEXT_ELIMINATION,
                 ]
                 .iter()
                 .map(|s| s.to_string()),
             );
+            if !no_cse_llm {
+                passes.push(CSE.to_string());
+            }
 
             // Target-specific pass ordering for O2
             match target {
                 OptimizationTarget::Tokens => {
                     // Prioritize context reduction
                     passes.extend(
-                        [
-                            DEAD_CONTEXT_ELIMINATION,
-                            SCHEMA_NARROWING,
-                            FUSE_ASK_OPS,
-                            CONDENSE_OPS,
-                            ASSIGN_PRIORITY,
-                            VLLM_HINTS,
-                            CANONICALIZER,
-                            TOOL_BINDING,
-                            BIND_TOOL_HANDLERS,
-                        ]
-                        .iter()
-                        .map(|s| s.to_string()),
+                        [CANONICALIZER, TOOL_BINDING, BIND_TOOL_HANDLERS]
+                            .iter()
+                            .map(|s| s.to_string()),
                     );
                 }
                 OptimizationTarget::Cost => {
-                    // Prioritize CSE and dead code elimination
+                    // Prioritize safe dead-code cleanup.
                     passes.extend(
-                        [
-                            SCHEMA_NARROWING,
-                            FUSE_ASK_OPS,
-                            CONDENSE_OPS,
-                            ASSIGN_PRIORITY,
-                            VLLM_HINTS,
-                            DEAD_CONTEXT_ELIMINATION,
-                            CANONICALIZER,
-                            TOOL_BINDING,
-                            BIND_TOOL_HANDLERS,
-                        ]
-                        .iter()
-                        .map(|s| s.to_string()),
+                        [CANONICALIZER, TOOL_BINDING, BIND_TOOL_HANDLERS]
+                            .iter()
+                            .map(|s| s.to_string()),
                     );
                 }
                 OptimizationTarget::Latency | OptimizationTarget::Parallelism => {
-                    // Prioritize fusion and scheduling
+                    // Prioritize backend-agnostic graph scheduling. Prompt/cache
+                    // rewrites remain explicit; shared-prefix analysis only
+                    // emits metadata for prompts that are already prefix-compatible.
                     passes.extend(
-                        [
-                            SCHEMA_NARROWING,
-                            FUSE_ASK_OPS,
-                            CONDENSE_OPS,
-                            ASSIGN_PRIORITY,
-                            VLLM_HINTS,
-                            DEAD_CONTEXT_ELIMINATION,
-                            CANONICALIZER,
-                            TOOL_BINDING,
-                            BIND_TOOL_HANDLERS,
-                        ]
-                        .iter()
-                        .map(|s| s.to_string()),
+                        [SCHEDULING, CANONICALIZER, TOOL_BINDING, BIND_TOOL_HANDLERS]
+                            .iter()
+                            .map(|s| s.to_string()),
                     );
                 }
                 OptimizationTarget::Balanced => {
                     // Default ordering
                     passes.extend(
-                        [
-                            SCHEMA_NARROWING,
-                            FUSE_ASK_OPS,
-                            CONDENSE_OPS,
-                            ASSIGN_PRIORITY,
-                            VLLM_HINTS,
-                            DEAD_CONTEXT_ELIMINATION,
-                            CANONICALIZER,
-                            TOOL_BINDING,
-                            BIND_TOOL_HANDLERS,
-                        ]
-                        .iter()
-                        .map(|s| s.to_string()),
+                        [CANONICALIZER, TOOL_BINDING, BIND_TOOL_HANDLERS]
+                            .iter()
+                            .map(|s| s.to_string()),
                     );
                 }
             }
 
-            insert_early_cse(&mut passes, no_cse_llm);
             if !no_cse_llm {
                 passes.push(CSE.to_string());
             }
             passes.push(SYMBOL_DCE.to_string());
+            if matches!(
+                target,
+                OptimizationTarget::Latency | OptimizationTarget::Parallelism
+            ) {
+                passes.push(SHARED_PREFIX_ANALYSIS.to_string());
+            }
+            passes.push(ASSIGN_PRIORITY.to_string());
         }
         OptimizationLevel::O3 => {
             passes.extend(
                 [
                     NORMALIZE,
                     BUILD_PROMPT,
-                    DSPY_OPTIMIZE,
-                    PROMPT_CANONICALIZATION,
+                    TEMPLATE_SPECIALIZATION,
+                    DEAD_CONTEXT_ELIMINATION,
                 ]
                 .iter()
                 .map(|s| s.to_string()),
             );
+            if !no_cse_llm {
+                passes.push(CSE.to_string());
+            }
 
-            let mut convergence_passes: Vec<String> = match target {
+            let convergence_passes: Vec<String> = match target {
                 OptimizationTarget::Tokens => vec![
-                    DEAD_CONTEXT_ELIMINATION,
                     TEMPLATE_SPECIALIZATION,
-                    SCHEMA_NARROWING,
+                    DEAD_CONTEXT_ELIMINATION,
                     SCHEDULING,
-                    FUSE_ASK_OPS,
-                    CONDENSE_OPS,
-                    ASSIGN_PRIORITY,
-                    VLLM_HINTS,
                     CANONICALIZER,
                     TOOL_BINDING,
                     BIND_TOOL_HANDLERS,
@@ -287,11 +235,6 @@ pub fn build_pass_list(
                 OptimizationTarget::Latency | OptimizationTarget::Parallelism => vec![
                     SCHEDULING,
                     TEMPLATE_SPECIALIZATION,
-                    SCHEMA_NARROWING,
-                    FUSE_ASK_OPS,
-                    CONDENSE_OPS,
-                    ASSIGN_PRIORITY,
-                    VLLM_HINTS,
                     DEAD_CONTEXT_ELIMINATION,
                     CANONICALIZER,
                     TOOL_BINDING,
@@ -302,13 +245,8 @@ pub fn build_pass_list(
                 .collect(),
                 _ => vec![
                     TEMPLATE_SPECIALIZATION,
-                    SCHEMA_NARROWING,
-                    SCHEDULING,
-                    FUSE_ASK_OPS,
-                    CONDENSE_OPS,
-                    ASSIGN_PRIORITY,
-                    VLLM_HINTS,
                     DEAD_CONTEXT_ELIMINATION,
+                    SCHEDULING,
                     CANONICALIZER,
                     TOOL_BINDING,
                     BIND_TOOL_HANDLERS,
@@ -318,11 +256,6 @@ pub fn build_pass_list(
                 .collect(),
             };
 
-            // Each convergence iteration runs (CSE → ASSIGN_PRIORITY → ... → CSE
-            // → SYMBOL_DCE), so the early CSE is part of `convergence_passes` and
-            // replays every iteration alongside the trailing CSE.
-            insert_early_cse(&mut convergence_passes, no_cse_llm);
-
             for _ in 0..MAX_CONVERGENCE_ITERATIONS {
                 passes.extend(convergence_passes.clone());
                 if !no_cse_llm {
@@ -330,6 +263,13 @@ pub fn build_pass_list(
                 }
                 passes.push(SYMBOL_DCE.to_string());
             }
+            if matches!(
+                target,
+                OptimizationTarget::Latency | OptimizationTarget::Parallelism
+            ) {
+                passes.push(SHARED_PREFIX_ANALYSIS.to_string());
+            }
+            passes.push(ASSIGN_PRIORITY.to_string());
         }
     }
 
@@ -359,9 +299,9 @@ pub fn build_pass_list_with_warn(
 ///
 /// Order of operations:
 /// 1. If `pass_list_override` is `Some`, that vector becomes the base list
-///    (opt-level / target / no-cse-llm / warn-unconsumed are ignored).
+///    (opt-level / target / warn-unconsumed are ignored).
 /// 2. Otherwise, the base list comes from [`build_pass_list_with_warn`].
-/// 3. Any name in `disable_passes` is dropped from the resulting list.
+/// 3. `no_cse_llm` and `disable_passes` filter the resulting list.
 ///
 /// Single source of truth used by both the MLIR-pass-manager build path
 /// ([`build_pipeline_with_config`]) and the diagnostics path
@@ -377,6 +317,9 @@ pub fn resolve_pass_list(config: &apxm_core::types::PipelineConfig) -> Vec<Strin
             config.warn_unconsumed,
         )
     };
+    if config.no_cse_llm {
+        passes.retain(|p| p != CSE);
+    }
     if !config.disable_passes.is_empty() {
         let drop: std::collections::HashSet<&str> =
             config.disable_passes.iter().map(String::as_str).collect();
@@ -401,32 +344,34 @@ mod tests {
         // Check structural ordering, not exact count
         assert_eq!(passes[0], NORMALIZE);
         assert_eq!(passes[1], BUILD_PROMPT);
-        assert_eq!(passes[2], DSPY_OPTIMIZE);
+        assert_eq!(passes[2], CANONICALIZER);
         assert!(passes.contains(&ASSIGN_PRIORITY.to_string()));
-        assert_eq!(passes.last().unwrap(), SYMBOL_DCE);
+        assert_eq!(passes.last().unwrap(), ASSIGN_PRIORITY);
+        let symbol_idx = passes.iter().position(|p| p == SYMBOL_DCE).unwrap();
+        let priority_idx = passes.iter().position(|p| p == ASSIGN_PRIORITY).unwrap();
+        assert!(symbol_idx < priority_idx);
         assert!(passes.contains(&CSE.to_string()));
-        assert!(passes.contains(&FUSE_ASK_OPS.to_string()));
+        assert_default_excludes_semantic_rewrites(&passes);
     }
 
     #[test]
-    fn o1_no_cse_llm_skips_cse() {
-        let passes = build_pass_list(OptimizationLevel::O1, true, OptimizationTarget::Balanced);
-        assert!(!passes.contains(&CSE.to_string()));
-        // Other passes still present
-        assert!(passes.contains(&FUSE_ASK_OPS.to_string()));
-        assert!(passes.contains(&NORMALIZE.to_string()));
+    fn no_cse_llm_filters_explicit_cse_override() {
+        let config = apxm_core::types::PipelineConfig {
+            no_cse_llm: true,
+            pass_list_override: Some(vec![NORMALIZE.to_string(), CSE.to_string()]),
+            ..Default::default()
+        };
+        let passes = resolve_pass_list(&config);
+        assert_eq!(passes, vec![NORMALIZE.to_string()]);
     }
 
     #[test]
     fn o2_pass_list_matches_spec() {
         let passes = build_pass_list(OptimizationLevel::O2, false, OptimizationTarget::Balanced);
-        assert!(passes.contains(&DSPY_OPTIMIZE.to_string()));
         assert!(passes.contains(&ASSIGN_PRIORITY.to_string()));
-        assert!(passes.contains(&PROMPT_CANONICALIZATION.to_string()));
         assert!(passes.contains(&TEMPLATE_SPECIALIZATION.to_string()));
         assert!(passes.contains(&DEAD_CONTEXT_ELIMINATION.to_string()));
-        assert!(passes.contains(&SCHEMA_NARROWING.to_string()));
-        assert!(passes.contains(&CONDENSE_OPS.to_string()));
+        assert_default_excludes_semantic_rewrites(&passes);
     }
 
     #[test]
@@ -435,8 +380,9 @@ mod tests {
         // Check preamble ordering
         assert_eq!(passes[0], NORMALIZE);
         assert_eq!(passes[1], BUILD_PROMPT);
-        assert_eq!(passes[2], DSPY_OPTIMIZE);
+        assert_eq!(passes[2], TEMPLATE_SPECIALIZATION);
         assert!(passes.contains(&ASSIGN_PRIORITY.to_string()));
+        assert_default_excludes_semantic_rewrites(&passes);
         // UNCONSUMED_VALUE_WARNING is opt-in via --warn (Task 6); it must NOT appear
         // by default at any opt level. See unconsumed_value_warning_off_by_default.
         // Convergence loop produces many more passes than O2
@@ -445,20 +391,17 @@ mod tests {
     }
 
     #[test]
-    fn test_target_latency_enables_fusion() {
+    fn target_latency_does_not_enable_unproven_fusion() {
         let passes = build_pass_list(OptimizationLevel::O2, false, OptimizationTarget::Latency);
-        // SCHEDULING is disabled at O2 (regression — see compiler-audit.md). Verify the
-        // remaining latency-target invariant: fusion is in the pipeline.
-        assert!(passes.contains(&FUSE_ASK_OPS.to_string()));
-        // At O3 the scheduling-before-fusion ordering still holds.
+        assert!(!passes.contains(&FUSE_ASK_OPS.to_string()));
+        assert!(passes.contains(&SCHEDULING.to_string()));
         let o3 = build_pass_list(OptimizationLevel::O3, false, OptimizationTarget::Latency);
-        let scheduling_idx = o3.iter().position(|p| p == SCHEDULING).unwrap();
-        let fusion_idx = o3.iter().position(|p| p == FUSE_ASK_OPS).unwrap();
-        assert!(scheduling_idx < fusion_idx);
+        assert!(!o3.contains(&FUSE_ASK_OPS.to_string()));
+        assert!(o3.contains(&SCHEDULING.to_string()));
     }
 
     #[test]
-    fn test_target_cost_enables_cse() {
+    fn target_cost_keeps_cse_enabled() {
         let passes = build_pass_list(OptimizationLevel::O2, false, OptimizationTarget::Cost);
         assert!(passes.contains(&CSE.to_string()));
         assert!(passes.contains(&DEAD_CONTEXT_ELIMINATION.to_string()));
@@ -467,14 +410,12 @@ mod tests {
     #[test]
     fn test_target_tokens_enables_dce() {
         let passes = build_pass_list(OptimizationLevel::O2, false, OptimizationTarget::Tokens);
-        // SCHEDULING is disabled at O2 (regression — see compiler-audit.md). Verify the
-        // remaining tokens-target invariant: dead-context-elimination runs before fusion.
         let dce_idx = passes
             .iter()
             .position(|p| p == DEAD_CONTEXT_ELIMINATION)
             .unwrap();
-        let fusion_idx = passes.iter().position(|p| p == FUSE_ASK_OPS).unwrap();
-        assert!(dce_idx < fusion_idx);
+        let canonicalizer_idx = passes.iter().position(|p| p == CANONICALIZER).unwrap();
+        assert!(dce_idx < canonicalizer_idx);
         // At O3 the DCE-before-scheduling ordering still holds.
         let o3 = build_pass_list(OptimizationLevel::O3, false, OptimizationTarget::Tokens);
         let dce_idx_o3 = o3
@@ -491,14 +432,13 @@ mod tests {
         // Check structural ordering, not exact count
         assert_eq!(balanced[0], NORMALIZE);
         assert_eq!(balanced[1], BUILD_PROMPT);
-        assert_eq!(balanced[2], DSPY_OPTIMIZE);
+        assert_eq!(balanced[2], TEMPLATE_SPECIALIZATION);
         assert!(balanced.contains(&ASSIGN_PRIORITY.to_string()));
-        assert!(balanced.contains(&PROMPT_CANONICALIZATION.to_string()));
-        assert!(balanced.contains(&SCHEMA_NARROWING.to_string()));
+        assert_default_excludes_semantic_rewrites(&balanced);
     }
 
     #[test]
-    fn assign_priority_runs_after_fusion() {
+    fn assign_priority_runs_after_safe_cleanup() {
         for target in [
             OptimizationTarget::Balanced,
             OptimizationTarget::Latency,
@@ -507,25 +447,21 @@ mod tests {
         ] {
             for level in [OptimizationLevel::O1, OptimizationLevel::O2] {
                 let passes = build_pass_list(level, false, target);
-                let fusion_idx = passes.iter().position(|p| p == FUSE_ASK_OPS).unwrap();
                 let priority_idx = passes.iter().position(|p| p == ASSIGN_PRIORITY).unwrap();
+                let symbol_idx = passes.iter().position(|p| p == SYMBOL_DCE).unwrap();
                 assert!(
-                    priority_idx > fusion_idx,
-                    "ASSIGN_PRIORITY must run after FUSE_ASK_OPS at {level:?}/{target:?}"
+                    priority_idx > symbol_idx,
+                    "ASSIGN_PRIORITY must run after SYMBOL_DCE at {level:?}/{target:?}"
                 );
             }
         }
     }
 
     #[test]
-    fn early_cse_runs_before_assign_priority() {
-        // Regression guard for the assign-priority/CSE ordering bug: assign-priority
-        // stamps each op with a `downstream_nodes` ArrayAttr listing consumer IDs,
-        // which makes structurally-identical ops look distinct to a later CSE pass.
-        // Inserting CSE *before* assign-priority lets dedup happen first; the
-        // surviving op then gets the union of consumers stamped onto it. Verified
-        // on cse_stress.air via the tier-2 ablation harness (disabling CSE
-        // regresses ops_after by +33%, was +0% before this fix).
+    fn cse_runs_before_assign_priority() {
+        // Regression guard for the assign-priority/CSE ordering bug:
+        // assign-priority stamps each op with downstream metadata, which makes
+        // structurally-identical ops look distinct to a later CSE pass.
         for target in [
             OptimizationTarget::Balanced,
             OptimizationTarget::Latency,
@@ -545,17 +481,14 @@ mod tests {
                 let cse_before = passes[..priority_idx].iter().any(|p| p == CSE);
                 assert!(
                     cse_before,
-                    "CSE must run at least once before ASSIGN_PRIORITY at {level:?}/{target:?}"
+                    "CSE must run before ASSIGN_PRIORITY at {level:?}/{target:?}"
                 );
             }
         }
     }
 
     #[test]
-    fn no_cse_llm_skips_early_cse() {
-        // The early CSE insertion must respect the `no_cse_llm` opt-out at
-        // every level. If the user disables CSE, neither the trailing CSE
-        // nor the early-CSE-before-assign-priority should appear.
+    fn no_cse_llm_skips_default_cse() {
         for level in [
             OptimizationLevel::O1,
             OptimizationLevel::O2,
@@ -570,47 +503,63 @@ mod tests {
     }
 
     #[test]
-    fn vllm_hints_runs_at_o1_plus_after_assign_priority() {
+    fn o2_runs_dead_context_before_canonicalizer() {
         for target in [
             OptimizationTarget::Balanced,
             OptimizationTarget::Latency,
             OptimizationTarget::Cost,
             OptimizationTarget::Tokens,
         ] {
-            for level in [
-                OptimizationLevel::O1,
-                OptimizationLevel::O2,
-                OptimizationLevel::O3,
-            ] {
-                let passes = build_pass_list(level, false, target);
-                let priority_idx = passes
-                    .iter()
-                    .position(|p| p == ASSIGN_PRIORITY)
-                    .expect("ASSIGN_PRIORITY must appear at O1+");
-                let vllm_idx = passes
-                    .iter()
-                    .position(|p| p == VLLM_HINTS)
-                    .unwrap_or_else(|| {
-                        panic!("VLLM_HINTS missing from O1+ pipeline at {level:?}/{target:?}")
-                    });
-                assert!(
-                    vllm_idx > priority_idx,
-                    "VLLM_HINTS must run after ASSIGN_PRIORITY at {level:?}/{target:?}"
-                );
-            }
+            let passes = build_pass_list(OptimizationLevel::O2, false, target);
+            let dce_idx = passes
+                .iter()
+                .position(|p| p == DEAD_CONTEXT_ELIMINATION)
+                .expect("DEAD_CONTEXT_ELIMINATION must appear at O2");
+            let canonicalizer_idx = passes
+                .iter()
+                .position(|p| p == CANONICALIZER)
+                .expect("CANONICALIZER must appear at O2");
+            assert!(
+                dce_idx < canonicalizer_idx,
+                "dead context must be pruned before canonicalizer at O2/{target:?}"
+            );
         }
     }
 
     #[test]
-    fn o0_does_not_emit_vllm_hints() {
-        let passes = build_pass_list(OptimizationLevel::O0, false, OptimizationTarget::Balanced);
-        assert!(!passes.contains(&VLLM_HINTS.to_string()));
+    fn explicit_semantic_passes_are_available_via_override() {
+        let explicit = [
+            DSPY_OPTIMIZE,
+            PROMPT_CANONICALIZATION,
+            SCHEMA_NARROWING,
+            FUSE_ASK_OPS,
+            CONDENSE_OPS,
+        ];
+        let config = apxm_core::types::PipelineConfig {
+            pass_list_override: Some(explicit.iter().map(|p| (*p).to_string()).collect()),
+            ..Default::default()
+        };
+        let expected: Vec<String> = explicit.iter().map(|p| (*p).to_string()).collect();
+        assert_eq!(resolve_pass_list(&config), expected);
+    }
+
+    #[test]
+    fn semantic_rewrites_are_absent_from_o2_targets() {
+        for target in [
+            OptimizationTarget::Balanced,
+            OptimizationTarget::Latency,
+            OptimizationTarget::Cost,
+            OptimizationTarget::Tokens,
+            OptimizationTarget::Parallelism,
+        ] {
+            let passes = build_pass_list(OptimizationLevel::O2, false, target);
+            assert_default_excludes_semantic_rewrites(&passes);
+        }
     }
 
     #[test]
     fn rust_only_passes_are_filtered_from_mlir_dispatch() {
         // Sanity: Rust-only passes must not look like MLIR passes.
-        assert!(!is_mlir_pass(VLLM_HINTS));
         assert!(!is_mlir_pass(TOOL_BINDING));
         assert!(!is_mlir_pass(BIND_TOOL_HANDLERS));
         // All other pass names should still be MLIR-dispatched.
@@ -682,7 +631,7 @@ mod tests {
     }
 
     #[test]
-    fn scheduling_pass_only_present_at_o3() {
+    fn scheduling_pass_is_targeted_before_o3() {
         use OptimizationTarget::*;
         for target in [Balanced, Latency, Cost, Tokens, Parallelism] {
             let o1 = build_pass_list(OptimizationLevel::O1, false, target);
@@ -692,9 +641,11 @@ mod tests {
                 !o1.iter().any(|p| p == SCHEDULING),
                 "SCHEDULING must not appear in O1 (target={target:?})"
             );
-            assert!(
-                !o2.iter().any(|p| p == SCHEDULING),
-                "SCHEDULING must not appear in O2 (target={target:?})"
+            let o2_has_scheduling = o2.iter().any(|p| p == SCHEDULING);
+            assert_eq!(
+                o2_has_scheduling,
+                matches!(target, Latency | Parallelism),
+                "SCHEDULING must be O2 target-specific (target={target:?})"
             );
             assert!(
                 o3.iter().any(|p| p == SCHEDULING),
@@ -732,6 +683,21 @@ mod tests {
                     "BIND_TOOL_HANDLERS must run after TOOL_BINDING at {level:?}/{target:?}"
                 );
             }
+        }
+    }
+
+    fn assert_default_excludes_semantic_rewrites(pass_list: &[String]) {
+        for pass_name in [
+            DSPY_OPTIMIZE,
+            PROMPT_CANONICALIZATION,
+            SCHEMA_NARROWING,
+            FUSE_ASK_OPS,
+            CONDENSE_OPS,
+        ] {
+            assert!(
+                !pass_list.contains(&pass_name.to_string()),
+                "{pass_name} must remain explicit until its production contract is enforced"
+            );
         }
     }
 }

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""optimization_showcase.py -- All compiler optimizations in one workflow
+"""optimization_showcase.py -- Production-safe compiler optimizations
 
-Demonstrates every optimization the APXM compiler can apply:
+Demonstrates default APXM compiler optimizations:
 1. Parallel scheduling -- independent nodes run concurrently
-2. Fusion -- adjacent THINK nodes merge into one LLM call
-3. Shared prefix reuse -- parallel branches share prompt prefix for KV-cache
+2. CSE -- duplicate deterministic work can be removed
+3. Template specialization -- constant prompt inputs can be folded
 4. Dead context elimination -- unused inputs are pruned
 
 Usage:
@@ -17,7 +17,7 @@ from apxm import compile, GraphRecorder
 
 @compile()
 def optimization_showcase(g: GraphRecorder):
-    """Showcase: parallel scheduling, fusion, shared prefix, and DCE."""
+    """Showcase: scheduling hints, CSE, template specialization, and DCE."""
 
     topic = g.ask(
         name="topic",
@@ -34,8 +34,7 @@ def optimization_showcase(g: GraphRecorder):
         "- Performance: [LOW/MEDIUM/HIGH]"
     )
 
-    # PARALLEL + SHARED PREFIX: three analyses fan out from triage
-    # All share "Based on triage: {triage}" prefix -- KV-cache reuse
+    # PARALLEL FANOUT: three analyses fan out from triage.
     arch = g.think(
         name="architecture",
         prompt="Based on triage: {triage}\n\n"
@@ -67,7 +66,7 @@ def optimization_showcase(g: GraphRecorder):
         "500-word summary with key insights and recommendations."
     )
 
-    # FUSION CANDIDATES: adjacent THINK nodes (review + validation)
+    # Independent follow-up checks.
     review = g.think(
         name="review",
         prompt="Review this synthesis:\n{synthesis}\n\n"

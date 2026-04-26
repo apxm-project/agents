@@ -96,6 +96,7 @@ constexpr llvm::StringLiteral CONDENSED_OPS = "ais.condensed_ops";
 constexpr llvm::StringLiteral TEMPLATES_SPECIALIZED = "ais.templates_specialized";
 constexpr llvm::StringLiteral SCHEMAS_NARROWED = "ais.schemas_narrowed";
 constexpr llvm::StringLiteral PROMPTS_CANONICALIZED = "ais.prompts_canonicalized";
+constexpr llvm::StringLiteral SHARED_PREFIX_ANALYZED = "ais.shared_prefix_analyzed";
 constexpr llvm::StringLiteral GRAPH_NORMALIZED = "ais.graph_normalized";
 constexpr llvm::StringLiteral DSPY_OPTIMIZED = "ais.dspy_optimized";
 
@@ -117,6 +118,7 @@ constexpr llvm::StringLiteral SHARED_PREFIX_GROUP = "ais.shared_prefix_group";
 constexpr llvm::StringLiteral SHARED_PREFIX_EST_TOKENS = "ais.shared_prefix_est_tokens";
 constexpr llvm::StringLiteral WARMUP_CANDIDATE = "ais.warmup_candidate";
 constexpr llvm::StringLiteral DOWNSTREAM_NODES = "ais.downstream_nodes";
+constexpr llvm::StringLiteral SHARED_PREFIX_GROUP_PREFIX = "shared_prefix_analysis_";
 
 // ---- Operation-level attributes (no ais. prefix) ----
 // These mirror the canonical graph attrs exported through apxm-core and match

@@ -561,6 +561,7 @@ impl LLMBackend for MockLLMBackend {
             streaming: true,
             vision: false,
             functions: true,
+            structured_outputs: true,
             batch: false,
             fine_tuning: false,
         }

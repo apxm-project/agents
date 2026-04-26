@@ -42,15 +42,15 @@ bin = ["{project}/bin", "{project}/target/release", "{home}/.cargo/bin"]
 lib = ["{project}/target/release/lib", "{environment}/lib"]
 
 [commands]
-build = { run = "cargo build -p apxm-cli --features driver,metrics --release", description = "Build APXM", skill = true, group = "Build & Test" }
-build-gui = { run = "cargo build -p apxm-gui --release", description = "Build GUI dashboard server", group = "Build & Test" }
-build-dialect = { run = "cmake --build $(find target/release/build -name 'Makefile' -path '*/apxm-compiler*/out/build/Makefile' | head -1 | xargs dirname) --target AISIRIncGen && cmake --build $(find target/release/build -name 'Makefile' -path '*/apxm-compiler*/out/build/Makefile' | head -1 | xargs dirname) && cargo build -p apxm-cli --features driver,metrics --release", description = "Rebuild MLIR dialect (TableGen + C++ + Rust) after editing .td or .cpp files", skill = true, group = "Build & Test" }
-test = { run = "cargo test --workspace --exclude apxm-compiler --exclude apxm-cli", description = "Run tests", skill = true, group = "Build & Test" }
-test-all = { run = "cargo test --workspace", description = "All tests (requires MLIR)", group = "Build & Test" }
-test-cli = { run = "cargo test -p apxm-cli --features driver,metrics --release", description = "Run CLI tests with driver (preserves MLIR-linked binary)", group = "Build & Test" }
+build = { run = "python tools/scripts/cargo.py build -p apxm-cli --features driver,metrics --release", description = "Build APXM", skill = true, group = "Build & Test" }
+build-gui = { run = "python tools/scripts/cargo.py build -p apxm-gui --release", description = "Build GUI dashboard server", group = "Build & Test" }
+build-dialect = { run = "python tools/scripts/cargo.py build-dialect", description = "Rebuild MLIR dialect (TableGen + C++ + Rust) after editing .td or .cpp files", skill = true, group = "Build & Test" }
+test = { run = "python tools/scripts/cargo.py test --workspace --exclude apxm-compiler --exclude apxm-cli", description = "Run tests", skill = true, group = "Build & Test" }
+test-all = { run = "python tools/scripts/cargo.py test --workspace", description = "All tests (requires MLIR)", group = "Build & Test" }
+test-cli = { run = "python tools/scripts/cargo.py test -p apxm-cli --features driver,metrics --release", description = "Run CLI tests with driver (preserves MLIR-linked binary)", group = "Build & Test" }
 test-python-frontend = { run = "python -m pytest crates/compiler/apxm-frontend/python/tests -q", description = "Run Python frontend tests", group = "Build & Test" }
 test-quality-eval = { run = "python -m pytest tools/quality_eval/tests -q", description = "Run offline quality-eval harness tests", group = "Build & Test" }
-clean = { run = "cargo clean", description = "Clean", group = "Build & Test" }
+clean = { run = "python tools/scripts/cargo.py clean", description = "Clean", group = "Build & Test" }
 
 codegen = { run = "apxm codegen", description = "Regenerate frontend bindings from Core definitions", skill = true, group = "Build & Test" }
 quality-eval = { run = "apxm quality-eval", description = "Run tier-3 quality-eval harness (rubric + budget + judge)", skill = true, group = "Build & Test" }
@@ -146,21 +146,21 @@ wrap = { name = "apxm", target = "target/release/apxm" }
 name = "compiler-runtime"
 label = "Compiler + Runtime"
 description = "APXM compiler and dataflow runtime"
-run = "cargo build -p apxm-cli --features driver,metrics --release"
+run = "python tools/scripts/cargo.py build -p apxm-cli --features driver,metrics --release"
 default = true
 
 [[install.components]]
 name = "mcp-server"
 label = "MCP Server"
 description = "HTTP API + MCP protocol server for IDE integration"
-run = "cargo build -p apxm-server --release"
+run = "python tools/scripts/cargo.py build -p apxm-server --release"
 default = true
 
 [[install.components]]
 name = "gui"
 label = "GUI Dashboard"
 description = "Web dashboard with multi-model agent chat (requires >=1 backend)"
-run = "cargo build -p apxm-gui --release"
+run = "python tools/scripts/cargo.py build -p apxm-gui --release"
 default = false
 
 [[install.components]]

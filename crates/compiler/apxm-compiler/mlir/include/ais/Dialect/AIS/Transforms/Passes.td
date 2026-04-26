@@ -5,7 +5,7 @@
  * Domain-specific transforms:
  *   - normalize      – canonicalize graph structure
  *   - scheduling     – annotate with tier/cost/parallel-safe flags
- *   - fuse-ask-ops   – batch ask LLM calls (highest ROI)
+ *   - fuse-ask-ops   – explicit-only LLM call merge experiment
  *   - unconsumed-value-warning – warn about unused results
  *
  * Each pass declares its constructor, dependent dialects, and tunable options
@@ -91,22 +91,21 @@ def CapabilityScheduling : Pass<"scheduling", "mlir::ModuleOp"> {
 }
 
 def FuseAskOps : Pass<"fuse-ask-ops", "mlir::ModuleOp"> {
-  let summary = "Fuse adjacent ask operations to reduce LLM calls";
+  let summary = "Explicit-only ASK fusion experiment";
   let description = [{
     Identifies producer-consumer ais.ask chains and merges them into single
-    batched operations. This is the highest-ROI optimization (100-400x) as it:
+    batched operations:
 
-    - Reduces serialized LLM API calls (each ~500ms-2s)
+    - Reduces serialized LLM API calls
     - Concatenates ask templates with separator
     - Combines contexts from both operations
 
     Only fuses AskOp (LOW latency). ThinkOp/ReasonOp are not fused because
     they have different semantics (extended thinking, structured output).
 
-    Fusion is guarded by heuristics to prevent quality degradation:
-    - Max fusion depth limits chain length (default: 5)
-    - Max template tokens prevents overly long prompts (default: 2000)
-    - Operations can opt-out via `ais.no_fuse` attribute
+    This pass is not part of the automatic O-level pipelines. It must remain
+    explicitly requested until APXM has typed request-attribute preservation
+    and semantic-quality heuristics for LLM-call merging.
 
     Only fuses when producer has single use through the consumer chain.
   }];
@@ -122,7 +121,7 @@ def FuseAskOps : Pass<"fuse-ask-ops", "mlir::ModuleOp"> {
 }
 
 def CondenseOps : Pass<"condense-ops", "mlir::ModuleOp"> {
-  let summary = "Condense consecutive memory operations into batched calls";
+  let summary = "Explicit-only memory operation batching experiment";
   let description = [{
     Identifies linear chains of QMEM or UMEM operations that target the same
     memory space and condenses them into a single batched operation.
@@ -137,7 +136,8 @@ def CondenseOps : Pass<"condense-ops", "mlir::ModuleOp"> {
     3. No intervening side-effectful operations exist between them
     4. Intermediate results are not consumed by other operations
 
-    This pass is the memory-tier analogue of FuseAskOps for LLM calls.
+    This pass is not part of the automatic O-level pipelines until memory-store
+    semantics and batching capability contracts are typed.
   }];
   let constructor = "mlir::ais::createCondenseOpsPass()";
 }
@@ -193,13 +193,14 @@ def UnconsumedValueWarning : Pass<"unconsumed-value-warning", "mlir::ModuleOp"> 
 def TemplateSpecialization : Pass<"template-specialization", "mlir::ModuleOp"> {
   let summary = "Specialize template strings with known constant inputs";
   let description = [{
-    When a template string like "Analyze {0}" is used with a known constant
+    When a template string like "Analyze {input}" is used with a known constant
     input, this pass specializes the template at compile time by substituting
     the constant value directly into the template string.
 
     Example transformation:
       %const = ais.const_str "user_input_here"
-      %r = ais.ask "Analyze {0}" [%const : !ais.token]
+      %r = ais.ask "Analyze {input}" [%const : !ais.token]
+           {input_names = ["input"]}
 
     Becomes:
       %r = ais.ask "Analyze user_input_here" []
@@ -217,50 +218,57 @@ def DeadContextElimination : Pass<"dead-context-elimination", "mlir::ModuleOp"> 
     then removes unused context inputs from the operation.
 
     Example transformation:
-      %r = ais.ask "Use {0} and {2}" [%a, %b, %c : !ais.token]
+      %r = ais.ask "Use {a} and {c}" [%a, %b, %c : !ais.token]
+           {input_names = ["a", "b", "c"]}
 
     Becomes:
-      %r = ais.ask "Use {0} and {1}" [%a, %c : !ais.token]
+      %r = ais.ask "Use {a} and {c}" [%a, %c : !ais.token]
+           {input_names = ["a", "c"]}
 
-    The placeholder indices are renumbered to maintain correctness. This pass
+    The operand list and input_names attribute are kept aligned. This pass
     reduces token costs by eliminating unused context that would otherwise be
     sent to the LLM.
 
-    This is particularly effective after fusion passes which may concatenate
-    templates that don't use all inherited context.
+    Placeholder-free templates preserve their context operands because those
+    operands still carry graph data dependencies and may be consumed by runtime
+    request construction.
   }];
   let constructor = "mlir::ais::createDeadContextEliminationPass()";
 }
 
 def SchemaNarrowing : Pass<"schema-narrowing", "mlir::ModuleOp"> {
-  let summary = "Narrow output schemas based on actual usage patterns";
+  let summary = "Explicit-only schema narrowing experiment";
   let description = [{
-    When an output_schema attribute is set on a node, this pass propagates
-    schema constraints to downstream consumers and narrows overly broad schemas
-    based on how the output is actually used.
+    Planned optimization: when an output_schema attribute is set on a node,
+    propagate schema constraints to downstream consumers and narrow overly broad
+    schemas based on how the output is actually used.
 
     Example: If a REASON operation specifies it returns {name, age, address}
     but downstream operations only access 'name' and 'age', the schema can be
     narrowed to {name, age}, reducing token overhead in the LLM response.
 
-    This pass performs data-flow analysis to track which fields are accessed
-    and removes unused fields from output_schema attributes.
+    The current implementation is not field-use narrowing, so this pass is not
+    part of the automatic O-level pipelines.
   }];
   let constructor = "mlir::ais::createSchemaNarrowingPass()";
 }
 
 def DspyOptimize : Pass<"dspy-optimize", "mlir::ModuleOp"> {
-  let summary = "Optimize prompt templates using DSPy";
+  let summary = "Explicit-only DSPy prompt optimization";
   let description = [{
     Invokes python3 -m apxm_dspy as a subprocess to run DSPy's prompt
     optimizers (MIPROv2, BootstrapFewShot, COPRO) on template strings.
     No-op when no training data is available.
+
+    This pass is not part of the automatic O-level pipelines until the
+    CLI/API config, optimizer request schema, cache key, and quality-gated
+    benchmark contract are complete.
   }];
   let constructor = "mlir::ais::createDspyOptimizePass()";
 }
 
 def PromptCanonicalization : Pass<"prompt-canonicalization", "mlir::ModuleOp"> {
-  let summary = "Reorder prompts to maximize shared-prefix reuse for vLLM caching";
+  let summary = "Explicit-only shared-prefix prompt layout experiment";
   let description = [{
     Identifies groups of LLM operations that share common upstream context and
     reorders their template strings so shared context appears FIRST, followed
@@ -268,24 +276,44 @@ def PromptCanonicalization : Pass<"prompt-canonicalization", "mlir::ModuleOp"> {
 
     Example transformation:
       Before:
-        %a = ais.ask "As security reviewer, review: {0}" [%diff]
-        %b = ais.ask "As style reviewer, review: {0}" [%diff]
+        %a = ais.ask "As security reviewer, review: {diff}" [%diff]
+             {input_names = ["diff"]}
+        %b = ais.ask "As style reviewer, review: {diff}" [%diff]
+             {input_names = ["diff"]}
 
       After:
-        %a = ais.ask "{0}\n---\nReview focus: security" [%diff]
+        %a = ais.ask "{diff}\n---\nReview focus: security" [%diff]
              {ais.shared_prefix_group = "diff_review", ais.warmup_candidate = true}
-        %b = ais.ask "{0}\n---\nReview focus: style" [%diff]
+        %b = ais.ask "{diff}\n---\nReview focus: style" [%diff]
              {ais.shared_prefix_group = "diff_review"}
 
-    This enables vLLM's prefix caching to reuse expensive shared context across
-    multiple operations, reducing repeated prefill work. The pass emits:
+    This can help prefix-caching inference backends reuse shared context across
+    multiple operations. The pass emits:
     - ais.shared_prefix_group: Identifies operations sharing a prefix
     - ais.shared_prefix_est_tokens: Estimated shared token count
     - ais.warmup_candidate: Marks first op in group for warmup prefill
 
-    See docs/strategy/09-VLLM-GRAPH-AWARENESS.md section 5.3.
+    This pass is not part of the automatic O-level pipelines until prompt
+    layout rewrites are controlled by a typed backend-agnostic graph-hint
+    contract.
   }];
   let constructor = "mlir::ais::createPromptCanonicalizationPass()";
+}
+
+def SharedPrefixAnalysis : Pass<"shared-prefix-analysis", "mlir::ModuleOp"> {
+  let summary = "Annotate existing shared-prefix reuse opportunities";
+  let description = [{
+    Detects LLM operations that already share the same leading prompt prefix
+    and context operands, then emits graph-hint metadata for prefix-aware
+    backends.
+
+    This pass does not rewrite prompt templates or reorder operands. It only
+    emits analysis metadata:
+    - ais.shared_prefix_group: Identifies operations sharing a prefix
+    - ais.shared_prefix_est_tokens: Estimated shared token count
+    - ais.warmup_candidate: Marks first op in group for warmup prefill
+  }];
+  let constructor = "mlir::ais::createSharedPrefixAnalysisPass()";
 }
 
 #endif // APXM_AIS_PASSES

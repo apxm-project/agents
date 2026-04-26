@@ -13,7 +13,7 @@ def my_workflow(g: GraphRecorder, param: str) -> dict:
     result = g.merge("result", [node1, node2])
     g.done(result)
 
-print(my_workflow._graph.to_air())
+print(my_workflow.to_air())
 ```
 
 ### Core Operations
@@ -55,7 +55,7 @@ team.merge("results")                                # Merge outputs
 examples/python/
     getting-started/     First contact (hello world, tool use)
     parallelism/         Implicit DAG-based parallel execution
-    optimization/        Compiler passes (fusion, DCE, shared prefix)
+    optimization/        Compiler passes (CSE, DCE, template specialization)
     multi-agent/         Native multi-agent coordination
     multi-provider/      Per-node model routing
     memory/              Three-tier memory and RAG
@@ -77,8 +77,8 @@ dekk apxm compile examples/python/getting-started/hello.py -O2 -o hello.apxmobj
 dekk apxm run hello.apxmobj
 
 # Compare optimization levels
-dekk apxm execute examples/python/optimization/fusion.py -O0
-dekk apxm execute examples/python/optimization/fusion.py -O2
+dekk apxm execute examples/python/optimization/dead_context.py -O0
+dekk apxm execute examples/python/optimization/dead_context.py -O2
 ```
 
 ## Runtime Requirements
@@ -95,7 +95,7 @@ Example categories:
 | `multi-provider/` | Registered backend/model routes in APXM config |
 | `native-tools/` | Mock backend for local runs or a registered real backend |
 | `multi-agent/`, `real-world/`, `self-hosted/` | Generated ACP agent profiles and authenticated agent CLIs |
-| `self-hosted/vllm_*.py` | APXM vLLM fork plus a registered served model alias |
+| `self-hosted/vllm_graph_smoke.py` | APXM vLLM fork plus a registered served model alias |
 | `_benchmarks/` | Use `--compile-only` when no backend is configured |
 
 Generated ACP profiles are typed imports. If an example imports

@@ -9,10 +9,10 @@
  *
  * Pass list (in canonical order):
  *   1. normalize                 – canonicalise the graph
- *   2. build-prompt              – generate {0} placeholder for empty templates
+ *   2. build-prompt              – generate named placeholders for empty templates
  *   3. scheduling                – annotate with tier/cost/parallel-safe flags
- *   4. fuse-ask-ops              – batch ask LLM calls (highest ROI)
- *   5. condense-ops              – batch consecutive memory operations
+ *   4. fuse-ask-ops              – explicit-only ASK fusion experiment
+ *   5. condense-ops              – explicit-only memory batching experiment
  *   6. unconsumed-value-warning  – warn about unused results (DCE)
  */
 
@@ -39,13 +39,13 @@ namespace mlir::ais {
 /// Create NormalizeAgentGraph pass - canonicalize AIS graph structure
 std::unique_ptr<Pass> createNormalizeAgentGraphPass();
 
-/// Create BuildPrompt pass - generate {0} placeholder for empty template_str
+/// Create BuildPrompt pass - generate named placeholders for empty template_str
 std::unique_ptr<Pass> createBuildPromptPass();
 
 /// Create CapabilityScheduling pass - annotate with scheduling metadata
 std::unique_ptr<Pass> createCapabilitySchedulingPass();
 
-/// Create FuseAskOps pass - merge ask chains (highest ROI)
+/// Create FuseAskOps pass - explicit-only ASK fusion experiment
 std::unique_ptr<Pass> createFuseAskOpsPass();
 
 /// Create CondenseOps pass - batch consecutive memory operations
@@ -65,6 +65,9 @@ std::unique_ptr<Pass> createSchemaNarrowingPass();
 
 /// Create PromptCanonicalization pass - reorder prompts for shared-prefix reuse
 std::unique_ptr<Pass> createPromptCanonicalizationPass();
+
+/// Create SharedPrefixAnalysis pass - annotate existing shared-prefix reuse
+std::unique_ptr<Pass> createSharedPrefixAnalysisPass();
 
 /// Create AssignPriority pass - assign execution priority based on critical path
 std::unique_ptr<Pass> createAssignPriorityPass();

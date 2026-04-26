@@ -11,6 +11,7 @@ use super::{
     ExecutionContext, Node, Result, Value, apply_llm_request_routing_from_node,
     execute_llm_request, extract_json_from_markdown, get_optional_string_attribute,
     inner_plan::{InnerPlanOptions, execute_inner_plan},
+    llm::attach_graph_hints,
 };
 use crate::aam::{Goal as AamGoal, GoalId, GoalStatus, TransitionLabel};
 use apxm_backends::LLMRequest;
@@ -141,6 +142,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
                 .with_temperature(temperature),
             node,
         )?;
+        let request = attach_graph_hints(ctx, node, request);
 
         if attempt > 0 {
             tracing::info!(
@@ -446,6 +448,7 @@ async fn generate_inner_plan(
     if let Some(model_name) = model_override {
         request = request.with_model(model_name.to_string());
     }
+    request = attach_graph_hints(ctx, node, request);
 
     let response = execute_llm_request(ctx, node.id, "INNER_PLAN", &request).await?;
 

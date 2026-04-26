@@ -135,6 +135,11 @@ private:
         APXM_AIS_DEBUG("  '" << name << "' is not constant; skipping");
         return false;
       }
+      if (!placeholders::namesIn(constOp.getValue()).empty()) {
+        APXM_AIS_DEBUG("  Constant for '" << name
+                       << "' contains template placeholders; skipping");
+        return false;
+      }
       constSubs[name] = constOp.getValue().str();
     }
 

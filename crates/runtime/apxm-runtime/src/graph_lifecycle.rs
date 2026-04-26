@@ -6,13 +6,14 @@
 //! `Drop` impl is the panic safety net that fires a best-effort release on a
 //! detached `tokio::spawn`.
 
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context, Result};
 use apxm_backends::llm::backends::traits::LLMBackend;
-use apxm_core::constants::graph::metadata as graph_meta;
-use apxm_core::types::execution::ExecutionDag;
+use apxm_core::constants::graph::{attrs as graph_attrs, metadata as graph_meta};
+use apxm_core::types::execution::{ExecutionDag, Node};
 use apxm_core::types::{
     ApxmGraphHints, GraphMetadata, GraphStatusSnapshot, NodeSpec, PriorityClass,
 };
@@ -107,6 +108,7 @@ pub(crate) fn graph_metadata_from_dag(
     exec_id: impl Into<String>,
     dag: &ExecutionDag,
 ) -> GraphMetadata {
+    let graph_shape = analyze_graph_shape(dag);
     let nodes = dag
         .nodes
         .iter()
@@ -129,13 +131,13 @@ pub(crate) fn graph_metadata_from_dag(
             NodeSpec {
                 node_id: node.id as u32,
                 node_name: node.metadata.name.clone(),
-                estimated_prompt_tokens: hints.compiler_hints.shared_prefix_est_tokens,
+                estimated_prompt_tokens: estimated_prompt_tokens(node, &hints),
                 downstream_nodes: if hints.downstream_nodes.is_empty() {
-                    dag.edges
-                        .iter()
-                        .filter(|edge| edge.from == node.id)
-                        .filter_map(|edge| u32::try_from(edge.to).ok())
-                        .collect()
+                    graph_shape
+                        .downstream
+                        .get(&node.id)
+                        .cloned()
+                        .unwrap_or_default()
                 } else {
                     hints.downstream_nodes
                 },
@@ -146,7 +148,95 @@ pub(crate) fn graph_metadata_from_dag(
         })
         .collect();
 
-    GraphMetadata::new(graph_id, exec_id).with_nodes(nodes)
+    let mut metadata = GraphMetadata::new(graph_id, exec_id).with_nodes(nodes);
+    metadata.critical_path_length = graph_shape.critical_path_length;
+    metadata.max_parallelism = graph_shape.max_parallelism;
+    metadata
+}
+
+#[derive(Debug, Default)]
+struct GraphShape {
+    downstream: HashMap<u64, Vec<u32>>,
+    critical_path_length: Option<u32>,
+    max_parallelism: Option<u32>,
+}
+
+fn estimated_prompt_tokens(node: &Node, hints: &ApxmGraphHints) -> Option<u32> {
+    node.attributes
+        .get(graph_attrs::EST_TEMPLATE_TOKENS)
+        .and_then(|value| value.as_u64())
+        .or_else(|| hints.compiler_hints.shared_prefix_est_tokens.map(u64::from))
+        .and_then(|value| u32::try_from(value).ok())
+}
+
+fn analyze_graph_shape(dag: &ExecutionDag) -> GraphShape {
+    if dag.nodes.is_empty() {
+        return GraphShape::default();
+    }
+
+    let mut downstream: HashMap<u64, Vec<u32>> = HashMap::new();
+    let mut incoming_count: HashMap<u64, usize> =
+        dag.nodes.iter().map(|node| (node.id, 0)).collect();
+
+    for edge in &dag.edges {
+        if let Ok(target) = u32::try_from(edge.to) {
+            let targets = downstream.entry(edge.from).or_default();
+            if !targets.contains(&target) {
+                targets.push(target);
+            }
+        }
+        *incoming_count.entry(edge.to).or_insert(0) += 1;
+    }
+
+    for targets in downstream.values_mut() {
+        targets.sort_unstable();
+    }
+
+    let mut queue = VecDeque::new();
+    let mut level: HashMap<u64, u32> = HashMap::new();
+    for node in &dag.nodes {
+        if incoming_count.get(&node.id).copied().unwrap_or_default() == 0 {
+            queue.push_back(node.id);
+            level.insert(node.id, 1);
+        }
+    }
+
+    let mut visited = 0usize;
+    let mut level_widths: HashMap<u32, u32> = HashMap::new();
+    let mut critical_path_length = 0u32;
+    while let Some(node_id) = queue.pop_front() {
+        visited += 1;
+        let node_level = level.get(&node_id).copied().unwrap_or(1);
+        critical_path_length = critical_path_length.max(node_level);
+        *level_widths.entry(node_level).or_insert(0) += 1;
+
+        for target in downstream.get(&node_id).into_iter().flatten() {
+            let target_id = u64::from(*target);
+            let next_level = node_level.saturating_add(1);
+            level
+                .entry(target_id)
+                .and_modify(|current| *current = (*current).max(next_level))
+                .or_insert(next_level);
+
+            if let Some(count) = incoming_count.get_mut(&target_id) {
+                *count = count.saturating_sub(1);
+                if *count == 0 {
+                    queue.push_back(target_id);
+                }
+            }
+        }
+    }
+
+    let max_parallelism = level_widths.values().copied().max();
+    GraphShape {
+        downstream,
+        critical_path_length: if visited == dag.nodes.len() {
+            Some(critical_path_length)
+        } else {
+            None
+        },
+        max_parallelism,
+    }
 }
 
 impl Drop for BackendGraphLifecycle {
@@ -173,5 +263,62 @@ impl Drop for BackendGraphLifecycle {
                 });
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use apxm_core::types::values::Number;
+    use apxm_core::types::{AISOperationType, DependencyType, Edge, NodeMetadata, Value};
+
+    fn node(id: u64, priority: u32) -> Node {
+        let mut node = Node::new(id, AISOperationType::Ask);
+        node.metadata = NodeMetadata {
+            priority,
+            name: Some(format!("node_{id}")),
+            ..NodeMetadata::default()
+        };
+        node
+    }
+
+    #[test]
+    fn graph_metadata_includes_shape_and_prompt_estimates() {
+        let mut dag = ExecutionDag::new();
+        let mut root = node(1, 90);
+        root.set_attribute(
+            graph_attrs::EST_TEMPLATE_TOKENS.to_string(),
+            Value::Number(Number::Integer(128)),
+        );
+        let left = node(2, 30);
+        let right = node(3, 30);
+        let join = node(4, 90);
+
+        dag.add_node(root).unwrap();
+        dag.add_node(left).unwrap();
+        dag.add_node(right).unwrap();
+        dag.add_node(join).unwrap();
+        dag.add_edge(Edge::new(1, 2, 12, DependencyType::Data))
+            .unwrap();
+        dag.add_edge(Edge::new(1, 3, 13, DependencyType::Data))
+            .unwrap();
+        dag.add_edge(Edge::new(2, 4, 24, DependencyType::Data))
+            .unwrap();
+        dag.add_edge(Edge::new(3, 4, 34, DependencyType::Data))
+            .unwrap();
+
+        let metadata = graph_metadata_from_dag("graph", "exec", &dag);
+
+        assert_eq!(metadata.node_count, Some(4));
+        assert_eq!(metadata.critical_path_length, Some(3));
+        assert_eq!(metadata.max_parallelism, Some(2));
+        let root_spec = metadata
+            .nodes
+            .iter()
+            .find(|spec| spec.node_id == 1)
+            .unwrap();
+        assert_eq!(root_spec.downstream_nodes, vec![2, 3]);
+        assert_eq!(root_spec.estimated_prompt_tokens, Some(128));
+        assert!(root_spec.is_critical_path);
     }
 }

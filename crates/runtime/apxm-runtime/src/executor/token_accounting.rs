@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use apxm_core::types::TokenUsage;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
@@ -17,13 +18,19 @@ pub struct TokenUsageSummary {
     pub output_tokens: usize,
     pub total_tokens: usize,
     pub call_count: usize,
+    #[serde(default)]
+    pub cached_input_tokens: usize,
+    #[serde(default)]
+    pub reasoning_output_tokens: usize,
 }
 
 impl TokenUsageSummary {
-    fn record(&mut self, input: usize, output: usize) {
-        self.input_tokens += input;
-        self.output_tokens += output;
-        self.total_tokens += input + output;
+    fn record_usage(&mut self, usage: &TokenUsage) {
+        self.input_tokens += usage.input_tokens;
+        self.output_tokens += usage.output_tokens;
+        self.total_tokens += usage.total_tokens;
+        self.cached_input_tokens += usage.cached_input_tokens;
+        self.reasoning_output_tokens += usage.reasoning_output_tokens;
         self.call_count += 1;
     }
 }
@@ -39,6 +46,8 @@ pub struct TokenAccountant {
     per_agent: RwLock<HashMap<String, TokenUsageSummary>>,
     total_input: AtomicUsize,
     total_output: AtomicUsize,
+    total_cached_input: AtomicUsize,
+    total_reasoning_output: AtomicUsize,
     total_calls: AtomicUsize,
 }
 
@@ -56,6 +65,8 @@ impl TokenAccountant {
             per_agent: RwLock::new(HashMap::new()),
             total_input: AtomicUsize::new(0),
             total_output: AtomicUsize::new(0),
+            total_cached_input: AtomicUsize::new(0),
+            total_reasoning_output: AtomicUsize::new(0),
             total_calls: AtomicUsize::new(0),
         }
     }
@@ -69,30 +80,45 @@ impl TokenAccountant {
         flow_name: Option<&str>,
         agent_name: Option<&str>,
     ) {
-        self.total_input.fetch_add(input_tokens, Ordering::Relaxed);
+        self.record_usage(
+            node_id,
+            &TokenUsage::new(input_tokens, output_tokens),
+            flow_name,
+            agent_name,
+        );
+    }
+
+    /// Record complete token usage for a single LLM call.
+    pub fn record_usage(
+        &self,
+        node_id: u64,
+        usage: &TokenUsage,
+        flow_name: Option<&str>,
+        agent_name: Option<&str>,
+    ) {
+        self.total_input
+            .fetch_add(usage.input_tokens, Ordering::Relaxed);
         self.total_output
-            .fetch_add(output_tokens, Ordering::Relaxed);
+            .fetch_add(usage.output_tokens, Ordering::Relaxed);
+        self.total_cached_input
+            .fetch_add(usage.cached_input_tokens, Ordering::Relaxed);
+        self.total_reasoning_output
+            .fetch_add(usage.reasoning_output_tokens, Ordering::Relaxed);
         self.total_calls.fetch_add(1, Ordering::Relaxed);
 
         {
             let mut map = self.per_node.write();
-            map.entry(node_id)
-                .or_default()
-                .record(input_tokens, output_tokens);
+            map.entry(node_id).or_default().record_usage(usage);
         }
 
         if let Some(name) = flow_name {
             let mut map = self.per_flow.write();
-            map.entry(name.to_string())
-                .or_default()
-                .record(input_tokens, output_tokens);
+            map.entry(name.to_string()).or_default().record_usage(usage);
         }
 
         if let Some(name) = agent_name {
             let mut map = self.per_agent.write();
-            map.entry(name.to_string())
-                .or_default()
-                .record(input_tokens, output_tokens);
+            map.entry(name.to_string()).or_default().record_usage(usage);
         }
     }
 
@@ -110,6 +136,8 @@ impl TokenAccountant {
             total_tokens: self.total_input.load(Ordering::Relaxed)
                 + self.total_output.load(Ordering::Relaxed),
             call_count: self.total_calls.load(Ordering::Relaxed),
+            cached_input_tokens: self.total_cached_input.load(Ordering::Relaxed),
+            reasoning_output_tokens: self.total_reasoning_output.load(Ordering::Relaxed),
         };
 
         TokenAccountingSnapshot {
@@ -173,6 +201,23 @@ mod tests {
 
         assert_eq!(snap.per_agent.len(), 2);
         assert_eq!(snap.per_agent["agent_x"].total_tokens, 430);
+    }
+
+    #[test]
+    fn test_record_usage_preserves_detailed_subcounts() {
+        let accountant = TokenAccountant::new();
+        let usage = TokenUsage::new(100, 40).with_details(60, 25);
+
+        accountant.record_usage(7, &usage, Some("flow_a"), Some("agent_x"));
+        let snap = accountant.snapshot();
+
+        assert_eq!(snap.total.input_tokens, 100);
+        assert_eq!(snap.total.output_tokens, 40);
+        assert_eq!(snap.total.cached_input_tokens, 60);
+        assert_eq!(snap.total.reasoning_output_tokens, 25);
+        assert_eq!(snap.per_node[&7].cached_input_tokens, 60);
+        assert_eq!(snap.per_flow["flow_a"].reasoning_output_tokens, 25);
+        assert_eq!(snap.per_agent["agent_x"].cached_input_tokens, 60);
     }
 
     #[test]

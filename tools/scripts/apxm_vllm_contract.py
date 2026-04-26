@@ -98,12 +98,25 @@ class ArgName(str, Enum):
     API_KEY = "api_key"
     API_KEY_ENV = "api_key_env"
     COMMAND = "command"
+    DEFAULT_CHAT_TEMPLATE_KWARGS = "default_chat_template_kwargs"
     ENDPOINT = "endpoint"
+    ENABLE_FORCE_INCLUDE_USAGE = "enable_force_include_usage"
+    ENABLE_PROMPT_TOKENS_DETAILS = "enable_prompt_tokens_details"
     HANDLER = "handler"
     HF_HOME = "hf_home"
     MODEL = "model"
+    REASONING_PARSER = "reasoning_parser"
     SERVED_MODEL_NAME = "served_model_name"
     WAIT = "wait"
+
+
+class VllmServeFlag(str, Enum):
+    """vLLM server CLI flags forwarded by the controller."""
+
+    DEFAULT_CHAT_TEMPLATE_KWARGS = "--default-chat-template-kwargs"
+    ENABLE_FORCE_INCLUDE_USAGE = "--enable-force-include-usage"
+    ENABLE_PROMPT_TOKENS_DETAILS = "--enable-prompt-tokens-details"
+    REASONING_PARSER = "--reasoning-parser"
 
 
 @dataclass(frozen=True)

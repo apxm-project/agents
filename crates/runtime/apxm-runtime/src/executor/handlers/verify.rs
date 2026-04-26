@@ -3,6 +3,7 @@
 use super::{
     ExecutionContext, Node, Result, Value, apply_llm_request_routing_from_node,
     execute_llm_request, get_input, get_optional_string_attribute, get_string_attribute,
+    llm::attach_graph_hints,
     template::{input_names_from_node, render_named},
 };
 use apxm_backends::LLMRequest;
@@ -53,6 +54,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         LLMRequest::new(verification_prompt).with_system_prompt(system_prompt),
         node,
     )?;
+    let request = attach_graph_hints(ctx, node, request);
     let response = execute_llm_request(ctx, node.id, "VERIFY", &request).await?;
 
     let is_verified = response.content.to_lowercase().contains("true");

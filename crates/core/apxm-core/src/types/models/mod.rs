@@ -90,6 +90,8 @@ pub struct ModelCapabilities {
     pub vision: bool,
     /// Supports function/tool calling
     pub functions: bool,
+    /// Supports provider-enforced structured output schemas.
+    pub structured_outputs: bool,
     /// Supports batch API (for cost optimization)
     pub batch: bool,
     /// Supports fine-tuning
@@ -97,7 +99,7 @@ pub struct ModelCapabilities {
 }
 
 /// Token usage information.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TokenUsage {
     /// Number of tokens in the input
     pub input_tokens: usize,
@@ -105,6 +107,12 @@ pub struct TokenUsage {
     pub output_tokens: usize,
     /// Total tokens used (input + output)
     pub total_tokens: usize,
+    /// Input tokens served from backend-side prompt/KV cache, when reported.
+    #[serde(default)]
+    pub cached_input_tokens: usize,
+    /// Output tokens spent in backend/model reasoning channels, when reported.
+    #[serde(default)]
+    pub reasoning_output_tokens: usize,
 }
 
 impl TokenUsage {
@@ -114,7 +122,16 @@ impl TokenUsage {
             input_tokens: input,
             output_tokens: output,
             total_tokens: input + output,
+            cached_input_tokens: 0,
+            reasoning_output_tokens: 0,
         }
+    }
+
+    /// Attach provider-reported detailed token subcounts.
+    pub fn with_details(mut self, cached_input: usize, reasoning_output: usize) -> Self {
+        self.cached_input_tokens = cached_input;
+        self.reasoning_output_tokens = reasoning_output;
+        self
     }
 }
 

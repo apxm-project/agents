@@ -352,6 +352,10 @@ pub async fn execute_command(
         h.abort();
     }
 
+    if !json {
+        print_execution_summary(&result.execution);
+    }
+
     let metrics_json = build_metrics_json(
         &input,
         Some(opt_level),
@@ -582,6 +586,10 @@ pub async fn run_command(
         None,
     );
 
+    if !json {
+        print_execution_summary(&result);
+    }
+
     let written_metrics_path = emit_metrics
         .as_ref()
         .map(|path| path.to_string_lossy().to_string());
@@ -691,6 +699,115 @@ fn print_result_values(results: &std::collections::HashMap<u64, apxm_core::types
             println!("{}={}", key, rendered);
         }
     }
+}
+
+#[cfg(feature = "driver")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExecutionSummaryStatus {
+    Success,
+    PartialFailure,
+}
+
+#[cfg(feature = "driver")]
+mod execution_summary_labels {
+    pub const PREFIX: &str = "APXM execution summary";
+    pub const STATUS: &str = "status";
+    pub const NODES: &str = "nodes";
+    pub const DURATION_MS: &str = "duration_ms";
+    pub const LLM_CALLS: &str = "llm_calls";
+    pub const TOKENS: &str = "tokens";
+    pub const INPUT_TOKENS: &str = "in";
+    pub const OUTPUT_TOKENS: &str = "out";
+    pub const CACHED_INPUT_TOKENS: &str = "cached_in";
+    pub const REASONING_OUTPUT_TOKENS: &str = "reasoning_out";
+    pub const BACKEND_GRAPHS: &str = "backend_graphs";
+}
+
+#[cfg(feature = "driver")]
+impl ExecutionSummaryStatus {
+    fn from_failed_nodes(failed_nodes: usize) -> Self {
+        if failed_nodes == 0 {
+            Self::Success
+        } else {
+            Self::PartialFailure
+        }
+    }
+
+    fn label(self) -> &'static str {
+        use apxm_core::constants::session::metrics_keys::execution_keys;
+        match self {
+            Self::Success => execution_keys::STATUS_SUCCESS,
+            Self::PartialFailure => execution_keys::STATUS_PARTIAL_FAILURE,
+        }
+    }
+}
+
+#[cfg(feature = "driver")]
+#[derive(Debug, Clone)]
+struct ExecutionSummary {
+    status: ExecutionSummaryStatus,
+    nodes_executed: usize,
+    nodes_failed: usize,
+    duration_ms: u128,
+    llm_calls: usize,
+    input_tokens: usize,
+    output_tokens: usize,
+    total_tokens: usize,
+    cached_input_tokens: usize,
+    reasoning_output_tokens: usize,
+    backend_graphs: usize,
+}
+
+#[cfg(feature = "driver")]
+impl ExecutionSummary {
+    fn from_result(result: &RuntimeExecutionResult) -> Self {
+        let total = &result.token_snapshot.total;
+        Self {
+            status: ExecutionSummaryStatus::from_failed_nodes(result.stats.failed_nodes),
+            nodes_executed: result.stats.executed_nodes,
+            nodes_failed: result.stats.failed_nodes,
+            duration_ms: result.stats.duration_ms,
+            llm_calls: total.call_count,
+            input_tokens: total.input_tokens,
+            output_tokens: total.output_tokens,
+            total_tokens: total.total_tokens,
+            cached_input_tokens: total.cached_input_tokens,
+            reasoning_output_tokens: total.reasoning_output_tokens,
+            backend_graphs: result.graph_status_snapshots.len(),
+        }
+    }
+}
+
+#[cfg(feature = "driver")]
+fn print_execution_summary(result: &RuntimeExecutionResult) {
+    use execution_summary_labels as labels;
+
+    let summary = ExecutionSummary::from_result(result);
+    eprintln!(
+        "{}: {}={}, {}={}/{}, {}={}, {}={}, {}={} ({}={}, {}={}, {}={}, {}={}), {}={}",
+        labels::PREFIX,
+        labels::STATUS,
+        summary.status.label(),
+        labels::NODES,
+        summary.nodes_executed,
+        summary.nodes_failed,
+        labels::DURATION_MS,
+        summary.duration_ms,
+        labels::LLM_CALLS,
+        summary.llm_calls,
+        labels::TOKENS,
+        summary.total_tokens,
+        labels::INPUT_TOKENS,
+        summary.input_tokens,
+        labels::OUTPUT_TOKENS,
+        summary.output_tokens,
+        labels::CACHED_INPUT_TOKENS,
+        summary.cached_input_tokens,
+        labels::REASONING_OUTPUT_TOKENS,
+        summary.reasoning_output_tokens,
+        labels::BACKEND_GRAPHS,
+        summary.backend_graphs
+    );
 }
 
 #[cfg(feature = "driver")]
@@ -829,7 +946,9 @@ impl apxm_core::MetricsSource for RuntimeMetricsSource<'_> {
 
     fn collect(&self) -> serde_json::Value {
         use apxm_core::constants::session::metrics_keys;
-        use metrics_keys::{execution_keys, link_phase_keys, llm_keys, runtime_meta_keys};
+        use metrics_keys::{execution_keys, runtime_meta_keys};
+        #[cfg(feature = "metrics")]
+        use metrics_keys::{link_phase_keys, llm_keys};
 
         let mut map = serde_json::Map::new();
 
@@ -1118,6 +1237,33 @@ mod tests {
         assert_eq!(graphs[0][gsk::GRAPH_ID], TEST_EXECUTION_ID);
         assert_eq!(graphs[0][gsk::PINNED_HANDLES], 2);
         assert_eq!(graphs[0][gsk::PINNED_BLOCKS], 16);
+    }
+
+    #[test]
+    fn execution_summary_rolls_up_runtime_metrics() {
+        let mut result = sample_result();
+        result.token_snapshot.total.input_tokens = 11;
+        result.token_snapshot.total.output_tokens = 7;
+        result.token_snapshot.total.total_tokens = 18;
+        result.token_snapshot.total.call_count = 2;
+        result.token_snapshot.total.cached_input_tokens = 3;
+        result.token_snapshot.total.reasoning_output_tokens = 5;
+        result
+            .graph_status_snapshots
+            .push(GraphStatusSnapshot::vllm(TEST_EXECUTION_ID).with_registered(true));
+
+        let summary = super::ExecutionSummary::from_result(&result);
+        assert_eq!(summary.status, super::ExecutionSummaryStatus::Success);
+        assert_eq!(summary.nodes_executed, 3);
+        assert_eq!(summary.nodes_failed, 0);
+        assert_eq!(summary.duration_ms, 42);
+        assert_eq!(summary.llm_calls, 2);
+        assert_eq!(summary.input_tokens, 11);
+        assert_eq!(summary.output_tokens, 7);
+        assert_eq!(summary.total_tokens, 18);
+        assert_eq!(summary.cached_input_tokens, 3);
+        assert_eq!(summary.reasoning_output_tokens, 5);
+        assert_eq!(summary.backend_graphs, 1);
     }
 
     #[cfg(feature = "metrics")]

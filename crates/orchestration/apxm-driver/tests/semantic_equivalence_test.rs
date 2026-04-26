@@ -5,14 +5,9 @@
 //! events by `(parent_deps, prompt, node_id)`. Independent reorderings
 //! collapse; dependency violations surface as deps mismatch.
 //!
-//! Gated at O0 vs O1. O2 currently rewrites prompts via
-//! `prompt-canonicalization` / `template-specialization` into a shared-prefix
-//! form (e.g. `{0}\n---\n[a] answer:`) where `{0}` is intended as a runtime
-//! substitution slot but is forwarded to the backend as literal text. This
-//! changes observable LLM behavior, so O2 vs O0 deliberately fails the
-//! tier-1 contract until the rewrite emits a substituted prompt or the
-//! runtime substitutes the new placeholder form. Raise the gate to O2 once
-//! that contract is restored.
+//! The O2 prompt-canonicalization path must preserve the runtime's named
+//! placeholder contract. A rewrite may reorder prompt text for prefix-cache
+//! locality, but it must not emit positional placeholders such as `{0}`.
 //!
 //! The multi-input synth fixture (downstream Ask consuming
 //! `{ask_a}/{ask_b}/{ask_c}`) previously failed at O1 because `FuseAskOps`
@@ -65,7 +60,7 @@ fn build_fanout_synthesis_module() -> AirModule {
                 name: "question".to_string(),
                 op: AISOperationType::ConstStr,
                 attributes: HashMap::from([(
-                    "value".into(),
+                    graph_attrs::VALUE.into(),
                     Value::String("what is the meaning of 42?".into()),
                 )]),
             },
@@ -102,6 +97,49 @@ fn build_fanout_synthesis_module() -> AirModule {
             AirEdge {
                 from: 1,
                 to: 4,
+                dependency: DependencyType::Data,
+            },
+        ],
+        parameters: vec![],
+        metadata: HashMap::new(),
+    }
+}
+
+fn build_context_label_fanout_module() -> AirModule {
+    AirModule {
+        name: "context_label_fanout".to_string(),
+        nodes: vec![
+            AirNode {
+                id: 1,
+                name: "dossier".to_string(),
+                op: AISOperationType::ConstStr,
+                attributes: HashMap::from([(
+                    graph_attrs::VALUE.into(),
+                    Value::String("fixed shared incident facts".into()),
+                )]),
+            },
+            AirNode {
+                id: 2,
+                name: "ask_a".to_string(),
+                op: AISOperationType::Ask,
+                attributes: ask_attrs_one("a", "dossier"),
+            },
+            AirNode {
+                id: 3,
+                name: "ask_b".to_string(),
+                op: AISOperationType::Ask,
+                attributes: ask_attrs_one("b", "dossier"),
+            },
+        ],
+        edges: vec![
+            AirEdge {
+                from: 1,
+                to: 2,
+                dependency: DependencyType::Data,
+            },
+            AirEdge {
+                from: 1,
+                to: 3,
                 dependency: DependencyType::Data,
             },
         ],
@@ -173,7 +211,10 @@ fn build_synth_fanin_module() -> AirModule {
                 id: 1,
                 name: "question".to_string(),
                 op: AISOperationType::ConstStr,
-                attributes: HashMap::from([("value".into(), Value::String("what is 42?".into()))]),
+                attributes: HashMap::from([(
+                    graph_attrs::VALUE.into(),
+                    Value::String("what is 42?".into()),
+                )]),
             },
             AirNode {
                 id: 2,
@@ -305,4 +346,69 @@ async fn semantic_equivalence_synth_fanin_o0_vs_o1() {
     // into a single fused op, so event counts intentionally differ between
     // O0 and O1. We only assert both opt levels succeeded; tier-2 work
     // tightens this into a full canonical-trace equality check.
+}
+
+#[tokio::test]
+async fn prompt_canonicalization_o2_preserves_named_runtime_inputs() {
+    let module = build_fanout_synthesis_module();
+
+    let trace = Arc::new(RwLock::new(CallTrace::new()));
+    compile_and_run_with_trace(&module, OptimizationLevel::O2, trace.clone())
+        .await
+        .expect("O2 compile+run");
+
+    let events = canonicalize(&trace.read());
+    assert!(!events.is_empty(), "O2 emitted no LLM call trace events");
+    for event in &events {
+        assert!(
+            !event.prompt.contains("{0}"),
+            "O2 leaked positional placeholder to backend: {}",
+            event.prompt
+        );
+        assert!(
+            event.prompt.contains("what is the meaning of 42?"),
+            "O2 failed to substitute named runtime input: {}",
+            event.prompt
+        );
+    }
+}
+
+#[tokio::test]
+async fn prompt_canonicalization_o2_keeps_context_label_with_context() {
+    let mut module = build_context_label_fanout_module();
+    for node in module
+        .nodes
+        .iter_mut()
+        .filter(|node| node.op == AISOperationType::Ask)
+    {
+        let tag = node.name.strip_prefix("ask_").unwrap_or("review");
+        node.attributes.insert(
+            graph_attrs::TEMPLATE_STR.into(),
+            Value::String(format!(
+                "[{tag}] assess customer risk.\n\nShared incident dossier:\n{{dossier}}\n\nReturn one short answer."
+            )),
+        );
+    }
+
+    let trace = Arc::new(RwLock::new(CallTrace::new()));
+    compile_and_run_with_trace(&module, OptimizationLevel::O2, trace.clone())
+        .await
+        .expect("O2 compile+run");
+
+    let events = canonicalize(&trace.read());
+    assert!(!events.is_empty(), "O2 emitted no LLM call trace events");
+    for event in &events {
+        assert!(
+            event
+                .prompt
+                .contains("Shared incident dossier:\nfixed shared incident facts"),
+            "O2 separated the context label from the substituted context: {}",
+            event.prompt
+        );
+        assert!(
+            !event.prompt.contains("Shared incident dossier: Return"),
+            "O2 moved the context label into the instruction suffix: {}",
+            event.prompt
+        );
+    }
 }

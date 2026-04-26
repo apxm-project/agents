@@ -22,12 +22,17 @@ NODE_SUMMARY = "summary"
 NODE_PRINT_OUTPUT = "print_output"
 PROMPT_ARCHITECTURE = (
     "You are running behind the APXM graph-aware vLLM fork. "
-    "In 4 short bullets, explain what a graph-aware inference boundary "
-    "can do that isolated prompt calls cannot."
+    "In 4 short bullets, list the evidence an operator should inspect to "
+    "confirm that a graph-aware inference boundary is active. Mention only "
+    "route selection, graph registration, node/session metrics, and backend "
+    "graph status. Do not claim speedup, cache-hit rate, token reduction, or "
+    "cost savings."
 )
 PROMPT_SUMMARY = (
-    "Turn this into a 3 sentence summary for an engineer validating a "
-    "self-hosted model smoke test on the vLLM fork backend:\n\n{architecture}"
+    "Turn this into a 3 sentence evidence summary for an engineer validating "
+    "a self-hosted model smoke test on the vLLM fork backend. Keep the summary "
+    "strictly about what the run can verify from emitted metrics and backend "
+    "graph status:\n\n{architecture}"
 )
 OUTPUT_HEADER = "=== VLLM FORK GRAPH SMOKE ==="
 OUTPUT_TEMPLATE = (

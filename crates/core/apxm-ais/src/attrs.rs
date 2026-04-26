@@ -168,10 +168,10 @@ pub const DOWNSTREAM_NODES: &str = "downstream_nodes";
 pub const REUSE_GROUP: &str = "shared_prefix_group";
 pub const EST_TEMPLATE_TOKENS: &str = "est_template_tokens";
 
-// -- vLLM graph-aware hints --
-// Mirrors of MLIR Constants.h::attrs::* (with ais. prefix). Read by the Rust
-// vllm_hints() compiler pass; written by the MLIR PromptCanonicalization +
-// AssignPriority passes. The drift-detector test asserts string equality.
+// -- Graph-aware backend hints --
+// Mirrors of MLIR Constants.h::attrs::* (with ais. prefix). Written by the
+// MLIR PromptCanonicalization + AssignPriority passes; ArtifactEmitter strips
+// the prefix into the bare graph attrs consumed by the runtime.
 pub const AIS_SHARED_PREFIX_GROUP: &str = "ais.shared_prefix_group";
 pub const AIS_SHARED_PREFIX_EST_TOKENS: &str = "ais.shared_prefix_est_tokens";
 pub const AIS_WARMUP_CANDIDATE: &str = "ais.warmup_candidate";
@@ -191,17 +191,6 @@ pub const MLIR_DERIVED_BARE_ATTRS: &[&str] = &[
     WARMUP_CANDIDATE,         // "warmup_candidate"
     DOWNSTREAM_NODES,         // "downstream_nodes"
 ];
-
-// vLLM payload keys: written by vllm_hints() pass onto LLM nodes; consumed
-// by the runtime when constructing APXM graph hints for each LLMRequest.
-pub const VLLM_PRIORITY_CLASS: &str = "_vllm_priority_class";
-pub const VLLM_DOWNSTREAM_NODES: &str = "_vllm_downstream_nodes";
-pub const VLLM_REUSE_GROUP: &str = "_vllm_reuse_group";
-pub const VLLM_CRITICAL_PATH: &str = "_vllm_critical_path";
-pub const VLLM_PIN_MODE: &str = "_vllm_pin_mode";
-pub const VLLM_EST_TOKENS: &str = "_vllm_est_tokens";
-pub const VLLM_WARMUP: &str = "_vllm_warmup";
-pub const VLLM_PIPELINE: &str = "_vllm_pipeline";
 
 /// AIS dialect prefix for MLIR-level attribute names.
 pub const MLIR_ATTR_PREFIX: &str = "ais.";
@@ -354,14 +343,6 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     AIS_SHARED_PREFIX_EST_TOKENS,
     AIS_WARMUP_CANDIDATE,
     AIS_DOWNSTREAM_NODES,
-    VLLM_PRIORITY_CLASS,
-    VLLM_DOWNSTREAM_NODES,
-    VLLM_REUSE_GROUP,
-    VLLM_CRITICAL_PATH,
-    VLLM_PIN_MODE,
-    VLLM_EST_TOKENS,
-    VLLM_WARMUP,
-    VLLM_PIPELINE,
     // OperationSpec-only fields (not graph attrs, but used in field names)
     "memory",
     "beliefs",
@@ -406,25 +387,6 @@ mod tests {
                 constants_h.contains(&needle),
                 "MLIR Constants.h drift: expected `{}` (Rust constant differs from C++ literal)",
                 needle
-            );
-        }
-    }
-
-    #[test]
-    fn vllm_payload_keys_use_underscore_prefix() {
-        for key in [
-            VLLM_PRIORITY_CLASS,
-            VLLM_DOWNSTREAM_NODES,
-            VLLM_REUSE_GROUP,
-            VLLM_CRITICAL_PATH,
-            VLLM_PIN_MODE,
-            VLLM_EST_TOKENS,
-            VLLM_WARMUP,
-            VLLM_PIPELINE,
-        ] {
-            assert!(
-                key.starts_with("_vllm_"),
-                "vLLM extra_body payload keys must use the `_vllm_` prefix; got `{key}`"
             );
         }
     }

@@ -14,7 +14,7 @@ ApxmGraph (Python IR)
 .air text (MLIR)
      ↓ Module::parse()
 MLIR in memory
-     ↓ PassManager::run() [15 passes via FFI]
+     ↓ PassManager::run() [configured pass list via FFI]
 Optimized MLIR
      ↓ apxm_codegen_emit_artifact()
 ExecutionDag
@@ -47,17 +47,21 @@ The crate has two layers:
 
 ## MLIR Passes
 
-The C++ pipeline applies these optimization passes:
+The compiler exposes these MLIR passes. The default O-level pipelines only use
+the production-safe subset; semantic rewrites remain explicit until their typed
+contracts are enforced.
 
 - `normalize-agent-graph` -- canonical form normalization
 - `build-prompt` -- prompt template materialization
-- `fuse-ask-ops` -- fuses adjacent ASK/THINK/REASON operations
 - `assign-priority` -- priority annotation for scheduling
 - `dead-context-elimination` -- removes unused context propagation
-- `prompt-canonicalization` -- prefix deduplication for KV-cache sharing
-- `condense-ops` -- merges redundant operations
-- `schema-narrowing` -- tightens output schemas
-- CSE, canonicalizer, symbol-DCE (standard MLIR passes)
+- `template-specialization` -- folds safe constant prompt inputs
+- `fuse-ask-ops` -- explicit-only ASK fusion experiment
+- `prompt-canonicalization` -- explicit-only prefix-cache layout experiment
+- `condense-ops` -- explicit-only memory batching experiment
+- `schema-narrowing` -- explicit-only field narrowing experiment
+- `dspy-optimize` -- explicit-only DSPy prompt optimization path
+- canonicalizer, CSE, and symbol-DCE (standard MLIR passes)
 
 ## MLIR Dialect
 

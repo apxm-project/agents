@@ -57,19 +57,24 @@ ENV_APXM_CONFIG = "APXM_CONFIG"
 FILE_MANIFEST = "manifest.json"
 FILE_RESULTS = "results.json"
 FILE_METRICS = "metrics.json"
+RUN_SUMMARY_PREFIX = "benchmark_e2e run"
+PENDING_VALUE = "pending"
+STATUS_SUCCEEDED = "succeeded"
+STATUS_FAILED = "failed"
 
 
 class MetricsKey(StrEnum):
     SCHEMA_VERSION = "schema_version"
     RUNTIME = "runtime"
     BACKENDS = "backends"
-    VLLM = "vllm"
     GRAPHS = "graphs"
     TOKEN_ACCOUNTING = "token_accounting"
     TOTAL = "total"
     INPUT_TOKENS = "input_tokens"
     OUTPUT_TOKENS = "output_tokens"
     TOTAL_TOKENS = "total_tokens"
+    CACHED_INPUT_TOKENS = "cached_input_tokens"
+    REASONING_OUTPUT_TOKENS = "reasoning_output_tokens"
     CALL_COUNT = "call_count"
     PINNED_BLOCKS = "pinned_blocks"
     PINNED_HANDLES = "pinned_handles"
@@ -80,6 +85,17 @@ SCHEMA_VERSION_V2 = 2
 
 KEY_DURATION_MS = "duration_ms"
 KEY_FINAL_OUTPUT = "final_output"
+
+
+def _backend_graphs(metrics: dict[str, Any]) -> list[dict[str, Any]]:
+    backends = metrics.get(MetricsKey.BACKENDS, {})
+    if not isinstance(backends, dict):
+        return []
+
+    graphs = backends.get(MetricsKey.GRAPHS, [])
+    if not isinstance(graphs, list):
+        return []
+    return [graph for graph in graphs if isinstance(graph, dict)]
 
 CSV_FIELDS = [
     "timestamp_utc",
@@ -95,6 +111,8 @@ CSV_FIELDS = [
     "input_tokens",
     "output_tokens",
     "total_tokens",
+    "cached_input_tokens",
+    "reasoning_output_tokens",
     "pinned_blocks",
     "pinned_handles",
     "critical_path_length",
@@ -111,6 +129,8 @@ class SessionSummary:
     input_tokens: int | None
     output_tokens: int | None
     total_tokens: int | None
+    cached_input_tokens: int | None
+    reasoning_output_tokens: int | None
     pinned_blocks: int | None
     pinned_handles: int | None
     critical_path_length: int | None
@@ -124,6 +144,8 @@ class SessionSummary:
         input_tokens: int | None = None
         output_tokens: int | None = None
         total_tokens: int | None = None
+        cached_input_tokens: int | None = None
+        reasoning_output_tokens: int | None = None
         pinned_blocks: int | None = None
         pinned_handles: int | None = None
         critical_path_length: int | None = None
@@ -168,12 +190,14 @@ class SessionSummary:
             v = total.get(MetricsKey.TOTAL_TOKENS)
             if isinstance(v, int):
                 total_tokens = v
+            v = total.get(MetricsKey.CACHED_INPUT_TOKENS)
+            if isinstance(v, int):
+                cached_input_tokens = v
+            v = total.get(MetricsKey.REASONING_OUTPUT_TOKENS)
+            if isinstance(v, int):
+                reasoning_output_tokens = v
 
-            vllm_graphs = (
-                metrics.get(MetricsKey.BACKENDS, {})
-                .get(MetricsKey.VLLM, {})
-                .get(MetricsKey.GRAPHS, [])
-            )
+            vllm_graphs = _backend_graphs(metrics)
             if vllm_graphs:
                 pb = sum(g.get(MetricsKey.PINNED_BLOCKS, 0) for g in vllm_graphs)
                 ph = sum(g.get(MetricsKey.PINNED_HANDLES, 0) for g in vllm_graphs)
@@ -188,6 +212,8 @@ class SessionSummary:
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             total_tokens=total_tokens,
+            cached_input_tokens=cached_input_tokens,
+            reasoning_output_tokens=reasoning_output_tokens,
             pinned_blocks=pinned_blocks,
             pinned_handles=pinned_handles,
             critical_path_length=critical_path_length,
@@ -210,6 +236,8 @@ class RunRecord:
     input_tokens: int | None
     output_tokens: int | None
     total_tokens: int | None
+    cached_input_tokens: int | None
+    reasoning_output_tokens: int | None
     pinned_blocks: int | None
     pinned_handles: int | None
     critical_path_length: int | None
@@ -232,6 +260,12 @@ class RunRecord:
             "input_tokens": "" if self.input_tokens is None else self.input_tokens,
             "output_tokens": "" if self.output_tokens is None else self.output_tokens,
             "total_tokens": "" if self.total_tokens is None else self.total_tokens,
+            "cached_input_tokens": ""
+            if self.cached_input_tokens is None
+            else self.cached_input_tokens,
+            "reasoning_output_tokens": ""
+            if self.reasoning_output_tokens is None
+            else self.reasoning_output_tokens,
             "pinned_blocks": "" if self.pinned_blocks is None else self.pinned_blocks,
             "pinned_handles": "" if self.pinned_handles is None else self.pinned_handles,
             "critical_path_length": "" if self.critical_path_length is None else self.critical_path_length,
@@ -427,6 +461,8 @@ def _run_once(
             input_tokens=None,
             output_tokens=None,
             total_tokens=None,
+            cached_input_tokens=None,
+            reasoning_output_tokens=None,
             pinned_blocks=None,
             pinned_handles=None,
             critical_path_length=None,
@@ -456,6 +492,8 @@ def _run_once(
         input_tokens=summary.input_tokens if summary else None,
         output_tokens=summary.output_tokens if summary else None,
         total_tokens=summary.total_tokens if summary else None,
+        cached_input_tokens=summary.cached_input_tokens if summary else None,
+        reasoning_output_tokens=summary.reasoning_output_tokens if summary else None,
         pinned_blocks=summary.pinned_blocks if summary else None,
         pinned_handles=summary.pinned_handles if summary else None,
         critical_path_length=summary.critical_path_length if summary else None,
@@ -490,12 +528,52 @@ def _summarize(records: list[RunRecord]) -> None:
         if wall_values:
             mean_wall = statistics.fmean(wall_values)
             median_wall = statistics.median(wall_values)
+            graph_values = [
+                row.graph_duration_ms for row in successes if row.graph_duration_ms is not None
+            ]
+            token_values = [
+                row.total_tokens for row in successes if row.total_tokens is not None
+            ]
+            call_values = [
+                row.llm_call_count for row in successes if row.llm_call_count is not None
+            ]
+            metric_parts = [
+                f"mean wall {mean_wall:.1f} ms",
+                f"median wall {median_wall:.1f} ms",
+            ]
+            if graph_values:
+                metric_parts.append(f"mean graph {statistics.fmean(graph_values):.1f} ms")
+            if token_values:
+                metric_parts.append(f"mean tokens {statistics.fmean(token_values):.1f}")
+            if call_values:
+                metric_parts.append(f"mean LLM calls {statistics.fmean(call_values):.1f}")
             print(
                 f"- O{opt_level}: {len(successes)}/{len(rows)} succeeded, "
-                f"mean wall {mean_wall:.1f} ms, median wall {median_wall:.1f} ms"
+                + ", ".join(metric_parts)
             )
         else:
             print(f"- O{opt_level}: 0/{len(rows)} succeeded")
+
+
+def _display_number(value: int | float | None, suffix: str = "") -> str:
+    if value is None:
+        return PENDING_VALUE
+    if isinstance(value, int):
+        return f"{value}{suffix}"
+    return f"{value:.1f}{suffix}"
+
+
+def _print_run_summary(record: RunRecord) -> None:
+    status = STATUS_SUCCEEDED if record.success else STATUS_FAILED
+    print(
+        f"- {RUN_SUMMARY_PREFIX}: O{record.opt_level} run {record.run_index} {status}; "
+        f"wall={record.wall_ms:.1f} ms; "
+        f"graph={_display_number(record.graph_duration_ms, ' ms')}; "
+        f"llm_calls={_display_number(record.llm_call_count)}; "
+        f"tokens={_display_number(record.total_tokens)}; "
+        f"session={record.session_dir or PENDING_VALUE}",
+        flush=True,
+    )
 
 
 def main() -> int:
@@ -524,6 +602,7 @@ def main() -> int:
                 apxm_config=args.apxm_config.resolve() if args.apxm_config else None,
             )
             records.append(record)
+            _print_run_summary(record)
 
     _write_csv(records, args.output.resolve(), args.append)
     _summarize(records)

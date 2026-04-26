@@ -10,6 +10,7 @@
 use super::{
     ExecutionContext, Node, Result, Value, apply_llm_request_routing_from_node,
     execute_llm_request, extract_json_from_markdown, get_optional_string_attribute,
+    llm::attach_graph_hints,
 };
 use apxm_backends::LLMRequest;
 use apxm_core::constants::graph::attrs as graph_attrs;
@@ -187,6 +188,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
                 .to_string()
         });
     request = request.with_system_prompt(system_prompt);
+    request = attach_graph_hints(ctx, node, request);
 
     // Execute with retries
     let mut last_error = None;

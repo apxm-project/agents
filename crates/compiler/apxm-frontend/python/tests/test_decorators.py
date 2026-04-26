@@ -72,6 +72,28 @@ def test_compiled_flow_emits_air_when_requested(monkeypatch, capsys):
     assert "module" in captured.out
 
 
+def test_compiled_function_to_air_includes_python_tool_sidecar():
+    """Compiled graph AIR includes Python tool metadata when tools are registered."""
+    from apxm import GraphRecorder, compile, tool
+    from apxm.constants import PYTHON_HANDLER_ID, PYTHON_TOOL_MANIFEST_MODULE
+    from apxm.constants import PYTHON_TOOLS_AIR_COMMENT_PREFIX
+
+    @tool
+    def fixture_tool() -> str:
+        return "fixture"
+
+    @compile()
+    def tool_workflow(g: GraphRecorder):
+        value = g.invoke_tool(fixture_tool, name="Fixture")
+        g.print(name="Print", message="{value}")
+
+    air = tool_workflow.to_air()
+
+    assert air.startswith(PYTHON_TOOLS_AIR_COMMENT_PREFIX)
+    assert PYTHON_HANDLER_ID in air
+    assert PYTHON_TOOL_MANIFEST_MODULE in air
+
+
 def test_compile_with_typed_params():
     """Test @compile with typed parameters that get derived automatically."""
     from apxm import GraphRecorder, compile

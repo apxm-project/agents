@@ -15,8 +15,9 @@
  *   %b = ais.ask "" [%m2]
  *
  * and replaces them with one `ais.ask` whose template is the concatenation
- * of all templates and static strings.  This removes an LLM round-trip
- * (500-2000 ms) and is the highest-ROI optimisation in the AIS pipeline.
+ * of all templates and static strings. This pass is explicit-only until APXM
+ * has typed request-attribute preservation and semantic-quality heuristics for
+ * LLM-call merging.
  *
  * Fusion is guarded by:
  *   - single use chain from producer to consumer (through merges)

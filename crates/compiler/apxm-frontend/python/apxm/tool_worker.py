@@ -125,7 +125,19 @@ def _import_tool_module(entry: dict[str, Any]) -> Any:
 
     module = importlib.util.module_from_spec(spec)
     sys.modules[synthetic_name] = module
-    spec.loader.exec_module(module)
+    source_dir = str(source_path.parent)
+    inserted_source_dir = False
+    if source_dir not in sys.path:
+        sys.path.insert(0, source_dir)
+        inserted_source_dir = True
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        if inserted_source_dir:
+            try:
+                sys.path.remove(source_dir)
+            except ValueError:
+                pass
     return module
 
 

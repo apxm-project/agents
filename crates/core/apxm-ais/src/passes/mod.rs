@@ -270,21 +270,39 @@ uses to assign work to the 4-level priority queue (Critical/High/Normal/Low)."#,
     "mlir::ais::createAssignPriorityPass()",
 );
 
+/// SharedPrefixAnalysis pass - annotate existing shared-prefix opportunities.
+pub const SHARED_PREFIX_ANALYSIS: PassSpec = PassSpec::new(
+    "shared-prefix-analysis",
+    "SharedPrefixAnalysis",
+    "Annotate existing shared-prefix reuse opportunities",
+    r#"Detects LLM operations that already share the same leading prompt prefix
+and context operands, then emits graph-hint metadata for prefix-aware backends.
+
+This pass does not rewrite prompt templates or reorder operands. It only emits
+analysis metadata such as shared-prefix group, estimated shared-prefix tokens,
+and warmup candidate markers."#,
+    PassCategory::Transform,
+    "mlir::ais::createSharedPrefixAnalysisPass()",
+);
+
 /// Fuse ask ops pass - merges adjacent ask operations.
 pub const FUSE_ASK_OPS: PassSpec = PassSpec::new(
     "fuse-ask-ops",
     "FuseAskOps",
-    "Fuse adjacent ask operations to reduce LLM calls",
+    "Explicit-only ASK fusion experiment",
     r#"Identifies producer-consumer ais.ask chains and merges them into single
-batched operations. This is the highest-ROI optimization (100-400x) as it:
+batched operations:
 
-- Reduces serialized LLM API calls (each ~500ms-2s)
+- Reduces serialized LLM API calls
 - Concatenates ask templates with separator
 - Combines contexts from both operations
 
 Only fuses AskOp (LOW latency). ThinkOp/ReasonOp are not fused because
 they have different semantics (extended thinking, structured output).
-Only fuses when producer has single use."#,
+
+This pass is explicit-only until APXM has typed request-attribute preservation
+and semantic-quality heuristics for LLM-call merging. Only fuses when producer
+has single use."#,
     PassCategory::Transform,
     "mlir::ais::createFuseAskOpsPass()",
 );
@@ -293,7 +311,7 @@ Only fuses when producer has single use."#,
 pub const CONDENSE_OPS: PassSpec = PassSpec::new(
     "condense-ops",
     "CondenseOps",
-    "Condense consecutive memory operations into batched calls",
+    "Explicit-only memory operation batching experiment",
     r#"Identifies linear chains of QMEM or UMEM operations that target the same
 memory space and condenses them into a single batched operation.
 
@@ -307,7 +325,8 @@ Condensation fires when:
 3. No intervening side-effectful operations exist between them
 4. Intermediate results are not consumed by other operations
 
-This pass is the memory-tier analogue of FuseAskOps for LLM calls."#,
+This pass is explicit-only until memory-store semantics and batching capability
+contracts are typed."#,
     PassCategory::Transform,
     "mlir::ais::createCondenseOpsPass()",
 );
@@ -375,15 +394,18 @@ This reduces token usage and simplifies the graph by eliminating dead data flow.
 pub const SCHEMA_NARROWING: PassSpec = PassSpec::new(
     "schema-narrowing",
     "SchemaNarrowing",
-    "Narrow output schemas based on actual usage",
-    r#"Analyzes how operation results are consumed and tightens output schema
-constraints to only include fields that are actually used downstream.
+    "Explicit-only schema narrowing experiment",
+    r#"Planned optimization: analyze how operation results are consumed and
+tighten output schema constraints to only include fields used downstream.
 
 This reduces token usage in structured output scenarios by avoiding
 generation of unnecessary fields.
 
 Example: If only the 'summary' field of a JSON response is used, the schema
-is narrowed to only request that field."#,
+is narrowed to only request that field.
+
+The current implementation is not field-use narrowing, so this pass is not
+part of the automatic O-level pipelines."#,
     PassCategory::Optimization,
     "mlir::ais::createSchemaNarrowingPass()",
 );
@@ -392,13 +414,14 @@ is narrowed to only request that field."#,
 pub const DSPY_OPTIMIZE: PassSpec = PassSpec::new(
     "dspy-optimize",
     "DspyOptimize",
-    "Optimize prompt templates using DSPy",
+    "Explicit-only DSPy prompt optimization",
     r#"Invokes DSPy (Stanford NLP) to automatically optimize LLM prompt templates.
 Uses MIPROv2, BootstrapFewShot, or COPRO optimizers to discover better
 instructions from training examples.
 
-This pass is a no-op when no training data is available — just like
-dead-context-elimination is a no-op when there is no dead context.
+This pass is explicit-only until the CLI/API config, optimizer request schema,
+cache key, and quality-gated benchmark contract are complete. It is a no-op
+when no training data is available.
 
 Placement: immediately after build-prompt (which synthesizes named placeholders).
 Subsequent passes (template-specialization, dead-context-elimination,
@@ -411,7 +434,7 @@ prompt-canonicalization) then operate on the optimized templates."#,
 pub const PROMPT_CANONICALIZATION: PassSpec = PassSpec::new(
     "prompt-canonicalization",
     "PromptCanonicalization",
-    "Reorder prompts to maximize shared-prefix KV-cache reuse",
+    "Explicit-only shared-prefix prompt layout experiment",
     r#"Analyzes prompt templates across the graph and canonicalizes them to
 maximize KV-cache sharing in vLLM/inference engines that support prefix caching.
 
@@ -420,8 +443,9 @@ This includes:
 - Reordering context inputs to align prompts
 - Normalizing formatting for cache-friendliness
 
-When combined with vLLM's automatic prefix caching, this can dramatically
-reduce token processing by reusing cached prefixes across requests."#,
+This can help prefix-caching inference backends reuse shared context across
+requests. It is explicit-only until prompt layout rewrites are controlled by a
+typed backend-agnostic graph-hint contract."#,
     PassCategory::Optimization,
     "mlir::ais::createPromptCanonicalizationPass()",
 );
@@ -446,7 +470,7 @@ pub const CSE: PassSpec = PassSpec::new(
     "cse",
     "CSE",
     "MLIR common subexpression elimination",
-    "Standard MLIR CSE pass that eliminates redundant computations.",
+    "Standard MLIR CSE pass. Use --no-cse-llm for intentionally stochastic LLM nodes until LLM purity is typed in the IR.",
     PassCategory::Optimization,
     "mlir::createCSEPass()",
 )
@@ -474,6 +498,7 @@ pub const AIS_PASSES: &[&PassSpec] = &[
     &DSPY_OPTIMIZE,
     &SCHEDULING,
     &ASSIGN_PRIORITY,
+    &SHARED_PREFIX_ANALYSIS,
     &FUSE_ASK_OPS,
     &CONDENSE_OPS,
     &UNCONSUMED_VALUE_WARNING,
@@ -491,6 +516,7 @@ pub const ALL_PASSES: &[&PassSpec] = &[
     &DSPY_OPTIMIZE,
     &SCHEDULING,
     &ASSIGN_PRIORITY,
+    &SHARED_PREFIX_ANALYSIS,
     &FUSE_ASK_OPS,
     &CONDENSE_OPS,
     &UNCONSUMED_VALUE_WARNING,
@@ -541,6 +567,7 @@ mod tests {
         assert!(find_pass_by_name("normalize").is_some());
         assert!(find_pass_by_name("build-prompt").is_some());
         assert!(find_pass_by_name("dspy-optimize").is_some());
+        assert!(find_pass_by_name("shared-prefix-analysis").is_some());
         assert!(find_pass_by_name("fuse-ask-ops").is_some());
         assert!(find_pass_by_name("condense-ops").is_some());
         assert!(find_pass_by_name("template-specialization").is_some());

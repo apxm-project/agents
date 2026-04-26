@@ -8,7 +8,7 @@ artifact. This document is conceptual — the live ordering and per-target tunin
 
 The compiler accepts AIR (the human-readable text IR), parses it into MLIR using the
 `ais` dialect, runs an optimization pipeline composed of MLIR-level transforms and a
-few Rust-side passes, and emits a `.apxmobj` artifact. The artifact is an
+small set of Rust-side checks, and emits a `.apxmobj` artifact. The artifact is an
 execution-ready DAG with stamped metadata that the runtime can dispatch without
 re-deriving any decisions the compiler made.
 
@@ -17,10 +17,8 @@ There are two kinds of passes:
 - **MLIR passes** are C++ transforms over the `ais` dialect. They do the work that
   benefits from MLIR's pattern matching, walker infrastructure, and dataflow
   analyses.
-- **Rust-side passes** run on the `AirModule` before MLIR parsing or as post-MLIR
-  bookkeeping. They handle work that needs Rust-side state (the tool registry, the
-  vLLM hint table, the model allowlist) which would be awkward to thread through
-  MLIR pass options.
+- **Rust-side passes** run around MLIR for work that needs Rust-side state, such
+  as tool registry checks and driver-level model allowlist validation.
 
 Both kinds appear in the pipeline list in execution order; the dispatcher routes
 each name to the right backend.
@@ -35,17 +33,15 @@ each name to the right backend.
                                   │       Normalization phase       │
                                   │   normalize-agent-graph         │
                                   │   build-prompt                  │
-                                  │   dspy-optimize                 │
                                   └────────────────┬────────────────┘
                                                    ▼
                                   ┌─────────────────────────────────┐
                                   │       Optimization phase        │
-                                  │   fuse-ask-ops                  │
-                                  │   dead-context-elimination      │
-                                  │   prompt-canonicalization       │
                                   │   template-specialization       │
-                                  │   schema-narrowing              │
-                                  │   condense-ops                  │
+                                  │   dead-context-elimination      │
+                                  │   canonicalizer                 │
+                                  │   CSE                           │
+                                  │   symbol-DCE                    │
                                   └────────────────┬────────────────┘
                                                    ▼
                                   ┌─────────────────────────────────┐
@@ -53,14 +49,12 @@ each name to the right backend.
                                   │   capability-scheduling         │
                                   │   assign-priority               │
                                   │   unconsumed-value-warning      │
-                                  │   canonicalizer / CSE / sym-DCE │
                                   └────────────────┬────────────────┘
                                                    ▼
                                   ┌─────────────────────────────────┐
-                                  │       Rust-side stamping        │
+                                  │       Rust-side checks          │
                                   │   tool-binding   (validate)     │
                                   │   bind-tool-handlers (link)     │
-                                  │   vllm-hints     (annotate)     │
                                   └────────────────┬────────────────┘
                                                    ▼
                                        ArtifactEmitter
@@ -82,16 +76,16 @@ which optimization level, is decided in `build_pass_list()`.
 |-------------------------------|--------------------------------------------------------------------------------|
 | `normalize-agent-graph`       | Canonical form — dedup context, lowercase attribute names, sort sets           |
 | `build-prompt`                | Fill empty prompt templates from upstream context where it can be inferred     |
-| `dspy-optimize`               | Apply ML-tuned prompt rewrites when a DSPy artifact is available (stub today)  |
+| `dspy-optimize`               | Explicit-only: apply ML-tuned prompt rewrites when DSPy config is wired        |
 | `unconsumed-value-warning`    | Diagnostic: warn on values produced but never read by a downstream node        |
 | `capability-scheduling`       | Annotate nodes with tier, cost, and latency labels for the runtime scheduler   |
-| `fuse-ask-ops`                | Combine adjacent LLM ASK calls that share context to eliminate round-trips     |
+| `fuse-ask-ops`                | Explicit-only: combine adjacent ASK calls; not default until heuristics exist  |
 | `assign-priority`             | Stamp critical-path priority on nodes to drive scheduler ordering              |
-| `prompt-canonicalization`     | Reorder prompt fragments so a common prefix can be reused by KV-cache          |
+| `prompt-canonicalization`     | Explicit-only: reorder prompt fragments for backend prefix-cache experiments   |
 | `template-specialization`     | Fold known constants into prompt templates                                     |
 | `dead-context-elimination`    | Prune context entries no downstream prompt actually consumes                   |
-| `schema-narrowing`            | Drop output-schema fields no downstream node reads                             |
-| `condense-ops`                | Batch sequences of memory ops (read/write/append) into a single op             |
+| `schema-narrowing`            | Explicit-only: planned field narrowing; current pass is diagnostic/experimental |
+| `condense-ops`                | Explicit-only: batch memory ops; not default until memory semantics are typed  |
 
 (`Passes.cpp` exists alongside these but only registers them — it is not itself a
 pass.)
@@ -102,13 +96,18 @@ pass.)
 |----------------------------|--------------------------------------------------------------------------------------|
 | `tool-binding`             | Validate that every `INV_TOOL` resolves to a `REGISTER_CAPABILITY` it can dispatch   |
 | `bind-tool-handlers`       | Copy `python_handler_id` from `REGISTER_CAPABILITY` onto each matching `INV_TOOL`    |
-| `vllm-hints`               | Stamp `_vllm_*` hint attrs on LLM nodes so the runtime can route to vLLM correctly   |
 | `validate-model-allowlist` | Standalone driver-invoked check that every model id is in the configured allowlist   |
 
-The MLIR passes flow through the MLIR pass manager. The Rust-side passes operate on
-the `AirModule` and run as the dispatcher visits their names in the pipeline list.
+The MLIR passes flow through the MLIR pass manager. The Rust-side tool passes operate
+on the `AirModule` and run as the dispatcher visits their names in the pipeline list.
 `validate-model-allowlist` is invoked separately by the driver/CLI rather than as
 part of `build_pass_list`.
+
+Graph-aware backend metadata remains backend-agnostic in the artifact. MLIR passes
+stamp generic graph attributes such as `priority`, `downstream_nodes`,
+`shared_prefix_group`, `shared_prefix_est_tokens`, and `warmup_candidate`. The
+runtime converts those attributes into typed `ApxmGraphHints`; concrete backends
+then translate the typed structure to their own wire format.
 
 ## Optimization Levels
 
@@ -118,15 +117,37 @@ The actual sequence each `(level, target)` produces is defined by
 
 - **O0** — passthrough. No optimization. Useful for debugging the lowering and for
   baseline performance comparisons.
-- **O1** — basic. Normalization, scheduling, fusion, canonicalization, CSE, DCE.
-  Target-aware nudges (e.g. `Cost`/`Tokens` get an extra dead-context-elimination
-  pass).
-- **O2** — standard. Adds template specialization, dead-context-elimination,
-  schema-narrowing, condense-ops. Within O2, the *target* (`Latency`, `Cost`,
-  `Tokens`, `Parallelism`, `Balanced`) reorders passes to favor the chosen
-  objective.
-- **O3** — aggressive. O2 iterated to a fixed-point (capped iterations) so that
-  each pass observes the others' results.
+- **O1** — basic. Normalization, prompt construction, canonicalization, tool
+  checks, CSE, symbol DCE, and priority metadata. The `Cost` and `Tokens`
+  targets add dead-context-elimination.
+- **O2** — standard. Adds template-specialization and dead-context-elimination
+  before canonicalization, then tool checks, CSE, symbol DCE, and priority
+  metadata. `Latency` and `Parallelism` targets also enable production-safe
+  scheduling metadata and analysis-only shared-prefix hints. This is the
+  default safe optimization level for production artifacts.
+- **O3** — aggressive but still contract-safe. Repeats template-specialization,
+  dead-context-elimination, scheduling metadata, canonicalization, tool checks,
+  CSE, and symbol DCE up to the configured iteration cap. Use it for diagnostics
+  or measured production workloads that benefit from repeated cleanup.
+
+CSE is the current non-heuristic duplicate-work optimization. Use
+`--no-cse-llm` when benchmarking or deploying intentionally stochastic LLM nodes
+until LLM purity/determinism is represented as a typed IR contract.
+
+## Explicit-Only Passes
+
+The following passes remain implemented and can be invoked with `--pass-list`
+for controlled experiments, but they are not part of O1/O2/O3 defaults:
+
+- `fuse-ask-ops`: merges LLM calls. It needs semantic-quality heuristics and
+  request-attribute preservation before it can be a default APXM pass.
+- `prompt-canonicalization`: useful for backend prefix-cache experiments, but
+  prompt layout rewrites need an explicit backend/graph-hint contract.
+- `schema-narrowing`: current implementation is not field-use schema narrowing.
+- `condense-ops`: memory batching needs typed memory-store semantics.
+- `dspy-optimize`: DSPy is the right direction for quality-aware prompt
+  optimization, but the CLI/API config, optimizer request schema, cache key,
+  and quality-gated benchmark path must be completed before slide-safe claims.
 
 ## Where to Read More
 

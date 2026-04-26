@@ -575,6 +575,7 @@ impl LLMBackend for AnthropicBackend {
             streaming: true,
             vision: self.model.starts_with("claude-") && !self.model.contains("legacy"),
             functions: true, // Claude models support tool use
+            structured_outputs: false,
             batch: false,
             fine_tuning: false,
         }

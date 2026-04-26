@@ -7,7 +7,7 @@ imperative orchestration code, you declare *what* your agents should do and the
 compiler figures out *how* to run it efficiently:
 
 - **Implicit parallelism** -- independent nodes run concurrently without manual threading
-- **Compiler optimizations** -- fusion, dead context elimination, shared prefix reuse
+- **Compiler optimizations** -- CSE, dead context elimination, template specialization
 - **Multi-agent coordination** -- native spawn, communicate, and team primitives
 - **Multi-provider routing** -- assign the right model to each task (fast, powerful, local)
 
@@ -39,7 +39,7 @@ Optional, depending on the example:
   profiles. The checked-in `claude` profile launches
   `npx -y @agentclientprotocol/claude-agent-acp@^0.24.2`; the checked-in
   `codex` profile launches `npx @zed-industries/codex-acp@^0.10.0`.
-- The APXM vLLM fork for `self-hosted/vllm_*.py`; see
+- The APXM vLLM fork for `self-hosted/vllm_graph_smoke.py`; see
   `docs/backends/vllm.md`.
 - `jq`, `rg`, and `marp` only for inspection/reporting commands that mention
   them.
@@ -63,7 +63,7 @@ dekk apxm run hello.apxmobj
 
 1. **[getting-started/](python/getting-started/)** -- First contact: hello world, tool use
 2. **[parallelism/](python/parallelism/)** -- Fan-out patterns, implicit DAG scheduling
-3. **[optimization/](python/optimization/)** -- Compiler passes: fusion, DCE, shared prefix
+3. **[optimization/](python/optimization/)** -- Compiler passes: CSE, DCE, template specialization
 4. **[multi-agent/](python/multi-agent/)** -- Spawn, communicate, team coordination
 5. **[multi-provider/](python/multi-provider/)** -- Route tasks to different models
 6. **[memory/](python/memory/)** -- Three-tier memory and RAG

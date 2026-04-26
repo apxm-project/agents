@@ -3,12 +3,13 @@
 Internal performance tests for APXM compiler optimization passes.
 
 These benchmarks measure the effectiveness of specific compiler passes by
-comparing O0 (no optimization) vs O2 (all passes enabled). They are not
-intended as user-facing examples.
+comparing controlled compiler configurations. They are not intended as
+user-facing examples. Semantic rewrites such as LLM fusion are explicit
+pass-list experiments, not O2 defaults.
 
 ## Files
 
-- **fusion_stress.py** -- 10 ASK/THINK pairs for FuseAskOps pass
+- **fusion_stress.py** -- Explicit-only ASK fusion stress source
 - **dead_context_stress.py** -- 5 contexts, 1 used, for DeadContextElimination
 - **shared_prefix_fanout.py** -- Shared prefix across 4 parallel nodes
 - **demo_code_critique.py** -- Composite code-critique benchmark graph for APXM x vLLM runs; checked in, but not yet a finalized measured talk asset
@@ -25,8 +26,9 @@ intended as user-facing examples.
 ## Usage
 
 ```bash
-dekk apxm execute examples/python/_benchmarks/fusion_stress.py -O0
-dekk apxm execute examples/python/_benchmarks/fusion_stress.py -O2
+dekk apxm compile examples/python/_benchmarks/fusion_stress.py \
+  --pass-list normalize,build-prompt,fuse-ask-ops,canonicalizer \
+  -o /tmp/fusion_stress.apxmobj
 
 # Composite benchmark graph
 dekk apxm execute examples/python/_benchmarks/demo_code_critique.py -O0

@@ -2,12 +2,9 @@
 //! IntegerAttr onto the module gets that value drained into `PassMetrics`
 //! and erased from the module.
 //!
-//! `FuseAskOps` will write `fuse-ask-ops_fired_count` once Task 7 wires
-//! `_fired_count` + `_ir_size_delta` for every transform pass. Until then
-//! this test is `#[ignore]`d — the FFI plumbing it exercises is already
-//! covered by Task 2's CAPI and Task 3's `drain_pass_stats` helper, but
-//! the end-to-end signal (FuseAskOps actually firing) only appears after
-//! Task 7.
+//! `FuseAskOps` is intentionally not in the default O-level pipelines because
+//! LLM-call merging needs a typed semantic contract. This test keeps the pass
+//! metrics path covered by invoking the pass explicitly.
 //!
 //! The fan-in fixture mirrors `build_synth_fanin_module` from
 //! `crates/orchestration/apxm-driver/tests/semantic_equivalence_test.rs`
@@ -18,7 +15,8 @@ use std::collections::HashMap;
 
 use apxm_compiler::{AirEdge, AirModule, AirNode, Context, Pipeline};
 use apxm_core::constants::graph::attrs as graph_attrs;
-use apxm_core::types::{AISOperationType, DependencyType, OptimizationLevel, Value};
+use apxm_core::types::compiler::metadata as passes;
+use apxm_core::types::{AISOperationType, DependencyType, PipelineConfig, Value};
 
 fn ask_attrs_one(tag: &str, input_name: &str) -> HashMap<String, Value> {
     HashMap::from([
@@ -55,7 +53,10 @@ fn build_synth_fanin_module() -> AirModule {
                 id: 1,
                 name: "question".to_string(),
                 op: AISOperationType::ConstStr,
-                attributes: HashMap::from([("value".into(), Value::String("what is 42?".into()))]),
+                attributes: HashMap::from([(
+                    graph_attrs::VALUE.into(),
+                    Value::String("what is 42?".into()),
+                )]),
             },
             AirNode {
                 id: 2,
@@ -125,7 +126,13 @@ fn build_synth_fanin_module() -> AirModule {
 #[test]
 fn fuse_ask_ops_reports_nonzero_fired_count() {
     let context = Context::new().expect("MLIR context must initialize");
-    let pipeline = Pipeline::with_opt_level(&context, OptimizationLevel::O1);
+    let pipeline = Pipeline::with_config(
+        &context,
+        PipelineConfig {
+            pass_list_override: Some(vec![passes::FUSE_ASK_OPS.name.to_string()]),
+            ..Default::default()
+        },
+    );
     let module = build_synth_fanin_module();
     let (_compiled, diagnostics) = pipeline
         .compile_graph_with_diagnostics(&module)
@@ -134,8 +141,8 @@ fn fuse_ask_ops_reports_nonzero_fired_count() {
     let fuse = diagnostics
         .passes
         .iter()
-        .find(|p| p.pass_name == "fuse-ask-ops")
-        .expect("fuse-ask-ops must run at O1");
+        .find(|p| p.pass_name == passes::FUSE_ASK_OPS.name)
+        .expect("fuse-ask-ops must run when explicitly requested");
 
     assert!(
         fuse.fired_count > 0,

@@ -543,6 +543,10 @@ pub mod llm {
         /// Per-model flag: when `false`, the backend must omit the explicit
         /// `temperature` field and let the provider default apply.
         pub const SUPPORTS_CUSTOM_TEMPERATURE: &str = "supports_custom_temperature";
+        /// Backend-level flag: when `false`, the OpenAI-compatible adapter
+        /// keeps APXM `output_schema` as runtime validation only and does not
+        /// send provider-specific structured-output request fields.
+        pub const SUPPORTS_STRUCTURED_OUTPUTS: &str = "supports_structured_outputs";
         /// Top-level body key recognised by vLLM's OpenAI-compatible endpoint
         /// to forward kwargs into the model's chat template (e.g.
         /// `{"enable_thinking": false}` for Qwen3).
@@ -557,11 +561,33 @@ pub mod llm {
     }
 
     pub mod openai {
+        pub const MODEL: &str = "model";
+        pub const MESSAGES: &str = "messages";
+        pub const ROLE: &str = "role";
+        pub const CONTENT: &str = "content";
+        pub const TEMPERATURE: &str = "temperature";
         pub const EXTRA_BODY: &str = "extra_body";
         pub const TOP_P: &str = "top_p";
         pub const FREQUENCY_PENALTY: &str = "frequency_penalty";
         pub const PRESENCE_PENALTY: &str = "presence_penalty";
         pub const STOP: &str = "stop";
+        pub const RESPONSE_FORMAT: &str = "response_format";
+        pub const RESPONSE_FORMAT_TYPE: &str = "type";
+        pub const RESPONSE_FORMAT_JSON_SCHEMA: &str = "json_schema";
+        pub const JSON_SCHEMA: &str = "json_schema";
+        pub const JSON_SCHEMA_NAME: &str = "name";
+        pub const JSON_SCHEMA_SCHEMA: &str = "schema";
+        pub const JSON_SCHEMA_STRICT: &str = "strict";
+        pub const APXM_OUTPUT_SCHEMA_NAME: &str = "apxm_output";
+    }
+
+    pub mod vllm_request {
+        pub const THINKING_TOKEN_BUDGET: &str = "thinking_token_budget";
+    }
+
+    pub mod backend_metadata {
+        pub const BACKEND_TYPE: &str = "backend_type";
+        pub const VLLM_GRAPH_AWARE: &str = "vllm-graph-aware";
     }
 
     pub mod google {

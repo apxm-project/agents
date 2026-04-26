@@ -300,6 +300,7 @@ mod tests {
                 output_tokens: 5,
                 total_tokens: 8,
                 call_count: 1,
+                ..TokenUsageSummary::default()
             }),
             Some(TimingBreakdown {
                 prefill_ms: 2.0,
