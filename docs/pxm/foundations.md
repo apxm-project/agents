@@ -32,7 +32,7 @@ summary = llm.ask(result_a, result_b)    # Implicit dependencies everywhere.
 
 ### Three Consequences of Opacity
 
-**1. No optimization is possible.** The runtime cannot fuse redundant LLM calls, eliminate dead operations, or schedule independent work concurrently. Every optimization that LLVM does for machine code -- CSE, DCE, fusion, reordering -- is impossible when the program is opaque Python.
+**1. No optimization is possible.** The runtime cannot see duplicate LLM work, eliminate dead operations, or schedule independent work concurrently. Every optimization that LLVM does for machine code -- CSE, DCE, scheduling, reordering -- is impossible when the program is opaque Python.
 
 **2. No verification is possible.** Type errors, missing dependencies, unreachable operations, and malformed state transitions only surface at runtime -- often after expensive LLM calls have already been made.
 

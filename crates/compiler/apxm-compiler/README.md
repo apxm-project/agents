@@ -56,7 +56,7 @@ contracts are enforced.
 - `assign-priority` -- priority annotation for scheduling
 - `dead-context-elimination` -- removes unused context propagation
 - `template-specialization` -- folds safe constant prompt inputs
-- `fuse-ask-ops` -- explicit-only ASK fusion experiment
+- `fuse-ask-ops` -- legacy explicit-only ASK fusion experiment; not a production claim
 - `prompt-canonicalization` -- explicit-only prefix-cache layout experiment
 - `condense-ops` -- explicit-only memory batching experiment
 - `schema-narrowing` -- explicit-only field narrowing experiment

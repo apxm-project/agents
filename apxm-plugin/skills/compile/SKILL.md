@@ -6,7 +6,7 @@ user-invocable: true
 
 # Compile
 
-Takes an AIS source file (.ais) or a project directory and compiles it through the MLIR-based optimization pipeline into a `.apxmobj` binary artifact. This is the "compiler" half of APXM — it parses your workflow, lowers it to the AIS MLIR dialect, runs optimization passes (fusing LLM calls, eliminating dead code, scheduling for parallelism), and emits a deterministic, hash-verified binary.
+Takes an AIS source file (.ais) or a project directory and compiles it through the MLIR-based optimization pipeline into a `.apxmobj` binary artifact. This is the "compiler" half of APXM — it parses your workflow, lowers it to the AIS MLIR dialect, runs production-safe optimization passes (duplicate-work elimination, dead-context elimination, template specialization, scheduling metadata), and emits a deterministic, hash-verified binary.
 
 The compiled artifact is self-contained: it includes all DAGs, sub-flows, parameter schemas, and metadata needed for execution. Artifacts are content-addressable — identical source graphs produce byte-identical artifacts.
 
@@ -16,7 +16,7 @@ The compiled artifact is self-contained: it includes all DAGs, sub-flows, parame
 dekk apxm compile graph.air                           # compile with default settings (O1)
 dekk apxm compile graph.air -o workflow.apxmobj       # specify output path
 dekk apxm compile graph.air -O0                       # no optimizations (raw IR to artifact)
-dekk apxm compile graph.air -O2                       # standard optimizations (fuse + specialize + narrow)
+dekk apxm compile graph.air -O2                       # standard safe optimizations
 dekk apxm compile graph.air -O3                       # aggressive (iterate passes to fixed-point)
 dekk apxm compile graph.air --emit-diagnostics d.json # write per-pass compilation statistics
 dekk apxm compile graph.air --no-cse-llm              # skip CSE for LLM ops (use when temperature > 0)
@@ -26,8 +26,8 @@ dekk apxm compile myproject/                           # compile all graphs in a
 ## Optimization Levels
 
 - **O0** — No passes. Useful for debugging the raw IR or when you need a baseline.
-- **O1** (default) — Normalize, build prompts, schedule for parallelism, fuse consecutive ASK chains (1.29x fewer API calls), CSE, dead-code elimination.
-- **O2** — Everything in O1 plus template specialization, schema narrowing, dead context elimination, and operation condensing.
+- **O1** (default) — Normalize, build prompts, attach scheduling metadata, run CSE, and eliminate dead symbols.
+- **O2** — Everything in O1 plus template specialization and dead-context elimination.
 - **O3** — O2 passes iterated up to 10 times until no further changes (fixed-point convergence). Typically converges in 2-4 iterations.
 
 ## Compilation Pipeline

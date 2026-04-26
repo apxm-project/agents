@@ -5,7 +5,6 @@ corpus and flag any (pair, graph) cell where the final op count diverges
 by more than one op.
 
 Suspicious pairs (from compiler-audit.md):
-    (cse, fuse-ask-ops)                          -- both eliminate redundancy
     (template-specialization, prompt-canonicalization)  -- both rewrite templates
 
 Exit code:
@@ -31,7 +30,6 @@ from pathlib import Path
 from .runner import BENCH_DIR, STRESS_GRAPHS
 
 PAIRS = [
-    ("cse", "fuse-ask-ops"),
     ("template-specialization", "prompt-canonicalization"),
 ]
 

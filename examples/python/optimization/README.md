@@ -7,9 +7,9 @@ runtime interpolation.
 
 APXM's compiler applies production-safe optimization passes to your agent
 workflow. Default `-O2` keeps exact duplicate-work elimination, dead-context
-elimination, and template specialization active. Semantic rewrites such as
-LLM-call fusion and prompt-layout canonicalization are explicit experiments
-until their typed contracts are enforced.
+elimination, and template specialization active. Semantic ASK-chain mutation
+and prompt-layout canonicalization are explicit experiments until their typed
+contracts are enforced.
 
 ## Examples
 

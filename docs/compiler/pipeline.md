@@ -79,7 +79,7 @@ which optimization level, is decided in `build_pass_list()`.
 | `dspy-optimize`               | Explicit-only: apply ML-tuned prompt rewrites when DSPy config is wired        |
 | `unconsumed-value-warning`    | Diagnostic: warn on values produced but never read by a downstream node        |
 | `capability-scheduling`       | Annotate nodes with tier, cost, and latency labels for the runtime scheduler   |
-| `fuse-ask-ops`                | Explicit-only: combine adjacent ASK calls; not default until heuristics exist  |
+| `fuse-ask-ops`                | Legacy explicit-only ASK mutation experiment; keep out of default pipelines   |
 | `assign-priority`             | Stamp critical-path priority on nodes to drive scheduler ordering              |
 | `prompt-canonicalization`     | Explicit-only: reorder prompt fragments for backend prefix-cache experiments   |
 | `template-specialization`     | Fold known constants into prompt templates                                     |
@@ -139,8 +139,10 @@ until LLM purity/determinism is represented as a typed IR contract.
 The following passes remain implemented and can be invoked with `--pass-list`
 for controlled experiments, but they are not part of O1/O2/O3 defaults:
 
-- `fuse-ask-ops`: merges LLM calls. It needs semantic-quality heuristics and
-  request-attribute preservation before it can be a default APXM pass.
+- `fuse-ask-ops`: legacy explicit-only experiment that mutates ASK chains. It
+  is not a production optimization claim; producer-consumer ASK opportunities
+  should be reported as analysis until typed quality and request-semantics
+  contracts exist.
 - `prompt-canonicalization`: useful for backend prefix-cache experiments, but
   prompt layout rewrites need an explicit backend/graph-hint contract.
 - `schema-narrowing`: current implementation is not field-use schema narrowing.

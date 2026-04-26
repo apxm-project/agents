@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""fusion_stress.py - Explicit benchmark source for ASK operation fusion
+"""fusion_stress.py - Legacy explicit benchmark source for ASK-chain mutation
 
-Tests: FuseAskOps optimization pass
-Measures: compile-time ASK chain fusion when the pass is explicitly requested
+Tests: legacy FuseAskOps experiment
+Measures: compile-time ASK-chain mutation when the pass is explicitly requested
 
 Graph structure: sequential ASK chain
 - Default O-levels: no fusion
-- Explicit pass-list with FuseAskOps: adjacent ASK nodes may fuse
+- Explicit pass-list with FuseAskOps: adjacent ASK nodes may be rewritten
 
 Metrics:
 - Compiled node count
@@ -23,7 +23,7 @@ from apxm import compile, GraphRecorder
 
 @compile()
 def fusion_stress(g: GraphRecorder):
-    """Sequential ASK chain to stress test explicit fusion."""
+    """Sequential ASK chain to stress test the legacy explicit pass."""
 
     # Start with initial question
     current = g.ask(
@@ -56,9 +56,9 @@ def fusion_stress(g: GraphRecorder):
     # Final output (current is the last ASK node).
     final = current  # bind local for template auto-wire
     output = g.print(
-        message="=== FUSION STRESS TEST RESULT ===\n\n"
+        message="=== ASK-CHAIN STRESS TEST RESULT ===\n\n"
         "Final elaboration:\n{final}\n\n"
-        "This workflow is an explicit FuseAskOps stress source."
+        "This workflow is a legacy explicit FuseAskOps stress source."
     )
 
     g.done(output)

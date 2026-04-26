@@ -91,7 +91,7 @@ pub fn build_pipeline_with_config(
 /// are typed and enforced by the compiler.
 ///
 /// Passes intentionally excluded from default O1/O2/O3 pipelines:
-/// - `fuse-ask-ops`: merges LLM calls without semantic-quality heuristics.
+/// - `fuse-ask-ops`: mutates ASK chains without semantic-quality heuristics.
 /// - `condense-ops`: changes memory-query/write grouping without a typed
 ///   memory batching capability contract.
 /// - `schema-narrowing`: current implementation is not real field-use

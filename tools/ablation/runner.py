@@ -31,9 +31,6 @@ BENCH_DIR = REPO_ROOT / "examples" / "python" / "_benchmarks"
 STRESS_GRAPHS = [
     "cse_stress.air",
     "priority_scheduling.air",
-    "schema_narrowing_stress.air",
-    "condense_ops_stress.air",
-    "fusion_stress.air",
     "dead_context_stress.air",
 ]
 
@@ -46,12 +43,7 @@ STRESS_GRAPHS = [
 PASSES = [
     "normalize",
     "build-prompt",
-    "dspy-optimize",
-    "prompt-canonicalization",
     "template-specialization",
-    "schema-narrowing",
-    "fuse-ask-ops",
-    "condense-ops",
     "assign-priority",
     "dead-context-elimination",
     "canonicalizer",
@@ -128,9 +120,8 @@ def _collect(graph_name: str, disable: str | None, tmpdir: Path) -> RunResult:
 def _did_fire(baseline: RunResult, pass_name: str) -> bool:
     """A pass "fired" if its fired_count > 0 OR it changed the op count.
 
-    Pre-Task-7, only fuse-ask-ops/build-prompt/capability-scheduling write
-    fired_count (they reuse pre-existing pattern attrs); the rest only show up
-    via ops_delta. This OR keeps the harness honest until Task 7 lands the
+    Pre-Task-7, only a subset of passes writes fired_count; the rest only show
+    up via ops_delta. This OR keeps the harness honest until Task 7 lands the
     full per-pass _fired_count plumbing.
     """
     return baseline.fired_counts.get(pass_name, 0) > 0 or baseline.ops_deltas.get(pass_name, 0) != 0

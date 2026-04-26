@@ -104,6 +104,8 @@ CSV_FIELDS = [
     "backend_label",
     "opt_level",
     "run_index",
+    "trial_id",
+    "run_order",
     "success",
     "wall_ms",
     "graph_duration_ms",
@@ -229,6 +231,8 @@ class RunRecord:
     backend_label: str
     opt_level: int
     run_index: int
+    trial_id: int
+    run_order: int
     success: bool
     wall_ms: float
     graph_duration_ms: int | None
@@ -253,6 +257,8 @@ class RunRecord:
             "backend_label": self.backend_label,
             "opt_level": self.opt_level,
             "run_index": self.run_index,
+            "trial_id": self.trial_id,
+            "run_order": self.run_order,
             "success": "true" if self.success else "false",
             "wall_ms": f"{self.wall_ms:.3f}",
             "graph_duration_ms": "" if self.graph_duration_ms is None else self.graph_duration_ms,
@@ -328,6 +334,11 @@ def _parse_args() -> argparse.Namespace:
         "--append",
         action="store_true",
         help="Append to an existing CSV instead of overwriting it",
+    )
+    parser.add_argument(
+        "--interleave-opt-levels",
+        action="store_true",
+        help="Run trial 1 for every opt level before trial 2 to reduce warm-cache bias.",
     )
     return parser.parse_args()
 
@@ -436,6 +447,8 @@ def _run_once(
     graph: Path,
     opt_level: int,
     run_index: int,
+    trial_id: int,
+    run_order: int,
     compile_only: bool,
     backend_label: str,
     trace: str | None,
@@ -454,6 +467,8 @@ def _run_once(
             backend_label=backend_label,
             opt_level=opt_level,
             run_index=run_index,
+            trial_id=trial_id,
+            run_order=run_order,
             success=result.returncode == 0,
             wall_ms=wall_ms,
             graph_duration_ms=None,
@@ -485,6 +500,8 @@ def _run_once(
         backend_label=backend_label,
         opt_level=opt_level,
         run_index=run_index,
+        trial_id=trial_id,
+        run_order=run_order,
         success=result.returncode == 0,
         wall_ms=wall_ms,
         graph_duration_ms=summary.graph_duration_ms if summary else None,
@@ -566,7 +583,8 @@ def _display_number(value: int | float | None, suffix: str = "") -> str:
 def _print_run_summary(record: RunRecord) -> None:
     status = STATUS_SUCCEEDED if record.success else STATUS_FAILED
     print(
-        f"- {RUN_SUMMARY_PREFIX}: O{record.opt_level} run {record.run_index} {status}; "
+        f"- {RUN_SUMMARY_PREFIX}: O{record.opt_level} trial {record.trial_id} "
+        f"run {record.run_index} order {record.run_order} {status}; "
         f"wall={record.wall_ms:.1f} ms; "
         f"graph={_display_number(record.graph_duration_ms, ' ms')}; "
         f"llm_calls={_display_number(record.llm_call_count)}; "
@@ -588,21 +606,37 @@ def main() -> int:
 
     opt_levels = args.opt_levels or [0, 2]
     records: list[RunRecord] = []
+    run_order = 0
 
-    for opt_level in opt_levels:
-        for run_index in range(1, args.iterations + 1):
-            record = _run_once(
-                graph=graph,
-                opt_level=opt_level,
-                run_index=run_index,
-                compile_only=args.compile_only,
-                backend_label=args.backend_label,
-                trace=args.trace,
-                session_parent=args.session_base.resolve(),
-                apxm_config=args.apxm_config.resolve() if args.apxm_config else None,
-            )
-            records.append(record)
-            _print_run_summary(record)
+    if args.interleave_opt_levels:
+        run_plan = [
+            (opt_level, trial_id, trial_id)
+            for trial_id in range(1, args.iterations + 1)
+            for opt_level in opt_levels
+        ]
+    else:
+        run_plan = [
+            (opt_level, run_index, run_index)
+            for opt_level in opt_levels
+            for run_index in range(1, args.iterations + 1)
+        ]
+
+    for opt_level, run_index, trial_id in run_plan:
+        run_order += 1
+        record = _run_once(
+            graph=graph,
+            opt_level=opt_level,
+            run_index=run_index,
+            trial_id=trial_id,
+            run_order=run_order,
+            compile_only=args.compile_only,
+            backend_label=args.backend_label,
+            trace=args.trace,
+            session_parent=args.session_base.resolve(),
+            apxm_config=args.apxm_config.resolve() if args.apxm_config else None,
+        )
+        records.append(record)
+        _print_run_summary(record)
 
     _write_csv(records, args.output.resolve(), args.append)
     _summarize(records)

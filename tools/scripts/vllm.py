@@ -617,6 +617,10 @@ def _build_serve_cmd(args: argparse.Namespace, extra_args: list[str]) -> tuple[l
         cmd.append(VllmServeFlag.ENABLE_PROMPT_TOKENS_DETAILS.value)
     if args.enable_force_include_usage:
         cmd.append(VllmServeFlag.ENABLE_FORCE_INCLUDE_USAGE.value)
+    if args.enable_prefix_caching:
+        cmd.append(VllmServeFlag.ENABLE_PREFIX_CACHING.value)
+    if args.scheduling_policy:
+        cmd.extend([VllmServeFlag.SCHEDULING_POLICY.value, args.scheduling_policy])
     if args.trust_remote_code:
         cmd.append("--trust-remote-code")
     cmd.extend(extra_args)
@@ -1108,6 +1112,17 @@ def _add_model_args(parser: argparse.ArgumentParser) -> None:
         dest=ArgName.ENABLE_FORCE_INCLUDE_USAGE.value,
         action="store_true",
         help="Ask vLLM to include usage on every supported request",
+    )
+    parser.add_argument(
+        "--enable-prefix-caching",
+        dest=ArgName.ENABLE_PREFIX_CACHING.value,
+        action="store_true",
+        help="Enable vLLM prefix caching for graph-aware latency experiments",
+    )
+    parser.add_argument(
+        "--scheduling-policy",
+        dest=ArgName.SCHEDULING_POLICY.value,
+        help="vLLM scheduler policy, for example priority for APXM priority hints",
     )
     parser.add_argument(
         "--trust-remote-code",
