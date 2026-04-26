@@ -20,6 +20,27 @@ from typing import Any
 
 import pytest
 
+from apxm.tool_worker import (
+    WIRE_ERROR_CANCELLED,
+    WIRE_ERROR_TIMEOUT,
+    WIRE_ERROR_UNKNOWN_HANDLER,
+    WIRE_FIELD_ARGS,
+    WIRE_FIELD_DEADLINE_MS,
+    WIRE_FIELD_ERROR,
+    WIRE_FIELD_ERROR_KIND,
+    WIRE_FIELD_ERROR_TRACEBACK,
+    WIRE_FIELD_MESSAGE,
+    WIRE_FIELD_OK,
+    WIRE_FIELD_REQUEST_ID,
+    WIRE_FIELD_TYPE,
+    WIRE_FIELD_VALUE,
+    WIRE_FIELD_VERSION,
+    WIRE_FIELD_TOOL_ID,
+    WIRE_TYPE_CALL,
+    WIRE_TYPE_CANCEL,
+    WIRE_VERSION,
+)
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -31,6 +52,11 @@ _PYTHON = sys.executable
 _APXM_PKG = os.path.normpath(
     os.path.join(os.path.dirname(__file__), os.pardir, os.pardir)
 )
+
+
+@pytest.fixture
+def anyio_backend() -> str:
+    return "asyncio"
 
 
 def _make_env() -> dict[str, str]:
@@ -75,6 +101,25 @@ async def _recv(proc: asyncio.subprocess.Process, timeout: float = 10.0) -> dict
     raw = await asyncio.wait_for(proc.stdout.readline(), timeout=timeout)
     assert raw, "unexpected EOF from worker"
     return json.loads(raw.decode())
+
+
+def _call_msg(req_id: str, tool_id: str, args: dict[str, Any], **extra: Any) -> dict[str, Any]:
+    return {
+        WIRE_FIELD_VERSION: WIRE_VERSION,
+        WIRE_FIELD_TYPE: WIRE_TYPE_CALL,
+        WIRE_FIELD_REQUEST_ID: req_id,
+        WIRE_FIELD_TOOL_ID: tool_id,
+        WIRE_FIELD_ARGS: args,
+        **extra,
+    }
+
+
+def _cancel_msg(req_id: str) -> dict[str, Any]:
+    return {
+        WIRE_FIELD_VERSION: WIRE_VERSION,
+        WIRE_FIELD_TYPE: WIRE_TYPE_CANCEL,
+        WIRE_FIELD_REQUEST_ID: req_id,
+    }
 
 
 async def _close(proc: asyncio.subprocess.Process) -> None:
@@ -167,137 +212,116 @@ async def _spawn_with_stubs(tmp: str) -> asyncio.subprocess.Process:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_concurrent_calls():
     """Three concurrent calls complete with correct results."""
     with tempfile.TemporaryDirectory() as tmp:
         proc = await _spawn_with_stubs(tmp)
         try:
             # Send three calls concurrently.
-            await _send(proc, {
-                "v": 1, "type": "call", "req_id": "c1",
-                "tool_id": "tool:add", "args": {"a": 3, "b": 4},
-            })
-            await _send(proc, {
-                "v": 1, "type": "call", "req_id": "c2",
-                "tool_id": "tool:greet", "args": {"name": "world"},
-            })
-            await _send(proc, {
-                "v": 1, "type": "call", "req_id": "c3",
-                "tool_id": "tool:concat", "args": {"items": [1, 2, 3]},
-            })
+            await _send(proc, _call_msg("c1", "tool:add", {"a": 3, "b": 4}))
+            await _send(proc, _call_msg("c2", "tool:greet", {"name": "world"}))
+            await _send(proc, _call_msg("c3", "tool:concat", {"items": [1, 2, 3]}))
 
             results: dict[str, dict[str, Any]] = {}
             for _ in range(3):
                 r = await _recv(proc)
-                results[r["req_id"]] = r
+                results[r[WIRE_FIELD_REQUEST_ID]] = r
 
-            assert results["c1"]["ok"] is True
-            assert results["c1"]["value"] == 7
+            assert results["c1"][WIRE_FIELD_OK] is True
+            assert results["c1"][WIRE_FIELD_VALUE] == 7
 
-            assert results["c2"]["ok"] is True
-            assert results["c2"]["value"] == "hello world"
+            assert results["c2"][WIRE_FIELD_OK] is True
+            assert results["c2"][WIRE_FIELD_VALUE] == "hello world"
 
-            assert results["c3"]["ok"] is True
-            assert results["c3"]["value"] == "1,2,3"
+            assert results["c3"][WIRE_FIELD_OK] is True
+            assert results["c3"][WIRE_FIELD_VALUE] == "1,2,3"
         finally:
             await _close(proc)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_unknown_handler_id():
     """Calling a non-existent tool_id returns an error with kind=unknown_handler."""
     with tempfile.TemporaryDirectory() as tmp:
         proc = await _spawn_with_stubs(tmp)
         try:
-            await _send(proc, {
-                "v": 1, "type": "call", "req_id": "u1",
-                "tool_id": "tool:nonexistent", "args": {},
-            })
+            await _send(proc, _call_msg("u1", "tool:nonexistent", {}))
             r = await _recv(proc)
-            assert r["req_id"] == "u1"
-            assert r["ok"] is False
-            assert r["error"]["kind"] == "unknown_handler"
+            assert r[WIRE_FIELD_REQUEST_ID] == "u1"
+            assert r[WIRE_FIELD_OK] is False
+            assert r[WIRE_FIELD_ERROR][WIRE_FIELD_ERROR_KIND] == WIRE_ERROR_UNKNOWN_HANDLER
         finally:
             await _close(proc)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_exception_in_tool():
     """Tool that raises an exception returns structured error."""
     with tempfile.TemporaryDirectory() as tmp:
         proc = await _spawn_with_stubs(tmp)
         try:
-            await _send(proc, {
-                "v": 1, "type": "call", "req_id": "e1",
-                "tool_id": "tool:boom", "args": {},
-            })
+            await _send(proc, _call_msg("e1", "tool:boom", {}))
             r = await _recv(proc)
-            assert r["req_id"] == "e1"
-            assert r["ok"] is False
-            assert r["error"]["kind"] == "ValueError"
-            assert "kaboom" in r["error"]["message"]
-            assert r["error"]["traceback"] != ""
+            assert r[WIRE_FIELD_REQUEST_ID] == "e1"
+            assert r[WIRE_FIELD_OK] is False
+            assert r[WIRE_FIELD_ERROR][WIRE_FIELD_ERROR_KIND] == ValueError.__name__
+            assert "kaboom" in r[WIRE_FIELD_ERROR][WIRE_FIELD_MESSAGE]
+            assert r[WIRE_FIELD_ERROR][WIRE_FIELD_ERROR_TRACEBACK] != ""
         finally:
             await _close(proc)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cancel():
     """Cancelling an in-flight call produces a cancelled error."""
     with tempfile.TemporaryDirectory() as tmp:
         proc = await _spawn_with_stubs(tmp)
         try:
             # Send a slow call, then cancel it.
-            await _send(proc, {
-                "v": 1, "type": "call", "req_id": "s1",
-                "tool_id": "tool:slow", "args": {},
-            })
+            await _send(proc, _call_msg("s1", "tool:slow", {}))
             # Give the worker time to start the task.
             await asyncio.sleep(0.3)
-            await _send(proc, {
-                "v": 1, "type": "cancel", "req_id": "s1",
-            })
+            await _send(proc, _cancel_msg("s1"))
             r = await _recv(proc, timeout=5.0)
-            assert r["req_id"] == "s1"
-            assert r["ok"] is False
-            assert r["error"]["kind"] in ("cancelled", "CancelledError")
+            assert r[WIRE_FIELD_REQUEST_ID] == "s1"
+            assert r[WIRE_FIELD_OK] is False
+            assert r[WIRE_FIELD_ERROR][WIRE_FIELD_ERROR_KIND] in (
+                WIRE_ERROR_CANCELLED,
+                asyncio.CancelledError.__name__,
+            )
         finally:
             await _close(proc)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_eof_graceful_shutdown():
     """Closing stdin causes the worker to exit cleanly."""
     with tempfile.TemporaryDirectory() as tmp:
         proc = await _spawn_with_stubs(tmp)
         # Send one call, read the result, then close.
-        await _send(proc, {
-            "v": 1, "type": "call", "req_id": "g1",
-            "tool_id": "tool:add", "args": {"a": 1, "b": 2},
-        })
+        await _send(proc, _call_msg("g1", "tool:add", {"a": 1, "b": 2}))
         r = await _recv(proc)
-        assert r["ok"] is True
-        assert r["value"] == 3
+        assert r[WIRE_FIELD_OK] is True
+        assert r[WIRE_FIELD_VALUE] == 3
 
         await _close(proc)
         assert proc.returncode == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_timeout_enforcement():
     """A call with a very short deadline_ms times out."""
     with tempfile.TemporaryDirectory() as tmp:
         proc = await _spawn_with_stubs(tmp)
         try:
-            await _send(proc, {
-                "v": 1, "type": "call", "req_id": "t1",
-                "tool_id": "tool:slow", "args": {},
-                "deadline_ms": 100,
-            })
+            await _send(
+                proc,
+                _call_msg("t1", "tool:slow", {}, **{WIRE_FIELD_DEADLINE_MS: 100}),
+            )
             r = await _recv(proc)
-            assert r["req_id"] == "t1"
-            assert r["ok"] is False
-            assert r["error"]["kind"] == "timeout"
+            assert r[WIRE_FIELD_REQUEST_ID] == "t1"
+            assert r[WIRE_FIELD_OK] is False
+            assert r[WIRE_FIELD_ERROR][WIRE_FIELD_ERROR_KIND] == WIRE_ERROR_TIMEOUT
         finally:
             await _close(proc)

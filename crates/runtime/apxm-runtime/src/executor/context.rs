@@ -23,6 +23,7 @@ use super::cancellation::CancellationToken;
 use super::dag_splicer::{DagSplicer, NoOpSplicer};
 use super::events::ExecutionEventEmitter;
 use super::graph_metrics::GraphMetricsTracker;
+use super::handlers::warmup::{WarmupConfig, WarmupMetrics};
 use super::inner_plan_linker::{InnerPlanLinker, NoOpLinker};
 use super::memoization::MemoCache;
 use super::middleware::OperationMiddleware;
@@ -56,6 +57,8 @@ pub struct ExecutionContext {
     pub metadata: std::collections::HashMap<String, String>,
     pub token_budget: Option<u64>,
     pub consumed_tokens: Arc<std::sync::atomic::AtomicU64>,
+    pub warmup_config: WarmupConfig,
+    pub warmup_metrics: Arc<WarmupMetrics>,
     pub event_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
     pub graph_metrics: Arc<GraphMetricsTracker>,
     pub token_accountant: Arc<TokenAccountant>,
@@ -150,6 +153,8 @@ impl ExecutionContext {
             metadata: metadata_map,
             token_budget: None,
             consumed_tokens: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            warmup_config: WarmupConfig::default(),
+            warmup_metrics: Arc::new(WarmupMetrics::new()),
             event_emitter: None,
             graph_metrics: Arc::new(GraphMetricsTracker::new()),
             token_accountant: Arc::new(TokenAccountant::new()),
@@ -311,6 +316,8 @@ impl ExecutionContext {
             metadata: metadata_map,
             token_budget: self.token_budget,
             consumed_tokens: Arc::clone(&self.consumed_tokens),
+            warmup_config: self.warmup_config.clone(),
+            warmup_metrics: Arc::clone(&self.warmup_metrics),
             event_emitter: self.event_emitter.as_ref().map(Arc::clone),
             graph_metrics: Arc::clone(&self.graph_metrics),
             token_accountant: Arc::clone(&self.token_accountant),

@@ -16,6 +16,7 @@ from pathlib import Path
 class EnvVar(str, Enum):
     """Environment variables consumed by the APXM/vLLM path."""
 
+    APXM_CONFIG = "APXM_CONFIG"
     APXM_VLLM_HF_HOME = "APXM_VLLM_HF_HOME"
     CUDA_VISIBLE_DEVICES = "CUDA_VISIBLE_DEVICES"
     HF_HOME = "HF_HOME"
@@ -190,7 +191,17 @@ def build_layout(script_file: str) -> RepoLayout:
     )
 
 
-def apxm_config_path() -> Path:
+def apxm_config_path(start: Path | None = None) -> Path:
+    explicit = os.environ.get(env_name(EnvVar.APXM_CONFIG), "").strip()
+    if explicit:
+        return Path(explicit)
+
+    cwd = (start or Path.cwd()).resolve()
+    for candidate_root in (cwd, *cwd.parents):
+        candidate = candidate_root / ".apxm" / "config.toml"
+        if candidate.is_file():
+            return candidate
+
     return Path.home() / ".apxm" / "config.toml"
 
 

@@ -36,8 +36,9 @@ pub use metrics::{MetricsReport, MetricsSource};
 pub use plan::{InnerPlanPayload, Plan, PlanStep};
 
 pub use types::{
-    AISOperation, AISOperationType, ApxmGraphHints, CapabilityRecord, CompilerHints,
-    CompletionPolicy, DependencyType, Edge, GoalTree, GraphMetadata, InstructionConfig, Node,
+    AISOperation, AISOperationType, ApxmGraphHints, ApxmPathFormat, ArtifactFormat,
+    CapabilityRecord, CompilerHints, CompletionPolicy, DependencyType, Edge, GoalTree,
+    GraphMetadata, GraphSourceFormat, InstructionConfig, LatencyClass, Node, NodeGraphMetrics,
     NodeId, NodeMetadata, NodeSpec, Number, PinMode, PinPolicy, PriorityClass, ScopePolicy,
     ScopeSpec, Token, TokenId, TokenStatus, Value,
 };

@@ -11,7 +11,7 @@ Run the live graph with a configured ACP profile. The graph uses
 by the frontend you are testing.
 
 ```sh
-dekk apxm execute examples/metrics/spawn-agent-graph-metrics.json \
+dekk apxm execute examples/metrics/spawn-agent-graph-metrics.air \
   --emit-session /tmp/apxm-metrics-session \
   --emit-metrics /tmp/apxm-graph-metrics.json
 ```

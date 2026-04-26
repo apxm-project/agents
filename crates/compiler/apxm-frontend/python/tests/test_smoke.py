@@ -1,6 +1,7 @@
 """Smoke tests for the flattened APXM Python package."""
 
-from apxm import ApxmGraph, GraphRecorder, compile
+from apxm import ApxmGraph, GraphRecorder, WorkflowTargetKind, compile
+from apxm.constants import OP_ASK, OP_WORKFLOW_SPAWN, TEMPLATE_STR
 
 
 def test_public_imports_and_all():
@@ -27,7 +28,6 @@ def test_public_imports_and_all():
         "LLMUsage",
         "ServerError",
         "close",
-        "load_graph",
         "new_session",
         "run",
         "WorkflowTargetKind",
@@ -40,6 +40,7 @@ def test_public_imports_and_all():
 
 
 def test_generated_constants_import():
+    import apxm.constants as public_constants
     from apxm._generated.constants import (
         AWAIT_RESULT,
         MODEL,
@@ -49,25 +50,25 @@ def test_generated_constants_import():
         WORKFLOW_TARGET_KIND_GRAPH_PATH,
     )
 
-    assert MODEL == "model"
-    assert TOOL_GROUPS == "tool_groups"
-    assert TARGET_KIND == "target_kind"
-    assert SESSION_ROOT == "session_root"
-    assert AWAIT_RESULT == "await_result"
-    assert WORKFLOW_TARGET_KIND_GRAPH_PATH == "graph_path"
+    assert MODEL == public_constants.MODEL
+    assert TOOL_GROUPS == public_constants.TOOL_GROUPS
+    assert TARGET_KIND == public_constants.TARGET_KIND
+    assert SESSION_ROOT == public_constants.SESSION_ROOT
+    assert AWAIT_RESULT == public_constants.AWAIT_RESULT
+    assert WORKFLOW_TARGET_KIND_GRAPH_PATH == WorkflowTargetKind.GRAPH_PATH.value
 
 
 def test_generated_operations_import():
     from apxm._generated.operations import ASK, WORKFLOW_SPAWN
 
-    assert ASK.op == "ASK"
-    assert WORKFLOW_SPAWN.op == "WORKFLOW_SPAWN"
+    assert ASK.op == OP_ASK
+    assert WORKFLOW_SPAWN.op == OP_WORKFLOW_SPAWN
 
 
 def test_generated_agents_import():
-    from apxm._generated.agents import claude
+    from apxm._generated.agents import ALL_AGENTS, claude
 
-    assert claude.name == "claude"
+    assert claude in ALL_AGENTS
 
 
 def test_graph_recorder_to_graph():
@@ -80,8 +81,8 @@ def test_graph_recorder_to_graph():
     assert len(graph.nodes) == 1
     assert len(graph.edges) == 0
     assert graph.nodes[0].name == "ask_question"
-    assert graph.nodes[0].op == "ASK"
-    assert graph.nodes[0].attributes["template_str"] == "What is APXM?"
+    assert graph.nodes[0].op == OP_ASK
+    assert graph.nodes[0].attributes[TEMPLATE_STR] == "What is APXM?"
     assert ask_node.name == "ask_question"
 
 

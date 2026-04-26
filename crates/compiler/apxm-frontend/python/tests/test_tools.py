@@ -9,6 +9,11 @@ from apxm import constants as graph_keys
 from apxm.tools import (
     FunctionTool,
     ToolContext,
+    TOOL_FAILURE_BEHAVIOR_RETURN_ERROR,
+    TOOL_METADATA_FAILURE_BEHAVIOR,
+    TOOL_METADATA_RETRIES,
+    TOOL_METADATA_TIMEOUT,
+    TOOL_METADATA_WANTS_CONTEXT,
     _TOOL_REGISTRY,
     _make_handler_id,
     _parse_docstring,
@@ -48,14 +53,18 @@ class TestToolDecoratorBasic:
     def test_decorator_with_kwargs(self):
         """@tool(timeout=5000, retries=2) passes metadata through."""
 
-        @tool(timeout=5000, retries=2, failure_behavior="return_error")
+        @tool(
+            timeout=5000,
+            retries=2,
+            failure_behavior=TOOL_FAILURE_BEHAVIOR_RETURN_ERROR,
+        )
         def flaky(x: str) -> str:
             """A flaky tool."""
             return x
 
-        assert flaky.metadata["timeout"] == 5000
-        assert flaky.metadata["retries"] == 2
-        assert flaky.metadata["failure_behavior"] == "return_error"
+        assert flaky.metadata[TOOL_METADATA_TIMEOUT] == 5000
+        assert flaky.metadata[TOOL_METADATA_RETRIES] == 2
+        assert flaky.metadata[TOOL_METADATA_FAILURE_BEHAVIOR] == TOOL_FAILURE_BEHAVIOR_RETURN_ERROR
 
     def test_custom_name(self):
         """@tool(name="my_tool") overrides the function name."""
@@ -195,7 +204,7 @@ class TestToolContext:
         def ctx_tool(ctx: ToolContext, x: int) -> int:
             return x
 
-        assert ctx_tool.metadata["wants_context"] is True
+        assert ctx_tool.metadata[TOOL_METADATA_WANTS_CONTEXT] is True
 
     def test_no_context_flag(self):
         """Functions without ToolContext have wants_context=False."""
@@ -204,7 +213,7 @@ class TestToolContext:
         def plain(x: int) -> int:
             return x
 
-        assert plain.metadata.get("wants_context", False) is False
+        assert plain.metadata.get(TOOL_METADATA_WANTS_CONTEXT, False) is False
 
 
 # ---------------------------------------------------------------------------

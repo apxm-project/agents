@@ -94,8 +94,9 @@ docs are the order to read them in:
 
 The compiler turns AIR into a runnable artifact through a deterministic optimization
 pipeline. It runs as MLIR transforms (the `ais` dialect) plus a few Rust-side passes
-that do bookkeeping the MLIR side can't easily express (tool binding, vLLM hint
-stamping, model-allowlist validation).
+that do bookkeeping the MLIR side can't easily express, such as tool binding.
+Backend-specific behavior stays in backend adapters; the compiler emits typed
+graph metadata and optimization hints, not vLLM-specific runtime policy.
 
 → [compiler/pipeline.md](compiler/pipeline.md) — pipeline diagram and pass-by-pass
 purpose. The live ordering is in

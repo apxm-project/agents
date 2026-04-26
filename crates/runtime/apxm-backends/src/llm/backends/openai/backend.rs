@@ -141,7 +141,7 @@ impl OpenAIBackend {
             .map(|arr| {
                 arr.iter()
                     .filter_map(|entry| {
-                        let id = entry.get("id").and_then(|v| v.as_str())?;
+                        let id = entry.get(config_keys::ID).and_then(|v| v.as_str())?;
                         let supports = entry
                             .get(config_keys::SUPPORTS_CUSTOM_TEMPERATURE)
                             .and_then(|v| v.as_bool())?;

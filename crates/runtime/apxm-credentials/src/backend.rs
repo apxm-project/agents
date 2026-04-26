@@ -14,6 +14,7 @@ use thiserror::Error;
 const FILE_PERMISSIONS: u32 = 0o600;
 const DIR_PERMISSIONS: u32 = 0o700;
 const CONFIG_FILENAME: &str = "config.toml";
+const CONFIG_KEY_BACKENDS: &str = "backends";
 const FILE_HEADER: &str = "# APXM Configuration - Managed by `apxm backend`\n\
                             # Permissions: 0600 (owner read/write only)\n\n";
 
@@ -46,13 +47,9 @@ pub enum BackendError {
     InsecurePermissions { path: String, mode: u32 },
 }
 
-/// Simplified config structure for backend management.
-///
-/// This only handles the `[[backends]]` section. Full ApXmConfig is handled
-/// by apxm-driver.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
+#[derive(Debug, Clone, Default)]
 struct BackendConfigFile {
-    #[serde(default)]
+    document: toml::value::Table,
     backends: Vec<BackendConfig>,
 }
 
@@ -105,21 +102,32 @@ impl BackendStore {
         Ok(())
     }
 
-    /// Read the config file (backends section only).
+    /// Read the config file while preserving sections owned by other APXM layers.
     fn read_file(&self) -> Result<BackendConfigFile, BackendError> {
         self.check_permissions()?;
         if !self.config_path.exists() {
             return Ok(BackendConfigFile::default());
         }
         let contents = fs::read_to_string(&self.config_path)?;
-        let file: BackendConfigFile = toml::from_str(&contents)?;
-        Ok(file)
+        let document: toml::value::Table = toml::from_str(&contents)?;
+        let backends = document
+            .get(CONFIG_KEY_BACKENDS)
+            .cloned()
+            .map(toml::Value::try_into)
+            .transpose()?
+            .unwrap_or_default();
+        Ok(BackendConfigFile { document, backends })
     }
 
-    /// Write the config file atomically.
+    /// Write the config file atomically without dropping non-backend sections.
     fn write_file(&self, file: &BackendConfigFile) -> Result<(), BackendError> {
         self.ensure_dir()?;
-        let serialized = toml::to_string_pretty(file)?;
+        let mut document = file.document.clone();
+        document.insert(
+            CONFIG_KEY_BACKENDS.to_string(),
+            toml::Value::try_from(&file.backends).map_err(BackendError::Serialize)?,
+        );
+        let serialized = toml::to_string_pretty(&document)?;
         let content = format!("{FILE_HEADER}{serialized}");
 
         // Atomic write via tempfile
@@ -255,6 +263,7 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
+            supports_structured_outputs: None,
         };
 
         store.add(backend.clone()).unwrap();
@@ -262,6 +271,52 @@ mod tests {
         assert_eq!(got.name, "test-backend");
         assert_eq!(got.backend_type, BackendType::Cloud);
         assert_eq!(got.protocol, ProviderProtocol::OpenAI);
+    }
+
+    #[test]
+    fn backend_updates_preserve_non_backend_sections() {
+        let tmp = TempDir::new().unwrap();
+        let store = test_store(tmp.path());
+        fs::write(
+            &store.config_path,
+            r#"
+[chat]
+default_backend = "existing"
+default_model = "demo"
+
+[compiler.optimization.prompt_tuning]
+enabled = true
+training_data = "training.json"
+"#,
+        )
+        .unwrap();
+        fs::set_permissions(
+            &store.config_path,
+            fs::Permissions::from_mode(FILE_PERMISSIONS),
+        )
+        .unwrap();
+
+        let backend = BackendConfig {
+            name: "new-backend".to_string(),
+            backend_type: BackendType::Local,
+            protocol: ProviderProtocol::Ollama,
+            endpoint: Some("http://localhost:11434".to_string()),
+            api_key: None,
+            headers: HashMap::new(),
+            models: vec![],
+            docker: None,
+            auto_tool_choice: None,
+            supports_structured_outputs: None,
+        };
+
+        store.add(backend).unwrap();
+        let updated = fs::read_to_string(&store.config_path).unwrap();
+        assert!(updated.contains("[chat]"));
+        assert!(updated.contains("default_backend = \"existing\""));
+        assert!(updated.contains("[compiler.optimization.prompt_tuning]"));
+        assert!(updated.contains("training_data = \"training.json\""));
+        assert!(updated.contains("[[backends]]"));
+        assert!(updated.contains("name = \"new-backend\""));
     }
 
     #[test]
@@ -279,6 +334,7 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
+            supports_structured_outputs: None,
         };
 
         store.add(backend.clone()).unwrap();
@@ -301,6 +357,7 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
+            supports_structured_outputs: None,
         };
 
         store.add(backend).unwrap();
@@ -323,6 +380,7 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
+            supports_structured_outputs: None,
         };
 
         let backend2 = BackendConfig {
@@ -335,6 +393,7 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
+            supports_structured_outputs: None,
         };
 
         store.add(backend1).unwrap();
@@ -361,6 +420,7 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
+            supports_structured_outputs: None,
         };
 
         store.add(backend).unwrap();
@@ -375,6 +435,7 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
+            supports_structured_outputs: None,
         };
 
         store.update("update-test", updated).unwrap();
@@ -406,6 +467,7 @@ mod tests {
                     supports_functions: true,
                     supports_thinking: false,
                     supports_custom_temperature: None,
+                    supports_structured_outputs: None,
                     max_output_tokens: None,
                     tags: vec!["production".to_string()],
                 },
@@ -419,12 +481,14 @@ mod tests {
                     supports_functions: true,
                     supports_thinking: false,
                     supports_custom_temperature: None,
+                    supports_structured_outputs: None,
                     max_output_tokens: None,
                     tags: vec!["fast".to_string(), "cheap".to_string()],
                 },
             ],
             docker: None,
             auto_tool_choice: None,
+            supports_structured_outputs: None,
         };
 
         store.add(backend).unwrap();
@@ -459,6 +523,7 @@ mod tests {
                 tensor_parallel: Some(2),
             }),
             auto_tool_choice: None,
+            supports_structured_outputs: None,
         };
 
         store.add(backend).unwrap();
@@ -484,6 +549,7 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
+            supports_structured_outputs: None,
         };
 
         store.add(backend).unwrap();
@@ -507,6 +573,7 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
+            supports_structured_outputs: None,
         };
         store.add(backend).unwrap();
 
@@ -520,6 +587,7 @@ mod tests {
             supports_functions: true,
             supports_thinking: false,
             supports_custom_temperature: None,
+            supports_structured_outputs: None,
             max_output_tokens: None,
             tags: vec!["production".to_string()],
         };
@@ -546,6 +614,7 @@ mod tests {
             supports_functions: false,
             supports_thinking: false,
             supports_custom_temperature: None,
+            supports_structured_outputs: None,
             max_output_tokens: None,
             tags: vec![],
         };
@@ -568,6 +637,7 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
+            supports_structured_outputs: None,
         };
         store.add(backend).unwrap();
 
@@ -581,6 +651,7 @@ mod tests {
             supports_functions: false,
             supports_thinking: false,
             supports_custom_temperature: None,
+            supports_structured_outputs: None,
             max_output_tokens: None,
             tags: vec![],
         };
@@ -607,6 +678,7 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
+            supports_structured_outputs: None,
         };
         store.add(backend).unwrap();
 
@@ -626,6 +698,7 @@ mod tests {
             supports_functions: false,
             supports_thinking: true,
             supports_custom_temperature: None,
+            supports_structured_outputs: None,
             max_output_tokens: Some(4096),
             tags: vec!["vllm".to_string(), "local".to_string()],
         };
@@ -651,6 +724,7 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
+            supports_structured_outputs: None,
         };
 
         store.add(backend).unwrap();
@@ -673,6 +747,7 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
+            supports_structured_outputs: None,
         };
 
         store.add(backend).unwrap();
@@ -695,6 +770,7 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
+            supports_structured_outputs: None,
         };
 
         store.add(backend).unwrap();
@@ -717,6 +793,7 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
+            supports_structured_outputs: None,
         };
         store.add(backend).unwrap();
 
@@ -730,6 +807,7 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
+            supports_structured_outputs: None,
         };
 
         store.update("vllm-update", updated).unwrap();
@@ -752,6 +830,7 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
+            supports_structured_outputs: None,
         };
 
         store.add(backend).unwrap();
@@ -775,6 +854,7 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
+            supports_structured_outputs: None,
         };
 
         store.add(backend).unwrap();

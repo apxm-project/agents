@@ -83,8 +83,12 @@ constexpr llvm::StringLiteral STDIN = "<stdin>";
 }  // namespace input
 
 /// MLIR attribute names set by AIS passes.
-/// These mirror the Rust constants in apxm_core::constants::dspy.
+/// These mirror the canonical AIS graph attribute contract in apxm-ais.
 namespace attrs {
+
+constexpr llvm::StringLiteral DIALECT_ATTR_PREFIX = "ais.";
+constexpr llvm::StringLiteral PASS_STATS_FIRED_SUFFIX = "_fired_count";
+constexpr llvm::StringLiteral PASS_STATS_IR_SIZE_DELTA_SUFFIX = "_ir_size_delta";
 
 // ---- Module-level pass counters ----
 constexpr llvm::StringLiteral PROMPTS_BUILT = "ais.prompts_built";
@@ -117,6 +121,12 @@ constexpr llvm::StringLiteral SHARED_PREFIX_GROUP = "ais.shared_prefix_group";
 constexpr llvm::StringLiteral SHARED_PREFIX_EST_TOKENS = "ais.shared_prefix_est_tokens";
 constexpr llvm::StringLiteral WARMUP_CANDIDATE = "ais.warmup_candidate";
 constexpr llvm::StringLiteral DOWNSTREAM_NODES = "ais.downstream_nodes";
+constexpr llvm::StringLiteral FANOUT_COUNT = "ais.fanout_count";
+constexpr llvm::StringLiteral REMAINING_PATH_LEN = "ais.remaining_path_len";
+constexpr llvm::StringLiteral LATENCY_CLASS = "ais.latency_class";
+constexpr llvm::StringLiteral BATCH_GROUP = "ais.batch_group";
+constexpr llvm::StringLiteral STAGE_INDEX = "ais.stage_index";
+constexpr llvm::StringLiteral ESTIMATED_DYNAMIC_TOKENS = "ais.estimated_dynamic_tokens";
 constexpr llvm::StringLiteral SHARED_PREFIX_GROUP_PREFIX = "shared_prefix_analysis_";
 
 // ---- Operation-level attributes (no ais. prefix) ----
@@ -140,6 +150,12 @@ constexpr llvm::StringLiteral DSPY_METRIC = "ais.dspy_metric";
 constexpr llvm::StringLiteral DSPY_NO_CACHE = "ais.dspy_no_cache";
 
 }  // namespace attrs
+
+namespace graph_metrics {
+constexpr llvm::StringLiteral LATENCY_SHORT = "short";
+constexpr llvm::StringLiteral LATENCY_MEDIUM = "medium";
+constexpr llvm::StringLiteral LATENCY_LONG = "long";
+}  // namespace graph_metrics
 
 /// JSON contract for the Python DSPy optimizer subprocess.
 namespace dspy_json {

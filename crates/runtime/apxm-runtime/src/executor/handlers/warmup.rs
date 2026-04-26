@@ -15,13 +15,19 @@
 //! Warmup is gated by thresholds:
 //! - Estimated shared prefix >= X tokens (configurable, default: 512)
 //! - Fan-out >= Y downstream consumers (configurable, default: 2)
-//! - Request target is `latency`, not `cost`
+//! - Request target is explicitly latency-oriented
 
 use super::{ExecutionContext, Result};
 use apxm_backends::LLMRequest;
-use apxm_core::constants::graph::attrs as graph_attrs;
+use apxm_core::constants::{
+    graph::attrs as graph_attrs, runtime::llm_request_metadata as request_metadata,
+};
+use apxm_core::types::OptimizationTarget;
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
+
+const WARMUP_MAX_TOKENS: usize = 1;
 
 /// Warmup configuration for shared-prefix optimization.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -108,9 +114,10 @@ impl WarmupMetrics {
     }
 }
 
-/// Check if a node should trigger a warmup request based on its attributes.
+/// Check if compiler metadata makes a node eligible for runtime warmup.
 ///
-/// Returns `Some(estimated_prefix_tokens)` if warmup should be triggered, `None` otherwise.
+/// This does not dispatch anything and does not inspect the selected backend.
+/// It only interprets backend-agnostic node hints plus runtime thresholds.
 pub fn should_warmup(
     node: &apxm_core::types::execution::Node,
     config: &WarmupConfig,
@@ -156,18 +163,57 @@ pub fn should_warmup(
         return None;
     }
 
-    // Check target is latency, not cost
-    let target = node
+    // Warmup is a cost-bearing runtime side effect, so analysis metadata alone
+    // is not enough. The compiler must stamp an explicit latency-oriented
+    // target before runtime may dispatch a synthetic request.
+    let Some(target) = node
         .attributes
         .get(graph_attrs::TARGET)
         .and_then(|v| v.as_str())
-        .unwrap_or("latency");
+        .and_then(|value| OptimizationTarget::from_str(value).ok())
+    else {
+        return None;
+    };
 
-    if target == "cost" {
+    if !matches!(
+        target,
+        OptimizationTarget::Latency | OptimizationTarget::Parallelism
+    ) {
         return None;
     }
 
     Some(estimated_prefix_tokens)
+}
+
+/// Decide whether this node should dispatch a synthetic runtime warmup request.
+///
+/// Compiler hints are declarative eligibility metadata. The runtime owns the
+/// side effect: it only dispatches warmup when policy thresholds pass and the
+/// selected backend advertises graph extensions.
+pub fn should_dispatch_warmup(
+    ctx: &ExecutionContext,
+    node: &apxm_core::types::execution::Node,
+    request: &LLMRequest,
+) -> Option<u32> {
+    let estimated_prefix_tokens = should_warmup(node, &ctx.warmup_config)?;
+    if !target_backend_supports_graph_extensions(ctx, request) {
+        return None;
+    }
+    Some(estimated_prefix_tokens)
+}
+
+fn target_backend_supports_graph_extensions(ctx: &ExecutionContext, request: &LLMRequest) -> bool {
+    let backend_name = if let Some(router) = &ctx.model_router {
+        router.select(request).ok().map(|decision| decision.backend)
+    } else {
+        let prepared = ctx.llm_registry.prepare_request(request);
+        ctx.llm_registry.resolve_backend_name(&prepared).ok()
+    };
+
+    backend_name
+        .as_deref()
+        .and_then(|name| ctx.llm_registry.get_backend(name))
+        .is_some_and(|backend| backend.supports_graph_extensions())
 }
 
 /// Create a warmup request from a regular LLM request.
@@ -180,17 +226,20 @@ pub fn create_warmup_request(original: &LLMRequest, node_id: u64) -> LLMRequest 
     let mut warmup_req = original.clone();
 
     // Generate minimal output (0 or 1 token)
-    warmup_req.max_tokens = Some(1);
+    warmup_req.max_tokens = Some(WARMUP_MAX_TOKENS);
 
     // Mark as warmup in metadata
-    warmup_req
-        .metadata
-        .insert("warmup".to_string(), serde_json::json!(true));
-    warmup_req
-        .metadata
-        .insert("warmup_node_id".to_string(), serde_json::json!(node_id));
+    warmup_req.metadata.insert(
+        request_metadata::WARMUP.to_string(),
+        serde_json::json!(true),
+    );
+    warmup_req.metadata.insert(
+        request_metadata::WARMUP_NODE_ID.to_string(),
+        serde_json::json!(node_id),
+    );
 
-    // If the request has APXM hints, mark it as warmup
+    // If the request has APXM hints, preserve the declarative warmup marker
+    // for graph-aware backends that inspect compiler hints.
     if let Some(ref mut hints) = warmup_req.apxm_hints {
         hints.compiler_hints.warmup_candidate = Some(true);
     }
@@ -210,6 +259,7 @@ pub async fn dispatch_warmup(
     estimated_prefix_tokens: u32,
 ) -> Result<()> {
     let warmup_req = create_warmup_request(request, node_id);
+    ctx.warmup_metrics.inc_requests_sent();
 
     // Fire-and-forget warmup request
     let ctx_clone = ctx.clone();
@@ -224,8 +274,6 @@ pub async fn dispatch_warmup(
             ctx_clone.llm_registry.generate(warmup_req).await
         };
 
-        // TODO: Track warmup metrics via a dedicated warmup metrics registry
-        // For now, just log success/failure
         if let Err(e) = result {
             // Log warmup failure but don't propagate - warmup is best-effort
             tracing::debug!(
@@ -235,6 +283,8 @@ pub async fn dispatch_warmup(
                 e
             );
         } else {
+            ctx_clone.warmup_metrics.inc_requests_reused();
+            ctx_clone.warmup_metrics.add_tokens_saved(estimated_tokens);
             tracing::debug!(
                 "Warmup request for node {} phase {} succeeded, estimated {} tokens saved",
                 node_id,
@@ -250,8 +300,53 @@ pub async fn dispatch_warmup(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use apxm_core::types::Value;
+    use crate::aam::Aam;
+    use crate::capability::CapabilitySystem;
+    use crate::memory::{MemoryConfig, MemorySystem};
+    use apxm_backends::{LLMBackend, LLMRegistry, LLMResponse};
+    use apxm_core::types::{FinishReason, ModelInfo, TokenUsage, Value};
     use std::collections::HashMap;
+    use std::sync::Arc;
+
+    const TEST_BACKEND: &str = "test-backend";
+    const TEST_MODEL: &str = "test-model";
+    const TEST_PROMPT: &str = "warm this prefix";
+
+    struct TestBackend {
+        graph_extensions: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl LLMBackend for TestBackend {
+        async fn generate(&self, _request: LLMRequest) -> anyhow::Result<LLMResponse> {
+            Ok(LLMResponse::new(
+                String::new(),
+                TEST_MODEL.to_string(),
+                TokenUsage::new(0, 0),
+                FinishReason::Stop,
+            ))
+        }
+
+        fn name(&self) -> &str {
+            TEST_BACKEND
+        }
+
+        fn model(&self) -> &str {
+            TEST_MODEL
+        }
+
+        async fn health_check(&self) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn list_models(&self) -> anyhow::Result<Vec<ModelInfo>> {
+            Ok(Vec::new())
+        }
+
+        fn supports_graph_extensions(&self) -> bool {
+            self.graph_extensions
+        }
+    }
 
     fn create_test_node(
         warmup_candidate: bool,
@@ -309,7 +404,7 @@ mod tests {
     #[test]
     fn test_warmup_fires_when_conditions_met() {
         let config = WarmupConfig::default();
-        let node = create_test_node(true, 512, 2, "latency");
+        let node = create_test_node(true, 512, 2, &OptimizationTarget::Latency.to_string());
 
         let result = should_warmup(&node, &config);
         assert!(result.is_some());
@@ -321,7 +416,7 @@ mod tests {
         let mut config = WarmupConfig::default();
         config.enabled = false;
 
-        let node = create_test_node(true, 512, 2, "latency");
+        let node = create_test_node(true, 512, 2, &OptimizationTarget::Latency.to_string());
 
         let result = should_warmup(&node, &config);
         assert!(result.is_none());
@@ -330,7 +425,7 @@ mod tests {
     #[test]
     fn test_warmup_skipped_when_not_candidate() {
         let config = WarmupConfig::default();
-        let node = create_test_node(false, 512, 2, "latency");
+        let node = create_test_node(false, 512, 2, &OptimizationTarget::Latency.to_string());
 
         let result = should_warmup(&node, &config);
         assert!(result.is_none());
@@ -339,7 +434,7 @@ mod tests {
     #[test]
     fn test_warmup_skipped_when_prefix_too_small() {
         let config = WarmupConfig::default();
-        let node = create_test_node(true, 256, 2, "latency");
+        let node = create_test_node(true, 256, 2, &OptimizationTarget::Latency.to_string());
 
         let result = should_warmup(&node, &config);
         assert!(result.is_none());
@@ -348,7 +443,7 @@ mod tests {
     #[test]
     fn test_warmup_skipped_when_fanout_too_small() {
         let config = WarmupConfig::default();
-        let node = create_test_node(true, 512, 1, "latency");
+        let node = create_test_node(true, 512, 1, &OptimizationTarget::Latency.to_string());
 
         let result = should_warmup(&node, &config);
         assert!(result.is_none());
@@ -357,7 +452,16 @@ mod tests {
     #[test]
     fn test_warmup_skipped_for_cost_target() {
         let config = WarmupConfig::default();
-        let node = create_test_node(true, 512, 2, "cost");
+        let node = create_test_node(true, 512, 2, &OptimizationTarget::Cost.to_string());
+
+        let result = should_warmup(&node, &config);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_warmup_skipped_without_explicit_latency_target() {
+        let config = WarmupConfig::default();
+        let node = create_test_node(true, 512, 2, "");
 
         let result = should_warmup(&node, &config);
         assert!(result.is_none());
@@ -370,11 +474,11 @@ mod tests {
 
         assert_eq!(warmup.max_tokens, Some(1));
         assert_eq!(
-            warmup.metadata.get("warmup"),
+            warmup.metadata.get(request_metadata::WARMUP),
             Some(&serde_json::json!(true))
         );
         assert_eq!(
-            warmup.metadata.get("warmup_node_id"),
+            warmup.metadata.get(request_metadata::WARMUP_NODE_ID),
             Some(&serde_json::json!(123))
         );
     }
@@ -404,5 +508,40 @@ mod tests {
 
         metrics.add_tokens_saved(512);
         assert_eq!(metrics.tokens_saved(), 512);
+    }
+
+    async fn test_context_with_backend(graph_extensions: bool) -> ExecutionContext {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .expect("memory"),
+        );
+        let llm_registry = Arc::new(LLMRegistry::new());
+        llm_registry
+            .register(TEST_BACKEND, TestBackend { graph_extensions })
+            .expect("register backend");
+        llm_registry
+            .set_default(TEST_BACKEND)
+            .expect("default backend");
+        let capability_system = Arc::new(CapabilitySystem::new());
+        ExecutionContext::new(memory, llm_registry, capability_system, Aam::new())
+    }
+
+    #[tokio::test]
+    async fn dispatch_warmup_requires_graph_aware_backend() {
+        let ctx = test_context_with_backend(false).await;
+        let node = create_test_node(true, 1000, 3, &OptimizationTarget::Latency.to_string());
+        let request = LLMRequest::new(TEST_PROMPT).with_backend(TEST_BACKEND);
+
+        assert_eq!(should_dispatch_warmup(&ctx, &node, &request), None);
+    }
+
+    #[tokio::test]
+    async fn dispatch_warmup_allows_graph_aware_backend() {
+        let ctx = test_context_with_backend(true).await;
+        let node = create_test_node(true, 1000, 3, &OptimizationTarget::Latency.to_string());
+        let request = LLMRequest::new(TEST_PROMPT).with_backend(TEST_BACKEND);
+
+        assert_eq!(should_dispatch_warmup(&ctx, &node, &request), Some(1000));
     }
 }

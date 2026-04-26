@@ -23,7 +23,7 @@ pub struct Plan {
     /// Summary of what will be accomplished
     pub result: String,
 
-    /// Optional inner plan (graph payload to be compiled and executed)
+    /// Optional inner plan (AIR payload to be compiled and executed)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub inner_plan: Option<InnerPlanPayload>,
 }
@@ -45,13 +45,13 @@ pub struct PlanStep {
 
 /// Inner plan payload
 ///
-/// Represents either graph JSON or a structured `TaskDag` that should
+/// Represents either AIR text or a structured `TaskDag` that should
 /// be compiled and executed as part of multi-level planning.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InnerPlanPayload {
-    /// Raw ApxmGraph JSON.
+    /// Raw AIR text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub graph: Option<String>,
+    pub air: Option<String>,
     /// Optional structured task DAG.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_dag: Option<TaskDag>,
@@ -67,10 +67,10 @@ impl Plan {
         }
     }
 
-    /// Create a plan with an inner graph payload.
-    pub fn with_inner_graph(mut self, graph: String) -> Self {
+    /// Create a plan with an inner AIR payload.
+    pub fn with_inner_air(mut self, air: String) -> Self {
         self.inner_plan = Some(InnerPlanPayload {
-            graph: Some(graph),
+            air: Some(air),
             task_dag: None,
         });
         self
@@ -79,7 +79,7 @@ impl Plan {
     /// Create a plan with structured inner task DAG.
     pub fn with_inner_task_dag(mut self, task_dag: TaskDag) -> Self {
         self.inner_plan = Some(InnerPlanPayload {
-            graph: None,
+            air: None,
             task_dag: Some(task_dag),
         });
         self
@@ -95,11 +95,11 @@ impl Plan {
 }
 
 impl InnerPlanPayload {
-    /// Returns true when this inner plan contains either graph JSON or a task DAG.
+    /// Returns true when this inner plan contains either AIR text or a task DAG.
     pub fn has_payload(&self) -> bool {
-        self.graph
+        self.air
             .as_ref()
-            .map(|graph| !graph.trim().is_empty())
+            .map(|air| !air.trim().is_empty())
             .unwrap_or(false)
             || self.task_dag.is_some()
     }
@@ -133,13 +133,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_plan_with_inner_graph() {
-        let plan = Plan::new(vec![], "Test plan".to_string()).with_inner_graph(
-            r#"{"name":"inner","nodes":[],"edges":[],"parameters":[],"metadata":{}}"#.to_string(),
+    fn test_plan_with_inner_air() {
+        let plan = Plan::new(vec![], "Test plan".to_string()).with_inner_air(
+            "module {\n  func.func @inner() -> !ais.token attributes {ais.entry} {\n    %r = ais.wait_all -> !ais.token\n    func.return %r : !ais.token\n  }\n}\n".to_string(),
         );
 
         assert!(plan.has_inner_plan());
-        assert!(plan.inner_plan.unwrap().graph.is_some());
+        assert!(plan.inner_plan.unwrap().air.is_some());
     }
 
     #[test]

@@ -94,8 +94,8 @@ pub fn graph_metadata_constants() -> Vec<FrontendConstant> {
             value: constants::graph::metadata::IS_ENTRY,
         },
         FrontendConstant {
-            name: "GRAPH_PAYLOAD".to_string(),
-            value: constants::inner_plan::GRAPH_PAYLOAD,
+            name: "AIR_PAYLOAD".to_string(),
+            value: constants::inner_plan::AIR_PAYLOAD,
         },
     ]
 }

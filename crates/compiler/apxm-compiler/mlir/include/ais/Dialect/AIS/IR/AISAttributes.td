@@ -62,6 +62,19 @@ def AISIntentAttr : AIS_I32EnumAttr<"intent", AISIntentKind> {
   let cppClassName = "AISIntentAttr";
 }
 
+// Latency classification produced by scheduling analysis.
+def AISLatencyKind : AIS_I32Enum<"AISLatencyKind",
+    "Operation latency classification",
+    [
+      I32EnumAttrCase<"low", 0, "low">,
+      I32EnumAttrCase<"medium", 1, "medium">,
+      I32EnumAttrCase<"high", 2, "high">
+    ]>;
+
+def AISLatencyAttr : AIS_I32EnumAttr<"latency", AISLatencyKind> {
+  let cppClassName = "AISLatencyAttr";
+}
+
 // Memory space classification for AAM (Agent Abstract Machine) memory tiers.
 def AISMemorySpaceKind : AIS_I32Enum<"AISMemorySpaceKind",
     "AAM memory space classification",

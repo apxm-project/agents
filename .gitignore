@@ -66,8 +66,8 @@ htmlcov/
 condaenv.*.requirements.txt
 mamba*
 
-# Build
-.apxm
+# APXM local workspace
+/.apxm/
 
 # Local machine-specific cargo config (contains local paths, do not commit)
 # Copy .cargo/config.toml.example to .cargo/config.toml and fill in your paths
@@ -104,4 +104,3 @@ apxm.toml.local
 /apxm-plugin/.mcp.json
 /apxm-plugin/hooks/
 /apxm-plugin/mcp/
-

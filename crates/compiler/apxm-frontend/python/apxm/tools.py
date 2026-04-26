@@ -12,7 +12,7 @@ import inspect
 import json
 import re
 from dataclasses import dataclass, field
-from typing import Any, Callable, TypeVar, overload
+from typing import Any, Callable, Final, TypeVar, overload
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -20,6 +20,12 @@ F = TypeVar("F", bound=Callable[..., Any])
 # Module-level registry — the tool worker uses this to look up handlers.
 # ---------------------------------------------------------------------------
 _TOOL_REGISTRY: dict[str, Callable[..., Any]] = {}
+TOOL_METADATA_TIMEOUT: Final[str] = "timeout"
+TOOL_METADATA_RETRIES: Final[str] = "retries"
+TOOL_METADATA_FAILURE_BEHAVIOR: Final[str] = "failure_behavior"
+TOOL_METADATA_WANTS_CONTEXT: Final[str] = "wants_context"
+TOOL_FAILURE_BEHAVIOR_RAISE: Final[str] = "raise"
+TOOL_FAILURE_BEHAVIOR_RETURN_ERROR: Final[str] = "return_error"
 
 # ---------------------------------------------------------------------------
 # Python type -> JSON Schema type mapping
@@ -321,12 +327,12 @@ def tool(
 
         metadata: dict[str, Any] = {}
         if timeout is not None:
-            metadata["timeout"] = timeout
+            metadata[TOOL_METADATA_TIMEOUT] = timeout
         if retries:
-            metadata["retries"] = retries
-        if failure_behavior != "raise":
-            metadata["failure_behavior"] = failure_behavior
-        metadata["wants_context"] = wants_context
+            metadata[TOOL_METADATA_RETRIES] = retries
+        if failure_behavior != TOOL_FAILURE_BEHAVIOR_RAISE:
+            metadata[TOOL_METADATA_FAILURE_BEHAVIOR] = failure_behavior
+        metadata[TOOL_METADATA_WANTS_CONTEXT] = wants_context
 
         ft = FunctionTool(
             name=tool_name,

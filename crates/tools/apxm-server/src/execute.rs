@@ -5,12 +5,9 @@ use std::sync::Arc;
 use apxm_artifact::Artifact;
 use apxm_compiler::AirModule;
 use apxm_compiler::{Context as CompilerContext, Pipeline as CompilerPipeline};
-use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::events::payload::ErrorPayload;
 use apxm_core::events::{ApxmEvent, EventSource};
 use apxm_core::paths::ApxmPaths;
-use apxm_core::types::AISOperationType;
-use apxm_core::types::values::Value;
 use apxm_runtime::EmitterAdapter;
 use axum::Json;
 use axum::extract::State;
@@ -25,19 +22,13 @@ use crate::state::{AppState, ExecuteCompletePayload, TokioChannelEmitter};
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct ExecuteRequest {
-    pub(crate) graph: JsonValue,
+    pub(crate) air: String,
     #[serde(default)]
     pub(crate) args: Vec<String>,
     #[serde(default)]
     pub(crate) session_id: Option<String>,
     #[serde(default)]
     pub(crate) session_root: Option<String>,
-    #[serde(default)]
-    pub(crate) token_budget: Option<u64>,
-    #[serde(default)]
-    pub(crate) output_schema: Option<JsonValue>,
-    #[serde(default)]
-    pub(crate) max_schema_retries: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -53,8 +44,8 @@ pub(crate) async fn execute(
     State(state): State<AppState>,
     Json(req): Json<ExecuteRequest>,
 ) -> Result<Json<ExecuteResponse>, ApiError> {
-    let (graph, args, session_id, session_dir) = prepare_request(req)?;
-    let artifact = graph_to_artifact(graph)?;
+    let (air, args, session_id, session_dir) = prepare_request(req)?;
+    let artifact = air_to_artifact(&air)?;
     let execution = state
         .runtime
         .execute_artifact_with_session_and_emitter(
@@ -73,8 +64,8 @@ pub(crate) async fn execute_stream(
     State(state): State<AppState>,
     Json(req): Json<ExecuteRequest>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>>, ApiError> {
-    let (graph, args, session_id, session_dir) = prepare_request(req)?;
-    let artifact = graph_to_artifact(graph)?;
+    let (air, args, session_id, session_dir) = prepare_request(req)?;
+    let artifact = air_to_artifact(&air)?;
     let (tx, mut rx) = mpsc::channel::<ApxmEvent>(128);
     let runtime = Arc::clone(&state.runtime);
     let trace_id = session_id
@@ -134,19 +125,13 @@ pub(crate) async fn execute_stream(
 
 pub(crate) fn prepare_request(
     mut req: ExecuteRequest,
-) -> Result<(AirModule, Vec<String>, Option<String>, Option<String>), ApiError> {
-    let mut graph: AirModule = serde_json::from_value(req.graph)
-        .map_err(|e| ApiError::bad_request(format!("invalid graph: {e}")))?;
-    apply_runtime_attributes(
-        &mut graph,
-        req.token_budget.take(),
-        req.output_schema.take(),
-        req.max_schema_retries,
-    )
-    .map_err(ApiError::bad_request)?;
+) -> Result<(String, Vec<String>, Option<String>, Option<String>), ApiError> {
+    if req.air.trim().is_empty() {
+        return Err(ApiError::bad_request("air must not be empty"));
+    }
     let (session_id, session_dir) =
         resolve_session_request(req.session_id.take(), req.session_root.take())?;
-    Ok((graph, req.args, session_id, session_dir))
+    Ok((req.air, req.args, session_id, session_dir))
 }
 
 fn resolve_session_request(
@@ -201,47 +186,17 @@ fn resolve_session_request(
     ))
 }
 
-pub(crate) fn apply_runtime_attributes(
-    graph: &mut AirModule,
-    token_budget: Option<u64>,
-    output_schema: Option<JsonValue>,
-    max_schema_retries: Option<u32>,
-) -> Result<(), String> {
-    for node in &mut graph.nodes {
-        if node.op != AISOperationType::Ask {
-            continue;
-        }
-        if let Some(budget) = token_budget {
-            let budget = i64::try_from(budget).unwrap_or(i64::MAX);
-            node.attributes.insert(
-                graph_attrs::TOKEN_BUDGET.to_string(),
-                Value::Number(budget.into()),
-            );
-        }
-        if let Some(schema) = output_schema.as_ref() {
-            let schema_value = Value::try_from(schema.clone())
-                .map_err(|e| format!("invalid output_schema: {e}"))?;
-            node.attributes
-                .insert(graph_attrs::OUTPUT_SCHEMA.to_string(), schema_value);
-        }
-        if let Some(retries) = max_schema_retries {
-            let retries = i64::from(retries);
-            node.attributes.insert(
-                graph_attrs::MAX_SCHEMA_RETRIES.to_string(),
-                Value::Number(retries.into()),
-            );
-        }
-    }
-    Ok(())
-}
-
-pub(crate) fn graph_to_artifact(graph: AirModule) -> Result<Artifact, ApiError> {
+pub(crate) fn air_module_to_artifact(graph: AirModule) -> Result<Artifact, ApiError> {
     let air_text = graph.to_air().map_err(|error| {
         ApiError::bad_request(format!(
             "failed to lower graph '{}' to AIR: {error}",
             graph.name
         ))
     })?;
+    air_to_artifact(&air_text)
+}
+
+pub(crate) fn air_to_artifact(air_text: &str) -> Result<Artifact, ApiError> {
     let context = CompilerContext::new().map_err(|error| {
         ApiError::internal_message(format!(
             "failed to initialize APXM compiler context: {error}"
@@ -249,9 +204,9 @@ pub(crate) fn graph_to_artifact(graph: AirModule) -> Result<Artifact, ApiError> 
     })?;
     let pipeline =
         CompilerPipeline::with_opt_level(&context, apxm_core::types::OptimizationLevel::O1);
-    let module = pipeline.compile(&air_text).map_err(|error| {
-        ApiError::bad_request(format!("failed to compile graph '{}': {error}", graph.name))
-    })?;
+    let module = pipeline
+        .compile(&air_text)
+        .map_err(|error| ApiError::bad_request(format!("failed to compile AIR: {error}")))?;
     let artifact_bytes = module
         .generate_artifact_bytes()
         .map_err(|error| ApiError::internal_message(format!("failed to emit artifact: {error}")))?;

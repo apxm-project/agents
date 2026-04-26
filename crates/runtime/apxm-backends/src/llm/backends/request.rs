@@ -163,7 +163,8 @@ pub struct LLMRequest {
     pub tool_choice: Option<ToolChoice>,
     /// Trace ID for cross-process event correlation.
     pub trace_id: Option<String>,
-    /// APXM graph hints for vLLM scheduling optimizations.
+    /// APXM graph scheduling metadata. Backends may lower this into their
+    /// own request controls when they support graph-aware execution.
     pub apxm_hints: Option<ApxmGraphHints>,
     /// Extra body fields to send to the LLM (provider-specific).
     pub extra_body: Option<serde_json::Value>,

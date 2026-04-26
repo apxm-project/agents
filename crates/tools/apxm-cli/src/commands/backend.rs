@@ -112,6 +112,7 @@ fn sync_ollama_models(
                 supports_functions,
                 supports_thinking: false,
                 supports_custom_temperature: None,
+                supports_structured_outputs: None,
                 max_output_tokens: None,
                 tags: vec![],
             };
@@ -192,6 +193,7 @@ pub async fn backend_command(action: BackendAction, json_output: bool) -> Result
                 models: vec![],
                 docker: None,
                 auto_tool_choice: None,
+                supports_structured_outputs: None,
             };
 
             store.add(backend).map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -495,6 +497,7 @@ pub async fn backend_command(action: BackendAction, json_output: bool) -> Result
                 supports_functions,
                 supports_thinking,
                 supports_custom_temperature: None,
+                supports_structured_outputs: None,
                 max_output_tokens: None,
                 tags: tag,
             };

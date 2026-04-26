@@ -165,6 +165,12 @@ pub const PROFILE_TOKEN_WARNING: &str = "__profile_token_warning";
 pub const WARMUP_CANDIDATE: &str = "warmup_candidate";
 pub const SHARED_PREFIX_EST_TOKENS: &str = "shared_prefix_est_tokens";
 pub const DOWNSTREAM_NODES: &str = "downstream_nodes";
+pub const FANOUT_COUNT: &str = "fanout_count";
+pub const REMAINING_PATH_LEN: &str = "remaining_path_len";
+pub const LATENCY_CLASS: &str = "latency_class";
+pub const BATCH_GROUP: &str = "batch_group";
+pub const STAGE_INDEX: &str = "stage_index";
+pub const ESTIMATED_DYNAMIC_TOKENS: &str = "estimated_dynamic_tokens";
 pub const REUSE_GROUP: &str = "shared_prefix_group";
 pub const EST_TEMPLATE_TOKENS: &str = "est_template_tokens";
 
@@ -176,6 +182,12 @@ pub const AIS_SHARED_PREFIX_GROUP: &str = "ais.shared_prefix_group";
 pub const AIS_SHARED_PREFIX_EST_TOKENS: &str = "ais.shared_prefix_est_tokens";
 pub const AIS_WARMUP_CANDIDATE: &str = "ais.warmup_candidate";
 pub const AIS_DOWNSTREAM_NODES: &str = "ais.downstream_nodes";
+pub const AIS_FANOUT_COUNT: &str = "ais.fanout_count";
+pub const AIS_REMAINING_PATH_LEN: &str = "ais.remaining_path_len";
+pub const AIS_LATENCY_CLASS: &str = "ais.latency_class";
+pub const AIS_BATCH_GROUP: &str = "ais.batch_group";
+pub const AIS_STAGE_INDEX: &str = "ais.stage_index";
+pub const AIS_ESTIMATED_DYNAMIC_TOKENS: &str = "ais.estimated_dynamic_tokens";
 
 /// Bare-name forms of MLIR-derived attributes (the result of
 /// `ArtifactEmitter.cpp` stripping the `ais.` prefix when serializing).
@@ -190,6 +202,12 @@ pub const MLIR_DERIVED_BARE_ATTRS: &[&str] = &[
     SHARED_PREFIX_EST_TOKENS, // "shared_prefix_est_tokens"
     WARMUP_CANDIDATE,         // "warmup_candidate"
     DOWNSTREAM_NODES,         // "downstream_nodes"
+    FANOUT_COUNT,             // "fanout_count"
+    REMAINING_PATH_LEN,       // "remaining_path_len"
+    LATENCY_CLASS,            // "latency_class"
+    BATCH_GROUP,              // "batch_group"
+    STAGE_INDEX,              // "stage_index"
+    ESTIMATED_DYNAMIC_TOKENS, // "estimated_dynamic_tokens"
 ];
 
 /// AIS dialect prefix for MLIR-level attribute names.
@@ -337,12 +355,24 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     WARMUP_CANDIDATE,
     SHARED_PREFIX_EST_TOKENS,
     DOWNSTREAM_NODES,
+    FANOUT_COUNT,
+    REMAINING_PATH_LEN,
+    LATENCY_CLASS,
+    BATCH_GROUP,
+    STAGE_INDEX,
+    ESTIMATED_DYNAMIC_TOKENS,
     REUSE_GROUP,
     EST_TEMPLATE_TOKENS,
     AIS_SHARED_PREFIX_GROUP,
     AIS_SHARED_PREFIX_EST_TOKENS,
     AIS_WARMUP_CANDIDATE,
     AIS_DOWNSTREAM_NODES,
+    AIS_FANOUT_COUNT,
+    AIS_REMAINING_PATH_LEN,
+    AIS_LATENCY_CLASS,
+    AIS_BATCH_GROUP,
+    AIS_STAGE_INDEX,
+    AIS_ESTIMATED_DYNAMIC_TOKENS,
     // OperationSpec-only fields (not graph attrs, but used in field names)
     "memory",
     "beliefs",
@@ -380,6 +410,12 @@ mod tests {
             ("SHARED_PREFIX_EST_TOKENS", AIS_SHARED_PREFIX_EST_TOKENS),
             ("WARMUP_CANDIDATE", AIS_WARMUP_CANDIDATE),
             ("DOWNSTREAM_NODES", AIS_DOWNSTREAM_NODES),
+            ("FANOUT_COUNT", AIS_FANOUT_COUNT),
+            ("REMAINING_PATH_LEN", AIS_REMAINING_PATH_LEN),
+            ("LATENCY_CLASS", AIS_LATENCY_CLASS),
+            ("BATCH_GROUP", AIS_BATCH_GROUP),
+            ("STAGE_INDEX", AIS_STAGE_INDEX),
+            ("ESTIMATED_DYNAMIC_TOKENS", AIS_ESTIMATED_DYNAMIC_TOKENS),
         ];
         for (cpp_name, rust_value) in pairs {
             let needle = format!("{cpp_name} = \"{rust_value}\"");

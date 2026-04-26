@@ -24,6 +24,26 @@ from typing import Any
 
 DEFAULT_BOOTSTRAP_SAMPLES = 2000
 DEFAULT_BOOTSTRAP_SEED = 42
+LIST_SEPARATOR = ";"
+
+
+class CsvKey:
+    ACTIVE_PASSES = "active_passes"
+    COMPILER_PASSES_MS = "compiler_passes_ms"
+    DIAGNOSTICS_PATH = "diagnostics_path"
+    DSPY_FIRED_COUNT = "dspy_fired_count"
+    FIRED_PASSES = "fired_passes"
+    GRAPH_DURATION_MS = "graph_duration_ms"
+    LLM_CALL_COUNT = "llm_call_count"
+    MODE = "mode"
+    OPT_LEVEL = "opt_level"
+    SUCCESS = "success"
+    TOTAL_TOKENS = "total_tokens"
+    CACHED_INPUT_TOKENS = "cached_input_tokens"
+    REASONING_OUTPUT_TOKENS = "reasoning_output_tokens"
+    TOTAL_OPS_ELIMINATED = "total_ops_eliminated"
+    TOTAL_TOKENS_SAVED = "total_tokens_saved"
+    WALL_MS = "wall_ms"
 
 
 def _parse_args() -> argparse.Namespace:
@@ -70,14 +90,14 @@ def _to_int(value: str) -> int | None:
 
 
 def _is_success(row: dict[str, str]) -> bool:
-    return row.get("success", "").lower() == "true"
+    return row.get(CsvKey.SUCCESS, "").lower() == "true"
 
 
 def _pick_duration_ms(row: dict[str, str]) -> float | None:
-    graph_duration = _to_float(row.get("graph_duration_ms", ""))
+    graph_duration = _to_float(row.get(CsvKey.GRAPH_DURATION_MS, ""))
     if graph_duration is not None:
         return graph_duration
-    return _to_float(row.get("wall_ms", ""))
+    return _to_float(row.get(CsvKey.WALL_MS, ""))
 
 
 def _bootstrap_mean_ci(
@@ -149,7 +169,7 @@ def _format_ci(bounds: tuple[float, float] | None, digits: int = 1) -> str:
 def _summarize_by_opt(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
     grouped: dict[int, list[dict[str, str]]] = defaultdict(list)
     for row in rows:
-        grouped[int(row["opt_level"])].append(row)
+        grouped[int(row[CsvKey.OPT_LEVEL])].append(row)
 
     summaries: list[dict[str, Any]] = []
     for opt_level in sorted(grouped):
@@ -163,22 +183,42 @@ def _summarize_by_opt(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
         token_totals = [
             total
             for row in success_rows
-            if (total := _to_int(row.get("total_tokens", ""))) is not None
+            if (total := _to_int(row.get(CsvKey.TOTAL_TOKENS, ""))) is not None
         ]
         cached_input_totals = [
             total
             for row in success_rows
-            if (total := _to_int(row.get("cached_input_tokens", ""))) is not None
+            if (total := _to_int(row.get(CsvKey.CACHED_INPUT_TOKENS, ""))) is not None
         ]
         reasoning_output_totals = [
             total
             for row in success_rows
-            if (total := _to_int(row.get("reasoning_output_tokens", ""))) is not None
+            if (total := _to_int(row.get(CsvKey.REASONING_OUTPUT_TOKENS, ""))) is not None
         ]
         llm_calls = [
             count
             for row in success_rows
-            if (count := _to_int(row.get("llm_call_count", ""))) is not None
+            if (count := _to_int(row.get(CsvKey.LLM_CALL_COUNT, ""))) is not None
+        ]
+        compiler_pass_ms = [
+            duration
+            for row in success_rows
+            if (duration := _to_float(row.get(CsvKey.COMPILER_PASSES_MS, ""))) is not None
+        ]
+        total_ops_eliminated = [
+            count
+            for row in success_rows
+            if (count := _to_int(row.get(CsvKey.TOTAL_OPS_ELIMINATED, ""))) is not None
+        ]
+        total_tokens_saved = [
+            count
+            for row in success_rows
+            if (count := _to_int(row.get(CsvKey.TOTAL_TOKENS_SAVED, ""))) is not None
+        ]
+        dspy_fired_counts = [
+            count
+            for row in success_rows
+            if (count := _to_int(row.get(CsvKey.DSPY_FIRED_COUNT, ""))) is not None
         ]
 
         summaries.append(
@@ -198,6 +238,39 @@ def _summarize_by_opt(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
                 if reasoning_output_totals
                 else None,
                 "mean_llm_calls": statistics.fmean(llm_calls) if llm_calls else None,
+                "mean_compiler_passes_ms": statistics.fmean(compiler_pass_ms)
+                if compiler_pass_ms
+                else None,
+                "mean_total_ops_eliminated": statistics.fmean(total_ops_eliminated)
+                if total_ops_eliminated
+                else None,
+                "mean_total_tokens_saved": statistics.fmean(total_tokens_saved)
+                if total_tokens_saved
+                else None,
+                "mean_dspy_fired_count": statistics.fmean(dspy_fired_counts)
+                if dspy_fired_counts
+                else None,
+                "fired_passes": sorted(
+                    {
+                        part
+                        for row in success_rows
+                        for part in row.get(CsvKey.FIRED_PASSES, "").split(LIST_SEPARATOR)
+                        if part
+                    }
+                ),
+                "active_passes": sorted(
+                    {
+                        part
+                        for row in success_rows
+                        for part in row.get(CsvKey.ACTIVE_PASSES, "").split(LIST_SEPARATOR)
+                        if part
+                    }
+                ),
+                "diagnostics_paths": [
+                    row[CsvKey.DIAGNOSTICS_PATH]
+                    for row in success_rows
+                    if row.get(CsvKey.DIAGNOSTICS_PATH)
+                ],
             }
         )
     return summaries
@@ -210,8 +283,9 @@ def _render_markdown(
     compare_opt_levels: tuple[int, int] | None,
     bootstrap_samples: int,
 ) -> str:
-    modes = sorted({row.get("mode", "") or "unknown" for row in rows})
+    modes = sorted({row.get(CsvKey.MODE, "") or "unknown" for row in rows})
     execute_only = modes == ["execute"]
+    compile_only = modes == ["compile"]
 
     lines: list[str] = []
     lines.append("# APXM graph benchmark report")
@@ -250,7 +324,33 @@ def _render_markdown(
             f"{_format_float(summary['mean_llm_calls'])} |"
         )
 
-    if len(summaries) >= 2:
+    if compile_only and any(summary["diagnostics_paths"] for summary in summaries):
+        lines.append("")
+        lines.append("## Compiler diagnostics")
+        lines.append("")
+        lines.append(
+            "These rows validate compiler behavior only. They show which passes "
+            "ran or fired, but they do not support runtime speed, token, or cost claims."
+        )
+        lines.append("")
+        lines.append(
+            "| opt | mean compiler passes ms | fired passes | active passes | "
+            "mean ops eliminated | mean tokens saved | mean dspy fired | diagnostics |"
+        )
+        lines.append("|---:|---:|---|---|---:|---:|---:|---:|")
+        for summary in summaries:
+            lines.append(
+                f"| O{summary['opt_level']} | "
+                f"{_format_float(summary['mean_compiler_passes_ms'])} | "
+                f"{', '.join(summary['fired_passes']) or '-'} | "
+                f"{', '.join(summary['active_passes']) or '-'} | "
+                f"{_format_float(summary['mean_total_ops_eliminated'])} | "
+                f"{_format_float(summary['mean_total_tokens_saved'])} | "
+                f"{_format_float(summary['mean_dspy_fired_count'])} | "
+                f"{len(summary['diagnostics_paths'])} |"
+            )
+
+    if execute_only and len(summaries) >= 2:
         if compare_opt_levels is None:
             compare_opt_levels = (summaries[0]["opt_level"], summaries[-1]["opt_level"])
 

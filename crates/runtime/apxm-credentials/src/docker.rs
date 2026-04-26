@@ -324,6 +324,7 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
+            supports_structured_outputs: None,
         };
 
         let result = DockerManager::start(&backend);
@@ -344,6 +345,7 @@ mod tests {
             models: vec![],
             docker: None,
             auto_tool_choice: None,
+            supports_structured_outputs: None,
         };
 
         let result = DockerManager::start(&backend);

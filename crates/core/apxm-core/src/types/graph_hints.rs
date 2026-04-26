@@ -3,6 +3,7 @@ use crate::constants::{
     graph::{attrs, metadata as graph_meta},
     llm::apxm as apxm_llm,
 };
+use crate::types::graph_metrics::NodeGraphMetrics;
 use crate::types::values::Value;
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -147,10 +148,15 @@ impl PinPolicy {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CompilerHints {
+    /// Estimated static shared-prefix tokens, produced by compiler analysis.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shared_prefix_est_tokens: Option<u32>,
+    /// Declarative compiler hint: this node is eligible for runtime prefix prefill.
+    /// The runtime still decides whether to dispatch a warmup request based on
+    /// backend capabilities and runtime policy.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub warmup_candidate: Option<bool>,
+    /// Declarative compiler hint for backend request pipelining.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pipeline_candidate: Option<bool>,
 }
@@ -171,6 +177,8 @@ pub struct ApxmGraphHints {
     pub downstream_nodes: Vec<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reuse_group: Option<String>,
+    #[serde(default, skip_serializing_if = "NodeGraphMetrics::is_empty")]
+    pub graph_metrics: NodeGraphMetrics,
     pub pin_policy: PinPolicy,
     pub compiler_hints: CompilerHints,
 }
@@ -186,6 +194,7 @@ impl Default for ApxmGraphHints {
             priority_class: None,
             downstream_nodes: Vec::new(),
             reuse_group: None,
+            graph_metrics: NodeGraphMetrics::default(),
             pin_policy: PinPolicy::none(),
             compiler_hints: CompilerHints::default(),
         }
@@ -210,6 +219,7 @@ impl ApxmGraphHints {
             priority_class: Some(PriorityClass::CriticalPath),
             downstream_nodes,
             reuse_group: None,
+            graph_metrics: NodeGraphMetrics::default(),
             pin_policy: PinPolicy::prefix(pin_ttl_ms),
             compiler_hints: CompilerHints::default(),
         }
@@ -230,6 +240,7 @@ impl ApxmGraphHints {
             priority_class: Some(PriorityClass::Parallel),
             downstream_nodes: Vec::new(),
             reuse_group: None,
+            graph_metrics: NodeGraphMetrics::default(),
             pin_policy: PinPolicy::none(),
             compiler_hints: CompilerHints::default(),
         }
@@ -240,6 +251,15 @@ impl ApxmGraphHints {
         node_label: String,
         attrs_map: &HashMap<String, Value>,
     ) -> Self {
+        Self::try_from_node_attrs(graph_id, node_label, attrs_map)
+            .expect("invalid compiler-derived graph hint attributes")
+    }
+
+    pub fn try_from_node_attrs(
+        graph_id: String,
+        node_label: String,
+        attrs_map: &HashMap<String, Value>,
+    ) -> Result<Self, String> {
         let numeric_node_id = node_label.parse::<u32>().ok();
 
         let priority_class = attrs_map.get(attrs::PRIORITY).and_then(|value| {
@@ -282,7 +302,7 @@ impl ApxmGraphHints {
             .get(attrs::WARMUP_CANDIDATE)
             .and_then(|value| value.as_bool());
 
-        Self {
+        Ok(Self {
             schema_version: 1,
             graph_id: Some(graph_id),
             execution_id: None,
@@ -291,13 +311,14 @@ impl ApxmGraphHints {
             priority_class,
             downstream_nodes,
             reuse_group,
+            graph_metrics: NodeGraphMetrics::try_from_attrs(attrs_map)?,
             pin_policy,
             compiler_hints: CompilerHints {
                 shared_prefix_est_tokens,
                 warmup_candidate,
                 pipeline_candidate: None,
             },
-        }
+        })
     }
 
     pub fn has_graph_context(&self) -> bool {
@@ -317,6 +338,8 @@ pub struct NodeSpec {
     pub priority_class: Option<PriorityClass>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reuse_group: Option<String>,
+    #[serde(default, skip_serializing_if = "NodeGraphMetrics::is_empty")]
+    pub graph_metrics: NodeGraphMetrics,
     pub is_critical_path: bool,
 }
 
@@ -476,7 +499,7 @@ impl GraphMetadata {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    use crate::types::graph_metrics::LatencyClass;
 
     #[test]
     fn priority_class_serializes_canonical_strings() {
@@ -534,7 +557,13 @@ mod tests {
 
     #[test]
     fn from_node_attrs_uses_backend_agnostic_graph_attrs() {
-        let attrs_map = HashMap::from([
+        let mut attrs_map = NodeGraphMetrics::default()
+            .with_fanout_count(2)
+            .with_remaining_path_len(4)
+            .with_latency_class(LatencyClass::Long)
+            .with_stage_index(1)
+            .to_attrs();
+        attrs_map.extend([
             (
                 attrs::PRIORITY.to_owned(),
                 Value::Number(crate::types::Number::Integer(
@@ -568,6 +597,10 @@ mod tests {
         assert_eq!(hints.pin_policy.mode, PinMode::Prefix);
         assert_eq!(hints.compiler_hints.shared_prefix_est_tokens, Some(1024));
         assert_eq!(hints.compiler_hints.warmup_candidate, Some(true));
+        assert_eq!(hints.graph_metrics.fanout_count, Some(2));
+        assert_eq!(hints.graph_metrics.remaining_path_len, Some(4));
+        assert_eq!(hints.graph_metrics.latency_class, Some(LatencyClass::Long));
+        assert_eq!(hints.graph_metrics.stage_index, Some(1));
     }
 
     #[test]
@@ -582,6 +615,7 @@ mod tests {
                 downstream_nodes: vec![1, 2],
                 priority_class: Some(PriorityClass::CriticalPath),
                 reuse_group: None,
+                graph_metrics: NodeGraphMetrics::default(),
                 is_critical_path: true,
             }]);
 

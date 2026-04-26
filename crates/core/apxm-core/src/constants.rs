@@ -30,8 +30,8 @@ pub mod env {
 }
 
 pub mod inner_plan {
-    /// Payload key for graph JSON in structured inner-plan outputs.
-    pub const GRAPH_PAYLOAD: &str = "graph";
+    /// Payload key for AIR text in structured inner-plan outputs.
+    pub const AIR_PAYLOAD: &str = "air";
     /// Payload key for structured task DAG in inner-plan outputs.
     pub const TASK_DAG: &str = "task_dag";
 }
@@ -186,6 +186,12 @@ pub mod runtime {
         pub const MODEL: &str = "model";
         pub const INPUT_TOKENS: &str = "input_tokens";
         pub const OUTPUT_TOKENS: &str = "output_tokens";
+    }
+
+    /// Runtime-owned metadata stamped on synthetic LLM requests.
+    pub mod llm_request_metadata {
+        pub const WARMUP: &str = "warmup";
+        pub const WARMUP_NODE_ID: &str = "warmup_node_id";
     }
 }
 
@@ -518,6 +524,7 @@ pub mod llm {
     }
 
     pub mod config_keys {
+        pub const ID: &str = "id";
         pub const EXTRA_HEADERS: &str = "extra_headers";
         pub const ENV_PREFIX: &str = "env:";
         /// Whether the backend accepts `tool_choice="auto"` on chat-completion
@@ -525,12 +532,12 @@ pub mod llm {
         /// `--enable-auto-tool-choice`. Plumbed from `BackendConfig.auto_tool_choice`.
         pub const AUTO_TOOL_CHOICE: &str = "auto_tool_choice";
         /// Per-model array forwarded to the backend so it can apply
-        /// model-specific request shaping (e.g. disabling thinking-mode for
-        /// Qwen3). Each entry carries at least `id` and `supports_thinking`.
+        /// model-specific request shaping. Each entry carries at least `id`
+        /// and optional capability flags.
         pub const MODELS: &str = "models";
         /// Per-model flag: when `false`, the backend must instruct the server
-        /// to suppress chain-of-thought output. For vLLM/Qwen3 this maps to
-        /// `chat_template_kwargs.enable_thinking = false`.
+        /// to suppress reasoning/thinking output when that server supports an
+        /// explicit chat-template control.
         pub const SUPPORTS_THINKING: &str = "supports_thinking";
         /// Per-model flag: when `false`, the backend must omit the explicit
         /// `temperature` field and let the provider default apply.
@@ -539,12 +546,11 @@ pub mod llm {
         /// keeps APXM `output_schema` as runtime validation only and does not
         /// send provider-specific structured-output request fields.
         pub const SUPPORTS_STRUCTURED_OUTPUTS: &str = "supports_structured_outputs";
-        /// Top-level body key recognised by vLLM's OpenAI-compatible endpoint
-        /// to forward kwargs into the model's chat template (e.g.
-        /// `{"enable_thinking": false}` for Qwen3).
+        /// Top-level body key recognised by OpenAI-compatible servers that
+        /// forward kwargs into the model's chat template.
         pub const CHAT_TEMPLATE_KWARGS: &str = "chat_template_kwargs";
-        /// Chat-template kwarg consumed by Qwen3 (and compatible) templates
-        /// to gate `<think>...</think>` emission.
+        /// Chat-template kwarg consumed by reasoning-capable templates to gate
+        /// thinking output.
         pub const ENABLE_THINKING: &str = "enable_thinking";
     }
 
@@ -573,10 +579,6 @@ pub mod llm {
         pub const APXM_OUTPUT_SCHEMA_NAME: &str = "apxm_output";
     }
 
-    pub mod vllm_request {
-        pub const THINKING_TOKEN_BUDGET: &str = "thinking_token_budget";
-    }
-
     pub mod backend_metadata {
         pub const BACKEND_TYPE: &str = "backend_type";
         pub const VLLM_GRAPH_AWARE: &str = "vllm-graph-aware";
@@ -602,10 +604,13 @@ pub mod extensions {
     /// Agent IR text format — canonical intermediate representation (like LLVM .ll).
     /// This is the primary authoring format for graph IR.
     pub const AIR: &str = "air";
+    /// Python frontend source that emits canonical AIR.
+    pub const PYTHON: &str = "py";
     /// Compiled artifact extension.
     pub const ARTIFACT: &str = "apxmobj";
-    /// JSON graph source file extension.
-    pub const JSON: &str = "json";
+    /// Structured JSON data extension for metrics, sessions, manifests,
+    /// diagnostics, caches, and API envelopes. JSON is not a graph source.
+    pub const JSON_DATA: &str = "json";
 }
 
 pub mod cache {
@@ -851,6 +856,16 @@ pub mod ui {
 }
 
 pub mod mlir {
+    /// MLIR textual syntax markers used by frontends and driver routing.
+    pub mod syntax {
+        /// Top-level MLIR module keyword.
+        pub const MODULE_KEYWORD: &str = "module";
+        /// Function operation prefix accepted for standalone function AIR.
+        pub const FUNC_FUNC_PREFIX: &str = "func.func";
+        /// MLIR line-comment prefix.
+        pub const LINE_COMMENT_PREFIX: &str = ";";
+    }
+
     /// MLIR type strings used in AIS dialect lowering.
     pub mod types {
         /// Token type (!ais.token).

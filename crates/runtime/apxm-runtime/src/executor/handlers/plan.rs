@@ -216,16 +216,16 @@ async fn execute_plan_once(
         }
         if enable_inner_plan && !plan.has_inner_plan() {
             match generate_inner_plan(ctx, node, &plan, original_goal, model_override).await {
-                Ok(Some(graph_payload)) => {
+                Ok(Some(air_payload)) => {
                     plan.inner_plan = Some(InnerPlanPayload {
-                        graph: Some(graph_payload),
+                        air: Some(air_payload),
                         task_dag: None,
                     });
                 }
                 Ok(None) => {
                     tracing::warn!(
                         execution_id = %ctx.execution_id,
-                        "Inner plan was requested but the model did not provide graph payload"
+                        "Inner plan was requested but the model did not provide AIR payload"
                     );
                 }
                 Err(err) => {

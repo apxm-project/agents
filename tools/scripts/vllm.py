@@ -50,7 +50,7 @@ REPO_ROOT = LAYOUT.repo_root
 VLLM_DIR = LAYOUT.vllm_dir
 VLLM_PYTHON = LAYOUT.vllm_python
 LOG_DIR = LAYOUT.log_dir
-APXM_CONFIG = apxm_config_path()
+APXM_CONFIG = apxm_config_path(REPO_ROOT)
 
 DEFAULT_BACKEND_NAME = DEFAULTS.backend_name
 DEFAULT_HOST = DEFAULTS.host

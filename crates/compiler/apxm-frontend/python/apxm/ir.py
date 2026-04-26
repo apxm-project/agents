@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import json
 import os
 import re
-from pathlib import Path
 from typing import Any
 
 from apxm._generated import constants as c
@@ -99,9 +97,6 @@ class ApxmGraph:
             "parameters": [parameter.to_dict() for parameter in self.parameters],
             "metadata": dict(self.metadata),
         }
-
-    def to_json(self, *, indent: int = 2, sort_keys: bool = False) -> str:
-        return json.dumps(self.to_dict(), indent=indent, sort_keys=sort_keys)
 
     def to_air(self) -> str:
         """Emit valid MLIR text for this graph.
@@ -296,12 +291,6 @@ class ApxmGraph:
         )
 
     @classmethod
-    def from_json(cls, payload: str | bytes | bytearray) -> "ApxmGraph":
-        if isinstance(payload, (bytes, bytearray)):
-            payload = payload.decode("utf-8")
-        return cls.from_dict(json.loads(payload))
-
-    @classmethod
     def merge(cls, name: str, graphs: list["ApxmGraph"]) -> "ApxmGraph":
         """Merge multiple sub-graphs, remapping node IDs to avoid collisions.
 
@@ -382,17 +371,6 @@ class ApxmGraph:
             parameters=merged_params,
             metadata=merged_metadata,
         )
-
-
-def load_graph(path: str | os.PathLike[str]) -> ApxmGraph:
-    """Load a graph from a JSON file.
-
-    Args:
-        path: Path to a .json graph file
-    """
-    p = Path(path)
-    text = p.read_text(encoding="utf-8")
-    return ApxmGraph.from_json(text)
 
 
 # ============================================================================

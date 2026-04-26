@@ -23,6 +23,7 @@ use super::{
     get_optional_u64_attribute, get_string_attribute,
     inner_plan::{InnerPlanOptions, execute_inner_plan},
     template::{input_names_from_node, render_named},
+    warmup::{dispatch_warmup, should_dispatch_warmup},
 };
 use crate::aam::{Goal as AamGoal, GoalId, GoalStatus, TransitionLabel};
 use crate::executor::memoization::MemoCache;
@@ -794,6 +795,10 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     // Attach APXM graph hints for graph-aware backends.
     request = attach_graph_hints(ctx, node, request);
 
+    if let Some(estimated_prefix_tokens) = should_dispatch_warmup(ctx, node, &request) {
+        dispatch_warmup(ctx, node.id, mode_name, &request, estimated_prefix_tokens).await?;
+    }
+
     // Execute with retries
     let mut last_error = None;
     let mut schema_retries_used = 0u32;
@@ -1529,7 +1534,7 @@ That's all."#;
         let json = r#"{
             "belief_updates": {},
             "new_goals": [],
-            "inner_plan": {"graph": "{\"name\":\"inner\",\"nodes\":[],\"edges\":[],\"parameters\":[],\"metadata\":{}}"},
+            "inner_plan": {"air": "module {\\n  func.func @inner() -> !ais.token attributes {ais.entry} {\\n    %r = ais.wait_all -> !ais.token\\n    func.return %r : !ais.token\\n  }\\n}\\n"},
             "result": "ok"
         }"#;
 

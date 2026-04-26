@@ -31,7 +31,7 @@ each name to the right backend.
                                                    ▼
                                   ┌─────────────────────────────────┐
                                   │       Normalization phase       │
-                                  │   normalize-agent-graph         │
+                                  │   normalize                     │
                                   │   build-prompt                  │
                                   └────────────────┬────────────────┘
                                                    ▼
@@ -46,9 +46,10 @@ each name to the right backend.
                                                    ▼
                                   ┌─────────────────────────────────┐
                                   │       Analysis phase            │
-                                  │   capability-scheduling         │
+                                  │   scheduling                    │
+                                  │   shared-prefix-analysis        │
                                   │   assign-priority               │
-                                  │   unconsumed-value-warning      │
+                                  │   unconsumed-value-warning*     │
                                   └────────────────┬────────────────┘
                                                    ▼
                                   ┌─────────────────────────────────┐
@@ -67,18 +68,21 @@ each name to the right backend.
 The phases are conceptual groupings — the compiler does not declare them as
 boundaries internally. Pass ordering inside a phase, and which passes are present at
 which optimization level, is decided in `build_pass_list()`.
+`unconsumed-value-warning` is opt-in through `--warn` and is shown only to mark
+where the diagnostic pass runs when requested.
 
 ## The Passes
 
-### MLIR passes (12 transforms in `crates/compiler/apxm-compiler/mlir/lib/Dialect/AIS/Transforms/`)
+### MLIR passes (current transforms in `crates/compiler/apxm-compiler/mlir/lib/Dialect/AIS/Transforms/`)
 
 | Pass                          | Purpose                                                                        |
 |-------------------------------|--------------------------------------------------------------------------------|
-| `normalize-agent-graph`       | Canonical form — dedup context, lowercase attribute names, sort sets           |
+| `normalize`                   | Canonical form — dedup context, lowercase attribute names, sort sets           |
 | `build-prompt`                | Fill empty prompt templates from upstream context where it can be inferred     |
 | `dspy-optimize`               | Config-gated compiler prompt tuning; no-op without training data              |
 | `unconsumed-value-warning`    | Diagnostic: warn on values produced but never read by a downstream node        |
-| `capability-scheduling`       | Annotate nodes with tier, cost, and latency labels for the runtime scheduler   |
+| `scheduling`                  | Annotate nodes with tier, cost, and latency labels for the runtime scheduler   |
+| `shared-prefix-analysis`      | Emit backend-agnostic prefix reuse and warmup eligibility metadata             |
 | `fuse-ask-ops`                | Explicit-only ASK mutation experiment; keep out of default pipelines          |
 | `assign-priority`             | Stamp critical-path priority on nodes to drive scheduler ordering              |
 | `prompt-canonicalization`     | Explicit-only: reorder prompt fragments for backend prefix-cache experiments   |
@@ -120,10 +124,9 @@ The actual sequence each `(level, target)` produces is defined by
 - **O1** — basic. Normalization, prompt construction, config-gated prompt
   tuning, template specialization, dead-context-elimination, canonicalization,
   tool checks, symbol DCE, and priority metadata.
-- **O2** — standard. Adds template-specialization and dead-context-elimination
-  before canonicalization, then tool checks, symbol DCE, scheduling metadata,
-  analysis-only shared-prefix hints, and priority metadata. This is the default
-  safe optimization level for production artifacts.
+- **O2** — standard. Keeps the O1 cleanup and prompt-tuning path, then adds
+  scheduling metadata, analysis-only shared-prefix hints, and priority metadata.
+  This is the default safe optimization level for production artifacts.
 - **O3** — aggressive but still contract-safe. Repeats template-specialization,
   dead-context-elimination, scheduling metadata, canonicalization, tool checks,
   and symbol DCE up to the configured iteration cap. Use it for diagnostics
@@ -141,6 +144,11 @@ available. The compiler reads that config from the APXM config file, normalizes
 training data into `.apxm/cache/compiler/training`, writes optimizer cache
 artifacts under `.apxm/cache/compiler/dspy`, and strips transient optimizer
 metadata before artifact serialization.
+
+The compiler-owned configuration is isolated under
+`[compiler.optimization.prompt_tuning]`. The LLM used for prompt tuning is
+declared in `[compiler.optimization.prompt_tuning.backend]`; the compiler does
+not inspect runtime `[chat]` routing or `[[backends]]` registrations.
 
 ## Explicit-Only Passes
 

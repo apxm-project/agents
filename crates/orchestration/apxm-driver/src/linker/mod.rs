@@ -4,27 +4,16 @@ use std::path::Path;
 use std::sync::Arc;
 
 use apxm_artifact::{Artifact, ArtifactSection};
-use apxm_core::constants::env as apxm_env;
+use apxm_core::constants::extensions;
 use apxm_core::error::runtime::RuntimeError;
 use apxm_core::log_info;
-use apxm_core::paths::ApxmPaths;
-use apxm_core::types::OptimizationTarget;
 use apxm_core::types::{OptimizationLevel, PipelineConfig};
 use apxm_runtime::{ExecutionEventEmitter, RuntimeConfig, RuntimeExecutionResult};
 
-use crate::{
-    cache, compiler::Compiler, config::ApXmConfig, error::DriverError, runtime::RuntimeExecutor,
-};
+use crate::{compiler::Compiler, config::ApXmConfig, error::DriverError, runtime::RuntimeExecutor};
 
 fn state_err(msg: impl Into<String>) -> DriverError {
     DriverError::Runtime(RuntimeError::State(msg.into()))
-}
-
-fn compiler_project_config_exists() -> bool {
-    ApxmPaths::discover()
-        .ok()
-        .map(|paths| paths.compiler_config_path().is_file())
-        .unwrap_or(false)
 }
 
 /// Linker configuration that drives compiler and runtime orchestration.
@@ -41,9 +30,6 @@ pub struct LinkerConfig {
 
     /// Full compiler pipeline configuration.
     pub pipeline_config: PipelineConfig,
-
-    /// When `true`, skip the artifact cache entirely.
-    pub no_cache: bool,
 }
 
 impl LinkerConfig {
@@ -57,7 +43,6 @@ impl LinkerConfig {
                 opt_level: OptimizationLevel::O2,
                 ..Default::default()
             },
-            no_cache: false,
         }
     }
 
@@ -99,18 +84,17 @@ pub struct LinkMetrics {
 
 /// High-level linker that orchestrates compiler and runtime execution.
 pub struct Linker {
-    /// MLIR compiler — None when MLIR toolchain is not available (graph-direct mode).
+    /// MLIR compiler required for AIR-to-artifact compilation.
     compiler: Option<Compiler>,
     runtime: RuntimeExecutor,
     pipeline_config: PipelineConfig,
-    no_cache: bool,
 }
 
 impl Linker {
     /// Create a new linker instance with the provided configuration.
     ///
-    /// The MLIR compiler is optional — if the toolchain is unavailable, the linker
-    /// falls back to graph-direct execution (JSON → ExecutionDag, bypassing MLIR).
+    /// The MLIR compiler is required. The linker does not execute source graphs
+    /// directly; graph source must compile to `.apxmobj` before runtime execution.
     pub async fn new(config: LinkerConfig) -> Result<Self, DriverError> {
         let compiler = match Compiler::with_opt_level(config.opt_level) {
             Ok(c) => {
@@ -118,50 +102,21 @@ impl Linker {
                 Some(c)
             }
             Err(e) => {
-                log_info!(
-                    "driver",
-                    "MLIR unavailable ({}); using graph-direct mode",
-                    e
-                );
+                log_info!("driver", "MLIR unavailable ({})", e);
                 None
             }
         };
         let runtime = RuntimeExecutor::new(&config).await?;
         let pipeline_config = config.pipeline_config;
-        let no_cache = config.no_cache;
 
         Ok(Self {
             compiler,
             runtime,
             pipeline_config,
-            no_cache,
         })
     }
 
-    fn artifact_cache_enabled(&self) -> bool {
-        !self.no_cache
-            && std::env::var_os(apxm_env::APXM_CONFIG).is_none()
-            && !compiler_project_config_exists()
-            && self.pipeline_config.opt_level == OptimizationLevel::O2
-            && self.pipeline_config.target == OptimizationTarget::Balanced
-            && self.pipeline_config.verify
-            && !self.pipeline_config.no_cse_llm
-            && self.pipeline_config.profile_path.is_none()
-            && self.pipeline_config.token_budget.is_none()
-            && self.pipeline_config.compiler_config_path.is_none()
-            && !self.pipeline_config.warn_unconsumed
-            && self.pipeline_config.disable_passes.is_empty()
-            && self.pipeline_config.pass_list_override.is_none()
-    }
-
-    /// Compile graph input into an executable artifact.
-    ///
-    /// For .air inputs, parses as MLIR text directly (bypasses graph loading + lowering).
-    /// For JSON graph inputs, loads as `AirModule`, emits AIR text, and compiles via MLIR.
-    ///
-    /// When caching is enabled (the default), the graph JSON is hashed and
-    /// looked up in `~/.cache/apxm/artifacts/`.  On a cache hit the
-    /// compilation step is skipped entirely.
+    /// Compile canonical AIR graph source into an executable artifact.
     pub fn compile_graph(&self, input: &Path) -> Result<Artifact, DriverError> {
         self.compile_graph_inner(input, None)
             .map(|(artifact, _)| artifact)
@@ -195,7 +150,7 @@ impl Linker {
         // the compiler section even when execute() runs against a .py source
         // (which is lowered to a temp .air file before reaching the linker).
         let ext = input.extension().and_then(|ext| ext.to_str());
-        if matches!(ext, Some("air")) {
+        if matches!(ext, Some(extensions::AIR)) {
             let air_text = std::fs::read_to_string(input)
                 .map_err(|e| state_err(format!("Failed to read {}: {}", input.display(), e)))?;
             let config = self.pipeline_config.clone();
@@ -217,46 +172,10 @@ impl Linker {
             }
             return Ok((artifact, diagnostics_json));
         }
-
-        let air_module = compiler.load_graph(input)?;
-
-        // Try the artifact cache first.
-        let hash = cache::graph_hash(&air_module).ok();
-
-        let artifact_cache_enabled = self.artifact_cache_enabled();
-        if artifact_cache_enabled
-            && let Some(ref h) = hash
-            && let Some(cached_bytes) = cache::load_cached(h)?
-        {
-            log_info!("driver", "cache hit for graph hash {}", h);
-            let artifact =
-                Artifact::from_bytes(&cached_bytes).map_err(|e| state_err(e.to_string()))?;
-            return Ok((artifact, None));
-        }
-
-        let (module, diagnostics) = compiler
-            .compile_graph_with_config_and_diagnostics(&air_module, self.pipeline_config.clone())?;
-        let diagnostics_json = Some(diagnostics.to_json());
-        let artifact_bytes = module.generate_artifact_bytes()?;
-
-        // Store in cache for next time.
-        if artifact_cache_enabled && let Some(ref h) = hash {
-            let _ = cache::store_cached(h, &artifact_bytes);
-        }
-
-        let artifact =
-            Artifact::from_bytes(&artifact_bytes).map_err(|e| state_err(e.to_string()))?;
-
-        let dag = artifact
-            .entry_dag()
-            .ok_or_else(|| state_err("Artifact contains no entry DAG"))?;
-        if let Err(err) = dag.validate() {
-            return Err(state_err(format!(
-                "Artifact DAG validation failed: {}",
-                err
-            )));
-        }
-        Ok((artifact, diagnostics_json))
+        Err(DriverError::Driver(format!(
+            "Unsupported graph source '{}'. Runtime execution requires canonical .air source or a precompiled .apxmobj artifact.",
+            input.display()
+        )))
     }
 
     /// Compile graph input and execute with entry arguments.

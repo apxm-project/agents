@@ -144,13 +144,18 @@ Create `~/.apxm/config.toml`:
 ```toml
 [chat]
 providers = ["ollama"]
-default_model = "ollama"
+default_backend = "ollama"
+default_model = "gpt-oss:20b-cloud"
 
-[[llm_backends]]
+[[backends]]
 name = "ollama"
-provider = "ollama"
-model = "gpt-oss:20b-cloud"
+type = "local"
+protocol = "ollama"
 endpoint = "http://localhost:11434"
+
+[[backends.models]]
+id = "gpt-oss:20b-cloud"
+aliases = ["ollama"]
 ```
 
 ---

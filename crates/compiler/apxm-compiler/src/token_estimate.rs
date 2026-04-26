@@ -4,29 +4,52 @@ use apxm_core::types::{AISOperationType, Number, Value};
 
 use crate::air_builder::AirModule;
 
-/// Select the appropriate BPE tokenizer based on the node's model attribute.
-///
-/// Model → tokenizer mapping:
-///   - GPT-3.5-turbo, GPT-4 (non -o) → cl100k_base
-///   - GPT-4o, o1, o3, Claude, default → o200k_base
-///
-/// For models without a BPE tokenizer (Llama, Mistral, etc.), we fall back to
-/// o200k_base as a reasonable approximation — the token counts are used for
-/// KV-cache scheduling hints, not billing, so ±10% accuracy is acceptable.
-fn tokenizer_for_model(model: Option<&str>) -> &'static bpe_openai::Tokenizer {
-    match model {
-        Some(m) if is_cl100k_model(m) => bpe_openai::cl100k_base(),
-        _ => bpe_openai::o200k_base(),
+mod tokenizer_model_patterns {
+    pub const GPT_4_PREFIX: &str = "gpt-4";
+    pub const GPT_4O_PREFIX: &str = "gpt-4o";
+    pub const GPT_35_PREFIX: &str = "gpt-3.5";
+    pub const TEXT_EMBEDDING_ADA: &str = "text-embedding-ada";
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TokenizerFamily {
+    Cl100kBase,
+    O200kBase,
+}
+
+impl TokenizerFamily {
+    fn for_model(model: Option<&str>) -> Self {
+        match model {
+            Some(model) if is_cl100k_model(model) => Self::Cl100kBase,
+            _ => Self::O200kBase,
+        }
     }
+
+    fn tokenizer(self) -> &'static bpe_openai::Tokenizer {
+        match self {
+            Self::Cl100kBase => bpe_openai::cl100k_base(),
+            Self::O200kBase => bpe_openai::o200k_base(),
+        }
+    }
+}
+
+/// Select the BPE estimator used for compiler scheduling hints.
+///
+/// Exact provider billing is collected from runtime responses. These estimates
+/// are compiler-side cost/scheduling hints for MLIR passes and graph-aware
+/// backends, so unknown model families use the project-wide default estimator.
+fn tokenizer_for_model(model: Option<&str>) -> &'static bpe_openai::Tokenizer {
+    TokenizerFamily::for_model(model).tokenizer()
 }
 
 /// Returns true for models that use the cl100k_base tokenizer.
 fn is_cl100k_model(model: &str) -> bool {
+    use tokenizer_model_patterns as patterns;
+
     let m = model.to_ascii_lowercase();
-    // cl100k: gpt-4 (not gpt-4o), gpt-3.5-turbo, text-embedding-ada-002
-    (m.starts_with("gpt-4") && !m.starts_with("gpt-4o"))
-        || m.starts_with("gpt-3.5")
-        || m.contains("text-embedding-ada")
+    (m.starts_with(patterns::GPT_4_PREFIX) && !m.starts_with(patterns::GPT_4O_PREFIX))
+        || m.starts_with(patterns::GPT_35_PREFIX)
+        || m.contains(patterns::TEXT_EMBEDDING_ADA)
 }
 
 /// Annotate LLM nodes with BPE token counts before lowering to MLIR.
@@ -34,18 +57,13 @@ fn is_cl100k_model(model: &str) -> bool {
 /// Sets `ais.est_template_tokens` on each ASK/THINK/REASON node so MLIR passes
 /// can read pre-computed values instead of the chars/4 heuristic.
 pub fn annotate_token_estimates(module: &mut AirModule) {
-    let mlir_key = format!(
-        "{}{}",
-        graph_attrs::MLIR_ATTR_PREFIX,
-        graph_attrs::EST_TEMPLATE_TOKENS
-    );
+    let mlir_key = mlir_attr_key(graph_attrs::EST_TEMPLATE_TOKENS);
     for node in &mut module.nodes {
-        match node.op {
-            AISOperationType::Ask | AISOperationType::Think | AISOperationType::Reason => {}
-            _ => continue,
+        if !is_llm_template_op(node.op) {
+            continue;
         }
         let template = match node.attributes.get(graph_attrs::TEMPLATE_STR) {
-            Some(Value::String(s)) => s.clone(),
+            Some(Value::String(value)) => value.clone(),
             _ => continue,
         };
         let static_text = strip_placeholders(&template);
@@ -56,8 +74,7 @@ pub fn annotate_token_estimates(module: &mut AirModule) {
             .attributes
             .get(graph_attrs::MODEL)
             .and_then(|v| v.as_str());
-        let tok = tokenizer_for_model(model);
-        let count = tok.count(&static_text);
+        let count = tokenizer_for_model(model).count(&static_text);
         node.attributes.insert(
             mlir_key.clone(),
             Value::Number(Number::Integer(count as i64)),
@@ -140,14 +157,24 @@ pub fn refine_token_estimates(dags: &mut [ExecutionDag]) {
                     Value::String(s) => Some(s.as_str()),
                     _ => None,
                 });
-            let tok = tokenizer_for_model(model);
-            let count = tok.count(&static_text);
+            let count = tokenizer_for_model(model).count(&static_text);
             node.set_attribute(
                 graph_attrs::SHARED_PREFIX_EST_TOKENS.to_string(),
                 Value::Number(apxm_core::types::Number::Integer(count as i64)),
             );
         }
     }
+}
+
+fn mlir_attr_key(attr: &str) -> String {
+    format!("{}{}", graph_attrs::MLIR_ATTR_PREFIX, attr)
+}
+
+fn is_llm_template_op(op: AISOperationType) -> bool {
+    matches!(
+        op,
+        AISOperationType::Ask | AISOperationType::Think | AISOperationType::Reason
+    )
 }
 
 #[cfg(test)]
@@ -181,11 +208,7 @@ mod tests {
     }
 
     fn get_est_tokens(node: &AirNode) -> Option<i64> {
-        let key = format!(
-            "{}{}",
-            graph_attrs::MLIR_ATTR_PREFIX,
-            graph_attrs::EST_TEMPLATE_TOKENS
-        );
+        let key = mlir_attr_key(graph_attrs::EST_TEMPLATE_TOKENS);
         match node.attributes.get(&key) {
             Some(Value::Number(Number::Integer(n))) => Some(*n),
             _ => None,

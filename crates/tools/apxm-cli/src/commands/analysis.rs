@@ -6,236 +6,36 @@ use std::path::PathBuf;
 use anyhow::Result;
 use colored::Colorize;
 
+#[cfg(feature = "driver")]
+use super::compile::air_graph_from_source;
 use super::implementations::{
     Status, category_str, find_op_spec, op_latency_ms, print_section_header, print_status_line,
 };
 use apxm_core::constants::graph::attrs as graph_attrs;
-use apxm_core::types::AISOperationType;
+use apxm_core::types::{AISOperationType, ApxmPathFormat};
 
 pub fn validate_command(
     input: PathBuf,
     json_output: bool,
     _no_check_resources: bool,
 ) -> Result<()> {
-    use apxm_core::types::AIS_OPERATIONS;
-    use std::collections::HashSet;
-
-    #[derive(serde::Deserialize)]
-    struct RawGraph {
-        #[serde(default)]
-        name: String,
-        #[serde(default)]
-        nodes: Vec<RawNode>,
-        #[serde(default)]
-        edges: Vec<RawEdge>,
-        #[serde(default)]
-        parameters: Vec<RawParam>,
-    }
-
-    #[derive(serde::Deserialize)]
-    struct RawNode {
-        #[serde(default)]
-        id: u64,
-        #[serde(default)]
-        name: String,
-        #[serde(default)]
-        op: String,
-        #[serde(default)]
-        attributes: HashMap<String, serde_json::Value>,
-    }
-
-    #[derive(serde::Deserialize)]
-    struct RawEdge {
-        #[serde(default)]
-        from: u64,
-        #[serde(default)]
-        to: u64,
-        #[serde(default = "RawEdge::default_dependency")]
-        dependency: String,
-    }
-
-    impl RawEdge {
-        fn default_dependency() -> String {
-            "Data".to_string()
-        }
-    }
-
-    #[derive(serde::Deserialize)]
-    struct RawParam {
-        #[serde(default)]
-        name: String,
-        #[serde(default)]
-        type_name: String,
-    }
-
-    let content = std::fs::read_to_string(&input)
-        .map_err(|e| anyhow::anyhow!("Failed to read {}: {e}", input.display()))?;
-
     let mut errors: Vec<String> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
 
-    // Check file extension - .air files need to be parsed differently
-    let is_air = input.extension().and_then(|e| e.to_str()) == Some("air");
-
-    if is_air {
-        return Err(anyhow::anyhow!(
-            "Validate accepts graph JSON inputs. Use 'apxm compile' to compile .air files."
-        ));
+    if !ApxmPathFormat::from_path(&input).is_air_source() {
+        errors.push(
+            "graph source must be canonical .air; JSON is reserved for structured data outputs"
+                .to_string(),
+        );
+    } else if let Err(err) = load_air_graph_for_analysis(&input) {
+        errors.push(err.to_string());
     }
 
-    let raw: RawGraph = serde_json::from_str(&content)
-        .map_err(|e| anyhow::anyhow!("Invalid JSON in {}: {e}", input.display()))?;
-
-    if raw.name.is_empty() {
-        errors.push("graph name must not be empty".to_string());
-    }
-
-    if raw.nodes.is_empty() {
-        errors.push("graph must contain at least one node".to_string());
-    }
-
-    let mut node_ids: HashSet<u64> = HashSet::new();
-    let valid_ops: HashSet<String> = AIS_OPERATIONS
-        .iter()
-        .map(|s| s.op_type.to_string())
-        .collect();
-
-    for node in &raw.nodes {
-        let id = node.id;
-        let name = &node.name;
-        let op = &node.op;
-
-        if id == 0 {
-            errors.push(format!("node '{name}' has invalid id (0 or missing)"));
-        }
-        if !node_ids.insert(id) {
-            errors.push(format!("duplicate node id {id}"));
-        }
-        if name.is_empty() {
-            errors.push(format!("node id={id} has empty name"));
-        }
-        if op.is_empty() {
-            errors.push(format!("node '{name}' (id={id}) has empty op"));
-        } else if !valid_ops.contains(op.as_str()) {
-            errors.push(format!(
-                "node '{name}' (id={id}) has unknown op '{op}'. Run 'apxm ops list' for valid ops."
-            ));
-        } else {
-            let spec = AIS_OPERATIONS.iter().find(|s| s.op_type.to_string() == *op);
-            if let Some(spec) = spec {
-                for field in spec.fields.iter().filter(|f| f.required) {
-                    if !node.attributes.contains_key(field.name) {
-                        errors.push(format!(
-                            "node '{name}' (id={id}, op={op}) missing required attribute '{}'",
-                            field.name
-                        ));
-                    }
-                }
-            }
-        }
-    }
-
-    for edge in &raw.edges {
-        let from = edge.from;
-        let to = edge.to;
-        let dep = &edge.dependency;
-
-        if from == to {
-            errors.push(format!("edge {from}->{to} is a self-loop"));
-        }
-        if !matches!(dep.as_str(), "Data" | "Control" | "Effect") {
-            errors.push(format!(
-                "edge {from}->{to} has invalid dependency type '{dep}'"
-            ));
-        }
-        if !node_ids.contains(&from) {
-            errors.push(format!("edge references non-existent source node {from}"));
-        }
-        if !node_ids.contains(&to) {
-            errors.push(format!("edge references non-existent target node {to}"));
-        }
-    }
-
-    if !node_ids.is_empty() && !raw.edges.is_empty() {
-        let mut in_degree: HashMap<u64, usize> = node_ids.iter().map(|&id| (id, 0)).collect();
-        let mut adjacency: HashMap<u64, Vec<u64>> = HashMap::new();
-
-        for edge in &raw.edges {
-            let from = edge.from;
-            let to = edge.to;
-            if node_ids.contains(&from) && node_ids.contains(&to) {
-                adjacency.entry(from).or_default().push(to);
-                *in_degree.entry(to).or_insert(0) += 1;
-            }
-        }
-
-        let mut queue: std::collections::VecDeque<u64> = in_degree
-            .iter()
-            .filter_map(|(&id, &deg)| if deg == 0 { Some(id) } else { None })
-            .collect();
-        let mut visited = 0usize;
-        while let Some(node_id) = queue.pop_front() {
-            visited += 1;
-            if let Some(neighbors) = adjacency.get(&node_id) {
-                for &neighbor in neighbors {
-                    if let Some(current) = in_degree.get_mut(&neighbor) {
-                        *current = current.saturating_sub(1);
-                        if *current == 0 {
-                            queue.push_back(neighbor);
-                        }
-                    }
-                }
-            }
-        }
-        if visited != node_ids.len() {
-            errors.push(format!(
-                "graph contains a cycle ({} nodes involved)",
-                node_ids.len() - visited
-            ));
-        }
-    }
-
-    let valid_types: HashSet<&str> = ["str", "int", "float", "bool", "json"]
-        .into_iter()
-        .collect();
-    let mut param_names: HashSet<String> = HashSet::new();
-    for param in &raw.parameters {
-        let pname = &param.name;
-        let ptype = &param.type_name;
-        if pname.is_empty() {
-            errors.push("parameter with empty name".to_string());
-        }
-        if !param_names.insert(pname.to_string()) {
-            errors.push(format!("duplicate parameter name '{pname}'"));
-        }
-        if !valid_types.contains(ptype.as_str()) {
-            warnings.push(format!(
-                "parameter '{pname}' has non-standard type_name '{ptype}'"
-            ));
-        }
-    }
-
-    // Also attempt full Rust-side parse+validate for deeper checks
-    match serde_json::from_str::<apxm_compiler::AirModule>(&content) {
-        Ok(graph) => {
-            if let Err(e) = graph.validate() {
-                let msg = e.to_string();
-                if !errors
-                    .iter()
-                    .any(|existing| msg.contains(&existing[..existing.len().min(30)]))
-                {
-                    errors.push(format!("graph validation: {msg}"));
-                }
-            }
-        }
-        Err(e) => {
-            let msg = e.to_string();
-            if !errors
-                .iter()
-                .any(|existing| msg.contains(&existing[..existing.len().min(30)]))
-            {
-                errors.push(format!("graph parse: {msg}"));
-            }
+    if warnings.is_empty() && errors.is_empty() {
+        if let Ok(graph) = load_air_graph_for_analysis(&input)
+            && graph.nodes.is_empty()
+        {
+            warnings.push("compiled AIR contains no executable nodes".to_string());
         }
     }
 
@@ -279,6 +79,21 @@ pub fn validate_command(
     }
 
     Ok(())
+}
+
+fn load_air_graph_for_analysis(input: &PathBuf) -> Result<apxm_compiler::AirModule> {
+    #[cfg(feature = "driver")]
+    {
+        return air_graph_from_source(input);
+    }
+
+    #[cfg(not(feature = "driver"))]
+    {
+        let _ = input;
+        Err(anyhow::anyhow!(
+            "AIR validation and analysis require the APXM driver feature"
+        ))
+    }
 }
 
 /// Parsed graph topology used by analyze and explain commands.
@@ -463,10 +278,12 @@ impl<'a> GraphAnalysis<'a> {
 }
 
 pub fn analyze_command(input: PathBuf, json_output: bool) -> Result<()> {
-    let content = std::fs::read_to_string(&input)
-        .map_err(|e| anyhow::anyhow!("Failed to read {}: {e}", input.display()))?;
-    let graph: apxm_compiler::AirModule = serde_json::from_str(&content)
-        .map_err(|e| anyhow::anyhow!("Invalid JSON in {}: {e}", input.display()))?;
+    if !ApxmPathFormat::from_path(&input).is_air_source() {
+        return Err(anyhow::anyhow!(
+            "Analyze accepts canonical .air graph source. JSON is reserved for structured data outputs."
+        ));
+    }
+    let graph = load_air_graph_for_analysis(&input)?;
 
     let ga = GraphAnalysis::from_graph(&graph);
     let (critical_path, critical_ms) = ga.critical_path();
@@ -730,10 +547,12 @@ pub fn explain_command(target: &str, json_output: bool) -> Result<()> {
 
     // Otherwise, treat as a graph file path
     let file = PathBuf::from(target);
-    let content = std::fs::read_to_string(&file)
-        .map_err(|e| anyhow::anyhow!("Failed to read {}: {e}", file.display()))?;
-    let graph: apxm_compiler::AirModule = serde_json::from_str(&content)
-        .map_err(|e| anyhow::anyhow!("Invalid JSON in {}: {e}", file.display()))?;
+    if !ApxmPathFormat::from_path(&file).is_air_source() {
+        return Err(anyhow::anyhow!(
+            "Explain accepts an error code or canonical .air graph source. JSON is reserved for structured data outputs."
+        ));
+    }
+    let graph = load_air_graph_for_analysis(&file)?;
 
     let ga = GraphAnalysis::from_graph(&graph);
     let critical_ms = ga.parallel_ms();

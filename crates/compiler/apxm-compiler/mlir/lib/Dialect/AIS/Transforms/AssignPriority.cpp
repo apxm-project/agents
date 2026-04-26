@@ -27,6 +27,7 @@
 #include "llvm/ADT/SmallVector.h"
 
 #include <algorithm>
+#include <optional>
 
 namespace mlir::ais {
 #define GEN_PASS_DEF_ASSIGNPRIORITY
@@ -39,6 +40,7 @@ APXM_AIS_DEBUG_SETUP(assign_priority)
 struct PriorityAnalysis {
   llvm::DenseMap<Operation*, unsigned> longestPath;
   llvm::DenseMap<Operation*, unsigned> fanOut;
+  llvm::DenseMap<Operation*, unsigned> stageIndex;
   llvm::DenseMap<Operation*, unsigned> opToId;
   llvm::DenseMap<Operation*, llvm::SmallVector<Operation*, 8>> downstream;
   unsigned criticalPathLength = 0;
@@ -50,6 +52,23 @@ static bool isAisOperation(Operation *op) {
 
 static bool isArtifactOperation(Operation *op) {
   return isAisOperation(op) || isa<func::ReturnOp>(op);
+}
+
+static std::optional<llvm::StringRef> graphLatencyClass(Operation *op) {
+  auto latencyAttr =
+      op->getAttrOfType<AISLatencyAttr>(apxm::constants::attrs::LATENCY);
+  if (!latencyAttr)
+    return std::nullopt;
+
+  switch (latencyAttr.getValue()) {
+  case AISLatencyKind::low:
+    return apxm::constants::graph_metrics::LATENCY_SHORT;
+  case AISLatencyKind::medium:
+    return apxm::constants::graph_metrics::LATENCY_MEDIUM;
+  case AISLatencyKind::high:
+    return apxm::constants::graph_metrics::LATENCY_LONG;
+  }
+  return std::nullopt;
 }
 
 /// Compute the longest path from each operation to a sink node (operation with no users).
@@ -93,6 +112,19 @@ static PriorityAnalysis analyzeDag(func::FuncOp func) {
   for (Operation* op : ops) {
     auto it = analysis.downstream.find(op);
     analysis.fanOut[op] = it == analysis.downstream.end() ? 0 : it->second.size();
+  }
+
+  // Compute a 0-based stage index from graph sources to each operation.
+  for (Operation* op : ops) {
+    unsigned stage = 0;
+    for (Value operand : op->getOperands()) {
+      Operation* producer = operand.getDefiningOp();
+      if (!isArtifactOperation(producer))
+        continue;
+
+      stage = std::max(stage, analysis.stageIndex.lookup(producer) + 1);
+    }
+    analysis.stageIndex[op] = stage;
   }
 
   // Compute longest path using reverse topological order (bottom-up)
@@ -167,6 +199,7 @@ struct AssignPriorityPass : impl::AssignPriorityBase<AssignPriorityPass> {
           Operation *opPtr = &op;
           unsigned longestPath = analysis.longestPath.lookup(opPtr);
           unsigned fanOut = analysis.fanOut.lookup(opPtr);
+          unsigned stageIndex = analysis.stageIndex.lookup(opPtr);
 
           // Priority assignment strategy (matches Rust parallelism_analysis):
           // - Critical path nodes (depth == critical_path_length) → Critical
@@ -190,7 +223,17 @@ struct AssignPriorityPass : impl::AssignPriorityBase<AssignPriorityPass> {
           OpBuilder builder(opPtr);
           opPtr->setAttr(apxm::constants::attrs::PRIORITY,
                          builder.getI32IntegerAttr(static_cast<int32_t>(priority)));
-
+          opPtr->setAttr(apxm::constants::attrs::FANOUT_COUNT,
+                         builder.getI32IntegerAttr(static_cast<int32_t>(fanOut)));
+          opPtr->setAttr(
+              apxm::constants::attrs::REMAINING_PATH_LEN,
+              builder.getI32IntegerAttr(static_cast<int32_t>(longestPath)));
+          opPtr->setAttr(apxm::constants::attrs::STAGE_INDEX,
+                         builder.getI32IntegerAttr(static_cast<int32_t>(stageIndex)));
+          if (auto latencyClass = graphLatencyClass(opPtr)) {
+            opPtr->setAttr(apxm::constants::attrs::LATENCY_CLASS,
+                           builder.getStringAttr(*latencyClass));
+          }
           // Emit downstream_nodes: collect IDs of AIS ops that consume this op's results
           llvm::SmallVector<unsigned> downstreamNodeIds;
           if (auto downstreamIt = analysis.downstream.find(opPtr);
@@ -215,6 +258,7 @@ struct AssignPriorityPass : impl::AssignPriorityBase<AssignPriorityPass> {
           APXM_AIS_DEBUG("  " << opPtr->getName() << ": priority=" << priority
                           << " (longest_path=" << longestPath
                           << ", fan_out=" << fanOut
+                          << ", stage_index=" << stageIndex
                           << ", downstream=" << downstreamIds.size() << ")");
         }
       }

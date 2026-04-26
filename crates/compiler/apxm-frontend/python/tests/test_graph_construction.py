@@ -1,12 +1,40 @@
 """Test graph construction API."""
-
-import json
 import pytest
+
+from apxm.constants import (
+    AGENT_NAME,
+    ARGS,
+    AWAIT_RESULT,
+    DEPENDENCY_CONTROL,
+    DEPENDENCY_DATA,
+    FLOW_NAME,
+    INPUT_NAMES,
+    OP_ASK,
+    OP_COMMUNICATE,
+    OP_FLOW_CALL,
+    OP_SPAWN_AGENT,
+    OP_WAIT_ALL,
+    OP_WORKFLOW_SPAWN,
+    SESSION_ROOT,
+    TARGET,
+    TARGET_KIND,
+    TEMPLATE_STR,
+    TIMEOUT_MS,
+    TOKEN_BUDGET,
+    TOOL_GROUPS,
+    TOOLS_ENABLED,
+)
 
 from .mocks import MOCK_AGENT_PROFILE, MOCK_AGENT_PROFILE_ALT
 
 WEB_TOOL_GROUP = "web"
 FILE_READ_TOOL_GROUP = "file:read"
+HELPER_FLOW_NAME = "helper_flow"
+MAIN_FLOW_NAME = "main_flow"
+INPUT_PARAM = "input"
+TOPIC_PARAM = "topic"
+TOPIC_PLACEHOLDER = f"{{{TOPIC_PARAM}}}"
+INPUT_PLACEHOLDER = f"{{{INPUT_PARAM}}}"
 
 
 def test_simple_graph():
@@ -22,8 +50,8 @@ def test_simple_graph():
     assert graph.name == "simple_test"
     assert len(graph.nodes) == 1
     assert graph.nodes[0].name == "query"
-    assert graph.nodes[0].op == "ASK"
-    assert graph.nodes[0].attributes["template_str"] == "What is {topic}?"
+    assert graph.nodes[0].op == OP_ASK
+    assert graph.nodes[0].attributes[TEMPLATE_STR] == "What is {topic}?"
 
 
 def test_agent_config_emits_tool_groups_and_enables_grouped_tools():
@@ -32,8 +60,8 @@ def test_agent_config_emits_tool_groups_and_enables_grouped_tools():
     agent = AgentConfig(name="researcher", tool_groups=[WEB_TOOL_GROUP, FILE_READ_TOOL_GROUP])
     attrs = agent.to_node_attributes()
 
-    assert attrs["tool_groups"] == [WEB_TOOL_GROUP, FILE_READ_TOOL_GROUP]
-    assert attrs["tools_enabled"] is True
+    assert attrs[TOOL_GROUPS] == [WEB_TOOL_GROUP, FILE_READ_TOOL_GROUP]
+    assert attrs[TOOLS_ENABLED] is True
 
 
 def test_agent_config_explicit_tools_enabled_overrides_tool_group_default():
@@ -42,8 +70,8 @@ def test_agent_config_explicit_tools_enabled_overrides_tool_group_default():
     agent = AgentConfig(name="researcher", tool_groups=[WEB_TOOL_GROUP], tools_enabled=False)
     attrs = agent.to_node_attributes()
 
-    assert attrs["tool_groups"] == [WEB_TOOL_GROUP]
-    assert attrs["tools_enabled"] is False
+    assert attrs[TOOL_GROUPS] == [WEB_TOOL_GROUP]
+    assert attrs[TOOLS_ENABLED] is False
 
 
 def test_graph_policy_applies_default_node_attrs():
@@ -57,10 +85,10 @@ def test_graph_policy_applies_default_node_attrs():
 
     graph = g.to_graph()
     attrs = graph.nodes[0].attributes
-    assert attrs["tool_groups"] == [WEB_TOOL_GROUP]
-    assert attrs["tools_enabled"] is True
-    assert attrs["token_budget"] == 128
-    assert attrs["timeout_ms"] == 2500
+    assert attrs[TOOL_GROUPS] == [WEB_TOOL_GROUP]
+    assert attrs[TOOLS_ENABLED] is True
+    assert attrs[TOKEN_BUDGET] == 128
+    assert attrs[TIMEOUT_MS] == 2500
 
 
 def test_node_policy_overrides_graph_policy():
@@ -79,9 +107,9 @@ def test_node_policy_overrides_graph_policy():
 
     graph = g.to_graph()
     attrs = graph.nodes[0].attributes
-    assert attrs["tool_groups"] == [FILE_READ_TOOL_GROUP]
-    assert attrs["token_budget"] == 256
-    assert attrs["tools_enabled"] is False
+    assert attrs[TOOL_GROUPS] == [FILE_READ_TOOL_GROUP]
+    assert attrs[TOKEN_BUDGET] == 256
+    assert attrs[TOOLS_ENABLED] is False
 
 
 def test_graph_with_params():
@@ -112,20 +140,67 @@ def test_graph_edges():
     c = g.ask(name="step3", prompt="Do C")
 
     # Control edge
-    g.add_edge(a, b, dependency="Control")
+    g.add_edge(a, b, dependency=DEPENDENCY_CONTROL)
     # Data edge
-    g.add_edge(b, c, dependency="Data")
+    g.add_edge(b, c, dependency=DEPENDENCY_DATA)
 
     graph = g.to_graph()
 
     assert len(graph.edges) == 2
-    control_edge = [e for e in graph.edges if e.dependency == "Control"][0]
-    data_edge = [e for e in graph.edges if e.dependency == "Data"][0]
+    control_edge = [e for e in graph.edges if e.dependency == DEPENDENCY_CONTROL][0]
+    data_edge = [e for e in graph.edges if e.dependency == DEPENDENCY_DATA][0]
 
     assert control_edge.from_id == a._node_id
     assert control_edge.to_id == b._node_id
     assert data_edge.from_id == b._node_id
     assert data_edge.to_id == c._node_id
+
+
+def test_auto_wire_resolves_outer_node_refs_from_list_comprehension():
+    from apxm import GraphRecorder
+    from apxm import constants as graph_keys
+
+    g = GraphRecorder("comprehension_scope")
+    artifact = g.ask(name="artifact", prompt="Produce context")
+    extracts = [
+        g.ask(name=f"extract_{index}", prompt="Use {artifact}")
+        for index in range(2)
+    ]
+
+    graph = g.to_graph()
+
+    for ref in extracts:
+        node = next(node for node in graph.nodes if node.id == ref._node_id)
+        assert node.attributes[graph_keys.INPUT_NAMES] == ["artifact"]
+        assert any(
+            edge.from_id == artifact._node_id
+            and edge.to_id == ref._node_id
+            and edge.dependency == graph_keys.DEPENDENCY_DATA
+            for edge in graph.edges
+        )
+
+
+def test_auto_wire_respects_comprehension_shadowing():
+    from apxm import GraphRecorder
+    from apxm import constants as graph_keys
+
+    g = GraphRecorder("comprehension_shadow")
+    artifact = g.ask(name="artifact", prompt="Produce context")
+    shadowed = [
+        g.ask(name="shadowed", prompt="Use {artifact}")
+        for artifact in ["literal context"]
+    ][0]
+
+    graph = g.to_graph()
+    node = next(node for node in graph.nodes if node.id == shadowed._node_id)
+
+    assert graph_keys.INPUT_NAMES not in node.attributes
+    assert not any(
+        edge.from_id == artifact._node_id
+        and edge.to_id == shadowed._node_id
+        and edge.dependency == graph_keys.DEPENDENCY_DATA
+        for edge in graph.edges
+    )
 
 
 def test_spawn_and_communicate():
@@ -260,9 +335,9 @@ def test_team_sugar():
 
     # Should have: 2 spawns + 2 communicates + 1 wait_all
     assert len(graph.nodes) >= 5
-    spawn_nodes = [n for n in graph.nodes if n.op == "SPAWN_AGENT"]
-    comm_nodes = [n for n in graph.nodes if n.op == "COMMUNICATE"]
-    wait_nodes = [n for n in graph.nodes if n.op == "WAIT_ALL"]
+    spawn_nodes = [n for n in graph.nodes if n.op == OP_SPAWN_AGENT]
+    comm_nodes = [n for n in graph.nodes if n.op == OP_COMMUNICATE]
+    wait_nodes = [n for n in graph.nodes if n.op == OP_WAIT_ALL]
 
     assert len(spawn_nodes) == 2
     assert len(comm_nodes) == 2
@@ -272,7 +347,6 @@ def test_team_sugar():
 def test_agent_handle_ask_returns_node_refs():
     """Test AgentHandle ask() returns COMMUNICATE nodes."""
     from apxm import GraphRecorder, NodeRef
-    from apxm.constants import DEPENDENCY_DATA, OP_COMMUNICATE
 
     g = GraphRecorder("handle_test")
     handle = g.spawn("alice", profile=MOCK_AGENT_PROFILE)
@@ -342,7 +416,6 @@ def test_validate_graph_rejects_invalid_llm_operation():
 
 def test_agent_handle_ask_auto_wires_node_refs():
     from apxm import GraphRecorder
-    from apxm._generated import constants as gen_keys
 
     g = GraphRecorder("handle_auto_wire")
     source = g.ask(name="source", prompt="Produce context")
@@ -351,29 +424,27 @@ def test_agent_handle_ask_auto_wires_node_refs():
 
     graph = g.to_graph()
     comm_node = next(node for node in graph.nodes if node.id == response._node_id)
-    assert comm_node.attributes[gen_keys.INPUT_NAMES] == ["source"]
+    assert comm_node.attributes[INPUT_NAMES] == ["source"]
     assert any(
         edge.from_id == source._node_id
         and edge.to_id == response._node_id
-        and edge.dependency == "Data"
+        and edge.dependency == DEPENDENCY_DATA
         for edge in graph.edges
     )
 
 
-def test_graph_to_json():
-    """Test graph serialization to JSON."""
+def test_graph_to_dict():
+    """Test graph serialization to the in-memory dictionary shape."""
     from apxm import GraphRecorder
 
-    g = GraphRecorder("json_test")
+    g = GraphRecorder("dict_test")
     g.param("input", "str")
     g.ask(name="process", prompt="Process {input}")
 
     graph = g.to_graph()
-    json_str = graph.to_json()
+    data = graph.to_dict()
 
-    data = json.loads(json_str)
-
-    assert data["name"] == "json_test"
+    assert data["name"] == "dict_test"
     assert len(data["nodes"]) == 1
     assert len(data["parameters"]) == 1
     assert data["parameters"][0]["name"] == "input"
@@ -445,27 +516,27 @@ def test_call_compiled_flow():
 
     @compile()
     def helper(g: GraphRecorder, topic: str):
-        result = g.ask(name="research", prompt=f"Research {{topic}}")
+        result = g.ask(name="research", prompt=f"Research {TOPIC_PLACEHOLDER}")
         g.done(result)
 
-    g = GraphRecorder("main_flow")
+    g = GraphRecorder(MAIN_FLOW_NAME)
     step1 = g.ask(name="get_topic", prompt="What topic?")
-    step2 = g.call(helper, topic=step1)
+    step2 = g.call(helper, **{TOPIC_PARAM: step1})
     g.done(step2)
 
     graph = g.to_graph()
 
     # Should have: get_topic (ASK) + call_helper (FLOW_CALL) + return (RETURN)
     assert len(graph.nodes) == 3
-    flow_call_nodes = [n for n in graph.nodes if n.op == "FLOW_CALL"]
+    flow_call_nodes = [n for n in graph.nodes if n.op == OP_FLOW_CALL]
     assert len(flow_call_nodes) == 1
-    assert flow_call_nodes[0].attributes["agent_name"] == "helper"
-    assert flow_call_nodes[0].attributes["flow_name"] == "main"
-    assert flow_call_nodes[0].attributes["input_names"] == ["topic"]
-    assert flow_call_nodes[0].attributes["args"]["topic"] == "{topic}"
+    assert flow_call_nodes[0].attributes[AGENT_NAME] == "helper"
+    assert flow_call_nodes[0].attributes[FLOW_NAME] == "main"
+    assert flow_call_nodes[0].attributes[INPUT_NAMES] == [TOPIC_PARAM]
+    assert flow_call_nodes[0].attributes[ARGS][TOPIC_PARAM] == TOPIC_PLACEHOLDER
 
     # Should have data edge from step1 -> flow_call
-    data_edges = [e for e in graph.edges if e.dependency == "Data"]
+    data_edges = [e for e in graph.edges if e.dependency == DEPENDENCY_DATA]
     assert any(e.from_id == step1._node_id and e.to_id == step2._node_id for e in data_edges)
 
 
@@ -475,91 +546,98 @@ def test_call_with_literal_args():
 
     @compile()
     def helper(g: GraphRecorder, topic: str):
-        g.ask(name="research", prompt=f"Research {{topic}}")
+        g.ask(name="research", prompt=f"Research {TOPIC_PLACEHOLDER}")
 
-    g = GraphRecorder("main_flow")
-    result = g.call(helper, topic="AI safety")
+    literal_topic = "AI safety"
+    g = GraphRecorder(MAIN_FLOW_NAME)
+    result = g.call(helper, **{TOPIC_PARAM: literal_topic})
 
     graph = g.to_graph()
 
-    flow_call_node = [n for n in graph.nodes if n.op == "FLOW_CALL"][0]
+    flow_call_node = [n for n in graph.nodes if n.op == OP_FLOW_CALL][0]
     # Literal args should be serialized in the args attribute
-    assert "AI safety" in str(flow_call_node.attributes.get("args", ""))
-    assert flow_call_node.attributes["args"]["topic"] == "AI safety"
+    assert literal_topic in str(flow_call_node.attributes.get(ARGS, ""))
+    assert flow_call_node.attributes[ARGS][TOPIC_PARAM] == literal_topic
 
 
 def test_flow_call_auto_wires_node_ref_args():
     """Test direct flow_call() auto-wires NodeRef argument values."""
     from apxm import GraphRecorder
 
-    g = GraphRecorder("main_flow")
+    audience_param = "audience"
+    audience_value = "engineers"
+    g = GraphRecorder(MAIN_FLOW_NAME)
     step1 = g.ask(name="get_topic", prompt="What topic?")
     step2 = g.flow_call(
         agent_name="researcher",
         flow_name="main",
-        args={"topic": step1, "audience": "engineers"},
+        args={TOPIC_PARAM: step1, audience_param: audience_value},
     )
     g.done(step2)
 
     graph = g.to_graph()
-    flow_call_node = [n for n in graph.nodes if n.op == "FLOW_CALL"][0]
-    assert flow_call_node.attributes["input_names"] == ["topic"]
-    assert flow_call_node.attributes["args"]["topic"] == "{topic}"
-    assert flow_call_node.attributes["args"]["audience"] == "engineers"
+    flow_call_node = [n for n in graph.nodes if n.op == OP_FLOW_CALL][0]
+    assert flow_call_node.attributes[INPUT_NAMES] == [TOPIC_PARAM]
+    assert flow_call_node.attributes[ARGS][TOPIC_PARAM] == TOPIC_PLACEHOLDER
+    assert flow_call_node.attributes[ARGS][audience_param] == audience_value
 
-    data_edges = [e for e in graph.edges if e.dependency == "Data"]
+    data_edges = [e for e in graph.edges if e.dependency == DEPENDENCY_DATA]
     assert any(e.from_id == step1._node_id and e.to_id == step2._node_id for e in data_edges)
 
 
 def test_workflow_spawn_auto_wires_node_ref_args():
     from apxm import GraphRecorder, WorkflowTargetKind
 
-    g = GraphRecorder("main_flow")
+    target_path = "workflows/review.apxmw"
+    audience_param = "audience"
+    audience_value = "engineers"
+    g = GraphRecorder(MAIN_FLOW_NAME)
     step1 = g.ask(name="get_topic", prompt="What topic?")
     step2 = g.workflow_spawn(
         target_kind=WorkflowTargetKind.WORKFLOW_PATH,
-        target="workflows/review.apxmw",
-        args={"topic": step1, "audience": "engineers"},
+        target=target_path,
+        args={TOPIC_PARAM: step1, audience_param: audience_value},
     )
     g.done(step2)
 
     graph = g.to_graph()
-    spawn_node = [n for n in graph.nodes if n.op == "WORKFLOW_SPAWN"][0]
-    assert spawn_node.attributes["target_kind"] == WorkflowTargetKind.WORKFLOW_PATH.value
-    assert spawn_node.attributes["target"] == "workflows/review.apxmw"
-    assert spawn_node.attributes["await_result"] is True
-    assert spawn_node.attributes["input_names"] == ["topic"]
-    assert spawn_node.attributes["args"]["topic"] == "{topic}"
-    assert spawn_node.attributes["args"]["audience"] == "engineers"
+    spawn_node = [n for n in graph.nodes if n.op == OP_WORKFLOW_SPAWN][0]
+    assert spawn_node.attributes[TARGET_KIND] == WorkflowTargetKind.WORKFLOW_PATH.value
+    assert spawn_node.attributes[TARGET] == target_path
+    assert spawn_node.attributes[AWAIT_RESULT] is True
+    assert spawn_node.attributes[INPUT_NAMES] == [TOPIC_PARAM]
+    assert spawn_node.attributes[ARGS][TOPIC_PARAM] == TOPIC_PLACEHOLDER
+    assert spawn_node.attributes[ARGS][audience_param] == audience_value
 
-    data_edges = [e for e in graph.edges if e.dependency == "Data"]
+    data_edges = [e for e in graph.edges if e.dependency == DEPENDENCY_DATA]
     assert any(e.from_id == step1._node_id and e.to_id == step2._node_id for e in data_edges)
 
 
 def test_workflow_spawn_applies_node_policy_and_session_root():
     from apxm import GraphRecorder, NodePolicy, WorkflowTargetKind
 
-    g = GraphRecorder("main_flow")
+    session_root = ".apxm/custom"
+    g = GraphRecorder(MAIN_FLOW_NAME)
     node = g.workflow_spawn(
         target_kind=WorkflowTargetKind.GRAPH_PATH,
         target="graphs/review.air",
-        session_root=".apxm/custom",
+        session_root=session_root,
         node_policy=NodePolicy(timeout_ms=2_500, token_budget=64),
     )
 
     graph = g.to_graph()
     spawn_node = [n for n in graph.nodes if n.id == node._node_id][0]
-    assert spawn_node.attributes["session_root"] == ".apxm/custom"
-    assert spawn_node.attributes["timeout_ms"] == 2500
-    assert spawn_node.attributes["token_budget"] == 64
+    assert spawn_node.attributes[SESSION_ROOT] == session_root
+    assert spawn_node.attributes[TIMEOUT_MS] == 2500
+    assert spawn_node.attributes[TOKEN_BUDGET] == 64
 
 
 def test_workflow_spawn_rejects_invalid_kind_and_detached_mode():
     from apxm import GraphRecorder, WorkflowTargetKind
 
-    g = GraphRecorder("main_flow")
+    g = GraphRecorder(MAIN_FLOW_NAME)
 
-    with pytest.raises(ValueError, match="target_kind"):
+    with pytest.raises(ValueError, match=TARGET_KIND):
         g.workflow_spawn(
             target_kind=WorkflowTargetKind.REGISTERED_FLOW,
             target="foo.air",
@@ -612,64 +690,26 @@ def test_embed_flow_module():
     assert "mod_inner" in node_names
 
 
-def test_load_graph():
-    """Test load_graph() from JSON file."""
-    import tempfile
-    from pathlib import Path
-    from apxm import GraphRecorder, load_graph
+def test_call_embedded_graph_object():
+    """Test g.call() with an in-memory ApxmGraph."""
+    from apxm import GraphRecorder
 
-    # Create a graph and save it
-    g = GraphRecorder("test_graph")
-    g.param("input", "str")
-    g.ask(name="process", prompt="Process {input}")
-    graph = g.to_graph()
-
-    with tempfile.NamedTemporaryFile(suffix=".json", mode="w", delete=False) as f:
-        f.write(graph.to_json())
-        tmp_path = f.name
-
-    try:
-        loaded = load_graph(tmp_path)
-        assert loaded.name == "test_graph"
-        assert len(loaded.nodes) == 1
-        assert len(loaded.parameters) == 1
-    finally:
-        Path(tmp_path).unlink(missing_ok=True)
-
-
-def test_call_loaded_graph():
-    """Test g.call() with a loaded ApxmGraph."""
-    import tempfile
-    from pathlib import Path
-    from apxm import GraphRecorder, load_graph
-
-    # Create and save helper graph
-    helper_g = GraphRecorder("helper_flow")
-    helper_g.param("input", "str")
-    helper_g.ask(name="process", prompt="Process {input}")
+    helper_g = GraphRecorder(HELPER_FLOW_NAME)
+    helper_g.param(INPUT_PARAM, "str")
+    helper_g.ask(name="process", prompt=f"Process {INPUT_PLACEHOLDER}")
     helper_graph = helper_g.to_graph()
 
-    with tempfile.NamedTemporaryFile(suffix=".json", mode="w", delete=False) as f:
-        f.write(helper_graph.to_json())
-        tmp_path = f.name
+    g = GraphRecorder(MAIN_FLOW_NAME)
+    step1 = g.ask(name="get_input", prompt="What input?")
+    step2 = g.call(helper_graph, **{INPUT_PARAM: step1})
+    g.done(step2)
 
-    try:
-        loaded = load_graph(tmp_path)
-
-        # Use in a new graph via call()
-        g = GraphRecorder("main_flow")
-        step1 = g.ask(name="get_input", prompt="What input?")
-        step2 = g.call(loaded, input=step1)
-        g.done(step2)
-
-        graph = g.to_graph()
-        flow_call_nodes = [n for n in graph.nodes if n.op == "FLOW_CALL"]
-        assert len(flow_call_nodes) == 1
-        assert flow_call_nodes[0].attributes["agent_name"] == "helper_flow"
-        assert flow_call_nodes[0].attributes["input_names"] == ["input"]
-        assert flow_call_nodes[0].attributes["args"]["input"] == "{input}"
-    finally:
-        Path(tmp_path).unlink(missing_ok=True)
+    graph = g.to_graph()
+    flow_call_nodes = [n for n in graph.nodes if n.op == OP_FLOW_CALL]
+    assert len(flow_call_nodes) == 1
+    assert flow_call_nodes[0].attributes[AGENT_NAME] == HELPER_FLOW_NAME
+    assert flow_call_nodes[0].attributes[INPUT_NAMES] == [INPUT_PARAM]
+    assert flow_call_nodes[0].attributes[ARGS][INPUT_PARAM] == INPUT_PLACEHOLDER
 
 
 def test_call_rejects_unknown_argument_names():

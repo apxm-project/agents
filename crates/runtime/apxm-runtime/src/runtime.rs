@@ -216,6 +216,7 @@ impl Runtime {
         ctx.flow_registry = Arc::clone(&self.flow_registry);
         ctx.instruction_config = self.instruction_config.clone();
         ctx.token_budget = self.config.token_budget;
+        ctx.warmup_config = self.config.warmup_config.clone();
         ctx.event_emitter = event_emitter;
         ctx.sandbox_registry = Arc::clone(&self.sandbox_registry);
         ctx.process_table = Arc::clone(&self.process_table);

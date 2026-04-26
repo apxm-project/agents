@@ -13,7 +13,7 @@ The runtime uses a parallel dataflow scheduler that executes independent nodes c
 ## Commands
 
 ```bash
-dekk apxm execute graph.air                           # compile (O1) and run
+dekk apxm execute graph.air                           # compile (O2) and run
 dekk apxm execute graph.air -O0                       # skip optimizations (useful for debugging)
 dekk apxm execute graph.air -O2                       # standard optimizations before execution
 dekk apxm execute graph.air --emit-metrics m.json     # write runtime statistics after execution

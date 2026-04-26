@@ -693,16 +693,83 @@ fn value_to_output_string(value: &apxm_core::types::Value) -> Option<String> {
 }
 
 fn load_graph_for_session(input: &Path) -> Result<apxm_compiler::AirModule, RuntimeError> {
-    if let Ok(compiler) = Compiler::new()
-        && let Ok(graph) = compiler.load_graph(input)
-    {
-        return Ok(graph);
+    let compiler = Compiler::with_opt_level(apxm_core::types::OptimizationLevel::O0)
+        .map_err(|e| RuntimeError::State(format!("Failed to initialize compiler: {e}")))?;
+    let module = compiler.compile(input).map_err(|e| {
+        RuntimeError::State(format!(
+            "Failed to compile graph '{}': {e}",
+            input.display()
+        ))
+    })?;
+    let artifact_bytes = module
+        .generate_artifact_bytes()
+        .map_err(|e| RuntimeError::State(format!("Failed to emit inspection artifact: {e}")))?;
+    let artifact = Artifact::from_bytes(&artifact_bytes)
+        .map_err(|e| RuntimeError::State(format!("Failed to parse inspection artifact: {e}")))?;
+    let dag = artifact.entry_dag().ok_or_else(|| {
+        RuntimeError::State("Inspection artifact contains no entry DAG".to_string())
+    })?;
+    Ok(graph_from_execution_dag(dag))
+}
+
+fn graph_from_execution_dag(
+    dag: &apxm_core::types::execution::ExecutionDag,
+) -> apxm_compiler::AirModule {
+    use apxm_compiler::{AirEdge, AirNode, AirParam};
+    use std::collections::HashMap;
+
+    let nodes = dag
+        .nodes
+        .iter()
+        .map(|node| AirNode {
+            id: node.id,
+            name: node
+                .metadata
+                .name
+                .clone()
+                .unwrap_or_else(|| format!("node_{}", node.id)),
+            op: node.op_type,
+            attributes: node.attributes.clone(),
+        })
+        .collect::<Vec<_>>();
+
+    let edges = dag
+        .edges
+        .iter()
+        .map(|edge| AirEdge {
+            from: edge.from,
+            to: edge.to,
+            dependency: edge.dependency_type.clone(),
+        })
+        .collect::<Vec<_>>();
+
+    let parameters = dag
+        .metadata
+        .parameters
+        .iter()
+        .map(|param| AirParam {
+            name: param.name.clone(),
+            type_name: param.type_name.clone(),
+        })
+        .collect::<Vec<_>>();
+
+    let mut metadata = HashMap::new();
+    if dag.metadata.is_entry {
+        metadata.insert(
+            apxm_core::constants::graph::metadata::IS_ENTRY.to_string(),
+            apxm_core::types::Value::Bool(true),
+        );
     }
 
-    let text = std::fs::read_to_string(input).map_err(|e| {
-        RuntimeError::State(format!("Failed to read graph '{}': {e}", input.display()))
-    })?;
-    serde_json::from_str::<apxm_compiler::AirModule>(&text).map_err(|e| {
-        RuntimeError::State(format!("Failed to parse graph '{}': {e}", input.display()))
-    })
+    apxm_compiler::AirModule {
+        name: dag
+            .metadata
+            .name
+            .clone()
+            .unwrap_or_else(|| "artifact".to_string()),
+        nodes,
+        edges,
+        parameters,
+        metadata,
+    }
 }
