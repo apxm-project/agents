@@ -130,6 +130,9 @@ pub fn copy_llm_request_routing(mut request: LLMRequest, source: &LLMRequest) ->
     if let Some(model) = &source.model {
         request = request.with_model(model.clone());
     }
+    if let Some(extra_body) = &source.extra_body {
+        request = request.with_extra_body(extra_body.clone());
+    }
     request
 }
 

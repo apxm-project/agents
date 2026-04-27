@@ -45,11 +45,6 @@ struct PrefixGroup {
   SmallVector<Operation *> ops;
 };
 
-static unsigned estimateTokens(StringRef str) {
-  return (str.size() + apxm::constants::tokens::CHARS_PER_TOKEN - 1)
-         / apxm::constants::tokens::CHARS_PER_TOKEN;
-}
-
 static std::optional<StringRef> getTemplate(Operation *op) {
   return TypeSwitch<Operation *, std::optional<StringRef>>(op)
       .Case<AskOp>([](AskOp ask) {
@@ -109,25 +104,28 @@ static std::optional<std::string> leadingPrefixSignature(Operation *op) {
   return templateStr.take_front(prefixEnd).trim().str();
 }
 
-static unsigned estimateSharedPrefixTokens(Operation *op, StringRef prefixSignature) {
-  unsigned estimatedTokens = estimateTokens(prefixSignature);
+static std::optional<unsigned> readExactTokenEstimate(Operation *op) {
+  if (auto precomputed = op->getAttrOfType<IntegerAttr>(
+          apxm::constants::attrs::ESTIMATED_DYNAMIC_TOKENS))
+    return precomputed.getValue().getZExtValue();
+  if (auto precomputed = op->getAttrOfType<IntegerAttr>(
+          apxm::constants::attrs::EST_TEMPLATE_TOKENS))
+    return precomputed.getValue().getZExtValue();
+  return std::nullopt;
+}
 
+static std::optional<unsigned> estimateSharedPrefixTokens(Operation *op) {
+  unsigned estimatedTokens = 0;
+  bool sawEstimate = false;
   for (Value value : op->getOperands()) {
     if (auto *defOp = value.getDefiningOp()) {
-      if (auto precomputed = defOp->getAttrOfType<IntegerAttr>(
-              apxm::constants::attrs::EST_TEMPLATE_TOKENS)) {
-        estimatedTokens += precomputed.getValue().getZExtValue();
-      } else if (auto val = defOp->getAttrOfType<StringAttr>(
-                     apxm::constants::attrs::VALUE)) {
-        estimatedTokens += estimateTokens(val.getValue());
-      } else if (auto tpl = defOp->getAttrOfType<StringAttr>(
-                     apxm::constants::attrs::TEMPLATE_STR)) {
-        estimatedTokens += estimateTokens(tpl.getValue());
+      if (auto precomputed = readExactTokenEstimate(defOp)) {
+        estimatedTokens += *precomputed;
+        sawEstimate = true;
       }
     }
   }
-
-  return estimatedTokens == 0 ? 1 : estimatedTokens;
+  return sawEstimate ? std::optional<unsigned>(estimatedTokens) : std::nullopt;
 }
 
 struct SharedPrefixAnalysisPass
@@ -179,22 +177,23 @@ struct SharedPrefixAnalysisPass
       bool first = true;
       for (Operation *op : group.ops) {
         OpBuilder builder(op);
-        const unsigned estimatedTokens =
-            estimateSharedPrefixTokens(op, group.prefixSignature);
+        auto estimatedTokens = estimateSharedPrefixTokens(op);
 
         if (!op->hasAttr(apxm::constants::attrs::SHARED_PREFIX_GROUP)) {
           op->setAttr(apxm::constants::attrs::SHARED_PREFIX_GROUP,
                       builder.getStringAttr(groupName));
         }
-        if (!op->hasAttr(apxm::constants::attrs::SHARED_PREFIX_EST_TOKENS)) {
+        if (estimatedTokens &&
+            !op->hasAttr(apxm::constants::attrs::SHARED_PREFIX_EST_TOKENS)) {
           op->setAttr(apxm::constants::attrs::SHARED_PREFIX_EST_TOKENS,
-                      builder.getI64IntegerAttr(estimatedTokens));
+                      builder.getI64IntegerAttr(*estimatedTokens));
         }
         if (!op->hasAttr(apxm::constants::attrs::SHARED_PREFIX_GROUP_SIZE)) {
           op->setAttr(apxm::constants::attrs::SHARED_PREFIX_GROUP_SIZE,
                       builder.getI64IntegerAttr(group.ops.size()));
         }
-        if (first && !op->hasAttr(apxm::constants::attrs::WARMUP_CANDIDATE)) {
+        if (estimatedTokens && first &&
+            !op->hasAttr(apxm::constants::attrs::WARMUP_CANDIDATE)) {
           op->setAttr(apxm::constants::attrs::WARMUP_CANDIDATE,
                       builder.getBoolAttr(true));
         }

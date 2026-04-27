@@ -258,17 +258,14 @@ struct FuseAskOpsPass : impl::FuseAskOpsBase<FuseAskOpsPass> {
 
     SmallVector<Operation*> opsToErase;
 
-    // Read pre-computed BPE token count from op, fall back to chars/4 heuristic.
-    auto estimateOpTokens = [](Operation *op) -> size_t {
+    // Read pre-computed BPE token count from op. If the compiler has no
+    // tokenizer-backed estimate, budget-gated fusion must skip the rewrite
+    // rather than inventing a heuristic count.
+    auto estimateOpTokens = [](Operation *op) -> std::optional<size_t> {
       if (auto precomputed = op->getAttrOfType<IntegerAttr>(
               apxm::constants::attrs::EST_TEMPLATE_TOKENS))
         return precomputed.getValue().getZExtValue();
-      if (auto askOp = dyn_cast<AskOp>(op))
-        return askOp.getTemplateStrAttr().getValue().size() / 4;
-      return 0;
-    };
-    auto estimateStrTokens = [](StringRef text) -> size_t {
-      return text.size() / 4;
+      return std::nullopt;
     };
 
     // Single-pass fusion with clear termination conditions
@@ -285,7 +282,14 @@ struct FuseAskOpsPass : impl::FuseAskOpsBase<FuseAskOpsPass> {
         AskOp producer = (*directProducer).getDefiningOp<AskOp>();
 
         if (maxTemplateTokens > 0) {
-          size_t fusedTokens = estimateOpTokens(producer) + estimateOpTokens(consumer);
+          auto producerTokens = estimateOpTokens(producer);
+          auto consumerTokens = estimateOpTokens(consumer);
+          if (!producerTokens || !consumerTokens) {
+            APXM_AIS_DEBUG("  Skipping fusion: missing tokenizer-backed token estimate");
+            stats.skippedBudget++;
+            return WalkResult::advance();
+          }
+          size_t fusedTokens = *producerTokens + *consumerTokens;
           if (fusedTokens > maxTemplateTokens) {
             APXM_AIS_DEBUG("  Skipping fusion: estimated " << fusedTokens
                           << " tokens > limit " << maxTemplateTokens);
@@ -368,10 +372,14 @@ struct FuseAskOpsPass : impl::FuseAskOpsBase<FuseAskOpsPass> {
           AskOp producer = trace->producer;
 
           if (maxTemplateTokens > 0) {
-            size_t fusedTokens = estimateOpTokens(producer) + estimateOpTokens(consumer);
-            for (const auto& str : trace->stringParts) {
-              fusedTokens += estimateStrTokens(str);
+            auto producerTokens = estimateOpTokens(producer);
+            auto consumerTokens = estimateOpTokens(consumer);
+            if (!producerTokens || !consumerTokens || !trace->stringParts.empty()) {
+              APXM_AIS_DEBUG("  Skipping merge chain fusion: missing tokenizer-backed token estimate");
+              stats.skippedBudget++;
+              return WalkResult::advance();
             }
+            size_t fusedTokens = *producerTokens + *consumerTokens;
 
             if (fusedTokens > maxTemplateTokens) {
               APXM_AIS_DEBUG("  Skipping merge chain fusion: estimated " << fusedTokens

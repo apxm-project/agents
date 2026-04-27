@@ -197,6 +197,7 @@ async fn run_cli(cli: Cli) -> Result<()> {
         Commands::Session { action } => session_command(action, cli.json),
         Commands::Workflow { action } => workflow_command(action, cli.json).await,
         Commands::Cache { action } => cache_command(action, cli.json),
+        Commands::Tokenize { text, file, model } => tokenize_command(text, file, model, cli.json),
         Commands::QualityEval { args } => quality_eval_command(args),
         Commands::Gui { file, port, open } => gui_command(file, port, open),
     }
@@ -223,6 +224,7 @@ async fn run_cli_no_driver(cli: Cli) -> Result<()> {
         Commands::Session { action } => session_command(action, cli.json),
         Commands::Workflow { action } => workflow_command_no_driver(action, cli.json),
         Commands::Cache { action } => cache_command(action, cli.json),
+        Commands::Tokenize { text, file, model } => tokenize_command(text, file, model, cli.json),
         Commands::QualityEval { args } => quality_eval_command(args),
         Commands::Gui { file, port, open } => gui_command(file, port, open),
         _ => Err(anyhow::anyhow!(

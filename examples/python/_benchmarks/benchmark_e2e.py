@@ -68,8 +68,11 @@ ENV_APXM_CONFIG = "APXM_CONFIG"
 FILE_MANIFEST = "manifest.json"
 FILE_RESULTS = "results.json"
 FILE_METRICS = "metrics.json"
+FILE_NODE = "node.json"
+FILE_NODE_STATUSES = "node_statuses.json"
 DIR_COMPILER_DIAGNOSTICS = "compiler-diagnostics"
 DIR_ARTIFACTS = "artifacts"
+DIR_NODES = "nodes"
 RUN_SUMMARY_PREFIX = "benchmark_e2e run"
 PRECOMPILE_SUMMARY_PREFIX = "benchmark_e2e precompile"
 PENDING_VALUE = "pending"
@@ -77,6 +80,7 @@ STATUS_SUCCEEDED = "succeeded"
 STATUS_FAILED = "failed"
 LIST_SEPARATOR = ";"
 PASS_DSPY_OPTIMIZE = "dspy-optimize"
+ATTR_BENCHMARK_MILESTONE = "benchmark_milestone"
 
 
 class MetricsKey(StrEnum):
@@ -153,6 +157,9 @@ CSV_FIELDS = [
     "pinned_blocks",
     "pinned_handles",
     "critical_path_length",
+    "critical_milestones_json",
+    "critical_milestone_last_ms",
+    "critical_milestone_count",
     "diagnostics_path",
     "pass_count",
     "fired_passes",
@@ -180,6 +187,9 @@ class SessionSummary:
     pinned_blocks: int | None
     pinned_handles: int | None
     critical_path_length: int | None
+    critical_milestones_json: str
+    critical_milestone_last_ms: int | None
+    critical_milestone_count: int
     final_output: str
     compiler_diagnostics: CompilerDiagnosticsSummary
 
@@ -196,6 +206,9 @@ class SessionSummary:
         pinned_blocks: int | None = None
         pinned_handles: int | None = None
         critical_path_length: int | None = None
+        critical_milestones_json = ""
+        critical_milestone_last_ms: int | None = None
+        critical_milestone_count = 0
         compiler_diagnostics = CompilerDiagnosticsSummary.empty()
 
         manifest_path = session_root / FILE_MANIFEST
@@ -258,6 +271,22 @@ class SessionSummary:
                 source=str(metrics_path),
             )
 
+        critical_milestones = _critical_milestones_from_session(session_root)
+        if critical_milestones:
+            critical_milestones_json = json.dumps(
+                critical_milestones,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            critical_milestone_count = len(critical_milestones)
+            finished_values = [
+                milestone.get("finished_at_ms")
+                for milestone in critical_milestones
+                if isinstance(milestone.get("finished_at_ms"), int)
+            ]
+            if finished_values:
+                critical_milestone_last_ms = max(finished_values)
+
         return cls(
             graph_duration_ms=graph_duration_ms,
             llm_call_count=llm_call_count,
@@ -269,6 +298,9 @@ class SessionSummary:
             pinned_blocks=pinned_blocks,
             pinned_handles=pinned_handles,
             critical_path_length=critical_path_length,
+            critical_milestones_json=critical_milestones_json,
+            critical_milestone_last_ms=critical_milestone_last_ms,
+            critical_milestone_count=critical_milestone_count,
             final_output=final_output,
             compiler_diagnostics=compiler_diagnostics,
         )
@@ -344,6 +376,9 @@ class RunRecord:
     pinned_blocks: int | None
     pinned_handles: int | None
     critical_path_length: int | None
+    critical_milestones_json: str
+    critical_milestone_last_ms: int | None
+    critical_milestone_count: int
     compiler_diagnostics: CompilerDiagnosticsSummary
     artifact_path: str
     session_dir: str
@@ -381,6 +416,11 @@ class RunRecord:
             "pinned_blocks": "" if self.pinned_blocks is None else self.pinned_blocks,
             "pinned_handles": "" if self.pinned_handles is None else self.pinned_handles,
             "critical_path_length": "" if self.critical_path_length is None else self.critical_path_length,
+            "critical_milestones_json": self.critical_milestones_json,
+            "critical_milestone_last_ms": ""
+            if self.critical_milestone_last_ms is None
+            else self.critical_milestone_last_ms,
+            "critical_milestone_count": self.critical_milestone_count,
             **self.compiler_diagnostics.as_fields(),
             "artifact_path": self.artifact_path,
             "session_dir": self.session_dir,
@@ -529,6 +569,78 @@ def _resolve_session_root(session_base: Path) -> Path:
 
 def _read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text())
+
+
+def _load_node_metadata(session_root: Path) -> dict[int, dict[str, Any]]:
+    nodes_dir = session_root / DIR_NODES
+    if not nodes_dir.is_dir():
+        return {}
+
+    metadata: dict[int, dict[str, Any]] = {}
+    for node_path in sorted(nodes_dir.glob(f"*/{FILE_NODE}")):
+        try:
+            node_payload = _read_json(node_path)
+        except (OSError, json.JSONDecodeError):
+            continue
+        node_id = node_payload.get("id")
+        if isinstance(node_id, int):
+            metadata[node_id] = node_payload
+    return metadata
+
+
+def _critical_milestones_from_session(session_root: Path) -> list[dict[str, Any]]:
+    statuses_path = session_root / FILE_NODE_STATUSES
+    if not statuses_path.is_file():
+        return []
+
+    try:
+        statuses = json.loads(statuses_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(statuses, list):
+        return []
+
+    node_metadata = _load_node_metadata(session_root)
+    milestones: list[dict[str, Any]] = []
+    for status in statuses:
+        if not isinstance(status, dict):
+            continue
+        node_id = status.get("node_id")
+        if not isinstance(node_id, int):
+            continue
+        node_payload = node_metadata.get(node_id, {})
+        attrs = node_payload.get("attributes")
+        if not isinstance(attrs, dict):
+            continue
+        marker = attrs.get(ATTR_BENCHMARK_MILESTONE)
+        if not isinstance(marker, str) or not marker:
+            continue
+        if "critical" not in marker.lower():
+            continue
+
+        milestone = {
+            "milestone": marker,
+            "node_id": node_id,
+            "node_name": node_payload.get("name"),
+            "op": node_payload.get("op"),
+            "priority": attrs.get("priority"),
+            "started_at_ms": status.get("started_at_ms"),
+            "finished_at_ms": status.get("finished_at_ms"),
+            "duration_ms": status.get("duration_ms"),
+        }
+        milestones.append(
+            {key: value for key, value in milestone.items() if value is not None}
+        )
+
+    milestones.sort(
+        key=lambda item: (
+            item.get("finished_at_ms")
+            if isinstance(item.get("finished_at_ms"), int)
+            else -1,
+            item.get("node_id") if isinstance(item.get("node_id"), int) else -1,
+        )
+    )
+    return milestones
 
 
 def _string_list(value: Any) -> str:
@@ -801,6 +913,9 @@ def _run_once(
             pinned_blocks=None,
             pinned_handles=None,
             critical_path_length=None,
+            critical_milestones_json="",
+            critical_milestone_last_ms=None,
+            critical_milestone_count=0,
             compiler_diagnostics=compiler_diagnostics,
             artifact_path="",
             session_dir="",
@@ -855,6 +970,9 @@ def _run_once(
         pinned_blocks=summary.pinned_blocks if summary else None,
         pinned_handles=summary.pinned_handles if summary else None,
         critical_path_length=summary.critical_path_length if summary else None,
+        critical_milestones_json=summary.critical_milestones_json if summary else "",
+        critical_milestone_last_ms=summary.critical_milestone_last_ms if summary else None,
+        critical_milestone_count=summary.critical_milestone_count if summary else 0,
         compiler_diagnostics=compiler_diagnostics,
         artifact_path=str(artifact_build.artifact_path) if artifact_build is not None else "",
         session_dir=str(session_root) if session_root is not None else "",

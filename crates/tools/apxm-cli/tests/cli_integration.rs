@@ -92,6 +92,50 @@ fn write_tmp_file_named(name: &str, content: &str) -> tempfile::NamedTempFile {
     f
 }
 
+#[test]
+fn tokenize_json_counts_text_with_apxm_tokenizer() {
+    let out = apxm()
+        .args(["--json", "tokenize", "hello world"])
+        .output()
+        .unwrap();
+
+    assert!(
+        out.status.success(),
+        "tokenize failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["tokens"], 2);
+    assert_eq!(v["tokenizer"], "o200k_base");
+    assert_eq!(v["chars"], 11);
+    assert_eq!(v["bytes"], 11);
+}
+
+#[test]
+fn tokenize_json_global_flag_works_after_subcommand_for_dekk() {
+    let input = write_tmp_file_named(".txt", "hello world");
+    let out = apxm()
+        .args([
+            "tokenize",
+            "--json",
+            "--file",
+            input.path().to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        out.status.success(),
+        "tokenize failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["tokens"], 2);
+    assert_eq!(v["tokenizer"], "o200k_base");
+}
+
 #[cfg(feature = "driver")]
 fn python3_available() -> bool {
     Command::new("python3")

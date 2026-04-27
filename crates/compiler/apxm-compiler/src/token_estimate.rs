@@ -42,6 +42,23 @@ fn tokenizer_for_model(model: Option<&str>) -> &'static bpe_openai::Tokenizer {
     TokenizerFamily::for_model(model).tokenizer()
 }
 
+/// Return the compiler tokenizer family selected for a model.
+pub fn tokenizer_name_for_model(model: Option<&str>) -> &'static str {
+    match TokenizerFamily::for_model(model) {
+        TokenizerFamily::Cl100kBase => "cl100k_base",
+        TokenizerFamily::O200kBase => "o200k_base",
+    }
+}
+
+/// Count text tokens with APXM's compiler-side BPE tokenizer.
+///
+/// Runtime responses remain the source of truth for provider billing. This
+/// helper exposes the same compiler-side estimator used for budgeting,
+/// scheduling, and graph metadata diagnostics.
+pub fn count_text_tokens(model: Option<&str>, text: &str) -> usize {
+    tokenizer_for_model(model).count(text)
+}
+
 /// Returns true for models that use the cl100k_base tokenizer.
 fn is_cl100k_model(model: &str) -> bool {
     use tokenizer_model_patterns as patterns;
@@ -55,7 +72,7 @@ fn is_cl100k_model(model: &str) -> bool {
 /// Annotate LLM nodes with BPE token counts before lowering to MLIR.
 ///
 /// Sets `ais.est_template_tokens` on each ASK/THINK/REASON node so MLIR passes
-/// can read pre-computed values instead of the chars/4 heuristic.
+/// can read pre-computed tokenizer values.
 pub fn annotate_token_estimates(module: &mut AirModule) {
     let mlir_key = mlir_attr_key(graph_attrs::EST_TEMPLATE_TOKENS);
     for node in &mut module.nodes {
@@ -130,10 +147,9 @@ fn utf8_len(b: u8) -> usize {
 
 /// Refine shared-prefix token estimates using exact BPE tokenization.
 ///
-/// After MLIR compilation, the C++ PromptCanonicalization pass sets
-/// `shared_prefix_est_tokens` using a chars/4 heuristic. This post-pass
-/// replaces those estimates with exact BPE token counts, selecting the
-/// tokenizer based on each node's `model` attribute.
+/// After MLIR compilation, this post-pass replaces shared-prefix estimates
+/// with BPE token counts, selecting the tokenizer based on each node's `model`
+/// attribute.
 pub fn refine_token_estimates(dags: &mut [ExecutionDag]) {
     for dag in dags.iter_mut() {
         for node in dag.nodes.iter_mut() {
@@ -318,16 +334,15 @@ mod tests {
     }
 
     #[test]
-    fn annotate_beats_heuristic_accuracy() {
-        // Code-heavy text where chars/4 diverges most from BPE
+    fn annotate_matches_bpe_tokenizer() {
+        // Code-heavy text exercises the actual BPE tokenizer rather than a
+        // non-tokenizer estimate.
         let code_template = "```rust\nfn main() {\n    println!(\"Hello, world!\");\n    let x = vec![1, 2, 3];\n    for i in &x {\n        println!(\"{}\", i);\n    }\n}\n```";
         let mut module = make_module(vec![make_llm_node(1, AISOperationType::Ask, code_template)]);
         annotate_token_estimates(&mut module);
         let bpe_count = get_est_tokens(&module.nodes[0]).unwrap();
-        let heuristic_count = (code_template.len() + 3) / 4;
-        // BPE and heuristic should differ for code — BPE is ground truth
-        assert!(bpe_count > 0);
-        assert_ne!(bpe_count as usize, heuristic_count);
+        let expected = bpe_openai::o200k_base().count(code_template);
+        assert_eq!(bpe_count as usize, expected);
     }
 
     #[test]
