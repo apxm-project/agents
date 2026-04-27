@@ -800,6 +800,10 @@ fn build_graph_metrics_json(
     {
         metrics_json[metrics_keys::RUNTIME_GRAPH_METRICS] = obj;
     }
+    if let Some(observed) = &result.execution.stats.observed_graph {
+        metrics_json[metrics_keys::RUNTIME_OBSERVED_GRAPH] =
+            serde_json::to_value(observed).unwrap_or(serde_json::Value::Null);
+    }
     #[cfg(feature = "metrics")]
     {
         let llm_metrics = &result.execution.llm_metrics;
@@ -845,6 +849,10 @@ fn build_artifact_metrics_json(
         .cloned()
     {
         metrics_json[metrics_keys::RUNTIME_GRAPH_METRICS] = obj;
+    }
+    if let Some(observed) = &execution.stats.observed_graph {
+        metrics_json[metrics_keys::RUNTIME_OBSERVED_GRAPH] =
+            serde_json::to_value(observed).unwrap_or(serde_json::Value::Null);
     }
     #[cfg(feature = "metrics")]
     {

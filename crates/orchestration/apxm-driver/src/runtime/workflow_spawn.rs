@@ -643,6 +643,12 @@ impl apxm_core::MetricsSource for RuntimeMetricsSource<'_> {
         {
             map.insert(metrics_keys::RUNTIME_GRAPH_METRICS.to_owned(), obj);
         }
+        if let Some(observed) = &self.execution.stats.observed_graph {
+            map.insert(
+                metrics_keys::RUNTIME_OBSERVED_GRAPH.to_owned(),
+                serde_json::to_value(observed).unwrap_or(serde_json::Value::Null),
+            );
+        }
         #[cfg(feature = "metrics")]
         {
             use metrics_keys::llm_keys;

@@ -86,6 +86,7 @@ ATTR_BENCHMARK_MILESTONE = "benchmark_milestone"
 class MetricsKey(StrEnum):
     SCHEMA_VERSION = "schema_version"
     RUNTIME = "runtime"
+    OBSERVED_GRAPH = "observed_graph"
     BACKENDS = "backends"
     GRAPHS = "graphs"
     TOKEN_ACCOUNTING = "token_accounting"
@@ -160,6 +161,16 @@ CSV_FIELDS = [
     "critical_milestones_json",
     "critical_milestone_last_ms",
     "critical_milestone_count",
+    "observed_critical_path_ms",
+    "observed_critical_path_finish_ms",
+    "observed_critical_path_node_count",
+    "observed_critical_path_nodes_json",
+    "queue_wait_total_ms",
+    "queue_wait_mean_ms",
+    "queue_wait_p95_ms",
+    "queue_wait_max_ms",
+    "critical_queue_wait_total_ms",
+    "critical_queue_wait_mean_ms",
     "diagnostics_path",
     "pass_count",
     "fired_passes",
@@ -190,6 +201,16 @@ class SessionSummary:
     critical_milestones_json: str
     critical_milestone_last_ms: int | None
     critical_milestone_count: int
+    observed_critical_path_ms: int | None
+    observed_critical_path_finish_ms: int | None
+    observed_critical_path_node_count: int | None
+    observed_critical_path_nodes_json: str
+    queue_wait_total_ms: int | None
+    queue_wait_mean_ms: float | None
+    queue_wait_p95_ms: int | None
+    queue_wait_max_ms: int | None
+    critical_queue_wait_total_ms: int | None
+    critical_queue_wait_mean_ms: float | None
     final_output: str
     compiler_diagnostics: CompilerDiagnosticsSummary
 
@@ -209,6 +230,16 @@ class SessionSummary:
         critical_milestones_json = ""
         critical_milestone_last_ms: int | None = None
         critical_milestone_count = 0
+        observed_critical_path_ms: int | None = None
+        observed_critical_path_finish_ms: int | None = None
+        observed_critical_path_node_count: int | None = None
+        observed_critical_path_nodes_json = ""
+        queue_wait_total_ms: int | None = None
+        queue_wait_mean_ms: float | None = None
+        queue_wait_p95_ms: int | None = None
+        queue_wait_max_ms: int | None = None
+        critical_queue_wait_total_ms: int | None = None
+        critical_queue_wait_mean_ms: float | None = None
         compiler_diagnostics = CompilerDiagnosticsSummary.empty()
 
         manifest_path = session_root / FILE_MANIFEST
@@ -258,6 +289,49 @@ class SessionSummary:
             if isinstance(v, int):
                 reasoning_output_tokens = v
 
+            observed = (
+                metrics.get(MetricsKey.RUNTIME, {})
+                .get(MetricsKey.OBSERVED_GRAPH, {})
+            )
+            if isinstance(observed, dict):
+                critical_path = observed.get("critical_path", {})
+                if isinstance(critical_path, dict):
+                    v = critical_path.get("duration_ms")
+                    if isinstance(v, int):
+                        observed_critical_path_ms = v
+                    v = critical_path.get("finish_ms")
+                    if isinstance(v, int):
+                        observed_critical_path_finish_ms = v
+                    v = critical_path.get("node_count")
+                    if isinstance(v, int):
+                        observed_critical_path_node_count = v
+                    v = critical_path.get("nodes")
+                    if isinstance(v, list):
+                        observed_critical_path_nodes_json = json.dumps(
+                            v,
+                            separators=(",", ":"),
+                        )
+                queue_wait = observed.get("queue_wait", {})
+                if isinstance(queue_wait, dict):
+                    v = queue_wait.get("total_ms")
+                    if isinstance(v, int):
+                        queue_wait_total_ms = v
+                    v = queue_wait.get("mean_ms")
+                    if isinstance(v, int | float):
+                        queue_wait_mean_ms = float(v)
+                    v = queue_wait.get("p95_ms")
+                    if isinstance(v, int):
+                        queue_wait_p95_ms = v
+                    v = queue_wait.get("max_ms")
+                    if isinstance(v, int):
+                        queue_wait_max_ms = v
+                    v = queue_wait.get("critical_path_total_ms")
+                    if isinstance(v, int):
+                        critical_queue_wait_total_ms = v
+                    v = queue_wait.get("critical_path_mean_ms")
+                    if isinstance(v, int | float):
+                        critical_queue_wait_mean_ms = float(v)
+
             vllm_graphs = _backend_graphs(metrics)
             if vllm_graphs:
                 pb = sum(g.get(MetricsKey.PINNED_BLOCKS, 0) for g in vllm_graphs)
@@ -301,6 +375,16 @@ class SessionSummary:
             critical_milestones_json=critical_milestones_json,
             critical_milestone_last_ms=critical_milestone_last_ms,
             critical_milestone_count=critical_milestone_count,
+            observed_critical_path_ms=observed_critical_path_ms,
+            observed_critical_path_finish_ms=observed_critical_path_finish_ms,
+            observed_critical_path_node_count=observed_critical_path_node_count,
+            observed_critical_path_nodes_json=observed_critical_path_nodes_json,
+            queue_wait_total_ms=queue_wait_total_ms,
+            queue_wait_mean_ms=queue_wait_mean_ms,
+            queue_wait_p95_ms=queue_wait_p95_ms,
+            queue_wait_max_ms=queue_wait_max_ms,
+            critical_queue_wait_total_ms=critical_queue_wait_total_ms,
+            critical_queue_wait_mean_ms=critical_queue_wait_mean_ms,
             final_output=final_output,
             compiler_diagnostics=compiler_diagnostics,
         )
@@ -379,6 +463,16 @@ class RunRecord:
     critical_milestones_json: str
     critical_milestone_last_ms: int | None
     critical_milestone_count: int
+    observed_critical_path_ms: int | None
+    observed_critical_path_finish_ms: int | None
+    observed_critical_path_node_count: int | None
+    observed_critical_path_nodes_json: str
+    queue_wait_total_ms: int | None
+    queue_wait_mean_ms: float | None
+    queue_wait_p95_ms: int | None
+    queue_wait_max_ms: int | None
+    critical_queue_wait_total_ms: int | None
+    critical_queue_wait_mean_ms: float | None
     compiler_diagnostics: CompilerDiagnosticsSummary
     artifact_path: str
     session_dir: str
@@ -421,6 +515,34 @@ class RunRecord:
             if self.critical_milestone_last_ms is None
             else self.critical_milestone_last_ms,
             "critical_milestone_count": self.critical_milestone_count,
+            "observed_critical_path_ms": ""
+            if self.observed_critical_path_ms is None
+            else self.observed_critical_path_ms,
+            "observed_critical_path_finish_ms": ""
+            if self.observed_critical_path_finish_ms is None
+            else self.observed_critical_path_finish_ms,
+            "observed_critical_path_node_count": ""
+            if self.observed_critical_path_node_count is None
+            else self.observed_critical_path_node_count,
+            "observed_critical_path_nodes_json": self.observed_critical_path_nodes_json,
+            "queue_wait_total_ms": ""
+            if self.queue_wait_total_ms is None
+            else self.queue_wait_total_ms,
+            "queue_wait_mean_ms": ""
+            if self.queue_wait_mean_ms is None
+            else f"{self.queue_wait_mean_ms:.3f}",
+            "queue_wait_p95_ms": ""
+            if self.queue_wait_p95_ms is None
+            else self.queue_wait_p95_ms,
+            "queue_wait_max_ms": ""
+            if self.queue_wait_max_ms is None
+            else self.queue_wait_max_ms,
+            "critical_queue_wait_total_ms": ""
+            if self.critical_queue_wait_total_ms is None
+            else self.critical_queue_wait_total_ms,
+            "critical_queue_wait_mean_ms": ""
+            if self.critical_queue_wait_mean_ms is None
+            else f"{self.critical_queue_wait_mean_ms:.3f}",
             **self.compiler_diagnostics.as_fields(),
             "artifact_path": self.artifact_path,
             "session_dir": self.session_dir,
@@ -916,6 +1038,16 @@ def _run_once(
             critical_milestones_json="",
             critical_milestone_last_ms=None,
             critical_milestone_count=0,
+            observed_critical_path_ms=None,
+            observed_critical_path_finish_ms=None,
+            observed_critical_path_node_count=None,
+            observed_critical_path_nodes_json="",
+            queue_wait_total_ms=None,
+            queue_wait_mean_ms=None,
+            queue_wait_p95_ms=None,
+            queue_wait_max_ms=None,
+            critical_queue_wait_total_ms=None,
+            critical_queue_wait_mean_ms=None,
             compiler_diagnostics=compiler_diagnostics,
             artifact_path="",
             session_dir="",
@@ -973,6 +1105,16 @@ def _run_once(
         critical_milestones_json=summary.critical_milestones_json if summary else "",
         critical_milestone_last_ms=summary.critical_milestone_last_ms if summary else None,
         critical_milestone_count=summary.critical_milestone_count if summary else 0,
+        observed_critical_path_ms=summary.observed_critical_path_ms if summary else None,
+        observed_critical_path_finish_ms=summary.observed_critical_path_finish_ms if summary else None,
+        observed_critical_path_node_count=summary.observed_critical_path_node_count if summary else None,
+        observed_critical_path_nodes_json=summary.observed_critical_path_nodes_json if summary else "",
+        queue_wait_total_ms=summary.queue_wait_total_ms if summary else None,
+        queue_wait_mean_ms=summary.queue_wait_mean_ms if summary else None,
+        queue_wait_p95_ms=summary.queue_wait_p95_ms if summary else None,
+        queue_wait_max_ms=summary.queue_wait_max_ms if summary else None,
+        critical_queue_wait_total_ms=summary.critical_queue_wait_total_ms if summary else None,
+        critical_queue_wait_mean_ms=summary.critical_queue_wait_mean_ms if summary else None,
         compiler_diagnostics=compiler_diagnostics,
         artifact_path=str(artifact_build.artifact_path) if artifact_build is not None else "",
         session_dir=str(session_root) if session_root is not None else "",
@@ -1066,6 +1208,18 @@ def _write_csv(records: list[RunRecord], output: Path, append: bool) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     mode = "a" if append and output.exists() else "w"
     write_header = mode == "w"
+    if mode == "a":
+        with output.open(newline="") as existing:
+            reader = csv.DictReader(existing)
+            existing_fields = reader.fieldnames or []
+            if existing_fields != CSV_FIELDS:
+                old_rows = list(reader)
+                with output.open("w", newline="") as rewritten:
+                    writer = csv.DictWriter(rewritten, fieldnames=CSV_FIELDS)
+                    writer.writeheader()
+                    for row in old_rows:
+                        writer.writerow({field: row.get(field, "") for field in CSV_FIELDS})
+                write_header = False
     with output.open(mode, newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=CSV_FIELDS)
         if write_header:
@@ -1099,6 +1253,16 @@ def _summarize(records: list[RunRecord]) -> None:
             call_values = [
                 row.llm_call_count for row in successes if row.llm_call_count is not None
             ]
+            observed_cp_values = [
+                row.observed_critical_path_ms
+                for row in successes
+                if row.observed_critical_path_ms is not None
+            ]
+            queue_wait_values = [
+                row.queue_wait_total_ms
+                for row in successes
+                if row.queue_wait_total_ms is not None
+            ]
             metric_parts = [
                 f"mean wall {mean_wall:.1f} ms",
                 f"median wall {median_wall:.1f} ms",
@@ -1109,6 +1273,14 @@ def _summarize(records: list[RunRecord]) -> None:
                 metric_parts.append(f"mean tokens {statistics.fmean(token_values):.1f}")
             if call_values:
                 metric_parts.append(f"mean LLM calls {statistics.fmean(call_values):.1f}")
+            if observed_cp_values:
+                metric_parts.append(
+                    f"observed critical path {statistics.fmean(observed_cp_values):.1f} ms"
+                )
+            if queue_wait_values:
+                metric_parts.append(
+                    f"queue wait {statistics.fmean(queue_wait_values):.1f} ms"
+                )
             print(
                 f"- O{opt_level}: {len(successes)}/{len(rows)} succeeded, "
                 + ", ".join(metric_parts)

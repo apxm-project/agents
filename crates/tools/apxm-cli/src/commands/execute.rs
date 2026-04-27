@@ -995,6 +995,12 @@ impl apxm_core::MetricsSource for RuntimeMetricsSource<'_> {
         {
             map.insert(metrics_keys::RUNTIME_GRAPH_METRICS.to_owned(), obj);
         }
+        if let Some(observed) = &self.execution.stats.observed_graph {
+            map.insert(
+                metrics_keys::RUNTIME_OBSERVED_GRAPH.to_owned(),
+                serde_json::to_value(observed).unwrap_or(serde_json::Value::Null),
+            );
+        }
         #[cfg(feature = "metrics")]
         {
             let llm_metrics = &self.execution.llm_metrics;
@@ -1137,6 +1143,7 @@ mod tests {
                 failed_nodes: 0,
                 duration_ms: 42,
                 node_statuses: vec![],
+                observed_graph: None,
             },
             #[cfg(feature = "metrics")]
             llm_metrics: apxm_backends::AggregatedMetrics::default(),
@@ -1187,6 +1194,7 @@ mod tests {
         let runtime = &metrics[metrics_keys::SECTION_RUNTIME];
         assert!(runtime.get(metrics_keys::RUNTIME_EXECUTION).is_some());
         assert!(runtime.get(metrics_keys::TOKEN_ACCOUNTING).is_some());
+        assert!(runtime.get(metrics_keys::RUNTIME_OBSERVED_GRAPH).is_none());
         #[cfg(feature = "metrics")]
         assert!(runtime.get(metrics_keys::RUNTIME_LLM).is_some());
     }

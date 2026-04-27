@@ -45,6 +45,12 @@ class CsvKey:
     GRAPH_DURATION_MS = "graph_duration_ms"
     CRITICAL_MILESTONE_LAST_MS = "critical_milestone_last_ms"
     CRITICAL_MILESTONE_COUNT = "critical_milestone_count"
+    OBSERVED_CRITICAL_PATH_MS = "observed_critical_path_ms"
+    OBSERVED_CRITICAL_PATH_FINISH_MS = "observed_critical_path_finish_ms"
+    QUEUE_WAIT_TOTAL_MS = "queue_wait_total_ms"
+    QUEUE_WAIT_MEAN_MS = "queue_wait_mean_ms"
+    QUEUE_WAIT_P95_MS = "queue_wait_p95_ms"
+    CRITICAL_QUEUE_WAIT_TOTAL_MS = "critical_queue_wait_total_ms"
     LLM_CALL_COUNT = "llm_call_count"
     MODE = "mode"
     OPT_LEVEL = "opt_level"
@@ -210,6 +216,36 @@ def _summarize_by_opt(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
             for row in success_rows
             if (duration := _pick_critical_milestone_ms(row)) is not None
         ]
+        observed_critical_paths = [
+            duration
+            for row in success_rows
+            if (duration := _to_float(row.get(CsvKey.OBSERVED_CRITICAL_PATH_MS, ""))) is not None
+        ]
+        observed_critical_finishes = [
+            duration
+            for row in success_rows
+            if (duration := _to_float(row.get(CsvKey.OBSERVED_CRITICAL_PATH_FINISH_MS, ""))) is not None
+        ]
+        queue_wait_totals = [
+            duration
+            for row in success_rows
+            if (duration := _to_float(row.get(CsvKey.QUEUE_WAIT_TOTAL_MS, ""))) is not None
+        ]
+        queue_wait_means = [
+            duration
+            for row in success_rows
+            if (duration := _to_float(row.get(CsvKey.QUEUE_WAIT_MEAN_MS, ""))) is not None
+        ]
+        queue_wait_p95s = [
+            duration
+            for row in success_rows
+            if (duration := _to_float(row.get(CsvKey.QUEUE_WAIT_P95_MS, ""))) is not None
+        ]
+        critical_queue_wait_totals = [
+            duration
+            for row in success_rows
+            if (duration := _to_float(row.get(CsvKey.CRITICAL_QUEUE_WAIT_TOTAL_MS, ""))) is not None
+        ]
         critical_milestone_counts = [
             count
             for row in success_rows
@@ -269,6 +305,8 @@ def _summarize_by_opt(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
                 "success_rate": len(success_rows) / len(group_rows) if group_rows else 0.0,
                 "durations": durations,
                 "critical_milestones": critical_milestones,
+                "observed_critical_paths": observed_critical_paths,
+                "observed_critical_finishes": observed_critical_finishes,
                 "mean_duration_ms": statistics.fmean(durations) if durations else None,
                 "median_duration_ms": statistics.median(durations) if durations else None,
                 "mean_critical_milestone_ms": statistics.fmean(critical_milestones)
@@ -279,6 +317,24 @@ def _summarize_by_opt(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
                 else None,
                 "mean_critical_milestone_count": statistics.fmean(critical_milestone_counts)
                 if critical_milestone_counts
+                else None,
+                "mean_observed_critical_path_ms": statistics.fmean(observed_critical_paths)
+                if observed_critical_paths
+                else None,
+                "mean_observed_critical_finish_ms": statistics.fmean(observed_critical_finishes)
+                if observed_critical_finishes
+                else None,
+                "mean_queue_wait_total_ms": statistics.fmean(queue_wait_totals)
+                if queue_wait_totals
+                else None,
+                "mean_queue_wait_ms": statistics.fmean(queue_wait_means)
+                if queue_wait_means
+                else None,
+                "mean_queue_wait_p95_ms": statistics.fmean(queue_wait_p95s)
+                if queue_wait_p95s
+                else None,
+                "mean_critical_queue_wait_total_ms": statistics.fmean(critical_queue_wait_totals)
+                if critical_queue_wait_totals
                 else None,
                 "mean_total_tokens": statistics.fmean(token_totals) if token_totals else None,
                 "mean_cached_input_tokens": statistics.fmean(cached_input_totals)
@@ -366,10 +422,11 @@ def _render_markdown(
     lines.append("")
     lines.append(
         "| opt | successful / total | success % | mean runtime ms | median runtime ms | "
-        "mean critical milestone ms | mean compile ms | mean total tokens | mean cached input | "
+        "mean critical milestone ms | observed critical path ms | queue wait total ms | "
+        "queue wait p95 ms | mean compile ms | mean total tokens | mean cached input | "
         "mean reasoning output | mean LLM calls |"
     )
-    lines.append("|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+    lines.append("|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
 
     for summary in summaries:
         ci = _bootstrap_mean_ci(summary["durations"], bootstrap_samples)
@@ -383,6 +440,9 @@ def _render_markdown(
             f"{mean_with_ci} | "
             f"{_format_float(summary['median_duration_ms'])} | "
             f"{_format_float(summary['mean_critical_milestone_ms'])} | "
+            f"{_format_float(summary['mean_observed_critical_path_ms'])} | "
+            f"{_format_float(summary['mean_queue_wait_total_ms'])} | "
+            f"{_format_float(summary['mean_queue_wait_p95_ms'])} | "
             f"{_format_float(summary['mean_compile_wall_ms'])} | "
             f"{_format_float(summary['mean_total_tokens'])} | "
             f"{_format_float(summary['mean_cached_input_tokens'])} | "
@@ -469,6 +529,39 @@ def _render_markdown(
                 target["critical_milestones"],
                 bootstrap_samples,
             )
+            observed_cp_base_mean = base["mean_observed_critical_path_ms"]
+            observed_cp_target_mean = target["mean_observed_critical_path_ms"]
+            observed_cp_speedup = None
+            if observed_cp_base_mean and observed_cp_target_mean:
+                observed_cp_speedup = (
+                    observed_cp_base_mean / observed_cp_target_mean
+                    if observed_cp_target_mean > 0
+                    else None
+                )
+            observed_cp_speedup_ci = _bootstrap_speedup_ci(
+                base["observed_critical_paths"],
+                target["observed_critical_paths"],
+                bootstrap_samples,
+            )
+            observed_cp_delta = None
+            observed_cp_reduction = None
+            if observed_cp_base_mean is not None and observed_cp_target_mean is not None:
+                observed_cp_delta = observed_cp_base_mean - observed_cp_target_mean
+                if observed_cp_base_mean > 0:
+                    observed_cp_reduction = observed_cp_delta / observed_cp_base_mean
+            observed_finish_base_mean = base["mean_observed_critical_finish_ms"]
+            observed_finish_target_mean = target["mean_observed_critical_finish_ms"]
+            observed_finish_delta = None
+            if observed_finish_base_mean is not None and observed_finish_target_mean is not None:
+                observed_finish_delta = observed_finish_base_mean - observed_finish_target_mean
+            queue_wait_base_mean = base["mean_queue_wait_total_ms"]
+            queue_wait_target_mean = target["mean_queue_wait_total_ms"]
+            queue_wait_delta = None
+            queue_wait_reduction = None
+            if queue_wait_base_mean is not None and queue_wait_target_mean is not None:
+                queue_wait_delta = queue_wait_base_mean - queue_wait_target_mean
+                if queue_wait_base_mean > 0:
+                    queue_wait_reduction = queue_wait_delta / queue_wait_base_mean
             critical_delta = None
             critical_reduction = None
             if critical_base_mean is not None and critical_target_mean is not None:
@@ -572,6 +665,19 @@ def _render_markdown(
                 and critical_speedup_ci is not None
                 and critical_speedup_ci[0] > 1.0
             )
+            observed_cp_supported = (
+                runtime_only
+                and len(base["observed_critical_paths"]) >= 2
+                and len(target["observed_critical_paths"]) >= 2
+                and observed_cp_delta is not None
+                and observed_cp_delta >= MIN_SPEEDUP_ABS_MS
+                and observed_cp_reduction is not None
+                and observed_cp_reduction >= MIN_SPEEDUP_RELATIVE
+                and observed_cp_speedup is not None
+                and observed_cp_speedup > 1.0
+                and observed_cp_speedup_ci is not None
+                and observed_cp_speedup_ci[0] > 1.0
+            )
 
             lines.append("")
             lines.append("## Comparison")
@@ -623,6 +729,37 @@ def _render_markdown(
                     f"- Bootstrap 95% CI for critical-milestone speedup: "
                     f"{_format_ci(critical_speedup_ci, digits=2)}"
                 )
+            if observed_cp_base_mean is not None or observed_cp_target_mean is not None:
+                lines.append(
+                    f"- Observed critical-path speedup: "
+                    f"{_format_measurement(observed_cp_speedup, suffix='x', digits=2)}"
+                )
+                lines.append(
+                    f"- Observed critical-path reduction: "
+                    f"{_format_measurement(observed_cp_delta, suffix=' ms')} "
+                    f"({_format_measurement(None if observed_cp_delta is None else observed_cp_delta / 1000.0, suffix=' s', digits=2)}; "
+                    f"{'-' if observed_cp_reduction is None else f'{observed_cp_reduction * 100:.1f}%'})"
+                )
+                lines.append(
+                    f"- Bootstrap 95% CI for observed critical-path speedup: "
+                    f"{_format_ci(observed_cp_speedup_ci, digits=2)}"
+                )
+            if observed_finish_delta is not None:
+                lines.append(
+                    f"- Observed critical-path finish reduction: "
+                    f"{_format_measurement(observed_finish_delta, suffix=' ms')}"
+                )
+            if queue_wait_delta is not None:
+                queue_wait_reduction_label = (
+                    "-"
+                    if queue_wait_reduction is None
+                    else f"{queue_wait_reduction * 100:.1f}%"
+                )
+                lines.append(
+                    f"- Total scheduler queue-wait reduction: "
+                    f"{_format_measurement(queue_wait_delta, suffix=' ms')} "
+                    f"({queue_wait_reduction_label})"
+                )
             lines.append(
                 "- Claim threshold: speedup requires >= "
                 f"{MIN_SPEEDUP_ABS_MS / 1000:.1f}s absolute reduction, "
@@ -665,6 +802,20 @@ def _render_markdown(
                         if critical_speed_supported
                         else (
                             "not supported; requires repeated milestone rows, >= "
+                            f"{MIN_SPEEDUP_ABS_MS / 1000:.1f}s absolute reduction, "
+                            f">= {MIN_SPEEDUP_RELATIVE * 100:.0f}% relative reduction, "
+                            "and bootstrap lower bound > 1.0"
+                        )
+                    )
+                )
+            if observed_cp_base_mean is not None or observed_cp_target_mean is not None:
+                lines.append(
+                    "- Observed critical-path claim: "
+                    + (
+                        "supported by runtime node durations and DAG edges"
+                        if observed_cp_supported
+                        else (
+                            "not supported; requires repeated observed-graph rows, >= "
                             f"{MIN_SPEEDUP_ABS_MS / 1000:.1f}s absolute reduction, "
                             f">= {MIN_SPEEDUP_RELATIVE * 100:.0f}% relative reduction, "
                             "and bootstrap lower bound > 1.0"

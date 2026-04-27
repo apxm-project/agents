@@ -14,6 +14,7 @@ mod engine;
 mod events;
 pub mod graph_metrics;
 mod handlers;
+pub mod hooks;
 pub mod inner_plan_linker;
 pub mod memoization;
 mod middleware;
@@ -32,6 +33,10 @@ pub use engine::{ExecutionResult, ExecutorEngine};
 pub use events::{ExecutionEvent, ExecutionEventEmitter};
 pub use graph_metrics::GraphMetricsTracker;
 pub use handlers::warmup::{WarmupConfig, WarmupMetrics};
+pub use hooks::{
+    ExecutionHook, ExecutionHookContext, GraphFinishedEvent, GraphStartedEvent, NodeFinishedEvent,
+    NodeReadyEvent, NodeStartedEvent,
+};
 pub use inner_plan_linker::{InnerPlanLinker, NoOpLinker};
 pub use middleware::{Next, OperationMiddleware};
 pub use middlewares::{LoopGuardMiddleware, TimeoutMiddleware};
