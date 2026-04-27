@@ -10,8 +10,9 @@ use crate::{
     capability::{CapabilitySystem, flow_registry::FlowRegistry},
     context_stack::ContextStack,
     executor::{
-        ExecutionContext, ExecutionEventEmitter, ExecutorEngine, InnerPlanLinker, NoOpLinker,
-        NoOpWorkflowSpawner, OperationMiddleware, WorkflowSpawner,
+        ExecutionContext, ExecutionEventEmitter, ExecutionHook, ExecutionHookContext,
+        ExecutorEngine, InnerPlanLinker, NoOpLinker, NoOpWorkflowSpawner, OperationMiddleware,
+        WorkflowSpawner,
     },
     graph_lifecycle::BackendGraphLifecycle,
     memory::{MemoryConfig, MemorySystem},
@@ -130,6 +131,8 @@ pub struct Runtime {
     agent_pool: Arc<AgentPool>,
     /// Dispatcher middleware cloned into each execution context.
     middlewares: Vec<Arc<dyn OperationMiddleware>>,
+    /// Scheduler lifecycle hooks cloned into each graph execution.
+    execution_hooks: Vec<Arc<dyn ExecutionHook>>,
 }
 
 impl Runtime {
@@ -192,6 +195,7 @@ impl Runtime {
             model_router: None,
             agent_pool,
             middlewares: Vec::new(),
+            execution_hooks: Vec::new(),
         })
     }
 
@@ -296,6 +300,16 @@ impl Runtime {
         self.middlewares = middlewares;
     }
 
+    /// Replace the scheduler lifecycle hook chain for future executions.
+    pub fn set_execution_hooks(&mut self, hooks: Vec<Arc<dyn ExecutionHook>>) {
+        self.execution_hooks = hooks;
+    }
+
+    /// Append one scheduler lifecycle hook for future executions.
+    pub fn add_execution_hook(&mut self, hook: Arc<dyn ExecutionHook>) {
+        self.execution_hooks.push(hook);
+    }
+
     /// Get a reference to the sandbox registry.
     pub fn sandbox_registry(&self) -> &SandboxRegistry {
         &self.sandbox_registry
@@ -379,7 +393,16 @@ impl Runtime {
         let graph_metrics = Arc::clone(&context.graph_metrics);
 
         // Execute with dataflow scheduler for automatic parallelism
-        let exec_result = self.scheduler.execute(dag, executor, context, vec![]).await;
+        let hook_context = ExecutionHookContext::new(
+            context.execution_id.clone(),
+            context.graph_id.clone(),
+            self.execution_hooks.clone(),
+        );
+
+        let exec_result = self
+            .scheduler
+            .execute_with_hooks(dag, executor, context, vec![], hook_context)
+            .await;
 
         let graph_status_snapshots = release_graph_lifecycles(&lifecycles).await;
 
@@ -456,9 +479,15 @@ impl Runtime {
         let executor = Arc::new(ExecutorEngine::new(context.clone()));
         let token_accountant = Arc::clone(&context.token_accountant);
         let graph_metrics = Arc::clone(&context.graph_metrics);
+        let hook_context = ExecutionHookContext::new(
+            context.execution_id.clone(),
+            context.graph_id.clone(),
+            self.execution_hooks.clone(),
+        );
+
         let exec_result = self
             .scheduler
-            .execute(entry_dag, executor, context, vec![])
+            .execute_with_hooks(entry_dag, executor, context, vec![], hook_context)
             .await;
 
         let graph_status_snapshots = release_graph_lifecycles(&lifecycles).await;
@@ -550,9 +579,15 @@ impl Runtime {
         let executor = Arc::new(ExecutorEngine::new(context.clone()));
         let token_accountant = Arc::clone(&context.token_accountant);
         let graph_metrics = Arc::clone(&context.graph_metrics);
+        let hook_context = ExecutionHookContext::new(
+            context.execution_id.clone(),
+            context.graph_id.clone(),
+            self.execution_hooks.clone(),
+        );
+
         let exec_result = self
             .scheduler
-            .execute(entry_dag, executor, context, arg_values)
+            .execute_with_hooks(entry_dag, executor, context, arg_values, hook_context)
             .await;
 
         let graph_status_snapshots = release_graph_lifecycles(&lifecycles).await;

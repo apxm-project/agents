@@ -7,8 +7,8 @@ use apxm_core::types::{ExecutionDag, ExecutionStats, Value};
 use apxm_core::{apxm_dag, apxm_sched};
 use tokio::task::JoinHandle;
 
-use crate::executor::ExecutionContext;
 use crate::executor::ExecutorEngine;
+use crate::executor::{ExecutionContext, ExecutionHookContext};
 use crate::observability::{MetricsCollector, SchedulerMetrics};
 use crate::scheduler::config::SchedulerConfig;
 use crate::scheduler::state::SchedulerState;
@@ -41,8 +41,27 @@ impl DataflowScheduler {
         &self,
         dag: ExecutionDag,
         executor: Arc<ExecutorEngine>,
+        ctx: ExecutionContext,
+        inputs: Vec<Value>,
+    ) -> RuntimeResult<(
+        std::collections::HashMap<u64, Value>,
+        ExecutionStats,
+        SchedulerMetrics,
+        Option<std::collections::HashMap<u64, Value>>,
+        Option<std::collections::HashMap<u64, Vec<u64>>>,
+    )> {
+        self.execute_with_hooks(dag, executor, ctx, inputs, ExecutionHookContext::default())
+            .await
+    }
+
+    /// Execute a DAG with scheduler-level execution hooks.
+    pub async fn execute_with_hooks(
+        &self,
+        dag: ExecutionDag,
+        executor: Arc<ExecutorEngine>,
         mut ctx: ExecutionContext,
         inputs: Vec<Value>,
+        hooks: ExecutionHookContext,
     ) -> RuntimeResult<(
         std::collections::HashMap<u64, Value>,
         ExecutionStats,
@@ -72,14 +91,21 @@ impl DataflowScheduler {
 
         // Validate DAG cost budget early
         self.enforce_cost_budget(&dag)?;
+        hooks.emit_graph_started(dag.nodes.len());
 
         // Create a new MetricsCollector for each execution to avoid accumulating
         // metrics across multiple workflow runs (fix for work_stealing timer overflow)
         let metrics = Arc::new(MetricsCollector::new());
 
         // Build shared scheduler state
-        let (state, workers) =
-            SchedulerState::new(dag, self.config.clone(), metrics.clone(), start, inputs)?;
+        let (state, workers) = SchedulerState::new_with_hooks(
+            dag,
+            self.config.clone(),
+            metrics.clone(),
+            start,
+            inputs,
+            hooks.clone(),
+        )?;
         // Project AAM goal priorities onto scheduler node priorities.
         // This bridges the two priority systems: compile-time node.metadata.priority
         // and runtime Goal.priority in the AAM.
@@ -117,6 +143,13 @@ impl DataflowScheduler {
         let mut first_error = state.first_error.lock();
         if let Some(error) = first_error.take() {
             apxm_sched!(error, error = %error, "DAG execution failed");
+            let stats = state.build_stats();
+            hooks.emit_graph_finished(
+                stats.executed_nodes,
+                stats.failed_nodes,
+                stats.duration_ms,
+                false,
+            );
             return Err(error);
         }
 
@@ -134,6 +167,12 @@ impl DataflowScheduler {
 
         // Build statistics
         let stats = state.build_stats();
+        hooks.emit_graph_finished(
+            stats.executed_nodes,
+            stats.failed_nodes,
+            stats.duration_ms,
+            stats.failed_nodes == 0,
+        );
 
         // Capture scheduler metrics snapshot
         let scheduler_metrics = SchedulerMetrics::from_collector(&state.metrics);

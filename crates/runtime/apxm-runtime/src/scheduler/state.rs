@@ -13,6 +13,9 @@ use dashmap::{DashMap, DashSet};
 use parking_lot::Mutex;
 use tokio::sync::Notify;
 
+use crate::executor::hooks::{
+    ExecutionHookContext, NodeFinishedEvent, NodeReadyEvent, NodeStartedEvent,
+};
 use crate::observability::MetricsCollector;
 use crate::scheduler::concurrency_control::{ConcurrencyControl, ConcurrencyControlHandle};
 use crate::scheduler::config::SchedulerConfig;
@@ -30,8 +33,10 @@ pub struct SchedulerState {
     pub cfg: SchedulerConfig,
     pub metrics: Arc<MetricsCollector>,
     pub start: Instant,
+    pub hooks: ExecutionHookContext,
 
     // Immutable node data
+    pub dag: Arc<ExecutionDag>,
     pub nodes: Arc<DashMap<NodeId, Arc<Node>>>,
     pub priorities: Arc<DashMap<NodeId, Priority>>,
 
@@ -86,10 +91,30 @@ impl SchedulerState {
         start: Instant,
         inputs: Vec<Value>,
     ) -> RuntimeResult<(Self, Vec<Worker<NodeId>>)> {
+        Self::new_with_hooks(
+            dag,
+            cfg,
+            metrics,
+            start,
+            inputs,
+            ExecutionHookContext::default(),
+        )
+    }
+
+    pub fn new_with_hooks(
+        dag: ExecutionDag,
+        cfg: SchedulerConfig,
+        metrics: Arc<MetricsCollector>,
+        start: Instant,
+        inputs: Vec<Value>,
+        hooks: ExecutionHookContext,
+    ) -> RuntimeResult<(Self, Vec<Worker<NodeId>>)> {
         // Validate configuration
         cfg.validate().map_err(|msg| RuntimeError::Scheduler {
             message: format!("Invalid scheduler config: {}", msg),
         })?;
+
+        let dag_snapshot = Arc::new(dag.clone());
 
         // Build parameter substitution maps BEFORE consuming inputs
         // Named map: {{PARAM_NAME}} -> value
@@ -199,7 +224,9 @@ impl SchedulerState {
             cfg: cfg.clone(),
             metrics,
             start,
+            hooks,
 
+            dag: dag_snapshot,
             nodes,
             priorities,
 
@@ -228,13 +255,14 @@ impl SchedulerState {
         };
 
         // Initialize readiness tracking and seed ready nodes
-        let _ = state.ready_set.initialize(
+        let ready_nodes = state.ready_set.initialize(
             &dag.nodes,
             &state.tokens,
             &state.priorities,
             &state.op_states,
             &state.queue,
         )?;
+        state.emit_node_ready_batch(&ready_nodes);
 
         // Initialize last progress timestamp
         state
@@ -370,13 +398,14 @@ impl SchedulerState {
         }
 
         // Propagate readiness to consumers
-        self.ready_set.on_token_ready(
+        let ready_nodes = self.ready_set.on_token_ready(
             token_id,
             &self.tokens,
             &self.priorities,
             &self.op_states,
             &self.queue,
         )?;
+        self.emit_node_ready_batch(&ready_nodes);
 
         self.record_progress();
         Ok(())
@@ -463,33 +492,174 @@ impl SchedulerState {
             .map(|entry| {
                 let v = entry.value();
                 let dur = match (v.started_at, v.finished_at) {
-                    (Some(s), Some(f)) => Some((f - s).as_millis()),
+                    (Some(s), Some(f)) => Some(f.saturating_duration_since(s).as_millis()),
                     _ => None,
                 };
+                let ready_at_ms = v
+                    .ready_at
+                    .map(|t| t.saturating_duration_since(self.start).as_millis());
+                let started_at_ms = v
+                    .started_at
+                    .map(|t| t.saturating_duration_since(self.start).as_millis());
+                let queue_wait_ms = match (v.ready_at, v.started_at) {
+                    (Some(ready_at), Some(started_at)) => {
+                        Some(started_at.saturating_duration_since(ready_at).as_millis())
+                    }
+                    _ => None,
+                };
+                let priority = self
+                    .priorities
+                    .get(entry.key())
+                    .map(|priority| priority.as_str().to_string());
                 NodeStatus {
                     node_id: *entry.key(),
                     status: v.status,
                     retries: v.retries,
                     last_error: v.last_error.clone(),
-                    started_at_ms: v
-                        .started_at
-                        .map(|t| t.duration_since(self.start).as_millis()),
+                    ready_at_ms,
+                    started_at_ms,
                     finished_at_ms: v
                         .finished_at
-                        .map(|t| t.duration_since(self.start).as_millis()),
+                        .map(|t| t.saturating_duration_since(self.start).as_millis()),
                     duration_ms: dur,
+                    queue_wait_ms,
+                    priority,
                     input_tokens: None,
                     output_tokens: None,
                 }
             })
             .collect();
 
-        ExecutionStats {
+        let mut stats = ExecutionStats {
             executed_nodes: self.executed.load(Ordering::Relaxed),
             failed_nodes: self.failed.load(Ordering::Relaxed),
             duration_ms,
             node_statuses,
+            observed_graph: None,
+        };
+        stats.attach_observed_graph_metrics(&self.dag);
+        stats
+    }
+
+    pub(crate) fn emit_node_ready_batch(&self, node_ids: &[NodeId]) {
+        if self.hooks.is_empty() {
+            return;
         }
+        for node_id in node_ids {
+            self.emit_node_ready(*node_id);
+        }
+    }
+
+    pub(crate) fn emit_node_ready(&self, node_id: NodeId) {
+        if self.hooks.is_empty() {
+            return;
+        }
+        let Some(node) = self.nodes.get(&node_id).map(|node| node.value().clone()) else {
+            return;
+        };
+        let priority = self
+            .priorities
+            .get(&node_id)
+            .map(|priority| *priority)
+            .unwrap_or(Priority::Normal);
+        let ready_at_ms = self
+            .op_states
+            .get(&node_id)
+            .and_then(|state| {
+                state
+                    .ready_at
+                    .map(|ready_at| ready_at.saturating_duration_since(self.start).as_millis())
+            })
+            .unwrap_or_else(|| self.elapsed_ms());
+
+        self.hooks.emit_node_ready(NodeReadyEvent {
+            execution_id: self.hooks.execution_id().to_string(),
+            graph_id: self.hooks.graph_id().to_string(),
+            node_id,
+            op_type: node.op_type,
+            priority: priority.as_str().to_string(),
+            ready_at_ms,
+        });
+    }
+
+    pub(crate) fn emit_node_started(&self, node_id: NodeId, node: &Node, worker_id: usize) {
+        if self.hooks.is_empty() {
+            return;
+        }
+        let priority = self
+            .priorities
+            .get(&node_id)
+            .map(|priority| *priority)
+            .unwrap_or(Priority::Normal);
+        let Some(op_state) = self.op_states.get(&node_id) else {
+            return;
+        };
+        let ready_at_ms = op_state
+            .ready_at
+            .map(|ready_at| ready_at.saturating_duration_since(self.start).as_millis());
+        let started_at_ms = op_state
+            .started_at
+            .map(|started_at| started_at.saturating_duration_since(self.start).as_millis())
+            .unwrap_or_else(|| self.elapsed_ms());
+        let queue_wait_ms = match (op_state.ready_at, op_state.started_at) {
+            (Some(ready_at), Some(started_at)) => {
+                Some(started_at.saturating_duration_since(ready_at).as_millis())
+            }
+            _ => None,
+        };
+
+        self.hooks.emit_node_started(NodeStartedEvent {
+            execution_id: self.hooks.execution_id().to_string(),
+            graph_id: self.hooks.graph_id().to_string(),
+            node_id,
+            op_type: node.op_type,
+            priority: priority.as_str().to_string(),
+            worker_id: Some(worker_id),
+            ready_at_ms,
+            started_at_ms,
+            queue_wait_ms,
+        });
+    }
+
+    pub(crate) fn emit_node_finished(&self, node_id: NodeId, node: &Node, attempts: u32) {
+        if self.hooks.is_empty() {
+            return;
+        }
+        let Some(op_state) = self.op_states.get(&node_id) else {
+            return;
+        };
+        let started_at_ms = op_state
+            .started_at
+            .map(|started_at| started_at.saturating_duration_since(self.start).as_millis());
+        let finished_at_ms = op_state
+            .finished_at
+            .map(|finished_at| {
+                finished_at
+                    .saturating_duration_since(self.start)
+                    .as_millis()
+            })
+            .unwrap_or_else(|| self.elapsed_ms());
+        let duration_ms = match (op_state.started_at, op_state.finished_at) {
+            (Some(started_at), Some(finished_at)) => Some(
+                finished_at
+                    .saturating_duration_since(started_at)
+                    .as_millis(),
+            ),
+            _ => None,
+        };
+
+        self.hooks.emit_node_finished(NodeFinishedEvent {
+            execution_id: self.hooks.execution_id().to_string(),
+            graph_id: self.hooks.graph_id().to_string(),
+            node_id,
+            op_type: node.op_type,
+            status: op_state.status,
+            attempts,
+            started_at_ms,
+            finished_at_ms,
+            duration_ms,
+            error: op_state.last_error.clone(),
+        });
     }
 }
 
@@ -560,6 +730,7 @@ mod tests {
     use apxm_core::types::operations::AISOperationType;
     use apxm_core::types::{DependencyType, Edge, ExecutionDag, Node, Value};
     use std::sync::atomic::Ordering;
+    use std::time::Duration;
 
     /// Helper: build a SchedulerConfig suitable for tests.
     fn test_config() -> SchedulerConfig {
@@ -1023,16 +1194,41 @@ mod tests {
     fn test_build_stats() {
         let dag = two_node_dag();
         let metrics = Arc::new(MetricsCollector::new());
-        let (state, _) =
-            SchedulerState::new(dag, test_config(), metrics, Instant::now(), vec![]).unwrap();
+        let start = Instant::now();
+        let (state, _) = SchedulerState::new(dag, test_config(), metrics, start, vec![]).unwrap();
 
         state.executed.store(1, Ordering::Relaxed);
         state.failed.store(1, Ordering::Relaxed);
+        if let Some(mut op) = state.op_states.get_mut(&1) {
+            op.status = OpStatus::Completed;
+            op.ready_at = Some(start + Duration::from_millis(5));
+            op.started_at = Some(start + Duration::from_millis(15));
+            op.finished_at = Some(start + Duration::from_millis(45));
+        }
+        if let Some(mut op) = state.op_states.get_mut(&2) {
+            op.status = OpStatus::Completed;
+            op.ready_at = Some(start + Duration::from_millis(50));
+            op.started_at = Some(start + Duration::from_millis(70));
+            op.finished_at = Some(start + Duration::from_millis(120));
+        }
 
         let stats = state.build_stats();
         assert_eq!(stats.executed_nodes, 1);
         assert_eq!(stats.failed_nodes, 1);
         assert_eq!(stats.node_statuses.len(), 2);
+        let node_one = stats
+            .node_statuses
+            .iter()
+            .find(|status| status.node_id == 1)
+            .unwrap();
+        assert_eq!(node_one.ready_at_ms, Some(5));
+        assert_eq!(node_one.started_at_ms, Some(15));
+        assert_eq!(node_one.queue_wait_ms, Some(10));
+        assert_eq!(node_one.priority.as_deref(), Some("low"));
+        let observed = stats.observed_graph.as_ref().unwrap();
+        assert_eq!(observed.critical_path.nodes, vec![1, 2]);
+        assert_eq!(observed.critical_path.duration_ms, 80);
+        assert_eq!(observed.queue_wait.total_ms, 30);
     }
 
     #[test]

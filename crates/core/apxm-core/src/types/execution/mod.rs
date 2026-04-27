@@ -22,7 +22,10 @@ pub use graph_metrics::{
     ProcessPromptMetric, ProcessSpawnMetric, SpawnedProcessKind,
 };
 pub use node::{LatencyTierConfig, Node, NodeId, NodeMetadata};
-pub use status::{ExecutionStats, NodeStatus, OpStatus};
+pub use status::{
+    ExecutionStats, NodeStatus, ObservedCriticalPath, ObservedGraphMetrics, ObservedQueueWait,
+    OpStatus,
+};
 pub use task::{Task, TaskDag, TaskId, TaskMetadata};
 pub use workflow::{
     WORKFLOW_SPAWN_PATH_TARGET_KINDS, WORKFLOW_TARGET_KIND_ARTIFACT_PATH,

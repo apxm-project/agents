@@ -20,7 +20,7 @@ use crossbeam_deque::Worker;
 use crate::executor::ExecutionContext;
 use crate::executor::ExecutorEngine;
 use crate::executor::pipeline::is_pure_llm_op;
-use crate::scheduler::internal_state::{OpState, TokenState};
+use crate::scheduler::internal_state::TokenState;
 use crate::scheduler::queue::Priority;
 use crate::scheduler::state::SchedulerState;
 use crate::timed;
@@ -98,7 +98,7 @@ pub async fn worker_loop(
         // Mark operation as running and emit scheduler-side observability
         // before dispatch so wait time is measured from ready -> running.
         let child_ctx = base_ctx.child();
-        op_start(&state.op_states, node_id);
+        op_start(&state, node_id, &node, worker_id);
         emit_scheduler_events(&state, &child_ctx, node_id);
 
         // Record progress so the watchdog knows the scheduler is alive during
@@ -208,13 +208,14 @@ fn collect_inputs(
 
 /// Mark an operation as running.
 #[inline]
-fn op_start(op_states: &dashmap::DashMap<NodeId, OpState>, node_id: NodeId) {
-    if let Some(mut state) = op_states.get_mut(&node_id) {
-        state.status = OpStatus::Running;
-        if state.started_at.is_none() {
-            state.started_at = Some(Instant::now());
+fn op_start(state: &SchedulerState, node_id: NodeId, node: &Node, worker_id: usize) {
+    if let Some(mut op_state) = state.op_states.get_mut(&node_id) {
+        op_state.status = OpStatus::Running;
+        if op_state.started_at.is_none() {
+            op_state.started_at = Some(Instant::now());
         }
     }
+    state.emit_node_started(node_id, node, worker_id);
 }
 
 fn emit_scheduler_events(state: &SchedulerState, ctx: &ExecutionContext, node_id: NodeId) {
@@ -249,8 +250,8 @@ fn emit_scheduler_events(state: &SchedulerState, ctx: &ExecutionContext, node_id
         delay,
         &format!(
             "chosen={}; median={}; rank={}_of_{}",
-            priority_label(chosen_priority),
-            priority_label(median_priority),
+            chosen_priority.as_str(),
+            median_priority.as_str(),
             rank,
             total_ready
         ),
@@ -274,8 +275,8 @@ fn emit_scheduler_events(state: &SchedulerState, ctx: &ExecutionContext, node_id
             "wait_ms={}; threshold_ms={}; blocker={}; blocked={}",
             wait_ms,
             HOL_BLOCK_THRESHOLD_MS,
-            priority_label(blocker_priority),
-            priority_label(chosen_priority)
+            blocker_priority.as_str(),
+            chosen_priority.as_str()
         ),
     );
 }
@@ -359,15 +360,6 @@ fn highest_priority_running_node(
     }
 
     best
-}
-
-fn priority_label(priority: Priority) -> &'static str {
-    match priority {
-        Priority::Low => "low",
-        Priority::Normal => "normal",
-        Priority::High => "high",
-        Priority::Critical => "critical",
-    }
 }
 
 /// Execution outcome.
@@ -541,6 +533,9 @@ async fn handle_success(event: &WorkerEvent<'_>, value: Value, attempts: u32) {
         op_state.status = OpStatus::Completed;
         op_state.finished_at = Some(Instant::now());
     }
+    event
+        .state
+        .emit_node_finished(event.node_id, event.node, attempts);
 
     // Record success event
     record_event(
@@ -582,6 +577,9 @@ async fn handle_failure(event: &WorkerEvent<'_>, error: RuntimeError, attempts: 
         op_state.last_error = Some(error.to_string());
         op_state.finished_at = Some(Instant::now());
     }
+    event
+        .state
+        .emit_node_finished(event.node_id, event.node, attempts);
 
     // Record failure event
     record_event(
@@ -660,13 +658,16 @@ async fn publish_outputs(state: &SchedulerState, node_id: u64, outputs: &[TokenI
         apxm_token!(trace, token_id = token_id, "Token produced and ready");
 
         // Propagate readiness to consumers
-        let _ = state.ready_set.on_token_ready(
+        let ready_nodes = state.ready_set.on_token_ready(
             token_id,
             &state.tokens,
             &state.priorities,
             &state.op_states,
             &state.queue,
         );
+        if let Ok(ready_nodes) = ready_nodes {
+            state.emit_node_ready_batch(&ready_nodes);
+        }
     }
 }
 

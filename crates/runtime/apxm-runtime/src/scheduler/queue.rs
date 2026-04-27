@@ -41,6 +41,17 @@ impl Priority {
         self as usize
     }
 
+    /// Stable lower-case label used in metrics and hook payloads.
+    #[inline]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Priority::Low => "low",
+            Priority::Normal => "normal",
+            Priority::High => "high",
+            Priority::Critical => "critical",
+        }
+    }
+
     /// Number of priority levels.
     pub const COUNT: usize = 4;
 }

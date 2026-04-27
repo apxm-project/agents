@@ -546,6 +546,7 @@ pub mod session {
         pub const RUNTIME_SCHEDULER: &str = "scheduler";
         pub const RUNTIME_LLM: &str = "llm";
         pub const RUNTIME_GRAPH_METRICS: &str = "graph_metrics";
+        pub const RUNTIME_OBSERVED_GRAPH: &str = "observed_graph";
         pub const BACKENDS_AGGREGATE: &str = "aggregate";
         pub const BACKENDS_PER_BACKEND: &str = "per_backend";
         pub const BACKENDS_GRAPHS: &str = "graphs";

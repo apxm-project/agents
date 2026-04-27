@@ -247,7 +247,12 @@ impl SchedulerState {
 
         // Enqueue ready nodes
         for (node_id, priority) in &ready_nodes {
+            if let Some(mut op_state) = self.op_states.get_mut(node_id) {
+                op_state.status = apxm_core::types::OpStatus::Ready;
+                op_state.ready_at = Some(std::time::Instant::now());
+            }
             self.queue.push(*node_id, *priority);
+            self.emit_node_ready(*node_id);
             tracing::debug!(node_id = node_id, "Enqueued ready inner DAG node");
         }
 
@@ -425,7 +430,12 @@ impl SchedulerState {
         }
 
         if all_inputs_ready {
+            if let Some(mut op_state) = self.op_states.get_mut(&replacement.id) {
+                op_state.status = apxm_core::types::OpStatus::Ready;
+                op_state.ready_at = Some(std::time::Instant::now());
+            }
             self.queue.push(replacement.id, priority);
+            self.emit_node_ready(replacement.id);
             log_debug!(
                 "scheduler::condense",
                 node_id = replacement.id,

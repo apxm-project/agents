@@ -69,6 +69,7 @@ class MetricsKeys:
     RUNTIME_SCHEDULER: Final[str] = "scheduler"
     RUNTIME_LLM: Final[str] = "llm"
     RUNTIME_GRAPH_METRICS: Final[str] = "graph_metrics"
+    RUNTIME_OBSERVED_GRAPH: Final[str] = "observed_graph"
     BACKENDS_AGGREGATE: Final[str] = "aggregate"
     BACKENDS_PER_BACKEND: Final[str] = "per_backend"
     BACKENDS_GRAPHS: Final[str] = "graphs"

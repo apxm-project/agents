@@ -128,6 +128,8 @@ impl ExecutorEngine {
 
         for node in &dag.nodes {
             let node_start = std::time::Instant::now();
+            let ready_at_ms = start_time.elapsed().as_millis();
+            let priority = sequential_priority_label(node.metadata.priority);
 
             // Mark as running
             {
@@ -139,9 +141,12 @@ impl ExecutorEngine {
                         status: OpStatus::Running,
                         retries: 0,
                         last_error: None,
-                        started_at_ms: Some(node_start.elapsed().as_millis()),
+                        ready_at_ms: Some(ready_at_ms),
+                        started_at_ms: Some(ready_at_ms),
                         finished_at_ms: None,
                         duration_ms: None,
+                        queue_wait_ms: Some(0),
+                        priority: Some(priority.clone()),
                         input_tokens: None,
                         output_tokens: None,
                     },
@@ -161,6 +166,7 @@ impl ExecutorEngine {
             let result = OperationDispatcher::dispatch(&self.context, node, inputs).await;
 
             let node_end = node_start.elapsed();
+            let finished_at_ms = start_time.elapsed().as_millis();
 
             // Store result and update status
             match result {
@@ -186,9 +192,12 @@ impl ExecutorEngine {
                                 status: OpStatus::Completed,
                                 retries: 0,
                                 last_error: None,
-                                started_at_ms: Some(node_start.elapsed().as_millis()),
-                                finished_at_ms: Some(node_end.as_millis()),
+                                ready_at_ms: Some(ready_at_ms),
+                                started_at_ms: Some(ready_at_ms),
+                                finished_at_ms: Some(finished_at_ms),
                                 duration_ms: Some(node_end.as_millis()),
+                                queue_wait_ms: Some(0),
+                                priority: Some(priority.clone()),
                                 input_tokens: None,
                                 output_tokens: None,
                             },
@@ -206,9 +215,12 @@ impl ExecutorEngine {
                                 status: OpStatus::Failed,
                                 retries: 0,
                                 last_error: Some(e.to_string()),
-                                started_at_ms: Some(node_start.elapsed().as_millis()),
-                                finished_at_ms: Some(node_end.as_millis()),
+                                ready_at_ms: Some(ready_at_ms),
+                                started_at_ms: Some(ready_at_ms),
+                                finished_at_ms: Some(finished_at_ms),
                                 duration_ms: Some(node_end.as_millis()),
+                                queue_wait_ms: Some(0),
+                                priority: Some(priority.clone()),
                                 input_tokens: None,
                                 output_tokens: None,
                             },
@@ -246,7 +258,7 @@ impl ExecutorEngine {
 
         // Build execution stats
         let statuses = node_statuses.read().await;
-        let stats = ExecutionStats {
+        let mut stats = ExecutionStats {
             executed_nodes: statuses.len(),
             failed_nodes: statuses
                 .values()
@@ -254,7 +266,9 @@ impl ExecutorEngine {
                 .count(),
             duration_ms: start_time.elapsed().as_millis(),
             node_statuses: statuses.values().cloned().collect(),
+            observed_graph: None,
         };
+        stats.attach_observed_graph_metrics(&dag);
 
         tracing::info!(
             execution_id = %self.context.execution_id,
@@ -333,6 +347,12 @@ impl ExecutorEngine {
     pub fn context(&self) -> &ExecutionContext {
         &self.context
     }
+}
+
+fn sequential_priority_label(priority: u32) -> String {
+    crate::scheduler::Priority::from_u8(priority.min(u8::MAX as u32) as u8)
+        .as_str()
+        .to_string()
 }
 
 /// Outcome of a single operation execution
