@@ -2,9 +2,10 @@
 
 use apxm_backends::llm::backends::LLMRequest;
 use apxm_backends::llm::backends::vllm::{
-    ApxmGraphHints, GraphAwareVllmBackend, GraphMetadata, NodeSpec, PinPolicy,
+    ApxmGraphHints, GraphAwareVllmBackend, GraphMetadata, NodeSpec, PinPolicy, REQUEST_XARGS,
 };
-use apxm_core::constants::llm::{api_paths, apxm as apxm_llm};
+use apxm_backends::llm::wire::api_paths;
+use apxm_core::constants::llm::apxm as apxm_llm;
 use apxm_core::types::{NodeGraphMetrics, PinMode, PriorityClass};
 use serde_json::json;
 
@@ -149,9 +150,9 @@ fn test_backend_injects_apxm_hints_into_extra_body() {
     );
 
     // Verify the hint injection creates proper extra_body structure
-    let extra_body = serde_json::json!({apxm_llm::VLLM_XARGS: {apxm_llm::HINTS_FIELD: hints_json}});
+    let extra_body = serde_json::json!({REQUEST_XARGS: {apxm_llm::HINTS_FIELD: hints_json}});
     assert!(extra_body.is_object());
-    assert!(extra_body.get(apxm_llm::VLLM_XARGS).is_some());
+    assert!(extra_body.get(REQUEST_XARGS).is_some());
 }
 
 #[test]

@@ -138,12 +138,14 @@ contract.
 
 ## Config-Gated Prompt Tuning
 
-`dspy-optimize` is included in O1/O2/O3 immediately after `build-prompt`. It is
-a no-op unless compiler-owned prompt tuning config and training data are
-available. The compiler reads that config from the APXM config file, normalizes
-training data into `.apxm/cache/compiler/training`, writes optimizer cache
-artifacts under `.apxm/cache/compiler/dspy`, and strips transient optimizer
-metadata before artifact serialization.
+`dspy-optimize` is injected into O1/O2/O3 immediately after `build-prompt` only
+when compiler-owned prompt tuning config and training data are available. The
+base O-level pass lists stay deterministic and side-effect free; the pipeline
+adds DSPy after it sees an explicit prompt-tuning request. The compiler reads
+that config from the APXM config file, normalizes training data into
+`.apxm/cache/compiler/training`, writes optimizer cache artifacts under
+`.apxm/cache/compiler/dspy`, and strips transient optimizer metadata before
+artifact serialization.
 
 The compiler-owned configuration is isolated under
 `[compiler.optimization.prompt_tuning]`. The LLM used for prompt tuning is

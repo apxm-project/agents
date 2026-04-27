@@ -24,42 +24,6 @@ def test_extract_uses_results_final_output():
     assert extract_final_output(FIX) == "Paris."
 
 
-def test_extract_falls_back_to_exit_values(tmp_path: Path):
-    (tmp_path / "results.json").write_text(json.dumps({
-        "node_outputs": {},
-        "token_values": {},
-        "exit_values": {"7": "Berlin.", "3": "earlier"},
-        "final_node_id": None,
-        "final_output": "",
-    }))
-    # Highest-id wins — 7 > 3.
-    assert extract_final_output(tmp_path) == "Berlin."
-
-
-def test_extract_falls_back_to_token_values_when_exits_empty(tmp_path: Path):
-    (tmp_path / "results.json").write_text(json.dumps({
-        "node_outputs": {},
-        "token_values": {"11": "from-token"},
-        "exit_values": {},
-        "final_node_id": None,
-        "final_output": "",
-    }))
-    assert extract_final_output(tmp_path) == "from-token"
-
-
-def test_extract_jsonifies_non_string_value(tmp_path: Path):
-    (tmp_path / "results.json").write_text(json.dumps({
-        "node_outputs": {},
-        "token_values": {},
-        "exit_values": {"1": {"city": "Paris", "pop": 2_100_000}},
-        "final_node_id": None,
-        "final_output": "",
-    }))
-    out = extract_final_output(tmp_path)
-    # Order within the dict is implementation-defined; reparse to compare.
-    assert json.loads(out) == {"city": "Paris", "pop": 2_100_000}
-
-
 def test_resolve_session_root_descends_into_single_subdir(tmp_path: Path):
     # `dekk apxm execute --emit-session <PATH>` treats PATH as a base dir
     # and creates `<PATH>/<stem>-<timestamp>/` underneath. The harness

@@ -102,7 +102,7 @@ fn sync_ollama_models(
             }
             let (supports_functions, supports_vision, ctx_window) =
                 ollama_model_caps(base_url, model_name);
-            let model = apxm_core::types::ModelConfig {
+            let model = apxm_backends::llm::ModelConfig {
                 id: model_name.to_string(),
                 aliases: vec![],
                 context_window: ctx_window,
@@ -128,7 +128,7 @@ fn sync_ollama_models(
 
 #[cfg(feature = "driver")]
 pub async fn backend_command(action: BackendAction, json_output: bool) -> Result<()> {
-    use apxm_core::types::{BackendConfig, BackendType, ProviderProtocol};
+    use apxm_backends::llm::{BackendConfig, BackendType, ProviderProtocol};
     use apxm_credentials::backend::BackendStore;
     use std::str::FromStr;
 
@@ -485,7 +485,7 @@ pub async fn backend_command(action: BackendAction, json_output: bool) -> Result
             supports_thinking,
             tag,
         } => {
-            use apxm_core::types::ModelConfig;
+            use apxm_backends::llm::ModelConfig;
 
             let model = ModelConfig {
                 id: model_id.clone(),

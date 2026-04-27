@@ -35,3 +35,13 @@ impl Default for SandboxPolicy {
         }
     }
 }
+
+impl SandboxPolicy {
+    /// Return whether an environment variable must be kept out of sandboxed
+    /// execution. Exact entries are policy-controlled; marker checks catch
+    /// backend-specific secret names without making core know those providers.
+    pub fn blocks_env_var(&self, key: &str) -> bool {
+        self.blocked_env_vars.iter().any(|blocked| blocked == key)
+            || sandbox_env::is_sensitive_name(key)
+    }
+}

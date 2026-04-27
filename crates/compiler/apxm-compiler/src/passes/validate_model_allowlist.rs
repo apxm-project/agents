@@ -1,9 +1,8 @@
 //! Model Allowlist Validation Pass
 //!
 //! Validates that all models referenced in graph nodes are in the configured allowlist.
-//! If no allowlist is configured, validation passes silently (backward compatible).
+//! If no allowlist is configured, this governance check is disabled.
 //!
-//! This is a compile-time governance check (Plan A from model-profiles-design.md).
 //! Does NOT query external APIs or check model health — that's the runtime ModelRouter's job.
 
 use crate::air_builder::AirModule;
@@ -25,7 +24,6 @@ use std::collections::{HashMap, HashSet};
 /// # Errors
 /// Returns an error listing ALL violations, not just the first one.
 pub fn validate_model_allowlist(module: &AirModule, allowlist: Option<&Vec<String>>) -> Result<()> {
-    // If no allowlist is configured, skip validation (backward compatible)
     let Some(allowed_models) = allowlist else {
         return Ok(());
     };

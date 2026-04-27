@@ -117,7 +117,7 @@ fn load_backend_config() -> Result<BackendConfig, String> {
 
             if in_headers {
                 let resolved = if let Some(var_name) =
-                    val.strip_prefix(apxm_core::constants::llm::config_keys::ENV_PREFIX)
+                    val.strip_prefix(apxm_backends::llm::wire::config_keys::ENV_PREFIX)
                 {
                     std::env::var(var_name).unwrap_or_default()
                 } else {
@@ -129,7 +129,7 @@ fn load_backend_config() -> Result<BackendConfig, String> {
                     "endpoint" => endpoint = val.to_string(),
                     "api_key" => {
                         api_key = if let Some(var_name) =
-                            val.strip_prefix(apxm_core::constants::llm::config_keys::ENV_PREFIX)
+                            val.strip_prefix(apxm_backends::llm::wire::config_keys::ENV_PREFIX)
                         {
                             std::env::var(var_name).unwrap_or_default()
                         } else {
@@ -248,13 +248,13 @@ pub async fn chat_handler(
     let mut request = client
         .post(&url)
         .header(
-            apxm_core::constants::http::headers::CONTENT_TYPE,
-            apxm_core::constants::http::headers::CONTENT_TYPE_JSON,
+            apxm_backends::llm::wire::headers::CONTENT_TYPE,
+            apxm_backends::llm::wire::headers::CONTENT_TYPE_JSON,
         )
         .json(&body);
     if !config.api_key.is_empty() {
         request = request.header(
-            apxm_core::constants::http::headers::AUTHORIZATION,
+            apxm_backends::llm::wire::headers::AUTHORIZATION,
             format!("Bearer {}", config.api_key),
         );
     }

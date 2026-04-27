@@ -84,23 +84,12 @@ dekk apxm execute .agents/skills/autofix/autofix_workflow.air --emit-session -- 
 dekk apxm execute .agents/skills/autofix/autofix_workflow.air --emit-session -- "examples/python/acp-agents"
 ```
 
-The `--auto-fix` mode now runs the autofix workflow through the APXM runtime, spawning agents via ACP. The workflow:
+The `--auto-fix` mode runs the autofix workflow through the APXM runtime, spawning agents via ACP. The workflow:
 1. Runs validation to identify failures
 2. Classifies failures into error clusters
 3. Spawns parallel fixer agents for each cluster type
 4. Runs verification to check fixes
 5. Generates a summary report
-
-## Manual Agent Spawning (Legacy)
-
-Task prompts are written to `/tmp/autofix-tasks/`:
-```bash
-ls /tmp/autofix-tasks/
-# cluster-attr_mismatch.txt
-# cluster-mlir_parse_error.txt
-# ...
-
-```
 
 ## Policy Checking
 

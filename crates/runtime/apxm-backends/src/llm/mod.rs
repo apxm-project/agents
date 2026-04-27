@@ -14,9 +14,13 @@
 
 pub mod assembler;
 pub mod backends;
+pub mod catalog;
+pub mod config;
 #[cfg(feature = "metrics")]
 pub mod observability;
+pub mod protocol;
 pub mod rate_limit;
+pub mod wire;
 #[cfg(not(feature = "metrics"))]
 pub mod observability {
     use apxm_core::types::TokenUsage;
@@ -190,7 +194,14 @@ pub mod registry;
 pub mod retry;
 pub mod schema;
 
-pub use apxm_core::types::{ProviderProtocol, ProviderSpec};
+pub use catalog::{
+    BUILTIN_MODELS, BUILTIN_PROVIDERS, BuiltinModelSpec, BuiltinProviderSpec,
+    DEFAULT_VLLM_BASE_URL, default_model_for_protocol, default_model_for_provider,
+    models_for_protocol, models_for_provider, resolve_builtin_model, resolve_builtin_provider,
+    resolve_provider_spec,
+};
+pub use config::{BackendConfig, BackendType, DockerConfig, ModelConfig};
+pub use protocol::{ProviderProtocol, ProviderSpec, normalize_endpoint_for_protocol};
 
 // Re-export key public API types
 pub use assembler::{AssembledEvent, AssembledToolCall, StreamAssembler};

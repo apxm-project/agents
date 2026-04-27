@@ -7,7 +7,8 @@ use crate::llm::backends::{
     AnthropicBackend, GoogleBackend, GraphAwareVllmBackend, LLMBackend, LLMRequest, LLMResponse,
     MockLLMBackend, OllamaBackend, OpenAIBackend,
 };
-use apxm_core::types::{ModelCapabilities, ModelInfo, ProviderProtocol, ProviderSpec};
+use crate::llm::{ProviderProtocol, ProviderSpec};
+use apxm_core::types::{ModelCapabilities, ModelInfo};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;

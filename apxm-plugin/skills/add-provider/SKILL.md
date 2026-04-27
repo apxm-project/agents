@@ -6,7 +6,7 @@ user-invocable: false
 
 # Add Provider
 
-How to add a new LLM provider to APXM. Providers are the backend implementations that handle LLM API calls.
+How to add a new LLM provider to APXM. Providers are backend-layer implementations that handle LLM API calls. Core stays backend-agnostic.
 
 ## Procedure
 
@@ -16,7 +16,7 @@ If the new provider uses an existing wire protocol (e.g., OpenAI-compatible), us
 
 **Adding a new protocol variant** (rare — most providers are OpenAI-compatible):
 
-Edit `crates/core/apxm-core/src/types/provider_spec.rs`:
+Edit `crates/runtime/apxm-backends/src/llm/protocol.rs`:
 
 ```rust
 pub enum ProviderProtocol {
@@ -29,7 +29,7 @@ Update `as_str()`, `from_str()`, and `all_variants()` in the same file.
 
 ### 2. Add to BUILTIN_PROVIDERS
 
-In `crates/core/apxm-core/src/types/provider_spec.rs`, add an entry:
+In `crates/runtime/apxm-backends/src/llm/catalog.rs`, add an entry:
 
 ```rust
 pub const BUILTIN_PROVIDERS: &[BuiltinProviderSpec] = &[
@@ -71,7 +71,9 @@ dekk apxm backend test my-key
 
 | File | Role |
 |------|------|
-| `crates/core/apxm-core/src/types/provider_spec.rs` | ProviderProtocol enum + BUILTIN_PROVIDERS |
+| `crates/runtime/apxm-backends/src/llm/protocol.rs` | `ProviderProtocol` enum |
+| `crates/runtime/apxm-backends/src/llm/catalog.rs` | `BUILTIN_PROVIDERS` and `BUILTIN_MODELS` |
 | `crates/runtime/apxm-backends/src/llm/backends/` | Backend implementations |
 | `crates/compiler/apxm-frontend/python/apxm/_generated/providers.py` | Generated Python provider specs |
+| `crates/compiler/apxm-frontend/python/apxm/_generated/models.py` | Generated Python model metadata |
 | `crates/tools/apxm-gui/frontend/src/types/generated.ts` | Generated TypeScript provider types |

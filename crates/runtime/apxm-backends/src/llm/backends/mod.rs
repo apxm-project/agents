@@ -33,7 +33,8 @@ pub use vllm::{
     PinPolicy, PriorityClass,
 };
 
-use apxm_core::types::{ProviderProtocol, resolve_builtin_provider};
+use crate::llm::ProviderProtocol;
+use crate::llm::catalog::resolve_builtin_provider;
 use std::sync::Arc;
 
 /// Factory for creating LLM backends from provider configuration.

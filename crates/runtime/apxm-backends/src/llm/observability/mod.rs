@@ -459,7 +459,9 @@ mod tests {
                 ..Default::default()
             },
             per_backend,
-            graph_status_snapshots: vec![GraphStatusSnapshot::vllm("g1").with_pin_counts(0, 12)],
+            graph_status_snapshots: vec![
+                GraphStatusSnapshot::graph_aware("g1").with_pin_counts(0, 12),
+            ],
         };
 
         let val = source.collect();

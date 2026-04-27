@@ -49,7 +49,6 @@ pub mod update_keys {
     pub const SESSION_UPDATE: &str = "sessionUpdate";
     pub const CONTENT: &str = "content";
     pub const TEXT: &str = "text";
-    pub const TYPE: &str = "type";
     pub const USED: &str = "used";
     pub const SIZE: &str = "size";
     pub const COST: &str = "cost";

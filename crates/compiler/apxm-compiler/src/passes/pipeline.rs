@@ -2,7 +2,7 @@
 //!
 //! Optimization levels:
 //!   O0 - No optimization (passthrough)
-//!   O1 - Basic: normalize, build-prompt, prompt optimization, safe cleanup, tool checks
+//!   O1 - Basic: normalize, build-prompt, safe cleanup, tool checks
 //!   O2 - Standard: O1 + template specialization, dead context elimination,
 //!        scheduling metadata, and shared-prefix analysis
 //!   O3 - Aggressive: O2-safe passes iterated to fixed-point convergence
@@ -22,6 +22,7 @@ const MAX_CONVERGENCE_ITERATIONS: usize = 10;
 // AIS authoring definitions.
 const NORMALIZE: &str = passes::NORMALIZE.name;
 const BUILD_PROMPT: &str = passes::BUILD_PROMPT.name;
+#[cfg(test)]
 const DSPY_OPTIMIZE: &str = passes::DSPY_OPTIMIZE.name;
 const ASSIGN_PRIORITY: &str = passes::ASSIGN_PRIORITY.name;
 const SCHEDULING: &str = passes::SCHEDULING.name;
@@ -100,6 +101,11 @@ pub fn build_pipeline_with_config(
 /// - `cse`: generic MLIR CSE is not LLM-safe until deterministic/memoizable
 ///   contracts are typed. Use explicit pass lists for ablation only.
 ///
+/// `dspy-optimize` is injected by the pipeline only when compiler prompt
+/// tuning is explicitly configured. It is not part of this pure base list
+/// because discovering that config must not make pass-list construction touch
+/// backend credentials, training data, or compiler cache state.
+///
 pub fn build_pass_list(
     level: OptimizationLevel,
     _no_cse_llm: bool,
@@ -116,7 +122,6 @@ pub fn build_pass_list(
                 [
                     NORMALIZE,
                     BUILD_PROMPT,
-                    DSPY_OPTIMIZE,
                     TEMPLATE_SPECIALIZATION,
                     DEAD_CONTEXT_ELIMINATION,
                     CANONICALIZER,
@@ -135,7 +140,6 @@ pub fn build_pass_list(
                 [
                     NORMALIZE,
                     BUILD_PROMPT,
-                    DSPY_OPTIMIZE,
                     TEMPLATE_SPECIALIZATION,
                     DEAD_CONTEXT_ELIMINATION,
                 ]
@@ -193,7 +197,6 @@ pub fn build_pass_list(
                 [
                     NORMALIZE,
                     BUILD_PROMPT,
-                    DSPY_OPTIMIZE,
                     TEMPLATE_SPECIALIZATION,
                     DEAD_CONTEXT_ELIMINATION,
                 ]
@@ -320,8 +323,7 @@ mod tests {
         // Check structural ordering, not exact count
         assert_eq!(passes[0], NORMALIZE);
         assert_eq!(passes[1], BUILD_PROMPT);
-        assert_eq!(passes[2], DSPY_OPTIMIZE);
-        assert_eq!(passes[3], TEMPLATE_SPECIALIZATION);
+        assert_eq!(passes[2], TEMPLATE_SPECIALIZATION);
         assert!(passes.contains(&ASSIGN_PRIORITY.to_string()));
         assert_eq!(passes.last().unwrap(), ASSIGN_PRIORITY);
         let symbol_idx = passes.iter().position(|p| p == SYMBOL_DCE).unwrap();
@@ -357,8 +359,7 @@ mod tests {
         // Check preamble ordering
         assert_eq!(passes[0], NORMALIZE);
         assert_eq!(passes[1], BUILD_PROMPT);
-        assert_eq!(passes[2], DSPY_OPTIMIZE);
-        assert_eq!(passes[3], TEMPLATE_SPECIALIZATION);
+        assert_eq!(passes[2], TEMPLATE_SPECIALIZATION);
         assert!(passes.contains(&ASSIGN_PRIORITY.to_string()));
         assert_default_excludes_semantic_rewrites(&passes);
         // UNCONSUMED_VALUE_WARNING is opt-in via --warn (Task 6); it must NOT appear
@@ -410,8 +411,7 @@ mod tests {
         // Check structural ordering, not exact count
         assert_eq!(balanced[0], NORMALIZE);
         assert_eq!(balanced[1], BUILD_PROMPT);
-        assert_eq!(balanced[2], DSPY_OPTIMIZE);
-        assert_eq!(balanced[3], TEMPLATE_SPECIALIZATION);
+        assert_eq!(balanced[2], TEMPLATE_SPECIALIZATION);
         assert!(balanced.contains(&ASSIGN_PRIORITY.to_string()));
         assert_default_excludes_semantic_rewrites(&balanced);
     }
@@ -516,23 +516,27 @@ mod tests {
     }
 
     #[test]
-    fn dspy_optimize_is_in_o1_o2_o3_after_build_prompt() {
+    fn base_o_levels_do_not_include_side_effecting_dspy_optimize() {
         for level in [
             OptimizationLevel::O1,
             OptimizationLevel::O2,
             OptimizationLevel::O3,
         ] {
             let passes = build_pass_list(level, false, OptimizationTarget::Balanced);
-            let build_prompt_idx = passes.iter().position(|p| p == BUILD_PROMPT).unwrap();
-            let dspy_idx = passes.iter().position(|p| p == DSPY_OPTIMIZE).unwrap();
-            assert_eq!(dspy_idx, build_prompt_idx + 1);
+            assert!(!passes.iter().any(|p| p == DSPY_OPTIMIZE));
         }
     }
 
     #[test]
-    fn dspy_optimize_is_not_in_o0() {
-        let passes = build_pass_list(OptimizationLevel::O0, false, OptimizationTarget::Balanced);
-        assert!(!passes.iter().any(|p| p == DSPY_OPTIMIZE));
+    fn dspy_optimize_is_available_via_explicit_override() {
+        let config = apxm_core::types::PipelineConfig {
+            pass_list_override: Some(vec![BUILD_PROMPT.to_string(), DSPY_OPTIMIZE.to_string()]),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_pass_list(&config),
+            vec![BUILD_PROMPT.to_string(), DSPY_OPTIMIZE.to_string()]
+        );
     }
 
     #[test]

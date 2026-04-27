@@ -4,14 +4,16 @@
 //! This file updates the default model and the set of models returned by
 //! `list_models()` to include newer Claude model identifiers.
 
+use crate::llm::ProviderProtocol;
 use crate::llm::backends::traits::StreamChunk;
 use crate::llm::backends::{ContentPart, LLMBackend, LLMRequest, LLMResponse, Role, ToolChoice};
+use crate::llm::catalog::{default_model_for_protocol, models_for_protocol};
+use crate::llm::wire::{
+    anthropic_events, api_paths, config_keys, defaults as wire_defaults, headers, message_keys,
+    roles, sse, tool_keys,
+};
 use anyhow::{Context, Result};
 use apxm_core::constants::graph::attrs::{BASE_URL, MODEL};
-use apxm_core::constants::http::headers;
-use apxm_core::constants::llm::{
-    anthropic_events, api_paths, config_keys, message_keys, roles, sse, tool_keys,
-};
 use apxm_core::log_debug;
 use apxm_core::types::{FinishReason, ModelCapabilities, ModelInfo, TokenUsage, ToolCall};
 use async_trait::async_trait;
@@ -21,9 +23,9 @@ use serde_json::json;
 use std::pin::Pin;
 use tokio_stream::Stream;
 
-use apxm_core::types::model_spec::{default_model_for_provider, models_for_provider};
-
 const DEFAULT_BASE_URL: &str = "https://api.anthropic.com/v1";
+const PROTOCOL: ProviderProtocol = ProviderProtocol::Anthropic;
+const DEFAULT_MODEL: &str = "claude-sonnet-4-5";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 
 /// Anthropic LLM backend.
@@ -69,9 +71,7 @@ impl AnthropicBackend {
             .as_ref()
             .and_then(|c| c.get(MODEL))
             .and_then(|m| m.as_str())
-            .unwrap_or_else(|| {
-                default_model_for_provider("anthropic").unwrap_or("claude-sonnet-4-5")
-            })
+            .unwrap_or_else(|| default_model_for_protocol(PROTOCOL).unwrap_or(DEFAULT_MODEL))
             .to_string();
 
         let base_url = config
@@ -186,7 +186,7 @@ impl AnthropicBackend {
         let mut body = json!({
             "model": model,
             "messages": conversation_messages,
-            "max_tokens": request.max_tokens.unwrap_or(apxm_core::constants::defaults::DEFAULT_ANTHROPIC_MAX_TOKENS),
+            "max_tokens": request.max_tokens.unwrap_or(wire_defaults::ANTHROPIC_MAX_TOKENS),
             "temperature": request.temperature,
         });
 
@@ -540,7 +540,7 @@ impl LLMBackend for AnthropicBackend {
     }
 
     fn name(&self) -> &str {
-        "anthropic"
+        PROTOCOL.as_str()
     }
 
     fn model(&self) -> &str {
@@ -559,7 +559,7 @@ impl LLMBackend for AnthropicBackend {
     }
 
     async fn list_models(&self) -> Result<Vec<ModelInfo>> {
-        Ok(models_for_provider("anthropic")
+        Ok(models_for_protocol(PROTOCOL)
             .map(|m| ModelInfo {
                 id: m.id.to_string(),
                 name: m.id.to_string(),

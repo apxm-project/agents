@@ -419,8 +419,9 @@ pub const DSPY_OPTIMIZE: PassSpec = PassSpec::new(
 Uses MIPROv2, BootstrapFewShot, or COPRO optimizers to discover better
 instructions from training examples.
 
-This pass is part of O1/O2/O3 and is a no-op unless compiler-owned prompt
-tuning configuration and training data are available.
+The Rust pipeline injects this pass into O1/O2/O3 only when compiler-owned
+prompt tuning configuration and training data are available. Without that
+typed request, default O-levels stay deterministic and side-effect free.
 
 Placement: immediately after build-prompt (which synthesizes named placeholders).
 Subsequent passes (template-specialization, dead-context-elimination,
@@ -435,7 +436,7 @@ pub const PROMPT_CANONICALIZATION: PassSpec = PassSpec::new(
     "PromptCanonicalization",
     "Explicit-only shared-prefix prompt layout experiment",
     r#"Analyzes prompt templates across the graph and canonicalizes them to
-maximize KV-cache sharing in vLLM/inference engines that support prefix caching.
+maximize KV-cache sharing in inference engines that support prefix caching.
 
 This includes:
 - Extracting common prompt prefixes

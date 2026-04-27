@@ -67,12 +67,7 @@ impl ProcessSandbox {
             }
         }
         for (key, value) in &self.policy.env_overrides {
-            if !self
-                .policy
-                .blocked_env_vars
-                .iter()
-                .any(|blocked| blocked == key)
-            {
+            if !self.policy.blocks_env_var(key) {
                 cmd.env(key, value);
             }
         }

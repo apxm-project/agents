@@ -1,10 +1,11 @@
 //! Ollama backend implementation (local models).
 
+use crate::llm::ProviderProtocol;
 use crate::llm::backends::traits::StreamChunk;
 use crate::llm::backends::{LLMBackend, LLMRequest, LLMResponse, Role};
+use crate::llm::wire::{api_paths, ollama as ollama_keys};
 use anyhow::{Context, Result};
 use apxm_core::constants::graph::attrs::{BASE_URL, MODEL};
-use apxm_core::constants::llm::{api_paths, ollama as ollama_keys};
 use apxm_core::types::{FinishReason, ModelCapabilities, ModelInfo, TokenUsage, ToolCall};
 use async_trait::async_trait;
 use futures::StreamExt as _;
@@ -14,6 +15,7 @@ use std::pin::Pin;
 use tokio_stream::Stream;
 
 const DEFAULT_BASE_URL: &str = "http://localhost:11434";
+const PROTOCOL: ProviderProtocol = ProviderProtocol::Ollama;
 const DEFAULT_MODEL: &str = "gpt-oss:120b-cloud";
 
 const INT_OPTIONS: &[&str] = &[
@@ -356,7 +358,7 @@ impl LLMBackend for OllamaBackend {
     }
 
     fn name(&self) -> &str {
-        "ollama"
+        PROTOCOL.as_str()
     }
 
     fn model(&self) -> &str {

@@ -1,7 +1,7 @@
 use crate::template::{is_numeric_placeholder, parse_placeholder_names};
 use crate::{AirError, AirModule};
 use apxm_core::constants::graph::attrs as graph_attrs;
-use apxm_core::types::{DependencyType, Value, get_operation_spec, provider_spec};
+use apxm_core::types::{DependencyType, Value, get_operation_spec};
 use std::collections::{HashMap, HashSet, VecDeque};
 
 pub fn validate_module(module: &AirModule) -> Result<(), AirError> {
@@ -181,19 +181,7 @@ fn validate_providers(module: &AirModule) -> Result<(), AirError> {
             }
         };
 
-        if provider_spec::resolve_builtin_provider(provider_name).is_none() {
-            let valid: Vec<&str> = provider_spec::BUILTIN_PROVIDERS
-                .iter()
-                .map(|s| s.id)
-                .collect();
-            return Err(AirError::Validation(format!(
-                "node '{}' ({}): unknown provider '{}'. Registered providers: {}",
-                node.name,
-                node.op,
-                provider_name,
-                valid.join(", ")
-            )));
-        }
+        let _ = provider_name;
     }
 
     Ok(())

@@ -1,4 +1,9 @@
 //! User-facing Dekk command hints emitted by the APXM CLI.
+//!
+//! Some hints are only referenced from feature-gated command paths. Keeping
+//! them centralized avoids reintroducing command-string literals at call sites.
+
+#![allow(dead_code)]
 
 pub const APXM_ENV_HINT: &str = "dekk apxm ...";
 #[cfg(not(feature = "driver"))]

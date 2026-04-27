@@ -96,7 +96,7 @@ impl Compiler {
     /// Validate model allowlist for an AIR module.
     ///
     /// This is a static validation that doesn't require a compiler context.
-    /// If `allowlist` is None, validation passes silently (backward compatible).
+    /// If `allowlist` is None, the governance check is disabled.
     pub fn validate_model_allowlist(
         module: &AirModule,
         allowlist: Option<&Vec<String>>,

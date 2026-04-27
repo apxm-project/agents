@@ -259,8 +259,9 @@ def DspyOptimize : Pass<"dspy-optimize", "mlir::ModuleOp"> {
     Invokes python3 -m apxm_dspy as a subprocess to run DSPy's prompt
     optimizers (MIPROv2, BootstrapFewShot, COPRO) on template strings.
 
-    The pass is part of O1/O2/O3 and is a no-op unless compiler-owned prompt
-    tuning configuration and training data are available.
+    The Rust pipeline injects this pass into O1/O2/O3 only when compiler-owned
+    prompt tuning configuration and training data are available. Without that
+    typed request, default O-levels stay deterministic and side-effect free.
   }];
   let constructor = "mlir::ais::createDspyOptimizePass()";
 }

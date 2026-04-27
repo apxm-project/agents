@@ -3,7 +3,7 @@
 //! This module provides functionality to start, stop, and monitor Docker
 //! containers for local inference backends (vLLM, Ollama, etc.).
 
-use apxm_core::types::{BackendConfig, BackendType};
+use apxm_backends::llm::{BackendConfig, BackendType};
 use std::process::Command;
 use thiserror::Error;
 
@@ -312,7 +312,7 @@ mod tests {
 
     #[test]
     fn test_not_local_backend_error() {
-        use apxm_core::types::ProviderProtocol;
+        use apxm_backends::llm::ProviderProtocol;
 
         let backend = BackendConfig {
             name: "cloud-backend".to_string(),
@@ -333,7 +333,7 @@ mod tests {
 
     #[test]
     fn test_no_docker_config_error() {
-        use apxm_core::types::ProviderProtocol;
+        use apxm_backends::llm::ProviderProtocol;
 
         let backend = BackendConfig {
             name: "local-backend".to_string(),

@@ -1210,7 +1210,7 @@ mod tests {
     fn metrics_json_includes_backend_graph_snapshots() {
         let mut result = sample_result();
         result.graph_status_snapshots.push(
-            GraphStatusSnapshot::vllm(TEST_EXECUTION_ID)
+            GraphStatusSnapshot::graph_aware(TEST_EXECUTION_ID)
                 .with_registered(true)
                 .with_pin_counts(2, 16)
                 .with_shape(Some(4), Some(3)),
@@ -1227,7 +1227,7 @@ mod tests {
         use metrics_keys::graph_status_keys as gsk;
         assert_eq!(
             graphs[0][gsk::BACKEND_KIND],
-            apxm_core::constants::graph::backend_kind::VLLM
+            apxm_core::constants::graph::backend_kind::GRAPH_AWARE
         );
         assert_eq!(graphs[0][gsk::GRAPH_ID], TEST_EXECUTION_ID);
         assert_eq!(graphs[0][gsk::PINNED_HANDLES], 2);
@@ -1245,7 +1245,7 @@ mod tests {
         result.token_snapshot.total.reasoning_output_tokens = 5;
         result
             .graph_status_snapshots
-            .push(GraphStatusSnapshot::vllm(TEST_EXECUTION_ID).with_registered(true));
+            .push(GraphStatusSnapshot::graph_aware(TEST_EXECUTION_ID).with_registered(true));
 
         let summary = super::ExecutionSummary::from_result(&result);
         assert_eq!(summary.status, super::ExecutionSummaryStatus::Success);

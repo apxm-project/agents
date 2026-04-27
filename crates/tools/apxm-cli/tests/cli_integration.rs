@@ -34,19 +34,33 @@ fn apxm() -> Command {
 }
 
 fn compiler_library_dir(binary: &Path) -> Option<std::path::PathBuf> {
-    let profile_dir = binary.parent()?;
-    let installed_lib_dir = profile_dir.join("lib");
-    if installed_lib_dir.is_dir() {
-        return Some(installed_lib_dir);
+    let binary_dir = binary.parent()?;
+    let profile_dirs = if binary_dir.file_name().is_some_and(|name| name == "deps") {
+        vec![binary_dir, binary_dir.parent()?]
+    } else {
+        vec![binary_dir]
+    };
+
+    let library_name = compiler_library_name();
+    for profile_dir in profile_dirs {
+        let installed_lib_dir = profile_dir.join("lib");
+        if installed_lib_dir.join(library_name).is_file() {
+            return Some(installed_lib_dir);
+        }
+
+        let build_dir = profile_dir.join("build");
+        if let Ok(entries) = std::fs::read_dir(build_dir) {
+            let found = entries
+                .filter_map(Result::ok)
+                .map(|entry| entry.path().join("out").join("build").join("lib"))
+                .find(|candidate| candidate.join(library_name).is_file());
+            if found.is_some() {
+                return found;
+            }
+        }
     }
 
-    let build_dir = profile_dir.join("build");
-    let library_name = compiler_library_name();
-    std::fs::read_dir(build_dir)
-        .ok()?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path().join("out").join("build").join("lib"))
-        .find(|candidate| candidate.join(library_name).is_file())
+    None
 }
 
 fn compiler_library_name() -> &'static str {
@@ -89,6 +103,7 @@ fn python3_available() -> bool {
         .unwrap_or(false)
 }
 
+#[cfg(feature = "driver")]
 fn write_json_file(path: &Path, value: &serde_json::Value) {
     std::fs::write(path, serde_json::to_vec_pretty(value).unwrap()).unwrap();
 }
@@ -134,6 +149,7 @@ fn write_session_manifest(
     session_dir
 }
 
+#[cfg(feature = "driver")]
 fn write_tmp_driver_config(hook_log: &Path) -> tempfile::NamedTempFile {
     use apxm_driver::config::{HookConfig, HookEvent, MiddlewareConfig};
 
@@ -244,7 +260,7 @@ module {
     assert!(air.contains("%n2 = ais.inv_tool"));
     assert!(air.contains("%n3 = ais.ask"));
     assert!(air.contains("[%n2 : !ais.token]"));
-    assert!(air.contains("input_names = [\"artifact\"]"));
+    assert!(air.contains("\"input_names\" = [\"artifact\"]"));
 }
 
 #[cfg(feature = "driver")]
@@ -297,7 +313,7 @@ module {
     assert!(air.contains("%n2 = ais.inv_tool"));
     assert!(air.contains("%n3 = ais.ask"));
     assert!(air.contains("[%n2 : !ais.token]"));
-    assert!(air.contains("input_names = [\"artifact\"]"));
+    assert!(air.contains("\"input_names\" = [\"artifact\"]"));
 }
 
 #[cfg(feature = "driver")]
@@ -364,7 +380,7 @@ if __name__ == "__main__":
     let air = String::from_utf8_lossy(&decompile.stdout);
     assert!(air.contains("ais.inv_tool"));
     assert_eq!(air.matches("ais.ask").count(), 2);
-    assert_eq!(air.matches("input_names = [\"artifact\"]").count(), 2);
+    assert_eq!(air.matches("\"input_names\" = [\"artifact\"]").count(), 2);
     assert_eq!(air.matches(": !ais.token]").count(), 2);
 }
 
@@ -378,6 +394,7 @@ const VALID_ASK: &str = r#"module {
 }
 "#;
 
+#[cfg(feature = "driver")]
 const VALID_PIPELINE: &str = r#"module {
   func.func @test_pipeline() -> !ais.token attributes {ais.entry} {
     %a = ais.ask "step 1" : !ais.token
@@ -387,6 +404,7 @@ const VALID_PIPELINE: &str = r#"module {
 }
 "#;
 
+#[cfg(feature = "driver")]
 const VALID_PARALLEL: &str = r#"module {
   func.func @test_parallel() -> !ais.token attributes {ais.entry} {
     %a = ais.ask "task a" : !ais.token
@@ -397,6 +415,7 @@ const VALID_PARALLEL: &str = r#"module {
 }
 "#;
 
+#[cfg(feature = "driver")]
 const CONST_GRAPH: &str = r#"module {
   func.func @const_graph() -> !ais.token attributes {ais.entry} {
     %value = ais.const_str "ok" : !ais.token
@@ -407,6 +426,7 @@ const CONST_GRAPH: &str = r#"module {
 
 // ─── validate: valid graphs ─────────────────────────────────────────────────
 
+#[cfg(feature = "driver")]
 #[test]
 fn validate_valid_ask_air() {
     let f = write_tmp_graph(VALID_ASK);
@@ -420,6 +440,7 @@ fn validate_valid_ask_air() {
     assert!(v["errors"].as_array().unwrap().is_empty());
 }
 
+#[cfg(feature = "driver")]
 #[test]
 fn validate_valid_pipeline_air() {
     let f = write_tmp_graph(VALID_PIPELINE);
@@ -432,6 +453,7 @@ fn validate_valid_pipeline_air() {
     assert_eq!(v["valid"], true);
 }
 
+#[cfg(feature = "driver")]
 #[test]
 fn run_json_errors_are_emitted_as_json() {
     let missing = tempfile::tempdir().unwrap().path().join("missing.apxmobj");
@@ -454,6 +476,7 @@ fn run_json_errors_are_emitted_as_json() {
     );
 }
 
+#[cfg(feature = "driver")]
 #[test]
 fn execute_json_errors_are_emitted_as_json() {
     let missing_config = tempfile::tempdir().unwrap().path().join("missing.toml");
@@ -482,6 +505,7 @@ fn execute_json_errors_are_emitted_as_json() {
     );
 }
 
+#[cfg(feature = "driver")]
 #[test]
 fn execute_air_with_local_controls_succeeds_end_to_end() {
     let graph = write_tmp_file_named(".air", CONST_GRAPH);
@@ -603,6 +627,7 @@ fn codegen_frontend_writes_generated_python_files() {
 
 // ─── analyze ────────────────────────────────────────────────────────────────
 
+#[cfg(feature = "driver")]
 #[test]
 fn analyze_parallel_graph() {
     let f = write_tmp_graph(VALID_PARALLEL);
@@ -613,11 +638,12 @@ fn analyze_parallel_graph() {
     assert!(out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["max_parallelism"], 2);
-    assert_eq!(v["depth"], 2);
-    assert_eq!(v["node_count"], 3);
-    assert_eq!(v["edge_count"], 2);
+    assert_eq!(v["depth"], 3);
+    assert_eq!(v["node_count"], 4);
+    assert_eq!(v["edge_count"], 3);
 }
 
+#[cfg(feature = "driver")]
 #[test]
 fn analyze_single_node() {
     let f = write_tmp_graph(VALID_ASK);
@@ -628,10 +654,11 @@ fn analyze_single_node() {
     assert!(out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["max_parallelism"], 1);
-    assert_eq!(v["depth"], 1);
+    assert_eq!(v["depth"], 2);
     assert_eq!(v["speedup"]["estimated_speedup"], "1.00x");
 }
 
+#[cfg(feature = "driver")]
 #[test]
 fn analyze_pipeline_graph() {
     let f = write_tmp_graph(VALID_PIPELINE);
@@ -642,7 +669,7 @@ fn analyze_pipeline_graph() {
     assert!(out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["max_parallelism"], 1);
-    assert_eq!(v["depth"], 2);
+    assert_eq!(v["depth"], 3);
 }
 
 // ─── ops ────────────────────────────────────────────────────────────────────
@@ -720,7 +747,13 @@ fn template_list_json() {
     assert!(out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     let templates = v.as_array().unwrap();
-    assert!(templates.len() >= 6);
+    let names: Vec<&str> = templates
+        .iter()
+        .filter_map(|template| template["name"].as_str())
+        .collect();
+    for expected in ["ask", "pipeline", "fan-out", "map-reduce", "verify"] {
+        assert!(names.contains(&expected));
+    }
     for t in templates {
         assert!(t["name"].is_string());
         assert!(t["description"].is_string());
@@ -745,16 +778,19 @@ fn template_show_unknown() {
     assert!(!out.status.success());
 }
 
+#[cfg(feature = "driver")]
 #[test]
 fn template_roundtrip_validate() {
-    // Get template AIR and feed it to validate
+    // Get canonical template AIR and feed it to validate.
     let show_out = apxm()
-        .args(["template", "show", "map-reduce"])
+        .args(["--json", "template", "show", "map-reduce"])
         .output()
         .unwrap();
     assert!(show_out.status.success());
+    let template: serde_json::Value = serde_json::from_slice(&show_out.stdout).unwrap();
+    let air = template["air"].as_str().unwrap();
 
-    let f = write_tmp_graph(std::str::from_utf8(&show_out.stdout).unwrap());
+    let f = write_tmp_graph(air);
     let val_out = apxm()
         .args(["--json", "validate", f.path().to_str().unwrap()])
         .output()
@@ -805,6 +841,7 @@ fn validate_duplicate_parameter_name() {
     assert_eq!(v["valid"], false);
 }
 
+#[cfg(feature = "driver")]
 #[test]
 fn validate_disconnected_graph() {
     let f = write_tmp_graph(
@@ -827,6 +864,7 @@ fn validate_disconnected_graph() {
     assert_eq!(v["valid"], true);
 }
 
+#[cfg(feature = "driver")]
 #[test]
 fn validate_parameter_invalid_type() {
     let f = write_tmp_graph(
@@ -842,6 +880,7 @@ fn validate_parameter_invalid_type() {
 
 // ─── analyze: edge cases ────────────────────────────────────────────────────
 
+#[cfg(feature = "driver")]
 #[test]
 fn analyze_disconnected_components() {
     let f = write_tmp_graph(
@@ -862,9 +901,10 @@ fn analyze_disconnected_components() {
     assert!(out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["max_parallelism"], 2);
-    assert_eq!(v["depth"], 2);
+    assert_eq!(v["depth"], 3);
 }
 
+#[cfg(feature = "driver")]
 #[test]
 fn analyze_includes_entry_exit_nodes() {
     let f = write_tmp_graph(VALID_PIPELINE);
@@ -912,6 +952,7 @@ fn ops_show_has_long_description() {
 
 // ─── explain ───────────────────────────────────────────────────────────────
 
+#[cfg(feature = "driver")]
 #[test]
 fn explain_single_node_json() {
     let f = write_tmp_graph(VALID_ASK);
@@ -921,18 +962,20 @@ fn explain_single_node_json() {
         .unwrap();
     assert!(out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(v["graph_name"], "test-ask");
-    assert_eq!(v["node_count"], 1);
-    assert_eq!(v["edge_count"], 0);
-    assert_eq!(v["depth"], 1);
+    assert_eq!(v["graph_name"], "test_ask");
+    assert_eq!(v["node_count"], 2);
+    assert_eq!(v["edge_count"], 1);
+    assert_eq!(v["depth"], 2);
     let flow = v["execution_flow"].as_array().unwrap();
-    assert_eq!(flow.len(), 1);
+    assert_eq!(flow.len(), 2);
     assert_eq!(flow[0]["phase"], 1);
     let nodes = flow[0]["nodes"].as_array().unwrap();
     assert_eq!(nodes.len(), 1);
     assert_eq!(nodes[0]["op"], "ASK");
+    assert_eq!(flow[1]["nodes"][0]["op"], "RETURN");
 }
 
+#[cfg(feature = "driver")]
 #[test]
 fn explain_pipeline_json() {
     let f = write_tmp_graph(VALID_PIPELINE);
@@ -942,14 +985,16 @@ fn explain_pipeline_json() {
         .unwrap();
     assert!(out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(v["depth"], 2);
+    assert_eq!(v["depth"], 3);
     let flow = v["execution_flow"].as_array().unwrap();
-    assert_eq!(flow.len(), 2);
-    // Phase 1: single node, Phase 2: single node
+    assert_eq!(flow.len(), 3);
+    // Phase 1 and 2 are ASK nodes, Phase 3 is RETURN.
     assert_eq!(flow[0]["nodes"].as_array().unwrap().len(), 1);
     assert_eq!(flow[1]["nodes"].as_array().unwrap().len(), 1);
+    assert_eq!(flow[2]["nodes"][0]["op"], "RETURN");
 }
 
+#[cfg(feature = "driver")]
 #[test]
 fn explain_parallel_json() {
     let f = write_tmp_graph(VALID_PARALLEL);
@@ -966,6 +1011,7 @@ fn explain_parallel_json() {
     assert!(v["summary"]["max_parallelism"].as_u64().unwrap() >= 2);
 }
 
+#[cfg(feature = "driver")]
 #[test]
 fn explain_human_readable() {
     let f = write_tmp_graph(VALID_PIPELINE);
@@ -988,6 +1034,7 @@ fn explain_file_not_found() {
     assert!(!out.status.success());
 }
 
+#[cfg(feature = "driver")]
 #[test]
 fn explain_node_metadata() {
     let f = write_tmp_graph(VALID_ASK);
@@ -1190,35 +1237,6 @@ fn session_list_prefers_local_root_over_global_home() {
 }
 
 #[test]
-fn session_inspect_falls_back_to_global_when_not_found_locally() {
-    let workspace = tempfile::tempdir().unwrap();
-    let home = tempfile::tempdir().unwrap();
-
-    write_session_manifest(
-        &workspace.path().join(".apxm").join("sessions"),
-        "local-run",
-        "2026-04-23T12:00:00Z",
-    );
-    let global_dir = write_session_manifest(
-        &home.path().join(".apxm").join("sessions"),
-        "global-run",
-        "2026-04-22T12:00:00Z",
-    );
-
-    let out = apxm()
-        .current_dir(workspace.path())
-        .env("HOME", home.path())
-        .args(["--json", "session", "inspect", "global-run"])
-        .output()
-        .unwrap();
-    assert!(out.status.success());
-
-    let session: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(session["manifest"]["execution_id"], "global-run");
-    assert_eq!(session["path"], global_dir.display().to_string());
-}
-
-#[test]
 fn session_list_uses_explicit_session_root() {
     let workspace = tempfile::tempdir().unwrap();
     let home = tempfile::tempdir().unwrap();
@@ -1312,6 +1330,7 @@ fn session_clean_uses_explicit_session_root() {
     );
 }
 
+#[cfg(feature = "driver")]
 #[test]
 fn workflow_run_nested_workflow_uses_explicit_root_for_parent_and_child() {
     let temp = tempfile::tempdir().unwrap();

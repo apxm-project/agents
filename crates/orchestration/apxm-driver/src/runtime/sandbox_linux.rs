@@ -152,12 +152,7 @@ impl SandboxBackend for BubblewrapSandboxBackend {
         command.env(sandbox_env::TEMP, bubblewrap::TMP_DIR);
         command.env(sandbox_env::TMP, bubblewrap::TMP_DIR);
         for (key, value) in &request.env {
-            if !self
-                .policy
-                .blocked_env_vars
-                .iter()
-                .any(|blocked| blocked == key)
-            {
+            if !self.policy.blocks_env_var(key) {
                 command.env(key, value);
             }
         }

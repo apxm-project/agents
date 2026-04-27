@@ -82,7 +82,7 @@ impl RuntimeExecutor {
         let report = MlirEnvReport::detect();
         report.apply_env();
         if report.is_ready() {
-            match CompilerInnerPlanLinker::new() {
+            match CompilerInnerPlanLinker::new(config.pipeline_config.clone()) {
                 Ok(linker) => {
                     apxm_core::log_info!("driver", "MLIR inner-plan linker initialized");
                     runtime.set_inner_plan_linker(Arc::new(linker));

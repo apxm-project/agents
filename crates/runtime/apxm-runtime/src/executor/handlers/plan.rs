@@ -333,7 +333,7 @@ async fn execute_plan_once(
                         tracing::warn!(
                             execution_id = %ctx.execution_id,
                             "Inner plan linking not supported - continuing without inner plan execution. \
-                             To enable, ensure CompilerInnerPlanLinker is attached to runtime."
+                             To enable, attach an InnerPlanLinker implementation to runtime."
                         );
                         // Continue execution without inner plan - not a fatal error
                     } else {

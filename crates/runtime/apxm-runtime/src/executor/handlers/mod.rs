@@ -223,8 +223,7 @@ pub async fn execute_llm_request(
 ) -> Result<LLMResponse> {
     // Use streaming path when an event emitter is available so we can
     // emit token-by-token events. The default generate_stream() impl
-    // just wraps generate() into a single Done chunk, so this is
-    // backward compatible.
+    // wraps generate() into a single Done chunk for non-streaming backends.
     if let Some(emitter) = &ctx.event_emitter {
         emitter.emit_llm_prompt(node_id, &request.prompt);
         return execute_llm_request_streaming(ctx, node_id, phase, request).await;
