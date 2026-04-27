@@ -3,6 +3,8 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
+use apxm_core::types::OptimizationTarget;
+
 use super::implementations::parse_header;
 
 #[derive(Parser)]
@@ -49,8 +51,8 @@ pub enum Commands {
         #[arg(short = 'O', long = "opt-level", default_value = "2")]
         opt_level: u8,
         /// Optimization target: latency, cost, tokens, parallelism, balanced
-        #[arg(long, default_value = "balanced")]
-        target: String,
+        #[arg(long, default_value_t = OptimizationTarget::Balanced)]
+        target: OptimizationTarget,
         /// Skip CSE for LLM operations (useful with non-zero temperature)
         #[arg(long)]
         no_cse_llm: bool,
@@ -90,6 +92,9 @@ pub enum Commands {
         /// Optimization level (0 = no optimizations, 1-3 = increasing optimization)
         #[arg(short = 'O', long = "opt-level", default_value = "2")]
         opt_level: u8,
+        /// Optimization target: latency, cost, tokens, parallelism, balanced
+        #[arg(long, default_value_t = OptimizationTarget::Balanced)]
+        target: OptimizationTarget,
         /// Emit metrics JSON file with runtime execution statistics
         #[arg(long)]
         emit_metrics: Option<PathBuf>,
@@ -112,6 +117,10 @@ pub enum Commands {
         /// Arguments to pass to the entry flow
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
+        /// Runtime optimization target for artifact-level execution hints:
+        /// latency, cost, tokens, parallelism, balanced
+        #[arg(long, default_value_t = OptimizationTarget::Balanced)]
+        target: OptimizationTarget,
         /// Emit metrics JSON file with runtime execution statistics
         #[arg(long)]
         emit_metrics: Option<PathBuf>,

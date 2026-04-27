@@ -190,6 +190,10 @@ struct SharedPrefixAnalysisPass
           op->setAttr(apxm::constants::attrs::SHARED_PREFIX_EST_TOKENS,
                       builder.getI64IntegerAttr(estimatedTokens));
         }
+        if (!op->hasAttr(apxm::constants::attrs::SHARED_PREFIX_GROUP_SIZE)) {
+          op->setAttr(apxm::constants::attrs::SHARED_PREFIX_GROUP_SIZE,
+                      builder.getI64IntegerAttr(group.ops.size()));
+        }
         if (first && !op->hasAttr(apxm::constants::attrs::WARMUP_CANDIDATE)) {
           op->setAttr(apxm::constants::attrs::WARMUP_CANDIDATE,
                       builder.getBoolAttr(true));

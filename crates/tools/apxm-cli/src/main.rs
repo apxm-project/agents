@@ -139,6 +139,7 @@ async fn run_cli(cli: Cli) -> Result<()> {
             input,
             args,
             opt_level,
+            target,
             emit_metrics,
             emit_session,
             no_emit_session,
@@ -148,6 +149,7 @@ async fn run_cli(cli: Cli) -> Result<()> {
                 input,
                 args,
                 opt_level,
+                target,
                 cli.config,
                 cli.json,
                 emit_metrics,
@@ -159,6 +161,7 @@ async fn run_cli(cli: Cli) -> Result<()> {
         Commands::Run {
             input,
             args,
+            target,
             emit_metrics,
             emit_session,
             no_emit_session,
@@ -167,6 +170,7 @@ async fn run_cli(cli: Cli) -> Result<()> {
             run_command(
                 input,
                 args,
+                target,
                 cli.config,
                 cli.json,
                 emit_metrics,

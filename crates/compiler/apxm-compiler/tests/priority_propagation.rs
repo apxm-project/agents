@@ -37,6 +37,29 @@ fn downstream_ids(node_attrs: &HashMap<String, Value>) -> Vec<u64> {
         .collect()
 }
 
+fn node_priority_by_id(dag: &apxm_core::types::ExecutionDag, id: u64) -> u32 {
+    dag.nodes
+        .iter()
+        .find(|node| node.id == id)
+        .unwrap_or_else(|| panic!("missing node {id}"))
+        .metadata
+        .priority
+}
+
+fn node_priority_by_template(dag: &apxm_core::types::ExecutionDag, needle: &str) -> u32 {
+    dag.nodes
+        .iter()
+        .find(|node| {
+            node.attributes
+                .get(graph_attrs::TEMPLATE_STR)
+                .and_then(Value::as_string)
+                .is_some_and(|template| template.contains(needle))
+        })
+        .unwrap_or_else(|| panic!("missing node template containing {needle}"))
+        .metadata
+        .priority
+}
+
 fn shared_prefix_attrs(branch: &str, input_name: &str) -> HashMap<String, Value> {
     HashMap::from([
         (
@@ -78,6 +101,12 @@ fn test_priority_on_critical_path() {
                 op: AISOperationType::Ask,
                 attributes: ask_attrs("process1"),
             },
+            AirNode {
+                id: 4,
+                name: "return".to_string(),
+                op: AISOperationType::Return,
+                attributes: HashMap::new(),
+            },
         ],
         edges: vec![
             AirEdge {
@@ -90,6 +119,11 @@ fn test_priority_on_critical_path() {
                 to: 3,
                 dependency: DependencyType::Data,
             },
+            AirEdge {
+                from: 3,
+                to: 4,
+                dependency: DependencyType::Data,
+            },
         ],
         parameters: vec![],
         metadata: HashMap::new(),
@@ -98,8 +132,13 @@ fn test_priority_on_critical_path() {
     let context = Context::new().expect("compiler context");
     let pipeline = Pipeline::with_opt_level(&context, OptimizationLevel::O1);
 
-    // Compile the module through the pipeline (requires MLIR)
-    let _module = pipeline.compile_graph(&graph).expect("compilation failed");
+    let module = pipeline.compile_graph(&graph).expect("compilation failed");
+    let bytes = module.generate_artifact_bytes().expect("artifact");
+    let artifact = Artifact::from_bytes(&bytes).expect("parse artifact");
+    let dag = artifact.entry_dag().expect("entry dag");
+
+    assert_eq!(node_priority_by_id(dag, 2), 90);
+    assert_eq!(node_priority_by_id(dag, 3), 90);
 }
 
 #[test]
@@ -316,6 +355,12 @@ fn test_shared_prefix_analysis_marks_latency_fanout() {
             .and_then(Value::as_u64)
             .expect("shared prefix token estimate");
         assert!(estimated > 0);
+        assert_eq!(
+            node.attributes
+                .get(graph_attrs::SHARED_PREFIX_GROUP_SIZE)
+                .and_then(Value::as_u64),
+            Some(2)
+        );
     }
 }
 
@@ -403,19 +448,58 @@ fn test_priority_normal_for_non_critical() {
                 id: 2,
                 name: "critical1".to_string(),
                 op: AISOperationType::Ask,
-                attributes: ask_attrs("root"),
+                attributes: HashMap::from([
+                    (
+                        graph_attrs::TEMPLATE_STR.into(),
+                        Value::String("critical branch {root}".into()),
+                    ),
+                    (
+                        graph_attrs::INPUT_NAMES.into(),
+                        Value::Array(vec![Value::String("root".into())]),
+                    ),
+                ]),
             },
             AirNode {
                 id: 3,
                 name: "non_critical".to_string(),
                 op: AISOperationType::Ask,
-                attributes: ask_attrs("root"),
+                attributes: HashMap::from([
+                    (
+                        graph_attrs::TEMPLATE_STR.into(),
+                        Value::String("background branch {root}".into()),
+                    ),
+                    (
+                        graph_attrs::INPUT_NAMES.into(),
+                        Value::Array(vec![Value::String("root".into())]),
+                    ),
+                ]),
             },
             AirNode {
                 id: 4,
                 name: "critical2".to_string(),
                 op: AISOperationType::Ask,
-                attributes: ask_attrs("critical1"),
+                attributes: HashMap::from([
+                    (
+                        graph_attrs::TEMPLATE_STR.into(),
+                        Value::String("final critical step {critical1}".into()),
+                    ),
+                    (
+                        graph_attrs::INPUT_NAMES.into(),
+                        Value::Array(vec![Value::String("critical1".into())]),
+                    ),
+                ]),
+            },
+            AirNode {
+                id: 5,
+                name: "join".to_string(),
+                op: AISOperationType::Merge,
+                attributes: HashMap::new(),
+            },
+            AirNode {
+                id: 6,
+                name: "return".to_string(),
+                op: AISOperationType::Return,
+                attributes: HashMap::new(),
             },
         ],
         edges: vec![
@@ -434,6 +518,21 @@ fn test_priority_normal_for_non_critical() {
                 to: 4,
                 dependency: DependencyType::Data,
             },
+            AirEdge {
+                from: 4,
+                to: 5,
+                dependency: DependencyType::Data,
+            },
+            AirEdge {
+                from: 3,
+                to: 5,
+                dependency: DependencyType::Data,
+            },
+            AirEdge {
+                from: 5,
+                to: 6,
+                dependency: DependencyType::Data,
+            },
         ],
         parameters: vec![],
         metadata: HashMap::new(),
@@ -442,6 +541,12 @@ fn test_priority_normal_for_non_critical() {
     let context = Context::new().expect("compiler context");
     let pipeline = Pipeline::with_opt_level(&context, OptimizationLevel::O1);
 
-    // Compile the module through the pipeline (requires MLIR)
-    let _module = pipeline.compile_graph(&graph).expect("compilation failed");
+    let module = pipeline.compile_graph(&graph).expect("compilation failed");
+    let bytes = module.generate_artifact_bytes().expect("artifact");
+    let artifact = Artifact::from_bytes(&bytes).expect("parse artifact");
+    let dag = artifact.entry_dag().expect("entry dag");
+
+    assert_eq!(node_priority_by_template(dag, "critical branch"), 90);
+    assert_eq!(node_priority_by_template(dag, "final critical step"), 90);
+    assert_eq!(node_priority_by_template(dag, "background branch"), 30);
 }

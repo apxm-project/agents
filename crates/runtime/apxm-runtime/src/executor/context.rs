@@ -16,7 +16,7 @@ use apxm_backends::LLMRegistry;
 use apxm_core::InstructionConfig;
 use apxm_core::constants::{cache, runtime::metadata};
 use apxm_core::paths::ApxmPaths;
-use apxm_core::types::Agent;
+use apxm_core::types::{Agent, OptimizationTarget};
 use std::sync::Arc;
 
 use super::cancellation::CancellationToken;
@@ -56,6 +56,8 @@ pub struct ExecutionContext {
     pub start_time: std::time::Instant,
     pub metadata: std::collections::HashMap<String, String>,
     pub token_budget: Option<u64>,
+    /// Runtime view of the compiler/driver optimization target for this graph.
+    pub optimization_target: OptimizationTarget,
     pub consumed_tokens: Arc<std::sync::atomic::AtomicU64>,
     pub warmup_config: WarmupConfig,
     pub warmup_metrics: Arc<WarmupMetrics>,
@@ -152,6 +154,7 @@ impl ExecutionContext {
             start_time: std::time::Instant::now(),
             metadata: metadata_map,
             token_budget: None,
+            optimization_target: OptimizationTarget::Balanced,
             consumed_tokens: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             warmup_config: WarmupConfig::default(),
             warmup_metrics: Arc::new(WarmupMetrics::new()),
@@ -315,6 +318,7 @@ impl ExecutionContext {
             start_time: std::time::Instant::now(),
             metadata: metadata_map,
             token_budget: self.token_budget,
+            optimization_target: self.optimization_target,
             consumed_tokens: Arc::clone(&self.consumed_tokens),
             warmup_config: self.warmup_config.clone(),
             warmup_metrics: Arc::clone(&self.warmup_metrics),

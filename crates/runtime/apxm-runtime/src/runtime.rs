@@ -25,7 +25,7 @@ use apxm_core::log_info;
 use apxm_core::{
     error::RuntimeError,
     types::{
-        GraphStatusSnapshot,
+        GraphStatusSnapshot, OptimizationTarget,
         execution::{Agent, AgentFlow, ExecutionDag, ExecutionStats},
         values::Value,
     },
@@ -71,6 +71,13 @@ pub struct RuntimeConfig {
     /// Warmup configuration for shared-prefix optimization.
     #[serde(default)]
     pub warmup_config: crate::executor::WarmupConfig,
+    /// Optimization target selected by the compiler/driver for this execution.
+    ///
+    /// Runtime side effects such as synthetic shared-prefix warmup are enabled
+    /// only for latency-oriented targets. Artifact-only runs default to
+    /// `balanced` unless a caller explicitly constructs a runtime config.
+    #[serde(default)]
+    pub optimization_target: OptimizationTarget,
 }
 
 impl RuntimeConfig {
@@ -82,6 +89,7 @@ impl RuntimeConfig {
             token_budget: None,
             context_stack: None,
             warmup_config: crate::executor::WarmupConfig::default(),
+            optimization_target: OptimizationTarget::Balanced,
         }
     }
 
@@ -217,6 +225,7 @@ impl Runtime {
         ctx.instruction_config = self.instruction_config.clone();
         ctx.token_budget = self.config.token_budget;
         ctx.warmup_config = self.config.warmup_config.clone();
+        ctx.optimization_target = self.config.optimization_target;
         ctx.event_emitter = event_emitter;
         ctx.sandbox_registry = Arc::clone(&self.sandbox_registry);
         ctx.process_table = Arc::clone(&self.process_table);

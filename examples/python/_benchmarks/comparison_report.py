@@ -25,10 +25,19 @@ from typing import Any
 DEFAULT_BOOTSTRAP_SAMPLES = 2000
 DEFAULT_BOOTSTRAP_SEED = 42
 LIST_SEPARATOR = ";"
+MIN_SPEEDUP_ABS_MS = 1_000.0
+MIN_SPEEDUP_RELATIVE = 0.05
+MIN_TOKEN_DELTA = 500.0
+MIN_TOKEN_REDUCTION = 0.05
+MIN_CALL_DELTA = 1.0
+RUNTIME_MODES = {"execute", "run-artifact"}
+COMPILE_MODES = {"compile"}
 
 
 class CsvKey:
     ACTIVE_PASSES = "active_passes"
+    ARTIFACT_PATH = "artifact_path"
+    COMPILE_WALL_MS = "compile_wall_ms"
     COMPILER_PASSES_MS = "compiler_passes_ms"
     DIAGNOSTICS_PATH = "diagnostics_path"
     DSPY_FIRED_COUNT = "dspy_fired_count"
@@ -37,6 +46,7 @@ class CsvKey:
     LLM_CALL_COUNT = "llm_call_count"
     MODE = "mode"
     OPT_LEVEL = "opt_level"
+    OPTIMIZATION_TARGET = "optimization_target"
     SUCCESS = "success"
     TOTAL_TOKENS = "total_tokens"
     CACHED_INPUT_TOKENS = "cached_input_tokens"
@@ -98,6 +108,15 @@ def _pick_duration_ms(row: dict[str, str]) -> float | None:
     if graph_duration is not None:
         return graph_duration
     return _to_float(row.get(CsvKey.WALL_MS, ""))
+
+
+def _pick_compile_wall_ms(row: dict[str, str]) -> float | None:
+    compile_wall = _to_float(row.get(CsvKey.COMPILE_WALL_MS, ""))
+    if compile_wall is not None:
+        return compile_wall
+    if row.get(CsvKey.MODE) == "compile":
+        return _to_float(row.get(CsvKey.WALL_MS, ""))
+    return None
 
 
 def _bootstrap_mean_ci(
@@ -205,6 +224,11 @@ def _summarize_by_opt(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
             for row in success_rows
             if (duration := _to_float(row.get(CsvKey.COMPILER_PASSES_MS, ""))) is not None
         ]
+        compile_wall_ms_values = [
+            duration
+            for row in success_rows
+            if (duration := _pick_compile_wall_ms(row)) is not None
+        ]
         total_ops_eliminated = [
             count
             for row in success_rows
@@ -241,6 +265,9 @@ def _summarize_by_opt(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
                 "mean_compiler_passes_ms": statistics.fmean(compiler_pass_ms)
                 if compiler_pass_ms
                 else None,
+                "mean_compile_wall_ms": statistics.fmean(compile_wall_ms_values)
+                if compile_wall_ms_values
+                else None,
                 "mean_total_ops_eliminated": statistics.fmean(total_ops_eliminated)
                 if total_ops_eliminated
                 else None,
@@ -271,6 +298,13 @@ def _summarize_by_opt(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
                     for row in success_rows
                     if row.get(CsvKey.DIAGNOSTICS_PATH)
                 ],
+                "artifact_paths": sorted(
+                    {
+                        row.get(CsvKey.ARTIFACT_PATH, "")
+                        for row in success_rows
+                        if row.get(CsvKey.ARTIFACT_PATH)
+                    }
+                ),
             }
         )
     return summaries
@@ -284,8 +318,10 @@ def _render_markdown(
     bootstrap_samples: int,
 ) -> str:
     modes = sorted({row.get(CsvKey.MODE, "") or "unknown" for row in rows})
-    execute_only = modes == ["execute"]
-    compile_only = modes == ["compile"]
+    targets = sorted({row.get(CsvKey.OPTIMIZATION_TARGET, "") or "unknown" for row in rows})
+    mode_set = set(modes)
+    runtime_only = mode_set.issubset(RUNTIME_MODES)
+    compile_only = mode_set.issubset(COMPILE_MODES)
 
     lines: list[str] = []
     lines.append("# APXM graph benchmark report")
@@ -293,19 +329,20 @@ def _render_markdown(
     lines.append(f"- Source CSV: `{csv_path}`")
     lines.append(f"- Rows: {len(rows)}")
     lines.append(f"- Modes: {', '.join(modes)}")
-    if not execute_only:
+    lines.append(f"- Optimization targets: {', '.join(targets)}")
+    if not runtime_only:
         lines.append(
-            "- Claim status: compile-only rows validate compiler behavior; "
+            "- Claim status: non-runtime rows validate compiler behavior; "
             "they do not support runtime speed, token, or cost claims."
         )
     lines.append("")
     lines.append("## Per-opt-level summary")
     lines.append("")
     lines.append(
-        "| opt | successful / total | success % | mean duration ms | median duration ms | "
-        "mean total tokens | mean cached input | mean reasoning output | mean LLM calls |"
+        "| opt | successful / total | success % | mean runtime ms | median runtime ms | "
+        "mean compile ms | mean total tokens | mean cached input | mean reasoning output | mean LLM calls |"
     )
-    lines.append("|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+    lines.append("|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
 
     for summary in summaries:
         ci = _bootstrap_mean_ci(summary["durations"], bootstrap_samples)
@@ -318,20 +355,41 @@ def _render_markdown(
             f"{summary['success_rate'] * 100:.1f} | "
             f"{mean_with_ci} | "
             f"{_format_float(summary['median_duration_ms'])} | "
+            f"{_format_float(summary['mean_compile_wall_ms'])} | "
             f"{_format_float(summary['mean_total_tokens'])} | "
             f"{_format_float(summary['mean_cached_input_tokens'])} | "
             f"{_format_float(summary['mean_reasoning_output_tokens'])} | "
             f"{_format_float(summary['mean_llm_calls'])} |"
         )
 
-    if compile_only and any(summary["diagnostics_paths"] for summary in summaries):
+    if any(summary["artifact_paths"] for summary in summaries):
+        lines.append("")
+        lines.append(
+            "Runtime rows are repeated `.apxmobj` executions. `mean compile ms` is the "
+            "one-time precompile wall time for the artifact at that optimization level, "
+            "not time paid by every runtime sample."
+        )
+
+    if any(summary["diagnostics_paths"] for summary in summaries):
         lines.append("")
         lines.append("## Compiler diagnostics")
         lines.append("")
-        lines.append(
-            "These rows validate compiler behavior only. They show which passes "
-            "ran or fired, but they do not support runtime speed, token, or cost claims."
-        )
+        if compile_only:
+            lines.append(
+                "These rows validate compiler behavior only. They show which passes "
+                "ran or fired, but they do not support runtime speed, token, or cost claims."
+            )
+        elif "run-artifact" in mode_set:
+            lines.append(
+                "These diagnostics were captured from the precompile step attached to "
+                "each artifact run row, so runtime metrics are separated from compiler "
+                "overhead while still showing which passes fired."
+            )
+        else:
+            lines.append(
+                "These diagnostics were captured from the compile step attached to each "
+                "execute row, so runtime metrics can be tied to the passes that actually fired."
+            )
         lines.append("")
         lines.append(
             "| opt | mean compiler passes ms | fired passes | active passes | "
@@ -350,7 +408,7 @@ def _render_markdown(
                 f"{len(summary['diagnostics_paths'])} |"
             )
 
-    if execute_only and len(summaries) >= 2:
+    if runtime_only and len(summaries) >= 2:
         if compare_opt_levels is None:
             compare_opt_levels = (summaries[0]["opt_level"], summaries[-1]["opt_level"])
 
@@ -398,6 +456,29 @@ def _render_markdown(
                     "mean_reasoning_output_tokens"
                 ]
             has_replicates = len(base["durations"]) >= 2 and len(target["durations"]) >= 2
+            duration_delta = None
+            duration_reduction = None
+            if base_mean is not None and target_mean is not None:
+                duration_delta = base_mean - target_mean
+                if base_mean > 0:
+                    duration_reduction = duration_delta / base_mean
+            base_compile = base["mean_compile_wall_ms"]
+            target_compile = target["mean_compile_wall_ms"]
+            base_first_run = (
+                base_compile + base_mean
+                if base_compile is not None and base_mean is not None
+                else None
+            )
+            target_first_run = (
+                target_compile + target_mean
+                if target_compile is not None and target_mean is not None
+                else None
+            )
+            first_run_delta = (
+                base_first_run - target_first_run
+                if base_first_run is not None and target_first_run is not None
+                else None
+            )
             token_reduction_label = (
                 "-"
                 if token_reduction is None
@@ -408,15 +489,27 @@ def _render_markdown(
                 if call_reduction is None
                 else f"{call_reduction * 100:.1f}%"
             )
-            savings_supported = execute_only and has_replicates and (
-                (token_reduction is not None and token_reduction > 0)
-                or (call_reduction is not None and call_reduction > 0)
+            token_savings_supported = (
+                token_delta is not None
+                and token_reduction is not None
+                and token_delta >= MIN_TOKEN_DELTA
+                and token_reduction >= MIN_TOKEN_REDUCTION
+            )
+            call_savings_supported = call_delta is not None and call_delta >= MIN_CALL_DELTA
+            savings_supported = runtime_only and has_replicates and (
+                token_savings_supported or call_savings_supported
             )
             speed_supported = (
-                execute_only
+                runtime_only
                 and has_replicates
+                and duration_delta is not None
+                and duration_delta >= MIN_SPEEDUP_ABS_MS
+                and duration_reduction is not None
+                and duration_reduction >= MIN_SPEEDUP_RELATIVE
                 and speedup is not None
                 and speedup > 1.0
+                and speedup_ci is not None
+                and speedup_ci[0] > 1.0
             )
 
             lines.append("")
@@ -432,7 +525,33 @@ def _render_markdown(
                 f"- Mean-duration speedup: {_format_measurement(speedup, suffix='x', digits=2)}"
             )
             lines.append(
+                f"- Mean-duration reduction: "
+                f"{_format_measurement(duration_delta, suffix=' ms')} "
+                f"({_format_measurement(None if duration_delta is None else duration_delta / 1000.0, suffix=' s', digits=2)}; "
+                f"{'-' if duration_reduction is None else f'{duration_reduction * 100:.1f}%'})"
+            )
+            if base_compile is not None or target_compile is not None:
+                lines.append(
+                    f"- One-time compile wall: O{base['opt_level']} "
+                    f"{_format_measurement(base_compile, suffix=' ms')}; "
+                    f"O{target['opt_level']} "
+                    f"{_format_measurement(target_compile, suffix=' ms')}"
+                )
+                lines.append(
+                    f"- First-run compile+runtime estimate: O{base['opt_level']} "
+                    f"{_format_measurement(base_first_run, suffix=' ms')}; "
+                    f"O{target['opt_level']} "
+                    f"{_format_measurement(target_first_run, suffix=' ms')}; "
+                    f"delta {_format_measurement(first_run_delta, suffix=' ms')}"
+                )
+            lines.append(
                 f"- Bootstrap 95% CI for speedup: {_format_ci(speedup_ci, digits=2)}"
+            )
+            lines.append(
+                "- Claim threshold: speedup requires >= "
+                f"{MIN_SPEEDUP_ABS_MS / 1000:.1f}s absolute reduction, "
+                f">= {MIN_SPEEDUP_RELATIVE * 100:.0f}% relative reduction, "
+                "and bootstrap lower bound > 1.0."
             )
             lines.append(
                 f"- Success-rate delta: "
@@ -467,7 +586,11 @@ def _render_markdown(
                 + (
                     "supported by measured token or call reduction"
                     if savings_supported
-                    else "not supported by repeated live token/call deltas"
+                    else (
+                        "not supported; requires >= "
+                        f"{MIN_TOKEN_DELTA:.0f} tokens and >= {MIN_TOKEN_REDUCTION * 100:.0f}% "
+                        f"token reduction, or >= {MIN_CALL_DELTA:.0f} fewer calls"
+                    )
                 )
             )
             lines.append(
