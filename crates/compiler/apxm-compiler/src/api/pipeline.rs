@@ -181,6 +181,7 @@ impl<'ctx> Pipeline<'ctx> {
         let dspy_name = DSPY_OPTIMIZE.name;
 
         if self.config.pass_list_override.is_none()
+            && self.config.opt_level != OptimizationLevel::O0
             && !pass_names.iter().any(|name| name == dspy_name)
             && self.optimization_context.prompt_optimization_configured()?
         {

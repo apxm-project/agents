@@ -43,6 +43,7 @@ struct PriorityAnalysis {
   llvm::DenseMap<Operation*, unsigned> stageIndex;
   llvm::DenseMap<Operation*, unsigned> opToId;
   llvm::DenseMap<Operation*, llvm::SmallVector<Operation*, 8>> downstream;
+  llvm::DenseMap<Operation*, bool> criticalPath;
   unsigned criticalPathLength = 0;
 };
 
@@ -168,6 +169,31 @@ static PriorityAnalysis analyzeDag(func::FuncOp func) {
     }
   }
 
+  llvm::SmallVector<Operation*> criticalWorklist;
+  for (Operation* op : ops) {
+    if (analysis.longestPath.lookup(op) == analysis.criticalPathLength) {
+      criticalWorklist.push_back(op);
+    }
+  }
+
+  while (!criticalWorklist.empty()) {
+    Operation* current = criticalWorklist.pop_back_val();
+    if (analysis.criticalPath.lookup(current))
+      continue;
+
+    analysis.criticalPath[current] = true;
+    const unsigned currentDepth = analysis.longestPath.lookup(current);
+    auto downstreamIt = analysis.downstream.find(current);
+    if (downstreamIt == analysis.downstream.end())
+      continue;
+
+    for (Operation* child : downstreamIt->second) {
+      if (analysis.longestPath.lookup(child) + 1 == currentDepth) {
+        criticalWorklist.push_back(child);
+      }
+    }
+  }
+
   return analysis;
 }
 
@@ -202,11 +228,12 @@ struct AssignPriorityPass : impl::AssignPriorityBase<AssignPriorityPass> {
           unsigned stageIndex = analysis.stageIndex.lookup(opPtr);
 
           // Priority assignment strategy (matches Rust parallelism_analysis):
-          // - Critical path nodes (depth == critical_path_length) → Critical
+          // - Critical path nodes (members of at least one maximum-depth path)
+          //   → Critical
           // - High fan-out nodes (FAN_OUT_THRESHOLD+ consumers) → High
           // - Default → Normal
 
-          bool isOnCriticalPath = (longestPath == analysis.criticalPathLength);
+          bool isOnCriticalPath = analysis.criticalPath.lookup(opPtr);
 
           unsigned priority;
           if (isOnCriticalPath) {

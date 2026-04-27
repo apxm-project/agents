@@ -164,6 +164,7 @@ pub const PROFILE_AVG_TOKENS: &str = "__profile_avg_tokens";
 pub const PROFILE_TOKEN_WARNING: &str = "__profile_token_warning";
 pub const WARMUP_CANDIDATE: &str = "warmup_candidate";
 pub const SHARED_PREFIX_EST_TOKENS: &str = "shared_prefix_est_tokens";
+pub const SHARED_PREFIX_GROUP_SIZE: &str = "shared_prefix_group_size";
 pub const DOWNSTREAM_NODES: &str = "downstream_nodes";
 pub const FANOUT_COUNT: &str = "fanout_count";
 pub const REMAINING_PATH_LEN: &str = "remaining_path_len";
@@ -180,6 +181,7 @@ pub const EST_TEMPLATE_TOKENS: &str = "est_template_tokens";
 // the prefix into the bare graph attrs consumed by the runtime.
 pub const AIS_SHARED_PREFIX_GROUP: &str = "ais.shared_prefix_group";
 pub const AIS_SHARED_PREFIX_EST_TOKENS: &str = "ais.shared_prefix_est_tokens";
+pub const AIS_SHARED_PREFIX_GROUP_SIZE: &str = "ais.shared_prefix_group_size";
 pub const AIS_WARMUP_CANDIDATE: &str = "ais.warmup_candidate";
 pub const AIS_DOWNSTREAM_NODES: &str = "ais.downstream_nodes";
 pub const AIS_FANOUT_COUNT: &str = "ais.fanout_count";
@@ -200,6 +202,7 @@ pub const AIS_ESTIMATED_DYNAMIC_TOKENS: &str = "ais.estimated_dynamic_tokens";
 pub const MLIR_DERIVED_BARE_ATTRS: &[&str] = &[
     REUSE_GROUP,              // "shared_prefix_group"
     SHARED_PREFIX_EST_TOKENS, // "shared_prefix_est_tokens"
+    SHARED_PREFIX_GROUP_SIZE, // "shared_prefix_group_size"
     WARMUP_CANDIDATE,         // "warmup_candidate"
     DOWNSTREAM_NODES,         // "downstream_nodes"
     FANOUT_COUNT,             // "fanout_count"
@@ -354,6 +357,7 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     PROFILE_TOKEN_WARNING,
     WARMUP_CANDIDATE,
     SHARED_PREFIX_EST_TOKENS,
+    SHARED_PREFIX_GROUP_SIZE,
     DOWNSTREAM_NODES,
     FANOUT_COUNT,
     REMAINING_PATH_LEN,
@@ -365,6 +369,7 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     EST_TEMPLATE_TOKENS,
     AIS_SHARED_PREFIX_GROUP,
     AIS_SHARED_PREFIX_EST_TOKENS,
+    AIS_SHARED_PREFIX_GROUP_SIZE,
     AIS_WARMUP_CANDIDATE,
     AIS_DOWNSTREAM_NODES,
     AIS_FANOUT_COUNT,

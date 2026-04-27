@@ -56,6 +56,7 @@ impl LinkerConfig {
     /// Set the full compiler pipeline configuration.
     pub fn with_pipeline_config(mut self, pipeline_config: PipelineConfig) -> Self {
         self.opt_level = pipeline_config.opt_level;
+        self.runtime_config.optimization_target = pipeline_config.target;
         self.pipeline_config = pipeline_config;
         self
     }

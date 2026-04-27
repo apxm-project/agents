@@ -255,7 +255,7 @@ pub fn compile_command(
     emit_diagnostics: Option<PathBuf>,
     emit_metrics: Option<PathBuf>,
     opt_level: u8,
-    target: String,
+    target: apxm_core::types::OptimizationTarget,
     no_cse_llm: bool,
     profile: Option<PathBuf>,
     warn: bool,
@@ -265,13 +265,11 @@ pub fn compile_command(
 ) -> Result<()> {
     use apxm_core::constants::diagnostics;
     use apxm_core::constants::session::metrics_keys;
-    use apxm_core::types::{OptimizationTarget, PipelineConfig};
+    use apxm_core::types::PipelineConfig;
 
     let opt = parse_opt_level(opt_level);
     let compiler_config_path = config.clone();
-    let opt_target: OptimizationTarget = target
-        .parse()
-        .with_context(|| format!("Invalid optimization target: {}", target))?;
+    let opt_target = target;
     let _apxm_config = load_config(config.clone())?;
     let input_source = if input.is_dir() {
         resolve_directory_air_source(&input)?
@@ -305,7 +303,7 @@ pub fn compile_command(
         let air_text = std::fs::read_to_string(&graph_input)
             .with_context(|| format!("Failed to read {}", graph_input.display()))?;
         let needs_custom_config = no_cse_llm
-            || opt_target != OptimizationTarget::Balanced
+            || opt_target != apxm_core::types::OptimizationTarget::Balanced
             || compiler_config_path.is_some()
             || profile.is_some()
             || warn

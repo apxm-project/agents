@@ -119,6 +119,7 @@ constexpr llvm::StringLiteral EST_TEMPLATE_TOKENS = "ais.est_template_tokens";
 // ---- Per-op prompt canonicalization annotations ----
 constexpr llvm::StringLiteral SHARED_PREFIX_GROUP = "ais.shared_prefix_group";
 constexpr llvm::StringLiteral SHARED_PREFIX_EST_TOKENS = "ais.shared_prefix_est_tokens";
+constexpr llvm::StringLiteral SHARED_PREFIX_GROUP_SIZE = "ais.shared_prefix_group_size";
 constexpr llvm::StringLiteral WARMUP_CANDIDATE = "ais.warmup_candidate";
 constexpr llvm::StringLiteral DOWNSTREAM_NODES = "ais.downstream_nodes";
 constexpr llvm::StringLiteral FANOUT_COUNT = "ais.fanout_count";

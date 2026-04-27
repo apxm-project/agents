@@ -2,7 +2,9 @@
 """Run repeated APXM graph benchmarks and emit a CSV summary.
 
 This harness stays deliberately small:
-- it shells out to `dekk apxm execute` for real runs
+- it shells out to `dekk apxm execute` for one-shot compile+run rows
+- it supports `--precompile-artifacts` to compile once, then time repeated
+  `dekk apxm run` artifact rows
 - it supports `--compile-only` for backend-free validation
 - it records wall-clock timing plus session-derived metrics when available
 
@@ -54,8 +56,10 @@ DEKK = "dekk"
 APXM = "apxm"
 CMD_EXECUTE = "execute"
 CMD_COMPILE = "compile"
+CMD_RUN = "run"
 FLAG_OUTPUT = "-o"
 FLAG_OPT_LEVEL = "-O"
+FLAG_TARGET = "--target"
 FLAG_EMIT_DIAGNOSTICS = "--emit-diagnostics"
 FLAG_EMIT_SESSION = "--emit-session"
 FLAG_TRACE = "--trace"
@@ -65,7 +69,9 @@ FILE_MANIFEST = "manifest.json"
 FILE_RESULTS = "results.json"
 FILE_METRICS = "metrics.json"
 DIR_COMPILER_DIAGNOSTICS = "compiler-diagnostics"
+DIR_ARTIFACTS = "artifacts"
 RUN_SUMMARY_PREFIX = "benchmark_e2e run"
+PRECOMPILE_SUMMARY_PREFIX = "benchmark_e2e precompile"
 PENDING_VALUE = "pending"
 STATUS_SUCCEEDED = "succeeded"
 STATUS_FAILED = "failed"
@@ -79,6 +85,9 @@ class MetricsKey(StrEnum):
     BACKENDS = "backends"
     GRAPHS = "graphs"
     TOKEN_ACCOUNTING = "token_accounting"
+    COMPILER = "compiler"
+    COMPILER_PASSES = "passes"
+    COMPILER_SUMMARY = "summary"
     TOTAL = "total"
     INPUT_TOKENS = "input_tokens"
     OUTPUT_TOKENS = "output_tokens"
@@ -127,12 +136,14 @@ CSV_FIELDS = [
     "variant",
     "backend_label",
     "opt_level",
+    "optimization_target",
     "run_index",
     "trial_id",
     "run_order",
     "success",
     "wall_ms",
     "graph_duration_ms",
+    "compile_wall_ms",
     "llm_call_count",
     "input_tokens",
     "output_tokens",
@@ -150,6 +161,7 @@ CSV_FIELDS = [
     "total_tokens_saved",
     "dspy_fired_count",
     "compiler_passes_ms",
+    "artifact_path",
     "session_dir",
     "output_excerpt",
     "stderr_excerpt",
@@ -169,6 +181,7 @@ class SessionSummary:
     pinned_handles: int | None
     critical_path_length: int | None
     final_output: str
+    compiler_diagnostics: CompilerDiagnosticsSummary
 
     @classmethod
     def from_session(cls, session_root: Path) -> SessionSummary:
@@ -183,6 +196,7 @@ class SessionSummary:
         pinned_blocks: int | None = None
         pinned_handles: int | None = None
         critical_path_length: int | None = None
+        compiler_diagnostics = CompilerDiagnosticsSummary.empty()
 
         manifest_path = session_root / FILE_MANIFEST
         if manifest_path.exists():
@@ -239,6 +253,10 @@ class SessionSummary:
                 pinned_blocks = pb
                 pinned_handles = ph
                 critical_path_length = cpl
+            compiler_diagnostics = _diagnostics_summary_from_payload(
+                metrics,
+                source=str(metrics_path),
+            )
 
         return cls(
             graph_duration_ms=graph_duration_ms,
@@ -252,6 +270,7 @@ class SessionSummary:
             pinned_handles=pinned_handles,
             critical_path_length=critical_path_length,
             final_output=final_output,
+            compiler_diagnostics=compiler_diagnostics,
         )
 
 
@@ -308,12 +327,14 @@ class RunRecord:
     variant: str
     backend_label: str
     opt_level: int
+    optimization_target: str
     run_index: int
     trial_id: int
     run_order: int
     success: bool
     wall_ms: float
     graph_duration_ms: int | None
+    compile_wall_ms: float | None
     llm_call_count: int | None
     input_tokens: int | None
     output_tokens: int | None
@@ -324,6 +345,7 @@ class RunRecord:
     pinned_handles: int | None
     critical_path_length: int | None
     compiler_diagnostics: CompilerDiagnosticsSummary
+    artifact_path: str
     session_dir: str
     output_excerpt: str
     stderr_excerpt: str
@@ -336,12 +358,16 @@ class RunRecord:
             "variant": self.variant,
             "backend_label": self.backend_label,
             "opt_level": self.opt_level,
+            "optimization_target": self.optimization_target,
             "run_index": self.run_index,
             "trial_id": self.trial_id,
             "run_order": self.run_order,
             "success": "true" if self.success else "false",
             "wall_ms": f"{self.wall_ms:.3f}",
             "graph_duration_ms": "" if self.graph_duration_ms is None else self.graph_duration_ms,
+            "compile_wall_ms": ""
+            if self.compile_wall_ms is None
+            else f"{self.compile_wall_ms:.3f}",
             "llm_call_count": "" if self.llm_call_count is None else self.llm_call_count,
             "input_tokens": "" if self.input_tokens is None else self.input_tokens,
             "output_tokens": "" if self.output_tokens is None else self.output_tokens,
@@ -356,10 +382,22 @@ class RunRecord:
             "pinned_handles": "" if self.pinned_handles is None else self.pinned_handles,
             "critical_path_length": "" if self.critical_path_length is None else self.critical_path_length,
             **self.compiler_diagnostics.as_fields(),
+            "artifact_path": self.artifact_path,
             "session_dir": self.session_dir,
             "output_excerpt": self.output_excerpt,
             "stderr_excerpt": self.stderr_excerpt,
         }
+
+
+@dataclass(frozen=True)
+class ArtifactBuild:
+    opt_level: int
+    artifact_path: Path
+    diagnostics_path: Path | None
+    compiler_diagnostics: CompilerDiagnosticsSummary
+    wall_ms: float
+    success: bool
+    stderr_excerpt: str
 
 
 def _parse_args() -> argparse.Namespace:
@@ -373,6 +411,12 @@ def _parse_args() -> argparse.Namespace:
         help="Optimization level to benchmark (repeatable, default: 0 and 2)",
     )
     parser.add_argument(
+        "--target",
+        default="balanced",
+        choices=("latency", "cost", "tokens", "parallelism", "balanced"),
+        help="Optimization target passed to `dekk apxm compile/execute`.",
+    )
+    parser.add_argument(
         "--iterations",
         type=int,
         default=3,
@@ -384,9 +428,26 @@ def _parse_args() -> argparse.Namespace:
         help="Run `dekk apxm compile` instead of `dekk apxm execute`",
     )
     parser.add_argument(
+        "--precompile-artifacts",
+        action="store_true",
+        help=(
+            "Compile one artifact per opt level, then benchmark repeated "
+            "`dekk apxm run` rows so runtime samples are not dominated by compile time."
+        ),
+    )
+    parser.add_argument(
+        "--artifact-dir",
+        type=Path,
+        default=None,
+        help="Directory for artifacts created by --precompile-artifacts.",
+    )
+    parser.add_argument(
         "--emit-compiler-diagnostics",
         action="store_true",
-        help="In compile-only mode, ask `dekk apxm compile` for per-pass diagnostics.",
+        help=(
+            "Ask compile steps for per-pass diagnostics in compile-only or "
+            "precompiled-artifact mode."
+        ),
     )
     parser.add_argument(
         "--diagnostics-dir",
@@ -476,15 +537,24 @@ def _string_list(value: Any) -> str:
     return LIST_SEPARATOR.join(str(item) for item in value)
 
 
-def _diagnostics_summary(path: Path | None) -> CompilerDiagnosticsSummary:
-    if path is None or not path.is_file():
-        return CompilerDiagnosticsSummary.empty()
+def _diagnostics_summary_from_payload(
+    data: dict[str, Any],
+    *,
+    source: str = "",
+) -> CompilerDiagnosticsSummary:
+    compiler = data.get(MetricsKey.COMPILER)
+    if isinstance(compiler, dict):
+        data = compiler
 
-    data = _read_json(path)
-    pass_metrics = data.get(DiagnosticsKey.PASS_METRICS, [])
+    pass_metrics = data.get(DiagnosticsKey.PASS_METRICS)
+    if pass_metrics is None:
+        pass_metrics = data.get(MetricsKey.COMPILER_PASSES)
     if not isinstance(pass_metrics, list):
         pass_metrics = []
-    pass_summary = data.get(DiagnosticsKey.PASS_SUMMARY, {})
+
+    pass_summary = data.get(DiagnosticsKey.PASS_SUMMARY)
+    if pass_summary is None:
+        pass_summary = data.get(MetricsKey.COMPILER_SUMMARY)
     if not isinstance(pass_summary, dict):
         pass_summary = {}
 
@@ -512,8 +582,11 @@ def _diagnostics_summary(path: Path | None) -> CompilerDiagnosticsSummary:
         value = pass_summary.get(key)
         return value if isinstance(value, int) else None
 
+    if not pass_metrics and not pass_summary:
+        return CompilerDiagnosticsSummary.empty()
+
     return CompilerDiagnosticsSummary(
-        diagnostics_path=str(path),
+        diagnostics_path=source,
         pass_count=_int_summary(DiagnosticsKey.TOTAL_PASSES) or len(pass_metrics),
         fired_passes=_string_list(pass_summary.get(DiagnosticsKey.FIRED_PASSES)),
         active_passes=_string_list(pass_summary.get(DiagnosticsKey.ACTIVE_PASSES)),
@@ -522,6 +595,13 @@ def _diagnostics_summary(path: Path | None) -> CompilerDiagnosticsSummary:
         dspy_fired_count=dspy_fired_count,
         compiler_passes_ms=compiler_passes_ms if saw_duration else None,
     )
+
+
+def _diagnostics_summary(path: Path | None) -> CompilerDiagnosticsSummary:
+    if path is None or not path.is_file():
+        return CompilerDiagnosticsSummary.empty()
+
+    return _diagnostics_summary_from_payload(_read_json(path), source=str(path))
 
 
 def _command_prefix(apxm_config: Path | None) -> list[str]:
@@ -536,43 +616,68 @@ def _command_env(apxm_config: Path | None) -> dict[str, str] | None:
     return env
 
 
+def _compile_to_artifact(
+    graph: Path,
+    opt_level: int,
+    target: str,
+    artifact_path: Path,
+    apxm_config: Path | None,
+    diagnostics_path: Path | None,
+) -> tuple[subprocess.CompletedProcess[str], float]:
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    diagnostics_args: list[str] = []
+    if diagnostics_path is not None:
+        diagnostics_path.parent.mkdir(parents=True, exist_ok=True)
+        diagnostics_args = [FLAG_EMIT_DIAGNOSTICS, str(diagnostics_path)]
+    if artifact_path.exists():
+        artifact_path.unlink()
+    cmd = [
+        *_command_prefix(apxm_config),
+        CMD_COMPILE,
+        str(graph),
+        FLAG_OUTPUT,
+        str(artifact_path),
+        FLAG_OPT_LEVEL,
+        str(opt_level),
+        FLAG_TARGET,
+        target,
+        *diagnostics_args,
+    ]
+    start = time.perf_counter()
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        cwd=REPO_ROOT,
+        env=_command_env(apxm_config),
+    )
+    wall_ms = (time.perf_counter() - start) * 1000.0
+    return result, wall_ms
+
+
 def _run_compile(
     graph: Path,
     opt_level: int,
+    target: str,
     apxm_config: Path | None,
     diagnostics_path: Path | None,
 ) -> tuple[subprocess.CompletedProcess[str], float]:
     with tempfile.TemporaryDirectory(prefix="apxm-bench-compile-") as tmp_dir:
         artifact_path = Path(tmp_dir) / f"{graph.stem}-O{opt_level}.apxmobj"
-        diagnostics_args: list[str] = []
-        if diagnostics_path is not None:
-            diagnostics_path.parent.mkdir(parents=True, exist_ok=True)
-            diagnostics_args = [FLAG_EMIT_DIAGNOSTICS, str(diagnostics_path)]
-        cmd = [
-            *_command_prefix(apxm_config),
-            CMD_COMPILE,
-            str(graph),
-            FLAG_OUTPUT,
-            str(artifact_path),
-            FLAG_OPT_LEVEL,
-            str(opt_level),
-            *diagnostics_args,
-        ]
-        start = time.perf_counter()
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            cwd=REPO_ROOT,
-            env=_command_env(apxm_config),
+        return _compile_to_artifact(
+            graph,
+            opt_level,
+            target,
+            artifact_path,
+            apxm_config,
+            diagnostics_path,
         )
-        wall_ms = (time.perf_counter() - start) * 1000.0
-    return result, wall_ms
 
 
 def _run_execute(
     graph: Path,
     opt_level: int,
+    target: str,
     session_base: Path,
     trace: str | None,
     apxm_config: Path | None,
@@ -583,6 +688,8 @@ def _run_execute(
         CMD_EXECUTE,
         FLAG_OPT_LEVEL,
         str(opt_level),
+        FLAG_TARGET,
+        target,
     ]
     if trace:
         cmd.extend([FLAG_TRACE, trace])
@@ -600,9 +707,40 @@ def _run_execute(
     return result, wall_ms
 
 
+def _run_artifact(
+    artifact_path: Path,
+    target: str,
+    session_base: Path,
+    trace: str | None,
+    apxm_config: Path | None,
+) -> tuple[subprocess.CompletedProcess[str], float]:
+    session_base.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        *_command_prefix(apxm_config),
+        CMD_RUN,
+        FLAG_TARGET,
+        target,
+    ]
+    if trace:
+        cmd.extend([FLAG_TRACE, trace])
+    cmd.extend([FLAG_EMIT_SESSION, str(session_base), str(artifact_path)])
+
+    start = time.perf_counter()
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        cwd=REPO_ROOT,
+        env=_command_env(apxm_config),
+    )
+    wall_ms = (time.perf_counter() - start) * 1000.0
+    return result, wall_ms
+
+
 def _run_once(
     graph: Path,
     opt_level: int,
+    target: str,
     run_index: int,
     trial_id: int,
     run_order: int,
@@ -614,9 +752,10 @@ def _run_once(
     apxm_config: Path | None,
     emit_compiler_diagnostics: bool,
     diagnostics_parent: Path,
+    artifact_build: ArtifactBuild | None,
 ) -> RunRecord:
     timestamp = datetime.now(timezone.utc).isoformat()
-    mode = "compile" if compile_only else "execute"
+    mode = "compile" if compile_only else "run-artifact" if artifact_build else "execute"
 
     if compile_only:
         diagnostics_path = (
@@ -629,6 +768,7 @@ def _run_once(
         result, wall_ms = _run_compile(
             graph,
             opt_level,
+            target,
             apxm_config,
             diagnostics_path,
         )
@@ -644,12 +784,14 @@ def _run_once(
             variant=variant,
             backend_label=backend_label,
             opt_level=opt_level,
+            optimization_target=target,
             run_index=run_index,
             trial_id=trial_id,
             run_order=run_order,
             success=result.returncode == 0,
             wall_ms=wall_ms,
             graph_duration_ms=None,
+            compile_wall_ms=wall_ms,
             llm_call_count=None,
             input_tokens=None,
             output_tokens=None,
@@ -660,20 +802,35 @@ def _run_once(
             pinned_handles=None,
             critical_path_length=None,
             compiler_diagnostics=compiler_diagnostics,
+            artifact_path="",
             session_dir="",
             output_excerpt="",
             stderr_excerpt=_collapse_text(result.stderr or result.stdout),
         )
 
     session_base = session_parent / f"opt-{opt_level}" / f"run-{run_index}"
-    result, wall_ms = _run_execute(
-        graph, opt_level, session_base, trace, apxm_config
-    )
+    if artifact_build is not None:
+        result, wall_ms = _run_artifact(
+            artifact_build.artifact_path,
+            target,
+            session_base,
+            trace,
+            apxm_config,
+        )
+    else:
+        result, wall_ms = _run_execute(
+            graph, opt_level, target, session_base, trace, apxm_config
+        )
     session_root: Path | None = None
     summary: SessionSummary | None = None
     if result.returncode == 0:
         session_root = _resolve_session_root(session_base)
         summary = SessionSummary.from_session(session_root)
+    compiler_diagnostics = CompilerDiagnosticsSummary.empty()
+    if artifact_build is not None:
+        compiler_diagnostics = artifact_build.compiler_diagnostics
+    elif summary is not None:
+        compiler_diagnostics = summary.compiler_diagnostics
     return RunRecord(
         timestamp_utc=timestamp,
         graph=str(graph),
@@ -681,12 +838,14 @@ def _run_once(
         variant=variant,
         backend_label=backend_label,
         opt_level=opt_level,
+        optimization_target=target,
         run_index=run_index,
         trial_id=trial_id,
         run_order=run_order,
         success=result.returncode == 0,
         wall_ms=wall_ms,
         graph_duration_ms=summary.graph_duration_ms if summary else None,
+        compile_wall_ms=artifact_build.wall_ms if artifact_build is not None else None,
         llm_call_count=summary.llm_call_count if summary else None,
         input_tokens=summary.input_tokens if summary else None,
         output_tokens=summary.output_tokens if summary else None,
@@ -696,11 +855,93 @@ def _run_once(
         pinned_blocks=summary.pinned_blocks if summary else None,
         pinned_handles=summary.pinned_handles if summary else None,
         critical_path_length=summary.critical_path_length if summary else None,
-        compiler_diagnostics=CompilerDiagnosticsSummary.empty(),
+        compiler_diagnostics=compiler_diagnostics,
+        artifact_path=str(artifact_build.artifact_path) if artifact_build is not None else "",
         session_dir=str(session_root) if session_root is not None else "",
         output_excerpt=_collapse_text(summary.final_output if summary else ""),
         stderr_excerpt=_collapse_text(result.stderr or result.stdout),
     )
+
+
+def _artifact_name(graph: Path, opt_level: int, target: str) -> str:
+    safe_target = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in target)
+    return f"{graph.stem}-O{opt_level}-{safe_target}.apxmobj"
+
+
+def _precompile_artifacts(
+    graph: Path,
+    opt_levels: list[int],
+    target: str,
+    artifact_dir: Path,
+    diagnostics_parent: Path,
+    apxm_config: Path | None,
+    emit_compiler_diagnostics: bool,
+) -> dict[int, ArtifactBuild]:
+    builds: dict[int, ArtifactBuild] = {}
+    manifest: list[dict[str, Any]] = []
+
+    for opt_level in opt_levels:
+        artifact_path = artifact_dir / _artifact_name(graph, opt_level, target)
+        diagnostics_path = (
+            diagnostics_parent / graph.stem / f"O{opt_level}-precompile.json"
+            if emit_compiler_diagnostics
+            else None
+        )
+        result, wall_ms = _compile_to_artifact(
+            graph,
+            opt_level,
+            target,
+            artifact_path,
+            apxm_config,
+            diagnostics_path,
+        )
+        compiler_diagnostics = (
+            _diagnostics_summary(diagnostics_path)
+            if result.returncode == 0
+            else CompilerDiagnosticsSummary.empty()
+        )
+        build = ArtifactBuild(
+            opt_level=opt_level,
+            artifact_path=artifact_path,
+            diagnostics_path=diagnostics_path,
+            compiler_diagnostics=compiler_diagnostics,
+            wall_ms=wall_ms,
+            success=result.returncode == 0,
+            stderr_excerpt=_collapse_text(result.stderr or result.stdout),
+        )
+        builds[opt_level] = build
+        _print_precompile_summary(build, target)
+        manifest.append(
+            {
+                "opt_level": opt_level,
+                "optimization_target": target,
+                "success": build.success,
+                "wall_ms": round(build.wall_ms, 3),
+                "artifact": str(build.artifact_path),
+                "diagnostics": str(build.diagnostics_path)
+                if build.diagnostics_path is not None
+                else None,
+                "pass_count": build.compiler_diagnostics.pass_count,
+                "fired_passes": build.compiler_diagnostics.fired_passes,
+                "dspy_fired_count": build.compiler_diagnostics.dspy_fired_count,
+                "stderr_excerpt": build.stderr_excerpt,
+            }
+        )
+        if not build.success:
+            break
+
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    (artifact_dir / "precompile-manifest.json").write_text(
+        json.dumps(manifest, indent=2) + "\n"
+    )
+    failures = [build for build in builds.values() if not build.success]
+    if failures:
+        failed = failures[0]
+        raise SystemExit(
+            f"error: artifact precompile failed for O{failed.opt_level}: "
+            f"{failed.stderr_excerpt or 'no compiler output'}"
+        )
+    return builds
 
 
 def _write_csv(records: list[RunRecord], output: Path, append: bool) -> None:
@@ -774,14 +1015,37 @@ def _print_run_summary(record: RunRecord) -> None:
             f"; passes={_display_number(record.compiler_diagnostics.pass_count)}"
             f"; dspy_fired={_display_number(record.compiler_diagnostics.dspy_fired_count)}"
         )
+    compile_part = ""
+    if record.compile_wall_ms is not None:
+        compile_part = f"; compile={record.compile_wall_ms:.1f} ms"
     print(
-        f"- {RUN_SUMMARY_PREFIX}: {record.variant} O{record.opt_level} trial {record.trial_id} "
+        f"- {RUN_SUMMARY_PREFIX}: {record.mode} {record.variant} "
+        f"O{record.opt_level}/{record.optimization_target} trial {record.trial_id} "
         f"run {record.run_index} order {record.run_order} {status}; "
         f"wall={record.wall_ms:.1f} ms; "
         f"graph={_display_number(record.graph_duration_ms, ' ms')}; "
         f"llm_calls={_display_number(record.llm_call_count)}; "
         f"tokens={_display_number(record.total_tokens)}; "
         f"session={record.session_dir or PENDING_VALUE}"
+        f"{compile_part}"
+        f"{diagnostic_part}",
+        flush=True,
+    )
+
+
+def _print_precompile_summary(build: ArtifactBuild, target: str) -> None:
+    status = STATUS_SUCCEEDED if build.success else STATUS_FAILED
+    diagnostic_part = ""
+    if build.compiler_diagnostics.diagnostics_path:
+        diagnostic_part = (
+            f"; passes={_display_number(build.compiler_diagnostics.pass_count)}"
+            f"; dspy_fired={_display_number(build.compiler_diagnostics.dspy_fired_count)}"
+        )
+    print(
+        f"- {PRECOMPILE_SUMMARY_PREFIX}: "
+        f"O{build.opt_level}/{target} {status}; "
+        f"wall={build.wall_ms:.1f} ms; "
+        f"artifact={build.artifact_path}"
         f"{diagnostic_part}",
         flush=True,
     )
@@ -796,8 +1060,8 @@ def main() -> int:
         raise SystemExit(f"error: graph not found: {graph}")
     if args.iterations < 1:
         raise SystemExit("error: --iterations must be >= 1")
-    if args.emit_compiler_diagnostics and not args.compile_only:
-        raise SystemExit("error: --emit-compiler-diagnostics requires --compile-only")
+    if args.compile_only and args.precompile_artifacts:
+        raise SystemExit("error: --compile-only and --precompile-artifacts are mutually exclusive")
 
     opt_levels = args.opt_levels or [0, 2]
     diagnostics_parent = (
@@ -805,6 +1069,22 @@ def main() -> int:
         if args.diagnostics_dir is not None
         else args.output.resolve().parent / DIR_COMPILER_DIAGNOSTICS
     )
+    artifact_builds: dict[int, ArtifactBuild] = {}
+    if args.precompile_artifacts:
+        artifact_dir = (
+            args.artifact_dir.resolve()
+            if args.artifact_dir is not None
+            else args.output.resolve().parent / DIR_ARTIFACTS / args.output.resolve().stem
+        )
+        artifact_builds = _precompile_artifacts(
+            graph=graph,
+            opt_levels=opt_levels,
+            target=args.target,
+            artifact_dir=artifact_dir,
+            diagnostics_parent=diagnostics_parent,
+            apxm_config=args.apxm_config.resolve() if args.apxm_config else None,
+            emit_compiler_diagnostics=args.emit_compiler_diagnostics,
+        )
     records: list[RunRecord] = []
     run_order = 0
 
@@ -826,6 +1106,7 @@ def main() -> int:
         record = _run_once(
             graph=graph,
             opt_level=opt_level,
+            target=args.target,
             run_index=run_index,
             trial_id=trial_id,
             run_order=run_order,
@@ -837,6 +1118,7 @@ def main() -> int:
             apxm_config=args.apxm_config.resolve() if args.apxm_config else None,
             emit_compiler_diagnostics=args.emit_compiler_diagnostics,
             diagnostics_parent=diagnostics_parent,
+            artifact_build=artifact_builds.get(opt_level),
         )
         records.append(record)
         _print_run_summary(record)

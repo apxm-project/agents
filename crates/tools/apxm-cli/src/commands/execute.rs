@@ -9,6 +9,8 @@ use anyhow::Result;
 #[cfg(feature = "driver")]
 use apxm_core::constants::env as apxm_env;
 #[cfg(feature = "driver")]
+use apxm_core::types::OptimizationTarget;
+#[cfg(feature = "driver")]
 use apxm_driver::{Linker, LinkerConfig};
 #[cfg(feature = "driver")]
 use apxm_runtime::RuntimeExecutionResult;
@@ -228,6 +230,7 @@ pub async fn execute_command(
     input: PathBuf,
     args: Vec<String>,
     opt_level: u8,
+    target: OptimizationTarget,
     config: Option<PathBuf>,
     json: bool,
     emit_metrics: Option<PathBuf>,
@@ -255,6 +258,7 @@ pub async fn execute_command(
     let opt = parse_opt_level(opt_level);
     let pipeline_config = apxm_core::types::PipelineConfig {
         opt_level: opt,
+        target,
         compiler_config_path: config.clone(),
         ..Default::default()
     };
@@ -464,6 +468,7 @@ pub async fn execute_command(
 pub async fn run_command(
     input: PathBuf,
     args: Vec<String>,
+    target: apxm_core::types::OptimizationTarget,
     config: Option<PathBuf>,
     json: bool,
     emit_metrics: Option<PathBuf>,
@@ -508,6 +513,7 @@ pub async fn run_command(
     }
 
     let mut linker_config = LinkerConfig::from_apxm_config(apxm_config);
+    linker_config.runtime_config.optimization_target = target;
 
     // Enable all-outputs collection when session output is requested
     if emit_session.is_some() {

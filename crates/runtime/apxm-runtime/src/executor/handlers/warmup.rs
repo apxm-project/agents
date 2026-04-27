@@ -24,7 +24,6 @@ use apxm_core::constants::{
 };
 use apxm_core::types::OptimizationTarget;
 use serde::{Deserialize, Serialize};
-use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 const WARMUP_MAX_TOKENS: usize = 1;
@@ -117,10 +116,12 @@ impl WarmupMetrics {
 /// Check if compiler metadata makes a node eligible for runtime warmup.
 ///
 /// This does not dispatch anything and does not inspect the selected backend.
-/// It only interprets backend-agnostic node hints plus runtime thresholds.
+/// It only interprets backend-agnostic node hints plus runtime thresholds and
+/// the caller-selected optimization target.
 pub fn should_warmup(
     node: &apxm_core::types::execution::Node,
     config: &WarmupConfig,
+    target: OptimizationTarget,
 ) -> Option<u32> {
     if !config.enabled {
         return None;
@@ -149,13 +150,21 @@ pub fn should_warmup(
         return None;
     }
 
-    // Check fan-out (downstream consumers)
+    // Check shared-prefix fan-out. Prefer the compiler's group-size annotation:
+    // per-node graph fan-out is often one even when several sibling requests
+    // reuse the same prefix.
     let fanout = node
         .attributes
-        .get(graph_attrs::DOWNSTREAM_NODES)
-        .and_then(|v| match v {
-            apxm_core::types::Value::Array(items) => Some(items.len() as u32),
-            _ => None,
+        .get(graph_attrs::SHARED_PREFIX_GROUP_SIZE)
+        .and_then(|v| v.as_u64())
+        .map(|u| u as u32)
+        .or_else(|| {
+            node.attributes
+                .get(graph_attrs::DOWNSTREAM_NODES)
+                .and_then(|v| match v {
+                    apxm_core::types::Value::Array(items) => Some(items.len() as u32),
+                    _ => None,
+                })
         })
         .unwrap_or(0);
 
@@ -164,17 +173,8 @@ pub fn should_warmup(
     }
 
     // Warmup is a cost-bearing runtime side effect, so analysis metadata alone
-    // is not enough. The compiler must stamp an explicit latency-oriented
-    // target before runtime may dispatch a synthetic request.
-    let Some(target) = node
-        .attributes
-        .get(graph_attrs::TARGET)
-        .and_then(|v| v.as_str())
-        .and_then(|value| OptimizationTarget::from_str(value).ok())
-    else {
-        return None;
-    };
-
+    // is not enough. The caller must explicitly select a latency-oriented
+    // optimization target for this execution.
     if !matches!(
         target,
         OptimizationTarget::Latency | OptimizationTarget::Parallelism
@@ -195,7 +195,8 @@ pub fn should_dispatch_warmup(
     node: &apxm_core::types::execution::Node,
     request: &LLMRequest,
 ) -> Option<u32> {
-    let estimated_prefix_tokens = should_warmup(node, &ctx.warmup_config)?;
+    let estimated_prefix_tokens =
+        should_warmup(node, &ctx.warmup_config, ctx.optimization_target)?;
     if !target_backend_supports_graph_extensions(ctx, request) {
         return None;
     }
@@ -406,7 +407,7 @@ mod tests {
         let config = WarmupConfig::default();
         let node = create_test_node(true, 512, 2, &OptimizationTarget::Latency.to_string());
 
-        let result = should_warmup(&node, &config);
+        let result = should_warmup(&node, &config, OptimizationTarget::Latency);
         assert!(result.is_some());
         assert_eq!(result.unwrap(), 512);
     }
@@ -418,7 +419,7 @@ mod tests {
 
         let node = create_test_node(true, 512, 2, &OptimizationTarget::Latency.to_string());
 
-        let result = should_warmup(&node, &config);
+        let result = should_warmup(&node, &config, OptimizationTarget::Latency);
         assert!(result.is_none());
     }
 
@@ -427,7 +428,7 @@ mod tests {
         let config = WarmupConfig::default();
         let node = create_test_node(false, 512, 2, &OptimizationTarget::Latency.to_string());
 
-        let result = should_warmup(&node, &config);
+        let result = should_warmup(&node, &config, OptimizationTarget::Latency);
         assert!(result.is_none());
     }
 
@@ -436,7 +437,7 @@ mod tests {
         let config = WarmupConfig::default();
         let node = create_test_node(true, 256, 2, &OptimizationTarget::Latency.to_string());
 
-        let result = should_warmup(&node, &config);
+        let result = should_warmup(&node, &config, OptimizationTarget::Latency);
         assert!(result.is_none());
     }
 
@@ -445,8 +446,21 @@ mod tests {
         let config = WarmupConfig::default();
         let node = create_test_node(true, 512, 1, &OptimizationTarget::Latency.to_string());
 
-        let result = should_warmup(&node, &config);
+        let result = should_warmup(&node, &config, OptimizationTarget::Latency);
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_warmup_uses_shared_prefix_group_size_over_node_fanout() {
+        let config = WarmupConfig::default();
+        let mut node = create_test_node(true, 512, 1, &OptimizationTarget::Latency.to_string());
+        node.attributes.insert(
+            graph_attrs::SHARED_PREFIX_GROUP_SIZE.to_string(),
+            Value::Number(apxm_core::types::Number::Integer(3)),
+        );
+
+        let result = should_warmup(&node, &config, OptimizationTarget::Latency);
+        assert_eq!(result, Some(512));
     }
 
     #[test]
@@ -454,7 +468,7 @@ mod tests {
         let config = WarmupConfig::default();
         let node = create_test_node(true, 512, 2, &OptimizationTarget::Cost.to_string());
 
-        let result = should_warmup(&node, &config);
+        let result = should_warmup(&node, &config, OptimizationTarget::Cost);
         assert!(result.is_none());
     }
 
@@ -463,7 +477,7 @@ mod tests {
         let config = WarmupConfig::default();
         let node = create_test_node(true, 512, 2, "");
 
-        let result = should_warmup(&node, &config);
+        let result = should_warmup(&node, &config, OptimizationTarget::Balanced);
         assert!(result.is_none());
     }
 
@@ -524,7 +538,9 @@ mod tests {
             .set_default(TEST_BACKEND)
             .expect("default backend");
         let capability_system = Arc::new(CapabilitySystem::new());
-        ExecutionContext::new(memory, llm_registry, capability_system, Aam::new())
+        let mut ctx = ExecutionContext::new(memory, llm_registry, capability_system, Aam::new());
+        ctx.optimization_target = OptimizationTarget::Latency;
+        ctx
     }
 
     #[tokio::test]
