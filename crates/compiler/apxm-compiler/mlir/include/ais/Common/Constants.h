@@ -184,11 +184,6 @@ constexpr unsigned NORMAL = 30;
 constexpr unsigned FAN_OUT_THRESHOLD = 3;
 }  // namespace priority
 
-/// Token estimation heuristic (PromptCanonicalization pass).
-namespace tokens {
-constexpr unsigned CHARS_PER_TOKEN = 4;
-}  // namespace tokens
-
 /// Version and metadata
 namespace meta {
 constexpr uint32_t BINARY_FORMAT_VERSION = 1;

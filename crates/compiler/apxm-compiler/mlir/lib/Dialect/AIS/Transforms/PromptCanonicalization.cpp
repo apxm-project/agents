@@ -47,6 +47,8 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/TypeSwitch.h"
 
+#include <optional>
+
 namespace mlir::ais {
 #define GEN_PASS_DEF_PROMPTCANONICALIZATION
 #include "ais/Dialect/AIS/Transforms/Passes.h.inc"
@@ -60,7 +62,7 @@ struct ReuseGroup {
   std::string groupName;
   SmallVector<Operation *> ops;
   ValueRange sharedContext;
-  unsigned estimatedTokens;
+  std::optional<unsigned> estimatedTokens;
 };
 
 /// Hash function for ValueRange to enable DenseMap keying
@@ -86,12 +88,6 @@ struct ValueRangeEqual {
     return true;
   }
 };
-
-/// Estimate token count for a template string (rough heuristic: 4 chars ≈ 1 token)
-static unsigned estimateTokens(StringRef str) {
-  return (str.size() + apxm::constants::tokens::CHARS_PER_TOKEN - 1)
-         / apxm::constants::tokens::CHARS_PER_TOKEN;
-}
 
 /// Parts extracted from a template around its context placeholders.
 struct PromptParts {
@@ -179,29 +175,31 @@ struct PromptCanonicalizationPass : impl::PromptCanonicalizationBase<PromptCanon
       // Generate group name from context hash
       std::string groupName = "shared_prefix_" + std::to_string(groupsProcessed);
 
-      // Estimate shared prefix tokens (sum of all context operands).
-      // Use pre-computed BPE counts (ais.est_template_tokens) when available,
-      // fall back to chars/4 heuristic for raw .air input.
+      // Estimate shared prefix tokens only from tokenizer-backed metadata.
+      // If a dynamic operand lacks a typed estimate, leave the estimate absent
+      // so runtime warmup does not act on a fabricated token count.
       unsigned estimatedTokens = 0;
+      bool sawEstimate = false;
       for (Value v : sharedContext) {
         if (auto* defOp = v.getDefiningOp()) {
           if (auto precomputed = defOp->getAttrOfType<IntegerAttr>(
-                  apxm::constants::attrs::EST_TEMPLATE_TOKENS)) {
+                  apxm::constants::attrs::ESTIMATED_DYNAMIC_TOKENS)) {
             estimatedTokens += precomputed.getValue().getZExtValue();
-          } else if (auto val = defOp->getAttrOfType<StringAttr>(apxm::constants::attrs::VALUE)) {
-            estimatedTokens += estimateTokens(val.getValue());
-          } else if (auto tpl = defOp->getAttrOfType<StringAttr>(apxm::constants::attrs::TEMPLATE_STR)) {
-            estimatedTokens += estimateTokens(tpl.getValue());
+            sawEstimate = true;
+          } else if (auto precomputed = defOp->getAttrOfType<IntegerAttr>(
+                         apxm::constants::attrs::EST_TEMPLATE_TOKENS)) {
+            estimatedTokens += precomputed.getValue().getZExtValue();
+            sawEstimate = true;
           }
         }
       }
-      if (estimatedTokens == 0 && !sharedContext.empty())
-        estimatedTokens = 1;
+      std::optional<unsigned> exactEstimate =
+          sawEstimate ? std::optional<unsigned>(estimatedTokens) : std::nullopt;
 
       // Step 3: Reorder each operation's template
       bool isFirst = true;
       for (Operation *op : ops) {
-        if (canonicalizePrompt(op, groupName, estimatedTokens, isFirst)) {
+        if (canonicalizePrompt(op, groupName, exactEstimate, isFirst)) {
           opsModified++;
           isFirst = false; // Only first op is warmup candidate
         }
@@ -233,7 +231,8 @@ private:
   /// Canonicalize a single LLM operation's prompt template
   /// Returns true if the operation was modified
   bool canonicalizePrompt(Operation *op, StringRef groupName,
-                         unsigned estimatedTokens, bool isWarmupCandidate) {
+                         std::optional<unsigned> estimatedTokens,
+                         bool isWarmupCandidate) {
     StringRef currentTemplate;
 
     // Get current template based on operation type
@@ -311,10 +310,12 @@ private:
 
     // Add metadata attributes
     op->setAttr(apxm::constants::attrs::SHARED_PREFIX_GROUP, builder.getStringAttr(groupName));
-    op->setAttr(apxm::constants::attrs::SHARED_PREFIX_EST_TOKENS,
-                builder.getI64IntegerAttr(estimatedTokens));
+    if (estimatedTokens) {
+      op->setAttr(apxm::constants::attrs::SHARED_PREFIX_EST_TOKENS,
+                  builder.getI64IntegerAttr(*estimatedTokens));
+    }
 
-    if (isWarmupCandidate) {
+    if (estimatedTokens && isWarmupCandidate) {
       op->setAttr(apxm::constants::attrs::WARMUP_CANDIDATE, builder.getBoolAttr(true));
       APXM_AIS_INFO("  Marked as warmup candidate");
     }

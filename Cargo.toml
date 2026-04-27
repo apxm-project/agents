@@ -78,6 +78,7 @@ tempfile = "3.0"
 colored = "3.0"
 blake3 = "1.5"
 clap = { version = "4.0", features = ["derive"] }
+bpe-openai = "0.3"
 walkdir = "2.0"
 rusqlite = { version = "0.32", features = ["bundled"] }
 jsonschema = "0.18"

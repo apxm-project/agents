@@ -35,36 +35,30 @@ pub fn load_graph_summary(session_dir: &Path) -> Option<String> {
 }
 
 pub fn estimate_tokens(text: &str) -> usize {
-    let char_count = text.chars().count();
-    if char_count == 0 {
-        0
-    } else {
-        char_count.div_ceil(4)
-    }
-}
-
-fn byte_index_for_char_count(text: &str, max_chars: usize) -> usize {
-    if max_chars == 0 {
-        return 0;
-    }
-    text.char_indices()
-        .nth(max_chars)
-        .map(|(idx, _)| idx)
-        .unwrap_or(text.len())
+    bpe_openai::o200k_base().count(text)
 }
 
 pub fn truncate_to_budget(text: &str, max_tokens: usize) -> (String, bool) {
-    let max_chars = max_tokens.saturating_mul(4);
-    let total_chars = text.chars().count();
+    let tokenizer = bpe_openai::o200k_base();
+    let tokens = tokenizer.encode(text);
 
-    if total_chars <= max_chars {
+    if tokens.len() <= max_tokens {
         return (text.to_string(), false);
     }
 
-    let truncated_chars = total_chars.saturating_sub(max_chars);
-    let prefix = &text[..byte_index_for_char_count(text, max_chars)];
+    let dropped_tokens = tokens.len().saturating_sub(max_tokens);
+    let mut keep = max_tokens.min(tokens.len());
+    let prefix = loop {
+        if let Some(decoded) = tokenizer.decode(&tokens[..keep]) {
+            break decoded;
+        }
+        if keep == 0 {
+            break String::new();
+        }
+        keep -= 1;
+    };
     (
-        format!("{}\n... [truncated {} chars]", prefix, truncated_chars),
+        format!("{}\n... [truncated {} tokens]", prefix, dropped_tokens),
         true,
     )
 }

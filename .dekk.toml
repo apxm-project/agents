@@ -54,6 +54,7 @@ clean = { run = "python tools/scripts/cargo.py clean", description = "Clean", gr
 
 codegen = { run = "apxm codegen", description = "Regenerate frontend bindings from Core definitions", skill = true, group = "Build & Test" }
 quality-eval = { run = "apxm quality-eval", description = "Run tier-3 quality-eval harness (rubric + budget + judge)", skill = true, group = "Build & Test" }
+tokenize = { run = "apxm tokenize", description = "Count text with APXM's compiler-side tokenizer", skill = true, group = "Discovery" }
 
 compile = { run = "apxm compile", description = "Compile graph to .apxmobj artifact", skill = true, group = "Compilation" }
 execute = { run = "apxm execute", description = "Compile and execute a graph", skill = true, group = "Compilation" }

@@ -44,6 +44,11 @@ use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 
+const VLLM_CACHE_SALT_ATTR: &str = "vllm_cache_salt";
+const VLLM_CACHE_SALT_EXECUTION: &str = "execution";
+const VLLM_CACHE_SALT_EXECUTION_ID: &str = "execution_id";
+const VLLM_CACHE_SALT_GRAPH_EXECUTION: &str = "graph_execution";
+
 /// LLM operation mode (derived from operation type)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LlmMode {
@@ -160,13 +165,6 @@ fn resolve_system_prompt(ctx: &ExecutionContext, node: &Node, mode: LlmMode) -> 
     Ok(prompt)
 }
 
-fn resolve_token_budget(ctx: &ExecutionContext, node: &Node) -> Option<u64> {
-    node.attributes
-        .get(graph_attrs::TOKEN_BUDGET)
-        .and_then(|v| v.as_u64())
-        .or(ctx.token_budget)
-}
-
 fn resolve_node_output_token_limit(node: &Node) -> Result<Option<usize>> {
     let Some(tokens) = get_optional_u64_attribute(node, graph_attrs::TOKEN_BUDGET)? else {
         return Ok(None);
@@ -198,6 +196,10 @@ fn charge_tokens(ctx: &ExecutionContext, budget: Option<u64>, delta: usize) -> R
         });
     }
     Ok(())
+}
+
+fn resolve_global_token_budget(ctx: &ExecutionContext) -> Option<u64> {
+    ctx.token_budget
 }
 
 fn output_schema_from_node(node: &Node) -> Result<Option<JsonValue>> {
@@ -659,6 +661,45 @@ pub(crate) fn attach_graph_hints(
     request.with_apxm_hints(hints)
 }
 
+fn apply_vllm_request_overrides_from_node(
+    ctx: &ExecutionContext,
+    node: &Node,
+    mut request: LLMRequest,
+) -> Result<LLMRequest> {
+    let Some(raw_cache_salt) = get_optional_string_attribute(node, VLLM_CACHE_SALT_ATTR)? else {
+        return Ok(request);
+    };
+    let raw_cache_salt = raw_cache_salt.trim();
+    if raw_cache_salt.is_empty() || raw_cache_salt.eq_ignore_ascii_case("none") {
+        return Ok(request);
+    }
+
+    let cache_salt = match raw_cache_salt {
+        VLLM_CACHE_SALT_EXECUTION | VLLM_CACHE_SALT_EXECUTION_ID => ctx.execution_id.clone(),
+        VLLM_CACHE_SALT_GRAPH_EXECUTION => {
+            format!("{}:{}", ctx.graph_id, ctx.execution_id)
+        }
+        literal => literal.to_string(),
+    };
+
+    if cache_salt.is_empty() {
+        return Ok(request);
+    }
+
+    let mut extra = request
+        .extra_body
+        .take()
+        .unwrap_or_else(|| JsonValue::Object(Default::default()));
+    if !extra.is_object() {
+        extra = JsonValue::Object(Default::default());
+    }
+    if let JsonValue::Object(ref mut map) = extra {
+        map.insert("cache_salt".to_string(), JsonValue::String(cache_salt));
+    }
+    request.extra_body = Some(extra);
+    Ok(request)
+}
+
 /// Execute LLM operation - unified handler for Ask, Think, Reason
 ///
 /// # Mode Behavior
@@ -791,6 +832,8 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
             request = request.with_tools(tools).with_tool_choice(ToolChoice::Auto);
         }
     }
+
+    request = apply_vllm_request_overrides_from_node(ctx, node, request)?;
 
     // Attach APXM graph hints for graph-aware backends.
     request = attach_graph_hints(ctx, node, request);
@@ -928,7 +971,7 @@ async fn execute_llm_once(
         }
         charge_tokens(
             ctx,
-            resolve_token_budget(ctx, node),
+            resolve_global_token_budget(ctx),
             cached.input_tokens + cached.output_tokens,
         )?;
         return match mode {
@@ -969,7 +1012,7 @@ async fn execute_llm_once(
 
     charge_tokens(
         ctx,
-        resolve_token_budget(ctx, node),
+        resolve_global_token_budget(ctx),
         response.usage.total_tokens,
     )?;
 
@@ -1114,7 +1157,7 @@ async fn execute_ask_with_tools(
         total_decode_ms += iter_decode;
         charge_tokens(
             ctx,
-            resolve_token_budget(ctx, node),
+            resolve_global_token_budget(ctx),
             response.usage.total_tokens,
         )?;
 
@@ -1435,6 +1478,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_node_token_budget_does_not_create_global_charge_limit() {
+        let ctx = test_ctx_with_grouped_tools().await;
+        let mut node = Node::new(7, AISOperationType::Ask);
+        node.attributes.insert(
+            graph_attrs::TOKEN_BUDGET.to_string(),
+            Value::Number(apxm_core::types::values::Number::Integer(128)),
+        );
+
+        assert_eq!(resolve_node_output_token_limit(&node).unwrap(), Some(128));
+        assert_eq!(resolve_global_token_budget(&ctx), None);
+        charge_tokens(&ctx, resolve_global_token_budget(&ctx), 10_000).unwrap();
+        assert_eq!(ctx.consumed_tokens.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
     async fn test_attach_graph_hints_uses_context_graph_id() {
         let ctx = test_ctx_with_grouped_tools()
             .await
@@ -1452,6 +1510,67 @@ mod tests {
         assert_eq!(hints.node_id, Some(42));
         assert_eq!(hints.node_name.as_deref(), Some("ask_node"));
         assert_eq!(hints.priority_class, Some(PriorityClass::CriticalPath));
+    }
+
+    #[tokio::test]
+    async fn test_vllm_cache_salt_execution_override_sets_extra_body() {
+        let ctx = test_ctx_with_grouped_tools()
+            .await
+            .with_execution_id("exec-cache-salt".to_string())
+            .with_graph_id("graph-cache-salt".to_string());
+        let mut node = Node::new(42, AISOperationType::Ask);
+        node.attributes.insert(
+            VLLM_CACHE_SALT_ATTR.to_string(),
+            Value::String(VLLM_CACHE_SALT_EXECUTION.to_string()),
+        );
+
+        let request =
+            apply_vllm_request_overrides_from_node(&ctx, &node, LLMRequest::new("prompt"))
+                .expect("cache salt override should apply");
+
+        assert_eq!(
+            request
+                .extra_body
+                .as_ref()
+                .and_then(|body| body.get("cache_salt"))
+                .and_then(JsonValue::as_str),
+            Some("exec-cache-salt")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_vllm_cache_salt_preserves_existing_extra_body() {
+        let ctx = test_ctx_with_grouped_tools()
+            .await
+            .with_execution_id("exec-cache-salt".to_string());
+        let mut node = Node::new(42, AISOperationType::Ask);
+        node.attributes.insert(
+            VLLM_CACHE_SALT_ATTR.to_string(),
+            Value::String("literal-salt".to_string()),
+        );
+
+        let request = LLMRequest::new("prompt").with_extra_body(serde_json::json!({
+            "priority": 5,
+        }));
+        let request = apply_vllm_request_overrides_from_node(&ctx, &node, request)
+            .expect("cache salt override should apply");
+
+        assert_eq!(
+            request
+                .extra_body
+                .as_ref()
+                .and_then(|body| body.get("priority"))
+                .and_then(JsonValue::as_i64),
+            Some(5)
+        );
+        assert_eq!(
+            request
+                .extra_body
+                .as_ref()
+                .and_then(|body| body.get("cache_salt"))
+                .and_then(JsonValue::as_str),
+            Some("literal-salt")
+        );
     }
 
     #[test]

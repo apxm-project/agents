@@ -349,6 +349,7 @@ dependencies = [
  "apxm-backends",
  "apxm-core",
  "async-trait",
+ "bpe-openai",
  "chrono",
  "crossbeam-deque",
  "dashmap",

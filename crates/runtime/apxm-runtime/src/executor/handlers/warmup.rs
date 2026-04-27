@@ -195,8 +195,7 @@ pub fn should_dispatch_warmup(
     node: &apxm_core::types::execution::Node,
     request: &LLMRequest,
 ) -> Option<u32> {
-    let estimated_prefix_tokens =
-        should_warmup(node, &ctx.warmup_config, ctx.optimization_target)?;
+    let estimated_prefix_tokens = should_warmup(node, &ctx.warmup_config, ctx.optimization_target)?;
     if !target_backend_supports_graph_extensions(ctx, request) {
         return None;
     }

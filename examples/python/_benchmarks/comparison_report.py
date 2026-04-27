@@ -43,6 +43,8 @@ class CsvKey:
     DSPY_FIRED_COUNT = "dspy_fired_count"
     FIRED_PASSES = "fired_passes"
     GRAPH_DURATION_MS = "graph_duration_ms"
+    CRITICAL_MILESTONE_LAST_MS = "critical_milestone_last_ms"
+    CRITICAL_MILESTONE_COUNT = "critical_milestone_count"
     LLM_CALL_COUNT = "llm_call_count"
     MODE = "mode"
     OPT_LEVEL = "opt_level"
@@ -117,6 +119,10 @@ def _pick_compile_wall_ms(row: dict[str, str]) -> float | None:
     if row.get(CsvKey.MODE) == "compile":
         return _to_float(row.get(CsvKey.WALL_MS, ""))
     return None
+
+
+def _pick_critical_milestone_ms(row: dict[str, str]) -> float | None:
+    return _to_float(row.get(CsvKey.CRITICAL_MILESTONE_LAST_MS, ""))
 
 
 def _bootstrap_mean_ci(
@@ -199,6 +205,16 @@ def _summarize_by_opt(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
             for row in success_rows
             if (duration := _pick_duration_ms(row)) is not None
         ]
+        critical_milestones = [
+            duration
+            for row in success_rows
+            if (duration := _pick_critical_milestone_ms(row)) is not None
+        ]
+        critical_milestone_counts = [
+            count
+            for row in success_rows
+            if (count := _to_int(row.get(CsvKey.CRITICAL_MILESTONE_COUNT, ""))) is not None
+        ]
         token_totals = [
             total
             for row in success_rows
@@ -252,8 +268,18 @@ def _summarize_by_opt(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
                 "successful_runs": len(success_rows),
                 "success_rate": len(success_rows) / len(group_rows) if group_rows else 0.0,
                 "durations": durations,
+                "critical_milestones": critical_milestones,
                 "mean_duration_ms": statistics.fmean(durations) if durations else None,
                 "median_duration_ms": statistics.median(durations) if durations else None,
+                "mean_critical_milestone_ms": statistics.fmean(critical_milestones)
+                if critical_milestones
+                else None,
+                "median_critical_milestone_ms": statistics.median(critical_milestones)
+                if critical_milestones
+                else None,
+                "mean_critical_milestone_count": statistics.fmean(critical_milestone_counts)
+                if critical_milestone_counts
+                else None,
                 "mean_total_tokens": statistics.fmean(token_totals) if token_totals else None,
                 "mean_cached_input_tokens": statistics.fmean(cached_input_totals)
                 if cached_input_totals
@@ -340,9 +366,10 @@ def _render_markdown(
     lines.append("")
     lines.append(
         "| opt | successful / total | success % | mean runtime ms | median runtime ms | "
-        "mean compile ms | mean total tokens | mean cached input | mean reasoning output | mean LLM calls |"
+        "mean critical milestone ms | mean compile ms | mean total tokens | mean cached input | "
+        "mean reasoning output | mean LLM calls |"
     )
-    lines.append("|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+    lines.append("|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
 
     for summary in summaries:
         ci = _bootstrap_mean_ci(summary["durations"], bootstrap_samples)
@@ -355,6 +382,7 @@ def _render_markdown(
             f"{summary['success_rate'] * 100:.1f} | "
             f"{mean_with_ci} | "
             f"{_format_float(summary['median_duration_ms'])} | "
+            f"{_format_float(summary['mean_critical_milestone_ms'])} | "
             f"{_format_float(summary['mean_compile_wall_ms'])} | "
             f"{_format_float(summary['mean_total_tokens'])} | "
             f"{_format_float(summary['mean_cached_input_tokens'])} | "
@@ -427,6 +455,26 @@ def _render_markdown(
                 target["durations"],
                 bootstrap_samples,
             )
+            critical_base_mean = base["mean_critical_milestone_ms"]
+            critical_target_mean = target["mean_critical_milestone_ms"]
+            critical_speedup = None
+            if critical_base_mean and critical_target_mean:
+                critical_speedup = (
+                    critical_base_mean / critical_target_mean
+                    if critical_target_mean > 0
+                    else None
+                )
+            critical_speedup_ci = _bootstrap_speedup_ci(
+                base["critical_milestones"],
+                target["critical_milestones"],
+                bootstrap_samples,
+            )
+            critical_delta = None
+            critical_reduction = None
+            if critical_base_mean is not None and critical_target_mean is not None:
+                critical_delta = critical_base_mean - critical_target_mean
+                if critical_base_mean > 0:
+                    critical_reduction = critical_delta / critical_base_mean
             token_delta = None
             token_reduction = None
             if base["mean_total_tokens"] is not None and target["mean_total_tokens"] is not None:
@@ -511,6 +559,19 @@ def _render_markdown(
                 and speedup_ci is not None
                 and speedup_ci[0] > 1.0
             )
+            critical_speed_supported = (
+                runtime_only
+                and len(base["critical_milestones"]) >= 2
+                and len(target["critical_milestones"]) >= 2
+                and critical_delta is not None
+                and critical_delta >= MIN_SPEEDUP_ABS_MS
+                and critical_reduction is not None
+                and critical_reduction >= MIN_SPEEDUP_RELATIVE
+                and critical_speedup is not None
+                and critical_speedup > 1.0
+                and critical_speedup_ci is not None
+                and critical_speedup_ci[0] > 1.0
+            )
 
             lines.append("")
             lines.append("## Comparison")
@@ -547,6 +608,21 @@ def _render_markdown(
             lines.append(
                 f"- Bootstrap 95% CI for speedup: {_format_ci(speedup_ci, digits=2)}"
             )
+            if critical_base_mean is not None or critical_target_mean is not None:
+                lines.append(
+                    f"- Mean critical-milestone speedup: "
+                    f"{_format_measurement(critical_speedup, suffix='x', digits=2)}"
+                )
+                lines.append(
+                    f"- Mean critical-milestone reduction: "
+                    f"{_format_measurement(critical_delta, suffix=' ms')} "
+                    f"({_format_measurement(None if critical_delta is None else critical_delta / 1000.0, suffix=' s', digits=2)}; "
+                    f"{'-' if critical_reduction is None else f'{critical_reduction * 100:.1f}%'})"
+                )
+                lines.append(
+                    f"- Bootstrap 95% CI for critical-milestone speedup: "
+                    f"{_format_ci(critical_speedup_ci, digits=2)}"
+                )
             lines.append(
                 "- Claim threshold: speedup requires >= "
                 f"{MIN_SPEEDUP_ABS_MS / 1000:.1f}s absolute reduction, "
@@ -581,6 +657,20 @@ def _render_markdown(
                     else "not supported; use repeated live rows before claiming speedup"
                 )
             )
+            if critical_base_mean is not None or critical_target_mean is not None:
+                lines.append(
+                    "- Critical-milestone latency claim: "
+                    + (
+                        "supported by measured critical-result completion time"
+                        if critical_speed_supported
+                        else (
+                            "not supported; requires repeated milestone rows, >= "
+                            f"{MIN_SPEEDUP_ABS_MS / 1000:.1f}s absolute reduction, "
+                            f">= {MIN_SPEEDUP_RELATIVE * 100:.0f}% relative reduction, "
+                            "and bootstrap lower bound > 1.0"
+                        )
+                    )
+                )
             lines.append(
                 "- Token/call reduction claim: "
                 + (

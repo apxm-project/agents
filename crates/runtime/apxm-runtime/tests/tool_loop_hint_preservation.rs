@@ -1,5 +1,6 @@
-//! Step 3b regression test: APXM graph hints survive every iteration of the
-//! tool-call retry loop in `execute_ask_with_tools`.
+//! Step 3b regression test: APXM graph hints and provider-specific request
+//! controls survive every iteration of the tool-call retry loop in
+//! `execute_ask_with_tools`.
 //!
 //! Without the explicit `apxm_hints` clone added at the bottom of the loop,
 //! only the first chat completion would carry hints — every follow-up
@@ -9,7 +10,7 @@
 //!
 //! This test wires a custom recording backend through the runtime, runs an
 //! Ask node that forces N rounds of tool calls, and asserts that every
-//! recorded request carried the same `apxm_hints` payload.
+//! recorded request carried the same `apxm_hints` and `extra_body` payloads.
 
 use std::collections::HashMap;
 use std::pin::Pin;
@@ -26,30 +27,39 @@ use apxm_runtime::{Runtime, RuntimeConfig};
 use async_trait::async_trait;
 use tokio_stream::Stream;
 
-/// Records every `LLMRequest.apxm_hints` value the backend sees.
+#[derive(Clone, Debug, PartialEq)]
+struct RequestSnapshot {
+    hints: Option<serde_json::Value>,
+    extra_body: Option<serde_json::Value>,
+}
+
+/// Records APXM hints and provider-specific request controls the backend sees.
 #[derive(Clone, Default)]
 struct HintsRecorder {
-    /// Snapshot of `apxm_hints` for each call, in arrival order.
-    hints: Arc<Mutex<Vec<Option<serde_json::Value>>>>,
+    /// Snapshot of each request, in arrival order.
+    snapshots: Arc<Mutex<Vec<RequestSnapshot>>>,
 }
 
 impl HintsRecorder {
     fn new() -> Self {
         Self {
-            hints: Arc::new(Mutex::new(Vec::new())),
+            snapshots: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
     fn record(&self, request: &LLMRequest) {
-        let snapshot = request
+        let hints = request
             .apxm_hints
             .as_ref()
             .and_then(|h| serde_json::to_value(h).ok());
-        self.hints.lock().unwrap().push(snapshot);
+        self.snapshots.lock().unwrap().push(RequestSnapshot {
+            hints,
+            extra_body: request.extra_body.clone(),
+        });
     }
 
-    fn snapshots(&self) -> Vec<Option<serde_json::Value>> {
-        self.hints.lock().unwrap().clone()
+    fn snapshots(&self) -> Vec<RequestSnapshot> {
+        self.snapshots.lock().unwrap().clone()
     }
 }
 
@@ -178,6 +188,10 @@ fn ask_node_with_graph_hints(max_iters: usize) -> Node {
         Value::Number(apxm_core::types::values::Number::Integer(1024)),
     );
     attrs.insert(a::WARMUP_CANDIDATE.to_string(), Value::Bool(true));
+    attrs.insert(
+        "vllm_cache_salt".to_string(),
+        Value::String("execution".into()),
+    );
 
     Node {
         id: 1,
@@ -247,20 +261,29 @@ async fn apxm_hints_preserved_across_every_tool_loop_iteration() {
         snapshots.len(),
     );
 
-    // Every call must carry hints — none may have been dropped on retry.
-    for (i, hints) in snapshots.iter().enumerate() {
+    // Every call must carry hints and provider controls; neither may be
+    // dropped on retry.
+    for (i, snapshot) in snapshots.iter().enumerate() {
         assert!(
-            hints.is_some(),
+            snapshot.hints.is_some(),
             "iteration {} dropped apxm_hints (Step 3b regression)",
+            i
+        );
+        assert!(
+            snapshot.extra_body.is_some(),
+            "iteration {} dropped extra_body request controls",
             i
         );
     }
 
     // All snapshots must be byte-identical: the loop must clone the same
     // hints, not rebuild a different shape.
-    let first = snapshots[0].as_ref().expect("first call must carry hints");
+    let first = snapshots[0]
+        .hints
+        .as_ref()
+        .expect("first call must carry hints");
     for (i, snap) in snapshots.iter().enumerate().skip(1) {
-        let other = snap.as_ref().expect("checked above");
+        let other = snap.hints.as_ref().expect("checked above");
         assert_eq!(
             other, first,
             "iteration {} hints diverged from initial request",
@@ -297,4 +320,28 @@ async fn apxm_hints_preserved_across_every_tool_loop_iteration() {
             .and_then(|p| p.get(apxm_llm::PIN_POLICY_MODE)),
         Some(&serde_json::json!(apxm_llm::PIN_MODE_PREFIX)),
     );
+
+    // `vllm_cache_salt` lowers into extra_body. Tool-loop continuations must
+    // preserve it exactly, otherwise backend cache/priority controls are lost
+    // after the first tool call.
+    let first_extra = snapshots[0]
+        .extra_body
+        .as_ref()
+        .expect("first call must carry extra_body");
+    let cache_salt = first_extra
+        .get("cache_salt")
+        .and_then(|value| value.as_str())
+        .expect("cache_salt must be lowered into extra_body");
+    assert!(
+        !cache_salt.is_empty(),
+        "execution-derived cache_salt must not be empty"
+    );
+    for (i, snap) in snapshots.iter().enumerate().skip(1) {
+        let other = snap.extra_body.as_ref().expect("checked above");
+        assert_eq!(
+            other, first_extra,
+            "iteration {} extra_body diverged from initial request",
+            i
+        );
+    }
 }

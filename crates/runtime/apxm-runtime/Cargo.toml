@@ -48,6 +48,7 @@ tempfile.workspace = true
 termimad = "0.30"
 dirs.workspace = true
 toml.workspace = true
+bpe-openai.workspace = true
 rusqlite = { workspace = true, optional = true }
 
 [features]

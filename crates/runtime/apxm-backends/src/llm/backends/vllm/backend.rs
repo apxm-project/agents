@@ -291,13 +291,26 @@ impl GraphAwareVllmBackend {
                 let vllm_xargs = map
                     .entry(super::graph_meta::REQUEST_XARGS.to_owned())
                     .or_insert_with(|| serde_json::json!({}));
-                if let serde_json::Value::Object(vllm_xargs_map) = vllm_xargs
-                    && !vllm_xargs_map.contains_key(apxm_llm::HINTS_FIELD)
-                {
-                    vllm_xargs_map.insert(
-                        apxm_llm::HINTS_FIELD.to_owned(),
-                        serde_json::to_value(hints).unwrap_or_default(),
-                    );
+                if let serde_json::Value::Object(vllm_xargs_map) = vllm_xargs {
+                    let rendered_hints = serde_json::to_value(hints).unwrap_or_default();
+                    match vllm_xargs_map.get_mut(apxm_llm::HINTS_FIELD) {
+                        Some(existing) => match (existing, rendered_hints) {
+                            (
+                                serde_json::Value::Object(existing_map),
+                                serde_json::Value::Object(rendered_map),
+                            ) => {
+                                for (key, value) in rendered_map {
+                                    existing_map.insert(key, value);
+                                }
+                            }
+                            (slot, rendered_hints) => {
+                                *slot = rendered_hints;
+                            }
+                        },
+                        None => {
+                            vllm_xargs_map.insert(apxm_llm::HINTS_FIELD.to_owned(), rendered_hints);
+                        }
+                    }
                 }
 
                 if !map.contains_key(apxm_llm::REQUEST_PRIORITY)
@@ -648,7 +661,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_inject_hints_skips_if_already_present() {
+    async fn test_inject_hints_merges_existing_apxm_field_runtime_wins() {
         use crate::llm::backends::LLMRequest;
         use crate::llm::backends::vllm::ApxmGraphHints;
 
@@ -659,13 +672,14 @@ mod tests {
         .await
         .unwrap();
 
-        let hints = ApxmGraphHints::default();
+        let hints = ApxmGraphHints::parallel("graph-fresh", "exec-fresh", 99, "fresh-node");
 
         let existing_key = "already";
         let existing_value = "present";
         let existing_extra = {
             let mut hints_map = serde_json::Map::new();
             hints_map.insert(existing_key.to_owned(), serde_json::json!(existing_value));
+            hints_map.insert(apxm_llm::NODE_ID.to_owned(), serde_json::json!(1));
             let mut vllm_xargs_map = serde_json::Map::new();
             vllm_xargs_map.insert(
                 apxm_llm::HINTS_FIELD.to_owned(),
@@ -687,10 +701,19 @@ mod tests {
 
         let extra = injected.extra_body.unwrap();
 
-        // Verify original APXM hints are preserved (not overwritten).
+        // Verify unknown caller fields are preserved, while APXM-owned runtime
+        // fields win over stale embedded values.
         assert_eq!(
             extra[graph_meta::REQUEST_XARGS][apxm_llm::HINTS_FIELD][existing_key],
             existing_value
+        );
+        assert_eq!(
+            extra[graph_meta::REQUEST_XARGS][apxm_llm::HINTS_FIELD][apxm_llm::NODE_ID],
+            99
+        );
+        assert_eq!(
+            extra[graph_meta::REQUEST_XARGS][apxm_llm::HINTS_FIELD][apxm_llm::GRAPH_ID],
+            "graph-fresh"
         );
     }
 

@@ -15,7 +15,7 @@ toml.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 blake3.workspace = true
-bpe-openai = "0.3"
+bpe-openai.workspace = true
 
 [dev-dependencies]
 insta.workspace = true
