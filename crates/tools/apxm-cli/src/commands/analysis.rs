@@ -27,8 +27,15 @@ pub fn validate_command(
             "graph source must be canonical .air; JSON is reserved for structured data outputs"
                 .to_string(),
         );
-    } else if let Err(err) = load_air_graph_for_analysis(&input) {
-        errors.push(err.to_string());
+    } else {
+        match load_air_graph_for_analysis(&input) {
+            Ok(graph) => {
+                if let Err(err) = graph.validate() {
+                    errors.push(err.to_string());
+                }
+            }
+            Err(err) => errors.push(err.to_string()),
+        }
     }
 
     if warnings.is_empty() && errors.is_empty() {

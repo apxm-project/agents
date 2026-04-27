@@ -4,8 +4,7 @@
 //! registry. Backends include deployment type, protocol, model metadata, and
 //! Docker configuration for local deployments.
 
-use apxm_core::types::provider_spec::normalize_endpoint_for_protocol;
-use apxm_core::types::{BackendConfig, ModelConfig};
+use apxm_backends::llm::{BackendConfig, ModelConfig, normalize_endpoint_for_protocol};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -235,8 +234,7 @@ fn normalize_endpoint(backend: &mut BackendConfig) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use apxm_core::types::ProviderProtocol;
-    use apxm_core::types::{BackendType, DockerConfig, ModelConfig};
+    use apxm_backends::llm::{BackendType, DockerConfig, ModelConfig, ProviderProtocol};
     use std::collections::HashMap;
     use tempfile::TempDir;
 

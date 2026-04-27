@@ -50,7 +50,7 @@ pub mod graph {
     }
 
     pub mod backend_kind {
-        pub const VLLM: &str = "vllm";
+        pub const GRAPH_AWARE: &str = "graph_aware";
         pub const GENERIC: &str = "generic";
     }
 
@@ -235,21 +235,29 @@ pub mod sandbox {
 
         pub const AWS_SECRET_ACCESS_KEY: &str = "AWS_SECRET_ACCESS_KEY";
         pub const AWS_ACCESS_KEY_ID: &str = "AWS_ACCESS_KEY_ID";
-        pub const OPENAI_API_KEY: &str = "OPENAI_API_KEY";
-        pub const ANTHROPIC_API_KEY: &str = "ANTHROPIC_API_KEY";
         pub const DATABASE_URL: &str = "DATABASE_URL";
         pub const SECRET_KEY: &str = "SECRET_KEY";
         pub const PRIVATE_KEY: &str = "PRIVATE_KEY";
+        pub const API_KEY_MARKER: &str = "API_KEY";
+        pub const ACCESS_TOKEN_MARKER: &str = "ACCESS_TOKEN";
+        pub const SECRET_MARKER: &str = "SECRET";
+        pub const PRIVATE_KEY_MARKER: &str = "PRIVATE_KEY";
 
         pub const BLOCKED_DEFAULTS: &[&str] = &[
             AWS_SECRET_ACCESS_KEY,
             AWS_ACCESS_KEY_ID,
-            OPENAI_API_KEY,
-            ANTHROPIC_API_KEY,
             DATABASE_URL,
             SECRET_KEY,
             PRIVATE_KEY,
         ];
+
+        pub fn is_sensitive_name(key: &str) -> bool {
+            let key = key.to_ascii_uppercase();
+            key.contains(API_KEY_MARKER)
+                || key.contains(ACCESS_TOKEN_MARKER)
+                || key.contains(SECRET_MARKER)
+                || key.contains(PRIVATE_KEY_MARKER)
+        }
     }
 
     pub mod bubblewrap {
@@ -391,87 +399,13 @@ pub mod capabilities {
     pub const BUILTINS: &[&str] = &[BASH, READ, WRITE, SEARCH_WEB];
 }
 
-pub mod http {
-    pub mod headers {
-        pub const CONTENT_TYPE: &str = "content-type";
-        pub const CONTENT_TYPE_JSON: &str = "application/json";
-        pub const AUTHORIZATION: &str = "authorization";
-        pub const X_REQUEST_ID: &str = "x-request-id";
-        pub const X_API_KEY: &str = "x-api-key";
-        pub const ANTHROPIC_VERSION: &str = "anthropic-version";
-        pub const X_GOOG_API_KEY: &str = "x-goog-api-key";
-    }
-}
-
 pub mod llm {
-    pub mod message_keys {
-        pub const ROLE: &str = "role";
-        pub const CONTENT: &str = "content";
-        pub const TYPE: &str = "type";
-        pub const TEXT: &str = "text";
-        pub const IMAGE: &str = "image";
-        pub const IMAGE_URL: &str = "image_url";
-        pub const SOURCE: &str = "source";
-        pub const URL: &str = "url";
-        pub const MODEL: &str = "model";
-        pub const MESSAGES: &str = "messages";
-        pub const MAX_TOKENS: &str = "max_tokens";
-        pub const TEMPERATURE: &str = "temperature";
-        pub const STREAM: &str = "stream";
-    }
-
-    pub mod tool_keys {
-        pub const TOOLS: &str = "tools";
-        pub const TOOL_CHOICE: &str = "tool_choice";
-        pub const TOOL_USE: &str = "tool_use";
-        pub const TOOL_RESULT: &str = "tool_result";
-        pub const TOOL_CALLS: &str = "tool_calls";
-        pub const FUNCTION: &str = "function";
-        pub const NAME: &str = "name";
-        pub const ID: &str = "id";
-        pub const INPUT: &str = "input";
-        pub const INPUT_SCHEMA: &str = "input_schema";
-        pub const ARGUMENTS: &str = "arguments";
-    }
-
-    pub mod roles {
-        pub const USER: &str = "user";
-        pub const ASSISTANT: &str = "assistant";
-        pub const SYSTEM: &str = "system";
-        pub const TOOL: &str = "tool";
-    }
-
-    pub mod finish_reasons {
-        pub const STOP: &str = "stop";
-        pub const TOOL_USE: &str = "tool_use";
-        pub const LENGTH: &str = "length";
-        pub const ERROR: &str = "error";
-    }
-
-    pub mod streaming {
-        pub const DELTA: &str = "delta";
-        pub const CHOICES: &str = "choices";
-        pub const TEXT_DELTA: &str = "text_delta";
-    }
-
-    pub mod api_paths {
-        pub const VERSION_PREFIX: &str = "/v1";
-        pub const CHAT_COMPLETIONS: &str = "/chat/completions";
-        pub const MODELS: &str = "/models";
-        pub const MESSAGES: &str = "/messages";
-        pub const API_CHAT: &str = "/api/chat";
-        pub const API_TAGS: &str = "/api/tags";
-        pub const APXM_GRAPHS: &str = "/apxm/graphs";
-        pub const APXM_GRAPHS_REGISTER: &str = "/apxm/graphs/register";
-    }
-
     pub mod apxm {
         pub const OBJECT_GRAPH_REGISTRATION: &str = "apxm.graph.registration";
         pub const OBJECT_GRAPH_STATUS: &str = "apxm.graph.status";
         pub const OBJECT_GRAPH_RELEASE: &str = "apxm.graph.release";
         pub const OBJECT: &str = "object";
         pub const REQUEST_PRIORITY: &str = "priority";
-        pub const VLLM_XARGS: &str = "vllm_xargs";
         pub const HINTS_FIELD: &str = "apxm";
         pub const SCHEMA_VERSION: &str = "schema_version";
         pub const GRAPH_ID: &str = "graph_id";
@@ -501,97 +435,6 @@ pub mod llm {
 
         pub const PIN_MODE_PREFIX: &str = "prefix";
         pub const PIN_MODE_NONE: &str = "none";
-    }
-
-    pub mod vllm {
-        pub const APXM_PROBE_GRAPH_ID: &str = "__apxm_probe__";
-    }
-
-    pub mod anthropic_events {
-        pub const MESSAGE_START: &str = "message_start";
-        pub const CONTENT_BLOCK_START: &str = "content_block_start";
-        pub const CONTENT_BLOCK_DELTA: &str = "content_block_delta";
-        pub const CONTENT_BLOCK_STOP: &str = "content_block_stop";
-        pub const MESSAGE_DELTA: &str = "message_delta";
-        pub const MESSAGE_STOP: &str = "message_stop";
-        pub const ERROR: &str = "error";
-    }
-
-    pub mod sse {
-        pub const DATA_PREFIX: &str = "data: ";
-        pub const EVENT_PREFIX: &str = "event: ";
-        pub const DONE_MARKER: &str = "[DONE]";
-    }
-
-    pub mod config_keys {
-        pub const ID: &str = "id";
-        pub const EXTRA_HEADERS: &str = "extra_headers";
-        pub const ENV_PREFIX: &str = "env:";
-        /// Whether the backend accepts `tool_choice="auto"` on chat-completion
-        /// requests. Stock vLLM rejects it unless launched with
-        /// `--enable-auto-tool-choice`. Plumbed from `BackendConfig.auto_tool_choice`.
-        pub const AUTO_TOOL_CHOICE: &str = "auto_tool_choice";
-        /// Per-model array forwarded to the backend so it can apply
-        /// model-specific request shaping. Each entry carries at least `id`
-        /// and optional capability flags.
-        pub const MODELS: &str = "models";
-        /// Per-model flag: when `false`, the backend must instruct the server
-        /// to suppress reasoning/thinking output when that server supports an
-        /// explicit chat-template control.
-        pub const SUPPORTS_THINKING: &str = "supports_thinking";
-        /// Per-model flag: when `false`, the backend must omit the explicit
-        /// `temperature` field and let the provider default apply.
-        pub const SUPPORTS_CUSTOM_TEMPERATURE: &str = "supports_custom_temperature";
-        /// Backend-level flag: when `false`, the OpenAI-compatible adapter
-        /// keeps APXM `output_schema` as runtime validation only and does not
-        /// send provider-specific structured-output request fields.
-        pub const SUPPORTS_STRUCTURED_OUTPUTS: &str = "supports_structured_outputs";
-        /// Top-level body key recognised by OpenAI-compatible servers that
-        /// forward kwargs into the model's chat template.
-        pub const CHAT_TEMPLATE_KWARGS: &str = "chat_template_kwargs";
-        /// Chat-template kwarg consumed by reasoning-capable templates to gate
-        /// thinking output.
-        pub const ENABLE_THINKING: &str = "enable_thinking";
-    }
-
-    pub mod tags {
-        pub const DEAD_ENDPOINT: &str = "dead-endpoint";
-    }
-
-    pub mod openai {
-        pub const MODEL: &str = "model";
-        pub const MESSAGES: &str = "messages";
-        pub const ROLE: &str = "role";
-        pub const CONTENT: &str = "content";
-        pub const TEMPERATURE: &str = "temperature";
-        pub const EXTRA_BODY: &str = "extra_body";
-        pub const TOP_P: &str = "top_p";
-        pub const FREQUENCY_PENALTY: &str = "frequency_penalty";
-        pub const PRESENCE_PENALTY: &str = "presence_penalty";
-        pub const STOP: &str = "stop";
-        pub const RESPONSE_FORMAT: &str = "response_format";
-        pub const RESPONSE_FORMAT_TYPE: &str = "type";
-        pub const RESPONSE_FORMAT_JSON_SCHEMA: &str = "json_schema";
-        pub const JSON_SCHEMA: &str = "json_schema";
-        pub const JSON_SCHEMA_NAME: &str = "name";
-        pub const JSON_SCHEMA_SCHEMA: &str = "schema";
-        pub const JSON_SCHEMA_STRICT: &str = "strict";
-        pub const APXM_OUTPUT_SCHEMA_NAME: &str = "apxm_output";
-    }
-
-    pub mod backend_metadata {
-        pub const BACKEND_TYPE: &str = "backend_type";
-        pub const VLLM_GRAPH_AWARE: &str = "vllm-graph-aware";
-    }
-
-    pub mod google {
-        pub const USAGE_METADATA: &str = "usageMetadata";
-        pub const PROMPT_TOKEN_COUNT: &str = "promptTokenCount";
-        pub const CANDIDATES_TOKEN_COUNT: &str = "candidatesTokenCount";
-    }
-
-    pub mod ollama {
-        pub const NUM_PREDICT: &str = "num_predict";
     }
 }
 
@@ -895,9 +738,4 @@ pub mod defaults {
     pub const DEFAULT_MAX_SPAWN_DEPTH: usize = 4;
     /// Maximum number of concurrent ACP sessions in the session pool.
     pub const DEFAULT_MAX_SESSIONS: usize = 16;
-
-    // LLM backend defaults
-    pub const DEFAULT_ANTHROPIC_MAX_TOKENS: usize = 4096;
-    pub const DEFAULT_GOOGLE_MAX_OUTPUT_TOKENS: usize = 2048;
-    pub const DEFAULT_GOOGLE_TOP_P: f64 = 0.95;
 }

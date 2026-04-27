@@ -125,6 +125,28 @@ impl CompilerOptimizationContext {
         }
     }
 
+    /// Return whether compiler prompt tuning is explicitly configured.
+    ///
+    /// This check is intentionally side-effect free. It lets the pipeline
+    /// decide whether the DSPy pass should be injected into the default
+    /// O-level sequence without normalizing training data or touching the
+    /// compiler cache unless that pass will actually run.
+    pub fn prompt_optimization_configured(&self) -> Result<bool> {
+        let Some((_config_path, root)) = self.load_config_root()? else {
+            return Ok(false);
+        };
+        let Some(prompt_table) = prompt_tuning_table(&root) else {
+            return Ok(false);
+        };
+        if !bool_field(prompt_table, toml_keys::ENABLED).unwrap_or(true) {
+            return Ok(false);
+        }
+        Ok(string_field(prompt_table, toml_keys::TRAINING_DATA)
+            .or_else(|| string_field(prompt_table, dspy_constants::TRAINING_DATA))
+            .or_else(|| string_field(prompt_table, toml_keys::DATASET))
+            .is_some())
+    }
+
     pub fn prompt_optimization(&self) -> Result<Option<PromptOptimizationRequest>> {
         let Some((config_path, root)) = self.load_config_root()? else {
             return Ok(None);

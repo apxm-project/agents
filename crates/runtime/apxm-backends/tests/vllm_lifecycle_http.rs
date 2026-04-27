@@ -11,11 +11,12 @@
 //! `vllm_xargs.apxm.pin_policy`, not through a separate control-plane pin API.
 
 use apxm_backends::llm::backends::vllm::{
-    ApxmGraphHints, GraphAwareVllmBackend, GraphMetadata, GraphStatusResponse,
+    ApxmGraphHints, GraphAwareVllmBackend, GraphMetadata, GraphStatusResponse, PROBE_GRAPH_ID,
+    REQUEST_XARGS,
 };
 use apxm_backends::llm::backends::{LLMBackend, LLMRequest};
-use apxm_core::constants::http::headers;
-use apxm_core::constants::llm::{api_paths, apxm as apxm_llm, config_keys};
+use apxm_backends::llm::wire::{api_paths, config_keys, headers};
+use apxm_core::constants::llm::apxm as apxm_llm;
 use serde_json::{Value, json};
 use wiremock::matchers::{method, path, path_regex};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
@@ -169,7 +170,7 @@ fn apxm_payload_from_request(request: &Request) -> Option<Value> {
         return None;
     }
     let body = serde_json::from_slice::<Value>(&request.body).ok()?;
-    body.get(apxm_llm::VLLM_XARGS)
+    body.get(REQUEST_XARGS)
         .and_then(|xargs| xargs.get(apxm_llm::HINTS_FIELD))
         .cloned()
 }
@@ -494,7 +495,7 @@ async fn vllm_health_check_hard_fails_when_apxm_endpoints_missing() {
         "{}{}/{}",
         api_paths::VERSION_PREFIX,
         api_paths::APXM_GRAPHS,
-        apxm_core::constants::llm::vllm::APXM_PROBE_GRAPH_ID,
+        PROBE_GRAPH_ID,
     );
     Mock::given(method("GET"))
         .and(path(probe_path))

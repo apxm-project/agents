@@ -1,17 +1,17 @@
 ---
 name: codegen
-description: Regenerate all downstream projections from Core definitions
+description: Regenerate downstream frontend projections from Rust contracts
 user-invocable: false
 ---
 
 # Codegen
 
-How to regenerate all downstream projections (Python, TypeScript) from Core definitions. The codegen pipeline ensures that Python frontends, TypeScript GUIs, and all other consumers stay in sync with Core.
+How to regenerate downstream projections (Python, TypeScript) from Rust contracts. The codegen pipeline keeps frontend bindings aligned with AIS operations, shared constants, backend-owned provider/model catalogs, and ACP agent profiles.
 
 ## Commands
 
 ```bash
-dekk apxm codegen frontend      # Python _generated/ → operations, constants, agents, providers, emission
+dekk apxm codegen frontend      # Python _generated/ → operations, constants, agents, providers, models, emission
 dekk apxm codegen typescript     # TypeScript generated.ts → ops, attrs, providers, agents
 ```
 
@@ -23,22 +23,24 @@ Run codegen after modifying any of these source files:
 |-------------|--------------|
 | `crates/core/apxm-ais/src/attrs.rs` | Attribute constants or ALL_ATTR_NAMES |
 | `crates/core/apxm-ais/src/operations/definitions.rs` | Operation specs, fields, categories |
-| `crates/core/apxm-core/src/types/provider_spec.rs` | BUILTIN_PROVIDERS or ProviderProtocol |
+| `crates/runtime/apxm-backends/src/llm/catalog.rs` | Built-in provider or model metadata |
+| `crates/runtime/apxm-backends/src/llm/protocol.rs` | ProviderProtocol variants or wire names |
 | `crates/orchestration/apxm-acp/src/registry.rs` | Agent templates |
 | `crates/tools/apxm-cli/src/frontend/registry.rs` | Codegen registry wrappers |
 
 ## Pipeline
 
 ```
-Core (apxm-ais, apxm-core, apxm-acp)
+Rust contracts (apxm-ais, apxm-core, apxm-backends, apxm-acp)
     ↓
-registry.rs (wraps Core into Frontend* types)
+registry.rs (wraps Rust contracts into Frontend* types)
     ↓
 codegen.rs → Python _generated/
     ├── constants.py    (from ALL_ATTR_NAMES)
     ├── operations.py   (from OperationSpec — full projection with FieldSpec)
     ├── agents.py       (from AgentRegistry)
-    ├── providers.py    (from BUILTIN_PROVIDERS + ProviderProtocol)
+    ├── providers.py    (from backend-owned BUILTIN_PROVIDERS + ProviderProtocol)
+    ├── models.py       (from backend-owned BUILTIN_MODELS)
     └── emission.py     (from MlirEmissionSpec)
     ↓
 codegen_ts.rs → TypeScript generated.ts
@@ -46,6 +48,7 @@ codegen_ts.rs → TypeScript generated.ts
     ├── ALL_OPERATIONS const
     ├── ATTR constants object
     ├── ProviderProtocol type + BUILTIN_PROVIDERS
+    ├── ModelSpec + BUILTIN_MODELS
     └── AgentTemplate type + ALL_AGENTS
 ```
 

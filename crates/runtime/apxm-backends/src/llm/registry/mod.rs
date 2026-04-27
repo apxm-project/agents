@@ -3,9 +3,11 @@
 //! Provides backend registration, intelligent routing, health monitoring,
 //! and fallback chain execution for robust LLM request handling.
 
+use crate::llm::ProviderProtocol;
 #[cfg(feature = "metrics")]
 use crate::llm::RequestMetrics;
 use crate::llm::backends::{LLMBackend, LLMRequest, LLMResponse, StreamChunk};
+use crate::llm::catalog::default_model_for_protocol;
 use crate::llm::rate_limit::{RateLimitConfig, RateLimiter, SystemClock};
 use anyhow::{Context as AnyhowContext, Result};
 use apxm_core::types::AISOperationType;
@@ -62,8 +64,8 @@ pub struct LLMRegistry {
     rate_limiter: Arc<RateLimiter<SystemClock>>,
     /// Round-robin counter for RoutingStrategy::RoundRobin
     round_robin_counter: Arc<AtomicUsize>,
-    /// Backend name → provider string (e.g. "anthropic", "openai")
-    backend_providers: Arc<DashMap<String, String>>,
+    /// Backend name → typed provider protocol.
+    backend_providers: Arc<DashMap<String, ProviderProtocol>>,
 }
 
 impl LLMRegistry {
@@ -227,16 +229,15 @@ impl LLMRegistry {
         Ok(())
     }
 
-    /// Record which provider protocol a backend uses (e.g. "anthropic", "openai").
+    /// Record which provider protocol a backend uses.
     ///
     /// Used for per-provider builtin model fallback when no model is specified.
     pub fn register_backend_provider(
         &self,
         backend: impl Into<String>,
-        provider: impl Into<String>,
+        provider: ProviderProtocol,
     ) {
-        self.backend_providers
-            .insert(backend.into(), provider.into());
+        self.backend_providers.insert(backend.into(), provider);
     }
 
     /// Register a named model alias.
@@ -288,9 +289,7 @@ impl LLMRegistry {
             } else if let Some(ref backend_name) = prepared.backend {
                 // Per-provider builtin fallback
                 if let Some(provider) = self.backend_providers.get(backend_name) {
-                    if let Some(builtin) =
-                        apxm_core::types::model_spec::default_model_for_provider(provider.value())
-                    {
+                    if let Some(builtin) = default_model_for_protocol(*provider.value()) {
                         prepared.model = Some(builtin.to_string());
                     }
                 }
@@ -712,7 +711,7 @@ mod tests {
     async fn test_registry_registration() -> Result<(), Box<dyn std::error::Error>> {
         let registry = LLMRegistry::new();
 
-        // Register using Provider enum (backward compatible)
+        // Register using the typed provider enum.
         let backend = Provider::OpenAI(OpenAIBackend::new("test-key", None).await?);
         registry.register("test", backend)?;
 

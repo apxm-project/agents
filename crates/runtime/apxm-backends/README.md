@@ -17,6 +17,9 @@ LLM providers, storage backends, and prompt templates.
 | `llm/backends/ollama` | Ollama local inference backend |
 | `llm/backends/vllm` | vLLM backend with graph-aware prefix hints |
 | `llm/backends/mock` | Deterministic mock backend for testing and benchmarks |
+| `llm/catalog` | Built-in provider and model metadata owned by the backend layer |
+| `llm/config` | Backend registration and model configuration types |
+| `llm/protocol` | Typed backend wire protocols and endpoint normalization |
 | `llm/registry/` | `LLMRegistry` with health monitoring and model resolution |
 | `llm/provider` | `Provider` enum plus `ProviderId` / `ProviderProtocol` routing |
 | `llm/assembler` | Request assembly and message formatting |
@@ -41,6 +44,7 @@ LLM providers, storage backends, and prompt templates.
 ## Key Exports
 
 - `LLMRegistry` -- provider registry with health monitoring
+- `BUILTIN_PROVIDERS` / `BUILTIN_MODELS` -- backend-owned provider and model catalogs for generated frontends
 - `Provider` / `ProviderId` / `ProviderProtocol` -- provider instances, built-in ids, and protocol routing
 - `LLMRequest` / `LLMResponse` -- request/response types
 - `RequestBuilder` -- fluent request construction
@@ -55,4 +59,4 @@ LLM providers, storage backends, and prompt templates.
 
 | Crate | Purpose |
 |-------|---------|
-| apxm-core | Error types, Value type, provider specs |
+| apxm-core | Error types, Value type, shared runtime primitives |

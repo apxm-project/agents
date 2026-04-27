@@ -19,12 +19,8 @@ pub mod graph_metrics;
 pub mod intents;
 
 // ── Domain ─────────────────────────────────────────────────
-pub mod backend;
 pub mod compiler;
-pub mod llm_control_plane;
-pub mod model_spec;
 pub mod models;
-pub mod provider_spec;
 pub mod session;
 pub mod source_format;
 
@@ -60,13 +56,6 @@ pub use identifiers::{
 pub use intents::{
     Entity, EntityType, ExportFormat, InspectTarget, Intent, MemoryQueryType, ProgramBuildStep,
 };
-pub use llm_control_plane::{
-    APXM_CONFIG_ENV_VAR, APXM_LLM_BACKEND_ENV_VAR, APXM_MODEL_ENV_VAR, APXM_USE_LLM_ENV_VAR,
-    ApxmBackendFallbackConfig, ApxmLlmBackendConfig, ApxmLlmChatConfig, ApxmLlmConfigFile,
-    ApxmLlmControlPlane, ApxmLlmRoutingConfig, ApxmModelAliasConfig, ApxmOperationRouteConfig,
-    ApxmRegisteredModelConfig, ResolvedApxmBackendConfig, ResolvedApxmModelAlias,
-    ResolvedApxmModelConfig,
-};
 pub use models::{
     FinishReason, LLMResponse, ModelCapabilities, ModelInfo, TimingBreakdown, TokenUsage, ToolCall,
     ToolResult,
@@ -83,13 +72,4 @@ pub use session::{CompletedNodeInfo, LiveSessionState, NodeInfo, SessionManifest
 pub use source_format::{ApxmPathFormat, ArtifactFormat, GraphSourceFormat};
 pub use values::{Number, Token, TokenId, TokenStatus, Value};
 
-pub use backend::{BackendConfig, BackendType, DockerConfig, ModelConfig};
 pub use config::InstructionConfig;
-pub use model_spec::{
-    BUILTIN_MODELS, BuiltinModelSpec, default_model_for_provider, models_for_provider,
-    resolve_builtin_model,
-};
-pub use provider_spec::{
-    BUILTIN_PROVIDERS, BuiltinProviderSpec, DEFAULT_VLLM_BASE_URL, ProviderProtocol, ProviderSpec,
-    normalize_endpoint_for_protocol, resolve_builtin_provider, resolve_provider_spec,
-};

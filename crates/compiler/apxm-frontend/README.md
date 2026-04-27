@@ -30,7 +30,8 @@ Python frontend for authoring APXM graphs.
 | `constants.py` | Graph attribute constants from the shared contract |
 | `agents.py` | Built-in agent profiles from `apxm-acp` |
 | `emission.py` | MLIR emission helpers |
-| `providers.py` | Built-in provider specs and protocols from `apxm-core` |
+| `providers.py` | Built-in provider specs and protocols from `apxm-backends` |
+| `models.py` | Built-in model metadata from `apxm-backends` |
 
 ## Key Exports
 

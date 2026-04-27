@@ -20,9 +20,10 @@
 //! # APXM_RECORD_FIXTURE=1 cargo test -p apxm-backends --test vllm_cassette_replay
 //! ```
 
-use apxm_backends::llm::backends::vllm::{ApxmGraphHints, GraphAwareVllmBackend};
+use apxm_backends::llm::backends::vllm::{ApxmGraphHints, GraphAwareVllmBackend, REQUEST_XARGS};
 use apxm_backends::llm::backends::{LLMBackend, LLMRequest};
-use apxm_core::constants::llm::{apxm as apxm_llm, openai as openai_keys};
+use apxm_backends::llm::wire::openai as openai_keys;
+use apxm_core::constants::llm::apxm as apxm_llm;
 use serde_json::{Value, json};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -75,7 +76,7 @@ async fn cassette_replay_qwen35_happy_path() {
         .as_str()
         .expect("fixture request prompt");
     let apxm_hints =
-        &request_fixture[openai_keys::EXTRA_BODY][apxm_llm::VLLM_XARGS][apxm_llm::HINTS_FIELD];
+        &request_fixture[openai_keys::EXTRA_BODY][REQUEST_XARGS][apxm_llm::HINTS_FIELD];
 
     let hints = ApxmGraphHints::critical_path(
         apxm_hints[apxm_llm::GRAPH_ID].as_str().unwrap(),
@@ -128,7 +129,7 @@ async fn cassette_replay_qwen35_happy_path() {
     let sent_body: Value =
         serde_json::from_slice(&chat_reqs[0].body).expect("parse sent request body");
     let sent_apxm = sent_body
-        .get(apxm_llm::VLLM_XARGS)
+        .get(REQUEST_XARGS)
         .and_then(|xargs| xargs.get(apxm_llm::HINTS_FIELD));
     assert!(
         sent_apxm.is_some(),

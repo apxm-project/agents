@@ -1,6 +1,6 @@
 /**
  * @file  PromptCanonicalization.cpp
- * @brief Reorders prompts to maximize shared-prefix reuse for vLLM prefix caching.
+ * @brief Reorders prompts to maximize shared-prefix reuse for prefix caching.
  *
  * This pass identifies groups of LLM operations (ask/think/reason) that share
  * common upstream context (same data edges) and reorders their template strings
@@ -19,7 +19,7 @@
  *   %b = ais.ask "{diff}\n---\nReview focus: style" [%diff] : !ais.token
  *        {ais.shared_prefix_group = "diff_review"}
  *
- * This transformation enables vLLM's prefix caching to reuse the expensive
+ * This transformation enables prefix-caching inference backends to reuse the expensive
  * shared context (%diff) across multiple operations, reducing repeated prefill
  * work. The pass also emits metadata attributes:
  *
@@ -27,7 +27,8 @@
  * - ais.shared_prefix_est_tokens: Estimated token count of shared prefix
  * - ais.warmup_candidate: Marks the first op in a group for warmup prefill
  *
- * See docs/strategy/09-VLLM-GRAPH-AWARENESS.md section 5.3 for design rationale.
+ * The backend adapter decides whether these backend-agnostic hints map to a
+ * concrete serving feature.
  */
 
 #include "ais/Dialect/AIS/Transforms/Passes.h"

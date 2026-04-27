@@ -6,9 +6,8 @@ use apxm_artifact::Artifact;
 use apxm_compiler::{self, Pipeline};
 use apxm_compiler::{AirEdge, AirModule, AirNode, AirParam};
 use apxm_core::constants::graph::{attrs as graph_attrs, metadata as graph_meta};
-use apxm_core::types::OptimizationLevel;
 use apxm_core::types::execution::{ExecutionDag, TaskDag};
-use apxm_core::types::{AISOperationType, DependencyType, Value};
+use apxm_core::types::{AISOperationType, DependencyType, PipelineConfig, Value};
 use apxm_core::utils::build::MlirEnvReport;
 use apxm_core::{log_debug, log_info};
 use apxm_runtime::{InnerPlanLinker, RuntimeError};
@@ -18,10 +17,11 @@ use std::collections::{HashMap, HashSet};
 /// Compiler-backed implementation of the runtime linker trait.
 pub struct CompilerInnerPlanLinker {
     context: Arc<parking_lot::Mutex<apxm_compiler::Context>>,
+    pipeline_config: PipelineConfig,
 }
 
 impl CompilerInnerPlanLinker {
-    pub fn new() -> Result<Self, RuntimeError> {
+    pub fn new(pipeline_config: PipelineConfig) -> Result<Self, RuntimeError> {
         // Check MLIR availability first; if not ready, return an error so the
         // caller can fall back to NoOpLinker (graph-direct mode).
         let report = MlirEnvReport::detect();
@@ -39,6 +39,7 @@ impl CompilerInnerPlanLinker {
 
         Ok(Self {
             context: Arc::new(parking_lot::Mutex::new(context)),
+            pipeline_config,
         })
     }
 }
@@ -58,7 +59,7 @@ impl InnerPlanLinker for CompilerInnerPlanLinker {
         );
 
         let context = self.context.lock();
-        let pipeline = Pipeline::with_opt_level(&context, OptimizationLevel::O1);
+        let pipeline = Pipeline::with_config(&context, self.pipeline_config.clone());
         let module = pipeline.compile(air_payload).map_err(|e| {
             RuntimeError::State(format!(
                 "Inner plan AIR compilation failed for '{}': {}",
@@ -113,7 +114,7 @@ impl InnerPlanLinker for CompilerInnerPlanLinker {
             RuntimeError::State(format!("Inner plan task AIR emission failed: {}", e))
         })?;
         let context = self.context.lock();
-        let pipeline = Pipeline::with_opt_level(&context, OptimizationLevel::O1);
+        let pipeline = Pipeline::with_config(&context, self.pipeline_config.clone());
         let module = pipeline.compile(&air_text).map_err(|e| {
             RuntimeError::State(format!("Inner plan task graph compilation failed: {}", e))
         })?;

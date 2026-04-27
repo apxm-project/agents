@@ -4,7 +4,7 @@ Shared graph contract, types, error definitions, event system, and constants use
 
 ## Overview
 
-`apxm-core` provides the downstream contract surface for the APXM toolchain: execution graph primitives, shared operation and pass metadata, structured errors with codes and suggestions, a 33-variant event system, graph constants, and provider/model specifications.
+`apxm-core` provides the downstream contract surface for the APXM toolchain: execution graph primitives, shared operation and pass metadata, structured errors with codes and suggestions, a 33-variant event system, graph constants, and backend-neutral model capability types.
 
 ## Module Structure
 
@@ -18,7 +18,7 @@ Shared graph contract, types, error definitions, event system, and constants use
 | `types/identifiers/` | Typed IDs (`NodeId`, `TokenId`) |
 | `types/intents/` | Intent types for goal-directed execution |
 | `types/models/` | `ModelInfo`, `ModelCapabilities`, `ModelResponse` |
-| `types/` (root) | `ProviderSpec`, `ProviderProtocol`, `BackendConfig`, `GoalTree` |
+| `types/` (root) | `GoalTree`, typed graph/runtime contracts, backend-neutral capability types |
 | `error/` | `RuntimeError`, `CompilerError`, `CompileError`, `CliError`, `SecurityError` |
 | `error/codes` | 50+ structured error codes (E001-E999) |
 | `error/builder` | `ErrorBuilder` pattern with source locations and suggestions |

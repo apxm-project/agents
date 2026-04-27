@@ -6,6 +6,7 @@ use crate::optimization::CompilerOptimizationContext;
 use crate::passes::{PassManager, PipelineDiagnostics, resolve_pass_list};
 use apxm_core::error::compiler::{CompilerError, Result};
 use apxm_core::error::{Error, codes::ErrorCode};
+use apxm_core::types::compiler::metadata::{BUILD_PROMPT, DSPY_OPTIMIZE};
 use apxm_core::types::{OptimizationLevel, PipelineConfig};
 use std::ffi::CString;
 
@@ -111,13 +112,14 @@ impl<'ctx> Pipeline<'ctx> {
     }
 
     fn process_module(&self, module: Module) -> Result<Module> {
-        self.apply_transient_module_config(&module)?;
+        let pass_names = self.resolved_pass_names()?;
+        self.apply_transient_module_config(&module, &pass_names)?;
 
         if self.config.verify {
             module.verify()?;
         }
 
-        let pm = PassManager::from_config(self.context, &self.config)?;
+        let pm = self.pass_manager_from_names(&pass_names)?;
         pm.run(&module)?;
 
         // Strip per-pass stat attributes (`ais.<pass>_fired_count`,
@@ -143,7 +145,8 @@ impl<'ctx> Pipeline<'ctx> {
         &self,
         module: Module,
     ) -> Result<(Module, PipelineDiagnostics)> {
-        self.apply_transient_module_config(&module)?;
+        let pass_names = self.resolved_pass_names()?;
+        self.apply_transient_module_config(&module, &pass_names)?;
 
         if self.config.verify {
             module.verify()?;
@@ -155,7 +158,7 @@ impl<'ctx> Pipeline<'ctx> {
         // diagnostics path agrees with PassManager::from_config. Rust-only
         // passes (tool-binding, bind-tool-handlers) are dispatched outside
         // the MLIR pass manager and must not reach it here.
-        let pass_names: Vec<String> = resolve_pass_list(&self.config)
+        let pass_names: Vec<String> = pass_names
             .into_iter()
             .filter(|n| crate::passes::is_mlir_pass(n))
             .collect();
@@ -173,8 +176,41 @@ impl<'ctx> Pipeline<'ctx> {
         &self.config
     }
 
-    fn apply_transient_module_config(&self, module: &Module) -> Result<()> {
+    fn resolved_pass_names(&self) -> Result<Vec<String>> {
+        let mut pass_names = resolve_pass_list(&self.config);
+        let dspy_name = DSPY_OPTIMIZE.name;
+
+        if self.config.pass_list_override.is_none()
+            && !pass_names.iter().any(|name| name == dspy_name)
+            && self.optimization_context.prompt_optimization_configured()?
+        {
+            let insert_at = pass_names
+                .iter()
+                .position(|name| name == BUILD_PROMPT.name)
+                .map(|index| index + 1)
+                .unwrap_or(0);
+            pass_names.insert(insert_at, dspy_name.to_string());
+        }
+
+        Ok(pass_names)
+    }
+
+    fn pass_manager_from_names(&self, pass_names: &[String]) -> Result<PassManager<'ctx>> {
+        let mut pm = PassManager::new(self.context)?;
+        for name in pass_names {
+            if crate::passes::is_mlir_pass(name) {
+                pm.add_pass(name)?;
+            }
+        }
+        Ok(pm)
+    }
+
+    fn apply_transient_module_config(&self, module: &Module, pass_names: &[String]) -> Result<()> {
         use apxm_core::constants::dspy;
+
+        if !pass_names.iter().any(|name| name == DSPY_OPTIMIZE.name) {
+            return Ok(());
+        }
 
         let Some(prompt_optimization) = self.optimization_context.prompt_optimization()? else {
             return Ok(());

@@ -16,7 +16,7 @@ while IFS= read -r line; do
       ;;
     session/prompt)
       # Send a streaming chunk notification
-      echo "{\"jsonrpc\":\"2.0\",\"method\":\"session/update\",\"params\":{\"update\":{\"type\":\"agent_message_chunk\",\"text\":\"Hello from mock\"}}}"
+      echo "{\"jsonrpc\":\"2.0\",\"method\":\"session/update\",\"params\":{\"update\":{\"sessionUpdate\":\"agent_message_chunk\",\"content\":{\"text\":\"Hello from mock\"}}}}"
       # Send the final response
       echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"stopReason\":\"end_turn\"}}"
       ;;

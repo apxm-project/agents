@@ -87,7 +87,6 @@ pub async fn configure_llm_registry(
                 backend.name
             ))
         })?;
-        registry.register_backend_provider(&backend.name, backend.protocol.as_str());
     }
 
     let default_backend = config

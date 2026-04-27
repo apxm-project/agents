@@ -282,6 +282,7 @@ dependencies = [
 name = "apxm-credentials"
 version = "0.0.1"
 dependencies = [
+ "apxm-backends",
  "apxm-core",
  "dirs 5.0.1",
  "reqwest",
@@ -321,6 +322,7 @@ name = "apxm-gui"
 version = "0.0.1"
 dependencies = [
  "apxm-acp",
+ "apxm-backends",
  "apxm-compiler",
  "apxm-core",
  "async-stream",

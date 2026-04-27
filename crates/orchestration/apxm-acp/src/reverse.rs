@@ -309,17 +309,12 @@ impl ReverseHandler for CapabilityReverseHandler {
         if method == methods::SESSION_UPDATE {
             if let Some(params) = params {
                 let update = &params[notification::UPDATE];
-                // ACP uses "sessionUpdate" as the discriminator key (not "type")
-                // and nests text under "content.text"
-                let update_kind = update[notification::SESSION_UPDATE]
-                    .as_str()
-                    .or_else(|| update[notification::TYPE].as_str()); // fallback for older protocol
+                // ACP uses "sessionUpdate" as the discriminator key and nests
+                // message chunks under "content.text".
+                let update_kind = update[notification::SESSION_UPDATE].as_str();
                 match update_kind {
                     Some(t) if t == update_types::AGENT_MESSAGE_CHUNK => {
-                        // Text is under content.text in the current ACP protocol
-                        let text = update[reverse_response::CONTENT][notification::TEXT]
-                            .as_str()
-                            .or_else(|| update[notification::TEXT].as_str()); // fallback
+                        let text = update[reverse_response::CONTENT][notification::TEXT].as_str();
                         if let Some(text) = text {
                             self.response_text.lock().unwrap().push_str(text);
                         }

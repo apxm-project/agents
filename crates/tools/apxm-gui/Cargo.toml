@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 apxm-core.workspace = true
+apxm-backends.workspace = true
 apxm-acp.workspace = true
 apxm-compiler.workspace = true
 axum.workspace = true

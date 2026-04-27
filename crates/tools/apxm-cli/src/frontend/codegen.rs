@@ -1011,25 +1011,6 @@ mod tests {
     }
 
     #[test]
-    fn models_module_renders_vllm_class() {
-        let rendered = render_generated_files();
-        assert!(rendered.models_py.contains("class Vllm:"));
-        assert!(
-            rendered
-                .models_py
-                .contains("QWEN_2_5_7B: Final[ModelId] = ModelId(\"Qwen/Qwen2.5-7B-Instruct\")")
-        );
-        assert!(rendered.models_py.contains("QWEN_2_5_14B: Final[ModelId]"));
-        assert!(rendered.models_py.contains("LLAMA_3_1_8B: Final[ModelId]"));
-        assert!(rendered.models_py.contains("LLAMA_3_1_70B: Final[ModelId]"));
-        assert!(
-            !rendered
-                .models_py
-                .contains("DEFAULT: Final[ModelId] = QWEN_2_5_7B")
-        );
-    }
-
-    #[test]
     fn constants_module_renders_valid_param_types() {
         let rendered = render_generated_files();
         assert!(

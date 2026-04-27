@@ -1,14 +1,11 @@
 use crate::BackendError;
-use apxm_core::types::BackendConfig;
-use apxm_core::types::model_spec::default_model_for_provider;
-use apxm_core::types::provider_spec::{
-    ProviderProtocol, normalize_endpoint_for_protocol, resolve_builtin_provider,
-};
+use apxm_backends::llm::catalog::{default_model_for_protocol, resolve_builtin_provider};
+use apxm_backends::llm::{BackendConfig, ProviderProtocol, normalize_endpoint_for_protocol};
 
 /// Validate a backend by making a minimal API call.
 ///
 /// Dispatches on the typed [`ProviderProtocol`] enum. Default base URLs are
-/// resolved from [`BUILTIN_PROVIDERS`] if not specified in the backend config.
+/// resolved from the backend catalog if not specified in the backend config.
 pub async fn validate_backend(backend: &BackendConfig) -> Result<String, BackendError> {
     let spec = resolve_builtin_provider(&backend.protocol.to_string()).ok_or_else(|| {
         BackendError::Io(std::io::Error::new(
@@ -87,7 +84,9 @@ async fn validate_openai(
         .models
         .first()
         .map(|m| m.id.as_str())
-        .unwrap_or_else(|| default_model_for_provider("openai").unwrap_or("gpt-4o-mini"));
+        .unwrap_or_else(|| {
+            default_model_for_protocol(ProviderProtocol::OpenAI).unwrap_or("gpt-4o-mini")
+        });
     let chat_url = format!("{base}/chat/completions");
     let mut req = client
         .post(&chat_url)
@@ -128,7 +127,8 @@ async fn validate_anthropic(
         .first()
         .map(|m| m.id.as_str())
         .unwrap_or_else(|| {
-            default_model_for_provider("anthropic").unwrap_or("claude-3-haiku-20240307")
+            default_model_for_protocol(ProviderProtocol::Anthropic)
+                .unwrap_or("claude-3-haiku-20240307")
         });
 
     let body = format!(

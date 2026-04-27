@@ -362,14 +362,14 @@ pub struct GraphMetadata {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GraphBackendKind {
-    Vllm,
+    GraphAware,
     Generic,
 }
 
 impl GraphBackendKind {
     pub const fn as_str(&self) -> &'static str {
         match self {
-            Self::Vllm => backend_kind::VLLM,
+            Self::GraphAware => backend_kind::GRAPH_AWARE,
             Self::Generic => backend_kind::GENERIC,
         }
     }
@@ -404,8 +404,8 @@ impl GraphStatusSnapshot {
         }
     }
 
-    pub fn vllm(graph_id: impl Into<String>) -> Self {
-        Self::new(GraphBackendKind::Vllm, graph_id)
+    pub fn graph_aware(graph_id: impl Into<String>) -> Self {
+        Self::new(GraphBackendKind::GraphAware, graph_id)
     }
 
     pub fn with_registered(mut self, registered: bool) -> Self {

@@ -1,11 +1,11 @@
 use apxm_acp::AgentRegistry;
+use apxm_backends::llm::ProviderProtocol;
+use apxm_backends::llm::catalog::{BUILTIN_MODELS, BUILTIN_PROVIDERS};
 use apxm_core::constants;
-use apxm_core::types::model_spec::BUILTIN_MODELS;
 use apxm_core::types::operations::{
     AISOperationType, ContextStyle, MlirResultType, OperationCategory, OperationField,
     get_all_operations,
 };
-use apxm_core::types::provider_spec::{BUILTIN_PROVIDERS, ProviderProtocol};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FrontendConstant {
@@ -81,7 +81,7 @@ pub fn builtin_models() -> Vec<FrontendModelSpec> {
         .iter()
         .map(|m| FrontendModelSpec {
             id: m.id,
-            provider: m.provider,
+            provider: m.protocol.as_str(),
             is_default: m.is_default,
         })
         .collect()
@@ -331,7 +331,7 @@ mod tests {
     fn builtin_models_include_openai_default() {
         let default = builtin_models()
             .iter()
-            .find(|m| m.provider == "openai" && m.is_default)
+            .find(|m| m.provider == ProviderProtocol::OpenAI.as_str() && m.is_default)
             .map(|m| m.id.to_string());
         assert_eq!(default, Some("gpt-4o-mini".to_string()));
     }

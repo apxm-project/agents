@@ -2,13 +2,13 @@
 //!
 //! Implements the LLMBackend trait for Google's Gemini API.
 
+use crate::llm::ProviderProtocol;
 use crate::llm::backends::traits::StreamChunk;
 use crate::llm::backends::{LLMBackend, LLMRequest, LLMResponse, Role};
+use crate::llm::catalog::{default_model_for_protocol, models_for_protocol};
+use crate::llm::wire::{defaults as wire_defaults, google as google_keys, headers, roles, sse};
 use anyhow::{Context, Result};
-use apxm_core::constants::defaults;
 use apxm_core::constants::graph::attrs::{BASE_URL, MODEL};
-use apxm_core::constants::http::headers;
-use apxm_core::constants::llm::{google as google_keys, roles, sse};
 use apxm_core::types::{FinishReason, ModelCapabilities, ModelInfo, TokenUsage};
 use apxm_core::{log_debug, log_error};
 use async_trait::async_trait;
@@ -18,9 +18,9 @@ use serde_json::json;
 use std::pin::Pin;
 use tokio_stream::Stream;
 
-use apxm_core::types::model_spec::{default_model_for_provider, models_for_provider};
-
 const DEFAULT_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta";
+const PROTOCOL: ProviderProtocol = ProviderProtocol::Google;
+const DEFAULT_MODEL: &str = "gemini-2.5-flash";
 
 /// Google AI LLM backend.
 pub struct GoogleBackend {
@@ -41,7 +41,7 @@ impl GoogleBackend {
             .as_ref()
             .and_then(|c| c.get(MODEL))
             .and_then(|m| m.as_str())
-            .unwrap_or_else(|| default_model_for_provider("google").unwrap_or("gemini-2.5-flash"))
+            .unwrap_or_else(|| default_model_for_protocol(PROTOCOL).unwrap_or(DEFAULT_MODEL))
             .to_string();
 
         let base_url = config
@@ -103,8 +103,8 @@ impl GoogleBackend {
             "contents": contents,
             "generationConfig": {
                 "temperature": request.temperature,
-                "maxOutputTokens": request.max_tokens.unwrap_or(defaults::DEFAULT_GOOGLE_MAX_OUTPUT_TOKENS),
-                "topP": request.top_p.unwrap_or(defaults::DEFAULT_GOOGLE_TOP_P),
+                "maxOutputTokens": request.max_tokens.unwrap_or(wire_defaults::GOOGLE_MAX_OUTPUT_TOKENS),
+                "topP": request.top_p.unwrap_or(wire_defaults::GOOGLE_TOP_P),
                 "stopSequences": request.stop_sequences,
             }
         });
@@ -297,7 +297,7 @@ impl LLMBackend for GoogleBackend {
     }
 
     fn name(&self) -> &str {
-        "google"
+        PROTOCOL.as_str()
     }
 
     fn model(&self) -> &str {
@@ -323,7 +323,7 @@ impl LLMBackend for GoogleBackend {
     }
 
     async fn list_models(&self) -> Result<Vec<ModelInfo>> {
-        Ok(models_for_provider("google")
+        Ok(models_for_protocol(PROTOCOL)
             .map(|m| ModelInfo {
                 id: m.id.to_string(),
                 name: m.id.to_string(),

@@ -36,13 +36,22 @@ pub mod storage;
 pub use llm::{
     // Observability
     AggregatedMetrics,
+    // Provider management
+    BUILTIN_MODELS,
+    BUILTIN_PROVIDERS,
     // Factory
+    BackendConfig,
     BackendFactory,
     BackendFallback,
     BackendMetricsSource,
     BackendRegistration,
+    BackendType,
+    BuiltinModelSpec,
+    BuiltinProviderSpec,
     // Structured message types
     ContentPart,
+    DEFAULT_VLLM_BASE_URL,
+    DockerConfig,
     // Retry logic
     ErrorClass,
     FunctionCall,
@@ -59,10 +68,10 @@ pub use llm::{
     Message,
     MetricsTracker,
     ModelAliasRegistration,
+    ModelConfig,
     ModelRegistration,
     OperationRoute,
     OutputParser,
-    // Provider management
     Provider,
     ProviderId,
     ProviderProtocol,
@@ -84,6 +93,14 @@ pub use llm::{
     // Tool types
     ToolChoice,
     ToolDefinition,
+    default_model_for_protocol,
+    default_model_for_provider,
+    models_for_protocol,
+    models_for_provider,
+    normalize_endpoint_for_protocol,
+    resolve_builtin_model,
+    resolve_builtin_provider,
+    resolve_provider_spec,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════

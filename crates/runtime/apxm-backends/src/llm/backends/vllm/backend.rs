@@ -7,13 +7,12 @@
 use crate::llm::backends::openai::OpenAIBackend;
 use crate::llm::backends::traits::StreamChunk;
 use crate::llm::backends::{LLMBackend, LLMRequest, LLMResponse};
+use crate::llm::catalog::DEFAULT_VLLM_BASE_URL;
+use crate::llm::wire::{api_paths, backend_metadata, config_keys, headers};
+use crate::llm::{ProviderProtocol, normalize_endpoint_for_protocol};
 use anyhow::{Context, Result};
 use apxm_core::constants::graph::attrs::{BASE_URL, MODEL};
-use apxm_core::constants::http::headers;
-use apxm_core::constants::llm::{
-    api_paths, apxm as apxm_llm, backend_metadata, config_keys, vllm as vllm_keys,
-};
-use apxm_core::types::provider_spec::{DEFAULT_VLLM_BASE_URL, normalize_endpoint_for_protocol};
+use apxm_core::constants::llm::apxm as apxm_llm;
 use apxm_core::types::{
     GraphMetadata, GraphStatusSnapshot, ModelCapabilities, ModelInfo, PriorityClass,
 };
@@ -24,6 +23,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tokio_stream::Stream;
 
 const DEFAULT_BASE_URL: &str = DEFAULT_VLLM_BASE_URL;
+const PROTOCOL: ProviderProtocol = ProviderProtocol::Vllm;
 const UNCONFIGURED_MODEL_SENTINEL: &str = "__apxm_vllm_model_required__";
 
 mod request_keys {
@@ -135,8 +135,7 @@ impl GraphAwareVllmBackend {
             .and_then(|u| u.as_str())
             .unwrap_or(DEFAULT_BASE_URL)
             .to_string();
-        let base_url =
-            normalize_endpoint_for_protocol(apxm_core::types::ProviderProtocol::Vllm, &base_url);
+        let base_url = normalize_endpoint_for_protocol(PROTOCOL, &base_url);
 
         let auto_tool_choice = config
             .as_ref()
@@ -290,7 +289,7 @@ impl GraphAwareVllmBackend {
         if let serde_json::Value::Object(ref mut map) = extra {
             if let Some(ref hints) = request.apxm_hints {
                 let vllm_xargs = map
-                    .entry(apxm_llm::VLLM_XARGS.to_owned())
+                    .entry(super::graph_meta::REQUEST_XARGS.to_owned())
                     .or_insert_with(|| serde_json::json!({}));
                 if let serde_json::Value::Object(vllm_xargs_map) = vllm_xargs
                     && !vllm_xargs_map.contains_key(apxm_llm::HINTS_FIELD)
@@ -382,7 +381,7 @@ impl LLMBackend for GraphAwareVllmBackend {
     }
 
     fn name(&self) -> &str {
-        backend_metadata::VLLM_GRAPH_AWARE
+        super::graph_meta::BACKEND_NAME
     }
 
     fn model(&self) -> &str {
@@ -397,7 +396,7 @@ impl LLMBackend for GraphAwareVllmBackend {
         // is stock vLLM, not the APXM fork. APXM requires the graph-aware
         // contract for `protocol = "vllm"` so scheduling hints cannot be
         // silently ignored.
-        let url = self.graph_status_url(vllm_keys::APXM_PROBE_GRAPH_ID);
+        let url = self.graph_status_url(super::graph_meta::PROBE_GRAPH_ID);
         match self
             .inner
             .apply_transport_headers(self.client.get(&url))
@@ -454,7 +453,7 @@ impl LLMBackend for GraphAwareVllmBackend {
         if let serde_json::Value::Object(ref mut map) = meta {
             map.insert(
                 backend_metadata::BACKEND_TYPE.to_string(),
-                backend_metadata::VLLM_GRAPH_AWARE.into(),
+                super::graph_meta::BACKEND_NAME.into(),
             );
         }
         meta
@@ -496,7 +495,7 @@ impl LLMBackend for GraphAwareVllmBackend {
         }
         match self.get_graph_status_typed(graph_id).await {
             Ok(status) => Ok(Some(
-                GraphStatusSnapshot::vllm(status.graph_id)
+                GraphStatusSnapshot::graph_aware(status.graph_id)
                     .with_registered(status.registered)
                     .with_pin_counts(status.pinned_handles, status.pinned_blocks)
                     .with_shape(status.node_count, status.critical_path_length),
@@ -509,6 +508,7 @@ impl LLMBackend for GraphAwareVllmBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::llm::backends::vllm::graph_meta;
 
     #[test]
     fn test_next_execution_id() {
@@ -574,13 +574,13 @@ mod tests {
         let extra = injected.extra_body.unwrap();
         assert!(
             extra
-                .get(apxm_llm::VLLM_XARGS)
+                .get(graph_meta::REQUEST_XARGS)
                 .and_then(|value| value.get(apxm_llm::HINTS_FIELD))
                 .is_some()
         );
 
         // Verify the serialized hints
-        let apxm = &extra[apxm_llm::VLLM_XARGS][apxm_llm::HINTS_FIELD];
+        let apxm = &extra[graph_meta::REQUEST_XARGS][apxm_llm::HINTS_FIELD];
         assert_eq!(
             extra[apxm_llm::REQUEST_PRIORITY],
             u8::from(VllmRequestPriority::CriticalPath)
@@ -637,12 +637,12 @@ mod tests {
         );
         assert!(
             extra
-                .get(apxm_llm::VLLM_XARGS)
+                .get(graph_meta::REQUEST_XARGS)
                 .and_then(|value| value.get(apxm_llm::HINTS_FIELD))
                 .is_some()
         );
         assert_eq!(
-            extra[apxm_llm::VLLM_XARGS][apxm_llm::HINTS_FIELD][apxm_llm::NODE_ID],
+            extra[graph_meta::REQUEST_XARGS][apxm_llm::HINTS_FIELD][apxm_llm::NODE_ID],
             10
         );
     }
@@ -673,7 +673,7 @@ mod tests {
             );
             let mut extra_map = serde_json::Map::new();
             extra_map.insert(
-                apxm_llm::VLLM_XARGS.to_owned(),
+                graph_meta::REQUEST_XARGS.to_owned(),
                 serde_json::Value::Object(vllm_xargs_map),
             );
             serde_json::Value::Object(extra_map)
@@ -689,7 +689,7 @@ mod tests {
 
         // Verify original APXM hints are preserved (not overwritten).
         assert_eq!(
-            extra[apxm_llm::VLLM_XARGS][apxm_llm::HINTS_FIELD][existing_key],
+            extra[graph_meta::REQUEST_XARGS][apxm_llm::HINTS_FIELD][existing_key],
             existing_value
         );
     }

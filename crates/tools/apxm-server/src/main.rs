@@ -154,10 +154,6 @@ async fn main() -> anyhow::Result<()> {
                                     warn!(name = %backend.name, error = %e, "failed to register LLM backend");
                                     continue;
                                 }
-                                runtime.llm_registry().register_backend_provider(
-                                    backend.name.clone(),
-                                    backend.protocol.as_str(),
-                                );
                                 if first_name.is_none() {
                                     first_name = Some(backend.name.clone());
                                 }

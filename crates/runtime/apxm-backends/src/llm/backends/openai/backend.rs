@@ -6,14 +6,15 @@
 //! This file updates the provider default model and the list of known models
 //! surfaced by `list_models()` to reflect more recent model names.
 
+use crate::llm::ProviderProtocol;
 use crate::llm::backends::traits::StreamChunk;
 use crate::llm::backends::{ContentPart, LLMBackend, LLMRequest, LLMResponse, Role, ToolChoice};
+use crate::llm::catalog::{default_model_for_protocol, models_for_protocol};
+use crate::llm::wire::{
+    api_paths, config_keys, headers, message_keys, openai as openai_keys, roles, sse, tool_keys,
+};
 use anyhow::{Context, Result};
 use apxm_core::constants::graph::attrs::{BASE_URL, MODEL};
-use apxm_core::constants::http::headers;
-use apxm_core::constants::llm::{
-    api_paths, config_keys, message_keys, openai as openai_keys, roles, sse, tool_keys,
-};
 use apxm_core::types::{FinishReason, ModelCapabilities, ModelInfo, TokenUsage, ToolCall};
 use async_trait::async_trait;
 use futures::StreamExt as _;
@@ -23,9 +24,9 @@ use std::collections::HashSet;
 use std::pin::Pin;
 use tokio_stream::Stream;
 
-use apxm_core::types::model_spec::{default_model_for_provider, models_for_provider};
-
 const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
+const PROTOCOL: ProviderProtocol = ProviderProtocol::OpenAI;
+const DEFAULT_MODEL: &str = "gpt-4o-mini";
 
 /// OpenAI LLM backend.
 ///
@@ -98,7 +99,7 @@ impl OpenAIBackend {
             .as_ref()
             .and_then(|c| c.get(MODEL))
             .and_then(|m| m.as_str())
-            .unwrap_or_else(|| default_model_for_provider("openai").unwrap_or("gpt-4o-mini"))
+            .unwrap_or_else(|| default_model_for_protocol(PROTOCOL).unwrap_or(DEFAULT_MODEL))
             .to_string();
 
         let base_url = config
@@ -644,7 +645,7 @@ impl LLMBackend for OpenAIBackend {
     }
 
     fn name(&self) -> &str {
-        "openai"
+        PROTOCOL.as_str()
     }
 
     fn model(&self) -> &str {
@@ -678,7 +679,7 @@ impl LLMBackend for OpenAIBackend {
     }
 
     async fn list_models(&self) -> Result<Vec<ModelInfo>> {
-        Ok(models_for_provider("openai")
+        Ok(models_for_protocol(PROTOCOL)
             .map(|m| ModelInfo {
                 id: m.id.to_string(),
                 name: m.id.to_string(),

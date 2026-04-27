@@ -775,8 +775,8 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
                         "Backend '{}' does not support tool_choice=\"auto\". \
                          Either remove tool usage from this node, configure \
                          `auto_tool_choice = false` for this backend in \
-                         `~/.apxm/config.toml`, or launch the server with \
-                         `--enable-auto-tool-choice` and `--tool-call-parser <name>`.",
+                         `~/.apxm/config.toml`, or enable automatic tool choice \
+                         in the registered backend adapter.",
                         backend_name
                     ),
                     backend: Some(backend_name),

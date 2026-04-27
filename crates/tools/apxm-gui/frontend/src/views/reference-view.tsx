@@ -295,9 +295,9 @@ const PASS_CATEGORY_COLORS: Record<string, string> = {
 
 const OPT_LEVEL_PASSES: Record<number, string[]> = {
   0: [],
-  1: ["normalize", "build-prompt", "dspy-optimize", "template-specialization", "dead-context-elimination", "canonicalizer", "tool-binding", "bind-tool-handlers", "symbol-dce", "assign-priority"],
-  2: ["normalize", "build-prompt", "dspy-optimize", "template-specialization", "dead-context-elimination", "scheduling", "shared-prefix-analysis", "canonicalizer", "tool-binding", "bind-tool-handlers", "symbol-dce", "assign-priority"],
-  3: ["normalize", "build-prompt", "dspy-optimize", "template-specialization", "dead-context-elimination", "scheduling", "shared-prefix-analysis", "canonicalizer", "tool-binding", "bind-tool-handlers", "symbol-dce", "(contract-safe convergence)", "assign-priority"],
+  1: ["normalize", "build-prompt", "(config-gated dspy-optimize)", "template-specialization", "dead-context-elimination", "canonicalizer", "tool-binding", "bind-tool-handlers", "symbol-dce", "assign-priority"],
+  2: ["normalize", "build-prompt", "(config-gated dspy-optimize)", "template-specialization", "dead-context-elimination", "scheduling", "shared-prefix-analysis", "canonicalizer", "tool-binding", "bind-tool-handlers", "symbol-dce", "assign-priority"],
+  3: ["normalize", "build-prompt", "(config-gated dspy-optimize)", "template-specialization", "dead-context-elimination", "scheduling", "shared-prefix-analysis", "canonicalizer", "tool-binding", "bind-tool-handlers", "symbol-dce", "(contract-safe convergence)", "assign-priority"],
 };
 
 function CompilerTab() {

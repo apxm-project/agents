@@ -5,13 +5,11 @@
 
 use crate::llm::LLMRegistry;
 use crate::llm::Provider;
+use crate::llm::wire::config_keys;
+use crate::llm::{BackendConfig, BackendType, ProviderProtocol, normalize_endpoint_for_protocol};
 use anyhow::{Result, anyhow};
 use apxm_core::constants::graph::attrs::{BASE_URL, MODEL};
-use apxm_core::constants::llm::config_keys;
-use apxm_core::types::{
-    AISOperationType, BackendConfig, BackendType, ModelInfo, ProviderProtocol,
-    normalize_endpoint_for_protocol,
-};
+use apxm_core::types::{AISOperationType, ModelInfo};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value as JsonValue, json};
 use std::collections::HashMap;
@@ -224,6 +222,7 @@ impl BackendRegistration {
             Provider::from_protocol(self.protocol, &self.api_key, self.backend_config_json())
                 .await?;
         registry.register(self.name.clone(), provider)?;
+        registry.register_backend_provider(self.name.clone(), self.protocol);
 
         if let Some(model) = &self.default_model {
             registry.set_model_route(model.clone(), self.name.clone())?;
@@ -329,7 +328,7 @@ impl RegistryPolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use apxm_core::types::{BackendType, ModelConfig};
+    use crate::llm::{BackendType, ModelConfig};
 
     #[test]
     fn backend_registration_from_vllm_backend_config_preserves_backend_model_split() {
