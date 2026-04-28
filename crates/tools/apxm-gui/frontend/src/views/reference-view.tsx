@@ -294,10 +294,10 @@ const PASS_CATEGORY_COLORS: Record<string, string> = {
 };
 
 const OPT_LEVEL_PASSES: Record<number, string[]> = {
-  0: [],
-  1: ["normalize", "build-prompt", "(config-gated dspy-optimize)", "template-specialization", "dead-context-elimination", "canonicalizer", "tool-binding", "bind-tool-handlers", "symbol-dce", "assign-priority"],
-  2: ["normalize", "build-prompt", "(config-gated dspy-optimize)", "template-specialization", "dead-context-elimination", "scheduling", "shared-prefix-analysis", "canonicalizer", "tool-binding", "bind-tool-handlers", "symbol-dce", "assign-priority"],
-  3: ["normalize", "build-prompt", "(config-gated dspy-optimize)", "template-specialization", "dead-context-elimination", "scheduling", "shared-prefix-analysis", "canonicalizer", "tool-binding", "bind-tool-handlers", "symbol-dce", "(contract-safe convergence)", "assign-priority"],
+  0: ["normalize", "build-prompt"],
+  1: ["normalize", "build-prompt", "(config-gated dspy-optimize)", "template-specialization", "dead-context-elimination", "canonicalizer", "tool-binding-check", "bind-tool-handlers", "symbol-dce", "assign-priority"],
+  2: ["normalize", "build-prompt", "(config-gated dspy-optimize)", "template-specialization", "dead-context-elimination", "canonicalizer", "tool-binding-check", "bind-tool-handlers", "symbol-dce", "scheduling", "shared-prefix-analysis", "assign-priority"],
+  3: ["normalize", "build-prompt", "(config-gated dspy-optimize)", "template-specialization", "dead-context-elimination", "(contract-safe cleanup loop)", "shared-prefix-analysis", "assign-priority"],
 };
 
 function CompilerTab() {
@@ -367,7 +367,7 @@ function CompilerTab() {
         </div>
         <div className="ref-compiler__level-detail">
           <p className="ref-compiler__level-desc">
-            {selectedLevel === 0 && "No optimization passes. Raw graph is emitted directly."}
+            {selectedLevel === 0 && "Required lowering only: normalize the graph and materialize LLM template/input_names contracts."}
             {selectedLevel === 1 && "Basic optimization: normalize, prompt building, config-gated DSPy, safe cleanup, and priority metadata."}
             {selectedLevel === 2 && "Standard optimization: adds scheduling metadata and shared-prefix analysis for backend-agnostic graph hints."}
             {selectedLevel === 3 && "Aggressive optimization: repeats contract-safe cleanup, scheduling metadata, and graph-hint analysis."}
