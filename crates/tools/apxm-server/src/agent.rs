@@ -7,6 +7,7 @@ use tracing::info;
 use crate::error::ApiError;
 use crate::helpers::now_ms;
 use crate::state::AppState;
+use crate::types::responses::{OkAck, OkAckId, OkAckName};
 
 /// A remote agent registered with this server.
 ///
@@ -41,7 +42,7 @@ pub(crate) struct ReceiveMessageRequest {
 pub(crate) async fn receive_message(
     State(state): State<AppState>,
     Json(req): Json<ReceiveMessageRequest>,
-) -> Result<Json<JsonValue>, ApiError> {
+) -> Result<Json<OkAckId>, ApiError> {
     let text = req.message.to_string();
     let source = req.from.clone();
     let tags = req
@@ -56,7 +57,7 @@ pub(crate) async fn receive_message(
         .await
         .map_err(ApiError::runtime)?;
     info!(from = %req.from, id = %id, "Received inter-agent message");
-    Ok(Json(serde_json::json!({ "ok": true, "id": id })))
+    Ok(Json(OkAckId::new(id)))
 }
 
 // ─── Agent Registry Handlers ─────────────────────────────────────────────────
@@ -74,7 +75,7 @@ pub(crate) struct RegisterAgentRequest {
 pub(crate) async fn register_agent(
     State(state): State<AppState>,
     Json(req): Json<RegisterAgentRequest>,
-) -> Result<Json<JsonValue>, ApiError> {
+) -> Result<Json<OkAckName>, ApiError> {
     let reg = AgentRegistration {
         name: req.name.clone(),
         url: req.url,
@@ -84,7 +85,7 @@ pub(crate) async fn register_agent(
     };
     info!(name = %req.name, "Registering agent");
     state.agent_registry.insert(req.name.clone(), reg);
-    Ok(Json(serde_json::json!({ "ok": true, "name": req.name })))
+    Ok(Json(OkAckName::new(req.name)))
 }
 
 pub(crate) async fn list_agents(State(state): State<AppState>) -> Json<JsonValue> {
@@ -115,10 +116,10 @@ pub(crate) async fn get_agent(
 pub(crate) async fn deregister_agent(
     State(state): State<AppState>,
     Path(name): Path<String>,
-) -> Result<Json<JsonValue>, ApiError> {
+) -> Result<Json<OkAck>, ApiError> {
     if state.agent_registry.remove(&name).is_some() {
         info!(%name, "Deregistered agent");
-        Ok(Json(serde_json::json!({ "ok": true })))
+        Ok(Json(OkAck::new()))
     } else {
         Err(ApiError::not_found(format!(
             "Agent '{}' not registered",

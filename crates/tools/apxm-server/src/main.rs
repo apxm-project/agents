@@ -51,6 +51,7 @@ mod mcp;
 mod memory;
 mod state;
 mod tasks;
+mod types;
 
 #[cfg(test)]
 mod tests;

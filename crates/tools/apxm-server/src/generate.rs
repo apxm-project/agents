@@ -14,6 +14,10 @@ use tokio_stream::StreamExt;
 use crate::error::ApiError;
 use crate::helpers::now_ms;
 use crate::state::AppState;
+use crate::types::responses::{
+    SseEventMeta, StreamErrorBody, StreamLlmDonePayload, StreamTokenPayload,
+    StreamToolCallPayload, StreamUsage, StreamUsagePayload, StreamWarningPayload,
+};
 
 // ─── LLM Generate Types ──────────────────────────────────────────────────────
 
@@ -208,174 +212,143 @@ pub(crate) async fn handle_generate_stream(
         // 60-second inactivity timeout
         let timeout_dur = std::time::Duration::from_secs(60);
 
+        let make_meta = |seq_val: u64, trace: &str| SseEventMeta {
+            seq: seq_val,
+            timestamp_ms: now_ms(),
+            trace_id: trace.to_string(),
+            source: "backend",
+        };
+        let to_event = |meta: SseEventMeta, payload: JsonValue| {
+            let envelope = serde_json::json!({
+                "meta": serde_json::to_value(&meta).unwrap_or(JsonValue::Null),
+                "payload": payload,
+            });
+            Event::default().event("apxm").data(envelope.to_string())
+        };
+
         loop {
             match tokio::time::timeout(timeout_dur, pinned.next()).await {
                 Ok(Some(Ok(chunk))) => {
                     let seq_val = seq.fetch_add(1, Ordering::Relaxed);
+                    let meta = make_meta(seq_val, &trace);
                     let maybe_event = match &chunk {
-                        StreamChunk::Token(text) => Some(
-                            Event::default().event("apxm").data(
-                                serde_json::json!({
-                                    "meta": {
-                                        "seq": seq_val,
-                                        "timestamp_ms": now_ms(),
-                                        "trace_id": trace,
-                                        "source": "backend"
-                                    },
-                                    "payload": {
-                                        "kind": "token",
-                                        "text": text
-                                    }
-                                })
-                                .to_string(),
-                            ),
-                        ),
-                        StreamChunk::Thought(text) => Some(
-                            Event::default().event("apxm").data(
-                                serde_json::json!({
-                                    "meta": {
-                                        "seq": seq_val,
-                                        "timestamp_ms": now_ms(),
-                                        "trace_id": trace,
-                                        "source": "backend"
-                                    },
-                                    "payload": {
-                                        "kind": "thought",
-                                        "text": text
-                                    }
-                                })
-                                .to_string(),
-                            ),
-                        ),
-                        StreamChunk::ToolCallStart { id, name } => Some(
-                            Event::default().event("apxm").data(
-                                serde_json::json!({
-                                    "meta": {
-                                        "seq": seq_val,
-                                        "timestamp_ms": now_ms(),
-                                        "trace_id": trace,
-                                        "source": "backend"
-                                    },
-                                    "payload": {
-                                        "kind": "tool_call",
-                                        "tool_call_id": id,
-                                        "name": name,
-                                        "phase": "start"
-                                    }
-                                })
-                                .to_string(),
-                            ),
-                        ),
+                        StreamChunk::Token(text) => {
+                            let payload = StreamTokenPayload {
+                                kind: "token",
+                                text: text.clone(),
+                            };
+                            Some(to_event(
+                                meta,
+                                serde_json::to_value(&payload).unwrap_or(JsonValue::Null),
+                            ))
+                        }
+                        StreamChunk::Thought(text) => {
+                            let payload = StreamTokenPayload {
+                                kind: "thought",
+                                text: text.clone(),
+                            };
+                            Some(to_event(
+                                meta,
+                                serde_json::to_value(&payload).unwrap_or(JsonValue::Null),
+                            ))
+                        }
+                        StreamChunk::ToolCallStart { id, name } => {
+                            let payload = StreamToolCallPayload {
+                                kind: "tool_call",
+                                tool_call_id: id.clone(),
+                                name: Some(name.clone()),
+                                arguments_delta: None,
+                                phase: "start",
+                            };
+                            Some(to_event(
+                                meta,
+                                serde_json::to_value(&payload).unwrap_or(JsonValue::Null),
+                            ))
+                        }
                         StreamChunk::ToolCallDelta {
                             id,
                             arguments_delta,
-                        } => Some(
-                            Event::default().event("apxm").data(
-                                serde_json::json!({
-                                    "meta": {
-                                        "seq": seq_val,
-                                        "timestamp_ms": now_ms(),
-                                        "trace_id": trace,
-                                        "source": "backend"
-                                    },
-                                    "payload": {
-                                        "kind": "tool_call",
-                                        "tool_call_id": id,
-                                        "arguments_delta": arguments_delta,
-                                        "phase": "delta"
-                                    }
-                                })
-                                .to_string(),
-                            ),
-                        ),
-                        StreamChunk::Done(response) => Some(
-                            Event::default().event("apxm").data(
-                                serde_json::json!({
-                                    "meta": {
-                                        "seq": seq_val,
-                                        "timestamp_ms": now_ms(),
-                                        "trace_id": trace,
-                                        "source": "backend"
-                                    },
-                                    "payload": {
-                                        "kind": "llm_done",
-                                        "content": response.content,
-                                        "model": response.model,
-                                        "finish_reason": format!("{:?}", response.finish_reason),
-                                        "usage": {
-                                            "input_tokens": response.usage.input_tokens,
-                                            "output_tokens": response.usage.output_tokens,
-                                            "total_tokens": response.usage.total_tokens
-                                        }
-                                    }
-                                })
-                                .to_string(),
-                            ),
-                        ),
-                        StreamChunk::Usage(usage) => Some(
-                            Event::default().event("apxm").data(
-                                serde_json::json!({
-                                    "meta": {
-                                        "seq": seq_val,
-                                        "timestamp_ms": now_ms(),
-                                        "trace_id": trace,
-                                        "source": "backend"
-                                    },
-                                    "payload": {
-                                        "kind": "usage",
-                                        "input_tokens": usage.input_tokens,
-                                        "output_tokens": usage.output_tokens,
-                                        "total_tokens": usage.total_tokens
-                                    }
-                                })
-                                .to_string(),
-                            ),
-                        ),
+                        } => {
+                            let payload = StreamToolCallPayload {
+                                kind: "tool_call",
+                                tool_call_id: id.clone(),
+                                name: None,
+                                arguments_delta: Some(arguments_delta.clone()),
+                                phase: "delta",
+                            };
+                            Some(to_event(
+                                meta,
+                                serde_json::to_value(&payload).unwrap_or(JsonValue::Null),
+                            ))
+                        }
+                        StreamChunk::Done(response) => {
+                            let payload = StreamLlmDonePayload {
+                                kind: "llm_done",
+                                content: response.content.clone(),
+                                model: response.model.clone(),
+                                finish_reason: format!("{:?}", response.finish_reason),
+                                usage: StreamUsage {
+                                    input_tokens: response.usage.input_tokens,
+                                    output_tokens: response.usage.output_tokens,
+                                    total_tokens: response.usage.total_tokens,
+                                },
+                            };
+                            Some(to_event(
+                                meta,
+                                serde_json::to_value(&payload).unwrap_or(JsonValue::Null),
+                            ))
+                        }
+                        StreamChunk::Usage(usage) => {
+                            let payload = StreamUsagePayload {
+                                kind: "usage",
+                                usage: StreamUsage {
+                                    input_tokens: usage.input_tokens,
+                                    output_tokens: usage.output_tokens,
+                                    total_tokens: usage.total_tokens,
+                                },
+                            };
+                            Some(to_event(
+                                meta,
+                                serde_json::to_value(&payload).unwrap_or(JsonValue::Null),
+                            ))
+                        }
                         StreamChunk::Error(msg) => {
-                            // Non-fatal stream error — forward as warning event
                             tracing::warn!(error = %msg, "Non-fatal streaming error from backend");
-                            Some(
-                                Event::default().event("apxm").data(
-                                    serde_json::json!({
-                                        "meta": {
-                                            "seq": seq_val,
-                                            "timestamp_ms": now_ms(),
-                                            "trace_id": trace,
-                                            "source": "backend"
-                                        },
-                                        "payload": {
-                                            "kind": "warning",
-                                            "message": msg
-                                        }
-                                    })
-                                    .to_string(),
-                                ),
-                            )
+                            let payload = StreamWarningPayload {
+                                kind: "warning",
+                                message: msg.clone(),
+                            };
+                            Some(to_event(
+                                meta,
+                                serde_json::to_value(&payload).unwrap_or(JsonValue::Null),
+                            ))
                         }
                     };
                     if let Some(event) = maybe_event {
                         if tx.send(Ok(event)).await.is_err() {
-                            // Client disconnected
                             break;
                         }
                     }
                 }
                 Ok(Some(Err(e))) => {
-                    // Mid-stream error from backend
-                    let error_event = Event::default()
-                        .event("error")
-                        .data(serde_json::json!({"message": e.to_string()}).to_string());
+                    let body = StreamErrorBody {
+                        message: e.to_string(),
+                    };
+                    let error_event = Event::default().event("error").data(
+                        serde_json::to_string(&body).unwrap_or_else(|_| "{}".to_string()),
+                    );
                     let _ = tx.send(Ok(error_event)).await;
                     break;
                 }
                 Ok(None) => {
-                    // Stream ended naturally
                     break;
                 }
                 Err(_) => {
-                    // Timeout — no activity for 60 seconds
+                    let body = StreamErrorBody {
+                        message: "Stream timeout after 60s".to_string(),
+                    };
                     let timeout_event = Event::default().event("error").data(
-                        serde_json::json!({"message": "Stream timeout after 60s"}).to_string(),
+                        serde_json::to_string(&body).unwrap_or_else(|_| "{}".to_string()),
                     );
                     let _ = tx.send(Ok(timeout_event)).await;
                     break;

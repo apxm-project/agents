@@ -8,6 +8,9 @@ use serde_json::Value as JsonValue;
 
 use crate::helpers::{jsonrpc_err, jsonrpc_ok, mcp_tool_result};
 use crate::state::AppState;
+use crate::types::responses::{
+    McpInitializeCapabilities, McpInitializeResult, ServerInfo, ToolEntry, ToolsCapability,
+};
 
 // ─── MCP 2025-11-05 JSON-RPC endpoint (/v1/mcp) ─────────────────────────────
 
@@ -34,20 +37,21 @@ pub(crate) async fn mcp_jsonrpc(
     let id = req.id.clone();
     match req.method.as_str() {
         "tools/list" => {
-            let tools: Vec<JsonValue> = state
+            let tools: Vec<ToolEntry> = state
                 .runtime
                 .capability_system()
                 .list_capabilities()
                 .iter()
-                .map(|m| {
-                    serde_json::json!({
-                        "name": m.name,
-                        "description": m.description,
-                        "inputSchema": m.parameters_schema,
-                    })
+                .map(|m| ToolEntry {
+                    name: m.name.clone(),
+                    description: m.description.clone(),
+                    input_schema: m.parameters_schema.clone(),
                 })
                 .collect();
-            jsonrpc_ok(id, serde_json::json!({ "tools": tools }))
+            jsonrpc_ok(
+                id,
+                serde_json::json!({ "tools": serde_json::to_value(&tools).unwrap_or(JsonValue::Null) }),
+            )
         }
         "tools/call" => {
             let tool_name = req
@@ -87,19 +91,24 @@ pub(crate) async fn mcp_jsonrpc(
                 },
             }
         }
-        "initialize" => jsonrpc_ok(
-            id,
-            serde_json::json!({
-                "protocolVersion": apxm_core::constants::protocols::MCP_VERSION,
-                "serverInfo": {
-                    "name": "apxm-server",
-                    "version": env!("CARGO_PKG_VERSION"),
+        "initialize" => {
+            let result = McpInitializeResult {
+                protocol_version: apxm_core::constants::protocols::MCP_VERSION,
+                server_info: ServerInfo {
+                    name: "apxm-server",
+                    version: env!("CARGO_PKG_VERSION"),
                 },
-                "capabilities": {
-                    "tools": { "listChanged": false },
+                capabilities: McpInitializeCapabilities {
+                    tools: ToolsCapability {
+                        list_changed: false,
+                    },
                 },
-            }),
-        ),
+            };
+            jsonrpc_ok(
+                id,
+                serde_json::to_value(&result).unwrap_or(JsonValue::Null),
+            )
+        }
         unknown => jsonrpc_err(id, -32601, format!("Method not found: {}", unknown)),
     }
 }

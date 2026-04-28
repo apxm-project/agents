@@ -10,6 +10,9 @@ use tracing::info;
 use crate::error::ApiError;
 use crate::helpers::now_ms;
 use crate::state::AppState;
+use crate::types::responses::{
+    CheckpointCreatedResponse, CheckpointResumedResponse, CheckpointWebhookPayload,
+};
 
 /// Status of a PAUSE/RESUME checkpoint.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -93,7 +96,7 @@ pub(crate) struct ResumeCheckpointRequest {
 pub(crate) async fn create_checkpoint(
     State(state): State<AppState>,
     Json(req): Json<CreateCheckpointRequest>,
-) -> Json<JsonValue> {
+) -> Json<CheckpointCreatedResponse> {
     let id = req.checkpoint_id.clone();
     let notification_url = req.notification_url.clone();
     let checkpoint = Checkpoint {
@@ -111,12 +114,12 @@ pub(crate) async fn create_checkpoint(
 
     // Fire-and-forget webhook notification
     if let Some(notify_url) = notification_url {
-        let payload = serde_json::json!({
-            "type": "checkpoint_created",
-            "checkpoint_id": id,
-            "message": req.message,
-            "review_url": format!("/v1/checkpoints/{}", id)
-        });
+        let payload = CheckpointWebhookPayload {
+            kind: "checkpoint_created",
+            checkpoint_id: id.clone(),
+            message: req.message,
+            review_url: format!("/v1/checkpoints/{}", id),
+        };
         tokio::spawn(async move {
             if let Ok(client) = reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(5))
@@ -127,12 +130,12 @@ pub(crate) async fn create_checkpoint(
         });
     }
 
-    Json(serde_json::json!({
-        "ok": true,
-        "checkpoint_id": id,
-        "status": apxm_core::types::SessionStatus::Pending,
-        "resume_url": format!("/v1/checkpoints/{}/resume", id)
-    }))
+    Json(CheckpointCreatedResponse {
+        ok: true,
+        checkpoint_id: id.clone(),
+        status: apxm_core::types::SessionStatus::Pending,
+        resume_url: format!("/v1/checkpoints/{}/resume", id),
+    })
 }
 
 pub(crate) async fn get_checkpoint(
@@ -152,7 +155,7 @@ pub(crate) async fn resume_checkpoint(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(req): Json<ResumeCheckpointRequest>,
-) -> Result<Json<JsonValue>, ApiError> {
+) -> Result<Json<CheckpointResumedResponse>, ApiError> {
     let cp = state
         .checkpoint_store
         .resume(&id, req.human_input)
@@ -161,11 +164,11 @@ pub(crate) async fn resume_checkpoint(
             message: e,
         })?;
     info!(id = %id, "Checkpoint resumed with human input");
-    Ok(Json(serde_json::json!({
-        "ok": true,
-        "checkpoint_id": cp.id,
-        "status": apxm_core::types::SessionStatus::Resumed,
-        "human_input": cp.human_input,
-        "resumed_at_ms": cp.resumed_at_ms
-    })))
+    Ok(Json(CheckpointResumedResponse {
+        ok: true,
+        checkpoint_id: cp.id,
+        status: apxm_core::types::SessionStatus::Resumed,
+        human_input: cp.human_input,
+        resumed_at_ms: cp.resumed_at_ms,
+    }))
 }

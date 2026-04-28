@@ -14,6 +14,7 @@ use tracing::info;
 
 use crate::error::ApiError;
 use crate::state::AppState;
+use crate::types::responses::{CapabilityEntry, OkAckName};
 
 /// A capability that forwards invocations to an external HTTP endpoint.
 ///
@@ -119,27 +120,25 @@ impl CapabilityExecutor for StaticCapability {
 
 pub(crate) async fn list_capabilities(
     State(state): State<AppState>,
-) -> Result<Json<JsonValue>, ApiError> {
-    let caps = state
+) -> Result<Json<Vec<CapabilityEntry>>, ApiError> {
+    let caps: Vec<CapabilityEntry> = state
         .runtime
         .capability_system()
         .list_capabilities()
         .iter()
-        .map(|m| {
-            serde_json::json!({
-                "name": m.name,
-                "description": m.description,
-                "parameters_schema": m.parameters_schema,
-            })
+        .map(|m| CapabilityEntry {
+            name: m.name.clone(),
+            description: m.description.clone(),
+            parameters_schema: m.parameters_schema.clone(),
         })
-        .collect::<Vec<_>>();
-    Ok(Json(JsonValue::Array(caps)))
+        .collect();
+    Ok(Json(caps))
 }
 
 pub(crate) async fn register_capability(
     State(state): State<AppState>,
     Json(req): Json<RegisterCapabilityRequest>,
-) -> Result<Json<JsonValue>, ApiError> {
+) -> Result<Json<OkAckName>, ApiError> {
     let metadata = CapabilityMetadata::new(
         req.name.clone(),
         req.description.clone(),
@@ -171,5 +170,5 @@ pub(crate) async fn register_capability(
         .capability_system()
         .register(capability)
         .map_err(ApiError::runtime)?;
-    Ok(Json(serde_json::json!({ "ok": true, "name": req.name })))
+    Ok(Json(OkAckName::new(req.name)))
 }
