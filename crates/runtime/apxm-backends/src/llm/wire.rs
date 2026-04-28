@@ -56,6 +56,10 @@ pub mod api_paths {
     pub const API_TAGS: &str = "/api/tags";
     pub const APXM_GRAPHS: &str = "/apxm/graphs";
     pub const APXM_GRAPHS_REGISTER: &str = "/apxm/graphs/register";
+    /// `GET /v1/apxm/scheduler` — APXM-fork endpoint reporting the live
+    /// scheduler policy so the backend can verify priority hints will be
+    /// honored (FCFS silently ignores per-request priority).
+    pub const APXM_SCHEDULER: &str = "/apxm/scheduler";
 }
 
 pub mod anthropic_events {

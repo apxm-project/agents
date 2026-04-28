@@ -28,6 +28,7 @@ from apxm_vllm_contract import (
     EnvVar,
     ForkModule,
     ProbeContract,
+    SchedulingPolicy,
     ToolName,
     VllmCommand,
     VllmDefaults,
@@ -1117,9 +1118,15 @@ def _add_model_args(parser: argparse.ArgumentParser) -> None:
         help="Enable vLLM prefix caching for graph-aware latency experiments",
     )
     parser.add_argument(
-        "--scheduling-policy",
+        VllmServeFlag.SCHEDULING_POLICY.value,
         dest=ArgName.SCHEDULING_POLICY.value,
-        help="vLLM scheduler policy, for example priority for APXM priority hints",
+        choices=[p.value for p in SchedulingPolicy],
+        default=DEFAULTS.scheduling_policy,
+        help=(
+            "vLLM scheduler policy. APXM ships with 'priority' so that "
+            "compiler-stamped critical-path hints actually re-order the "
+            "waiting queue; pass 'fcfs' to disable."
+        ),
     )
     parser.add_argument(
         "--trust-remote-code",

@@ -91,6 +91,18 @@ pub struct GraphStatusResponse {
     pub critical_path_length: Option<u64>,
 }
 
+/// Response from `GET /v1/apxm/scheduler`.
+///
+/// The fork's critical-path boost (which rewrites a request's priority to -1)
+/// is only consulted when `policy == "priority"`. If the running fork is in
+/// FCFS mode, APXM-stamped hints round-trip without effect.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SchedulerInfoResponse {
+    pub object: String,
+    pub policy: String,
+    pub default: Option<String>,
+}
+
 /// Graph-aware vLLM backend.
 ///
 /// Wraps an OpenAI-compatible vLLM server and injects APXM graph hints
@@ -112,6 +124,10 @@ pub struct GraphAwareVllmBackend {
     default_model_configured: bool,
     /// Whether vLLM should receive native `structured_outputs`.
     structured_outputs_supported: bool,
+    /// One-shot guard so the FCFS-policy WARN only fires once per backend.
+    /// Set to `true` after the first time `health_check` reports a non-priority
+    /// policy or a missing `/v1/apxm/scheduler` endpoint.
+    scheduler_policy_warned: AtomicBool,
 }
 
 impl GraphAwareVllmBackend {
@@ -178,7 +194,98 @@ impl GraphAwareVllmBackend {
             auto_tool_choice_supported: AtomicBool::new(auto_tool_choice),
             default_model_configured,
             structured_outputs_supported,
+            scheduler_policy_warned: AtomicBool::new(false),
         })
+    }
+
+    /// URL for the scheduler-info probe (`GET /v1/apxm/scheduler`).
+    fn scheduler_info_url(&self) -> String {
+        format!("{}{}", self.base_url, api_paths::APXM_SCHEDULER)
+    }
+
+    /// Probe `/v1/apxm/scheduler` and warn loudly once if the fork is not in
+    /// priority mode. Hints are still sent so the per-request `vllm_xargs.apxm`
+    /// payload (graph_id, pin_policy, etc.) keeps reaching the scheduler — only
+    /// the priority field is inert under FCFS, which the operator needs to know.
+    async fn probe_scheduler_policy(&self) {
+        // Cheap short-circuit: once we've warned, don't re-probe every health tick.
+        if self.scheduler_policy_warned.load(Ordering::Relaxed) {
+            return;
+        }
+
+        let url = self.scheduler_info_url();
+        let response = self
+            .inner
+            .apply_transport_headers(self.client.get(&url))
+            .send()
+            .await;
+
+        match response {
+            Ok(resp) if resp.status().is_success() => {
+                let info = resp.json::<SchedulerInfoResponse>().await;
+                match info {
+                    Ok(info) if info.policy == super::graph_meta::SCHEDULER_POLICY_PRIORITY => {
+                        // Priority mode is active — APXM hints will reorder admission.
+                        // Nothing to log; keep `scheduler_policy_warned` false so we
+                        // re-check if a future health tick sees a different policy.
+                    }
+                    Ok(info) => {
+                        if !self.scheduler_policy_warned.swap(true, Ordering::Relaxed) {
+                            tracing::warn!(
+                                policy = %info.policy,
+                                expected = super::graph_meta::SCHEDULER_POLICY_PRIORITY,
+                                url = %url,
+                                "vLLM scheduler is not in priority mode; APXM critical-path \
+                                 hints will round-trip without reordering admission. Restart \
+                                 the fork with `--scheduling-policy=priority` (the APXM \
+                                 launcher default) to make priority hints take effect."
+                            );
+                        }
+                    }
+                    Err(err) => {
+                        if !self.scheduler_policy_warned.swap(true, Ordering::Relaxed) {
+                            tracing::warn!(
+                                error = %err,
+                                url = %url,
+                                "vLLM /v1/apxm/scheduler returned a malformed body; cannot \
+                                 confirm priority hints will be honored."
+                            );
+                        }
+                    }
+                }
+            }
+            Ok(resp) if resp.status() == reqwest::StatusCode::NOT_FOUND => {
+                if !self.scheduler_policy_warned.swap(true, Ordering::Relaxed) {
+                    tracing::warn!(
+                        url = %url,
+                        "vLLM fork is missing /v1/apxm/scheduler — likely an older fork \
+                         build. Cannot verify scheduler policy; APXM priority hints may be \
+                         inert. Rebuild the external/vllm submodule to pick up the \
+                         scheduler-info endpoint."
+                    );
+                }
+            }
+            Ok(resp) => {
+                if !self.scheduler_policy_warned.swap(true, Ordering::Relaxed) {
+                    tracing::warn!(
+                        status = %resp.status(),
+                        url = %url,
+                        "vLLM scheduler-info probe returned an unexpected status; \
+                         priority hint behavior is unverified."
+                    );
+                }
+            }
+            Err(err) => {
+                if !self.scheduler_policy_warned.swap(true, Ordering::Relaxed) {
+                    tracing::warn!(
+                        error = %err,
+                        url = %url,
+                        "Failed to probe vLLM /v1/apxm/scheduler; priority hint behavior \
+                         is unverified."
+                    );
+                }
+            }
+        }
     }
 
     /// Return the registration endpoint used for graph metadata uploads.
@@ -447,6 +554,14 @@ impl LLMBackend for GraphAwareVllmBackend {
                     .context("failed to probe vLLM APXM graph route during health_check");
             }
         }
+
+        // Probe the scheduler-policy endpoint so the operator gets a loud
+        // warning if the fork is running in FCFS mode (in which case
+        // APXM-stamped per-request priorities are ignored). The probe is
+        // best-effort and warn-once: it never aborts health_check, because
+        // vllm_xargs.apxm hints (graph_id, pin_policy, …) remain useful for
+        // KV pinning regardless of scheduler policy.
+        self.probe_scheduler_policy().await;
 
         Ok(())
     }

@@ -124,6 +124,18 @@ class VllmServeFlag(str, Enum):
     SCHEDULING_POLICY = "--scheduling-policy"
 
 
+class SchedulingPolicy(str, Enum):
+    """vLLM scheduler policy values understood by the APXM fork.
+
+    The fork's per-request critical-path boost only takes effect under
+    PRIORITY mode; FCFS silently ignores per-request priority hints. The
+    APXM-fork default is PRIORITY (see external/vllm/vllm/config/scheduler.py).
+    """
+
+    FCFS = "fcfs"
+    PRIORITY = "priority"
+
+
 @dataclass(frozen=True)
 class VllmDefaults:
     """Controller defaults that are model-neutral and safe for local hosts."""
@@ -136,6 +148,10 @@ class VllmDefaults:
     stop_timeout_seconds: float = 20.0
     download_workers: int = 8
     log_lines: int = 80
+    # APXM ships with priority on by default so compiler-stamped critical-path
+    # hints actually reorder the waiting queue. Operators can override by
+    # passing --scheduling-policy fcfs explicitly.
+    scheduling_policy: str = SchedulingPolicy.PRIORITY.value
 
 
 @dataclass(frozen=True)
