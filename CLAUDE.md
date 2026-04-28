@@ -9,6 +9,8 @@ Language: Rust
 - **compile**: `dekk apxm compile <graph.air>` -- Compile graph to optimized .apxmobj artifact
 - **execute**: `dekk apxm execute <graph.air>` -- Compile and run a graph in one step
 - **run**: `dekk apxm run <artifact.apxmobj>` -- Execute a pre-compiled artifact
+- **stop**: `dekk apxm stop` -- Stop APXM compile/run/execute/workflow jobs
+- **process/list**: `dekk apxm process list` -- List APXM job processes
 - **decompile**: `dekk apxm decompile <artifact.apxmobj>` -- Reverse-map artifact back to AIR
 - **validate**: `dekk apxm validate <graph.air>` -- Validate graph against AIS contract
 - **analyze**: `dekk apxm analyze <graph.air>` -- Parallelism analysis, critical path, speedup estimate
