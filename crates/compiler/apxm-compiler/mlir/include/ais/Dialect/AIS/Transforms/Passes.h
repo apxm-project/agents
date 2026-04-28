@@ -7,13 +7,17 @@
  * site (AisTransforms.cpp) and command-line driver code free of TableGen
  * details.
  *
- * Pass list (in canonical order):
- *   1. normalize                 – canonicalise the graph
- *   2. build-prompt              – generate named placeholders for empty templates
- *   3. scheduling                – annotate with tier/cost/parallel-safe flags
- *   4. fuse-ask-ops              – explicit-only ASK fusion experiment
- *   5. condense-ops              – explicit-only memory batching experiment
- *   6. unconsumed-value-warning  – warn about unused results (DCE)
+ * Pass list (canonical registration order):
+ *   1. normalize                  – canonicalize the graph
+ *   2. build-prompt               – materialize LLM template/input_names contracts
+ *   3. template-specialization    – fold known constants into templates
+ *   4. dead-context-elimination   – remove context operands unused by templates
+ *   5. scheduling                 – annotate with tier/cost/parallel-safe flags
+ *   6. shared-prefix-analysis     – annotate existing prefix-reuse opportunities
+ *   7. assign-priority            – stamp critical-path priority metadata
+ *   8. dspy-optimize              – config-gated prompt-template tuning
+ *   9. unconsumed-value-warning   – warn about unused results
+ *  10. explicit-only experiments  – fuse, condense, schema, prompt canonicalization
  */
 
 #ifndef APXM_AIS_PASSES_H
@@ -39,7 +43,7 @@ namespace mlir::ais {
 /// Create NormalizeAgentGraph pass - canonicalize AIS graph structure
 std::unique_ptr<Pass> createNormalizeAgentGraphPass();
 
-/// Create BuildPrompt pass - generate named placeholders for empty template_str
+/// Create BuildPrompt pass - materialize LLM template/input_names contracts
 std::unique_ptr<Pass> createBuildPromptPass();
 
 /// Create CapabilityScheduling pass - annotate with scheduling metadata

@@ -6,7 +6,8 @@
  * prompt optimizers (MIPROv2, BootstrapFewShot, COPRO) on template strings.
  * It is a no-op when no training data is available.
  *
- * Placement: immediately after build-prompt (which establishes {0} placeholders).
+ * Placement: immediately after build-prompt (which establishes named
+ * template/input_names contracts).
  */
 
 #include "ais/Dialect/AIS/Transforms/Passes.h"
