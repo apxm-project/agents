@@ -46,8 +46,10 @@ node outputs for node-detail lookup. Prompt observability now emits redacted
 `llm_prompt` events, and `node_output` events carry summary/hash/redaction
 metadata instead of raw JSON values. Execution records are memory-indexed for
 API lookup and snapshotted to `execution.json` inside the APXM-owned skill
-session directory. Skill provenance on generic runtime events and full
-scheduler replay remain future work.
+session directory. Runtime events emitted by server-owned skill runs carry
+`skill_id`, `skill_version`, and entry-flow provenance. Nested parent-skill
+provenance, artifact-level provenance, and full scheduler replay remain future
+work.
 
 ## Next PR
 
@@ -56,8 +58,8 @@ server-managed executions:
 
 1. Add a bounded or reloadable execution index on top of persisted
    `execution.json` snapshots.
-2. Preserve `skill_id`, `skill_version`, `scope_id`, and parent-run provenance
-   in events, session manifests, and node artifacts.
+2. Preserve parent-run provenance, `scope_id`, and artifact/session provenance
+   for nested skills.
 3. Extend capability admission beyond read-only registered tools with explicit
    sandbox preflight.
 
@@ -92,8 +94,8 @@ server-managed executions:
 
 | Missing piece | Closing tasks | Done when |
 | --- | --- | --- |
-| Runtime and artifact metadata do not carry stable `skill_id`, `skill_version`, parent skill, or flow provenance. | T0.1, T2.3, T3.3 | Manifests, artifacts, sessions, events, and nested invocations preserve skill identity and parent links. |
-| Generic event streams include typed redacted `llm_prompt`, `node_output`, and `node_metrics`, but lack skill provenance. | T2.1, T2.2, T2.3 | REST/MCP streaming consumers can connect runtime events to `skill_id`, `skill_version`, flow, scope, and parent run. |
+| Server-owned top-level runtime events carry `skill_id`, `skill_version`, and entry flow; artifact/session metadata and nested parent provenance remain incomplete. | T0.1, T2.3, T3.3 | Manifests, artifacts, sessions, events, and nested invocations preserve skill identity and parent links. |
+| Generic event streams include typed redacted `llm_prompt`, `node_output`, and `node_metrics`, but still need node names and nested parent scope/provenance. | T2.1, T2.2, T2.3 | REST/MCP streaming consumers can connect runtime events to node names, scope, and parent run. |
 | Child artifact workflow sessions can miss per-node directories. | T3.1 | Child artifact executions reconstruct graph metadata and write complete per-node evidence. |
 | `FLOW_CALL` returns only the sub-flow result and hides child output maps. | T3.2 | Parent results and sessions expose namespaced child `all_outputs` / `node_output_map` data. |
 | Session scope ids exist in lower layers but are not persisted as first-class isolation dimensions. | T2.3, T3.3 | Session manifests, node files, event streams, and skill/scope indices include non-null scope ids for skill runs. |
@@ -404,8 +406,9 @@ apxm_skill_run_status  # future, after ExecutionStore lands
 
 **Why:** `SessionEventEmitter` writes files, and generic event streams now
 include redacted `llm_prompt`, `node_output`, and `node_metrics` payloads.
-The remaining work is enriching those payloads with skill provenance and node
-names.
+Top-level server-owned skill runs attach `skill_id`, `skill_version`, and entry
+flow to those runtime events. The remaining work is enriching those payloads
+with node names, nested parent provenance, and session-level scope persistence.
 
 **Scope:**
 

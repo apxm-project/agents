@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use apxm_core::events::payload::*;
-use apxm_core::events::{ApxmEvent, EventEmitter, EventSource};
+use apxm_core::events::{ApxmEvent, EventEmitter, EventSource, SkillEventProvenance};
 use apxm_core::types::operations::AISOperationType;
 use apxm_core::types::values::Value;
 use parking_lot::RwLock;
@@ -23,6 +23,7 @@ pub struct EmitterAdapter {
     emitter: Arc<dyn EventEmitter>,
     source: EventSource,
     trace_id: String,
+    skill_provenance: Option<SkillEventProvenance>,
     seq: AtomicU64,
     /// Current parent span ID for hierarchical event nesting.
     /// Updated by the executor engine when entering/leaving node scopes.
@@ -42,10 +43,17 @@ impl EmitterAdapter {
             emitter,
             source,
             trace_id: trace_id.into(),
+            skill_provenance: None,
             seq: AtomicU64::new(0),
             current_span_id: RwLock::new(None),
             current_scope_id: RwLock::new(None),
         }
+    }
+
+    /// Attach skill provenance to every subsequently emitted event.
+    pub fn with_skill_provenance(mut self, provenance: SkillEventProvenance) -> Self {
+        self.skill_provenance = Some(provenance);
+        self
     }
 
     /// Set the current span ID for subsequently emitted events.
@@ -69,6 +77,7 @@ impl EmitterAdapter {
         };
         let event = event
             .with_scope_id(scope)
+            .with_skill_provenance(self.skill_provenance.clone())
             .with_seq(self.seq.fetch_add(1, Ordering::Relaxed));
         self.emitter.emit(event);
     }
@@ -266,7 +275,7 @@ mod tests {
     use std::sync::mpsc;
 
     use apxm_core::events::payload::{LlmPromptPayload, NodeMetricsPayload, NodeOutputPayload};
-    use apxm_core::events::{ChannelEmitter, EventSource, kind};
+    use apxm_core::events::{ChannelEmitter, EventSource, SkillEventProvenance, kind};
     use apxm_core::types::operations::AISOperationType;
     use apxm_core::types::{NodeMetrics, OperationMetric};
 
@@ -347,7 +356,14 @@ mod tests {
             Arc::new(ChannelEmitter::new(tx)),
             EventSource::Runtime,
             "trace-llm-prompt",
-        );
+        )
+        .with_skill_provenance(SkillEventProvenance {
+            skill_id: "checkout-context-triage".to_string(),
+            skill_version: "0.1.0".to_string(),
+            parent_skill_id: None,
+            parent_execution_id: None,
+            flow_name: Some("main".to_string()),
+        });
         adapter.set_current_span_id(Some("parent-span".to_string()));
         adapter.set_current_scope_id(Some("scope-1".to_string()));
 
@@ -359,6 +375,10 @@ mod tests {
         assert_eq!(event.meta.trace_id, "trace-llm-prompt");
         assert_eq!(event.meta.parent_span_id.as_deref(), Some("parent-span"));
         assert_eq!(event.meta.scope_id.as_deref(), Some("scope-1"));
+        let skill = event.meta.skill.as_ref().expect("skill provenance");
+        assert_eq!(skill.skill_id, "checkout-context-triage");
+        assert_eq!(skill.skill_version, "0.1.0");
+        assert_eq!(skill.flow_name.as_deref(), Some("main"));
 
         let payload = event
             .payload

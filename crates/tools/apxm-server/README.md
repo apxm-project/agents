@@ -67,7 +67,8 @@ read-only; Python-backed `INV_TOOL` handlers are rejected. Sessions are created
 under APXM-owned skill session directories using a generated or simple validated
 `session_id`, streamed skill runs emit typed `node_output` and `node_metrics`
 events, prompt and node-output observability is redacted to summaries and
-hashes, and completed runs are recorded in the in-memory execution index for
+hashes, and runtime events include the skill id, skill version, and entry flow.
+Completed runs are recorded in the in-memory execution index for
 `/v1/executions/:execution_id`. Each update is also snapshotted to
 `execution.json` inside the APXM-owned skill session directory. Typed node
 outputs and node metrics observed during REST and SSE skill execution are

@@ -14,7 +14,7 @@ pub mod sinks;
 mod tests;
 
 pub use emitter::EventEmitter;
-pub use event::{ApxmEvent, EventMeta, EventSource};
+pub use event::{ApxmEvent, EventMeta, EventSource, SkillEventProvenance};
 pub use kind::{EventCategory, EventKind};
 pub use payload::EventPayload;
 pub use sinks::{ChannelEmitter, FanOutEmitter, NoOpEmitter};

@@ -1209,6 +1209,15 @@ async fn skill_execute_stream_emits_node_output_events() {
     );
     assert_eq!(node_output["meta"]["source"], "runtime");
     assert_eq!(node_output["meta"]["trace_id"], execution_id);
+    assert_eq!(node_output["meta"]["skill"]["skill_id"], FIXTURE_SKILL_ID);
+    assert_eq!(
+        node_output["meta"]["skill"]["skill_version"],
+        FIXTURE_SKILL_VERSION
+    );
+    assert_eq!(
+        node_output["meta"]["skill"]["flow_name"],
+        FIXTURE_ENTRY_FLOW
+    );
     assert_eq!(node_output["payload"]["node_id"], 1);
     assert_eq!(
         node_output["payload"][NODE_OUTPUT_FIELD][SUMMARY_FIELD],
