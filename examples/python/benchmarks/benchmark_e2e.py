@@ -64,6 +64,8 @@ FLAG_EMIT_DIAGNOSTICS = "--emit-diagnostics"
 FLAG_EMIT_SESSION = "--emit-session"
 FLAG_TRACE = "--trace"
 ENV_APXM_CONFIG = "APXM_CONFIG"
+ENV_VLLM_CACHE_SALT = "APXM_VLLM_CACHE_SALT"
+VLLM_CACHE_SALT_PER_EXECUTION = "execution"
 
 FILE_MANIFEST = "manifest.json"
 FILE_RESULTS = "results.json"
@@ -862,11 +864,19 @@ def _command_prefix(apxm_config: Path | None) -> list[str]:
     return [DEKK, APXM]
 
 
-def _command_env(apxm_config: Path | None) -> dict[str, str] | None:
-    if apxm_config is None:
-        return None
+def _command_env(apxm_config: Path | None) -> dict[str, str]:
+    """Build the per-iteration child env.
+
+    Always sets ``APXM_VLLM_CACHE_SALT=execution`` so each benchmark
+    iteration salts the vLLM prefix cache by execution_id. This isolates
+    back-to-back O0/O2 sweeps from each other's KV state. Production runs
+    (``dekk apxm execute`` invoked directly) do not pass through this helper,
+    so the prefix cache is reused across executions as designed.
+    """
     env = os.environ.copy()
-    env[ENV_APXM_CONFIG] = str(apxm_config)
+    if apxm_config is not None:
+        env[ENV_APXM_CONFIG] = str(apxm_config)
+    env[ENV_VLLM_CACHE_SALT] = VLLM_CACHE_SALT_PER_EXECUTION
     return env
 
 
@@ -1261,6 +1271,14 @@ def _summarize(records: list[RunRecord]) -> None:
     print("# benchmark_e2e summary")
     if variants != ["default"]:
         print(f"- variants: {', '.join(variants)}")
+    # If any opt level produced critical-chain milestones, the workflow under
+    # test cares about critical-chain finish time, not whole-graph wall time.
+    # Promote the claim metric to its own line per opt level, alongside wall.
+    has_critical_milestones = any(
+        row.critical_milestone_last_ms is not None or row.observed_critical_path_finish_ms is not None
+        for row in records
+        if row.success
+    )
     for opt_level in sorted(by_opt):
         rows = by_opt[opt_level]
         successes = [row for row in rows if row.success]
@@ -1309,8 +1327,61 @@ def _summarize(records: list[RunRecord]) -> None:
                 f"- O{opt_level}: {len(successes)}/{len(rows)} succeeded, "
                 + ", ".join(metric_parts)
             )
+            if has_critical_milestones:
+                milestone_values = [
+                    row.critical_milestone_last_ms
+                    for row in successes
+                    if row.critical_milestone_last_ms is not None
+                ]
+                finish_values = [
+                    row.observed_critical_path_finish_ms
+                    for row in successes
+                    if row.observed_critical_path_finish_ms is not None
+                ]
+                claim_parts: list[str] = []
+                if milestone_values:
+                    claim_parts.append(
+                        f"mean critical milestone last {statistics.fmean(milestone_values):.1f} ms"
+                    )
+                if finish_values:
+                    claim_parts.append(
+                        f"mean observed critical finish {statistics.fmean(finish_values):.1f} ms"
+                    )
+                if claim_parts:
+                    print(
+                        f"  claim metric (critical-chain finish, not whole-graph wall): "
+                        + ", ".join(claim_parts)
+                    )
         else:
             print(f"- O{opt_level}: 0/{len(rows)} succeeded")
+    # Cross-opt-level delta on the claim metric makes the priority-hints win
+    # legible without scraping the CSV. Skip silently if we do not have at
+    # least two opt levels with milestone data.
+    if has_critical_milestones:
+        per_opt_milestone: dict[int, float] = {}
+        for opt_level in sorted(by_opt):
+            successes = [row for row in by_opt[opt_level] if row.success]
+            milestone_values = [
+                row.critical_milestone_last_ms
+                for row in successes
+                if row.critical_milestone_last_ms is not None
+            ]
+            if milestone_values:
+                per_opt_milestone[opt_level] = statistics.fmean(milestone_values)
+        if len(per_opt_milestone) >= 2:
+            baseline_opt = min(per_opt_milestone)
+            baseline = per_opt_milestone[baseline_opt]
+            deltas: list[str] = []
+            for opt_level, value in per_opt_milestone.items():
+                if opt_level == baseline_opt:
+                    continue
+                delta_ms = value - baseline
+                pct = (delta_ms / baseline * 100.0) if baseline else 0.0
+                deltas.append(
+                    f"O{opt_level} vs O{baseline_opt}: {delta_ms:+.1f} ms ({pct:+.1f}%)"
+                )
+            if deltas:
+                print("- claim-metric delta: " + "; ".join(deltas))
 
 
 def _display_number(value: int | float | None, suffix: str = "") -> str:

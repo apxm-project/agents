@@ -27,6 +27,7 @@ use super::{
 };
 use crate::aam::{Goal as AamGoal, GoalId, GoalStatus, TransitionLabel};
 use crate::executor::memoization::MemoCache;
+use apxm_backends::llm::backends::vllm::attrs as vllm_attrs;
 use apxm_backends::{LLMRequest, ToolChoice, ToolDefinition};
 use apxm_core::InnerPlanPayload;
 use apxm_core::apxm_llm;
@@ -44,10 +45,25 @@ use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 
-const VLLM_CACHE_SALT_ATTR: &str = "vllm_cache_salt";
-const VLLM_CACHE_SALT_EXECUTION: &str = "execution";
-const VLLM_CACHE_SALT_EXECUTION_ID: &str = "execution_id";
-const VLLM_CACHE_SALT_GRAPH_EXECUTION: &str = "graph_execution";
+/// Backends that maintain their own request-level prefix / KV cache get
+/// `memoizable=false` by default. Reasoning:
+///
+/// 1. The APXM in-process memo cache only hits on bit-identical full prompts,
+///    which is rare in real agent workflows where each call interpolates
+///    different context. The downstream prefix cache is the better cache layer.
+/// 2. A memo hit short-circuits before the backend HTTP call, which hides the
+///    backend's own cache telemetry (e.g. vLLM's `cached_input_tokens`,
+///    `pinned_blocks`) from the runtime metrics report.
+///
+/// Cloud backends without an application-visible cache control surface keep
+/// the historical default of `memoizable=true` so the in-process memo remains
+/// the primary application-level cache for them.
+fn default_memoizable_for_backend(backend: Option<&str>) -> bool {
+    match backend {
+        Some("vllm") | Some("ollama") => false,
+        _ => true,
+    }
+}
 
 /// LLM operation mode (derived from operation type)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -666,17 +682,16 @@ fn apply_vllm_request_overrides_from_node(
     node: &Node,
     mut request: LLMRequest,
 ) -> Result<LLMRequest> {
-    let Some(raw_cache_salt) = get_optional_string_attribute(node, VLLM_CACHE_SALT_ATTR)? else {
+    let node_attr = get_optional_string_attribute(node, vllm_attrs::CACHE_SALT_ATTR)?;
+    let Some(selector) = vllm_attrs::resolved_cache_salt_selector(node_attr.as_deref()) else {
         return Ok(request);
     };
-    let raw_cache_salt = raw_cache_salt.trim();
-    if raw_cache_salt.is_empty() || raw_cache_salt.eq_ignore_ascii_case("none") {
-        return Ok(request);
-    }
 
-    let cache_salt = match raw_cache_salt {
-        VLLM_CACHE_SALT_EXECUTION | VLLM_CACHE_SALT_EXECUTION_ID => ctx.execution_id.clone(),
-        VLLM_CACHE_SALT_GRAPH_EXECUTION => {
+    let cache_salt = match selector.as_str() {
+        vllm_attrs::CACHE_SALT_EXECUTION | vllm_attrs::CACHE_SALT_EXECUTION_ID => {
+            ctx.execution_id.clone()
+        }
+        vllm_attrs::CACHE_SALT_GRAPH_EXECUTION => {
             format!("{}:{}", ctx.graph_id, ctx.execution_id)
         }
         literal => literal.to_string(),
@@ -929,11 +944,12 @@ async fn execute_llm_once(
         return execute_ask_with_tools(ctx, node, request).await;
     }
 
+    let resolved_backend = get_optional_string_attribute(node, graph_attrs::BACKEND)?;
     let memoizable = node
         .attributes
         .get(graph_attrs::MEMOIZABLE)
         .and_then(|v| v.as_bool())
-        .unwrap_or(true);
+        .unwrap_or_else(|| default_memoizable_for_backend(resolved_backend.as_deref()));
 
     // Check memoization cache for deterministic (temperature=0) calls
     let memo_key = if memoizable {
@@ -1520,8 +1536,8 @@ mod tests {
             .with_graph_id("graph-cache-salt".to_string());
         let mut node = Node::new(42, AISOperationType::Ask);
         node.attributes.insert(
-            VLLM_CACHE_SALT_ATTR.to_string(),
-            Value::String(VLLM_CACHE_SALT_EXECUTION.to_string()),
+            vllm_attrs::CACHE_SALT_ATTR.to_string(),
+            Value::String(vllm_attrs::CACHE_SALT_EXECUTION.to_string()),
         );
 
         let request =
@@ -1545,7 +1561,7 @@ mod tests {
             .with_execution_id("exec-cache-salt".to_string());
         let mut node = Node::new(42, AISOperationType::Ask);
         node.attributes.insert(
-            VLLM_CACHE_SALT_ATTR.to_string(),
+            vllm_attrs::CACHE_SALT_ATTR.to_string(),
             Value::String("literal-salt".to_string()),
         );
 
@@ -1774,5 +1790,30 @@ That's all."#;
 
         let tools = resolve_ask_tools(&ctx, &node);
         assert!(tools.is_empty());
+    }
+
+    #[test]
+    fn memoizable_default_off_for_self_hosted_backends() {
+        // Self-hosted backends own a request-level cache that the APXM memo
+        // would shadow; default to deferring to them.
+        assert!(!default_memoizable_for_backend(Some("vllm")));
+        assert!(!default_memoizable_for_backend(Some("ollama")));
+    }
+
+    #[test]
+    fn memoizable_default_on_for_cloud_backends() {
+        // Cloud backends expose no application-side cache control; the APXM
+        // memo remains the only application-visible cache for them.
+        assert!(default_memoizable_for_backend(Some("openai")));
+        assert!(default_memoizable_for_backend(Some("anthropic")));
+        assert!(default_memoizable_for_backend(Some("google")));
+        assert!(default_memoizable_for_backend(Some("amd")));
+    }
+
+    #[test]
+    fn memoizable_default_on_when_backend_unknown() {
+        // No resolved backend means we cannot prove the downstream has its
+        // own cache. Stay on the conservative (historical) default.
+        assert!(default_memoizable_for_backend(None));
     }
 }
