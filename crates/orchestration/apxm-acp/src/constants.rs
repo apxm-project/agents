@@ -167,6 +167,8 @@ pub mod timeouts {
     pub const CONTROL_TIMEOUT_SECS: u64 = 10;
     /// Timeout for system preamble injection (secs).
     pub const PREAMBLE_TIMEOUT_SECS: u64 = 120;
+    /// Timeout for a single user prompt turn (secs).
+    pub const PROMPT_TIMEOUT_SECS: u64 = 300;
 }
 
 pub mod terminal {

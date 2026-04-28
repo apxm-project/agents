@@ -726,9 +726,10 @@ fn materialize_graph_state(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use apxm_core::types::execution::FlowParameter;
     use apxm_core::types::execution::NodeMetadata;
     use apxm_core::types::operations::AISOperationType;
-    use apxm_core::types::{DependencyType, Edge, ExecutionDag, Node, Value};
+    use apxm_core::types::{DagMetadata, DependencyType, Edge, ExecutionDag, Node, Value};
     use std::sync::atomic::Ordering;
     use std::time::Duration;
 
@@ -937,6 +938,47 @@ mod tests {
         let t50 = state.tokens.get(&50).unwrap();
         assert!(t50.ready);
         assert_eq!(t50.value, Some(input_val));
+    }
+
+    #[test]
+    fn test_new_substitutes_named_runtime_parameters_in_node_attributes() {
+        let mut node = make_node(1, vec![], vec![10]);
+        node.op_type = AISOperationType::Communicate;
+        node.attributes.insert(
+            apxm_core::constants::graph::attrs::MESSAGE.to_string(),
+            Value::String("Task: {{task}}".to_string()),
+        );
+
+        let mut dag = ExecutionDag::new();
+        dag.add_node(node).unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+        dag.metadata = DagMetadata {
+            name: Some("parameterized".to_string()),
+            is_entry: true,
+            parameters: vec![FlowParameter {
+                name: "task".to_string(),
+                type_name: "str".to_string(),
+            }],
+        };
+
+        let metrics = Arc::new(MetricsCollector::new());
+        let (state, _) = SchedulerState::new(
+            dag,
+            test_config(),
+            metrics,
+            Instant::now(),
+            vec![Value::String("review the demo".to_string())],
+        )
+        .unwrap();
+
+        let stored = state.nodes.get(&1).expect("node should be stored");
+        let message = stored
+            .attributes
+            .get(apxm_core::constants::graph::attrs::MESSAGE)
+            .and_then(Value::as_str)
+            .expect("message attribute");
+        assert_eq!(message, "Task: review the demo");
     }
 
     #[test]
