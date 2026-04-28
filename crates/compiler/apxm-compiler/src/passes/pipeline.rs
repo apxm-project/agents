@@ -1,10 +1,9 @@
 //! Pipeline builder for the passes.
 //!
 //! Optimization levels:
-//!   O0 - No optimization (passthrough)
-//!   O1 - Basic: normalize, build-prompt, safe cleanup, tool checks
-//!   O2 - Standard: O1 + template specialization, dead context elimination,
-//!        scheduling metadata, and shared-prefix analysis
+//!   O0 - Required normalization and executable lowering only; no optimization
+//!   O1 - Basic safe cleanup plus priority metadata
+//!   O2 - Standard: O1 + scheduling metadata and shared-prefix analysis
 //!   O3 - Aggressive: O2-safe passes iterated to fixed-point convergence
 
 use super::PassManager;
@@ -115,7 +114,12 @@ pub fn build_pass_list(
 
     match level {
         OptimizationLevel::O0 => {
-            // No optimization passes at O0
+            // O0 is the no-optimization baseline, not a "skip executable
+            // lowering" mode. Normalize establishes canonical attribute
+            // spelling, and BuildPrompt establishes the runtime
+            // template/input_names contract for LLM ops with context.
+            passes.push(NORMALIZE.to_string());
+            passes.push(BUILD_PROMPT.to_string());
         }
         OptimizationLevel::O1 => {
             passes.extend(
@@ -312,9 +316,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn o0_produces_no_passes() {
+    fn o0_runs_only_required_lowering() {
         let passes = build_pass_list(OptimizationLevel::O0, false, OptimizationTarget::Balanced);
-        assert!(passes.is_empty());
+        assert_eq!(
+            passes,
+            vec![NORMALIZE.to_string(), BUILD_PROMPT.to_string()]
+        );
+        assert_default_excludes_semantic_rewrites(&passes);
+        assert!(!passes.contains(&TEMPLATE_SPECIALIZATION.to_string()));
+        assert!(!passes.contains(&DEAD_CONTEXT_ELIMINATION.to_string()));
+        assert!(!passes.contains(&CANONICALIZER.to_string()));
+        assert!(!passes.contains(&SCHEDULING.to_string()));
+        assert!(!passes.contains(&ASSIGN_PRIORITY.to_string()));
     }
 
     #[test]
@@ -447,6 +460,7 @@ mod tests {
             OptimizationTarget::Tokens,
         ] {
             for level in [
+                OptimizationLevel::O0,
                 OptimizationLevel::O1,
                 OptimizationLevel::O2,
                 OptimizationLevel::O3,
@@ -463,6 +477,7 @@ mod tests {
     #[test]
     fn no_cse_llm_skips_default_cse() {
         for level in [
+            OptimizationLevel::O0,
             OptimizationLevel::O1,
             OptimizationLevel::O2,
             OptimizationLevel::O3,
@@ -518,6 +533,7 @@ mod tests {
     #[test]
     fn base_o_levels_do_not_include_side_effecting_dspy_optimize() {
         for level in [
+            OptimizationLevel::O0,
             OptimizationLevel::O1,
             OptimizationLevel::O2,
             OptimizationLevel::O3,
@@ -619,6 +635,7 @@ mod tests {
     fn unconsumed_value_warning_off_by_default() {
         use OptimizationTarget::Balanced;
         for level in [
+            OptimizationLevel::O0,
             OptimizationLevel::O1,
             OptimizationLevel::O2,
             OptimizationLevel::O3,

@@ -329,7 +329,7 @@ fn emit_node(
         }
         AISOperationType::Ask | AISOperationType::Think | AISOperationType::Reason => {
             let op_name = node.op.mlir_mnemonic();
-            let template = get_non_empty_template(&node.attributes);
+            let template = get_template(&node.attributes);
             let result = format!("%n{}", node.id);
             let attrs = extra_attr_dict(
                 &node.attributes,
@@ -1176,7 +1176,7 @@ fn format_type(value_type: &MlirValueType) -> String {
     }
 }
 
-fn get_non_empty_template(attributes: &HashMap<String, Value>) -> String {
+fn get_template(attributes: &HashMap<String, Value>) -> String {
     get_string_attr(
         attributes,
         &[
@@ -1185,8 +1185,7 @@ fn get_non_empty_template(attributes: &HashMap<String, Value>) -> String {
             graph_attrs::TEMPLATE,
         ],
     )
-    .filter(|value| !value.trim().is_empty())
-    .unwrap_or_else(|| "{input}".to_string())
+    .unwrap_or_default()
 }
 
 fn get_string_attr(attributes: &HashMap<String, Value>, keys: &[&str]) -> Option<String> {
@@ -1344,5 +1343,53 @@ fn sanitize_symbol_name(name: &str) -> String {
         symbol
     } else {
         format!("g_{symbol}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::air_builder::{AirEdge, AirModule, AirNode};
+    use apxm_core::types::{AISOperationType, DependencyType};
+
+    #[test]
+    fn missing_llm_template_lowers_to_empty_prompt_for_build_prompt() {
+        let module = AirModule {
+            name: "implicit_prompt".to_string(),
+            nodes: vec![
+                AirNode {
+                    id: 1,
+                    name: "seed".to_string(),
+                    op: AISOperationType::ConstStr,
+                    attributes: HashMap::from([(
+                        graph_attrs::VALUE.to_string(),
+                        Value::String("hello".to_string()),
+                    )]),
+                },
+                AirNode {
+                    id: 2,
+                    name: "ask".to_string(),
+                    op: AISOperationType::Ask,
+                    attributes: HashMap::new(),
+                },
+            ],
+            edges: vec![AirEdge {
+                from: 1,
+                to: 2,
+                dependency: DependencyType::Data,
+            }],
+            parameters: vec![],
+            metadata: HashMap::new(),
+        };
+
+        let air = emit_air(&module).expect("AIR emission");
+        assert!(
+            air.contains("%n2 = ais.ask \"\" [%n1 : !ais.token]"),
+            "AIR should leave prompt materialization to build-prompt:\n{air}"
+        );
+        assert!(
+            !air.contains("\"{input}\""),
+            "AIR emitter must not invent a placeholder without input_names:\n{air}"
+        );
     }
 }

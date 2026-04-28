@@ -22,6 +22,7 @@
 
 pub mod air_builder;
 pub mod api;
+mod artifact_validation;
 pub mod codegen;
 mod ffi;
 pub mod optimization;

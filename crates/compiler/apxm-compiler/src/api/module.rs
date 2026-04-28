@@ -105,9 +105,11 @@ impl Module {
     ) -> Result<Artifact> {
         let payload = self.emit_artifact_payload(module_name)?;
         let mut dags = parse_wire_dags(&payload)?;
+        crate::artifact_validation::validate_template_placeholders(&dags)
+            .map_err(invalid_input_error)?;
         crate::token_estimate::refine_token_estimates(&mut dags);
 
-        // Post-MLIR tool-binding pass: validate INV_TOOL ↔ REGISTER_CAPABILITY
+        // Post-MLIR tool-binding-check: validate INV_TOOL ↔ REGISTER_CAPABILITY
         // and copy `python_handler_id` from registrations onto invocations.
         // W721/W723 warnings are logged here (non-fatal).
         for dag in dags.iter_mut() {
