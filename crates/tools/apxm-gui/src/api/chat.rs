@@ -157,43 +157,27 @@ fn load_backend_config() -> Result<BackendConfig, String> {
 // ---------------------------------------------------------------------------
 
 /// GET /api/chat/models — list available models for the chat dropdown.
-/// Reuses the same config extraction logic as the backends handler.
+/// Delegates to `api::backend::load_backends()` (typed BackendStore).
 pub async fn models_handler() -> impl IntoResponse {
-    let path = apxm_core::env::apxm_home().join("config.toml");
-    let content = match std::fs::read_to_string(&path) {
-        Ok(c) => c,
+    let backends = match crate::api::backend::load_backends() {
+        Ok(b) => b,
         Err(e) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": format!("cannot read config: {e}") })),
+                Json(serde_json::json!({ "error": e.1 })),
             )
                 .into_response();
         }
     };
 
-    let backends = crate::extract_backends_from_config(&content);
     let mut models = Vec::new();
-
     for backend in &backends {
-        if let Some(backend_models) = backend.get("models").and_then(|m| m.as_array()) {
-            for m in backend_models {
-                let id = m
-                    .get("id")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let aliases: Vec<String> = m
-                    .get("aliases")
-                    .and_then(|a| a.as_array())
-                    .map(|a| {
-                        a.iter()
-                            .filter_map(|v| v.as_str().map(String::from))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                if !id.is_empty() {
-                    models.push(ModelInfo { id, aliases });
-                }
+        for m in &backend.models {
+            if !m.id.is_empty() {
+                models.push(ModelInfo {
+                    id: m.id.clone(),
+                    aliases: m.aliases.clone(),
+                });
             }
         }
     }

@@ -6,6 +6,10 @@ edition.workspace = true
 [lints]
 workspace = true
 
+[lib]
+name = "apxm_gui"
+path = "src/lib.rs"
+
 [[bin]]
 name = "apxm-gui"
 path = "src/main.rs"
@@ -15,7 +19,9 @@ apxm-core.workspace = true
 apxm-backends.workspace = true
 apxm-acp.workspace = true
 apxm-compiler.workspace = true
+apxm-credentials.workspace = true
 axum.workspace = true
+clap = { workspace = true, features = ["derive"] }
 dashmap.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tokio-stream.workspace = true
