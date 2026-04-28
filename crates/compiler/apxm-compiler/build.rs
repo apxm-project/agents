@@ -9,8 +9,8 @@ use apxm_ais::{
     generate_pass_descriptors, generate_pass_dispatch, generate_passes_tablegen, generate_tablegen,
 };
 use apxm_core::utils::build::{
-    LibraryConfig, LinkSpec, Platform, detect_llvm_version, emit_link_directives,
-    find_versioned_mlir_library, get_target_dir, get_workspace_root, locate_library,
+    detect_llvm_version, emit_link_directives, find_versioned_mlir_library, get_target_dir,
+    get_workspace_root, locate_library, LibraryConfig, LinkSpec, Platform,
 };
 use apxm_core::{log_debug, log_info};
 
@@ -290,6 +290,8 @@ fn configure_cmake(
 
 /// Build CMake target
 fn build_cmake(build_dir: &Path) -> Result<()> {
+    remove_zero_byte_objects(build_dir)?;
+
     run_command(
         Command::new("cmake").current_dir(build_dir).args([
             "--build",
@@ -302,6 +304,38 @@ fn build_cmake(build_dir: &Path) -> Result<()> {
         ]),
         "CMake build failed",
     )
+}
+
+fn remove_zero_byte_objects(dir: &Path) -> Result<()> {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Ok(());
+    };
+
+    for entry in entries {
+        let entry = entry?;
+        let path = entry.path();
+        let metadata = entry.metadata()?;
+
+        if metadata.is_dir() {
+            remove_zero_byte_objects(&path)?;
+            continue;
+        }
+
+        if metadata.is_file()
+            && metadata.len() == 0
+            && path.extension().and_then(|ext| ext.to_str()) == Some("o")
+        {
+            log_info!(
+                "apxm-compiler-build",
+                "Removing stale zero-byte object: {}",
+                path.display()
+            );
+            fs::remove_file(&path)
+                .with_context(|| format!("Failed to remove stale object: {}", path.display()))?;
+        }
+    }
+
+    Ok(())
 }
 
 /// Install CMake build
@@ -376,12 +410,11 @@ fn generate_bindings(
     // conda-forge puts them at $prefix/lib/clang/<version>/include.
     // We search several candidate roots including the miniforge base env.
     let mut extra_clang_args: Vec<String> = Vec::new();
-    let home_dir = std::env::var("HOME").unwrap_or_default();
-    let miniforge_apxm = std::path::PathBuf::from(format!("{}/miniforge3/envs/apxm", home_dir));
+    let home_dir = apxm_core::env::home_dir();
     let clang_roots = [
         mlir_prefix.to_path_buf(),
-        miniforge_apxm,
-        std::path::PathBuf::from(format!("{}/miniforge3", home_dir)),
+        home_dir.join("miniforge3/envs/apxm"),
+        home_dir.join("miniforge3"),
     ];
     'outer: for root in &clang_roots {
         for ver in ["21", "22", "20", "19", "18"] {

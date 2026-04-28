@@ -29,7 +29,6 @@ use super::{
     ExecutionContext, Node, Result, Value, get_optional_string_attribute,
     get_optional_u64_attribute, get_string_attribute,
 };
-use apxm_core::constants::defaults;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::constants::runtime::belief_keys;
 use apxm_core::error::RuntimeError;
@@ -47,9 +46,10 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         .unwrap_or(DEFAULT_POLL_INTERVAL_MS);
     let notification_url = get_optional_string_attribute(node, graph_attrs::NOTIFICATION_URL)?;
 
-    let server_url = get_optional_string_attribute(node, graph_attrs::SERVER_URL)?
-        .or_else(|| std::env::var("APXM_SERVER_URL").ok())
-        .unwrap_or_else(|| defaults::DEFAULT_SERVER_URL.to_string());
+    let server_url = apxm_core::env::server_url_with_override(get_optional_string_attribute(
+        node,
+        graph_attrs::SERVER_URL,
+    )?);
 
     let base_url = server_url.trim_end_matches('/');
 

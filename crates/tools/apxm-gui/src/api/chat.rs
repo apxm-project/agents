@@ -61,8 +61,7 @@ struct BackendConfig {
 }
 
 fn load_backend_config() -> Result<BackendConfig, String> {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
-    let path = std::path::Path::new(&home).join(".apxm/config.toml");
+    let path = apxm_core::env::apxm_home().join("config.toml");
     let content = std::fs::read_to_string(&path).map_err(|e| format!("cannot read config: {e}"))?;
 
     // Use line-based extraction for endpoint, api_key, and headers
@@ -160,8 +159,7 @@ fn load_backend_config() -> Result<BackendConfig, String> {
 /// GET /api/chat/models — list available models for the chat dropdown.
 /// Reuses the same config extraction logic as the backends handler.
 pub async fn models_handler() -> impl IntoResponse {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
-    let path = std::path::Path::new(&home).join(".apxm/config.toml");
+    let path = apxm_core::env::apxm_home().join("config.toml");
     let content = match std::fs::read_to_string(&path) {
         Ok(c) => c,
         Err(e) => {

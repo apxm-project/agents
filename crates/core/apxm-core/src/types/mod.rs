@@ -12,6 +12,7 @@ pub mod operations;
 pub mod values;
 
 // ── Execution ──────────────────────────────────────────────
+pub mod communicate;
 pub mod config;
 pub mod execution;
 pub mod graph_hints;
@@ -29,6 +30,7 @@ pub use aam::{
     AamContext, CapabilityProjection, CapabilityRecord, CompletionPolicy, GoalProjection, GoalTree,
     ScopePolicy, ScopeSpec,
 };
+pub use communicate::{CommunicateProtocol, UnknownProtocol};
 pub use compiler::{
     CodegenOptions, CompilationStage, EmitFormat, OptimizationLevel, OptimizationTarget, PassInfo,
     PassMetadata, PipelineConfig, find_pass_metadata, list_pass_metadata, stage_rank,

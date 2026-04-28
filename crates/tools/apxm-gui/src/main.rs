@@ -63,7 +63,7 @@ type ApiResult<T> = Result<T, AppError>;
 
 /// Validate that a user-provided path resolves to within cwd or `~/.apxm/sessions/`.
 fn validate_path(path: &str) -> Result<PathBuf, AppError> {
-    let home = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/root".into()));
+    let home = apxm_core::env::home_dir();
     // Expand leading ~/ to $HOME/
     let expanded = if let Some(rest) = path.strip_prefix("~/") {
         home.join(rest)
@@ -1357,9 +1357,7 @@ async fn execute_handler(
     let pid = child.id().unwrap_or(0);
 
     // Wait briefly for the session directory to appear
-    let sessions_dir = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/root".into()))
-        .join(".apxm")
-        .join("sessions");
+    let sessions_dir = apxm_core::env::apxm_home().join("sessions");
 
     let stem = path
         .file_stem()
@@ -1596,8 +1594,7 @@ async fn probe_backend_status(endpoint: &str) -> String {
 /// With `?probe=true`, actively probes backend endpoints for reachability.
 async fn health_handler(Query(params): Query<HealthParam>) -> ApiResult<impl IntoResponse> {
     let do_probe = params.probe.unwrap_or(false);
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
-    let apxm_dir = PathBuf::from(&home).join(".apxm");
+    let apxm_dir = apxm_core::env::apxm_home();
     let config_path = apxm_dir.join("config.toml");
 
     let mut backends_json: Vec<serde_json::Value> = Vec::new();
@@ -1905,8 +1902,7 @@ async fn agents_handler() -> impl IntoResponse {
 async fn config_update_handler(
     axum::extract::Json(payload): axum::extract::Json<serde_json::Value>,
 ) -> ApiResult<impl IntoResponse> {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
-    let config_path = PathBuf::from(&home).join(".apxm").join("config.toml");
+    let config_path = apxm_core::env::apxm_home().join("config.toml");
 
     if let Some(content) = payload.get("content").and_then(|v| v.as_str()) {
         // Direct content write
@@ -2189,8 +2185,7 @@ fn parse_toml_value(raw: &str) -> serde_json::Value {
 /// GET /api/backends — detailed backend and model listing from config.
 async fn backends_handler(Query(params): Query<HealthParam>) -> ApiResult<impl IntoResponse> {
     let do_probe = params.probe.unwrap_or(false);
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
-    let config_path = PathBuf::from(&home).join(".apxm").join("config.toml");
+    let config_path = apxm_core::env::apxm_home().join("config.toml");
 
     if !config_path.exists() {
         return Ok(Json(serde_json::json!({ "backends": [] })));
@@ -2247,8 +2242,7 @@ async fn backends_handler(Query(params): Query<HealthParam>) -> ApiResult<impl I
 
 /// GET /api/config — read ~/.apxm/config.toml and return as text.
 async fn config_handler() -> ApiResult<impl IntoResponse> {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
-    let config_path = PathBuf::from(home).join(".apxm").join("config.toml");
+    let config_path = apxm_core::env::apxm_home().join("config.toml");
 
     if !config_path.exists() {
         return Err(AppError(
