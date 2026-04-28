@@ -17,8 +17,8 @@ Metrics:
 Note: This tests RUNTIME caching within a single execution.
 
 Usage:
-  dekk apxm execute examples/python/_benchmarks/memo_cache_stress.py -O0
-  dekk apxm execute examples/python/_benchmarks/memo_cache_stress.py -O2
+  dekk apxm execute examples/python/benchmarks/stress/memo_cache_stress.py -O0
+  dekk apxm execute examples/python/benchmarks/stress/memo_cache_stress.py -O2
 """
 
 from apxm import compile, GraphRecorder

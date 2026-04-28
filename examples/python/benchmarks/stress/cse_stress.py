@@ -15,8 +15,8 @@ Metrics:
 - Metrics proving whether result reuse occurred
 
 Usage:
-  dekk apxm execute examples/python/_benchmarks/cse_stress.py -O0
-  dekk apxm compile examples/python/_benchmarks/cse_stress.py \
+  dekk apxm execute examples/python/benchmarks/stress/cse_stress.py -O0
+  dekk apxm compile examples/python/benchmarks/stress/cse_stress.py \
     --pass-list normalize,build-prompt,cse,canonicalizer
 """
 

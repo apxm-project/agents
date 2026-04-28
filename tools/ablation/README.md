@@ -11,7 +11,7 @@ cd tools && python3 -m ablation
 ```
 
 The harness compiles each stress graph in
-`examples/python/_benchmarks/*.air` once at `-O 2` to establish a baseline,
+`examples/python/benchmarks/stress/*.air` once at `-O 2` to establish a baseline,
 then re-compiles each graph with each MLIR-side pass disabled
 (`--disable-pass <name>`). It prints a Markdown delta table of
 `ops_after` per (pass, graph) cell and exits non-zero when:

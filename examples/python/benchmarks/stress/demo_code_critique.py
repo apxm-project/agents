@@ -12,11 +12,11 @@ The graph exercises a stable benchmark shape:
 - one final print
 
 Usage:
-  dekk apxm execute examples/python/_benchmarks/demo_code_critique.py -O0
-  dekk apxm execute examples/python/_benchmarks/demo_code_critique.py -O2
+  dekk apxm execute examples/python/benchmarks/stress/demo_code_critique.py -O0
+  dekk apxm execute examples/python/benchmarks/stress/demo_code_critique.py -O2
 
 To emit AIR directly:
-  python3 examples/python/_benchmarks/demo_code_critique.py
+  python3 examples/python/benchmarks/stress/demo_code_critique.py
 """
 
 from __future__ import annotations

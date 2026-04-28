@@ -1,0 +1,19 @@
+[project]
+name = "apxm-gemma4-demo"
+version = "0.1.0"
+description = "Gemma 4 strategic demo workflows for APXM (compiled, observable, vLLM-routed)."
+requires-python = ">=3.11"
+
+[tool.apxm.demo]
+# Three canonical case files. Each one is a self-contained graph + entry point.
+workflows = [
+  "workflows/01_review_synthesis_skill.py",
+  "workflows/02_checkout_context_pruning.py",
+  "workflows/03_vllm_backend_hints.py",
+]
+
+[tool.apxm.demo.routes]
+# Aliases the run_demo.py launcher writes into the generated config.
+# Workflows reference these symbolic aliases, never a hardcoded model id.
+showcase  = { protocol = "vllm", purpose = "Gemma synthesis lane" }
+benchmark = { protocol = "vllm", purpose = "context-pruning + priority lanes" }

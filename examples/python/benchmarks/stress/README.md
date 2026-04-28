@@ -26,26 +26,26 @@ experiments, not O2 defaults or production claims.
 ## Usage
 
 ```bash
-dekk apxm compile examples/python/_benchmarks/fusion_stress.py \
+dekk apxm compile examples/python/benchmarks/stress/fusion_stress.py \
   --pass-list normalize,build-prompt,fuse-ask-ops,canonicalizer \
   -o /tmp/fusion_stress.apxmobj
 
 # Composite benchmark graph
-dekk apxm execute examples/python/_benchmarks/demo_code_critique.py -O0
-dekk apxm execute examples/python/_benchmarks/demo_code_critique.py -O2
+dekk apxm execute examples/python/benchmarks/stress/demo_code_critique.py -O0
+dekk apxm execute examples/python/benchmarks/stress/demo_code_critique.py -O2
 
 # Backend-free validation (compile only)
-python3 examples/python/_benchmarks/benchmark_e2e.py --compile-only
+python3 examples/python/benchmarks/benchmark_e2e.py --compile-only
 
 # Full execution benchmark (requires a configured APXM backend)
-python3 examples/python/_benchmarks/benchmark_e2e.py \
-  --graph examples/python/_benchmarks/demo_code_critique.py \
+python3 examples/python/benchmarks/benchmark_e2e.py \
+  --graph examples/python/benchmarks/stress/demo_code_critique.py \
   --iterations 5 \
-  --output examples/python/_benchmarks/results/demo_code_critique.csv
+  --output examples/python/benchmarks/stress/results/demo_code_critique.csv
 
 # Markdown report from a benchmark CSV
-python3 examples/python/_benchmarks/comparison_report.py \
-  examples/python/_benchmarks/results/demo_code_critique.csv
+python3 examples/python/benchmarks/comparison_report.py \
+  examples/python/benchmarks/stress/results/demo_code_critique.csv
 ```
 
 ## Notes
@@ -54,7 +54,7 @@ python3 examples/python/_benchmarks/comparison_report.py \
   command, so it matches the repo's existing benchmark harness style.
 - `--compile-only` is the safe default when no local backend is configured.
 - `demo_code_critique.py` bootstraps the in-repo Python frontend path so
-  `python3 examples/python/_benchmarks/demo_code_critique.py` can emit AIR
+  `python3 examples/python/benchmarks/stress/demo_code_critique.py` can emit AIR
   directly from a fresh checkout.
 - Treat these files as benchmark sources until fresh metrics are captured; do
   not use them for speedup, token-savings, or cache hit-rate claims without
