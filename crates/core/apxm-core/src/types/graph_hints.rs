@@ -384,6 +384,12 @@ pub struct GraphStatusSnapshot {
     pub registered: bool,
     pub pinned_handles: u64,
     pub pinned_blocks: u64,
+    /// Peak `pinned_handles` recorded by `LLMRegistry::start_pin_polling`.
+    #[serde(default)]
+    pub pinned_handles_peak: u64,
+    /// Peak `pinned_blocks` recorded by `LLMRegistry::start_pin_polling`.
+    #[serde(default)]
+    pub pinned_blocks_peak: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub node_count: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -399,6 +405,8 @@ impl GraphStatusSnapshot {
             registered: false,
             pinned_handles: 0,
             pinned_blocks: 0,
+            pinned_handles_peak: 0,
+            pinned_blocks_peak: 0,
             node_count: None,
             critical_path_length: None,
         }
@@ -424,6 +432,14 @@ impl GraphStatusSnapshot {
         self
     }
 
+    /// Fold pin-peak counters into the snapshot, clamping each peak to be
+    /// at least the corresponding live count.
+    pub fn with_pin_peaks(mut self, handles_peak: u64, blocks_peak: u64) -> Self {
+        self.pinned_handles_peak = handles_peak.max(self.pinned_handles);
+        self.pinned_blocks_peak = blocks_peak.max(self.pinned_blocks);
+        self
+    }
+
     pub fn with_shape(
         mut self,
         node_count: Option<u64>,
@@ -435,30 +451,39 @@ impl GraphStatusSnapshot {
     }
 
     pub fn to_metrics_json(&self) -> serde_json::Value {
-        use crate::constants::session::metrics_keys::graph_status_keys as keys;
+        use crate::types::metrics::GraphStatusKey as K;
 
         let mut map = serde_json::Map::new();
+        map.insert(K::Object.as_str().into(), apxm_llm::OBJECT_GRAPH_STATUS.into());
         map.insert(
-            keys::OBJECT.to_owned(),
-            apxm_llm::OBJECT_GRAPH_STATUS.into(),
-        );
-        map.insert(
-            keys::BACKEND_KIND.to_owned(),
+            K::BackendKind.as_str().into(),
             self.backend_kind.as_str().into(),
         );
         if let Some(backend_name) = &self.backend_name {
-            map.insert(keys::BACKEND_NAME.to_owned(), backend_name.clone().into());
+            map.insert(K::BackendName.as_str().into(), backend_name.clone().into());
         }
-        map.insert(keys::GRAPH_ID.to_owned(), self.graph_id.clone().into());
-        map.insert(keys::REGISTERED.to_owned(), self.registered.into());
-        map.insert(keys::PINNED_HANDLES.to_owned(), self.pinned_handles.into());
-        map.insert(keys::PINNED_BLOCKS.to_owned(), self.pinned_blocks.into());
+        map.insert(K::GraphId.as_str().into(), self.graph_id.clone().into());
+        map.insert(K::Registered.as_str().into(), self.registered.into());
+        map.insert(K::PinnedHandles.as_str().into(), self.pinned_handles.into());
+        map.insert(K::PinnedBlocks.as_str().into(), self.pinned_blocks.into());
+        if self.pinned_handles_peak > 0 {
+            map.insert(
+                K::PinnedHandlesPeak.as_str().into(),
+                self.pinned_handles_peak.into(),
+            );
+        }
+        if self.pinned_blocks_peak > 0 {
+            map.insert(
+                K::PinnedBlocksPeak.as_str().into(),
+                self.pinned_blocks_peak.into(),
+            );
+        }
         if let Some(node_count) = self.node_count {
-            map.insert(keys::NODE_COUNT.to_owned(), node_count.into());
+            map.insert(K::NodeCount.as_str().into(), node_count.into());
         }
         if let Some(critical_path_length) = self.critical_path_length {
             map.insert(
-                keys::CRITICAL_PATH_LENGTH.to_owned(),
+                K::CriticalPathLength.as_str().into(),
                 critical_path_length.into(),
             );
         }

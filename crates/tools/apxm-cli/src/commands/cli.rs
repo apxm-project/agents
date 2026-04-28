@@ -3,7 +3,7 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-use apxm_core::types::OptimizationTarget;
+use apxm_core::types::{MetricsLevel, OptimizationTarget};
 
 use super::implementations::parse_header;
 
@@ -98,6 +98,10 @@ pub enum Commands {
         /// Emit metrics JSON file with runtime execution statistics
         #[arg(long)]
         emit_metrics: Option<PathBuf>,
+        /// Metrics emission tier (basic = aggregates only;
+        /// detailed = adds in-flight observers like per-graph pin-peak polling)
+        #[arg(long, default_value_t = MetricsLevel::default())]
+        emit_metrics_level: MetricsLevel,
         /// Emit session output folder with all node results, events, metrics.
         /// Default: ON (auto-generates path under ApxmPaths::sessions_dir()).
         /// Pass an explicit path to override, or use --no-emit-session to disable.
@@ -124,6 +128,10 @@ pub enum Commands {
         /// Emit metrics JSON file with runtime execution statistics
         #[arg(long)]
         emit_metrics: Option<PathBuf>,
+        /// Metrics emission tier (basic = aggregates only;
+        /// detailed = adds in-flight observers like per-graph pin-peak polling)
+        #[arg(long, default_value_t = MetricsLevel::default())]
+        emit_metrics_level: MetricsLevel,
         /// Emit session output folder with all node results, events, metrics.
         /// Default: ON (auto-generates path under ApxmPaths::sessions_dir()).
         /// Pass an explicit path to override, or use --no-emit-session to disable.

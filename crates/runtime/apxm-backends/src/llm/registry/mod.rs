@@ -18,8 +18,8 @@ use futures::stream::{Stream, StreamExt};
 use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::atomic::AtomicUsize;
-use std::time::Instant;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
 mod health;
 mod resolver;
@@ -66,6 +66,47 @@ pub struct LLMRegistry {
     round_robin_counter: Arc<AtomicUsize>,
     /// Backend name → typed provider protocol.
     backend_providers: Arc<DashMap<String, ProviderProtocol>>,
+    /// graph_id → (handles_peak, blocks_peak), populated by `start_pin_polling`
+    /// and consumed by `pre_release_status_all`.
+    pin_peaks: Arc<DashMap<String, (Arc<AtomicU64>, Arc<AtomicU64>)>>,
+}
+
+/// Atomically bump an `AtomicU64` slot to the larger of its current value and `val`.
+fn bump_max(slot: &AtomicU64, val: u64) {
+    let mut prev = slot.load(Ordering::Relaxed);
+    while val > prev {
+        match slot.compare_exchange_weak(prev, val, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => break,
+            Err(p) => prev = p,
+        }
+    }
+}
+
+/// RAII wrapper around the pin-polling background task.
+///
+/// Aborts the task on `Drop` so a polling loop cannot outlive the executor
+/// scope that started it (e.g. on a panic or early-return code path).
+/// Call [`Self::abort`] explicitly when ordering matters, e.g. before
+/// `pre_release_status_all` so the final fold sees the full peak.
+pub struct PinPollHandle {
+    inner: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl PinPollHandle {
+    /// Abort the background polling task immediately.
+    pub fn abort(mut self) {
+        if let Some(handle) = self.inner.take() {
+            handle.abort();
+        }
+    }
+}
+
+impl Drop for PinPollHandle {
+    fn drop(&mut self) {
+        if let Some(handle) = self.inner.take() {
+            handle.abort();
+        }
+    }
 }
 
 impl LLMRegistry {
@@ -95,6 +136,7 @@ impl LLMRegistry {
             rate_limiter: Arc::new(rate_limiter),
             round_robin_counter: Arc::new(AtomicUsize::new(0)),
             backend_providers: Arc::new(DashMap::new()),
+            pin_peaks: Arc::new(DashMap::new()),
         })
     }
 
@@ -119,6 +161,7 @@ impl LLMRegistry {
             rate_limiter: Arc::new(rate_limiter),
             round_robin_counter: Arc::new(AtomicUsize::new(0)),
             backend_providers: Arc::new(DashMap::new()),
+            pin_peaks: Arc::new(DashMap::new()),
         }
     }
 
@@ -631,8 +674,8 @@ impl LLMRegistry {
 
     /// Collect graph status from all graph-aware backends before releasing.
     ///
-    /// Iterates `find_graph_aware_backends()`, calls `get_graph_status(graph_id)`
-    /// on each, and collects the `Some(_)` values. Failures are logged and skipped.
+    /// Folds in pin peaks recorded by `start_pin_polling` for the same
+    /// `graph_id` if any are present. Failures are logged and skipped.
     pub async fn pre_release_status_all(
         &self,
         graph_id: &str,
@@ -652,7 +695,52 @@ impl LLMRegistry {
                 }
             }
         }
+        if let Some((_, (h_peak, b_peak))) = self.pin_peaks.remove(graph_id) {
+            let h = h_peak.load(Ordering::Relaxed);
+            let b = b_peak.load(Ordering::Relaxed);
+            if h > 0 || b > 0 {
+                results = results
+                    .into_iter()
+                    .map(|s| s.with_pin_peaks(h, b))
+                    .collect();
+            }
+        }
         results
+    }
+
+    /// Spawn a background task that polls every graph-aware backend at
+    /// `interval`, recording peak `pinned_handles` / `pinned_blocks` for
+    /// `graph_id`. The returned [`PinPollHandle`] aborts the task on `Drop`,
+    /// so callers cannot leak it; explicit `.abort()` before
+    /// `pre_release_status_all` is still preferred for ordering clarity.
+    pub fn start_pin_polling(
+        self: &Arc<Self>,
+        graph_id: String,
+        interval: Duration,
+    ) -> PinPollHandle {
+        let handles_peak = Arc::new(AtomicU64::new(0));
+        let blocks_peak = Arc::new(AtomicU64::new(0));
+        self.pin_peaks.insert(
+            graph_id.clone(),
+            (handles_peak.clone(), blocks_peak.clone()),
+        );
+        let registry = Arc::clone(self);
+        let inner = tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(interval);
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            // Skip the immediate first tick so we don't race the register call.
+            ticker.tick().await;
+            loop {
+                ticker.tick().await;
+                for (_name, backend) in registry.find_graph_aware_backends() {
+                    if let Ok(Some(snap)) = backend.get_graph_status(&graph_id).await {
+                        bump_max(&handles_peak, snap.pinned_handles);
+                        bump_max(&blocks_peak, snap.pinned_blocks);
+                    }
+                }
+            }
+        });
+        PinPollHandle { inner: Some(inner) }
     }
 
     /// Build a `BackendMetricsSource` from the tracker's aggregates and

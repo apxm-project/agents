@@ -16,7 +16,7 @@ use apxm_backends::LLMRegistry;
 use apxm_core::InstructionConfig;
 use apxm_core::constants::{cache, runtime::metadata};
 use apxm_core::paths::ApxmPaths;
-use apxm_core::types::{Agent, OptimizationTarget};
+use apxm_core::types::{Agent, MetricsLevel, OptimizationTarget};
 use std::sync::Arc;
 
 use super::cancellation::CancellationToken;
@@ -58,6 +58,10 @@ pub struct ExecutionContext {
     pub token_budget: Option<u64>,
     /// Runtime view of the compiler/driver optimization target for this graph.
     pub optimization_target: OptimizationTarget,
+    /// Metrics emission tier for this execution. `Detailed` enables in-flight
+    /// observers (currently per-graph pin-peak polling); `Basic` records
+    /// steady-state aggregates only.
+    pub metrics_level: MetricsLevel,
     pub consumed_tokens: Arc<std::sync::atomic::AtomicU64>,
     pub warmup_config: WarmupConfig,
     pub warmup_metrics: Arc<WarmupMetrics>,
@@ -155,6 +159,7 @@ impl ExecutionContext {
             metadata: metadata_map,
             token_budget: None,
             optimization_target: OptimizationTarget::Balanced,
+            metrics_level: MetricsLevel::default(),
             consumed_tokens: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             warmup_config: WarmupConfig::default(),
             warmup_metrics: Arc::new(WarmupMetrics::new()),
@@ -319,6 +324,7 @@ impl ExecutionContext {
             metadata: metadata_map,
             token_budget: self.token_budget,
             optimization_target: self.optimization_target,
+            metrics_level: self.metrics_level,
             consumed_tokens: Arc::clone(&self.consumed_tokens),
             warmup_config: self.warmup_config.clone(),
             warmup_metrics: Arc::clone(&self.warmup_metrics),
