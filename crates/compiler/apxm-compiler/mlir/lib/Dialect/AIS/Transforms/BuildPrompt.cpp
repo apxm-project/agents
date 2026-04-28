@@ -1,7 +1,7 @@
 /**
  * @file  BuildPrompt.cpp
- * @brief Generates named-placeholder templates for LLM operations whose
- *        template string is empty but whose context array is non-empty.
+ * @brief Materializes the runtime prompt/input_names contract for LLM
+ *        operations whose context array is non-empty.
  *
  * For example:
  *
@@ -16,11 +16,13 @@
  *
  * Names are taken from the existing `input_names` attribute when present;
  * otherwise the pass falls back to defaults `ctx0`, `ctx1`, ... and stamps
- * a fresh `input_names` array. Either way the runtime resolves placeholders
- * by name via the `input_names` parallel array.
+ * a fresh `input_names` array. For non-empty templates, the pass still
+ * materializes `input_names` when they are missing or malformed so runtime
+ * template rendering can validate the context arity deterministically.
  *
  * This pass works alongside the InstructionConfig system:
- * - BuildPrompt: Ensures template_str is never empty when context exists
+ * - BuildPrompt: Ensures LLM ops with context have a template/input_names
+ *   contract the runtime can execute
  * - InstructionConfig: Maps operation types to system prompts at runtime
  */
 
@@ -96,20 +98,8 @@ private:
   bool processLlmOp(LlmOpT op) {
     StringRef currentTemplate = op.getTemplateStrAttr().getValue();
 
-    // Only process if template is empty AND context exists
-    if (!currentTemplate.empty()) {
-      APXM_AIS_DEBUG("  Skipping op with non-empty template: \""
-                     << currentTemplate << "\"");
-      return false;
-    }
-
     if (op.getContext().empty()) {
       APXM_AIS_DEBUG("  Skipping op with empty context");
-      return false;
-    }
-
-    if (!generatePlaceholders) {
-      APXM_AIS_DEBUG("  Placeholder generation disabled");
       return false;
     }
 
@@ -132,20 +122,51 @@ private:
       nameRefs.push_back(nameStorage.back());
     }
 
-    // Build "{name0}{name1}..." template that references each context input.
-    llvm::SmallString<128> templateBuf;
-    for (llvm::StringRef name : nameRefs) {
-      templateBuf.append("{");
-      templateBuf.append(name);
-      templateBuf.append("}");
+    bool needsInputNamesWrite = existing.size() != contextSize;
+    for (llvm::StringRef name : existing) {
+      if (name.empty()) {
+        needsInputNamesWrite = true;
+        break;
+      }
     }
-    op.setTemplateStrAttr(builder.getStringAttr(templateBuf));
-    placeholders::writeInputNames(op.getOperation(), nameRefs, builder);
 
-    APXM_AIS_INFO("  Generated named placeholder template for "
-                  << op->getName() << " with " << contextSize
-                  << " context operands");
-    return true;
+    bool modified = false;
+    if (needsInputNamesWrite) {
+      placeholders::writeInputNames(op.getOperation(), nameRefs, builder);
+      modified = true;
+    }
+
+    // Only synthesize template text when the authored template is empty.
+    if (currentTemplate.empty()) {
+      if (!generatePlaceholders) {
+        APXM_AIS_DEBUG("  Placeholder generation disabled");
+        return modified;
+      }
+
+      // Build "{name0}{name1}..." template that references each context input.
+      llvm::SmallString<128> templateBuf;
+      for (llvm::StringRef name : nameRefs) {
+        templateBuf.append("{");
+        templateBuf.append(name);
+        templateBuf.append("}");
+      }
+      op.setTemplateStrAttr(builder.getStringAttr(templateBuf));
+      if (!modified)
+        placeholders::writeInputNames(op.getOperation(), nameRefs, builder);
+      modified = true;
+
+      APXM_AIS_INFO("  Generated named placeholder template for "
+                    << op->getName() << " with " << contextSize
+                    << " context operands");
+    } else if (modified) {
+      APXM_AIS_INFO("  Materialized input_names for "
+                    << op->getName() << " with " << contextSize
+                    << " context operands");
+    } else {
+      APXM_AIS_DEBUG("  Prompt/input_names contract already materialized");
+    }
+
+    return modified;
   }
 };
 

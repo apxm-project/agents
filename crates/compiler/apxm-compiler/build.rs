@@ -82,15 +82,18 @@ impl MlirLayout {
 
 /// Set up cargo rerun triggers for relevant files
 fn setup_rerun_triggers() {
-    for path in [
-        "CMakeLists.txt",
-        "mlir/lib/CMakeLists.txt",
-        "mlir/lib",
-        "mlir/include",
-        "../../../.dekk.toml",
-    ] {
+    for path in ["CMakeLists.txt", "../../../.dekk.toml"] {
         println!("cargo:rerun-if-changed={}", path);
     }
+    for path in [
+        "mlir/lib",
+        "mlir/include",
+        "../../core/apxm-ais/src/operations",
+        "../../core/apxm-ais/src/passes",
+    ] {
+        emit_rerun_if_changed_recursive(Path::new(path));
+    }
+    println!("cargo:rerun-if-changed=../../core/apxm-ais/src/attrs.rs");
     for key in [
         "MLIR_PREFIX",
         "LLVM_PREFIX",
@@ -102,9 +105,21 @@ fn setup_rerun_triggers() {
     ] {
         println!("cargo:rerun-if-env-changed={key}");
     }
-    // Also rerun if apxm-ais changes (for TableGen regeneration)
-    println!("cargo:rerun-if-changed=../../core/apxm-ais/src/operations/");
-    println!("cargo:rerun-if-changed=../../core/apxm-ais/src/passes/");
+}
+
+fn emit_rerun_if_changed_recursive(path: &Path) {
+    println!("cargo:rerun-if-changed={}", path.display());
+    let Ok(entries) = fs::read_dir(path) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            emit_rerun_if_changed_recursive(&path);
+        } else {
+            println!("cargo:rerun-if-changed={}", path.display());
+        }
+    }
 }
 
 /// Generate TableGen (.td) file from Rust definitions.

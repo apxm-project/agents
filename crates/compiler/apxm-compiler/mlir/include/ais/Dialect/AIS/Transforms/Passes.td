@@ -3,10 +3,16 @@
  * @brief Transform passes that operate on the AIS dialect.
  *
  * Domain-specific transforms:
- *   - normalize      – canonicalize graph structure
- *   - scheduling     – annotate with tier/cost/parallel-safe flags
- *   - fuse-ask-ops   – explicit-only LLM call merge experiment
+ *   - normalize                – canonicalize graph structure
+ *   - build-prompt             – materialize LLM template/input_names contracts
+ *   - template-specialization  – fold known constants into templates
+ *   - dead-context-elimination – remove context operands unused by templates
+ *   - scheduling               – annotate with tier/cost/parallel-safe flags
+ *   - shared-prefix-analysis   – annotate prefix-reuse opportunities
+ *   - assign-priority          – stamp critical-path priority metadata
+ *   - dspy-optimize            – config-gated prompt-template tuning
  *   - unconsumed-value-warning – warn about unused results
+ *   - fuse/condense/schema/prompt canonicalization – explicit-only experiments
  *
  * Each pass declares its constructor, dependent dialects, and tunable options
  * so that `mlir-opt --help` displays them.  Options are wired to the
@@ -29,8 +35,8 @@ def NormalizeAgentGraph : Pass<"normalize", "mlir::ModuleOp"> {
   let summary = "Normalize AIS graph structure";
   let description = [{
     Canonicalizes the AIS graph by:
-    - Deduplicating reasoning contexts
-    - Normalizing string attributes (lowercase capability/space names)
+    - Deduplicating unnamed LLM context operands
+    - Normalizing string attributes (lowercase capability/memory-tier names)
     - Establishing SSA ordering invariants for downstream passes
 
     This pass ensures the IR is in a canonical form that other passes
@@ -45,17 +51,20 @@ def BuildPrompt : Pass<"build-prompt", "mlir::ModuleOp"> {
     Processes LLM operations and generates placeholder templates:
     1. Empty template_str -> synthesized "{<name>}" templates referencing
        each context operand by its `input_names` entry.
-    2. Optionally embed instruction prompts from config.
+    2. Missing or malformed `input_names` -> synthesized `ctx0`, `ctx1`, ...
+       entries that match the context operand arity.
+    3. Optionally embed instruction prompts from config.
 
     Works with InstructionConfig system - does NOT replace runtime mapping,
-    just ensures template_str is never empty when context exists.
+    just ensures LLM ops with context have a complete template/input_names
+    contract.
 
     This pass enables proper prompt construction for operations like:
       ask(user_input) -> ask("{user_input}", [user_input])
       with the matching `input_names = ["user_input"]` attribute.
 
-    Without this pass, empty template_str causes the runtime to produce
-    empty prompts, resulting in empty or broken LLM responses.
+    Without this pass, empty template_str or missing input_names causes the
+    runtime to produce empty prompts or reject context-bearing LLM nodes.
   }];
   let constructor = "mlir::ais::createBuildPromptPass()";
   let options = [

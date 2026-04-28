@@ -4,7 +4,8 @@
  *        predictable attribute values and operand order.
  *
  * The pass performs two local transformations:
- *   1. Deduplicate the context operand list of LLM ops (ask, think, reason)
+ *   1. Deduplicate unnamed context operand lists of LLM ops
+ *      (ask, think, reason)
  *   2. Lower-case the string attributes `space` and `capability` on every op
  *
  * Both changes are semantics-preserving and idempotent, so the pass can be
@@ -15,6 +16,7 @@
 #include "ais/Dialect/AIS/Transforms/Passes.h"
 
 #include "ais/Common/Constants.h"
+#include "ais/Dialect/AIS/Transforms/Placeholders.h"
 #include "PassStatsHelpers.h"
 #include "ais/Dialect/AIS/IR/AISAttributes.h"
 #include "ais/Dialect/AIS/IR/AISOps.h"
@@ -59,21 +61,21 @@ struct NormalizeAgentGraphPass : impl::NormalizeAgentGraphBase<NormalizeAgentGra
     // Phase 1: Deduplicate LLM op contexts (ask, think, reason)
     APXM_AIS_DEBUG("Deduplicating LLM op contexts...");
     module.walk([&](AskOp op) {
-      if (needsDeduplication(op.getContext())) {
+      if (canDeduplicateContext(op) && needsDeduplication(op.getContext())) {
         deduplicateLlmContext(op);
         stats.contextDedups++;
         APXM_AIS_DEBUG("  Deduplicated context in ask: " << op.getTemplateStrAttr());
       }
     });
     module.walk([&](ThinkOp op) {
-      if (needsDeduplication(op.getContext())) {
+      if (canDeduplicateContext(op) && needsDeduplication(op.getContext())) {
         deduplicateLlmContext(op);
         stats.contextDedups++;
         APXM_AIS_DEBUG("  Deduplicated context in think: " << op.getTemplateStrAttr());
       }
     });
     module.walk([&](ReasonOp op) {
-      if (needsDeduplication(op.getContext())) {
+      if (canDeduplicateContext(op) && needsDeduplication(op.getContext())) {
         deduplicateLlmContext(op);
         stats.contextDedups++;
         APXM_AIS_DEBUG("  Deduplicated context in reason: " << op.getTemplateStrAttr());
@@ -136,6 +138,15 @@ private:
                   [&](Value v) { return seen.insert(v).second; });
 
     op->setOperands(uniqueContext);
+  }
+
+  /// Deduplicating named context can change semantics because two aliases for
+  /// the same token may both be referenced in the template. Once input_names
+  /// exist, preserve the authored context exactly; dead-context-elimination can
+  /// remove unused named operands later when it is provably safe.
+  template <typename LlmOpT>
+  static bool canDeduplicateContext(LlmOpT op) {
+    return placeholders::readInputNames(op.getOperation()).empty();
   }
 };
 
