@@ -1565,7 +1565,7 @@ reports it.
 ## Immediate Next Steps
 
 1. **Execution retention:** add a bounded or reloadable execution index over the
-   persisted `execution.json` session snapshots.
+   persisted `executions/{execution_id}.json` session snapshots.
 2. **G2 remainder:** attach node names, scope ids, and nested parent provenance
    to redacted `llm_prompt`, `node_output`, and `node_metrics` events.
 3. **Capability policy remainder:** extend the current read-only registered

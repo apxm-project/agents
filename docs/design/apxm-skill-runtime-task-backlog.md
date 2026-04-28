@@ -45,8 +45,8 @@ core events through `EmitterAdapter`, and REST/SSE skill execution records
 node outputs for node-detail lookup. Prompt observability now emits redacted
 `llm_prompt` events, and `node_output` events carry summary/hash/redaction
 metadata instead of raw JSON values. Execution records are memory-indexed for
-API lookup and snapshotted to `execution.json` inside the APXM-owned skill
-session directory. Runtime events emitted by server-owned skill runs carry
+API lookup and snapshotted to `executions/{execution_id}.json` inside the
+APXM-owned skill session directory. Runtime events emitted by server-owned skill runs carry
 `skill_id`, `skill_version`, and entry-flow provenance. Nested parent-skill
 provenance, artifact-level provenance, and full scheduler replay remain future
 work.
@@ -57,7 +57,7 @@ The next engineering PR should move from static execution to observable
 server-managed executions:
 
 1. Add a bounded or reloadable execution index on top of persisted
-   `execution.json` snapshots.
+   `executions/{execution_id}.json` snapshots.
 2. Preserve parent-run provenance, `scope_id`, and artifact/session provenance
    for nested skills.
 3. Extend capability admission beyond read-only registered tools with explicit
