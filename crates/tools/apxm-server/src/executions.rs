@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use apxm_core::events::payload::{NodeMetricsPayload, NodeOutputPayload};
+use apxm_core::events::payload::{NodeMetricsPayload, NodeOutputPayload, RedactedContent};
 use apxm_core::events::{ApxmEvent, EventEmitter};
 use apxm_core::types::NodeMetrics;
 use axum::Json;
@@ -12,6 +12,8 @@ use crate::error::ApiError;
 use crate::execute::ExecuteResponse;
 use crate::helpers::now_ms;
 use crate::state::AppState;
+
+pub(crate) const EXECUTION_RECORD_FILE: &str = "execution.json";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -46,7 +48,7 @@ pub(crate) struct ExecutionRecord {
 pub(crate) struct NodeOutputRecord {
     pub(crate) node_id: u64,
     pub(crate) observed_at_ms: u64,
-    pub(crate) value: serde_json::Value,
+    pub(crate) output: RedactedContent,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -103,6 +105,7 @@ impl ExecutionStore {
         };
         self.inner
             .insert(record.execution_id.clone(), record.clone());
+        persist_record_snapshot(&record);
         record
     }
 
@@ -116,7 +119,10 @@ impl ExecutionStore {
         entry.completed_at_ms = Some(now_ms());
         entry.result = Some(result);
         entry.error = None;
-        Some(entry.clone())
+        let record = entry.clone();
+        drop(entry);
+        persist_record_snapshot(&record);
+        Some(record)
     }
 
     pub(crate) fn complete_failure(
@@ -129,7 +135,10 @@ impl ExecutionStore {
         entry.completed_at_ms = Some(now_ms());
         entry.result = None;
         entry.error = Some(error);
-        Some(entry.clone())
+        let record = entry.clone();
+        drop(entry);
+        persist_record_snapshot(&record);
+        Some(record)
     }
 
     pub(crate) fn get(&self, execution_id: &str) -> Option<ExecutionRecord> {
@@ -140,15 +149,18 @@ impl ExecutionStore {
         &self,
         execution_id: &str,
         node_id: u64,
-        value: serde_json::Value,
+        output: RedactedContent,
     ) -> Option<ExecutionRecord> {
         let mut entry = self.inner.get_mut(execution_id)?;
         entry.node_outputs.push(NodeOutputRecord {
             node_id,
             observed_at_ms: now_ms(),
-            value,
+            output,
         });
-        Some(entry.clone())
+        let record = entry.clone();
+        drop(entry);
+        persist_record_snapshot(&record);
+        Some(record)
     }
 
     pub(crate) fn record_node_metrics(
@@ -163,7 +175,10 @@ impl ExecutionStore {
             observed_at_ms: now_ms(),
             metrics,
         });
-        Some(entry.clone())
+        let record = entry.clone();
+        drop(entry);
+        persist_record_snapshot(&record);
+        Some(record)
     }
 
     pub(crate) fn get_node(
@@ -202,6 +217,25 @@ impl ExecutionStore {
             outputs,
             metrics,
         })
+    }
+}
+
+fn persist_record_snapshot(record: &ExecutionRecord) {
+    let path = std::path::Path::new(&record.session_dir).join(EXECUTION_RECORD_FILE);
+    let Ok(bytes) = serde_json::to_vec_pretty(record) else {
+        tracing::warn!(
+            execution_id = %record.execution_id,
+            "failed to serialize execution record snapshot"
+        );
+        return;
+    };
+    if let Err(error) = std::fs::write(&path, bytes) {
+        tracing::warn!(
+            execution_id = %record.execution_id,
+            path = %path.display(),
+            %error,
+            "failed to persist execution record snapshot"
+        );
     }
 }
 
@@ -267,7 +301,7 @@ impl EventEmitter for ExecutionRecordingEmitter {
             self.execution_store.record_node_output(
                 &self.execution_id,
                 payload.node_id,
-                payload.value.clone(),
+                payload.output.clone(),
             );
         }
         if let Some(payload) = event.payload.downcast_ref::<NodeMetricsPayload>() {

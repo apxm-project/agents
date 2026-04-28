@@ -10,6 +10,21 @@ use super::kind::{self, EventKind};
 use crate::types::execution::NodeMetrics;
 use crate::types::operations::AISOperationType;
 
+/// Redaction policy used for prompt and node-output observability payloads.
+pub const REDACTION_POLICY_SUMMARY_HASH: &str = "summary_hash_v1";
+/// Hash prefix used in redacted observability payloads.
+pub const REDACTION_HASH_PREFIX_BLAKE3: &str = "blake3:";
+/// Media type used when redacting plain prompt text.
+pub const REDACTED_CONTENT_TYPE_TEXT: &str = "text/plain";
+/// Media type used when redacting JSON node outputs.
+pub const REDACTED_CONTENT_TYPE_JSON: &str = "application/json";
+const JSON_SUMMARY_NULL: &str = "null";
+const JSON_SUMMARY_BOOL: &str = "boolean";
+const JSON_SUMMARY_NUMBER: &str = "number";
+const JSON_SUMMARY_STRING: &str = "string";
+const JSON_SUMMARY_ARRAY: &str = "array";
+const JSON_SUMMARY_OBJECT: &str = "object";
+
 /// Parent trait for all event payloads.
 pub trait EventPayload: Send + Sync + 'static {
     /// Typed kind metadata for this payload.
@@ -81,6 +96,8 @@ pub fn boxed_payload_from_json(
         boxed!(ToolCallPayload)
     } else if kind_name == kind::LLM_DONE.name() {
         boxed!(LlmDonePayload)
+    } else if kind_name == kind::LLM_PROMPT.name() {
+        boxed!(LlmPromptPayload)
     } else if kind_name == kind::USAGE.name() {
         boxed!(UsagePayload)
     } else if kind_name == kind::RETRY.name() {
@@ -157,6 +174,75 @@ pub fn boxed_payload_from_json(
 // LLM Layer payload structs
 // ===========================================================================
 
+/// Metadata for content that was intentionally removed from an event payload.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RedactedContent {
+    /// Whether the original content was redacted.
+    pub redacted: bool,
+    /// Stable redaction policy identifier.
+    pub policy: String,
+    /// Content hash with algorithm prefix.
+    pub hash: String,
+    /// Original serialized byte length.
+    pub size_bytes: usize,
+    /// Original character length when the source was text.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub char_count: Option<usize>,
+    /// Media type of the original content.
+    pub content_type: String,
+    /// Non-sensitive shape summary.
+    pub summary: String,
+}
+
+impl RedactedContent {
+    /// Create redaction metadata for plain text without retaining the text.
+    pub fn from_text(text: &str) -> Self {
+        Self {
+            redacted: true,
+            policy: REDACTION_POLICY_SUMMARY_HASH.to_string(),
+            hash: tagged_blake3(text.as_bytes()),
+            size_bytes: text.len(),
+            char_count: Some(text.chars().count()),
+            content_type: REDACTED_CONTENT_TYPE_TEXT.to_string(),
+            summary: format!("text(chars={})", text.chars().count()),
+        }
+    }
+
+    /// Create redaction metadata for JSON without retaining the value.
+    pub fn from_json(value: &serde_json::Value) -> Self {
+        let bytes = serde_json::to_vec(value).unwrap_or_default();
+        Self {
+            redacted: true,
+            policy: REDACTION_POLICY_SUMMARY_HASH.to_string(),
+            hash: tagged_blake3(&bytes),
+            size_bytes: bytes.len(),
+            char_count: None,
+            content_type: REDACTED_CONTENT_TYPE_JSON.to_string(),
+            summary: json_shape_summary(value),
+        }
+    }
+}
+
+fn tagged_blake3(bytes: &[u8]) -> String {
+    format!(
+        "{REDACTION_HASH_PREFIX_BLAKE3}{}",
+        blake3::hash(bytes).to_hex()
+    )
+}
+
+fn json_shape_summary(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::Null => JSON_SUMMARY_NULL.to_string(),
+        serde_json::Value::Bool(_) => JSON_SUMMARY_BOOL.to_string(),
+        serde_json::Value::Number(_) => JSON_SUMMARY_NUMBER.to_string(),
+        serde_json::Value::String(text) => {
+            format!("{JSON_SUMMARY_STRING}(chars={})", text.chars().count())
+        }
+        serde_json::Value::Array(items) => format!("{JSON_SUMMARY_ARRAY}(len={})", items.len()),
+        serde_json::Value::Object(fields) => format!("{JSON_SUMMARY_OBJECT}(len={})", fields.len()),
+    }
+}
+
 /// A single streaming token.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenPayload {
@@ -204,6 +290,16 @@ pub struct LlmDonePayload {
     pub response_id: Option<String>,
 }
 impl_event_payload!(LlmDonePayload, kind::LLM_DONE);
+
+/// A redacted prompt sent to an LLM backend.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmPromptPayload {
+    /// The graph node ID that issued the prompt.
+    pub node_id: u64,
+    /// Redacted prompt metadata.
+    pub prompt: RedactedContent,
+}
+impl_event_payload!(LlmPromptPayload, kind::LLM_PROMPT);
 
 /// Why the model stopped generating.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -312,8 +408,8 @@ impl_event_payload!(OperationEndPayload, kind::OPERATION_END);
 pub struct NodeOutputPayload {
     /// The graph node ID.
     pub node_id: u64,
-    /// The node output as JSON.
-    pub value: serde_json::Value,
+    /// Redacted output metadata.
+    pub output: RedactedContent,
 }
 impl_event_payload!(NodeOutputPayload, kind::NODE_OUTPUT);
 

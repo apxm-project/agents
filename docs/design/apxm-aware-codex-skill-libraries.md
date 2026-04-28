@@ -308,10 +308,10 @@ Important missing pieces:
 
 - Runtime and artifact metadata do not yet carry stable `skill_id`,
   `skill_version`, parent skill, or flow provenance.
-- Generic event streams now include typed `node_output` and `node_metrics`
-  events through `EmitterAdapter`. They still do not include prompt payload
-  events, and `node_output` does not yet carry skill provenance or a redacted
-  summary/hash envelope.
+- Generic event streams now include typed `node_output`, `node_metrics`, and
+  redacted `llm_prompt` events through `EmitterAdapter`. `node_output` carries a
+  redacted summary/hash envelope, but these events do not yet carry first-class
+  skill provenance.
 - Child artifact workflow sessions can miss per-node directories because the
   driver does not pass reconstructed artifact graph metadata into the child
   session emitter.
@@ -371,8 +371,9 @@ Acceptance tests:
 ### G2: Typed Node Output Events
 
 Problem: `SessionEventEmitter` writes node outputs and prompts to files, and the
-generic event stream now includes typed `node_output` and `node_metrics`, but it
-does not yet include prompt events or redacted value summaries/hashes.
+generic event stream now includes typed redacted `llm_prompt`, `node_output`,
+and `node_metrics`, but those payloads still need first-class skill and flow
+provenance.
 
 Implementation:
 
@@ -380,11 +381,12 @@ Implementation:
 - Done: add core `node_metrics` event kind and payload.
 - Done: implement `emit_node_output` in `EmitterAdapter`.
 - Done: implement `emit_node_metrics` in `EmitterAdapter`.
-- Add core event kind and payload for redacted `llm_prompt`.
-- Implement `emit_llm_prompt` in `EmitterAdapter`.
-- Include optional `node_name`, `skill_id`, `flow_name`, value summary/hash, and
-  redaction status. `scope_id` already travels in the event envelope when set by
-  the runtime.
+- Done: add core event kind and payload for redacted `llm_prompt`.
+- Done: implement `emit_llm_prompt` in `EmitterAdapter`.
+- Done: stream summary/hash/redaction metadata instead of raw node output
+  values.
+- Include optional `node_name`, `skill_id`, and `flow_name`. `scope_id` already
+  travels in the event envelope when set by the runtime.
 - Keep full output values in session files when policy allows; stream summaries
   by default.
 
@@ -700,11 +702,12 @@ Implementation target:
   `crates/runtime/apxm-runtime/src/executor/emitter_adapter.rs`.
 - Done: add core `node_metrics` event kind/payload and forward it from
   `crates/runtime/apxm-runtime/src/executor/emitter_adapter.rs`.
-- Add core event kind/payload for redacted `llm_prompt`.
-- Implement prompt forwarding in
+- Done: add core event kind/payload for redacted `llm_prompt`.
+- Done: implement prompt forwarding in
   `crates/runtime/apxm-runtime/src/executor/emitter_adapter.rs`.
-- Include `node_id`, `scope_id`, optional `skill_id`, optional `flow_name`,
-  value summary, hash, and a redaction flag.
+- Include optional `skill_id` and optional `flow_name`; `node_id`, `scope_id`,
+  value summary, hash, and redaction metadata are already present in the stream
+  path.
 - Keep full values in session files when policy allows; stream summaries by
   default.
 - Ensure root and per-node `trace.ndjson` files also receive typed
@@ -1554,10 +1557,10 @@ reports it.
 
 ## Immediate Next Steps
 
-1. **Execution retention:** replace the in-memory execution/node-output store
-   with bounded retention or persistent storage.
-2. **G2 remainder:** add redacted `llm_prompt` payloads, then add
-   summary/hash/redaction fields to `node_output`.
+1. **Execution retention:** add a bounded or reloadable execution index over the
+   persisted `execution.json` session snapshots.
+2. **G2 remainder:** attach skill and flow provenance to redacted `llm_prompt`,
+   `node_output`, and `node_metrics` events.
 3. **Capability policy remainder:** extend the current read-only registered
    capability admission with sandbox routing and tests for side-effectful
    policies.
