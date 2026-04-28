@@ -201,6 +201,11 @@ pub enum Commands {
         #[command(subcommand)]
         action: SessionAction,
     },
+    /// Inspect or stop APXM job processes
+    Process {
+        #[command(subcommand)]
+        action: ProcessAction,
+    },
     /// Manage multi-step workflow files
     Workflow {
         #[command(subcommand)]
@@ -310,6 +315,34 @@ pub enum SessionAction {
         /// Explicit sessions root to clean instead of local/global discovery
         #[arg(long)]
         session_root: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ProcessAction {
+    /// List APXM job processes visible from this worktree
+    List {
+        /// Include long-running APXM services such as apxm-server and apxm-gui
+        #[arg(long)]
+        include_services: bool,
+        /// Include repo-local vLLM server/controller processes
+        #[arg(long)]
+        include_vllm: bool,
+    },
+    /// Stop APXM compile/run/execute/workflow jobs
+    Stop {
+        /// Show matching processes without sending a signal
+        #[arg(long)]
+        dry_run: bool,
+        /// Send SIGKILL instead of SIGTERM
+        #[arg(long, short)]
+        force: bool,
+        /// Include long-running APXM services such as apxm-server and apxm-gui
+        #[arg(long)]
+        include_services: bool,
+        /// Include repo-local vLLM server/controller processes
+        #[arg(long)]
+        include_vllm: bool,
     },
 }
 

@@ -31,6 +31,7 @@ Command-line interface for the APXM graph compiler and runtime toolchain.
 | `analyze` | Parallelism, critical path, speedup estimate |
 | `explain` | Human-readable summary of a graph |
 | `replay` | Replay a session trace as timeline |
+| `process` | List or stop APXM compile/run/execute/workflow jobs |
 | `doctor` | Diagnose MLIR/LLVM/conda dependencies |
 | `backend` | Add/list/remove/test LLM backends |
 | `agent` | Add/list/remove/test agent profiles |
