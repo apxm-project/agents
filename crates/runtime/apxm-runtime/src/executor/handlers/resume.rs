@@ -18,7 +18,6 @@
 //! attempts. Total default wait: 5 min. Adjust via node attributes if needed.
 
 use super::{ExecutionContext, Node, Result, Value};
-use apxm_core::constants::defaults;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::constants::runtime::belief_keys;
 use apxm_core::error::RuntimeError;
@@ -41,15 +40,12 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
             message: "RESUME requires a `checkpoint` attribute".to_string(),
         })?;
 
-    let server_url = node
-        .attributes
-        .get(graph_attrs::SERVER_URL)
-        .and_then(|v| v.as_string().map(|s| s.to_string()))
-        .or_else(|| ctx.metadata.get("apxm_server_url").cloned())
-        .unwrap_or_else(|| {
-            std::env::var("APXM_SERVER_URL")
-                .unwrap_or_else(|_| defaults::DEFAULT_SERVER_URL.to_string())
-        });
+    let server_url = apxm_core::env::server_url_with_override(
+        node.attributes
+            .get(graph_attrs::SERVER_URL)
+            .and_then(|v| v.as_string().map(|s| s.to_string()))
+            .or_else(|| ctx.metadata.get("apxm_server_url").cloned()),
+    );
 
     let poll_attempts = node
         .attributes

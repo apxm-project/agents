@@ -91,7 +91,7 @@ mod tests {
     use crate::testing::{
         MOCK_AGENT_NAME, MOCK_AGENT_PROFILE, MOCK_MODEL_NAME, MOCK_SESSION_ID, MOCK_STOP_REASON,
     };
-    use apxm_core::constants::communicate_protocols as comm_proto;
+    use apxm_core::types::CommunicateProtocol;
     use apxm_core::types::{AISOperationType, SpawnedProcessKind};
     use std::path::Path;
 
@@ -124,7 +124,7 @@ mod tests {
             node_id: 2,
             agent_name: MOCK_AGENT_NAME.to_string(),
             process_id: "process-1".to_string(),
-            protocol: comm_proto::ACP.to_string(),
+            protocol: CommunicateProtocol::Acp.as_str().to_string(),
             session_id: Some(MOCK_SESSION_ID.to_string()),
             turn: Some(1),
             model: Some(MOCK_MODEL_NAME.to_string()),

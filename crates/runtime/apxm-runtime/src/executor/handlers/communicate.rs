@@ -25,12 +25,11 @@ use super::{
 use crate::aam::{ScopeSpec, TransitionLabel};
 use crate::executor::ExecutorEngine;
 use apxm_backends::LLMRequest;
-use apxm_core::constants::communicate_protocols as comm_proto;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::constants::runtime::context_stack as context_stack_consts;
 use apxm_core::constants::runtime::{belief_keys, metadata, response_keys};
 use apxm_core::error::RuntimeError;
-use apxm_core::types::{AISOperationType, ProcessPromptMetric};
+use apxm_core::types::{AISOperationType, CommunicateProtocol, ProcessPromptMetric};
 
 /// Well-known flow names tried in order when looking up a recipient agent.
 const COMMUNICATE_FLOW_NAMES: &[&str] = &["communicate", "main"];
@@ -51,7 +50,11 @@ fn message_from_attributes(node: &Node) -> Option<Value> {
         })
 }
 
-fn resolve_message(node: &Node, protocol: &str, inputs: &[Value]) -> Result<Value> {
+fn resolve_message(
+    node: &Node,
+    protocol: CommunicateProtocol,
+    inputs: &[Value],
+) -> Result<Value> {
     let input_names = input_names_from_node(node);
     let attr_message = message_from_attributes(node);
     let message_input_count = input_names.len();
@@ -72,7 +75,7 @@ fn resolve_message(node: &Node, protocol: &str, inputs: &[Value]) -> Result<Valu
         return Ok(Value::String(template.clone()));
     }
 
-    let fallback = if protocol == comm_proto::ACP {
+    let fallback = if protocol == CommunicateProtocol::Acp {
         message_inputs
             .iter()
             .find(|v| matches!(v, Value::String(_)))
@@ -132,18 +135,24 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     let recipient = get_string_attribute(node, graph_attrs::RECIPIENT)
         .or_else(|_| get_string_attribute(node, graph_attrs::TARGET))
         .unwrap_or_default();
-    let protocol = get_string_attribute(node, graph_attrs::PROTOCOL)
-        .unwrap_or_else(|_| comm_proto::LOCAL.to_string());
-    let message = resolve_message(node, &protocol, &inputs)?;
+    let protocol = match get_string_attribute(node, graph_attrs::PROTOCOL) {
+        Ok(raw) => raw.parse::<CommunicateProtocol>().map_err(|e| {
+            RuntimeError::Operation {
+                op_type: node.op_type,
+                message: format!("COMMUNICATE has invalid 'protocol' value: {e}"),
+            }
+        })?,
+        Err(_) => CommunicateProtocol::Local,
+    };
+    let message = resolve_message(node, protocol, &inputs)?;
 
-    match protocol.as_str() {
-        comm_proto::HTTP | comm_proto::HTTPS => {
+    match protocol {
+        CommunicateProtocol::Http | CommunicateProtocol::Https => {
             return execute_http(ctx, node, &recipient, message).await;
         }
-        comm_proto::BROADCAST => return execute_broadcast(ctx, node, message).await,
-        comm_proto::ACP => return execute_acp(ctx, node, &recipient, message).await,
-        _ => {
-            // local — require recipient
+        CommunicateProtocol::Broadcast => return execute_broadcast(ctx, node, message).await,
+        CommunicateProtocol::Acp => return execute_acp(ctx, node, &recipient, message).await,
+        CommunicateProtocol::Local => {
             if recipient.is_empty() {
                 return Err(RuntimeError::Operation {
                     op_type: node.op_type,
@@ -482,7 +491,7 @@ async fn execute_broadcast(ctx: &ExecutionContext, _node: &Node, message: Value)
             )
             .with_metadata(
                 metadata::COMMUNICATE_MODE.to_string(),
-                comm_proto::BROADCAST.to_string(),
+                CommunicateProtocol::Broadcast.as_str().to_string(),
             );
 
         let msg = message.clone();
@@ -613,7 +622,7 @@ async fn execute_acp(
                 ),
                 (
                     graph_attrs::PROTOCOL.to_string(),
-                    Value::String(comm_proto::ACP.to_string()),
+                    Value::String(CommunicateProtocol::Acp.as_str().to_string()),
                 ),
                 (graph_attrs::MESSAGE.to_string(), message.clone()),
             ]
@@ -658,7 +667,7 @@ async fn execute_acp(
                 node_id: node.id,
                 agent_name: process.name.clone(),
                 process_id: process.id.clone(),
-                protocol: comm_proto::ACP.to_string(),
+                protocol: CommunicateProtocol::Acp.as_str().to_string(),
                 session_id: None,
                 turn: None,
                 model: None,
@@ -680,7 +689,7 @@ async fn execute_acp(
         node_id: node.id,
         agent_name: process.name.clone(),
         process_id: process.id.clone(),
-        protocol: comm_proto::ACP.to_string(),
+        protocol: CommunicateProtocol::Acp.as_str().to_string(),
         session_id: prompt_response.session_id.clone(),
         turn: prompt_response.turn,
         model: prompt_response.model.clone(),
@@ -765,8 +774,7 @@ async fn execute_http(
         recipient.to_string()
     } else {
         // Name-based lookup via APXM server agent registry
-        let server_url = std::env::var("APXM_SERVER_URL")
-            .unwrap_or_else(|_| "http://localhost:18800".to_string());
+        let server_url = apxm_core::env::server_url();
         let lookup_url = format!("{}/v1/agents/{}", server_url, recipient);
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
@@ -1062,7 +1070,7 @@ mod tests {
         );
         node.attributes.insert(
             graph_attrs::PROTOCOL.to_string(),
-            Value::String(comm_proto::ACP.to_string()),
+            Value::String(CommunicateProtocol::Acp.as_str().to_string()),
         );
         node.attributes.insert(
             graph_attrs::PROFILE.to_string(),
@@ -1127,7 +1135,7 @@ mod tests {
         );
         node.attributes.insert(
             graph_attrs::PROTOCOL.to_string(),
-            Value::String(comm_proto::ACP.to_string()),
+            Value::String(CommunicateProtocol::Acp.as_str().to_string()),
         );
         node.attributes.insert(
             graph_attrs::MESSAGE.to_string(),
@@ -1184,7 +1192,7 @@ mod tests {
         );
         node.attributes.insert(
             graph_attrs::PROTOCOL.to_string(),
-            Value::String(comm_proto::ACP.to_string()),
+            Value::String(CommunicateProtocol::Acp.as_str().to_string()),
         );
         node.attributes.insert(
             graph_attrs::MESSAGE.to_string(),
@@ -1252,7 +1260,7 @@ mod tests {
         );
         node.attributes.insert(
             graph_attrs::PROTOCOL.to_string(),
-            Value::String(comm_proto::ACP.to_string()),
+            Value::String(CommunicateProtocol::Acp.as_str().to_string()),
         );
 
         let result = execute(&ctx, &node, vec![Value::String("hello".to_string())])
@@ -1275,7 +1283,7 @@ mod tests {
 
         let turn = &node_metrics.processes.prompt_turns[0];
         assert_eq!(turn.process_id, process_id);
-        assert_eq!(turn.protocol, comm_proto::ACP);
+        assert_eq!(turn.protocol, CommunicateProtocol::Acp.as_str());
         assert_eq!(turn.session_id.as_deref(), Some(MOCK_SESSION_ID));
         assert_eq!(turn.model.as_deref(), Some(MOCK_MODEL_NAME));
         assert_eq!(turn.stop_reason.as_deref(), Some(MOCK_STOP_REASON));
@@ -1326,7 +1334,7 @@ mod tests {
         );
         node.attributes.insert(
             graph_attrs::PROTOCOL.to_string(),
-            Value::String(comm_proto::ACP.to_string()),
+            Value::String(CommunicateProtocol::Acp.as_str().to_string()),
         );
 
         let error = execute(&ctx, &node, vec![])

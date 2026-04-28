@@ -36,9 +36,10 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
     let max_wait_ms = get_optional_u64_attribute(node, graph_attrs::MAX_WAIT_MS)?
         .unwrap_or(defaults::DEFAULT_MAX_WAIT_MS);
 
-    let server_url = get_optional_string_attribute(node, graph_attrs::SERVER_URL)?
-        .or_else(|| std::env::var("APXM_SERVER_URL").ok())
-        .unwrap_or_else(|| defaults::DEFAULT_SERVER_URL.to_string());
+    let server_url = apxm_core::env::server_url_with_override(get_optional_string_attribute(
+        node,
+        graph_attrs::SERVER_URL,
+    )?);
 
     tracing::info!(
         execution_id = %ctx.execution_id,

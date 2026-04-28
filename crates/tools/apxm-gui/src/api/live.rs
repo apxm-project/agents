@@ -381,8 +381,7 @@ pub async fn sse_node_output(
 /// array of session summaries parsed from each `manifest.json`.
 pub async fn list_sessions() -> Result<Json<Vec<SessionInfo>>, (StatusCode, Json<serde_json::Value>)>
 {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
-    let sessions_dir = PathBuf::from(home).join(".apxm").join("sessions");
+    let sessions_dir = apxm_core::env::apxm_home().join("sessions");
 
     if !sessions_dir.is_dir() {
         // No sessions directory yet — return empty list.
