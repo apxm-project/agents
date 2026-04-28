@@ -109,6 +109,9 @@ unless the note explicitly says they are implemented.
 
 - [design/guardrails_handoffs.md](design/guardrails_handoffs.md) — input/output
   guardrails and inter-agent handoffs as first-class AIR constructs
+- [design/apxm-aware-codex-skill-libraries.md](design/apxm-aware-codex-skill-libraries.md) —
+  roadmap for APXM-aware Codex skills, server-exposed skill libraries, AIR
+  conversion, and A0-A4 evaluation
 
 ## Backend Guides
 
