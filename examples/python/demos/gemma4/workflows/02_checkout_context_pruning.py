@@ -25,9 +25,25 @@ the call/token deltas, not a wall-clock chart.
 
 from __future__ import annotations
 
-from shared.bootstrap import bootstrap_paths
+import sys
+from pathlib import Path
 
-bootstrap_paths(__file__)
+# Inline sys.path bootstrap. The workflow must run from any cwd via
+# `dekk apxm compile <file>` or `python3 <file>`, so we cannot rely on
+# `shared/` already being importable. Walk up to the APXM repo root, then
+# inject the frontend package and the demo root onto sys.path before any
+# `apxm.*` or `shared.*` imports.
+_HERE = Path(__file__).resolve()
+_REPO_ROOT = next(
+    (p for p in (_HERE, *_HERE.parents)
+     if (p / "Cargo.toml").exists() and (p / "crates").is_dir()),
+    Path.cwd().resolve(),
+)
+_FRONTEND = _REPO_ROOT / "crates" / "compiler" / "apxm-frontend" / "python"
+_DEMO_ROOT = _HERE.parents[1]
+for _p in (str(_FRONTEND), str(_DEMO_ROOT)):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 from apxm import GraphRecorder, compile, emit_air_if_requested  # noqa: E402
 from apxm.constants import INPUT_NAMES  # noqa: E402

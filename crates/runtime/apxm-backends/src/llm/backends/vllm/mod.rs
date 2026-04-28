@@ -1,4 +1,5 @@
 //! vLLM graph-aware backend module.
+pub mod attrs;
 pub mod backend;
 pub mod graph_meta;
 

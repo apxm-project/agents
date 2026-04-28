@@ -19,17 +19,37 @@ Why it matters
 Claim metric
 ------------
 Wall-clock to the `Critical_User_Visible_Result` milestone (NOT whole-graph
-duration). The backend probe in `scripts/measure_vllm_hints.py` corroborates
-that priority + prefix-cache hints are observed at the vLLM HTTP boundary.
+duration). Whole-graph `wall_ms` stays dominated by the four background audit
+prompts that are intentionally awaited so the trace remains auditable, so a
+flat or slightly higher `wall_ms` does not refute the optimization — the
+critical-chain finish time (`critical_milestone_last_ms`,
+`observed_critical_path_finish_ms`) is the metric to watch. The backend probe
+in `scripts/measure_vllm_hints.py` corroborates that priority + prefix-cache
+hints are observed at the vLLM HTTP boundary.
 """
 
 from __future__ import annotations
 
+import sys
 import time
+from pathlib import Path
 
-from shared.bootstrap import bootstrap_paths
-
-bootstrap_paths(__file__)
+# Inline sys.path bootstrap. The workflow must run from any cwd via
+# `dekk apxm compile <file>` or `python3 <file>`, so we cannot rely on
+# `shared/` already being importable. Walk up to the APXM repo root, then
+# inject the frontend package and the demo root onto sys.path before any
+# `apxm.*` or `shared.*` imports.
+_HERE = Path(__file__).resolve()
+_REPO_ROOT = next(
+    (p for p in (_HERE, *_HERE.parents)
+     if (p / "Cargo.toml").exists() and (p / "crates").is_dir()),
+    Path.cwd().resolve(),
+)
+_FRONTEND = _REPO_ROOT / "crates" / "compiler" / "apxm-frontend" / "python"
+_DEMO_ROOT = _HERE.parents[1]
+for _p in (str(_FRONTEND), str(_DEMO_ROOT)):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 from apxm import GraphRecorder, compile, emit_air_if_requested, tool  # noqa: E402
 from apxm import constants as graph_keys  # noqa: E402
@@ -45,11 +65,6 @@ from shared.routes import VLLM, BENCHMARK_ROUTE  # noqa: E402
 BACKGROUND_TOKEN_BUDGET = 6000
 CRITICAL_TOKEN_BUDGET = 1200
 CRITICAL_RELEASE_DELAY_SEC = 0.45
-
-LLM_MEASUREMENT_ATTRS = {
-    graph_keys.MEMOIZABLE: False,
-    "vllm_cache_salt": "execution",
-}
 
 
 # Inlined dossier — single source of truth for this case. Kept verbatim so
@@ -155,7 +170,6 @@ def vllm_backend_hints(g: GraphRecorder):
         ),
         temperature=0.0,
         token_budget=BACKGROUND_TOKEN_BUDGET,
-        **LLM_MEASUREMENT_ATTRS,
     )
     background_reliability = g.ask(
         name="Background_Reliability_Audit",
@@ -165,7 +179,6 @@ def vllm_backend_hints(g: GraphRecorder):
         ),
         temperature=0.0,
         token_budget=BACKGROUND_TOKEN_BUDGET,
-        **LLM_MEASUREMENT_ATTRS,
     )
     background_finance = g.ask(
         name="Background_Finance_Audit",
@@ -175,7 +188,6 @@ def vllm_backend_hints(g: GraphRecorder):
         ),
         temperature=0.0,
         token_budget=BACKGROUND_TOKEN_BUDGET,
-        **LLM_MEASUREMENT_ATTRS,
     )
     background_rollout = g.ask(
         name="Background_Rollout_Audit",
@@ -185,10 +197,9 @@ def vllm_backend_hints(g: GraphRecorder):
         ),
         temperature=0.0,
         token_budget=BACKGROUND_TOKEN_BUDGET,
-        **LLM_MEASUREMENT_ATTRS,
     )
 
-    g.ask(
+    critical_triage = g.ask(
         name="Critical_Triage",
         prompt=(
             "Gate: {gate}\n\n"
@@ -198,9 +209,8 @@ def vllm_backend_hints(g: GraphRecorder):
         temperature=0.0,
         token_budget=CRITICAL_TOKEN_BUDGET,
         benchmark_milestone="critical_triage",
-        **LLM_MEASUREMENT_ATTRS,
     )
-    g.think(
+    critical_plan = g.think(
         name="Critical_Mitigation_Plan",
         prompt=(
             "Critical triage:\n{critical_triage}\n\n"
@@ -209,9 +219,8 @@ def vllm_backend_hints(g: GraphRecorder):
         temperature=0.0,
         token_budget=CRITICAL_TOKEN_BUDGET,
         benchmark_milestone="critical_plan",
-        **LLM_MEASUREMENT_ATTRS,
     )
-    g.think(
+    critical_summary = g.think(
         name="Critical_Executive_Summary",
         prompt=(
             "Mitigation plan:\n{critical_plan}\n\n"
@@ -220,7 +229,6 @@ def vllm_backend_hints(g: GraphRecorder):
         temperature=0.0,
         token_budget=CRITICAL_TOKEN_BUDGET,
         benchmark_milestone="critical_summary",
-        **LLM_MEASUREMENT_ATTRS,
     )
 
     critical_output = g.print(
