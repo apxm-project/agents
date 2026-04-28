@@ -1102,8 +1102,13 @@ def _add_model_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--enable-prompt-tokens-details",
         dest=ArgName.ENABLE_PROMPT_TOKENS_DETAILS.value,
-        action="store_true",
-        help="Ask vLLM to include prompt_tokens_details such as cached_tokens in usage",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULTS.enable_prompt_tokens_details,
+        help=(
+            "Emit usage.prompt_tokens_details (cached_tokens) on responses. "
+            "APXM defaults this on so the OpenAI parser can populate "
+            "cached_input_tokens; pass --no-enable-prompt-tokens-details to opt out."
+        ),
     )
     parser.add_argument(
         "--enable-force-include-usage",

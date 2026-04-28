@@ -152,6 +152,13 @@ class VllmDefaults:
     # hints actually reorder the waiting queue. Operators can override by
     # passing --scheduling-policy fcfs explicitly.
     scheduling_policy: str = SchedulingPolicy.PRIORITY.value
+    # APXM ships with prompt_tokens_details on by default so the OpenAI parser
+    # at apxm-backends/src/llm/backends/openai/backend.rs:779-789 can populate
+    # cached_input_tokens per request from usage.prompt_tokens_details.cached_tokens.
+    # The fork's emission is gated at vllm/entrypoints/openai/chat_completion/serving.py
+    # by --enable-prompt-tokens-details (default False upstream). Operators can
+    # opt out with --no-enable-prompt-tokens-details.
+    enable_prompt_tokens_details: bool = True
 
 
 @dataclass(frozen=True)
