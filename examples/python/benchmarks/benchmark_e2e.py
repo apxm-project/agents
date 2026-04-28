@@ -9,8 +9,8 @@ This harness stays deliberately small:
 - it records wall-clock timing plus session-derived metrics when available
 
 Usage:
-  python3 examples/python/_benchmarks/benchmark_e2e.py --compile-only
-  python3 examples/python/_benchmarks/benchmark_e2e.py --iterations 5
+  python3 examples/python/benchmarks/benchmark_e2e.py --compile-only
+  python3 examples/python/benchmarks/benchmark_e2e.py --iterations 5
 """
 
 from __future__ import annotations
@@ -651,6 +651,16 @@ def _parse_args() -> argparse.Namespace:
         help="Optional APXM trace level for execute mode",
     )
     parser.add_argument(
+        "--runtime-arg",
+        dest="runtime_args",
+        action="append",
+        default=[],
+        help=(
+            "Runtime argument passed to the entry flow. Repeat for multiple "
+            "parameters. Used by both execute and precompiled artifact runs."
+        ),
+    )
+    parser.add_argument(
         "--append",
         action="store_true",
         help="Append to an existing CSV instead of overwriting it",
@@ -681,11 +691,21 @@ def _resolve_session_root(session_base: Path) -> Path:
         return session_base
 
     children = [child for child in session_base.iterdir() if child.is_dir()]
-    if len(children) == 1 and (children[0] / FILE_RESULTS).exists():
-        return children[0]
+    completed_children = [
+        child for child in children if (child / FILE_RESULTS).is_file()
+    ]
+    if len(completed_children) == 1:
+        return completed_children[0]
+    if len(completed_children) > 1:
+        return max(
+            completed_children,
+            key=lambda child: (child / FILE_RESULTS).stat().st_mtime,
+        )
 
     raise FileNotFoundError(
-        f"no {FILE_RESULTS} under {session_base} or its single child directory"
+        f"no completed session with {FILE_RESULTS} under {session_base}; "
+        f"found {len(children)} child session "
+        f"{'directory' if len(children) == 1 else 'directories'}"
     )
 
 
@@ -915,6 +935,7 @@ def _run_execute(
     session_base: Path,
     trace: str | None,
     apxm_config: Path | None,
+    runtime_args: list[str],
 ) -> tuple[subprocess.CompletedProcess[str], float]:
     session_base.mkdir(parents=True, exist_ok=True)
     cmd = [
@@ -927,7 +948,7 @@ def _run_execute(
     ]
     if trace:
         cmd.extend([FLAG_TRACE, trace])
-    cmd.extend([FLAG_EMIT_SESSION, str(session_base), str(graph)])
+    cmd.extend([FLAG_EMIT_SESSION, str(session_base), str(graph), *runtime_args])
 
     start = time.perf_counter()
     result = subprocess.run(
@@ -947,6 +968,7 @@ def _run_artifact(
     session_base: Path,
     trace: str | None,
     apxm_config: Path | None,
+    runtime_args: list[str],
 ) -> tuple[subprocess.CompletedProcess[str], float]:
     session_base.mkdir(parents=True, exist_ok=True)
     cmd = [
@@ -957,7 +979,7 @@ def _run_artifact(
     ]
     if trace:
         cmd.extend([FLAG_TRACE, trace])
-    cmd.extend([FLAG_EMIT_SESSION, str(session_base), str(artifact_path)])
+    cmd.extend([FLAG_EMIT_SESSION, str(session_base), str(artifact_path), *runtime_args])
 
     start = time.perf_counter()
     result = subprocess.run(
@@ -987,6 +1009,7 @@ def _run_once(
     emit_compiler_diagnostics: bool,
     diagnostics_parent: Path,
     artifact_build: ArtifactBuild | None,
+    runtime_args: list[str],
 ) -> RunRecord:
     timestamp = datetime.now(timezone.utc).isoformat()
     mode = "compile" if compile_only else "run-artifact" if artifact_build else "execute"
@@ -1063,10 +1086,11 @@ def _run_once(
             session_base,
             trace,
             apxm_config,
+            runtime_args,
         )
     else:
         result, wall_ms = _run_execute(
-            graph, opt_level, target, session_base, trace, apxm_config
+            graph, opt_level, target, session_base, trace, apxm_config, runtime_args
         )
     session_root: Path | None = None
     summary: SessionSummary | None = None
@@ -1409,6 +1433,7 @@ def main() -> int:
             emit_compiler_diagnostics=args.emit_compiler_diagnostics,
             diagnostics_parent=diagnostics_parent,
             artifact_build=artifact_builds.get(opt_level),
+            runtime_args=args.runtime_args,
         )
         records.append(record)
         _print_run_summary(record)

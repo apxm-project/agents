@@ -1,2 +1,0 @@
-# Allow checked-in .air artifacts under this folder (used by ablation harness).
-!*.air

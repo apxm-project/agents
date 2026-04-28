@@ -15,8 +15,8 @@ Metrics:
 - Critical-path improvement under measured backend contention
 
 Usage:
-  dekk apxm execute examples/python/_benchmarks/priority_scheduling.py -O0
-  dekk apxm execute examples/python/_benchmarks/priority_scheduling.py -O2
+  dekk apxm execute examples/python/benchmarks/stress/priority_scheduling.py -O0
+  dekk apxm execute examples/python/benchmarks/stress/priority_scheduling.py -O2
 """
 
 from apxm import compile, GraphRecorder

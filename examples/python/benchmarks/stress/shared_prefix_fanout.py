@@ -5,8 +5,8 @@ Tests: compiler-emitted shared-prefix hints across parallel nodes.
 Measures: emitted graph hints, backend cache telemetry, and total latency.
 
 Usage:
-  dekk apxm execute examples/python/_benchmarks/shared_prefix_fanout.py -O0
-  dekk apxm execute examples/python/_benchmarks/shared_prefix_fanout.py -O2
+  dekk apxm execute examples/python/benchmarks/stress/shared_prefix_fanout.py -O0
+  dekk apxm execute examples/python/benchmarks/stress/shared_prefix_fanout.py -O2
 """
 
 from apxm import compile, GraphRecorder

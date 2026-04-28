@@ -1,0 +1,4 @@
+runs/
+decks/output/
+__pycache__/
+*.pyc

@@ -63,7 +63,8 @@ examples/python/
     real-world/          Complete production workflows
     native-tools/        Native Python agent/tool handoff
     self-hosted/         APXM workflows for the APXM repo
-    _benchmarks/         Internal performance tests
+    demos/               Strategic demos (Gemma 4 lives here)
+    benchmarks/          Shared harness (benchmark_e2e.py) + stress/
 ```
 
 ## Running Examples
@@ -96,7 +97,8 @@ Example categories:
 | `native-tools/` | Mock backend for local runs or a registered real backend |
 | `multi-agent/`, `real-world/`, `self-hosted/` | Generated ACP agent profiles and authenticated agent CLIs |
 | `self-hosted/vllm_graph_smoke.py` | APXM vLLM fork plus a registered served model alias |
-| `_benchmarks/` | Use `--compile-only` when no backend is configured |
+| `benchmarks/`, `benchmarks/stress/` | Use `--compile-only` when no backend is configured |
+| `demos/gemma4/` | Local vLLM fork on port 8916 plus a registered served model alias |
 
 Generated ACP profiles are typed imports. If an example imports
 `apxm._generated.agents.claude`, the profile must exist in generated frontend

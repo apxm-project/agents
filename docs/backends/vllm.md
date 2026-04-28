@@ -218,7 +218,7 @@ one, align its config with the backend you enabled:
 dekk apxm execute \
   --emit-session "${APXM_METRICS_DIR}/priority-session" \
   --emit-metrics "${APXM_METRICS_DIR}/priority-metrics.json" \
-  examples/python/_benchmarks/priority_scheduling.air
+  examples/python/benchmarks/stress/priority_scheduling.air
 ```
 
 Session output creates a timestamped execution directory under the path you

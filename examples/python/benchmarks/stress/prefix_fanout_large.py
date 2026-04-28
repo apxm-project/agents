@@ -14,8 +14,8 @@ Metrics:
 - Total execution time
 
 Usage:
-  dekk apxm execute examples/python/_benchmarks/prefix_fanout_large.py -O0
-  dekk apxm execute examples/python/_benchmarks/prefix_fanout_large.py -O2
+  dekk apxm execute examples/python/benchmarks/stress/prefix_fanout_large.py -O0
+  dekk apxm execute examples/python/benchmarks/stress/prefix_fanout_large.py -O2
 """
 
 from apxm import compile, GraphRecorder

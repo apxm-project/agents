@@ -171,8 +171,12 @@ crates/
     apxm-cli      # CLI tool
     apxm-server   # HTTP/MCP server
     apxm-gui      # Browser UI
-examples/         # Python and AIR graph sources
-docs/             # Documentation
+examples/
+  python/
+    getting-started, parallelism, optimization, ...   # Feature-focused samples
+    benchmarks/                                       # Shared harness + stress/
+    demos/gemma4/                                     # Tracked strategic demo
+docs/             # Documentation (start at docs/README.md, see docs/demos.md)
 ```
 
 ---

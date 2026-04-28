@@ -197,6 +197,59 @@ def _format_ci(bounds: tuple[float, float] | None, digits: int = 1) -> str:
     return f"[{bounds[0]:.{digits}f}, {bounds[1]:.{digits}f}]"
 
 
+def _token_call_threshold_text() -> str:
+    return (
+        ">= "
+        f"{MIN_TOKEN_DELTA:.0f} tokens and >= {MIN_TOKEN_REDUCTION * 100:.0f}% "
+        f"token reduction, or >= {MIN_CALL_DELTA:.0f} fewer calls"
+    )
+
+
+def _token_call_claim_blocker(
+    *,
+    runtime_only: bool,
+    has_replicates: bool,
+    token_or_call_threshold_supported: bool,
+) -> str:
+    if not runtime_only:
+        return "not supported; requires runtime rows, not compile-only rows"
+    if not has_replicates and token_or_call_threshold_supported:
+        return (
+            "diagnostic only; token/call deltas clear the threshold, but the "
+            "claim needs at least two successful runtime rows per optimization level"
+        )
+    if not has_replicates:
+        return (
+            "not supported; requires at least two successful runtime rows per "
+            "optimization level plus " + _token_call_threshold_text()
+        )
+    return "not supported; requires " + _token_call_threshold_text()
+
+
+def _cost_claim_blocker(
+    *,
+    runtime_only: bool,
+    has_replicates: bool,
+    token_or_call_threshold_supported: bool,
+) -> str:
+    if not runtime_only:
+        return "not supported; requires runtime token/call deltas"
+    if not has_replicates and token_or_call_threshold_supported:
+        return (
+            "diagnostic only; repeat the runtime rows, then apply explicit "
+            "token prices or a hardware-cost model"
+        )
+    if not has_replicates:
+        return (
+            "not supported; requires repeated runtime rows, token/call "
+            "thresholds, and explicit pricing or hardware-cost assumptions"
+        )
+    return (
+        "not supported by token/call deltas; dollar claims also require "
+        "explicit pricing or hardware-cost assumptions"
+    )
+
+
 def _summarize_by_opt(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
     grouped: dict[int, list[dict[str, str]]] = defaultdict(list)
     for row in rows:
@@ -637,8 +690,11 @@ def _render_markdown(
                 and token_reduction >= MIN_TOKEN_REDUCTION
             )
             call_savings_supported = call_delta is not None and call_delta >= MIN_CALL_DELTA
-            savings_supported = runtime_only and has_replicates and (
+            token_or_call_threshold_supported = (
                 token_savings_supported or call_savings_supported
+            )
+            savings_supported = runtime_only and has_replicates and (
+                token_or_call_threshold_supported
             )
             speed_supported = (
                 runtime_only
@@ -827,10 +883,10 @@ def _render_markdown(
                 + (
                     "supported by measured token or call reduction"
                     if savings_supported
-                    else (
-                        "not supported; requires >= "
-                        f"{MIN_TOKEN_DELTA:.0f} tokens and >= {MIN_TOKEN_REDUCTION * 100:.0f}% "
-                        f"token reduction, or >= {MIN_CALL_DELTA:.0f} fewer calls"
+                    else _token_call_claim_blocker(
+                        runtime_only=runtime_only,
+                        has_replicates=has_replicates,
+                        token_or_call_threshold_supported=token_or_call_threshold_supported,
                     )
                 )
             )
@@ -839,7 +895,11 @@ def _render_markdown(
                 + (
                     "allowed only as a priced or hardware-cost model using the measured deltas"
                     if savings_supported
-                    else "not supported by token/call deltas"
+                    else _cost_claim_blocker(
+                        runtime_only=runtime_only,
+                        has_replicates=has_replicates,
+                        token_or_call_threshold_supported=token_or_call_threshold_supported,
+                    )
                 )
             )
 
