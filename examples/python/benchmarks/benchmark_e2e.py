@@ -47,7 +47,7 @@ def _find_repo_root(start: Path) -> Path:
 
 REPO_ROOT = _find_repo_root(Path(__file__))
 BENCHMARK_DIR = Path(__file__).resolve().parent
-DEFAULT_GRAPH = BENCHMARK_DIR / "demo_code_critique.py"
+DEFAULT_GRAPH = BENCHMARK_DIR / "stress" / "demo_code_critique.py"
 DEFAULT_RESULTS_DIR = BENCHMARK_DIR / "results"
 DEFAULT_OUTPUT = DEFAULT_RESULTS_DIR / "demo_code_critique_benchmark.csv"
 DEFAULT_SESSION_BASE = DEFAULT_RESULTS_DIR / "sessions"
