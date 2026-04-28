@@ -2,6 +2,7 @@
 //!
 //! Exposes the runtime's capabilities over a REST+SSE API with support for:
 //! - **Graph execution**: `POST /v1/execute`, `POST /v1/execute/stream`
+//! - **Skill library**: `GET /v1/skills`, `POST /v1/skills/{id}/execute`
 //! - **LLM generation**: `POST /v1/generate`, `POST /v1/generate-stream`,
 //!   `GET /v1/schema`
 //! - **Memory**: `GET|POST /v1/memory`
@@ -44,11 +45,13 @@ mod capability;
 mod checkpoints;
 mod error;
 mod execute;
+mod executions;
 mod generate;
 mod health;
 mod helpers;
 mod mcp;
 mod memory;
+mod skills;
 mod state;
 mod tasks;
 mod types;
@@ -63,10 +66,15 @@ use crate::agent::{
 use crate::capability::{list_capabilities, register_capability};
 use crate::checkpoints::{CheckpointStore, create_checkpoint, get_checkpoint, resume_checkpoint};
 use crate::execute::{execute, execute_stream};
+use crate::executions::{ExecutionStore, get_execution, get_execution_node};
 use crate::generate::{handle_generate, handle_generate_stream, handle_schema};
 use crate::health::{health, list_models};
 use crate::mcp::mcp_jsonrpc;
 use crate::memory::{delete_fact, search_facts, store_fact};
+use crate::skills::{
+    SkillLibrary, execute_skill, execute_skill_stream, get_skill, list_skills, parse_skill_roots,
+    validate_skill,
+};
 use crate::state::AppState;
 use crate::tasks::{TaskQueueManager, claim_task, complete_task, create_task, list_tasks};
 
@@ -93,6 +101,17 @@ fn build_app(state: AppState) -> Router {
         // Capabilities
         .route("/v1/capabilities", get(list_capabilities))
         .route("/v1/capabilities/register", post(register_capability))
+        // Server-owned skill inventory and static skill execution
+        .route("/v1/skills", get(list_skills))
+        .route("/v1/skills/{id}", get(get_skill))
+        .route("/v1/skills/{id}/validate", post(validate_skill))
+        .route("/v1/skills/{id}/execute", post(execute_skill))
+        .route("/v1/skills/{id}/execute/stream", post(execute_skill_stream))
+        .route("/v1/executions/{execution_id}", get(get_execution))
+        .route(
+            "/v1/executions/{execution_id}/nodes/{node_id}",
+            get(get_execution_node),
+        )
         // COMMUNICATE receive target
         .route("/v1/receive", post(receive_message))
         // Agent registry
@@ -134,6 +153,10 @@ async fn main() -> anyhow::Result<()> {
             std::env::var("RUST_LOG").unwrap_or_else(|_| "info,apxm_server=debug".to_string()),
         )
         .init();
+
+    let args: Vec<String> = std::env::args().collect();
+    let skill_roots = parse_skill_roots(&args);
+    let skill_library = SkillLibrary::new(skill_roots);
 
     let runtime = Arc::new(Runtime::new(RuntimeConfig::default()).await?);
 
@@ -189,13 +212,14 @@ async fn main() -> anyhow::Result<()> {
         checkpoint_store: CheckpointStore::new(),
         start_time: SystemTime::now(),
         a2a_tasks: Arc::new(DashMap::new()),
+        skill_library,
+        execution_store: ExecutionStore::new(),
     };
 
     let app = build_app(state);
 
     // Parse --port from CLI args (service-manager passes `--port <N>`)
     let cli_port: Option<u16> = {
-        let args: Vec<String> = std::env::args().collect();
         args.iter()
             .position(|a| a == "--port")
             .and_then(|i| args.get(i + 1))

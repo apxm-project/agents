@@ -52,8 +52,10 @@ document the implementation details and stay close to the code.
                                            COMMUNICATE)
 ```
 
-The same artifact that runs locally can be shipped to a server, replayed for
-debugging, or dispatched against a different backend without recompiling.
+The same artifact that runs locally can be shipped to a server, inspected
+through session traces/timelines for debugging, or dispatched against a
+different backend without recompiling. Full scheduler replay requires future
+scheduler snapshots.
 
 ## Crate Layout
 
@@ -112,6 +114,9 @@ unless the note explicitly says they are implemented.
 - [design/apxm-aware-codex-skill-libraries.md](design/apxm-aware-codex-skill-libraries.md) —
   roadmap for APXM-aware Codex skills, server-exposed skill libraries, AIR
   conversion, and A0-A4 evaluation
+- [design/apxm-skill-runtime-task-backlog.md](design/apxm-skill-runtime-task-backlog.md) —
+  PR-sized task backlog for read-only skill discovery, static execution,
+  observability gaps, nested skill evidence, benchmarks, and checkpoint/replay
 
 ## Backend Guides
 

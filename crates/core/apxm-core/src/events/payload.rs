@@ -7,6 +7,7 @@ use std::io;
 use serde::{Deserialize, Serialize};
 
 use super::kind::{self, EventKind};
+use crate::types::execution::NodeMetrics;
 use crate::types::operations::AISOperationType;
 
 /// Parent trait for all event payloads.
@@ -94,6 +95,10 @@ pub fn boxed_payload_from_json(
         boxed!(OperationStartPayload)
     } else if kind_name == kind::OPERATION_END.name() {
         boxed!(OperationEndPayload)
+    } else if kind_name == kind::NODE_OUTPUT.name() {
+        boxed!(NodeOutputPayload)
+    } else if kind_name == kind::NODE_METRICS.name() {
+        boxed!(NodeMetricsPayload)
     } else if kind_name == kind::TOOL_START.name() {
         boxed!(ToolStartPayload)
     } else if kind_name == kind::TOOL_END.name() {
@@ -301,6 +306,26 @@ pub struct OperationEndPayload {
     pub success: bool,
 }
 impl_event_payload!(OperationEndPayload, kind::OPERATION_END);
+
+/// A graph node produced an output value.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeOutputPayload {
+    /// The graph node ID.
+    pub node_id: u64,
+    /// The node output as JSON.
+    pub value: serde_json::Value,
+}
+impl_event_payload!(NodeOutputPayload, kind::NODE_OUTPUT);
+
+/// Runtime metrics recorded for a graph node.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeMetricsPayload {
+    /// The graph node ID.
+    pub node_id: u64,
+    /// Provider-neutral runtime metrics for the node.
+    pub metrics: NodeMetrics,
+}
+impl_event_payload!(NodeMetricsPayload, kind::NODE_METRICS);
 
 /// A tool invocation started.
 #[derive(Debug, Clone, Serialize, Deserialize)]

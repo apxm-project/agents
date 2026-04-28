@@ -12,6 +12,8 @@ use crate::a2a::A2aTaskRecord;
 use crate::agent::AgentRegistration;
 use crate::checkpoints::CheckpointStore;
 use crate::execute::ExecuteResponse;
+use crate::executions::ExecutionStore;
+use crate::skills::SkillLibrary;
 use crate::tasks::TaskQueueManager;
 
 #[derive(Clone)]
@@ -27,6 +29,10 @@ pub(crate) struct AppState {
     pub(crate) start_time: SystemTime,
     /// In-flight A2A task records (task_id → record).
     pub(crate) a2a_tasks: Arc<DashMap<String, A2aTaskRecord>>,
+    /// Server-owned APXM skill inventory.
+    pub(crate) skill_library: SkillLibrary,
+    /// In-memory execution records for server-owned skill runs.
+    pub(crate) execution_store: ExecutionStore,
 }
 
 /// Thin [`EventEmitter`] that forwards events to a tokio MPSC channel.

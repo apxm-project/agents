@@ -5,8 +5,10 @@ mod tests {
     use std::collections::HashMap;
 
     use crate::events::event::{ApxmEvent, EventSource};
+    use crate::events::kind;
     use crate::events::payload::*;
     use crate::types::operations::AISOperationType;
+    use crate::types::{NodeMetrics, OperationMetric};
 
     fn roundtrip<T>(payload: T)
     where
@@ -123,6 +125,26 @@ mod tests {
             success: true,
         }
     );
+    roundtrip_test!(
+        serde_node_output,
+        NodeOutputPayload {
+            node_id: 1,
+            value: serde_json::json!({"status": "ok"}),
+        }
+    );
+    roundtrip_test!(serde_node_metrics, {
+        let mut metrics = NodeMetrics::new(1);
+        metrics.record_operation(OperationMetric {
+            node_id: 1,
+            op_type: AISOperationType::ConstStr,
+            duration_ms: 7,
+            success: true,
+        });
+        NodeMetricsPayload {
+            node_id: 1,
+            metrics,
+        }
+    });
     roundtrip_test!(
         serde_tool_start,
         ToolStartPayload {
@@ -283,6 +305,19 @@ mod tests {
             direction: TurnDirection::Request,
         }
     );
+
+    #[test]
+    fn core_event_kind_registry_includes_node_events() {
+        assert_eq!(
+            kind::core_event_kind(kind::NODE_OUTPUT.name()),
+            Some(kind::NODE_OUTPUT)
+        );
+        assert_eq!(
+            kind::core_event_kind(kind::NODE_METRICS.name()),
+            Some(kind::NODE_METRICS)
+        );
+        assert!(kind::core_event_kind("not_a_core_event").is_none());
+    }
 
     #[test]
     fn builder_root() {
