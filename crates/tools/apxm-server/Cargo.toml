@@ -19,6 +19,7 @@ apxm-backends.workspace = true
 apxm-credentials.workspace = true
 apxm-runtime = { workspace = true, features = ["metrics"] }
 anyhow.workspace = true
+blake3.workspace = true
 reqwest.workspace = true
 async-trait.workspace = true
 dashmap.workspace = true
@@ -28,6 +29,7 @@ axum.workspace = true
 futures.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+toml.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "signal", "time"] }
 tokio-stream.workspace = true
 tower = { version = "0.5", features = ["util"] }

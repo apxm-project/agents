@@ -36,6 +36,8 @@ export const PROVIDER_EVENT = kind("provider_event", "observability");
 // -- Runtime event kinds -----------------------------------------------------
 export const OPERATION_START = kind("operation_start", "lifecycle");
 export const OPERATION_END = kind("operation_end", "lifecycle");
+export const NODE_OUTPUT = kind("node_output", "observability");
+export const NODE_METRICS = kind("node_metrics", "observability");
 export const TOOL_START = kind("tool_start", "lifecycle");
 export const TOOL_END = kind("tool_end", "lifecycle");
 export const PLAN_CREATED = kind("plan_created", "lifecycle");

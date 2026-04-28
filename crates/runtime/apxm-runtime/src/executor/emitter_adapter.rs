@@ -145,6 +145,20 @@ impl ExecutionEventEmitter for EmitterAdapter {
         });
     }
 
+    fn emit_node_output(&self, node_id: u64, value: &Value) {
+        let value = value
+            .to_json()
+            .unwrap_or_else(|_| serde_json::Value::String(value.to_string()));
+        self.emit(NodeOutputPayload { node_id, value });
+    }
+
+    fn emit_node_metrics(&self, node_id: u64, metrics: &apxm_core::types::NodeMetrics) {
+        self.emit(NodeMetricsPayload {
+            node_id,
+            metrics: metrics.clone(),
+        });
+    }
+
     fn emit_plan_created(&self, plan_id: &str, steps: usize) {
         self.emit(PlanCreatedPayload {
             plan_id: plan_id.to_string(),
@@ -234,5 +248,81 @@ impl ExecutionEventEmitter for EmitterAdapter {
 
     fn emit_memoization_hit(&self, node_id: u64) {
         self.emit(MemoizationHitPayload { node_id });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc;
+
+    use apxm_core::events::payload::{NodeMetricsPayload, NodeOutputPayload};
+    use apxm_core::events::{ChannelEmitter, EventSource};
+    use apxm_core::types::operations::AISOperationType;
+    use apxm_core::types::{NodeMetrics, OperationMetric};
+
+    use super::*;
+
+    #[test]
+    fn emitter_adapter_forwards_node_output_events() {
+        let (tx, rx) = mpsc::channel();
+        let adapter = EmitterAdapter::new(
+            Arc::new(ChannelEmitter::new(tx)),
+            EventSource::Runtime,
+            "trace-node-output",
+        );
+        adapter.set_current_span_id(Some("parent-span".to_string()));
+        adapter.set_current_scope_id(Some("scope-1".to_string()));
+
+        adapter.emit_node_output(42, &Value::String("ok".to_string()));
+
+        let event = rx.recv().expect("node output event");
+        assert_eq!(event.kind().name(), "node_output");
+        assert_eq!(event.meta.seq, 0);
+        assert_eq!(event.meta.trace_id, "trace-node-output");
+        assert_eq!(event.meta.parent_span_id.as_deref(), Some("parent-span"));
+        assert_eq!(event.meta.scope_id.as_deref(), Some("scope-1"));
+
+        let payload = event
+            .payload
+            .downcast_ref::<NodeOutputPayload>()
+            .expect("node output payload");
+        assert_eq!(payload.node_id, 42);
+        assert_eq!(payload.value, serde_json::json!("ok"));
+    }
+
+    #[test]
+    fn emitter_adapter_forwards_node_metrics_events() {
+        let (tx, rx) = mpsc::channel();
+        let adapter = EmitterAdapter::new(
+            Arc::new(ChannelEmitter::new(tx)),
+            EventSource::Runtime,
+            "trace-node-metrics",
+        );
+        adapter.set_current_span_id(Some("parent-span".to_string()));
+        adapter.set_current_scope_id(Some("scope-1".to_string()));
+        let mut metrics = NodeMetrics::new(42);
+        metrics.record_operation(OperationMetric {
+            node_id: 42,
+            op_type: AISOperationType::ConstStr,
+            duration_ms: 9,
+            success: true,
+        });
+
+        adapter.emit_node_metrics(42, &metrics);
+
+        let event = rx.recv().expect("node metrics event");
+        assert_eq!(event.kind().name(), "node_metrics");
+        assert_eq!(event.meta.seq, 0);
+        assert_eq!(event.meta.trace_id, "trace-node-metrics");
+        assert_eq!(event.meta.parent_span_id.as_deref(), Some("parent-span"));
+        assert_eq!(event.meta.scope_id.as_deref(), Some("scope-1"));
+
+        let payload = event
+            .payload
+            .downcast_ref::<NodeMetricsPayload>()
+            .expect("node metrics payload");
+        assert_eq!(payload.node_id, 42);
+        assert_eq!(payload.metrics.operation.attempts, 1);
+        assert_eq!(payload.metrics.operation.successes, 1);
     }
 }

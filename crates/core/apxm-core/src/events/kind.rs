@@ -71,6 +71,10 @@ pub const OPERATION_START: EventKind =
     EventKind::new("operation_start", EventCategory::Lifecycle, false);
 pub const OPERATION_END: EventKind =
     EventKind::new("operation_end", EventCategory::Lifecycle, false);
+pub const NODE_OUTPUT: EventKind =
+    EventKind::new("node_output", EventCategory::Observability, false);
+pub const NODE_METRICS: EventKind =
+    EventKind::new("node_metrics", EventCategory::Observability, false);
 pub const TOOL_START: EventKind = EventKind::new("tool_start", EventCategory::Lifecycle, false);
 pub const TOOL_END: EventKind = EventKind::new("tool_end", EventCategory::Lifecycle, false);
 pub const PLAN_CREATED: EventKind = EventKind::new("plan_created", EventCategory::Lifecycle, false);
@@ -112,3 +116,55 @@ pub const SESSION_START: EventKind =
 pub const SESSION_END: EventKind = EventKind::new("session_end", EventCategory::Lifecycle, true);
 pub const TURN_BOUNDARY: EventKind =
     EventKind::new("turn_boundary", EventCategory::Lifecycle, false);
+
+/// All core APXM event kinds known to `apxm-core`.
+///
+/// Extension crates can still define their own [`EventKind`] constants with
+/// [`EventKind::new`]. This slice is the stable registry for core events that
+/// can round-trip through `ApxmEvent` deserialization in this crate.
+pub const CORE_EVENT_KINDS: &[EventKind] = &[
+    TOKEN,
+    THOUGHT,
+    TOOL_CALL,
+    LLM_DONE,
+    USAGE,
+    RETRY,
+    WARNING,
+    CITATION,
+    PROVIDER_EVENT,
+    OPERATION_START,
+    OPERATION_END,
+    NODE_OUTPUT,
+    NODE_METRICS,
+    TOOL_START,
+    TOOL_END,
+    PLAN_CREATED,
+    PLAN_STEP_STARTED,
+    PLAN_STEP_COMPLETED,
+    MEMORY_READ,
+    MEMORY_WRITE,
+    CHECKPOINT_SAVED,
+    CHECKPOINT_RESTORED,
+    SCHEDULER_DECISION,
+    HEAD_OF_LINE_BLOCK,
+    GPU_UTILIZATION,
+    TOKEN_USAGE,
+    MEMOIZATION_HIT,
+    ERROR,
+    CONTEXT_COMPACTED,
+    MODEL_REROUTED,
+    CANCELLED,
+    LOOP_DETECTED,
+    CONTEXT_WINDOW_WARNING,
+    SESSION_START,
+    SESSION_END,
+    TURN_BOUNDARY,
+];
+
+/// Look up a core APXM event kind by its wire name.
+pub fn core_event_kind(name: &str) -> Option<EventKind> {
+    CORE_EVENT_KINDS
+        .iter()
+        .copied()
+        .find(|kind| kind.name() == name)
+}
