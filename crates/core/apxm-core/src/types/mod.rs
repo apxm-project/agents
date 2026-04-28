@@ -17,6 +17,7 @@ pub mod execution;
 pub mod graph_hints;
 pub mod graph_metrics;
 pub mod intents;
+pub mod metrics;
 
 // ── Domain ─────────────────────────────────────────────────
 pub mod compiler;
@@ -50,6 +51,7 @@ pub use graph_hints::{
     PinMode, PinPolicy, PriorityClass,
 };
 pub use graph_metrics::{LatencyClass, NodeGraphMetrics};
+pub use metrics::{GraphStatusKey, MetricsLevel};
 pub use identifiers::{
     BackendId, CapabilityName, CheckpointId, ExecutionId, MessageId, ModelId, NodeIdType, OpIdType,
     ProfileId, SessionId, TokenIdType, TraceId,

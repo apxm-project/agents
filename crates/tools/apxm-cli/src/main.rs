@@ -141,6 +141,7 @@ async fn run_cli(cli: Cli) -> Result<()> {
             opt_level,
             target,
             emit_metrics,
+            emit_metrics_level,
             emit_session,
             no_emit_session,
             emit_profile,
@@ -153,6 +154,7 @@ async fn run_cli(cli: Cli) -> Result<()> {
                 cli.config,
                 cli.json,
                 emit_metrics,
+                emit_metrics_level,
                 resolve_emit_session(emit_session, no_emit_session),
                 emit_profile,
             )
@@ -163,6 +165,7 @@ async fn run_cli(cli: Cli) -> Result<()> {
             args,
             target,
             emit_metrics,
+            emit_metrics_level,
             emit_session,
             no_emit_session,
             emit_profile,
@@ -174,6 +177,7 @@ async fn run_cli(cli: Cli) -> Result<()> {
                 cli.config,
                 cli.json,
                 emit_metrics,
+                emit_metrics_level,
                 resolve_emit_session(emit_session, no_emit_session),
                 emit_profile,
             )

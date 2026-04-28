@@ -299,21 +299,10 @@ impl SchedulerMetrics {
         Self::default()
     }
 
+    /// Wire-shape serialization. The struct's serde field names ARE the wire keys;
+    /// `serde_json::to_value` is the single source of truth.
     pub fn to_json(&self) -> serde_json::Value {
-        serde_json::json!({
-            "per_op_overhead_us": self.per_op_overhead_us,
-            "overhead_breakdown": {
-                "ready_set_update_us": self.overhead_breakdown.ready_set_update_us,
-                "work_stealing_us": self.overhead_breakdown.work_stealing_us,
-                "input_collection_us": self.overhead_breakdown.input_collection_us,
-                "operation_dispatch_us": self.overhead_breakdown.operation_dispatch_us,
-                "token_routing_us": self.overhead_breakdown.token_routing_us
-            },
-            "max_parallelism": self.max_parallelism,
-            "avg_parallelism": self.avg_parallelism,
-            "operations_executed": self.operations_executed,
-            "operations_failed": self.operations_failed
-        })
+        serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
     }
 }
 

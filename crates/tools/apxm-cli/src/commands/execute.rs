@@ -234,6 +234,7 @@ pub async fn execute_command(
     config: Option<PathBuf>,
     json: bool,
     emit_metrics: Option<PathBuf>,
+    emit_metrics_level: apxm_core::types::MetricsLevel,
     emit_session: Option<Option<PathBuf>>,
     emit_profile: Option<PathBuf>,
 ) -> Result<()> {
@@ -264,6 +265,7 @@ pub async fn execute_command(
     };
     let mut linker_config =
         LinkerConfig::from_apxm_config(apxm_config).with_pipeline_config(pipeline_config);
+    linker_config.runtime_config.metrics_level = emit_metrics_level;
     let (graph_input, _python_air, python_tools_sidecar) =
         prepare_graph_input(&input, config.as_deref())?;
 
@@ -472,6 +474,7 @@ pub async fn run_command(
     config: Option<PathBuf>,
     json: bool,
     emit_metrics: Option<PathBuf>,
+    emit_metrics_level: apxm_core::types::MetricsLevel,
     emit_session: Option<Option<PathBuf>>,
     emit_profile: Option<PathBuf>,
 ) -> Result<()> {
@@ -514,6 +517,7 @@ pub async fn run_command(
 
     let mut linker_config = LinkerConfig::from_apxm_config(apxm_config);
     linker_config.runtime_config.optimization_target = target;
+    linker_config.runtime_config.metrics_level = emit_metrics_level;
 
     // Enable all-outputs collection when session output is requested
     if emit_session.is_some() {
@@ -949,7 +953,7 @@ impl apxm_core::MetricsSource for RuntimeMetricsSource<'_> {
         use apxm_core::constants::session::metrics_keys;
         use metrics_keys::{execution_keys, runtime_meta_keys};
         #[cfg(feature = "metrics")]
-        use metrics_keys::{link_phase_keys, llm_keys};
+        use metrics_keys::link_phase_keys;
 
         let mut map = serde_json::Map::new();
 
@@ -966,11 +970,8 @@ impl apxm_core::MetricsSource for RuntimeMetricsSource<'_> {
             execution_keys::DURATION_MS.to_owned(),
             (self.execution.stats.duration_ms as u64).into(),
         );
-        let status = if self.execution.stats.failed_nodes == 0 {
-            execution_keys::STATUS_SUCCESS
-        } else {
-            execution_keys::STATUS_PARTIAL_FAILURE
-        };
+        let status =
+            ExecutionSummaryStatus::from_failed_nodes(self.execution.stats.failed_nodes).label();
         exec.insert(
             execution_keys::STATUS.to_owned(),
             serde_json::Value::String(status.to_owned()),
@@ -1003,35 +1004,9 @@ impl apxm_core::MetricsSource for RuntimeMetricsSource<'_> {
         }
         #[cfg(feature = "metrics")]
         {
-            let llm_metrics = &self.execution.llm_metrics;
-            let mut llm = serde_json::Map::new();
-            llm.insert(
-                llm_keys::TOTAL_REQUESTS.to_owned(),
-                llm_metrics.total_requests.into(),
-            );
-            llm.insert(
-                llm_keys::TOTAL_INPUT_TOKENS.to_owned(),
-                llm_metrics.total_input_tokens.into(),
-            );
-            llm.insert(
-                llm_keys::TOTAL_OUTPUT_TOKENS.to_owned(),
-                llm_metrics.total_output_tokens.into(),
-            );
-            llm.insert(
-                llm_keys::AVG_LATENCY_MS.to_owned(),
-                (llm_metrics.average_latency.as_millis() as u64).into(),
-            );
-            llm.insert(
-                llm_keys::P50_LATENCY_MS.to_owned(),
-                (llm_metrics.p50_latency.as_millis() as u64).into(),
-            );
-            llm.insert(
-                llm_keys::P99_LATENCY_MS.to_owned(),
-                (llm_metrics.p99_latency.as_millis() as u64).into(),
-            );
             map.insert(
                 metrics_keys::RUNTIME_LLM.to_owned(),
-                serde_json::Value::Object(llm),
+                self.execution.llm_metrics.to_metrics_json(),
             );
 
             if let Some(link_metrics) = self.link_metrics {

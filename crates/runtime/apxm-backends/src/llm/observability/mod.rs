@@ -60,6 +60,39 @@ pub struct AggregatedMetrics {
     pub total_retries: usize,
 }
 
+impl AggregatedMetrics {
+    /// Producer-owned wire-shape projection for `runtime.llm` in the metrics report.
+    ///
+    /// Flattens `Duration` fields to integer milliseconds and uses the shared
+    /// `llm_keys::*` constants so the wire format stays single-sourced.
+    pub fn to_metrics_json(&self) -> serde_json::Value {
+        use metrics_keys::llm_keys;
+        let mut llm = serde_json::Map::new();
+        llm.insert(llm_keys::TOTAL_REQUESTS.to_owned(), self.total_requests.into());
+        llm.insert(
+            llm_keys::TOTAL_INPUT_TOKENS.to_owned(),
+            self.total_input_tokens.into(),
+        );
+        llm.insert(
+            llm_keys::TOTAL_OUTPUT_TOKENS.to_owned(),
+            self.total_output_tokens.into(),
+        );
+        llm.insert(
+            llm_keys::AVG_LATENCY_MS.to_owned(),
+            (self.average_latency.as_millis() as u64).into(),
+        );
+        llm.insert(
+            llm_keys::P50_LATENCY_MS.to_owned(),
+            (self.p50_latency.as_millis() as u64).into(),
+        );
+        llm.insert(
+            llm_keys::P99_LATENCY_MS.to_owned(),
+            (self.p99_latency.as_millis() as u64).into(),
+        );
+        serde_json::Value::Object(llm)
+    }
+}
+
 /// Metrics tracker for observability.
 #[derive(Clone)]
 pub struct MetricsTracker {

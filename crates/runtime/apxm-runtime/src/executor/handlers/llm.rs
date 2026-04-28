@@ -677,17 +677,10 @@ pub(crate) fn attach_graph_hints(
     request.with_apxm_hints(hints)
 }
 
-fn apply_vllm_request_overrides_from_node(
-    ctx: &ExecutionContext,
-    node: &Node,
-    mut request: LLMRequest,
-) -> Result<LLMRequest> {
-    let node_attr = get_optional_string_attribute(node, vllm_attrs::CACHE_SALT_ATTR)?;
-    let Some(selector) = vllm_attrs::resolved_cache_salt_selector(node_attr.as_deref()) else {
-        return Ok(request);
-    };
-
-    let cache_salt = match selector.as_str() {
+/// Resolve a salt selector sentinel to its concrete string. Literal
+/// selectors pass through unchanged.
+fn substitute_cache_salt_selector(ctx: &ExecutionContext, selector: &str) -> String {
+    match selector {
         vllm_attrs::CACHE_SALT_EXECUTION | vllm_attrs::CACHE_SALT_EXECUTION_ID => {
             ctx.execution_id.clone()
         }
@@ -695,12 +688,15 @@ fn apply_vllm_request_overrides_from_node(
             format!("{}:{}", ctx.graph_id, ctx.execution_id)
         }
         literal => literal.to_string(),
-    };
-
-    if cache_salt.is_empty() {
-        return Ok(request);
     }
+}
 
+/// Attach a `cache_salt` entry to `request.extra_body`, preserving any
+/// existing object fields. No-ops if `cache_salt` is empty.
+fn attach_cache_salt(mut request: LLMRequest, cache_salt: String) -> LLMRequest {
+    if cache_salt.is_empty() {
+        return request;
+    }
     let mut extra = request
         .extra_body
         .take()
@@ -712,7 +708,52 @@ fn apply_vllm_request_overrides_from_node(
         map.insert("cache_salt".to_string(), JsonValue::String(cache_salt));
     }
     request.extra_body = Some(extra);
-    Ok(request)
+    request
+}
+
+/// Resolution chain for the vLLM `cache_salt`:
+///
+///   1. Explicit `vllm_cache_salt` node attribute — author intent always wins.
+///      A value of `"none"` (or empty) disables salting entirely.
+///   2. Compiler-stamped `shared_prefix_group` — the SharedPrefixAnalysis
+///      pass marks sibling nodes that share a bit-identical leading prompt.
+///      Salting by `{graph_id}:{group}` lets the vLLM prefix cache survive
+///      across executions of the same graph for grouped nodes, while the
+///      benchmark harness can still keep ungrouped nodes execution-isolated
+///      via `APXM_VLLM_CACHE_SALT=execution`.
+///   3. Env var fallback (`APXM_VLLM_CACHE_SALT`) — harness iteration
+///      isolation for ungrouped nodes.
+fn apply_vllm_request_overrides_from_node(
+    ctx: &ExecutionContext,
+    node: &Node,
+    request: LLMRequest,
+) -> Result<LLMRequest> {
+    let explicit_attr = get_optional_string_attribute(node, vllm_attrs::CACHE_SALT_ATTR)?;
+    if let Some(attr_value) = explicit_attr.as_deref() {
+        match vllm_attrs::resolved_cache_salt_selector(Some(attr_value)) {
+            Some(selector) => {
+                let cache_salt = substitute_cache_salt_selector(ctx, &selector);
+                return Ok(attach_cache_salt(request, cache_salt));
+            }
+            // Explicit "none"/empty: caller asked for no salting; do not
+            // fall through to the compiler hint or env var.
+            None => return Ok(request),
+        }
+    }
+
+    let reuse_group = get_optional_string_attribute(node, graph_attrs::REUSE_GROUP)?
+        .map(|g| g.trim().to_owned())
+        .filter(|g| !g.is_empty());
+    if let Some(group) = reuse_group {
+        let cache_salt = format!("{}:{}", ctx.graph_id, group);
+        return Ok(attach_cache_salt(request, cache_salt));
+    }
+
+    let Some(selector) = vllm_attrs::resolved_cache_salt_selector(None) else {
+        return Ok(request);
+    };
+    let cache_salt = substitute_cache_salt_selector(ctx, &selector);
+    Ok(attach_cache_salt(request, cache_salt))
 }
 
 /// Execute LLM operation - unified handler for Ask, Think, Reason
@@ -1586,6 +1627,123 @@ mod tests {
                 .and_then(|body| body.get("cache_salt"))
                 .and_then(JsonValue::as_str),
             Some("literal-salt")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_vllm_cache_salt_honors_compiler_shared_prefix_group() {
+        // Compiler hint: when SharedPrefixAnalysis stamps `shared_prefix_group`
+        // on a node, the runtime must salt by `{graph_id}:{group}` so sibling
+        // nodes in that group reuse the vLLM prefix cache across executions
+        // of the same graph — even when the harness has set the env var to
+        // `execution` for iteration isolation of ungrouped nodes.
+        let ctx = test_ctx_with_grouped_tools()
+            .await
+            .with_execution_id("exec-iter-9".to_string())
+            .with_graph_id("review-synthesis-graph".to_string());
+        let mut node = Node::new(4, AISOperationType::Ask);
+        node.attributes.insert(
+            graph_attrs::REUSE_GROUP.to_string(),
+            Value::String("shared_prefix_analysis_0".to_string()),
+        );
+
+        // Simulate the harness env var so we exercise the precedence rule:
+        // compiler hint must win over env-var-driven execution salting.
+        // SAFETY: this test runs in a tokio task; we don't share the env var
+        // across threads concurrently here. The other env-mutating tests live
+        // in `vllm/attrs.rs` under their own serialization mutex.
+        let prev = std::env::var(vllm_attrs::CACHE_SALT_ENV_VAR).ok();
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var(vllm_attrs::CACHE_SALT_ENV_VAR, "execution");
+        }
+
+        let request =
+            apply_vllm_request_overrides_from_node(&ctx, &node, LLMRequest::new("prompt"))
+                .expect("compiler-hint salt override should apply");
+
+        #[allow(unsafe_code)]
+        unsafe {
+            match prev {
+                Some(v) => std::env::set_var(vllm_attrs::CACHE_SALT_ENV_VAR, v),
+                None => std::env::remove_var(vllm_attrs::CACHE_SALT_ENV_VAR),
+            }
+        }
+
+        assert_eq!(
+            request
+                .extra_body
+                .as_ref()
+                .and_then(|body| body.get("cache_salt"))
+                .and_then(JsonValue::as_str),
+            Some("review-synthesis-graph:shared_prefix_analysis_0"),
+            "shared_prefix_group must produce a graph-scoped salt, not the execution id"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_vllm_cache_salt_explicit_attr_overrides_compiler_hint() {
+        // Author intent (per-node `vllm_cache_salt = "execution"`) wins over
+        // a compiler-stamped `shared_prefix_group`. This is the escape hatch
+        // for workflows that explicitly want isolation even on grouped nodes.
+        let ctx = test_ctx_with_grouped_tools()
+            .await
+            .with_execution_id("exec-isolated".to_string())
+            .with_graph_id("graph-with-group".to_string());
+        let mut node = Node::new(4, AISOperationType::Ask);
+        node.attributes.insert(
+            graph_attrs::REUSE_GROUP.to_string(),
+            Value::String("shared_prefix_analysis_0".to_string()),
+        );
+        node.attributes.insert(
+            vllm_attrs::CACHE_SALT_ATTR.to_string(),
+            Value::String(vllm_attrs::CACHE_SALT_EXECUTION.to_string()),
+        );
+
+        let request =
+            apply_vllm_request_overrides_from_node(&ctx, &node, LLMRequest::new("prompt"))
+                .expect("explicit attr should override compiler hint");
+
+        assert_eq!(
+            request
+                .extra_body
+                .as_ref()
+                .and_then(|body| body.get("cache_salt"))
+                .and_then(JsonValue::as_str),
+            Some("exec-isolated"),
+            "explicit `vllm_cache_salt` must take precedence over `shared_prefix_group`"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_vllm_cache_salt_explicit_none_disables_for_grouped_node() {
+        // Workflow author can set `vllm_cache_salt = "none"` to disable
+        // salting on a node that the compiler would otherwise group.
+        let ctx = test_ctx_with_grouped_tools()
+            .await
+            .with_execution_id("exec-x".to_string())
+            .with_graph_id("graph-x".to_string());
+        let mut node = Node::new(4, AISOperationType::Ask);
+        node.attributes.insert(
+            graph_attrs::REUSE_GROUP.to_string(),
+            Value::String("shared_prefix_analysis_0".to_string()),
+        );
+        node.attributes.insert(
+            vllm_attrs::CACHE_SALT_ATTR.to_string(),
+            Value::String(vllm_attrs::CACHE_SALT_NONE_LITERAL.to_string()),
+        );
+
+        let request =
+            apply_vllm_request_overrides_from_node(&ctx, &node, LLMRequest::new("prompt"))
+                .expect("explicit none should disable salting");
+
+        assert!(
+            request
+                .extra_body
+                .as_ref()
+                .and_then(|body| body.get("cache_salt"))
+                .is_none(),
+            "explicit `vllm_cache_salt = none` must skip the salt entirely"
         );
     }
 

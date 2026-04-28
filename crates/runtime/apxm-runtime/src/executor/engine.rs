@@ -54,7 +54,23 @@ impl ExecutorEngine {
         let graph_id = self.context.graph_id.clone();
         self.register_graph_metadata(&dag, &graph_id).await;
 
+        // Detailed metrics: spawn pin-peak polling for this graph_id.
+        let pin_poll_handle = self
+            .context
+            .metrics_level
+            .pin_poll_interval()
+            .map(|interval| {
+                self.context
+                    .llm_registry
+                    .start_pin_polling(graph_id.clone(), interval)
+            });
+
         let mut result = self.execute_dag_inner(dag).await;
+
+        // Stop polling before pre_release so the final fold sees the full peak.
+        if let Some(handle) = pin_poll_handle {
+            handle.abort();
+        }
 
         // Capture graph status from graph-aware backends before releasing pins.
         let graph_status_snapshots = self

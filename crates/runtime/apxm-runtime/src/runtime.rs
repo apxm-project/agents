@@ -79,6 +79,11 @@ pub struct RuntimeConfig {
     /// `balanced` unless a caller explicitly constructs a runtime config.
     #[serde(default)]
     pub optimization_target: OptimizationTarget,
+    /// Metrics emission tier. `Detailed` enables in-flight observers
+    /// (currently per-graph pin-peak polling); `Basic` records steady-state
+    /// aggregates only.
+    #[serde(default)]
+    pub metrics_level: apxm_core::types::MetricsLevel,
 }
 
 impl RuntimeConfig {
@@ -91,6 +96,7 @@ impl RuntimeConfig {
             context_stack: None,
             warmup_config: crate::executor::WarmupConfig::default(),
             optimization_target: OptimizationTarget::Balanced,
+            metrics_level: apxm_core::types::MetricsLevel::default(),
         }
     }
 
@@ -230,6 +236,7 @@ impl Runtime {
         ctx.token_budget = self.config.token_budget;
         ctx.warmup_config = self.config.warmup_config.clone();
         ctx.optimization_target = self.config.optimization_target;
+        ctx.metrics_level = self.config.metrics_level;
         ctx.event_emitter = event_emitter;
         ctx.sandbox_registry = Arc::clone(&self.sandbox_registry);
         ctx.process_table = Arc::clone(&self.process_table);
