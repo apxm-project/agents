@@ -1,0 +1,26 @@
+{
+  "plugins": [
+    "apxm-plugin/"
+  ],
+  "mcpServers": {
+    "apxm": {
+      "command": "python3",
+      "args": [
+        "apxm-plugin/mcp/apxm_server.py"
+      ]
+    }
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "apxm-plugin/hooks/guard-build-tools.sh"
+          }
+        ],
+        "matcher": "Bash"
+      }
+    ]
+  }
+}
