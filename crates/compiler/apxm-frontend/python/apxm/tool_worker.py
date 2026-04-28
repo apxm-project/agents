@@ -115,6 +115,8 @@ def _load_manifest(path: str) -> None:
     with open(path) as fh:
         entries = json.load(fh)
 
+    _prepend_manifest_source_dirs(entries)
+
     for entry in entries:
         module_name = entry[PYTHON_TOOL_MANIFEST_MODULE]
         try:
@@ -129,6 +131,24 @@ def _load_manifest(path: str) -> None:
                     WIRE_FIELD_MESSAGE: f"failed to import {module_name}: {exc}",
                 }
             )
+
+
+def _prepend_manifest_source_dirs(entries: list[dict[str, Any]]) -> None:
+    """Make source-file-backed modules importable for artifact-only runs."""
+    source_dirs: list[str] = []
+    seen: set[str] = set()
+    for entry in entries:
+        source_file = entry.get(PYTHON_TOOL_MANIFEST_SOURCE_FILE)
+        if not source_file:
+            continue
+        source_dir = str(Path(source_file).resolve().parent)
+        if source_dir in seen or source_dir in sys.path:
+            continue
+        seen.add(source_dir)
+        source_dirs.append(source_dir)
+
+    for source_dir in reversed(source_dirs):
+        sys.path.insert(0, source_dir)
 
 
 def _import_tool_module(entry: dict[str, Any]) -> Any:
@@ -149,19 +169,7 @@ def _import_tool_module(entry: dict[str, Any]) -> Any:
 
     module = importlib.util.module_from_spec(spec)
     sys.modules[synthetic_name] = module
-    source_dir = str(source_path.parent)
-    inserted_source_dir = False
-    if source_dir not in sys.path:
-        sys.path.insert(0, source_dir)
-        inserted_source_dir = True
-    try:
-        spec.loader.exec_module(module)
-    finally:
-        if inserted_source_dir:
-            try:
-                sys.path.remove(source_dir)
-            except ValueError:
-                pass
+    spec.loader.exec_module(module)
     return module
 
 
