@@ -34,12 +34,15 @@ CMAKE = "cmake"
 BUILD_FLAG = "--build"
 TARGET_FLAG = "--target"
 RELEASE_FLAG = "--release"
+CONFIG_FLAG = "--config"
+PROFILE_FLAG = "--profile"
 PACKAGE_FLAG = "-p"
 FEATURES_FLAG = "--features"
 DRIVER_METRICS_FEATURES = "driver,metrics"
 APXM_CLI_PACKAGE = "apxm-cli"
 TARGET_ROOT_NAME = "apxm-cargo-targets"
 PROJECT_TARGET_DIR_NAME = "target"
+DEBUG_PROFILE_DIR_NAME = "debug"
 RELEASE_PROFILE_DIR_NAME = "release"
 BUILD_DIR_NAME = "build"
 LIB_DIR_NAME = "lib"
@@ -83,9 +86,44 @@ def _target_dir(project_root: Path) -> Path:
     )
 
 
-def _cargo_env(target_dir: Path) -> dict[str, str]:
+def _command_profile(command: list[str]) -> str:
+    if RELEASE_FLAG in command:
+        return RELEASE_PROFILE_DIR_NAME
+    for idx, value in enumerate(command):
+        if value == PROFILE_FLAG and idx + 1 < len(command):
+            profile = command[idx + 1].lower()
+            if profile == RELEASE_PROFILE_DIR_NAME:
+                return RELEASE_PROFILE_DIR_NAME
+    for idx, value in enumerate(command):
+        if value == CONFIG_FLAG and idx + 1 < len(command):
+            config = command[idx + 1].lower()
+            if config == RELEASE_PROFILE_DIR_NAME:
+                return RELEASE_PROFILE_DIR_NAME
+    return DEBUG_PROFILE_DIR_NAME
+
+
+def _prepend_env_path(env: dict[str, str], key: str, paths: list[Path]) -> None:
+    existing = env.get(key, "")
+    current = [str(path) for path in paths]
+    if existing:
+        current.extend(existing.split(os.pathsep))
+    if current:
+        env[key] = os.pathsep.join(current)
+
+
+def _cargo_env(project_root: Path, target_dir: Path, command: list[str]) -> dict[str, str]:
     env = dict(os.environ)
     env[EnvKey.CARGO_TARGET_DIR.value] = str(target_dir)
+    profile = _command_profile(command)
+    project_profile_dir = project_root / PROJECT_TARGET_DIR_NAME / profile
+    # The native MLIR bridge is installed into the workspace target/profile
+    # directory by apxm-compiler/build.rs, even when Rust artifacts use the
+    # machine-local CARGO_TARGET_DIR.  dekk sets LD_LIBRARY_PATH to the release
+    # install for normal CLI use; prepend the active profile here so debug tests
+    # never load a stale release libapxm_compiler_c.so.
+    profile_paths = [project_profile_dir / LIB_DIR_NAME, project_profile_dir]
+    _prepend_env_path(env, "LD_LIBRARY_PATH", profile_paths)
+    _prepend_env_path(env, "DYLD_LIBRARY_PATH", profile_paths)
     return env
 
 
@@ -93,7 +131,7 @@ def _run(command: list[str], *, project_root: Path, target_dir: Path) -> int:
     result = subprocess.run(
         command,
         cwd=project_root,
-        env=_cargo_env(target_dir),
+        env=_cargo_env(project_root, target_dir, command),
         check=False,
     )
     return int(result.returncode)

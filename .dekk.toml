@@ -51,6 +51,8 @@ test-cli = { run = "python tools/scripts/cargo.py test -p apxm-cli --features dr
 test-python-frontend = { run = "python -m pytest crates/compiler/apxm-frontend/python/tests -q", description = "Run Python frontend tests", group = "Build & Test" }
 test-quality-eval = { run = "python -m pytest tools/quality_eval/tests -q", description = "Run offline quality-eval harness tests", group = "Build & Test" }
 clean = { run = "python tools/scripts/cargo.py clean", description = "Clean", group = "Build & Test" }
+stop = { run = "apxm process stop", description = "Stop APXM compile/run/execute/workflow jobs", group = "Configuration" }
+clean-processes = { run = "apxm process stop", description = "Stop APXM job processes without cleaning build outputs", group = "Configuration" }
 
 codegen = { run = "apxm codegen", description = "Regenerate frontend bindings from Core definitions", skill = true, group = "Build & Test" }
 quality-eval = { run = "apxm quality-eval", description = "Run tier-3 quality-eval harness (rubric + budget + judge)", skill = true, group = "Build & Test" }
@@ -132,6 +134,12 @@ group = "Configuration"
 stats = { run = "apxm cache stats", description = "Show cache statistics" }
 clear = { run = "apxm cache clear", description = "Clear all cached entries" }
 export = { run = "apxm cache export", description = "Export cache to JSON" }
+
+[commands.process]
+description = "Inspect and stop APXM job processes"
+group = "Configuration"
+list = { run = "apxm process list", description = "List APXM compile/run/execute/workflow jobs" }
+stop = { run = "apxm process stop", description = "Stop APXM compile/run/execute/workflow jobs" }
 
 [agents]
 source = "apxm-plugin"
