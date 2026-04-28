@@ -14,6 +14,7 @@ use crate::execute::{air_module_to_artifact, to_execute_response};
 use crate::helpers::{jsonrpc_err, jsonrpc_ok, now_ms};
 use crate::mcp::McpRequest;
 use crate::state::AppState;
+use crate::types::responses::{A2aTaskFailure, A2aTaskSuccess};
 
 /// Lifecycle state of an A2A task.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -186,11 +187,10 @@ pub(crate) async fn a2a_send_task(
         }
         return (
             axum::http::StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({
-                "id": req.id,
-                "status": {"state": "failed"},
-                "error": {"message": "No text content in A2A message parts"}
-            })),
+            Json(A2aTaskFailure::new(
+                &req.id,
+                "No text content in A2A message parts",
+            )),
         )
             .into_response();
     }
@@ -234,8 +234,9 @@ pub(crate) async fn a2a_send_task(
             }
             return (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"id": req.id, "status": {"state": "failed"}, "error": {"message": e.message}})),
-            ).into_response();
+                Json(A2aTaskFailure::new(&req.id, &e.message)),
+            )
+                .into_response();
         }
     };
 
@@ -255,11 +256,7 @@ pub(crate) async fn a2a_send_task(
                 record.output_text = Some(output.clone());
                 record.completed_at_ms = Some(now_ms());
             }
-            Json(serde_json::json!({
-                "id": req.id,
-                "status": {"state": "completed"},
-                "result": {"message": {"role": "agent", "parts": [{"type": "text", "text": output}]}}
-            })).into_response()
+            Json(A2aTaskSuccess::completed(req.id.clone(), output)).into_response()
         }
         Err(e) => {
             if let Some(mut record) = state.a2a_tasks.get_mut(&req.id) {
@@ -269,8 +266,9 @@ pub(crate) async fn a2a_send_task(
             }
             (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"id": req.id, "status": {"state": "failed"}, "error": {"message": e.to_string()}})),
-            ).into_response()
+                Json(A2aTaskFailure::new(&req.id, e.to_string())),
+            )
+                .into_response()
         }
     }
 }

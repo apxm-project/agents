@@ -19,6 +19,7 @@ use tokio::sync::mpsc;
 
 use crate::error::ApiError;
 use crate::state::{AppState, ExecuteCompletePayload, TokioChannelEmitter};
+use crate::types::responses::{ExecutionStats, LlmUsageSummary};
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct ExecuteRequest {
@@ -36,8 +37,8 @@ pub(crate) struct ExecuteResponse {
     pub(crate) results: HashMap<String, JsonValue>,
     pub(crate) content: Option<String>,
     pub(crate) session_dir: Option<String>,
-    pub(crate) stats: JsonValue,
-    pub(crate) llm_usage: JsonValue,
+    pub(crate) stats: ExecutionStats,
+    pub(crate) llm_usage: LlmUsageSummary,
 }
 
 pub(crate) async fn execute(
@@ -236,15 +237,15 @@ pub(crate) fn to_execute_response(
         results: mapped,
         content,
         session_dir,
-        stats: serde_json::json!({
-            "executed_nodes": result.stats.executed_nodes,
-            "failed_nodes": result.stats.failed_nodes,
-            "duration_ms": result.stats.duration_ms
-        }),
-        llm_usage: serde_json::json!({
-            "input_tokens": result.llm_metrics.total_input_tokens,
-            "output_tokens": result.llm_metrics.total_output_tokens,
-            "total_requests": result.llm_metrics.total_requests
-        }),
+        stats: ExecutionStats {
+            executed_nodes: result.stats.executed_nodes,
+            failed_nodes: result.stats.failed_nodes,
+            duration_ms: result.stats.duration_ms,
+        },
+        llm_usage: LlmUsageSummary {
+            input_tokens: result.llm_metrics.total_input_tokens,
+            output_tokens: result.llm_metrics.total_output_tokens,
+            total_requests: result.llm_metrics.total_requests,
+        },
     }
 }

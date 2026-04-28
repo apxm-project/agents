@@ -5,6 +5,7 @@ use serde_json::Value as JsonValue;
 
 use crate::error::ApiError;
 use crate::state::AppState;
+use crate::types::responses::OkAck;
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct StoreFactRequest {
@@ -69,12 +70,12 @@ pub(crate) async fn search_facts(
 pub(crate) async fn delete_fact(
     State(state): State<AppState>,
     Json(req): Json<DeleteFactRequest>,
-) -> Result<Json<JsonValue>, ApiError> {
+) -> Result<Json<OkAck>, ApiError> {
     state
         .runtime
         .memory()
         .delete_fact(&req.id)
         .await
         .map_err(ApiError::runtime)?;
-    Ok(Json(serde_json::json!({ "ok": true })))
+    Ok(Json(OkAck::new()))
 }

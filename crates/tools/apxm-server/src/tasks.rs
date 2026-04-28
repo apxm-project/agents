@@ -12,6 +12,7 @@ use tracing::info;
 use crate::error::ApiError;
 use crate::helpers::now_ms;
 use crate::state::AppState;
+use crate::types::responses::{OkAckId, TaskClaimResponse, TaskCreatedResponse, TaskListResponse};
 
 /// Status of a queued task.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -205,7 +206,7 @@ pub(crate) struct CompleteTaskRequest {
 pub(crate) async fn create_task(
     State(state): State<AppState>,
     Json(req): Json<CreateTaskRequest>,
-) -> Json<JsonValue> {
+) -> Json<TaskCreatedResponse> {
     let id = req.id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let task = QueuedTask {
         id: id.clone(),
@@ -221,26 +222,30 @@ pub(crate) async fn create_task(
     };
     state.task_manager.enqueue(task).await;
     info!(id = %id, queue = %req.queue, "Task enqueued");
-    Json(serde_json::json!({ "ok": true, "id": id, "queue": req.queue }))
+    Json(TaskCreatedResponse {
+        ok: true,
+        id,
+        queue: req.queue,
+    })
 }
 
 pub(crate) async fn list_tasks(
     State(state): State<AppState>,
     Path(queue): Path<String>,
-) -> Json<JsonValue> {
+) -> Json<TaskListResponse> {
     let tasks = state.task_manager.list_queue(&queue);
-    Json(serde_json::json!({
-        "queue": queue,
-        "count": tasks.len(),
-        "tasks": tasks
-    }))
+    Json(TaskListResponse {
+        queue,
+        count: tasks.len(),
+        tasks,
+    })
 }
 
 pub(crate) async fn claim_task(
     State(state): State<AppState>,
     Path(queue): Path<String>,
     Json(req): Json<ClaimTaskRequest>,
-) -> Result<Json<JsonValue>, ApiError> {
+) -> Result<Json<TaskClaimResponse>, ApiError> {
     let deadline_ms = now_ms() + req.max_wait_ms;
     let mut task = state
         .task_manager
@@ -268,13 +273,13 @@ pub(crate) async fn claim_task(
     match task {
         Some(t) => {
             info!(id = %t.id, queue = %queue, agent_id = %req.agent_id, "Task claimed");
-            Ok(Json(serde_json::json!({
-                "task_id": t.id,
-                "queue": t.queue,
-                "data": t.data,
-                "claim_token": t.claim_token,
-                "expires_at_ms": t.lease_expires_ms
-            })))
+            Ok(Json(TaskClaimResponse {
+                task_id: t.id,
+                queue: t.queue,
+                data: t.data,
+                claim_token: t.claim_token,
+                expires_at_ms: t.lease_expires_ms,
+            }))
         }
         None => Err(ApiError {
             status: axum::http::StatusCode::NOT_FOUND,
@@ -287,7 +292,7 @@ pub(crate) async fn complete_task(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(req): Json<CompleteTaskRequest>,
-) -> Result<Json<JsonValue>, ApiError> {
+) -> Result<Json<OkAckId>, ApiError> {
     state
         .task_manager
         .complete(&id, &req.claim_token, req.result)
@@ -301,5 +306,5 @@ pub(crate) async fn complete_task(
             ApiError { status, message: e }
         })?;
     info!(id = %id, success = %req.success, "Task completed");
-    Ok(Json(serde_json::json!({ "ok": true, "id": id })))
+    Ok(Json(OkAckId::new(id)))
 }
