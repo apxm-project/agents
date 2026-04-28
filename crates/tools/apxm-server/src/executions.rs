@@ -13,7 +13,8 @@ use crate::execute::ExecuteResponse;
 use crate::helpers::now_ms;
 use crate::state::AppState;
 
-pub(crate) const EXECUTION_RECORD_FILE: &str = "execution.json";
+pub(crate) const EXECUTION_RECORDS_DIR: &str = "executions";
+pub(crate) const EXECUTION_RECORD_EXTENSION: &str = "json";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -221,7 +222,7 @@ impl ExecutionStore {
 }
 
 fn persist_record_snapshot(record: &ExecutionRecord) {
-    let path = std::path::Path::new(&record.session_dir).join(EXECUTION_RECORD_FILE);
+    let path = execution_record_snapshot_path(&record.session_dir, &record.execution_id);
     let Ok(bytes) = serde_json::to_vec_pretty(record) else {
         tracing::warn!(
             execution_id = %record.execution_id,
@@ -229,14 +230,45 @@ fn persist_record_snapshot(record: &ExecutionRecord) {
         );
         return;
     };
-    if let Err(error) = std::fs::write(&path, bytes) {
+    if let Some(parent) = path.parent() {
+        if let Err(error) = std::fs::create_dir_all(parent) {
+            tracing::warn!(
+                execution_id = %record.execution_id,
+                path = %parent.display(),
+                %error,
+                "failed to create execution record snapshot directory"
+            );
+            return;
+        }
+    }
+    let temp_path = path.with_extension(format!("{EXECUTION_RECORD_EXTENSION}.tmp"));
+    if let Err(error) = std::fs::write(&temp_path, bytes) {
         tracing::warn!(
             execution_id = %record.execution_id,
-            path = %path.display(),
+            path = %temp_path.display(),
+            %error,
+            "failed to write execution record snapshot"
+        );
+        return;
+    }
+    if let Err(error) = std::fs::rename(&temp_path, &path) {
+        tracing::warn!(
+            execution_id = %record.execution_id,
+            from = %temp_path.display(),
+            to = %path.display(),
             %error,
             "failed to persist execution record snapshot"
         );
     }
+}
+
+pub(crate) fn execution_record_snapshot_path(
+    session_dir: &str,
+    execution_id: &str,
+) -> std::path::PathBuf {
+    std::path::Path::new(session_dir)
+        .join(EXECUTION_RECORDS_DIR)
+        .join(format!("{execution_id}.{EXECUTION_RECORD_EXTENSION}"))
 }
 
 pub(crate) async fn get_execution(

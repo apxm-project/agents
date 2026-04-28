@@ -32,7 +32,7 @@ use tower::ServiceExt;
 use crate::build_app;
 use crate::checkpoints::{Checkpoint, CheckpointStatus, CheckpointStore};
 use crate::execute::{ExecuteRequest, prepare_request};
-use crate::executions::{EXECUTION_RECORD_FILE, ExecutionStore};
+use crate::executions::{ExecutionStore, execution_record_snapshot_path};
 use crate::helpers::{jsonrpc_err, jsonrpc_ok, mcp_tool_result, now_ms};
 use crate::mcp::{
     MCP_TOOL_APXM_SKILL_CALL, MCP_TOOL_APXM_SKILL_GET, MCP_TOOL_APXM_SKILL_VALIDATE,
@@ -1052,7 +1052,7 @@ async fn skill_execute_static_artifact_returns_result_from_server_owned_session(
     );
     assert!(node_body["metrics"][0]["observed_at_ms"].is_number());
 
-    let snapshot_path = std::path::Path::new(session_dir).join(EXECUTION_RECORD_FILE);
+    let snapshot_path = execution_record_snapshot_path(session_dir, execution_id);
     let snapshot = std::fs::read_to_string(&snapshot_path).expect("execution record snapshot");
     let snapshot_body: serde_json::Value =
         serde_json::from_str(&snapshot).expect("execution record snapshot json");

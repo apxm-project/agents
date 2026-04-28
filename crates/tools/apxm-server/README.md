@@ -70,9 +70,9 @@ events, prompt and node-output observability is redacted to summaries and
 hashes, and runtime events include the skill id, skill version, and entry flow.
 Completed runs are recorded in the in-memory execution index for
 `/v1/executions/:execution_id`. Each update is also snapshotted to
-`execution.json` inside the APXM-owned skill session directory. Typed node
-outputs and node metrics observed during REST and SSE skill execution are
-available at
+`executions/:execution_id.json` inside the APXM-owned skill session directory.
+Typed node outputs and node metrics observed during REST and SSE skill
+execution are available at
 `/v1/executions/:execution_id/nodes/:node_id` for the lifetime of the server
 process.
 
