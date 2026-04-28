@@ -47,6 +47,12 @@ from apxm.tool_worker import (
 
 _WORKER_MODULE = "apxm.tool_worker"
 _PYTHON = sys.executable
+_MANIFEST_HANDLER_ID = "handler_id"
+_MANIFEST_MODULE = "module"
+_MANIFEST_QUALNAME = "qualname"
+_MANIFEST_NAME = "name"
+_MANIFEST_SCHEMA = "schema"
+_MANIFEST_SOURCE_FILE = "source_file"
 
 # Path to the apxm package so subprocess can find it.
 _APXM_PKG = os.path.normpath(
@@ -85,6 +91,13 @@ async def _spawn_worker(
         env=_make_env(),
     )
     return proc
+
+
+def _write_manifest(entries: list[dict[str, Any]]) -> str:
+    fh = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+    with fh:
+        json.dump(entries, fh)
+    return fh.name
 
 
 async def _send(proc: asyncio.subprocess.Process, msg: dict[str, Any]) -> None:
@@ -270,6 +283,48 @@ async def test_exception_in_tool():
             assert r[WIRE_FIELD_ERROR][WIRE_FIELD_ERROR_TRACEBACK] != ""
         finally:
             await _close(proc)
+
+
+@pytest.mark.anyio
+async def test_manifest_source_file_makes_non_main_module_importable():
+    """Artifacts can import module-backed tools from source_file metadata alone."""
+    with tempfile.TemporaryDirectory() as tmp:
+        module_name = "artifact_tool_module"
+        handler_id = "sha256:c4835a1f1c7937c4a52bbabf9cb7f77217f5df59654553c2b70b6ff214fbb257"
+        source_file = os.path.join(tmp, f"{module_name}.py")
+        with open(source_file, "w") as fh:
+            fh.write(
+                '''\
+from apxm.tools import tool
+
+@tool
+def summarize(text: str) -> str:
+    return "summary:" + text
+'''
+            )
+
+        manifest_path = _write_manifest(
+            [
+                {
+                    _MANIFEST_HANDLER_ID: handler_id,
+                    _MANIFEST_MODULE: module_name,
+                    _MANIFEST_QUALNAME: "summarize",
+                    _MANIFEST_NAME: "summarize",
+                    _MANIFEST_SCHEMA: {"type": "object"},
+                    _MANIFEST_SOURCE_FILE: source_file,
+                }
+            ]
+        )
+        proc = await _spawn_worker(manifest_path)
+        try:
+            await _send(proc, _call_msg("sf1", handler_id, {"text": "ok"}))
+            r = await _recv(proc)
+            assert r[WIRE_FIELD_REQUEST_ID] == "sf1"
+            assert r[WIRE_FIELD_OK] is True
+            assert r[WIRE_FIELD_VALUE] == "summary:ok"
+        finally:
+            await _close(proc)
+            os.unlink(manifest_path)
 
 
 @pytest.mark.anyio
