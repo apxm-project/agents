@@ -17,11 +17,13 @@ There are two kinds of passes:
 - **MLIR passes** are C++ transforms over the `ais` dialect. They do the work that
   benefits from MLIR's pattern matching, walker infrastructure, and dataflow
   analyses.
-- **Rust-side passes** run around MLIR for work that needs Rust-side state, such
-  as tool registry checks and driver-level model allowlist validation.
+- **Rust-side checks/finalizers** run around MLIR for work that needs Rust-side
+  state or artifact-level data, such as tool registry checks and driver-level
+  model allowlist validation.
 
-Both kinds appear in the pipeline list in execution order; the dispatcher routes
-each name to the right backend.
+The O-level pass list controls the MLIR transform sequence. Artifact finalization
+then runs invariant checks for every optimization level so O0 and O2 artifacts
+share the same executable runtime contract.
 
 ## Pipeline Diagram
 
@@ -30,7 +32,7 @@ each name to the right backend.
    (.air)                                          │
                                                    ▼
                                   ┌─────────────────────────────────┐
-                                  │       Normalization phase       │
+                                  │       Required lowering         │
                                   │   normalize                     │
                                   │   build-prompt                  │
                                   └────────────────┬────────────────┘
@@ -53,9 +55,9 @@ each name to the right backend.
                                   └────────────────┬────────────────┘
                                                    ▼
                                   ┌─────────────────────────────────┐
-                                  │       Rust-side checks          │
-                                  │   tool-binding   (validate)     │
-                                  │   bind-tool-handlers (link)     │
+                                  │       Artifact finalization     │
+                                  │   template contract validation  │
+                                  │   tool checks + handler links   │
                                   └────────────────┬────────────────┘
                                                    ▼
                                        ArtifactEmitter
@@ -77,8 +79,8 @@ where the diagnostic pass runs when requested.
 
 | Pass                          | Purpose                                                                        |
 |-------------------------------|--------------------------------------------------------------------------------|
-| `normalize`                   | Canonical form — dedup context, lowercase attribute names, sort sets           |
-| `build-prompt`                | Fill empty prompt templates from upstream context where it can be inferred     |
+| `normalize`                   | Canonical form: lowercase selected attrs and dedup unnamed context operands    |
+| `build-prompt`                | Materialize LLM `template_str` / `input_names` runtime contracts               |
 | `dspy-optimize`               | Config-gated compiler prompt tuning; no-op without training data              |
 | `unconsumed-value-warning`    | Diagnostic: warn on values produced but never read by a downstream node        |
 | `scheduling`                  | Annotate nodes with tier, cost, and latency labels for the runtime scheduler   |
@@ -98,14 +100,14 @@ pass.)
 
 | Pass                       | Purpose                                                                              |
 |----------------------------|--------------------------------------------------------------------------------------|
-| `tool-binding`             | Validate that every `INV_TOOL` resolves to a `REGISTER_CAPABILITY` it can dispatch   |
+| `tool-binding-check`       | Validate that every `INV_TOOL` resolves to a `REGISTER_CAPABILITY` it can dispatch   |
 | `bind-tool-handlers`       | Copy `python_handler_id` from `REGISTER_CAPABILITY` onto each matching `INV_TOOL`    |
 | `validate-model-allowlist` | Standalone driver-invoked check that every model id is in the configured allowlist   |
 
-The MLIR passes flow through the MLIR pass manager. The Rust-side tool passes operate
-on the `AirModule` and run as the dispatcher visits their names in the pipeline list.
-`validate-model-allowlist` is invoked separately by the driver/CLI rather than as
-part of `build_pass_list`.
+The MLIR passes flow through the MLIR pass manager. The Rust-side artifact checks
+operate on the emitted `ExecutionDag` and run for every optimization level during
+artifact generation. `validate-model-allowlist` is invoked separately by the
+driver/CLI rather than as part of `build_pass_list`.
 
 Graph-aware backend metadata remains backend-agnostic in the artifact. MLIR passes
 stamp generic graph attributes such as `priority`, `downstream_nodes`,
@@ -119,14 +121,16 @@ The pipeline is parameterized by an optimization level and an optimization targe
 The actual sequence each `(level, target)` produces is defined by
 `build_pass_list()`; the doc here only describes the intent.
 
-- **O0** — passthrough. No optimization. Useful for debugging the lowering and for
-  baseline performance comparisons.
-- **O1** — basic. Normalization, prompt construction, config-gated prompt
-  tuning, template specialization, dead-context-elimination, canonicalization,
-  tool checks, symbol DCE, and priority metadata.
-- **O2** — standard. Keeps the O1 cleanup and prompt-tuning path, then adds
-  scheduling metadata, analysis-only shared-prefix hints, and priority metadata.
-  This is the default safe optimization level for production artifacts.
+- **O0** — required normalization and executable lowering only. It runs
+  `normalize` and `build-prompt`, then artifact finalization validates the same
+  runtime contracts used by higher optimization levels. It does not run cleanup,
+  scheduling, priority, DSPy, or graph rewrites.
+- **O1** — basic safe cleanup. It keeps the O0 lowering path, then adds
+  template specialization, dead-context-elimination, canonicalization, symbol
+  DCE, and priority metadata.
+- **O2** — standard. Keeps the O1 cleanup path, then adds scheduling metadata
+  and analysis-only shared-prefix hints. This is the default safe optimization
+  level for production artifacts.
 - **O3** — aggressive but still contract-safe. Repeats template-specialization,
   dead-context-elimination, scheduling metadata, canonicalization, tool checks,
   and symbol DCE up to the configured iteration cap. Use it for diagnostics

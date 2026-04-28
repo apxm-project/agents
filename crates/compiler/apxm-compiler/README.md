@@ -52,11 +52,14 @@ the production-safe subset; semantic rewrites remain explicit until their typed
 contracts are enforced.
 
 - `normalize` -- canonical form normalization
-- `build-prompt` -- prompt template materialization
-- `assign-priority` -- priority annotation for scheduling
-- `dead-context-elimination` -- removes unused context propagation
+- `build-prompt` -- LLM template/input_names contract materialization
 - `template-specialization` -- folds safe constant prompt inputs
+- `dead-context-elimination` -- removes unused context propagation
+- `scheduling` -- emits backend-agnostic scheduling metadata
+- `shared-prefix-analysis` -- annotates existing prefix-reuse opportunities
+- `assign-priority` -- priority annotation for scheduling
 - `dspy-optimize` -- config-gated compiler prompt optimization path
+- `unconsumed-value-warning` -- opt-in diagnostic for unused produced values
 - `fuse-ask-ops` -- explicit-only ASK fusion experiment; not a production claim
 - `prompt-canonicalization` -- explicit-only prefix-cache layout experiment
 - `condense-ops` -- explicit-only memory batching experiment
