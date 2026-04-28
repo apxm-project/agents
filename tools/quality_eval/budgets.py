@@ -1,4 +1,4 @@
-"""Per-fixture spend caps backed by Phase A's `metrics.json::token_accounting`.
+"""Per-fixture spend caps backed by session `metrics.json` token accounting.
 
 Two knobs only — `max_llm_calls` and `max_total_tokens`. They are absolute
 ceilings, not soft warnings; a fixture run that exceeds either is a FAIL
@@ -20,10 +20,21 @@ from ._keys import BudgetKeys, MetricsKeys, SessionFiles
 class Budget:
     max_llm_calls: int = 0
     max_total_tokens: int = 0
+    has_max_llm_calls: bool = False
+    has_max_total_tokens: bool = False
+
+    def __post_init__(self) -> None:
+        # Direct test/helper construction historically used positive values to
+        # mean "cap declared". Keep that ergonomic path while allowing loaded
+        # TOML files to declare an explicit zero cap.
+        if self.max_llm_calls > 0:
+            self.has_max_llm_calls = True
+        if self.max_total_tokens > 0:
+            self.has_max_total_tokens = True
 
     @property
     def has_caps(self) -> bool:
-        return self.max_llm_calls > 0 or self.max_total_tokens > 0
+        return self.has_max_llm_calls or self.has_max_total_tokens
 
 
 def load_budget(path: str | Path) -> Budget:
@@ -41,6 +52,8 @@ def load_budget(path: str | Path) -> Budget:
     return Budget(
         max_llm_calls=int(data.get(BudgetKeys.MAX_LLM_CALLS, 0)),
         max_total_tokens=int(data.get(BudgetKeys.MAX_TOTAL_TOKENS, 0)),
+        has_max_llm_calls=BudgetKeys.MAX_LLM_CALLS in data,
+        has_max_total_tokens=BudgetKeys.MAX_TOTAL_TOKENS in data,
     )
 
 
@@ -64,13 +77,17 @@ def enforce(session_dir: Path, budget: Budget) -> list[str]:
     except json.JSONDecodeError as e:
         return [f"budget: {SessionFiles.METRICS} parse error: {e}"]
 
-    total = (data.get(MetricsKeys.TOKEN_ACCOUNTING) or {}).get(MetricsKeys.TOTAL) or {}
+    token_accounting = data.get(MetricsKeys.TOKEN_ACCOUNTING)
+    if token_accounting is None:
+        runtime = data.get(MetricsKeys.SECTION_RUNTIME) or {}
+        token_accounting = runtime.get(MetricsKeys.TOKEN_ACCOUNTING)
+    total = (token_accounting or {}).get(MetricsKeys.TOTAL) or {}
     calls = int(total.get(MetricsKeys.CALL_COUNT, 0))
     tokens = int(total.get(MetricsKeys.TOTAL_TOKENS, 0))
 
     failures: list[str] = []
-    if budget.max_llm_calls and calls > budget.max_llm_calls:
+    if budget.has_max_llm_calls and calls > budget.max_llm_calls:
         failures.append(f"{BudgetKeys.MAX_LLM_CALLS}: {calls} > {budget.max_llm_calls}")
-    if budget.max_total_tokens and tokens > budget.max_total_tokens:
+    if budget.has_max_total_tokens and tokens > budget.max_total_tokens:
         failures.append(f"{BudgetKeys.MAX_TOTAL_TOKENS}: {tokens} > {budget.max_total_tokens}")
     return failures

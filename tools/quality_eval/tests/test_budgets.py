@@ -27,6 +27,25 @@ def _write_metrics(dir_: Path, calls: int, tokens: int) -> None:
     }))
 
 
+def _write_v2_metrics(dir_: Path, calls: int, tokens: int) -> None:
+    (dir_ / "metrics.json").write_text(json.dumps({
+        "schema_version": 2,
+        "runtime": {
+            "token_accounting": {
+                "total": {
+                    "input_tokens": tokens // 2,
+                    "output_tokens": tokens - tokens // 2,
+                    "total_tokens": tokens,
+                    "call_count": calls,
+                },
+                "per_node": {},
+                "per_flow": {},
+                "per_agent": {},
+            }
+        },
+    }))
+
+
 def test_load_budget_round_trip(tmp_path: Path):
     p = tmp_path / "budget.toml"
     p.write_text("max_llm_calls = 3\nmax_total_tokens = 1500\n")
@@ -42,9 +61,35 @@ def test_load_budget_missing_file_returns_empty(tmp_path: Path):
     assert not b.has_caps
 
 
+def test_load_budget_explicit_zero_is_a_cap(tmp_path: Path):
+    p = tmp_path / "budget.toml"
+    p.write_text("max_llm_calls = 0\nmax_total_tokens = 0\n")
+    b = load_budget(p)
+    assert b.max_llm_calls == 0
+    assert b.max_total_tokens == 0
+    assert b.has_caps
+
+
 def test_enforce_within_budget_returns_empty(tmp_path: Path):
     _write_metrics(tmp_path, calls=2, tokens=500)
     assert enforce(tmp_path, Budget(max_llm_calls=3, max_total_tokens=1000)) == []
+
+
+def test_enforce_v2_metrics_shape(tmp_path: Path):
+    _write_v2_metrics(tmp_path, calls=2, tokens=500)
+    assert enforce(tmp_path, Budget(max_llm_calls=3, max_total_tokens=1000)) == []
+
+
+def test_enforce_explicit_zero_cap(tmp_path: Path):
+    _write_v2_metrics(tmp_path, calls=1, tokens=5)
+    budget = Budget(
+        max_llm_calls=0,
+        max_total_tokens=0,
+        has_max_llm_calls=True,
+        has_max_total_tokens=True,
+    )
+    fails = enforce(tmp_path, budget)
+    assert len(fails) == 2
 
 
 def test_enforce_calls_exceeded(tmp_path: Path):
