@@ -1932,169 +1932,19 @@ async fn config_update_handler(
 
 /// `GET /api/skills`
 ///
-/// Scans `.claude/skills/` and `apxm-plugin/skills/` for SKILL.md files,
-/// parsing YAML frontmatter to return structured skill metadata.
-async fn skills_handler() -> ApiResult<impl IntoResponse> {
-    let cwd = std::env::current_dir().unwrap_or_default();
-
-    let search_dirs = [cwd.join(".claude/skills"), cwd.join("apxm-plugin/skills")];
-
-    let mut skills: Vec<serde_json::Value> = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-
-    for dir in &search_dirs {
-        if !dir.is_dir() {
-            continue;
-        }
-        scan_skills_dir(dir, dir, &mut skills, &mut seen, false);
-    }
-
-    skills.sort_by(|a, b| {
-        let na = a["name"].as_str().unwrap_or("");
-        let nb = b["name"].as_str().unwrap_or("");
-        na.cmp(nb)
-    });
-
-    Ok(Json(serde_json::json!({ "skills": skills })))
+/// Returns no skills while generated agent skill packaging is disabled.
+async fn skills_handler() -> ApiResult<Json<serde_json::Value>> {
+    Ok(Json(serde_json::json!({ "skills": [] })))
 }
 
 /// `GET /api/skills/:name` — return full skill content including body markdown.
 async fn skill_detail_handler(
     axum::extract::Path(name): axum::extract::Path<String>,
-) -> ApiResult<impl IntoResponse> {
-    let cwd = std::env::current_dir().unwrap_or_default();
-
-    let search_dirs = [cwd.join(".claude/skills"), cwd.join("apxm-plugin/skills")];
-
-    let mut skills: Vec<serde_json::Value> = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-
-    for dir in &search_dirs {
-        if !dir.is_dir() {
-            continue;
-        }
-        scan_skills_dir(dir, dir, &mut skills, &mut seen, true);
-    }
-
-    let skill = skills
-        .into_iter()
-        .find(|s| s["name"].as_str() == Some(name.as_str()))
-        .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("skill '{name}' not found")))?;
-
-    Ok(Json(skill))
-}
-
-fn scan_skills_dir(
-    base: &std::path::Path,
-    current: &std::path::Path,
-    skills: &mut Vec<serde_json::Value>,
-    seen: &mut std::collections::HashSet<String>,
-    include_body: bool,
-) {
-    let entries = match std::fs::read_dir(current) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-
-        let skill_md = path.join("SKILL.md");
-        if skill_md.is_file() {
-            if let Ok(content) = std::fs::read_to_string(&skill_md) {
-                if let Some(skill) = parse_skill_frontmatter(&content, &path, base, include_body) {
-                    let name = skill["name"].as_str().unwrap_or("").to_string();
-                    if seen.insert(name) {
-                        skills.push(skill);
-                    }
-                }
-            }
-        }
-
-        scan_skills_dir(base, &path, skills, seen, include_body);
-    }
-}
-
-fn parse_skill_frontmatter(
-    content: &str,
-    skill_path: &std::path::Path,
-    base: &std::path::Path,
-    include_body: bool,
-) -> Option<serde_json::Value> {
-    let trimmed = content.trim();
-    if !trimmed.starts_with("---") {
-        return None;
-    }
-
-    let after_first = &trimmed[3..];
-    let end_idx = after_first.find("---")?;
-    let frontmatter = &after_first[..end_idx];
-    let body = after_first[end_idx + 3..].trim();
-
-    let mut name = String::new();
-    let mut description = String::new();
-    let mut user_invocable = false;
-
-    for line in frontmatter.lines() {
-        let line = line.trim();
-        if let Some(val) = line.strip_prefix("name:") {
-            name = val.trim().to_string();
-        } else if let Some(val) = line.strip_prefix("description:") {
-            description = val.trim().to_string();
-        } else if let Some(val) = line.strip_prefix("user-invocable:") {
-            user_invocable = val.trim() == "true";
-        }
-    }
-
-    if name.is_empty() {
-        name = skill_path
-            .strip_prefix(base)
-            .unwrap_or(skill_path)
-            .to_string_lossy()
-            .to_string();
-    }
-
-    let summary = body
-        .lines()
-        .find(|l| l.starts_with('#'))
-        .map(|l| l.trim_start_matches('#').trim().to_string());
-
-    let body_len = body.len();
-    let section_count = body.lines().filter(|l| l.starts_with('#')).count();
-
-    // Derive a category from the skill name for grouping
-    let category = categorize_skill(&name);
-
-    let mut result = serde_json::json!({
-        "name": name,
-        "description": description,
-        "user_invocable": user_invocable,
-        "heading": summary,
-        "body_length": body_len,
-        "section_count": section_count,
-        "category": category,
-    });
-
-    if include_body {
-        result["content"] = serde_json::json!(body);
-    }
-
-    Some(result)
-}
-
-fn categorize_skill(name: &str) -> &'static str {
-    match name {
-        "compile" | "execute" | "run" | "decompile" | "validate" => "build & run",
-        "debug" | "doctor" | "autofix" | "audit" => "debug & diagnostics",
-        "add" | "add-op" | "add-attr" | "add-agent" | "add-provider" | "remove-op" => "extend AIS",
-        "codegen" | "refactor" | "extend" | "plan-feature" => "development",
-        "analyze" | "explain" | "view" | "ops" | "template" => "explore & analyze",
-        "init" | "merge" | "worktree" | "test" => "project & workflow",
-        _ => "other",
-    }
+) -> ApiResult<Json<serde_json::Value>> {
+    Err(AppError(
+        StatusCode::NOT_FOUND,
+        format!("skill '{name}' not found"),
+    ))
 }
 
 /// Extract backend entries from config text, trying TOML parse first then regex fallback.

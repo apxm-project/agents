@@ -141,12 +141,6 @@ group = "Configuration"
 list = { run = "apxm process list", description = "List APXM compile/run/execute/workflow jobs" }
 stop = { run = "apxm process stop", description = "Stop APXM compile/run/execute/workflow jobs" }
 
-[agents]
-source = "apxm-plugin"
-targets = ["claude", "codex", "copilot", "cursor"]
-enrich = true
-version = "0.1.0"
-
 [install]
 wrap = { name = "apxm", target = "target/release/apxm" }
 
