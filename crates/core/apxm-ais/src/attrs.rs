@@ -223,7 +223,12 @@ pub const MLIR_ATTR_PREFIX: &str = "ais.";
 /// attribute only requires extending this list.
 pub const TEMPLATE_BEARING_ATTRS: &[&str] = &[
     TEMPLATE_STR,
+    PROMPT,
+    TEMPLATE,
     MESSAGE,
+    PARAMS_JSON,
+    TASK_SPEC,
+    PROPOSAL,
     GOAL,
     CONDITION,
     CLAIM_TEXT,

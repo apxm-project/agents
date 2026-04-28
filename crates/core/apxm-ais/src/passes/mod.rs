@@ -160,8 +160,8 @@ pub const NORMALIZE: PassSpec = PassSpec::new(
     "NormalizeAgentGraph",
     "Normalize AIS graph structure",
     r#"Canonicalizes the AIS graph by:
-- Deduplicating reasoning contexts
-- Normalizing string attributes (lowercase capability/space names)
+- Deduplicating unnamed LLM context operands
+- Normalizing string attributes (lowercase capability/memory-tier names)
 - Establishing SSA ordering invariants for downstream passes
 
 This pass ensures the IR is in a canonical form that other passes
@@ -170,7 +170,7 @@ can rely on, similar to MLIR's canonicalizer but domain-specific."#,
     "mlir::ais::createNormalizeAgentGraphPass()",
 );
 
-/// BuildPrompt pass - generates placeholder templates for empty template_str.
+/// BuildPrompt pass - materializes LLM prompt/input_names runtime contracts.
 pub const BUILD_PROMPT: PassSpec = PassSpec::new(
     "build-prompt",
     "BuildPrompt",
@@ -178,17 +178,20 @@ pub const BUILD_PROMPT: PassSpec = PassSpec::new(
     r#"Processes LLM operations and generates placeholder templates:
 1. Empty template_str -> synthesized "{<name>}" templates referencing
    each context operand by its `input_names` entry.
-2. Optionally embed instruction prompts from config.
+2. Missing or malformed `input_names` -> synthesized `ctx0`, `ctx1`, ...
+   entries that match the context operand arity.
+3. Optionally embed instruction prompts from config.
 
 Works with InstructionConfig system - does NOT replace runtime mapping,
-just ensures template_str is never empty when context exists.
+just ensures LLM ops with context have a complete template/input_names
+contract.
 
 This pass enables proper prompt construction for operations like:
   ask(user_input) -> ask("{user_input}", [user_input])
   with the matching `input_names = ["user_input"]` attribute.
 
-Without this pass, empty template_str causes the runtime to produce
-empty prompts, resulting in empty or broken LLM responses."#,
+Without this pass, empty template_str or missing input_names causes the runtime
+to produce empty prompts or reject context-bearing LLM nodes."#,
     PassCategory::Transform,
     "mlir::ais::createBuildPromptPass()",
 )
