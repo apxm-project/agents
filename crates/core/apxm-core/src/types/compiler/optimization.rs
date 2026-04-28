@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 #[repr(u8)]
 #[derive(Default)]
 pub enum OptimizationLevel {
-    /// No optimization, fastest compilation
+    /// Required normalization and executable lowering only; no optional optimization
     O0 = 0,
     /// Basic optimizations
     O1 = 1,
