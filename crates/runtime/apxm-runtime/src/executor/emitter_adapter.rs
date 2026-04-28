@@ -149,13 +149,23 @@ impl ExecutionEventEmitter for EmitterAdapter {
         let value = value
             .to_json()
             .unwrap_or_else(|_| serde_json::Value::String(value.to_string()));
-        self.emit(NodeOutputPayload { node_id, value });
+        self.emit(NodeOutputPayload {
+            node_id,
+            output: RedactedContent::from_json(&value),
+        });
     }
 
     fn emit_node_metrics(&self, node_id: u64, metrics: &apxm_core::types::NodeMetrics) {
         self.emit(NodeMetricsPayload {
             node_id,
             metrics: metrics.clone(),
+        });
+    }
+
+    fn emit_llm_prompt(&self, node_id: u64, prompt: &str) {
+        self.emit(LlmPromptPayload {
+            node_id,
+            prompt: RedactedContent::from_text(prompt),
         });
     }
 
@@ -255,8 +265,8 @@ impl ExecutionEventEmitter for EmitterAdapter {
 mod tests {
     use std::sync::mpsc;
 
-    use apxm_core::events::payload::{NodeMetricsPayload, NodeOutputPayload};
-    use apxm_core::events::{ChannelEmitter, EventSource};
+    use apxm_core::events::payload::{LlmPromptPayload, NodeMetricsPayload, NodeOutputPayload};
+    use apxm_core::events::{ChannelEmitter, EventSource, kind};
     use apxm_core::types::operations::AISOperationType;
     use apxm_core::types::{NodeMetrics, OperationMetric};
 
@@ -276,7 +286,7 @@ mod tests {
         adapter.emit_node_output(42, &Value::String("ok".to_string()));
 
         let event = rx.recv().expect("node output event");
-        assert_eq!(event.kind().name(), "node_output");
+        assert_eq!(event.kind(), kind::NODE_OUTPUT);
         assert_eq!(event.meta.seq, 0);
         assert_eq!(event.meta.trace_id, "trace-node-output");
         assert_eq!(event.meta.parent_span_id.as_deref(), Some("parent-span"));
@@ -287,7 +297,11 @@ mod tests {
             .downcast_ref::<NodeOutputPayload>()
             .expect("node output payload");
         assert_eq!(payload.node_id, 42);
-        assert_eq!(payload.value, serde_json::json!("ok"));
+        assert!(payload.output.redacted);
+        assert_eq!(payload.output.summary, "string(chars=2)");
+        assert!(!payload.output.hash.is_empty());
+        let event_json = serde_json::to_string(&event).expect("serialize event");
+        assert!(!event_json.contains("ok"));
     }
 
     #[test]
@@ -311,7 +325,7 @@ mod tests {
         adapter.emit_node_metrics(42, &metrics);
 
         let event = rx.recv().expect("node metrics event");
-        assert_eq!(event.kind().name(), "node_metrics");
+        assert_eq!(event.kind(), kind::NODE_METRICS);
         assert_eq!(event.meta.seq, 0);
         assert_eq!(event.meta.trace_id, "trace-node-metrics");
         assert_eq!(event.meta.parent_span_id.as_deref(), Some("parent-span"));
@@ -324,5 +338,36 @@ mod tests {
         assert_eq!(payload.node_id, 42);
         assert_eq!(payload.metrics.operation.attempts, 1);
         assert_eq!(payload.metrics.operation.successes, 1);
+    }
+
+    #[test]
+    fn emitter_adapter_forwards_redacted_llm_prompt_events() {
+        let (tx, rx) = mpsc::channel();
+        let adapter = EmitterAdapter::new(
+            Arc::new(ChannelEmitter::new(tx)),
+            EventSource::Runtime,
+            "trace-llm-prompt",
+        );
+        adapter.set_current_span_id(Some("parent-span".to_string()));
+        adapter.set_current_scope_id(Some("scope-1".to_string()));
+
+        adapter.emit_llm_prompt(7, "secret customer prompt");
+
+        let event = rx.recv().expect("llm prompt event");
+        assert_eq!(event.kind(), kind::LLM_PROMPT);
+        assert_eq!(event.meta.seq, 0);
+        assert_eq!(event.meta.trace_id, "trace-llm-prompt");
+        assert_eq!(event.meta.parent_span_id.as_deref(), Some("parent-span"));
+        assert_eq!(event.meta.scope_id.as_deref(), Some("scope-1"));
+
+        let payload = event
+            .payload
+            .downcast_ref::<LlmPromptPayload>()
+            .expect("llm prompt payload");
+        assert_eq!(payload.node_id, 7);
+        assert!(payload.prompt.redacted);
+        assert_eq!(payload.prompt.summary, "text(chars=22)");
+        let event_json = serde_json::to_string(&event).expect("serialize event");
+        assert!(!event_json.contains("secret customer prompt"));
     }
 }

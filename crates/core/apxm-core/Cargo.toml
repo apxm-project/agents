@@ -8,6 +8,7 @@ workspace = true
 
 [dependencies]
 anyhow.workspace = true
+blake3.workspace = true
 chrono.workspace = true
 colored.workspace = true
 envy = { version = "0.4", optional = true }

@@ -68,6 +68,13 @@ mod tests {
         }
     );
     roundtrip_test!(
+        serde_llm_prompt,
+        LlmPromptPayload {
+            node_id: 1,
+            prompt: RedactedContent::from_text("private prompt"),
+        }
+    );
+    roundtrip_test!(
         serde_usage,
         UsagePayload {
             input_tokens: 10,
@@ -129,7 +136,7 @@ mod tests {
         serde_node_output,
         NodeOutputPayload {
             node_id: 1,
-            value: serde_json::json!({"status": "ok"}),
+            output: RedactedContent::from_json(&serde_json::json!({"status": "ok"})),
         }
     );
     roundtrip_test!(serde_node_metrics, {
@@ -307,7 +314,11 @@ mod tests {
     );
 
     #[test]
-    fn core_event_kind_registry_includes_node_events() {
+    fn core_event_kind_registry_includes_observability_events() {
+        assert_eq!(
+            kind::core_event_kind(kind::LLM_PROMPT.name()),
+            Some(kind::LLM_PROMPT)
+        );
         assert_eq!(
             kind::core_event_kind(kind::NODE_OUTPUT.name()),
             Some(kind::NODE_OUTPUT)
@@ -317,6 +328,37 @@ mod tests {
             Some(kind::NODE_METRICS)
         );
         assert!(kind::core_event_kind("not_a_core_event").is_none());
+    }
+
+    #[test]
+    fn redacted_content_omits_original_text() {
+        let payload = LlmPromptPayload {
+            node_id: 7,
+            prompt: RedactedContent::from_text("sensitive prompt body"),
+        };
+        let event = ApxmEvent::root(payload, EventSource::Runtime, "trace-redacted-prompt");
+        let json = serde_json::to_string(&event).expect("serialize");
+
+        assert!(!json.contains("sensitive prompt body"));
+        assert!(json.contains(REDACTION_POLICY_SUMMARY_HASH));
+        assert!(json.contains(REDACTION_HASH_PREFIX_BLAKE3));
+    }
+
+    #[test]
+    fn redacted_content_omits_original_json_values() {
+        let payload = NodeOutputPayload {
+            node_id: 7,
+            output: RedactedContent::from_json(&serde_json::json!({
+                "secret": "customer-token",
+            })),
+        };
+        let event = ApxmEvent::root(payload, EventSource::Runtime, "trace-redacted-output");
+        let json = serde_json::to_string(&event).expect("serialize");
+
+        assert!(!json.contains("customer-token"));
+        assert!(!json.contains("secret"));
+        assert!(json.contains("object(len=1)"));
+        assert!(json.contains(REDACTION_HASH_PREFIX_BLAKE3));
     }
 
     #[test]

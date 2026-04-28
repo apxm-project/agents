@@ -59,6 +59,7 @@ pub const TOKEN: EventKind = EventKind::new("token", EventCategory::Stream, fals
 pub const THOUGHT: EventKind = EventKind::new("thought", EventCategory::Stream, false);
 pub const TOOL_CALL: EventKind = EventKind::new("tool_call", EventCategory::Lifecycle, false);
 pub const LLM_DONE: EventKind = EventKind::new("llm_done", EventCategory::Lifecycle, true);
+pub const LLM_PROMPT: EventKind = EventKind::new("llm_prompt", EventCategory::Observability, false);
 pub const USAGE: EventKind = EventKind::new("usage", EventCategory::Observability, false);
 pub const RETRY: EventKind = EventKind::new("retry", EventCategory::Error, false);
 pub const WARNING: EventKind = EventKind::new("warning", EventCategory::Error, false);
@@ -127,6 +128,7 @@ pub const CORE_EVENT_KINDS: &[EventKind] = &[
     THOUGHT,
     TOOL_CALL,
     LLM_DONE,
+    LLM_PROMPT,
     USAGE,
     RETRY,
     WARNING,

@@ -14,6 +14,7 @@ use std::time::SystemTime;
 use apxm_artifact::{Artifact, ArtifactMetadata};
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::error::RuntimeError;
+use apxm_core::events::payload::REDACTION_HASH_PREFIX_BLAKE3;
 use apxm_core::types::AISOperationType;
 use apxm_core::types::execution::{DagMetadata, ExecutionDag, Node, NodeMetadata};
 use apxm_core::types::values::Value;
@@ -31,7 +32,7 @@ use tower::ServiceExt;
 use crate::build_app;
 use crate::checkpoints::{Checkpoint, CheckpointStatus, CheckpointStore};
 use crate::execute::{ExecuteRequest, prepare_request};
-use crate::executions::ExecutionStore;
+use crate::executions::{EXECUTION_RECORD_FILE, ExecutionStore};
 use crate::helpers::{jsonrpc_err, jsonrpc_ok, mcp_tool_result, now_ms};
 use crate::mcp::{
     MCP_TOOL_APXM_SKILL_CALL, MCP_TOOL_APXM_SKILL_GET, MCP_TOOL_APXM_SKILL_VALIDATE,
@@ -59,6 +60,10 @@ const EVENT_SKILL_EXECUTE_STARTED: &str = "skill_execute_started";
 const EVENT_SKILL_EXECUTE_COMPLETE: &str = "skill_execute_complete";
 const EVENT_NODE_OUTPUT: &str = "node_output";
 const EVENT_NODE_METRICS: &str = "node_metrics";
+const NODE_OUTPUT_FIELD: &str = "output";
+const REDACTED_FIELD: &str = "redacted";
+const SUMMARY_FIELD: &str = "summary";
+const HASH_FIELD: &str = "hash";
 
 const FIXTURE_PACKAGE_DIR: &str = "checkout";
 const FIXTURE_PACKAGE_ALT_DIR: &str = "checkout-alt";
@@ -80,6 +85,7 @@ const FIXTURE_TOKEN_LIMIT: u64 = 4096;
 const FIXTURE_SOURCE: &str = "# Checkout Context Triage\n\nFollow the checkout triage steps.\n";
 const FIXTURE_AIR: &str = "module { func.func @main() attributes {ais.entry} }";
 const FIXTURE_OUTPUT: &str = "ok";
+const FIXTURE_OUTPUT_SUMMARY: &str = "string(chars=2)";
 const FIXTURE_OUTPUT_V2: &str = "ok-v2";
 const FIXTURE_COMPILER_VERSION: &str = "test-compiler";
 const FIXTURE_CONVERSION_REPORT: &str = r#"{"status":"hand-authored","unmapped":[]}"#;
@@ -998,7 +1004,20 @@ async fn skill_execute_static_artifact_returns_result_from_server_owned_session(
     assert_eq!(detail_body["status"], "succeeded");
     assert_eq!(detail_body["result"]["content"], FIXTURE_OUTPUT);
     assert_eq!(detail_body["node_outputs"][0]["node_id"], 1);
-    assert_eq!(detail_body["node_outputs"][0]["value"], FIXTURE_OUTPUT);
+    assert_eq!(
+        detail_body["node_outputs"][0][NODE_OUTPUT_FIELD][SUMMARY_FIELD],
+        FIXTURE_OUTPUT_SUMMARY
+    );
+    assert_eq!(
+        detail_body["node_outputs"][0][NODE_OUTPUT_FIELD][REDACTED_FIELD],
+        true
+    );
+    assert!(
+        detail_body["node_outputs"][0][NODE_OUTPUT_FIELD][HASH_FIELD]
+            .as_str()
+            .expect("node output hash")
+            .starts_with(REDACTION_HASH_PREFIX_BLAKE3)
+    );
     assert_eq!(detail_body["node_metrics"][0]["node_id"], 1);
     assert_eq!(
         detail_body["node_metrics"][0]["metrics"]["operation"]["attempts"],
@@ -1021,7 +1040,10 @@ async fn skill_execute_static_artifact_returns_result_from_server_owned_session(
     assert_eq!(node_body["session_dir"], session_dir);
     assert_eq!(node_body["node_id"], 1);
     assert_eq!(node_body["outputs"][0]["node_id"], 1);
-    assert_eq!(node_body["outputs"][0]["value"], FIXTURE_OUTPUT);
+    assert_eq!(
+        node_body["outputs"][0][NODE_OUTPUT_FIELD][SUMMARY_FIELD],
+        FIXTURE_OUTPUT_SUMMARY
+    );
     assert!(node_body["outputs"][0]["observed_at_ms"].is_number());
     assert_eq!(node_body["metrics"][0]["node_id"], 1);
     assert_eq!(
@@ -1029,6 +1051,22 @@ async fn skill_execute_static_artifact_returns_result_from_server_owned_session(
         1
     );
     assert!(node_body["metrics"][0]["observed_at_ms"].is_number());
+
+    let snapshot_path = std::path::Path::new(session_dir).join(EXECUTION_RECORD_FILE);
+    let snapshot = std::fs::read_to_string(&snapshot_path).expect("execution record snapshot");
+    let snapshot_body: serde_json::Value =
+        serde_json::from_str(&snapshot).expect("execution record snapshot json");
+    assert_eq!(snapshot_body["execution_id"], execution_id);
+    assert_eq!(snapshot_body["status"], "succeeded");
+    assert_eq!(
+        snapshot_body["node_outputs"][0][NODE_OUTPUT_FIELD][SUMMARY_FIELD],
+        FIXTURE_OUTPUT_SUMMARY
+    );
+    assert!(
+        !snapshot_body["node_outputs"][0]
+            .to_string()
+            .contains(FIXTURE_OUTPUT)
+    );
 }
 
 #[tokio::test]
@@ -1108,7 +1146,10 @@ async fn skill_execute_stream_emits_started_and_final_result() {
     assert_eq!(detail_body["status"], "succeeded");
     assert_eq!(detail_body["result"]["content"], FIXTURE_OUTPUT);
     assert_eq!(detail_body["node_outputs"][0]["node_id"], 1);
-    assert_eq!(detail_body["node_outputs"][0]["value"], FIXTURE_OUTPUT);
+    assert_eq!(
+        detail_body["node_outputs"][0][NODE_OUTPUT_FIELD][SUMMARY_FIELD],
+        FIXTURE_OUTPUT_SUMMARY
+    );
     assert_eq!(detail_body["node_metrics"][0]["node_id"], 1);
     assert_eq!(
         detail_body["node_metrics"][0]["metrics"]["operation"]["attempts"],
@@ -1169,7 +1210,21 @@ async fn skill_execute_stream_emits_node_output_events() {
     assert_eq!(node_output["meta"]["source"], "runtime");
     assert_eq!(node_output["meta"]["trace_id"], execution_id);
     assert_eq!(node_output["payload"]["node_id"], 1);
-    assert_eq!(node_output["payload"]["value"], FIXTURE_OUTPUT);
+    assert_eq!(
+        node_output["payload"][NODE_OUTPUT_FIELD][SUMMARY_FIELD],
+        FIXTURE_OUTPUT_SUMMARY
+    );
+    assert_eq!(
+        node_output["payload"][NODE_OUTPUT_FIELD][REDACTED_FIELD],
+        true
+    );
+    assert!(
+        node_output["payload"][NODE_OUTPUT_FIELD][HASH_FIELD]
+            .as_str()
+            .expect("node output hash")
+            .starts_with(REDACTION_HASH_PREFIX_BLAKE3)
+    );
+    assert!(!node_output.to_string().contains(FIXTURE_OUTPUT));
 
     let (node_status, node_body) =
         get_json(app, &execution_node_detail_route(execution_id, 1)).await;
@@ -1180,7 +1235,10 @@ async fn skill_execute_stream_emits_node_output_events() {
     );
     assert_eq!(node_body["execution_id"], execution_id);
     assert_eq!(node_body["node_id"], 1);
-    assert_eq!(node_body["outputs"][0]["value"], FIXTURE_OUTPUT);
+    assert_eq!(
+        node_body["outputs"][0][NODE_OUTPUT_FIELD][SUMMARY_FIELD],
+        FIXTURE_OUTPUT_SUMMARY
+    );
     assert_eq!(
         node_body["metrics"][0]["metrics"]["operation"]["attempts"],
         1

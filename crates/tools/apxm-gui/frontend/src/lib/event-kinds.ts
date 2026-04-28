@@ -27,6 +27,7 @@ export const TOKEN = kind("token", "stream");
 export const THOUGHT = kind("thought", "stream");
 export const TOOL_CALL = kind("tool_call", "lifecycle");
 export const LLM_DONE = kind("llm_done", "lifecycle", true);
+export const LLM_PROMPT = kind("llm_prompt", "observability");
 export const USAGE = kind("usage", "observability");
 export const RETRY = kind("retry", "error");
 export const WARNING = kind("warning", "error");

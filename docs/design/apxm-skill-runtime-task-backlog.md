@@ -41,23 +41,24 @@ declares the capability/tool, the capability is registered in the runtime, the
 capability metadata is read-only, the manifest side-effect policy is omitted or
 `read_only`, and the artifact does not use Python-backed tool handlers.
 Streaming skill execution now forwards typed `node_output` and `node_metrics`
-core events through
-`EmitterAdapter`, and REST/SSE skill execution records node outputs for
-node-detail lookup. Execution records are still in-memory only; prompt event
-payloads, redacted output summaries/hashes, skill provenance on runtime events,
-and persistent retention remain future work.
+core events through `EmitterAdapter`, and REST/SSE skill execution records
+node outputs for node-detail lookup. Prompt observability now emits redacted
+`llm_prompt` events, and `node_output` events carry summary/hash/redaction
+metadata instead of raw JSON values. Execution records are memory-indexed for
+API lookup and snapshotted to `execution.json` inside the APXM-owned skill
+session directory. Skill provenance on generic runtime events and full
+scheduler replay remain future work.
 
 ## Next PR
 
 The next engineering PR should move from static execution to observable
 server-managed executions:
 
-1. Replace in-memory execution/node records with a bounded or persistent store.
-2. Add redacted prompt events and redacted output summaries/hashes for skill
-   runs.
-3. Preserve `skill_id`, `skill_version`, `scope_id`, and parent-run provenance
+1. Add a bounded or reloadable execution index on top of persisted
+   `execution.json` snapshots.
+2. Preserve `skill_id`, `skill_version`, `scope_id`, and parent-run provenance
    in events, session manifests, and node artifacts.
-4. Extend capability admission beyond read-only registered tools with explicit
+3. Extend capability admission beyond read-only registered tools with explicit
    sandbox preflight.
 
 ## Operating Principles
@@ -92,7 +93,7 @@ server-managed executions:
 | Missing piece | Closing tasks | Done when |
 | --- | --- | --- |
 | Runtime and artifact metadata do not carry stable `skill_id`, `skill_version`, parent skill, or flow provenance. | T0.1, T2.3, T3.3 | Manifests, artifacts, sessions, events, and nested invocations preserve skill identity and parent links. |
-| Generic event streams include typed `node_output` and `node_metrics`, but not prompt payload events or redacted value summaries/hashes. | T2.1, T2.2 | REST/MCP streaming consumers receive `node_output`, `node_metrics`, and redacted `llm_prompt` events. |
+| Generic event streams include typed redacted `llm_prompt`, `node_output`, and `node_metrics`, but lack skill provenance. | T2.1, T2.2, T2.3 | REST/MCP streaming consumers can connect runtime events to `skill_id`, `skill_version`, flow, scope, and parent run. |
 | Child artifact workflow sessions can miss per-node directories. | T3.1 | Child artifact executions reconstruct graph metadata and write complete per-node evidence. |
 | `FLOW_CALL` returns only the sub-flow result and hides child output maps. | T3.2 | Parent results and sessions expose namespaced child `all_outputs` / `node_output_map` data. |
 | Session scope ids exist in lower layers but are not persisted as first-class isolation dimensions. | T2.3, T3.3 | Session manifests, node files, event streams, and skill/scope indices include non-null scope ids for skill runs. |
@@ -402,19 +403,19 @@ apxm_skill_run_status  # future, after ExecutionStore lands
 ### T2.1 Add Core Node Event Payloads
 
 **Why:** `SessionEventEmitter` writes files, and generic event streams now
-include `node_output` and `node_metrics`, but prompt payloads and redacted value
-summaries/hashes are still missing from the core stream.
+include redacted `llm_prompt`, `node_output`, and `node_metrics` payloads.
+The remaining work is enriching those payloads with skill provenance and node
+names.
 
 **Scope:**
 
-- Done: add `node_output` event kind and payload, with `node_id` and JSON
-  output value.
+- Done: add `node_output` event kind and payload, with `node_id` plus redacted
+  summary/hash metadata.
 - Done: add `node_metrics` event kind and payload, with `node_id` and
   provider-neutral node metrics.
-- Add event kind and payload struct for redacted `llm_prompt`.
-- Extend node payloads with optional `node_name`, `skill_id`, `flow_name`, value
-  summary, value hash, and redaction status. `scope_id` already travels in the
-  event envelope when the runtime sets it.
+- Done: add event kind and payload struct for redacted `llm_prompt`.
+- Extend node payloads with optional `node_name`, `skill_id`, and `flow_name`.
+  `scope_id` already travels in the event envelope when the runtime sets it.
 
 **Likely files:**
 
@@ -435,7 +436,7 @@ summaries/hashes are still missing from the core stream.
 
 - Done: implement `emit_node_output` in `EmitterAdapter`.
 - Done: implement `emit_node_metrics` in `EmitterAdapter`.
-- Implement `emit_llm_prompt` in `EmitterAdapter`.
+- Done: implement `emit_llm_prompt` in `EmitterAdapter`.
 - Preserve span and scope metadata.
 - Keep event order coherent with operation lifecycle.
 
@@ -459,6 +460,7 @@ summaries/hashes are still missing from the core stream.
 ```bash
 cargo test -p apxm-runtime emitter_adapter_forwards_node_output_events
 cargo test -p apxm-runtime emitter_adapter_forwards_node_metrics_events
+cargo test -p apxm-runtime emitter_adapter_forwards_redacted_llm_prompt_events
 cargo test -p apxm-server skill_execute_stream_emits_node_output_events
 cargo test -p apxm-driver session_trace_contains_typed_node_events
 ```
