@@ -24,15 +24,14 @@ use super::{
 };
 use crate::aam::{ScopeSpec, TransitionLabel};
 use crate::executor::ExecutorEngine;
+use crate::flow_names::COMMUNICATE_FLOWS as COMMUNICATE_FLOW_NAMES;
 use apxm_backends::LLMRequest;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::constants::runtime::context_stack as context_stack_consts;
-use apxm_core::constants::runtime::{belief_keys, metadata, response_keys};
+use crate::metadata_keys as metadata;
+use apxm_core::constants::runtime::{belief_keys, response_keys};
 use apxm_core::error::RuntimeError;
 use apxm_core::types::{AISOperationType, CommunicateProtocol, ProcessPromptMetric};
-
-/// Well-known flow names tried in order when looking up a recipient agent.
-const COMMUNICATE_FLOW_NAMES: &[&str] = &["communicate", "main"];
 
 fn message_from_attributes(node: &Node) -> Option<Value> {
     get_string_attribute(node, graph_attrs::MESSAGE)

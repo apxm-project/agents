@@ -11,14 +11,13 @@ use super::{
 };
 use crate::aam::{ScopeSpec, TransitionLabel};
 use crate::executor::ExecutorEngine;
+use crate::flow_names::HANDOFF_FLOWS as HANDOFF_FLOW_NAMES;
 use apxm_backends::LLMRequest;
 use apxm_core::constants::graph::attrs as graph_attrs;
-use apxm_core::constants::runtime::{belief_keys, metadata, response_keys};
+use crate::metadata_keys as metadata;
+use apxm_core::constants::runtime::{belief_keys, response_keys};
 use apxm_core::error::RuntimeError;
 use apxm_core::types::operations::AISOperationType;
-
-/// Well-known flow names tried when looking up the target agent.
-const HANDOFF_FLOW_NAMES: &[&str] = &["communicate", "main"];
 
 pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -> Result<Value> {
     let source = get_string_attribute(node, graph_attrs::HANDOFF_FROM)?;

@@ -1,5 +1,5 @@
 use super::policy::SandboxPolicy;
-use apxm_core::constants::sandbox::{env as sandbox_env, messages, session_prefixes};
+use crate::sandbox::constants::{env as sandbox_env, messages, session_prefixes};
 use tokio::process::Command;
 
 /// Result of a sandboxed execution.
@@ -178,7 +178,7 @@ impl ProcessSandbox {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use apxm_core::constants::sandbox::executables;
+    use crate::sandbox::constants::executables;
 
     #[tokio::test]
     async fn test_execute_simple_command() {

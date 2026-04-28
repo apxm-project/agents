@@ -18,7 +18,7 @@
 //! -- it calls `CapabilityExecutor::execute()` directly, which bypasses the
 //! sandbox entirely.
 
-use apxm_core::constants::sandbox::backend_names;
+use apxm_runtime::sandbox::constants::backend_names;
 use apxm_runtime::sandbox::{
     DefaultBackend, ExecRequest, ExecResult, IsolationLevel, SandboxBackend, SandboxCapabilities,
     SandboxRegistry,

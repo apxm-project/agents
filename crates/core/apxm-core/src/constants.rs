@@ -1,7 +1,4 @@
 //! Shared string constants for cross-crate protocol fields.
-//!
-//! Keep graph contract keys and common node attribute keys centralized here
-//! so APXM and AgentMate frontends/backends stay consistent.
 
 pub mod diagnostics {
     /// Compile diagnostics mode for canonical graph input.
@@ -60,25 +57,6 @@ pub mod graph {
 }
 
 pub mod runtime {
-    pub mod metadata {
-        pub const PARENT_EXECUTION_ID: &str = "parent_execution_id";
-        pub const SCOPE_ID: &str = "scope_id";
-        pub const PARENT_SCOPE_ID: &str = "parent_scope_id";
-        pub const SESSION_DIR: &str = "session_dir";
-        pub const SESSION_ROOT: &str = "session_root";
-        pub const DELEGATE_TASK_SPEC: &str = "delegate_task_spec";
-        pub const DELEGATE_TARGET: &str = "delegate_target";
-        pub const NEGOTIATE_PROPOSAL: &str = "negotiate_proposal";
-        pub const NEGOTIATE_ROUND: &str = "negotiate_round";
-        pub const NEGOTIATE_PARTY: &str = "negotiate_party";
-        pub const COMMUNICATE_SENDER: &str = "communicate_sender";
-        pub const COMMUNICATE_RECIPIENT: &str = "communicate_recipient";
-        pub const COMMUNICATE_MODE: &str = "communicate_mode";
-        pub const FLOW_CALL_DEPTH: &str = "flow_call_depth";
-        pub const TARGET_AGENT: &str = "target_agent";
-        pub const TARGET_FLOW: &str = "target_flow";
-    }
-
     pub mod context_stack {
         pub const DEFAULT_PROFILE: &str = "default";
         pub const PROFILE_REVIEWER: &str = "reviewer";
@@ -201,162 +179,11 @@ pub mod memory {
     pub const EPISODIC: &str = "episodic";
 }
 
-pub mod sandbox {
-    pub mod executables {
-        pub const BASH: &str = "bash";
-        pub const BUBBLEWRAP: &str = "bwrap";
-        pub const SHELL: &str = "sh";
-    }
-
-    pub mod backend_names {
-        pub const PROCESS: &str = "apxm-process";
-        pub const BUBBLEWRAP: &str = "apxm-bwrap";
-    }
-
-    pub mod session_prefixes {
-        pub const PROCESS: &str = "process";
-        pub const BUBBLEWRAP: &str = "bwrap";
-        pub const SCRATCH: &str = "scratch";
-        pub const WORKDIR: &str = "workdir";
-        pub const SCRIPT: &str = "script";
-    }
-
-    pub mod env {
-        pub const PATH: &str = "PATH";
-        pub const HOME: &str = "HOME";
-        pub const LANG: &str = "LANG";
-        pub const LC_ALL: &str = "LC_ALL";
-        pub const TERM: &str = "TERM";
-        pub const TMPDIR: &str = "TMPDIR";
-        pub const TEMP: &str = "TEMP";
-        pub const TMP: &str = "TMP";
-
-        pub const SAFE_PASSTHROUGH: &[&str] = &[PATH, HOME, LANG, LC_ALL, TERM];
-
-        pub const AWS_SECRET_ACCESS_KEY: &str = "AWS_SECRET_ACCESS_KEY";
-        pub const AWS_ACCESS_KEY_ID: &str = "AWS_ACCESS_KEY_ID";
-        pub const DATABASE_URL: &str = "DATABASE_URL";
-        pub const SECRET_KEY: &str = "SECRET_KEY";
-        pub const PRIVATE_KEY: &str = "PRIVATE_KEY";
-        pub const API_KEY_MARKER: &str = "API_KEY";
-        pub const ACCESS_TOKEN_MARKER: &str = "ACCESS_TOKEN";
-        pub const SECRET_MARKER: &str = "SECRET";
-        pub const PRIVATE_KEY_MARKER: &str = "PRIVATE_KEY";
-
-        pub const BLOCKED_DEFAULTS: &[&str] = &[
-            AWS_SECRET_ACCESS_KEY,
-            AWS_ACCESS_KEY_ID,
-            DATABASE_URL,
-            SECRET_KEY,
-            PRIVATE_KEY,
-        ];
-
-        pub fn is_sensitive_name(key: &str) -> bool {
-            let key = key.to_ascii_uppercase();
-            key.contains(API_KEY_MARKER)
-                || key.contains(ACCESS_TOKEN_MARKER)
-                || key.contains(SECRET_MARKER)
-                || key.contains(PRIVATE_KEY_MARKER)
-        }
-    }
-
-    pub mod bubblewrap {
-        pub const VERSION_ARG: &str = "--version";
-        pub const FLAG_NEW_SESSION: &str = "--new-session";
-        pub const FLAG_DIE_WITH_PARENT: &str = "--die-with-parent";
-        pub const FLAG_RO_BIND: &str = "--ro-bind";
-        pub const FLAG_BIND: &str = "--bind";
-        pub const FLAG_DEV: &str = "--dev";
-        pub const FLAG_PROC: &str = "--proc";
-        pub const FLAG_DIR: &str = "--dir";
-        pub const FLAG_CHDIR: &str = "--chdir";
-        pub const FLAG_UNSHARE_USER: &str = "--unshare-user";
-        pub const FLAG_UNSHARE_PID: &str = "--unshare-pid";
-        pub const FLAG_UNSHARE_NET: &str = "--unshare-net";
-        pub const FLAG_SEPARATOR: &str = "--";
-        pub const FILESYSTEM_ROOT: &str = "/";
-        pub const FILESYSTEM_DEV: &str = "/dev";
-        pub const FILESYSTEM_PROC: &str = "/proc";
-        pub const TMP_DIR: &str = "/apxm-tmp";
-        pub const WORKDIR: &str = "/apxm-workdir";
-        pub const WARN_READ_ALLOWLISTS: &str = "bubblewrap backend currently enforces read-only root plus writable carve-outs, not per-path read allowlists";
-        pub const ERR_NOT_AVAILABLE: &str = "bubblewrap is not available on this host";
-        pub const ERR_ONLY_LINUX: &str = "bubblewrap backend is only supported on Linux";
-        pub const ERR_SESSION_STATE: &str = "invalid bubblewrap session state";
-        pub const ERR_WORKDIR_NOT_DIRECTORY: &str = "sandbox working directory must be a directory";
-        pub const ERR_TIMED_OUT: &str = "command timed out and was killed";
-        pub const ERR_EXECUTION_PREFIX: &str = "bubblewrap sandbox";
-    }
-
-    pub mod shell_args {
-        pub const COMMAND: &str = "-c";
-        pub const LOGIN_COMMAND: &str = "-lc";
-    }
-
-    pub mod messages {
-        pub const COMMAND_BLOCKED_BY_POLICY: &str = "command blocked by sandbox policy";
-        pub const PROCESS_TIMED_OUT_AND_KILLED: &str = "Process timed out and was killed";
-    }
-}
-
 pub mod protocols {
     /// MCP (Model Context Protocol) version string.
     pub const MCP_VERSION: &str = "2025-11-05";
     /// A2A (Agent-to-Agent) protocol version.
     pub const A2A_VERSION: &str = "0.3";
-}
-
-pub mod acp {
-    pub mod session_params {
-        pub const MCP_SERVERS: &str = "mcpServers";
-        pub const CWD: &str = "cwd";
-    }
-
-    pub mod client_capabilities {
-        pub const FS: &str = "fs";
-        pub const READ_TEXT_FILE: &str = "readTextFile";
-        pub const WRITE_TEXT_FILE: &str = "writeTextFile";
-        pub const TERMINAL: &str = "terminal";
-        pub const NAME: &str = "name";
-        pub const VERSION: &str = "version";
-    }
-
-    pub mod reverse_params {
-        pub const PATH: &str = "path";
-        pub const LINE: &str = "line";
-        pub const CONTENT: &str = "content";
-        pub const COMMAND: &str = "command";
-        pub const ARGS: &str = "args";
-        pub const CWD: &str = "cwd";
-        pub const ENV: &str = "env";
-        pub const NAME: &str = "name";
-        pub const VALUE: &str = "value";
-        pub const OPTIONS: &str = "options";
-        pub const KIND: &str = "kind";
-        pub const OFFSET: &str = "offset";
-    }
-
-    pub mod reverse_response {
-        pub const CONTENT: &str = "content";
-        pub const OUTPUT: &str = "output";
-        pub const TRUNCATED: &str = "truncated";
-        pub const SIGNAL: &str = "signal";
-        pub const OUTCOME: &str = "outcome";
-    }
-
-    pub mod notification {
-        pub const UPDATE: &str = "update";
-        pub const SESSION_UPDATE: &str = "sessionUpdate";
-        pub const TYPE: &str = "type";
-        pub const TEXT: &str = "text";
-        pub const USED: &str = "used";
-        pub const SIZE: &str = "size";
-    }
-
-    pub mod set_session {
-        pub const MODEL: &str = "model";
-        pub const VALUE: &str = "value";
-    }
 }
 
 pub mod jsonrpc {
@@ -374,20 +201,6 @@ pub mod jsonrpc {
         pub const INVALID_PARAMS: i64 = -32602;
         pub const INTERNAL_ERROR: i64 = -32000;
     }
-}
-
-/// COMMUNICATE operation protocol dispatch modes.
-pub mod communicate_protocols {
-    /// In-process sub-flow execution via FlowRegistry.
-    pub const LOCAL: &str = "local";
-    /// HTTP POST to an external APXM agent's `/v1/receive` endpoint.
-    pub const HTTP: &str = "http";
-    /// HTTPS variant of the HTTP protocol.
-    pub const HTTPS: &str = "https";
-    /// ACP JSON-RPC over stdio to a spawned agent subprocess.
-    pub const ACP: &str = "acp";
-    /// Fan-out to ALL registered agents in parallel.
-    pub const BROADCAST: &str = "broadcast";
 }
 
 pub mod capabilities {

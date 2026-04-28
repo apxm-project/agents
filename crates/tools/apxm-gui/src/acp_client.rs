@@ -135,8 +135,8 @@ impl AgentSession {
             jsonrpc::ID: new_id,
             jsonrpc::METHOD: acp_methods::SESSION_NEW,
             jsonrpc::PARAMS: {
-                apxm_core::constants::acp::session_params::CWD: cwd.to_string_lossy(),
-                apxm_core::constants::acp::session_params::MCP_SERVERS: []
+                apxm_acp::constants::args::CWD: cwd.to_string_lossy(),
+                apxm_acp::constants::fields::MCP_SERVERS: []
             }
         });
         session.send_message(&new_req).await?;
@@ -457,8 +457,8 @@ impl AgentSession {
         msg: &Value,
         tx: &mpsc::Sender<Arc<dyn EventPayload>>,
     ) {
-        use apxm_core::constants::acp::reverse_params;
-        use apxm_core::constants::acp::reverse_response;
+        use apxm_acp::constants::reverse_params;
+        use apxm_acp::constants::reverse_response;
 
         let request_id = msg.get(jsonrpc::ID).cloned().unwrap_or(Value::Null);
         let method = msg

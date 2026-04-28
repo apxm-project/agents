@@ -12,7 +12,7 @@ mod sandbox_linux;
 use std::sync::Arc;
 use std::time::Instant;
 
-use apxm_core::constants::sandbox::{backend_names, session_prefixes};
+use apxm_runtime::sandbox::constants::{backend_names, session_prefixes};
 use apxm_runtime::sandbox::{
     ExecRequest, ExecResult, IsolationLevel, SandboxBackend, SandboxCapabilities, SandboxContext,
     SandboxError, SandboxRegistry, ValidationResult,

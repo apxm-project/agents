@@ -4,8 +4,8 @@ use crate::capability::{
     metadata::CapabilityMetadata,
 };
 use crate::sandbox::{ExecRequest, ExecResult, IsolationLevel};
+use crate::sandbox::constants::{executables, shell_args};
 use apxm_core::{
-    constants::sandbox::{executables, shell_args},
     error::RuntimeError,
     types::{AISOperationType, Value},
 };

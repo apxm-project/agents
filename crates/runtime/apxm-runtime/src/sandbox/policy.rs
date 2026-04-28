@@ -1,4 +1,4 @@
-use apxm_core::constants::sandbox::env as sandbox_env;
+use crate::sandbox::constants::env as sandbox_env;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;

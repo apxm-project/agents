@@ -11,7 +11,8 @@ use crate::executor::ExecutorEngine;
 use crate::executor::handlers::template::input_names_from_node;
 use crate::scheduler::{DataflowScheduler, SchedulerConfig};
 use apxm_core::constants::graph::attrs as graph_attrs;
-use apxm_core::constants::runtime::{belief_keys, metadata};
+use crate::metadata_keys as metadata;
+use apxm_core::constants::runtime::belief_keys;
 use apxm_core::error::RuntimeError;
 use apxm_core::types::execution::ExecutionDag;
 

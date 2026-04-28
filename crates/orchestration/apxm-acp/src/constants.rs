@@ -1,7 +1,4 @@
-//! Shared constants for the ACP protocol client.
-//!
-//! All magic strings, timeouts, and defaults are centralized here
-//! following the pattern in `apxm-core/src/constants.rs`.
+//! ACP wire-protocol constants.
 
 pub mod protocol {
     /// ACP protocol version negotiated during initialize (uint16, per ACP spec).
@@ -75,6 +72,42 @@ pub mod fields {
     pub const MODE_ID: &str = "modeId";
     pub const CONFIG_ID: &str = "configId";
     pub const CREDENTIAL: &str = "credential";
+    pub const MCP_SERVERS: &str = "mcpServers";
+}
+
+/// Client capability advertisement keys (initialize handshake).
+pub mod client_capabilities {
+    pub const FS: &str = "fs";
+    pub const READ_TEXT_FILE: &str = "readTextFile";
+    pub const WRITE_TEXT_FILE: &str = "writeTextFile";
+    pub const TERMINAL: &str = "terminal";
+    pub const NAME: &str = "name";
+    pub const VERSION: &str = "version";
+}
+
+/// Parameter keys for agent-to-client reverse RPCs (fs/*, terminal/*, requestPermission).
+pub mod reverse_params {
+    pub const PATH: &str = "path";
+    pub const LINE: &str = "line";
+    pub const CONTENT: &str = "content";
+    pub const COMMAND: &str = "command";
+    pub const ARGS: &str = "args";
+    pub const CWD: &str = "cwd";
+    pub const ENV: &str = "env";
+    pub const NAME: &str = "name";
+    pub const VALUE: &str = "value";
+    pub const OPTIONS: &str = "options";
+    pub const KIND: &str = "kind";
+    pub const OFFSET: &str = "offset";
+}
+
+/// Response keys returned by the client for reverse RPCs.
+pub mod reverse_response {
+    pub const CONTENT: &str = "content";
+    pub const OUTPUT: &str = "output";
+    pub const TRUNCATED: &str = "truncated";
+    pub const SIGNAL: &str = "signal";
+    pub const OUTCOME: &str = "outcome";
 }
 
 pub mod tool_kinds {
@@ -144,6 +177,8 @@ pub mod capability {
 pub mod wire {
     /// ACP wire key for model in prompt response.
     pub const MODEL: &str = "model";
+    /// ACP wire key for the value payload in unstable_setSessionModel.
+    pub const VALUE: &str = "value";
 }
 
 pub mod timeouts {

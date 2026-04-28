@@ -1,13 +1,7 @@
 //! Typed dispatch surface for the COMMUNICATE operation's protocol attribute.
-//!
-//! Replaces the loose `communicate_protocols::*` string constants so handlers
-//! and metric emitters can `match` on a closed set of variants instead of
-//! comparing against bare strings.
 
 use std::fmt;
 use std::str::FromStr;
-
-use crate::constants::communicate_protocols;
 
 /// Transport selected by a COMMUNICATE node's `protocol` attribute.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -28,11 +22,11 @@ impl CommunicateProtocol {
     /// Wire string used in `.air` attributes and metric labels.
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Local => communicate_protocols::LOCAL,
-            Self::Http => communicate_protocols::HTTP,
-            Self::Https => communicate_protocols::HTTPS,
-            Self::Acp => communicate_protocols::ACP,
-            Self::Broadcast => communicate_protocols::BROADCAST,
+            Self::Local => "local",
+            Self::Http => "http",
+            Self::Https => "https",
+            Self::Acp => "acp",
+            Self::Broadcast => "broadcast",
         }
     }
 
@@ -53,11 +47,11 @@ impl FromStr for CommunicateProtocol {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            communicate_protocols::LOCAL => Ok(Self::Local),
-            communicate_protocols::HTTP => Ok(Self::Http),
-            communicate_protocols::HTTPS => Ok(Self::Https),
-            communicate_protocols::ACP => Ok(Self::Acp),
-            communicate_protocols::BROADCAST => Ok(Self::Broadcast),
+            "local" => Ok(Self::Local),
+            "http" => Ok(Self::Http),
+            "https" => Ok(Self::Https),
+            "acp" => Ok(Self::Acp),
+            "broadcast" => Ok(Self::Broadcast),
             _ => Err(UnknownProtocol(s.to_string())),
         }
     }
@@ -99,7 +93,7 @@ mod tests {
     }
 
     #[test]
-    fn wire_strings_match_constants() {
+    fn as_str_returns_canonical_wire_strings() {
         assert_eq!(CommunicateProtocol::Local.as_str(), "local");
         assert_eq!(CommunicateProtocol::Http.as_str(), "http");
         assert_eq!(CommunicateProtocol::Https.as_str(), "https");
