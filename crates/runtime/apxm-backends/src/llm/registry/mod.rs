@@ -710,14 +710,19 @@ impl LLMRegistry {
 
     /// Spawn a background task that polls every graph-aware backend at
     /// `interval`, recording peak `pinned_handles` / `pinned_blocks` for
-    /// `graph_id`. The returned [`PinPollHandle`] aborts the task on `Drop`,
-    /// so callers cannot leak it; explicit `.abort()` before
-    /// `pre_release_status_all` is still preferred for ordering clarity.
+    /// `graph_id`. Returns `None` if no graph-aware backends are registered
+    /// (no point waking a no-op poll loop). The returned [`PinPollHandle`]
+    /// aborts the task on `Drop`, so callers cannot leak it; explicit
+    /// `.abort()` before `pre_release_status_all` is still preferred for
+    /// ordering clarity.
     pub fn start_pin_polling(
         self: &Arc<Self>,
         graph_id: String,
         interval: Duration,
-    ) -> PinPollHandle {
+    ) -> Option<PinPollHandle> {
+        if self.find_graph_aware_backends().is_empty() {
+            return None;
+        }
         let handles_peak = Arc::new(AtomicU64::new(0));
         let blocks_peak = Arc::new(AtomicU64::new(0));
         self.pin_peaks.insert(
@@ -740,7 +745,7 @@ impl LLMRegistry {
                 }
             }
         });
-        PinPollHandle { inner: Some(inner) }
+        Some(PinPollHandle { inner: Some(inner) })
     }
 
     /// Build a `BackendMetricsSource` from the tracker's aggregates and

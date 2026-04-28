@@ -55,11 +55,13 @@ impl ExecutorEngine {
         self.register_graph_metadata(&dag, &graph_id).await;
 
         // Detailed metrics: spawn pin-peak polling for this graph_id.
+        // `start_pin_polling` returns `None` when no graph-aware backends are
+        // registered, so we don't wake a no-op poll loop.
         let pin_poll_handle = self
             .context
             .metrics_level
             .pin_poll_interval()
-            .map(|interval| {
+            .and_then(|interval| {
                 self.context
                     .llm_registry
                     .start_pin_polling(graph_id.clone(), interval)
