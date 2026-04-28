@@ -7,7 +7,7 @@ use std::time::Duration;
 use apxm_artifact::Artifact;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::events::payload::ErrorPayload;
-use apxm_core::events::{ApxmEvent, EventCategory, EventKind, EventSource};
+use apxm_core::events::{ApxmEvent, EventCategory, EventKind, EventSource, SkillEventProvenance};
 use apxm_core::impl_event_payload;
 use apxm_core::paths::ApxmPaths;
 use apxm_core::types::AISOperationType;
@@ -277,6 +277,19 @@ struct PreparedSkillExecution {
     execution_id: String,
     skill_id: String,
     skill_version: String,
+    entry_flow: String,
+}
+
+impl PreparedSkillExecution {
+    fn skill_provenance(&self) -> SkillEventProvenance {
+        SkillEventProvenance {
+            skill_id: self.skill_id.clone(),
+            skill_version: self.skill_version.clone(),
+            parent_skill_id: None,
+            parent_execution_id: None,
+            flow_name: Some(self.entry_flow.clone()),
+        }
+    }
 }
 
 pub(crate) async fn list_skills(State(state): State<AppState>) -> Json<SkillScan> {
@@ -319,14 +332,17 @@ pub(crate) async fn execute_skill_by_id(
     req: SkillExecuteRequest,
 ) -> Result<SkillExecuteResponse, ApiError> {
     let prepared = prepare_skill_execution(state, id, req)?;
-    let emitter = Arc::new(apxm_runtime::EmitterAdapter::new(
-        Arc::new(ExecutionRecordingEmitter::new(
-            state.execution_store.clone(),
-            prepared.execution_id.clone(),
-        )),
-        EventSource::Runtime,
-        &prepared.execution_id,
-    ));
+    let emitter = Arc::new(
+        apxm_runtime::EmitterAdapter::new(
+            Arc::new(ExecutionRecordingEmitter::new(
+                state.execution_store.clone(),
+                prepared.execution_id.clone(),
+            )),
+            EventSource::Runtime,
+            &prepared.execution_id,
+        )
+        .with_skill_provenance(prepared.skill_provenance()),
+    );
     let runtime_execution = state.runtime.execute_artifact_with_session_and_emitter(
         prepared.artifact,
         prepared.args,
@@ -383,11 +399,14 @@ pub(crate) async fn execute_skill_stream(
                 prepared.execution_id.clone(),
             )),
         ];
-        let emitter = Arc::new(apxm_runtime::EmitterAdapter::new(
-            Arc::new(apxm_core::events::FanOutEmitter::new(event_sinks)),
-            EventSource::Runtime,
-            &trace_id,
-        ));
+        let emitter = Arc::new(
+            apxm_runtime::EmitterAdapter::new(
+                Arc::new(apxm_core::events::FanOutEmitter::new(event_sinks)),
+                EventSource::Runtime,
+                &trace_id,
+            )
+            .with_skill_provenance(prepared.skill_provenance()),
+        );
         let runtime_execution = runtime.execute_artifact_with_session_and_emitter(
             prepared.artifact,
             prepared.args,
@@ -497,6 +516,7 @@ fn prepare_skill_execution(
         execution_id: execution.execution_id,
         skill_id: manifest.skill_id.clone(),
         skill_version: manifest.version.clone(),
+        entry_flow: manifest.entry_flow.clone(),
     })
 }
 

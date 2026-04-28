@@ -306,12 +306,13 @@ inspectable by skill identity.
 
 Important missing pieces:
 
-- Runtime and artifact metadata do not yet carry stable `skill_id`,
-  `skill_version`, parent skill, or flow provenance.
+- Server-owned top-level runtime events now carry stable `skill_id`,
+  `skill_version`, and entry-flow provenance. Artifact metadata, session
+  manifests, and nested parent-skill provenance are still incomplete.
 - Generic event streams now include typed `node_output`, `node_metrics`, and
   redacted `llm_prompt` events through `EmitterAdapter`. `node_output` carries a
-  redacted summary/hash envelope, but these events do not yet carry first-class
-  skill provenance.
+  redacted summary/hash envelope, and server-owned top-level skill runs attach
+  skill provenance to the event metadata.
 - Child artifact workflow sessions can miss per-node directories because the
   driver does not pass reconstructed artifact graph metadata into the child
   session emitter.
@@ -339,12 +340,17 @@ work; old workflows are useful only as benchmark inputs.
 
 ### G1: Stable Skill Provenance
 
-Problem: runtime and artifact metadata do not carry stable `skill_id`,
-`skill_version`, parent skill, or flow provenance.
+Problem: server-owned top-level runtime events carry `skill_id`,
+`skill_version`, and entry flow, but artifact metadata, session manifests, and
+nested parent-skill provenance are still incomplete.
 
 Implementation:
 
-- Add a shared `SkillManifest` / `SkillProvenance` model.
+- Done: add first-class skill provenance metadata to the core event envelope.
+- Done: attach top-level server-owned skill provenance through
+  `EmitterAdapter`.
+- Add a shared `SkillManifest` / `SkillProvenance` model for artifact/session
+  metadata.
 - Add artifact section constants such as `apxm.skill_manifest.v1`.
 - Preserve provenance in session manifests and metrics before changing core DAG
   wire format.
@@ -372,8 +378,9 @@ Acceptance tests:
 
 Problem: `SessionEventEmitter` writes node outputs and prompts to files, and the
 generic event stream now includes typed redacted `llm_prompt`, `node_output`,
-and `node_metrics`, but those payloads still need first-class skill and flow
-provenance.
+and `node_metrics`; server-owned top-level skill runs attach `skill_id`,
+`skill_version`, and entry flow. Those payloads still need node names and
+nested parent provenance.
 
 Implementation:
 
@@ -1559,8 +1566,8 @@ reports it.
 
 1. **Execution retention:** add a bounded or reloadable execution index over the
    persisted `execution.json` session snapshots.
-2. **G2 remainder:** attach skill and flow provenance to redacted `llm_prompt`,
-   `node_output`, and `node_metrics` events.
+2. **G2 remainder:** attach node names, scope ids, and nested parent provenance
+   to redacted `llm_prompt`, `node_output`, and `node_metrics` events.
 3. **Capability policy remainder:** extend the current read-only registered
    capability admission with sandbox routing and tests for side-effectful
    policies.

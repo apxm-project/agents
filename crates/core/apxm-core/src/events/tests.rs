@@ -4,7 +4,7 @@
 mod tests {
     use std::collections::HashMap;
 
-    use crate::events::event::{ApxmEvent, EventSource};
+    use crate::events::event::{ApxmEvent, EventSource, SkillEventProvenance};
     use crate::events::kind;
     use crate::events::payload::*;
     use crate::types::operations::AISOperationType;
@@ -421,6 +421,34 @@ mod tests {
         )
         .with_seq(99);
         assert_eq!(event.meta.seq, 99);
+    }
+
+    #[test]
+    fn builder_with_skill_provenance() {
+        let event = ApxmEvent::root(
+            WarningPayload {
+                code: "W999".into(),
+                message: "test".into(),
+            },
+            EventSource::Runtime,
+            "trace-skill",
+        )
+        .with_skill_provenance(Some(SkillEventProvenance {
+            skill_id: "checkout-context-triage".into(),
+            skill_version: "0.1.0".into(),
+            parent_skill_id: Some("parent-skill".into()),
+            parent_execution_id: Some("parent-exec".into()),
+            flow_name: Some("main".into()),
+        }));
+        let json = serde_json::to_string(&event).expect("serialize");
+        let back: ApxmEvent = serde_json::from_str(&json).expect("deserialize");
+
+        let skill = back.meta.skill.expect("skill provenance");
+        assert_eq!(skill.skill_id, "checkout-context-triage");
+        assert_eq!(skill.skill_version, "0.1.0");
+        assert_eq!(skill.parent_skill_id.as_deref(), Some("parent-skill"));
+        assert_eq!(skill.parent_execution_id.as_deref(), Some("parent-exec"));
+        assert_eq!(skill.flow_name.as_deref(), Some("main"));
     }
 
     #[test]
