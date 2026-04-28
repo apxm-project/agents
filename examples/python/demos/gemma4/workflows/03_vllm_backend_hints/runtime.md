@@ -60,7 +60,7 @@ The O2 compiler stamped:
 
 For this metadata to **reduce wall time**, the runtime priority scheduler needs:
 1. **Contention.** The scheduler can only reorder if there's a queue. Today the runtime sees `avg_parallelism = 2.4`, `max = 5` — well within capacity. It dispatches everything as soon as deps clear; there's no reorder window.
-2. **vLLM-side priority.** The `extra_body.apxm_hints` payload includes the priority hint, but vLLM's scheduler treats requests FIFO unless the fork honors the hint. The local fork (submodule SHA `568a8a2b9` per `feedback_local_vllm.md`) does pass the hint through, but with only 7 concurrent requests the vLLM batch scheduler has nothing to defer.
+2. **vLLM-side priority.** The `extra_body.apxm_hints` payload includes the priority hint, but vLLM's scheduler treats requests FIFO unless the fork honors the hint. The local fork (submodule HEAD `6dc7a18958`; load-bearing commits `8e2ccc9308`, `fe6d35e45b`, `6dc7a18958`) does pass the hint through, but with only 7 concurrent requests the vLLM batch scheduler has nothing to defer.
 
 Since both sides have ample capacity, the priority stamping is informational only. The wall-time signal you'd want — critical_triage running *before* the 4 background prefills land — would require either:
 - A `concurrency_limit` declared on the module so the runtime queues requests, *then* the priority sort matters; or
