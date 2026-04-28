@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command as StdCommand, Stdio as StdStdio};
 use std::time::Instant;
 
-use apxm_core::constants::sandbox::{
+use apxm_runtime::sandbox::constants::{
     backend_names, bubblewrap, env as sandbox_env, executables, session_prefixes,
 };
 use apxm_runtime::sandbox::policy::SandboxPolicy;

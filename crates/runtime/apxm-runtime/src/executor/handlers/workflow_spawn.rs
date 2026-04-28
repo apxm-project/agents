@@ -7,10 +7,8 @@ use super::{
     ExecutionContext, Node, Result, Value, get_optional_string_attribute, get_string_attribute,
 };
 use crate::executor::handlers::template::input_names_from_node;
-use apxm_core::constants::{
-    graph::attrs as graph_attrs,
-    runtime::{metadata, response_keys},
-};
+use crate::metadata_keys as metadata;
+use apxm_core::constants::{graph::attrs as graph_attrs, runtime::response_keys};
 use apxm_core::error::RuntimeError;
 use apxm_core::types::{WorkflowInvocation, WorkflowInvocationKind, WorkflowTarget};
 

@@ -1,0 +1,18 @@
+//! Execution metadata keys produced and consumed by the runtime.
+
+pub const PARENT_EXECUTION_ID: &str = "parent_execution_id";
+pub const SCOPE_ID: &str = "scope_id";
+pub const PARENT_SCOPE_ID: &str = "parent_scope_id";
+pub const SESSION_DIR: &str = "session_dir";
+pub const SESSION_ROOT: &str = "session_root";
+pub const DELEGATE_TASK_SPEC: &str = "delegate_task_spec";
+pub const DELEGATE_TARGET: &str = "delegate_target";
+pub const NEGOTIATE_PROPOSAL: &str = "negotiate_proposal";
+pub const NEGOTIATE_ROUND: &str = "negotiate_round";
+pub const NEGOTIATE_PARTY: &str = "negotiate_party";
+pub const COMMUNICATE_SENDER: &str = "communicate_sender";
+pub const COMMUNICATE_RECIPIENT: &str = "communicate_recipient";
+pub const COMMUNICATE_MODE: &str = "communicate_mode";
+pub const FLOW_CALL_DEPTH: &str = "flow_call_depth";
+pub const TARGET_AGENT: &str = "target_agent";
+pub const TARGET_FLOW: &str = "target_flow";

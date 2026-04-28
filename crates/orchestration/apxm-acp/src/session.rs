@@ -8,13 +8,13 @@ use apxm_core::apxm_acp;
 use crate::AcpError;
 use crate::auth;
 use crate::constants::{
-    args as cap_args, client, fields, methods, protocol, stop_reasons, timeouts, wire,
+    args as cap_args, client, client_capabilities as client_caps, fields, methods, protocol,
+    stop_reasons, timeouts, wire,
 };
 use crate::content::ContentBlock;
 use crate::protocol::StdioTransport;
 use crate::registry::AcpAgentProfile;
 use crate::reverse::{CapabilityReverseHandler, ReverseHandler};
-use apxm_core::constants::acp::client_capabilities as client_caps;
 
 /// Result of a prompt round-trip.
 #[derive(Debug, Clone)]

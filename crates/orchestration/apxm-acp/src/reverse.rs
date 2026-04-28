@@ -4,10 +4,12 @@ use std::sync::Arc;
 use apxm_core::apxm_acp;
 
 use crate::AcpError;
-use crate::constants::{fields, methods, option_kinds, outcomes, tool_kinds, update_types};
+use crate::constants::{
+    fields, methods, option_kinds, outcomes, reverse_params, reverse_response, tool_kinds,
+    update_keys, update_types,
+};
 use crate::registry::PermissionMode;
 use crate::terminal::TerminalManager;
-use apxm_core::constants::acp::{notification, reverse_params, reverse_response};
 
 /// Trait for handling reverse requests and notifications from an ACP agent.
 #[async_trait]
@@ -308,13 +310,13 @@ impl ReverseHandler for CapabilityReverseHandler {
     async fn on_notification(&self, method: &str, params: Option<&serde_json::Value>) {
         if method == methods::SESSION_UPDATE {
             if let Some(params) = params {
-                let update = &params[notification::UPDATE];
+                let update = &params[update_keys::UPDATE];
                 // ACP uses "sessionUpdate" as the discriminator key and nests
                 // message chunks under "content.text".
-                let update_kind = update[notification::SESSION_UPDATE].as_str();
+                let update_kind = update[update_keys::SESSION_UPDATE].as_str();
                 match update_kind {
                     Some(t) if t == update_types::AGENT_MESSAGE_CHUNK => {
-                        let text = update[reverse_response::CONTENT][notification::TEXT].as_str();
+                        let text = update[reverse_response::CONTENT][update_keys::TEXT].as_str();
                         if let Some(text) = text {
                             self.response_text.lock().unwrap().push_str(text);
                         }
@@ -324,13 +326,13 @@ impl ReverseHandler for CapabilityReverseHandler {
                         // Try standard field names first, then ACP-specific names
                         if let Some(input) = update[fields::INPUT_TOKENS]
                             .as_u64()
-                            .or_else(|| update[notification::USED].as_u64())
+                            .or_else(|| update[update_keys::USED].as_u64())
                         {
                             usage.0 = Some(input);
                         }
                         if let Some(output) = update[fields::OUTPUT_TOKENS]
                             .as_u64()
-                            .or_else(|| update[notification::SIZE].as_u64())
+                            .or_else(|| update[update_keys::SIZE].as_u64())
                         {
                             usage.1 = Some(output);
                         }

@@ -142,7 +142,7 @@ pub fn copy_llm_request_routing(mut request: LLMRequest, source: &LLMRequest) ->
 /// see it; this helper centralizes the lookup for HANDOFF and COMMUNICATE
 /// inline-agent fallbacks.
 pub async fn read_stm_with_scope_fallback(ctx: &ExecutionContext, key: &str) -> Option<Value> {
-    use apxm_core::constants::runtime::metadata;
+    use crate::metadata_keys as metadata;
     let parent_scope = ctx.metadata.get(metadata::PARENT_SCOPE_ID).cloned();
     let primary = parent_scope.as_deref().unwrap_or_else(|| ctx.scope_id());
     if let Ok(Some(v)) = ctx

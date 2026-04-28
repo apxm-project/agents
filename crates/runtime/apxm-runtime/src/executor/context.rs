@@ -14,7 +14,8 @@ use crate::{
 };
 use apxm_backends::LLMRegistry;
 use apxm_core::InstructionConfig;
-use apxm_core::constants::{cache, runtime::metadata};
+use crate::metadata_keys as metadata;
+use apxm_core::constants::cache;
 use apxm_core::paths::ApxmPaths;
 use apxm_core::types::{Agent, MetricsLevel, OptimizationTarget};
 use std::sync::Arc;

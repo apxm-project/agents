@@ -12,14 +12,13 @@
 use super::{ExecutionContext, Node, Result, Value, get_string_attribute};
 use crate::aam::{ScopeSpec, TransitionLabel};
 use crate::executor::ExecutorEngine;
+use crate::flow_names::NEGOTIATE_FLOWS as NEGOTIATE_FLOW_NAMES;
 use apxm_core::constants::defaults;
 use apxm_core::constants::graph::attrs as graph_attrs;
-use apxm_core::constants::runtime::{belief_keys, metadata, response_keys, transition_labels};
+use crate::metadata_keys as metadata;
+use apxm_core::constants::runtime::{belief_keys, response_keys, transition_labels};
 use apxm_core::error::RuntimeError;
 use std::collections::HashMap;
-
-/// Well-known flow names tried when looking up a negotiation party.
-const NEGOTIATE_FLOW_NAMES: &[&str] = &["negotiate", "communicate", "main"];
 
 pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -> Result<Value> {
     let proposal = get_string_attribute(node, graph_attrs::PROPOSAL)?;

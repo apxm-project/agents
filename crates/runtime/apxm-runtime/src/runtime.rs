@@ -21,7 +21,8 @@ use crate::{
 };
 use apxm_artifact::Artifact;
 use apxm_backends::LLMRegistry;
-use apxm_core::constants::{graph::metadata as graph_meta, runtime::metadata};
+use crate::metadata_keys as metadata;
+use apxm_core::constants::graph::metadata as graph_meta;
 use apxm_core::log_info;
 use apxm_core::{
     error::RuntimeError,
