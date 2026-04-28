@@ -249,13 +249,20 @@ fn emit_cli_error(err: &anyhow::Error, json_mode: bool) {
     }
 
     if json_mode {
+        let causes: Vec<String> = err.chain().skip(1).map(ToString::to_string).collect();
         println!(
             "{}",
-            serde_json::to_string_pretty(&json!({ "error": err.to_string() }))
+            serde_json::to_string_pretty(&json!({
+                "error": err.to_string(),
+                "causes": causes,
+            }))
                 .expect("serialize cli error")
         );
     } else {
         eprintln!("{err}");
+        for cause in err.chain().skip(1) {
+            eprintln!("  caused by: {cause}");
+        }
     }
 }
 
