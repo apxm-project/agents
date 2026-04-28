@@ -243,8 +243,11 @@ impl AcpSession {
             .await?;
 
         // Read response — reverse requests, notifications, and final response
-        // are all handled by the transport + handler
-        let result = self.transport()?.read_response(id, handler).await?;
+        // are all handled by the transport + handler.
+        let timeout = Duration::from_secs(timeouts::PROMPT_TIMEOUT_SECS);
+        let result = tokio::time::timeout(timeout, self.transport()?.read_response(id, handler))
+            .await
+            .map_err(|_| AcpError::Timeout("prompt turn timed out".to_string()))??;
 
         // Collect accumulated text from streaming notifications
         let text = handler.take_response_text();
