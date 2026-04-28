@@ -20,8 +20,8 @@ use tracing::{error, info};
 
 use apxm_acp::registry::AgentRegistry;
 
-use crate::AppState;
 use crate::acp_client::AgentSession;
+use crate::state::AppState;
 
 // ---------------------------------------------------------------------------
 // Constants
