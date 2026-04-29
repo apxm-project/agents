@@ -3,8 +3,8 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use axum::routing::{delete, get, post};
 use axum::Router;
+use axum::routing::{delete, get, post};
 use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
 
@@ -83,10 +83,7 @@ pub fn build_router(state: Arc<AppState>, static_dir: &Path) -> Router {
         .route(paths::OPS, get(api::graph::ops_handler))
         .route(paths::PASSES, get(api::graph::passes_handler))
         .route(paths::SESSION, get(api::session::session_handler))
-        .route(
-            paths::SESSION_NODE,
-            get(api::session::session_node_handler),
-        )
+        .route(paths::SESSION_NODE, get(api::session::session_node_handler))
         .route(paths::CONFIG, get(api::config::config_handler))
         .route(paths::WORKFLOWS, get(api::files::workflows_handler))
         .route(paths::FILE, get(api::files::file_handler))
@@ -109,14 +106,8 @@ pub fn build_router(state: Arc<AppState>, static_dir: &Path) -> Router {
         .route(paths::CHAT, post(api::chat::chat_handler))
         .route(paths::CHAT_MODELS, get(api::chat::models_handler))
         .route(paths::AGENT_CHAT, post(api::agent::agent_chat))
-        .route(
-            paths::AGENT_PROFILES,
-            get(api::agent::list_agent_profiles),
-        )
-        .route(
-            paths::AGENT_SESSIONS,
-            get(api::agent::list_agent_sessions),
-        )
+        .route(paths::AGENT_PROFILES, get(api::agent::list_agent_profiles))
+        .route(paths::AGENT_SESSIONS, get(api::agent::list_agent_sessions))
         .route(
             paths::AGENT_SESSION_BY_ID,
             delete(api::agent::delete_agent_session),
@@ -126,7 +117,10 @@ pub fn build_router(state: Arc<AppState>, static_dir: &Path) -> Router {
         .route(paths::LIVE_SESSION, get(api::live::sse_session_stream))
         .route(paths::LIVE_NODE, get(api::live::sse_node_output))
         .route(paths::SESSIONS, get(api::live::list_sessions))
-        .nest_service(paths::ASSETS, ServeDir::new(static_dir.join(paths::ASSETS_DIR)))
+        .nest_service(
+            paths::ASSETS,
+            ServeDir::new(static_dir.join(paths::ASSETS_DIR)),
+        )
         .fallback(get(api::pages::spa_fallback))
         .layer(CorsLayer::permissive())
         .with_state(state)

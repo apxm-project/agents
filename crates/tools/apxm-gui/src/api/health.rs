@@ -15,9 +15,7 @@ pub struct HealthQuery {
 }
 
 /// GET /api/health
-pub async fn health_handler(
-    Query(params): Query<HealthQuery>,
-) -> ApiResult<impl IntoResponse> {
+pub async fn health_handler(Query(params): Query<HealthQuery>) -> ApiResult<impl IntoResponse> {
     let do_probe = params.probe.unwrap_or(false);
 
     let backends = load_backends().unwrap_or_default();

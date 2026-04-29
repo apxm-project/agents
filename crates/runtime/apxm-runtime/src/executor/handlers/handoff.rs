@@ -6,15 +6,15 @@
 //! Emits typed handoff lifecycle events with span continuity.
 
 use super::{
-    ExecutionContext, Node, Result, Value, execute_llm_request, get_string_attribute,
+    ExecutionContext, Node, Result, Value, execute_llm_request_for_node, get_string_attribute,
     read_stm_with_scope_fallback,
 };
 use crate::aam::{ScopeSpec, TransitionLabel};
 use crate::executor::ExecutorEngine;
 use crate::flow_names::HANDOFF_FLOWS as HANDOFF_FLOW_NAMES;
+use crate::metadata_keys as metadata;
 use apxm_backends::LLMRequest;
 use apxm_core::constants::graph::attrs as graph_attrs;
-use crate::metadata_keys as metadata;
 use apxm_core::constants::runtime::{belief_keys, response_keys};
 use apxm_core::error::RuntimeError;
 use apxm_core::types::operations::AISOperationType;
@@ -317,7 +317,7 @@ async fn handoff_inline_agent(
         "HANDOFF dispatching to inline-spawned agent via LLM"
     );
 
-    let response = execute_llm_request(ctx, node.id, "HANDOFF", &request).await?;
+    let response = execute_llm_request_for_node(ctx, node, "HANDOFF", &request).await?;
     Ok(Some(Value::String(response.content)))
 }
 

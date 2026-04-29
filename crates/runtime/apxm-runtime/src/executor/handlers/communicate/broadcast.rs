@@ -230,8 +230,9 @@ mod tests {
             Value::String(CommunicateProtocol::Broadcast.as_str().to_string()),
         );
 
-        let result =
-            execute_broadcast(&ctx, &node, Value::String("ping".to_string())).await.unwrap();
+        let result = execute_broadcast(&ctx, &node, Value::String("ping".to_string()))
+            .await
+            .unwrap();
 
         let arr = match result {
             Value::Array(items) => items,
@@ -277,8 +278,9 @@ mod tests {
             metadata: NodeMetadata::default(),
         };
 
-        let result =
-            execute_broadcast(&ctx, &node, Value::String("ping".to_string())).await.unwrap();
+        let result = execute_broadcast(&ctx, &node, Value::String("ping".to_string()))
+            .await
+            .unwrap();
         assert_eq!(result, Value::Array(vec![]));
     }
 }

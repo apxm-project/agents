@@ -256,7 +256,7 @@ fn emit_cli_error(err: &anyhow::Error, json_mode: bool) {
                 "error": err.to_string(),
                 "causes": causes,
             }))
-                .expect("serialize cli error")
+            .expect("serialize cli error")
         );
     } else {
         eprintln!("{err}");

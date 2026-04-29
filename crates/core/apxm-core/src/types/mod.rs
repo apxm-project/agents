@@ -53,7 +53,6 @@ pub use graph_hints::{
     PinMode, PinPolicy, PriorityClass,
 };
 pub use graph_metrics::{LatencyClass, NodeGraphMetrics};
-pub use metrics::{GraphStatusKey, MetricsLevel};
 pub use identifiers::{
     BackendId, CapabilityName, CheckpointId, ExecutionId, MessageId, ModelId, NodeIdType, OpIdType,
     ProfileId, SessionId, TokenIdType, TraceId,
@@ -61,6 +60,7 @@ pub use identifiers::{
 pub use intents::{
     Entity, EntityType, ExportFormat, InspectTarget, Intent, MemoryQueryType, ProgramBuildStep,
 };
+pub use metrics::{GraphStatusKey, MetricsLevel};
 pub use models::{
     FinishReason, LLMResponse, ModelCapabilities, ModelInfo, TimingBreakdown, TokenUsage, ToolCall,
     ToolResult,

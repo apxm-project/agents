@@ -9,8 +9,8 @@ use apxm_ais::{
     generate_pass_descriptors, generate_pass_dispatch, generate_passes_tablegen, generate_tablegen,
 };
 use apxm_core::utils::build::{
-    detect_llvm_version, emit_link_directives, find_versioned_mlir_library, get_target_dir,
-    get_workspace_root, locate_library, LibraryConfig, LinkSpec, Platform,
+    LibraryConfig, LinkSpec, Platform, detect_llvm_version, emit_link_directives,
+    find_versioned_mlir_library, get_target_dir, get_workspace_root, locate_library,
 };
 use apxm_core::{log_debug, log_info};
 

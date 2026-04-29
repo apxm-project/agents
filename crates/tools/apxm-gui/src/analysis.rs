@@ -219,9 +219,6 @@ mod tests {
         assert_eq!(display_name_to_serde_variant("QueryMemory"), "QMEM");
         assert_eq!(display_name_to_serde_variant("Ask"), "ASK");
         assert_eq!(display_name_to_serde_variant("ASK"), "ASK");
-        assert_eq!(
-            display_name_to_serde_variant("SpawnAgent"),
-            "SPAWN_AGENT"
-        );
+        assert_eq!(display_name_to_serde_variant("SpawnAgent"), "SPAWN_AGENT");
     }
 }

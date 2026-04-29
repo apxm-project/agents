@@ -15,8 +15,21 @@ from apxm.backends import select_backend
 SHOWCASE_ALIAS = "showcase"
 BENCHMARK_ALIAS = "benchmark"
 
-SHOWCASE_ROUTE = select_backend(protocol=VLLM.protocol, alias=SHOWCASE_ALIAS)
-BENCHMARK_ROUTE = select_backend(protocol=VLLM.protocol, alias=BENCHMARK_ALIAS)
+
+def _select_alias(alias: str):
+    return select_backend(protocol=VLLM.protocol, alias=alias)
+
+
+def __getattr__(name: str):
+    if name == "SHOWCASE_ROUTE":
+        route = _select_alias(SHOWCASE_ALIAS)
+        globals()[name] = route
+        return route
+    if name == "BENCHMARK_ROUTE":
+        route = _select_alias(BENCHMARK_ALIAS)
+        globals()[name] = route
+        return route
+    raise AttributeError(name)
 
 __all__ = [
     "VLLM",

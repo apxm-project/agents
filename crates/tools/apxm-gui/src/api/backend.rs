@@ -99,9 +99,7 @@ pub async fn probe_backend_status(endpoint: &str) -> String {
 }
 
 /// GET /api/backends
-pub async fn backends_handler(
-    Query(params): Query<BackendsQuery>,
-) -> ApiResult<impl IntoResponse> {
+pub async fn backends_handler(Query(params): Query<BackendsQuery>) -> ApiResult<impl IntoResponse> {
     let backends = load_backends()?;
 
     let mut dtos: Vec<BackendDto> = backends.iter().map(BackendDto::from).collect();

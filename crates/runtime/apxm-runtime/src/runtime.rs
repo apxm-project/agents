@@ -1,5 +1,6 @@
 //! Runtime orchestrator - Main entry point for the APxM runtime
 
+use crate::metadata_keys as metadata;
 use crate::model_router::{ModelRouter, ModelRouterConfig};
 use crate::python_tools;
 use crate::python_tools::{PythonToolBridge, PythonToolRegistry};
@@ -21,7 +22,6 @@ use crate::{
 };
 use apxm_artifact::Artifact;
 use apxm_backends::LLMRegistry;
-use crate::metadata_keys as metadata;
 use apxm_core::constants::graph::metadata as graph_meta;
 use apxm_core::log_info;
 use apxm_core::{
