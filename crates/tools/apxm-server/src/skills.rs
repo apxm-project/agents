@@ -10,7 +10,8 @@ use apxm_core::events::payload::ErrorPayload;
 use apxm_core::events::{ApxmEvent, EventCategory, EventKind, EventSource, SkillEventProvenance};
 use apxm_core::impl_event_payload;
 use apxm_core::paths::ApxmPaths;
-use apxm_core::types::AISOperationType;
+use apxm_core::types::{AISOperationType, Value};
+use apxm_runtime::capability::CapabilitySandboxPreflight;
 use axum::Json;
 use axum::extract::{Path as AxumPath, State};
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -33,6 +34,8 @@ const TESTS_DIR: &str = "tests";
 const SKILL_ROOT_FLAG: &str = "--skill-root";
 const SKILL_ROOTS_ENV: &str = "APXM_SKILL_ROOTS";
 const SKILL_SESSION_DIR: &str = "skills";
+const SIDE_EFFECT_POLICY_READ_ONLY: &str = "read_only";
+const SIDE_EFFECT_POLICY_SANDBOXED: &str = "sandboxed";
 const HASH_PREFIX: &str = "blake3:";
 const SKILL_EXECUTE_STARTED: EventKind =
     EventKind::new("skill_execute_started", EventCategory::Lifecycle, false);
@@ -764,8 +767,11 @@ fn validate_static_skill_admission(
     let side_effect_policy = manifest
         .side_effect_policy
         .as_deref()
-        .unwrap_or("read_only");
-    if side_effect_policy != "read_only" {
+        .unwrap_or(SIDE_EFFECT_POLICY_READ_ONLY);
+    if !matches!(
+        side_effect_policy,
+        SIDE_EFFECT_POLICY_READ_ONLY | SIDE_EFFECT_POLICY_SANDBOXED
+    ) {
         return Err(ApiError::bad_request(format!(
             "static skill execution does not support side_effect_policy '{side_effect_policy}' yet"
         )));
@@ -779,11 +785,13 @@ fn validate_static_skill_admission(
     } else {
         manifest.allowed_tools.iter().map(String::as_str).collect()
     };
-    for name in &allowed_tools {
-        if !capability_system.is_read_only(name) {
-            return Err(ApiError::bad_request(format!(
-                "skill capability '{name}' is not read-only"
-            )));
+    if side_effect_policy == SIDE_EFFECT_POLICY_READ_ONLY {
+        for name in &allowed_tools {
+            if !capability_system.is_read_only(name) {
+                return Err(ApiError::bad_request(format!(
+                    "skill capability '{name}' is not read-only"
+                )));
+            }
         }
     }
 
@@ -791,6 +799,9 @@ fn validate_static_skill_admission(
         for node in &dag.nodes {
             if node.op_type == AISOperationType::InvTool {
                 validate_inv_tool_node(node, &allowed_tools)?;
+                if side_effect_policy == SIDE_EFFECT_POLICY_SANDBOXED {
+                    validate_sandboxed_inv_tool_node(node, state)?;
+                }
             } else if !is_allowed_static_skill_op(node.op_type) {
                 return Err(ApiError::bad_request(format!(
                     "skill artifact uses disallowed operation {}",
@@ -800,6 +811,72 @@ fn validate_static_skill_admission(
         }
     }
     Ok(())
+}
+
+fn validate_sandboxed_inv_tool_node(
+    node: &apxm_core::types::execution::Node,
+    state: &AppState,
+) -> Result<(), ApiError> {
+    let capability = node
+        .attributes
+        .get(graph_attrs::CAPABILITY)
+        .and_then(|value| value.as_string())
+        .ok_or_else(|| ApiError::bad_request("INV_TOOL missing capability attribute"))?;
+    let capability_system = state.runtime.capability_system();
+    if capability_system.is_read_only(&capability) {
+        return Ok(());
+    }
+
+    let args = inv_tool_static_args(node)?;
+    match capability_system.sandbox_preflight(&capability, &args) {
+        Ok(CapabilitySandboxPreflight::Sandboxed { .. }) => Ok(()),
+        Ok(CapabilitySandboxPreflight::Direct) => Err(ApiError::bad_request(format!(
+            "skill capability '{capability}' is side-effectful but does not declare sandbox execution"
+        ))),
+        Err(error) => Err(ApiError::bad_request(format!(
+            "skill capability '{capability}' failed sandbox preflight: {error}"
+        ))),
+    }
+}
+
+fn inv_tool_static_args(
+    node: &apxm_core::types::execution::Node,
+) -> Result<HashMap<String, Value>, ApiError> {
+    let mut args = HashMap::new();
+    let Some(params_json) = node
+        .attributes
+        .get(graph_attrs::PARAMS_JSON)
+        .and_then(|value| value.as_string())
+    else {
+        return Ok(args);
+    };
+
+    let parsed: serde_json::Value = serde_json::from_str(&params_json)
+        .map_err(|error| ApiError::bad_request(format!("invalid INV_TOOL params_json: {error}")))?;
+    let Some(obj) = parsed.as_object() else {
+        return Err(ApiError::bad_request(
+            "INV_TOOL params_json must be a JSON object",
+        ));
+    };
+
+    for (key, value) in obj {
+        let value = match value {
+            serde_json::Value::String(value) => Value::String(value.clone()),
+            serde_json::Value::Number(value) => {
+                if let Some(value) = value.as_i64() {
+                    Value::Number(apxm_core::types::values::Number::Integer(value))
+                } else if let Some(value) = value.as_f64() {
+                    Value::Number(apxm_core::types::values::Number::Float(value))
+                } else {
+                    continue;
+                }
+            }
+            serde_json::Value::Bool(value) => Value::Bool(*value),
+            _ => continue,
+        };
+        args.insert(key.clone(), value);
+    }
+    Ok(args)
 }
 
 fn validate_inv_tool_node(

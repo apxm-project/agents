@@ -21,7 +21,10 @@ use apxm_core::types::execution::{DagMetadata, ExecutionDag, Node, NodeMetadata}
 use apxm_core::types::values::Value;
 use apxm_runtime::capability::executor::CapabilityExecutor;
 use apxm_runtime::capability::metadata::CapabilityMetadata;
-use apxm_runtime::{Runtime, RuntimeConfig};
+use apxm_runtime::{
+    DefaultBackend, ExecRequest, ExecResult, IsolationLevel, Runtime, RuntimeConfig,
+    SandboxCapabilities, SandboxRegistry,
+};
 use async_trait::async_trait;
 use axum::Router;
 use axum::body::Body;
@@ -132,6 +135,8 @@ const ERROR_CAPABILITY_NOT_REGISTERED: &str = "is not registered";
 const ERROR_UNDECLARED_CAPABILITY: &str = "invokes undeclared capability";
 const ERROR_PYTHON_INV_TOOL_UNSUPPORTED: &str = "does not support python-backed INV_TOOL";
 const ERROR_SIDE_EFFECT_POLICY_UNSUPPORTED: &str = "does not support side_effect_policy";
+const ERROR_SANDBOX_PREFLIGHT: &str = "sandbox preflight";
+const SIDE_EFFECT_POLICY_SANDBOXED: &str = "sandboxed";
 
 struct FixtureReadCapability {
     metadata: CapabilityMetadata,
@@ -159,6 +164,46 @@ impl CapabilityExecutor for FixtureReadCapability {
 
     fn metadata(&self) -> &CapabilityMetadata {
         &self.metadata
+    }
+}
+
+struct FixtureSandboxedCapability {
+    metadata: CapabilityMetadata,
+}
+
+impl FixtureSandboxedCapability {
+    fn new(name: &str) -> Self {
+        Self {
+            metadata: CapabilityMetadata::new(
+                name,
+                "Fixture side-effectful sandboxed capability",
+                serde_json::json!({ "type": "object", "properties": {} }),
+            )
+            .with_returns("string"),
+        }
+    }
+}
+
+#[async_trait]
+impl CapabilityExecutor for FixtureSandboxedCapability {
+    async fn execute(&self, _args: HashMap<String, Value>) -> Result<Value, RuntimeError> {
+        Err(RuntimeError::Capability {
+            capability: self.metadata.name.clone(),
+            message: "fixture sandboxed capability must run through sandbox".to_string(),
+        })
+    }
+
+    fn metadata(&self) -> &CapabilityMetadata {
+        &self.metadata
+    }
+
+    fn to_exec_request(&self, _args: &HashMap<String, Value>) -> Option<ExecRequest> {
+        Some(ExecRequest {
+            min_isolation: IsolationLevel::PolicyOnly,
+            program: "fixture-sandboxed-tool".to_string(),
+            origin_op: Some("inv_tool".to_string()),
+            ..Default::default()
+        })
     }
 }
 
@@ -211,6 +256,22 @@ async fn test_state_with_skill_roots_and_execution_store(
         a2a_tasks: Arc::new(DashMap::new()),
         skill_library: SkillLibrary::new(skill_roots),
         execution_store,
+    }
+}
+
+async fn test_state_with_runtime_and_skill_roots(
+    runtime: Runtime,
+    skill_roots: Vec<std::path::PathBuf>,
+) -> AppState {
+    AppState {
+        runtime: Arc::new(runtime),
+        agent_registry: Arc::new(DashMap::new()),
+        task_manager: TaskQueueManager::new(),
+        checkpoint_store: CheckpointStore::new(),
+        start_time: SystemTime::now(),
+        a2a_tasks: Arc::new(DashMap::new()),
+        skill_library: SkillLibrary::new(skill_roots),
+        execution_store: ExecutionStore::new(),
     }
 }
 
@@ -376,6 +437,32 @@ artifact_hash = "{artifact_hash}"
 required_capabilities = ["{required_capability}"]
 allowed_tools = ["{allowed_tool}"]
 side_effect_policy = "read_only"
+"#
+        ),
+    );
+}
+
+fn write_sandboxed_policy_skill_with_artifact(
+    root: &std::path::Path,
+    artifact_bytes: &[u8],
+    required_capability: &str,
+    allowed_tool: &str,
+) {
+    let skill_dir = root.join(FIXTURE_PACKAGE_DIR);
+    std::fs::create_dir_all(&skill_dir).expect(MSG_SKILL_DIR);
+    std::fs::write(skill_dir.join(FILE_SKILL_ARTIFACT), artifact_bytes).expect(FILE_SKILL_ARTIFACT);
+    let artifact_hash = tagged_blake3(artifact_bytes);
+    write_skill_manifest(
+        &skill_dir,
+        &format!(
+            r#"
+skill_id = "{FIXTURE_SKILL_ID}"
+version = "{FIXTURE_SKILL_VERSION}"
+entry_flow = "{FIXTURE_ENTRY_FLOW}"
+artifact_hash = "{artifact_hash}"
+required_capabilities = ["{required_capability}"]
+allowed_tools = ["{allowed_tool}"]
+side_effect_policy = "{SIDE_EFFECT_POLICY_SANDBOXED}"
 "#
         ),
     );
@@ -582,6 +669,32 @@ fn fixture_execute_response(session_dir: Option<String>) -> ExecuteResponse {
             total_requests: 0,
         },
     }
+}
+
+fn fixture_sandbox_registry() -> SandboxRegistry {
+    let mut registry = SandboxRegistry::new();
+    registry.register(Arc::new(DefaultBackend::new(
+        SandboxCapabilities {
+            isolation_level: IsolationLevel::PolicyOnly,
+            supports_filesystem_restriction: true,
+            supports_network_restriction: true,
+            supports_syscall_filtering: false,
+            supports_resource_limits: true,
+            name: "fixture-policy-sandbox".to_string(),
+            version: "test".to_string(),
+        },
+        |_request| async {
+            Ok(ExecResult {
+                success: true,
+                exit_code: Some(0),
+                stdout: FIXTURE_OUTPUT.to_string(),
+                stderr: String::new(),
+                duration: std::time::Duration::from_millis(1),
+                timed_out: false,
+            })
+        },
+    )));
+    registry
 }
 
 fn skill_detail_route(id: &str) -> String {
@@ -1411,6 +1524,65 @@ async fn skill_execute_allows_declared_read_only_capability() {
 
     assert_eq!(status, StatusCode::OK, "skill execute failed: {body}");
     assert_eq!(body["content"], FIXTURE_OUTPUT);
+}
+
+#[tokio::test]
+async fn skill_execute_allows_sandboxed_side_effectful_capability_after_preflight() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let artifact = inv_tool_artifact_bytes(FIXTURE_TOOL, None);
+    write_sandboxed_policy_skill_with_artifact(temp.path(), &artifact, FIXTURE_TOOL, FIXTURE_TOOL);
+
+    let mut runtime = Runtime::new(RuntimeConfig::in_memory())
+        .await
+        .expect("test runtime");
+    runtime.set_sandbox_registry(Arc::new(fixture_sandbox_registry()));
+    runtime
+        .capability_system()
+        .register(Arc::new(FixtureSandboxedCapability::new(FIXTURE_TOOL)))
+        .expect("register fixture sandboxed capability");
+    let app = build_app(
+        test_state_with_runtime_and_skill_roots(runtime, vec![temp.path().to_path_buf()]).await,
+    );
+
+    let (status, body) = post_json(
+        app,
+        &skill_execute_route(FIXTURE_SKILL_ID),
+        serde_json::json!({}),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "skill execute failed: {body}");
+    assert_eq!(body["content"], FIXTURE_OUTPUT);
+}
+
+#[tokio::test]
+async fn skill_execute_rejects_sandboxed_policy_without_backend_preflight() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let artifact = inv_tool_artifact_bytes(FIXTURE_TOOL, None);
+    write_sandboxed_policy_skill_with_artifact(temp.path(), &artifact, FIXTURE_TOOL, FIXTURE_TOOL);
+    let state = test_state_with_skill_roots(vec![temp.path().to_path_buf()]).await;
+    state
+        .runtime
+        .capability_system()
+        .register(Arc::new(FixtureSandboxedCapability::new(FIXTURE_TOOL)))
+        .expect("register fixture sandboxed capability");
+    let app = build_app(state);
+
+    let (status, body) = post_json(
+        app,
+        &skill_execute_route(FIXTURE_SKILL_ID),
+        serde_json::json!({}),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST, "expected 400: {body}");
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains(ERROR_SANDBOX_PREFLIGHT),
+        "expected sandbox preflight rejection: {body}"
+    );
 }
 
 #[tokio::test]
