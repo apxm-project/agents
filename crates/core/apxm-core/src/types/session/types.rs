@@ -56,6 +56,18 @@ pub struct SessionManifest {
     /// Scope identifier for session isolation. `None` means global scope.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope_id: Option<String>,
+    /// Parent execution that spawned this session, when this is a child run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_execution_id: Option<String>,
+    /// Parent session directory that owns this child run, when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_session_dir: Option<String>,
+    /// Parent scope that spawned this session, when this is a scoped child run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_scope_id: Option<String>,
+    /// Parent node that spawned this session, when this is a child run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spawn_node_id: Option<u64>,
 }
 
 /// Live session state — updated in real-time as nodes complete.

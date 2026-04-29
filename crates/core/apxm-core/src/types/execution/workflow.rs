@@ -102,6 +102,14 @@ pub struct WorkflowInvocation {
     pub session_root: Option<String>,
     #[serde(default)]
     pub session_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_execution_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_session_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_scope_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spawn_node_id: Option<u64>,
 }
 
 const fn default_await_result() -> bool {
@@ -281,6 +289,10 @@ mod tests {
                 await_result: true,
                 session_root: None,
                 session_dir: None,
+                parent_execution_id: None,
+                parent_session_dir: None,
+                parent_scope_id: None,
+                spawn_node_id: None,
             },
         };
         assert_eq!(wn.depth(), 0);
@@ -327,6 +339,10 @@ mod tests {
                 await_result: true,
                 session_root: None,
                 session_dir: None,
+                parent_execution_id: None,
+                parent_session_dir: None,
+                parent_scope_id: None,
+                spawn_node_id: None,
             },
         };
         assert!(wn.flatten().is_empty());
@@ -478,6 +494,10 @@ mod tests {
                         await_result: true,
                         session_root: None,
                         session_dir: None,
+                        parent_execution_id: None,
+                        parent_session_dir: None,
+                        parent_scope_id: None,
+                        spawn_node_id: None,
                     },
                 },
             ],
@@ -546,6 +566,10 @@ mod tests {
                         await_result: false,
                         session_root: None,
                         session_dir: None,
+                        parent_execution_id: None,
+                        parent_session_dir: None,
+                        parent_scope_id: None,
+                        spawn_node_id: None,
                     },
                 },
                 WorkflowNode::SubWorkflow {
@@ -603,6 +627,10 @@ mod tests {
             await_result: true,
             session_root: None,
             session_dir: None,
+            parent_execution_id: None,
+            parent_session_dir: None,
+            parent_scope_id: None,
+            spawn_node_id: None,
         };
         let spawned = WorkflowInvocation {
             kind: WorkflowInvocationKind::WorkflowSpawn,
@@ -613,6 +641,10 @@ mod tests {
             await_result: true,
             session_root: None,
             session_dir: None,
+            parent_execution_id: None,
+            parent_session_dir: None,
+            parent_scope_id: None,
+            spawn_node_id: None,
         };
         assert!(!flow_call.is_cross_execution());
         assert!(spawned.is_cross_execution());

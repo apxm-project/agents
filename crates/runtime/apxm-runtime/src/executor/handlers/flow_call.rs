@@ -190,9 +190,14 @@ async fn execute_impl(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -
 
     // Propagate the child scope_id to the event emitter so emitted events
     // carry the sub-flow's scope for session isolation.
-    if let Some(emitter) = &child_ctx.event_emitter {
+    let child_event_emitter = child_ctx.event_emitter.as_ref().map(Arc::clone);
+    let previous_scope_id = if let Some(emitter) = &child_event_emitter {
+        let previous_scope_id = emitter.current_scope_id();
         emitter.set_current_scope_id(child_ctx.current_scope_id.clone());
-    }
+        previous_scope_id
+    } else {
+        None
+    };
 
     // Execute the sub-flow DAG with real scheduler inputs so compile
     // parameters work for nested flows.
@@ -203,14 +208,20 @@ async fn execute_impl(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -
     let token_accountant = Arc::clone(&child_ctx.token_accountant);
     let child_scope_id = child_ctx.scope_id().to_string();
 
-    let (results, stats, _scheduler_metrics, all_outputs, node_output_map) = scheduler
+    let scheduler_result = scheduler
         .execute(
             dag_to_execute,
             engine,
             child_ctx,
             resolved_args.ordered_inputs.clone(),
         )
-        .await
+        .await;
+
+    if let Some(emitter) = &child_event_emitter {
+        emitter.set_current_scope_id(previous_scope_id);
+    }
+
+    let (results, stats, _scheduler_metrics, all_outputs, node_output_map) = scheduler_result
         .map_err(|e| {
             tracing::error!(
                 agent = %agent_name,

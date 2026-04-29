@@ -8,7 +8,7 @@ use apxm_core::paths::session_node_dir_name;
 use apxm_core::types::{
     AISOperationType, DependencyType, NodeMetrics, OperationMetric, SessionStatus, Value,
 };
-use apxm_driver::session_output::SessionEventEmitter;
+use apxm_driver::session_output::{SessionEventEmitter, SessionOutputWriter, SessionProvenance};
 use apxm_runtime::ExecutionEventEmitter;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -293,6 +293,136 @@ fn node_lifecycle_events_are_persisted_to_root_and_node_traces() {
         node_events[1].payload.to_json(),
         root_events[1].payload.to_json()
     );
+}
+
+#[test]
+fn scoped_session_events_and_node_metadata_are_persisted() {
+    let session_root = tempfile::tempdir().expect("session root");
+    let project_root = setup_project_root();
+    let graph = make_graph(
+        vec![make_node(
+            1,
+            "scoped_seed",
+            AISOperationType::ConstStr,
+            HashMap::new(),
+        )],
+        Vec::new(),
+    );
+
+    let emitter = make_emitter(session_root.path(), project_root.path(), &graph);
+    emitter.set_current_scope_id(Some("scope-1".to_string()));
+    emitter.emit_operation_start(1, AISOperationType::ConstStr);
+    emitter.emit_operation_end(
+        1,
+        AISOperationType::ConstStr,
+        Duration::from_millis(7),
+        true,
+        None,
+        None,
+    );
+
+    let root_events = read_trace(&session_root.path().join(constants::session::files::TRACE));
+    assert_eq!(root_events.len(), 2);
+    assert_eq!(root_events[0].meta.scope_id.as_deref(), Some("scope-1"));
+    assert_eq!(root_events[1].meta.scope_id.as_deref(), Some("scope-1"));
+
+    let node_dir = session_root
+        .path()
+        .join(constants::session::files::NODES_DIR)
+        .join(session_node_dir_name(1, "scoped_seed"));
+    let node_events = read_trace(&node_dir.join(constants::session::node::TRACE_NDJSON));
+    assert_eq!(node_events[0].meta.scope_id.as_deref(), Some("scope-1"));
+    assert_eq!(node_events[1].meta.scope_id.as_deref(), Some("scope-1"));
+
+    let node_json: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(node_dir.join(constants::session::node::NODE_JSON)).expect("node.json"),
+    )
+    .expect("node json");
+    assert_eq!(node_json[constants::session::node::SCOPE_ID], "scope-1");
+}
+
+#[test]
+fn child_session_manifest_and_node_metadata_include_provenance() {
+    let session_root = tempfile::tempdir().expect("session root");
+    let project_root = setup_project_root();
+    let graph = make_graph(
+        vec![make_node(
+            1,
+            "child_seed",
+            AISOperationType::ConstStr,
+            HashMap::new(),
+        )],
+        Vec::new(),
+    );
+    let provenance = SessionProvenance {
+        scope_id: Some("child-scope".to_string()),
+        parent_execution_id: Some("parent-exec".to_string()),
+        parent_session_dir: Some("/tmp/parent-session".to_string()),
+        parent_scope_id: Some("parent-scope".to_string()),
+        spawn_node_id: Some(42),
+    };
+
+    let writer =
+        SessionOutputWriter::new(session_root.path(), EXECUTION_ID).expect("session writer");
+    writer
+        .write_manifest_with_provenance(
+            EXECUTION_ID,
+            Some("child_graph"),
+            SessionStatus::Running,
+            0,
+            1,
+            false,
+            &provenance,
+        )
+        .expect("manifest");
+
+    let emitter = SessionEventEmitter::new_with_provenance(
+        writer.session_dir(),
+        EXECUTION_ID.to_string(),
+        Some(&graph),
+        Some(project_root.path()),
+        provenance,
+    )
+    .expect("session emitter");
+    emitter.emit_operation_start(1, AISOperationType::ConstStr);
+
+    let manifest: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(
+            writer
+                .session_dir()
+                .join(constants::session::files::MANIFEST),
+        )
+        .expect("manifest"),
+    )
+    .expect("manifest json");
+    assert_eq!(manifest["scope_id"], "child-scope");
+    assert_eq!(manifest["parent_execution_id"], "parent-exec");
+    assert_eq!(manifest["parent_session_dir"], "/tmp/parent-session");
+    assert_eq!(manifest["parent_scope_id"], "parent-scope");
+    assert_eq!(manifest["spawn_node_id"], 42);
+
+    let node_dir = writer
+        .session_dir()
+        .join(constants::session::files::NODES_DIR)
+        .join(session_node_dir_name(1, "child_seed"));
+    let node_json: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(node_dir.join(constants::session::node::NODE_JSON)).expect("node.json"),
+    )
+    .expect("node json");
+    assert_eq!(node_json[constants::session::node::SCOPE_ID], "child-scope");
+    assert_eq!(
+        node_json[constants::session::node::PARENT_EXECUTION_ID],
+        "parent-exec"
+    );
+    assert_eq!(
+        node_json[constants::session::node::PARENT_SESSION_DIR],
+        "/tmp/parent-session"
+    );
+    assert_eq!(
+        node_json[constants::session::node::PARENT_SCOPE_ID],
+        "parent-scope"
+    );
+    assert_eq!(node_json[constants::session::node::SPAWN_NODE_ID], 42);
 }
 
 #[test]

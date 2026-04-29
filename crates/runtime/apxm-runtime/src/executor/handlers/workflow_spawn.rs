@@ -51,6 +51,10 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         await_result: true,
         session_root: resolve_session_root(ctx, node)?,
         session_dir: None,
+        parent_execution_id: Some(ctx.execution_id.clone()),
+        parent_session_dir: ctx.metadata.get(metadata::SESSION_DIR).cloned(),
+        parent_scope_id: Some(ctx.scope_id().to_string()),
+        spawn_node_id: Some(node.id),
     };
 
     let result = ctx.workflow_spawner.spawn_workflow(invocation).await?;
