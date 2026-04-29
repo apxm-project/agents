@@ -18,6 +18,7 @@ class CargoCommand(StrEnum):
     BUILD = "build"
     BUILD_DIALECT = "build-dialect"
     CLEAN = "clean"
+    SCRUB_SIGBUS_CACHE = "scrub-sigbus-cache"
     TARGET_DIR = "target-dir"
     TEST = "test"
 
@@ -44,6 +45,7 @@ TARGET_ROOT_NAME = "apxm-cargo-targets"
 PROJECT_TARGET_DIR_NAME = "target"
 DEBUG_PROFILE_DIR_NAME = "debug"
 RELEASE_PROFILE_DIR_NAME = "release"
+FINGERPRINT_DIR_NAME = ".fingerprint"
 BUILD_DIR_NAME = "build"
 LIB_DIR_NAME = "lib"
 MAKEFILE_NAME = "Makefile"
@@ -54,6 +56,9 @@ APXM_COMPILER_BUILD_GLOB = f"apxm-compiler*/out/{BUILD_DIR_NAME}/{MAKEFILE_NAME}
 TABLEGEN_TARGET = "AISIRIncGen"
 PROJECT_DIGEST_SIZE = 16
 EXECUTABLE_SUFFIX = ".exe"
+FINGERPRINT_OUTPUT_GLOB = "output-*"
+RUSTC_SIGBUS_MARKER = "rustc interrupted by SIGBUS"
+TEMP_ARCHIVE_GLOB = ".tmp*.temp-archive"
 LIBRARY_SUFFIXES = frozenset({".a", ".dylib", ".dll", ".so"})
 SKIP_RELEASE_ENTRIES = frozenset({
     BUILD_DIR_NAME,
@@ -246,6 +251,39 @@ def _clean(project_root: Path, target_dir: Path, args: list[str]) -> int:
     return result
 
 
+def _scrub_sigbus_cache(project_root: Path, target_dir: Path) -> int:
+    target_roots = [project_root / PROJECT_TARGET_DIR_NAME, target_dir]
+    removed = 0
+
+    for root in dict.fromkeys(path.resolve() for path in target_roots):
+        if not root.exists():
+            continue
+
+        fingerprint_root = root / DEBUG_PROFILE_DIR_NAME / FINGERPRINT_DIR_NAME
+        if fingerprint_root.is_dir():
+            for output in fingerprint_root.glob(f"*/{FINGERPRINT_OUTPUT_GLOB}"):
+                if not output.is_file():
+                    continue
+                try:
+                    content = output.read_text(errors="replace")
+                except OSError:
+                    continue
+                if RUSTC_SIGBUS_MARKER in content:
+                    output.unlink()
+                    removed += 1
+
+        deps_root = root / DEBUG_PROFILE_DIR_NAME / DEPS_DIR_NAME
+        if deps_root.is_dir():
+            for entry in deps_root.glob(TEMP_ARCHIVE_GLOB):
+                if entry.is_dir():
+                    shutil.rmtree(entry)
+                    removed += 1
+
+    suffix = "y" if removed == 1 else "ies"
+    print(f"removed {removed} stale rustc SIGBUS cache entr{suffix}")
+    return 0
+
+
 def main(argv: list[str]) -> int:
     project_root = _repo_root(Path(__file__))
     target_dir = _target_dir(project_root)
@@ -261,6 +299,8 @@ def main(argv: list[str]) -> int:
         return _build_dialect(project_root, target_dir)
     if argv[0] == CargoCommand.CLEAN.value:
         return _clean(project_root, target_dir, argv[1:])
+    if argv[0] == CargoCommand.SCRUB_SIGBUS_CACHE.value:
+        return _scrub_sigbus_cache(project_root, target_dir)
 
     result = _run([CARGO, *argv], project_root=project_root, target_dir=target_dir)
     if result == 0 and argv[0] == CargoCommand.BUILD.value and RELEASE_FLAG in argv:
