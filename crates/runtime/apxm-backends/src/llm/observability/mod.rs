@@ -68,7 +68,10 @@ impl AggregatedMetrics {
     pub fn to_metrics_json(&self) -> serde_json::Value {
         use metrics_keys::llm_keys;
         let mut llm = serde_json::Map::new();
-        llm.insert(llm_keys::TOTAL_REQUESTS.to_owned(), self.total_requests.into());
+        llm.insert(
+            llm_keys::TOTAL_REQUESTS.to_owned(),
+            self.total_requests.into(),
+        );
         llm.insert(
             llm_keys::TOTAL_INPUT_TOKENS.to_owned(),
             self.total_input_tokens.into(),

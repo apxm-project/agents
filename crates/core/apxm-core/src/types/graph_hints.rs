@@ -454,7 +454,10 @@ impl GraphStatusSnapshot {
         use crate::types::metrics::GraphStatusKey as K;
 
         let mut map = serde_json::Map::new();
-        map.insert(K::Object.as_str().into(), apxm_llm::OBJECT_GRAPH_STATUS.into());
+        map.insert(
+            K::Object.as_str().into(),
+            apxm_llm::OBJECT_GRAPH_STATUS.into(),
+        );
         map.insert(
             K::BackendKind.as_str().into(),
             self.backend_kind.as_str().into(),

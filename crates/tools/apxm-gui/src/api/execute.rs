@@ -36,9 +36,7 @@ pub struct PathParam {
 }
 
 /// POST /api/execute
-pub async fn execute_handler(
-    Json(req): Json<ExecuteRequest>,
-) -> ApiResult<impl IntoResponse> {
+pub async fn execute_handler(Json(req): Json<ExecuteRequest>) -> ApiResult<impl IntoResponse> {
     let path = validate_path(&req.path)?;
     let cli_bin = find_apxm_cli();
 
@@ -117,9 +115,7 @@ pub async fn execute_handler(
 }
 
 /// POST /api/validate
-pub async fn validate_handler(
-    Json(req): Json<serde_json::Value>,
-) -> ApiResult<impl IntoResponse> {
+pub async fn validate_handler(Json(req): Json<serde_json::Value>) -> ApiResult<impl IntoResponse> {
     let path_str = req
         .get("path")
         .and_then(|v| v.as_str())
@@ -148,9 +144,7 @@ pub async fn validate_handler(
 }
 
 /// POST /api/decompile
-pub async fn decompile_handler(
-    Json(req): Json<serde_json::Value>,
-) -> ApiResult<impl IntoResponse> {
+pub async fn decompile_handler(Json(req): Json<serde_json::Value>) -> ApiResult<impl IntoResponse> {
     let path_str = req
         .get("path")
         .and_then(|v| v.as_str())
@@ -178,9 +172,7 @@ pub async fn decompile_handler(
 }
 
 /// GET /api/explain?path=<file>
-pub async fn explain_handler(
-    Query(params): Query<PathParam>,
-) -> ApiResult<impl IntoResponse> {
+pub async fn explain_handler(Query(params): Query<PathParam>) -> ApiResult<impl IntoResponse> {
     let path = validate_path(&params.path)?;
     let cli_bin = find_apxm_cli();
 

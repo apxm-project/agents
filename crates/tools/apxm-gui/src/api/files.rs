@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::air_parse;
 use crate::error::{ApiResult, AppError};
-use crate::paths::{is_skip_dir, validate_path, SourceKind};
+use crate::paths::{SourceKind, is_skip_dir, validate_path};
 use crate::state::AppState;
 
 #[derive(Deserialize)]
@@ -39,9 +39,7 @@ pub async fn startup_handler(State(state): State<Arc<AppState>>) -> impl IntoRes
 }
 
 /// GET /api/examples
-pub async fn examples_handler(
-    State(state): State<Arc<AppState>>,
-) -> ApiResult<impl IntoResponse> {
+pub async fn examples_handler(State(state): State<Arc<AppState>>) -> ApiResult<impl IntoResponse> {
     let examples_dir = match &state.examples_dir {
         Some(d) if d.is_dir() => d.clone(),
         _ => {
@@ -160,11 +158,7 @@ pub async fn filetree_handler() -> ApiResult<impl IntoResponse> {
     })))
 }
 
-async fn build_tree(
-    dir: &Path,
-    base: &Path,
-    depth: usize,
-) -> Vec<serde_json::Value> {
+async fn build_tree(dir: &Path, base: &Path, depth: usize) -> Vec<serde_json::Value> {
     if depth > 4 {
         return vec![];
     }
@@ -382,9 +376,9 @@ pub async fn collect_graphs(
                     let name = parsed
                         .as_ref()
                         .and_then(|v| v.get("name").and_then(|n| n.as_str()).map(String::from));
-                    let count = parsed.as_ref().and_then(|v| {
-                        v.get("nodes").and_then(|n| n.as_array()).map(|a| a.len())
-                    });
+                    let count = parsed
+                        .as_ref()
+                        .and_then(|v| v.get("nodes").and_then(|n| n.as_array()).map(|a| a.len()));
                     let params = parsed
                         .as_ref()
                         .and_then(|v| v.get("parameters").and_then(|p| p.as_array()).cloned());

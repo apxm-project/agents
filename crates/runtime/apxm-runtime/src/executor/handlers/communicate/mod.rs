@@ -30,12 +30,12 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         .or_else(|_| get_string_attribute(node, graph_attrs::TARGET))
         .unwrap_or_default();
     let protocol = match get_string_attribute(node, graph_attrs::PROTOCOL) {
-        Ok(raw) => raw.parse::<CommunicateProtocol>().map_err(|e| {
-            RuntimeError::Operation {
+        Ok(raw) => raw
+            .parse::<CommunicateProtocol>()
+            .map_err(|e| RuntimeError::Operation {
                 op_type: node.op_type,
                 message: format!("COMMUNICATE has invalid 'protocol' value: {e}"),
-            }
-        })?,
+            })?,
         Err(_) => CommunicateProtocol::Local,
     };
     let message = local::resolve_message(node, protocol, &inputs)?;
@@ -44,9 +44,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         CommunicateProtocol::Http | CommunicateProtocol::Https => {
             http::execute_http(ctx, node, &recipient, message).await
         }
-        CommunicateProtocol::Broadcast => {
-            broadcast::execute_broadcast(ctx, node, message).await
-        }
+        CommunicateProtocol::Broadcast => broadcast::execute_broadcast(ctx, node, message).await,
         CommunicateProtocol::Acp => acp::execute_acp(ctx, node, &recipient, message).await,
         CommunicateProtocol::Local => local::execute_local(ctx, node, &recipient, message).await,
     }
@@ -574,6 +572,10 @@ mod tests {
         // surfaces it as RuntimeError::Operation with the protocol name in the message.
         let parse_err = "websocket".parse::<CommunicateProtocol>().unwrap_err();
         assert_eq!(parse_err.0, "websocket");
-        assert!(parse_err.to_string().contains("unknown communicate protocol"));
+        assert!(
+            parse_err
+                .to_string()
+                .contains("unknown communicate protocol")
+        );
     }
 }

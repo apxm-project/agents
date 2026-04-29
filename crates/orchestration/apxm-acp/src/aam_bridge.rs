@@ -192,11 +192,7 @@ mod tests {
             env: Default::default(),
         }];
         let params = render_session_params(cwd, &caps);
-        let servers = params
-            .get(fields::MCP_SERVERS)
-            .unwrap()
-            .as_array()
-            .unwrap();
+        let servers = params.get(fields::MCP_SERVERS).unwrap().as_array().unwrap();
         assert_eq!(servers.len(), 1);
         assert_eq!(servers[0]["name"], "test-mcp");
     }

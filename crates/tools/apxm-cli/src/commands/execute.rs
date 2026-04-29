@@ -951,9 +951,9 @@ impl apxm_core::MetricsSource for RuntimeMetricsSource<'_> {
 
     fn collect(&self) -> serde_json::Value {
         use apxm_core::constants::session::metrics_keys;
-        use metrics_keys::{execution_keys, runtime_meta_keys};
         #[cfg(feature = "metrics")]
         use metrics_keys::link_phase_keys;
+        use metrics_keys::{execution_keys, runtime_meta_keys};
 
         let mut map = serde_json::Map::new();
 

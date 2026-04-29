@@ -1,5 +1,6 @@
 //! Execution context - Holds runtime state and provides access to subsystems
 
+use crate::metadata_keys as metadata;
 use crate::python_tools::PythonToolBridge;
 use crate::sandbox::SandboxRegistry;
 use crate::{
@@ -14,7 +15,6 @@ use crate::{
 };
 use apxm_backends::LLMRegistry;
 use apxm_core::InstructionConfig;
-use crate::metadata_keys as metadata;
 use apxm_core::constants::cache;
 use apxm_core::paths::ApxmPaths;
 use apxm_core::types::{Agent, MetricsLevel, OptimizationTarget};

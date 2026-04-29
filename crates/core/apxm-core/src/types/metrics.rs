@@ -126,7 +126,10 @@ mod tests {
 
     #[test]
     fn metrics_level_from_str_is_case_insensitive() {
-        assert_eq!(MetricsLevel::from_str("BASIC").unwrap(), MetricsLevel::Basic);
+        assert_eq!(
+            MetricsLevel::from_str("BASIC").unwrap(),
+            MetricsLevel::Basic
+        );
         assert_eq!(
             MetricsLevel::from_str("Detailed").unwrap(),
             MetricsLevel::Detailed

@@ -102,7 +102,10 @@ mod tests {
     #[test]
     fn env_used_when_attr_absent() {
         with_env(Some("execution"), || {
-            assert_eq!(resolved_cache_salt_selector(None).as_deref(), Some("execution"));
+            assert_eq!(
+                resolved_cache_salt_selector(None).as_deref(),
+                Some("execution")
+            );
         });
     }
 

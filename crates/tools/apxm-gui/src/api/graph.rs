@@ -9,14 +9,14 @@ use serde::Deserialize;
 use tracing::{error, info};
 
 use apxm_compiler::AirModule;
+use apxm_core::types::OperationSpec;
 use apxm_core::types::compiler::list_pass_metadata;
 use apxm_core::types::operations::metadata::get_all_operations;
-use apxm_core::types::OperationSpec;
 
 use crate::air_parse;
 use crate::analysis::{analyze_graph, normalize_ops_for_air_module};
 use crate::error::{ApiResult, AppError};
-use crate::paths::{validate_path, SourceKind};
+use crate::paths::{SourceKind, validate_path};
 
 #[derive(Deserialize)]
 pub struct PathParam {

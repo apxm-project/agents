@@ -11,8 +11,6 @@ pub async fn skills_handler() -> ApiResult<Json<serde_json::Value>> {
 }
 
 /// GET /api/skills/{name}
-pub async fn skill_detail_handler(
-    Path(name): Path<String>,
-) -> ApiResult<Json<serde_json::Value>> {
+pub async fn skill_detail_handler(Path(name): Path<String>) -> ApiResult<Json<serde_json::Value>> {
     Err(AppError::not_found(format!("skill '{name}' not found")))
 }

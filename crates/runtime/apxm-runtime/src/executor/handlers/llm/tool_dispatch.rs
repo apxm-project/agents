@@ -1,6 +1,8 @@
 //! Function-calling tool registry lookup, parallel dispatch, and ASK tool loop.
 
-use super::{ExecutionContext, charge_tokens, copy_llm_request_routing, resolve_global_token_budget};
+use super::{
+    ExecutionContext, charge_tokens, copy_llm_request_routing, resolve_global_token_budget,
+};
 use apxm_backends::{LLMRequest, ToolDefinition};
 use apxm_core::apxm_llm;
 use apxm_core::constants::graph::attrs as graph_attrs;
@@ -11,7 +13,7 @@ use apxm_core::types::values::Value;
 use apxm_core::types::{ToolCall, ToolResult};
 use std::collections::HashMap;
 
-use super::super::{Result, execute_llm_request};
+use super::super::{Result, execute_llm_request_for_node};
 
 /// Default maximum number of tool loop iterations to prevent infinite loops.
 /// Can be overridden per-node via the `max_tool_iterations` attribute.
@@ -342,7 +344,7 @@ pub(super) async fn execute_ask_with_tools(
         );
 
         let llm_start = std::time::Instant::now();
-        let response = execute_llm_request(ctx, node.id, "ASK", &current_request).await?;
+        let response = execute_llm_request_for_node(ctx, node, "ASK", &current_request).await?;
         let iter_total_ms = llm_start.elapsed().as_secs_f64() * 1000.0;
         let (iter_prefill, iter_decode) = response
             .timing

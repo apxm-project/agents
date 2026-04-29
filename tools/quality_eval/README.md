@@ -121,6 +121,6 @@ live in `_keys.py::RubricKeys` / `BudgetKeys`.
 The harness is run locally only (no CI gate is shipped in this repo):
 
 - Offline check (no backend required):
-  `dekk apxm test-quality-eval`
+  `PYTHONPATH=tools python -m pytest tools/quality_eval/tests -q`
 - Real-backend sweep (backend configured in `~/.apxm/config.toml`):
   `dekk apxm quality-eval -- --all --opt 2 --judge none --samples 3 --threshold 2`

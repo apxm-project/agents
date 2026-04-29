@@ -8,7 +8,7 @@ use apxm_core::types::{OptimizationLevel, OptimizationTarget};
 
 use crate::air_parse;
 use crate::error::{ApiResult, AppError};
-use crate::paths::{validate_path, SourceKind};
+use crate::paths::{SourceKind, validate_path};
 use crate::process::{apxm_command, find_apxm_cli};
 
 fn default_opt_level() -> u8 {
@@ -86,9 +86,7 @@ pub fn parse_compile_opt_level(level: u8) -> OptimizationLevel {
 }
 
 /// POST /api/compile
-pub async fn compile_handler(
-    Json(req): Json<CompileRequest>,
-) -> ApiResult<impl IntoResponse> {
+pub async fn compile_handler(Json(req): Json<CompileRequest>) -> ApiResult<impl IntoResponse> {
     let path = validate_path(&req.path)?;
 
     let node_count_before = if let Ok(content) = tokio::fs::read_to_string(&path).await {

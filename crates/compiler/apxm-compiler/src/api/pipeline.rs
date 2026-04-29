@@ -6,9 +6,7 @@ use crate::optimization::CompilerOptimizationContext;
 use crate::passes::{PassManager, PipelineDiagnostics, resolve_pass_list};
 use apxm_core::error::compiler::{CompilerError, Result};
 use apxm_core::error::{Error, codes::ErrorCode};
-use apxm_core::types::compiler::metadata::{
-    BUILD_PROMPT, DEAD_CONTEXT_ELIMINATION, DSPY_OPTIMIZE,
-};
+use apxm_core::types::compiler::metadata::{BUILD_PROMPT, DEAD_CONTEXT_ELIMINATION, DSPY_OPTIMIZE};
 use apxm_core::types::{OptimizationLevel, PipelineConfig};
 use std::ffi::CString;
 

@@ -15,8 +15,8 @@ use crate::error::ApiError;
 use crate::helpers::now_ms;
 use crate::state::AppState;
 use crate::types::responses::{
-    SseEventMeta, StreamErrorBody, StreamLlmDonePayload, StreamTokenPayload,
-    StreamToolCallPayload, StreamUsage, StreamUsagePayload, StreamWarningPayload,
+    SseEventMeta, StreamErrorBody, StreamLlmDonePayload, StreamTokenPayload, StreamToolCallPayload,
+    StreamUsage, StreamUsagePayload, StreamWarningPayload,
 };
 
 // ─── LLM Generate Types ──────────────────────────────────────────────────────
@@ -334,9 +334,9 @@ pub(crate) async fn handle_generate_stream(
                     let body = StreamErrorBody {
                         message: e.to_string(),
                     };
-                    let error_event = Event::default().event("error").data(
-                        serde_json::to_string(&body).unwrap_or_else(|_| "{}".to_string()),
-                    );
+                    let error_event = Event::default()
+                        .event("error")
+                        .data(serde_json::to_string(&body).unwrap_or_else(|_| "{}".to_string()));
                     let _ = tx.send(Ok(error_event)).await;
                     break;
                 }
@@ -347,9 +347,9 @@ pub(crate) async fn handle_generate_stream(
                     let body = StreamErrorBody {
                         message: "Stream timeout after 60s".to_string(),
                     };
-                    let timeout_event = Event::default().event("error").data(
-                        serde_json::to_string(&body).unwrap_or_else(|_| "{}".to_string()),
-                    );
+                    let timeout_event = Event::default()
+                        .event("error")
+                        .data(serde_json::to_string(&body).unwrap_or_else(|_| "{}".to_string()));
                     let _ = tx.send(Ok(timeout_event)).await;
                     break;
                 }

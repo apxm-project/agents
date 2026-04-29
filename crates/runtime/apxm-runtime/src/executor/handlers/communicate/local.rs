@@ -2,7 +2,7 @@
 //! and inline-spawned agent fallback.
 
 use super::super::{
-    ExecutionContext, Node, Result, Value, execute_llm_request, get_string_attribute,
+    ExecutionContext, Node, Result, Value, execute_llm_request_for_node, get_string_attribute,
     template::{input_names_from_node, render_named},
 };
 use crate::aam::{ScopeSpec, TransitionLabel};
@@ -323,7 +323,7 @@ async fn communicate_inline_agent(
         "COMMUNICATE dispatching to inline-spawned agent via LLM"
     );
 
-    let response = execute_llm_request(ctx, node.id, "COMMUNICATE", &request).await?;
+    let response = execute_llm_request_for_node(ctx, node, "COMMUNICATE", &request).await?;
     Ok(Some(Value::String(response.content)))
 }
 

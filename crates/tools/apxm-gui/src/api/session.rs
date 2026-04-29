@@ -26,12 +26,11 @@ pub async fn read_json_file(path: &Path) -> Result<serde_json::Value, AppError> 
     if !path.exists() {
         return Ok(serde_json::Value::Null);
     }
-    let content = tokio::fs::read_to_string(path).await.map_err(|e| {
-        AppError::internal(format!("failed to read {}: {e}", path.display()))
-    })?;
-    let value: serde_json::Value = serde_json::from_str(&content).map_err(|e| {
-        AppError::bad_request(format!("invalid JSON in {}: {e}", path.display()))
-    })?;
+    let content = tokio::fs::read_to_string(path)
+        .await
+        .map_err(|e| AppError::internal(format!("failed to read {}: {e}", path.display())))?;
+    let value: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| AppError::bad_request(format!("invalid JSON in {}: {e}", path.display())))?;
     Ok(value)
 }
 
@@ -40,9 +39,9 @@ pub async fn read_ndjson_file(path: &Path) -> Result<serde_json::Value, AppError
     if !path.exists() {
         return Ok(serde_json::Value::Array(vec![]));
     }
-    let content = tokio::fs::read_to_string(path).await.map_err(|e| {
-        AppError::internal(format!("failed to read {}: {e}", path.display()))
-    })?;
+    let content = tokio::fs::read_to_string(path)
+        .await
+        .map_err(|e| AppError::internal(format!("failed to read {}: {e}", path.display())))?;
 
     let events: Vec<serde_json::Value> = content
         .lines()
@@ -54,9 +53,7 @@ pub async fn read_ndjson_file(path: &Path) -> Result<serde_json::Value, AppError
 }
 
 /// GET /api/session?path=<dir>
-pub async fn session_handler(
-    Query(params): Query<PathParam>,
-) -> ApiResult<impl IntoResponse> {
+pub async fn session_handler(Query(params): Query<PathParam>) -> ApiResult<impl IntoResponse> {
     let dir = validate_path(&params.path)?;
     if !dir.is_dir() {
         return Err(AppError::not_found(format!(
@@ -159,8 +156,7 @@ pub async fn session_node_handler(
             let name = entry.file_name();
             let name_str = name.to_string_lossy();
             if name_str.starts_with(&format!("{}_", node_id))
-                || name_str
-                    .starts_with(&format!("{:02}_", node_id.parse::<u64>().unwrap_or(0)))
+                || name_str.starts_with(&format!("{:02}_", node_id.parse::<u64>().unwrap_or(0)))
             {
                 target_dir = Some(entry.path());
                 break;
@@ -168,8 +164,9 @@ pub async fn session_node_handler(
         }
     }
 
-    let target_dir = target_dir
-        .ok_or_else(|| AppError::not_found(format!("node directory not found for id: {node_id}")))?;
+    let target_dir = target_dir.ok_or_else(|| {
+        AppError::not_found(format!("node directory not found for id: {node_id}"))
+    })?;
 
     let mut result = serde_json::Map::new();
     let files = &["node.json", "output.json", "status.json", "live.json"];

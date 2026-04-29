@@ -8,7 +8,8 @@
 
 use super::{
     ExecutionContext, Node, Result, Value, apply_llm_request_routing_from_node,
-    execute_llm_request, get_input, get_optional_string_attribute, get_optional_u64_attribute,
+    execute_llm_request_for_node, get_input, get_optional_string_attribute,
+    get_optional_u64_attribute,
 };
 use crate::aam::TransitionLabel;
 use apxm_backends::LLMRequest;
@@ -77,7 +78,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         let plan_req =
             apply_llm_request_routing_from_node(LLMRequest::new(plan_prompt.clone()), node)?;
 
-        let plan_response = execute_llm_request(ctx, node.id, "autonomous_plan", &plan_req)
+        let plan_response = execute_llm_request_for_node(ctx, node, "autonomous_plan", &plan_req)
             .await
             .map_err(|e| RuntimeError::Operation {
                 op_type: node.op_type,
@@ -104,12 +105,13 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
 
         let action_req = apply_llm_request_routing_from_node(LLMRequest::new(action_prompt), node)?;
 
-        let action_response = execute_llm_request(ctx, node.id, "autonomous_action", &action_req)
-            .await
-            .map_err(|e| RuntimeError::Operation {
-                op_type: node.op_type,
-                message: format!("Failed to execute action (iteration {}): {}", iteration, e),
-            })?;
+        let action_response =
+            execute_llm_request_for_node(ctx, node, "autonomous_action", &action_req)
+                .await
+                .map_err(|e| RuntimeError::Operation {
+                    op_type: node.op_type,
+                    message: format!("Failed to execute action (iteration {}): {}", iteration, e),
+                })?;
 
         current_state = Value::String(action_response.content.clone());
 
@@ -123,7 +125,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
 
         let eval_req = apply_llm_request_routing_from_node(LLMRequest::new(eval_prompt), node)?;
 
-        let eval_response = execute_llm_request(ctx, node.id, "autonomous_eval", &eval_req)
+        let eval_response = execute_llm_request_for_node(ctx, node, "autonomous_eval", &eval_req)
             .await
             .map_err(|e| RuntimeError::Operation {
                 op_type: node.op_type,
