@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 /// Configuration for the dataflow scheduler.
 ///
 /// Controls parallelism, work-stealing behavior, retry logic, and resource limits.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SchedulerConfig {
     #[serde(default = "default_max_concurrency")]
     pub max_concurrency: usize,
@@ -61,7 +61,7 @@ pub struct SchedulerConfig {
 }
 
 /// Configuration for token pipelining (research feature).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PipelineConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -148,6 +148,11 @@ impl SchedulerConfig {
 
     pub fn with_latency_tiers(mut self, latency_tiers: LatencyTierConfig) -> Self {
         self.latency_tiers = latency_tiers;
+        self
+    }
+
+    pub fn with_collect_all_outputs(mut self, collect_all_outputs: bool) -> Self {
+        self.collect_all_outputs = collect_all_outputs;
         self
     }
 

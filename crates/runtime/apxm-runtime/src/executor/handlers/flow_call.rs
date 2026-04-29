@@ -197,7 +197,8 @@ async fn execute_impl(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -
     // Execute the sub-flow DAG with real scheduler inputs so compile
     // parameters work for nested flows.
     let engine = Arc::new(ExecutorEngine::new(child_ctx.clone()));
-    let scheduler = DataflowScheduler::new(SchedulerConfig::default());
+    let scheduler =
+        DataflowScheduler::new(SchedulerConfig::default().with_collect_all_outputs(true));
     let dag_to_execute = (*sub_dag).clone();
     let token_accountant = Arc::clone(&child_ctx.token_accountant);
     let child_scope_id = child_ctx.scope_id().to_string();
@@ -714,6 +715,20 @@ mod tests {
             results
                 .values()
                 .any(|value| value == &Value::String("hello from sub-flow".to_string()))
+        );
+        let Some(Value::Object(all_outputs)) = evidence.get("all_outputs") else {
+            panic!("flow call all_outputs should be an object");
+        };
+        assert_eq!(
+            all_outputs.get("100"),
+            Some(&Value::String("hello from sub-flow".to_string()))
+        );
+        let Some(Value::Object(node_output_map)) = evidence.get("node_output_map") else {
+            panic!("flow call node_output_map should be an object");
+        };
+        assert_eq!(
+            node_output_map.get("1"),
+            Some(&Value::Array(vec![Value::Number(Number::Integer(100))]))
         );
     }
 

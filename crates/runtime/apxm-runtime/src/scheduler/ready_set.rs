@@ -204,12 +204,14 @@ impl ReadySet {
     }
 
     /// Get a snapshot of all pending counts for diagnostics.
-    #[cfg(test)]
-    pub fn snapshot(&self) -> Vec<(NodeId, usize)> {
-        self.pending_inputs
+    pub(crate) fn snapshot(&self) -> Vec<(NodeId, usize)> {
+        let mut snapshot: Vec<_> = self
+            .pending_inputs
             .iter()
             .map(|entry| (*entry.key(), *entry.value()))
-            .collect()
+            .collect();
+        snapshot.sort_unstable_by_key(|(node_id, _)| *node_id);
+        snapshot
     }
 }
 
