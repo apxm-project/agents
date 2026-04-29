@@ -16,7 +16,13 @@ pub use write::{WriteCapability, WriteConfig};
 use crate::CapabilitySystem;
 use apxm_core::{error::RuntimeError, types::Value};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    ffi::OsString,
+    io,
+    path::{Component, Path, PathBuf},
+    sync::Arc,
+};
 
 /// Serde default helper for boolean fields that should default to `true`.
 pub(crate) fn default_true() -> bool {
@@ -36,6 +42,58 @@ pub(crate) fn require_string_arg<'a>(
             capability: capability_name.to_string(),
             message: format!("Missing required '{primary_key}' argument"),
         })
+}
+
+/// Normalize `.` and `..` components without touching the filesystem.
+///
+/// Capability policy checks use this before prefix comparisons so
+/// `base/../outside` is not treated as being inside `base`.
+pub(crate) fn normalize_path_lexically(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !normalized.pop() {
+                    normalized.push("..");
+                }
+            }
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => normalized.push(component.as_os_str()),
+            Component::Normal(part) => normalized.push(part),
+        }
+    }
+    normalized
+}
+
+/// Canonicalize a path, or if it does not exist yet, canonicalize the nearest
+/// existing ancestor and append the missing suffix.
+pub(crate) fn canonicalize_path_or_existing_ancestor(path: &Path) -> io::Result<PathBuf> {
+    let path = normalize_path_lexically(path);
+    if path.exists() {
+        return std::fs::canonicalize(path);
+    }
+
+    let mut missing = Vec::<OsString>::new();
+    let mut current = path.as_path();
+    loop {
+        if current.exists() {
+            let mut canonical = std::fs::canonicalize(current)?;
+            for component in missing.iter().rev() {
+                canonical.push(component);
+            }
+            return Ok(canonical);
+        }
+
+        let Some(name) = current.file_name() else {
+            return std::fs::canonicalize(current);
+        };
+        missing.push(name.to_os_string());
+        let Some(parent) = current.parent() else {
+            return std::fs::canonicalize(current);
+        };
+        current = parent;
+    }
 }
 
 /// Configuration for APxM standard tools.

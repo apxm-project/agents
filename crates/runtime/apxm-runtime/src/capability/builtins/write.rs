@@ -1,4 +1,4 @@
-use super::require_string_arg;
+use super::{canonicalize_path_or_existing_ancestor, normalize_path_lexically, require_string_arg};
 use crate::capability::{
     executor::{CapabilityExecutor, CapabilityResult},
     metadata::CapabilityMetadata,
@@ -141,14 +141,47 @@ impl WriteCapability {
         })
     }
 
-    fn resolve_path(&self, raw_path: &str) -> PathBuf {
-        if Path::new(raw_path).is_absolute() {
-            return PathBuf::from(raw_path);
-        }
+    fn resolve_path(&self, raw_path: &str) -> CapabilityResult<PathBuf> {
+        let raw_path = Path::new(raw_path);
+        let path = if raw_path.is_absolute() {
+            raw_path.to_path_buf()
+        } else if let Some(base_directory) = &self.config.base_directory {
+            base_directory.join(raw_path)
+        } else {
+            raw_path.to_path_buf()
+        };
+        let path = normalize_path_lexically(&path);
+
         if let Some(base_directory) = &self.config.base_directory {
-            return base_directory.join(raw_path);
+            let base_directory =
+                canonicalize_path_or_existing_ancestor(base_directory).map_err(|error| {
+                    RuntimeError::Capability {
+                        capability: self.metadata.name.clone(),
+                        message: format!(
+                            "Failed to resolve base_directory '{}': {error}",
+                            base_directory.display()
+                        ),
+                    }
+                })?;
+            let policy_path = canonicalize_path_or_existing_ancestor(&path).map_err(|error| {
+                RuntimeError::Capability {
+                    capability: self.metadata.name.clone(),
+                    message: format!("Failed to resolve path '{}': {error}", path.display()),
+                }
+            })?;
+            if !policy_path.starts_with(&base_directory) {
+                return Err(RuntimeError::Capability {
+                    capability: self.metadata.name.clone(),
+                    message: format!(
+                        "Path '{}' is outside base_directory '{}'",
+                        policy_path.display(),
+                        base_directory.display()
+                    ),
+                });
+            }
         }
-        PathBuf::from(raw_path)
+
+        Ok(path)
     }
 
     fn validate_path_and_content(&self, path: &Path, content_len: usize) -> CapabilityResult<()> {
@@ -245,7 +278,7 @@ impl CapabilityExecutor for WriteCapability {
             .and_then(|value| value.as_boolean())
             .unwrap_or(false);
 
-        let path = self.resolve_path(file_path);
+        let path = self.resolve_path(file_path)?;
         self.validate_path_and_content(&path, content.len())?;
 
         if !self.config.overwrite_existing && !append && path.exists() {
@@ -336,5 +369,78 @@ mod tests {
         // No temp or backup files remain
         let entries: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
         assert_eq!(entries.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn base_directory_rejects_parent_traversal() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("base");
+        tokio::fs::create_dir_all(&base).await.unwrap();
+        let outside = dir.path().join("outside.txt");
+        let capability = WriteCapability::with_config(WriteConfig {
+            base_directory: Some(base.clone()),
+            allowed_paths: Some(vec![base]),
+            ..Default::default()
+        });
+        let args = HashMap::from([
+            (
+                "file_path".to_string(),
+                Value::String("../outside.txt".to_string()),
+            ),
+            ("content".to_string(), Value::String("escape".to_string())),
+        ]);
+
+        let error = capability
+            .execute(args)
+            .await
+            .expect_err("parent traversal should be rejected");
+
+        assert!(
+            error.to_string().contains("outside base_directory"),
+            "expected base directory rejection: {error}"
+        );
+        assert!(!outside.exists(), "outside file should not be written");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn base_directory_rejects_symlink_escape() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("base");
+        let outside = dir.path().join("outside");
+        tokio::fs::create_dir_all(&base).await.unwrap();
+        tokio::fs::create_dir_all(&outside).await.unwrap();
+        let outside_file = outside.join("secret.txt");
+        tokio::fs::write(&outside_file, "secret").await.unwrap();
+        symlink(&outside, base.join("link")).unwrap();
+
+        let capability = WriteCapability::with_config(WriteConfig {
+            base_directory: Some(base.clone()),
+            allowed_paths: Some(vec![base]),
+            ..Default::default()
+        });
+        let args = HashMap::from([
+            (
+                "file_path".to_string(),
+                Value::String("link/secret.txt".to_string()),
+            ),
+            ("content".to_string(), Value::String("escape".to_string())),
+        ]);
+
+        let error = capability
+            .execute(args)
+            .await
+            .expect_err("symlink escape should be rejected");
+
+        assert!(
+            error.to_string().contains("outside base_directory"),
+            "expected base directory rejection: {error}"
+        );
+        assert_eq!(
+            tokio::fs::read_to_string(&outside_file).await.unwrap(),
+            "secret"
+        );
     }
 }

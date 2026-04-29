@@ -112,10 +112,6 @@ impl SandboxRegistry {
     /// 1. backends whose isolation level meets or exceeds `min_isolation`
     /// 2. fully validated backends over degraded ones
     /// 3. the closest matching isolation level among qualifying backends
-    ///
-    /// If nothing satisfies `min_isolation`, the registry falls back to the
-    /// strongest compatible backend below that level instead of silently
-    /// bypassing sandboxing entirely.
     pub fn select_for_request(
         &self,
         request: &ExecRequest,
@@ -197,19 +193,14 @@ impl SandboxRegistry {
             };
 
         let mut meets_min = Vec::new();
-        let mut below_min = Vec::new();
 
         for candidate in validated {
             if candidate.capabilities.isolation_level >= min_isolation {
                 meets_min.push(candidate);
-            } else {
-                below_min.push(candidate);
             }
         }
 
-        let selected = choose_candidate(meets_min, true)
-            .or_else(|| choose_candidate(below_min, false))
-            .ok_or_else(|| {
+        let selected = choose_candidate(meets_min, true).ok_or_else(|| {
                 let registered = self
                     .backends
                     .iter()
@@ -224,11 +215,11 @@ impl SandboxRegistry {
                 } else {
                     rejected.join("; ")
                 };
-                SandboxError::RequirementsNotMet(format!(
-                    "{NO_COMPATIBLE_BACKEND_PREFIX}{min_isolation}{NO_COMPATIBLE_BACKEND_MIDDLE}{registered}{NO_COMPATIBLE_BACKEND_REJECTED_SEPARATOR}{rejected_text}{NO_COMPATIBLE_BACKEND_SUFFIX}",
-                    min_isolation = request.min_isolation,
-                ))
-            })?;
+            SandboxError::RequirementsNotMet(format!(
+                "{NO_COMPATIBLE_BACKEND_PREFIX}{min_isolation}{NO_COMPATIBLE_BACKEND_MIDDLE}{registered}{NO_COMPATIBLE_BACKEND_REJECTED_SEPARATOR}{rejected_text}{NO_COMPATIBLE_BACKEND_SUFFIX}",
+                min_isolation = request.min_isolation,
+            ))
+        })?;
 
         Ok(SandboxSelection {
             backend: selected.backend,
@@ -503,17 +494,23 @@ mod tests {
     }
 
     #[test]
-    fn test_select_for_request_falls_back_to_strongest_compatible_backend_below_minimum() {
+    fn test_select_for_request_rejects_backends_below_minimum() {
         let mut reg = SandboxRegistry::new();
         reg.register(make_backend("policy", IsolationLevel::PolicyOnly));
         reg.register(make_backend("os", IsolationLevel::OsLevel));
 
-        let selection = reg
+        let error = reg
             .select_for_request(&ExecRequest {
                 min_isolation: IsolationLevel::Container,
                 ..ExecRequest::default()
             })
-            .unwrap();
-        assert_eq!(selection.backend.capabilities().name, "os");
+            .expect_err("should not fall back below the requested isolation level");
+
+        assert!(
+            error
+                .to_string()
+                .contains("no compatible backend for request requiring at least container"),
+            "unexpected error: {error}"
+        );
     }
 }
