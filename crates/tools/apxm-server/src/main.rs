@@ -31,6 +31,7 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use apxm_backends::BackendRegistration;
+use apxm_core::paths::ApxmPaths;
 use apxm_runtime::{Runtime, RuntimeConfig};
 use axum::{Router, routing::get, routing::post};
 use dashmap::DashMap;
@@ -66,7 +67,7 @@ use crate::agent::{
 use crate::capability::{list_capabilities, register_capability};
 use crate::checkpoints::{CheckpointStore, create_checkpoint, get_checkpoint, resume_checkpoint};
 use crate::execute::{execute, execute_stream};
-use crate::executions::{ExecutionStore, get_execution, get_execution_node};
+use crate::executions::{ExecutionStore, get_execution, get_execution_node, list_executions};
 use crate::generate::{handle_generate, handle_generate_stream, handle_schema};
 use crate::health::{health, list_models};
 use crate::mcp::mcp_jsonrpc;
@@ -108,6 +109,7 @@ fn build_app(state: AppState) -> Router {
         .route("/v1/skills/{id}/validate", post(validate_skill))
         .route("/v1/skills/{id}/execute", post(execute_skill))
         .route("/v1/skills/{id}/execute/stream", post(execute_skill_stream))
+        .route("/v1/executions", get(list_executions))
         .route("/v1/executions/{execution_id}", get(get_execution))
         .route(
             "/v1/executions/{execution_id}/nodes/{node_id}",
@@ -155,6 +157,23 @@ fn register_server_event_payloads() {
         }
     }
     register_skill_event_payloads();
+}
+
+fn execution_store_from_paths() -> ExecutionStore {
+    match ApxmPaths::discover() {
+        Ok(paths) => {
+            let store = ExecutionStore::from_session_roots(paths.session_lookup_dirs());
+            let loaded = store.list().len();
+            if loaded > 0 {
+                info!(count = loaded, "loaded persisted execution records");
+            }
+            store
+        }
+        Err(error) => {
+            warn!(%error, "failed to discover APXM paths for execution record reload");
+            ExecutionStore::new()
+        }
+    }
 }
 
 #[tokio::main]
@@ -224,7 +243,7 @@ async fn main() -> anyhow::Result<()> {
         start_time: SystemTime::now(),
         a2a_tasks: Arc::new(DashMap::new()),
         skill_library,
-        execution_store: ExecutionStore::new(),
+        execution_store: execution_store_from_paths(),
     };
 
     let app = build_app(state);
