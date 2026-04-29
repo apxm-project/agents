@@ -39,7 +39,7 @@ pub mod metadata;
 pub mod registry;
 
 use crate::aam::{Aam, TransitionLabel};
-use crate::sandbox::{SandboxRegistry, ValidationResult};
+use crate::sandbox::{IsolationLevel, SandboxRegistry, ValidationResult};
 use approval::{ApprovalChannel, ApprovalStore};
 use apxm_core::{error::RuntimeError, types::values::Value};
 use executor::{CapabilityExecutor, exec_result_to_value};
@@ -51,6 +51,23 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 
 /// Result type for capability operations
 type CapabilityResult<T> = Result<T, RuntimeError>;
+
+/// Result of checking whether a capability invocation can be sandboxed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CapabilitySandboxPreflight {
+    /// The capability does not request sandbox routing for these arguments.
+    Direct,
+    /// The capability produced an execution request and a compatible backend
+    /// was selected without running the capability.
+    Sandboxed {
+        /// Selected backend name.
+        backend: String,
+        /// Isolation level provided by the selected backend.
+        isolation: IsolationLevel,
+        /// Warnings reported when the backend can only provide degraded guarantees.
+        warnings: Vec<String>,
+    },
+}
 
 /// Main capability system coordinator
 ///
@@ -444,6 +461,59 @@ impl CapabilitySystem {
             .map(|cap| cap.metadata().read_only)
             .unwrap_or(false)
     }
+
+    /// Check whether a capability invocation would route through a compatible
+    /// sandbox backend, without executing the capability.
+    pub fn sandbox_preflight(
+        &self,
+        name: &str,
+        args: &HashMap<String, Value>,
+    ) -> CapabilityResult<CapabilitySandboxPreflight> {
+        let capability = self
+            .registry
+            .get(name)
+            .ok_or_else(|| RuntimeError::Capability {
+                capability: name.to_string(),
+                message: format!("Capability '{name}' not found"),
+            })?;
+
+        let Some(exec_req) = capability.to_exec_request(args) else {
+            return Ok(CapabilitySandboxPreflight::Direct);
+        };
+
+        let sandbox_reg = self.sandbox_registry.read().clone();
+        let registry = sandbox_reg.ok_or_else(|| RuntimeError::Capability {
+            capability: name.to_string(),
+            message: "Capability requires sandbox execution but sandbox registry is not configured"
+                .to_string(),
+        })?;
+        if registry.is_empty() {
+            return Err(RuntimeError::Capability {
+                capability: name.to_string(),
+                message:
+                    "Capability requires sandbox execution but no sandbox backend is available"
+                        .to_string(),
+            });
+        }
+
+        let selection =
+            registry
+                .select_for_request(&exec_req)
+                .map_err(|error| RuntimeError::Capability {
+                    capability: name.to_string(),
+                    message: format!("sandbox select: {error}"),
+                })?;
+        let capabilities = selection.backend.capabilities();
+        let warnings = match selection.validation {
+            ValidationResult::Degraded { warnings } => warnings,
+            ValidationResult::Ok | ValidationResult::Unsupported { .. } => Vec::new(),
+        };
+        Ok(CapabilitySandboxPreflight::Sandboxed {
+            backend: capabilities.name,
+            isolation: capabilities.isolation_level,
+            warnings,
+        })
+    }
 }
 
 impl Default for CapabilitySystem {
@@ -749,6 +819,77 @@ mod tests {
         assert!(
             !executed_directly.load(Ordering::SeqCst),
             "Capability execute() should not be called when sandbox is available"
+        );
+    }
+
+    #[test]
+    fn test_sandbox_preflight_selects_backend_without_execution() {
+        let system = CapabilitySystem::new();
+        let executed_directly = Arc::new(AtomicBool::new(false));
+        let capability = Arc::new(MockSandboxedCapability::new(Arc::clone(&executed_directly)));
+        system.register(capability).unwrap();
+
+        let mut registry = SandboxRegistry::new();
+        registry.register(Arc::new(crate::sandbox::DefaultBackend::new(
+            crate::sandbox::SandboxCapabilities {
+                isolation_level: crate::sandbox::IsolationLevel::OsLevel,
+                supports_filesystem_restriction: false,
+                supports_network_restriction: false,
+                supports_syscall_filtering: false,
+                supports_resource_limits: false,
+                name: "test-backend".to_string(),
+                version: "1.0".to_string(),
+            },
+            |_req| async {
+                Ok(crate::sandbox::ExecResult {
+                    success: true,
+                    exit_code: Some(0),
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    duration: std::time::Duration::from_millis(10),
+                    timed_out: false,
+                })
+            },
+        )));
+        system.set_sandbox_registry(Arc::new(registry));
+
+        let mut args = HashMap::new();
+        args.insert("command".to_string(), Value::String("test".to_string()));
+        let preflight = system
+            .sandbox_preflight("mock_sandboxed", &args)
+            .expect("sandbox preflight");
+
+        assert_eq!(
+            preflight,
+            CapabilitySandboxPreflight::Sandboxed {
+                backend: "test-backend".to_string(),
+                isolation: crate::sandbox::IsolationLevel::OsLevel,
+                warnings: Vec::new(),
+            }
+        );
+        assert!(
+            !executed_directly.load(Ordering::SeqCst),
+            "preflight must not execute the capability"
+        );
+    }
+
+    #[test]
+    fn test_sandbox_preflight_reports_direct_capabilities() {
+        let system = CapabilitySystem::new();
+        let executed_directly = Arc::new(AtomicBool::new(false));
+        let capability = Arc::new(MockDirectCapability::new(Arc::clone(&executed_directly)));
+        system.register(capability).unwrap();
+
+        let mut args = HashMap::new();
+        args.insert("value".to_string(), Value::String("test".to_string()));
+        let preflight = system
+            .sandbox_preflight("mock_direct", &args)
+            .expect("sandbox preflight");
+
+        assert_eq!(preflight, CapabilitySandboxPreflight::Direct);
+        assert!(
+            !executed_directly.load(Ordering::SeqCst),
+            "preflight must not execute direct capabilities"
         );
     }
 
