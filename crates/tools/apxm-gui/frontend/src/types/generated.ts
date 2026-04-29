@@ -458,6 +458,7 @@ export const COMMUNICATE: OpSpec = {
     { name: "recipient", description: "Target agent name (or URL for http protocol)", required: true, refType: null },
     { name: "message", description: "Message content to send", required: false, refType: null },
     { name: "protocol", description: "Dispatch protocol: local (default), http, https, acp, broadcast", required: false, refType: null },
+    { name: "llm_operation", description: "Semantic LLM operation for analysis when this communication sends an agent prompt", required: false, refType: null },
   ],
   producesOutput: true,
   needsSubmission: true,
@@ -689,7 +690,7 @@ export const REGISTER_CAPABILITY: OpSpec = {
   name: "RegisterCapability",
   category: "coordination" as OpCategory,
   description: "Register a new capability (tool) in the runtime registry",
-  longDescription: "Dynamically registers a new capability in the runtime's capability registry. The capability becomes available for INV operations after registration. Returns a confirmation with the registered capability name.",
+  longDescription: "Dynamically registers a new capability in the runtime's capability registry. The capability becomes available for INV_TOOL operations after registration. Returns a confirmation with the registered capability name.",
   latency: "low",
   fields: [
     { name: "capability_name", description: "Name for the capability to register", required: true, refType: null },
@@ -824,16 +825,16 @@ export const ALL_OPERATIONS: readonly OpSpec[] = [
 ] as const;
 
 export type OpCategory =
-  | "communication" |
-  | "control_flow" |
-  | "coordination" |
-  | "error_handling" |
-  | "identity" |
-  | "internal" |
-  | "memory" |
-  | "metadata" |
-  | "reasoning" |
-  | "synchronization" |
+  | "communication"
+  | "control_flow"
+  | "coordination"
+  | "error_handling"
+  | "identity"
+  | "internal"
+  | "memory"
+  | "metadata"
+  | "reasoning"
+  | "synchronization"
   | "tools";
 
 export const ATTR = {
@@ -887,6 +888,7 @@ export const ATTR = {
   TARGET: "target",
   TARGET_KIND: "target_kind",
   PROTOCOL: "protocol",
+  LLM_OPERATION: "llm_operation",
   GOAL: "goal",
   GOAL_ID: "goal_id",
   PRIORITY: "priority",
@@ -955,13 +957,27 @@ export const ATTR = {
   __PROFILE_TOKEN_WARNING: "__profile_token_warning",
   WARMUP_CANDIDATE: "warmup_candidate",
   SHARED_PREFIX_EST_TOKENS: "shared_prefix_est_tokens",
+  SHARED_PREFIX_GROUP_SIZE: "shared_prefix_group_size",
   DOWNSTREAM_NODES: "downstream_nodes",
+  FANOUT_COUNT: "fanout_count",
+  REMAINING_PATH_LEN: "remaining_path_len",
+  LATENCY_CLASS: "latency_class",
+  BATCH_GROUP: "batch_group",
+  STAGE_INDEX: "stage_index",
+  ESTIMATED_DYNAMIC_TOKENS: "estimated_dynamic_tokens",
   SHARED_PREFIX_GROUP: "shared_prefix_group",
   EST_TEMPLATE_TOKENS: "est_template_tokens",
   AIS_SHARED_PREFIX_GROUP: "ais.shared_prefix_group",
   AIS_SHARED_PREFIX_EST_TOKENS: "ais.shared_prefix_est_tokens",
+  AIS_SHARED_PREFIX_GROUP_SIZE: "ais.shared_prefix_group_size",
   AIS_WARMUP_CANDIDATE: "ais.warmup_candidate",
   AIS_DOWNSTREAM_NODES: "ais.downstream_nodes",
+  AIS_FANOUT_COUNT: "ais.fanout_count",
+  AIS_REMAINING_PATH_LEN: "ais.remaining_path_len",
+  AIS_LATENCY_CLASS: "ais.latency_class",
+  AIS_BATCH_GROUP: "ais.batch_group",
+  AIS_STAGE_INDEX: "ais.stage_index",
+  AIS_ESTIMATED_DYNAMIC_TOKENS: "ais.estimated_dynamic_tokens",
   MEMORY: "memory",
   BELIEFS: "beliefs",
   GOALS: "goals",
@@ -975,7 +991,6 @@ export const ATTR = {
   COUNT_TOKEN: "count_token",
   CASES: "cases",
   DEFAULT: "default",
-  ARGS: "args",
   ORDERING: "ordering",
   PAYLOAD: "payload",
   ERROR_HANDLER: "error_handler",
@@ -992,11 +1007,11 @@ export const GRAPH_METRICS = {
 } as const;
 
 export type ProviderProtocol =
-  | "openai" |
-  | "anthropic" |
-  | "google" |
-  | "ollama" |
-  | "vllm" |
+  | "openai"
+  | "anthropic"
+  | "google"
+  | "ollama"
+  | "vllm"
   | "mock";
 
 export type ProviderSpec = {

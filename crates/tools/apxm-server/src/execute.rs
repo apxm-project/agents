@@ -32,7 +32,7 @@ pub(crate) struct ExecuteRequest {
     pub(crate) session_root: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct ExecuteResponse {
     pub(crate) results: HashMap<String, JsonValue>,
     pub(crate) content: Option<String>,

@@ -252,7 +252,7 @@ pub(crate) struct SkillExecuteResponse {
     pub(crate) response: ExecuteResponse,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SkillExecuteStartedPayload {
     pub(crate) execution_id: String,
     pub(crate) skill_id: String,
@@ -261,12 +261,29 @@ pub(crate) struct SkillExecuteStartedPayload {
 }
 impl_event_payload!(SkillExecuteStartedPayload, SKILL_EXECUTE_STARTED);
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SkillExecuteCompletePayload {
     pub(crate) execution_id: String,
     pub(crate) result: ExecuteResponse,
 }
 impl_event_payload!(SkillExecuteCompletePayload, SKILL_EXECUTE_COMPLETE);
+
+pub(crate) fn register_skill_event_payloads() {
+    register_event_payload_once::<SkillExecuteStartedPayload>(SKILL_EXECUTE_STARTED);
+    register_event_payload_once::<SkillExecuteCompletePayload>(SKILL_EXECUTE_COMPLETE);
+}
+
+fn register_event_payload_once<T>(kind: EventKind)
+where
+    T: apxm_core::events::EventPayload + serde::de::DeserializeOwned,
+{
+    match apxm_core::events::register_event_payload::<T>(kind) {
+        Ok(()) | Err(apxm_core::events::EventRegistryError::AlreadyRegistered { .. }) => {}
+        Err(apxm_core::events::EventRegistryError::CoreKind { kind }) => {
+            panic!("server skill event kind `{kind}` conflicts with core event kind");
+        }
+    }
+}
 
 struct PreparedSkillExecution {
     artifact: Artifact,

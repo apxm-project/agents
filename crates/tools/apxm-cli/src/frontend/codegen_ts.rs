@@ -124,7 +124,7 @@ fn render_ts_categories(buf: &mut String, ops: &[FrontendOperationSpec]) {
 
     buf.push_str("export type OpCategory =\n");
     for (i, cat) in categories.iter().enumerate() {
-        let sep = if i < categories.len() - 1 { " |" } else { ";" };
+        let sep = if i < categories.len() - 1 { "" } else { ";" };
         buf.push_str(&format!("  | {}{}\n", ts_string(cat), sep));
     }
     buf.push('\n');
@@ -150,7 +150,7 @@ fn render_ts_provider_types(buf: &mut String) {
     let protocols = provider_protocols();
     buf.push_str("export type ProviderProtocol =\n");
     for (i, proto) in protocols.iter().enumerate() {
-        let sep = if i < protocols.len() - 1 { " |" } else { ";" };
+        let sep = if i < protocols.len() - 1 { "" } else { ";" };
         buf.push_str(&format!("  | {}{}\n", ts_string(proto), sep));
     }
     buf.push('\n');

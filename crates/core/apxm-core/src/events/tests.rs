@@ -4,11 +4,86 @@
 mod tests {
     use std::collections::HashMap;
 
+    use serde::{Deserialize, Serialize};
+
     use crate::events::event::{ApxmEvent, EventSource, SkillEventProvenance};
     use crate::events::kind;
     use crate::events::payload::*;
+    use crate::events::{
+        EventCategory, EventKind, EventPayloadRegistry, EventRegistryError, register_event_payload,
+        registered_event_kind, registered_event_kinds,
+    };
     use crate::types::operations::AISOperationType;
     use crate::types::{NodeMetrics, OperationMetric};
+
+    const TEST_EXTENSION_KIND: EventKind =
+        EventKind::new("test_extension_event", EventCategory::Lifecycle, false);
+    const TEST_EXTENSION_MALFORMED_KIND: EventKind = EventKind::new(
+        "test_extension_schema_error",
+        EventCategory::Lifecycle,
+        false,
+    );
+    const TEST_EXTENSION_DUPLICATE_KIND: EventKind =
+        EventKind::new("test_extension_duplicate", EventCategory::Lifecycle, false);
+    const TEST_LOCAL_EXTENSION_KIND: EventKind = EventKind::new(
+        "test_local_extension_event",
+        EventCategory::Lifecycle,
+        false,
+    );
+    const TEST_LOCAL_EXTENSION_MALFORMED_KIND: EventKind = EventKind::new(
+        "test_local_extension_schema_error",
+        EventCategory::Lifecycle,
+        false,
+    );
+    const TEST_PRECEDENCE_EXTENSION_KIND: EventKind =
+        EventKind::new("test_extension_precedence", EventCategory::Lifecycle, false);
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    struct TestExtensionPayload {
+        id: String,
+        count: u64,
+    }
+    crate::impl_event_payload!(TestExtensionPayload, TEST_EXTENSION_KIND);
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    struct TestExtensionMalformedPayload {
+        id: String,
+        count: u64,
+    }
+    crate::impl_event_payload!(TestExtensionMalformedPayload, TEST_EXTENSION_MALFORMED_KIND);
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    struct TestExtensionDuplicatePayload {
+        id: String,
+    }
+    crate::impl_event_payload!(TestExtensionDuplicatePayload, TEST_EXTENSION_DUPLICATE_KIND);
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    struct TestLocalExtensionPayload {
+        id: String,
+    }
+    crate::impl_event_payload!(TestLocalExtensionPayload, TEST_LOCAL_EXTENSION_KIND);
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    struct TestLocalExtensionMalformedPayload {
+        count: u64,
+    }
+    crate::impl_event_payload!(
+        TestLocalExtensionMalformedPayload,
+        TEST_LOCAL_EXTENSION_MALFORMED_KIND
+    );
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    struct TestGlobalPrecedencePayload {
+        global_id: String,
+    }
+    crate::impl_event_payload!(TestGlobalPrecedencePayload, TEST_PRECEDENCE_EXTENSION_KIND);
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    struct TestLocalPrecedencePayload {
+        local_id: String,
+    }
+    crate::impl_event_payload!(TestLocalPrecedencePayload, TEST_PRECEDENCE_EXTENSION_KIND);
 
     fn roundtrip<T>(payload: T)
     where
@@ -19,6 +94,20 @@ mod tests {
         let back: ApxmEvent = serde_json::from_str(&json).expect("deserialize");
         let json2 = serde_json::to_string(&back).expect("re-serialize");
         assert_eq!(json, json2);
+    }
+
+    fn raw_event_with_payload(payload: serde_json::Value) -> serde_json::Value {
+        let event = ApxmEvent::root(
+            WarningPayload {
+                code: "W999".into(),
+                message: "template".into(),
+            },
+            EventSource::Runtime,
+            "test-trace-id",
+        );
+        let mut raw = serde_json::to_value(event).expect("serialize event template");
+        raw["payload"] = payload;
+        raw
     }
 
     macro_rules! roundtrip_test {
@@ -359,6 +448,247 @@ mod tests {
         assert!(!json.contains("secret"));
         assert!(json.contains("object(len=1)"));
         assert!(json.contains(REDACTION_HASH_PREFIX_BLAKE3));
+    }
+
+    #[test]
+    fn unknown_event_payload_deserializes_without_error() {
+        let raw = raw_event_with_payload(serde_json::json!({
+            "kind": "vendor_widget_updated",
+            "widget_id": "w1",
+            "state": { "ok": true },
+        }));
+
+        let event: ApxmEvent = serde_json::from_value(raw).expect("unknown event");
+
+        assert_eq!(event.kind().name(), "vendor_widget_updated");
+        let payload = event
+            .payload
+            .downcast_ref::<UnknownEventPayload>()
+            .expect("unknown event payload");
+        assert_eq!(payload.kind_name(), "vendor_widget_updated");
+        assert_eq!(payload.payload_json()["widget_id"], "w1");
+        assert_eq!(
+            payload.payload_json()["state"],
+            serde_json::json!({"ok": true})
+        );
+    }
+
+    #[test]
+    fn unknown_event_payload_roundtrips_wire_json() {
+        let raw = raw_event_with_payload(serde_json::json!({
+            "kind": "vendor_widget_updated",
+            "widget_id": "w1",
+            "state": {
+                "ok": true,
+                "items": [1, { "nested": "value" }],
+            },
+            "value": "preserved",
+        }));
+
+        let event: ApxmEvent = serde_json::from_value(raw.clone()).expect("unknown event");
+        let back = serde_json::to_value(&event).expect("serialize unknown event");
+        let reparsed: ApxmEvent =
+            serde_json::from_value(back.clone()).expect("deserialize serialized unknown event");
+
+        assert_eq!(back, raw);
+        assert!(
+            reparsed
+                .payload
+                .downcast_ref::<UnknownEventPayload>()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn core_event_still_deserializes_to_typed_payload() {
+        let raw = raw_event_with_payload(serde_json::json!({
+            "kind": kind::OPERATION_END.name(),
+            "node_id": 42,
+            "op_type": "ASK",
+            "duration_ms": 12,
+            "success": true,
+        }));
+
+        let event: ApxmEvent = serde_json::from_value(raw).expect("core event");
+        let payload = event
+            .payload
+            .downcast_ref::<OperationEndPayload>()
+            .expect("operation end payload");
+
+        assert_eq!(payload.node_id, 42);
+        assert!(payload.success);
+    }
+
+    #[test]
+    fn malformed_core_event_does_not_fallback_to_unknown() {
+        let raw = raw_event_with_payload(serde_json::json!({
+            "kind": kind::OPERATION_END.name(),
+            "node_id": 42,
+        }));
+
+        let result = serde_json::from_value::<ApxmEvent>(raw);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn registered_extension_event_deserializes_to_typed_payload() {
+        let _ = register_event_payload::<TestExtensionPayload>(TEST_EXTENSION_KIND);
+        let raw = raw_event_with_payload(serde_json::json!({
+            "kind": TEST_EXTENSION_KIND.name(),
+            "id": "abc",
+            "count": 3,
+        }));
+
+        let event: ApxmEvent = serde_json::from_value(raw).expect("registered extension event");
+        let payload = event
+            .payload
+            .downcast_ref::<TestExtensionPayload>()
+            .expect("test extension payload");
+
+        assert_eq!(payload.id, "abc");
+        assert_eq!(payload.count, 3);
+    }
+
+    #[test]
+    fn local_extension_registry_decodes_without_global_registration() {
+        let mut registry = EventPayloadRegistry::new();
+        registry
+            .register_payload::<TestLocalExtensionPayload>(TEST_LOCAL_EXTENSION_KIND)
+            .expect("local extension registration");
+        let raw = raw_event_with_payload(serde_json::json!({
+            "kind": TEST_LOCAL_EXTENSION_KIND.name(),
+            "id": "local",
+        }));
+
+        let event = ApxmEvent::from_json_with_registry(raw, &registry)
+            .expect("locally registered extension event");
+        let payload = event
+            .payload
+            .downcast_ref::<TestLocalExtensionPayload>()
+            .expect("local extension payload");
+
+        assert_eq!(payload.id, "local");
+    }
+
+    #[test]
+    fn local_extension_schema_error_does_not_fallback_to_unknown() {
+        let mut registry = EventPayloadRegistry::new();
+        registry
+            .register_payload::<TestLocalExtensionMalformedPayload>(
+                TEST_LOCAL_EXTENSION_MALFORMED_KIND,
+            )
+            .expect("local extension registration");
+        let raw = raw_event_with_payload(serde_json::json!({
+            "kind": TEST_LOCAL_EXTENSION_MALFORMED_KIND.name(),
+            "count": "not a number",
+        }));
+
+        let result = ApxmEvent::from_json_with_registry(raw, &registry);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn local_extension_registry_takes_precedence_over_global_registry() {
+        let _ =
+            register_event_payload::<TestGlobalPrecedencePayload>(TEST_PRECEDENCE_EXTENSION_KIND);
+        let mut registry = EventPayloadRegistry::new();
+        registry
+            .register_payload::<TestLocalPrecedencePayload>(TEST_PRECEDENCE_EXTENSION_KIND)
+            .expect("local extension registration");
+        let raw = raw_event_with_payload(serde_json::json!({
+            "kind": TEST_PRECEDENCE_EXTENSION_KIND.name(),
+            "local_id": "local",
+        }));
+
+        let event =
+            ApxmEvent::from_json_with_registry(raw, &registry).expect("local extension event");
+        let payload = event
+            .payload
+            .downcast_ref::<TestLocalPrecedencePayload>()
+            .expect("local extension payload");
+
+        assert_eq!(payload.local_id, "local");
+    }
+
+    #[test]
+    fn registered_extension_schema_error_does_not_fallback_to_unknown() {
+        let _ =
+            register_event_payload::<TestExtensionMalformedPayload>(TEST_EXTENSION_MALFORMED_KIND);
+        let raw = raw_event_with_payload(serde_json::json!({
+            "kind": TEST_EXTENSION_MALFORMED_KIND.name(),
+            "id": "abc",
+            "count": "not a number",
+        }));
+
+        let result = serde_json::from_value::<ApxmEvent>(raw);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn registry_rejects_core_kind_registration() {
+        let err = register_event_payload::<TokenPayload>(kind::TOKEN).expect_err("core kind error");
+
+        assert!(matches!(err, EventRegistryError::CoreKind { .. }));
+    }
+
+    #[test]
+    fn local_registry_rejects_core_kind_registration() {
+        let mut registry = EventPayloadRegistry::new();
+        let err = registry
+            .register_payload::<TokenPayload>(kind::TOKEN)
+            .expect_err("core kind error");
+
+        assert!(matches!(err, EventRegistryError::CoreKind { .. }));
+    }
+
+    #[test]
+    fn local_registry_rejects_duplicate_extension_kind() {
+        let mut registry = EventPayloadRegistry::new();
+
+        registry
+            .register_payload::<TestLocalExtensionPayload>(TEST_LOCAL_EXTENSION_KIND)
+            .expect("first local registration");
+        let err = registry
+            .register_payload::<TestLocalExtensionPayload>(TEST_LOCAL_EXTENSION_KIND)
+            .expect_err("duplicate local registration");
+
+        assert!(matches!(err, EventRegistryError::AlreadyRegistered { .. }));
+    }
+
+    #[test]
+    fn registry_rejects_duplicate_extension_kind() {
+        let first =
+            register_event_payload::<TestExtensionDuplicatePayload>(TEST_EXTENSION_DUPLICATE_KIND);
+        let second =
+            register_event_payload::<TestExtensionDuplicatePayload>(TEST_EXTENSION_DUPLICATE_KIND);
+
+        assert!(
+            first.is_ok() || matches!(first, Err(EventRegistryError::AlreadyRegistered { .. }))
+        );
+        assert!(matches!(
+            second,
+            Err(EventRegistryError::AlreadyRegistered { .. })
+        ));
+    }
+
+    #[test]
+    fn global_registry_exposes_registered_kinds_sorted() {
+        let _ = register_event_payload::<TestExtensionPayload>(TEST_EXTENSION_KIND);
+
+        assert_eq!(
+            registered_event_kind(TEST_EXTENSION_KIND.name()),
+            Some(TEST_EXTENSION_KIND)
+        );
+
+        let names = registered_event_kinds()
+            .into_iter()
+            .map(|kind| kind.name())
+            .collect::<Vec<_>>();
+        assert!(names.windows(2).all(|pair| pair[0] <= pair[1]));
+        assert!(names.contains(&TEST_EXTENSION_KIND.name()));
     }
 
     #[test]

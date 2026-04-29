@@ -47,7 +47,7 @@ impl apxm_core::events::EventEmitter for TokioChannelEmitter {
 pub(crate) const EXECUTE_COMPLETE: EventKind =
     EventKind::new("execute_complete", EventCategory::Lifecycle, true);
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub(crate) struct ExecuteCompletePayload {
     pub(crate) result: ExecuteResponse,
 }

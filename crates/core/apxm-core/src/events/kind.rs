@@ -1,5 +1,8 @@
 //! Typed event identifiers and categories.
 
+use std::collections::HashMap;
+use std::sync::{OnceLock, RwLock};
+
 use serde::{Deserialize, Serialize};
 
 /// Coarse routing category for an event.
@@ -11,6 +14,28 @@ pub enum EventCategory {
     Error,
     Observability,
     UserAction,
+}
+
+impl EventCategory {
+    /// Stable list of all APXM event categories.
+    pub const ALL: &[EventCategory] = &[
+        EventCategory::Stream,
+        EventCategory::Lifecycle,
+        EventCategory::Error,
+        EventCategory::Observability,
+        EventCategory::UserAction,
+    ];
+
+    /// Wire spelling for this category.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            EventCategory::Stream => "stream",
+            EventCategory::Lifecycle => "lifecycle",
+            EventCategory::Error => "error",
+            EventCategory::Observability => "observability",
+            EventCategory::UserAction => "user_action",
+        }
+    }
 }
 
 /// Typed event kind identifier.
@@ -169,4 +194,26 @@ pub fn core_event_kind(name: &str) -> Option<EventKind> {
         .iter()
         .copied()
         .find(|kind| kind.name() == name)
+}
+
+/// Build an event kind for opaque/unknown event payloads.
+///
+/// Unknown event names are interned so the public `EventKind` representation
+/// can remain a small copyable `&'static str` identifier.
+pub(crate) fn opaque_event_kind(name: &str) -> EventKind {
+    if let Some(kind) = core_event_kind(name) {
+        return kind;
+    }
+
+    static INTERNED_EVENT_NAMES: OnceLock<RwLock<HashMap<String, &'static str>>> = OnceLock::new();
+    let names = INTERNED_EVENT_NAMES.get_or_init(|| RwLock::new(HashMap::new()));
+    if let Some(interned) = names.read().expect("event kind intern lock").get(name) {
+        return EventKind::new(interned, EventCategory::Observability, false);
+    }
+
+    let mut names = names.write().expect("event kind intern lock");
+    let interned = *names
+        .entry(name.to_string())
+        .or_insert_with_key(|key| Box::leak(key.clone().into_boxed_str()));
+    EventKind::new(interned, EventCategory::Observability, false)
 }
