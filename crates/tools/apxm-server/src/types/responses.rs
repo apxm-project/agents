@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
 #[derive(Debug, Serialize)]
@@ -206,14 +206,14 @@ pub(crate) struct CheckpointWebhookPayload {
     pub(crate) review_url: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct ExecutionStats {
     pub(crate) executed_nodes: usize,
     pub(crate) failed_nodes: usize,
     pub(crate) duration_ms: u128,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct LlmUsageSummary {
     pub(crate) input_tokens: usize,
     pub(crate) output_tokens: usize,

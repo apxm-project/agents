@@ -285,6 +285,27 @@ mod tests {
     }
 
     #[test]
+    fn graph_attr_constant_names_are_unique() {
+        let constants = graph_attr_constants();
+        let mut names = std::collections::BTreeSet::new();
+        let duplicates = constants
+            .iter()
+            .filter_map(|item| {
+                if names.insert(item.name.as_str()) {
+                    None
+                } else {
+                    Some(item.name.as_str())
+                }
+            })
+            .collect::<Vec<_>>();
+
+        assert!(
+            duplicates.is_empty(),
+            "duplicate frontend attr constants: {duplicates:?}"
+        );
+    }
+
+    #[test]
     fn operation_specs_include_spawn_agent() {
         assert!(
             operation_specs()

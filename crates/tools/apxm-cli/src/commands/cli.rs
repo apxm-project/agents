@@ -280,6 +280,18 @@ pub enum CodegenAction {
         /// Output file path for generated TypeScript
         #[arg(long)]
         output: Option<PathBuf>,
+        /// Check that the output is up to date without writing it
+        #[arg(long)]
+        check: bool,
+    },
+    /// Generate TypeScript event kind constants into the GUI frontend
+    EventKinds {
+        /// Output file path for generated TypeScript event kinds
+        #[arg(long)]
+        output: Option<PathBuf>,
+        /// Check that the output is up to date without writing it
+        #[arg(long)]
+        check: bool,
     },
 }
 

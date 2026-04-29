@@ -73,9 +73,9 @@ use crate::mcp::mcp_jsonrpc;
 use crate::memory::{delete_fact, search_facts, store_fact};
 use crate::skills::{
     SkillLibrary, execute_skill, execute_skill_stream, get_skill, list_skills, parse_skill_roots,
-    validate_skill,
+    register_skill_event_payloads, validate_skill,
 };
-use crate::state::AppState;
+use crate::state::{AppState, EXECUTE_COMPLETE, ExecuteCompletePayload};
 use crate::tasks::{TaskQueueManager, claim_task, complete_task, create_task, list_tasks};
 
 pub(crate) const DEFAULT_ADDR: &str = "127.0.0.1:18800";
@@ -86,6 +86,7 @@ pub(crate) const DEFAULT_PUBLIC_URL: &str = "http://localhost:18800";
 /// Extracted from `main()` so that integration tests can call it directly
 /// without binding to a TCP port.
 fn build_app(state: AppState) -> Router {
+    register_server_event_payloads();
     let req_id_header = axum::http::HeaderName::from_static("x-request-id");
     Router::new()
         // Health + meta
@@ -144,6 +145,16 @@ fn build_app(state: AppState) -> Router {
         // Propagate X-Request-Id from clients; generate one when absent
         .layer(PropagateRequestIdLayer::new(req_id_header.clone()))
         .layer(SetRequestIdLayer::new(req_id_header, MakeRequestUuid))
+}
+
+fn register_server_event_payloads() {
+    match apxm_core::events::register_event_payload::<ExecuteCompletePayload>(EXECUTE_COMPLETE) {
+        Ok(()) | Err(apxm_core::events::EventRegistryError::AlreadyRegistered { .. }) => {}
+        Err(apxm_core::events::EventRegistryError::CoreKind { kind }) => {
+            panic!("server event kind `{kind}` conflicts with core event kind");
+        }
+    }
+    register_skill_event_payloads();
 }
 
 #[tokio::main]

@@ -2,11 +2,13 @@
 
 use std::any::Any;
 use std::collections::HashMap;
-use std::io;
 
 use serde::{Deserialize, Serialize};
 
 use super::kind::{self, EventKind};
+use super::registry::{
+    EventPayloadRegistry, decode_registered_payload, event_kind_for_payload, payload_without_kind,
+};
 use crate::types::execution::NodeMetrics;
 use crate::types::operations::AISOperationType;
 
@@ -76,15 +78,53 @@ macro_rules! impl_event_payload {
 /// Deserialize a serialized core payload back into a boxed trait object.
 pub fn boxed_payload_from_json(
     kind_name: &str,
-    mut payload_json: serde_json::Value,
+    payload_json: serde_json::Value,
 ) -> serde_json::Result<Box<dyn EventPayload>> {
-    if let serde_json::Value::Object(obj) = &mut payload_json {
-        obj.remove("kind");
+    boxed_payload_from_json_with_registry(kind_name, payload_json, None)
+}
+
+/// Deserialize a serialized payload using core decoders, an optional extension
+/// registry, the global extension registry, then opaque fallback.
+pub fn boxed_payload_from_json_with_registry(
+    kind_name: &str,
+    payload_json: serde_json::Value,
+    registry: Option<&EventPayloadRegistry>,
+) -> serde_json::Result<Box<dyn EventPayload>> {
+    let payload_json = payload_without_kind(payload_json);
+
+    if let Some(payload) = boxed_core_payload_from_json(kind_name, payload_json.clone())? {
+        return Ok(payload);
+    }
+
+    if let Some(payload) =
+        registry.and_then(|registry| registry.decode(kind_name, payload_json.clone()))
+    {
+        return payload;
+    }
+
+    if let Some(payload) = decode_registered_payload(kind_name, payload_json.clone()) {
+        return payload;
+    }
+
+    Ok(Box::new(UnknownEventPayload::from_json(
+        kind_name,
+        payload_json,
+    )))
+}
+
+fn boxed_core_payload_from_json(
+    kind_name: &str,
+    payload_json: serde_json::Value,
+) -> serde_json::Result<Option<Box<dyn EventPayload>>> {
+    if kind::core_event_kind(kind_name).is_none() {
+        return Ok(None);
     }
 
     macro_rules! boxed {
         ($ty:ty) => {
-            Ok(Box::new(serde_json::from_value::<$ty>(payload_json)?) as Box<dyn EventPayload>)
+            Ok(Some(
+                Box::new(serde_json::from_value::<$ty>(payload_json)?) as Box<dyn EventPayload>
+            ))
         };
     }
 
@@ -163,9 +203,8 @@ pub fn boxed_payload_from_json(
     } else if kind_name == kind::TURN_BOUNDARY.name() {
         boxed!(TurnBoundaryPayload)
     } else {
-        Err(serde_json::Error::io(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("unknown event kind: {kind_name}"),
+        Err(<serde_json::Error as serde::de::Error>::custom(format!(
+            "core event kind `{kind_name}` has no payload decoder"
         )))
     }
 }
@@ -173,6 +212,53 @@ pub fn boxed_payload_from_json(
 // ===========================================================================
 // LLM Layer payload structs
 // ===========================================================================
+
+/// Opaque event payload used when an event kind is not registered locally.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UnknownEventPayload {
+    kind: EventKind,
+    payload_json: serde_json::Value,
+}
+
+impl UnknownEventPayload {
+    /// Build an opaque payload from wire JSON. The `kind` discriminator should
+    /// already be removed from `payload_json`.
+    pub fn from_json(kind_name: &str, payload_json: serde_json::Value) -> Self {
+        Self {
+            kind: event_kind_for_payload(kind_name),
+            payload_json,
+        }
+    }
+
+    /// Event kind wire name.
+    pub fn kind_name(&self) -> &'static str {
+        self.kind.name()
+    }
+
+    /// Original payload fields, excluding the `kind` discriminator.
+    pub fn payload_json(&self) -> &serde_json::Value {
+        &self.payload_json
+    }
+
+    /// Consume this payload and return original payload fields.
+    pub fn into_payload_json(self) -> serde_json::Value {
+        self.payload_json
+    }
+}
+
+impl EventPayload for UnknownEventPayload {
+    fn event_kind(&self) -> EventKind {
+        self.kind
+    }
+
+    fn to_json(&self) -> serde_json::Value {
+        self.payload_json.clone()
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
 
 /// Metadata for content that was intentionally removed from an event payload.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

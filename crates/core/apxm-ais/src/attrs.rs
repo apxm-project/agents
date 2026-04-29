@@ -397,7 +397,6 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     "count_token",
     "cases",
     "default",
-    "args",
     "ordering",
     "payload",
     "error_handler",
@@ -435,5 +434,18 @@ mod tests {
                 needle
             );
         }
+    }
+
+    #[test]
+    fn all_attr_names_are_unique() {
+        let mut seen = std::collections::BTreeSet::new();
+        let mut duplicates = Vec::new();
+        for name in ALL_ATTR_NAMES {
+            if !seen.insert(*name) {
+                duplicates.push(*name);
+            }
+        }
+
+        assert!(duplicates.is_empty(), "duplicate attrs: {duplicates:?}");
     }
 }

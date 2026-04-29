@@ -1261,7 +1261,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         fields: &[
             OperationField::required(attrs::AGENT_NAME, "Name of the agent to call"),
             OperationField::required(attrs::FLOW_NAME, "Name of the flow to invoke"),
-            OperationField::optional("args", "Arguments to pass to the flow"),
+            OperationField::optional(attrs::ARGS, "Arguments to pass to the flow"),
         ],
         needs_submission: true,
         min_inputs: 0,
