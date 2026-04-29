@@ -86,6 +86,7 @@ pub mod runtime {
         pub const PENDING_COMMUNICATE_PREFIX: &str = "_pending_communicate:";
         pub const COMMUNICATE_MESSAGE: &str = "_communicate_message";
         pub const PENDING_FLOW_CALL_PREFIX: &str = "_pending_flow_call:";
+        pub const FLOW_CALL_OUTPUT_PREFIX: &str = "_flow_call_outputs:";
         pub const FLOW_ARG_PREFIX: &str = "_flow_arg_";
         pub const BRANCH_PREFIX: &str = "_branch:";
         pub const GUARD_PREFIX: &str = "_guard:";
