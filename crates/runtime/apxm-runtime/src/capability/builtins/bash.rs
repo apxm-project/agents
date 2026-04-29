@@ -146,7 +146,7 @@ impl BashCapability {
         {
             let is_allowed = allowed_commands
                 .iter()
-                .any(|allowed| command.starts_with(allowed));
+                .any(|allowed| command_matches_allowed(command, allowed));
             if !is_allowed {
                 return Err(RuntimeError::Capability {
                     capability: self.metadata.name.clone(),
@@ -295,4 +295,90 @@ fn truncate_string_in_place(value: &mut String, remaining: &mut usize) {
     let boundary = value.floor_char_boundary(*remaining);
     value.truncate(boundary);
     *remaining = 0;
+}
+
+fn command_matches_allowed(command: &str, allowed: &str) -> bool {
+    if command == allowed {
+        return true;
+    }
+    let Some(suffix) = command.strip_prefix(allowed) else {
+        return false;
+    };
+    if !suffix
+        .chars()
+        .next()
+        .is_some_and(|ch| matches!(ch, ' ' | '\t'))
+    {
+        return false;
+    }
+    !has_disallowed_shell_syntax(suffix)
+}
+
+fn has_disallowed_shell_syntax(value: &str) -> bool {
+    let mut in_single_quote = false;
+    let mut in_double_quote = false;
+    let mut escaped = false;
+
+    for ch in value.chars() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+
+        match ch {
+            '\\' if !in_single_quote => escaped = true,
+            '\'' if !in_double_quote => in_single_quote = !in_single_quote,
+            '"' if !in_single_quote => in_double_quote = !in_double_quote,
+            '`' | '$' => return true,
+            ';' | '|' | '&' | '<' | '>' | '(' | ')' | '\n' | '\r'
+                if !in_single_quote && !in_double_quote =>
+            {
+                return true;
+            }
+            _ => {}
+        }
+    }
+
+    in_single_quote || in_double_quote || escaped
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn allowed_commands_accept_arguments_after_whitespace() {
+        let capability = BashCapability::git();
+
+        for command in [
+            "git status --short",
+            "git commit -m 'half;half'",
+            "git commit -m \"docs: mention foo|bar\"",
+        ] {
+            capability
+                .validate_command(command)
+                .expect("git command arguments should be allowed");
+        }
+    }
+
+    #[test]
+    fn allowed_commands_reject_shell_control_suffixes() {
+        let capability = BashCapability::git();
+
+        for command in [
+            "git status; echo bypass",
+            "git status ; echo bypass",
+            "git status && echo bypass",
+            "git status | cat",
+        ] {
+            let error = capability
+                .validate_command(command)
+                .expect_err("shell control suffix should not match allowed command prefix");
+
+            assert!(
+                error.to_string().contains("Command not allowed"),
+                "expected allowlist rejection for {command:?}: {error}"
+            );
+        }
+    }
 }

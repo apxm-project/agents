@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use apxm_artifact::Artifact;
@@ -139,32 +138,24 @@ fn resolve_session_request(
     session_id: Option<String>,
     session_root: Option<String>,
 ) -> Result<(Option<String>, Option<String>), ApiError> {
-    let session_root = session_root
-        .map(|root| {
-            let trimmed = root.trim();
-            if trimmed.is_empty() {
-                Err(ApiError::bad_request("session_root must not be empty"))
-            } else {
-                Ok(PathBuf::from(trimmed))
-            }
-        })
-        .transpose()?;
+    if session_root.is_some() {
+        return Err(ApiError::bad_request(
+            "session_root is server-controlled and cannot be set by clients",
+        ));
+    }
 
-    if session_root.is_none() && session_id.is_none() {
+    if session_id.is_none() {
         return Ok((None, None));
     }
 
-    let resolved_session_id = session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    let base_dir = if let Some(root) = session_root {
-        root
-    } else {
-        ApxmPaths::discover()
-            .map_err(|e| ApiError::internal_message(format!("failed to discover APXM paths: {e}")))?
-            .sessions_dir()
-            .map_err(|e| {
-                ApiError::internal_message(format!("failed to resolve sessions dir: {e}"))
-            })?
-    };
+    let resolved_session_id = session_id
+        .map(validate_session_id)
+        .transpose()?
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let base_dir = ApxmPaths::discover()
+        .map_err(|e| ApiError::internal_message(format!("failed to discover APXM paths: {e}")))?
+        .sessions_dir()
+        .map_err(|e| ApiError::internal_message(format!("failed to resolve sessions dir: {e}")))?;
 
     std::fs::create_dir_all(&base_dir).map_err(|e| {
         ApiError::internal_message(format!(
@@ -185,6 +176,21 @@ fn resolve_session_request(
         Some(resolved_session_id),
         Some(session_dir.to_string_lossy().to_string()),
     ))
+}
+
+fn validate_session_id(session_id: String) -> Result<String, ApiError> {
+    if session_id.is_empty()
+        || session_id == "."
+        || session_id == ".."
+        || !session_id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+    {
+        return Err(ApiError::bad_request(
+            "session_id must contain only ASCII letters, digits, '-', '_', or '.', and must not be '.' or '..'",
+        ));
+    }
+    Ok(session_id)
 }
 
 pub(crate) fn air_module_to_artifact(graph: AirModule) -> Result<Artifact, ApiError> {
