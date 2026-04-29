@@ -1,3 +1,4 @@
+use std::path::Path as FsPath;
 use std::sync::Arc;
 
 use apxm_core::events::payload::{NodeMetricsPayload, NodeOutputPayload, RedactedContent};
@@ -6,7 +7,7 @@ use apxm_core::types::NodeMetrics;
 use axum::Json;
 use axum::extract::{Path, State};
 use dashmap::DashMap;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::ApiError;
 use crate::execute::ExecuteResponse;
@@ -16,7 +17,7 @@ use crate::state::AppState;
 pub(crate) const EXECUTION_RECORDS_DIR: &str = "executions";
 pub(crate) const EXECUTION_RECORD_EXTENSION: &str = "json";
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ExecutionStatus {
     Running,
@@ -24,7 +25,7 @@ pub(crate) enum ExecutionStatus {
     Failed,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct ExecutionRecord {
     pub(crate) execution_id: String,
     pub(crate) skill_id: String,
@@ -45,7 +46,7 @@ pub(crate) struct ExecutionRecord {
     pub(crate) node_metrics: Vec<NodeMetricsRecord>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct NodeOutputRecord {
     pub(crate) node_id: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -54,7 +55,7 @@ pub(crate) struct NodeOutputRecord {
     pub(crate) output: RedactedContent,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct NodeMetricsRecord {
     pub(crate) node_id: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -85,6 +86,28 @@ impl ExecutionStore {
         Self {
             inner: Arc::new(DashMap::new()),
         }
+    }
+
+    pub(crate) fn from_session_roots<I, P>(session_roots: I) -> Self
+    where
+        I: IntoIterator<Item = P>,
+        P: AsRef<FsPath>,
+    {
+        let store = Self::new();
+        store.reload_from_session_roots(session_roots);
+        store
+    }
+
+    pub(crate) fn reload_from_session_roots<I, P>(&self, session_roots: I) -> usize
+    where
+        I: IntoIterator<Item = P>,
+        P: AsRef<FsPath>,
+    {
+        let mut loaded = 0;
+        for root in session_roots {
+            loaded += self.load_records_from_tree(root.as_ref());
+        }
+        loaded
     }
 
     pub(crate) fn start_skill_execution(
@@ -148,6 +171,21 @@ impl ExecutionStore {
 
     pub(crate) fn get(&self, execution_id: &str) -> Option<ExecutionRecord> {
         self.inner.get(execution_id).map(|entry| entry.clone())
+    }
+
+    pub(crate) fn list(&self) -> Vec<ExecutionRecord> {
+        let mut records: Vec<ExecutionRecord> = self
+            .inner
+            .iter()
+            .map(|entry| entry.value().clone())
+            .collect();
+        records.sort_by(|left, right| {
+            right
+                .started_at_ms
+                .cmp(&left.started_at_ms)
+                .then_with(|| left.execution_id.cmp(&right.execution_id))
+        });
+        records
     }
 
     pub(crate) fn record_node_output(
@@ -227,6 +265,55 @@ impl ExecutionStore {
             metrics,
         })
     }
+
+    fn load_records_from_tree(&self, root: &FsPath) -> usize {
+        if !root.is_dir() {
+            return 0;
+        }
+
+        let mut loaded = 0;
+        let Ok(entries) = std::fs::read_dir(root) else {
+            tracing::warn!(path = %root.display(), "failed to read execution snapshot root");
+            return 0;
+        };
+
+        for entry in entries.filter_map(Result::ok) {
+            let path = entry.path();
+            if path.is_dir() {
+                if path.file_name().and_then(|name| name.to_str()) == Some(EXECUTION_RECORDS_DIR) {
+                    loaded += self.load_records_from_execution_dir(&path);
+                } else {
+                    loaded += self.load_records_from_tree(&path);
+                }
+            }
+        }
+
+        loaded
+    }
+
+    fn load_records_from_execution_dir(&self, dir: &FsPath) -> usize {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            tracing::warn!(path = %dir.display(), "failed to read execution snapshot directory");
+            return 0;
+        };
+
+        let mut loaded = 0;
+        for entry in entries.filter_map(Result::ok) {
+            let path = entry.path();
+            if !is_execution_record_snapshot(&path) {
+                continue;
+            }
+            let Some(record) = read_execution_record_snapshot(&path) else {
+                continue;
+            };
+            if self.inner.contains_key(&record.execution_id) {
+                continue;
+            }
+            self.inner.insert(record.execution_id.clone(), record);
+            loaded += 1;
+        }
+        loaded
+    }
 }
 
 fn persist_record_snapshot(record: &ExecutionRecord) {
@@ -276,7 +363,56 @@ pub(crate) fn execution_record_snapshot_path(
 ) -> std::path::PathBuf {
     std::path::Path::new(session_dir)
         .join(EXECUTION_RECORDS_DIR)
-        .join(format!("{execution_id}.{EXECUTION_RECORD_EXTENSION}"))
+        .join(execution_record_snapshot_file_name(execution_id))
+}
+
+fn execution_record_snapshot_file_name(execution_id: &str) -> String {
+    format!("{execution_id}.{EXECUTION_RECORD_EXTENSION}")
+}
+
+fn is_execution_record_snapshot(path: &FsPath) -> bool {
+    path.is_file()
+        && path.extension().and_then(|extension| extension.to_str())
+            == Some(EXECUTION_RECORD_EXTENSION)
+}
+
+fn read_execution_record_snapshot(path: &FsPath) -> Option<ExecutionRecord> {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            tracing::warn!(
+                path = %path.display(),
+                %error,
+                "failed to read execution record snapshot"
+            );
+            return None;
+        }
+    };
+    let record: ExecutionRecord = match serde_json::from_slice(&bytes) {
+        Ok(record) => record,
+        Err(error) => {
+            tracing::warn!(
+                path = %path.display(),
+                %error,
+                "failed to parse execution record snapshot"
+            );
+            return None;
+        }
+    };
+    let expected_file_name = execution_record_snapshot_file_name(&record.execution_id);
+    if path.file_name().and_then(|name| name.to_str()) != Some(expected_file_name.as_str()) {
+        tracing::warn!(
+            path = %path.display(),
+            execution_id = %record.execution_id,
+            "execution record snapshot filename does not match record id"
+        );
+        return None;
+    }
+    Some(record)
+}
+
+pub(crate) async fn list_executions(State(state): State<AppState>) -> Json<Vec<ExecutionRecord>> {
+    Json(state.execution_store.list())
 }
 
 pub(crate) async fn get_execution(

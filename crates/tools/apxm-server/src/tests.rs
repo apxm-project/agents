@@ -14,8 +14,9 @@ use std::time::SystemTime;
 use apxm_artifact::{Artifact, ArtifactMetadata};
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::error::RuntimeError;
-use apxm_core::events::payload::REDACTION_HASH_PREFIX_BLAKE3;
+use apxm_core::events::payload::{REDACTION_HASH_PREFIX_BLAKE3, RedactedContent};
 use apxm_core::types::AISOperationType;
+use apxm_core::types::NodeMetrics;
 use apxm_core::types::execution::{DagMetadata, ExecutionDag, Node, NodeMetadata};
 use apxm_core::types::values::Value;
 use apxm_runtime::capability::executor::CapabilityExecutor;
@@ -31,7 +32,7 @@ use tower::ServiceExt;
 
 use crate::build_app;
 use crate::checkpoints::{Checkpoint, CheckpointStatus, CheckpointStore};
-use crate::execute::{ExecuteRequest, prepare_request};
+use crate::execute::{ExecuteRequest, ExecuteResponse, prepare_request};
 use crate::executions::{ExecutionStore, execution_record_snapshot_path};
 use crate::helpers::{jsonrpc_err, jsonrpc_ok, mcp_tool_result, now_ms};
 use crate::mcp::{
@@ -41,6 +42,7 @@ use crate::mcp::{
 use crate::skills::SkillLibrary;
 use crate::state::AppState;
 use crate::tasks::{QueuedTask, TaskQueueManager, TaskStatus};
+use crate::types::responses::{ExecutionStats, LlmUsageSummary};
 
 // ── Test helpers ──────────────────────────────────────────────────────────
 
@@ -64,8 +66,10 @@ const NODE_OUTPUT_FIELD: &str = "output";
 const REDACTED_FIELD: &str = "redacted";
 const SUMMARY_FIELD: &str = "summary";
 const HASH_FIELD: &str = "hash";
+const STATUS_SUCCEEDED: &str = "succeeded";
 
 const FIXTURE_PACKAGE_DIR: &str = "checkout";
+const FIXTURE_SKILL_SESSION_DIR: &str = "skills";
 const FIXTURE_PACKAGE_ALT_DIR: &str = "checkout-alt";
 const FIXTURE_PACKAGE_V2_DIR: &str = "checkout-v2";
 const FIXTURE_SKILL_ID: &str = "checkout-context-triage";
@@ -87,6 +91,7 @@ const FIXTURE_AIR: &str = "module { func.func @main() attributes {ais.entry} }";
 const FIXTURE_OUTPUT: &str = "ok";
 const FIXTURE_OUTPUT_SUMMARY: &str = "string(chars=2)";
 const FIXTURE_OUTPUT_V2: &str = "ok-v2";
+const FIXTURE_NODE_ID: u64 = 1;
 const FIXTURE_COMPILER_VERSION: &str = "test-compiler";
 const FIXTURE_CONVERSION_REPORT: &str = r#"{"status":"hand-authored","unmapped":[]}"#;
 const FILE_SKILL_MANIFEST: &str = "skill.toml";
@@ -184,6 +189,13 @@ async fn test_state() -> AppState {
 }
 
 async fn test_state_with_skill_roots(skill_roots: Vec<std::path::PathBuf>) -> AppState {
+    test_state_with_skill_roots_and_execution_store(skill_roots, ExecutionStore::new()).await
+}
+
+async fn test_state_with_skill_roots_and_execution_store(
+    skill_roots: Vec<std::path::PathBuf>,
+    execution_store: ExecutionStore,
+) -> AppState {
     // Use in-memory LTM to avoid SQLite file-locking across parallel tests.
     let runtime = Arc::new(
         Runtime::new(RuntimeConfig::in_memory())
@@ -198,7 +210,7 @@ async fn test_state_with_skill_roots(skill_roots: Vec<std::path::PathBuf>) -> Ap
         start_time: SystemTime::now(),
         a2a_tasks: Arc::new(DashMap::new()),
         skill_library: SkillLibrary::new(skill_roots),
-        execution_store: ExecutionStore::new(),
+        execution_store,
     }
 }
 
@@ -552,6 +564,24 @@ fn inv_tool_artifact_bytes(capability: &str, python_handler_id: Option<&str>) ->
 
 fn tagged_blake3(bytes: &[u8]) -> String {
     format!("blake3:{}", blake3::hash(bytes).to_hex())
+}
+
+fn fixture_execute_response(session_dir: Option<String>) -> ExecuteResponse {
+    ExecuteResponse {
+        results: HashMap::new(),
+        content: Some(FIXTURE_OUTPUT.to_string()),
+        session_dir,
+        stats: ExecutionStats {
+            executed_nodes: 1,
+            failed_nodes: 0,
+            duration_ms: 0,
+        },
+        llm_usage: LlmUsageSummary {
+            input_tokens: 0,
+            output_tokens: 0,
+            total_requests: 0,
+        },
+    }
 }
 
 fn skill_detail_route(id: &str) -> String {
@@ -1101,6 +1131,88 @@ async fn execution_node_detail_unknown_node_returns_404() {
         StatusCode::NOT_FOUND,
         "expected missing node 404: {node_body}"
     );
+}
+
+#[tokio::test]
+async fn execution_store_reloads_persisted_records_for_api_index() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let session_root = temp.path().join("sessions");
+    let session_dir = session_root
+        .join(FIXTURE_SKILL_SESSION_DIR)
+        .join(FIXTURE_SKILL_ID)
+        .join(FIXTURE_SESSION_ID);
+    let session_dir_str = session_dir.to_string_lossy().to_string();
+
+    let writer = ExecutionStore::new();
+    let record = writer.start_skill_execution(
+        FIXTURE_SKILL_ID,
+        FIXTURE_SKILL_VERSION,
+        FIXTURE_SESSION_ID,
+        &session_dir_str,
+    );
+    writer.record_node_output(
+        &record.execution_id,
+        FIXTURE_NODE_ID,
+        Some(FIXTURE_OUTPUT_NAME.to_string()),
+        RedactedContent::from_text(FIXTURE_OUTPUT),
+    );
+    writer.record_node_metrics(
+        &record.execution_id,
+        FIXTURE_NODE_ID,
+        Some(FIXTURE_OUTPUT_NAME.to_string()),
+        NodeMetrics::new(FIXTURE_NODE_ID),
+    );
+    writer.complete_success(
+        &record.execution_id,
+        fixture_execute_response(Some(session_dir_str.clone())),
+    );
+
+    let loaded_store = ExecutionStore::from_session_roots([session_root]);
+    assert!(
+        loaded_store.get(&record.execution_id).is_some(),
+        "persisted execution should reload into the in-memory index"
+    );
+    let app =
+        build_app(test_state_with_skill_roots_and_execution_store(Vec::new(), loaded_store).await);
+
+    let (list_status, list_body) = get_json(app.clone(), ROUTE_EXECUTIONS).await;
+    assert_eq!(
+        list_status,
+        StatusCode::OK,
+        "execution list failed: {list_body}"
+    );
+    let listed = list_body.as_array().expect("execution list body");
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0]["execution_id"], record.execution_id);
+    assert_eq!(listed[0]["skill_id"], FIXTURE_SKILL_ID);
+
+    let (detail_status, detail_body) =
+        get_json(app.clone(), &execution_detail_route(&record.execution_id)).await;
+    assert_eq!(
+        detail_status,
+        StatusCode::OK,
+        "execution detail failed after reload: {detail_body}"
+    );
+    assert_eq!(detail_body["execution_id"], record.execution_id);
+    assert_eq!(detail_body["status"], STATUS_SUCCEEDED);
+    assert_eq!(detail_body["result"]["content"], FIXTURE_OUTPUT);
+    assert_eq!(
+        detail_body["node_outputs"][0]["node_name"],
+        FIXTURE_OUTPUT_NAME
+    );
+
+    let (node_status, node_body) = get_json(
+        app,
+        &execution_node_detail_route(&record.execution_id, FIXTURE_NODE_ID),
+    )
+    .await;
+    assert_eq!(
+        node_status,
+        StatusCode::OK,
+        "node detail failed after reload: {node_body}"
+    );
+    assert_eq!(node_body["outputs"][0]["node_name"], FIXTURE_OUTPUT_NAME);
+    assert_eq!(node_body["metrics"][0]["node_name"], FIXTURE_OUTPUT_NAME);
 }
 
 #[tokio::test]
