@@ -51,6 +51,7 @@ test-cli = { run = "python tools/scripts/cargo.py test -p apxm-cli --features dr
 test-python-frontend = { run = "python -m pytest crates/compiler/apxm-frontend/python/tests -q", description = "Run Python frontend tests", group = "Build & Test" }
 test-quality-eval = { run = "python -m pytest tools/quality_eval/tests -q", description = "Run offline quality-eval harness tests", group = "Build & Test" }
 clean = { run = "python tools/scripts/cargo.py clean", description = "Clean", group = "Build & Test" }
+scrub-rustc-cache = { run = "python tools/scripts/cargo.py scrub-sigbus-cache", description = "Remove stale rustc SIGBUS diagnostics from Cargo caches", group = "Build & Test" }
 stop = { run = "apxm process stop", description = "Stop APXM compile/run/execute/workflow jobs", group = "Configuration" }
 clean-processes = { run = "apxm process stop", description = "Stop APXM job processes without cleaning build outputs", group = "Configuration" }
 
