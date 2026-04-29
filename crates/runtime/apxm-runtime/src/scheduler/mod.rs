@@ -14,6 +14,7 @@ pub mod dataflow;
 pub mod lane_queue;
 pub mod queue;
 pub mod ready_set;
+pub mod snapshot;
 pub mod splicing;
 pub mod state;
 pub mod work_stealing;
@@ -27,6 +28,11 @@ pub use config::SchedulerConfig;
 pub use dataflow::DataflowScheduler;
 pub use lane_queue::SessionLaneGuard;
 pub use queue::{Priority, PriorityQueue};
+pub use snapshot::{
+    SchedulerSnapshot, SchedulerSnapshotCounters, SchedulerSnapshotDelegatedToken,
+    SchedulerSnapshotExecutionFrame, SchedulerSnapshotNodeOutputs, SchedulerSnapshotOp,
+    SchedulerSnapshotPendingInput, SchedulerSnapshotPromise, SchedulerSnapshotToken,
+};
 pub use splicing::SpliceConfig;
 
 // Re-export execution types from apxm-core
