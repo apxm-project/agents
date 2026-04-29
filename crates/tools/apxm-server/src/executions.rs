@@ -4,6 +4,7 @@ use std::sync::Arc;
 use apxm_core::events::payload::{NodeMetricsPayload, NodeOutputPayload, RedactedContent};
 use apxm_core::events::{ApxmEvent, EventEmitter};
 use apxm_core::types::NodeMetrics;
+use apxm_skill::SkillExecutionProvenance;
 use axum::Json;
 use axum::extract::{Path, State};
 use dashmap::DashMap;
@@ -30,6 +31,20 @@ pub(crate) struct ExecutionRecord {
     pub(crate) execution_id: String,
     pub(crate) skill_id: String,
     pub(crate) skill_version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) entry_flow: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) source_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) air_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) artifact_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) parent_execution_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) parent_skill_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) parent_skill_version: Option<String>,
     pub(crate) session_id: String,
     pub(crate) session_dir: String,
     pub(crate) status: ExecutionStatus,
@@ -117,10 +132,34 @@ impl ExecutionStore {
         session_id: &str,
         session_dir: &str,
     ) -> ExecutionRecord {
+        self.start_skill_execution_with_provenance(
+            SkillExecutionProvenance {
+                skill_id: skill_id.to_string(),
+                skill_version: skill_version.to_string(),
+                ..SkillExecutionProvenance::default()
+            },
+            session_id,
+            session_dir,
+        )
+    }
+
+    pub(crate) fn start_skill_execution_with_provenance(
+        &self,
+        provenance: SkillExecutionProvenance,
+        session_id: &str,
+        session_dir: &str,
+    ) -> ExecutionRecord {
         let record = ExecutionRecord {
             execution_id: uuid::Uuid::new_v4().to_string(),
-            skill_id: skill_id.to_string(),
-            skill_version: skill_version.to_string(),
+            skill_id: provenance.skill_id,
+            skill_version: provenance.skill_version,
+            entry_flow: provenance.entry_flow,
+            source_hash: provenance.source_hash,
+            air_hash: provenance.air_hash,
+            artifact_hash: provenance.artifact_hash,
+            parent_execution_id: provenance.parent_execution_id,
+            parent_skill_id: provenance.parent_skill_id,
+            parent_skill_version: provenance.parent_skill_version,
             session_id: session_id.to_string(),
             session_dir: session_dir.to_string(),
             status: ExecutionStatus::Running,
