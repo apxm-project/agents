@@ -31,6 +31,10 @@ const OFFSET_PAYLOAD_LEN: usize = OFFSET_VERSION + SIZE_VERSION;
 const OFFSET_HASH: usize = OFFSET_PAYLOAD_LEN + SIZE_PAYLOAD_LEN;
 const OFFSET_FLAGS: usize = OFFSET_HASH + SIZE_HASH;
 
+pub mod section_kinds {
+    pub const SKILL_MANIFEST_V1: &str = "apxm.skill_manifest.v1";
+}
+
 #[derive(Debug, Error)]
 pub enum ArtifactError {
     #[error("I/O error: {0}")]
@@ -121,9 +125,29 @@ impl Artifact {
         &self.sections
     }
 
+    pub fn section_data(&self, kind: &str) -> Option<&[u8]> {
+        self.sections
+            .iter()
+            .find(|section| section.kind == kind)
+            .map(|section| section.data.as_slice())
+    }
+
     /// Append an extra section to the artifact.
     pub fn add_section(&mut self, section: ArtifactSection) {
         self.sections.push(section);
+    }
+
+    pub fn replace_section(&mut self, kind: impl Into<String>, data: Vec<u8>) {
+        let kind = kind.into();
+        if let Some(section) = self
+            .sections
+            .iter_mut()
+            .find(|section| section.kind == kind)
+        {
+            section.data = data;
+        } else {
+            self.sections.push(ArtifactSection { kind, data });
+        }
     }
 
     /// Consume artifact and return all DAGs
@@ -323,5 +347,37 @@ mod tests {
         bytes[last] ^= 0xFF;
         let err = Artifact::from_bytes(&bytes).expect_err("expected hash mismatch");
         assert!(matches!(err, ArtifactError::HashMismatch));
+    }
+
+    #[test]
+    fn section_helpers_round_trip_skill_manifest_section() {
+        let metadata = ArtifactMetadata::new(Some("sample".into()), "test-compiler");
+        let mut artifact = Artifact::new(metadata, vec![sample_dag()]);
+        artifact.replace_section(
+            section_kinds::SKILL_MANIFEST_V1,
+            br#"{"skill_id":"x"}"#.to_vec(),
+        );
+
+        let bytes = artifact.to_bytes().expect("serialize artifact");
+        let decoded = Artifact::from_bytes(&bytes).expect("deserialize artifact");
+
+        assert_eq!(
+            decoded.section_data(section_kinds::SKILL_MANIFEST_V1),
+            Some(br#"{"skill_id":"x"}"#.as_slice())
+        );
+    }
+
+    #[test]
+    fn replace_section_updates_existing_section() {
+        let metadata = ArtifactMetadata::new(Some("sample".into()), "test-compiler");
+        let mut artifact = Artifact::new(metadata, vec![sample_dag()]);
+        artifact.replace_section(section_kinds::SKILL_MANIFEST_V1, b"old".to_vec());
+        artifact.replace_section(section_kinds::SKILL_MANIFEST_V1, b"new".to_vec());
+
+        assert_eq!(artifact.sections().len(), 1);
+        assert_eq!(
+            artifact.section_data(section_kinds::SKILL_MANIFEST_V1),
+            Some(b"new".as_slice())
+        );
     }
 }

@@ -3,6 +3,7 @@ members = [
 	# ── Core (Foundation) ─────────────────────────
 	"crates/core/apxm-ais",
 	"crates/core/apxm-core",
+	"crates/core/apxm-skill",
 	# ── Compiler (Compilation) ────────────────────
 	"crates/compiler/apxm-compiler",
 	# ── Runtime (Execution + Backend) ─────────────
@@ -29,6 +30,7 @@ edition = "2024"
 # ── Internal crates ──────────────────────────────────────────
 apxm-ais = { version = "0.0.1", path = "crates/core/apxm-ais" }
 apxm-core = { version = "0.0.1", path = "crates/core/apxm-core" }
+apxm-skill = { version = "0.0.1", path = "crates/core/apxm-skill" }
 apxm-compiler = { version = "0.0.1", path = "crates/compiler/apxm-compiler" }
 apxm-runtime = { version = "0.0.1", path = "crates/runtime/apxm-runtime" }
 apxm-backends = { version = "0.0.1", path = "crates/runtime/apxm-backends" }

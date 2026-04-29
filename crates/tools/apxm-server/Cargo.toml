@@ -15,8 +15,10 @@ path = "src/bin/apxm_mcp.rs"
 apxm-artifact.workspace = true
 apxm-compiler.workspace = true
 apxm-core.workspace = true
+apxm-skill.workspace = true
 apxm-backends.workspace = true
 apxm-credentials.workspace = true
+apxm-driver.workspace = true
 apxm-runtime = { workspace = true, features = ["metrics"] }
 anyhow.workspace = true
 blake3.workspace = true

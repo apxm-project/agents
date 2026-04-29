@@ -1,0 +1,13 @@
+[package]
+name = "apxm-skill"
+version.workspace = true
+edition.workspace = true
+description = "Shared APXM skill manifest, validation, and provenance types"
+
+[lints]
+workspace = true
+
+[dependencies]
+blake3.workspace = true
+serde.workspace = true
+toml.workspace = true

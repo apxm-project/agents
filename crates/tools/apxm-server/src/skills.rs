@@ -12,6 +12,10 @@ use apxm_core::impl_event_payload;
 use apxm_core::paths::ApxmPaths;
 use apxm_core::types::{AISOperationType, Value};
 use apxm_runtime::capability::CapabilitySandboxPreflight;
+use apxm_skill::{
+    SkillExecutionProvenance, SkillManifest, SkillPackageHashes, SkillValidationReport,
+    ValidationStatus,
+};
 use axum::Json;
 use axum::extract::{Path as AxumPath, State};
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -24,7 +28,7 @@ use crate::execute::{ExecuteResponse, to_execute_response};
 use crate::executions::ExecutionRecordingEmitter;
 use crate::state::{AppState, TokioChannelEmitter};
 
-const MANIFEST_FILE: &str = "skill.toml";
+const MANIFEST_FILE: &str = apxm_skill::MANIFEST_FILE;
 const SOURCE_FILE: &str = "SKILL.md";
 const AIR_FILE: &str = "skill.air";
 const ARTIFACT_FILE: &str = "skill.apxmobj";
@@ -36,7 +40,6 @@ const SKILL_ROOTS_ENV: &str = "APXM_SKILL_ROOTS";
 const SKILL_SESSION_DIR: &str = "skills";
 const SIDE_EFFECT_POLICY_READ_ONLY: &str = "read_only";
 const SIDE_EFFECT_POLICY_SANDBOXED: &str = "sandboxed";
-const HASH_PREFIX: &str = "blake3:";
 const SKILL_EXECUTE_STARTED: EventKind =
     EventKind::new("skill_execute_started", EventCategory::Lifecycle, false);
 const SKILL_EXECUTE_COMPLETE: EventKind =
@@ -111,54 +114,6 @@ impl Default for SkillLibrary {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub(crate) struct SkillManifest {
-    pub(crate) skill_id: String,
-    pub(crate) version: String,
-    #[serde(default)]
-    pub(crate) display_name: Option<String>,
-    #[serde(default)]
-    pub(crate) description: Option<String>,
-    pub(crate) entry_flow: String,
-    #[serde(default)]
-    pub(crate) source_hash: Option<String>,
-    #[serde(default)]
-    pub(crate) air_hash: Option<String>,
-    #[serde(default)]
-    pub(crate) artifact_hash: Option<String>,
-    #[serde(default)]
-    pub(crate) compiler_version: Option<String>,
-    #[serde(default)]
-    pub(crate) runtime_version: Option<String>,
-    #[serde(default)]
-    pub(crate) required_capabilities: Vec<String>,
-    #[serde(default)]
-    pub(crate) allowed_tools: Vec<String>,
-    #[serde(default)]
-    pub(crate) timeout_ms: Option<u64>,
-    #[serde(default)]
-    pub(crate) token_limit: Option<u64>,
-    #[serde(default)]
-    pub(crate) isolation_policy: Option<String>,
-    #[serde(default)]
-    pub(crate) side_effect_policy: Option<String>,
-    #[serde(default)]
-    pub(crate) inputs: Vec<SkillParam>,
-    #[serde(default)]
-    pub(crate) outputs: Vec<SkillParam>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub(crate) struct SkillParam {
-    pub(crate) name: String,
-    #[serde(default, rename = "type")]
-    pub(crate) type_name: Option<String>,
-    #[serde(default)]
-    pub(crate) description: Option<String>,
-    #[serde(default)]
-    pub(crate) required: Option<bool>,
-}
-
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct SkillScan {
     pub(crate) object: &'static str,
@@ -201,35 +156,11 @@ pub(crate) struct SkillPackageFiles {
     pub(crate) has_tests: bool,
 }
 
-#[derive(Debug, Clone, Default, Serialize)]
-pub(crate) struct SkillPackageHashes {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) source_hash: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) air_hash: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) artifact_hash: Option<String>,
-}
-
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum CompileStatus {
     Compiled,
     NotCompiled,
-    Invalid,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct SkillValidationReport {
-    pub(crate) status: ValidationStatus,
-    pub(crate) errors: Vec<String>,
-    pub(crate) warnings: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum ValidationStatus {
-    Valid,
     Invalid,
 }
 
@@ -521,9 +452,18 @@ fn prepare_skill_execution(
         .transpose()?
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let session_dir = skill_session_dir(&manifest.skill_id, &session_id)?;
-    let execution = state.execution_store.start_skill_execution(
-        &manifest.skill_id,
-        &manifest.version,
+    let execution = state.execution_store.start_skill_execution_with_provenance(
+        SkillExecutionProvenance {
+            skill_id: manifest.skill_id.clone(),
+            skill_version: manifest.version.clone(),
+            entry_flow: Some(manifest.entry_flow.clone()),
+            source_hash: executable.record.hashes.source_hash.clone(),
+            air_hash: executable.record.hashes.air_hash.clone(),
+            artifact_hash: executable.record.hashes.artifact_hash.clone(),
+            parent_execution_id: None,
+            parent_skill_id: None,
+            parent_skill_version: None,
+        },
         &session_id,
         &session_dir,
     );
@@ -628,7 +568,7 @@ fn load_record(package_dir: &Path) -> SkillRecord {
     let mut warnings = Vec::new();
     let manifest = match parse_manifest_file(&manifest_path) {
         Ok(manifest) => {
-            validate_manifest_shape(&manifest, &mut errors);
+            errors.extend(apxm_skill::manifest_shape_errors(&manifest));
             Some(manifest)
         }
         Err(error) => {
@@ -741,9 +681,73 @@ fn load_static_skill_artifact(
 
     let artifact = Artifact::from_bytes(&bytes)
         .map_err(|error| ApiError::bad_request(format!("invalid skill artifact: {error}")))?;
+    validate_embedded_skill_manifest(&artifact, manifest)?;
     validate_artifact_entry_flow(&artifact, &manifest.entry_flow)?;
     validate_static_skill_admission(manifest, &artifact, state)?;
     Ok(artifact)
+}
+
+fn validate_embedded_skill_manifest(
+    artifact: &Artifact,
+    manifest: &SkillManifest,
+) -> Result<(), ApiError> {
+    let Some(data) = artifact.section_data(apxm_artifact::section_kinds::SKILL_MANIFEST_V1) else {
+        return Ok(());
+    };
+    let text = std::str::from_utf8(data).map_err(|error| {
+        ApiError::bad_request(format!("embedded skill manifest is not UTF-8: {error}"))
+    })?;
+    let embedded = apxm_skill::parse_manifest(text).map_err(|error| {
+        ApiError::bad_request(format!("failed to parse embedded skill manifest: {error}"))
+    })?;
+
+    validate_embedded_manifest_field("skill_id", &embedded.skill_id, &manifest.skill_id)?;
+    validate_embedded_manifest_field("version", &embedded.version, &manifest.version)?;
+    validate_embedded_manifest_field("entry_flow", &embedded.entry_flow, &manifest.entry_flow)?;
+    validate_embedded_manifest_option(
+        "source_hash",
+        embedded.source_hash.as_deref(),
+        manifest.source_hash.as_deref(),
+    )?;
+    validate_embedded_manifest_option(
+        "air_hash",
+        embedded.air_hash.as_deref(),
+        manifest.air_hash.as_deref(),
+    )?;
+    validate_embedded_manifest_option(
+        "artifact_hash",
+        embedded.artifact_hash.as_deref(),
+        manifest.artifact_hash.as_deref(),
+    )?;
+    Ok(())
+}
+
+fn validate_embedded_manifest_field(
+    field: &str,
+    embedded: &str,
+    manifest: &str,
+) -> Result<(), ApiError> {
+    if embedded == manifest {
+        Ok(())
+    } else {
+        Err(ApiError::bad_request(format!(
+            "embedded skill manifest {field} '{embedded}' does not match skill.toml '{manifest}'"
+        )))
+    }
+}
+
+fn validate_embedded_manifest_option(
+    field: &str,
+    embedded: Option<&str>,
+    manifest: Option<&str>,
+) -> Result<(), ApiError> {
+    if embedded == manifest {
+        Ok(())
+    } else {
+        Err(ApiError::bad_request(format!(
+            "embedded skill manifest {field} does not match skill.toml"
+        )))
+    }
 }
 
 fn validate_static_skill_admission(
@@ -931,41 +935,11 @@ fn is_allowed_static_skill_op(op: AISOperationType) -> bool {
 }
 
 fn parse_manifest_file(path: &Path) -> Result<SkillManifest, String> {
-    let contents = fs::read_to_string(path)
-        .map_err(|error| format!("failed to read {MANIFEST_FILE}: {error}"))?;
-    parse_manifest(&contents).map_err(|error| format!("failed to parse {MANIFEST_FILE}: {error}"))
+    apxm_skill::parse_manifest_file(path)
 }
 
 fn parse_manifest(contents: &str) -> Result<SkillManifest, toml::de::Error> {
-    match toml::from_str::<SkillManifest>(contents) {
-        Ok(manifest) => Ok(manifest),
-        Err(top_level_error) => {
-            let value = toml::from_str::<toml::Value>(contents)?;
-            if let Some(skill_table) = value.get("skill") {
-                skill_table.clone().try_into()
-            } else {
-                Err(top_level_error)
-            }
-        }
-    }
-}
-
-fn validate_manifest_shape(manifest: &SkillManifest, errors: &mut Vec<String>) {
-    if manifest.skill_id.trim().is_empty() {
-        errors.push("skill_id is required".to_string());
-    }
-    if manifest.version.trim().is_empty() {
-        errors.push("version is required".to_string());
-    }
-    if manifest.entry_flow.trim().is_empty() {
-        errors.push("entry_flow is required".to_string());
-    }
-    if matches!(manifest.timeout_ms, Some(0)) {
-        errors.push("timeout_ms must be greater than zero".to_string());
-    }
-    if matches!(manifest.token_limit, Some(0)) {
-        errors.push("token_limit must be greater than zero".to_string());
-    }
+    apxm_skill::parse_manifest(contents)
 }
 
 fn validate_declared_hash(
@@ -976,44 +950,19 @@ fn validate_declared_hash(
     errors: &mut Vec<String>,
     warnings: &mut Vec<String>,
 ) {
-    let Some(declared) = declared else {
-        return;
-    };
-    if !file_exists {
-        warnings.push(format!("{field} declared but matching file is missing"));
-        return;
-    }
-    let Some(actual) = actual else {
-        return;
-    };
-    if !hashes_match(declared, actual) {
-        errors.push(format!(
-            "{field} mismatch: declared {declared}, actual {actual}"
-        ));
-    }
+    apxm_skill::validate_declared_hash(field, declared, actual, file_exists, errors, warnings);
 }
 
 fn hashes_match(declared: &str, actual: &str) -> bool {
-    let declared = declared.strip_prefix(HASH_PREFIX).unwrap_or(declared);
-    let actual = actual.strip_prefix(HASH_PREFIX).unwrap_or(actual);
-    declared.eq_ignore_ascii_case(actual)
+    apxm_skill::hashes_match(declared, actual)
 }
 
 fn file_hash_if_present(path: &Path, errors: &mut Vec<String>) -> Option<String> {
-    if !path.is_file() {
-        return None;
-    }
-    match fs::read(path) {
-        Ok(bytes) => Some(tagged_blake3(&bytes)),
-        Err(error) => {
-            errors.push(format!("failed to hash {}: {error}", path.display()));
-            None
-        }
-    }
+    apxm_skill::file_hash_if_present(path, errors)
 }
 
 fn tagged_blake3(bytes: &[u8]) -> String {
-    format!("{HASH_PREFIX}{}", blake3::hash(bytes).to_hex())
+    apxm_skill::tagged_blake3(bytes)
 }
 
 fn skill_session_dir(skill_id: &str, session_id: &str) -> Result<String, ApiError> {

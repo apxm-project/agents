@@ -389,7 +389,9 @@ dependencies = [
  "apxm-compiler",
  "apxm-core",
  "apxm-credentials",
+ "apxm-driver",
  "apxm-runtime",
+ "apxm-skill",
  "async-stream",
  "async-trait",
  "axum",
@@ -409,6 +411,15 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "apxm-skill"
+version = "0.0.1"
+dependencies = [
+ "blake3",
+ "serde",
+ "toml",
 ]
 
 [[package]]
