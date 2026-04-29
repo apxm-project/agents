@@ -572,12 +572,10 @@ pub struct SkillManifest {
 
 Implementation target:
 
-- Add a small shared module or crate, preferably
-  `crates/orchestration/apxm-skill` if the API is expected to be reused by CLI,
-  driver, server, and GUI.
-- If a new crate is too much for the first PR, start with
-  `crates/tools/apxm-server/src/skills.rs` and move it out after the shape is
-  proven.
+- Use the shared `crates/core/apxm-skill` crate for manifest identity, hashes,
+  validation reports, and execution provenance.
+- Keep filesystem scanning, HTTP handlers, and static artifact admission in
+  `crates/tools/apxm-server/src/skills.rs`.
 - Recognize `skill.toml`, `skill.air`, and optional `skill.apxmobj`.
 - Validate hashes and required files, but do not execute anything yet.
 

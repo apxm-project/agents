@@ -62,12 +62,15 @@ artifact paths, raw AIR, or session roots.
 symlinked artifacts, entry-flow mismatches, unknown request fields such as
 `session_root`, process, memory, LLM, agent-spawn calls, and unsupported
 side-effect policies. Static `INV_TOOL` nodes are allowed only for manifest
-declared capabilities/tools that are registered in the runtime and marked
-read-only; Python-backed `INV_TOOL` handlers are rejected. Sessions are created
-under APXM-owned skill session directories using a generated or simple validated
-`session_id`, streamed skill runs emit typed `node_output` and `node_metrics`
-events, prompt and node-output observability is redacted to summaries and
-hashes, and runtime events include the skill id, skill version, and entry flow.
+declared capabilities/tools that are registered in the runtime. With omitted or
+`read_only` side-effect policy those capabilities must be read-only; with
+`sandboxed` policy, side-effectful capabilities must declare sandbox execution
+and pass sandbox preflight. Python-backed `INV_TOOL` handlers are rejected.
+Sessions are created under APXM-owned skill session directories using a
+generated or simple validated `session_id`, streamed skill runs emit typed
+`node_output` and `node_metrics` events, prompt and node-output observability is
+redacted to summaries and hashes, and runtime events include the skill id, skill
+version, and entry flow.
 Completed runs are recorded in the in-memory execution index for
 `/v1/executions/:execution_id`. Each update is also snapshotted to
 `executions/:execution_id.json` inside the APXM-owned skill session directory.
@@ -106,5 +109,6 @@ The `apxm-mcp-server` binary exposes these tools over stdio:
 | apxm-runtime | DAG execution engine |
 | apxm-backends | LLM provider registry |
 | apxm-artifact | Artifact serialization |
+| apxm-skill | Shared skill manifests, validation reports, hashes, and execution provenance |
 | apxm-core | Shared types, error codes, constants |
 | apxm-credentials | Backend credential lookup |

@@ -37,19 +37,21 @@ artifacts from server-owned skill roots. It rejects raw AIR, client-provided
 artifact paths, client-provided session roots, symlinked artifacts, missing or
 mismatched artifact hashes, entry-flow mismatches, invalid session ids, and
 unsafe operations. Static `INV_TOOL` nodes are admitted only when the manifest
-declares the capability/tool, the capability is registered in the runtime, the
-capability metadata is read-only, the manifest side-effect policy is omitted or
-`read_only`, and the artifact does not use Python-backed tool handlers.
+declares the capability/tool and the capability is registered in the runtime.
+When the manifest side-effect policy is omitted or `read_only`, admitted
+capabilities must be read-only. When the policy is `sandboxed`, side-effectful
+capabilities must declare sandbox execution and pass sandbox preflight. Python-
+backed `INV_TOOL` handlers are rejected.
 Streaming skill execution now forwards typed `node_output` and `node_metrics`
 core events through `EmitterAdapter`, and REST/SSE skill execution records
 node outputs for node-detail lookup. Prompt observability now emits redacted
 `llm_prompt` events, and `node_output` events carry summary/hash/redaction
 metadata instead of raw JSON values. Execution records are memory-indexed for
 API lookup and snapshotted to `executions/{execution_id}.json` inside the
-APXM-owned skill session directory. Runtime events emitted by server-owned skill runs carry
-`skill_id`, `skill_version`, and entry-flow provenance. Nested parent-skill
-provenance, artifact-level provenance, and full scheduler replay remain future
-work.
+APXM-owned skill session directory. Runtime events and persisted execution
+records emitted by server-owned skill runs carry `skill_id`, `skill_version`,
+entry-flow, and artifact hash provenance. Nested parent-skill provenance,
+reloadable execution indexes, and full scheduler replay remain future work.
 
 ## Next PR
 
@@ -60,8 +62,9 @@ server-managed executions:
    `executions/{execution_id}.json` snapshots.
 2. Preserve parent-run provenance, `scope_id`, and artifact/session provenance
    for nested skills.
-3. Extend capability admission beyond read-only registered tools with explicit
-   sandbox preflight.
+3. Broaden capability admission policy beyond the current `read_only` and
+   `sandboxed` static `INV_TOOL` paths, including richer policy surfaces and
+   nested-skill propagation.
 
 ## Operating Principles
 
@@ -147,10 +150,10 @@ hash, entry flow, capability policy, and ABI.
   compatibility, input/output ABI, required capabilities, allowed tools,
   timeout, token limit, isolation policy, and side-effect policy.
 
-**Likely files:**
+**Implemented files:**
 
-- New shared module or crate: `crates/orchestration/apxm-skill`
-- If starting smaller: `crates/tools/apxm-server/src/skills.rs`
+- Shared crate: `crates/core/apxm-skill`
+- Server scanner and HTTP surface: `crates/tools/apxm-server/src/skills.rs`
 - Later consumers: `crates/orchestration/apxm-driver/src/session_output.rs`
 - Artifact section constants may live near `crates/orchestration/apxm-artifact/src/lib.rs`
 
@@ -186,7 +189,7 @@ hash, entry flow, capability policy, and ABI.
 
 - `crates/tools/apxm-server/src/skills.rs`
 - `crates/tools/apxm-server/src/state.rs`
-- Later extraction to `crates/orchestration/apxm-skill`
+- Shared manifest/hash/validation types live in `crates/core/apxm-skill`
 
 **Acceptance criteria:**
 
