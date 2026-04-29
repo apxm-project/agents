@@ -15,7 +15,7 @@ use async_trait::async_trait;
 
 use crate::compiler::Compiler;
 use crate::hooks;
-use crate::session_output::{SessionEventEmitter, SessionOutputWriter};
+use crate::session_output::{SessionEventEmitter, SessionOutputWriter, SessionProvenance};
 
 pub struct DriverWorkflowSpawner {
     runtime: Mutex<Option<Weak<Runtime>>>,
@@ -40,22 +40,32 @@ impl DriverWorkflowSpawner {
     ) -> Pin<Box<dyn Future<Output = Result<WorkflowSpawnResult, RuntimeError>> + Send + 'a>> {
         Box::pin(async move {
             let session_base_dir = resolve_session_base_dir(invocation.session_root.as_deref())?;
-            match invocation.target {
+            match &invocation.target {
                 WorkflowTarget::GraphPath { path } => {
-                    self.execute_graph_path(Path::new(&path), &invocation.args, &session_base_dir)
-                        .await
+                    self.execute_graph_path(
+                        Path::new(&path),
+                        &invocation.args,
+                        &session_base_dir,
+                        &invocation,
+                    )
+                    .await
                 }
                 WorkflowTarget::ArtifactPath { path } => {
                     self.execute_artifact_path(
                         Path::new(&path),
                         &invocation.args,
                         &session_base_dir,
+                        &invocation,
                     )
                     .await
                 }
                 WorkflowTarget::WorkflowPath { path } => {
-                    self.execute_workflow_path(Path::new(&path), invocation.args, &session_base_dir)
-                        .await
+                    self.execute_workflow_path(
+                        Path::new(&path),
+                        invocation.args.clone(),
+                        &session_base_dir,
+                    )
+                    .await
                 }
                 WorkflowTarget::RegisteredFlow {
                     agent_name,
@@ -73,6 +83,7 @@ impl DriverWorkflowSpawner {
         graph_path: &Path,
         args: &HashMap<String, serde_json::Value>,
         session_base_dir: &Path,
+        invocation: &WorkflowInvocation,
     ) -> Result<WorkflowSpawnResult, RuntimeError> {
         let artifact = {
             let compiler = Compiler::new()
@@ -90,11 +101,13 @@ impl DriverWorkflowSpawner {
         let ordered_args = ordered_args_from_artifact(&artifact, args)?;
         let input_graph = load_graph_for_session(graph_path).ok();
         let execution_id = child_execution_id("graph", graph_path);
+        let provenance = provenance_from_invocation(invocation);
         let writer = create_session_writer(
             session_base_dir,
             &execution_id,
             graph_path.file_stem().and_then(|s| s.to_str()),
             input_graph.as_ref(),
+            &provenance,
         )?;
         let session_dir = writer.session_dir().to_path_buf();
         let runtime = self.runtime()?;
@@ -105,6 +118,7 @@ impl DriverWorkflowSpawner {
             artifact.entry_dag().map(|dag| dag.nodes.len()),
             runtime.memory_system_arc(),
             self.configured_emitter.as_ref().map(Arc::clone),
+            &provenance,
         )?;
 
         let execution = runtime
@@ -122,6 +136,7 @@ impl DriverWorkflowSpawner {
             &execution_id,
             graph_path.file_stem().and_then(|s| s.to_str()),
             execution.as_ref(),
+            &provenance,
         )?;
 
         let execution = execution?;
@@ -136,6 +151,7 @@ impl DriverWorkflowSpawner {
         artifact_path: &Path,
         args: &HashMap<String, serde_json::Value>,
         session_base_dir: &Path,
+        invocation: &WorkflowInvocation,
     ) -> Result<WorkflowSpawnResult, RuntimeError> {
         let artifact = Artifact::read_from_path(artifact_path).map_err(|e| {
             RuntimeError::State(format!(
@@ -145,11 +161,13 @@ impl DriverWorkflowSpawner {
         })?;
         let ordered_args = ordered_args_from_artifact(&artifact, args)?;
         let execution_id = child_execution_id("artifact", artifact_path);
+        let provenance = provenance_from_invocation(invocation);
         let writer = create_session_writer(
             session_base_dir,
             &execution_id,
             artifact_path.file_stem().and_then(|s| s.to_str()),
             None,
+            &provenance,
         )?;
         let session_dir = writer.session_dir().to_path_buf();
         let runtime = self.runtime()?;
@@ -160,6 +178,7 @@ impl DriverWorkflowSpawner {
             artifact.entry_dag().map(|dag| dag.nodes.len()),
             runtime.memory_system_arc(),
             self.configured_emitter.as_ref().map(Arc::clone),
+            &provenance,
         )?;
 
         let execution = runtime
@@ -177,6 +196,7 @@ impl DriverWorkflowSpawner {
             &execution_id,
             artifact_path.file_stem().and_then(|s| s.to_str()),
             execution.as_ref(),
+            &provenance,
         )?;
 
         let execution = execution?;
@@ -513,6 +533,7 @@ fn create_session_writer(
     execution_id: &str,
     graph_name: Option<&str>,
     input_graph: Option<&apxm_compiler::AirModule>,
+    provenance: &SessionProvenance,
 ) -> Result<SessionOutputWriter, RuntimeError> {
     let writer = SessionOutputWriter::new(session_base_dir, execution_id).map_err(|e| {
         RuntimeError::State(format!(
@@ -521,7 +542,7 @@ fn create_session_writer(
         ))
     })?;
     writer
-        .write_manifest(
+        .write_manifest_with_provenance(
             execution_id,
             graph_name,
             SessionStatus::Running,
@@ -530,6 +551,7 @@ fn create_session_writer(
                 .map(|graph| graph.nodes.len())
                 .unwrap_or_default(),
             false,
+            provenance,
         )
         .map_err(|e| RuntimeError::State(format!("Failed to write child session manifest: {e}")))?;
     if let Some(graph) = input_graph {
@@ -547,14 +569,16 @@ fn create_session_emitter(
     total_nodes: Option<usize>,
     memory: Arc<apxm_runtime::memory::MemorySystem>,
     configured_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
+    provenance: &SessionProvenance,
 ) -> Result<Option<Arc<dyn ExecutionEventEmitter>>, RuntimeError> {
     let project_root = std::env::current_dir().ok();
     let emitter = Arc::new(
-        SessionEventEmitter::new(
+        SessionEventEmitter::new_with_provenance(
             session_dir,
             execution_id.to_string(),
             input_graph,
             project_root.as_deref(),
+            provenance.clone(),
         )
         .map_err(|e| RuntimeError::State(format!("Failed to create session emitter: {e}")))?,
     );
@@ -573,10 +597,11 @@ fn finalize_child_session(
     execution_id: &str,
     graph_name: Option<&str>,
     execution: Result<&RuntimeExecutionResult, &RuntimeError>,
+    provenance: &SessionProvenance,
 ) -> Result<(), RuntimeError> {
     match execution {
         Ok(execution) => writer
-            .finalize(
+            .finalize_with_provenance(
                 execution_id,
                 graph_name,
                 execution.stats.duration_ms as u128,
@@ -588,11 +613,22 @@ fn finalize_child_session(
                 &build_metrics_report(execution),
                 &execution.stats.node_statuses,
                 None,
+                provenance,
             )
             .map_err(|e| RuntimeError::State(format!("Failed to finalize child session: {e}"))),
         Err(_) => writer
-            .finalize_live_with_id(false, Some(execution_id), graph_name)
+            .finalize_live_with_id_and_provenance(false, Some(execution_id), graph_name, provenance)
             .map_err(|e| RuntimeError::State(format!("Failed to mark child session failed: {e}"))),
+    }
+}
+
+fn provenance_from_invocation(invocation: &WorkflowInvocation) -> SessionProvenance {
+    SessionProvenance {
+        scope_id: invocation.parent_scope_id.clone(),
+        parent_execution_id: invocation.parent_execution_id.clone(),
+        parent_session_dir: invocation.parent_session_dir.clone(),
+        parent_scope_id: invocation.parent_scope_id.clone(),
+        spawn_node_id: invocation.spawn_node_id,
     }
 }
 

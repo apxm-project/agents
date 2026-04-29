@@ -474,6 +474,11 @@ pub mod session {
         pub const STATUS_JSON: &str = "status.json";
         pub const METRICS_JSON: &str = "metrics.json";
         pub const TRACE_NDJSON: &str = "trace.ndjson";
+        pub const SCOPE_ID: &str = "scope_id";
+        pub const PARENT_EXECUTION_ID: &str = "parent_execution_id";
+        pub const PARENT_SESSION_DIR: &str = "parent_session_dir";
+        pub const PARENT_SCOPE_ID: &str = "parent_scope_id";
+        pub const SPAWN_NODE_ID: &str = "spawn_node_id";
         pub const PROMPT_TXT: &str = "prompt.txt";
         pub const RESPONSE_TXT: &str = "response.txt";
         pub const SKILLS_DIR: &str = "skills";

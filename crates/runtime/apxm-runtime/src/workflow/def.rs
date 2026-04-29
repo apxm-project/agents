@@ -76,6 +76,10 @@ impl GraphStep {
             await_result: true,
             session_root: None,
             session_dir: None,
+            parent_execution_id: None,
+            parent_session_dir: None,
+            parent_scope_id: None,
+            spawn_node_id: None,
         }
     }
 }

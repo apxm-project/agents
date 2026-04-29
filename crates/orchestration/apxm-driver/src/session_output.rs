@@ -20,6 +20,7 @@ use apxm_core::types::{
     CompletedNodeInfo, LiveSessionState, NodeInfo, SessionManifest, SessionStatus,
 };
 use apxm_runtime::ExecutionEventEmitter;
+use parking_lot::RwLock;
 
 use crate::context_assembler::{ContextAssembler, WorkspaceNodeMetadata};
 use crate::skill_resolver::SkillResolver;
@@ -34,11 +35,30 @@ pub struct SessionOutputWriter {
     session_dir: PathBuf,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct SessionProvenance {
+    pub scope_id: Option<String>,
+    pub parent_execution_id: Option<String>,
+    pub parent_session_dir: Option<String>,
+    pub parent_scope_id: Option<String>,
+    pub spawn_node_id: Option<u64>,
+}
+
 /// Serialize to pretty JSON and write to a file.
 fn json_pretty_write(path: &Path, value: &(impl serde::Serialize + ?Sized)) -> io::Result<()> {
     let json =
         serde_json::to_string_pretty(value).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
     fs::write(path, json)
+}
+
+fn insert_optional_string(
+    object: &mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    value: Option<String>,
+) {
+    if let Some(value) = value {
+        object.insert(key.to_string(), serde_json::Value::String(value));
+    }
 }
 
 /// Pick the entry function's terminal output for `results.json::final_output`.
@@ -199,6 +219,27 @@ impl SessionOutputWriter {
         node_count: usize,
         success: bool,
     ) -> io::Result<()> {
+        self.write_manifest_with_provenance(
+            execution_id,
+            graph_name,
+            status,
+            duration_ms,
+            node_count,
+            success,
+            &SessionProvenance::default(),
+        )
+    }
+
+    pub fn write_manifest_with_provenance(
+        &self,
+        execution_id: &str,
+        graph_name: Option<&str>,
+        status: SessionStatus,
+        duration_ms: u128,
+        node_count: usize,
+        success: bool,
+        provenance: &SessionProvenance,
+    ) -> io::Result<()> {
         let manifest = SessionManifest {
             execution_id: execution_id.to_string(),
             graph_name: graph_name.map(|s| s.to_string()),
@@ -207,7 +248,11 @@ impl SessionOutputWriter {
             duration_ms,
             node_count,
             success,
-            scope_id: None,
+            scope_id: provenance.scope_id.clone(),
+            parent_execution_id: provenance.parent_execution_id.clone(),
+            parent_session_dir: provenance.parent_session_dir.clone(),
+            parent_scope_id: provenance.parent_scope_id.clone(),
+            spawn_node_id: provenance.spawn_node_id,
         };
         json_pretty_write(
             &self.session_dir.join(constants::session::files::MANIFEST),
@@ -302,18 +347,50 @@ impl SessionOutputWriter {
         node_statuses: &[apxm_core::types::NodeStatus],
         episodic_entries: Option<&[apxm_runtime::memory::EpisodicEntry]>,
     ) -> io::Result<()> {
+        self.finalize_with_provenance(
+            execution_id,
+            graph_name,
+            duration_ms,
+            node_count,
+            success,
+            all_outputs,
+            node_map,
+            exit_values,
+            metrics_json,
+            node_statuses,
+            episodic_entries,
+            &SessionProvenance::default(),
+        )
+    }
+
+    pub fn finalize_with_provenance(
+        &self,
+        execution_id: &str,
+        graph_name: Option<&str>,
+        duration_ms: u128,
+        node_count: usize,
+        success: bool,
+        all_outputs: Option<&HashMap<u64, Value>>,
+        node_map: Option<&HashMap<u64, Vec<u64>>>,
+        exit_values: &HashMap<u64, Value>,
+        metrics_json: &serde_json::Value,
+        node_statuses: &[apxm_core::types::NodeStatus],
+        episodic_entries: Option<&[apxm_runtime::memory::EpisodicEntry]>,
+        provenance: &SessionProvenance,
+    ) -> io::Result<()> {
         let status = if success {
             SessionStatus::Completed
         } else {
             SessionStatus::Failed
         };
-        self.write_manifest(
+        self.write_manifest_with_provenance(
             execution_id,
             graph_name,
             status,
             duration_ms,
             node_count,
             success,
+            provenance,
         )?;
 
         if let (Some(all_outputs), Some(node_map)) = (all_outputs, node_map) {
@@ -355,6 +432,21 @@ impl SessionOutputWriter {
         execution_id: Option<&str>,
         graph_name: Option<&str>,
     ) -> io::Result<()> {
+        self.finalize_live_with_id_and_provenance(
+            success,
+            execution_id,
+            graph_name,
+            &SessionProvenance::default(),
+        )
+    }
+
+    pub fn finalize_live_with_id_and_provenance(
+        &self,
+        success: bool,
+        execution_id: Option<&str>,
+        graph_name: Option<&str>,
+        provenance: &SessionProvenance,
+    ) -> io::Result<()> {
         let status = if success {
             SessionStatus::Completed
         } else {
@@ -379,7 +471,9 @@ impl SessionOutputWriter {
 
         // Also update manifest.json so it doesn't stay at "running"
         if let Some(exec_id) = execution_id {
-            self.write_manifest(exec_id, graph_name, status, 0, 0, success)?;
+            self.write_manifest_with_provenance(
+                exec_id, graph_name, status, 0, 0, success, provenance,
+            )?;
         }
 
         Ok(())
@@ -424,9 +518,11 @@ pub struct SessionEventEmitter {
     total: AtomicU64,
     seq: AtomicU64,
     current_node_id: AtomicI64,
+    current_scope_id: RwLock<Option<String>>,
     node_metadata: Arc<HashMap<u64, WorkspaceNodeMetadata>>,
     node_traces: Mutex<HashMap<u64, FileEventSink>>,
     node_llm_tokens: Mutex<HashMap<u64, Vec<String>>>,
+    provenance: SessionProvenance,
     skill_resolver: Option<SkillResolver>,
     context_assembler: parking_lot::Mutex<Option<ContextAssembler>>,
     running_nodes: Mutex<Vec<NodeInfo>>,
@@ -440,6 +536,22 @@ impl SessionEventEmitter {
         trace_id: String,
         input_graph: Option<&AirModule>,
         project_root: Option<&Path>,
+    ) -> io::Result<Self> {
+        Self::new_with_provenance(
+            session_dir,
+            trace_id,
+            input_graph,
+            project_root,
+            SessionProvenance::default(),
+        )
+    }
+
+    pub fn new_with_provenance(
+        session_dir: &Path,
+        trace_id: String,
+        input_graph: Option<&AirModule>,
+        project_root: Option<&Path>,
+        provenance: SessionProvenance,
     ) -> io::Result<Self> {
         let trace_path = session_dir.join(constants::session::files::TRACE);
         let sink = FileEventSink::new(&trace_path)?;
@@ -487,9 +599,11 @@ impl SessionEventEmitter {
             total: AtomicU64::new(0),
             seq: AtomicU64::new(0),
             current_node_id: AtomicI64::new(-1),
+            current_scope_id: RwLock::new(provenance.scope_id.clone()),
             node_metadata,
             node_traces: Mutex::new(HashMap::new()),
             node_llm_tokens: Mutex::new(HashMap::new()),
+            provenance,
             skill_resolver,
             context_assembler: parking_lot::Mutex::new(context_assembler),
             running_nodes: Mutex::new(Vec::new()),
@@ -519,7 +633,9 @@ impl SessionEventEmitter {
 
     fn write_trace_event<P: EventPayload>(&self, payload: P) {
         let seq = self.seq.fetch_add(1, Ordering::Relaxed);
-        let event = ApxmEvent::root(payload, EventSource::Runtime, &*self.trace_id).with_seq(seq);
+        let event = ApxmEvent::root(payload, EventSource::Runtime, &*self.trace_id)
+            .with_scope_id(self.current_scope_id())
+            .with_seq(seq);
         if let Ok(mut sink) = self.sink.lock() {
             let _ = sink.write_event(&event);
             let _ = sink.flush();
@@ -528,7 +644,9 @@ impl SessionEventEmitter {
 
     fn write_node_trace_event<P: EventPayload>(&self, node_id: u64, payload: P) {
         let seq = self.seq.fetch_add(1, Ordering::Relaxed);
-        let event = ApxmEvent::root(payload, EventSource::Runtime, &*self.trace_id).with_seq(seq);
+        let event = ApxmEvent::root(payload, EventSource::Runtime, &*self.trace_id)
+            .with_scope_id(self.current_scope_id())
+            .with_seq(seq);
         if let Ok(mut traces) = self.node_traces.lock()
             && let Some(sink) = traces.get_mut(&node_id)
         {
@@ -548,12 +666,40 @@ impl SessionEventEmitter {
             return;
         }
 
-        let node_info = serde_json::json!({
+        let mut node_info = serde_json::json!({
             "id": node_id,
             "name": meta.name,
             "op": meta.op_type,
             "attributes": serde_json::to_value(&meta.attributes).unwrap_or_default(),
         });
+        if let Some(object) = node_info.as_object_mut() {
+            insert_optional_string(
+                object,
+                constants::session::node::SCOPE_ID,
+                self.current_scope_id(),
+            );
+            insert_optional_string(
+                object,
+                constants::session::node::PARENT_EXECUTION_ID,
+                self.provenance.parent_execution_id.clone(),
+            );
+            insert_optional_string(
+                object,
+                constants::session::node::PARENT_SESSION_DIR,
+                self.provenance.parent_session_dir.clone(),
+            );
+            insert_optional_string(
+                object,
+                constants::session::node::PARENT_SCOPE_ID,
+                self.provenance.parent_scope_id.clone(),
+            );
+            if let Some(spawn_node_id) = self.provenance.spawn_node_id {
+                object.insert(
+                    constants::session::node::SPAWN_NODE_ID.to_string(),
+                    serde_json::Value::Number(spawn_node_id.into()),
+                );
+            }
+        }
         let _ = json_pretty_write(
             &node_dir.join(constants::session::node::NODE_JSON),
             &node_info,
@@ -743,6 +889,14 @@ impl SessionEventEmitter {
 }
 
 impl ExecutionEventEmitter for SessionEventEmitter {
+    fn set_current_scope_id(&self, scope_id: Option<String>) {
+        *self.current_scope_id.write() = scope_id;
+    }
+
+    fn current_scope_id(&self) -> Option<String> {
+        self.current_scope_id.read().clone()
+    }
+
     fn emit_llm_token(&self, content: &str) {
         self.write_trace_event(apxm_core::events::payload::TokenPayload {
             text: content.to_string(),
