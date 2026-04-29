@@ -9,12 +9,13 @@ use super::{ExecutionContext, Node, Result, Value, get_string_attribute};
 use crate::aam::{ScopeSpec, TransitionLabel};
 use crate::executor::ExecutorEngine;
 use crate::executor::handlers::template::input_names_from_node;
+use crate::metadata_keys as metadata;
 use crate::scheduler::{DataflowScheduler, SchedulerConfig};
 use apxm_core::constants::graph::attrs as graph_attrs;
-use crate::metadata_keys as metadata;
 use apxm_core::constants::runtime::belief_keys;
 use apxm_core::error::RuntimeError;
 use apxm_core::types::execution::ExecutionDag;
+use apxm_core::types::values::Number;
 
 /// Maximum recursion depth for flow calls to prevent stack overflow
 const MAX_FLOW_CALL_DEPTH: usize = 100;
@@ -199,8 +200,9 @@ async fn execute_impl(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -
     let scheduler = DataflowScheduler::new(SchedulerConfig::default());
     let dag_to_execute = (*sub_dag).clone();
     let token_accountant = Arc::clone(&child_ctx.token_accountant);
+    let child_scope_id = child_ctx.scope_id().to_string();
 
-    let (results, stats, _scheduler_metrics, _, _) = scheduler
+    let (results, stats, _scheduler_metrics, all_outputs, node_output_map) = scheduler
         .execute(
             dag_to_execute,
             engine,
@@ -220,6 +222,17 @@ async fn execute_impl(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -
                 message: format!("Sub-flow execution failed: {}", e),
             }
         })?;
+
+    record_child_flow_outputs(
+        ctx,
+        node.id,
+        &agent_name,
+        &flow_name,
+        &child_scope_id,
+        &results,
+        all_outputs.as_ref(),
+        node_output_map.as_ref(),
+    );
 
     // Clear the pending flow call belief
     ctx.aam.set_belief(
@@ -251,6 +264,91 @@ async fn execute_impl(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -
     );
 
     Ok(return_value)
+}
+
+fn record_child_flow_outputs(
+    ctx: &ExecutionContext,
+    parent_node_id: u64,
+    agent_name: &str,
+    flow_name: &str,
+    child_scope_id: &str,
+    results: &HashMap<u64, Value>,
+    all_outputs: Option<&HashMap<u64, Value>>,
+    node_output_map: Option<&HashMap<u64, Vec<u64>>>,
+) {
+    let evidence = Value::Object(
+        vec![
+            (
+                "type".to_string(),
+                Value::String("flow_call_child_outputs".to_string()),
+            ),
+            (
+                "parent_node_id".to_string(),
+                Value::Number(Number::Integer(parent_node_id as i64)),
+            ),
+            ("agent".to_string(), Value::String(agent_name.to_string())),
+            ("flow".to_string(), Value::String(flow_name.to_string())),
+            (
+                "child_scope_id".to_string(),
+                Value::String(child_scope_id.to_string()),
+            ),
+            ("results".to_string(), output_map_to_value(results)),
+            (
+                "all_outputs".to_string(),
+                all_outputs
+                    .map(output_map_to_value)
+                    .unwrap_or_else(|| Value::Object(HashMap::new())),
+            ),
+            (
+                "node_output_map".to_string(),
+                node_output_map
+                    .map(node_output_map_to_value)
+                    .unwrap_or_else(|| Value::Object(HashMap::new())),
+            ),
+        ]
+        .into_iter()
+        .collect(),
+    );
+
+    ctx.aam.set_belief(
+        format!(
+            "{}{}:{}:{}",
+            belief_keys::FLOW_CALL_OUTPUT_PREFIX,
+            agent_name,
+            flow_name,
+            parent_node_id
+        ),
+        evidence,
+        TransitionLabel::Custom(format!("flow_call_outputs:{}:{}", agent_name, flow_name)),
+    );
+}
+
+fn output_map_to_value(outputs: &HashMap<u64, Value>) -> Value {
+    Value::Object(
+        outputs
+            .iter()
+            .map(|(node_id, value)| (node_id.to_string(), value.clone()))
+            .collect(),
+    )
+}
+
+fn node_output_map_to_value(output_map: &HashMap<u64, Vec<u64>>) -> Value {
+    Value::Object(
+        output_map
+            .iter()
+            .map(|(node_id, output_ids)| {
+                (
+                    node_id.to_string(),
+                    Value::Array(
+                        output_ids
+                            .iter()
+                            .map(|output_id| Value::Number(Number::Integer(*output_id as i64)))
+                            .collect(),
+                    ),
+                )
+            })
+            .collect(),
+    )
 }
 
 #[derive(Debug, Clone)]
@@ -592,6 +690,31 @@ mod tests {
 
         let result = execute(&ctx, &node, vec![]).await.unwrap();
         assert_eq!(result, Value::String("hello from sub-flow".to_string()));
+
+        let evidence_key = format!("{}TestAgent:greet:1", belief_keys::FLOW_CALL_OUTPUT_PREFIX);
+        let evidence = ctx
+            .aam
+            .get_belief(&evidence_key)
+            .expect("flow call child output evidence");
+        let Value::Object(evidence) = evidence else {
+            panic!("flow call evidence should be an object");
+        };
+        assert_eq!(
+            evidence.get("agent"),
+            Some(&Value::String("TestAgent".to_string()))
+        );
+        assert_eq!(
+            evidence.get("flow"),
+            Some(&Value::String("greet".to_string()))
+        );
+        let Some(Value::Object(results)) = evidence.get("results") else {
+            panic!("flow call results should be an object");
+        };
+        assert!(
+            results
+                .values()
+                .any(|value| value == &Value::String("hello from sub-flow".to_string()))
+        );
     }
 
     #[tokio::test]
