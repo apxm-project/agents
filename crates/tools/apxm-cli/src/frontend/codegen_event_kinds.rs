@@ -78,18 +78,43 @@ fn ts_string(value: &str) -> String {
 }
 
 fn event_kind_identifiers() -> Vec<(&'static str, String)> {
-    let mut seen = std::collections::BTreeMap::<String, &'static str>::new();
-    let mut identifiers = Vec::with_capacity(CORE_EVENT_KINDS.len());
+    let names: Vec<&'static str> = CORE_EVENT_KINDS
+        .iter()
+        .map(|event_kind| event_kind.name())
+        .collect();
+    event_kind_identifiers_for_names(&names)
+}
 
-    for event_kind in CORE_EVENT_KINDS {
-        let name = event_kind.name();
-        let ident = ts_identifier(name);
-        if let Some(existing) = seen.insert(ident.clone(), name) {
-            panic!(
-                "event kind names `{existing}` and `{name}` both generate TypeScript identifier `{ident}`"
-            );
+fn event_kind_identifiers_for_names(names: &[&'static str]) -> Vec<(&'static str, String)> {
+    let mut grouped = std::collections::BTreeMap::<String, Vec<&'static str>>::new();
+    for name in names {
+        grouped.entry(ts_identifier(name)).or_default().push(*name);
+    }
+    for group in grouped.values_mut() {
+        group.sort_unstable();
+    }
+
+    let mut seen = std::collections::BTreeSet::<String>::new();
+    let mut identifiers = Vec::with_capacity(names.len());
+    for name in names {
+        let base = ts_identifier(name);
+        let primary_name = grouped
+            .get(&base)
+            .and_then(|group| group.first())
+            .copied()
+            .unwrap_or(*name);
+        let mut ident = if *name == primary_name {
+            base
+        } else {
+            format!("{base}_{}", stable_identifier_suffix(name))
+        };
+
+        let mut duplicate_index = 2;
+        while !seen.insert(ident.clone()) {
+            ident = format!("{}_{}", ts_identifier(name), duplicate_index);
+            duplicate_index += 1;
         }
-        identifiers.push((name, ident));
+        identifiers.push((*name, ident));
     }
 
     identifiers
@@ -110,6 +135,15 @@ fn ts_identifier(name: &str) -> String {
     }
 
     ident
+}
+
+fn stable_identifier_suffix(value: &str) -> String {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in value.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{hash:08X}", hash = hash as u32)
 }
 
 #[cfg(test)]
@@ -169,11 +203,32 @@ mod tests {
         assert_eq!(ts_identifier("node_output"), "NODE_OUTPUT");
         assert_eq!(ts_identifier("vendor.event-start"), "VENDOR_EVENT_START");
         assert_eq!(ts_identifier("3p_event"), "_3P_EVENT");
+        assert_eq!(ts_identifier(""), "_");
+        assert_eq!(ts_identifier("..."), "___");
+    }
+
+    #[test]
+    fn event_kind_identifier_collisions_get_stable_suffixes() {
+        let identifiers =
+            event_kind_identifiers_for_names(&["vendor.event-start", "vendor_event_start"]);
+
+        assert_eq!(
+            identifiers[0],
+            ("vendor.event-start", "VENDOR_EVENT_START".to_string())
+        );
+        assert_eq!(identifiers[1].0, "vendor_event_start");
+        assert!(identifiers[1].1.starts_with("VENDOR_EVENT_START_"));
+        assert_ne!(identifiers[0].1, identifiers[1].1);
     }
 
     #[test]
     fn core_event_kind_identifiers_are_unique() {
         let identifiers = event_kind_identifiers();
+        let unique_identifiers = identifiers
+            .iter()
+            .map(|(_, ident)| ident)
+            .collect::<std::collections::BTreeSet<_>>();
         assert_eq!(identifiers.len(), CORE_EVENT_KINDS.len());
+        assert_eq!(unique_identifiers.len(), CORE_EVENT_KINDS.len());
     }
 }

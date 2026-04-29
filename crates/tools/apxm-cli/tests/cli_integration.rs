@@ -1146,6 +1146,203 @@ fn codegen_frontend_is_idempotent() {
     assert_eq!(first_snapshot, second_snapshot);
 }
 
+#[test]
+fn codegen_typescript_is_idempotent_and_checkable() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let output_path = temp_dir.path().join("generated.ts");
+    let output_path_str = output_path.to_str().unwrap();
+
+    let first = apxm()
+        .args([
+            "--json",
+            "codegen",
+            "typescript",
+            "--output",
+            output_path_str,
+        ])
+        .output()
+        .unwrap();
+    assert!(first.status.success());
+    let first_json: serde_json::Value = serde_json::from_slice(&first.stdout).unwrap();
+    assert_eq!(first_json["target"], "typescript");
+    assert_eq!(first_json["output"], output_path_str);
+    assert_eq!(first_json["check"], false);
+    let first_content = std::fs::read_to_string(&output_path).unwrap();
+
+    let second = apxm()
+        .args([
+            "--json",
+            "codegen",
+            "typescript",
+            "--output",
+            output_path_str,
+        ])
+        .output()
+        .unwrap();
+    assert!(second.status.success());
+    let second_json: serde_json::Value = serde_json::from_slice(&second.stdout).unwrap();
+    let second_content = std::fs::read_to_string(&output_path).unwrap();
+    assert_eq!(first_json, second_json);
+    assert_eq!(first_content, second_content);
+
+    let check = apxm()
+        .args([
+            "--json",
+            "codegen",
+            "typescript",
+            "--output",
+            output_path_str,
+            "--check",
+        ])
+        .output()
+        .unwrap();
+    assert!(check.status.success());
+    let check_json: serde_json::Value = serde_json::from_slice(&check.stdout).unwrap();
+    assert_eq!(check_json["target"], "typescript");
+    assert_eq!(check_json["output"], output_path_str);
+    assert_eq!(check_json["check"], true);
+}
+
+#[test]
+fn codegen_event_kinds_is_idempotent_and_checkable() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let output_path = temp_dir.path().join("core-event-kinds.ts");
+    let output_path_str = output_path.to_str().unwrap();
+
+    let first = apxm()
+        .args([
+            "--json",
+            "codegen",
+            "event-kinds",
+            "--output",
+            output_path_str,
+        ])
+        .output()
+        .unwrap();
+    assert!(first.status.success());
+    let first_json: serde_json::Value = serde_json::from_slice(&first.stdout).unwrap();
+    assert_eq!(first_json["target"], "event-kinds");
+    assert_eq!(first_json["output"], output_path_str);
+    assert_eq!(first_json["check"], false);
+    assert!(first_json["count"].as_u64().unwrap() > 0);
+    let first_content = std::fs::read_to_string(&output_path).unwrap();
+
+    let second = apxm()
+        .args([
+            "--json",
+            "codegen",
+            "event-kinds",
+            "--output",
+            output_path_str,
+        ])
+        .output()
+        .unwrap();
+    assert!(second.status.success());
+    let second_json: serde_json::Value = serde_json::from_slice(&second.stdout).unwrap();
+    let second_content = std::fs::read_to_string(&output_path).unwrap();
+    assert_eq!(first_json, second_json);
+    assert_eq!(first_content, second_content);
+
+    let check = apxm()
+        .args([
+            "--json",
+            "codegen",
+            "event-kinds",
+            "--output",
+            output_path_str,
+            "--check",
+        ])
+        .output()
+        .unwrap();
+    assert!(check.status.success());
+    let check_json: serde_json::Value = serde_json::from_slice(&check.stdout).unwrap();
+    assert_eq!(check_json["target"], "event-kinds");
+    assert_eq!(check_json["output"], output_path_str);
+    assert_eq!(check_json["check"], true);
+    assert_eq!(check_json["count"], first_json["count"]);
+}
+
+#[test]
+fn codegen_typescript_check_fails_when_file_is_stale() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let output_path = temp_dir.path().join("generated.ts");
+    let output_path_str = output_path.to_str().unwrap();
+    let stale_content = "// stale generated file\n";
+    std::fs::write(&output_path, stale_content).unwrap();
+
+    let check = apxm()
+        .args([
+            "--json",
+            "codegen",
+            "typescript",
+            "--output",
+            output_path_str,
+            "--check",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!check.status.success());
+    let check_json: serde_json::Value = serde_json::from_slice(&check.stdout).unwrap();
+    assert!(check_json["error"].as_str().unwrap().contains("stale"));
+    assert_eq!(
+        std::fs::read_to_string(&output_path).unwrap(),
+        stale_content
+    );
+}
+
+#[test]
+fn codegen_event_kinds_check_fails_when_file_is_stale() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let output_path = temp_dir.path().join("core-event-kinds.ts");
+    let output_path_str = output_path.to_str().unwrap();
+    let stale_content = "// stale generated event kinds\n";
+    std::fs::write(&output_path, stale_content).unwrap();
+
+    let check = apxm()
+        .args([
+            "--json",
+            "codegen",
+            "event-kinds",
+            "--output",
+            output_path_str,
+            "--check",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!check.status.success());
+    let check_json: serde_json::Value = serde_json::from_slice(&check.stdout).unwrap();
+    assert!(check_json["error"].as_str().unwrap().contains("stale"));
+    assert_eq!(
+        std::fs::read_to_string(&output_path).unwrap(),
+        stale_content
+    );
+}
+
+#[test]
+fn codegen_default_generated_files_are_current() {
+    let typescript = apxm()
+        .args(["--json", "codegen", "typescript", "--check"])
+        .output()
+        .unwrap();
+    assert!(
+        typescript.status.success(),
+        "typescript codegen drift: {}",
+        String::from_utf8_lossy(&typescript.stderr)
+    );
+
+    let event_kinds = apxm()
+        .args(["--json", "codegen", "event-kinds", "--check"])
+        .output()
+        .unwrap();
+    assert!(
+        event_kinds.status.success(),
+        "event-kind codegen drift: {}",
+        String::from_utf8_lossy(&event_kinds.stderr)
+    );
+}
+
 // ─── tool ──────────────────────────────────────────────────────────────────
 
 #[test]
