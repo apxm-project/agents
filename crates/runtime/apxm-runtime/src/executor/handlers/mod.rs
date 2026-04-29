@@ -218,9 +218,20 @@ pub fn llm_error(
     }
 }
 
-pub async fn execute_llm_request(
+pub async fn execute_llm_request_for_node(
+    ctx: &ExecutionContext,
+    node: &Node,
+    phase: &str,
+    request: &LLMRequest,
+) -> Result<LLMResponse> {
+    execute_llm_request_with_node_name(ctx, node.id, node.metadata.name.as_deref(), phase, request)
+        .await
+}
+
+async fn execute_llm_request_with_node_name(
     ctx: &ExecutionContext,
     node_id: u64,
+    node_name: Option<&str>,
     phase: &str,
     request: &LLMRequest,
 ) -> Result<LLMResponse> {
@@ -228,7 +239,7 @@ pub async fn execute_llm_request(
     // emit token-by-token events. The default generate_stream() impl
     // wraps generate() into a single Done chunk for non-streaming backends.
     if let Some(emitter) = &ctx.event_emitter {
-        emitter.emit_llm_prompt(node_id, &request.prompt);
+        emitter.emit_llm_prompt_with_name(node_id, node_name, &request.prompt);
         return execute_llm_request_streaming(ctx, node_id, phase, request).await;
     }
 
@@ -649,6 +660,13 @@ mod tests {
                 .push(format!("prompt:{node_id}:{prompt}"));
         }
 
+        fn emit_llm_prompt_with_name(&self, node_id: u64, node_name: Option<&str>, prompt: &str) {
+            self.events.lock().unwrap().push(format!(
+                "prompt:{node_id}:{}:{prompt}",
+                node_name.unwrap_or("")
+            ));
+        }
+
         fn emit_llm_token_for_node(&self, node_id: u64, content: &str) {
             self.events
                 .lock()
@@ -679,15 +697,28 @@ mod tests {
         )
         .with_event_emitter(Some(emitter.clone()));
 
-        let response = execute_llm_request(&ctx, 7, "ask", &LLMRequest::new("plan this"))
-            .await
-            .unwrap();
+        let node = Node {
+            id: 7,
+            op_type: apxm_core::types::operations::AISOperationType::Ask,
+            attributes: HashMap::new(),
+            input_tokens: vec![],
+            output_tokens: vec![],
+            metadata: apxm_core::types::execution::NodeMetadata {
+                name: Some("ask_node".to_string()),
+                ..Default::default()
+            },
+        };
+
+        let response =
+            execute_llm_request_for_node(&ctx, &node, "ask", &LLMRequest::new("plan this"))
+                .await
+                .unwrap();
 
         assert_eq!(response.content, "alpha beta");
 
         let events = emitter.snapshot();
         assert!(!events.is_empty());
-        assert_eq!(events[0], "prompt:7:plan this");
+        assert_eq!(events[0], "prompt:7:ask_node:plan this");
         assert!(events.iter().any(|event| event == "token:7:alpha "));
         assert!(events.iter().any(|event| event == "token:7:beta "));
     }

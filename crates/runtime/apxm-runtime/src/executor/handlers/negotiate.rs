@@ -13,9 +13,9 @@ use super::{ExecutionContext, Node, Result, Value, get_string_attribute};
 use crate::aam::{ScopeSpec, TransitionLabel};
 use crate::executor::ExecutorEngine;
 use crate::flow_names::NEGOTIATE_FLOWS as NEGOTIATE_FLOW_NAMES;
+use crate::metadata_keys as metadata;
 use apxm_core::constants::defaults;
 use apxm_core::constants::graph::attrs as graph_attrs;
-use crate::metadata_keys as metadata;
 use apxm_core::constants::runtime::{belief_keys, response_keys, transition_labels};
 use apxm_core::error::RuntimeError;
 use std::collections::HashMap;
@@ -176,7 +176,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
 
     // Emit node output for session recording
     if let Some(emitter) = &ctx.event_emitter {
-        emitter.emit_node_output(node.id, &result_value);
+        emitter.emit_node_output_with_name(node.id, node.metadata.name.as_deref(), &result_value);
     }
 
     Ok(result_value)

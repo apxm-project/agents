@@ -48,6 +48,8 @@ pub(crate) struct ExecutionRecord {
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct NodeOutputRecord {
     pub(crate) node_id: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) node_name: Option<String>,
     pub(crate) observed_at_ms: u64,
     pub(crate) output: RedactedContent,
 }
@@ -55,6 +57,8 @@ pub(crate) struct NodeOutputRecord {
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct NodeMetricsRecord {
     pub(crate) node_id: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) node_name: Option<String>,
     pub(crate) observed_at_ms: u64,
     pub(crate) metrics: NodeMetrics,
 }
@@ -150,11 +154,13 @@ impl ExecutionStore {
         &self,
         execution_id: &str,
         node_id: u64,
+        node_name: Option<String>,
         output: RedactedContent,
     ) -> Option<ExecutionRecord> {
         let mut entry = self.inner.get_mut(execution_id)?;
         entry.node_outputs.push(NodeOutputRecord {
             node_id,
+            node_name,
             observed_at_ms: now_ms(),
             output,
         });
@@ -168,11 +174,13 @@ impl ExecutionStore {
         &self,
         execution_id: &str,
         node_id: u64,
+        node_name: Option<String>,
         metrics: NodeMetrics,
     ) -> Option<ExecutionRecord> {
         let mut entry = self.inner.get_mut(execution_id)?;
         entry.node_metrics.push(NodeMetricsRecord {
             node_id,
+            node_name,
             observed_at_ms: now_ms(),
             metrics,
         });
@@ -333,6 +341,7 @@ impl EventEmitter for ExecutionRecordingEmitter {
             self.execution_store.record_node_output(
                 &self.execution_id,
                 payload.node_id,
+                payload.node_name.clone(),
                 payload.output.clone(),
             );
         }
@@ -340,8 +349,61 @@ impl EventEmitter for ExecutionRecordingEmitter {
             self.execution_store.record_node_metrics(
                 &self.execution_id,
                 payload.node_id,
+                payload.node_name.clone(),
                 payload.metrics.clone(),
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use apxm_core::events::EventSource;
+
+    use super::*;
+
+    const TEST_SKILL_ID: &str = "checkout-context-triage";
+    const TEST_SKILL_VERSION: &str = "0.1.0";
+    const TEST_SESSION_ID: &str = "session-1";
+    const TEST_NODE_ID: u64 = 7;
+    const TEST_NODE_NAME: &str = "fetch_context";
+    const TEST_NODE_OUTPUT: &str = "private context";
+
+    #[test]
+    fn execution_recording_emitter_persists_node_names() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = ExecutionStore::new();
+        let record = store.start_skill_execution(
+            TEST_SKILL_ID,
+            TEST_SKILL_VERSION,
+            TEST_SESSION_ID,
+            temp.path().to_str().expect("utf-8 temp path"),
+        );
+        let emitter = ExecutionRecordingEmitter::new(store.clone(), record.execution_id.clone());
+
+        emitter.emit(ApxmEvent::root(
+            NodeOutputPayload {
+                node_id: TEST_NODE_ID,
+                node_name: Some(TEST_NODE_NAME.to_string()),
+                output: RedactedContent::from_text(TEST_NODE_OUTPUT),
+            },
+            EventSource::Runtime,
+            &record.execution_id,
+        ));
+        emitter.emit(ApxmEvent::root(
+            NodeMetricsPayload {
+                node_id: TEST_NODE_ID,
+                node_name: Some(TEST_NODE_NAME.to_string()),
+                metrics: NodeMetrics::new(TEST_NODE_ID),
+            },
+            EventSource::Runtime,
+            &record.execution_id,
+        ));
+
+        let detail = store
+            .get_node(&record.execution_id, TEST_NODE_ID)
+            .expect("node execution detail");
+        assert_eq!(detail.outputs[0].node_name.as_deref(), Some(TEST_NODE_NAME));
+        assert_eq!(detail.metrics[0].node_name.as_deref(), Some(TEST_NODE_NAME));
     }
 }

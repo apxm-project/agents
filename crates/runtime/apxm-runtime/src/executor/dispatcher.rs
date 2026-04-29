@@ -182,7 +182,11 @@ impl OperationDispatcher {
         // Emit OperationEnd event
         if let Some(emitter) = &ctx.event_emitter {
             if let Some(metrics) = &node_metrics {
-                emitter.emit_node_metrics(node.id, metrics);
+                emitter.emit_node_metrics_with_name(
+                    node.id,
+                    node.metadata.name.as_deref(),
+                    metrics,
+                );
             }
             let tokens = ctx.token_accountant.get_node(node.id);
             let timing = ctx.timing_tracker.get_node(node.id);

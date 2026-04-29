@@ -95,7 +95,7 @@ server-managed executions:
 | Missing piece | Closing tasks | Done when |
 | --- | --- | --- |
 | Server-owned top-level runtime events carry `skill_id`, `skill_version`, and entry flow; artifact/session metadata and nested parent provenance remain incomplete. | T0.1, T2.3, T3.3 | Manifests, artifacts, sessions, events, and nested invocations preserve skill identity and parent links. |
-| Generic event streams include typed redacted `llm_prompt`, `node_output`, and `node_metrics`, but still need node names and nested parent scope/provenance. | T2.1, T2.2, T2.3 | REST/MCP streaming consumers can connect runtime events to node names, scope, and parent run. |
+| Generic event streams include typed redacted `llm_prompt`, `node_output`, and `node_metrics`, including optional runtime node names, but still need artifact-derived names and nested parent scope/provenance. | T2.1, T2.2, T2.3 | REST/MCP streaming consumers can connect runtime events to node names, scope, and parent run. |
 | Child artifact workflow sessions can miss per-node directories. | T3.1 | Child artifact executions reconstruct graph metadata and write complete per-node evidence. |
 | `FLOW_CALL` returns only the sub-flow result and hides child output maps. | T3.2 | Parent results and sessions expose namespaced child `all_outputs` / `node_output_map` data. |
 | Session scope ids exist in lower layers but are not persisted as first-class isolation dimensions. | T2.3, T3.3 | Session manifests, node files, event streams, and skill/scope indices include non-null scope ids for skill runs. |
@@ -407,8 +407,9 @@ apxm_skill_run_status  # future, after ExecutionStore lands
 **Why:** `SessionEventEmitter` writes files, and generic event streams now
 include redacted `llm_prompt`, `node_output`, and `node_metrics` payloads.
 Top-level server-owned skill runs attach `skill_id`, `skill_version`, and entry
-flow to those runtime events. The remaining work is enriching those payloads
-with node names, nested parent provenance, and session-level scope persistence.
+flow to those runtime events. Payloads now carry optional node names when the
+runtime still has source node metadata. The remaining work is artifact-derived
+node names, nested parent provenance, and session-level scope persistence.
 
 **Scope:**
 
@@ -417,8 +418,11 @@ with node names, nested parent provenance, and session-level scope persistence.
 - Done: add `node_metrics` event kind and payload, with `node_id` and
   provider-neutral node metrics.
 - Done: add event kind and payload struct for redacted `llm_prompt`.
-- Extend node payloads with optional `node_name`, `skill_id`, and `flow_name`.
-  `scope_id` already travels in the event envelope when the runtime sets it.
+- Done: extend `llm_prompt`, `node_output`, and `node_metrics` payloads with
+  optional `node_name`.
+- Keep `skill_id`, `skill_version`, and `flow_name` in event metadata rather
+  than duplicating them into each node payload. `scope_id` already travels in
+  the event envelope when the runtime sets it.
 
 **Likely files:**
 

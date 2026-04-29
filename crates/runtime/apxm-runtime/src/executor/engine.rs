@@ -197,7 +197,11 @@ impl ExecutorEngine {
                         }
                     }
                     if let Some(emitter) = &self.context.event_emitter {
-                        emitter.emit_node_output(node.id, &value);
+                        emitter.emit_node_output_with_name(
+                            node.id,
+                            node.metadata.name.as_deref(),
+                            &value,
+                        );
                     }
 
                     // Mark as completed
