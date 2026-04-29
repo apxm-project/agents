@@ -160,6 +160,7 @@ mod tests {
         serde_llm_prompt,
         LlmPromptPayload {
             node_id: 1,
+            node_name: Some("ask_node".into()),
             prompt: RedactedContent::from_text("private prompt"),
         }
     );
@@ -225,6 +226,7 @@ mod tests {
         serde_node_output,
         NodeOutputPayload {
             node_id: 1,
+            node_name: Some("output_node".into()),
             output: RedactedContent::from_json(&serde_json::json!({"status": "ok"})),
         }
     );
@@ -238,6 +240,7 @@ mod tests {
         });
         NodeMetricsPayload {
             node_id: 1,
+            node_name: Some("metrics_node".into()),
             metrics,
         }
     });
@@ -423,6 +426,7 @@ mod tests {
     fn redacted_content_omits_original_text() {
         let payload = LlmPromptPayload {
             node_id: 7,
+            node_name: None,
             prompt: RedactedContent::from_text("sensitive prompt body"),
         };
         let event = ApxmEvent::root(payload, EventSource::Runtime, "trace-redacted-prompt");
@@ -437,6 +441,7 @@ mod tests {
     fn redacted_content_omits_original_json_values() {
         let payload = NodeOutputPayload {
             node_id: 7,
+            node_name: None,
             output: RedactedContent::from_json(&serde_json::json!({
                 "secret": "customer-token",
             })),

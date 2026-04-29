@@ -90,7 +90,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     // Emit node output for session recording
     if let Ok(ref value) = result {
         if let Some(emitter) = &ctx.event_emitter {
-            emitter.emit_node_output(node.id, value);
+            emitter.emit_node_output_with_name(node.id, node.metadata.name.as_deref(), value);
         }
     }
 

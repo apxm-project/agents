@@ -382,6 +382,9 @@ impl_event_payload!(LlmDonePayload, kind::LLM_DONE);
 pub struct LlmPromptPayload {
     /// The graph node ID that issued the prompt.
     pub node_id: u64,
+    /// Optional stable or human-readable node name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_name: Option<String>,
     /// Redacted prompt metadata.
     pub prompt: RedactedContent,
 }
@@ -494,6 +497,9 @@ impl_event_payload!(OperationEndPayload, kind::OPERATION_END);
 pub struct NodeOutputPayload {
     /// The graph node ID.
     pub node_id: u64,
+    /// Optional stable or human-readable node name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_name: Option<String>,
     /// Redacted output metadata.
     pub output: RedactedContent,
 }
@@ -504,6 +510,9 @@ impl_event_payload!(NodeOutputPayload, kind::NODE_OUTPUT);
 pub struct NodeMetricsPayload {
     /// The graph node ID.
     pub node_id: u64,
+    /// Optional stable or human-readable node name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_name: Option<String>,
     /// Provider-neutral runtime metrics for the node.
     pub metrics: NodeMetrics,
 }

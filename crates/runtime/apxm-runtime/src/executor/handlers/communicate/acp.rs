@@ -123,7 +123,7 @@ pub(super) async fn execute_acp(
     };
 
     if let Some(emitter) = &ctx.event_emitter {
-        emitter.emit_llm_prompt(node.id, &enriched_prompt);
+        emitter.emit_llm_prompt_with_name(node.id, node.metadata.name.as_deref(), &enriched_prompt);
     }
 
     let prompt_start = std::time::Instant::now();

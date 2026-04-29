@@ -19,7 +19,7 @@
 
 use super::{
     ExecutionContext, Node, Result, Value, apply_llm_request_routing_from_node,
-    copy_llm_request_routing, execute_llm_request, get_optional_string_attribute,
+    copy_llm_request_routing, execute_llm_request_for_node, get_optional_string_attribute,
     get_optional_u64_attribute, get_string_attribute,
     template::{input_names_from_node, render_named},
     warmup::{dispatch_warmup, should_dispatch_warmup},
@@ -541,7 +541,7 @@ async fn execute_llm_once(
 
     // Execute LLM request through registry.
     let llm_start = std::time::Instant::now();
-    let response = execute_llm_request(ctx, node.id, mode_name, request).await?;
+    let response = execute_llm_request_for_node(ctx, node, mode_name, request).await?;
     let total_ms = llm_start.elapsed().as_secs_f64() * 1000.0;
     let (prefill_ms, decode_ms) = response
         .timing
@@ -904,5 +904,4 @@ mod tests {
             "explicit `vllm_cache_salt = none` must skip the salt entirely"
         );
     }
-
 }

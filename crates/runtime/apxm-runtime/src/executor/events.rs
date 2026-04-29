@@ -162,8 +162,22 @@ pub trait ExecutionEventEmitter: Send + Sync {
     ) {
     }
     fn emit_node_output(&self, _node_id: u64, _value: &Value) {}
+    fn emit_node_output_with_name(&self, node_id: u64, _node_name: Option<&str>, value: &Value) {
+        self.emit_node_output(node_id, value);
+    }
     fn emit_node_metrics(&self, _node_id: u64, _metrics: &NodeMetrics) {}
+    fn emit_node_metrics_with_name(
+        &self,
+        node_id: u64,
+        _node_name: Option<&str>,
+        metrics: &NodeMetrics,
+    ) {
+        self.emit_node_metrics(node_id, metrics);
+    }
     fn emit_llm_prompt(&self, _node_id: u64, _prompt: &str) {}
+    fn emit_llm_prompt_with_name(&self, node_id: u64, _node_name: Option<&str>, prompt: &str) {
+        self.emit_llm_prompt(node_id, prompt);
+    }
     fn emit_llm_token_for_node(&self, _node_id: u64, content: &str) {
         self.emit_llm_token(content);
     }

@@ -155,25 +155,45 @@ impl ExecutionEventEmitter for EmitterAdapter {
     }
 
     fn emit_node_output(&self, node_id: u64, value: &Value) {
+        self.emit_node_output_with_name(node_id, None, value);
+    }
+
+    fn emit_node_output_with_name(&self, node_id: u64, node_name: Option<&str>, value: &Value) {
         let value = value
             .to_json()
             .unwrap_or_else(|_| serde_json::Value::String(value.to_string()));
         self.emit(NodeOutputPayload {
             node_id,
+            node_name: node_name.map(str::to_string),
             output: RedactedContent::from_json(&value),
         });
     }
 
     fn emit_node_metrics(&self, node_id: u64, metrics: &apxm_core::types::NodeMetrics) {
+        self.emit_node_metrics_with_name(node_id, None, metrics);
+    }
+
+    fn emit_node_metrics_with_name(
+        &self,
+        node_id: u64,
+        node_name: Option<&str>,
+        metrics: &apxm_core::types::NodeMetrics,
+    ) {
         self.emit(NodeMetricsPayload {
             node_id,
+            node_name: node_name.map(str::to_string),
             metrics: metrics.clone(),
         });
     }
 
     fn emit_llm_prompt(&self, node_id: u64, prompt: &str) {
+        self.emit_llm_prompt_with_name(node_id, None, prompt);
+    }
+
+    fn emit_llm_prompt_with_name(&self, node_id: u64, node_name: Option<&str>, prompt: &str) {
         self.emit(LlmPromptPayload {
             node_id,
+            node_name: node_name.map(str::to_string),
             prompt: RedactedContent::from_text(prompt),
         });
     }
@@ -292,7 +312,11 @@ mod tests {
         adapter.set_current_span_id(Some("parent-span".to_string()));
         adapter.set_current_scope_id(Some("scope-1".to_string()));
 
-        adapter.emit_node_output(42, &Value::String("ok".to_string()));
+        adapter.emit_node_output_with_name(
+            42,
+            Some("format_result"),
+            &Value::String("ok".to_string()),
+        );
 
         let event = rx.recv().expect("node output event");
         assert_eq!(event.kind(), kind::NODE_OUTPUT);
@@ -306,6 +330,7 @@ mod tests {
             .downcast_ref::<NodeOutputPayload>()
             .expect("node output payload");
         assert_eq!(payload.node_id, 42);
+        assert_eq!(payload.node_name.as_deref(), Some("format_result"));
         assert!(payload.output.redacted);
         assert_eq!(payload.output.summary, "string(chars=2)");
         assert!(!payload.output.hash.is_empty());
@@ -331,7 +356,7 @@ mod tests {
             success: true,
         });
 
-        adapter.emit_node_metrics(42, &metrics);
+        adapter.emit_node_metrics_with_name(42, Some("const_node"), &metrics);
 
         let event = rx.recv().expect("node metrics event");
         assert_eq!(event.kind(), kind::NODE_METRICS);
@@ -345,6 +370,7 @@ mod tests {
             .downcast_ref::<NodeMetricsPayload>()
             .expect("node metrics payload");
         assert_eq!(payload.node_id, 42);
+        assert_eq!(payload.node_name.as_deref(), Some("const_node"));
         assert_eq!(payload.metrics.operation.attempts, 1);
         assert_eq!(payload.metrics.operation.successes, 1);
     }
@@ -367,7 +393,7 @@ mod tests {
         adapter.set_current_span_id(Some("parent-span".to_string()));
         adapter.set_current_scope_id(Some("scope-1".to_string()));
 
-        adapter.emit_llm_prompt(7, "secret customer prompt");
+        adapter.emit_llm_prompt_with_name(7, Some("ask_node"), "secret customer prompt");
 
         let event = rx.recv().expect("llm prompt event");
         assert_eq!(event.kind(), kind::LLM_PROMPT);
@@ -385,6 +411,7 @@ mod tests {
             .downcast_ref::<LlmPromptPayload>()
             .expect("llm prompt payload");
         assert_eq!(payload.node_id, 7);
+        assert_eq!(payload.node_name.as_deref(), Some("ask_node"));
         assert!(payload.prompt.redacted);
         assert_eq!(payload.prompt.summary, "text(chars=22)");
         let event_json = serde_json::to_string(&event).expect("serialize event");
