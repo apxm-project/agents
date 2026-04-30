@@ -5,7 +5,11 @@ All notable changes to APXM are documented here. The format is based on
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once a `1.0`
 contract is committed to.
 
-## [Unreleased] — Public release scrub
+## [Unreleased]
+
+_No unreleased changes._
+
+## [0.0.1] - 2026-04-30 — Public release scrub
 
 This is the first public-ready iteration of the repository.
 
