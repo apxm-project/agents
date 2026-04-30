@@ -3,6 +3,10 @@ name = "apxm-server"
 version.workspace = true
 edition.workspace = true
 description = "HTTP API wrapper for APXM runtime"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
 
 [lints]
 workspace = true

@@ -3,6 +3,10 @@ name = "apxm-skill"
 version.workspace = true
 edition.workspace = true
 description = "Shared APXM skill manifest, validation, and provenance types"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
 
 [lints]
 workspace = true

@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 publish = false
 description = "ACP (Agent Client Protocol) client for APXM — spawn and orchestrate coding agents via JSON-RPC over stdio"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
 
 [lints]
 workspace = true

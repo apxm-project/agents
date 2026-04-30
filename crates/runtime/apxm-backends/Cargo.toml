@@ -3,6 +3,10 @@ name = "apxm-backends"
 version.workspace = true
 edition.workspace = true
 description = "APXM Backends - LLM providers, storage backends, and prompt templates"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
 
 [lints]
 workspace = true

@@ -50,6 +50,10 @@ __pycache__/
 # APXM compiled artifacts
 *.apxmobj
 
+# Prevent accidental re-introduction of private slide/poster binaries
+*.pptx
+*Poster*.pdf
+
 # Python cache
 .python-cache
 

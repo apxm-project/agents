@@ -42,6 +42,7 @@ Install Dekk first if it is not already available on your machine.
 ```bash
 git clone https://github.com/randreshg/apxm
 cd apxm
+git submodule update --init --recursive   # optional: repo-local vLLM fork under external/vllm
 dekk apxm install --no-interactive
 dekk apxm doctor
 ```
@@ -258,3 +259,19 @@ Each check provides actionable fix suggestions when issues are found.
 - [Compiler Pipeline](docs/compiler/pipeline.md) — Current pass pipeline and optimization stages
 - [Guardrails and Handoffs](docs/design/guardrails_handoffs.md) — Design notes for safe inter-agent boundaries
 - [Sessions](docs/design/sessions.md) — Durable session and checkpoint design
+
+---
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for build, test, and PR conventions, and
+[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community standards. For security
+issues, follow [SECURITY.md](SECURITY.md) instead of opening a public issue.
+
+---
+
+## License
+
+APXM is released under the [MIT License](LICENSE). The optional bundled vLLM
+fork under [`external/vllm`](external/vllm) is governed by its own upstream
+license (Apache-2.0).

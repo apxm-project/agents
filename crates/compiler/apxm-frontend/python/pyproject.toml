@@ -7,13 +7,13 @@ name = "apxm"
 version = "0.0.1"
 description = "Python frontend for APXM graph construction, AIR emission, and workflow execution"
 requires-python = ">=3.10"
-license = { text = "Apache-2.0" }
-authors = [{ name = "APXM Contributors" }]
+license = { text = "MIT" }
+authors = [{ name = "The APXM authors" }]
 keywords = ["apxm", "workflows", "graphs", "agents", "mlir"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: Apache Software License",
+    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.10",
