@@ -63,7 +63,7 @@ examples/python/
     real-world/          Complete production workflows
     native-tools/        Native Python agent/tool handoff
     self-hosted/         APXM workflows for the APXM repo
-    demos/               Strategic demos (Gemma 4 lives here)
+    demos/               Skill-library proof-point demos (Gemma 4 lives here)
     benchmarks/          Shared harness (benchmark_e2e.py) + stress/
 ```
 

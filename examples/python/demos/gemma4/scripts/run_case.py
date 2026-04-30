@@ -72,7 +72,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--case", required=True, choices=sorted(CASES), help="Which case to run.")
     parser.add_argument("--run-dir", required=True, type=Path, help="Run directory created by run_demo.py.")
     parser.add_argument("--apxm-config", required=True, type=Path, help="Path to generated/config.toml.")
-    parser.add_argument("--backend-label", default="strategic-demo-vllm", help="Backend label stamped into rows.")
+    parser.add_argument("--backend-label", default="gemma4-demo-vllm", help="Backend label stamped into rows.")
     return parser.parse_args(argv)
 
 

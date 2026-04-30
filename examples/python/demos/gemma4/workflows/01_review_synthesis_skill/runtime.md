@@ -6,7 +6,7 @@ Sources:
 - `/tmp/case01-runs/review-synthesis/sessions/opt-2/run-1/01_review_synthesis_skill-O2-balanced-20260428T032223/metrics.json`
 - `/tmp/case01-runs/review-synthesis/runtime-o0-o2.csv`
 
-## Headline numbers
+## Measured numbers
 
 | Metric | O0 | O2 | Δ |
 |---|---|---|---|

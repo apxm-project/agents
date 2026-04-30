@@ -87,7 +87,7 @@ from shared.routes import SHOWCASE_ROUTE  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
-# Node names — keep stable; deck slides and benchmark CSVs reference them.
+# Node names — keep stable; benchmark CSVs reference them.
 # ---------------------------------------------------------------------------
 
 NODE_CLAUDE_AGENT = "claude_architect"

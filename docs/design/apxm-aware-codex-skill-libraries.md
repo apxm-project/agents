@@ -1304,7 +1304,7 @@ The first proof should be a hand-authored APXM skill named
 - `examples/python/demos/gemma4/workflows/02_checkout_context_pruning.py`
 - `examples/python/demos/gemma4/workflows/02_checkout_context_pruning/compiler.md`
 - `examples/python/demos/gemma4/workflows/02_checkout_context_pruning/runtime.md`
-- `examples/python/demos/gemma4/runs/20260428T053110Z-three-cases-postfix/context-pruning/runtime-o0-o2.csv`
+- a fresh `runs/<UTC>/context-pruning/runtime-o0-o2.csv` produced locally by `examples/python/demos/gemma4/scripts/run_case.py`
 
 This is the strongest seed because it already demonstrates the exact APXM
 compiler value we need to test for skills. O0 keeps five context-extraction LLM
@@ -1487,7 +1487,7 @@ No-go conditions:
 - Create `examples/python/skill-evals/` around the A0-A4 matrix.
 - Wrap `benchmark_e2e.py` instead of duplicating runtime measurement.
 - Add claim linting so reports cannot cite unsupported numbers.
-- Promote claims into demos/decks only after artifact-backed runs exist.
+- Promote claims into demos and public docs only after artifact-backed runs exist.
 
 ## Test Plan
 

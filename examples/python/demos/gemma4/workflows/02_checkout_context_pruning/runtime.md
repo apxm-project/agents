@@ -5,7 +5,7 @@ Sources:
 - `/tmp/case01-runs/context-pruning/sessions/opt-0/run-1/02_checkout_context_pruning-O0-balanced-…/metrics.json`
 - `/tmp/case01-runs/context-pruning/sessions/opt-2/run-1/02_checkout_context_pruning-O2-balanced-…/metrics.json`
 
-## Headline numbers
+## Measured numbers
 
 | Metric | O0 | O2 | Δ |
 |---|---|---|---|
