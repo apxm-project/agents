@@ -29,7 +29,11 @@ Every one of these properties has a direct counterpart in A-PXM.
 
 ### AIS is the IR
 
-The [Agent Instruction Set](ais.md) is A-PXM's intermediate representation -- the ISA contract described in [foundations.md](foundations.md). Any frontend can emit AIS graphs:
+The [Agent Instruction Set](ais.md) is A-PXM's intermediate representation -- the ISA contract described in [foundations.md](foundations.md). Any frontend can emit AIS graphs.
+
+The skill-library architecture exposed in [`VISION.md`](../../VISION.md) — typed skill manifests with declared capabilities, capability-gated runtime sandboxing, and a server-owned skill inventory — is the concrete realization of "AIS as the IR" applied to the unit of agent work most teams care about: a *skill*. A compiled skill is an AIR graph that lowers to the AIS dialect, an `.apxmobj` artifact is a versioned linkable object built from that graph, and `apxm-server` is the linker / loader that lets multiple host agents share one library of those objects.
+
+Any frontend can emit AIS graphs:
 
 ```
 Source                Frontend           IR            Optimizer         Backend

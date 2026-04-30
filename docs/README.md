@@ -1,5 +1,9 @@
 # APXM Documentation
 
+> **Start here for the practical framing:** [VISION.md](../VISION.md) — APXM as a library
+> system for agent skills. This documentation set covers the model and the implementation
+> behind that framing.
+
 ## What APXM is
 
 APXM (**A**gent **P**rogram e**X**ecution **M**odel) treats an agent graph the
