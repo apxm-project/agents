@@ -5,14 +5,15 @@ use super::{
     get_optional_u64_attribute,
 };
 use crate::sandbox::constants::{executables, session_prefixes};
-use crate::sandbox::policy::SandboxPolicy;
-use crate::sandbox::process::ProcessSandbox;
-use crate::sandbox::{ExecRequest, ExecResult, IsolationLevel, ValidationResult};
+use crate::sandbox::{ExecRequest, IsolationLevel, ValidationResult};
 use apxm_core::constants::{defaults, graph::attrs as graph_attrs, runtime::belief_keys};
 
 const ERR_EXC_SANDBOX_SELECT_PREFIX: &str = "Sandbox selection failed";
 const ERR_EXC_SANDBOX_SESSION_PREFIX: &str = "Sandbox session failed";
 const ERR_EXC_SANDBOX_EXEC_PREFIX: &str = "Sandbox execution failed";
+const ERR_EXC_SANDBOX_DEGRADED: &str = "Sandbox backend selected with degraded guarantees";
+const ERR_EXC_SANDBOX_NOT_CONFIGURED: &str =
+    "Sandbox execution requires a configured sandbox backend";
 
 pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -> Result<Value> {
     // Extract code from 'code' attribute, or fall back to first input
@@ -43,32 +44,10 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
 
     let timeout = std::time::Duration::from_secs(timeout_secs);
     let result = if ctx.sandbox_registry.is_empty() {
-        let policy = SandboxPolicy {
-            timeout,
-            ..SandboxPolicy::default()
-        };
-        let sandbox = ProcessSandbox::new(policy);
-        let start = std::time::Instant::now();
-        let result = sandbox
-            .execute_script(&interpreter, &code)
-            .await
-            .map_err(|e| apxm_core::error::RuntimeError::Operation {
-                op_type: node.op_type,
-                message: format!("{ERR_EXC_SANDBOX_EXEC_PREFIX}: {e}"),
-            })?;
-
-        ExecResult {
-            success: result.exit_code == 0 && !result.timed_out,
-            exit_code: if result.timed_out {
-                None
-            } else {
-                Some(result.exit_code)
-            },
-            stdout: result.stdout,
-            stderr: result.stderr,
-            duration: start.elapsed(),
-            timed_out: result.timed_out,
-        }
+        return Err(apxm_core::error::RuntimeError::Operation {
+            op_type: node.op_type,
+            message: ERR_EXC_SANDBOX_NOT_CONFIGURED.to_string(),
+        });
     } else {
         let script_dir =
             tempfile::tempdir().map_err(|e| apxm_core::error::RuntimeError::Operation {
@@ -111,8 +90,12 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
                 node_id = node.id,
                 backend = %selection.backend.capabilities().name,
                 warnings = ?warnings,
-                "EXC selected sandbox backend with degraded guarantees"
+                "Sandbox backend selected with degraded guarantees"
             );
+            return Err(apxm_core::error::RuntimeError::Operation {
+                op_type: node.op_type,
+                message: format!("{ERR_EXC_SANDBOX_DEGRADED}: {}", warnings.join("; ")),
+            });
         }
 
         let session = selection.backend.create_session().await.map_err(|e| {
@@ -175,8 +158,13 @@ mod tests {
     use super::*;
     use crate::capability::CapabilitySystem;
     use crate::memory::{MemoryConfig, MemorySystem};
+    use crate::sandbox::{
+        DefaultBackend, ExecResult, SandboxBackend, SandboxCapabilities, SandboxContext,
+        SandboxError, SandboxRegistry,
+    };
     use apxm_core::types::operations::AISOperationType;
     use std::sync::Arc;
+    use std::time::Duration;
 
     fn make_node_with_code(code: &str) -> Node {
         let mut node = Node {
@@ -192,6 +180,91 @@ mod tests {
             Value::String(code.to_string()),
         );
         node
+    }
+
+    async fn test_context_with_sandbox(output: &'static str) -> ExecutionContext {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(apxm_backends::LLMRegistry::new());
+        let capability_system = Arc::new(CapabilitySystem::new());
+        let ctx = ExecutionContext::new(
+            memory,
+            llm_registry,
+            capability_system,
+            crate::aam::Aam::new(),
+        );
+        let mut registry = SandboxRegistry::new();
+        registry.register(Arc::new(DefaultBackend::new(
+            SandboxCapabilities {
+                isolation_level: IsolationLevel::OsLevel,
+                supports_filesystem_restriction: true,
+                supports_network_restriction: true,
+                supports_syscall_filtering: false,
+                supports_resource_limits: true,
+                name: "test-exc-sandbox".to_string(),
+                version: "test".to_string(),
+            },
+            move |_request| async move {
+                Ok(ExecResult {
+                    success: true,
+                    exit_code: Some(0),
+                    stdout: output.to_string(),
+                    stderr: String::new(),
+                    duration: Duration::from_millis(1),
+                    timed_out: false,
+                })
+            },
+        )));
+        ctx.with_sandbox_registry(Arc::new(registry))
+    }
+
+    struct DegradedExcBackend;
+
+    #[async_trait::async_trait]
+    impl SandboxBackend for DegradedExcBackend {
+        fn capabilities(&self) -> SandboxCapabilities {
+            SandboxCapabilities {
+                isolation_level: IsolationLevel::OsLevel,
+                supports_filesystem_restriction: false,
+                supports_network_restriction: false,
+                supports_syscall_filtering: false,
+                supports_resource_limits: false,
+                name: "degraded-exc-sandbox".to_string(),
+                version: "test".to_string(),
+            }
+        }
+
+        fn is_available(&self) -> bool {
+            true
+        }
+
+        fn validate(&self, _request: &ExecRequest) -> ValidationResult {
+            ValidationResult::Degraded {
+                warnings: vec!["read paths are not enforced".to_string()],
+            }
+        }
+
+        async fn create_session(&self) -> std::result::Result<SandboxContext, SandboxError> {
+            unreachable!("degraded EXC backend must be rejected before session creation")
+        }
+
+        async fn execute(
+            &self,
+            _ctx: &SandboxContext,
+            _request: ExecRequest,
+        ) -> std::result::Result<ExecResult, SandboxError> {
+            unreachable!("degraded EXC backend must be rejected before execution")
+        }
+
+        async fn destroy_session(
+            &self,
+            _ctx: SandboxContext,
+        ) -> std::result::Result<(), SandboxError> {
+            unreachable!("degraded EXC backend must be rejected before cleanup")
+        }
     }
 
     #[tokio::test]
@@ -227,15 +300,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_exc_basic_echo() {
-        let memory = Arc::new(
-            MemorySystem::new(MemoryConfig::in_memory_ltm())
-                .await
-                .unwrap(),
-        );
-        let llm_registry = Arc::new(apxm_backends::LLMRegistry::new());
-        let capability_system = Arc::new(CapabilitySystem::new());
         let aam = crate::aam::Aam::new();
-        let ctx = ExecutionContext::new(memory, llm_registry, capability_system, aam.clone());
+        let mut ctx = test_context_with_sandbox("hello").await;
+        ctx.aam = aam.clone();
 
         let node = make_node_with_code("echo hello");
         let result = execute(&ctx, &node, vec![]).await.unwrap();
@@ -258,19 +325,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_exc_code_from_input() {
-        let memory = Arc::new(
-            MemorySystem::new(MemoryConfig::in_memory_ltm())
-                .await
-                .unwrap(),
-        );
-        let llm_registry = Arc::new(apxm_backends::LLMRegistry::new());
-        let capability_system = Arc::new(CapabilitySystem::new());
-        let ctx = ExecutionContext::new(
-            memory,
-            llm_registry,
-            capability_system,
-            crate::aam::Aam::new(),
-        );
+        let ctx = test_context_with_sandbox("from_input").await;
 
         // No code attribute, but first input provides the code
         let node = Node {
@@ -297,5 +352,62 @@ mod tests {
         } else {
             panic!("Expected string result from EXC");
         }
+    }
+
+    #[tokio::test]
+    async fn test_exc_rejects_empty_sandbox_registry() {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(apxm_backends::LLMRegistry::new());
+        let capability_system = Arc::new(CapabilitySystem::new());
+        let ctx = ExecutionContext::new(
+            memory,
+            llm_registry,
+            capability_system,
+            crate::aam::Aam::new(),
+        );
+
+        let node = make_node_with_code("echo should-not-run");
+        let error = execute(&ctx, &node, vec![])
+            .await
+            .expect_err("EXC should fail closed without a configured sandbox backend");
+
+        assert!(
+            error.to_string().contains(ERR_EXC_SANDBOX_NOT_CONFIGURED),
+            "expected sandbox configuration error: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_exc_rejects_degraded_sandbox_backend() {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(apxm_backends::LLMRegistry::new());
+        let capability_system = Arc::new(CapabilitySystem::new());
+        let ctx = ExecutionContext::new(
+            memory,
+            llm_registry,
+            capability_system,
+            crate::aam::Aam::new(),
+        );
+        let mut registry = SandboxRegistry::new();
+        registry.register(Arc::new(DegradedExcBackend));
+        let ctx = ctx.with_sandbox_registry(Arc::new(registry));
+
+        let node = make_node_with_code("echo should-not-run");
+        let error = execute(&ctx, &node, vec![])
+            .await
+            .expect_err("EXC should fail closed on degraded sandbox guarantees");
+
+        assert!(
+            error.to_string().contains(ERR_EXC_SANDBOX_DEGRADED),
+            "expected degraded sandbox rejection: {error}"
+        );
     }
 }

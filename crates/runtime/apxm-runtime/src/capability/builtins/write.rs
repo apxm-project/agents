@@ -1,4 +1,7 @@
-use super::{canonicalize_path_or_existing_ancestor, normalize_path_lexically, require_string_arg};
+use super::{
+    canonicalize_path_or_existing_ancestor, canonicalize_policy_path, normalize_path_lexically,
+    require_string_arg,
+};
 use crate::capability::{
     executor::{CapabilityExecutor, CapabilityResult},
     metadata::CapabilityMetadata,
@@ -184,27 +187,44 @@ impl WriteCapability {
         Ok(path)
     }
 
-    fn validate_path_and_content(&self, path: &Path, content_len: usize) -> CapabilityResult<()> {
+    fn validate_path_and_content(
+        &self,
+        path: &Path,
+        content_len: usize,
+        append: bool,
+    ) -> CapabilityResult<()> {
+        let policy_path = canonicalize_policy_path(path, &self.metadata.name, "requested")?;
         if let Some(blocked_path) = self
             .config
             .blocked_paths
             .iter()
-            .find(|blocked| path.starts_with(blocked.as_path()))
+            .map(|blocked| {
+                canonicalize_policy_path(blocked.as_path(), &self.metadata.name, "blocked")
+                    .map(|canonical| (blocked.clone(), canonical))
+            })
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .find(|(_, blocked)| policy_path.starts_with(blocked.as_path()))
         {
             return Err(RuntimeError::Capability {
                 capability: self.metadata.name.clone(),
-                message: format!("Path blocked by policy: {}", blocked_path.display()),
+                message: format!("Path blocked by policy: {}", blocked_path.0.display()),
             });
         }
 
         if let Some(allowed_paths) = &self.config.allowed_paths
             && !allowed_paths
                 .iter()
-                .any(|allowed| path.starts_with(allowed.as_path()))
+                .map(|allowed| {
+                    canonicalize_policy_path(allowed.as_path(), &self.metadata.name, "allowed")
+                })
+                .collect::<Result<Vec<_>, _>>()?
+                .iter()
+                .any(|allowed| policy_path.starts_with(allowed.as_path()))
         {
             return Err(RuntimeError::Capability {
                 capability: self.metadata.name.clone(),
-                message: format!("Path not in allowed list: {}", path.display()),
+                message: format!("Path not in allowed list: {}", policy_path.display()),
             });
         }
 
@@ -240,14 +260,23 @@ impl WriteCapability {
             });
         }
 
+        let effective_len = if append {
+            std::fs::metadata(path)
+                .map(|metadata| metadata.len() as usize)
+                .unwrap_or(0)
+                .saturating_add(content_len)
+        } else {
+            content_len
+        };
+
         if let Some(max_file_size) = self.config.max_file_size
-            && content_len > max_file_size
+            && effective_len > max_file_size
         {
             return Err(RuntimeError::Capability {
                 capability: self.metadata.name.clone(),
                 message: format!(
                     "Content too large ({} bytes > {} bytes)",
-                    content_len, max_file_size
+                    effective_len, max_file_size
                 ),
             });
         }
@@ -279,7 +308,7 @@ impl CapabilityExecutor for WriteCapability {
             .unwrap_or(false);
 
         let path = self.resolve_path(file_path)?;
-        self.validate_path_and_content(&path, content.len())?;
+        self.validate_path_and_content(&path, content.len(), append)?;
 
         if !self.config.overwrite_existing && !append && path.exists() {
             return Err(RuntimeError::Capability {
@@ -442,5 +471,84 @@ mod tests {
             tokio::fs::read_to_string(&outside_file).await.unwrap(),
             "secret"
         );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn allowed_paths_reject_symlink_escape_without_base_directory() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let allowed = dir.path().join("allowed");
+        let outside = dir.path().join("outside");
+        tokio::fs::create_dir_all(&allowed).await.unwrap();
+        tokio::fs::create_dir_all(&outside).await.unwrap();
+        let outside_file = outside.join("secret.txt");
+        tokio::fs::write(&outside_file, "secret").await.unwrap();
+        symlink(&outside, allowed.join("link")).unwrap();
+
+        let capability = WriteCapability::with_config(WriteConfig {
+            allowed_paths: Some(vec![allowed.clone()]),
+            ..Default::default()
+        });
+        let args = HashMap::from([
+            (
+                "file_path".to_string(),
+                Value::String(
+                    allowed
+                        .join("link")
+                        .join("secret.txt")
+                        .to_string_lossy()
+                        .into_owned(),
+                ),
+            ),
+            ("content".to_string(), Value::String("escape".to_string())),
+            ("append".to_string(), Value::Bool(true)),
+        ]);
+
+        let error = capability
+            .execute(args)
+            .await
+            .expect_err("symlink escape should be rejected by allowed_paths");
+
+        assert!(
+            error.to_string().contains("Path not in allowed list"),
+            "expected allowed path rejection: {error}"
+        );
+        assert_eq!(
+            tokio::fs::read_to_string(&outside_file).await.unwrap(),
+            "secret"
+        );
+    }
+
+    #[tokio::test]
+    async fn append_checks_total_file_size_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.txt");
+        tokio::fs::write(&path, "12345").await.unwrap();
+
+        let capability = WriteCapability::with_config(WriteConfig {
+            max_file_size: Some(8),
+            ..Default::default()
+        });
+        let args = HashMap::from([
+            (
+                "file_path".to_string(),
+                Value::String(path.to_string_lossy().into_owned()),
+            ),
+            ("content".to_string(), Value::String("6789".to_string())),
+            ("append".to_string(), Value::Bool(true)),
+        ]);
+
+        let error = capability
+            .execute(args)
+            .await
+            .expect_err("append should enforce total file size");
+
+        assert!(
+            error.to_string().contains("Content too large"),
+            "expected size rejection: {error}"
+        );
+        assert_eq!(tokio::fs::read_to_string(&path).await.unwrap(), "12345");
     }
 }

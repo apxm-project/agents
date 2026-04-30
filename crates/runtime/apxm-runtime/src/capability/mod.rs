@@ -49,6 +49,8 @@ use parking_lot::RwLock;
 use registry::CapabilityRegistry;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
+const SANDBOX_DEGRADED_GUARANTEES: &str = "sandbox backend selected with degraded guarantees";
+
 /// Result type for capability operations
 type CapabilityResult<T> = Result<T, RuntimeError>;
 
@@ -337,6 +339,13 @@ impl CapabilitySystem {
                                 warnings = ?warnings,
                                 "sandbox backend selected with degraded guarantees"
                             );
+                            return Err(RuntimeError::Capability {
+                                capability: name.to_string(),
+                                message: format!(
+                                    "{SANDBOX_DEGRADED_GUARANTEES}: {}",
+                                    warnings.join("; ")
+                                ),
+                            });
                         }
                         tracing::debug!(
                             capability = %name,
@@ -505,7 +514,12 @@ impl CapabilitySystem {
                 })?;
         let capabilities = selection.backend.capabilities();
         let warnings = match selection.validation {
-            ValidationResult::Degraded { warnings } => warnings,
+            ValidationResult::Degraded { warnings } => {
+                return Err(RuntimeError::Capability {
+                    capability: name.to_string(),
+                    message: format!("{SANDBOX_DEGRADED_GUARANTEES}: {}", warnings.join("; ")),
+                });
+            }
             ValidationResult::Ok | ValidationResult::Unsupported { .. } => Vec::new(),
         };
         Ok(CapabilitySandboxPreflight::Sandboxed {
@@ -770,6 +784,54 @@ mod tests {
         }
     }
 
+    struct DegradedSandboxBackend;
+
+    #[async_trait::async_trait]
+    impl crate::sandbox::SandboxBackend for DegradedSandboxBackend {
+        fn capabilities(&self) -> crate::sandbox::SandboxCapabilities {
+            crate::sandbox::SandboxCapabilities {
+                isolation_level: crate::sandbox::IsolationLevel::OsLevel,
+                supports_filesystem_restriction: false,
+                supports_network_restriction: false,
+                supports_syscall_filtering: false,
+                supports_resource_limits: false,
+                name: "degraded-test-backend".to_string(),
+                version: "test".to_string(),
+            }
+        }
+
+        fn is_available(&self) -> bool {
+            true
+        }
+
+        fn validate(&self, _request: &crate::sandbox::ExecRequest) -> ValidationResult {
+            ValidationResult::Degraded {
+                warnings: vec!["filesystem allowlist is not enforced".to_string()],
+            }
+        }
+
+        async fn create_session(
+            &self,
+        ) -> Result<crate::sandbox::SandboxContext, crate::sandbox::SandboxError> {
+            unreachable!("degraded backend must be rejected before session creation")
+        }
+
+        async fn execute(
+            &self,
+            _ctx: &crate::sandbox::SandboxContext,
+            _request: crate::sandbox::ExecRequest,
+        ) -> Result<crate::sandbox::ExecResult, crate::sandbox::SandboxError> {
+            unreachable!("degraded backend must be rejected before execution")
+        }
+
+        async fn destroy_session(
+            &self,
+            _ctx: crate::sandbox::SandboxContext,
+        ) -> Result<(), crate::sandbox::SandboxError> {
+            unreachable!("degraded backend must be rejected before cleanup")
+        }
+    }
+
     #[tokio::test]
     async fn test_sandbox_routing_with_registry() {
         let system = CapabilitySystem::new();
@@ -866,6 +928,61 @@ mod tests {
                 isolation: crate::sandbox::IsolationLevel::OsLevel,
                 warnings: Vec::new(),
             }
+        );
+        assert!(
+            !executed_directly.load(Ordering::SeqCst),
+            "preflight must not execute the capability"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_routing_rejects_degraded_backend() {
+        let system = CapabilitySystem::new();
+        let executed_directly = Arc::new(AtomicBool::new(false));
+        let capability = Arc::new(MockSandboxedCapability::new(Arc::clone(&executed_directly)));
+        system.register(capability).unwrap();
+
+        let mut registry = SandboxRegistry::new();
+        registry.register(Arc::new(DegradedSandboxBackend));
+        system.set_sandbox_registry(Arc::new(registry));
+
+        let mut args = HashMap::new();
+        args.insert("command".to_string(), Value::String("test".to_string()));
+        let error = system
+            .invoke("mock_sandboxed", args)
+            .await
+            .expect_err("degraded sandbox backend should fail closed");
+
+        assert!(
+            error.to_string().contains(SANDBOX_DEGRADED_GUARANTEES),
+            "expected degraded sandbox rejection: {error}"
+        );
+        assert!(
+            !executed_directly.load(Ordering::SeqCst),
+            "capability execute() should not run when sandbox guarantees are degraded"
+        );
+    }
+
+    #[test]
+    fn test_sandbox_preflight_rejects_degraded_backend() {
+        let system = CapabilitySystem::new();
+        let executed_directly = Arc::new(AtomicBool::new(false));
+        let capability = Arc::new(MockSandboxedCapability::new(Arc::clone(&executed_directly)));
+        system.register(capability).unwrap();
+
+        let mut registry = SandboxRegistry::new();
+        registry.register(Arc::new(DegradedSandboxBackend));
+        system.set_sandbox_registry(Arc::new(registry));
+
+        let mut args = HashMap::new();
+        args.insert("command".to_string(), Value::String("test".to_string()));
+        let error = system
+            .sandbox_preflight("mock_sandboxed", &args)
+            .expect_err("degraded sandbox backend should fail preflight");
+
+        assert!(
+            error.to_string().contains(SANDBOX_DEGRADED_GUARANTEES),
+            "expected degraded sandbox preflight rejection: {error}"
         );
         assert!(
             !executed_directly.load(Ordering::SeqCst),

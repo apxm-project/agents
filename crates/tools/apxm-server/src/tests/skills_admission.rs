@@ -107,6 +107,41 @@ async fn skill_execute_rejects_sandboxed_policy_without_backend_preflight() {
 }
 
 #[tokio::test]
+async fn skill_execute_rejects_degraded_sandbox_preflight() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let artifact = inv_tool_artifact_bytes(FIXTURE_TOOL, None);
+    write_sandboxed_policy_skill_with_artifact(temp.path(), &artifact, FIXTURE_TOOL, FIXTURE_TOOL);
+
+    let mut runtime = Runtime::new(RuntimeConfig::in_memory())
+        .await
+        .expect("test runtime");
+    runtime.set_sandbox_registry(Arc::new(fixture_degraded_sandbox_registry()));
+    runtime
+        .capability_system()
+        .register(Arc::new(FixtureSandboxedCapability::new(FIXTURE_TOOL)))
+        .expect("register fixture sandboxed capability");
+    let app = build_app(
+        test_state_with_runtime_and_skill_roots(runtime, vec![temp.path().to_path_buf()]).await,
+    );
+
+    let (status, body) = post_json(
+        app,
+        &skill_execute_route(FIXTURE_SKILL_ID),
+        serde_json::json!({}),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST, "expected 400: {body}");
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains(ERROR_SANDBOX_DEGRADED),
+        "expected degraded sandbox preflight rejection: {body}"
+    );
+}
+
+#[tokio::test]
 async fn skill_execute_rejects_inv_tool_not_in_allowed_tools() {
     let temp = tempfile::tempdir().expect("tempdir");
     let artifact = inv_tool_artifact_bytes(FIXTURE_TOOL, None);

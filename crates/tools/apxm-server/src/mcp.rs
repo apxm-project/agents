@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use apxm_core::types::values::Value;
+use apxm_runtime::capability::CapabilitySandboxPreflight;
 use axum::Json;
 use axum::extract::State;
 use serde_json::Value as JsonValue;
@@ -22,6 +23,12 @@ pub(crate) use schema::{
     MCP_TOOL_APXM_SKILL_CALL, MCP_TOOL_APXM_SKILL_GET, MCP_TOOL_APXM_SKILL_VALIDATE,
     MCP_TOOL_APXM_SKILLS_LIST, McpRequest,
 };
+
+const MCP_ERROR_ARGUMENTS_OBJECT: &str = "arguments must be an object";
+const MCP_ERROR_UNKNOWN_TOOL_PREFIX: &str = "unknown tool";
+const MCP_ERROR_CAPABILITY_NOT_AGENT_SAFE: &str =
+    "capability is not read-only and does not declare sandbox execution";
+const MCP_ERROR_SANDBOX_PREFLIGHT_PREFIX: &str = "capability failed sandbox preflight";
 
 // ─── MCP 2025-11-05 JSON-RPC endpoint (/v1/mcp) ─────────────────────────────
 
@@ -45,6 +52,7 @@ pub(crate) async fn mcp_jsonrpc(
                     .capability_system()
                     .list_capabilities()
                     .iter()
+                    .filter(|m| m.read_only)
                     .map(|m| ToolEntry {
                         name: m.name.clone(),
                         description: m.description.clone(),
@@ -78,7 +86,7 @@ pub(crate) async fn mcp_jsonrpc(
             // argument object; silently treating other shapes as `{}` bypasses
             // required-argument validation for registered capabilities.
             let JsonValue::Object(map) = &tool_args else {
-                return mcp_tool_result(id, "arguments must be an object".to_string(), true);
+                return mcp_tool_result(id, MCP_ERROR_ARGUMENTS_OBJECT.to_string(), true);
             };
             let mut args = HashMap::new();
             for (key, value) in map {
@@ -96,6 +104,32 @@ pub(crate) async fn mcp_jsonrpc(
             }
 
             let cap_sys = state.runtime.capability_system();
+            if !cap_sys.has_capability(tool_name) {
+                return mcp_tool_result(
+                    id,
+                    format!("{MCP_ERROR_UNKNOWN_TOOL_PREFIX}: {tool_name}"),
+                    true,
+                );
+            }
+            if !cap_sys.is_read_only(tool_name) {
+                match cap_sys.sandbox_preflight(tool_name, &args) {
+                    Ok(CapabilitySandboxPreflight::Sandboxed { .. }) => {}
+                    Ok(CapabilitySandboxPreflight::Direct) => {
+                        return mcp_tool_result(
+                            id,
+                            format!("{MCP_ERROR_CAPABILITY_NOT_AGENT_SAFE}: {tool_name}"),
+                            true,
+                        );
+                    }
+                    Err(error) => {
+                        return mcp_tool_result(
+                            id,
+                            format!("{MCP_ERROR_SANDBOX_PREFLIGHT_PREFIX}: {tool_name}: {error}"),
+                            true,
+                        );
+                    }
+                }
+            }
             match cap_sys.invoke(tool_name, args).await {
                 Ok(result) => {
                     let result_json = result

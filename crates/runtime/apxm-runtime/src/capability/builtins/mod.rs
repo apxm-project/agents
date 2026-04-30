@@ -96,6 +96,20 @@ pub(crate) fn canonicalize_path_or_existing_ancestor(path: &Path) -> io::Result<
     }
 }
 
+pub(crate) fn canonicalize_policy_path(
+    path: &Path,
+    capability_name: &str,
+    policy_field: &str,
+) -> Result<PathBuf, RuntimeError> {
+    canonicalize_path_or_existing_ancestor(path).map_err(|error| RuntimeError::Capability {
+        capability: capability_name.to_string(),
+        message: format!(
+            "Failed to resolve {policy_field} path '{}': {error}",
+            path.display()
+        ),
+    })
+}
+
 /// Configuration for APxM standard tools.
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct ToolsConfig {

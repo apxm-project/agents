@@ -78,7 +78,8 @@ impl BashCapability {
                             "description": "Optional timeout in seconds"
                         }
                     },
-                    "required": ["command"]
+                    "required": ["command"],
+                    "additionalProperties": false
                 }),
             )
             .with_returns("string")
@@ -181,12 +182,6 @@ impl BashCapability {
             .unwrap_or(self.config.timeout_secs)
     }
 
-    fn needs_network(&self, args: &HashMap<String, Value>) -> bool {
-        args.get("needs_network")
-            .and_then(|value| value.as_bool())
-            .unwrap_or(false)
-    }
-
     fn working_directory(&self) -> Option<PathBuf> {
         self.config
             .working_directory
@@ -211,7 +206,7 @@ impl BashCapability {
             max_output_bytes: self.config.max_output_bytes,
             read_paths,
             write_paths,
-            needs_network: self.needs_network(args),
+            needs_network: false,
             needs_process_spawn: true,
             origin_op: Some(AISOperationType::InvTool.to_string()),
             ..ExecRequest::default()
@@ -380,5 +375,26 @@ mod tests {
                 "expected allowlist rejection for {command:?}: {error}"
             );
         }
+    }
+
+    #[test]
+    fn command_args_cannot_request_network_access() {
+        let capability = BashCapability::safe();
+        let args = HashMap::from([
+            (
+                "command".to_string(),
+                Value::String("echo hello".to_string()),
+            ),
+            ("needs_network".to_string(), Value::Bool(true)),
+        ]);
+
+        let request = capability
+            .build_exec_request(&args)
+            .expect("exec request should be built");
+
+        assert!(
+            !request.needs_network,
+            "network access must be host policy, not tool-argument controlled"
+        );
     }
 }
