@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 publish = false
 description = "APxM CLI - minimal compile/run wrapper for the driver"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
 
 [lints]
 workspace = true
