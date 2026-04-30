@@ -1,5 +1,10 @@
 # A-PXM: Agent Program Execution Model
 
+> This is the **formal model** behind APXM. For the practical "skills as libraries" framing
+> aimed at users and contributors, start at [VISION.md](../../VISION.md) and the
+> [root README](../../README.md). Read this tree when you want the theory of *why* a
+> typed agent IR makes the library promise possible.
+
 A-PXM is a formal Program Execution Model (PXM) for agentic AI. It treats agent workflows not as opaque scripts but as typed dataflow graphs -- making them visible to compilers, schedulers, and verification tools. A-PXM draws on five decades of PXM research (von Neumann, dataflow, BSP, CSP, MapReduce, actors) to define how compute, memory, and scheduling should work for agents.
 
 ---

@@ -1,12 +1,36 @@
-# APXM – Agent Programming eXecution Model
+# APXM — A Library System for Agent Skills
 
-APXM is a full toolchain for building autonomous agent workflows:
+> Software scaled when code became libraries. Agents will scale only when skills do.
+
+Every team encodes the same processes as different "skills," and rewrites them. APXM is the
+infrastructure that lets a skill be **compiled once and reused everywhere** — typed, versioned,
+linkable, and governed.
+
+What APXM gives you:
+
+- **Compiled skills** — a skill compiles to a typed AIR graph and a `.apxmobj` artifact, the
+  way a function compiles to an object file. Once compiled, the same artifact runs across
+  deployments.
+- **Typed isolation** — capabilities, side-effect policy, and approval gates live in the
+  skill's manifest and are enforced by the runtime sandbox.
+- **Reproducible sessions** — every execution emits a session directory with metrics, traces,
+  and node outputs you can replay.
+- **Compiler diagnostics** — the optimizer eliminates redundant LLM calls and surfaces the
+  *why*, not just the *what*. New passes compound across every existing skill.
+- **Server-owned library** — `apxm-server` exposes one skill inventory; Codex, Claude Code,
+  the GUI, and `apxm-cli` see the same library through a single REST/MCP surface.
+
+APXM is built on a formal **Program Execution Model for agentic AI**. If you want the practical
+positioning, read [VISION.md](VISION.md). If you want the theory ("the LLVM for agents"), read
+[docs/pxm/readme.md](docs/pxm/readme.md). If you want to install and run skills, keep reading.
+
+Under the hood, APXM ships:
 
 - **AIR** as the canonical human-readable graph source
-- **AIS MLIR dialect** as the compiler representation
+- an **AIS MLIR dialect** as the compiler representation
 - **`.apxmobj` artifacts** as deterministic compiled workflows
-- **Runtime** with scheduling, memory, tools, backend routing, and graph metrics
-- **Dekk-first CLI** for install, compile, execute, and backend setup
+- a **runtime** with scheduling, memory, tools, backend routing, and graph metrics
+- a **Dekk-first CLI** for install, compile, execute, and backend setup
 
 ---
 
@@ -203,21 +227,29 @@ Each check provides actionable fix suggestions when issues are found.
 
 ## Documentation
 
-### Guides
-- [Documentation Index](docs/README.md) — Entry point for the current docs set
-- CLI Reference — Run `dekk apxm --help` for commands, options, and graph tooling
-- [vLLM Backend](docs/backends/vllm.md) — Dekk-first optional backend setup and metrics
-- [External vLLM Fork](docs/external-vllm-fork.md) — Architecture and fork integration notes
+### Skill libraries (the practical framing)
+- [VISION.md](VISION.md) — Where APXM is going and why "skills as libraries" is the unifying
+  thesis
+- [APXM-Aware Skill Libraries](docs/design/apxm-aware-codex-skill-libraries.md) — How a host
+  agent's skills become typed, optimized APXM skills
+- [Skill Runtime Backlog](docs/design/apxm-skill-runtime-task-backlog.md) — What's implemented
+  vs. in-flight
 
-### PXM
-- [Overview](docs/pxm/readme.md) — High-level overview of APXM as a program execution model
+### PXM (the formal model behind the libraries)
+- [Overview](docs/pxm/readme.md) — A-PXM as a Program Execution Model
 - [Foundations](docs/pxm/foundations.md) — How A-PXM draws on decades of PXM research
 - [AAM](docs/pxm/aam.md) — Agent Abstract Machine state model
 - [AIS](docs/pxm/ais.md) — Agent Instruction Set contract and typed operations
 - [Compute](docs/pxm/compute.md) — Compute across 6 foundational PXMs
 - [Memory](docs/pxm/memory.md) — Memory separation across PXMs
 - [Scheduling](docs/pxm/scheduling.md) — Scheduling and execution across PXMs
-- [Vision](docs/pxm/vision.md) — Long-range system direction
+- [Vision: LLVM for Agents](docs/pxm/vision.md) — Long-range system direction
+
+### Guides
+- [Documentation Index](docs/README.md) — Entry point for the current docs set
+- CLI Reference — Run `dekk apxm --help` for commands, options, and graph tooling
+- [vLLM Backend](docs/backends/vllm.md) — Dekk-first optional backend setup and metrics
+- [External vLLM Fork](docs/external-vllm-fork.md) — Architecture and fork integration notes
 
 ### AIS Operations
 - Run `dekk apxm ops list` or `dekk apxm ops show <OP>` for the live AIS surface

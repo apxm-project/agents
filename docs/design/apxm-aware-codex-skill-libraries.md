@@ -1,5 +1,11 @@
 # APXM-Aware Codex Skill Libraries
 
+In every team running agents in production, the same scene plays out: each team
+encodes the same processes as a slightly different "skill," with no shared
+compiled object, no shared optimizer, and no shared governance. The
+fragmented-skills problem is what APXM exists to solve (see
+[VISION.md](../../VISION.md) for the full framing).
+
 This document captures the integration direction for making Codex and other
 coding agents APXM-aware. It connects the APXM "LLVM for agents" vision with a
 practical skill-library architecture: skills should be discoverable,
