@@ -71,4 +71,4 @@ After enabling DSPy you'll see the change in three places:
 - `pass_summary.fired_passes` will include `"dspy-optimize"`.
 - The compiled `.apxmobj` (decompile with `dekk apxm decompile`) will show each Ask op carrying an `ais.dspy_optimized` attribute holding the rewritten prompt.
 
-None of those signals are present in the 2026-04-28 sweep, which is why this file's headline is "DSPy did not fire."
+None of those signals are present in the 2026-04-28 sweep, which is why this file's bottom line is: DSPy did not fire.

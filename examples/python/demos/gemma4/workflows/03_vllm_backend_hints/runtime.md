@@ -5,7 +5,7 @@ Sources:
 - `/tmp/case01-runs/backend-hints/priority-contention/sessions/opt-0/run-1/03_vllm_backend_hints-O0-latency-…/metrics.json`
 - `/tmp/case01-runs/backend-hints/priority-contention/sessions/opt-2/run-1/03_vllm_backend_hints-O2-latency-20260428T032331/metrics.json`
 
-## Headline numbers
+## Measured numbers
 
 | Metric | O0 | O2 | Δ |
 |---|---|---|---|

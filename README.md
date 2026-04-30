@@ -175,8 +175,8 @@ examples/
   python/
     getting-started, parallelism, optimization, ...   # Feature-focused samples
     benchmarks/                                       # Shared harness + stress/
-    demos/gemma4/                                     # Tracked strategic demo
-docs/             # Documentation (start at docs/README.md, see docs/demos.md)
+    demos/gemma4/                                     # Three skill-library proof points (ReviewSynthesis, context pruning, vLLM hints)
+docs/             # Documentation (start at docs/README.md)
 ```
 
 ---

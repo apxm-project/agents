@@ -19,8 +19,8 @@ This is the **token / call / capacity** demo. It is the source of the
 Caveat
 ------
 This is *not* a latency promise. The four removed branches were parallel-able,
-so wall-clock latency may or may not move with token count. The deck must show
-the call/token deltas, not a wall-clock chart.
+so wall-clock latency may or may not move with token count. Quote the
+call/token deltas, not a wall-clock chart.
 """
 
 from __future__ import annotations
