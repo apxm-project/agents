@@ -14,11 +14,19 @@ use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::PathBuf, process::Stdio, time::Instant};
 use tokio::{process::Command, time::Duration};
 
+const BLOCKED_COMMAND_RM_RECURSIVE: &str = "rm recursive";
+const BLOCKED_COMMAND_RM_RECURSIVE_FORCE: &str = "rm recursive force";
+const BLOCKED_COMMAND_SUDO: &str = "sudo";
+const BLOCKED_COMMAND_SU: &str = "su ";
+const BLOCKED_COMMAND_MKFS: &str = "mkfs";
+const BLOCKED_COMMAND_FDISK: &str = "fdisk";
+const BLOCKED_COMMAND_DD_INPUT: &str = "dd if=";
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BashConfig {
     #[serde(default = "super::default_true")]
     pub enabled: bool,
-    #[serde(default)]
+    #[serde(default = "default_blocked_commands")]
     pub blocked_commands: Vec<String>,
     #[serde(default)]
     pub allowed_commands: Option<Vec<String>>,
@@ -38,15 +46,69 @@ fn default_max_output() -> usize {
     100_000
 }
 
+fn default_blocked_commands() -> Vec<String> {
+    safe_blocked_commands()
+}
+
+fn base_config() -> BashConfig {
+    BashConfig {
+        enabled: true,
+        blocked_commands: Vec::new(),
+        allowed_commands: None,
+        working_directory: None,
+        timeout_secs: default_timeout(),
+        max_output_bytes: default_max_output(),
+    }
+}
+
+fn safe_blocked_commands() -> Vec<String> {
+    vec![
+        BLOCKED_COMMAND_RM_RECURSIVE.to_string(),
+        BLOCKED_COMMAND_SUDO.to_string(),
+        BLOCKED_COMMAND_SU.to_string(),
+        BLOCKED_COMMAND_MKFS.to_string(),
+        BLOCKED_COMMAND_FDISK.to_string(),
+        BLOCKED_COMMAND_DD_INPUT.to_string(),
+    ]
+}
+
 impl Default for BashConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            blocked_commands: Vec::new(),
+            blocked_commands: default_blocked_commands(),
             allowed_commands: None,
             working_directory: None,
             timeout_secs: default_timeout(),
             max_output_bytes: default_max_output(),
+        }
+    }
+}
+
+impl BashConfig {
+    pub fn safe_preset() -> Self {
+        Self {
+            blocked_commands: safe_blocked_commands(),
+            ..base_config()
+        }
+    }
+
+    pub fn build_preset() -> Self {
+        Self {
+            blocked_commands: vec![
+                BLOCKED_COMMAND_SUDO.to_string(),
+                BLOCKED_COMMAND_SU.to_string(),
+                BLOCKED_COMMAND_RM_RECURSIVE_FORCE.to_string(),
+            ],
+            timeout_secs: 600,
+            ..base_config()
+        }
+    }
+
+    pub fn git_preset() -> Self {
+        Self {
+            allowed_commands: Some(git_allowed_commands()),
+            ..base_config()
         }
     }
 }
@@ -90,55 +152,15 @@ impl BashCapability {
     }
 
     pub fn safe() -> Self {
-        Self::with_config(BashConfig {
-            blocked_commands: vec![
-                "rm -rf".to_string(),
-                "rm -r".to_string(),
-                "sudo".to_string(),
-                "su ".to_string(),
-                "mkfs".to_string(),
-                "fdisk".to_string(),
-                "dd if=".to_string(),
-            ],
-            ..Default::default()
-        })
+        Self::with_config(BashConfig::safe_preset())
     }
 
     pub fn build() -> Self {
-        Self::with_config(BashConfig {
-            blocked_commands: vec!["sudo".to_string(), "su ".to_string(), "rm -rf".to_string()],
-            timeout_secs: 600,
-            ..Default::default()
-        })
+        Self::with_config(BashConfig::build_preset())
     }
 
     pub fn git() -> Self {
-        Self::with_config(BashConfig {
-            allowed_commands: Some(vec![
-                "git status".to_string(),
-                "git diff".to_string(),
-                "git log".to_string(),
-                "git show".to_string(),
-                "git add".to_string(),
-                "git reset".to_string(),
-                "git commit".to_string(),
-                "git push".to_string(),
-                "git pull".to_string(),
-                "git branch".to_string(),
-                "git checkout".to_string(),
-                "git switch".to_string(),
-                "git merge".to_string(),
-                "git rebase".to_string(),
-                "git stash".to_string(),
-                "git fetch".to_string(),
-                "git remote".to_string(),
-                "git clone".to_string(),
-                "git rev-parse".to_string(),
-                "git config --get".to_string(),
-                "git config --list".to_string(),
-            ]),
-            ..Default::default()
-        })
+        Self::with_config(BashConfig::git_preset())
     }
 
     fn validate_command(&self, command: &str) -> CapabilityResult<()> {
@@ -164,7 +186,7 @@ impl BashCapability {
             .config
             .blocked_commands
             .iter()
-            .find(|pattern| command.contains(pattern.as_str()))
+            .find(|pattern| command_matches_blocked(command, pattern))
         {
             return Err(RuntimeError::Capability {
                 capability: self.metadata.name.clone(),
@@ -218,6 +240,35 @@ impl BashCapability {
         truncate_string_in_place(stdout, &mut remaining);
         truncate_string_in_place(stderr, &mut remaining);
     }
+}
+
+fn git_allowed_commands() -> Vec<String> {
+    [
+        "git status",
+        "git diff",
+        "git log",
+        "git show",
+        "git add",
+        "git reset",
+        "git commit",
+        "git push",
+        "git pull",
+        "git branch",
+        "git checkout",
+        "git switch",
+        "git merge",
+        "git rebase",
+        "git stash",
+        "git fetch",
+        "git remote",
+        "git clone",
+        "git rev-parse",
+        "git config --get",
+        "git config --list",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect()
 }
 
 impl Default for BashCapability {
@@ -309,6 +360,140 @@ fn command_matches_allowed(command: &str, allowed: &str) -> bool {
     !has_disallowed_shell_syntax(suffix)
 }
 
+fn command_matches_blocked(command: &str, blocked: &str) -> bool {
+    if blocked == BLOCKED_COMMAND_RM_RECURSIVE {
+        return contains_recursive_rm(command);
+    }
+    if blocked == BLOCKED_COMMAND_RM_RECURSIVE_FORCE {
+        return contains_recursive_force_rm(command);
+    }
+    command.contains(blocked)
+}
+
+fn contains_recursive_force_rm(command: &str) -> bool {
+    contains_rm_matching(command, rm_args_have_recursive_force)
+}
+
+fn contains_recursive_rm(command: &str) -> bool {
+    contains_rm_matching(command, rm_args_have_recursive)
+}
+
+fn contains_rm_matching(command: &str, predicate: impl Fn(&[String]) -> bool) -> bool {
+    shell_word_segments_for_policy(command)
+        .iter()
+        .any(|tokens| {
+            for (index, token) in tokens.iter().enumerate() {
+                if !token_is_rm_command(token) {
+                    continue;
+                }
+                if predicate(&tokens[index + 1..]) {
+                    return true;
+                }
+            }
+            false
+        })
+}
+
+fn token_is_rm_command(token: &str) -> bool {
+    token.rsplit('/').next() == Some("rm")
+}
+
+fn shell_word_segments_for_policy(command: &str) -> Vec<Vec<String>> {
+    let mut segments = Vec::new();
+    let mut words = Vec::new();
+    let mut current = String::new();
+    let mut in_single_quote = false;
+    let mut in_double_quote = false;
+    let mut escaped = false;
+
+    for ch in command.chars() {
+        if escaped {
+            current.push(ch);
+            escaped = false;
+            continue;
+        }
+
+        match ch {
+            '\\' if !in_single_quote => escaped = true,
+            '\'' if !in_double_quote => in_single_quote = !in_single_quote,
+            '"' if !in_single_quote => in_double_quote = !in_double_quote,
+            ch if ch.is_whitespace() && !in_single_quote && !in_double_quote => {
+                if !current.is_empty() {
+                    words.push(std::mem::take(&mut current));
+                }
+            }
+            ';' | '|' | '&' | '<' | '>' | '(' | ')' | '\n' | '\r'
+                if !in_single_quote && !in_double_quote =>
+            {
+                if !current.is_empty() {
+                    words.push(std::mem::take(&mut current));
+                }
+                if !words.is_empty() {
+                    segments.push(std::mem::take(&mut words));
+                }
+            }
+            _ => current.push(ch),
+        }
+    }
+
+    if escaped {
+        current.push('\\');
+    }
+    if !current.is_empty() {
+        words.push(current);
+    }
+    if !words.is_empty() {
+        segments.push(words);
+    }
+
+    segments
+}
+
+fn rm_args_have_recursive(tokens: &[String]) -> bool {
+    for token in tokens {
+        if token == "--" {
+            break;
+        }
+        if token == "--recursive" {
+            return true;
+        }
+        if token.starts_with("--") || !token.starts_with('-') {
+            continue;
+        }
+        if token.chars().skip(1).any(|ch| ch == 'r' || ch == 'R') {
+            return true;
+        }
+    }
+    false
+}
+
+fn rm_args_have_recursive_force(tokens: &[String]) -> bool {
+    let mut recursive = false;
+    let mut force = false;
+    for token in tokens {
+        if token == "--" {
+            break;
+        }
+        if !token.starts_with('-') {
+            continue;
+        }
+        if token == "--recursive" {
+            recursive = true;
+            continue;
+        }
+        if token == "--force" {
+            force = true;
+            continue;
+        }
+        if token.starts_with("--") {
+            continue;
+        }
+        recursive |= token.chars().skip(1).any(|ch| ch == 'r' || ch == 'R');
+        force |= token.chars().skip(1).any(|ch| ch == 'f');
+    }
+    recursive && force
+}
+
 fn has_disallowed_shell_syntax(value: &str) -> bool {
     let mut in_single_quote = false;
     let mut in_double_quote = false;
@@ -374,6 +559,126 @@ mod tests {
                 error.to_string().contains("Command not allowed"),
                 "expected allowlist rejection for {command:?}: {error}"
             );
+        }
+    }
+
+    #[test]
+    fn blocklist_rejects_recursive_force_rm_variants() {
+        for command in [
+            "rm -rf target",
+            "rm -fr target",
+            "rm -Rf target",
+            "rm -r -f target",
+            "rm -f -r target",
+            "rm --recursive --force target",
+            "command rm -rf target",
+            "env rm -rf target",
+            "/bin/rm -rf target",
+            "true; rm -rf target",
+            "printf ok && rm --recursive --force target",
+            "cd target || rm -fr target",
+            "find . -exec rm -rf {} \\;",
+        ] {
+            let error = BashCapability::build()
+                .validate_command(command)
+                .expect_err("recursive force rm variant should be blocked");
+
+            assert!(
+                error.to_string().contains("Command blocked by policy"),
+                "expected blocklist rejection for {command:?}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn safe_and_default_reject_recursive_rm_without_force() {
+        for capability in [BashCapability::safe(), BashCapability::new()] {
+            for command in [
+                "rm -r target",
+                "rm -R target",
+                "rm --recursive target",
+                "command rm -r target",
+                "env FOO=bar rm -R target",
+                "/bin/rm -r target",
+                "true; rm -r target",
+                "printf ok && rm --recursive target",
+                "xargs rm -r target",
+            ] {
+                let error = capability
+                    .validate_command(command)
+                    .expect_err("recursive rm variant should be blocked");
+
+                assert!(
+                    error.to_string().contains("Command blocked by policy"),
+                    "expected blocklist rejection for {command:?}: {error}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn default_bash_config_is_not_unrestricted() {
+        let config = BashConfig::default();
+        assert!(
+            config
+                .blocked_commands
+                .contains(&BLOCKED_COMMAND_RM_RECURSIVE.to_string()),
+            "default bash config should block recursive rm"
+        );
+        assert!(
+            config
+                .blocked_commands
+                .contains(&BLOCKED_COMMAND_SUDO.to_string()),
+            "default bash config should block sudo"
+        );
+    }
+
+    #[test]
+    fn bash_presets_express_expected_rm_policy() {
+        let safe = BashConfig::safe_preset();
+        let build = BashConfig::build_preset();
+
+        assert!(
+            safe.blocked_commands
+                .contains(&BLOCKED_COMMAND_RM_RECURSIVE.to_string())
+        );
+        assert!(
+            !safe
+                .blocked_commands
+                .contains(&BLOCKED_COMMAND_RM_RECURSIVE_FORCE.to_string()),
+            "safe preset should use the broader recursive rm policy"
+        );
+        assert!(
+            build
+                .blocked_commands
+                .contains(&BLOCKED_COMMAND_RM_RECURSIVE_FORCE.to_string()),
+            "build preset should block recursive force rm"
+        );
+        assert!(
+            !build
+                .blocked_commands
+                .contains(&BLOCKED_COMMAND_RM_RECURSIVE.to_string()),
+            "build preset should not use the broader recursive rm policy"
+        );
+    }
+
+    #[test]
+    fn build_preset_allows_recursive_rm_without_force() {
+        let capability = BashCapability::build();
+
+        for command in ["rm -r target", "rm --recursive target"] {
+            capability
+                .validate_command(command)
+                .expect("build preset should only block recursive rm when force is also used");
+        }
+    }
+
+    #[test]
+    fn rm_policy_stops_parsing_options_after_double_dash() {
+        for capability in [BashCapability::safe(), BashCapability::build()] {
+            capability
+                .validate_command("rm -- -rf")
+                .expect("operands after -- should not be treated as rm options");
         }
     }
 

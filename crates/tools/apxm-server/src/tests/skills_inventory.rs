@@ -8,7 +8,7 @@ async fn skills_list_returns_installed_manifests() {
     write_valid_skill(temp.path(), FIXTURE_PACKAGE_DIR);
     let app = build_app(test_state_with_skill_roots(vec![temp.path().to_path_buf()]).await);
 
-    let (status, body) = get_json(app, ROUTE_SKILLS).await;
+    let (status, body) = get_json(app, routes::SKILLS).await;
 
     assert_eq!(status, StatusCode::OK, "list skills failed: {body}");
     assert_eq!(body["object"], "list");
@@ -90,7 +90,7 @@ async fn skills_registry_reports_duplicate_id_version_as_ambiguous() {
     write_complete_skill_with_version(temp.path(), FIXTURE_PACKAGE_ALT_DIR, FIXTURE_SKILL_VERSION);
     let app = build_app(test_state_with_skill_roots(vec![temp.path().to_path_buf()]).await);
 
-    let (list_status, list_body) = get_json(app.clone(), ROUTE_SKILLS).await;
+    let (list_status, list_body) = get_json(app.clone(), routes::SKILLS).await;
     assert_eq!(list_status, StatusCode::OK, "list failed: {list_body}");
     let records = list_body["data"].as_array().expect("skill records");
     assert_eq!(records.len(), 2);
@@ -149,7 +149,7 @@ version = "{FIXTURE_SKILL_VERSION}"
     );
     let app = build_app(test_state_with_skill_roots(vec![temp.path().to_path_buf()]).await);
 
-    let (status, body) = get_json(app, ROUTE_SKILLS).await;
+    let (status, body) = get_json(app, routes::SKILLS).await;
 
     assert_eq!(status, StatusCode::OK, "list failed: {body}");
     assert_eq!(body["data"][0]["validation"]["status"], "invalid");
@@ -190,7 +190,7 @@ async fn skills_registry_rest_and_mcp_share_read_only_validated_inventory() {
     let versioned_id = versioned_skill_id();
 
     // REST list must ignore request-provided roots and use only AppState roots.
-    let injected_list_route = format!("{ROUTE_SKILLS}?{QUERY_ROOT_INJECTION}");
+    let injected_list_route = format!("{}?{QUERY_ROOT_INJECTION}", routes::SKILLS);
     let (list_status, list_body) = get_json(app.clone(), &injected_list_route).await;
     assert_eq!(list_status, StatusCode::OK, "list failed: {list_body}");
     assert!(
@@ -230,7 +230,7 @@ async fn skills_registry_rest_and_mcp_share_read_only_validated_inventory() {
 
     let (mcp_list_status, mcp_list_body) = post_json(
         app.clone(),
-        ROUTE_MCP,
+        routes::MCP,
         serde_json::json!({
             "jsonrpc": MCP_JSONRPC_VERSION,
             "id": 1,
@@ -262,7 +262,7 @@ async fn skills_registry_rest_and_mcp_share_read_only_validated_inventory() {
     );
     let (mcp_validate_status, mcp_validate_body) = post_json(
         app,
-        ROUTE_MCP,
+        routes::MCP,
         mcp_call(
             MCP_TOOL_APXM_SKILL_VALIDATE,
             serde_json::Value::Object(mcp_args),

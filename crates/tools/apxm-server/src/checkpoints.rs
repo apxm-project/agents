@@ -9,6 +9,7 @@ use tracing::info;
 
 use crate::error::ApiError;
 use crate::helpers::now_ms;
+use crate::routes;
 use crate::state::AppState;
 use crate::types::responses::{
     CheckpointCreatedResponse, CheckpointResumedResponse, CheckpointWebhookPayload,
@@ -118,7 +119,7 @@ pub(crate) async fn create_checkpoint(
             kind: "checkpoint_created",
             checkpoint_id: id.clone(),
             message: req.message,
-            review_url: format!("/v1/checkpoints/{}", id),
+            review_url: routes::checkpoint_detail_path(&id),
         };
         tokio::spawn(async move {
             if let Ok(client) = reqwest::Client::builder()
@@ -134,7 +135,7 @@ pub(crate) async fn create_checkpoint(
         ok: true,
         checkpoint_id: id.clone(),
         status: apxm_core::types::SessionStatus::Pending,
-        resume_url: format!("/v1/checkpoints/{}/resume", id),
+        resume_url: routes::checkpoint_resume_path(&id),
     })
 }
 

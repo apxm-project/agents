@@ -41,6 +41,7 @@ mod health;
 mod helpers;
 mod mcp;
 mod memory;
+mod routes;
 mod skills;
 mod startup;
 mod state;

@@ -48,6 +48,7 @@ use crate::mcp::{
     MCP_TOOL_APXM_SKILL_CALL, MCP_TOOL_APXM_SKILL_GET, MCP_TOOL_APXM_SKILL_VALIDATE,
     MCP_TOOL_APXM_SKILLS_LIST,
 };
+use crate::routes;
 use crate::skills::SkillLibrary;
 use crate::state::AppState;
 use crate::tasks::{QueuedTask, TaskQueueManager, TaskStatus};
@@ -68,9 +69,6 @@ mod tasks;
 
 // ── Test helpers ──────────────────────────────────────────────────────────
 
-const ROUTE_SKILLS: &str = "/v1/skills";
-const ROUTE_EXECUTIONS: &str = "/v1/executions";
-const ROUTE_MCP: &str = "/v1/mcp";
 const MCP_METHOD_INITIALIZE: &str = "initialize";
 const MCP_METHOD_TOOLS_LIST: &str = "tools/list";
 const MCP_METHOD_TOOLS_CALL: &str = "tools/call";
@@ -845,27 +843,27 @@ fn fixture_degraded_sandbox_registry() -> SandboxRegistry {
 }
 
 fn skill_detail_route(id: &str) -> String {
-    format!("{ROUTE_SKILLS}/{id}")
+    routes::skill_detail_path(id)
 }
 
 fn skill_validate_route(id: &str) -> String {
-    format!("{ROUTE_SKILLS}/{id}/validate")
+    routes::skill_validate_path(id)
 }
 
 fn skill_execute_route(id: &str) -> String {
-    format!("{ROUTE_SKILLS}/{id}/execute")
+    routes::skill_execute_path(id)
 }
 
 fn skill_execute_stream_route(id: &str) -> String {
-    format!("{ROUTE_SKILLS}/{id}/execute/stream")
+    routes::skill_execute_stream_path(id)
 }
 
 fn execution_detail_route(id: &str) -> String {
-    format!("{ROUTE_EXECUTIONS}/{id}")
+    routes::execution_detail_path(id)
 }
 
 fn execution_node_detail_route(execution_id: &str, node_id: u64) -> String {
-    format!("{ROUTE_EXECUTIONS}/{execution_id}/nodes/{node_id}")
+    routes::execution_node_detail_path(execution_id, node_id)
 }
 
 fn sse_data_events(text: &str) -> Vec<serde_json::Value> {

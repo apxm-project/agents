@@ -5,7 +5,7 @@ use super::*;
 #[tokio::test]
 async fn health_returns_ok() {
     let app = build_app(test_state().await);
-    let (status, body) = get_json(app, "/health").await;
+    let (status, body) = get_json(app, routes::HEALTH).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["status"], "ok");
     assert!(body["version"].is_string());
@@ -16,7 +16,7 @@ async fn health_returns_ok() {
 #[tokio::test]
 async fn models_returns_json_array() {
     let app = build_app(test_state().await);
-    let (status, body) = get_json(app, "/v1/models").await;
+    let (status, body) = get_json(app, routes::MODELS).await;
     assert_eq!(status, StatusCode::OK);
     // With no backends configured the array may be empty, but must be an array.
     assert!(
@@ -35,7 +35,7 @@ async fn memory_store_and_search_roundtrip() {
     // Store a fact
     let (store_status, store_body) = post_json(
         app.clone(),
-        "/v1/memory/facts/store",
+        routes::MEMORY_FACTS_STORE,
         serde_json::json!({
             "text": "RDNA 4 uses a unified compute architecture",
             "tags": ["gpu", "rdna4"],
@@ -55,7 +55,7 @@ async fn memory_search_returns_array() {
     let app = build_app(test_state().await);
     let (status, body) = post_json(
         app,
-        "/v1/memory/facts/search",
+        routes::MEMORY_FACTS_SEARCH,
         serde_json::json!({ "query": "GPU architecture", "limit": 5 }),
     )
     .await;
@@ -71,7 +71,7 @@ async fn a2a_jsonrpc_unknown_method_returns_error() {
     let app = build_app(test_state().await);
     let (status, body) = post_json(
         app,
-        "/a2a",
+        routes::A2A,
         serde_json::json!({
             "jsonrpc": "2.0",
             "id": "t1",
