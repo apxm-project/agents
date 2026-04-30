@@ -98,8 +98,15 @@ The `apxm-mcp-server` binary exposes these tools over stdio:
 
 - `apxm_validate` -- validate AIR text
 - `apxm_compile` -- compile AIR text to an optimized artifact
-- `apxm_execute` -- compile and execute AIR text in one shot
 - `apxm_get_contract` -- return the full AIS contract
+
+`apxm-mcp-server` is a developer/debug compiler server, not the safe skill-call
+surface. It does not scan server-owned skill roots or apply the manifest
+admission policy used by HTTP MCP `apxm_skill_call`. Raw AIR execution through
+`apxm_execute` is hidden from `tools/list` and rejected by `tools/call` by
+default. Set `APXM_MCP_ENABLE_RAW_EXECUTE=1` explicitly to expose and enable it
+for local debugging. This stdio-only gate is separate from the raw HTTP
+`/v1/execute` developer/debug API described above.
 
 ## Dependencies
 

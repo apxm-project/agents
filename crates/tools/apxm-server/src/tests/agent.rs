@@ -8,7 +8,7 @@ async fn agent_registry_register_returns_ok() {
 
     let (status, body) = post_json(
         app,
-        "/v1/agents/register",
+        routes::AGENTS_REGISTER,
         serde_json::json!({
             "name": "test-agent",
             "url": "http://localhost:19999",
@@ -25,7 +25,7 @@ async fn agent_registry_register_returns_ok() {
 #[tokio::test]
 async fn agent_registry_list_returns_array() {
     let app = build_app(test_state().await);
-    let (status, body) = get_json(app, "/v1/agents").await;
+    let (status, body) = get_json(app, routes::AGENTS).await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.is_array(), "expected array: {body}");
 }
@@ -35,7 +35,7 @@ async fn agent_registry_missing_name_returns_400() {
     let app = build_app(test_state().await);
     let (status, body) = post_json(
         app,
-        "/v1/agents/register",
+        routes::AGENTS_REGISTER,
         serde_json::json!({ "url": "http://localhost:19999" }),
     )
     .await;
@@ -51,7 +51,7 @@ async fn agent_registry_missing_name_returns_400() {
 #[tokio::test]
 async fn a2a_agent_card_has_required_fields() {
     let app = build_app(test_state().await);
-    let (status, body) = get_json(app, "/.well-known/agent.json").await;
+    let (status, body) = get_json(app, routes::AGENT_CARD).await;
     assert_eq!(status, StatusCode::OK, "agent card failed: {body}");
     assert!(body["name"].is_string(), "missing 'name': {body}");
     assert!(body["url"].is_string(), "missing 'url': {body}");

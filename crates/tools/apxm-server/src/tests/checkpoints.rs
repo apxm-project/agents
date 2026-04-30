@@ -7,7 +7,7 @@ async fn checkpoint_create_returns_pending() {
     let app = build_app(test_state().await);
     let (status, body) = post_json(
         app,
-        "/v1/checkpoints",
+        routes::CHECKPOINTS,
         serde_json::json!({
             "checkpoint_id": "cp-test-001",
             "message": "Please review the generated plan",
@@ -33,7 +33,7 @@ async fn checkpoint_get_returns_checkpoint() {
     // Create first
     post_json(
         app.clone(),
-        "/v1/checkpoints",
+        routes::CHECKPOINTS,
         serde_json::json!({
             "checkpoint_id": "cp-get-001",
             "message": "Review needed"
@@ -42,7 +42,7 @@ async fn checkpoint_get_returns_checkpoint() {
     .await;
 
     // Get it
-    let (status, body) = get_json(app, "/v1/checkpoints/cp-get-001").await;
+    let (status, body) = get_json(app, &routes::checkpoint_detail_path("cp-get-001")).await;
     assert_eq!(status, StatusCode::OK, "get checkpoint failed: {body}");
     assert_eq!(body["id"], "cp-get-001");
     assert_eq!(body["status"], "pending");
@@ -57,7 +57,7 @@ async fn checkpoint_resume_workflow() {
     // 1. Create checkpoint
     post_json(
         app.clone(),
-        "/v1/checkpoints",
+        routes::CHECKPOINTS,
         serde_json::json!({
             "checkpoint_id": "cp-resume-001",
             "message": "Human decision required"
@@ -68,7 +68,7 @@ async fn checkpoint_resume_workflow() {
     // 2. Resume with human input
     let (status, body) = post_json(
         app,
-        "/v1/checkpoints/cp-resume-001/resume",
+        &routes::checkpoint_resume_path("cp-resume-001"),
         serde_json::json!({ "human_input": { "decision": "approved", "notes": "LGTM" } }),
     )
     .await;
@@ -83,7 +83,7 @@ async fn checkpoint_resume_workflow() {
 #[tokio::test]
 async fn checkpoint_get_missing_returns_404() {
     let app = build_app(test_state().await);
-    let (status, body) = get_json(app, "/v1/checkpoints/does-not-exist").await;
+    let (status, body) = get_json(app, &routes::checkpoint_detail_path("does-not-exist")).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "expected 404: {body}");
 }
 
@@ -95,7 +95,7 @@ async fn checkpoint_resume_already_resumed_returns_400() {
     // Create + resume once
     post_json(
         app.clone(),
-        "/v1/checkpoints",
+        routes::CHECKPOINTS,
         serde_json::json!({
             "checkpoint_id": "cp-double-001",
             "message": "Once only"
@@ -104,7 +104,7 @@ async fn checkpoint_resume_already_resumed_returns_400() {
     .await;
     post_json(
         app.clone(),
-        "/v1/checkpoints/cp-double-001/resume",
+        &routes::checkpoint_resume_path("cp-double-001"),
         serde_json::json!({ "human_input": { "ok": true } }),
     )
     .await;
@@ -112,7 +112,7 @@ async fn checkpoint_resume_already_resumed_returns_400() {
     // Attempt to resume again
     let (status, body) = post_json(
         app,
-        "/v1/checkpoints/cp-double-001/resume",
+        &routes::checkpoint_resume_path("cp-double-001"),
         serde_json::json!({ "human_input": { "ok": false } }),
     )
     .await;

@@ -5,7 +5,7 @@ async fn mcp_initialize_returns_protocol_version() {
     let app = build_app(test_state().await);
     let (status, body) = post_json(
         app,
-        ROUTE_MCP,
+        routes::MCP,
         serde_json::json!({
             "jsonrpc": MCP_JSONRPC_VERSION,
             "id": 1,
@@ -27,7 +27,7 @@ async fn mcp_tools_list_returns_array() {
     let app = build_app(test_state().await);
     let (status, body) = post_json(
         app,
-        ROUTE_MCP,
+        routes::MCP,
         serde_json::json!({
             "jsonrpc": MCP_JSONRPC_VERSION,
             "id": 2,
@@ -46,7 +46,7 @@ async fn mcp_tools_list_includes_skill_inventory_tools() {
     let app = build_app(test_state().await);
     let (status, body) = post_json(
         app,
-        ROUTE_MCP,
+        routes::MCP,
         serde_json::json!({
             "jsonrpc": MCP_JSONRPC_VERSION,
             "id": 22,
@@ -87,7 +87,7 @@ async fn mcp_tools_list_exposes_only_read_only_generic_capabilities() {
 
     let (status, body) = post_json(
         app,
-        ROUTE_MCP,
+        routes::MCP,
         serde_json::json!({
             "jsonrpc": MCP_JSONRPC_VERSION,
             "id": 24,
@@ -120,7 +120,7 @@ async fn mcp_skill_get_returns_installed_skill_record() {
     );
     let (status, body) = post_json(
         app,
-        ROUTE_MCP,
+        routes::MCP,
         mcp_call(
             MCP_TOOL_APXM_SKILL_GET,
             serde_json::Value::Object(arguments),
@@ -152,7 +152,7 @@ async fn mcp_skill_call_executes_static_server_owned_skill() {
 
     let (status, body) = post_json(
         app,
-        ROUTE_MCP,
+        routes::MCP,
         mcp_call(
             MCP_TOOL_APXM_SKILL_CALL,
             serde_json::Value::Object(arguments),
@@ -202,7 +202,7 @@ async fn mcp_skill_call_rejects_undeclared_inv_tool_with_tool_error() {
 
     let (status, body) = post_json(
         app,
-        ROUTE_MCP,
+        routes::MCP,
         mcp_call(
             MCP_TOOL_APXM_SKILL_CALL,
             serde_json::Value::Object(arguments),
@@ -242,7 +242,7 @@ async fn mcp_skill_call_rejects_python_backed_inv_tool_with_tool_error() {
 
     let (status, body) = post_json(
         app,
-        ROUTE_MCP,
+        routes::MCP,
         mcp_call(
             MCP_TOOL_APXM_SKILL_CALL,
             serde_json::Value::Object(arguments),
@@ -276,7 +276,7 @@ async fn mcp_skill_call_rejects_non_read_only_side_effect_policy_with_tool_error
 
     let (status, body) = post_json(
         app,
-        ROUTE_MCP,
+        routes::MCP,
         mcp_call(
             MCP_TOOL_APXM_SKILL_CALL,
             serde_json::Value::Object(arguments),
@@ -321,7 +321,7 @@ async fn mcp_skill_call_allows_sandboxed_side_effectful_capability_after_preflig
 
     let (status, body) = post_json(
         app,
-        ROUTE_MCP,
+        routes::MCP,
         mcp_call(
             MCP_TOOL_APXM_SKILL_CALL,
             serde_json::Value::Object(arguments),
@@ -360,7 +360,7 @@ async fn mcp_skill_call_rejects_sandboxed_policy_without_backend_preflight() {
 
     let (status, body) = post_json(
         app,
-        ROUTE_MCP,
+        routes::MCP,
         mcp_call(
             MCP_TOOL_APXM_SKILL_CALL,
             serde_json::Value::Object(arguments),
@@ -385,7 +385,7 @@ async fn mcp_unknown_method_returns_error_code() {
     let app = build_app(test_state().await);
     let (status, body) = post_json(
         app,
-        ROUTE_MCP,
+        routes::MCP,
         serde_json::json!({
             "jsonrpc": MCP_JSONRPC_VERSION,
             "id": 99,
@@ -416,7 +416,7 @@ async fn mcp_tools_call_validates_registered_capability_arguments() {
 
     let (status, body) = post_json(
         app,
-        ROUTE_MCP,
+        routes::MCP,
         mcp_call(FIXTURE_TOOL, serde_json::json!({})),
     )
     .await;
@@ -441,7 +441,7 @@ async fn mcp_tools_call_allows_read_only_capability() {
 
     let (status, body) = post_json(
         app,
-        ROUTE_MCP,
+        routes::MCP,
         mcp_call(FIXTURE_TOOL, serde_json::json!({})),
     )
     .await;
@@ -466,7 +466,7 @@ async fn mcp_tools_call_rejects_non_read_only_direct_capability() {
 
     let (status, body) = post_json(
         app,
-        ROUTE_MCP,
+        routes::MCP,
         mcp_call(FIXTURE_TOOL, serde_json::json!({})),
     )
     .await;
@@ -493,7 +493,7 @@ async fn mcp_tools_call_routes_sandboxed_capability_through_registry() {
 
     let (status, body) = post_json(
         app,
-        ROUTE_MCP,
+        routes::MCP,
         mcp_call(FIXTURE_TOOL, serde_json::json!({})),
     )
     .await;
@@ -520,7 +520,7 @@ async fn mcp_tools_call_rejects_degraded_sandboxed_capability() {
 
     let (status, body) = post_json(
         app,
-        ROUTE_MCP,
+        routes::MCP,
         mcp_call(FIXTURE_TOOL, serde_json::json!({})),
     )
     .await;
@@ -545,7 +545,7 @@ async fn mcp_tools_call_rejects_non_object_arguments() {
 
     let (status, body) = post_json(
         app,
-        ROUTE_MCP,
+        routes::MCP,
         mcp_call(FIXTURE_TOOL, serde_json::json!(["not", "an", "object"])),
     )
     .await;

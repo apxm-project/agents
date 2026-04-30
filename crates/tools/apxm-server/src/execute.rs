@@ -4,10 +4,15 @@ use std::sync::Arc;
 use apxm_artifact::Artifact;
 use apxm_compiler::AirModule;
 use apxm_compiler::{Context as CompilerContext, Pipeline as CompilerPipeline};
+use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::events::payload::ErrorPayload;
 use apxm_core::events::{ApxmEvent, EventSource};
 use apxm_core::paths::ApxmPaths;
+use apxm_core::types::AISOperationType;
+use apxm_core::types::execution::Node;
+use apxm_core::types::values::Value as RuntimeValue;
 use apxm_runtime::EmitterAdapter;
+use apxm_runtime::capability::CapabilitySandboxPreflight;
 use axum::Json;
 use axum::extract::State;
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -19,6 +24,13 @@ use tokio::sync::mpsc;
 use crate::error::ApiError;
 use crate::state::{AppState, ExecuteCompletePayload, TokioChannelEmitter};
 use crate::types::responses::{ExecutionStats, LlmUsageSummary};
+
+const ERROR_RAW_PYTHON_TOOL_SECTIONS: &str = "raw execute does not support python tool sections";
+const ERROR_RAW_PYTHON_TOOL_HANDLERS: &str =
+    "raw execute does not support python-backed tool handlers";
+const ERROR_INV_TOOL_MISSING_CAPABILITY: &str = "INV_TOOL missing capability attribute";
+const ERROR_INV_TOOL_PARAMS_NOT_OBJECT: &str = "INV_TOOL params_json must be a JSON object";
+const ERROR_ASK_REQUIRES_READ_ONLY_TOOLS: &str = "ASK tool exposure requires read-only tools";
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct ExecuteRequest {
@@ -46,6 +58,7 @@ pub(crate) async fn execute(
 ) -> Result<Json<ExecuteResponse>, ApiError> {
     let (air, args, session_id, session_dir) = prepare_request(req)?;
     let artifact = air_to_artifact(&air)?;
+    validate_raw_execute_admission(&artifact, &state)?;
     let execution = state
         .runtime
         .execute_artifact_with_session_and_emitter(
@@ -66,6 +79,7 @@ pub(crate) async fn execute_stream(
 ) -> Result<Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>>, ApiError> {
     let (air, args, session_id, session_dir) = prepare_request(req)?;
     let artifact = air_to_artifact(&air)?;
+    validate_raw_execute_admission(&artifact, &state)?;
     let (tx, mut rx) = mpsc::channel::<ApxmEvent>(128);
     let runtime = Arc::clone(&state.runtime);
     let trace_id = session_id
@@ -219,6 +233,168 @@ pub(crate) fn air_to_artifact(air_text: &str) -> Result<Artifact, ApiError> {
         .map_err(|error| ApiError::internal_message(format!("failed to emit artifact: {error}")))?;
     Artifact::from_bytes(&artifact_bytes)
         .map_err(|error| ApiError::internal_message(format!("failed to decode artifact: {error}")))
+}
+
+fn validate_raw_execute_admission(artifact: &Artifact, state: &AppState) -> Result<(), ApiError> {
+    if artifact
+        .sections()
+        .iter()
+        .any(|section| section.kind == apxm_runtime::python_tools::CAPABILITY_NAME)
+    {
+        return Err(ApiError::bad_request(ERROR_RAW_PYTHON_TOOL_SECTIONS));
+    }
+
+    for dag in artifact.dags() {
+        for node in &dag.nodes {
+            if node.attributes.contains_key(graph_attrs::PYTHON_HANDLER_ID) {
+                return Err(ApiError::bad_request(ERROR_RAW_PYTHON_TOOL_HANDLERS));
+            }
+
+            match node.op_type {
+                AISOperationType::InvTool => validate_raw_inv_tool_node(node, state)?,
+                AISOperationType::Ask | AISOperationType::Think | AISOperationType::Reason => {
+                    validate_raw_llm_tool_exposure(node, state)?;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_raw_inv_tool_node(node: &Node, state: &AppState) -> Result<(), ApiError> {
+    let capability = node
+        .attributes
+        .get(graph_attrs::CAPABILITY)
+        .and_then(|value| value.as_string())
+        .ok_or_else(|| ApiError::bad_request(ERROR_INV_TOOL_MISSING_CAPABILITY))?;
+    let capability_system = state.runtime.capability_system();
+
+    if !capability_system.has_capability(capability) {
+        return Err(ApiError::bad_request(format!(
+            "raw execute capability '{capability}' is not registered"
+        )));
+    }
+
+    if capability_system.is_read_only(capability) {
+        return Ok(());
+    }
+
+    let args = inv_tool_static_args(node)?;
+    match capability_system.sandbox_preflight(capability, &args) {
+        Ok(CapabilitySandboxPreflight::Sandboxed { .. }) => Ok(()),
+        Ok(CapabilitySandboxPreflight::Direct) => Err(ApiError::bad_request(format!(
+            "raw execute capability '{capability}' is not read-only and does not declare sandbox execution"
+        ))),
+        Err(error) => Err(ApiError::bad_request(format!(
+            "raw execute capability '{capability}' failed sandbox preflight: {error}"
+        ))),
+    }
+}
+
+fn validate_raw_llm_tool_exposure(node: &Node, state: &AppState) -> Result<(), ApiError> {
+    let Some(requested_tools) = parse_string_array_attr(node, graph_attrs::TOOLS) else {
+        return validate_raw_ask_group_or_all_tools(node, state);
+    };
+    if requested_tools.is_empty() {
+        return validate_raw_ask_group_or_all_tools(node, state);
+    }
+    validate_read_only_tool_names(&requested_tools, state)
+}
+
+fn validate_raw_ask_group_or_all_tools(node: &Node, state: &AppState) -> Result<(), ApiError> {
+    let tools_enabled = node
+        .attributes
+        .get(graph_attrs::TOOLS_ENABLED)
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    if !tools_enabled {
+        return Ok(());
+    }
+
+    if let Some(groups) = parse_string_array_attr(node, graph_attrs::TOOL_GROUPS)
+        && !groups.is_empty()
+    {
+        let grouped_tools = state
+            .runtime
+            .capability_system()
+            .list_capabilities_by_groups(&groups);
+        for metadata in grouped_tools {
+            if !metadata.read_only {
+                return Err(ApiError::bad_request(format!(
+                    "{ERROR_ASK_REQUIRES_READ_ONLY_TOOLS}; capability '{}' is not read-only",
+                    metadata.name
+                )));
+            }
+        }
+        return Ok(());
+    }
+
+    for metadata in state.runtime.capability_system().list_capabilities() {
+        if !metadata.read_only {
+            return Err(ApiError::bad_request(format!(
+                "ASK tools_enabled=true would expose non-read-only capability '{}'",
+                metadata.name
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_read_only_tool_names(tool_names: &[String], state: &AppState) -> Result<(), ApiError> {
+    let capability_system = state.runtime.capability_system();
+    for tool_name in tool_names {
+        let Some(metadata) = capability_system.get_metadata(tool_name) else {
+            return Err(ApiError::bad_request(format!(
+                "raw execute capability '{tool_name}' is not registered"
+            )));
+        };
+        if !metadata.read_only {
+            return Err(ApiError::bad_request(format!(
+                "{ERROR_ASK_REQUIRES_READ_ONLY_TOOLS}; capability '{tool_name}' is not read-only"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn parse_string_array_attr(node: &Node, attr_name: &str) -> Option<Vec<String>> {
+    node.attributes
+        .get(attr_name)
+        .and_then(|value| value.as_array())
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_string().map(ToString::to_string))
+                .collect()
+        })
+}
+
+fn inv_tool_static_args(node: &Node) -> Result<HashMap<String, RuntimeValue>, ApiError> {
+    let mut args = HashMap::new();
+    let Some(params_json) = node
+        .attributes
+        .get(graph_attrs::PARAMS_JSON)
+        .and_then(|value| value.as_string())
+    else {
+        return Ok(args);
+    };
+
+    let parsed: serde_json::Value = serde_json::from_str(params_json)
+        .map_err(|error| ApiError::bad_request(format!("invalid INV_TOOL params_json: {error}")))?;
+    let Some(object) = parsed.as_object() else {
+        return Err(ApiError::bad_request(ERROR_INV_TOOL_PARAMS_NOT_OBJECT));
+    };
+
+    for (key, value) in object {
+        let value = RuntimeValue::try_from(value.clone()).map_err(|error| {
+            ApiError::bad_request(format!("invalid INV_TOOL arg '{key}': {error}"))
+        })?;
+        args.insert(key.clone(), value);
+    }
+
+    Ok(args)
 }
 
 pub(crate) fn to_execute_response(

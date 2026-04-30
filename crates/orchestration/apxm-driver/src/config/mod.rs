@@ -397,52 +397,13 @@ fn apply_enabled_override(
 fn apply_tool_preset(name: &str, config: &mut apxm_runtime::capability::builtins::ToolsConfig) {
     match name {
         "bash_safe" => {
-            config.bash.blocked_commands = vec![
-                "rm -rf".to_string(),
-                "rm -r".to_string(),
-                "sudo".to_string(),
-                "su ".to_string(),
-                "mkfs".to_string(),
-                "fdisk".to_string(),
-                "dd if=".to_string(),
-            ];
-            config.bash.allowed_commands = None;
-            config.bash.timeout_secs = 120;
-            config.bash.max_output_bytes = 100_000;
-            config.bash.enabled = true;
+            config.bash = apxm_runtime::capability::builtins::BashConfig::safe_preset();
         }
         "bash_build" => {
-            config.bash.blocked_commands =
-                vec!["sudo".to_string(), "su ".to_string(), "rm -rf".to_string()];
-            config.bash.allowed_commands = None;
-            config.bash.timeout_secs = 600;
-            config.bash.enabled = true;
+            config.bash = apxm_runtime::capability::builtins::BashConfig::build_preset();
         }
         "bash_git" => {
-            config.bash.allowed_commands = Some(vec![
-                "git status".to_string(),
-                "git diff".to_string(),
-                "git log".to_string(),
-                "git show".to_string(),
-                "git add".to_string(),
-                "git reset".to_string(),
-                "git commit".to_string(),
-                "git push".to_string(),
-                "git pull".to_string(),
-                "git branch".to_string(),
-                "git checkout".to_string(),
-                "git switch".to_string(),
-                "git merge".to_string(),
-                "git rebase".to_string(),
-                "git stash".to_string(),
-                "git fetch".to_string(),
-                "git remote".to_string(),
-                "git clone".to_string(),
-                "git rev-parse".to_string(),
-                "git config --get".to_string(),
-                "git config --list".to_string(),
-            ]);
-            config.bash.enabled = true;
+            config.bash = apxm_runtime::capability::builtins::BashConfig::git_preset();
         }
         "read_source" => {
             config.read.allowed_extensions = Some(
@@ -889,6 +850,13 @@ mod tests {
                 .bash
                 .blocked_commands
                 .iter()
+                .any(|command| command == "rm recursive")
+        );
+        assert!(
+            tools
+                .bash
+                .blocked_commands
+                .iter()
                 .any(|command| command == "sudo")
         );
 
@@ -922,6 +890,60 @@ mod tests {
                 .any(|term| term == "secrets")
         );
         assert!(tools.search_web.safe_search);
+    }
+
+    #[test]
+    fn bash_build_preset_uses_recursive_force_rm_policy() {
+        let toml = r#"
+            [tools.bash_build]
+            enabled = true
+        "#;
+
+        let config: ApXmConfig = toml::from_str(toml).unwrap();
+        let tools = config.tools_config();
+
+        assert!(tools.bash.enabled);
+        assert_eq!(tools.bash.timeout_secs, 600);
+        assert!(
+            tools
+                .bash
+                .blocked_commands
+                .iter()
+                .any(|command| command == "rm recursive force"),
+            "bash_build should block recursive force rm"
+        );
+        assert!(
+            !tools
+                .bash
+                .blocked_commands
+                .iter()
+                .any(|command| command == "rm recursive"),
+            "bash_build should not use the broader recursive rm policy"
+        );
+    }
+
+    #[test]
+    fn default_tools_config_uses_safe_bash_policy() {
+        let config = ApXmConfig::default();
+        let tools = config.tools_config();
+
+        assert!(tools.bash.enabled);
+        assert!(
+            tools
+                .bash
+                .blocked_commands
+                .iter()
+                .any(|command| command == "rm recursive"),
+            "default bash policy should block recursive rm"
+        );
+        assert!(
+            tools
+                .bash
+                .blocked_commands
+                .iter()
+                .any(|command| command == "sudo"),
+            "default bash policy should block sudo"
+        );
     }
 
     #[test]

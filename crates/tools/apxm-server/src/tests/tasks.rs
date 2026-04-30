@@ -7,7 +7,7 @@ async fn task_queue_create_returns_id() {
     let app = build_app(test_state().await);
     let (status, body) = post_json(
         app,
-        "/v1/tasks",
+        routes::TASKS,
         serde_json::json!({
             "queue": "test-queue",
             "data": { "work": "process this" }
@@ -28,7 +28,7 @@ async fn task_queue_list_returns_tasks() {
     // Create a task first
     post_json(
         app.clone(),
-        "/v1/tasks",
+        routes::TASKS,
         serde_json::json!({
             "queue": "list-test",
             "data": { "item": 1 }
@@ -36,7 +36,7 @@ async fn task_queue_list_returns_tasks() {
     )
     .await;
 
-    let (status, body) = get_json(app, "/v1/tasks/list-test").await;
+    let (status, body) = get_json(app, &routes::task_queue_path("list-test")).await;
     assert_eq!(status, StatusCode::OK, "list tasks failed: {body}");
     assert_eq!(body["queue"], "list-test");
     assert!(
@@ -54,7 +54,7 @@ async fn task_queue_claim_and_complete() {
     // 1. Create task
     let (_, create_body) = post_json(
         app.clone(),
-        "/v1/tasks",
+        routes::TASKS,
         serde_json::json!({ "queue": "work", "data": { "job": "test" } }),
     )
     .await;
@@ -63,7 +63,7 @@ async fn task_queue_claim_and_complete() {
     // 2. Claim task
     let (claim_status, claim_body) = post_json(
         app.clone(),
-        "/v1/tasks/work/claim",
+        &routes::task_claim_path("work"),
         serde_json::json!({ "agent_id": "test-agent", "lease_ms": 30000 }),
     )
     .await;
@@ -72,7 +72,7 @@ async fn task_queue_claim_and_complete() {
     let claim_token = claim_body["claim_token"].as_str().unwrap().to_string();
 
     // 3. Complete task
-    let complete_path = format!("/v1/tasks/{}/complete", task_id);
+    let complete_path = routes::task_complete_path(&task_id);
     let (complete_status, complete_body) = post_json(
         app,
         &complete_path,
@@ -96,7 +96,7 @@ async fn task_queue_claim_empty_queue_returns_404() {
     let app = build_app(test_state().await);
     let (status, body) = post_json(
         app,
-        "/v1/tasks/empty-queue/claim",
+        &routes::task_claim_path("empty-queue"),
         serde_json::json!({ "agent_id": "agent-1" }),
     )
     .await;

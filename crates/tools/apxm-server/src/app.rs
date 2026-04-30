@@ -15,6 +15,7 @@ use crate::generate::{handle_generate, handle_generate_stream, handle_schema};
 use crate::health::{health, list_models};
 use crate::mcp::mcp_jsonrpc;
 use crate::memory::{delete_fact, search_facts, store_fact};
+use crate::routes::ServerRoute;
 use crate::skills::{
     execute_skill, execute_skill_stream, get_skill, list_skills, register_skill_event_payloads,
     validate_skill,
@@ -31,56 +32,71 @@ pub(crate) fn build_app(state: AppState) -> Router {
     let req_id_header = axum::http::HeaderName::from_static("x-request-id");
     Router::new()
         // Health + meta
-        .route("/health", get(health))
-        .route("/v1/models", get(list_models))
+        .route(ServerRoute::Health.path(), get(health))
+        .route(ServerRoute::Models.path(), get(list_models))
         // Execution
-        .route("/v1/execute", post(execute))
-        .route("/v1/execute/stream", post(execute_stream))
+        .route(ServerRoute::Execute.path(), post(execute))
+        .route(ServerRoute::ExecuteStream.path(), post(execute_stream))
         // Memory
-        .route("/v1/memory/facts/store", post(store_fact))
-        .route("/v1/memory/facts/search", post(search_facts))
-        .route("/v1/memory/facts/delete", post(delete_fact))
+        .route(ServerRoute::MemoryFactsStore.path(), post(store_fact))
+        .route(ServerRoute::MemoryFactsSearch.path(), post(search_facts))
+        .route(ServerRoute::MemoryFactsDelete.path(), post(delete_fact))
         // Capabilities
-        .route("/v1/capabilities", get(list_capabilities))
-        .route("/v1/capabilities/register", post(register_capability))
-        // Server-owned skill inventory and static skill execution
-        .route("/v1/skills", get(list_skills))
-        .route("/v1/skills/{id}", get(get_skill))
-        .route("/v1/skills/{id}/validate", post(validate_skill))
-        .route("/v1/skills/{id}/execute", post(execute_skill))
-        .route("/v1/skills/{id}/execute/stream", post(execute_skill_stream))
-        .route("/v1/executions", get(list_executions))
-        .route("/v1/executions/{execution_id}", get(get_execution))
+        .route(ServerRoute::Capabilities.path(), get(list_capabilities))
         .route(
-            "/v1/executions/{execution_id}/nodes/{node_id}",
+            ServerRoute::CapabilitiesRegister.path(),
+            post(register_capability),
+        )
+        // Server-owned skill inventory and static skill execution
+        .route(ServerRoute::Skills.path(), get(list_skills))
+        .route(ServerRoute::SkillDetail.path(), get(get_skill))
+        .route(ServerRoute::SkillValidate.path(), post(validate_skill))
+        .route(ServerRoute::SkillExecute.path(), post(execute_skill))
+        .route(
+            ServerRoute::SkillExecuteStream.path(),
+            post(execute_skill_stream),
+        )
+        .route(ServerRoute::Executions.path(), get(list_executions))
+        .route(ServerRoute::ExecutionDetail.path(), get(get_execution))
+        .route(
+            ServerRoute::ExecutionNodeDetail.path(),
             get(get_execution_node),
         )
         // COMMUNICATE receive target
-        .route("/v1/receive", post(receive_message))
+        .route(ServerRoute::Receive.path(), post(receive_message))
         // Agent registry
-        .route("/v1/agents", get(list_agents))
-        .route("/v1/agents/register", post(register_agent))
-        .route("/v1/agents/{name}", get(get_agent).delete(deregister_agent))
+        .route(ServerRoute::Agents.path(), get(list_agents))
+        .route(ServerRoute::AgentsRegister.path(), post(register_agent))
+        .route(
+            ServerRoute::AgentDetail.path(),
+            get(get_agent).delete(deregister_agent),
+        )
         // Task queue (Plan 07 - CLAIM op backend)
-        .route("/v1/tasks", post(create_task))
-        .route("/v1/tasks/{queue}", get(list_tasks))
-        .route("/v1/tasks/{queue}/claim", post(claim_task))
-        .route("/v1/tasks/{id}/complete", post(complete_task))
+        .route(ServerRoute::Tasks.path(), post(create_task))
+        .route(ServerRoute::TaskQueue.path(), get(list_tasks))
+        .route(ServerRoute::TaskClaim.path(), post(claim_task))
+        .route(ServerRoute::TaskComplete.path(), post(complete_task))
         // Checkpoints (Plan 07 - PAUSE/RESUME HITL)
-        .route("/v1/checkpoints", post(create_checkpoint))
-        .route("/v1/checkpoints/{id}", get(get_checkpoint))
-        .route("/v1/checkpoints/{id}/resume", post(resume_checkpoint))
+        .route(ServerRoute::Checkpoints.path(), post(create_checkpoint))
+        .route(ServerRoute::CheckpointDetail.path(), get(get_checkpoint))
+        .route(
+            ServerRoute::CheckpointResume.path(),
+            post(resume_checkpoint),
+        )
         // A2A v0.3 - AgentCard discovery + REST task lifecycle
-        .route("/.well-known/agent.json", get(agent_card))
-        .route("/a2a", post(a2a_jsonrpc))
-        .route("/a2a/tasks/send", post(a2a_send_task))
-        .route("/a2a/tasks/{id}", get(a2a_get_task))
+        .route(ServerRoute::AgentCard.path(), get(agent_card))
+        .route(ServerRoute::A2a.path(), post(a2a_jsonrpc))
+        .route(ServerRoute::A2aTasksSend.path(), post(a2a_send_task))
+        .route(ServerRoute::A2aTaskDetail.path(), get(a2a_get_task))
         // LLM generation (Phase A3 - LLM backend routes)
-        .route("/v1/generate", post(handle_generate))
-        .route("/v1/generate-stream", post(handle_generate_stream))
-        .route("/v1/schema", get(handle_schema))
+        .route(ServerRoute::Generate.path(), post(handle_generate))
+        .route(
+            ServerRoute::GenerateStream.path(),
+            post(handle_generate_stream),
+        )
+        .route(ServerRoute::Schema.path(), get(handle_schema))
         // MCP 2025-11-05 - JSON-RPC tools endpoint
-        .route("/v1/mcp", post(mcp_jsonrpc))
+        .route(ServerRoute::Mcp.path(), post(mcp_jsonrpc))
         .with_state(state)
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())

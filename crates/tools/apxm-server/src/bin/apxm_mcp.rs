@@ -2,13 +2,14 @@
 //!
 //! Implements JSON-RPC 2.0 over stdin/stdout per the Model Context Protocol
 //! (2024-11-05) so that external agents (Claude Code, Codex, etc.) can
-//! validate, compile, and execute APXM AIR.
+//! validate and compile APXM AIR. Raw AIR execution is hidden and disabled by
+//! default, and is exposed only when `APXM_MCP_ENABLE_RAW_EXECUTE` is set.
 //!
 //! # Tools
 //!
 //! - `apxm_validate`      -- validate AIR against the AIS contract
 //! - `apxm_compile`       -- compile AIR to an optimized artifact
-//! - `apxm_execute`       -- compile + execute AIR in one shot
+//! - `apxm_execute`       -- compile + execute AIR only when explicitly enabled
 //! - `apxm_get_contract`  -- return the full AIS contract (ops, attrs, types)
 //!
 //! # Running
@@ -31,6 +32,8 @@ use serde_json::{Value, json};
 const MCP_PROTOCOL_VERSION: &str = apxm_core::constants::protocols::MCP_VERSION;
 const SERVER_NAME: &str = "apxm-mcp-server";
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
+const RAW_EXECUTE_ENV: &str = "APXM_MCP_ENABLE_RAW_EXECUTE";
+const RAW_EXECUTE_DISABLED_MESSAGE: &str = "apxm_execute is disabled by default in the stdio MCP server. Use the HTTP MCP apxm_skill_call tool for server-owned skills, or set APXM_MCP_ENABLE_RAW_EXECUTE=1 for explicit developer/debug raw AIR execution.";
 
 // JSON-RPC error codes
 const PARSE_ERROR: i64 = apxm_core::constants::jsonrpc::error_codes::PARSE_ERROR;
@@ -94,8 +97,8 @@ fn handle_request(request: Value) -> Value {
 
     let result = match method {
         "initialize" => handle_initialize(),
-        "tools/list" => handle_tools_list(),
-        "tools/call" => handle_tools_call(params),
+        "tools/list" => handle_tools_list(raw_execute_enabled()),
+        "tools/call" => handle_tools_call(params, raw_execute_enabled()),
         "ping" => Ok(json!({})),
         "" => Err(rpc_error(PARSE_ERROR, "missing method")),
         _ => Err(rpc_error(
@@ -131,8 +134,14 @@ fn handle_initialize() -> Result<Value, Value> {
     }))
 }
 
-fn handle_tools_list() -> Result<Value, Value> {
-    let tools = vec![
+fn raw_execute_enabled() -> bool {
+    std::env::var(RAW_EXECUTE_ENV)
+        .ok()
+        .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+}
+
+fn handle_tools_list(raw_execute_enabled: bool) -> Result<Value, Value> {
+    let mut tools = vec![
         json!({
             "name": "apxm_validate",
             "description": "Validate canonical APXM AIR against the AIS contract.",
@@ -168,25 +177,6 @@ fn handle_tools_list() -> Result<Value, Value> {
             }
         }),
         json!({
-            "name": "apxm_execute",
-            "description": "Compile and execute APXM AIR in one shot. Requires APXM runtime environment.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "air": {
-                        "type": "string",
-                        "description": "Canonical APXM AIR text"
-                    },
-                    "parameters": {
-                        "type": "object",
-                        "description": "Runtime parameters to pass to the graph entry flow",
-                        "additionalProperties": { "type": "string" }
-                    }
-                },
-                "required": ["air"]
-            }
-        }),
-        json!({
             "name": "apxm_get_contract",
             "description": "Return the full AIS contract: all valid operations with required attributes, valid dependency types, parameter types, and AIR input contract.",
             "inputSchema": {
@@ -210,10 +200,34 @@ fn handle_tools_list() -> Result<Value, Value> {
             }
         }),
     ];
+    if raw_execute_enabled {
+        tools.insert(
+            2,
+            json!({
+                "name": "apxm_execute",
+                "description": "Developer/debug only: compile and execute raw APXM AIR in one shot. Safe skill clients should use HTTP MCP apxm_skill_call.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "air": {
+                            "type": "string",
+                            "description": "Canonical APXM AIR text"
+                        },
+                        "parameters": {
+                            "type": "object",
+                            "description": "Runtime parameters to pass to the graph entry flow",
+                            "additionalProperties": { "type": "string" }
+                        }
+                    },
+                    "required": ["air"]
+                }
+            }),
+        );
+    }
     Ok(json!({ "tools": tools }))
 }
 
-fn handle_tools_call(params: Value) -> Result<Value, Value> {
+fn handle_tools_call(params: Value, raw_execute_enabled: bool) -> Result<Value, Value> {
     let name = params
         .get("name")
         .and_then(Value::as_str)
@@ -226,7 +240,8 @@ fn handle_tools_call(params: Value) -> Result<Value, Value> {
     let result = match name {
         "apxm_validate" => tool_validate(args),
         "apxm_compile" => tool_compile(args),
-        "apxm_execute" => tool_execute(args),
+        "apxm_execute" if raw_execute_enabled => tool_execute(args),
+        "apxm_execute" => Err(RAW_EXECUTE_DISABLED_MESSAGE.to_string()),
         "apxm_get_contract" => tool_get_contract(),
         "apxm_analyze" => tool_analyze(args),
         _ => Err(format!("unknown tool: {name}")),
@@ -318,7 +333,7 @@ fn tool_compile(args: Value) -> Result<String, String> {
 }
 
 // ---------------------------------------------------------------------------
-// Tool: apxm_execute
+// Tool: apxm_execute (hidden and disabled unless APXM_MCP_ENABLE_RAW_EXECUTE is set)
 // ---------------------------------------------------------------------------
 
 fn tool_execute(args: Value) -> Result<String, String> {
@@ -761,4 +776,60 @@ fn rpc_error(code: i64, message: impl Into<String>) -> Value {
         "code": code,
         "message": message.into(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tool_names(list: &Value) -> Vec<&str> {
+        list["tools"]
+            .as_array()
+            .expect("tools array")
+            .iter()
+            .filter_map(|tool| tool["name"].as_str())
+            .collect()
+    }
+
+    #[test]
+    fn tools_list_hides_raw_execute_by_default() {
+        let list = handle_tools_list(false).expect("tools/list");
+        let names = tool_names(&list);
+
+        assert!(names.contains(&"apxm_validate"));
+        assert!(names.contains(&"apxm_compile"));
+        assert!(!names.contains(&"apxm_execute"));
+        assert!(names.contains(&"apxm_get_contract"));
+    }
+
+    #[test]
+    fn tools_list_includes_raw_execute_when_explicitly_enabled() {
+        let list = handle_tools_list(true).expect("tools/list");
+        let names = tool_names(&list);
+
+        assert!(names.contains(&"apxm_execute"));
+    }
+
+    #[test]
+    fn raw_execute_call_is_disabled_by_default() {
+        let result = handle_tools_call(
+            json!({
+                "name": "apxm_execute",
+                "arguments": {
+                    "air": "module { func.func @main() attributes {ais.entry} }"
+                }
+            }),
+            false,
+        )
+        .expect("tools/call result");
+
+        assert_eq!(result["isError"], true);
+        assert!(
+            result["content"][0]["text"]
+                .as_str()
+                .unwrap_or_default()
+                .contains(RAW_EXECUTE_ENV),
+            "expected explicit env flag guidance: {result}"
+        );
+    }
 }

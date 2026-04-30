@@ -76,7 +76,7 @@ async fn execution_store_reloads_persisted_records_for_api_index() {
     let app =
         build_app(test_state_with_skill_roots_and_execution_store(Vec::new(), loaded_store).await);
 
-    let (list_status, list_body) = get_json(app.clone(), ROUTE_EXECUTIONS).await;
+    let (list_status, list_body) = get_json(app.clone(), routes::EXECUTIONS).await;
     assert_eq!(
         list_status,
         StatusCode::OK,
