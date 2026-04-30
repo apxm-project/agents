@@ -258,7 +258,6 @@ Each check provides actionable fix suggestions when issues are found.
 ### Design Notes
 - [Compiler Pipeline](docs/compiler/pipeline.md) — Current pass pipeline and optimization stages
 - [Guardrails and Handoffs](docs/design/guardrails_handoffs.md) — Design notes for safe inter-agent boundaries
-- [Sessions](docs/design/sessions.md) — Durable session and checkpoint design
 
 ---
 
