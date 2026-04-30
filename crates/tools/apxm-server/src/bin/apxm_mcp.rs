@@ -360,10 +360,12 @@ fn tool_execute(args: Value) -> Result<String, String> {
 
     let exec_start = Instant::now();
     let execution = rt.block_on(async {
+        use apxm_driver::runtime::sandbox::configure_sandbox_registry;
         use apxm_runtime::{Runtime, RuntimeConfig};
-        let runtime = Runtime::new(RuntimeConfig::default())
+        let mut runtime = Runtime::new(RuntimeConfig::default())
             .await
             .map_err(|e| format!("runtime init failed: {e}"))?;
+        runtime.set_sandbox_registry(configure_sandbox_registry());
         runtime
             .execute_artifact_with_args(artifact, args)
             .await

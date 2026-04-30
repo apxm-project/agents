@@ -1,4 +1,7 @@
-use super::{canonicalize_path_or_existing_ancestor, normalize_path_lexically, require_string_arg};
+use super::{
+    canonicalize_path_or_existing_ancestor, canonicalize_policy_path, normalize_path_lexically,
+    require_string_arg,
+};
 use crate::capability::{
     executor::{CapabilityExecutor, CapabilityResult},
     metadata::CapabilityMetadata,
@@ -164,26 +167,38 @@ impl ReadCapability {
     }
 
     fn validate_path(&self, path: &Path) -> CapabilityResult<()> {
+        let policy_path = canonicalize_policy_path(path, &self.metadata.name, "requested")?;
         if let Some(blocked_path) = self
             .config
             .blocked_paths
             .iter()
-            .find(|blocked| path.starts_with(blocked.as_path()))
+            .map(|blocked| {
+                canonicalize_policy_path(blocked.as_path(), &self.metadata.name, "blocked")
+                    .map(|canonical| (blocked.clone(), canonical))
+            })
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .find(|(_, blocked)| policy_path.starts_with(blocked.as_path()))
         {
             return Err(RuntimeError::Capability {
                 capability: self.metadata.name.clone(),
-                message: format!("Path blocked by policy: {}", blocked_path.display()),
+                message: format!("Path blocked by policy: {}", blocked_path.0.display()),
             });
         }
 
         if let Some(allowed_paths) = &self.config.allowed_paths
             && !allowed_paths
                 .iter()
-                .any(|allowed| path.starts_with(allowed.as_path()))
+                .map(|allowed| {
+                    canonicalize_policy_path(allowed.as_path(), &self.metadata.name, "allowed")
+                })
+                .collect::<Result<Vec<_>, _>>()?
+                .iter()
+                .any(|allowed| policy_path.starts_with(allowed.as_path()))
         {
             return Err(RuntimeError::Capability {
                 capability: self.metadata.name.clone(),
-                message: format!("Path not in allowed list: {}", path.display()),
+                message: format!("Path not in allowed list: {}", policy_path.display()),
             });
         }
 
@@ -348,6 +363,47 @@ mod tests {
         assert!(
             error.to_string().contains("outside base_directory"),
             "expected base directory rejection: {error}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn allowed_paths_reject_symlink_escape_without_base_directory() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let allowed = dir.path().join("allowed");
+        let outside = dir.path().join("outside");
+        tokio::fs::create_dir_all(&allowed).await.unwrap();
+        tokio::fs::create_dir_all(&outside).await.unwrap();
+        tokio::fs::write(outside.join("secret.txt"), "secret")
+            .await
+            .unwrap();
+        symlink(&outside, allowed.join("link")).unwrap();
+
+        let capability = ReadCapability::with_config(ReadConfig {
+            allowed_paths: Some(vec![allowed.clone()]),
+            ..Default::default()
+        });
+        let args = HashMap::from([(
+            "file_path".to_string(),
+            Value::String(
+                allowed
+                    .join("link")
+                    .join("secret.txt")
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+        )]);
+
+        let error = capability
+            .execute(args)
+            .await
+            .expect_err("symlink escape should be rejected by allowed_paths");
+
+        assert!(
+            error.to_string().contains("Path not in allowed list"),
+            "expected allowed path rejection: {error}"
         );
     }
 }

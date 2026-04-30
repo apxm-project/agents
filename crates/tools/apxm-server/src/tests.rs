@@ -27,7 +27,8 @@ use apxm_runtime::capability::executor::CapabilityExecutor;
 use apxm_runtime::capability::metadata::CapabilityMetadata;
 use apxm_runtime::{
     DefaultBackend, ExecRequest, ExecResult, IsolationLevel, Runtime, RuntimeConfig,
-    SandboxCapabilities, SandboxRegistry,
+    SandboxBackend, SandboxCapabilities, SandboxContext, SandboxError, SandboxRegistry,
+    ValidationResult,
 };
 use async_trait::async_trait;
 use axum::Router;
@@ -154,7 +155,12 @@ const ERROR_UNDECLARED_CAPABILITY: &str = "invokes undeclared capability";
 const ERROR_PYTHON_INV_TOOL_UNSUPPORTED: &str = "does not support python-backed INV_TOOL";
 const ERROR_SIDE_EFFECT_POLICY_UNSUPPORTED: &str = "does not support side_effect_policy";
 const ERROR_SANDBOX_PREFLIGHT: &str = "sandbox preflight";
+const ERROR_SANDBOX_DEGRADED: &str = "degraded guarantees";
+const ERROR_MCP_AGENT_SAFE: &str = "not read-only";
 const SIDE_EFFECT_POLICY_SANDBOXED: &str = "sandboxed";
+const FIXTURE_SANDBOX_NAME: &str = "fixture-policy-sandbox";
+const FIXTURE_DEGRADED_SANDBOX_NAME: &str = "fixture-degraded-sandbox";
+const FIXTURE_DEGRADED_SANDBOX_WARNING: &str = "fixture sandbox degraded guarantees";
 
 struct FixtureReadCapability {
     metadata: CapabilityMetadata,
@@ -176,6 +182,34 @@ impl FixtureReadCapability {
 
 #[async_trait]
 impl CapabilityExecutor for FixtureReadCapability {
+    async fn execute(&self, _args: HashMap<String, Value>) -> Result<Value, RuntimeError> {
+        Ok(Value::String(FIXTURE_OUTPUT.to_string()))
+    }
+
+    fn metadata(&self) -> &CapabilityMetadata {
+        &self.metadata
+    }
+}
+
+struct FixtureSideEffectCapability {
+    metadata: CapabilityMetadata,
+}
+
+impl FixtureSideEffectCapability {
+    fn new(name: &str) -> Self {
+        Self {
+            metadata: CapabilityMetadata::new(
+                name,
+                "Fixture side-effectful direct capability",
+                serde_json::json!({ "type": "object", "properties": {} }),
+            )
+            .with_returns("string"),
+        }
+    }
+}
+
+#[async_trait]
+impl CapabilityExecutor for FixtureSideEffectCapability {
     async fn execute(&self, _args: HashMap<String, Value>) -> Result<Value, RuntimeError> {
         Ok(Value::String(FIXTURE_OUTPUT.to_string()))
     }
@@ -744,7 +778,7 @@ fn fixture_sandbox_registry() -> SandboxRegistry {
             supports_network_restriction: true,
             supports_syscall_filtering: false,
             supports_resource_limits: true,
-            name: "fixture-policy-sandbox".to_string(),
+            name: FIXTURE_SANDBOX_NAME.to_string(),
             version: "test".to_string(),
         },
         |_request| async {
@@ -758,6 +792,55 @@ fn fixture_sandbox_registry() -> SandboxRegistry {
             })
         },
     )));
+    registry
+}
+
+struct FixtureDegradedSandboxBackend;
+
+#[async_trait]
+impl SandboxBackend for FixtureDegradedSandboxBackend {
+    fn capabilities(&self) -> SandboxCapabilities {
+        SandboxCapabilities {
+            isolation_level: IsolationLevel::PolicyOnly,
+            supports_filesystem_restriction: false,
+            supports_network_restriction: false,
+            supports_syscall_filtering: false,
+            supports_resource_limits: false,
+            name: FIXTURE_DEGRADED_SANDBOX_NAME.to_string(),
+            version: "test".to_string(),
+        }
+    }
+
+    fn is_available(&self) -> bool {
+        true
+    }
+
+    fn validate(&self, _request: &ExecRequest) -> ValidationResult {
+        ValidationResult::Degraded {
+            warnings: vec![FIXTURE_DEGRADED_SANDBOX_WARNING.to_string()],
+        }
+    }
+
+    async fn create_session(&self) -> Result<SandboxContext, SandboxError> {
+        unreachable!("degraded fixture backend must be rejected before session creation")
+    }
+
+    async fn execute(
+        &self,
+        _ctx: &SandboxContext,
+        _request: ExecRequest,
+    ) -> Result<ExecResult, SandboxError> {
+        unreachable!("degraded fixture backend must be rejected before execution")
+    }
+
+    async fn destroy_session(&self, _ctx: SandboxContext) -> Result<(), SandboxError> {
+        unreachable!("degraded fixture backend must be rejected before cleanup")
+    }
+}
+
+fn fixture_degraded_sandbox_registry() -> SandboxRegistry {
+    let mut registry = SandboxRegistry::new();
+    registry.register(Arc::new(FixtureDegradedSandboxBackend));
     registry
 }
 

@@ -71,6 +71,43 @@ async fn mcp_tools_list_includes_skill_inventory_tools() {
 }
 
 #[tokio::test]
+async fn mcp_tools_list_exposes_only_read_only_generic_capabilities() {
+    let state = test_state().await;
+    state
+        .runtime
+        .capability_system()
+        .register(Arc::new(FixtureReadCapability::new(FIXTURE_TOOL)))
+        .expect("register read-only fixture capability");
+    state
+        .runtime
+        .capability_system()
+        .register(Arc::new(FixtureSideEffectCapability::new("write_file")))
+        .expect("register side-effectful fixture capability");
+    let app = build_app(state);
+
+    let (status, body) = post_json(
+        app,
+        ROUTE_MCP,
+        serde_json::json!({
+            "jsonrpc": MCP_JSONRPC_VERSION,
+            "id": 24,
+            "method": MCP_METHOD_TOOLS_LIST,
+            "params": {}
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "MCP tools/list failed: {body}");
+    let tools = body["result"]["tools"].as_array().expect("tools array");
+    let names: Vec<&str> = tools
+        .iter()
+        .filter_map(|tool| tool["name"].as_str())
+        .collect();
+    assert!(names.contains(&FIXTURE_TOOL), "tools: {body}");
+    assert!(!names.contains(&"write_file"), "tools: {body}");
+}
+
+#[tokio::test]
 async fn mcp_skill_get_returns_installed_skill_record() {
     let temp = tempfile::tempdir().expect("tempdir");
     write_valid_skill(temp.path(), FIXTURE_PACKAGE_DIR);
@@ -260,6 +297,90 @@ async fn mcp_skill_call_rejects_non_read_only_side_effect_policy_with_tool_error
 }
 
 #[tokio::test]
+async fn mcp_skill_call_allows_sandboxed_side_effectful_capability_after_preflight() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let artifact = inv_tool_artifact_bytes(FIXTURE_TOOL, None);
+    write_sandboxed_policy_skill_with_artifact(temp.path(), &artifact, FIXTURE_TOOL, FIXTURE_TOOL);
+
+    let mut runtime = Runtime::new(RuntimeConfig::in_memory())
+        .await
+        .expect("test runtime");
+    runtime.set_sandbox_registry(Arc::new(fixture_sandbox_registry()));
+    runtime
+        .capability_system()
+        .register(Arc::new(FixtureSandboxedCapability::new(FIXTURE_TOOL)))
+        .expect("register fixture sandboxed capability");
+    let app = build_app(
+        test_state_with_runtime_and_skill_roots(runtime, vec![temp.path().to_path_buf()]).await,
+    );
+    let mut arguments = serde_json::Map::new();
+    arguments.insert(
+        MCP_ARG_ID.to_string(),
+        serde_json::Value::String(versioned_skill_id()),
+    );
+
+    let (status, body) = post_json(
+        app,
+        ROUTE_MCP,
+        mcp_call(
+            MCP_TOOL_APXM_SKILL_CALL,
+            serde_json::Value::Object(arguments),
+        ),
+    )
+    .await;
+
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "MCP tool errors should stay JSON-RPC 200: {body}"
+    );
+    assert_eq!(body["result"]["isError"], false);
+    let response: serde_json::Value =
+        serde_json::from_str(tool_text(&body)).expect("MCP execute response JSON");
+    assert_eq!(response["content"], FIXTURE_OUTPUT);
+}
+
+#[tokio::test]
+async fn mcp_skill_call_rejects_sandboxed_policy_without_backend_preflight() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let artifact = inv_tool_artifact_bytes(FIXTURE_TOOL, None);
+    write_sandboxed_policy_skill_with_artifact(temp.path(), &artifact, FIXTURE_TOOL, FIXTURE_TOOL);
+    let state = test_state_with_skill_roots(vec![temp.path().to_path_buf()]).await;
+    state
+        .runtime
+        .capability_system()
+        .register(Arc::new(FixtureSandboxedCapability::new(FIXTURE_TOOL)))
+        .expect("register fixture sandboxed capability");
+    let app = build_app(state);
+    let mut arguments = serde_json::Map::new();
+    arguments.insert(
+        MCP_ARG_ID.to_string(),
+        serde_json::Value::String(versioned_skill_id()),
+    );
+
+    let (status, body) = post_json(
+        app,
+        ROUTE_MCP,
+        mcp_call(
+            MCP_TOOL_APXM_SKILL_CALL,
+            serde_json::Value::Object(arguments),
+        ),
+    )
+    .await;
+
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "MCP tool errors should stay JSON-RPC 200: {body}"
+    );
+    assert_eq!(body["result"]["isError"], true);
+    assert!(
+        tool_text(&body).contains(ERROR_SANDBOX_PREFLIGHT),
+        "expected sandbox preflight rejection: {body}"
+    );
+}
+
+#[tokio::test]
 async fn mcp_unknown_method_returns_error_code() {
     let app = build_app(test_state().await);
     let (status, body) = post_json(
@@ -305,6 +426,110 @@ async fn mcp_tools_call_validates_registered_capability_arguments() {
     assert!(
         tool_text(&body).contains("Input validation failed"),
         "expected capability schema validation error: {body}"
+    );
+}
+
+#[tokio::test]
+async fn mcp_tools_call_allows_read_only_capability() {
+    let state = test_state().await;
+    state
+        .runtime
+        .capability_system()
+        .register(Arc::new(FixtureReadCapability::new(FIXTURE_TOOL)))
+        .expect("register fixture capability");
+    let app = build_app(state);
+
+    let (status, body) = post_json(
+        app,
+        ROUTE_MCP,
+        mcp_call(FIXTURE_TOOL, serde_json::json!({})),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "expected MCP response: {body}");
+    assert_eq!(body["result"]["isError"], false);
+    assert!(
+        tool_text(&body).contains(FIXTURE_OUTPUT),
+        "expected read-only capability output: {body}"
+    );
+}
+
+#[tokio::test]
+async fn mcp_tools_call_rejects_non_read_only_direct_capability() {
+    let state = test_state().await;
+    state
+        .runtime
+        .capability_system()
+        .register(Arc::new(FixtureSideEffectCapability::new(FIXTURE_TOOL)))
+        .expect("register side-effectful fixture capability");
+    let app = build_app(state);
+
+    let (status, body) = post_json(
+        app,
+        ROUTE_MCP,
+        mcp_call(FIXTURE_TOOL, serde_json::json!({})),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "expected MCP response: {body}");
+    assert_eq!(body["result"]["isError"], true);
+    assert!(
+        tool_text(&body).contains(ERROR_MCP_AGENT_SAFE),
+        "expected MCP agent safety rejection: {body}"
+    );
+}
+
+#[tokio::test]
+async fn mcp_tools_call_routes_sandboxed_capability_through_registry() {
+    let mut runtime = Runtime::new(RuntimeConfig::in_memory())
+        .await
+        .expect("test runtime");
+    runtime.set_sandbox_registry(Arc::new(fixture_sandbox_registry()));
+    runtime
+        .capability_system()
+        .register(Arc::new(FixtureSandboxedCapability::new(FIXTURE_TOOL)))
+        .expect("register fixture sandboxed capability");
+    let app = build_app(test_state_with_runtime_and_skill_roots(runtime, Vec::new()).await);
+
+    let (status, body) = post_json(
+        app,
+        ROUTE_MCP,
+        mcp_call(FIXTURE_TOOL, serde_json::json!({})),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "expected MCP response: {body}");
+    assert_eq!(body["result"]["isError"], false);
+    assert!(
+        tool_text(&body).contains(FIXTURE_OUTPUT),
+        "expected sandboxed capability output: {body}"
+    );
+}
+
+#[tokio::test]
+async fn mcp_tools_call_rejects_degraded_sandboxed_capability() {
+    let mut runtime = Runtime::new(RuntimeConfig::in_memory())
+        .await
+        .expect("test runtime");
+    runtime.set_sandbox_registry(Arc::new(fixture_degraded_sandbox_registry()));
+    runtime
+        .capability_system()
+        .register(Arc::new(FixtureSandboxedCapability::new(FIXTURE_TOOL)))
+        .expect("register fixture sandboxed capability");
+    let app = build_app(test_state_with_runtime_and_skill_roots(runtime, Vec::new()).await);
+
+    let (status, body) = post_json(
+        app,
+        ROUTE_MCP,
+        mcp_call(FIXTURE_TOOL, serde_json::json!({})),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "expected MCP response: {body}");
+    assert_eq!(body["result"]["isError"], true);
+    assert!(
+        tool_text(&body).contains(ERROR_SANDBOX_DEGRADED),
+        "expected degraded sandbox rejection: {body}"
     );
 }
 
