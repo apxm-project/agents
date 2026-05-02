@@ -3,6 +3,7 @@
 use apxm_compiler::AirModule;
 use apxm_compiler::{Context, Module, Pipeline, PipelineDiagnostics};
 use apxm_core::constants::extensions;
+use apxm_core::toolchain_env;
 use apxm_core::types::{OptimizationLevel, PipelineConfig};
 use apxm_core::utils::build::MlirEnvReport;
 use std::fs;
@@ -28,8 +29,9 @@ impl Compiler {
         report.apply_env();
         if !report.is_ready() {
             return Err(DriverError::Driver(format!(
-                "MLIR toolchain not detected.\n{}\nSet MLIR_DIR/MLIR_PREFIX/LLVM_PREFIX/CONDA_PREFIX or ensure mlir-tblgen is on PATH.",
-                report.summary()
+                "MLIR toolchain not detected.\n{}\n{}",
+                report.summary(),
+                toolchain_env::missing_toolchain_env_hint()
             )));
         }
 
