@@ -8,6 +8,7 @@ use std::{
     process::Command,
 };
 
+use crate::toolchain_env;
 use crate::log_debug;
 
 /// Platform-specific library naming conventions
@@ -105,13 +106,10 @@ impl LibraryConfig {
     pub fn for_mlir() -> Self {
         let platform = Platform::current();
         Self {
-            env_vars: vec![
-                "MLIR_PREFIX".to_string(),
-                "CONDA_PREFIX".to_string(),
-                "LLVM_PREFIX".to_string(),
-                "MLIR_DIR".to_string(),
-                "LLVM_DIR".to_string(),
-            ],
+            env_vars: crate::toolchain_env::MLIR_TOOLCHAIN_LIBRARY_ENV_KEYS
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect(),
             lib_dirs: vec!["lib".to_string(), "lib64".to_string()],
             lib_patterns: platform
                 .mlir_library_patterns()
@@ -660,16 +658,16 @@ impl MlirEnvReport {
 
     pub fn apply_env(&self) {
         if let Some(prefix) = &self.resolved_prefix {
-            set_env_if_missing("MLIR_PREFIX", prefix);
-            set_env_if_missing("LLVM_PREFIX", prefix);
+            set_env_if_missing(toolchain_env::MLIR_PREFIX, prefix);
+            set_env_if_missing(toolchain_env::LLVM_PREFIX, prefix);
         }
 
         if let Some(mlir_dir) = &self.resolved_mlir_cmake_dir {
-            set_env_if_missing("MLIR_DIR", mlir_dir);
+            set_env_if_missing(toolchain_env::MLIR_DIR, mlir_dir);
         }
 
         if let Some(llvm_dir) = &self.resolved_llvm_cmake_dir {
-            set_env_if_missing("LLVM_DIR", llvm_dir);
+            set_env_if_missing(toolchain_env::LLVM_DIR, llvm_dir);
         }
     }
 }

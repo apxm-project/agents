@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use apxm_compiler::Context as CompilerContext;
 use apxm_core::constants::env as apxm_env;
+use apxm_core::toolchain_env;
 use apxm_core::utils::build::MlirEnvReport;
 #[cfg(feature = "driver")]
 use apxm_driver::ApXmConfig;
@@ -270,12 +271,12 @@ pub fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> 
 /// Auto-detect the conda prefix for the `apxm` environment.
 ///
 /// Resolution order:
-/// 1. `CONDA_PREFIX` env var
+/// 1. [`toolchain_env::CONDA_PREFIX`] env var
 /// 2. `conda info --envs --json` output (looks for an env named "apxm")
 /// 3. Common paths: ~/miniforge3/envs/apxm, ~/mambaforge/envs/apxm, ~/miniconda3/envs/apxm
 fn detect_conda_prefix() -> Option<PathBuf> {
-    // 1. Check CONDA_PREFIX env var
-    if let Ok(prefix) = env::var("CONDA_PREFIX") {
+    // 1. Check conda-reported prefix
+    if let Ok(prefix) = env::var(toolchain_env::CONDA_PREFIX) {
         let p = PathBuf::from(&prefix);
         if p.is_dir() {
             return Some(p);

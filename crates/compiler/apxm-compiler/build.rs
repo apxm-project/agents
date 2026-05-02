@@ -12,6 +12,7 @@ use apxm_core::utils::build::{
     LibraryConfig, LinkSpec, Platform, detect_llvm_version, emit_link_directives,
     find_versioned_mlir_library, get_target_dir, get_workspace_root, locate_library,
 };
+use apxm_core::toolchain_env;
 use apxm_core::{log_debug, log_info};
 
 /// Build configuration derived from environment variables
@@ -94,15 +95,7 @@ fn setup_rerun_triggers() {
         emit_rerun_if_changed_recursive(Path::new(path));
     }
     println!("cargo:rerun-if-changed=../../core/apxm-ais/src/attrs.rs");
-    for key in [
-        "MLIR_PREFIX",
-        "LLVM_PREFIX",
-        "MLIR_DIR",
-        "LLVM_DIR",
-        "CONDA_PREFIX",
-        "LIBCLANG_PATH",
-        "PATH",
-    ] {
+    for key in toolchain_env::APXM_COMPILER_BUILD_RERUN_ENV_KEYS {
         println!("cargo:rerun-if-env-changed={key}");
     }
 }
@@ -348,6 +341,191 @@ fn install_cmake(build_dir: &Path) -> Result<()> {
     )
 }
 
+// --- libclang discovery for bindgen / clang-sys (`toolchain_env::LIBCLANG_PATH`) ------------
+
+/// See [clang-sys `get_library_path`](https://docs.rs/clang-sys) — loadable `libclang` in this directory.
+const LIBCLANG_FILE_DLL: &str = "libclang.dll";
+const LIBCLANG_FILE_SO: &str = "libclang.so";
+const LIBCLANG_FILE_DYLIB: &str = "libclang.dylib";
+const LIBCLANG_WIN_PREFIX: &str = "libclang-";
+/// Windows MSVC layout (`libclang-13.dll`, …), not the host's `DLL_SUFFIX`.
+const LIBCLANG_WINDOWS_DLL_SUFFIX: &str = ".dll";
+const LIBCLANG_SO_DOT: &str = "libclang.so.";
+/// conda-forge macOS: `libclang.13.dylib` (SONAME), often without `libclang.dylib`.
+const LIBCLANG_MACOS_DOT_PREFIX: &str = "libclang.";
+const LIBCLANG_MACOS_DYLIB_SUFFIX: &str = ".dylib";
+
+fn is_libclang_shared_library_file_name(file_name: &str) -> bool {
+    if matches!(
+        file_name,
+        LIBCLANG_FILE_DLL | LIBCLANG_FILE_SO | LIBCLANG_FILE_DYLIB
+    ) {
+        return true;
+    }
+    if let Some(body) = file_name
+        .strip_prefix(LIBCLANG_WIN_PREFIX)
+        .and_then(|s| s.strip_suffix(LIBCLANG_WINDOWS_DLL_SUFFIX))
+    {
+        return !body.is_empty() && body.chars().all(|c| c.is_ascii_digit());
+    }
+    if file_name.starts_with(LIBCLANG_SO_DOT) {
+        return file_name.len() > LIBCLANG_SO_DOT.len();
+    }
+    if let Some(body) = file_name
+        .strip_prefix(LIBCLANG_MACOS_DOT_PREFIX)
+        .and_then(|s| s.strip_suffix(LIBCLANG_MACOS_DYLIB_SUFFIX))
+    {
+        return !body.is_empty() && body.chars().all(|c| c.is_ascii_digit());
+    }
+    false
+}
+
+fn directory_contains_libclang_shared_library(dir: &Path) -> bool {
+    if !dir.is_dir() {
+        return false;
+    }
+    let Ok(entries) = fs::read_dir(dir) else {
+        return false;
+    };
+    entries.flatten().any(|e| {
+        e.file_name()
+            .to_str()
+            .is_some_and(is_libclang_shared_library_file_name)
+    })
+}
+
+fn find_libclang_search_dir(bin_dir: &Path, lib_dir: &Path) -> Option<PathBuf> {
+    for dir in [bin_dir, lib_dir] {
+        if directory_contains_libclang_shared_library(dir) {
+            return Some(dir.to_path_buf());
+        }
+    }
+    None
+}
+
+/// conda-forge on macOS ships `libclang.<major>.dylib` but not always `libclang.dylib`;
+/// clang-sys looks for the unversioned name under [`toolchain_env::LIBCLANG_PATH`].
+#[cfg(target_os = "macos")]
+fn ensure_libclang_dylib_alias_for_bindgen(prefix: &Path) -> Result<()> {
+    let lib_dir = prefix.join("lib");
+    if !lib_dir.is_dir() {
+        return Ok(());
+    }
+    let dst = lib_dir.join(LIBCLANG_FILE_DYLIB);
+    if dst.exists() {
+        return Ok(());
+    }
+
+    let mut versioned: Vec<(u32, PathBuf)> = Vec::new();
+    for entry in
+        fs::read_dir(&lib_dir).with_context(|| format!("read_dir {}", lib_dir.display()))?
+    {
+        let entry = entry?;
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        let Some(body) = name
+            .strip_prefix(LIBCLANG_MACOS_DOT_PREFIX)
+            .and_then(|s| s.strip_suffix(LIBCLANG_MACOS_DYLIB_SUFFIX))
+        else {
+            continue;
+        };
+        if body.is_empty() || !body.chars().all(|c| c.is_ascii_digit()) {
+            continue;
+        }
+        let Ok(major) = body.parse::<u32>() else {
+            continue;
+        };
+        versioned.push((major, path));
+    }
+
+    let Some((_, src)) = versioned.into_iter().max_by_key(|(m, _)| *m) else {
+        return Ok(());
+    };
+
+    let link_target = src.file_name().context("libclang path has no file name")?;
+    std::os::unix::fs::symlink(link_target, &dst)
+        .with_context(|| format!("symlink {} -> {}", src.display(), dst.display()))?;
+    log_info!(
+        "apxm-compiler-build",
+        "Created {} -> {} for bindgen (conda-forge macOS layout)",
+        dst.display(),
+        src.display()
+    );
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn ensure_libclang_dylib_alias_for_bindgen(_prefix: &Path) -> Result<()> {
+    Ok(())
+}
+
+fn clang_builtin_include_dirs(clang_roots: &[PathBuf]) -> Option<PathBuf> {
+    let mut best: Option<(u32, PathBuf)> = None;
+    for root in clang_roots {
+        let lib_clang = root.join("lib/clang");
+        if !lib_clang.is_dir() {
+            continue;
+        }
+        let Ok(entries) = fs::read_dir(&lib_clang) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            let Some(major) = name
+                .split('.')
+                .next()
+                .and_then(|s| s.parse::<u32>().ok())
+            else {
+                continue;
+            };
+            let include = path.join("include");
+            if include.join("stddef.h").is_file() {
+                let replace = best
+                    .as_ref()
+                    .map(|(v, _)| major > *v)
+                    .unwrap_or(true);
+                if replace {
+                    best = Some((major, include));
+                }
+            }
+        }
+    }
+    best.map(|(_, p)| p)
+}
+
+fn conda_sysroot_include_dir(root: &Path) -> Option<PathBuf> {
+    let Ok(entries) = fs::read_dir(root) else {
+        return None;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        // Typical conda sysroot layout:
+        //   <triplet>/sysroot/usr/include (e.g., x86_64-conda-linux-gnu)
+        if !name.contains("-conda-") {
+            continue;
+        }
+        let include = path.join("sysroot/usr/include");
+        if include.join("stdint.h").is_file() {
+            return Some(include);
+        }
+    }
+    None
+}
+
 /// Generate Rust bindings using bindgen
 fn generate_bindings(
     manifest_dir: &Path,
@@ -359,76 +537,47 @@ fn generate_bindings(
     let bindings_path = out_dir.join("bindings.rs");
     let header_path = manifest_dir.join("mlir/include/ais/CAPI/Compiler.h");
 
-    // Set up libclang path for bindgen.
-    // Priority: existing LIBCLANG_PATH env var > prefix/bin (Windows conda) > prefix/lib.
-    if env::var("LIBCLANG_PATH").is_err() {
-        // On Windows, conda-forge puts libclang-*.dll in bin/, not lib/.
-        let candidates = [mlir_prefix.join("bin"), mlir_prefix.join("lib")];
-        let libclang_names = [
-            "libclang.dll",
-            "libclang-13.dll",
-            "libclang-14.dll",
-            "libclang-15.dll",
-            "libclang-16.dll",
-            "libclang-17.dll",
-            "libclang-18.dll",
-            "libclang-19.dll",
-            "libclang-20.dll",
-            "libclang-21.dll",
-            "libclang-22.dll",
-            "libclang.so",
-            "libclang.dylib",
-        ];
-        let found = candidates
-            .iter()
-            .find(|dir| dir.exists() && libclang_names.iter().any(|name| dir.join(name).exists()));
-        if let Some(dir) = found {
+    // Set up libclang path for bindgen (clang-sys reads `toolchain_env::LIBCLANG_PATH`).
+    // Priority: existing env > prefix/bin (Windows conda) > prefix/lib.
+    if env::var(toolchain_env::LIBCLANG_PATH).is_err() {
+        let bin_dir = mlir_prefix.join("bin");
+        let lib_dir = mlir_prefix.join("lib");
+        let chosen = find_libclang_search_dir(&bin_dir, &lib_dir).unwrap_or(lib_dir);
+        if chosen.exists() {
             log_info!(
                 "apxm-compiler-build",
-                "Setting LIBCLANG_PATH for bindgen: {}",
-                dir.display()
+                "Setting {} for bindgen: {}",
+                toolchain_env::LIBCLANG_PATH,
+                chosen.display()
             );
             // SAFETY: Build scripts are single-threaded.
             #[allow(unsafe_code)]
             unsafe {
-                env::set_var("LIBCLANG_PATH", dir);
-            }
-        } else {
-            // Fall back to prefix/lib even if we couldn't confirm a file there
-            let clang_lib_path = mlir_prefix.join("lib");
-            if clang_lib_path.exists() {
-                // SAFETY: Build scripts are single-threaded.
-                #[allow(unsafe_code)]
-                unsafe {
-                    env::set_var("LIBCLANG_PATH", &clang_lib_path);
-                }
+                env::set_var(toolchain_env::LIBCLANG_PATH, &chosen);
             }
         }
     }
 
+    ensure_libclang_dylib_alias_for_bindgen(mlir_prefix)?;
+
     // Find clang resource directory (contains stddef.h and other builtins).
     // conda-forge puts them at $prefix/lib/clang/<version>/include.
-    // We search several candidate roots including the miniforge base env.
+    // We search a few candidate roots around the active toolchain prefix.
     let mut extra_clang_args: Vec<String> = Vec::new();
     let home_dir = apxm_core::env::home_dir();
-    let clang_roots = [
-        mlir_prefix.to_path_buf(),
-        home_dir.join("miniforge3/envs/apxm"),
-        home_dir.join("miniforge3"),
-    ];
-    'outer: for root in &clang_roots {
-        for ver in ["21", "22", "20", "19", "18"] {
-            let candidate = root.join("lib/clang").join(ver).join("include");
-            if candidate.join("stddef.h").exists() {
-                log_info!(
-                    "apxm-compiler-build",
-                    "Found clang builtins at {}",
-                    candidate.display()
-                );
-                extra_clang_args.push(format!("-I{}", candidate.display()));
-                break 'outer;
-            }
-        }
+    let mut clang_roots = vec![mlir_prefix.to_path_buf()];
+    if let Ok(prefix) = env::var(toolchain_env::CONDA_PREFIX) {
+        clang_roots.push(PathBuf::from(prefix));
+    }
+    clang_roots.push(home_dir.join("miniforge3/envs/apxm"));
+    clang_roots.push(home_dir.join("miniforge3"));
+    if let Some(candidate) = clang_builtin_include_dirs(&clang_roots) {
+        log_info!(
+            "apxm-compiler-build",
+            "Found clang builtins at {}",
+            candidate.display()
+        );
+        extra_clang_args.push(format!("-I{}", candidate.display()));
     }
     if extra_clang_args.is_empty() {
         log_info!(
@@ -438,10 +587,9 @@ fn generate_bindings(
     }
 
     // Also add the conda sysroot include path so clang's stdint.h can
-    // `#include_next <stdint.h>` to find the system header.
+    // `#include_next <stdint.h>` to find the next system header.
     for root in &clang_roots {
-        let sysroot_include = root.join("x86_64-conda-linux-gnu/sysroot/usr/include");
-        if sysroot_include.join("stdint.h").exists() {
+        if let Some(sysroot_include) = conda_sysroot_include_dir(root) {
             log_info!(
                 "apxm-compiler-build",
                 "Found conda sysroot includes at {}",

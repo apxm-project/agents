@@ -21,6 +21,7 @@ pub mod model_profiles;
 pub mod observability;
 pub mod paths;
 pub mod plan;
+pub mod toolchain_env;
 pub mod types;
 pub mod utils;
 

@@ -2,6 +2,7 @@
 name = "apxm-cli"
 version.workspace = true
 edition.workspace = true
+build = "build.rs"
 publish = false
 description = "APxM CLI - minimal compile/run wrapper for the driver"
 license.workspace = true
@@ -42,6 +43,9 @@ rusqlite = { workspace = true, optional = true }
 
 [dev-dependencies]
 serde_json.workspace = true
+
+[build-dependencies]
+apxm-core.workspace = true
 
 [features]
 default = []
