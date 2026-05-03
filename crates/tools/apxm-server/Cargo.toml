@@ -2,6 +2,7 @@
 name = "apxm-server"
 version.workspace = true
 edition.workspace = true
+build = "build.rs"
 description = "HTTP API wrapper for APXM runtime"
 license.workspace = true
 repository.workspace = true
@@ -46,3 +47,6 @@ tracing-subscriber.workspace = true
 [dev-dependencies]
 http-body-util = "0.1"
 tempfile.workspace = true
+
+[build-dependencies]
+apxm-core.workspace = true
