@@ -137,7 +137,7 @@ mod tests {
         assert!(default_memoizable_for_backend(Some("openai")));
         assert!(default_memoizable_for_backend(Some("anthropic")));
         assert!(default_memoizable_for_backend(Some("google")));
-        assert!(default_memoizable_for_backend(Some("amd")));
+        assert!(default_memoizable_for_backend(Some("hosted")));
     }
 
     #[test]

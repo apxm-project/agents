@@ -96,7 +96,7 @@ help = { run = "python tools/scripts/vllm.py help", description = "Show detailed
 doctor = { run = "python tools/scripts/vllm.py doctor", description = "Verify APXM-vLLM Docker, fork source, GPU, Slurm, and port readiness" }
 probe = { run = "python tools/scripts/vllm.py probe", description = "Probe OpenAI models and APXM graph endpoints" }
 enable = { run = "python tools/scripts/vllm.py enable", description = "Register a probed APXM-vLLM HTTP endpoint as an APXM backend" }
-docker-build = { run = "python tools/scripts/vllm.py docker-build", description = "Build the APXM-vLLM GPU runtime Docker image" }
+docker-build = { run = "python tools/scripts/vllm.py docker-build", description = "Build the APXM-vLLM runtime Docker image" }
 docker-save = { run = "python tools/scripts/vllm.py docker-save", description = "Save APXM-vLLM image to shared APXM image store" }
 docker-load = { run = "python tools/scripts/vllm.py docker-load", description = "Load APXM-vLLM image from shared APXM image store" }
 docker-start = { run = "python tools/scripts/vllm.py docker-start", description = "Start Docker vLLM inside an owned allocation" }
@@ -177,7 +177,7 @@ default = false
 [[install.components]]
 name = "vllm"
 label = "APXM-vLLM Docker readiness"
-description = "Verifies the APXM-vLLM fork, Docker/GPU runtime devices, Slurm tools, and port readiness"
+description = "Verifies the APXM-vLLM fork, Docker, Slurm tools, and port readiness"
 run = "python tools/scripts/vllm.py doctor"
 default = false
 

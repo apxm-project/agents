@@ -115,7 +115,6 @@ STATE_VERSION = 1
 GIT = ToolName.GIT.value
 DOCKER = ToolName.DOCKER.value
 LSOF = ToolName.LSOF.value
-GPU_SMI = ToolName.GPU_SMI.value
 SBATCH = ToolName.SBATCH.value
 SCANCEL = ToolName.SCANCEL.value
 SINFO = ToolName.SINFO.value
@@ -649,30 +648,6 @@ def doctor_cmd(args: argparse.Namespace) -> int:
     if not buildx_ok:
         errors += 1
 
-    for device in (Path("/dev/kfd"), Path("/dev/dri")):
-        exists = device.exists()
-        print(f"{str(device).replace('/', '_').lstrip('_')}_exists={str(exists).lower()}")
-        if not exists:
-            errors += 1
-
-    gpu_smi_path = _tool_path(GPU_SMI)
-    print(f"gpu_smi={gpu_smi_path}")
-    if gpu_smi_path:
-        result = _capture(
-            enum_values([ToolName.GPU_SMI, RocmSmiFlag.SHOW_PRODUCT_NAME, RocmSmiFlag.JSON])
-        )
-        if result.returncode == 0:
-            try:
-                payload = json.loads(result.stdout)
-                gpu_count = len([key for key in payload if key.startswith("card")])
-            except json.JSONDecodeError:
-                gpu_count = 0
-            print(f"gpu_gpu_count={gpu_count}")
-        else:
-            print("gpu_gpu_count=unknown")
-    else:
-        print("gpu_gpu_count=unknown")
-
     slurm_tools = {tool: _tool_path(tool) for tool in (SINFO, SQUEUE, SBATCH, SRUN)}
     print(
         "slurm_tools="
@@ -842,6 +817,9 @@ def docker_build_cmd(args: argparse.Namespace) -> int:
     if not _verify_fork_source(verbose=True):
         _print("Refusing to build: external/vllm does not expose the APXM fork contract.")
         return 1
+    if not args.base_image:
+        _print("Refusing to build: pass --base-image with the pinned vLLM image tag or digest.")
+        return 1
     dockerfile = Path(args.dockerfile)
     if not dockerfile.is_absolute():
         dockerfile = REPO_ROOT / dockerfile
@@ -853,7 +831,7 @@ def docker_build_cmd(args: argparse.Namespace) -> int:
     if not image:
         apxm_commit = _capture([GIT, "-C", str(REPO_ROOT), "rev-parse", "--short", "HEAD"]).stdout.strip()
         vllm_commit = _capture([GIT, "-C", str(VLLM_DIR), "rev-parse", "--short", "HEAD"]).stdout.strip()
-        image = f"apxm-vllm-gpu:{apxm_commit or 'apxm'}-{vllm_commit or 'vllm'}"
+        image = f"apxm-vllm-runtime:{apxm_commit or 'apxm'}-{vllm_commit or 'vllm'}"
 
     cmd = [
         DOCKER,
@@ -873,8 +851,7 @@ def docker_build_cmd(args: argparse.Namespace) -> int:
         DockerFlag.LABEL.value,
         f"apxm.vllm.dirty={str(_git_dirty(VLLM_DIR)).lower()}",
     ]
-    if args.base_image:
-        cmd.extend([DockerFlag.BUILD_ARG.value, f"BASE_IMAGE={args.base_image}"])
+    cmd.extend([DockerFlag.BUILD_ARG.value, f"BASE_IMAGE={args.base_image}"])
     cmd.append(str(REPO_ROOT))
 
     _print(f"Building APXM-vLLM image: {image}")
@@ -1045,7 +1022,7 @@ def docker_load_cmd(args: argparse.Namespace) -> int:
 def _default_image_tag() -> str:
     apxm_commit = _capture([GIT, "-C", str(REPO_ROOT), "rev-parse", "--short", "HEAD"]).stdout.strip()
     vllm_commit = _capture([GIT, "-C", str(VLLM_DIR), "rev-parse", "--short", "HEAD"]).stdout.strip()
-    return f"apxm-vllm-gpu:{apxm_commit or 'apxm'}-{vllm_commit or 'vllm'}"
+    return f"apxm-vllm-runtime:{apxm_commit or 'apxm'}-{vllm_commit or 'vllm'}"
 
 
 def _service_name(name: str) -> str:
@@ -1297,7 +1274,6 @@ def docker_start_cmd(args: argparse.Namespace, extra_args: list[str]) -> int:
         DockerFlag.NETWORK.value,
         DockerValue.HOST_NETWORK.value,
         DockerFlag.IPC_HOST.value,
-        f"{DockerFlag.DEVICE.value}=/dev/kfd",
         f"{DockerFlag.DEVICE.value}=/dev/dri",
         DockerFlag.GROUP_ADD.value,
         "video",
@@ -1595,18 +1571,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     docker_build = subparsers.add_parser(
         VllmCommand.DOCKER_BUILD.value,
-        help="Build a pinned APXM-vLLM GPU runtime Docker image",
+        help="Build a pinned APXM-vLLM runtime Docker image",
     )
     docker_build.add_argument(
         "--dockerfile",
         dest=ArgName.DOCKERFILE.value,
-        default="deploy/vllm/Dockerfile.apxm-gpu",
+        default="deploy/vllm/Dockerfile.apxm",
         help="Dockerfile used to build the APXM-vLLM image",
     )
     docker_build.add_argument(
         "--image",
         dest=ArgName.IMAGE.value,
-        help="Image tag to create (default: apxm-vllm-gpu:<apxm>-<vllm>)",
+        help="Image tag to create (default: apxm-vllm-runtime:<apxm>-<vllm>)",
     )
     docker_build.add_argument(
         "--base-image",
@@ -1745,7 +1721,7 @@ def build_parser() -> argparse.ArgumentParser:
     service_start.add_argument(
         "--image",
         dest=ArgName.IMAGE.value,
-        help="APXM-vLLM image tag/digest (default: APXM_VLLM_IMAGE or apxm-vllm-gpu:<apxm>-<vllm>)",
+        help="APXM-vLLM image tag/digest (default: APXM_VLLM_IMAGE or apxm-vllm-runtime:<apxm>-<vllm>)",
     )
     service_start.add_argument("--backend-name", default=DEFAULT_BACKEND_NAME, help="APXM backend name")
     service_start.add_argument("--port", type=int, default=DEFAULT_PORT, help="vLLM port")

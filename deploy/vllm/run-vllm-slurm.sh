@@ -9,9 +9,7 @@
 # Optional command arguments are executed after vLLM is ready, while the trap
 # keeps container cleanup tied to the Slurm job lifecycle.
 
-#SBATCH -p gpu
 #SBATCH -N 1
-#SBATCH --gres=gpu:gpu:8
 #SBATCH --cpus-per-task=112
 #SBATCH --mem=0
 #SBATCH --time=04:00:00
@@ -25,7 +23,7 @@ PORT="${PORT:-8916}"
 HF_HOME_HOST="${HF_HOME_HOST:-${APXM_VLLM_HF_HOME:-$HOME/.cache/huggingface-apxm-vllm}}"
 APXM_COMMIT="${APXM_COMMIT:-$(git rev-parse --short HEAD)}"
 VLLM_COMMIT="${VLLM_COMMIT:-$(git -C external/vllm rev-parse --short HEAD)}"
-APXM_VLLM_IMAGE="${APXM_VLLM_IMAGE:-apxm-vllm-gpu:${APXM_COMMIT}-${VLLM_COMMIT}}"
+APXM_VLLM_IMAGE="${APXM_VLLM_IMAGE:-apxm-vllm-runtime:${APXM_COMMIT}-${VLLM_COMMIT}}"
 APXM_VLLM_IMAGE_ARCHIVE="${APXM_VLLM_IMAGE_ARCHIVE:-}"
 TENSOR_PARALLEL_SIZE="${TENSOR_PARALLEL_SIZE:-8}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-32768}"
@@ -35,8 +33,6 @@ STARTUP_TIMEOUT_SECONDS="${STARTUP_TIMEOUT_SECONDS:-7200}"
 REASONING_PARSER="${REASONING_PARSER:-openai_gptoss}"
 TOOL_CALL_PARSER="${TOOL_CALL_PARSER:-openai}"
 ENABLE_AUTO_TOOL_CHOICE="${ENABLE_AUTO_TOOL_CHOICE:-1}"
-ATTENTION_BACKEND="${ATTENTION_BACKEND:-GPU_AITER_UNIFIED_ATTN}"
-VLLM_GPU_USE_AITER="${VLLM_GPU_USE_AITER:-1}"
 CONTAINER_NAME="${CONTAINER_NAME:-apxm-vllm-${SLURM_JOB_ID:-manual}-${PORT}}"
 
 cleanup() {
@@ -92,13 +88,6 @@ fi
 if [ "$ENABLE_AUTO_TOOL_CHOICE" = "1" ]; then
   cmd+=(--enable-auto-tool-choice)
 fi
-if [ -n "$ATTENTION_BACKEND" ]; then
-  cmd+=(--attention-backend "$ATTENTION_BACKEND")
-fi
-if [ -n "$VLLM_GPU_USE_AITER" ]; then
-  cmd+=(--container-env "VLLM_GPU_USE_AITER=$VLLM_GPU_USE_AITER")
-fi
-
 "${cmd[@]}"
 
 if [ "$#" -gt 0 ]; then

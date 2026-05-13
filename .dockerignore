@@ -1,7 +1,7 @@
 **
 !deploy/
 !deploy/vllm/
-!deploy/vllm/Dockerfile.apxm-gpu
+!deploy/vllm/Dockerfile.apxm
 !external/
 !external/vllm/
 !external/vllm/**

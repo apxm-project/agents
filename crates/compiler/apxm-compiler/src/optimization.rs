@@ -438,7 +438,7 @@ name = "runtime-backend"
 type = "local"
 protocol = "vllm"
 endpoint = "http://runtime.example/v1"
-api_key = "runtime-secret"
+api_key = "env:APXM_RUNTIME_TEST_KEY"
 
 [[backends.models]]
 id = "runtime-model"
@@ -493,7 +493,7 @@ id = "runtime-model"
         assert_eq!(backend[toml_keys::ENDPOINT], "http://compiler.example/v1");
         assert_eq!(backend[toml_keys::API_KEY], "env:APXM_COMPILER_TEST_KEY");
         assert_eq!(backend[toml_keys::HEADERS]["x-tenant"], "compiler");
-        assert!(!request.backend_json.contains("runtime-secret"));
+        assert!(!request.backend_json.contains("APXM_RUNTIME_TEST_KEY"));
         assert!(!request.backend_json.contains("runtime-model"));
     }
 }
