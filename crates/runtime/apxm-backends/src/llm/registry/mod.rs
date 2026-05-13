@@ -11,7 +11,6 @@ use crate::llm::catalog::default_model_for_protocol;
 use crate::llm::rate_limit::{RateLimitConfig, RateLimiter, SystemClock};
 use anyhow::{Context as AnyhowContext, Result};
 use apxm_core::types::AISOperationType;
-#[cfg(feature = "metrics")]
 use apxm_core::types::TokenUsage;
 use dashmap::DashMap;
 use futures::stream::{Stream, StreamExt};
@@ -22,9 +21,15 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 mod health;
+mod latency_profile;
 mod resolver;
 
 pub use health::{HealthMonitor, HealthStatus};
+#[allow(unused_imports)]
+pub use latency_profile::{
+    BackendLatencyProfile, LatencyProfileStore, DEFAULT_LATENCY_EWMA_ALPHA,
+    LATENCY_PROFILE_MIN_SAMPLES,
+};
 pub use resolver::{RoutingStrategy, SelectionCriteria};
 
 /// LLM Registry manages multiple backends with routing and fallback.
@@ -168,6 +173,50 @@ impl LLMRegistry {
     #[cfg(feature = "metrics")]
     pub fn metrics(&self) -> &crate::llm::MetricsTracker {
         &self.metrics
+    }
+
+    /// Resolve the backend name a request would dispatch to, without taking a
+    /// backend handle. Used by the streaming path so it can record health and
+    /// metrics outcomes against the same backend the stream actually used.
+    pub fn resolved_backend_name(&self, request: &LLMRequest) -> Result<String> {
+        self.resolve_backend(request)
+    }
+
+    /// Record a streaming-path outcome against the same metrics + health
+    /// surface that `try_generate` populates for non-streaming calls.
+    ///
+    /// The streaming dispatcher invokes `backend.generate_stream` directly
+    /// instead of going through `try_generate`, so neither the metrics
+    /// tracker nor the health monitor saw stream completions before this
+    /// hook existed. Without it, `runtime.llm.{total_requests,
+    /// avg_latency_ms, p50_latency_ms, p99_latency_ms}` stayed at zero in
+    /// every session metrics report even though prefill/decode timings were
+    /// being tracked per node.
+    pub fn record_streaming_outcome(
+        &self,
+        backend_name: &str,
+        backend_model: &str,
+        latency: Duration,
+        #[cfg_attr(not(feature = "metrics"), allow(unused_variables))] usage: Option<TokenUsage>,
+        success: bool,
+    ) {
+        #[cfg(feature = "metrics")]
+        {
+            let usage = usage.unwrap_or_else(|| TokenUsage::new(0, 0));
+            self.metrics.record(RequestMetrics::new(
+                backend_name.to_string(),
+                backend_model.to_string(),
+                latency,
+                usage,
+                success,
+                0,
+            ));
+        }
+        if success {
+            self.health_monitor.record_success(backend_name, latency);
+        } else {
+            self.health_monitor.record_failure(backend_name, latency);
+        }
     }
 
     /// Register a backend with a given name.

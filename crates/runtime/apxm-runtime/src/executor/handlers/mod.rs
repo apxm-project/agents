@@ -290,7 +290,6 @@ async fn execute_llm_request_streaming(
     use apxm_backends::StreamChunk;
     use tokio_stream::StreamExt;
 
-    #[cfg(feature = "metrics")]
     let start = std::time::Instant::now();
 
     // When a ModelRouter is present, let it choose backend/model first.
@@ -316,6 +315,18 @@ async fn execute_llm_request_streaming(
         .resolve_backend_for_streaming(&prepared_request)
         .map_err(|e| llm_error(ctx, phase, &prepared_request, e))?;
 
+    let resolved_backend_name = ctx
+        .llm_registry
+        .resolved_backend_name(&prepared_request)
+        .unwrap_or_else(|_| {
+            prepared_request
+                .backend
+                .clone()
+                .or_else(|| prepared_request.model.clone())
+                .unwrap_or_else(|| "auto".to_string())
+        });
+    let resolved_backend_model = backend.model().to_string();
+
     let mut stream = backend.generate_stream(prepared_request.clone());
 
     let mut final_response: Option<LLMResponse> = None;
@@ -325,7 +336,19 @@ async fn execute_llm_request_streaming(
     let mut streamed_tool_calls: Vec<apxm_core::types::ToolCall> = Vec::new();
 
     while let Some(chunk_result) = stream.next().await {
-        let chunk = chunk_result.map_err(|e| llm_error(ctx, phase, &prepared_request, e))?;
+        let chunk = match chunk_result {
+            Ok(chunk) => chunk,
+            Err(e) => {
+                ctx.llm_registry.record_streaming_outcome(
+                    &resolved_backend_name,
+                    &resolved_backend_model,
+                    start.elapsed(),
+                    None,
+                    false,
+                );
+                return Err(llm_error(ctx, phase, &prepared_request, e));
+            }
+        };
         match chunk {
             StreamChunk::Token(token) => {
                 // If we had a pending tool call being accumulated, it's now
@@ -382,10 +405,22 @@ async fn execute_llm_request_streaming(
         }
     }
 
-    let mut response = final_response.ok_or_else(|| RuntimeError::LLM {
-        message: format!("LLM stream ended without a Done chunk during {phase}"),
-        backend: request.backend.clone().or_else(|| request.model.clone()),
-    })?;
+    let mut response = match final_response {
+        Some(resp) => resp,
+        None => {
+            ctx.llm_registry.record_streaming_outcome(
+                &resolved_backend_name,
+                &resolved_backend_model,
+                start.elapsed(),
+                None,
+                false,
+            );
+            return Err(RuntimeError::LLM {
+                message: format!("LLM stream ended without a Done chunk during {phase}"),
+                backend: request.backend.clone().or_else(|| request.model.clone()),
+            });
+        }
+    };
 
     // Merge any tool calls accumulated from streaming into the response.
     // The Done chunk may already contain tool_calls (from backends that include
@@ -401,9 +436,18 @@ async fn execute_llm_request_streaming(
         }
     }
 
+    let latency = start.elapsed();
+
+    ctx.llm_registry.record_streaming_outcome(
+        &resolved_backend_name,
+        &resolved_backend_model,
+        latency,
+        Some(response.usage.clone()),
+        true,
+    );
+
     #[cfg(feature = "metrics")]
     {
-        let latency = start.elapsed();
         record_llm_event(ctx, phase, request, &response, latency).await;
     }
 
