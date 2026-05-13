@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Per-workflow O0 vs O2 comparison report for the gemma4 demo.
 
-Ingests `runs/<UTC>/<case>/runtime-o0-o2.csv` for the three demo cases and
+Ingests `.apxm/evaluation/gemma4/runs/<UTC>/<case>/runtime-o0-o2.csv` for the three demo cases and
 prints, for each case:
   - All paired metrics (mean over iterations) for O0 vs O2 with absolute and
     percent deltas.
@@ -11,7 +11,7 @@ prints, for each case:
 Usage
 -----
     python3 examples/python/demos/gemma4/scripts/o0_o2_report.py \\
-        --run-dir <runs-root>/<UTC>-three-cases
+        --run-dir <repo>/.apxm/evaluation/gemma4/runs/<UTC>-three-cases
 
 The script makes no network calls and reads only the CSVs and (optionally)
 session metrics.json files emitted by `benchmark_e2e.py`. Run after

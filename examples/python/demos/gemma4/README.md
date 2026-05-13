@@ -22,7 +22,7 @@ their `02_*/`, `03_*/` siblings) for compiler-pass details and runtime evidence.
 | `workflows/0N_*/` | Per-case `compiler.md`, `runtime.md`, and `dspy.md` analysis notes. |
 | `shared/` | Cross-case helpers (route aliases, dossier text). |
 | `scripts/` | Operator scripts: `run_demo.py` writes the local config, `run_case.py` invokes the shared benchmark harness, `measure_vllm_hints.py` probes the vLLM HTTP boundary directly, `o0_o2_report.py` summarizes O0 vs O2 evidence. |
-| `runs/` | (gitignored) Generated evidence under `runs/<UTC-timestamp>-three-cases/`. |
+| `.apxm/evaluation/gemma4/runs/` | Repo-local APXM workspace for generated evidence; never write run outputs under `examples/`. |
 
 ## Compile once, run many
 
@@ -32,7 +32,7 @@ Every case is meant to be measured with `dekk apxm compile` (build one
 
 ```sh
 DEMO=examples/python/demos/gemma4
-RUN_DIR="$DEMO/runs/$(date -u +%Y%m%dT%H%M%SZ)-three-cases"
+RUN_DIR=".apxm/evaluation/gemma4/runs/$(date -u +%Y%m%dT%H%M%SZ)-three-cases"
 
 python3 "$DEMO/scripts/run_demo.py" \
     --run-dir "$RUN_DIR" \

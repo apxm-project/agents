@@ -10,7 +10,7 @@ config.
 
 Usage:
     python3 examples/python/demos/gemma4/scripts/run_demo.py \\
-        --run-dir <path>/runs/<UTC>-three-cases \\
+        --run-dir <repo>/.apxm/evaluation/gemma4/runs/<UTC>-three-cases \\
         --backend vllm-fork \\
         --model google/gemma-4-31B-it
 """
@@ -34,7 +34,7 @@ BENCHMARK_ALIAS = "benchmark"
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--run-dir", required=True, type=Path, help="Run directory; generated/config.toml is written here.")
+    parser.add_argument("--run-dir", required=True, type=Path, help="APXM workspace run directory; generated/config.toml is written here.")
     parser.add_argument("--backend", required=True, help="Registered backend name to target (e.g. vllm-fork).")
     parser.add_argument("--model", required=True, help="Model id served at --base-url (e.g. google/gemma-4-31B-it).")
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help=f"vLLM OpenAI-compatible URL (default: {DEFAULT_BASE_URL}).")
