@@ -195,7 +195,7 @@ impl LLMRegistry {
     pub fn record_streaming_outcome(
         &self,
         backend_name: &str,
-        backend_model: &str,
+        #[cfg_attr(not(feature = "metrics"), allow(unused_variables))] backend_model: &str,
         latency: Duration,
         #[cfg_attr(not(feature = "metrics"), allow(unused_variables))] usage: Option<TokenUsage>,
         success: bool,
