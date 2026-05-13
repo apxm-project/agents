@@ -243,6 +243,12 @@ SUMMARY:
 - Performance impact: +80ms avg login latency (bcrypt cost)
 """
 
+    # The literal review text contains Python f-string fragments like
+    # {email} and {session_id} that the APXM template parser would otherwise
+    # interpret as graph placeholders. Insert a space after each '{' to break
+    # the {name} pattern; the model still reads the code as intended.
+    large_context = large_context.replace("{", "{ ")
+
     # 8-way fan-out: different review aspects
     # All share the SAME large context prefix (4000 tokens)
     # Each adds a small unique suffix (50-100 tokens)

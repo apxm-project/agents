@@ -45,7 +45,6 @@ from apxm_vllm_contract import (
     HttpMethod,
     MediaType,
     ProbeContract,
-    RocmSmiFlag,
     SchedulingPolicy,
     SlurmServiceDefaults,
     ToolName,
@@ -1274,6 +1273,7 @@ def docker_start_cmd(args: argparse.Namespace, extra_args: list[str]) -> int:
         DockerFlag.NETWORK.value,
         DockerValue.HOST_NETWORK.value,
         DockerFlag.IPC_HOST.value,
+        f"{DockerFlag.DEVICE.value}=/dev/kfd",
         f"{DockerFlag.DEVICE.value}=/dev/dri",
         DockerFlag.GROUP_ADD.value,
         "video",
@@ -1357,7 +1357,7 @@ def docker_start_cmd(args: argparse.Namespace, extra_args: list[str]) -> int:
                     argparse.Namespace(
                         container_name=container_name,
                         port=args.port,
-                        lines=80,
+                        lines=5000,
                         follow=False,
                     )
                 )
