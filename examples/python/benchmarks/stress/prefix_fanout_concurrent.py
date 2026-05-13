@@ -61,17 +61,18 @@ def _variant_index() -> int:
         idx = int(raw)
     except ValueError:
         idx = 0
-    if idx < 0 or idx >= len(_VARIANT_PROFILES):
+    if idx < 0:
         idx = 0
     return idx
 
 
 def _build_context(idx: int) -> str:
-    p = _VARIANT_PROFILES[idx]
-    service = p["service"]
-    domain = p["domain"]
-    primary_file = p["primary_file"]
-    tagline = p["tagline"]
+    p = _VARIANT_PROFILES[idx % len(_VARIANT_PROFILES)]
+    suffix = f"_v{idx}"
+    service = p["service"] + suffix
+    domain = p["domain"] + suffix
+    primary_file = p["primary_file"].replace(".py", f"{suffix}.py")
+    tagline = p["tagline"] + f" (tenant {idx})"
     body = (
         "You are reviewing a large pull request for the "
         + tagline
