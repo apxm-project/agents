@@ -13,10 +13,13 @@ channels = ["conda-forge"]
 [environment.packages]
 mlir = "22"
 libclang13 = "22"
+clang = "22"
 python = "3.11"
 pytest = ""
 pytest-asyncio = ""
 cmake = ""
+ninja = ""
+uv = ""
 nodejs = "22"
 
 [tools]
@@ -87,19 +90,24 @@ restart = { run = "apxm backend restart", description = "Restart local backend" 
 add-model = { run = "apxm backend add-model", description = "Add model to backend" }
 
 [commands.vllm]
-description = "Operate the visible external/vllm fork"
+description = "Operate APXM-vLLM through Dekk-controlled Slurm services and Docker image primitives"
 group = "Configuration"
-install = { run = "python tools/scripts/vllm.py install", description = "Install the repo-local external/vllm fork" }
 help = { run = "python tools/scripts/vllm.py help", description = "Show detailed vLLM controller help" }
-doctor = { run = "python tools/scripts/vllm.py doctor", description = "Verify fork imports, package versions, GPU visibility, and port state" }
-download = { run = "python tools/scripts/vllm.py download", description = "Download Hugging Face model weights into the configured cache" }
-serve = { run = "python tools/scripts/vllm.py serve", description = "Serve a model from the repo-local external/vllm fork" }
-start = { run = "python tools/scripts/vllm.py start", description = "Start a repo-local vLLM model server in the background" }
-stop = { run = "python tools/scripts/vllm.py stop", description = "Stop the repo-local vLLM server for a port" }
-status = { run = "python tools/scripts/vllm.py status", description = "Show repo-local vLLM process and port status" }
-logs = { run = "python tools/scripts/vllm.py logs", description = "Show repo-local vLLM background server logs" }
+doctor = { run = "python tools/scripts/vllm.py doctor", description = "Verify APXM-vLLM Docker, fork source, GPU, Slurm, and port readiness" }
 probe = { run = "python tools/scripts/vllm.py probe", description = "Probe OpenAI models and APXM graph endpoints" }
-enable = { run = "python tools/scripts/vllm.py enable", description = "Enable the running repo-local vLLM endpoint as an APXM backend" }
+enable = { run = "python tools/scripts/vllm.py enable", description = "Register a probed APXM-vLLM HTTP endpoint as an APXM backend" }
+docker-build = { run = "python tools/scripts/vllm.py docker-build", description = "Build the APXM-vLLM GPU runtime Docker image" }
+docker-save = { run = "python tools/scripts/vllm.py docker-save", description = "Save APXM-vLLM image to shared APXM image store" }
+docker-load = { run = "python tools/scripts/vllm.py docker-load", description = "Load APXM-vLLM image from shared APXM image store" }
+docker-start = { run = "python tools/scripts/vllm.py docker-start", description = "Start Docker vLLM inside an owned allocation" }
+docker-stop = { run = "python tools/scripts/vllm.py docker-stop", description = "Stop allocation-local Docker vLLM" }
+docker-status = { run = "python tools/scripts/vllm.py docker-status", description = "Show allocation-local Docker vLLM status" }
+docker-logs = { run = "python tools/scripts/vllm.py docker-logs", description = "Show allocation-local Docker vLLM logs" }
+service-adopt = { run = "python tools/scripts/vllm.py service-adopt", description = "Record an existing Slurm APXM-vLLM service job" }
+service-start = { run = "python tools/scripts/vllm.py service-start", description = "Submit a persistent Slurm-owned APXM-vLLM service job" }
+service-status = { run = "python tools/scripts/vllm.py service-status", description = "Show persistent APXM-vLLM service status" }
+service-exec = { run = "python tools/scripts/vllm.py service-exec", description = "Run a command inside a persistent APXM-vLLM service allocation" }
+service-stop = { run = "python tools/scripts/vllm.py service-stop", description = "Cancel a persistent APXM-vLLM service job" }
 
 [commands.ops]
 description = "Browse AIS operations"
@@ -168,9 +176,9 @@ default = false
 
 [[install.components]]
 name = "vllm"
-label = "vLLM (graph-aware fork)"
-description = "Required for graph-aware scheduling — stock vLLM does not consume APXM request hints"
-run = "python tools/scripts/vllm.py install"
+label = "APXM-vLLM Docker readiness"
+description = "Verifies the APXM-vLLM fork, Docker/GPU runtime devices, Slurm tools, and port readiness"
+run = "python tools/scripts/vllm.py doctor"
 default = false
 
 [[install.components]]

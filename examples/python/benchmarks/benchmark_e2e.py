@@ -25,7 +25,9 @@ import subprocess
 import sys
 import tempfile
 import time
-from dataclasses import dataclass
+import urllib.error
+import urllib.request
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 try:
     from enum import StrEnum
@@ -38,34 +40,59 @@ from pathlib import Path
 from typing import Any
 
 
+class BootstrapPath(StrEnum):
+    CARGO_TOML = "Cargo.toml"
+    CRATES = "crates"
+    TOOLS = "tools"
+    SCRIPTS = "scripts"
+
+
+class BenchmarkPath(StrEnum):
+    STRESS = "stress"
+    DEMO_CODE_CRITIQUE = "demo_code_critique.py"
+    DEFAULT_CSV = "demo_code_critique_benchmark.csv"
+    SESSIONS = "sessions"
+
+
 def _find_repo_root(start: Path) -> Path:
     for candidate in (start.resolve(), *start.resolve().parents):
-        if (candidate / "Cargo.toml").is_file() and (candidate / "crates").is_dir():
+        if (
+            (candidate / BootstrapPath.CARGO_TOML.value).is_file()
+            and (candidate / BootstrapPath.CRATES.value).is_dir()
+        ):
             return candidate
     return Path.cwd().resolve()
 
 
 REPO_ROOT = _find_repo_root(Path(__file__))
 BENCHMARK_DIR = Path(__file__).resolve().parent
-DEFAULT_GRAPH = BENCHMARK_DIR / "stress" / "demo_code_critique.py"
-DEFAULT_RESULTS_DIR = BENCHMARK_DIR / "results"
-DEFAULT_OUTPUT = DEFAULT_RESULTS_DIR / "demo_code_critique_benchmark.csv"
-DEFAULT_SESSION_BASE = DEFAULT_RESULTS_DIR / "sessions"
+TOOLS_SCRIPT_DIR = REPO_ROOT / BootstrapPath.TOOLS.value / BootstrapPath.SCRIPTS.value
+if str(TOOLS_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(TOOLS_SCRIPT_DIR))
 
-DEKK = "dekk"
-APXM = "apxm"
-CMD_EXECUTE = "execute"
-CMD_COMPILE = "compile"
-CMD_RUN = "run"
-FLAG_OUTPUT = "-o"
-FLAG_OPT_LEVEL = "-O"
-FLAG_TARGET = "--target"
-FLAG_EMIT_DIAGNOSTICS = "--emit-diagnostics"
-FLAG_EMIT_SESSION = "--emit-session"
-FLAG_TRACE = "--trace"
-ENV_APXM_CONFIG = "APXM_CONFIG"
-ENV_VLLM_CACHE_SALT = "APXM_VLLM_CACHE_SALT"
-VLLM_CACHE_SALT_PER_EXECUTION = "execution"
+from apxm_vllm_contract import (  # noqa: E402
+    ApiRoute,
+    DockerCommand,
+    DockerFlag,
+    DockerValue,
+    EnvVar,
+    HttpHeader,
+    MediaType,
+    RocmSmiFlag,
+    ToolName,
+    VllmDefaults,
+    build_layout,
+    enum_values,
+    env_name,
+    local_endpoint,
+)
+
+REPO_LAYOUT = build_layout(__file__)
+REPO_ROOT = REPO_LAYOUT.repo_root
+DEFAULT_GRAPH = BENCHMARK_DIR / BenchmarkPath.STRESS.value / BenchmarkPath.DEMO_CODE_CRITIQUE.value
+DEFAULT_RESULTS_DIR = REPO_LAYOUT.benchmark_results_dir
+DEFAULT_OUTPUT = DEFAULT_RESULTS_DIR / BenchmarkPath.DEFAULT_CSV.value
+DEFAULT_SESSION_BASE = DEFAULT_RESULTS_DIR / BenchmarkPath.SESSIONS.value
 
 FILE_MANIFEST = "manifest.json"
 FILE_RESULTS = "results.json"
@@ -81,8 +108,46 @@ PENDING_VALUE = "pending"
 STATUS_SUCCEEDED = "succeeded"
 STATUS_FAILED = "failed"
 LIST_SEPARATOR = ";"
+DEFAULT_VLLM = VllmDefaults()
+DEFAULT_EVIDENCE_ENDPOINT = local_endpoint(host=DEFAULT_VLLM.host, port=DEFAULT_VLLM.port)
 PASS_DSPY_OPTIMIZE = "dspy-optimize"
 ATTR_BENCHMARK_MILESTONE = "benchmark_milestone"
+EVIDENCE_SCHEMA_VERSION = 1
+
+
+class CommandToken(StrEnum):
+    DEKK = "dekk"
+    APXM = "apxm"
+    COMPILE = "compile"
+    EXECUTE = "execute"
+    RUN = "run"
+
+
+class BenchmarkMode(StrEnum):
+    COMPILE = "compile"
+    EXECUTE = "execute"
+    RUN_ARTIFACT = "run-artifact"
+
+
+class OptimizationTarget(StrEnum):
+    LATENCY = "latency"
+    COST = "cost"
+    TOKENS = "tokens"
+    PARALLELISM = "parallelism"
+    BALANCED = "balanced"
+
+
+class CliFlag(StrEnum):
+    EMIT_DIAGNOSTICS = "--emit-diagnostics"
+    EMIT_SESSION = "--emit-session"
+    OPT_LEVEL = "-O"
+    OUTPUT = "-o"
+    TARGET = "--target"
+    TRACE = "--trace"
+
+
+class CacheSaltScope(StrEnum):
+    EXECUTION = "execution"
 
 
 class MetricsKey(StrEnum):
@@ -564,6 +629,79 @@ class ArtifactBuild:
     stderr_excerpt: str
 
 
+@dataclass(frozen=True)
+class BenchmarkEvidence:
+    graph: str
+    output_csv: str
+    session_base: str
+    backend_label: str
+    variant: str
+    opt_levels: list[int]
+    iterations: int
+    precompile_artifacts: bool
+    emit_compiler_diagnostics: bool
+    success: bool
+    run_count: int
+
+
+@dataclass(frozen=True)
+class RepoEvidence:
+    path: str
+    commit: str | None
+    dirty: bool
+    branch: str | None = None
+    origin_apxm: str | None = None
+
+
+@dataclass(frozen=True)
+class ModelEvidence:
+    model_ref: str
+    served_model_id: str
+    backend_name: str
+    hf_home_host: str
+    port: str
+
+
+@dataclass(frozen=True)
+class SlurmEvidence:
+    job_id: str
+    job_nodelist: str
+    job_partition: str
+
+
+@dataclass(frozen=True)
+class ContainerEvidence:
+    image: str
+    inspect: Any
+
+
+@dataclass(frozen=True)
+class EndpointEvidence:
+    base_url: str
+    models: Any
+    scheduler: Any
+
+
+@dataclass(frozen=True)
+class HostEvidence:
+    hostname: Any
+    gpu_smi: Any
+
+
+@dataclass(frozen=True)
+class EvidenceManifest:
+    schema_version: int
+    created_at_utc: str
+    benchmark: BenchmarkEvidence
+    apxm: RepoEvidence
+    vllm_fork: RepoEvidence
+    model: ModelEvidence
+    slurm: SlurmEvidence
+    container: ContainerEvidence
+    endpoint: EndpointEvidence
+    host: HostEvidence
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--graph", type=Path, default=DEFAULT_GRAPH, help="Graph source to run")
@@ -576,8 +714,8 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--target",
-        default="balanced",
-        choices=("latency", "cost", "tokens", "parallelism", "balanced"),
+        default=OptimizationTarget.BALANCED.value,
+        choices=[target.value for target in OptimizationTarget],
         help="Optimization target passed to `dekk apxm compile/execute`.",
     )
     parser.add_argument(
@@ -672,6 +810,17 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Run trial 1 for every opt level before trial 2 to reduce warm-cache bias.",
     )
+    parser.add_argument(
+        "--evidence-manifest",
+        type=Path,
+        default=None,
+        help="Write a JSON sidecar with system, backend, and run evidence.",
+    )
+    parser.add_argument(
+        "--evidence-endpoint",
+        default=DEFAULT_EVIDENCE_ENDPOINT,
+        help="OpenAI-compatible endpoint used for evidence probes.",
+    )
     return parser.parse_args()
 
 
@@ -683,7 +832,7 @@ def _collapse_text(text: str, limit: int = 240) -> str:
 
 
 def _require_dekk() -> None:
-    if shutil.which(DEKK) is None:
+    if shutil.which(CommandToken.DEKK.value) is None:
         raise SystemExit("error: `dekk` is not on PATH")
 
 
@@ -860,8 +1009,16 @@ def _diagnostics_summary(path: Path | None) -> CompilerDiagnosticsSummary:
     return _diagnostics_summary_from_payload(_read_json(path), source=str(path))
 
 
+def _env_value(env_var: EnvVar) -> str:
+    return os.environ.get(env_name(env_var), "")
+
+
+def _endpoint_url(base_url: str, route: ApiRoute) -> str:
+    return f"{base_url.rstrip('/')}/{route.value}"
+
+
 def _command_prefix(apxm_config: Path | None) -> list[str]:
-    return [DEKK, APXM]
+    return enum_values([CommandToken.DEKK, CommandToken.APXM])
 
 
 def _command_env(apxm_config: Path | None) -> dict[str, str]:
@@ -875,8 +1032,8 @@ def _command_env(apxm_config: Path | None) -> dict[str, str]:
     """
     env = os.environ.copy()
     if apxm_config is not None:
-        env[ENV_APXM_CONFIG] = str(apxm_config)
-    env[ENV_VLLM_CACHE_SALT] = VLLM_CACHE_SALT_PER_EXECUTION
+        env[env_name(EnvVar.APXM_CONFIG)] = str(apxm_config)
+    env[env_name(EnvVar.APXM_VLLM_CACHE_SALT)] = CacheSaltScope.EXECUTION.value
     return env
 
 
@@ -892,21 +1049,21 @@ def _compile_to_artifact(
     diagnostics_args: list[str] = []
     if diagnostics_path is not None:
         diagnostics_path.parent.mkdir(parents=True, exist_ok=True)
-        diagnostics_args = [FLAG_EMIT_DIAGNOSTICS, str(diagnostics_path)]
+        diagnostics_args = enum_values([CliFlag.EMIT_DIAGNOSTICS, str(diagnostics_path)])
     if artifact_path.exists():
         artifact_path.unlink()
-    cmd = [
+    cmd = enum_values([
         *_command_prefix(apxm_config),
-        CMD_COMPILE,
+        CommandToken.COMPILE,
         str(graph),
-        FLAG_OUTPUT,
+        CliFlag.OUTPUT,
         str(artifact_path),
-        FLAG_OPT_LEVEL,
+        CliFlag.OPT_LEVEL,
         str(opt_level),
-        FLAG_TARGET,
+        CliFlag.TARGET,
         target,
         *diagnostics_args,
-    ]
+    ])
     start = time.perf_counter()
     result = subprocess.run(
         cmd,
@@ -948,17 +1105,17 @@ def _run_execute(
     runtime_args: list[str],
 ) -> tuple[subprocess.CompletedProcess[str], float]:
     session_base.mkdir(parents=True, exist_ok=True)
-    cmd = [
+    cmd = enum_values([
         *_command_prefix(apxm_config),
-        CMD_EXECUTE,
-        FLAG_OPT_LEVEL,
+        CommandToken.EXECUTE,
+        CliFlag.OPT_LEVEL,
         str(opt_level),
-        FLAG_TARGET,
+        CliFlag.TARGET,
         target,
-    ]
+    ])
     if trace:
-        cmd.extend([FLAG_TRACE, trace])
-    cmd.extend([FLAG_EMIT_SESSION, str(session_base), str(graph), *runtime_args])
+        cmd.extend(enum_values([CliFlag.TRACE, trace]))
+    cmd.extend(enum_values([CliFlag.EMIT_SESSION, str(session_base), str(graph), *runtime_args]))
 
     start = time.perf_counter()
     result = subprocess.run(
@@ -981,15 +1138,17 @@ def _run_artifact(
     runtime_args: list[str],
 ) -> tuple[subprocess.CompletedProcess[str], float]:
     session_base.mkdir(parents=True, exist_ok=True)
-    cmd = [
+    cmd = enum_values([
         *_command_prefix(apxm_config),
-        CMD_RUN,
-        FLAG_TARGET,
+        CommandToken.RUN,
+        CliFlag.TARGET,
         target,
-    ]
+    ])
     if trace:
-        cmd.extend([FLAG_TRACE, trace])
-    cmd.extend([FLAG_EMIT_SESSION, str(session_base), str(artifact_path), *runtime_args])
+        cmd.extend(enum_values([CliFlag.TRACE, trace]))
+    cmd.extend(
+        enum_values([CliFlag.EMIT_SESSION, str(session_base), str(artifact_path), *runtime_args])
+    )
 
     start = time.perf_counter()
     result = subprocess.run(
@@ -1022,7 +1181,13 @@ def _run_once(
     runtime_args: list[str],
 ) -> RunRecord:
     timestamp = datetime.now(timezone.utc).isoformat()
-    mode = "compile" if compile_only else "run-artifact" if artifact_build else "execute"
+    mode = (
+        BenchmarkMode.COMPILE.value
+        if compile_only
+        else BenchmarkMode.RUN_ARTIFACT.value
+        if artifact_build
+        else BenchmarkMode.EXECUTE.value
+    )
 
     if compile_only:
         diagnostics_path = (
@@ -1260,6 +1425,164 @@ def _write_csv(records: list[RunRecord], output: Path, append: bool) -> None:
             writer.writeheader()
         for record in records:
             writer.writerow(record.as_row())
+
+
+def _git(repo: Path, *args: str) -> str | None:
+    result = subprocess.run(
+        [ToolName.GIT.value, "-C", str(repo), *args],
+        capture_output=True,
+        text=True,
+        cwd=REPO_ROOT,
+    )
+    if result.returncode != 0:
+        return None
+    value = result.stdout.strip()
+    return value if value else None
+
+
+def _command_json(cmd: list[str], *, timeout: float = 30.0) -> Any:
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            cwd=REPO_ROOT,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"error": repr(exc)}
+    if result.returncode != 0:
+        return {
+            "error": result.stderr.strip() or result.stdout.strip(),
+            "returncode": result.returncode,
+        }
+    text = result.stdout.strip()
+    try:
+        return json.loads(text) if text else None
+    except json.JSONDecodeError:
+        return text
+
+
+def _http_json(url: str, *, timeout: float = 15.0) -> Any:
+    request = urllib.request.Request(
+        url,
+        headers={HttpHeader.CONTENT_TYPE.value: MediaType.JSON.value},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            raw = response.read().decode("utf-8")
+    except (urllib.error.URLError, TimeoutError) as exc:
+        return {"error": repr(exc)}
+    try:
+        return json.loads(raw) if raw else None
+    except json.JSONDecodeError as exc:
+        return {"error": repr(exc), "raw": raw[:500]}
+
+
+def _image_inspect(image: str | None) -> Any:
+    if not image:
+        return None
+    return _command_json(
+        enum_values(
+            [
+                ToolName.DOCKER,
+                DockerCommand.IMAGE,
+                DockerCommand.INSPECT,
+                image,
+                DockerFlag.FORMAT,
+                DockerValue.JSON_OBJECT_FORMAT,
+            ]
+        )
+    )
+
+
+def _write_evidence_manifest(
+    *,
+    args: argparse.Namespace,
+    records: list[RunRecord],
+    output: Path,
+) -> Path:
+    endpoint = args.evidence_endpoint.rstrip("/")
+    vllm_dir = REPO_LAYOUT.vllm_dir
+    manifest_path = (
+        args.evidence_manifest.resolve()
+        if args.evidence_manifest is not None
+        else output.with_suffix(".evidence.json")
+    )
+    image = _env_value(EnvVar.APXM_VLLM_IMAGE)
+    manifest = EvidenceManifest(
+        schema_version=EVIDENCE_SCHEMA_VERSION,
+        created_at_utc=datetime.now(timezone.utc).isoformat(),
+        benchmark=BenchmarkEvidence(
+            graph=str(args.graph.resolve()),
+            output_csv=str(output),
+            session_base=str(args.session_base.resolve()),
+            backend_label=args.backend_label,
+            variant=args.variant,
+            opt_levels=args.opt_levels or [0, 2],
+            iterations=args.iterations,
+            precompile_artifacts=args.precompile_artifacts,
+            emit_compiler_diagnostics=args.emit_compiler_diagnostics,
+            success=all(record.success for record in records),
+            run_count=len(records),
+        ),
+        apxm=RepoEvidence(
+            path=str(REPO_ROOT),
+            commit=_git(REPO_ROOT, "rev-parse", "HEAD"),
+            dirty=bool(_git(REPO_ROOT, "status", "--porcelain")),
+        ),
+        vllm_fork=RepoEvidence(
+            path=str(vllm_dir),
+            commit=_git(vllm_dir, "rev-parse", "HEAD"),
+            branch=_git(vllm_dir, "rev-parse", "--abbrev-ref", "HEAD"),
+            origin_apxm=_git(vllm_dir, "rev-parse", "origin/apxm"),
+            dirty=bool(_git(vllm_dir, "status", "--porcelain")),
+        ),
+        model=ModelEvidence(
+            model_ref=_env_value(EnvVar.MODEL_REF),
+            served_model_id=_env_value(EnvVar.SERVED_MODEL_ID),
+            backend_name=_env_value(EnvVar.BACKEND_NAME),
+            hf_home_host=_env_value(EnvVar.HF_HOME_HOST),
+            port=_env_value(EnvVar.PORT),
+        ),
+        slurm=SlurmEvidence(
+            job_id=_env_value(EnvVar.SLURM_JOB_ID),
+            job_nodelist=_env_value(EnvVar.SLURM_JOB_NODELIST),
+            job_partition=_env_value(EnvVar.SLURM_JOB_PARTITION),
+        ),
+        container=ContainerEvidence(
+            image=image,
+            inspect=_image_inspect(image),
+        ),
+        endpoint=EndpointEvidence(
+            base_url=endpoint,
+            models=_http_json(_endpoint_url(endpoint, ApiRoute.MODELS)),
+            scheduler=_http_json(_endpoint_url(endpoint, ApiRoute.APXM_SCHEDULER)),
+        ),
+        host=HostEvidence(
+            hostname=_command_json([ToolName.HOSTNAME.value]),
+            gpu_smi=_command_json(
+                enum_values(
+                    [
+                        ToolName.GPU_SMI,
+                        RocmSmiFlag.SHOW_PRODUCT_NAME,
+                        RocmSmiFlag.SHOW_MEMORY_INFO,
+                        RocmSmiFlag.VRAM,
+                        RocmSmiFlag.SHOW_USE,
+                        RocmSmiFlag.SHOW_TEMP,
+                        RocmSmiFlag.JSON,
+                    ]
+                ),
+                timeout=60.0,
+            ),
+        ),
+    )
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(
+        json.dumps(asdict(manifest), indent=2, sort_keys=True) + "\n"
+    )
+    return manifest_path
 
 
 def _summarize(records: list[RunRecord]) -> None:
@@ -1510,8 +1833,14 @@ def main() -> int:
         _print_run_summary(record)
 
     _write_csv(records, args.output.resolve(), args.append)
+    evidence_path = _write_evidence_manifest(
+        args=args,
+        records=records,
+        output=args.output.resolve(),
+    )
     _summarize(records)
     print(f"CSV written to {args.output.resolve()}")
+    print(f"Evidence manifest written to {evidence_path}")
 
     return 0 if all(record.success for record in records) else 1
 

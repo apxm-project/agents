@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
-"""Operate the repo-local external/vllm fork without exposing its venv layout."""
+"""Operate APXM-vLLM through Dekk.
+
+The canonical path is a persistent Slurm-owned service launched by Dekk. Docker
+isolates the vLLM server process inside that allocation; APXM commands should
+reach it through `service-exec` unless the operator already owns the allocation.
+"""
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
-import signal
+import re
 import shutil
 import socket
 import subprocess
@@ -22,13 +28,26 @@ from typing import Any
 from apxm_vllm_contract import (
     ApiRoute,
     ArgName,
+    AuthScheme,
     BackendProtocol,
     BackendType,
+    ContainerPath,
     DekkToken,
+    DockerBuildxCommand,
+    DockerCommand,
+    DockerFlag,
+    DockerLabel,
+    DockerValue,
     EnvVar,
     ForkModule,
+    HostAddress,
+    HttpHeader,
+    HttpMethod,
+    MediaType,
     ProbeContract,
+    RocmSmiFlag,
     SchedulingPolicy,
+    SlurmServiceDefaults,
     ToolName,
     VllmCommand,
     VllmDefaults,
@@ -38,19 +57,23 @@ from apxm_vllm_contract import (
     build_layout,
     display_hf_home,
     effective_hf_home,
+    enum_values,
     env_name,
     env_reference,
     graph_register_path,
     local_endpoint,
+    openai_route_path,
 )
 
 LAYOUT = build_layout(__file__)
 DEFAULTS = VllmDefaults()
+SERVICE_DEFAULTS = SlurmServiceDefaults()
 PROBE = ProbeContract()
 REPO_ROOT = LAYOUT.repo_root
 VLLM_DIR = LAYOUT.vllm_dir
-VLLM_PYTHON = LAYOUT.vllm_python
 LOG_DIR = LAYOUT.log_dir
+IMAGE_STORE_DIR = LAYOUT.image_store_dir
+SERVICE_DIR = LAYOUT.service_dir
 APXM_CONFIG = apxm_config_path(REPO_ROOT)
 
 DEFAULT_BACKEND_NAME = DEFAULTS.backend_name
@@ -59,14 +82,13 @@ DEFAULT_PORT = DEFAULTS.port
 DEFAULT_REQUEST_TIMEOUT_SECONDS = DEFAULTS.request_timeout_seconds
 DEFAULT_STARTUP_TIMEOUT_SECONDS = DEFAULTS.startup_timeout_seconds
 DEFAULT_STOP_TIMEOUT_SECONDS = DEFAULTS.stop_timeout_seconds
-LOCALHOST = "127.0.0.1"
-LOCALHOST_NAME = "localhost"
-CONTENT_TYPE_HEADER = "content-type"
-AUTHORIZATION_HEADER = "authorization"
-JSON_CONTENT_TYPE = "application/json"
-BEARER_AUTH_SCHEME = "Bearer"
+LOCALHOST = HostAddress.LOOPBACK.value
+LOCALHOST_NAME = HostAddress.LOCALHOST.value
+ANY_HOST = HostAddress.ANY.value
+ANY_HOST_V6 = HostAddress.ANY_V6.value
 MODELS_PATH = ApiRoute.MODELS.value
 APXM_GRAPHS_PATH = ApiRoute.APXM_GRAPHS.value
+APXM_SCHEDULER_PATH = ApiRoute.APXM_SCHEDULER.value
 APXM_GRAPH_REGISTER_PATH = graph_register_path()
 PROBE_GRAPH_ID = PROBE.graph_id
 TEMP_GRAPH_ID_PREFIX = PROBE.temp_graph_id_prefix
@@ -74,119 +96,50 @@ TEMP_EXECUTION_ID_PREFIX = PROBE.temp_execution_id_prefix
 TEMP_NODE_NAME = PROBE.temp_node_name
 ENV_HF_HOME = env_name(EnvVar.HF_HOME)
 ENV_APXM_VLLM_HF_HOME = env_name(EnvVar.APXM_VLLM_HF_HOME)
+ENV_APXM_VLLM_IMAGE = env_name(EnvVar.APXM_VLLM_IMAGE)
+ENV_APXM_VLLM_SERVICE_NAME = env_name(EnvVar.APXM_VLLM_SERVICE_NAME)
+ENV_HF_TOKEN = env_name(EnvVar.HF_TOKEN)
 ENV_VLLM_API_KEY = env_name(EnvVar.VLLM_API_KEY)
 ENV_HIP_VISIBLE_DEVICES = env_name(EnvVar.HIP_VISIBLE_DEVICES)
 ENV_CUDA_VISIBLE_DEVICES = env_name(EnvVar.CUDA_VISIBLE_DEVICES)
-PID_STATE_VERSION = 1
-PROC_ROOT = Path("/proc")
+ENV_MODEL_REF = env_name(EnvVar.MODEL_REF)
+ENV_SERVED_MODEL_ID = env_name(EnvVar.SERVED_MODEL_ID)
+ENV_BACKEND_NAME = env_name(EnvVar.BACKEND_NAME)
+ENV_PORT = env_name(EnvVar.PORT)
+ENV_HF_HOME_HOST = env_name(EnvVar.HF_HOME_HOST)
+ENV_MAX_MODEL_LEN = env_name(EnvVar.MAX_MODEL_LEN)
+ENV_STARTUP_TIMEOUT_SECONDS = env_name(EnvVar.STARTUP_TIMEOUT_SECONDS)
+ENV_SLURM_JOB_ID = env_name(EnvVar.SLURM_JOB_ID)
+ENV_SLURM_JOB_NODELIST = env_name(EnvVar.SLURM_JOB_NODELIST)
+STATE_VERSION = 1
 GIT = ToolName.GIT.value
+DOCKER = ToolName.DOCKER.value
 LSOF = ToolName.LSOF.value
-TAIL = ToolName.TAIL.value
-UV = ToolName.UV.value
+GPU_SMI = ToolName.GPU_SMI.value
+SBATCH = ToolName.SBATCH.value
+SCANCEL = ToolName.SCANCEL.value
+SINFO = ToolName.SINFO.value
+SQUEUE = ToolName.SQUEUE.value
+SRUN = ToolName.SRUN.value
 MANAGED_BY = "dekk apxm vllm"
+APXM_ROUTER_FILE = VLLM_DIR / "vllm" / "entrypoints" / "openai" / "apxm" / "api_router.py"
+OPENAI_API_SERVER_FILE = VLLM_DIR / "vllm" / "entrypoints" / "openai" / "api_server.py"
 COMMANDS_WITHOUT_EXTRA_ARGS = {
-    VllmCommand.INSTALL.value,
     VllmCommand.HELP.value,
     VllmCommand.DOCTOR.value,
-    VllmCommand.DOWNLOAD.value,
-    VllmCommand.STOP.value,
-    VllmCommand.STATUS.value,
-    VllmCommand.LOGS.value,
     VllmCommand.PROBE.value,
     VllmCommand.ENABLE.value,
+    VllmCommand.DOCKER_BUILD.value,
+    VllmCommand.DOCKER_LOAD.value,
+    VllmCommand.DOCKER_STOP.value,
+    VllmCommand.DOCKER_STATUS.value,
+    VllmCommand.DOCKER_LOGS.value,
+    VllmCommand.DOCKER_SAVE.value,
+    VllmCommand.SERVICE_ADOPT.value,
+    VllmCommand.SERVICE_START.value,
+    VllmCommand.SERVICE_STATUS.value,
+    VllmCommand.SERVICE_STOP.value,
 }
-
-VERIFY_FORK_CODE = """
-import importlib
-import json
-import sys
-from pathlib import Path
-
-expected = Path(sys.argv[1]).resolve()
-contract = json.loads(sys.argv[2])
-vllm = importlib.import_module(contract["vllm_module"])
-router = importlib.import_module(contract["router_module"])
-api_server = importlib.import_module(contract["api_server_module"])
-
-got = Path(vllm.__file__).resolve().parent.parent
-if got != expected:
-    print(
-        f"ERROR: vllm imports from {got}, expected fork at {expected}",
-        file=sys.stderr,
-    )
-    sys.exit(1)
-
-router_path = Path(router.__file__).resolve()
-if expected not in router_path.parents:
-    print(
-        f"ERROR: APXM router imports from {router_path}, expected under {expected}",
-        file=sys.stderr,
-    )
-    sys.exit(1)
-
-api_server_text = Path(api_server.__file__).read_text(encoding="utf-8")
-if contract["router_module"] not in api_server_text:
-    print(
-        "ERROR: OpenAI API server does not mount the APXM router from this checkout.",
-        file=sys.stderr,
-    )
-    sys.exit(1)
-
-print("OK: editable install resolves to external/vllm fork")
-print(f"OK: APXM router imports from {router_path}")
-"""
-
-DOCTOR_CODE = """
-import importlib
-import json
-import sys
-from pathlib import Path
-
-payload = {}
-for name in json.loads(sys.argv[1])["modules"]:
-    try:
-        module = importlib.import_module(name)
-        payload[name] = {
-            "version": getattr(module, "__version__", "unknown"),
-            "file": str(Path(getattr(module, "__file__", "")).resolve()),
-        }
-    except Exception as exc:
-        payload[name] = {"error": repr(exc)}
-
-try:
-    import torch
-    payload["torch"].update(
-        {
-            "hip": getattr(torch.version, "hip", None),
-            "cuda": torch.version.cuda,
-            "cuda_available": torch.cuda.is_available(),
-            "device_count": torch.cuda.device_count(),
-        }
-    )
-except Exception:
-    pass
-
-try:
-    router = importlib.import_module(json.loads(sys.argv[1])["router_module"])
-    payload["apxm_router"] = str(Path(router.__file__).resolve())
-except Exception as exc:
-    payload["apxm_router_error"] = repr(exc)
-
-print(json.dumps(payload, indent=2, sort_keys=True))
-"""
-
-DOWNLOAD_CODE = """
-import sys
-from huggingface_hub import snapshot_download
-
-model = sys.argv[1]
-max_workers = int(sys.argv[2])
-path = snapshot_download(
-    model,
-    max_workers=max_workers,
-)
-print(path)
-"""
 
 
 def _print(msg: str) -> None:
@@ -210,6 +163,79 @@ def _capture(
     env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True)
+
+
+def _capture_stdout(cmd: list[str], *, cwd: Path | None = None) -> str:
+    result = _capture(cmd, cwd=cwd)
+    if result.returncode != 0:
+        return ""
+    return result.stdout.strip()
+
+
+def _git_stdout(repo: Path, *args: str) -> str:
+    return _capture_stdout([GIT, "-C", str(repo), *args])
+
+
+def _git_dirty(repo: Path) -> bool:
+    return bool(_git_stdout(repo, "status", "--porcelain"))
+
+
+def _tool_path(tool: str) -> str:
+    return shutil.which(tool) or ""
+
+
+def _check_line(status: str, name: str, detail: str = "") -> None:
+    suffix = f" {detail}" if detail else ""
+    print(f"{status}: {name}{suffix}")
+
+
+def _verify_fork_source(*, verbose: bool) -> bool:
+    errors = 0
+    if not (VLLM_DIR / "pyproject.toml").exists():
+        _check_line("ERROR", "external/vllm source", f"missing pyproject.toml at {VLLM_DIR}")
+        return False
+
+    checks = (
+        (
+            "APXM router file",
+            APXM_ROUTER_FILE,
+            (
+                openai_route_path(APXM_GRAPH_REGISTER_PATH),
+                openai_route_path(ApiRoute.APXM_SCHEDULER),
+            ),
+        ),
+        (
+            "OpenAI API server mounts APXM router",
+            OPENAI_API_SERVER_FILE,
+            (ForkModule.APXM_ROUTER.value, "register_apxm_api_router"),
+        ),
+    )
+    for label, path, needles in checks:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            _check_line("ERROR", label, str(exc))
+            errors += 1
+            continue
+        missing = [needle for needle in needles if needle not in text]
+        if missing:
+            _check_line("ERROR", label, f"missing {', '.join(missing)}")
+            errors += 1
+        elif verbose:
+            _check_line("OK", label, str(path.relative_to(REPO_ROOT)))
+
+    if verbose:
+        commit = _git_stdout(VLLM_DIR, "rev-parse", "HEAD")
+        branch = _git_stdout(VLLM_DIR, "rev-parse", "--abbrev-ref", "HEAD")
+        origin_apxm = _git_stdout(VLLM_DIR, "rev-parse", "origin/apxm")
+        _check_line("OK", "external/vllm commit", commit or "<unknown>")
+        _check_line("OK", "external/vllm branch", branch or "<unknown>")
+        if origin_apxm:
+            status = "OK" if commit == origin_apxm else "WARN"
+            _check_line(status, "external/vllm origin/apxm", origin_apxm)
+        _check_line("WARN" if _git_dirty(VLLM_DIR) else "OK", "external/vllm dirty", str(_git_dirty(VLLM_DIR)).lower())
+
+    return errors == 0
 
 
 def _fork_contract_payload() -> str:
@@ -238,49 +264,8 @@ def _doctor_payload() -> str:
     )
 
 
-def _ensure_installed() -> bool:
-    if VLLM_PYTHON.exists():
-        return True
-    _print("external/vllm is not installed yet.")
-    _print("From the repo root, run: dekk apxm vllm install")
-    return False
-
-
-def _verify_visible_fork(*, verbose: bool) -> bool:
-    if not _ensure_installed():
-        return False
-    result = _capture(
-        [str(VLLM_PYTHON), "-c", VERIFY_FORK_CODE, str(VLLM_DIR), _fork_contract_payload()],
-        cwd=VLLM_DIR,
-    )
-    if result.returncode == 0:
-        if verbose and result.stdout.strip():
-            _print(result.stdout.strip())
-        return True
-
-    if result.stdout.strip():
-        _print(result.stdout.strip())
-    if result.stderr.strip():
-        _print(result.stderr.strip())
-    _print("From the repo root, run: dekk apxm vllm install")
-    return False
-
-
 def _hf_home(args: argparse.Namespace) -> str | None:
     return effective_hf_home(explicit=arg_value(args, ArgName.HF_HOME))
-
-
-def _serve_env(args: argparse.Namespace) -> dict[str, str]:
-    env = dict(os.environ)
-    hf_home = _hf_home(args)
-    if hf_home:
-        env[ENV_HF_HOME] = hf_home
-    if args.gpus:
-        env[ENV_HIP_VISIBLE_DEVICES] = args.gpus
-        env[ENV_CUDA_VISIBLE_DEVICES] = args.gpus
-    if arg_value(args, ArgName.API_KEY):
-        env[ENV_VLLM_API_KEY] = str(arg_value(args, ArgName.API_KEY))
-    return env
 
 
 def _api_key(args: argparse.Namespace) -> str | None:
@@ -321,132 +306,102 @@ def _temporary_id(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4()}"
 
 
-def _pid_file(port: int) -> Path:
-    return LOG_DIR / f"server-{port}.pid"
+def _container_state_file(port: int) -> Path:
+    return LOG_DIR / f"container-{port}.json"
 
 
-def _pid_state_file(port: int) -> Path:
-    return LOG_DIR / f"server-{port}.json"
+def _default_container_name(port: int) -> str:
+    slurm_job_id = os.environ.get(ENV_SLURM_JOB_ID, "").strip()
+    if slurm_job_id:
+        return f"apxm-vllm-{slurm_job_id}-{port}"
+    return f"apxm-vllm-{port}"
 
 
-def _log_file(port: int) -> Path:
-    return LOG_DIR / f"server-{port}.log"
-
-
-def _read_pid(path: Path) -> int | None:
-    try:
-        return int(path.read_text(encoding="utf-8").strip())
-    except (OSError, ValueError):
-        return None
-
-
-def _pid_is_running(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-        return True
-    except OSError:
-        return False
-
-
-def _process_cmdline(pid: int) -> list[str]:
-    if not PROC_ROOT.exists():
-        return []
-    try:
-        raw = (PROC_ROOT / str(pid) / "cmdline").read_bytes()
-    except OSError:
-        return []
-    return [part.decode("utf-8", errors="replace") for part in raw.split(b"\0") if part]
-
-
-def _process_cwd(pid: int) -> Path | None:
-    if not PROC_ROOT.exists():
-        return None
-    try:
-        return (PROC_ROOT / str(pid) / "cwd").resolve()
-    except OSError:
-        return None
-
-
-def _is_repo_vllm_process(pid: int) -> bool:
-    if not _pid_is_running(pid):
-        return False
-    cwd = _process_cwd(pid)
-    cmdline = _process_cmdline(pid)
-    if cwd != VLLM_DIR or not cmdline:
-        return False
+def _docker_available() -> bool:
     return (
-        str(VLLM_PYTHON) in cmdline
-        and ForkModule.VLLM_CLI.value in cmdline
-        and VllmCommand.SERVE.value in cmdline
+        shutil.which(DOCKER) is not None
+        and _capture([DOCKER, DockerCommand.INFO.value]).returncode == 0
     )
 
 
-def _read_pid_state(port: int) -> dict[str, Any] | None:
-    try:
-        state = json.loads(_pid_state_file(port).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    return state if isinstance(state, dict) else None
-
-
-def _state_matches_managed_process(port: int, pid: int) -> bool:
-    state = _read_pid_state(port)
-    if not state:
-        return False
+def _docker_buildx_available() -> bool:
     return (
-        state.get("version") == PID_STATE_VERSION
-        and state.get("managed_by") == MANAGED_BY
-        and state.get("pid") == pid
-        and state.get("port") == port
-        and state.get("cwd") == str(VLLM_DIR)
-        and state.get("python") == str(VLLM_PYTHON)
+        shutil.which(DOCKER) is not None
+        and _capture(
+            [DOCKER, DockerCommand.BUILDX.value, DockerBuildxCommand.VERSION.value]
+        ).returncode
+        == 0
     )
 
 
-def _is_managed_repo_vllm_process(port: int, pid: int) -> bool:
-    if not _pid_is_running(pid):
-        return False
-    if PROC_ROOT.exists():
-        return _is_repo_vllm_process(pid)
-    if _state_matches_managed_process(port, pid):
-        _print(
-            "Process metadata is not available on this host; trusting the "
-            "Dekk-managed pid state file."
+def _docker_capture(args: list[str]) -> subprocess.CompletedProcess[str]:
+    return _capture([DOCKER, *args], cwd=REPO_ROOT)
+
+
+def _docker_container_running(name: str) -> bool:
+    result = _docker_capture(
+        enum_values(
+            [
+                DockerCommand.INSPECT,
+                DockerFlag.FORMAT,
+                DockerValue.RUNNING_FORMAT,
+                name,
+            ]
         )
-        return True
-    return False
+    )
+    return result.returncode == 0 and result.stdout.strip().lower() == "true"
 
 
-def _write_pid_state(args: argparse.Namespace, process: subprocess.Popen[Any]) -> None:
+def _write_container_state(
+    *,
+    port: int,
+    container_name: str,
+    container_id: str,
+    image: str,
+    endpoint: str,
+    model: str,
+    served_model_name: str,
+    backend_name: str,
+    command: list[str],
+) -> None:
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
     state = {
-        "version": PID_STATE_VERSION,
+        "version": STATE_VERSION,
         "managed_by": MANAGED_BY,
-        "pid": process.pid,
-        "port": args.port,
-        "model": args.model,
-        "served_model_name": args.served_model_name or args.model,
-        "backend_name": args.backend_name,
-        "api_key_configured": bool(_api_key(args)),
-        "cwd": str(VLLM_DIR),
-        "python": str(VLLM_PYTHON),
-        "endpoint": _endpoint_for_args(args),
+        "container_name": container_name,
+        "container_id": container_id,
+        "image": image,
+        "port": port,
+        "endpoint": endpoint,
+        "model": model,
+        "served_model_name": served_model_name,
+        "backend_name": backend_name,
+        "slurm_job_id": os.environ.get(ENV_SLURM_JOB_ID),
+        "slurm_job_nodelist": os.environ.get(ENV_SLURM_JOB_NODELIST),
         "started_at": time.time(),
+        "command": command,
     }
-    _pid_file(args.port).write_text(f"{process.pid}\n", encoding="utf-8")
-    _pid_state_file(args.port).write_text(
+    _container_state_file(port).write_text(
         json.dumps(state, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
 
 
-def _remove_pid_state(port: int) -> None:
-    for path in (_pid_file(port), _pid_state_file(port)):
-        try:
-            path.unlink()
-        except FileNotFoundError:
-            pass
-        except OSError as exc:
-            _print(f"Could not remove {path}: {exc}")
+def _read_container_state(port: int) -> dict[str, Any] | None:
+    try:
+        state = json.loads(_container_state_file(port).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return state if isinstance(state, dict) else None
+
+
+def _remove_container_state(port: int) -> None:
+    try:
+        _container_state_file(port).unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        _print(f"Could not remove {_container_state_file(port)}: {exc}")
 
 
 def _port_pids(port: int) -> list[int]:
@@ -465,7 +420,7 @@ def _port_pids(port: int) -> list[int]:
 
 
 def _port_is_available(host: str, port: int) -> bool:
-    probe_host = host if host not in ("", "0.0.0.0") else LOCALHOST
+    probe_host = host if host not in ("", ANY_HOST) else LOCALHOST
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
@@ -487,17 +442,22 @@ def _port_owner_hint(port: int) -> str:
 def _http_json(
     url: str,
     *,
-    method: str = "GET",
+    method: str | HttpMethod = HttpMethod.GET,
     body: dict[str, Any] | None = None,
     api_key: str | None = None,
 ) -> Any:
     data = None
-    headers = {CONTENT_TYPE_HEADER: JSON_CONTENT_TYPE}
+    headers = {HttpHeader.CONTENT_TYPE.value: MediaType.JSON.value}
     if api_key:
-        headers[AUTHORIZATION_HEADER] = f"{BEARER_AUTH_SCHEME} {api_key}"
+        headers[HttpHeader.AUTHORIZATION.value] = f"{AuthScheme.BEARER.value} {api_key}"
     if body is not None:
         data = json.dumps(body).encode("utf-8")
-    request = urllib.request.Request(url, data=data, headers=headers, method=method)
+    request = urllib.request.Request(
+        url,
+        data=data,
+        headers=headers,
+        method=method.value if isinstance(method, HttpMethod) else method,
+    )
     with urllib.request.urlopen(request, timeout=DEFAULT_REQUEST_TIMEOUT_SECONDS) as response:
         raw = response.read().decode("utf-8")
     return json.loads(raw) if raw else None
@@ -561,24 +521,29 @@ def _verify_enable_target(endpoint: str, model: str, *, api_key: str | None = No
             )
             return False
         _http_json(f"{base}/{APXM_GRAPHS_PATH}/{PROBE_GRAPH_ID}", api_key=api_key)
+        scheduler = _http_json(f"{base}/{APXM_SCHEDULER_PATH}", api_key=api_key)
+        scheduler_policy = scheduler.get("policy") if isinstance(scheduler, dict) else None
+        if scheduler_policy != SchedulingPolicy.PRIORITY.value:
+            _print(
+                f"APXM scheduler policy is {scheduler_policy!r}; "
+                f"expected {SchedulingPolicy.PRIORITY.value!r}."
+            )
+            return False
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
         _print(f"Enable preflight failed for {base}: {exc}")
         return False
     return True
 
 
-def _build_serve_cmd(args: argparse.Namespace, extra_args: list[str]) -> tuple[list[str], dict[str, str]]:
+def _build_container_vllm_args(args: argparse.Namespace, extra_args: list[str]) -> list[str]:
     served_model_name = args.served_model_name or args.model
     cmd = [
-        str(VLLM_PYTHON),
-        "-m",
-        ForkModule.VLLM_CLI.value,
-        VllmCommand.SERVE.value,
+        "--model",
         args.model,
         "--served-model-name",
         served_model_name,
         "--host",
-        args.host,
+        ANY_HOST,
         "--port",
         str(args.port),
     ]
@@ -625,89 +590,33 @@ def _build_serve_cmd(args: argparse.Namespace, extra_args: list[str]) -> tuple[l
     if args.trust_remote_code:
         cmd.append("--trust-remote-code")
     cmd.extend(extra_args)
+    return cmd
 
-    return cmd, _serve_env(args)
 
-
-def _print_registration_hint(args: argparse.Namespace) -> None:
-    served_model_name = args.served_model_name or args.model
-    endpoint = _endpoint_for_args(args)
-    _print("")
-    _print("Register this vLLM backend with APXM after the server is reachable:")
-    _print(
-        f"  dekk apxm vllm enable {served_model_name} "
-        f"--backend-name {args.backend_name} --port {args.port} --endpoint {endpoint}"
-    )
-    if _api_key(args):
-        _print(f"  Keep {ENV_VLLM_API_KEY} set, or add --api-key-env <ENV_VAR> when enabling.")
-    _print("")
+def _extend_container_env(cmd: list[str], env_specs: list[str]) -> bool:
+    for spec in env_specs:
+        if not spec:
+            continue
+        if "=" in spec:
+            key = spec.split("=", 1)[0]
+            if not key:
+                _print(f"Invalid --container-env value {spec!r}: missing variable name")
+                return False
+            cmd.extend([DockerFlag.ENV.value, spec])
+            continue
+        if spec not in os.environ:
+            _print(f"Invalid --container-env value {spec!r}: host environment variable is not set")
+            return False
+        cmd.extend([DockerFlag.ENV.value, spec])
+    return True
 
 
 def _warn_if_public_bind_without_key(args: argparse.Namespace) -> None:
-    if args.host in {"0.0.0.0", "::"} and not _api_key(args):
+    if args.host in {ANY_HOST, ANY_HOST_V6} and not _api_key(args):
         _print(
             "Warning: binding vLLM on a wildcard host without an API key. "
             f"For shared or remote hosts, set {ENV_VLLM_API_KEY} or pass --api-key."
         )
-
-
-def install_cmd(_args: argparse.Namespace) -> int:
-    if not (VLLM_DIR / "pyproject.toml").exists():
-        rc = _run(
-            [GIT, "-C", str(REPO_ROOT), "submodule", "update", "--init", str(VLLM_DIR.relative_to(REPO_ROOT))]
-        )
-        if rc != 0:
-            return rc
-    if not (VLLM_DIR / "pyproject.toml").exists():
-        _print("external/vllm is not available after submodule init")
-        return 1
-    if not shutil.which(UV):
-        _print("uv is required for the repo-local vLLM install.")
-        _print("Install uv through your system/Dekk environment, then rerun: dekk apxm vllm install")
-        return 1
-    if not VLLM_PYTHON.exists():
-        rc = _run([UV, "venv", "--python", sys.executable, str(LAYOUT.venv_dir)], cwd=VLLM_DIR)
-        if rc != 0:
-            return rc
-    install_steps = [
-        [
-            UV,
-            "pip",
-            "install",
-            "--python",
-            str(VLLM_PYTHON),
-            "--torch-backend=auto",
-            "-r",
-            "requirements/build.txt",
-        ],
-        [
-            UV,
-            "pip",
-            "install",
-            "--python",
-            str(VLLM_PYTHON),
-            "-e",
-            ".",
-            "--torch-backend=auto",
-            "--no-build-isolation",
-        ],
-    ]
-    for step in install_steps:
-        rc = _run(step, cwd=VLLM_DIR)
-        if rc != 0:
-            return rc
-    for label, cmd in (
-        ("HEAD", [GIT, "-C", str(VLLM_DIR), "rev-parse", "--short", "HEAD"]),
-        ("origin", [GIT, "-C", str(VLLM_DIR), "remote", "get-url", "origin"]),
-    ):
-        result = _capture(cmd)
-        if result.returncode == 0 and result.stdout.strip():
-            _print(f"external/vllm {label}={result.stdout.strip()}")
-    if not _verify_visible_fork(verbose=True):
-        return 1
-    _print("Installed the repo-local fork from external/vllm.")
-    _print("Next: dekk apxm vllm start <MODEL_REF> --served-model-name <SERVED_MODEL_ID> --wait")
-    return 0
 
 
 def help_cmd(args: argparse.Namespace) -> int:
@@ -719,207 +628,65 @@ def help_cmd(args: argparse.Namespace) -> int:
 
 
 def doctor_cmd(args: argparse.Namespace) -> int:
-    if not _verify_visible_fork(verbose=True):
-        return 1
-    result = _capture([str(VLLM_PYTHON), "-c", DOCTOR_CODE, _doctor_payload()], cwd=VLLM_DIR)
-    if result.stdout.strip():
-        print(result.stdout.strip())
-    if result.stderr.strip():
-        _print(result.stderr.strip())
+    errors = 0
+    print("mode=canonical-docker")
+    print(f"repo_root={REPO_ROOT}")
+    print(f"external_vllm={VLLM_DIR}")
+    print(f"apxm_commit={_git_stdout(REPO_ROOT, 'rev-parse', 'HEAD') or '<unknown>'}")
+    print(f"apxm_dirty={str(_git_dirty(REPO_ROOT)).lower()}")
+
+    if not _verify_fork_source(verbose=True):
+        errors += 1
+
+    docker_path = _tool_path(DOCKER)
+    print(f"docker={docker_path}")
+    docker_ok = _docker_available()
+    print(f"docker_daemon_ready={str(docker_ok).lower()}")
+    if not docker_ok:
+        errors += 1
+    buildx_ok = _docker_buildx_available()
+    print(f"docker_buildx_ready={str(buildx_ok).lower()}")
+    if not buildx_ok:
+        errors += 1
+
+    for device in (Path("/dev/kfd"), Path("/dev/dri")):
+        exists = device.exists()
+        print(f"{str(device).replace('/', '_').lstrip('_')}_exists={str(exists).lower()}")
+        if not exists:
+            errors += 1
+
+    gpu_smi_path = _tool_path(GPU_SMI)
+    print(f"gpu_smi={gpu_smi_path}")
+    if gpu_smi_path:
+        result = _capture(
+            enum_values([ToolName.GPU_SMI, RocmSmiFlag.SHOW_PRODUCT_NAME, RocmSmiFlag.JSON])
+        )
+        if result.returncode == 0:
+            try:
+                payload = json.loads(result.stdout)
+                gpu_count = len([key for key in payload if key.startswith("card")])
+            except json.JSONDecodeError:
+                gpu_count = 0
+            print(f"gpu_gpu_count={gpu_count}")
+        else:
+            print("gpu_gpu_count=unknown")
+    else:
+        print("gpu_gpu_count=unknown")
+
+    slurm_tools = {tool: _tool_path(tool) for tool in (SINFO, SQUEUE, SBATCH, SRUN)}
+    print(
+        "slurm_tools="
+        + ",".join(f"{tool}:{'yes' if path else 'no'}" for tool, path in slurm_tools.items())
+    )
+    print(f"slurm_job_id={os.environ.get(ENV_SLURM_JOB_ID, '')}")
+    print(f"slurm_job_nodelist={os.environ.get(ENV_SLURM_JOB_NODELIST, '')}")
     print(f"HF_HOME={display_hf_home(_hf_home(args))}")
     print(f"APXM_VLLM_HF_HOME={os.environ.get(ENV_APXM_VLLM_HF_HOME, '')}")
-    print(f"server_pid_file={_pid_file(args.port)}")
-    print(f"server_log_file={_log_file(args.port)}")
+    print(f"container_state_file={_container_state_file(args.port)}")
     pids = _port_pids(args.port)
     print(f"port_{args.port}_pids={','.join(map(str, pids)) if pids else ''}")
-    return result.returncode
 
-
-def download_cmd(args: argparse.Namespace) -> int:
-    if not _verify_visible_fork(verbose=True):
-        return 1
-    hf_home = _hf_home(args)
-    env = dict(os.environ)
-    if hf_home:
-        Path(hf_home).mkdir(parents=True, exist_ok=True)
-        env[ENV_HF_HOME] = hf_home
-    _print(f"Downloading {args.model} with HF_HOME={display_hf_home(hf_home)}")
-    return _run(
-        [str(VLLM_PYTHON), "-c", DOWNLOAD_CODE, args.model, str(args.max_workers)],
-        cwd=VLLM_DIR,
-        env=env,
-    )
-
-
-def serve_cmd(args: argparse.Namespace, extra_args: list[str]) -> int:
-    if not _verify_visible_fork(verbose=True):
-        return 1
-
-    cmd, env = _build_serve_cmd(args, extra_args)
-    _warn_if_public_bind_without_key(args)
-    _print("Launching the visible repo-local fork from external/vllm")
-    _print(f"working_dir={VLLM_DIR}")
-    _print(f"python={VLLM_PYTHON}")
-    _print(f"hf_home={display_hf_home(env.get(ENV_HF_HOME))} (used for Hugging Face-backed model refs)")
-    _print(f"backend_name={args.backend_name}")
-    _print(f"model={args.model}")
-    _print(f"registration_endpoint={_endpoint_for_args(args)}")
-    _print_registration_hint(args)
-    return _run(cmd, cwd=VLLM_DIR, env=env)
-
-
-def start_cmd(args: argparse.Namespace, extra_args: list[str]) -> int:
-    if not _verify_visible_fork(verbose=True):
-        return 1
-    pids = _port_pids(args.port)
-    if pids or not _port_is_available(args.host, args.port):
-        _print(f"Port {args.port} is already in use by {_port_owner_hint(args.port)}")
-        return 1
-
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    cmd, env = _build_serve_cmd(args, extra_args)
-    _warn_if_public_bind_without_key(args)
-    log_path = _log_file(args.port)
-    with log_path.open("ab") as log:
-        process = subprocess.Popen(
-            cmd,
-            cwd=VLLM_DIR,
-            env=env,
-            stdout=log,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
-    _write_pid_state(args, process)
-    _print(f"Started vLLM PID {process.pid}")
-    _print(f"log={log_path}")
-    _print(f"pid_file={_pid_file(args.port)}")
-    _print(f"registration_endpoint={_endpoint_for_args(args)}")
-    _print_registration_hint(args)
-    if args.wait:
-        deadline = time.time() + args.startup_timeout
-        while time.time() < deadline:
-            if not _pid_is_running(process.pid):
-                _print(f"vLLM process exited before the server became ready; see {log_path}")
-                return 1
-            if _server_ready(_endpoint_for_args(args), api_key=_api_key(args)):
-                _print(f"Server responded on local_probe_endpoint={_endpoint_for_args(args)}")
-                return 0
-            time.sleep(2.0)
-        _print(
-            f"Timed out waiting for local_probe_endpoint={_endpoint(args.port)}; "
-            f"PID {process.pid} may still be starting. See {log_path}, or run "
-        f"`dekk apxm vllm status --port {args.port}` / "
-        f"`dekk apxm vllm stop --port {args.port}`."
-        )
-        return 1
-    return 0
-
-
-def stop_cmd(args: argparse.Namespace) -> int:
-    pids: list[int] = []
-    pid = _read_pid(_pid_file(args.port))
-    if pid is not None:
-        if _is_managed_repo_vllm_process(args.port, pid):
-            pids.append(pid)
-        else:
-            _print(f"Refusing stale or unmanaged pid-file PID {pid}")
-    skipped_port_pids: list[int] = []
-    for port_pid in _port_pids(args.port):
-        if _is_managed_repo_vllm_process(args.port, port_pid):
-            pids.append(port_pid)
-        else:
-            skipped_port_pids.append(port_pid)
-    pids = sorted(set(pids))
-    if not pids:
-        if skipped_port_pids:
-            _print(
-                f"Port {args.port} is owned by unmanaged PID(s): "
-                f"{', '.join(map(str, skipped_port_pids))}"
-            )
-            _print(
-                "This command only stops repo-local external/vllm processes. "
-                "Use a separate system administration command for unrelated owners."
-            )
-            return 1
-        _print(f"No vLLM process found for port {args.port}")
-        return 0
-
-    for pid in pids:
-        try:
-            os.kill(pid, signal.SIGTERM)
-            _print(f"Sent SIGTERM to PID {pid}")
-        except OSError as exc:
-            _print(f"PID {pid}: {exc}")
-    deadline = time.time() + args.timeout
-    while time.time() < deadline:
-        if not any(_pid_is_running(pid) for pid in pids):
-            break
-        time.sleep(0.5)
-    for pid in pids:
-        if _pid_is_running(pid):
-            try:
-                os.kill(pid, signal.SIGKILL)
-                _print(f"Sent SIGKILL to PID {pid}")
-            except OSError:
-                pass
-    if not any(_pid_is_running(pid) for pid in pids):
-        _remove_pid_state(args.port)
-    return 0
-
-
-def status_cmd(args: argparse.Namespace) -> int:
-    registration_endpoint = None
-    backend_name = None
-    served_model_name = None
-    api_key_configured = None
-    state = _read_pid_state(args.port)
-    if state:
-        registration_endpoint = state.get("endpoint")
-        backend_name = state.get("backend_name")
-        served_model_name = state.get("served_model_name")
-        api_key_configured = state.get("api_key_configured")
-    pid = _read_pid(_pid_file(args.port))
-    if pid is not None:
-        print(f"pid_file={_pid_file(args.port)}")
-        print(f"pid={pid}")
-        print(f"pid_running={str(_pid_is_running(pid)).lower()}")
-    pids = _port_pids(args.port)
-    print(f"port={args.port}")
-    print(f"port_available={str(_port_is_available(LOCALHOST, args.port)).lower()}")
-    print(f"port_pids={','.join(map(str, pids)) if pids else ''}")
-    if not pids and not shutil.which(LSOF):
-        print(f"port_pid_attribution={LSOF}_not_available")
-    print(f"local_probe_endpoint={_endpoint(args.port)}")
-    if registration_endpoint:
-        print(f"registration_endpoint={registration_endpoint}")
-    if backend_name:
-        print(f"backend_name={backend_name}")
-    if served_model_name:
-        print(f"served_model_name={served_model_name}")
-    if api_key_configured is not None:
-        print(f"api_key_configured={str(bool(api_key_configured)).lower()}")
-    print(f"log={_log_file(args.port)}")
-    return 0
-
-
-def logs_cmd(args: argparse.Namespace) -> int:
-    path = _log_file(args.port)
-    if not path.exists():
-        _print(f"No log file found at {path}")
-        return 1
-    if args.follow:
-        if shutil.which(TAIL):
-            return _run([TAIL, "-f", str(path)], cwd=REPO_ROOT)
-        _print(f"{TAIL} is not available on this host; use --lines without --follow.")
-        return 1
-    try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError as exc:
-        _print(f"Could not read {path}: {exc}")
-        return 1
-    for line in lines[-args.lines :]:
-        print(line)
-    return 0
+    return 1 if errors else 0
 
 
 def probe_cmd(args: argparse.Namespace) -> int:
@@ -933,10 +700,19 @@ def probe_cmd(args: argparse.Namespace) -> int:
         print(json.dumps({"models": models}, indent=2, sort_keys=True))
         status = _http_json(f"{base}/{APXM_GRAPHS_PATH}/{PROBE_GRAPH_ID}", api_key=api_key)
         print(json.dumps({"apxm_probe": status}, indent=2, sort_keys=True))
+        scheduler = _http_json(f"{base}/{APXM_SCHEDULER_PATH}", api_key=api_key)
+        print(json.dumps({"apxm_scheduler": scheduler}, indent=2, sort_keys=True))
+        scheduler_policy = scheduler.get("policy") if isinstance(scheduler, dict) else None
+        if scheduler_policy != SchedulingPolicy.PRIORITY.value:
+            _print(
+                f"APXM scheduler policy is {scheduler_policy!r}; "
+                f"expected {SchedulingPolicy.PRIORITY.value!r}."
+            )
+            return 1
 
         registration = _http_json(
             f"{base}/{APXM_GRAPH_REGISTER_PATH}",
-            method="POST",
+            method=HttpMethod.POST,
             api_key=api_key,
             body={
                 "graph_id": graph_id,
@@ -952,7 +728,11 @@ def probe_cmd(args: argparse.Namespace) -> int:
         )
         registered = True
         graph_status = _http_json(f"{base}/{APXM_GRAPHS_PATH}/{graph_id}", api_key=api_key)
-        release = _http_json(f"{base}/{APXM_GRAPHS_PATH}/{graph_id}", method="DELETE", api_key=api_key)
+        release = _http_json(
+            f"{base}/{APXM_GRAPHS_PATH}/{graph_id}",
+            method=HttpMethod.DELETE,
+            api_key=api_key,
+        )
         registered = False
         print(
             json.dumps(
@@ -971,7 +751,11 @@ def probe_cmd(args: argparse.Namespace) -> int:
     finally:
         if registered:
             try:
-                _http_json(f"{base}/{APXM_GRAPHS_PATH}/{graph_id}", method="DELETE", api_key=api_key)
+                _http_json(
+                    f"{base}/{APXM_GRAPHS_PATH}/{graph_id}",
+                    method=HttpMethod.DELETE,
+                    api_key=api_key,
+                )
             except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
                 _print(f"Could not release temporary graph {graph_id}: {exc}")
     return 0
@@ -1043,6 +827,653 @@ def enable_cmd(args: argparse.Namespace) -> int:
     elif _run(add_model, cwd=REPO_ROOT) != 0:
         return 1
     return _run(test, cwd=REPO_ROOT)
+
+
+def docker_build_cmd(args: argparse.Namespace) -> int:
+    if not _docker_available():
+        _print("Docker is not installed or the daemon is not reachable.")
+        return 1
+    if not _docker_buildx_available():
+        _print(
+            "Docker BuildKit/buildx is required; refusing to use Docker's "
+            "legacy builder. Install the docker-buildx package/plugin."
+        )
+        return 1
+    if not _verify_fork_source(verbose=True):
+        _print("Refusing to build: external/vllm does not expose the APXM fork contract.")
+        return 1
+    dockerfile = Path(args.dockerfile)
+    if not dockerfile.is_absolute():
+        dockerfile = REPO_ROOT / dockerfile
+    if not dockerfile.exists():
+        _print(f"Dockerfile not found: {dockerfile}")
+        return 1
+
+    image = args.image
+    if not image:
+        apxm_commit = _capture([GIT, "-C", str(REPO_ROOT), "rev-parse", "--short", "HEAD"]).stdout.strip()
+        vllm_commit = _capture([GIT, "-C", str(VLLM_DIR), "rev-parse", "--short", "HEAD"]).stdout.strip()
+        image = f"apxm-vllm-gpu:{apxm_commit or 'apxm'}-{vllm_commit or 'vllm'}"
+
+    cmd = [
+        DOCKER,
+        DockerCommand.BUILDX.value,
+        DockerBuildxCommand.BUILD.value,
+        DockerFlag.LOAD.value,
+        DockerFlag.FILE.value,
+        str(dockerfile),
+        DockerFlag.TAG.value,
+        image,
+        DockerFlag.LABEL.value,
+        f"org.opencontainers.image.revision={_capture([GIT, '-C', str(REPO_ROOT), 'rev-parse', 'HEAD']).stdout.strip()}",
+        DockerFlag.LABEL.value,
+        f"apxm.vllm.commit={_capture([GIT, '-C', str(VLLM_DIR), 'rev-parse', 'HEAD']).stdout.strip()}",
+        DockerFlag.LABEL.value,
+        f"apxm.repo.dirty={str(_git_dirty(REPO_ROOT)).lower()}",
+        DockerFlag.LABEL.value,
+        f"apxm.vllm.dirty={str(_git_dirty(VLLM_DIR)).lower()}",
+    ]
+    if args.base_image:
+        cmd.extend([DockerFlag.BUILD_ARG.value, f"BASE_IMAGE={args.base_image}"])
+    cmd.append(str(REPO_ROOT))
+
+    _print(f"Building APXM-vLLM image: {image}")
+    rc = _run(cmd, cwd=REPO_ROOT)
+    if rc != 0:
+        return rc
+    inspect = _capture(
+        enum_values(
+            [
+                ToolName.DOCKER,
+                DockerCommand.IMAGE,
+                DockerCommand.INSPECT,
+                image,
+                DockerFlag.FORMAT,
+                DockerValue.IMAGE_ID_FORMAT,
+            ]
+        )
+    )
+    if inspect.returncode == 0 and inspect.stdout.strip():
+        print(f"image={image}")
+        print(f"image_id={inspect.stdout.strip()}")
+    return 0
+
+
+def _image_archive_stem(image: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9_.-]+", "_", image).strip("._-")
+    if not slug:
+        slug = "image"
+    digest = hashlib.sha256(image.encode("utf-8")).hexdigest()[:12]
+    return f"{slug}-{digest}"
+
+
+def _default_image_archive(image: str) -> Path:
+    return IMAGE_STORE_DIR / f"{_image_archive_stem(image)}.docker.tar"
+
+
+def _manifest_path_for_archive(archive: Path) -> Path:
+    return archive.with_suffix(f"{archive.suffix}.json")
+
+
+def _docker_image_metadata(image: str) -> dict[str, Any] | None:
+    result = _docker_capture(
+        enum_values(
+            [
+                DockerCommand.IMAGE,
+                DockerCommand.INSPECT,
+                image,
+                DockerFlag.FORMAT,
+                DockerValue.IMAGE_METADATA_FORMAT,
+            ]
+        )
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    try:
+        metadata = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+    return metadata if isinstance(metadata, dict) else None
+
+
+def _archive_path_arg(args: argparse.Namespace, image: str) -> Path:
+    archive = arg_value(args, ArgName.ARCHIVE)
+    return Path(archive).expanduser().resolve() if archive else _default_image_archive(image)
+
+
+def docker_save_cmd(args: argparse.Namespace) -> int:
+    if not _docker_available():
+        _print("Docker is not installed or the daemon is not reachable.")
+        return 1
+    image = args.image
+    metadata = _docker_image_metadata(image)
+    if metadata is None:
+        _print(f"Image is not present in this Docker daemon: {image}")
+        return 1
+
+    archive = _archive_path_arg(args, image)
+    archive.parent.mkdir(parents=True, exist_ok=True)
+    tmp_archive = archive.with_name(f"{archive.name}.tmp")
+    tmp_archive.unlink(missing_ok=True)
+    result = _docker_capture(
+        enum_values([DockerCommand.SAVE, DockerFlag.OUTPUT, str(tmp_archive), image])
+    )
+    if result.returncode != 0:
+        if result.stdout.strip():
+            _print(result.stdout.strip())
+        if result.stderr.strip():
+            _print(result.stderr.strip())
+        tmp_archive.unlink(missing_ok=True)
+        return result.returncode
+    tmp_archive.replace(archive)
+
+    manifest = {
+        "schema_version": 1,
+        "created_at_unix": time.time(),
+        "archive": str(archive),
+        "image": image,
+        "image_id": metadata.get("Id"),
+        "repo_tags": metadata.get("RepoTags"),
+        "repo_digests": metadata.get("RepoDigests"),
+        "labels": (metadata.get("Config") or {}).get("Labels"),
+        "apxm_commit": _git_stdout(REPO_ROOT, "rev-parse", "HEAD"),
+        "apxm_dirty": _git_dirty(REPO_ROOT),
+        "vllm_commit": _git_stdout(VLLM_DIR, "rev-parse", "HEAD"),
+        "vllm_dirty": _git_dirty(VLLM_DIR),
+    }
+    manifest_path = _manifest_path_for_archive(archive)
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    print(f"image={image}")
+    print(f"image_id={metadata.get('Id')}")
+    print(f"archive={archive}")
+    print(f"manifest={manifest_path}")
+    return 0
+
+
+def docker_load_cmd(args: argparse.Namespace) -> int:
+    if not _docker_available():
+        _print("Docker is not installed or the daemon is not reachable.")
+        return 1
+    image = args.image
+    archive = _archive_path_arg(args, image)
+    if not archive.is_file():
+        _print(f"APXM image archive not found: {archive}")
+        _print(
+            "Create it once from a builder node with: "
+            f"dekk apxm vllm docker-save --image {image}"
+        )
+        return 1
+
+    manifest_path = _manifest_path_for_archive(archive)
+    expected_image_id: str | None = None
+    if manifest_path.is_file():
+        try:
+            manifest = json.loads(manifest_path.read_text())
+        except json.JSONDecodeError as exc:
+            _print(f"Could not parse image archive manifest {manifest_path}: {exc}")
+            return 1
+        if isinstance(manifest, dict) and isinstance(manifest.get("image_id"), str):
+            expected_image_id = manifest["image_id"]
+
+    result = _docker_capture(enum_values([DockerCommand.LOAD, DockerFlag.INPUT, str(archive)]))
+    if result.returncode != 0:
+        if result.stdout.strip():
+            _print(result.stdout.strip())
+        if result.stderr.strip():
+            _print(result.stderr.strip())
+        return result.returncode
+
+    metadata = _docker_image_metadata(image)
+    if metadata is None:
+        _print(f"Loaded archive, but expected image tag is absent: {image}")
+        return 1
+    actual_image_id = metadata.get("Id")
+    if expected_image_id and actual_image_id != expected_image_id:
+        _print(
+            f"Loaded image id mismatch for {image}: expected {expected_image_id}, "
+            f"got {actual_image_id}"
+        )
+        return 1
+
+    print(result.stdout.strip())
+    print(f"image={image}")
+    print(f"image_id={actual_image_id}")
+    print(f"archive={archive}")
+    return 0
+
+
+def _default_image_tag() -> str:
+    apxm_commit = _capture([GIT, "-C", str(REPO_ROOT), "rev-parse", "--short", "HEAD"]).stdout.strip()
+    vllm_commit = _capture([GIT, "-C", str(VLLM_DIR), "rev-parse", "--short", "HEAD"]).stdout.strip()
+    return f"apxm-vllm-gpu:{apxm_commit or 'apxm'}-{vllm_commit or 'vllm'}"
+
+
+def _service_name(name: str) -> str:
+    normalized = re.sub(r"[^A-Za-z0-9_.-]+", "-", name.strip()).strip(".-")
+    if not normalized:
+        raise SystemExit("service name must contain at least one alphanumeric character")
+    return normalized
+
+
+def _service_state_file(name: str) -> Path:
+    return SERVICE_DIR / f"{_service_name(name)}.json"
+
+
+def _read_service_state(name: str) -> dict[str, Any] | None:
+    try:
+        state = json.loads(_service_state_file(name).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return state if isinstance(state, dict) else None
+
+
+def _write_service_state(name: str, state: dict[str, Any]) -> Path:
+    SERVICE_DIR.mkdir(parents=True, exist_ok=True)
+    path = _service_state_file(name)
+    path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return path
+
+
+def _require_service_state(name: str) -> dict[str, Any] | None:
+    state = _read_service_state(name)
+    if not state:
+        _print(f"APXM-vLLM service state not found: {_service_state_file(name)}")
+        return None
+    return state
+
+
+def _service_job_id(state: dict[str, Any]) -> str | None:
+    job_id = state.get("job_id")
+    return str(job_id) if job_id else None
+
+
+def service_start_cmd(args: argparse.Namespace) -> int:
+    if not shutil.which(SBATCH):
+        _print("sbatch is not available on this host.")
+        return 1
+    name = _service_name(args.name)
+    image = args.image or os.environ.get(ENV_APXM_VLLM_IMAGE) or _default_image_tag()
+    model = args.model
+    served_model = args.served_model_name or args.model
+    port = str(args.port)
+    log_path = LOG_DIR / f"slurm-apxm-vllm-service-{name}-%j.out"
+    script = REPO_ROOT / "deploy" / "vllm" / "run-vllm-slurm.sh"
+    if not script.is_file():
+        _print(f"Slurm service wrapper not found: {script}")
+        return 1
+
+    env = dict(os.environ)
+    env.update(
+        {
+            ENV_APXM_VLLM_SERVICE_NAME: name,
+            ENV_APXM_VLLM_IMAGE: image,
+            ENV_MODEL_REF: model,
+            ENV_SERVED_MODEL_ID: served_model,
+            ENV_BACKEND_NAME: args.backend_name,
+            ENV_PORT: port,
+        }
+    )
+    if args.hf_home:
+        env[ENV_HF_HOME_HOST] = args.hf_home
+    if args.max_model_len is not None:
+        env[ENV_MAX_MODEL_LEN] = str(args.max_model_len)
+    if args.startup_timeout is not None:
+        env[ENV_STARTUP_TIMEOUT_SECONDS] = str(args.startup_timeout)
+
+    cmd = [
+        SBATCH,
+        "--job-name",
+        f"apxm-vllm-{name}",
+        "--output",
+        str(log_path),
+        str(script),
+    ]
+    result = _capture(cmd, cwd=REPO_ROOT, env=env)
+    if result.stdout.strip():
+        print(result.stdout.strip())
+    if result.stderr.strip():
+        _print(result.stderr.strip())
+    if result.returncode != 0:
+        return result.returncode
+    match = re.search(r"Submitted batch job\s+(\d+)", result.stdout)
+    if not match:
+        _print("Could not parse Slurm job id from sbatch output.")
+        return 1
+    job_id = match.group(1)
+    state = {
+        "version": STATE_VERSION,
+        "managed_by": MANAGED_BY,
+        "name": name,
+        "job_id": job_id,
+        "image": image,
+        "model": model,
+        "served_model_name": served_model,
+        "backend_name": args.backend_name,
+        "port": args.port,
+        "local_endpoint": _endpoint(args.port),
+        "max_model_len": args.max_model_len,
+        "log_pattern": str(log_path),
+        "submitted_at": time.time(),
+    }
+    path = _write_service_state(name, state)
+    print(f"service={name}")
+    print(f"job_id={job_id}")
+    print(f"state={path}")
+    print(f"exec=dekk apxm vllm service-exec {name} -- <command>")
+    return 0
+
+
+def service_adopt_cmd(args: argparse.Namespace) -> int:
+    name = _service_name(args.name)
+    state = {
+        "version": STATE_VERSION,
+        "managed_by": MANAGED_BY,
+        "name": name,
+        "job_id": str(args.job_id),
+        "image": args.image or "",
+        "model": args.model or "",
+        "served_model_name": args.served_model_name or args.model or "",
+        "backend_name": args.backend_name,
+        "port": args.port,
+        "local_endpoint": _endpoint(args.port),
+        "max_model_len": args.max_model_len,
+        "adopted_at": time.time(),
+    }
+    path = _write_service_state(name, state)
+    print(f"service={name}")
+    print(f"job_id={args.job_id}")
+    print(f"state={path}")
+    return 0
+
+
+def service_status_cmd(args: argparse.Namespace) -> int:
+    state = _require_service_state(args.name)
+    if not state:
+        return 1
+    job_id = _service_job_id(state)
+    print(json.dumps(state, indent=2, sort_keys=True))
+    if job_id and shutil.which(SQUEUE):
+        result = _capture(
+            [SQUEUE, "-j", job_id, "-o", "%.18i %.9P %.30j %.8u %.2t %.12M %.12l %.20R"],
+            cwd=REPO_ROOT,
+        )
+        if result.stdout.strip():
+            print(result.stdout.strip())
+        if result.stderr.strip():
+            _print(result.stderr.strip())
+    if args.probe and job_id:
+        return _run(
+            [
+                SRUN,
+                "--jobid",
+                job_id,
+                "--overlap",
+                sys.executable,
+                str(Path(__file__).resolve()),
+                VllmCommand.PROBE.value,
+                "--port",
+                str(state.get("port", DEFAULT_PORT)),
+            ],
+            cwd=REPO_ROOT,
+        )
+    return 0
+
+
+def service_exec_cmd(args: argparse.Namespace, extra_args: list[str]) -> int:
+    state = _require_service_state(args.name)
+    if not state:
+        return 1
+    job_id = _service_job_id(state)
+    if not job_id:
+        _print(f"Service {args.name} has no Slurm job id.")
+        return 1
+    command = list(args.service_command or extra_args)
+    if command and command[0] == "--":
+        command = command[1:]
+    if not command:
+        _print("service-exec requires a command after --")
+        return 1
+    env = dict(os.environ)
+    service_env = {
+        ENV_APXM_VLLM_IMAGE: state.get("image"),
+        ENV_MODEL_REF: state.get("model"),
+        ENV_SERVED_MODEL_ID: state.get("served_model_name"),
+        ENV_BACKEND_NAME: state.get("backend_name"),
+        ENV_PORT: state.get("port"),
+        ENV_MAX_MODEL_LEN: state.get("max_model_len"),
+    }
+    for key, value in service_env.items():
+        if value not in (None, ""):
+            env[key] = str(value)
+    return _run([SRUN, "--jobid", job_id, "--overlap", *command], cwd=REPO_ROOT, env=env)
+
+
+def service_stop_cmd(args: argparse.Namespace) -> int:
+    state = _require_service_state(args.name)
+    if not state:
+        return 1
+    job_id = _service_job_id(state)
+    if not job_id:
+        _print(f"Service {args.name} has no Slurm job id.")
+        return 1
+    if not shutil.which(SCANCEL):
+        _print("scancel is not available on this host.")
+        return 1
+    rc = _run([SCANCEL, job_id], cwd=REPO_ROOT)
+    if rc == 0 and args.remove_state:
+        try:
+            _service_state_file(args.name).unlink()
+        except FileNotFoundError:
+            pass
+    return rc
+
+
+def docker_start_cmd(args: argparse.Namespace, extra_args: list[str]) -> int:
+    if not _docker_available():
+        _print("Docker is not installed or the daemon is not reachable.")
+        return 1
+    if not args.image:
+        _print("--image is required for docker-start")
+        return 1
+
+    container_name = args.container_name or _default_container_name(args.port)
+    if _docker_container_running(container_name):
+        _print(f"Container {container_name} is already running.")
+        return 1
+    if not _port_is_available(LOCALHOST, args.port):
+        _print(f"Port {args.port} is already in use by {_port_owner_hint(args.port)}")
+        return 1
+
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    served_model_name = args.served_model_name or args.model
+    endpoint = _endpoint_for_args(args)
+    hf_home = _hf_home(args)
+    cmd = [
+        DOCKER,
+        DockerCommand.RUN.value,
+        DockerFlag.DETACH.value,
+        DockerFlag.NAME.value,
+        container_name,
+        DockerFlag.NETWORK.value,
+        DockerValue.HOST_NETWORK.value,
+        DockerFlag.IPC_HOST.value,
+        f"{DockerFlag.DEVICE.value}=/dev/kfd",
+        f"{DockerFlag.DEVICE.value}=/dev/dri",
+        DockerFlag.GROUP_ADD.value,
+        "video",
+        DockerFlag.GROUP_ADD.value,
+        "render",
+        DockerFlag.SECURITY_OPT.value,
+        DockerValue.SECCOMP_UNCONFINED.value,
+        DockerFlag.LABEL.value,
+        f"{DockerLabel.MANAGED_BY.value}={MANAGED_BY}",
+        DockerFlag.LABEL.value,
+        f"{DockerLabel.BACKEND_NAME.value}={args.backend_name}",
+        DockerFlag.LABEL.value,
+        f"{DockerLabel.SERVED_MODEL_ID.value}={served_model_name}",
+    ]
+    slurm_job_id = os.environ.get(ENV_SLURM_JOB_ID, "").strip()
+    if slurm_job_id:
+        cmd.extend([DockerFlag.LABEL.value, f"{DockerLabel.SLURM_JOB_ID.value}={slurm_job_id}"])
+    if hf_home:
+        Path(hf_home).mkdir(parents=True, exist_ok=True)
+        cmd.extend(
+            [
+                DockerFlag.ENV.value,
+                f"{ENV_HF_HOME}={ContainerPath.HF_HOME.value}",
+                DockerFlag.VOLUME.value,
+                f"{hf_home}:{ContainerPath.HF_HOME.value}",
+            ]
+        )
+    if args.gpus:
+        cmd.extend(
+            [
+                DockerFlag.ENV.value,
+                f"{ENV_HIP_VISIBLE_DEVICES}={args.gpus}",
+                DockerFlag.ENV.value,
+                f"{ENV_CUDA_VISIBLE_DEVICES}={args.gpus}",
+            ]
+        )
+    if ENV_HF_TOKEN in os.environ:
+        cmd.extend([DockerFlag.ENV.value, ENV_HF_TOKEN])
+    if _api_key(args):
+        cmd.extend([DockerFlag.ENV.value, f"{ENV_VLLM_API_KEY}={_api_key(args)}"])
+    if not _extend_container_env(cmd, arg_value(args, ArgName.CONTAINER_ENV, [])):
+        return 1
+
+    cmd.append(args.image)
+    cmd.extend(_build_container_vllm_args(args, extra_args))
+
+    _warn_if_public_bind_without_key(args)
+    _print(f"Starting APXM-vLLM container {container_name}")
+    _print(f"image={args.image}")
+    _print(f"endpoint={endpoint}")
+    _print(f"hf_home={display_hf_home(hf_home)}")
+    result = _capture(cmd, cwd=REPO_ROOT)
+    if result.returncode != 0:
+        if result.stdout.strip():
+            _print(result.stdout.strip())
+        if result.stderr.strip():
+            _print(result.stderr.strip())
+        return result.returncode
+
+    container_id = result.stdout.strip()
+    _write_container_state(
+        port=args.port,
+        container_name=container_name,
+        container_id=container_id,
+        image=args.image,
+        endpoint=endpoint,
+        model=args.model,
+        served_model_name=served_model_name,
+        backend_name=args.backend_name,
+        command=cmd,
+    )
+    _print(f"container_id={container_id}")
+    _print(f"state={_container_state_file(args.port)}")
+
+    if args.wait:
+        deadline = time.time() + args.startup_timeout
+        while time.time() < deadline:
+            if not _docker_container_running(container_name):
+                _print(f"Container {container_name} exited before server became ready.")
+                docker_logs_cmd(
+                    argparse.Namespace(
+                        container_name=container_name,
+                        port=args.port,
+                        lines=80,
+                        follow=False,
+                    )
+                )
+                return 1
+            if _server_ready(endpoint, api_key=_api_key(args)):
+                _print(f"Server responded on local_probe_endpoint={endpoint}")
+                if args.enable:
+                    probe_args = argparse.Namespace(
+                        endpoint=endpoint,
+                        port=args.port,
+                        api_key=arg_value(args, ArgName.API_KEY),
+                        graph_id=None,
+                    )
+                    if probe_cmd(probe_args) != 0:
+                        return 1
+                    enable_args = argparse.Namespace(
+                        model=served_model_name,
+                        backend_name=args.backend_name,
+                        port=args.port,
+                        endpoint=endpoint,
+                        api_key=arg_value(args, ArgName.API_KEY),
+                        api_key_env=arg_value(args, ArgName.API_KEY_ENV),
+                        alias=arg_value(args, ArgName.ALIAS, []),
+                    )
+                    return enable_cmd(enable_args)
+                return 0
+            time.sleep(2.0)
+        _print(
+            f"Timed out waiting for local_probe_endpoint={endpoint}. "
+            f"Run: dekk apxm vllm docker-logs --port {args.port}"
+        )
+        return 1
+    return 0
+
+
+def _container_name_from_args(args: argparse.Namespace) -> str:
+    if args.container_name:
+        return args.container_name
+    state = _read_container_state(args.port)
+    if state and isinstance(state.get("container_name"), str):
+        return state["container_name"]
+    return _default_container_name(args.port)
+
+
+def docker_stop_cmd(args: argparse.Namespace) -> int:
+    if not _docker_available():
+        _print("Docker is not installed or the daemon is not reachable.")
+        return 1
+    name = _container_name_from_args(args)
+    result = _docker_capture(enum_values([DockerCommand.RM, DockerFlag.FORCE, name]))
+    if result.returncode != 0:
+        if result.stderr.strip():
+            _print(result.stderr.strip())
+        return result.returncode
+    if result.stdout.strip():
+        print(result.stdout.strip())
+    _remove_container_state(args.port)
+    return 0
+
+
+def docker_status_cmd(args: argparse.Namespace) -> int:
+    if not _docker_available():
+        _print("Docker is not installed or the daemon is not reachable.")
+        return 1
+    name = _container_name_from_args(args)
+    result = _docker_capture(
+        enum_values([DockerCommand.INSPECT, DockerFlag.FORMAT, DockerValue.STATUS_FORMAT, name])
+    )
+    if result.returncode == 0 and result.stdout.strip():
+        print(result.stdout.strip().lstrip("/"))
+    else:
+        print(f"name={name} status=not_found")
+    state = _read_container_state(args.port)
+    if state:
+        print(f"state={_container_state_file(args.port)}")
+        print(f"endpoint={state.get('endpoint')}")
+        print(f"model={state.get('model')}")
+        print(f"served_model_name={state.get('served_model_name')}")
+        print(f"backend_name={state.get('backend_name')}")
+    return 0
+
+
+def docker_logs_cmd(args: argparse.Namespace) -> int:
+    if not _docker_available():
+        _print("Docker is not installed or the daemon is not reachable.")
+        return 1
+    name = _container_name_from_args(args)
+    cmd = [DOCKER, DockerCommand.LOGS.value, DockerFlag.TAIL.value, str(args.lines)]
+    if args.follow:
+        cmd.append(DockerFlag.FOLLOW.value)
+    cmd.append(name)
+    return _run(cmd, cwd=REPO_ROOT)
 
 
 def _add_model_args(parser: argparse.ArgumentParser) -> None:
@@ -1143,18 +1574,18 @@ def _add_model_args(parser: argparse.ArgumentParser) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="dekk apxm vllm",
-        description="Operate the repo-local external/vllm fork.",
+        description=(
+            "Operate APXM-vLLM through persistent Slurm services, with Docker "
+            "image-store controls as allocation-local primitives."
+        ),
     )
     subparsers = parser.add_subparsers(dest=ArgName.COMMAND.value, required=True)
-
-    install = subparsers.add_parser(VllmCommand.INSTALL.value, help="Install the repo-local vLLM fork")
-    install.set_defaults(**{ArgName.HANDLER.value: lambda ns, extra: install_cmd(ns)})
 
     help_parser = subparsers.add_parser(VllmCommand.HELP.value, help="Show controller or subcommand help")
     help_parser.add_argument("topic", nargs="?", help="Subcommand to describe")
     help_parser.set_defaults(**{ArgName.HANDLER.value: lambda ns, extra: help_cmd(ns)})
 
-    doctor = subparsers.add_parser(VllmCommand.DOCTOR.value, help="Verify fork, Python packages, GPU, and port")
+    doctor = subparsers.add_parser(VllmCommand.DOCTOR.value, help="Verify APXM-vLLM Docker, fork source, GPU, Slurm, and port readiness")
     doctor.add_argument(
         "--hf-home",
         help=f"HF_HOME value to report/use for Hugging Face-backed refs (or set {ENV_APXM_VLLM_HF_HOME}/{ENV_HF_HOME})",
@@ -1162,57 +1593,205 @@ def build_parser() -> argparse.ArgumentParser:
     doctor.add_argument("--port", type=int, default=DEFAULT_PORT, help="vLLM port")
     doctor.set_defaults(**{ArgName.HANDLER.value: lambda ns, extra: doctor_cmd(ns)})
 
-    download = subparsers.add_parser(VllmCommand.DOWNLOAD.value, help="Download Hugging Face model weights into HF_HOME")
-    download.add_argument(ArgName.MODEL.value, help="Hugging Face model id to download")
-    download.add_argument(
-        "--hf-home",
-        dest=ArgName.HF_HOME.value,
-        help=f"Hugging Face cache root (or set {ENV_APXM_VLLM_HF_HOME}/{ENV_HF_HOME})",
+    docker_build = subparsers.add_parser(
+        VllmCommand.DOCKER_BUILD.value,
+        help="Build a pinned APXM-vLLM GPU runtime Docker image",
     )
-    download.add_argument("--max-workers", type=int, default=DEFAULTS.download_workers, help="Parallel download workers")
-    download.set_defaults(**{ArgName.HANDLER.value: lambda ns, extra: download_cmd(ns)})
+    docker_build.add_argument(
+        "--dockerfile",
+        dest=ArgName.DOCKERFILE.value,
+        default="deploy/vllm/Dockerfile.apxm-gpu",
+        help="Dockerfile used to build the APXM-vLLM image",
+    )
+    docker_build.add_argument(
+        "--image",
+        dest=ArgName.IMAGE.value,
+        help="Image tag to create (default: apxm-vllm-gpu:<apxm>-<vllm>)",
+    )
+    docker_build.add_argument(
+        "--base-image",
+        dest=ArgName.BASE_IMAGE.value,
+        help="Override Dockerfile BASE_IMAGE build arg",
+    )
+    docker_build.set_defaults(**{ArgName.HANDLER.value: lambda ns, extra: docker_build_cmd(ns)})
 
-    serve = subparsers.add_parser(VllmCommand.SERVE.value, help="Serve a model in the foreground")
-    _add_model_args(serve)
-    serve.set_defaults(**{ArgName.HANDLER.value: serve_cmd})
+    docker_save = subparsers.add_parser(
+        VllmCommand.DOCKER_SAVE.value,
+        help="Save a built APXM-vLLM image into the APXM shared image store",
+    )
+    docker_save.add_argument(
+        "--image",
+        dest=ArgName.IMAGE.value,
+        required=True,
+        help="Image tag/digest to save",
+    )
+    docker_save.add_argument(
+        "--archive",
+        dest=ArgName.ARCHIVE.value,
+        help="Archive path (default: .apxm/vllm-images/<image>.docker.tar)",
+    )
+    docker_save.set_defaults(**{ArgName.HANDLER.value: lambda ns, extra: docker_save_cmd(ns)})
 
-    start = subparsers.add_parser(VllmCommand.START.value, help="Start a model server in the background")
-    _add_model_args(start)
-    start.add_argument(
+    docker_load = subparsers.add_parser(
+        VllmCommand.DOCKER_LOAD.value,
+        help="Load an APXM-vLLM image from the APXM shared image store",
+    )
+    docker_load.add_argument(
+        "--image",
+        dest=ArgName.IMAGE.value,
+        required=True,
+        help="Image tag/digest expected after load",
+    )
+    docker_load.add_argument(
+        "--archive",
+        dest=ArgName.ARCHIVE.value,
+        help="Archive path (default: .apxm/vllm-images/<image>.docker.tar)",
+    )
+    docker_load.set_defaults(**{ArgName.HANDLER.value: lambda ns, extra: docker_load_cmd(ns)})
+
+    docker_start = subparsers.add_parser(
+        VllmCommand.DOCKER_START.value,
+        help="Start vLLM from a Docker image inside an owned allocation",
+    )
+    _add_model_args(docker_start)
+    docker_start.add_argument(
+        "--image",
+        dest=ArgName.IMAGE.value,
+        required=True,
+        help="APXM-vLLM image tag/digest",
+    )
+    docker_start.add_argument(
+        "--container-name",
+        dest=ArgName.CONTAINER_NAME.value,
+        help="Docker container name (default: apxm-vllm-<job>-<port> or apxm-vllm-<port>)",
+    )
+    docker_start.add_argument(
         "--wait",
         dest=ArgName.WAIT.value,
         action="store_true",
         default=True,
         help="Wait until /v1/models responds (default)",
     )
-    start.add_argument(
+    docker_start.add_argument(
         "--no-wait",
         dest=ArgName.WAIT.value,
         action="store_false",
-        help="Return after launching the background process",
+        help="Return after launching the container",
     )
-    start.add_argument(
+    docker_start.add_argument(
         "--startup-timeout",
         type=float,
         default=DEFAULT_STARTUP_TIMEOUT_SECONDS,
         help="Seconds to wait when --wait is set",
     )
-    start.set_defaults(**{ArgName.HANDLER.value: start_cmd})
+    docker_start.add_argument(
+        "--enable",
+        action="store_true",
+        help="After readiness, run probe and enable this endpoint as an APXM backend",
+    )
+    docker_start.add_argument(
+        "--alias",
+        action="append",
+        default=[],
+        dest=ArgName.ALIAS.value,
+        help="Alternative routing alias to register when --enable is set",
+    )
+    docker_start.add_argument(
+        "--container-env",
+        action="append",
+        default=[],
+        dest=ArgName.CONTAINER_ENV.value,
+        help="Pass KEY=VALUE, or a named host environment variable, into the container",
+    )
+    docker_start.set_defaults(**{ArgName.HANDLER.value: docker_start_cmd})
 
-    stop = subparsers.add_parser(VllmCommand.STOP.value, help="Stop a repo-local vLLM server for a port")
-    stop.add_argument("--port", type=int, default=DEFAULT_PORT, help="vLLM port")
-    stop.add_argument("--timeout", type=float, default=DEFAULT_STOP_TIMEOUT_SECONDS, help="Seconds before SIGKILL")
-    stop.set_defaults(**{ArgName.HANDLER.value: lambda ns, extra: stop_cmd(ns)})
+    for subcommand, help_text, handler in (
+        (VllmCommand.DOCKER_STOP, "Stop and remove a Dekk-managed vLLM container", docker_stop_cmd),
+        (VllmCommand.DOCKER_STATUS, "Show Dekk-managed vLLM container status", docker_status_cmd),
+        (VllmCommand.DOCKER_LOGS, "Show Dekk-managed vLLM container logs", docker_logs_cmd),
+    ):
+        docker_parser = subparsers.add_parser(subcommand.value, help=help_text)
+        docker_parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="vLLM port")
+        docker_parser.add_argument(
+            "--container-name",
+            dest=ArgName.CONTAINER_NAME.value,
+            help="Docker container name (default: read state for port, then apxm-vllm-<port>)",
+        )
+        if subcommand == VllmCommand.DOCKER_LOGS:
+            docker_parser.add_argument("--lines", type=int, default=DEFAULTS.log_lines, help="Number of lines to show")
+            docker_parser.add_argument("--follow", action="store_true", help="Follow the log")
+        docker_parser.set_defaults(**{ArgName.HANDLER.value: lambda ns, extra, h=handler: h(ns)})
 
-    status = subparsers.add_parser(VllmCommand.STATUS.value, help="Show process and port status")
-    status.add_argument("--port", type=int, default=DEFAULT_PORT, help="vLLM port")
-    status.set_defaults(**{ArgName.HANDLER.value: lambda ns, extra: status_cmd(ns)})
+    service_adopt = subparsers.add_parser(
+        VllmCommand.SERVICE_ADOPT.value,
+        help="Record an existing Slurm APXM-vLLM service job",
+    )
+    service_adopt.add_argument(ArgName.NAME.value, help="Service name")
+    service_adopt.add_argument("--job-id", required=True, help="Existing Slurm job id")
+    service_adopt.add_argument("--image", dest=ArgName.IMAGE.value, help="APXM-vLLM image tag/digest")
+    service_adopt.add_argument("--model", dest=ArgName.MODEL.value, help="Model ref loaded by vLLM")
+    service_adopt.add_argument("--served-model-name", dest=ArgName.SERVED_MODEL_NAME.value, help="Served model id")
+    service_adopt.add_argument("--backend-name", default=DEFAULT_BACKEND_NAME, help="APXM backend name")
+    service_adopt.add_argument("--port", type=int, default=DEFAULT_PORT, help="vLLM port")
+    service_adopt.add_argument("--max-model-len", type=int, help="Recorded MAX_MODEL_LEN for this service")
+    service_adopt.set_defaults(**{ArgName.HANDLER.value: lambda ns, extra: service_adopt_cmd(ns)})
 
-    logs = subparsers.add_parser(VllmCommand.LOGS.value, help="Show background server logs")
-    logs.add_argument("--port", type=int, default=DEFAULT_PORT, help="vLLM port")
-    logs.add_argument("--lines", type=int, default=DEFAULTS.log_lines, help="Number of lines to show")
-    logs.add_argument("--follow", action="store_true", help="Follow the log")
-    logs.set_defaults(**{ArgName.HANDLER.value: lambda ns, extra: logs_cmd(ns)})
+    service_start = subparsers.add_parser(
+        VllmCommand.SERVICE_START.value,
+        help="Submit a persistent Slurm-owned APXM-vLLM service job",
+    )
+    service_start.add_argument(ArgName.NAME.value, help="Service name stored under .apxm/vllm-services")
+    service_start.add_argument(ArgName.MODEL.value, help="vLLM model id or local model path")
+    service_start.add_argument(
+        "--image",
+        dest=ArgName.IMAGE.value,
+        help="APXM-vLLM image tag/digest (default: APXM_VLLM_IMAGE or apxm-vllm-gpu:<apxm>-<vllm>)",
+    )
+    service_start.add_argument("--backend-name", default=DEFAULT_BACKEND_NAME, help="APXM backend name")
+    service_start.add_argument("--port", type=int, default=DEFAULT_PORT, help="vLLM port")
+    service_start.add_argument("--served-model-name", dest=ArgName.SERVED_MODEL_NAME.value, help="Served model id")
+    service_start.add_argument(
+        "--hf-home",
+        dest=ArgName.HF_HOME.value,
+        help=f"Host Hugging Face cache root (or set {ENV_APXM_VLLM_HF_HOME}/{ENV_HF_HOME})",
+    )
+    service_start.add_argument(
+        "--max-model-len",
+        type=int,
+        default=SERVICE_DEFAULTS.max_model_len,
+        help="MAX_MODEL_LEN exported to the Slurm wrapper",
+    )
+    service_start.add_argument(
+        "--startup-timeout",
+        type=float,
+        default=SERVICE_DEFAULTS.startup_timeout_seconds,
+        help="STARTUP_TIMEOUT_SECONDS exported to the Slurm wrapper",
+    )
+    service_start.set_defaults(**{ArgName.HANDLER.value: lambda ns, extra: service_start_cmd(ns)})
+
+    service_status = subparsers.add_parser(
+        VllmCommand.SERVICE_STATUS.value,
+        help="Show a persistent APXM-vLLM service job",
+    )
+    service_status.add_argument(ArgName.NAME.value, help="Service name")
+    service_status.add_argument("--probe", action="store_true", help="Run probe inside the service allocation")
+    service_status.set_defaults(**{ArgName.HANDLER.value: lambda ns, extra: service_status_cmd(ns)})
+
+    service_exec = subparsers.add_parser(
+        VllmCommand.SERVICE_EXEC.value,
+        help="Run a command inside a persistent APXM-vLLM service allocation",
+    )
+    service_exec.add_argument(ArgName.NAME.value, help="Service name")
+    service_exec.add_argument("service_command", nargs=argparse.REMAINDER, help="Command to run after --")
+    service_exec.set_defaults(**{ArgName.HANDLER.value: service_exec_cmd})
+
+    service_stop = subparsers.add_parser(
+        VllmCommand.SERVICE_STOP.value,
+        help="Cancel a persistent APXM-vLLM service job",
+    )
+    service_stop.add_argument(ArgName.NAME.value, help="Service name")
+    service_stop.add_argument("--remove-state", action="store_true", help="Delete the service state file after scancel")
+    service_stop.set_defaults(**{ArgName.HANDLER.value: lambda ns, extra: service_stop_cmd(ns)})
 
     probe = subparsers.add_parser(
         VllmCommand.PROBE.value,
