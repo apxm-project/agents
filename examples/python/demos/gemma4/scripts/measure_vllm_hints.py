@@ -12,6 +12,7 @@ import argparse
 import concurrent.futures
 import json
 import statistics
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -19,7 +20,30 @@ from typing import Any
 from urllib import error, request
 
 
-DEFAULT_BASE_URL = "http://127.0.0.1:8916/v1"
+def _find_repo_root(start: Path) -> Path:
+    for candidate in (start.resolve(), *start.resolve().parents):
+        if (candidate / "Cargo.toml").is_file() and (candidate / "tools").is_dir():
+            return candidate
+    return Path.cwd().resolve()
+
+
+REPO_ROOT = _find_repo_root(Path(__file__))
+TOOLS_SCRIPT_DIR = REPO_ROOT / "tools" / "scripts"
+if str(TOOLS_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(TOOLS_SCRIPT_DIR))
+
+from apxm_vllm_contract import (  # noqa: E402
+    ApiRoute,
+    HttpHeader,
+    HttpMethod,
+    MediaType,
+    VllmDefaults,
+    local_endpoint,
+)
+
+
+DEFAULTS = VllmDefaults()
+DEFAULT_BASE_URL = local_endpoint(host=DEFAULTS.host, port=DEFAULTS.port)
 SELECTED_COUNTERS = (
     "vllm:prefix_cache_queries_total",
     "vllm:prefix_cache_hits_total",
@@ -32,13 +56,14 @@ SELECTED_COUNTERS = (
 
 def _root_url(base_url: str) -> str:
     base = base_url.rstrip("/")
-    if base.endswith("/v1"):
-        return base[:-3]
+    suffix = f"/{ApiRoute.OPENAI_PREFIX.value}"
+    if base.endswith(suffix):
+        return base[: -len(suffix)]
     return base
 
 
 def _json_request(
-    method: str,
+    method: str | HttpMethod,
     url: str,
     payload: dict[str, Any] | None = None,
     timeout: float = 600.0,
@@ -47,8 +72,8 @@ def _json_request(
     req = request.Request(
         url,
         data=data,
-        method=method,
-        headers={"Content-Type": "application/json"},
+        method=method.value if isinstance(method, HttpMethod) else method,
+        headers={HttpHeader.CONTENT_TYPE.value: MediaType.JSON.value},
     )
     try:
         with request.urlopen(req, timeout=timeout) as response:
@@ -71,7 +96,11 @@ def _wait_for_server(base_url: str, timeout_s: float) -> None:
     last_error: Exception | None = None
     while time.monotonic() < deadline:
         try:
-            _json_request("GET", f"{base_url.rstrip('/')}/models", timeout=10.0)
+            _json_request(
+                HttpMethod.GET,
+                f"{base_url.rstrip('/')}/{ApiRoute.MODELS.value}",
+                timeout=10.0,
+            )
             return
         except Exception as exc:  # noqa: BLE001 - report the final connection error.
             last_error = exc
@@ -82,10 +111,17 @@ def _wait_for_server(base_url: str, timeout_s: float) -> None:
 def _model_id(base_url: str, explicit_model: str | None) -> str:
     if explicit_model:
         return explicit_model
-    data = _json_request("GET", f"{base_url.rstrip('/')}/models", timeout=30.0)
+    data = _json_request(
+        HttpMethod.GET,
+        f"{base_url.rstrip('/')}/{ApiRoute.MODELS.value}",
+        timeout=30.0,
+    )
     models = data.get("data") if isinstance(data, dict) else None
     if not models:
-        raise RuntimeError("Unable to discover model id from /v1/models")
+        raise RuntimeError(
+            "Unable to discover model id from "
+            f"/{ApiRoute.OPENAI_PREFIX.value}/{ApiRoute.MODELS.value}"
+        )
     return str(models[0]["id"])
 
 
@@ -167,8 +203,8 @@ def _chat(
 
     start = time.perf_counter()
     response = _json_request(
-        "POST",
-        f"{base_url.rstrip('/')}/chat/completions",
+        HttpMethod.POST,
+        f"{base_url.rstrip('/')}/{ApiRoute.CHAT_COMPLETIONS.value}",
         payload,
         timeout=timeout,
     )
@@ -339,6 +375,34 @@ def run_priority_case(args: argparse.Namespace, model: str) -> dict[str, Any]:
     }
 
 
+def add_contract_aliases(result: dict[str, Any]) -> None:
+    aliases: dict[str, Any] = {}
+    prefix = result.get("prefix")
+    if isinstance(prefix, dict):
+        cold_usage = prefix.get("cold", {}).get("usage", {})
+        warm_usage = prefix.get("warm", {}).get("usage", {})
+        if isinstance(cold_usage, dict):
+            aliases["prefix_cold_cached_input_tokens"] = cold_usage.get("cached_tokens")
+        if isinstance(warm_usage, dict):
+            aliases["prefix_warm_cached_input_tokens"] = warm_usage.get("cached_tokens")
+            aliases["cached_input_tokens"] = warm_usage.get("cached_tokens")
+
+    priority = result.get("priority")
+    if isinstance(priority, dict):
+        aliases["priority_control_critical_duration_ms"] = (
+            priority.get("control", {}).get("critical", {}).get("duration_ms")
+        )
+        aliases["priority_hinted_critical_duration_ms"] = (
+            priority.get("hinted", {}).get("critical", {}).get("duration_ms")
+        )
+        aliases["priority_critical_reduction_ms"] = priority.get("critical_reduction_ms")
+        aliases["priority_critical_reduction_percent"] = priority.get(
+            "critical_reduction_percent"
+        )
+
+    result["contract_aliases"] = aliases
+
+
 def write_summary(path: Path, result: dict[str, Any]) -> None:
     lines = [
         "# Direct vLLM Hint Measurement",
@@ -415,6 +479,7 @@ def main() -> None:
         result["prefix"] = run_prefix_case(args, model)
     if not args.skip_priority:
         result["priority"] = run_priority_case(args, model)
+    add_contract_aliases(result)
 
     if args.output_json:
         args.output_json.parent.mkdir(parents=True, exist_ok=True)

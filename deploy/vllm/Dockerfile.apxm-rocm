@@ -1,0 +1,66 @@
+ARG BASE_IMAGE=vllm/vllm-openai-gpu@sha256:e57241b32b416e1a6ec651cb1eb013f83fc710738d15b6328e0cdc428349f651
+
+FROM ${BASE_IMAGE}
+
+ARG APXM_VLLM_SOURCE_DIR=/opt/apxm-vllm-source
+ARG APXM_VLLM_WORKDIR=/srv/apxm-vllm
+
+LABEL org.opencontainers.image.title="APXM graph-aware vLLM GPU runtime"
+LABEL org.opencontainers.image.description="GPU runtime vLLM image with APXM graph-aware HTTP routes and request hints"
+LABEL apxm.vllm.install_mode="python-source-overlay"
+
+ENV APXM_VLLM_SOURCE_DIR=${APXM_VLLM_SOURCE_DIR}
+ENV APXM_VLLM_WORKDIR=${APXM_VLLM_WORKDIR}
+
+COPY external/vllm/ ${APXM_VLLM_SOURCE_DIR}/
+
+RUN python3 - <<'PY'
+import os
+import shutil
+import sysconfig
+from pathlib import Path
+
+source_root = Path(os.environ["APXM_VLLM_SOURCE_DIR"]).resolve()
+source_package = source_root / "vllm"
+if not source_package.is_dir():
+    raise SystemExit(f"APXM vLLM source package missing: {source_package}")
+
+package_roots = [
+    Path(sysconfig.get_paths()[key]).resolve()
+    for key in ("platlib", "purelib")
+    if key in sysconfig.get_paths()
+]
+target_package = next(
+    (package_root / "vllm" for package_root in package_roots if (package_root / "vllm").is_dir()),
+    None,
+)
+if target_package is None:
+    raise SystemExit(f"installed vLLM package not found under sysconfig roots: {package_roots}")
+
+shutil.copytree(source_package, target_package, dirs_exist_ok=True)
+
+import vllm.entrypoints.openai.apxm.api_router as apxm_router
+import vllm.entrypoints.openai.api_server as api_server
+
+router_path = Path(apxm_router.__file__).resolve()
+api_server_text = Path(api_server.__file__).read_text(encoding="utf-8")
+if not hasattr(apxm_router, "attach_router"):
+    raise SystemExit("APXM router is missing attach_router")
+if source_root in router_path.parents:
+    raise SystemExit(f"APXM router imported from source copy, not installed package: {router_path}")
+if not any(package_root in router_path.parents for package_root in package_roots):
+    raise SystemExit(f"APXM router is outside sysconfig package roots: {router_path}")
+if "vllm.entrypoints.openai.apxm.api_router" not in api_server_text:
+    raise SystemExit("OpenAI API server does not mount the APXM router")
+print("APXM router overlay verified under Python sysconfig package roots")
+PY
+
+RUN mkdir -p "${APXM_VLLM_WORKDIR}"
+
+WORKDIR ${APXM_VLLM_WORKDIR}
+
+ENV TOKENIZERS_PARALLELISM=false
+ENV SAFETENSORS_FAST_GPU=1
+ENV HIP_FORCE_DEV_KERNARG=1
+
+ENTRYPOINT ["python3", "-m", "vllm.entrypoints.openai.api_server"]
