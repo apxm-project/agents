@@ -4,9 +4,9 @@ This is the Dekk-first operator path for the APXM graph-aware vLLM backend.
 The fork lives under `external/vllm`; operators should use `dekk apxm vllm`
 instead of calling the fork's private Python environment directly.
 
-The canonical production shape is a pinned APXM-vLLM GPU runtime container image built
+The canonical production shape is a pinned APXM-vLLM runtime container image built
 from `external/vllm` and launched as a persistent `dekk apxm vllm service-*`
-job. For controlled Slurm/GPU evaluation, Slurm owns the node/GPU allocation
+job. For controlled Slurm evaluation, Slurm owns the node/GPU allocation
 and Dekk owns the container lifecycle inside that allocation. Direct
 `docker-*` commands are allocation-local primitives used by the service wrapper.
 
@@ -32,9 +32,9 @@ are explicitly labeled as examples.
 
 Canonical commands:
 
-- `dekk apxm vllm doctor` verifies the APXM fork source, Docker daemon, GPU runtime
-  device nodes, Docker buildx, Slurm tools, cache settings, and port ownership.
-- `dekk apxm vllm docker-build` builds a GPU runtime APXM-vLLM image from
+- `dekk apxm vllm doctor` verifies the APXM fork source, Docker daemon,
+  Docker buildx, Slurm tools, cache settings, and port ownership.
+- `dekk apxm vllm docker-build` builds an APXM-vLLM image from
   `external/vllm` with `docker buildx build --load` and records APXM/vLLM
   commit and dirty-tree labels. Docker's legacy builder is not a supported
   path.
@@ -70,8 +70,7 @@ dekk apxm vllm doctor --port 8916
 
 `doctor` must report that `external/vllm` contains the APXM router, that the
 OpenAI API server mounts it, that `/v1/apxm/scheduler` exists in the fork
-source, and that Docker, Docker buildx, and the GPU runtime device nodes are
-reachable. If
+source, and that Docker, Docker buildx, and Slurm tools are reachable. If
 `external/vllm` is not at the expected APXM fork, fix the source before building
 an image.
 
@@ -83,9 +82,9 @@ infrastructure path.
 ```bash
 APXM_COMMIT="$(git rev-parse --short HEAD)"
 VLLM_COMMIT="$(git -C external/vllm rev-parse --short HEAD)"
-IMAGE="apxm-vllm-gpu:${APXM_COMMIT}-${VLLM_COMMIT}"
+IMAGE="apxm-vllm-runtime:${APXM_COMMIT}-${VLLM_COMMIT}"
 
-dekk apxm vllm docker-build --image "$IMAGE"
+dekk apxm vllm docker-build --image "$IMAGE" --base-image <VLLM_IMAGE_TAG_OR_DIGEST>
 dekk apxm vllm docker-save --image "$IMAGE"
 ```
 
@@ -99,7 +98,7 @@ inside allocations.
 
 ### 3. Choose A Model And Cache
 
-For the first APXM claim-bearing readiness run on one regular `gpu` node,
+For the first APXM claim-bearing readiness run on one regular accelerator node,
 use:
 
 ```text
@@ -107,7 +106,7 @@ MODEL_REF=openai/gpt-oss-120b
 SERVED_MODEL_ID=gpt-oss-120b
 BACKEND_NAME=vllm-fork
 PORT=8916
-HF_HOME_HOST=/home/apxm/.cache/huggingface-apxm-vllm
+HF_HOME_HOST=$HOME/.cache/huggingface-apxm-vllm
 ```
 
 This is an example model decision, not an APXM default. For local model
@@ -169,9 +168,7 @@ dekk apxm vllm docker-start "$MODEL_REF" \
   --enable-auto-tool-choice \
   --enable \
   --alias benchmark \
-  --max-num-seqs 4 \
-  --attention-backend GPU_AITER_UNIFIED_ATTN \
-  --container-env VLLM_GPU_USE_AITER=1
+  --max-num-seqs 4
 ```
 
 APXM can emit priority and reuse hints, but those hints only become scheduling

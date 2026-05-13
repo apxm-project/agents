@@ -3,7 +3,7 @@
 Status: operational deployment plan, 2026-05-12.
 
 This directory is the Dekk-controlled deployment surface for APXM graph-aware
-vLLM on GPU runtime/GPU.
+vLLM.
 
 ## Builder Policy
 
@@ -43,13 +43,14 @@ normal benchmark loop.
 
 ```bash
 dekk apxm vllm docker-build \
-  --image apxm-vllm-gpu:<tag>
+  --image apxm-vllm-runtime:<tag> \
+  --base-image <VLLM_IMAGE_TAG_OR_DIGEST>
 
 dekk apxm vllm docker-save \
-  --image apxm-vllm-gpu:<tag>
+  --image apxm-vllm-runtime:<tag>
 
 dekk apxm vllm service-start gptoss120b openai/gpt-oss-120b \
-  --image apxm-vllm-gpu:<tag-or-digest> \
+  --image apxm-vllm-runtime:<tag-or-digest> \
   --served-model-name gpt-oss-120b \
   --backend-name vllm-fork \
   --hf-home "$HOME/.cache/huggingface-apxm-vllm" \
@@ -74,9 +75,9 @@ Create the image-store artifact once before submitting jobs:
 ```bash
 APXM_COMMIT="$(git rev-parse --short HEAD)"
 VLLM_COMMIT="$(git -C external/vllm rev-parse --short HEAD)"
-IMAGE="apxm-vllm-gpu:${APXM_COMMIT}-${VLLM_COMMIT}"
+IMAGE="apxm-vllm-runtime:${APXM_COMMIT}-${VLLM_COMMIT}"
 
-dekk apxm vllm docker-build --image "$IMAGE"
+dekk apxm vllm docker-build --image "$IMAGE" --base-image <VLLM_IMAGE_TAG_OR_DIGEST>
 dekk apxm vllm docker-save --image "$IMAGE"
 ```
 

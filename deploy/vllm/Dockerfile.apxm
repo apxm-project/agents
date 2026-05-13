@@ -1,12 +1,12 @@
-ARG BASE_IMAGE=vllm/vllm-openai-gpu@sha256:e57241b32b416e1a6ec651cb1eb013f83fc710738d15b6328e0cdc428349f651
+ARG BASE_IMAGE
 
 FROM ${BASE_IMAGE}
 
 ARG APXM_VLLM_SOURCE_DIR=/opt/apxm-vllm-source
 ARG APXM_VLLM_WORKDIR=/srv/apxm-vllm
 
-LABEL org.opencontainers.image.title="APXM graph-aware vLLM GPU runtime"
-LABEL org.opencontainers.image.description="GPU runtime vLLM image with APXM graph-aware HTTP routes and request hints"
+LABEL org.opencontainers.image.title="APXM graph-aware vLLM"
+LABEL org.opencontainers.image.description="vLLM image with APXM graph-aware HTTP routes and request hints"
 LABEL apxm.vllm.install_mode="python-source-overlay"
 
 ENV APXM_VLLM_SOURCE_DIR=${APXM_VLLM_SOURCE_DIR}
@@ -61,6 +61,5 @@ WORKDIR ${APXM_VLLM_WORKDIR}
 
 ENV TOKENIZERS_PARALLELISM=false
 ENV SAFETENSORS_FAST_GPU=1
-ENV HIP_FORCE_DEV_KERNARG=1
 
 ENTRYPOINT ["python3", "-m", "vllm.entrypoints.openai.api_server"]

@@ -15,10 +15,10 @@ name = "vllm-fork"
 type = "local"
 protocol = "vllm"
 endpoint = "http://localhost:8916/v1"
-api_key = "SECRET"
+api_key = "env:APXM_TEST_BACKEND_KEY"
 
 [backends.headers]
-Authorization = "Bearer SECRET"
+Authorization = "Bearer <redacted>"
 
 [[backends.models]]
 id = "served-model"

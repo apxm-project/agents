@@ -126,7 +126,6 @@ class ToolName(str, Enum):
     DOCKER = "docker"
     HOSTNAME = "hostname"
     LSOF = "lsof"
-    GPU_SMI = "gpu-smi"
     SBATCH = "sbatch"
     SCANCEL = "scancel"
     SINFO = "sinfo"
@@ -257,17 +256,6 @@ class RepoPath(str, Enum):
 
     EXTERNAL = "external"
     VLLM = "vllm"
-
-
-class RocmSmiFlag(str, Enum):
-    """gpu-smi flags used by readiness and evidence capture."""
-
-    JSON = "--json"
-    SHOW_MEMORY_INFO = "--showmeminfo"
-    SHOW_PRODUCT_NAME = "--showproductname"
-    SHOW_TEMP = "--showtemp"
-    SHOW_USE = "--showuse"
-    VRAM = "vram"
 
 
 class ArgName(str, Enum):

@@ -17,10 +17,10 @@ path:
 
 ```bash
 dekk apxm vllm doctor
-dekk apxm vllm docker-build --image apxm-vllm-gpu:<tag>
-dekk apxm vllm docker-save --image apxm-vllm-gpu:<tag>
+dekk apxm vllm docker-build --image apxm-vllm-runtime:<tag> --base-image <VLLM_IMAGE_TAG_OR_DIGEST>
+dekk apxm vllm docker-save --image apxm-vllm-runtime:<tag>
 dekk apxm vllm service-start <NAME> <MODEL_REF> \
-  --image apxm-vllm-gpu:<tag> \
+  --image apxm-vllm-runtime:<tag> \
   --served-model-name <SERVED_MODEL_ID>
 dekk apxm vllm service-status <NAME> --probe
 dekk apxm vllm service-exec <NAME> -- dekk apxm execute <GRAPH.py>

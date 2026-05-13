@@ -51,10 +51,10 @@ the Dekk-controlled Docker image path:
 
 ```bash
 dekk apxm vllm doctor
-dekk apxm vllm docker-build --image apxm-vllm-gpu:<TAG>
-dekk apxm vllm docker-save --image apxm-vllm-gpu:<TAG>
+dekk apxm vllm docker-build --image apxm-vllm-runtime:<TAG> --base-image <VLLM_IMAGE_TAG_OR_DIGEST>
+dekk apxm vllm docker-save --image apxm-vllm-runtime:<TAG>
 dekk apxm vllm service-start <NAME> <MODEL_REF> \
-  --image apxm-vllm-gpu:<TAG> \
+  --image apxm-vllm-runtime:<TAG> \
   --served-model-name <SERVED_MODEL_ID> \
   --max-model-len 32768
 dekk apxm vllm service-exec <NAME> -- dekk apxm execute <GRAPH.py>

@@ -78,7 +78,6 @@ from apxm_vllm_contract import (  # noqa: E402
     EnvVar,
     HttpHeader,
     MediaType,
-    RocmSmiFlag,
     ToolName,
     VllmDefaults,
     build_layout,
@@ -685,7 +684,7 @@ class EndpointEvidence:
 @dataclass(frozen=True)
 class HostEvidence:
     hostname: Any
-    gpu_smi: Any
+    gpu_info: Any
 
 
 @dataclass(frozen=True)
@@ -1562,20 +1561,7 @@ def _write_evidence_manifest(
         ),
         host=HostEvidence(
             hostname=_command_json([ToolName.HOSTNAME.value]),
-            gpu_smi=_command_json(
-                enum_values(
-                    [
-                        ToolName.GPU_SMI,
-                        RocmSmiFlag.SHOW_PRODUCT_NAME,
-                        RocmSmiFlag.SHOW_MEMORY_INFO,
-                        RocmSmiFlag.VRAM,
-                        RocmSmiFlag.SHOW_USE,
-                        RocmSmiFlag.SHOW_TEMP,
-                        RocmSmiFlag.JSON,
-                    ]
-                ),
-                timeout=60.0,
-            ),
+            gpu_info=None,
         ),
     )
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
