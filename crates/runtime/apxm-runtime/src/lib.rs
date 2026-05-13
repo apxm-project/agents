@@ -27,6 +27,7 @@ pub mod agent_pool;
 pub mod capability;
 mod constants;
 pub mod context_stack;
+mod dispatch;
 pub mod executor;
 pub mod flow_names;
 pub mod graph_lifecycle;
