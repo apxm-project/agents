@@ -1,7 +1,9 @@
 # External vLLM Fork
 
-This note documents the source-level contract between APXM and the repo-local
-graph-aware vLLM fork. Operator setup lives in
+This note documents the source-level contract between APXM and the APXM
+graph-aware vLLM fork. In this checkout the source normally lives at
+`external/vllm`; claim-bearing evaluation may also run an equivalent container
+image built from that fork. Operator setup lives in
 [`backends/vllm.md`](backends/vllm.md); do not duplicate bring-up steps here.
 
 ## Scope
@@ -10,23 +12,40 @@ APXM is backend-agnostic. vLLM is an optional LLM backend implemented under the
 normal backend registry. The fork lives at `external/vllm` and adds graph-aware
 OpenAI-compatible endpoints that stock vLLM does not expose.
 
-Use the APXM controller for normal operations:
+Use Dekk for normal operations. Dockerized APXM-vLLM is the canonical serving
+path:
 
 ```bash
-dekk apxm vllm install
 dekk apxm vllm doctor
-dekk apxm vllm start <MODEL_REF> --wait
-dekk apxm vllm probe
-dekk apxm vllm enable <SERVED_MODEL_ID>
+dekk apxm vllm docker-build --image apxm-vllm-gpu:<tag>
+dekk apxm vllm docker-save --image apxm-vllm-gpu:<tag>
+dekk apxm vllm service-start <NAME> <MODEL_REF> \
+  --image apxm-vllm-gpu:<tag> \
+  --served-model-name <SERVED_MODEL_ID>
+dekk apxm vllm service-status <NAME> --probe
+dekk apxm vllm service-exec <NAME> -- dekk apxm execute <GRAPH.py>
 ```
 
-Direct calls into the fork's private Python environment are troubleshooting
-steps, not the supported workflow.
+`docker-build` uses Docker BuildKit/buildx. Do not build APXM-vLLM images with
+Docker's legacy builder.
+
+For containerized operation, the requirement is contract equivalence: the image
+must expose the same HTTP routes and request-hint behavior as the source fork,
+and APXM should register it through the Dekk service wrapper or, for an
+already-owned allocation, `dekk apxm vllm probe --endpoint ...` and
+`dekk apxm vllm enable --endpoint ...`.
 
 ## Fork Source
 
 - Submodule path: `external/vllm`
-- Expected fork branch: `apxm`
+- Expected fork branch: `apxm`, but commit and router verification are the
+  source of truth for evaluation evidence.
+- Current source-of-truth commit in this workspace:
+  `fe6d35e45bd4624eb55ad9b695b3b7c11b94a99a` (`origin/apxm` as verified on
+  2026-05-12).
+- This workspace currently carries local APXM contract edits on top of that
+  commit for `/v1/apxm/scheduler`; image labels and evaluation records must
+  preserve the dirty-tree status until those edits are committed upstream.
 - Operator runbook: `docs/backends/vllm.md`
 - Rust backend: `crates/runtime/apxm-backends/src/llm/backends/vllm/backend.rs`
 
@@ -43,6 +62,16 @@ The fork exposes these APXM graph endpoints:
 - `POST /v1/apxm/graphs/register`
 - `GET /v1/apxm/graphs/{graph_id}`
 - `DELETE /v1/apxm/graphs/{graph_id}`
+
+The fork should also expose the scheduler-capability endpoint:
+
+- `GET /v1/apxm/scheduler`
+
+The scheduler endpoint returns the live vLLM scheduling policy. APXM treats the
+graph endpoints and scheduler endpoint as required for the graph-aware `vllm`
+backend. A response with `policy != "priority"` means APXM critical-path
+priority hints can round-trip without reordering admission, so `dekk apxm vllm
+probe` and `enable` reject it.
 
 Node inference still uses the OpenAI-compatible chat route:
 
@@ -95,5 +124,8 @@ Do not treat a backend as graph-aware when any of these are true:
 - `dekk apxm vllm enable <SERVED_MODEL_ID>` cannot find the served id in
   `/v1/models`.
 - The workload routes to a different backend or model than the one enabled.
+
+Do not claim priority-hint improvement when `/v1/apxm/scheduler` is missing or
+does not report priority mode for the run.
 
 At the APXM to vLLM boundary, use the term `graph`, not `workflow`.

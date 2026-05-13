@@ -41,11 +41,11 @@ python3 examples/python/benchmarks/benchmark_e2e.py --compile-only
 python3 examples/python/benchmarks/benchmark_e2e.py \
   --graph examples/python/benchmarks/stress/demo_code_critique.py \
   --iterations 5 \
-  --output examples/python/benchmarks/stress/results/demo_code_critique.csv
+  --output .apxm/benchmarks/results/stress/demo_code_critique.csv
 
 # Markdown report from a benchmark CSV
 python3 examples/python/benchmarks/comparison_report.py \
-  examples/python/benchmarks/stress/results/demo_code_critique.csv
+  .apxm/benchmarks/results/stress/demo_code_critique.csv
 ```
 
 ## Notes

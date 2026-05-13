@@ -14,7 +14,7 @@ small set of TypeScript/CSS for the GUI. The supported install path is
 ```bash
 git clone https://github.com/randreshg/apxm
 cd apxm
-git submodule update --init --recursive    # optional repo-local vLLM fork
+git submodule update --init --recursive    # APXM-vLLM fork under external/vllm
 dekk apxm install --no-interactive
 dekk apxm doctor
 ```
@@ -43,17 +43,21 @@ dekk apxm ops list
 If you change the AIS dialect, run `dekk apxm regen` (or the equivalent
 codegen target) and commit the regenerated files alongside your change.
 
-## Working on the optional vLLM fork
+## Working on APXM-vLLM
 
 The repo includes [`external/vllm`](external/vllm) as a git submodule pointing
-at the graph-aware vLLM fork APXM uses. It is optional — APXM works with stock
-vLLM, OpenAI-compatible endpoints, or a registered local backend. To opt in:
+at the graph-aware vLLM fork APXM uses. The supported APXM-vLLM serving path is
+the Dekk-controlled Docker image path:
 
 ```bash
-dekk apxm vllm install
 dekk apxm vllm doctor
-dekk apxm vllm start <MODEL_REF> --served-model-name <SERVED_MODEL_ID> --wait
-dekk apxm vllm enable <SERVED_MODEL_ID>
+dekk apxm vllm docker-build --image apxm-vllm-gpu:<TAG>
+dekk apxm vllm docker-save --image apxm-vllm-gpu:<TAG>
+dekk apxm vllm service-start <NAME> <MODEL_REF> \
+  --image apxm-vllm-gpu:<TAG> \
+  --served-model-name <SERVED_MODEL_ID> \
+  --max-model-len 32768
+dekk apxm vllm service-exec <NAME> -- dekk apxm execute <GRAPH.py>
 ```
 
 See [`docs/external-vllm-fork.md`](docs/external-vllm-fork.md) for the

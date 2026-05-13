@@ -42,19 +42,22 @@ Install Dekk first if it is not already available on your machine.
 ```bash
 git clone https://github.com/randreshg/apxm
 cd apxm
-git submodule update --init --recursive   # optional: repo-local vLLM fork under external/vllm
+git submodule update --init --recursive   # APXM-vLLM fork under external/vllm
 dekk apxm install --no-interactive
 dekk apxm doctor
 ```
 
-**Optional repo-local vLLM fork:**
+**APXM-vLLM image path:**
 ```bash
-# Stock vLLM does not consume APXM's vLLM extension hints.
-dekk apxm vllm install
 dekk apxm vllm doctor
-dekk apxm vllm start <MODEL_REF> --served-model-name <SERVED_MODEL_ID> --wait
-dekk apxm vllm probe
-dekk apxm vllm enable <SERVED_MODEL_ID>
+dekk apxm vllm docker-build --image apxm-vllm-gpu:<TAG>
+dekk apxm vllm docker-save --image apxm-vllm-gpu:<TAG>
+dekk apxm vllm service-start <NAME> <MODEL_REF> \
+  --image apxm-vllm-gpu:<TAG> \
+  --served-model-name <SERVED_MODEL_ID> \
+  --max-model-len 32768
+dekk apxm vllm service-status <NAME> --probe
+dekk apxm vllm service-exec <NAME> -- dekk apxm execute <GRAPH.py>
 ```
 
 **What the installer does:**
@@ -89,9 +92,10 @@ dekk apxm execute <file.air> --trace debug
 dekk apxm run <file.apxmobj>
 dekk apxm validate <file.air>
 dekk apxm analyze <file.air>
-dekk apxm vllm install
-dekk apxm vllm start <MODEL_REF> --served-model-name <SERVED_MODEL_ID> --wait
-dekk apxm vllm enable <SERVED_MODEL_ID>
+dekk apxm vllm doctor
+dekk apxm vllm docker-build --image apxm-vllm-gpu:<TAG>
+dekk apxm vllm docker-save --image apxm-vllm-gpu:<TAG>
+dekk apxm vllm service-start <NAME> <MODEL_REF> --image apxm-vllm-gpu:<TAG> --served-model-name <SERVED_MODEL_ID> --max-model-len 32768
 ```
 
 Run `dekk apxm --help` for complete command reference.

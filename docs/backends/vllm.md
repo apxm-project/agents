@@ -4,6 +4,12 @@ This is the Dekk-first operator path for the APXM graph-aware vLLM backend.
 The fork lives under `external/vllm`; operators should use `dekk apxm vllm`
 instead of calling the fork's private Python environment directly.
 
+The canonical production shape is a pinned APXM-vLLM GPU runtime container image built
+from `external/vllm` and launched as a persistent `dekk apxm vllm service-*`
+job. For controlled Slurm/GPU evaluation, Slurm owns the node/GPU allocation
+and Dekk owns the container lifecycle inside that allocation. Direct
+`docker-*` commands are allocation-local primitives used by the service wrapper.
+
 ## Scope
 
 APXM is model-agnostic. vLLM loads a model reference, APXM registers the served
@@ -16,80 +22,156 @@ Use these terms consistently:
   provider-backed reference that vLLM supports, or a local model directory.
 - `<SERVED_MODEL_ID>` is what `/v1/models` reports. APXM stores this value for
   routing.
-- `<HF_MODEL_ID>` is only for `dekk apxm vllm download`, which pre-populates a
-  Hugging Face cache. Skip it for local model directories and non-Hugging Face
-  model sources.
+- `<HF_MODEL_ID>` is only for Hugging Face-hosted models. Dockerized vLLM can
+  populate the mounted cache on first start.
 
 There is no APXM/vLLM default model. Examples must use placeholders unless they
 are explicitly labeled as examples.
 
 ## Dekk Commands
 
-- `dekk apxm vllm install` builds the repo-local fork environment.
-- `dekk apxm vllm help [subcommand]` shows detailed controller options.
-- `dekk apxm vllm doctor` verifies imports, package versions, GPU visibility,
-  and port ownership.
-- `dekk apxm vllm download <HF_MODEL_ID>` downloads Hugging Face weights into
-  the configured cache. Pass `--hf-home`, set `APXM_VLLM_HF_HOME`, or let
-  Hugging Face use its own default cache.
-- `dekk apxm vllm start <MODEL_REF>` starts the forked server in the background.
-- `dekk apxm vllm serve <MODEL_REF>` runs the forked server in the foreground.
-- `dekk apxm vllm probe` checks `/v1/models` and the APXM graph endpoints.
-- `dekk apxm vllm enable <SERVED_MODEL_ID>` records the running endpoint and
+Canonical commands:
+
+- `dekk apxm vllm doctor` verifies the APXM fork source, Docker daemon, GPU runtime
+  device nodes, Docker buildx, Slurm tools, cache settings, and port ownership.
+- `dekk apxm vllm docker-build` builds a GPU runtime APXM-vLLM image from
+  `external/vllm` with `docker buildx build --load` and records APXM/vLLM
+  commit and dirty-tree labels. Docker's legacy builder is not a supported
+  path.
+- `dekk apxm vllm service-start <NAME> <MODEL_REF>` submits a persistent
+  Slurm-owned APXM-vLLM service job.
+- `dekk apxm vllm service-status <NAME> --probe` checks the Slurm job and
+  probes the APXM-vLLM endpoint from inside that allocation.
+- `dekk apxm vllm service-exec <NAME> -- <command>` runs APXM commands inside
+  the service allocation through `srun --jobid <service-job> --overlap`.
+- `dekk apxm vllm docker-start <MODEL_REF>` starts Dockerized vLLM only when
+  the operator already owns the allocation.
+- `dekk apxm vllm probe` checks `/v1/models`, the APXM graph routes, and
+  requires the scheduler capability route to report `policy = "priority"`.
+- `dekk apxm vllm enable <SERVED_MODEL_ID>` records the probed endpoint and
   served model id in APXM backend config.
-- `dekk apxm vllm status`, `logs`, and `stop` manage the repo-local server.
+- `dekk apxm vllm help [subcommand]` shows detailed controller options.
+
+Dockerized vLLM communicates with APXM over HTTP. APXM stores an endpoint such
+as `http://127.0.0.1:8916/v1`, uses OpenAI-compatible `/chat/completions` for
+inference, and uses `/apxm/*` routes for graph-aware registration, status,
+release, and scheduler capability checks. Docker is process isolation, not a
+separate APXM backend protocol.
 
 ## Bring Up A Backend
 
 Run these commands from the APXM repo root.
 
-### 1. Install And Verify The Fork
+### 1. Verify The Host And Fork
 
 ```bash
-dekk apxm vllm install
 dekk apxm vllm doctor --port 8916
 ```
 
-`doctor` must report that the editable vLLM install and APXM router resolve
-under `external/vllm`. If it points at a wheel, `/tmp` checkout, or unrelated
-environment, stop and reinstall through Dekk.
+`doctor` must report that `external/vllm` contains the APXM router, that the
+OpenAI API server mounts it, that `/v1/apxm/scheduler` exists in the fork
+source, and that Docker, Docker buildx, and the GPU runtime device nodes are
+reachable. If
+`external/vllm` is not at the expected APXM fork, fix the source before building
+an image.
 
-### 2. Choose A Model Reference
+### 2. Build The APXM-vLLM Image
 
-If the model is hosted on Hugging Face and you want to pre-populate the cache:
+Use an explicit image tag or digest. `latest` is not part of the APXM
+infrastructure path.
 
 ```bash
-dekk apxm vllm download <HF_MODEL_ID> --hf-home /path/to/hf-cache
+APXM_COMMIT="$(git rev-parse --short HEAD)"
+VLLM_COMMIT="$(git -C external/vllm rev-parse --short HEAD)"
+IMAGE="apxm-vllm-gpu:${APXM_COMMIT}-${VLLM_COMMIT}"
+
+dekk apxm vllm docker-build --image "$IMAGE"
+dekk apxm vllm docker-save --image "$IMAGE"
 ```
 
-For local model directories, skip `download` and pass the directory path to
-`start`.
+The build command fails early if the fork contract is absent. For final
+evaluation, record the image id or registry digest after build. If Docker
+buildx is unavailable, install the host's `docker-buildx` package/plugin rather
+than using Docker's legacy builder.
+`docker-save` writes the APXM-managed image artifact under
+`.apxm/vllm-images`; Slurm launchers load that artifact and do not build images
+inside allocations.
 
-### 3. Start The Server
+### 3. Choose A Model And Cache
 
-```bash
-dekk apxm vllm start <MODEL_REF> \
-  --port 8916 \
-  --wait
+For the first APXM claim-bearing readiness run on one regular `gpu` node,
+use:
+
+```text
+MODEL_REF=openai/gpt-oss-120b
+SERVED_MODEL_ID=gpt-oss-120b
+BACKEND_NAME=vllm-fork
+PORT=8916
+HF_HOME_HOST=/home/apxm/.cache/huggingface-apxm-vllm
 ```
 
-Add `--served-model-name <SERVED_MODEL_ID>` when you want the server to expose
-a stable model id different from `<MODEL_REF>`. Add `--hf-home /path/to/cache`
-only for Hugging Face-backed model refs when you do not want the Hugging Face
-default cache. GPU and memory flags such as `--gpus`,
-`--tensor-parallel-size`, `--gpu-memory-utilization`, and `--max-model-len` are
-passed through to vLLM.
+This is an example model decision, not an APXM default. For local model
+directories, set `MODEL_REF` to the filesystem path and set
+`SERVED_MODEL_ID` to the id reported by `/v1/models`.
+Use `openai/gpt-oss-20b` only for a fast smoke/debug run when image or
+model-cache bring-up is the bottleneck.
 
-For graph-aware latency experiments, launch the backend with vLLM prefix caching
-and priority scheduling enabled:
+### 4. Start The Dockerized Server
+
+For graph-aware latency experiments, prefer a persistent Slurm service job over
+a one-off model server:
 
 ```bash
-dekk apxm vllm start <MODEL_REF> \
-  --served-model-name <SERVED_MODEL_ID> \
+dekk apxm vllm service-start gptoss120b "$MODEL_REF" \
+  --image "$IMAGE" \
+  --served-model-name "$SERVED_MODEL_ID" \
+  --backend-name "$BACKEND_NAME" \
+  --hf-home "$HF_HOME_HOST" \
+  --port "$PORT" \
+  --max-model-len 32768
+
+dekk apxm vllm service-status gptoss120b --probe
+dekk apxm vllm service-exec gptoss120b -- \
+  python3 examples/python/benchmarks/benchmark_e2e.py --iterations 3
+```
+
+`service-exec` runs commands through `srun --jobid <service-job> --overlap`.
+That keeps APXM on the same node as the Dockerized vLLM server, so the backend
+endpoint can remain `http://127.0.0.1:$PORT/v1`. Reuse the same service for
+multiple benchmark campaigns; start a new service only when changing the image,
+model, context length, or server startup contract. A client in an arbitrary
+different allocation should not assume the compute-node host port is reachable;
+`service-exec` is the portable path because it runs the client on the service
+node.
+
+For a direct container start inside an already-owned allocation, launch with
+priority scheduling, prefix caching, usage details, and constrained queue
+pressure:
+
+```bash
+mkdir -p "$HF_HOME_HOST"
+
+dekk apxm vllm docker-start "$MODEL_REF" \
+  --image "$IMAGE" \
+  --served-model-name "$SERVED_MODEL_ID" \
+  --backend-name "$BACKEND_NAME" \
+  --hf-home "$HF_HOME_HOST" \
+  --port "$PORT" \
+  --tensor-parallel-size 8 \
+  --gpu-memory-utilization 0.90 \
+  --max-model-len 32768 \
   --enable-prefix-caching \
   --scheduling-policy priority \
-  --port 8916 \
-  --wait
+  --enable-prompt-tokens-details \
+  --enable-force-include-usage \
+  --reasoning-parser openai_gptoss \
+  --tool-call-parser openai \
+  --enable-auto-tool-choice \
+  --enable \
+  --alias benchmark \
+  --max-num-seqs 4 \
+  --attention-backend GPU_AITER_UNIFIED_ATTN \
+  --container-env VLLM_GPU_USE_AITER=1
 ```
 
 APXM can emit priority and reuse hints, but those hints only become scheduling
@@ -97,11 +179,16 @@ or cache behavior when the backend is configured to honor the corresponding
 vLLM features. Treat prefix-cache counters as latency evidence, not
 provider-visible token or dollar-cost reduction by themselves.
 
-For reasoning-capable models, pass the parser and template settings explicitly.
-APXM does not infer these from the served model id:
+Unknown trailing flags are passed through to vLLM, so `--max-num-seqs 4` is
+intentional. Dockerized vLLM binds inside the container to `0.0.0.0:$PORT`, uses
+host networking, and is registered by APXM as `http://127.0.0.1:$PORT/v1`.
+
+For reasoning-capable models, pass parser and template settings explicitly when
+the model requires them. APXM does not infer these from the served model id:
 
 ```bash
-dekk apxm vllm start <MODEL_REF> \
+dekk apxm vllm docker-start "$MODEL_REF" \
+  --image "$IMAGE" \
   --served-model-name <SERVED_MODEL_ID> \
   --reasoning-parser <REASONING_PARSER> \
   --default-chat-template-kwargs '{"enable_thinking": true}' \
@@ -119,20 +206,28 @@ reasoning-token detail is only reported when the served API response includes a
 provider detail field such as `completion_tokens_details.reasoning_tokens` or
 `output_tokens_details.reasoning_tokens`.
 
-### 4. Probe The Running Server
+### 5. Probe The Running Server
 
 ```bash
-dekk apxm vllm probe --port 8916
+dekk apxm vllm probe --endpoint "http://127.0.0.1:${PORT}/v1"
 ```
 
 `probe` checks `/v1/models`, confirms the APXM graph router is mounted, and
 round-trips a temporary graph registration/status/release. A 404 from the APXM
 graph route means the process is not the APXM fork.
 
-### 5. Enable APXM Routing
+The runtime backend also probes `GET /v1/apxm/scheduler` as capability evidence
+for priority scheduling. Missing scheduler information does not invalidate graph
+registration, but a priority-latency claim requires evidence that the scheduler
+policy is `priority`.
+
+### 6. Enable APXM Routing
 
 ```bash
-dekk apxm vllm enable <SERVED_MODEL_ID> --port 8916
+dekk apxm vllm enable "$SERVED_MODEL_ID" \
+  --backend-name "$BACKEND_NAME" \
+  --endpoint "http://127.0.0.1:${PORT}/v1" \
+  --alias benchmark
 ```
 
 `enable` verifies that `/v1/models` reports the served model id, verifies the
@@ -166,10 +261,12 @@ code.
 ## Example: Local Directory
 
 ```bash
-dekk apxm vllm start /models/my-model \
+dekk apxm vllm docker-start /models/my-model \
+  --image "$IMAGE" \
   --served-model-name my-model-local \
   --port 8916 \
-  --wait
+  --wait \
+  --enable
 dekk apxm vllm probe --port 8916
 dekk apxm vllm enable my-model-local --port 8916
 ```
@@ -179,12 +276,13 @@ Do not enable the filesystem path unless `/v1/models` reports that exact string.
 ## Example: Hugging Face Cache
 
 ```bash
-dekk apxm vllm download <HF_MODEL_ID> --hf-home /path/to/hf-cache
-dekk apxm vllm start <HF_MODEL_ID> \
+dekk apxm vllm docker-start <HF_MODEL_ID> \
+  --image "$IMAGE" \
   --served-model-name <SERVED_MODEL_ID> \
   --hf-home /path/to/hf-cache \
   --port 8916 \
-  --wait
+  --wait \
+  --enable
 dekk apxm vllm probe --port 8916
 dekk apxm vllm enable <SERVED_MODEL_ID> --port 8916
 ```

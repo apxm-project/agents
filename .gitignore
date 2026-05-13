@@ -88,4 +88,6 @@ examples/python/demos/gemma4/runs/
 *.key
 *.pem
 apxm.toml.local
-
+.venv/
+.cursor*/
+.tmp/

@@ -4,8 +4,8 @@
 Usage:
     python3 examples/python/demos/gemma4/scripts/run_case.py \\
         --case context-pruning \\
-        --run-dir <path>/runs/<UTC>-three-cases \\
-        --apxm-config <path>/runs/<UTC>-three-cases/generated/config.toml
+        --run-dir <repo>/.apxm/evaluation/gemma4/runs/<UTC>-three-cases \\
+        --apxm-config <repo>/.apxm/evaluation/gemma4/runs/<UTC>-three-cases/generated/config.toml
 
 This wrapper hides the path to the shared `benchmark_e2e.py` harness so
 operators never need to know about anything outside `demos/gemma4/`. Each

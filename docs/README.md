@@ -124,8 +124,8 @@ unless the note explicitly says they are implemented.
 
 ## Backend Guides
 
-- [backends/vllm.md](backends/vllm.md) — Dekk-first setup, registration, and
-  metrics guidance for the repo-local graph-aware vLLM fork
+- [backends/vllm.md](backends/vllm.md) — Dekk-first Docker/image-store setup,
+  registration, and metrics guidance for the graph-aware APXM-vLLM fork
 
 ## Trying It Out
 
