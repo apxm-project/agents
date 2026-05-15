@@ -146,6 +146,8 @@ pub mod observability {
         pub aggregate: AggregatedMetrics,
         pub per_backend: std::collections::HashMap<String, AggregatedMetrics>,
         pub graph_status_snapshots: Vec<apxm_core::types::GraphStatusSnapshot>,
+        pub graph_capabilities:
+            std::collections::HashMap<String, apxm_core::types::BackendGraphCapabilities>,
     }
 
     impl apxm_core::metrics::MetricsSource for BackendMetricsSource {
@@ -160,6 +162,7 @@ pub mod observability {
             if self.aggregate.total_requests == 0
                 && self.per_backend.is_empty()
                 && self.graph_status_snapshots.is_empty()
+                && self.graph_capabilities.is_empty()
             {
                 return serde_json::Value::Null;
             }
@@ -182,6 +185,12 @@ pub mod observability {
                 map.insert(
                     metrics_keys::BACKENDS_GRAPHS.to_owned(),
                     serde_json::Value::Array(graph_statuses),
+                );
+            }
+            if !self.graph_capabilities.is_empty() {
+                map.insert(
+                    metrics_keys::BACKENDS_GRAPH_CAPABILITIES.to_owned(),
+                    serde_json::to_value(&self.graph_capabilities).unwrap_or_default(),
                 );
             }
             serde_json::Value::Object(map)

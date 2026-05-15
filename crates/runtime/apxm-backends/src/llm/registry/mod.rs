@@ -10,8 +10,8 @@ use crate::llm::backends::{LLMBackend, LLMRequest, LLMResponse, StreamChunk};
 use crate::llm::catalog::default_model_for_protocol;
 use crate::llm::rate_limit::{RateLimitConfig, RateLimiter, SystemClock};
 use anyhow::{Context as AnyhowContext, Result};
-use apxm_core::types::AISOperationType;
 use apxm_core::types::TokenUsage;
+use apxm_core::types::{AISOperationType, BackendGraphCapabilities};
 use dashmap::DashMap;
 use futures::stream::{Stream, StreamExt};
 use std::collections::HashMap;
@@ -27,8 +27,8 @@ mod resolver;
 pub use health::{HealthMonitor, HealthStatus};
 #[allow(unused_imports)]
 pub use latency_profile::{
-    BackendLatencyProfile, LatencyProfileStore, DEFAULT_LATENCY_EWMA_ALPHA,
-    LATENCY_PROFILE_MIN_SAMPLES,
+    BackendLatencyProfile, DEFAULT_LATENCY_EWMA_ALPHA, LATENCY_PROFILE_MIN_SAMPLES,
+    LatencyProfileStore,
 };
 pub use resolver::{RoutingStrategy, SelectionCriteria};
 
@@ -721,6 +721,14 @@ impl LLMRegistry {
             .collect()
     }
 
+    /// Snapshot graph-aware capability evidence for every registered backend.
+    pub fn graph_capabilities(&self) -> HashMap<String, BackendGraphCapabilities> {
+        self.backend_snapshot()
+            .into_iter()
+            .map(|(name, backend)| (name, backend.graph_capabilities()))
+            .collect()
+    }
+
     /// Collect graph status from all graph-aware backends before releasing.
     ///
     /// Folds in pin peaks recorded by `start_pin_polling` for the same
@@ -806,9 +814,11 @@ impl LLMRegistry {
     ) -> Option<crate::llm::observability::BackendMetricsSource> {
         let aggregate = self.metrics.aggregate();
         let per_backend = self.metrics.aggregate_per_backend();
+        let graph_capabilities = self.graph_capabilities();
         if aggregate.total_requests == 0
             && per_backend.is_empty()
             && graph_status_snapshots.is_empty()
+            && graph_capabilities.is_empty()
         {
             return None;
         }
@@ -816,6 +826,7 @@ impl LLMRegistry {
             aggregate,
             per_backend,
             graph_status_snapshots,
+            graph_capabilities,
         })
     }
 

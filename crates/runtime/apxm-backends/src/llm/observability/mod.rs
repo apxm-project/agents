@@ -4,7 +4,7 @@
 
 use apxm_core::constants::session::metrics_keys;
 use apxm_core::metrics::MetricsSource;
-use apxm_core::types::{GraphStatusSnapshot, TokenUsage};
+use apxm_core::types::{BackendGraphCapabilities, GraphStatusSnapshot, TokenUsage};
 use dashmap::DashMap;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -284,6 +284,7 @@ pub struct BackendMetricsSource {
     pub aggregate: AggregatedMetrics,
     pub per_backend: HashMap<String, AggregatedMetrics>,
     pub graph_status_snapshots: Vec<GraphStatusSnapshot>,
+    pub graph_capabilities: HashMap<String, BackendGraphCapabilities>,
 }
 
 impl MetricsSource for BackendMetricsSource {
@@ -295,6 +296,7 @@ impl MetricsSource for BackendMetricsSource {
         if self.aggregate.total_requests == 0
             && self.per_backend.is_empty()
             && self.graph_status_snapshots.is_empty()
+            && self.graph_capabilities.is_empty()
         {
             return serde_json::Value::Null;
         }
@@ -317,6 +319,12 @@ impl MetricsSource for BackendMetricsSource {
             map.insert(
                 metrics_keys::BACKENDS_GRAPHS.to_owned(),
                 serde_json::Value::Array(graph_statuses),
+            );
+        }
+        if !self.graph_capabilities.is_empty() {
+            map.insert(
+                metrics_keys::BACKENDS_GRAPH_CAPABILITIES.to_owned(),
+                serde_json::to_value(&self.graph_capabilities).unwrap_or_default(),
             );
         }
         serde_json::Value::Object(map)
@@ -474,6 +482,7 @@ mod tests {
             aggregate: AggregatedMetrics::default(),
             per_backend: HashMap::new(),
             graph_status_snapshots: vec![],
+            graph_capabilities: HashMap::new(),
         };
         assert!(source.collect().is_null());
     }
@@ -498,6 +507,7 @@ mod tests {
             graph_status_snapshots: vec![
                 GraphStatusSnapshot::graph_aware("g1").with_pin_counts(0, 12),
             ],
+            graph_capabilities: HashMap::new(),
         };
 
         let val = source.collect();
@@ -520,6 +530,7 @@ mod tests {
             },
             per_backend: HashMap::new(),
             graph_status_snapshots: vec![],
+            graph_capabilities: HashMap::new(),
         };
 
         let val = source.collect();
@@ -535,7 +546,36 @@ mod tests {
             aggregate: AggregatedMetrics::default(),
             per_backend: HashMap::new(),
             graph_status_snapshots: vec![],
+            graph_capabilities: HashMap::new(),
         };
         assert_eq!(source.section_name(), metrics_keys::SECTION_BACKENDS);
+    }
+
+    #[test]
+    fn backend_metrics_source_emits_graph_capabilities_without_requests() {
+        let mut graph_capabilities = HashMap::new();
+        graph_capabilities.insert(
+            "vllm-fork".to_string(),
+            BackendGraphCapabilities {
+                supports_graph_registration: true,
+                supports_request_hints: true,
+                supports_priority: true,
+                ..BackendGraphCapabilities::default()
+            },
+        );
+        let source = BackendMetricsSource {
+            aggregate: AggregatedMetrics::default(),
+            per_backend: HashMap::new(),
+            graph_status_snapshots: vec![],
+            graph_capabilities,
+        };
+
+        let val = source.collect();
+        let obj = val.as_object().expect("collect must return an object");
+        assert!(obj.contains_key(metrics_keys::BACKENDS_GRAPH_CAPABILITIES));
+        assert_eq!(
+            obj[metrics_keys::BACKENDS_GRAPH_CAPABILITIES]["vllm-fork"]["supports_priority"],
+            serde_json::Value::Bool(true)
+        );
     }
 }

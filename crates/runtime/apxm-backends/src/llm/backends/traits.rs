@@ -2,7 +2,8 @@
 
 use super::{LLMRequest, LLMResponse};
 use apxm_core::types::{
-    GraphMetadata, GraphStatusSnapshot, ModelCapabilities, ModelInfo, TokenUsage,
+    BackendGraphCapabilities, GraphMetadata, GraphStatusSnapshot, ModelCapabilities, ModelInfo,
+    TokenUsage,
 };
 use async_trait::async_trait;
 use serde_json::Value;
@@ -65,12 +66,24 @@ pub trait LLMBackend: Send + Sync {
         ModelCapabilities::default()
     }
 
+    /// Get graph-aware backend capability evidence.
+    ///
+    /// Generic providers default to no graph-aware support, while preserving
+    /// any structured-output support advertised by the model capability API.
+    fn graph_capabilities(&self) -> BackendGraphCapabilities {
+        BackendGraphCapabilities {
+            supports_structured_outputs: self.capabilities().structured_outputs,
+            ..BackendGraphCapabilities::default()
+        }
+    }
+
     /// Get provider-specific metadata as JSON.
     fn metadata(&self) -> Value {
         serde_json::json!({
             "name": self.name(),
             "model": self.model(),
             "capabilities": serde_json::to_value(self.capabilities()).unwrap_or(Value::Null),
+            "graph_capabilities": serde_json::to_value(self.graph_capabilities()).unwrap_or(Value::Null),
         })
     }
 
@@ -199,5 +212,47 @@ mod tests {
         let chunk = StreamChunk::Thought("test".into());
         let cloned = chunk.clone();
         assert!(matches!(cloned, StreamChunk::Thought(ref t) if t == "test"));
+    }
+
+    #[test]
+    fn graph_capabilities_default_to_generic_structured_output_support_only() {
+        struct TestBackend;
+
+        #[async_trait::async_trait]
+        impl LLMBackend for TestBackend {
+            async fn generate(&self, _request: LLMRequest) -> anyhow::Result<LLMResponse> {
+                unreachable!("not used")
+            }
+
+            fn name(&self) -> &str {
+                "test"
+            }
+
+            fn model(&self) -> &str {
+                "test-model"
+            }
+
+            async fn health_check(&self) -> anyhow::Result<()> {
+                Ok(())
+            }
+
+            async fn list_models(&self) -> anyhow::Result<Vec<ModelInfo>> {
+                Ok(vec![])
+            }
+
+            fn capabilities(&self) -> ModelCapabilities {
+                ModelCapabilities {
+                    structured_outputs: true,
+                    ..ModelCapabilities::default()
+                }
+            }
+        }
+
+        let backend = TestBackend;
+        let caps = backend.graph_capabilities();
+        assert!(!caps.supports_graph_registration);
+        assert!(!caps.supports_request_hints);
+        assert!(caps.supports_structured_outputs);
+        assert!(!caps.supports_cancel_groups);
     }
 }

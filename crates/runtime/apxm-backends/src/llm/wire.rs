@@ -60,6 +60,9 @@ pub mod api_paths {
     /// scheduler policy so the backend can verify priority hints will be
     /// honored (FCFS silently ignores per-request priority).
     pub const APXM_SCHEDULER: &str = "/apxm/scheduler";
+    /// `POST /v1/apxm/admin/reset_prefix_cache` — operator endpoint used
+    /// by benchmark harnesses to flush the prefix cache between cells.
+    pub const APXM_ADMIN_RESET_PREFIX_CACHE: &str = "/apxm/admin/reset_prefix_cache";
 }
 
 pub mod anthropic_events {

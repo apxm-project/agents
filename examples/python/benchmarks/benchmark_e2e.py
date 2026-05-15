@@ -27,7 +27,8 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
-from dataclasses import asdict, dataclass
+import hashlib
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 try:
     from enum import StrEnum
@@ -111,7 +112,25 @@ DEFAULT_VLLM = VllmDefaults()
 DEFAULT_EVIDENCE_ENDPOINT = local_endpoint(host=DEFAULT_VLLM.host, port=DEFAULT_VLLM.port)
 PASS_DSPY_OPTIMIZE = "dspy-optimize"
 ATTR_BENCHMARK_MILESTONE = "benchmark_milestone"
-EVIDENCE_SCHEMA_VERSION = 1
+EVIDENCE_SCHEMA_VERSION = 2
+
+ARM_APXM_ON = "apxm-on"
+ARM_FLAT_HTTP = "flat-http"
+DISABLE_HINTS_ENABLED = "1"
+
+GPU_SMI = "gpu-smi"
+GPU_FLAG_DRIVER_VERSION = "--showdriverversion"
+GPU_FLAG_PRODUCT_NAME = "--showproductname"
+GPU_FLAG_PERF_LEVEL = "--getperflevel"
+GPU_FLAG_JSON = "--json"
+PERF_LEVEL_LOCKED = "high"
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from util import pre_registration as _pre_registration  # noqa: E402
+
+PRE_REGISTRATION_TEMPLATE = _pre_registration.TEMPLATE_PATH
+PRE_REGISTRATION_SIDECAR_SUFFIX = _pre_registration.SIDECAR_SUFFIX
+EXIT_PRE_REGISTRATION_REQUIRED = _pre_registration.EXIT_PRE_REGISTRATION_REQUIRED
 
 
 class CommandToken(StrEnum):
@@ -629,6 +648,13 @@ class ArtifactBuild:
 
 
 @dataclass(frozen=True)
+class SloThresholds:
+    ttft_p95_ms: float | None = None
+    tpot_p95_ms: float | None = None
+    dag_critical_path_p95_ms: float | None = None
+
+
+@dataclass(frozen=True)
 class BenchmarkEvidence:
     graph: str
     output_csv: str
@@ -641,6 +667,10 @@ class BenchmarkEvidence:
     emit_compiler_diagnostics: bool
     success: bool
     run_count: int
+    arm: str = ARM_APXM_ON
+    seed_list: list[int] = field(default_factory=list)
+    slos: SloThresholds = field(default_factory=SloThresholds)
+    pre_registration_path: str | None = None
 
 
 @dataclass(frozen=True)
@@ -685,6 +715,26 @@ class EndpointEvidence:
 class HostEvidence:
     hostname: Any
     gpu_info: Any
+    gpu_driver_version: str | None = None
+    gpu_model: str | None = None
+    gpu_clock_lock_state: dict | None = None
+
+
+@dataclass(frozen=True)
+class WorkloadEvidence:
+    name: str | None = None
+    sha: str | None = None
+
+
+@dataclass(frozen=True)
+class DatasetEvidence:
+    name: str | None = None
+    sha: str | None = None
+
+
+@dataclass(frozen=True)
+class ZooEvidence:
+    snapshot_ref: str | None = None
 
 
 @dataclass(frozen=True)
@@ -699,6 +749,9 @@ class EvidenceManifest:
     container: ContainerEvidence
     endpoint: EndpointEvidence
     host: HostEvidence
+    workload: WorkloadEvidence = field(default_factory=WorkloadEvidence)
+    dataset: DatasetEvidence = field(default_factory=DatasetEvidence)
+    zoo: ZooEvidence = field(default_factory=ZooEvidence)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -819,6 +872,51 @@ def _parse_args() -> argparse.Namespace:
         "--evidence-endpoint",
         default=DEFAULT_EVIDENCE_ENDPOINT,
         help="OpenAI-compatible endpoint used for evidence probes.",
+    )
+    parser.add_argument(
+        "--no-apxm-hints",
+        action="store_true",
+        help=(
+            "Run as the flat-HTTP control arm: suppress vllm_xargs.apxm "
+            "injection and /v1/apxm/graphs/register on the same vLLM build."
+        ),
+    )
+    parser.add_argument(
+        "--slo-ttft-p95-ms",
+        type=float,
+        default=None,
+        help="Pre-registered TTFT P95 SLO in milliseconds (recorded in manifest).",
+    )
+    parser.add_argument(
+        "--slo-tpot-p95-ms",
+        type=float,
+        default=None,
+        help="Pre-registered TPOT P95 SLO in milliseconds (recorded in manifest).",
+    )
+    parser.add_argument(
+        "--slo-dag-critical-path-p95-ms",
+        type=float,
+        default=None,
+        help="Pre-registered DAG critical-path P95 SLO in milliseconds (recorded in manifest).",
+    )
+    parser.add_argument(
+        "--pre-registration",
+        type=Path,
+        default=None,
+        help=(
+            "Path to a pre-registration markdown file authored before the run "
+            "(see examples/python/benchmarks/templates/pre-registration.template.md). "
+            "When provided, the file is copied alongside the output CSV and "
+            "referenced from the evidence manifest."
+        ),
+    )
+    parser.add_argument(
+        "--require-pre-registration",
+        action="store_true",
+        help=(
+            "Refuse to start when --pre-registration is missing. Use for runs "
+            "whose evidence will be cited in a docs/claims/ file."
+        ),
     )
     return parser.parse_args()
 
@@ -1496,6 +1594,50 @@ def _image_inspect(image: str | None) -> Any:
     )
 
 
+def _gpu_smi_field(flag: str) -> str | None:
+    payload = _command_json([GPU_SMI, flag, GPU_FLAG_JSON])
+    if not isinstance(payload, dict) or "error" in payload:
+        return None
+    for entry in payload.values():
+        if isinstance(entry, dict):
+            for value in entry.values():
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+    return None
+
+
+def _gpu_perf_lock_state() -> dict | None:
+    payload = _command_json([GPU_SMI, GPU_FLAG_PERF_LEVEL, GPU_FLAG_JSON])
+    if not isinstance(payload, dict) or "error" in payload:
+        return None
+    observed_levels: list[str] = []
+    for entry in payload.values():
+        if isinstance(entry, dict):
+            for value in entry.values():
+                if isinstance(value, str) and value.strip():
+                    observed_levels.append(value.strip())
+    if not observed_levels:
+        return None
+    return {
+        "expected": PERF_LEVEL_LOCKED,
+        "observed": observed_levels,
+        "all_locked": all(level == PERF_LEVEL_LOCKED for level in observed_levels),
+    }
+
+
+def _workload_sha(graph: Path) -> str | None:
+    sha = _git(REPO_ROOT, "log", "-1", "--format=%H", "--", str(graph))
+    if sha:
+        return sha
+    try:
+        return hashlib.sha256(graph.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+_enforce_pre_registration = _pre_registration.enforce
+
+
 def _write_evidence_manifest(
     *,
     args: argparse.Namespace,
@@ -1510,6 +1652,7 @@ def _write_evidence_manifest(
         else output.with_suffix(".evidence.json")
     )
     image = _env_value(EnvVar.APXM_VLLM_IMAGE)
+    arm = ARM_FLAT_HTTP if getattr(args, "no_apxm_hints", False) else ARM_APXM_ON
     manifest = EvidenceManifest(
         schema_version=EVIDENCE_SCHEMA_VERSION,
         created_at_utc=datetime.now(timezone.utc).isoformat(),
@@ -1525,6 +1668,14 @@ def _write_evidence_manifest(
             emit_compiler_diagnostics=args.emit_compiler_diagnostics,
             success=all(record.success for record in records),
             run_count=len(records),
+            arm=arm,
+            seed_list=list(range(args.iterations)),
+            slos=SloThresholds(
+                ttft_p95_ms=getattr(args, "slo_ttft_p95_ms", None),
+                tpot_p95_ms=getattr(args, "slo_tpot_p95_ms", None),
+                dag_critical_path_p95_ms=getattr(args, "slo_dag_critical_path_p95_ms", None),
+            ),
+            pre_registration_path=getattr(args, "_pre_registration_sidecar", None),
         ),
         apxm=RepoEvidence(
             path=str(REPO_ROOT),
@@ -1562,6 +1713,13 @@ def _write_evidence_manifest(
         host=HostEvidence(
             hostname=_command_json([ToolName.HOSTNAME.value]),
             gpu_info=None,
+            gpu_driver_version=_gpu_smi_field(GPU_FLAG_DRIVER_VERSION),
+            gpu_model=_gpu_smi_field(GPU_FLAG_PRODUCT_NAME),
+            gpu_clock_lock_state=_gpu_perf_lock_state(),
+        ),
+        workload=WorkloadEvidence(
+            name=args.graph.name,
+            sha=_workload_sha(args.graph),
         ),
     )
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1748,6 +1906,13 @@ def _print_precompile_summary(build: ArtifactBuild, target: str) -> None:
 def main() -> int:
     args = _parse_args()
     _require_dekk()
+    if args.no_apxm_hints:
+        os.environ[env_name(EnvVar.APXM_DISABLE_HINTS)] = DISABLE_HINTS_ENABLED
+    args._pre_registration_sidecar = _enforce_pre_registration(
+        pre_registration_arg=args.pre_registration,
+        require=args.require_pre_registration,
+        output_path=args.output.resolve(),
+    )
 
     graph = args.graph.resolve()
     if not graph.exists():

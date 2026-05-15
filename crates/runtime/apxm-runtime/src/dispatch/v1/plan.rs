@@ -4,7 +4,7 @@
 //! APXM runtime hands to a graph-aware inference backend. The serde shape is
 //! documented in the design note as a sketch, not a committed wire ABI.
 
-use apxm_core::types::graph_hints::{PinPolicy, PriorityClass};
+use apxm_core::types::graph_hints::{CompilerHints, PinPolicy, PriorityClass};
 use apxm_core::types::graph_metrics::LatencyClass;
 use serde::{Deserialize, Serialize};
 
@@ -84,6 +84,14 @@ pub(crate) struct NodeDispatchPlan {
     pub estimated_dynamic_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reuse_group: Option<String>,
+    #[serde(default, skip_serializing_if = "CompilerHints::is_empty")]
+    pub compiler_hints: CompilerHints,
+    #[serde(default, skip)]
+    pub registration_node_name: Option<String>,
+    #[serde(default, skip)]
+    pub registration_estimated_prompt_tokens: Option<u32>,
+    #[serde(default, skip)]
+    pub registration_is_critical_path: Option<bool>,
 }
 
 /// What the backend must (or may) support before APXM relies on graph-aware

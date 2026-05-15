@@ -107,6 +107,9 @@ ENV_BACKEND_NAME = env_name(EnvVar.BACKEND_NAME)
 ENV_PORT = env_name(EnvVar.PORT)
 ENV_HF_HOME_HOST = env_name(EnvVar.HF_HOME_HOST)
 ENV_MAX_MODEL_LEN = env_name(EnvVar.MAX_MODEL_LEN)
+ENV_MAX_NUM_SEQS = env_name(EnvVar.MAX_NUM_SEQS)
+ENV_SCHEDULING_POLICY = env_name(EnvVar.SCHEDULING_POLICY)
+ENV_ENABLE_PREFIX_CACHING = env_name(EnvVar.ENABLE_PREFIX_CACHING)
 ENV_STARTUP_TIMEOUT_SECONDS = env_name(EnvVar.STARTUP_TIMEOUT_SECONDS)
 ENV_SLURM_JOB_ID = env_name(EnvVar.SLURM_JOB_ID)
 ENV_SLURM_JOB_NODELIST = env_name(EnvVar.SLURM_JOB_NODELIST)
@@ -127,6 +130,7 @@ COMMANDS_WITHOUT_EXTRA_ARGS = {
     VllmCommand.DOCTOR.value,
     VllmCommand.PROBE.value,
     VllmCommand.ENABLE.value,
+    VllmCommand.CACHE_WARM.value,
     VllmCommand.DOCKER_BUILD.value,
     VllmCommand.DOCKER_LOAD.value,
     VllmCommand.DOCKER_STOP.value,
@@ -1024,6 +1028,63 @@ def _default_image_tag() -> str:
     return f"apxm-vllm-runtime:{apxm_commit or 'apxm'}-{vllm_commit or 'vllm'}"
 
 
+def cache_warm_cmd(args: argparse.Namespace) -> int:
+    """Download a model to the shared HF cache without GPU allocation.
+
+    Runs `huggingface-cli download <model>` inside the APXM-vLLM Docker
+    container with no `--gpus` flag, mounting the shared host HF cache so
+    weights persist across runs. Idempotent — `huggingface-cli` resumes
+    partial downloads via the standard HF cache layout.
+
+    The model-zoo deploy pattern is: cache-warm once per model, then any
+    subsequent `service-start` for that model boots in ~10 min instead of
+    waiting on a multi-hour HF download under a GPU allocation.
+    """
+    if not _docker_available():
+        _print("Docker is not installed or the daemon is not reachable.")
+        return 1
+    image = args.image or os.environ.get(ENV_APXM_VLLM_IMAGE) or _default_image_tag()
+    if _docker_image_metadata(image) is None:
+        _print(
+            f"APXM-vLLM image not loaded: {image}\n"
+            f"Load it first with: dekk apxm vllm docker-load --image {image}"
+        )
+        return 1
+
+    hf_home = (
+        args.hf_home
+        or os.environ.get(ENV_APXM_VLLM_HF_HOME)
+        or os.environ.get(ENV_HF_HOME)
+        or os.path.expanduser("~/.cache/huggingface-apxm-vllm")
+    )
+    Path(hf_home).mkdir(parents=True, exist_ok=True)
+
+    # The APXM-vLLM image's ENTRYPOINT is the vLLM OpenAI API server.
+    # Override it with `hf` (the modern Hugging Face Hub CLI; the legacy
+    # `huggingface-cli` is deprecated and no longer works in this image).
+    docker_cmd: list[str] = [
+        "docker", "run", "--rm",
+        DockerFlag.NETWORK.value, DockerValue.HOST_NETWORK.value,
+        DockerFlag.ENV.value, f"{ENV_HF_HOME}={ContainerPath.HF_HOME.value}",
+        DockerFlag.VOLUME.value, f"{hf_home}:{ContainerPath.HF_HOME.value}",
+        "--entrypoint", "hf",
+    ]
+    if ENV_HF_TOKEN in os.environ:
+        docker_cmd.extend([DockerFlag.ENV.value, ENV_HF_TOKEN])
+    docker_cmd.append(image)
+    docker_cmd.extend(["download", args.model])
+    if args.revision:
+        docker_cmd.extend(["--revision", args.revision])
+
+    print(f"[cache-warm] image={image}")
+    print(f"[cache-warm] model={args.model}")
+    print(f"[cache-warm] hf_home_host={hf_home}")
+    print(f"[cache-warm] hf_home_container={ContainerPath.HF_HOME.value}")
+    print("[cache-warm] starting docker run (CPU-only, no --gpus); resumes from cache if partial")
+
+    return subprocess.run(docker_cmd).returncode
+
+
 def _service_name(name: str) -> str:
     normalized = re.sub(r"[^A-Za-z0-9_.-]+", "-", name.strip()).strip(".-")
     if not normalized:
@@ -1093,6 +1154,12 @@ def service_start_cmd(args: argparse.Namespace) -> int:
         env[ENV_HF_HOME_HOST] = args.hf_home
     if args.max_model_len is not None:
         env[ENV_MAX_MODEL_LEN] = str(args.max_model_len)
+    if args.max_num_seqs is not None:
+        env[ENV_MAX_NUM_SEQS] = str(args.max_num_seqs)
+    if args.scheduling_policy:
+        env[ENV_SCHEDULING_POLICY] = str(args.scheduling_policy)
+    if args.enable_prefix_caching is not None:
+        env[ENV_ENABLE_PREFIX_CACHING] = "1" if args.enable_prefix_caching else "0"
     if args.startup_timeout is not None:
         env[ENV_STARTUP_TIMEOUT_SECONDS] = str(args.startup_timeout)
 
@@ -1128,6 +1195,9 @@ def service_start_cmd(args: argparse.Namespace) -> int:
         "port": args.port,
         "local_endpoint": _endpoint(args.port),
         "max_model_len": args.max_model_len,
+        "max_num_seqs": args.max_num_seqs,
+        "scheduling_policy": args.scheduling_policy,
+        "enable_prefix_caching": args.enable_prefix_caching,
         "log_pattern": str(log_path),
         "submitted_at": time.time(),
     }
@@ -1153,6 +1223,9 @@ def service_adopt_cmd(args: argparse.Namespace) -> int:
         "port": args.port,
         "local_endpoint": _endpoint(args.port),
         "max_model_len": args.max_model_len,
+        "max_num_seqs": args.max_num_seqs,
+        "scheduling_policy": args.scheduling_policy,
+        "enable_prefix_caching": args.enable_prefix_caching,
         "adopted_at": time.time(),
     }
     path = _write_service_state(name, state)
@@ -1217,6 +1290,12 @@ def service_exec_cmd(args: argparse.Namespace, extra_args: list[str]) -> int:
         ENV_BACKEND_NAME: state.get("backend_name"),
         ENV_PORT: state.get("port"),
         ENV_MAX_MODEL_LEN: state.get("max_model_len"),
+        ENV_MAX_NUM_SEQS: state.get("max_num_seqs"),
+        ENV_SCHEDULING_POLICY: state.get("scheduling_policy"),
+        ENV_ENABLE_PREFIX_CACHING: (
+            "1" if state.get("enable_prefix_caching") is True else
+            "0" if state.get("enable_prefix_caching") is False else None
+        ),
     }
     for key, value in service_env.items():
         if value not in (None, ""):
@@ -1625,6 +1704,31 @@ def build_parser() -> argparse.ArgumentParser:
     )
     docker_load.set_defaults(**{ArgName.HANDLER.value: lambda ns, extra: docker_load_cmd(ns)})
 
+    cache_warm = subparsers.add_parser(
+        VllmCommand.CACHE_WARM.value,
+        help="Download a model to the shared HF cache without GPU allocation",
+    )
+    cache_warm.add_argument(
+        "model",
+        help="HF model id or path to download (e.g. openai/gpt-oss-120b)",
+    )
+    cache_warm.add_argument(
+        "--image",
+        dest=ArgName.IMAGE.value,
+        help="APXM-vLLM image tag/digest (default: APXM_VLLM_IMAGE or apxm-vllm-runtime:<apxm>-<vllm>)",
+    )
+    cache_warm.add_argument(
+        "--hf-home",
+        dest=ArgName.HF_HOME.value,
+        help=f"Host Hugging Face cache root (or set {ENV_APXM_VLLM_HF_HOME}/{ENV_HF_HOME})",
+    )
+    cache_warm.add_argument(
+        "--revision",
+        default=None,
+        help="Specific revision/branch/tag to download (default: main)",
+    )
+    cache_warm.set_defaults(**{ArgName.HANDLER.value: lambda ns, extra: cache_warm_cmd(ns)})
+
     docker_start = subparsers.add_parser(
         VllmCommand.DOCKER_START.value,
         help="Start vLLM from a Docker image inside an owned allocation",
@@ -1710,6 +1814,20 @@ def build_parser() -> argparse.ArgumentParser:
     service_adopt.add_argument("--backend-name", default=DEFAULT_BACKEND_NAME, help="APXM backend name")
     service_adopt.add_argument("--port", type=int, default=DEFAULT_PORT, help="vLLM port")
     service_adopt.add_argument("--max-model-len", type=int, help="Recorded MAX_MODEL_LEN for this service")
+    service_adopt.add_argument("--max-num-seqs", dest=ArgName.MAX_NUM_SEQS.value, type=int, help="Recorded MAX_NUM_SEQS for this service")
+    service_adopt.add_argument(
+        VllmServeFlag.SCHEDULING_POLICY.value,
+        dest=ArgName.SCHEDULING_POLICY.value,
+        choices=[p.value for p in SchedulingPolicy],
+        help="Recorded scheduler policy for this service",
+    )
+    service_adopt.add_argument(
+        "--enable-prefix-caching",
+        dest=ArgName.ENABLE_PREFIX_CACHING.value,
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Recorded prefix-cache state for this service",
+    )
     service_adopt.set_defaults(**{ArgName.HANDLER.value: lambda ns, extra: service_adopt_cmd(ns)})
 
     service_start = subparsers.add_parser(
@@ -1736,6 +1854,27 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=SERVICE_DEFAULTS.max_model_len,
         help="MAX_MODEL_LEN exported to the Slurm wrapper",
+    )
+    service_start.add_argument(
+        "--max-num-seqs",
+        dest=ArgName.MAX_NUM_SEQS.value,
+        type=int,
+        default=SERVICE_DEFAULTS.max_num_seqs,
+        help="MAX_NUM_SEQS exported to the Slurm wrapper",
+    )
+    service_start.add_argument(
+        VllmServeFlag.SCHEDULING_POLICY.value,
+        dest=ArgName.SCHEDULING_POLICY.value,
+        choices=[p.value for p in SchedulingPolicy],
+        default=SERVICE_DEFAULTS.scheduling_policy,
+        help="SCHEDULING_POLICY exported to the Slurm wrapper",
+    )
+    service_start.add_argument(
+        "--enable-prefix-caching",
+        dest=ArgName.ENABLE_PREFIX_CACHING.value,
+        action=argparse.BooleanOptionalAction,
+        default=SERVICE_DEFAULTS.enable_prefix_caching,
+        help="ENABLE_PREFIX_CACHING exported to the Slurm wrapper",
     )
     service_start.add_argument(
         "--startup-timeout",

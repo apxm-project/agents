@@ -17,19 +17,23 @@ class EnvVar(str, Enum):
     """Environment variables consumed by the APXM/vLLM path."""
 
     APXM_CONFIG = "APXM_CONFIG"
+    APXM_DISABLE_HINTS = "APXM_DISABLE_HINTS"
     APXM_VLLM_CACHE_SALT = "APXM_VLLM_CACHE_SALT"
     APXM_VLLM_HF_HOME = "APXM_VLLM_HF_HOME"
     APXM_VLLM_IMAGE = "APXM_VLLM_IMAGE"
     APXM_VLLM_SERVICE_NAME = "APXM_VLLM_SERVICE_NAME"
     BACKEND_NAME = "BACKEND_NAME"
     CUDA_VISIBLE_DEVICES = "CUDA_VISIBLE_DEVICES"
+    ENABLE_PREFIX_CACHING = "ENABLE_PREFIX_CACHING"
     HF_HOME_HOST = "HF_HOME_HOST"
     HF_HOME = "HF_HOME"
     HF_TOKEN = "HF_TOKEN"
     HIP_VISIBLE_DEVICES = "HIP_VISIBLE_DEVICES"
     MAX_MODEL_LEN = "MAX_MODEL_LEN"
+    MAX_NUM_SEQS = "MAX_NUM_SEQS"
     MODEL_REF = "MODEL_REF"
     PORT = "PORT"
+    SCHEDULING_POLICY = "SCHEDULING_POLICY"
     SERVED_MODEL_ID = "SERVED_MODEL_ID"
     SLURM_JOB_ID = "SLURM_JOB_ID"
     SLURM_JOB_NODELIST = "SLURM_JOB_NODELIST"
@@ -140,6 +144,7 @@ class VllmCommand(str, Enum):
     DOCTOR = "doctor"
     PROBE = "probe"
     ENABLE = "enable"
+    CACHE_WARM = "cache-warm"
     DOCKER_BUILD = "docker-build"
     DOCKER_LOAD = "docker-load"
     DOCKER_START = "docker-start"
@@ -278,6 +283,7 @@ class ArgName(str, Enum):
     HANDLER = "handler"
     HF_HOME = "hf_home"
     IMAGE = "image"
+    MAX_NUM_SEQS = "max_num_seqs"
     MODEL = "model"
     NAME = "name"
     REASONING_PARSER = "reasoning_parser"
@@ -339,6 +345,9 @@ class SlurmServiceDefaults:
     """Defaults exported by `dekk apxm vllm service-start` to the Slurm wrapper."""
 
     max_model_len: int = 32768
+    max_num_seqs: int = 64
+    scheduling_policy: str = SchedulingPolicy.PRIORITY.value
+    enable_prefix_caching: bool = True
     startup_timeout_seconds: float = 7200.0
 
 

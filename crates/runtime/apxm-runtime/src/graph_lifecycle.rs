@@ -10,12 +10,15 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use crate::dispatch::v1::{
+    BackendCapabilityRequirements, DispatchIrV1, TelemetryContract, lower_graph,
+};
 use anyhow::{Context, Result};
 use apxm_backends::llm::backends::traits::LLMBackend;
 use apxm_core::constants::graph::{attrs as graph_attrs, metadata as graph_meta};
 use apxm_core::types::execution::{ExecutionDag, Node};
 use apxm_core::types::{
-    ApxmGraphHints, GraphMetadata, GraphStatusSnapshot, NodeSpec, PriorityClass,
+    ApxmGraphHints, GraphMetadata, GraphStatusSnapshot, NodeGraphMetrics, NodeSpec, PriorityClass,
 };
 use tokio::sync::Mutex;
 
@@ -42,7 +45,18 @@ impl BackendGraphLifecycle {
         exec_id: String,
         dag: &ExecutionDag,
     ) -> Result<Self> {
-        let metadata = graph_metadata_from_dag(graph_id.clone(), exec_id, dag);
+        let dispatch_ir = graph_dispatch_ir_from_dag(graph_id.clone(), exec_id, dag);
+        Self::register_dispatch_ir(backend, &dispatch_ir).await
+    }
+
+    /// Register a graph using the runtime-owned dispatch plan as the source
+    /// of the existing backend registration payload.
+    pub(crate) async fn register_dispatch_ir(
+        backend: Arc<dyn LLMBackend>,
+        dispatch_ir: &DispatchIrV1,
+    ) -> Result<Self> {
+        let metadata = graph_metadata_from_dispatch_ir(dispatch_ir);
+        let graph_id = metadata.graph_id.clone();
 
         backend
             .register_graph(metadata)
@@ -101,6 +115,125 @@ impl BackendGraphLifecycle {
     pub fn graph_id(&self) -> &str {
         &self.graph_id
     }
+}
+
+pub(crate) fn graph_dispatch_ir_from_dag(
+    graph_id: impl Into<String>,
+    exec_id: impl Into<String>,
+    dag: &ExecutionDag,
+) -> DispatchIrV1 {
+    let graph_id = graph_id.into();
+    let exec_id = exec_id.into();
+    let metadata = graph_metadata_from_dag(graph_id.clone(), exec_id.clone(), dag);
+    let node_hints = graph_hints_from_dag(&graph_id, &exec_id, dag);
+    lower_graph(
+        &metadata,
+        &node_hints,
+        BackendCapabilityRequirements {
+            backend: None,
+            protocol: None,
+            required: vec!["graph_registration".to_owned(), "request_hints".to_owned()],
+            optional: vec![
+                "priority".to_owned(),
+                "prefix_cohorts".to_owned(),
+                "pin_release".to_owned(),
+                "backend_cache_state".to_owned(),
+            ],
+        },
+        TelemetryContract {
+            required_labels: vec!["graph_id".to_owned(), "node_id".to_owned()],
+            requested_metrics: vec![
+                "scheduler_policy".to_owned(),
+                "graph_status".to_owned(),
+                "pinned_blocks_peak".to_owned(),
+            ],
+        },
+    )
+}
+
+pub(crate) fn graph_metadata_from_dispatch_ir(ir: &DispatchIrV1) -> GraphMetadata {
+    let nodes = ir
+        .nodes
+        .iter()
+        .map(|node| {
+            let is_critical_path = node.registration_is_critical_path.unwrap_or_else(|| {
+                matches!(node.priority_class, Some(PriorityClass::CriticalPath))
+            });
+            NodeSpec {
+                node_id: node.node_id,
+                node_name: node
+                    .registration_node_name
+                    .clone()
+                    .or_else(|| node.node_name.clone()),
+                estimated_prompt_tokens: node.registration_estimated_prompt_tokens,
+                downstream_nodes: node.downstream_nodes.clone(),
+                priority_class: node.priority_class,
+                reuse_group: node.reuse_group.clone(),
+                graph_metrics: NodeGraphMetrics {
+                    fanout_count: node.fanout_count,
+                    remaining_path_len: node.remaining_path_len,
+                    latency_class: node.latency_class,
+                    batch_group: node.batch_group.clone(),
+                    stage_index: node.stage_index,
+                    estimated_dynamic_tokens: node.estimated_dynamic_tokens,
+                },
+                is_critical_path,
+            }
+        })
+        .collect();
+
+    GraphMetadata {
+        graph_id: ir.graph.graph_id.clone(),
+        execution_id: ir.graph.execution_id.clone(),
+        critical_path_length: ir.graph.critical_path_length,
+        node_count: ir.graph.node_count,
+        max_parallelism: ir.graph.max_parallelism,
+        nodes,
+        default_pin_ttl_ms: ir.graph.default_pin_ttl_ms,
+    }
+}
+
+fn graph_hints_from_dag(
+    graph_id: &str,
+    exec_id: &str,
+    dag: &ExecutionDag,
+) -> HashMap<u32, ApxmGraphHints> {
+    let graph_shape = analyze_graph_shape(dag);
+    dag.nodes
+        .iter()
+        .filter_map(|node| {
+            let node_id = u32::try_from(node.id).ok()?;
+            let node_label = node.metadata.name.clone().unwrap_or_else(|| {
+                format!("{}{}", graph_meta::GENERATED_NODE_NAME_PREFIX, node.id)
+            });
+            let mut hints = ApxmGraphHints::from_node_attrs(
+                graph_id.to_owned(),
+                node_label.clone(),
+                &node.attributes,
+            );
+            hints.execution_id = Some(exec_id.to_owned());
+            hints.node_id = Some(node_id);
+            hints.node_name = Some(node_label);
+            if hints.priority_class.is_none() {
+                let priority = i64::from(node.metadata.priority);
+                hints.priority_class = Some(
+                    if priority >= graph_meta::CRITICAL_PATH_PRIORITY_THRESHOLD {
+                        PriorityClass::CriticalPath
+                    } else {
+                        PriorityClass::Parallel
+                    },
+                );
+            }
+            if hints.downstream_nodes.is_empty() {
+                hints.downstream_nodes = graph_shape
+                    .downstream
+                    .get(&node.id)
+                    .cloned()
+                    .unwrap_or_default();
+            }
+            Some((node_id, hints))
+        })
+        .collect()
 }
 
 pub(crate) fn graph_metadata_from_dag(
@@ -321,5 +454,33 @@ mod tests {
         assert_eq!(root_spec.downstream_nodes, vec![2, 3]);
         assert_eq!(root_spec.estimated_prompt_tokens, Some(128));
         assert!(root_spec.is_critical_path);
+    }
+
+    #[test]
+    fn dispatch_ir_registration_metadata_matches_legacy_metadata() {
+        let mut dag = ExecutionDag::new();
+        let mut root = node(1, 90);
+        root.set_attribute(
+            graph_attrs::EST_TEMPLATE_TOKENS.to_string(),
+            Value::Number(Number::Integer(128)),
+        );
+        root.set_attribute(
+            graph_attrs::REUSE_GROUP.to_string(),
+            Value::String("shared".to_string()),
+        );
+        let child = node(2, 30);
+        dag.add_node(root).unwrap();
+        dag.add_node(child).unwrap();
+        dag.add_edge(Edge::new(1, 2, 12, DependencyType::Data))
+            .unwrap();
+
+        let legacy = graph_metadata_from_dag("graph", "exec", &dag);
+        let dispatch = graph_dispatch_ir_from_dag("graph", "exec", &dag);
+        let lowered = graph_metadata_from_dispatch_ir(&dispatch);
+
+        assert_eq!(
+            serde_json::to_value(&lowered).unwrap(),
+            serde_json::to_value(&legacy).unwrap()
+        );
     }
 }

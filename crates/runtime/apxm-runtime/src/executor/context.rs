@@ -1,5 +1,6 @@
 //! Execution context - Holds runtime state and provides access to subsystems
 
+use crate::dispatch::v1::{DispatchIrV1, derive_apxm_hints};
 use crate::metadata_keys as metadata;
 use crate::python_tools::PythonToolBridge;
 use crate::sandbox::SandboxRegistry;
@@ -17,7 +18,7 @@ use apxm_backends::LLMRegistry;
 use apxm_core::InstructionConfig;
 use apxm_core::constants::cache;
 use apxm_core::paths::ApxmPaths;
-use apxm_core::types::{Agent, MetricsLevel, OptimizationTarget};
+use apxm_core::types::{Agent, ApxmGraphHints, MetricsLevel, OptimizationTarget};
 use std::sync::Arc;
 
 use super::cancellation::CancellationToken;
@@ -41,6 +42,7 @@ pub struct ExecutionContext {
     /// Worker child contexts inherit this so every node request points at the
     /// same registered graph.
     pub graph_id: String,
+    pub(crate) dispatch_ir_v1: Arc<parking_lot::RwLock<Option<DispatchIrV1>>>,
     pub session_id: Option<String>,
     pub memory: Arc<MemorySystem>,
     pub llm_registry: Arc<LLMRegistry>,
@@ -143,6 +145,7 @@ impl ExecutionContext {
         Self {
             execution_id,
             graph_id,
+            dispatch_ir_v1: Arc::new(parking_lot::RwLock::new(None)),
             session_id: None,
             memory,
             llm_registry,
@@ -214,6 +217,17 @@ impl ExecutionContext {
     pub fn with_graph_id(mut self, graph_id: String) -> Self {
         self.graph_id = graph_id;
         self
+    }
+
+    pub(crate) fn set_dispatch_ir_v1(&self, dispatch_ir: DispatchIrV1) {
+        *self.dispatch_ir_v1.write() = Some(dispatch_ir);
+    }
+
+    pub(crate) fn dispatch_hints_for_node(&self, node_id: u32) -> Option<ApxmGraphHints> {
+        let guard = self.dispatch_ir_v1.read();
+        let ir = guard.as_ref()?;
+        let node = ir.nodes.iter().find(|node| node.node_id == node_id)?;
+        Some(derive_apxm_hints(ir, node))
     }
 
     /// Create context with session ID
@@ -308,6 +322,7 @@ impl ExecutionContext {
         Self {
             execution_id: uuid::Uuid::now_v7().to_string(),
             graph_id: self.graph_id.clone(),
+            dispatch_ir_v1: Arc::clone(&self.dispatch_ir_v1),
             session_id: self.session_id.clone(),
             memory: Arc::clone(&self.memory),
             llm_registry: Arc::clone(&self.llm_registry),
