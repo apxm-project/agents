@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
 """Summarize benchmark_e2e CSV output as Markdown.
 
-The report intentionally stays dependency-free so it works in a fresh checkout.
-It focuses on the metrics the local harness can reliably collect:
-
-- success rate
-- wall-clock timing
-- graph duration when emitted by the session writer
-- token/call totals when available
+The opt-level comparison path (the original report) is dependency-free and
+keeps working without scipy. The arm-comparison path (APXM-on vs flat-HTTP
+on the same CSV, paired by cell/seed) requires scipy for the Wilcoxon
+signed-rank test; it is rendered only when the CSV carries an `arm` column.
 """
 
 from __future__ import annotations
@@ -21,6 +18,11 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+try:
+    from scipy.stats import wilcoxon as _scipy_wilcoxon  # type: ignore[import-not-found]
+except ImportError:  # scipy not installed; arm-comparison section will note this
+    _scipy_wilcoxon = None  # type: ignore[assignment]
+
 
 DEFAULT_BOOTSTRAP_SAMPLES = 2000
 DEFAULT_BOOTSTRAP_SEED = 42
@@ -32,6 +34,24 @@ MIN_TOKEN_REDUCTION = 0.05
 MIN_CALL_DELTA = 1.0
 RUNTIME_MODES = {"execute", "run-artifact"}
 COMPILE_MODES = {"compile"}
+
+ARM_COLUMN = "arm"
+ARM_APXM_ON = "apxm-on"
+ARM_FLAT_HTTP = "flat-http"
+
+# Per-metric direction for the Wilcoxon alternative hypothesis. "less"
+# means we hypothesize APXM-on values are smaller (latency-style metrics);
+# "greater" means we hypothesize APXM-on values are larger (cache-reuse
+# and pin-utilization metrics).
+ARM_METRIC_SPECS: tuple[tuple[str, str], ...] = (
+    ("batch_wall_ms", "less"),
+    ("max_tenant_wall_ms", "less"),
+    ("prefix_cache_hit_rate", "greater"),
+    ("pinned_blocks_peak_max", "greater"),
+    ("cached_input_tokens_sum", "greater"),
+)
+
+ARM_PAIR_KEY_FIELDS = ("cell_label", "opt_level", "iteration")
 
 
 class CsvKey:
@@ -195,6 +215,163 @@ def _format_ci(bounds: tuple[float, float] | None, digits: int = 1) -> str:
     if bounds is None:
         return "-"
     return f"[{bounds[0]:.{digits}f}, {bounds[1]:.{digits}f}]"
+
+
+def _pair_rows_by_arm(
+    rows: list[dict[str, str]],
+    key_fields: tuple[str, ...] = ARM_PAIR_KEY_FIELDS,
+) -> dict[tuple, dict[str, dict[str, str]]]:
+    """Group rows by the pairing key, splitting into the two arms.
+
+    Returns a dict keyed by the pairing tuple where the value is itself a
+    dict mapping arm name to the matching row. Pairs where one arm is
+    missing or duplicated (>1 row per arm per key) are dropped.
+    """
+    by_key: dict[tuple, dict[str, list[dict[str, str]]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+    for row in rows:
+        arm = row.get(ARM_COLUMN, "").strip()
+        if arm not in (ARM_APXM_ON, ARM_FLAT_HTTP):
+            continue
+        try:
+            key = tuple(row[field] for field in key_fields)
+        except KeyError:
+            continue
+        by_key[key][arm].append(row)
+    paired: dict[tuple, dict[str, dict[str, str]]] = {}
+    for key, arm_rows in by_key.items():
+        apxm_rows = arm_rows.get(ARM_APXM_ON, [])
+        flat_rows = arm_rows.get(ARM_FLAT_HTTP, [])
+        if len(apxm_rows) == 1 and len(flat_rows) == 1:
+            paired[key] = {ARM_APXM_ON: apxm_rows[0], ARM_FLAT_HTTP: flat_rows[0]}
+    return paired
+
+
+def _wilcoxon_p_value(
+    apxm_values: list[float],
+    flat_values: list[float],
+    alternative: str,
+) -> float | None:
+    if _scipy_wilcoxon is None or len(apxm_values) != len(flat_values) or len(apxm_values) < 5:
+        return None
+    if all(a == b for a, b in zip(apxm_values, flat_values)):
+        return None
+    try:
+        result = _scipy_wilcoxon(apxm_values, flat_values, alternative=alternative)
+    except ValueError:
+        return None
+    return float(result.pvalue)
+
+
+def _bootstrap_ratio_ci(
+    apxm_values: list[float],
+    flat_values: list[float],
+    samples: int,
+    seed: int = DEFAULT_BOOTSTRAP_SEED,
+) -> tuple[float, float] | None:
+    """CI on the ratio APXM_mean / flat_mean, paired-resampled by index."""
+    if len(apxm_values) != len(flat_values) or len(apxm_values) < 2:
+        return None
+    rng = random.Random(seed)
+    n = len(apxm_values)
+    ratios: list[float] = []
+    for _ in range(samples):
+        indices = [rng.randrange(n) for _ in range(n)]
+        apxm_mean = statistics.fmean(apxm_values[i] for i in indices)
+        flat_mean = statistics.fmean(flat_values[i] for i in indices)
+        if flat_mean > 0:
+            ratios.append(apxm_mean / flat_mean)
+    if len(ratios) < 2:
+        return None
+    ratios.sort()
+    lower_idx = int(0.025 * (len(ratios) - 1))
+    upper_idx = int(0.975 * (len(ratios) - 1))
+    return ratios[lower_idx], ratios[upper_idx]
+
+
+def _summarize_by_arm(
+    rows: list[dict[str, str]],
+    bootstrap_samples: int,
+) -> dict[str, Any] | None:
+    """Compute the paired arm comparison summary, or None if not applicable.
+
+    Returns None when the CSV has no `arm` column, fewer than two pair
+    keys, or no metric columns of interest.
+    """
+    if not rows or ARM_COLUMN not in rows[0]:
+        return None
+    paired = _pair_rows_by_arm(rows)
+    if not paired:
+        return None
+    metrics: dict[str, dict[str, Any]] = {}
+    for metric_name, alternative in ARM_METRIC_SPECS:
+        if metric_name not in rows[0]:
+            continue
+        apxm_values: list[float] = []
+        flat_values: list[float] = []
+        for arm_pair in paired.values():
+            apxm_v = _to_float(arm_pair[ARM_APXM_ON].get(metric_name, ""))
+            flat_v = _to_float(arm_pair[ARM_FLAT_HTTP].get(metric_name, ""))
+            if apxm_v is None or flat_v is None:
+                continue
+            apxm_values.append(apxm_v)
+            flat_values.append(flat_v)
+        if len(apxm_values) < 2:
+            continue
+        metrics[metric_name] = {
+            "alternative": alternative,
+            "paired_n": len(apxm_values),
+            "apxm_median": statistics.median(apxm_values),
+            "flat_median": statistics.median(flat_values),
+            "wilcoxon_p": _wilcoxon_p_value(apxm_values, flat_values, alternative),
+            "ratio_ci": _bootstrap_ratio_ci(apxm_values, flat_values, bootstrap_samples),
+        }
+    if not metrics:
+        return None
+    return {
+        "pair_count": len(paired),
+        "pair_key_fields": list(ARM_PAIR_KEY_FIELDS),
+        "metrics": metrics,
+        "scipy_available": _scipy_wilcoxon is not None,
+    }
+
+
+def _format_p_value(p: float | None) -> str:
+    if p is None:
+        return "-"
+    if p < 1e-4:
+        return f"{p:.2e}"
+    return f"{p:.4f}"
+
+
+def _render_arm_comparison(arm_summary: dict[str, Any]) -> str:
+    lines: list[str] = []
+    lines.append("\n## Arm comparison (APXM-on vs flat-HTTP)\n")
+    lines.append(
+        f"- Paired by `{', '.join(arm_summary['pair_key_fields'])}` "
+        f"across {arm_summary['pair_count']} cells.\n"
+    )
+    if not arm_summary["scipy_available"]:
+        lines.append(
+            "- Wilcoxon column blank: scipy is not installed in this environment. "
+            "Install with `uv pip install scipy` to enable the paired test.\n"
+        )
+    lines.append(
+        "\n| metric | alt. | n | APXM median | flat median | Wilcoxon p | bootstrap 95% CI on ratio |\n"
+    )
+    lines.append("|---|---|---|---|---|---|---|\n")
+    for metric_name, m in arm_summary["metrics"].items():
+        ratio_ci = m["ratio_ci"]
+        ci_str = (
+            f"[{ratio_ci[0]:.4f}, {ratio_ci[1]:.4f}]" if ratio_ci is not None else "-"
+        )
+        lines.append(
+            f"| `{metric_name}` | {m['alternative']} | {m['paired_n']} | "
+            f"{m['apxm_median']:.4f} | {m['flat_median']:.4f} | "
+            f"{_format_p_value(m['wilcoxon_p'])} | {ci_str} |\n"
+        )
+    return "".join(lines)
 
 
 def _token_call_threshold_text() -> str:
@@ -928,6 +1105,10 @@ def main() -> int:
         compare_opt_levels=compare_opt_levels,
         bootstrap_samples=args.bootstrap_samples,
     )
+
+    arm_summary = _summarize_by_arm(rows, args.bootstrap_samples)
+    if arm_summary is not None:
+        markdown = markdown + _render_arm_comparison(arm_summary)
 
     if args.markdown_out is not None:
         args.markdown_out.parent.mkdir(parents=True, exist_ok=True)

@@ -69,6 +69,7 @@ mamba*
 
 # APXM local workspace
 /.apxm/
+/.claude/
 
 # Keep examples source-only; APXM runtime/evaluation artifacts belong in /.apxm/.
 examples/python/benchmarks/results/

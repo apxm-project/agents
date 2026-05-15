@@ -996,6 +996,12 @@ impl apxm_core::MetricsSource for RuntimeMetricsSource<'_> {
         {
             map.insert(metrics_keys::RUNTIME_GRAPH_METRICS.to_owned(), obj);
         }
+        if !self.execution.dispatch_ir_metrics.is_null() {
+            map.insert(
+                metrics_keys::RUNTIME_DISPATCH_IR_V1.to_owned(),
+                self.execution.dispatch_ir_metrics.clone(),
+            );
+        }
         if let Some(observed) = &self.execution.stats.observed_graph {
             map.insert(
                 metrics_keys::RUNTIME_OBSERVED_GRAPH.to_owned(),
@@ -1076,11 +1082,15 @@ fn build_metrics_json(
     let backend_aggregate = result.llm_metrics.clone();
     #[cfg(not(feature = "metrics"))]
     let backend_aggregate = apxm_backends::AggregatedMetrics::default();
-    if backend_aggregate.total_requests > 0 || !result.graph_status_snapshots.is_empty() {
+    if backend_aggregate.total_requests > 0
+        || !result.graph_status_snapshots.is_empty()
+        || !result.backend_graph_capabilities.is_empty()
+    {
         report.add_source(&apxm_backends::BackendMetricsSource {
             aggregate: backend_aggregate,
             per_backend: std::collections::HashMap::new(),
             graph_status_snapshots: result.graph_status_snapshots.clone(),
+            graph_capabilities: result.backend_graph_capabilities.clone(),
         });
     }
 
@@ -1133,6 +1143,8 @@ mod tests {
             },
             graph_metrics_snapshot: GraphMetricsSnapshot::default(),
             graph_status_snapshots: vec![],
+            backend_graph_capabilities: HashMap::new(),
+            dispatch_ir_metrics: serde_json::Value::Null,
         }
     }
 

@@ -49,8 +49,8 @@ pub use execution::{
 };
 pub use goal::{Goal, GoalId, GoalStatus};
 pub use graph_hints::{
-    ApxmGraphHints, CompilerHints, GraphBackendKind, GraphMetadata, GraphStatusSnapshot, NodeSpec,
-    PinMode, PinPolicy, PriorityClass,
+    ApxmGraphHints, BackendGraphCapabilities, CompilerHints, GraphBackendKind, GraphMetadata,
+    GraphStatusSnapshot, NodeSpec, PinMode, PinPolicy, PriorityClass,
 };
 pub use graph_metrics::{LatencyClass, NodeGraphMetrics};
 pub use identifiers::{

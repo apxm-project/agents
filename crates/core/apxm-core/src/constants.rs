@@ -361,9 +361,11 @@ pub mod session {
         pub const RUNTIME_LLM: &str = "llm";
         pub const RUNTIME_GRAPH_METRICS: &str = "graph_metrics";
         pub const RUNTIME_OBSERVED_GRAPH: &str = "observed_graph";
+        pub const RUNTIME_DISPATCH_IR_V1: &str = "dispatch_ir_v1";
         pub const BACKENDS_AGGREGATE: &str = "aggregate";
         pub const BACKENDS_PER_BACKEND: &str = "per_backend";
         pub const BACKENDS_GRAPHS: &str = "graphs";
+        pub const BACKENDS_GRAPH_CAPABILITIES: &str = "graph_capabilities";
         pub const SCHEMA_VERSION_VALUE: u32 = 2;
 
         // Compiler diagnostics section keys

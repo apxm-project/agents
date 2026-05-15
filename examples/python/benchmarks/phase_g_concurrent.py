@@ -37,14 +37,40 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from util import prom_pull  # noqa: E402
+from util import pre_registration  # noqa: E402
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_GRAPH = REPO_ROOT / "examples" / "python" / "benchmarks" / "stress" / "prefix_fanout_concurrent.py"
 DEFAULT_RESULTS_DIR = REPO_ROOT / ".apxm" / "benchmarks" / "results"
 DEFAULT_OUTPUT = DEFAULT_RESULTS_DIR / "phase-g-concurrent.csv"
 
+EXPECTED_MATRIX_CELLS = {
+    "A": {"server_prefix_caching": False, "server_scheduling_policy": "fcfs", "opt_level": 0},
+    "B": {"server_prefix_caching": True, "server_scheduling_policy": "fcfs", "opt_level": 0},
+    "C": {"server_prefix_caching": False, "server_scheduling_policy": "priority", "opt_level": 2},
+    "D": {"server_prefix_caching": True, "server_scheduling_policy": "priority", "opt_level": 2},
+}
+
+APXM_DISABLE_HINTS_ENV = "APXM_DISABLE_HINTS"
+DISABLE_HINTS_ENABLED = "1"
+ARM_APXM_ON = "apxm-on"
+ARM_FLAT_HTTP = "flat-http"
+
+PHASEG_VARIANT_ENV = "APXM_PHASEG_VARIANT"
+PHASEG_CELL_LABEL_ENV = "APXM_PHASEG_CELL_LABEL"
+APXM_VLLM_CACHE_SALT_ENV = "APXM_VLLM_CACHE_SALT"
+
 
 @dataclass
 class TenantResult:
+    cell_label: str
+    server_scheduling_policy: str
+    server_prefix_caching: bool
+    max_num_seqs: int
+    model: str
+    service_name: str
     variant: int
     opt_level: int
     iteration: int
@@ -54,11 +80,18 @@ class TenantResult:
     pinned_blocks_peak: int
     cached_input_tokens: int
     llm_calls: int
+    arm: str = ARM_APXM_ON
 
 
 @dataclass
 class BatchRow:
     timestamp: str
+    cell_label: str
+    server_scheduling_policy: str
+    server_prefix_caching: bool
+    max_num_seqs: int
+    model: str
+    service_name: str
     opt_level: int
     iteration: int
     concurrency: int
@@ -70,6 +103,10 @@ class BatchRow:
     pinned_blocks_peak_sum: int
     cached_input_tokens_sum: int
     llm_calls_sum: int
+    arm: str = ARM_APXM_ON
+    prefix_cache_hit_rate: float | None = None
+    prefix_cache_queries_delta: float = 0.0
+    prefix_cache_hits_delta: float = 0.0
 
 
 def _parse_args() -> argparse.Namespace:
@@ -85,7 +122,52 @@ def _parse_args() -> argparse.Namespace:
                    help="Base URL for /v1/apxm/* (vLLM service endpoint without /v1).")
     p.add_argument("--target", default="latency")
     p.add_argument("--interleave-opt-levels", action="store_true", default=True)
+    p.add_argument("--cell-label", default=os.environ.get(PHASEG_CELL_LABEL_ENV, ""),
+                   help="Benchmark matrix cell label. Defaults to A/B/C/D inference from server controls and opt level.")
+    p.add_argument("--server-scheduling-policy", default=os.environ.get("SCHEDULING_POLICY", "priority"))
+    p.add_argument("--server-prefix-caching", action=argparse.BooleanOptionalAction,
+                   default=_env_bool("ENABLE_PREFIX_CACHING", True))
+    p.add_argument("--max-num-seqs", type=int, default=int(os.environ.get("MAX_NUM_SEQS", "64")))
+    p.add_argument("--model", default=os.environ.get("MODEL_REF", ""))
+    p.add_argument("--service-name", default=os.environ.get("APXM_VLLM_SERVICE_NAME", ""))
+    p.add_argument("--matrix-report", type=Path,
+                   help="Write a JSON coverage/lint report for the A-D benchmark matrix.")
+    p.add_argument("--require-matrix", action="store_true",
+                   help="Exit nonzero when --matrix-report finds missing or failed cells.")
+    p.add_argument("--no-apxm-hints", action="store_true",
+                   help="Run as the flat-HTTP control arm: suppress vllm_xargs.apxm injection "
+                        "and /v1/apxm/graphs/register on the same vLLM build.")
+    p.add_argument("--metrics-url", default=None,
+                   help="vLLM Prometheus /metrics URL. Defaults to "
+                        "<apxm_endpoint>/metrics. Set empty string to disable polling.")
+    p.add_argument("--pre-registration", type=Path, default=None,
+                   help="Pre-registration markdown file authored before the run. "
+                        "Copied alongside the output CSV when provided.")
+    p.add_argument("--require-pre-registration", action="store_true",
+                   help="Refuse to start when --pre-registration is missing. "
+                        "Use for runs whose evidence will be cited in docs/claims/.")
     return p.parse_args()
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"", "0", "false", "no", "off"}
+
+
+def _cell_label(explicit: str, policy: str, prefix_caching: bool, opt_level: int) -> str:
+    if explicit:
+        return explicit
+    normalized = policy.strip().lower()
+    for label, spec in EXPECTED_MATRIX_CELLS.items():
+        if (
+            spec["server_prefix_caching"] == prefix_caching
+            and spec["server_scheduling_policy"] == normalized
+            and spec["opt_level"] == opt_level
+        ):
+            return label
+    return f"{normalized}-prefix-{int(prefix_caching)}-o{opt_level}"
 
 
 def _fetch_graph_status(endpoint: str, execution_id: str) -> dict:
@@ -108,14 +190,27 @@ def _execute_tenant(
     iteration: int,
     target: str,
     apxm_endpoint: str,
+    cell_label: str,
+    server_scheduling_policy: str,
+    server_prefix_caching: bool,
+    max_num_seqs: int,
+    model: str,
+    service_name: str,
+    arm: str = ARM_APXM_ON,
 ) -> TenantResult:
     env = os.environ.copy()
-    env["APXM_PHASEG_VARIANT"] = str(variant)
-    # Salt by batch (iteration), not by execution: tenants in the same
-    # batch share a salt so that within-tenant 8-way fan-out hits
-    # auto-prefix-cache; across batches we rotate to keep trials
-    # independent.
-    env["APXM_VLLM_CACHE_SALT"] = f"phaseg-iter-{iteration}-variant-{variant}"
+    env[PHASEG_VARIANT_ENV] = str(variant)
+    # Salt scoped per (arm, opt_level). Arm prevents the second arm of
+    # a paired-arm A/B from hitting the first arm's cache (the prior
+    # per-(iter, variant) scheme caused a ~99 % vs 0 % hit-rate inversion
+    # — see docs/claims/mooncake-paired-arms-smoke.md). Opt_level
+    # prevents O2 from inheriting O0's warm cache. Variant is NOT in
+    # the salt: tenant differentiation comes from byte-distinct contexts
+    # in the workload itself (per prefix_fanout_concurrent's docstring),
+    # so all tenants in a cell legitimately share salt and the cache
+    # reflects the workload's true prefix-sharing structure (which is
+    # what we want for cohort-routing measurements).
+    env[APXM_VLLM_CACHE_SALT_ENV] = f"phaseg-arm-{arm}-opt-{opt_level}"
     import tempfile
     metrics_dir = Path(tempfile.mkdtemp(prefix=f"phaseg-metrics-v{variant}-it{iteration}-"))
     metrics_path = metrics_dir / "metrics.json"
@@ -197,6 +292,12 @@ def _execute_tenant(
         pass
 
     return TenantResult(
+        cell_label=cell_label,
+        server_scheduling_policy=server_scheduling_policy,
+        server_prefix_caching=server_prefix_caching,
+        max_num_seqs=max_num_seqs,
+        model=model,
+        service_name=service_name,
         variant=variant,
         opt_level=opt_level,
         iteration=iteration,
@@ -206,6 +307,7 @@ def _execute_tenant(
         pinned_blocks_peak=pin_peak,
         cached_input_tokens=cached_input,
         llm_calls=llm_calls,
+        arm=arm,
     )
 
 
@@ -218,8 +320,30 @@ def _run_batch(
     stagger_ms: int,
     target: str,
     apxm_endpoint: str,
+    cell_label_override: str,
+    server_scheduling_policy: str,
+    server_prefix_caching: bool,
+    max_num_seqs: int,
+    model: str,
+    service_name: str,
+    arm: str = ARM_APXM_ON,
+    metrics_url: str | None = None,
 ) -> tuple[BatchRow, list[TenantResult]]:
     tenants: list[TenantResult] = []
+    cell_label = _cell_label(
+        cell_label_override,
+        server_scheduling_policy,
+        server_prefix_caching,
+        opt_level,
+    )
+
+    metrics_before: dict[str, float] = {}
+    if metrics_url:
+        try:
+            metrics_before = prom_pull.snapshot(metrics_url)
+        except (urllib.error.URLError, TimeoutError) as exc:
+            print(f"[phase-g] warn: metrics snapshot before batch failed: {exc!r}", flush=True)
+
     batch_start = time.perf_counter()
 
     with ThreadPoolExecutor(max_workers=concurrency) as pool:
@@ -233,6 +357,13 @@ def _run_batch(
                 iteration=iteration,
                 target=target,
                 apxm_endpoint=apxm_endpoint,
+                cell_label=cell_label,
+                server_scheduling_policy=server_scheduling_policy,
+                server_prefix_caching=server_prefix_caching,
+                max_num_seqs=max_num_seqs,
+                model=model,
+                service_name=service_name,
+                arm=arm,
             ))
             if variant < concurrency - 1 and stagger_ms > 0:
                 time.sleep(stagger_ms / 1000.0)
@@ -240,6 +371,18 @@ def _run_batch(
             tenants.append(fut.result())
 
     batch_wall_ms = (time.perf_counter() - batch_start) * 1000.0
+
+    metrics_delta: dict[str, float] = {}
+    if metrics_url and metrics_before:
+        try:
+            metrics_after = prom_pull.snapshot(metrics_url)
+            metrics_delta = prom_pull.delta(metrics_before, metrics_after)
+        except (urllib.error.URLError, TimeoutError) as exc:
+            print(f"[phase-g] warn: metrics snapshot after batch failed: {exc!r}", flush=True)
+    cell_hit_rate = prom_pull.hit_rate(metrics_delta) if metrics_delta else None
+    queries_delta = metrics_delta.get(prom_pull.PREFIX_CACHE_QUERIES_TOTAL, 0.0)
+    hits_delta = metrics_delta.get(prom_pull.PREFIX_CACHE_HITS_TOTAL, 0.0)
+
     failed = sum(1 for t in tenants if t.returncode != 0)
     if tenants:
         max_wall = max(t.wall_ms for t in tenants)
@@ -254,6 +397,12 @@ def _run_batch(
 
     row = BatchRow(
         timestamp=datetime.now(timezone.utc).isoformat(),
+        cell_label=cell_label,
+        server_scheduling_policy=server_scheduling_policy,
+        server_prefix_caching=server_prefix_caching,
+        max_num_seqs=max_num_seqs,
+        model=model,
+        service_name=service_name,
         opt_level=opt_level,
         iteration=iteration,
         concurrency=concurrency,
@@ -265,8 +414,58 @@ def _run_batch(
         pinned_blocks_peak_sum=pin_peak_sum,
         cached_input_tokens_sum=cached_sum,
         llm_calls_sum=llm_calls_sum,
+        arm=arm,
+        prefix_cache_hit_rate=cell_hit_rate,
+        prefix_cache_queries_delta=queries_delta,
+        prefix_cache_hits_delta=hits_delta,
     )
     return row, tenants
+
+
+def _write_matrix_report(
+    rows: list[BatchRow],
+    path: Path,
+    *,
+    pre_registration_path: str | None = None,
+) -> bool:
+    by_label: dict[str, list[BatchRow]] = {}
+    for row in rows:
+        by_label.setdefault(row.cell_label, []).append(row)
+
+    cells = {}
+    ok = True
+    for label, spec in EXPECTED_MATRIX_CELLS.items():
+        matching = [
+            row for row in by_label.get(label, [])
+            if row.opt_level == spec["opt_level"]
+            and row.server_scheduling_policy == spec["server_scheduling_policy"]
+            and row.server_prefix_caching == spec["server_prefix_caching"]
+        ]
+        failed_tenants = sum(row.failed_tenants for row in matching)
+        cell_ok = bool(matching) and failed_tenants == 0
+        if not cell_ok:
+            ok = False
+        cells[label] = {
+            **spec,
+            "present": bool(matching),
+            "rows": len(matching),
+            "failed_tenants": failed_tenants,
+            "batch_wall_ms": [row.batch_wall_ms for row in matching],
+            "pinned_blocks_peak_max": max(
+                (row.pinned_blocks_peak_max for row in matching),
+                default=0,
+            ),
+        }
+
+    payload = {
+        "matrix": "phase_g_concurrent_2x2",
+        "ok": ok,
+        "cells": cells,
+        "pre_registration_path": pre_registration_path,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    return ok
 
 
 def _bootstrap_speedup(
@@ -295,7 +494,22 @@ def _bootstrap_speedup(
 
 def main() -> int:
     args = _parse_args()
+    args.server_scheduling_policy = args.server_scheduling_policy.strip().lower()
     args.output.parent.mkdir(parents=True, exist_ok=True)
+    if args.no_apxm_hints:
+        os.environ[APXM_DISABLE_HINTS_ENV] = DISABLE_HINTS_ENABLED
+    arm = ARM_FLAT_HTTP if args.no_apxm_hints else ARM_APXM_ON
+    pre_reg_sidecar = pre_registration.enforce(
+        pre_registration_arg=args.pre_registration,
+        require=args.require_pre_registration,
+        output_path=args.output.resolve(),
+    )
+    if args.metrics_url is None:
+        metrics_url = f"{args.apxm_endpoint.rstrip('/')}/metrics"
+    elif args.metrics_url == "":
+        metrics_url = None
+    else:
+        metrics_url = args.metrics_url
 
     iter_plan: list[tuple[int, int]] = []
     if args.interleave_opt_levels:
@@ -319,6 +533,14 @@ def main() -> int:
             stagger_ms=args.stagger_ms,
             target=args.target,
             apxm_endpoint=args.apxm_endpoint,
+            cell_label_override=args.cell_label,
+            server_scheduling_policy=args.server_scheduling_policy,
+            server_prefix_caching=args.server_prefix_caching,
+            max_num_seqs=args.max_num_seqs,
+            model=args.model,
+            service_name=args.service_name,
+            arm=arm,
+            metrics_url=metrics_url,
         )
         rows.append(row)
         detail_rows.extend(tenants)
@@ -332,10 +554,14 @@ def main() -> int:
         )
 
     fieldnames = list(asdict(rows[0]).keys()) if rows else [
-        "timestamp", "opt_level", "iteration", "concurrency",
+        "timestamp", "cell_label", "server_scheduling_policy",
+        "server_prefix_caching", "max_num_seqs", "model", "service_name",
+        "opt_level", "iteration", "concurrency",
         "batch_wall_ms", "max_tenant_wall_ms", "sum_tenant_wall_ms",
         "failed_tenants", "pinned_blocks_peak_max", "pinned_blocks_peak_sum",
-        "cached_input_tokens_sum", "llm_calls_sum",
+        "cached_input_tokens_sum", "llm_calls_sum", "arm",
+        "prefix_cache_hit_rate",
+        "prefix_cache_queries_delta", "prefix_cache_hits_delta",
     ]
     with args.output.open("w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=fieldnames)
@@ -392,6 +618,13 @@ def main() -> int:
     print(f"\nWrote {len(rows)} batch rows to {args.output}")
     if detail_rows:
         print(f"Wrote {len(detail_rows)} per-tenant rows to {detail_path}")
+    if args.matrix_report:
+        matrix_ok = _write_matrix_report(
+            rows, args.matrix_report, pre_registration_path=pre_reg_sidecar
+        )
+        print(f"Wrote Phase-G matrix report to {args.matrix_report}")
+        if args.require_matrix and not matrix_ok:
+            return 1
     return 0
 
 

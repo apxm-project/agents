@@ -14,17 +14,36 @@ use anyhow::{Context, Result};
 use apxm_core::constants::graph::attrs::{BASE_URL, MODEL};
 use apxm_core::constants::llm::apxm as apxm_llm;
 use apxm_core::types::{
-    GraphMetadata, GraphStatusSnapshot, ModelCapabilities, ModelInfo, PriorityClass,
+    BackendGraphCapabilities, GraphMetadata, GraphStatusSnapshot, ModelCapabilities, ModelInfo,
+    PriorityClass,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::pin::Pin;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tokio_stream::Stream;
 
 const DEFAULT_BASE_URL: &str = DEFAULT_VLLM_BASE_URL;
 const PROTOCOL: ProviderProtocol = ProviderProtocol::Vllm;
 const UNCONFIGURED_MODEL_SENTINEL: &str = "__apxm_vllm_model_required__";
+
+/// Env var that, when set to `"1"`, suppresses APXM-specific request shaping
+/// and graph registration so the backend behaves as a flat-HTTP control arm.
+const DISABLE_HINTS_ENV: &str = "APXM_DISABLE_HINTS";
+const DISABLE_HINTS_ENV_ENABLED: &str = "1";
+
+/// Marker placed in `GraphRegisterResponse.object` when the wire send is
+/// suppressed by `DISABLE_HINTS_ENV`, so logs and any consumer can
+/// distinguish a suppressed registration from a real one.
+const SUPPRESSED_REGISTRATION_OBJECT: &str = "apxm.disabled";
+
+fn apxm_disable_hints() -> bool {
+    static DISABLED: OnceLock<bool> = OnceLock::new();
+    *DISABLED.get_or_init(|| {
+        std::env::var(DISABLE_HINTS_ENV).ok().as_deref() == Some(DISABLE_HINTS_ENV_ENABLED)
+    })
+}
 
 mod request_keys {
     pub const THINKING_TOKEN_BUDGET: &str = "thinking_token_budget";
@@ -128,6 +147,8 @@ pub struct GraphAwareVllmBackend {
     /// Set to `true` after the first time `health_check` reports a non-priority
     /// policy or a missing `/v1/apxm/scheduler` endpoint.
     scheduler_policy_warned: AtomicBool,
+    /// Last successfully observed scheduler policy from `/v1/apxm/scheduler`.
+    scheduler_policy: parking_lot::RwLock<Option<String>>,
 }
 
 impl GraphAwareVllmBackend {
@@ -195,6 +216,7 @@ impl GraphAwareVllmBackend {
             default_model_configured,
             structured_outputs_supported,
             scheduler_policy_warned: AtomicBool::new(false),
+            scheduler_policy: parking_lot::RwLock::new(None),
         })
     }
 
@@ -225,11 +247,13 @@ impl GraphAwareVllmBackend {
                 let info = resp.json::<SchedulerInfoResponse>().await;
                 match info {
                     Ok(info) if info.policy == super::graph_meta::SCHEDULER_POLICY_PRIORITY => {
+                        *self.scheduler_policy.write() = Some(info.policy);
                         // Priority mode is active — APXM hints will reorder admission.
                         // Nothing to log; keep `scheduler_policy_warned` false so we
                         // re-check if a future health tick sees a different policy.
                     }
                     Ok(info) => {
+                        *self.scheduler_policy.write() = Some(info.policy.clone());
                         if !self.scheduler_policy_warned.swap(true, Ordering::Relaxed) {
                             tracing::warn!(
                                 policy = %info.policy,
@@ -243,6 +267,7 @@ impl GraphAwareVllmBackend {
                         }
                     }
                     Err(err) => {
+                        *self.scheduler_policy.write() = None;
                         if !self.scheduler_policy_warned.swap(true, Ordering::Relaxed) {
                             tracing::warn!(
                                 error = %err,
@@ -255,6 +280,7 @@ impl GraphAwareVllmBackend {
                 }
             }
             Ok(resp) if resp.status() == reqwest::StatusCode::NOT_FOUND => {
+                *self.scheduler_policy.write() = None;
                 if !self.scheduler_policy_warned.swap(true, Ordering::Relaxed) {
                     tracing::warn!(
                         url = %url,
@@ -276,6 +302,7 @@ impl GraphAwareVllmBackend {
                 }
             }
             Err(err) => {
+                *self.scheduler_policy.write() = None;
                 if !self.scheduler_policy_warned.swap(true, Ordering::Relaxed) {
                     tracing::warn!(
                         error = %err,
@@ -308,6 +335,17 @@ impl GraphAwareVllmBackend {
     /// requests. The server stores the metadata and uses it for KV-cache
     /// pinning decisions.
     pub async fn register_graph(&self, metadata: GraphMetadata) -> Result<GraphRegisterResponse> {
+        if apxm_disable_hints() {
+            return Ok(GraphRegisterResponse {
+                object: SUPPRESSED_REGISTRATION_OBJECT.to_string(),
+                graph_id: metadata.graph_id.clone(),
+                execution_id: metadata.execution_id.clone(),
+                registered_nodes: 0,
+                critical_path_length: None,
+                max_parallelism: None,
+                default_pin_ttl_ms: None,
+            });
+        }
         let url = self.graph_registration_url();
         let response = self
             .inner
@@ -327,10 +365,12 @@ impl GraphAwareVllmBackend {
             anyhow::bail!("Graph registration failed: {} - {}", status, body);
         }
 
-        response
+        let registered = response
             .json()
             .await
-            .context("Failed to parse graph registration response")
+            .context("Failed to parse graph registration response")?;
+        self.probe_scheduler_policy().await;
+        Ok(registered)
     }
 
     /// Release a graph's KV-cache pins on the vLLM server.
@@ -394,7 +434,9 @@ impl GraphAwareVllmBackend {
         }
 
         if let serde_json::Value::Object(ref mut map) = extra {
-            if let Some(ref hints) = request.apxm_hints {
+            if !apxm_disable_hints()
+                && let Some(ref hints) = request.apxm_hints
+            {
                 let vllm_xargs = map
                     .entry(super::graph_meta::REQUEST_XARGS.to_owned())
                     .or_insert_with(|| serde_json::json!({}));
@@ -583,8 +625,38 @@ impl LLMBackend for GraphAwareVllmBackend {
                 backend_metadata::BACKEND_TYPE.to_string(),
                 super::graph_meta::BACKEND_NAME.into(),
             );
+            map.insert(
+                "graph_capabilities".to_string(),
+                serde_json::to_value(self.graph_capabilities()).unwrap_or_default(),
+            );
+            if let Some(policy) = self.scheduler_policy.read().clone() {
+                map.insert("scheduler_policy".to_string(), policy.into());
+            }
         }
         meta
+    }
+
+    fn graph_capabilities(&self) -> BackendGraphCapabilities {
+        let endpoints = self.apxm_endpoints_available.load(Ordering::Relaxed);
+        let scheduler_is_priority = self
+            .scheduler_policy
+            .read()
+            .as_deref()
+            .map(|policy| policy == super::graph_meta::SCHEDULER_POLICY_PRIORITY)
+            .unwrap_or(false);
+        BackendGraphCapabilities {
+            supports_graph_registration: endpoints,
+            supports_request_hints: endpoints,
+            supports_priority: scheduler_is_priority,
+            supports_prefix_cohorts: endpoints,
+            supports_pin_release: endpoints,
+            supports_structured_outputs: self.structured_outputs_supported,
+            supports_backend_queue_state: false,
+            supports_backend_cache_state: endpoints,
+            supports_cancel_groups: false,
+            supports_dispatch_ir_v1_internal: endpoints,
+            supports_admin_reset_prefix_cache: endpoints,
+        }
     }
 
     fn supports_graph_extensions(&self) -> bool {
@@ -941,6 +1013,41 @@ mod tests {
         .unwrap();
 
         assert!(!disabled.capabilities().structured_outputs);
+    }
+
+    #[tokio::test]
+    async fn test_graph_capabilities_derive_from_endpoint_and_scheduler_state() {
+        let backend = GraphAwareVllmBackend::new(
+            "test-key",
+            Some(serde_json::json!({
+                BASE_URL: "http://localhost:8916/v1",
+                MODEL: "test-model"
+            })),
+        )
+        .await
+        .unwrap();
+
+        let caps_without_scheduler = backend.graph_capabilities();
+        assert!(caps_without_scheduler.supports_graph_registration);
+        assert!(caps_without_scheduler.supports_request_hints);
+        assert!(caps_without_scheduler.supports_prefix_cohorts);
+        assert!(caps_without_scheduler.supports_pin_release);
+        assert!(caps_without_scheduler.supports_backend_cache_state);
+        assert!(caps_without_scheduler.supports_structured_outputs);
+        assert!(!caps_without_scheduler.supports_priority);
+        assert!(!caps_without_scheduler.supports_cancel_groups);
+
+        *backend.scheduler_policy.write() = Some(graph_meta::SCHEDULER_POLICY_PRIORITY.to_string());
+        let caps_with_priority = backend.graph_capabilities();
+        assert!(caps_with_priority.supports_priority);
+
+        backend
+            .apxm_endpoints_available
+            .store(false, Ordering::Relaxed);
+        let caps_without_endpoints = backend.graph_capabilities();
+        assert!(!caps_without_endpoints.supports_graph_registration);
+        assert!(!caps_without_endpoints.supports_request_hints);
+        assert!(!caps_without_endpoints.supports_backend_cache_state);
     }
 
     #[tokio::test]

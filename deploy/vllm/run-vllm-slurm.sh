@@ -28,7 +28,9 @@ APXM_VLLM_IMAGE_ARCHIVE="${APXM_VLLM_IMAGE_ARCHIVE:-}"
 TENSOR_PARALLEL_SIZE="${TENSOR_PARALLEL_SIZE:-8}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-32768}"
 GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.90}"
-MAX_NUM_SEQS="${MAX_NUM_SEQS:-4}"
+MAX_NUM_SEQS="${MAX_NUM_SEQS:-64}"
+SCHEDULING_POLICY="${SCHEDULING_POLICY:-priority}"
+ENABLE_PREFIX_CACHING="${ENABLE_PREFIX_CACHING:-1}"
 STARTUP_TIMEOUT_SECONDS="${STARTUP_TIMEOUT_SECONDS:-7200}"
 REASONING_PARSER="${REASONING_PARSER:-openai_gptoss}"
 TOOL_CALL_PARSER="${TOOL_CALL_PARSER:-openai}"
@@ -48,6 +50,9 @@ echo "image_archive=${APXM_VLLM_IMAGE_ARCHIVE:-<apxm image store default>}"
 echo "model=${MODEL_REF}"
 echo "served_model=${SERVED_MODEL_ID}"
 echo "port=${PORT}"
+echo "max_num_seqs=${MAX_NUM_SEQS}"
+echo "scheduling_policy=${SCHEDULING_POLICY}"
+echo "enable_prefix_caching=${ENABLE_PREFIX_CACHING}"
 echo "container_name=${CONTAINER_NAME}"
 
 mkdir -p "$HF_HOME_HOST"
@@ -69,8 +74,6 @@ cmd=(
   --tensor-parallel-size "$TENSOR_PARALLEL_SIZE"
   --gpu-memory-utilization "$GPU_MEMORY_UTILIZATION"
   --max-model-len "$MAX_MODEL_LEN"
-  --enable-prefix-caching
-  --scheduling-policy priority
   --enable-prompt-tokens-details
   --enable-force-include-usage
   --enable
@@ -79,6 +82,12 @@ cmd=(
   --max-num-seqs "$MAX_NUM_SEQS"
 )
 
+if [ "$ENABLE_PREFIX_CACHING" = "1" ]; then
+  cmd+=(--enable-prefix-caching)
+fi
+if [ -n "$SCHEDULING_POLICY" ]; then
+  cmd+=(--scheduling-policy "$SCHEDULING_POLICY")
+fi
 if [ -n "$REASONING_PARSER" ]; then
   cmd+=(--reasoning-parser "$REASONING_PARSER")
 fi

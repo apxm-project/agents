@@ -679,6 +679,12 @@ impl apxm_core::MetricsSource for RuntimeMetricsSource<'_> {
         {
             map.insert(metrics_keys::RUNTIME_GRAPH_METRICS.to_owned(), obj);
         }
+        if !self.execution.dispatch_ir_metrics.is_null() {
+            map.insert(
+                metrics_keys::RUNTIME_DISPATCH_IR_V1.to_owned(),
+                self.execution.dispatch_ir_metrics.clone(),
+            );
+        }
         if let Some(observed) = &self.execution.stats.observed_graph {
             map.insert(
                 metrics_keys::RUNTIME_OBSERVED_GRAPH.to_owned(),

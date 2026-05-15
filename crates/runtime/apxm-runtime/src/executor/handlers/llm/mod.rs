@@ -120,6 +120,21 @@ pub(crate) fn attach_graph_hints(
     node: &Node,
     request: LLMRequest,
 ) -> LLMRequest {
+    if let Ok(node_id) = u32::try_from(node.id)
+        && let Some(hints) = ctx.dispatch_hints_for_node(node_id)
+    {
+        apxm_llm!(debug,
+            execution_id = %ctx.execution_id,
+            graph_id = %ctx.graph_id,
+            node_id = node.id,
+            priority_class = ?hints.priority_class,
+            reuse_group = ?hints.reuse_group,
+            downstream = hints.downstream_nodes.len(),
+            "Built APXM graph hints from DispatchIrV1"
+        );
+        return request.with_apxm_hints(hints);
+    }
+
     let node_name = node
         .metadata
         .name
@@ -725,6 +740,69 @@ mod tests {
         assert_eq!(hints.node_id, Some(42));
         assert_eq!(hints.node_name.as_deref(), Some("ask_node"));
         assert_eq!(hints.priority_class, Some(PriorityClass::CriticalPath));
+    }
+
+    #[tokio::test]
+    async fn test_attach_graph_hints_prefers_dispatch_ir_when_present() {
+        use apxm_core::types::values::Number;
+        use apxm_core::types::{DependencyType, Edge, ExecutionDag};
+
+        let direct_ctx = test_ctx_with_grouped_tools()
+            .await
+            .with_execution_id("exec-dispatch".to_string())
+            .with_graph_id("graph-dispatch".to_string());
+        let dispatch_ctx = test_ctx_with_grouped_tools()
+            .await
+            .with_execution_id("exec-dispatch".to_string())
+            .with_graph_id("graph-dispatch".to_string());
+
+        let mut root = Node::new(42, AISOperationType::Ask);
+        root.metadata.name = Some("ask_node".to_string());
+        root.metadata.priority = 95;
+        root.attributes.insert(
+            graph_attrs::REUSE_GROUP.to_string(),
+            Value::String("shared-prefix".to_string()),
+        );
+        root.attributes.insert(
+            graph_attrs::SHARED_PREFIX_EST_TOKENS.to_string(),
+            Value::Number(Number::Integer(256)),
+        );
+        root.attributes.insert(
+            graph_attrs::DOWNSTREAM_NODES.to_string(),
+            Value::Array(vec![Value::Number(Number::Integer(43))]),
+        );
+        let child = Node::new(43, AISOperationType::Ask);
+        let mut dag = ExecutionDag::new();
+        dag.add_node(root.clone()).unwrap();
+        dag.add_node(child).unwrap();
+        dag.add_edge(Edge::new(42, 43, 1, DependencyType::Data))
+            .unwrap();
+
+        let dispatch_ir = crate::graph_lifecycle::graph_dispatch_ir_from_dag(
+            "graph-dispatch",
+            "exec-dispatch",
+            &dag,
+        );
+        dispatch_ctx.set_dispatch_ir_v1(dispatch_ir);
+
+        let direct = attach_graph_hints(&direct_ctx, &root, LLMRequest::new("prompt"))
+            .apxm_hints
+            .expect("direct graph hints should be attached");
+        let request = attach_graph_hints(&dispatch_ctx, &root, LLMRequest::new("prompt"));
+        let hints = request.apxm_hints.expect("graph hints should be attached");
+
+        assert_eq!(
+            serde_json::to_value(&hints).unwrap(),
+            serde_json::to_value(&direct).unwrap()
+        );
+        assert_eq!(hints.graph_id.as_deref(), Some("graph-dispatch"));
+        assert_eq!(hints.execution_id.as_deref(), Some("exec-dispatch"));
+        assert_eq!(hints.node_id, Some(42));
+        assert_eq!(hints.node_name.as_deref(), Some("ask_node"));
+        assert_eq!(hints.priority_class, Some(PriorityClass::CriticalPath));
+        assert_eq!(hints.downstream_nodes, vec![43]);
+        assert_eq!(hints.reuse_group.as_deref(), Some("shared-prefix"));
+        assert_eq!(hints.compiler_hints.shared_prefix_est_tokens, Some(256));
     }
 
     #[tokio::test]

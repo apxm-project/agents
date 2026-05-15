@@ -1,7 +1,7 @@
 //! Executor engine - Main orchestrator for DAG execution
 
 use super::{ExecutionContext, Result, dispatcher::OperationDispatcher};
-use crate::graph_lifecycle::graph_metadata_from_dag;
+use crate::graph_lifecycle::{graph_dispatch_ir_from_dag, graph_metadata_from_dispatch_ir};
 use crate::scheduler::{DataflowScheduler, SchedulerConfig};
 use apxm_core::types::{
     GraphStatusSnapshot,
@@ -52,7 +52,9 @@ impl ExecutorEngine {
 
         // Register graph metadata with graph-aware backends.
         let graph_id = self.context.graph_id.clone();
-        self.register_graph_metadata(&dag, &graph_id).await;
+        let dispatch_ir = graph_dispatch_ir_from_dag(&graph_id, &self.context.execution_id, &dag);
+        self.context.set_dispatch_ir_v1(dispatch_ir.clone());
+        self.register_graph_metadata(&dispatch_ir).await;
 
         // Detailed metrics: spawn pin-peak polling for this graph_id.
         // `start_pin_polling` returns `None` when no graph-aware backends are
@@ -110,8 +112,8 @@ impl ExecutorEngine {
     }
 
     /// Build and register graph metadata with all backends.
-    async fn register_graph_metadata(&self, dag: &ExecutionDag, graph_id: &str) {
-        let metadata = graph_metadata_from_dag(graph_id, &self.context.execution_id, dag);
+    async fn register_graph_metadata(&self, dispatch_ir: &crate::dispatch::v1::DispatchIrV1) {
+        let metadata = graph_metadata_from_dispatch_ir(dispatch_ir);
 
         self.context.llm_registry.register_graph_all(metadata).await;
     }

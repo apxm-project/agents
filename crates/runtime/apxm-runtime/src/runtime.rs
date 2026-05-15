@@ -10,12 +10,13 @@ use crate::{
     agent_pool::AgentPool,
     capability::{CapabilitySystem, flow_registry::FlowRegistry},
     context_stack::ContextStack,
+    dispatch::v1::{DispatchIrV1, dispatch_ir_accounting_json},
     executor::{
         ExecutionContext, ExecutionEventEmitter, ExecutionHook, ExecutionHookContext,
         ExecutorEngine, InnerPlanLinker, NoOpLinker, NoOpWorkflowSpawner, OperationMiddleware,
         WorkflowSpawner,
     },
-    graph_lifecycle::BackendGraphLifecycle,
+    graph_lifecycle::{BackendGraphLifecycle, graph_dispatch_ir_from_dag},
     memory::{MemoryConfig, MemorySystem},
     process_table::ProcessTable,
     scheduler::{DataflowScheduler, SchedulerConfig, SessionLaneGuard},
@@ -27,7 +28,7 @@ use apxm_core::log_info;
 use apxm_core::{
     error::RuntimeError,
     types::{
-        GraphStatusSnapshot, OptimizationTarget,
+        BackendGraphCapabilities, GraphStatusSnapshot, OptimizationTarget,
         execution::{Agent, AgentFlow, ExecutionDag, ExecutionStats},
         values::Value,
     },
@@ -56,6 +57,10 @@ pub struct RuntimeExecutionResult {
     pub graph_metrics_snapshot: apxm_core::types::GraphMetricsSnapshot,
     /// Backend graph status snapshots captured before graph release.
     pub graph_status_snapshots: Vec<GraphStatusSnapshot>,
+    /// Backend graph capability evidence captured for this execution.
+    pub backend_graph_capabilities: HashMap<String, BackendGraphCapabilities>,
+    /// Runtime-owned Dispatch IR accounting projected to JSON for metrics.
+    pub dispatch_ir_metrics: serde_json::Value,
 }
 
 /// Runtime configuration
@@ -378,13 +383,10 @@ impl Runtime {
         let context = self
             .build_context(None, event_emitter, None)
             .with_graph_id(graph_id_from_dag(&dag));
-        let lifecycles = build_graph_lifecycles(
-            &self.llm_registry,
-            &dag,
-            &context.graph_id,
-            &context.execution_id,
-        )
-        .await;
+        let dispatch_ir =
+            graph_dispatch_ir_from_dag(&context.graph_id, &context.execution_id, &dag);
+        context.set_dispatch_ir_v1(dispatch_ir.clone());
+        let lifecycles = build_graph_lifecycles(&self.llm_registry, &dispatch_ir).await;
         let graph_emitter = context.event_emitter.as_ref().map(Arc::clone);
         let execution_id = context.execution_id.clone();
         let node_count = dag.nodes.len();
@@ -426,6 +428,12 @@ impl Runtime {
         // Capture token accounting snapshot after execution completes
         let token_snapshot = token_accountant.snapshot();
         let graph_metrics_snapshot = graph_metrics.snapshot();
+        let backend_graph_capabilities = self.llm_registry.graph_capabilities();
+        let dispatch_ir_metrics = dispatch_ir_accounting_json(
+            Some(&dispatch_ir),
+            &backend_graph_capabilities,
+            &graph_status_snapshots,
+        );
 
         Ok(RuntimeExecutionResult {
             results,
@@ -438,6 +446,8 @@ impl Runtime {
             token_snapshot,
             graph_metrics_snapshot,
             graph_status_snapshots,
+            backend_graph_capabilities,
+            dispatch_ir_metrics,
         })
     }
 
@@ -477,13 +487,10 @@ impl Runtime {
         let context = self
             .build_context_with_bridge(None, None, None, python_bridge)
             .with_graph_id(graph_id_from_dag(&entry_dag));
-        let lifecycles = build_graph_lifecycles(
-            &self.llm_registry,
-            &entry_dag,
-            &context.graph_id,
-            &context.execution_id,
-        )
-        .await;
+        let dispatch_ir =
+            graph_dispatch_ir_from_dag(&context.graph_id, &context.execution_id, &entry_dag);
+        context.set_dispatch_ir_v1(dispatch_ir.clone());
+        let lifecycles = build_graph_lifecycles(&self.llm_registry, &dispatch_ir).await;
         let executor = Arc::new(ExecutorEngine::new(context.clone()));
         let token_accountant = Arc::clone(&context.token_accountant);
         let graph_metrics = Arc::clone(&context.graph_metrics);
@@ -504,6 +511,12 @@ impl Runtime {
 
         let token_snapshot = token_accountant.snapshot();
         let graph_metrics_snapshot = graph_metrics.snapshot();
+        let backend_graph_capabilities = self.llm_registry.graph_capabilities();
+        let dispatch_ir_metrics = dispatch_ir_accounting_json(
+            Some(&dispatch_ir),
+            &backend_graph_capabilities,
+            &graph_status_snapshots,
+        );
 
         Ok(RuntimeExecutionResult {
             results,
@@ -516,6 +529,8 @@ impl Runtime {
             token_snapshot,
             graph_metrics_snapshot,
             graph_status_snapshots,
+            backend_graph_capabilities,
+            dispatch_ir_metrics,
         })
     }
 
@@ -574,13 +589,10 @@ impl Runtime {
         let execution_id = context.execution_id.clone();
         let node_count = entry_dag.nodes.len();
 
-        let lifecycles = build_graph_lifecycles(
-            &self.llm_registry,
-            &entry_dag,
-            &context.graph_id,
-            &context.execution_id,
-        )
-        .await;
+        let dispatch_ir =
+            graph_dispatch_ir_from_dag(&context.graph_id, &context.execution_id, &entry_dag);
+        context.set_dispatch_ir_v1(dispatch_ir.clone());
+        let lifecycles = build_graph_lifecycles(&self.llm_registry, &dispatch_ir).await;
         if let Some(emitter) = &graph_emitter {
             emitter.emit_graph_start(&execution_id, node_count);
         }
@@ -608,6 +620,12 @@ impl Runtime {
 
         let token_snapshot = token_accountant.snapshot();
         let graph_metrics_snapshot = graph_metrics.snapshot();
+        let backend_graph_capabilities = self.llm_registry.graph_capabilities();
+        let dispatch_ir_metrics = dispatch_ir_accounting_json(
+            Some(&dispatch_ir),
+            &backend_graph_capabilities,
+            &graph_status_snapshots,
+        );
 
         Ok(RuntimeExecutionResult {
             results,
@@ -620,6 +638,8 @@ impl Runtime {
             token_snapshot,
             graph_metrics_snapshot,
             graph_status_snapshots,
+            backend_graph_capabilities,
+            dispatch_ir_metrics,
         })
     }
 
@@ -701,24 +721,15 @@ impl Runtime {
 /// control-plane outages do not kill the user's execution.
 async fn build_graph_lifecycles(
     registry: &LLMRegistry,
-    dag: &ExecutionDag,
-    graph_id: &str,
-    exec_id: &str,
+    dispatch_ir: &DispatchIrV1,
 ) -> Vec<BackendGraphLifecycle> {
     let mut lifecycles = Vec::new();
     for (backend_name, backend) in registry.find_graph_aware_backends() {
-        match BackendGraphLifecycle::register(
-            backend.clone(),
-            graph_id.to_string(),
-            exec_id.to_string(),
-            dag,
-        )
-        .await
-        {
+        match BackendGraphLifecycle::register_dispatch_ir(backend.clone(), dispatch_ir).await {
             Ok(lifecycle) => lifecycles.push(lifecycle),
             Err(e) => {
                 tracing::warn!(
-                    graph_id = %graph_id,
+                    graph_id = %dispatch_ir.graph.graph_id,
                     backend = %backend_name,
                     error = %e,
                     "Backend register_graph failed; continuing without graph-aware hints"

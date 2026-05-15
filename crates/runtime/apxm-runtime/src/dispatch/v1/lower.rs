@@ -51,9 +51,7 @@ pub(crate) fn lower_graph(
             let pin_policy = hints
                 .map(|h| h.pin_policy.clone())
                 .unwrap_or_else(PinPolicy::none);
-            let priority_class = hints
-                .and_then(|h| h.priority_class)
-                .or(spec.priority_class);
+            let priority_class = hints.and_then(|h| h.priority_class).or(spec.priority_class);
             let downstream_nodes = if let Some(h) = hints {
                 if h.downstream_nodes.is_empty() {
                     spec.downstream_nodes.clone()
@@ -86,6 +84,10 @@ pub(crate) fn lower_graph(
                 stage_index: metrics.stage_index,
                 estimated_dynamic_tokens: metrics.estimated_dynamic_tokens,
                 reuse_group,
+                compiler_hints: hints.map(|h| h.compiler_hints.clone()).unwrap_or_default(),
+                registration_node_name: spec.node_name.clone(),
+                registration_estimated_prompt_tokens: spec.estimated_prompt_tokens,
+                registration_is_critical_path: Some(spec.is_critical_path),
             }
         })
         .collect();
@@ -115,6 +117,6 @@ pub(crate) fn derive_apxm_hints(ir: &DispatchIrV1, node: &NodeDispatchPlan) -> A
             estimated_dynamic_tokens: node.estimated_dynamic_tokens,
         },
         pin_policy: node.pin_policy.clone(),
-        compiler_hints: Default::default(),
+        compiler_hints: node.compiler_hints.clone(),
     }
 }
