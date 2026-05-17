@@ -46,17 +46,22 @@ DEFAULT_GRAPH = REPO_ROOT / "examples" / "python" / "benchmarks" / "stress" / "p
 DEFAULT_RESULTS_DIR = REPO_ROOT / ".apxm" / "benchmarks" / "results"
 DEFAULT_OUTPUT = DEFAULT_RESULTS_DIR / "phase-g-concurrent.csv"
 
-EXPECTED_MATRIX_CELLS = {
-    "A": {"server_prefix_caching": False, "server_scheduling_policy": "fcfs", "opt_level": 0},
-    "B": {"server_prefix_caching": True, "server_scheduling_policy": "fcfs", "opt_level": 0},
-    "C": {"server_prefix_caching": False, "server_scheduling_policy": "priority", "opt_level": 2},
-    "D": {"server_prefix_caching": True, "server_scheduling_policy": "priority", "opt_level": 2},
-}
-
 APXM_DISABLE_HINTS_ENV = "APXM_DISABLE_HINTS"
 DISABLE_HINTS_ENABLED = "1"
 ARM_APXM_ON = "apxm-on"
 ARM_FLAT_HTTP = "flat-http"
+
+# Matrix cells are (prefix-cache state) × (arm). The previous shape
+# (prefix × scheduling_policy) was retired when the APXM controller
+# dropped FCFS support — the only supported policy is now `priority`,
+# applied uniformly to all cells. The arm axis (APXM-on vs flat-HTTP)
+# is the load-bearing comparison.
+EXPECTED_MATRIX_CELLS = {
+    "A": {"server_prefix_caching": False, "arm": ARM_FLAT_HTTP, "opt_level": 0},
+    "B": {"server_prefix_caching": True, "arm": ARM_FLAT_HTTP, "opt_level": 0},
+    "C": {"server_prefix_caching": False, "arm": ARM_APXM_ON, "opt_level": 2},
+    "D": {"server_prefix_caching": True, "arm": ARM_APXM_ON, "opt_level": 2},
+}
 
 PHASEG_VARIANT_ENV = "APXM_PHASEG_VARIANT"
 PHASEG_CELL_LABEL_ENV = "APXM_PHASEG_CELL_LABEL"
@@ -157,18 +162,17 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw.strip().lower() not in {"", "0", "false", "no", "off"}
 
 
-def _cell_label(explicit: str, policy: str, prefix_caching: bool, opt_level: int) -> str:
+def _cell_label(explicit: str, arm: str, prefix_caching: bool, opt_level: int) -> str:
     if explicit:
         return explicit
-    normalized = policy.strip().lower()
     for label, spec in EXPECTED_MATRIX_CELLS.items():
         if (
             spec["server_prefix_caching"] == prefix_caching
-            and spec["server_scheduling_policy"] == normalized
+            and spec["arm"] == arm
             and spec["opt_level"] == opt_level
         ):
             return label
-    return f"{normalized}-prefix-{int(prefix_caching)}-o{opt_level}"
+    return f"{arm}-prefix-{int(prefix_caching)}-o{opt_level}"
 
 
 def _fetch_graph_status(endpoint: str, execution_id: str) -> dict:
@@ -333,7 +337,7 @@ def _run_batch(
     tenants: list[TenantResult] = []
     cell_label = _cell_label(
         cell_label_override,
-        server_scheduling_policy,
+        arm,
         server_prefix_caching,
         opt_level,
     )
@@ -439,7 +443,7 @@ def _write_matrix_report(
         matching = [
             row for row in by_label.get(label, [])
             if row.opt_level == spec["opt_level"]
-            and row.server_scheduling_policy == spec["server_scheduling_policy"]
+            and row.arm == spec["arm"]
             and row.server_prefix_caching == spec["server_prefix_caching"]
         ]
         failed_tenants = sum(row.failed_tenants for row in matching)
