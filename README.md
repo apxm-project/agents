@@ -47,16 +47,16 @@ dekk apxm install --no-interactive
 dekk apxm doctor
 ```
 
-**APXM-vLLM image path:**
+**APXM-vLLM image path** (zoo-based deployment — see [`docs/backends/model-zoo.md`](docs/backends/model-zoo.md) for full runbook):
 ```bash
-dekk apxm vllm doctor
+export APXM_VLLM_HF_HOME=$HOME/.cache/huggingface-apxm-vllm   # mandatory: HF cache root
+dekk apxm vllm doctor                                          # verifies image, fork, env
 dekk apxm vllm docker-build --image apxm-vllm-runtime:<TAG> --base-image <VLLM_IMAGE_TAG_OR_DIGEST>
 dekk apxm vllm docker-save --image apxm-vllm-runtime:<TAG>
-dekk apxm vllm service-start <NAME> <MODEL_REF> \
-  --image apxm-vllm-runtime:<TAG> \
-  --served-model-name <SERVED_MODEL_ID> \
-  --max-model-len 32768
-dekk apxm vllm service-status <NAME> --probe
+dekk apxm vllm zoo-cache-warm                                  # walks deploy/vllm/zoo.toml
+dekk apxm vllm zoo-apply                                       # reconciles manifest → Slurm services
+dekk apxm vllm service-list                                    # current state
+dekk apxm vllm service-status <NAME> --probe                   # probe one service via SRUN
 dekk apxm vllm service-exec <NAME> -- dekk apxm execute <GRAPH.py>
 ```
 
@@ -95,7 +95,9 @@ dekk apxm analyze <file.air>
 dekk apxm vllm doctor
 dekk apxm vllm docker-build --image apxm-vllm-runtime:<TAG> --base-image <VLLM_IMAGE_TAG_OR_DIGEST>
 dekk apxm vllm docker-save --image apxm-vllm-runtime:<TAG>
-dekk apxm vllm service-start <NAME> <MODEL_REF> --image apxm-vllm-runtime:<TAG> --served-model-name <SERVED_MODEL_ID> --max-model-len 32768
+dekk apxm vllm zoo-apply                  # boot every vllm service in deploy/vllm/zoo.toml
+dekk apxm vllm zoo-status                 # probe state per zoo entry
+dekk apxm vllm check-no-legacy --strict   # CI lint for no-legacy / no-fallback discipline
 ```
 
 Run `dekk apxm --help` for complete command reference.

@@ -2321,7 +2321,7 @@ def build_parser() -> argparse.ArgumentParser:
     docker_start.add_argument(
         "--container-name",
         dest=ArgName.CONTAINER_NAME.value,
-        help="Docker container name (default: apxm-vllm-<job>-<port> or apxm-vllm-<port>)",
+        help="Docker container name (required — no factory default)",
     )
     docker_start.add_argument(
         "--wait",
@@ -2373,7 +2373,7 @@ def build_parser() -> argparse.ArgumentParser:
         docker_parser.add_argument(
             "--container-name",
             dest=ArgName.CONTAINER_NAME.value,
-            help="Docker container name (default: read state for port, then apxm-vllm-<port>)",
+            help="Docker container name (resolved from --port's state file if omitted; required when no state)",
         )
         if subcommand == VllmCommand.DOCKER_LOGS:
             docker_parser.add_argument("--lines", type=int, default=DEFAULTS.log_lines, help="Number of lines to show")

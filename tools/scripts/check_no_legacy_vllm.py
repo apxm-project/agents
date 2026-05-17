@@ -41,21 +41,21 @@ RULES: tuple[LintRule, ...] = (
         name="legacy-service-start",
         pattern=r"dekk\s+apxm\s+vllm\s+service-start\b|sbatch\s+.*service-start",
         description="`service-start` CLI removed in Phase 6; use `zoo apply` instead",
-        include_globs=("tools/**/*.py", "docs/**/*.md", "deploy/**/*", "examples/**/*", ".dekk.toml"),
+        include_globs=("tools/**/*.py", "docs/**/*.md", "deploy/**/*", "examples/**/*", ".dekk.toml", "README.md"),
         exclude_globs=("tools/scripts/check_no_legacy_vllm.py",),
     ),
     LintRule(
         name="legacy-service-adopt",
         pattern=r"dekk\s+apxm\s+vllm\s+service-adopt\b",
         description="`service-adopt` CLI deleted in Phase 6; write a zoo.toml entry + zoo apply",
-        include_globs=("tools/**/*.py", "docs/**/*.md", "deploy/**/*", "examples/**/*", ".dekk.toml"),
+        include_globs=("tools/**/*.py", "docs/**/*.md", "deploy/**/*", "examples/**/*", ".dekk.toml", "README.md"),
         exclude_globs=("tools/scripts/check_no_legacy_vllm.py",),
     ),
     LintRule(
         name="legacy-run-vllm-slurm",
         pattern=r"run-vllm-slurm\.sh",
         description="`run-vllm-slurm.sh` deleted in Phase 6; use unified deploy/vllm/run-vllm.sh",
-        include_globs=("tools/**/*.py", "docs/**/*.md", "deploy/**/*", "examples/**/*", ".dekk.toml"),
+        include_globs=("tools/**/*.py", "docs/**/*.md", "deploy/**/*", "examples/**/*", ".dekk.toml", "README.md"),
         exclude_globs=("tools/scripts/check_no_legacy_vllm.py",),
     ),
     LintRule(
@@ -65,7 +65,7 @@ RULES: tuple[LintRule, ...] = (
             "Hardcoded port 8916 outside the allocator range default. Use "
             "_allocate_port() or a manifest-supplied port instead."
         ),
-        include_globs=("tools/**/*.py", "docs/**/*.md", "deploy/**/*", "examples/**/*"),
+        include_globs=("tools/**/*.py", "docs/**/*.md", "deploy/**/*", "examples/**/*", "README.md"),
         exclude_globs=(
             "tools/scripts/vllm.py",  # PORT_ALLOCATOR_MIN definition
             "tools/scripts/apxm_vllm_contract.py",  # historical defaults removed
