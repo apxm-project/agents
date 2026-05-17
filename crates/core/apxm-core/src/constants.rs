@@ -182,7 +182,7 @@ pub mod memory {
 
 pub mod protocols {
     /// MCP (Model Context Protocol) version string.
-    pub const MCP_VERSION: &str = "2025-11-05";
+    pub const MCP_VERSION: &str = "2025-11-25";
     /// A2A (Agent-to-Agent) protocol version.
     pub const A2A_VERSION: &str = "0.3";
 }

@@ -1,0 +1,28 @@
+{
+  "task": "Refactor a target module while preserving behavior and verifying tests.",
+  "graph": {
+    "name": "refactor_workflow",
+    "entry": "refactor",
+    "parameters": [
+      { "name": "target", "type": "str", "required": true },
+      { "name": "goal", "type": "str", "required": true }
+    ],
+    "nodes": [
+      { "id": 1, "name": "analyze_current_structure", "op": "ask", "agent": "analyzer", "prompt": "Read the target and produce current structure, proposed structure, impact analysis, and ordered refactor plan." },
+      { "id": 2, "name": "implement_refactor", "op": "ask", "agent": "implementer", "prompt": "Implement the refactor from the analysis. Keep behavior stable and report touched files.", "depends_on": [
+        { "node": 1, "dependency": "Data" }
+      ] },
+      { "id": 3, "name": "verify_refactor", "op": "ask", "agent": "test_runner", "prompt": "Run build, tests, and formatting checks. Fix breakage if localized.", "depends_on": [
+        { "node": 2, "dependency": "Data" }
+      ] },
+      { "id": 4, "name": "summarize_refactor", "op": "think", "prompt": "Summarize files changed, behavior risk, verification result, and remaining work.", "depends_on": [
+        { "node": 1, "dependency": "Data" },
+        { "node": 2, "dependency": "Data" },
+        { "node": 3, "dependency": "Data" }
+      ] },
+      { "id": 5, "name": "return_summary", "op": "yield", "depends_on": [
+        { "node": 4, "dependency": "Data" }
+      ] }
+    ]
+  }
+}

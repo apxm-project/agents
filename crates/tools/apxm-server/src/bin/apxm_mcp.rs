@@ -11,6 +11,10 @@
 //! - `apxm_compile`       -- compile AIR to an optimized artifact
 //! - `apxm_execute`       -- compile + execute AIR only when explicitly enabled
 //! - `apxm_get_contract`  -- return the full AIS contract (ops, attrs, types)
+//! - `resources/list`     -- enumerate bundled/user APXM skill resources
+//! - `resources/read`     -- read `skill://...` resources
+//! - `apxm_plan_as_graph` -- emit, validate, compile, and optionally execute a plan graph
+//! - query tools          -- fetch traces, AAM memory, evidence, and capabilities
 //!
 //! # Running
 //!
@@ -20,6 +24,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::io::{self, BufRead, Write};
+use std::path::PathBuf;
 use std::time::Instant;
 
 use apxm_artifact::Artifact;
@@ -29,8 +34,23 @@ use apxm_core::types::execution::ExecutionDag;
 use apxm_core::types::{AIS_OPERATIONS, OptimizationLevel};
 use serde_json::{Value, json};
 
+#[path = "../mcp_protocol.rs"]
+mod mcp_protocol;
+#[path = "../mcp_tools.rs"]
+mod mcp_tools;
+#[path = "../runtime_setup.rs"]
+mod runtime_setup;
+#[path = "../skill_resources.rs"]
+mod skill_resources;
+
+use mcp_protocol::{
+    ContentKind, McpMethod, OperationCategoryWire, StdioTool, Tier3Tool, args as mcp_args,
+    contract_value, fields as mcp_fields, operation_latency_estimate_ms, schema_type, server_name,
+    tool_description, tool_result,
+};
+
 const MCP_PROTOCOL_VERSION: &str = apxm_core::constants::protocols::MCP_VERSION;
-const SERVER_NAME: &str = "apxm-mcp-server";
+const SERVER_NAME: &str = server_name::STDIO;
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const RAW_EXECUTE_ENV: &str = "APXM_MCP_ENABLE_RAW_EXECUTE";
 const RAW_EXECUTE_DISABLED_MESSAGE: &str = "apxm_execute is disabled by default in the stdio MCP server. Use the HTTP MCP apxm_skill_call tool for server-owned skills, or set APXM_MCP_ENABLE_RAW_EXECUTE=1 for explicit developer/debug raw AIR execution.";
@@ -95,13 +115,15 @@ fn handle_request(request: Value) -> Value {
         return Value::Null;
     }
 
-    let result = match method {
-        "initialize" => handle_initialize(),
-        "tools/list" => handle_tools_list(raw_execute_enabled()),
-        "tools/call" => handle_tools_call(params, raw_execute_enabled()),
-        "ping" => Ok(json!({})),
-        "" => Err(rpc_error(PARSE_ERROR, "missing method")),
-        _ => Err(rpc_error(
+    let result = match McpMethod::from_str(method) {
+        Some(McpMethod::Initialize) => handle_initialize(),
+        Some(McpMethod::ToolsList) => handle_tools_list(raw_execute_enabled()),
+        Some(McpMethod::ToolsCall) => handle_tools_call(params, raw_execute_enabled()),
+        Some(McpMethod::ResourcesList) => handle_resources_list(),
+        Some(McpMethod::ResourcesRead) => handle_resources_read(params),
+        Some(McpMethod::Ping) => Ok(json!({})),
+        None if method.is_empty() => Err(rpc_error(PARSE_ERROR, "missing method")),
+        None => Err(rpc_error(
             METHOD_NOT_FOUND,
             format!("unknown method: {method}"),
         )),
@@ -123,13 +145,17 @@ fn handle_request(request: Value) -> Value {
 
 fn handle_initialize() -> Result<Value, Value> {
     Ok(json!({
-        "protocolVersion": MCP_PROTOCOL_VERSION,
-        "serverInfo": {
-            "name": SERVER_NAME,
-            "version": SERVER_VERSION,
+        (mcp_fields::PROTOCOL_VERSION): MCP_PROTOCOL_VERSION,
+        (mcp_fields::SERVER_INFO): {
+            (mcp_fields::NAME): SERVER_NAME,
+            (mcp_fields::VERSION): SERVER_VERSION,
         },
-        "capabilities": {
-            "tools": { "listChanged": false }
+        (mcp_fields::CAPABILITIES): {
+            (mcp_fields::TOOLS): { (mcp_fields::LIST_CHANGED): false },
+            (mcp_fields::RESOURCES): {
+                (mcp_fields::LIST_CHANGED): false,
+                (mcp_fields::SUBSCRIBE): false,
+            }
         }
     }))
 }
@@ -143,120 +169,265 @@ fn raw_execute_enabled() -> bool {
 fn handle_tools_list(raw_execute_enabled: bool) -> Result<Value, Value> {
     let mut tools = vec![
         json!({
-            "name": "apxm_validate",
-            "description": "Validate canonical APXM AIR against the AIS contract.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "air": {
-                        "type": "string",
-                        "description": "Canonical APXM AIR text"
+            (mcp_fields::NAME): StdioTool::Validate.as_str(),
+            (mcp_fields::DESCRIPTION): "Validate canonical APXM AIR against the AIS contract.",
+            (mcp_fields::INPUT_SCHEMA): {
+                (mcp_fields::TYPE): schema_type::OBJECT,
+                (mcp_fields::PROPERTIES): {
+                    (mcp_args::AIR): {
+                        (mcp_fields::TYPE): schema_type::STRING,
+                        (mcp_fields::DESCRIPTION): "Canonical APXM AIR text"
                     }
                 },
-                "required": ["air"]
+                (mcp_fields::REQUIRED): [mcp_args::AIR]
             }
         }),
         json!({
-            "name": "apxm_compile",
-            "description": "Compile canonical APXM AIR to an optimized APXM artifact (.apxmobj). Returns the artifact path and compilation stats.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "air": {
-                        "type": "string",
-                        "description": "Canonical APXM AIR text"
+            (mcp_fields::NAME): StdioTool::Compile.as_str(),
+            (mcp_fields::DESCRIPTION): "Compile canonical APXM AIR to an optimized APXM artifact (.apxmobj). Returns the artifact path and compilation stats.",
+            (mcp_fields::INPUT_SCHEMA): {
+                (mcp_fields::TYPE): schema_type::OBJECT,
+                (mcp_fields::PROPERTIES): {
+                    (mcp_args::AIR): {
+                        (mcp_fields::TYPE): schema_type::STRING,
+                        (mcp_fields::DESCRIPTION): "Canonical APXM AIR text"
                     },
-                    "opt_level": {
-                        "type": "integer",
-                        "description": "Optimization level (0-3). 0=none, 1=basic, 2=standard, 3=aggressive. Default: 2",
-                        "minimum": 0,
-                        "maximum": 3
+                    (mcp_args::OPT_LEVEL): {
+                        (mcp_fields::TYPE): schema_type::INTEGER,
+                        (mcp_fields::DESCRIPTION): "Optimization level (0-3). 0=none, 1=basic, 2=standard, 3=aggressive. Default: 2",
+                        (mcp_fields::MINIMUM): 0,
+                        (mcp_fields::MAXIMUM): 3
                     }
                 },
-                "required": ["air"]
+                (mcp_fields::REQUIRED): [mcp_args::AIR]
             }
         }),
         json!({
-            "name": "apxm_get_contract",
-            "description": "Return the full AIS contract: all valid operations with required attributes, valid dependency types, parameter types, and AIR input contract.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {},
-                "required": []
+            (mcp_fields::NAME): StdioTool::GetContract.as_str(),
+            (mcp_fields::DESCRIPTION): "Return the full AIS contract: all valid operations with required attributes, valid dependency types, parameter types, and AIR input contract.",
+            (mcp_fields::INPUT_SCHEMA): {
+                (mcp_fields::TYPE): schema_type::OBJECT,
+                (mcp_fields::PROPERTIES): {},
+                (mcp_fields::REQUIRED): []
             }
         }),
         json!({
-            "name": "apxm_analyze",
-            "description": "Analyze APXM AIR to extract parallelism opportunities, critical path, and execution phases.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "air": {
-                        "type": "string",
-                        "description": "Canonical APXM AIR text"
+            (mcp_fields::NAME): StdioTool::Analyze.as_str(),
+            (mcp_fields::DESCRIPTION): "Analyze APXM AIR to extract parallelism opportunities, critical path, and execution phases.",
+            (mcp_fields::INPUT_SCHEMA): {
+                (mcp_fields::TYPE): schema_type::OBJECT,
+                (mcp_fields::PROPERTIES): {
+                    (mcp_args::AIR): {
+                        (mcp_fields::TYPE): schema_type::STRING,
+                        (mcp_fields::DESCRIPTION): "Canonical APXM AIR text"
                     }
                 },
-                "required": ["air"]
+                (mcp_fields::REQUIRED): [mcp_args::AIR]
             }
+        }),
+        json!({
+            (mcp_fields::NAME): Tier3Tool::PlanAsGraph.as_str(),
+            (mcp_fields::DESCRIPTION): tool_description::tier3(Tier3Tool::PlanAsGraph),
+            (mcp_fields::INPUT_SCHEMA): {
+                (mcp_fields::TYPE): schema_type::OBJECT,
+                (mcp_fields::PROPERTIES): {
+                    (mcp_args::TASK): {
+                        (mcp_fields::TYPE): schema_type::STRING,
+                        (mcp_fields::DESCRIPTION): "Natural-language task to convert into an APXM execution graph"
+                    },
+                    (mcp_args::CONTEXT): {
+                        (mcp_fields::TYPE): schema_type::STRING,
+                        (mcp_fields::DESCRIPTION): "Optional context that should shape the graph"
+                    },
+                    (mcp_args::CONSTRAINTS): {
+                        (mcp_fields::TYPE): schema_type::OBJECT,
+                        (mcp_fields::DESCRIPTION): "Optional structured constraints for the graph emitter"
+                    },
+                    (mcp_args::PARAMETERS): {
+                        (mcp_fields::TYPE): schema_type::OBJECT,
+                        (mcp_fields::DESCRIPTION): "Optional runtime parameter values keyed by emitted parameter name"
+                    },
+                    (mcp_args::EXECUTE): {
+                        (mcp_fields::TYPE): schema_type::BOOLEAN,
+                        (mcp_fields::DESCRIPTION): "Whether to execute after successful compile. Default: true"
+                    },
+                    (mcp_args::TRACE_ID): {
+                        (mcp_fields::TYPE): schema_type::STRING,
+                        (mcp_fields::DESCRIPTION): "Optional caller-provided trace id"
+                    }
+                },
+                (mcp_fields::REQUIRED): [mcp_args::TASK]
+            }
+        }),
+        json!({
+            (mcp_fields::NAME): Tier3Tool::TraceFetch.as_str(),
+            (mcp_fields::DESCRIPTION): tool_description::tier3(Tier3Tool::TraceFetch),
+            (mcp_fields::INPUT_SCHEMA): {
+                (mcp_fields::TYPE): schema_type::OBJECT,
+                (mcp_fields::PROPERTIES): {
+                    (mcp_args::TRACE_ID): {
+                        (mcp_fields::TYPE): schema_type::STRING,
+                        (mcp_fields::DESCRIPTION): "Execution trace id returned by apxm_plan_as_graph or skill execution"
+                    },
+                    (mcp_args::NODE_ID): {
+                        (mcp_fields::TYPE): schema_type::INTEGER,
+                        (mcp_fields::MINIMUM): 1
+                    },
+                    (mcp_args::FULL): {
+                        (mcp_fields::TYPE): schema_type::BOOLEAN,
+                        (mcp_fields::DESCRIPTION): "Return the full execution record instead of a compact summary"
+                    }
+                },
+                (mcp_fields::REQUIRED): [mcp_args::TRACE_ID]
+            }
+        }),
+        json!({
+            (mcp_fields::NAME): Tier3Tool::AamRecall.as_str(),
+            (mcp_fields::DESCRIPTION): tool_description::tier3(Tier3Tool::AamRecall),
+            (mcp_fields::INPUT_SCHEMA): query_tool_schema()
+        }),
+        json!({
+            (mcp_fields::NAME): Tier3Tool::EvidenceLookup.as_str(),
+            (mcp_fields::DESCRIPTION): tool_description::tier3(Tier3Tool::EvidenceLookup),
+            (mcp_fields::INPUT_SCHEMA): {
+                (mcp_fields::TYPE): schema_type::OBJECT,
+                (mcp_fields::PROPERTIES): {
+                    (mcp_args::QUERY): { (mcp_fields::TYPE): schema_type::STRING },
+                    (mcp_args::CLAIM_ID): { (mcp_fields::TYPE): schema_type::STRING },
+                    (mcp_args::PATH): { (mcp_fields::TYPE): schema_type::STRING },
+                    (mcp_args::LIMIT): {
+                        (mcp_fields::TYPE): schema_type::INTEGER,
+                        (mcp_fields::MINIMUM): 1,
+                        (mcp_fields::MAXIMUM): 100
+                    }
+                },
+                (mcp_fields::REQUIRED): []
+            }
+        }),
+        json!({
+            (mcp_fields::NAME): Tier3Tool::CapabilityList.as_str(),
+            (mcp_fields::DESCRIPTION): tool_description::tier3(Tier3Tool::CapabilityList),
+            (mcp_fields::INPUT_SCHEMA): query_tool_schema()
         }),
     ];
     if raw_execute_enabled {
         tools.insert(
             2,
             json!({
-                "name": "apxm_execute",
-                "description": "Developer/debug only: compile and execute raw APXM AIR in one shot. Safe skill clients should use HTTP MCP apxm_skill_call.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "air": {
-                            "type": "string",
-                            "description": "Canonical APXM AIR text"
+                (mcp_fields::NAME): StdioTool::Execute.as_str(),
+                (mcp_fields::DESCRIPTION): "Developer/debug only: compile and execute raw APXM AIR in one shot. Safe skill clients should use HTTP MCP apxm_skill_call.",
+                (mcp_fields::INPUT_SCHEMA): {
+                    (mcp_fields::TYPE): schema_type::OBJECT,
+                    (mcp_fields::PROPERTIES): {
+                        (mcp_args::AIR): {
+                            (mcp_fields::TYPE): schema_type::STRING,
+                            (mcp_fields::DESCRIPTION): "Canonical APXM AIR text"
                         },
-                        "parameters": {
-                            "type": "object",
-                            "description": "Runtime parameters to pass to the graph entry flow",
-                            "additionalProperties": { "type": "string" }
+                        (mcp_args::PARAMETERS): {
+                            (mcp_fields::TYPE): schema_type::OBJECT,
+                            (mcp_fields::DESCRIPTION): "Runtime parameters to pass to the graph entry flow",
+                            (mcp_fields::ADDITIONAL_PROPERTIES): { (mcp_fields::TYPE): schema_type::STRING }
                         }
                     },
-                    "required": ["air"]
+                    (mcp_fields::REQUIRED): [mcp_args::AIR]
                 }
             }),
         );
     }
-    Ok(json!({ "tools": tools }))
+    Ok(json!({ (mcp_fields::TOOLS): tools }))
 }
 
 fn handle_tools_call(params: Value, raw_execute_enabled: bool) -> Result<Value, Value> {
     let name = params
-        .get("name")
+        .get(mcp_fields::NAME)
         .and_then(Value::as_str)
         .ok_or_else(|| rpc_error(INVALID_PARAMS, "tools/call missing params.name"))?;
     let args = params
-        .get("arguments")
+        .get(mcp_fields::ARGUMENTS)
         .cloned()
         .unwrap_or_else(|| json!({}));
 
-    let result = match name {
-        "apxm_validate" => tool_validate(args),
-        "apxm_compile" => tool_compile(args),
-        "apxm_execute" if raw_execute_enabled => tool_execute(args),
-        "apxm_execute" => Err(RAW_EXECUTE_DISABLED_MESSAGE.to_string()),
-        "apxm_get_contract" => tool_get_contract(),
-        "apxm_analyze" => tool_analyze(args),
-        _ => Err(format!("unknown tool: {name}")),
+    let result = match StdioTool::from_str(name) {
+        Some(StdioTool::Validate) => tool_validate(args),
+        Some(StdioTool::Compile) => tool_compile(args),
+        Some(StdioTool::Execute) if raw_execute_enabled => tool_execute(args),
+        Some(StdioTool::Execute) => Err(RAW_EXECUTE_DISABLED_MESSAGE.to_string()),
+        Some(StdioTool::GetContract) => tool_get_contract(),
+        Some(StdioTool::Analyze) => tool_analyze(args),
+        None => match Tier3Tool::from_str(name) {
+            Some(Tier3Tool::PlanAsGraph) => tool_plan_as_graph(args),
+            Some(Tier3Tool::TraceFetch) => tool_trace_fetch(args),
+            Some(Tier3Tool::AamRecall) => tool_aam_recall(args),
+            Some(Tier3Tool::EvidenceLookup) => tool_evidence_lookup(args),
+            Some(Tier3Tool::CapabilityList) => tool_capability_list(args),
+            None => Err(format!("unknown tool: {name}")),
+        },
     };
 
     match result {
         Ok(output) => Ok(json!({
-            "content": [{ "type": "text", "text": output }],
-            "isError": false,
+            (mcp_fields::CONTENT): [{
+                (mcp_fields::TYPE): ContentKind::Text.as_str(),
+                (mcp_fields::TEXT): output,
+            }],
+            (mcp_fields::IS_ERROR): false,
         })),
         Err(error) => Ok(json!({
-            "content": [{ "type": "text", "text": error }],
-            "isError": true,
+            (mcp_fields::CONTENT): [{
+                (mcp_fields::TYPE): ContentKind::Text.as_str(),
+                (mcp_fields::TEXT): error,
+            }],
+            (mcp_fields::IS_ERROR): true,
         })),
     }
+}
+
+fn query_tool_schema() -> Value {
+    json!({
+        (mcp_fields::TYPE): schema_type::OBJECT,
+        (mcp_fields::PROPERTIES): {
+            (mcp_args::QUERY): {
+                (mcp_fields::TYPE): schema_type::STRING,
+                (mcp_fields::DESCRIPTION): "Optional substring query"
+            },
+            (mcp_args::TOP_K): {
+                (mcp_fields::TYPE): schema_type::INTEGER,
+                (mcp_fields::MINIMUM): 1,
+                (mcp_fields::MAXIMUM): 100
+            }
+        },
+        (mcp_fields::REQUIRED): []
+    })
+}
+
+fn handle_resources_list() -> Result<Value, Value> {
+    handle_resources_list_with_roots(&discovered_skill_roots())
+}
+
+fn handle_resources_read(params: Value) -> Result<Value, Value> {
+    handle_resources_read_with_roots(params, &discovered_skill_roots())
+}
+
+fn discovered_skill_roots() -> Vec<PathBuf> {
+    let args: Vec<String> = std::env::args().collect();
+    skill_resources::prepend_builtin_skill_root(skill_resources::parse_skill_roots(&args))
+}
+
+fn handle_resources_list_with_roots(roots: &[PathBuf]) -> Result<Value, Value> {
+    let packages = skill_resources::scan_resource_packages(roots);
+    let resources = skill_resources::list_skill_resources(&packages);
+    Ok(json!({ (mcp_fields::RESOURCES): resources }))
+}
+
+fn handle_resources_read_with_roots(params: Value, roots: &[PathBuf]) -> Result<Value, Value> {
+    let uri = params
+        .get(mcp_fields::URI)
+        .and_then(Value::as_str)
+        .ok_or_else(|| rpc_error(INVALID_PARAMS, "resources/read missing params.uri"))?;
+    let packages = skill_resources::scan_resource_packages(roots);
+    let content = skill_resources::resolve_skill_uri(&packages, uri)
+        .map_err(|error| rpc_error(INVALID_PARAMS, error.to_string()))?;
+    Ok(json!({ (mcp_fields::CONTENTS): [content] }))
 }
 
 // ---------------------------------------------------------------------------
@@ -279,9 +450,9 @@ fn tool_validate(args: Value) -> Result<String, String> {
 
     let valid = errors.is_empty();
     let result = json!({
-        "valid": valid,
-        "errors": errors,
-        "warnings": warnings,
+        (tool_result::VALID): valid,
+        (tool_result::ERRORS): errors,
+        (tool_result::WARNINGS): warnings,
     });
     Ok(serde_json::to_string_pretty(&result).unwrap())
 }
@@ -292,7 +463,10 @@ fn tool_validate(args: Value) -> Result<String, String> {
 
 fn tool_compile(args: Value) -> Result<String, String> {
     let air = get_air_arg(&args)?;
-    let opt_level_num = args.get("opt_level").and_then(Value::as_u64).unwrap_or(2);
+    let opt_level_num = args
+        .get(mcp_args::OPT_LEVEL)
+        .and_then(Value::as_u64)
+        .unwrap_or(2);
     let opt_level = match opt_level_num {
         0 => OptimizationLevel::O0,
         1 => OptimizationLevel::O1,
@@ -320,13 +494,13 @@ fn tool_compile(args: Value) -> Result<String, String> {
         .map_err(|e| format!("failed to write artifact: {e}"))?;
 
     let result = json!({
-        "artifact_path": artifact_path.display().to_string(),
-        "stats": {
-            "nodes": node_count,
-            "edges": edge_count,
-            "artifact_bytes": artifact_bytes.len(),
-            "compile_ms": compile_ms,
-            "opt_level": opt_level_num,
+        (tool_result::ARTIFACT_PATH): artifact_path.display().to_string(),
+        (tool_result::STATS): {
+            (tool_result::NODES): node_count,
+            (tool_result::EDGES): edge_count,
+            (tool_result::ARTIFACT_BYTES): artifact_bytes.len(),
+            (tool_result::COMPILE_MS): compile_ms,
+            (tool_result::OPT_LEVEL): opt_level_num,
         }
     });
     Ok(serde_json::to_string_pretty(&result).unwrap())
@@ -340,7 +514,7 @@ fn tool_execute(args: Value) -> Result<String, String> {
     let air = get_air_arg(&args)?;
 
     let parameters = args
-        .get("parameters")
+        .get(mcp_args::PARAMETERS)
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
@@ -404,19 +578,19 @@ fn tool_execute(args: Value) -> Result<String, String> {
     }
 
     let result = json!({
-        "result": content.unwrap_or_default(),
-        "results": results_map,
-        "stats": {
-            "duration_ms": compile_ms as u64 + exec_ms as u64,
-            "compile_ms": compile_ms,
-            "execute_ms": exec_ms,
-            "executed_nodes": execution.stats.executed_nodes,
-            "failed_nodes": execution.stats.failed_nodes,
+        (tool_result::RESULT): content.unwrap_or_default(),
+        (tool_result::RESULTS): results_map,
+        (tool_result::STATS): {
+            (tool_result::DURATION_MS): compile_ms as u64 + exec_ms as u64,
+            (tool_result::COMPILE_MS): compile_ms,
+            (tool_result::EXECUTE_MS): exec_ms,
+            (tool_result::EXECUTED_NODES): execution.stats.executed_nodes,
+            (tool_result::FAILED_NODES): execution.stats.failed_nodes,
         },
-        "llm_usage": {
-            "input_tokens": execution.llm_metrics.total_input_tokens,
-            "output_tokens": execution.llm_metrics.total_output_tokens,
-            "total_requests": execution.llm_metrics.total_requests,
+        (tool_result::LLM_USAGE): {
+            (tool_result::INPUT_TOKENS): execution.llm_metrics.total_input_tokens,
+            (tool_result::OUTPUT_TOKENS): execution.llm_metrics.total_output_tokens,
+            (tool_result::TOTAL_REQUESTS): execution.llm_metrics.total_requests,
         }
     });
     Ok(serde_json::to_string_pretty(&result).unwrap())
@@ -427,24 +601,6 @@ fn tool_execute(args: Value) -> Result<String, String> {
 // ---------------------------------------------------------------------------
 
 fn tool_get_contract() -> Result<String, String> {
-    use apxm_core::types::OperationCategory;
-
-    fn category_str(cat: OperationCategory) -> &'static str {
-        match cat {
-            OperationCategory::Metadata => "metadata",
-            OperationCategory::Memory => "memory",
-            OperationCategory::Reasoning => "reasoning",
-            OperationCategory::Tools => "tools",
-            OperationCategory::ControlFlow => "control_flow",
-            OperationCategory::Synchronization => "synchronization",
-            OperationCategory::ErrorHandling => "error_handling",
-            OperationCategory::Communication => "communication",
-            OperationCategory::Internal => "internal",
-            OperationCategory::Coordination => "coordination",
-            OperationCategory::Identity => "identity",
-        }
-    }
-
     let mut operations = serde_json::Map::new();
     for spec in AIS_OPERATIONS {
         let required_attrs: Vec<&str> = spec
@@ -458,33 +614,38 @@ fn tool_get_contract() -> Result<String, String> {
             .fields
             .iter()
             .filter(|f| !f.required)
-            .map(|f| json!({"name": f.name, "description": f.description}))
+            .map(|f| {
+                json!({
+                    (tool_result::NAME): f.name,
+                    (tool_result::DESCRIPTION): f.description
+                })
+            })
             .collect();
 
         let mut op_json = json!({
-            "description": spec.description,
-            "long_description": spec.long_description,
-            "category": category_str(spec.category),
-            "latency": spec.latency.as_str(),
-            "required_attributes": required_attrs,
-            "optional_attributes": optional_attrs,
-            "produces_output": spec.produces_output,
+            (tool_result::DESCRIPTION): spec.description,
+            (tool_result::LONG_DESCRIPTION): spec.long_description,
+            (tool_result::CATEGORY): OperationCategoryWire::from(spec.category).as_str(),
+            (tool_result::LATENCY): spec.latency.as_str(),
+            (tool_result::REQUIRED_ATTRIBUTES): required_attrs,
+            (tool_result::OPTIONAL_ATTRIBUTES): optional_attrs,
+            (tool_result::PRODUCES_OUTPUT): spec.produces_output,
         });
 
         if let Some(example) = spec.example_json {
-            op_json["example"] = Value::String(example.to_string());
+            op_json[tool_result::EXAMPLE] = Value::String(example.to_string());
         }
 
         operations.insert(spec.op_type.to_string(), op_json);
     }
 
     let result = json!({
-        "operations": Value::Object(operations),
-        "dependency_types": ["Data", "Control", "Effect"],
-        "parameter_types": ["str", "int", "float", "bool", "json"],
-        "air_contract": {
-            "required_argument": "air",
-            "description": "Canonical APXM graph source as AIR text",
+        (tool_result::OPERATIONS): Value::Object(operations),
+        (tool_result::DEPENDENCY_TYPES): contract_value::DEPENDENCY_TYPES,
+        (tool_result::PARAMETER_TYPES): contract_value::PARAMETER_TYPES,
+        (tool_result::AIR_CONTRACT): {
+            (tool_result::REQUIRED_ARGUMENT): mcp_args::AIR,
+            (tool_result::DESCRIPTION): "Canonical APXM graph source as AIR text",
         }
     });
     Ok(serde_json::to_string_pretty(&result).unwrap())
@@ -558,15 +719,9 @@ fn tool_analyze(args: Value) -> Result<String, String> {
             .iter()
             .find(|n| n.id == node_id)
             .and_then(|n| {
-                use apxm_core::types::OperationLatency;
                 for spec in AIS_OPERATIONS {
                     if spec.op_type == n.op_type {
-                        return Some(match spec.latency {
-                            OperationLatency::None => 10,
-                            OperationLatency::Low => 100,
-                            OperationLatency::Medium => 1000,
-                            OperationLatency::High => 5000,
-                        });
+                        return Some(operation_latency_estimate_ms(spec.latency));
                     }
                 }
                 None
@@ -625,15 +780,20 @@ fn tool_analyze(args: Value) -> Result<String, String> {
                         .map(|n| n.op_type.to_string())
                         .unwrap_or_else(|| "?".to_string());
                     let name = node.and_then(|n| n.metadata.name.as_deref()).unwrap_or("?");
-                    json!({"id": id, "name": name, "op": op, "latency_ms": node_latency(id)})
+                    json!({
+                        (tool_result::ID): id,
+                        (tool_result::NAME): name,
+                        (tool_result::OP): op,
+                        (tool_result::LATENCY_MS): node_latency(id)
+                    })
                 })
                 .collect();
             json!({
-                "phase": i + 1,
-                "parallel": layer.len() > 1,
-                "parallelism_degree": layer.len(),
-                "estimated_ms": max_latency,
-                "nodes": node_details,
+                (tool_result::PHASE): i + 1,
+                (tool_result::PARALLEL): layer.len() > 1,
+                (tool_result::PARALLELISM_DEGREE): layer.len(),
+                (tool_result::ESTIMATED_MS): max_latency,
+                (tool_result::NODES): node_details,
             })
         })
         .collect();
@@ -652,25 +812,25 @@ fn tool_analyze(args: Value) -> Result<String, String> {
     let max_parallelism = phases.iter().map(|p| p.len()).max().unwrap_or(1);
 
     let result = json!({
-        "graph_name": graph.metadata.name.as_deref().unwrap_or("artifact"),
-        "node_count": graph.nodes.len(),
-        "edge_count": graph.edges.len(),
-        "entry_nodes": entry_nodes,
-        "exit_nodes": exit_nodes,
-        "depth": phases.len(),
-        "max_parallelism": max_parallelism,
-        "execution_phases": phase_json,
-        "critical_path": {
-            "nodes": critical_path,
-            "length": critical_path.len(),
-            "estimated_ms": critical_path_latency,
+        (tool_result::GRAPH_NAME): graph.metadata.name.as_deref().unwrap_or("artifact"),
+        (tool_result::NODE_COUNT): graph.nodes.len(),
+        (tool_result::EDGE_COUNT): graph.edges.len(),
+        (tool_result::ENTRY_NODES): entry_nodes,
+        (tool_result::EXIT_NODES): exit_nodes,
+        (tool_result::DEPTH): phases.len(),
+        (tool_result::MAX_PARALLELISM): max_parallelism,
+        (tool_result::EXECUTION_PHASES): phase_json,
+        (tool_result::CRITICAL_PATH): {
+            (tool_result::NODES): critical_path,
+            (tool_result::LENGTH): critical_path.len(),
+            (tool_result::ESTIMATED_MS): critical_path_latency,
         },
-        "speedup": {
-            "sequential_ms": sequential_latency,
-            "parallel_ms": parallel_latency,
-            "estimated_speedup": format!("{:.2}x", speedup),
+        (tool_result::SPEEDUP): {
+            (tool_result::SEQUENTIAL_MS): sequential_latency,
+            (tool_result::PARALLEL_MS): parallel_latency,
+            (tool_result::ESTIMATED_SPEEDUP): format!("{:.2}x", speedup),
         },
-        "suggestions": build_suggestions(&phases, max_parallelism, speedup, &critical_path, &graph),
+        (tool_result::SUGGESTIONS): build_suggestions(&phases, max_parallelism, speedup, &critical_path, &graph),
     });
 
     Ok(serde_json::to_string_pretty(&result).unwrap())
@@ -717,12 +877,7 @@ fn build_suggestions(
                 .map(|n| {
                     for spec in AIS_OPERATIONS {
                         if spec.op_type == n.op_type {
-                            return match spec.latency {
-                                apxm_core::types::OperationLatency::High => 5000u64,
-                                apxm_core::types::OperationLatency::Medium => 1000,
-                                apxm_core::types::OperationLatency::Low => 100,
-                                apxm_core::types::OperationLatency::None => 10,
-                            };
+                            return operation_latency_estimate_ms(spec.latency);
                         }
                     }
                     100
@@ -744,12 +899,58 @@ fn build_suggestions(
 }
 
 // ---------------------------------------------------------------------------
+// Tier-3 dispatch/query tools
+// ---------------------------------------------------------------------------
+
+fn tool_plan_as_graph(args: Value) -> Result<String, String> {
+    run_with_stdio_runtime(|runtime| async move { mcp_tools::plan_as_graph(&runtime, args).await })
+}
+
+fn tool_trace_fetch(args: Value) -> Result<String, String> {
+    run_with_stdio_runtime(|runtime| async move {
+        mcp_tools::trace_fetch(Some(&runtime), None, args).await
+    })
+}
+
+fn tool_aam_recall(args: Value) -> Result<String, String> {
+    run_with_stdio_runtime(|runtime| async move { mcp_tools::aam_recall(&runtime, args).await })
+}
+
+fn tool_evidence_lookup(args: Value) -> Result<String, String> {
+    let output = mcp_tools::evidence_lookup(args)?;
+    serde_json::to_string_pretty(&output).map_err(|error| error.to_string())
+}
+
+fn tool_capability_list(args: Value) -> Result<String, String> {
+    run_with_stdio_runtime(|runtime| async move { Ok(mcp_tools::capability_list(&runtime, args)) })
+}
+
+fn run_with_stdio_runtime<F, Fut>(f: F) -> Result<String, String>
+where
+    F: FnOnce(apxm_runtime::Runtime) -> Fut,
+    Fut: std::future::Future<Output = Result<Value, String>>,
+{
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| format!("tokio runtime init failed: {error}"))?;
+    let output = rt.block_on(async {
+        let runtime =
+            runtime_setup::build_runtime_with_router(apxm_runtime::RuntimeConfig::default())
+                .await
+                .map_err(|error| format!("runtime init failed: {error}"))?;
+        f(runtime).await
+    })?;
+    serde_json::to_string_pretty(&output).map_err(|error| error.to_string())
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 fn get_air_arg(args: &Value) -> Result<&str, String> {
     let air = args
-        .get("air")
+        .get(mcp_args::AIR)
         .and_then(Value::as_str)
         .ok_or("missing required argument: air")?;
     if air.trim().is_empty() {
@@ -783,53 +984,118 @@ mod tests {
     use super::*;
 
     fn tool_names(list: &Value) -> Vec<&str> {
-        list["tools"]
+        list[mcp_fields::TOOLS]
             .as_array()
             .expect("tools array")
             .iter()
-            .filter_map(|tool| tool["name"].as_str())
+            .filter_map(|tool| tool[mcp_fields::NAME].as_str())
             .collect()
     }
 
     #[test]
     fn tools_list_hides_raw_execute_by_default() {
-        let list = handle_tools_list(false).expect("tools/list");
+        let list = handle_tools_list(false).expect(McpMethod::ToolsList.as_str());
         let names = tool_names(&list);
 
-        assert!(names.contains(&"apxm_validate"));
-        assert!(names.contains(&"apxm_compile"));
-        assert!(!names.contains(&"apxm_execute"));
-        assert!(names.contains(&"apxm_get_contract"));
+        assert!(names.contains(&StdioTool::Validate.as_str()));
+        assert!(names.contains(&StdioTool::Compile.as_str()));
+        assert!(!names.contains(&StdioTool::Execute.as_str()));
+        assert!(names.contains(&StdioTool::GetContract.as_str()));
+        assert!(names.contains(&Tier3Tool::PlanAsGraph.as_str()));
+        assert!(names.contains(&Tier3Tool::TraceFetch.as_str()));
+        assert!(names.contains(&Tier3Tool::AamRecall.as_str()));
+        assert!(names.contains(&Tier3Tool::EvidenceLookup.as_str()));
+        assert!(names.contains(&Tier3Tool::CapabilityList.as_str()));
     }
 
     #[test]
     fn tools_list_includes_raw_execute_when_explicitly_enabled() {
-        let list = handle_tools_list(true).expect("tools/list");
+        let list = handle_tools_list(true).expect(McpMethod::ToolsList.as_str());
         let names = tool_names(&list);
 
-        assert!(names.contains(&"apxm_execute"));
+        assert!(names.contains(&StdioTool::Execute.as_str()));
     }
 
     #[test]
     fn raw_execute_call_is_disabled_by_default() {
         let result = handle_tools_call(
             json!({
-                "name": "apxm_execute",
-                "arguments": {
-                    "air": "module { func.func @main() attributes {ais.entry} }"
+                (mcp_fields::NAME): StdioTool::Execute.as_str(),
+                (mcp_fields::ARGUMENTS): {
+                    (mcp_args::AIR): "module { func.func @main() attributes {ais.entry} }"
                 }
             }),
             false,
         )
         .expect("tools/call result");
 
-        assert_eq!(result["isError"], true);
+        assert_eq!(result[mcp_fields::IS_ERROR], true);
         assert!(
-            result["content"][0]["text"]
+            result[mcp_fields::CONTENT][0][mcp_fields::TEXT]
                 .as_str()
                 .unwrap_or_default()
                 .contains(RAW_EXECUTE_ENV),
             "expected explicit env flag guidance: {result}"
         );
+    }
+
+    #[test]
+    fn initialize_advertises_resources_capability() {
+        let result = handle_initialize().expect(McpMethod::Initialize.as_str());
+
+        assert_eq!(
+            result[mcp_fields::CAPABILITIES][mcp_fields::RESOURCES][mcp_fields::LIST_CHANGED],
+            false
+        );
+        assert_eq!(
+            result[mcp_fields::CAPABILITIES][mcp_fields::RESOURCES][mcp_fields::SUBSCRIBE],
+            false
+        );
+    }
+
+    #[test]
+    fn resources_list_and_read_skill_uri() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let skill_dir = temp.path().join("demo");
+        std::fs::create_dir_all(skill_dir.join("examples")).expect("skill dir");
+        std::fs::write(
+            skill_dir.join("skill.toml"),
+            r#"
+skill_id = "demo-skill"
+version = "0.1.0"
+display_name = "Demo Skill"
+description = "Demo resource package"
+entry_flow = "main"
+"#,
+        )
+        .expect("manifest");
+        std::fs::write(skill_dir.join("SKILL.md"), "# Demo\n").expect("SKILL.md");
+        std::fs::write(skill_dir.join("examples").join("demo.json"), "{}\n").expect("example");
+        let roots = vec![temp.path().to_path_buf()];
+
+        let list =
+            handle_resources_list_with_roots(&roots).expect(McpMethod::ResourcesList.as_str());
+        let uris: Vec<&str> = list[mcp_fields::RESOURCES]
+            .as_array()
+            .expect("resources")
+            .iter()
+            .filter_map(|resource| resource[mcp_fields::URI].as_str())
+            .collect();
+        assert!(uris.contains(&"skill://demo-skill/SKILL.md"), "{list}");
+        assert!(
+            uris.contains(&"skill://demo-skill/examples/demo.json"),
+            "{list}"
+        );
+
+        let read = handle_resources_read_with_roots(
+            json!({ (mcp_fields::URI): "skill://demo-skill/SKILL.md" }),
+            &roots,
+        )
+        .expect(McpMethod::ResourcesRead.as_str());
+        assert_eq!(
+            read[mcp_fields::CONTENTS][0][mcp_fields::MIME_TYPE],
+            "text/markdown"
+        );
+        assert_eq!(read[mcp_fields::CONTENTS][0][mcp_fields::TEXT], "# Demo\n");
     }
 }

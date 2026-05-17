@@ -95,7 +95,7 @@ pub(crate) fn build_app(state: AppState) -> Router {
             post(handle_generate_stream),
         )
         .route(ServerRoute::Schema.path(), get(handle_schema))
-        // MCP 2025-11-05 - JSON-RPC tools endpoint
+        // MCP 2025-11-25 - JSON-RPC tools endpoint
         .route(ServerRoute::Mcp.path(), post(mcp_jsonrpc))
         .with_state(state)
         .layer(CorsLayer::permissive())

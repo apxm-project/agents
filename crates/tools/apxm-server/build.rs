@@ -14,8 +14,16 @@ mod cargo_out {
         println!("cargo:rerun-if-env-changed={key}");
     }
 
+    pub(super) fn rerun_if_changed(path: impl AsRef<str>) {
+        println!("cargo:rerun-if-changed={}", path.as_ref());
+    }
+
     pub(super) fn rustc_link_arg(flag: impl AsRef<str>) {
         println!("cargo:rustc-link-arg={}", flag.as_ref());
+    }
+
+    pub(super) fn rustc_env(key: &str, value: impl AsRef<str>) {
+        println!("cargo:rustc-env={key}={}", value.as_ref());
     }
 }
 
@@ -53,6 +61,14 @@ fn main() {
     for key in toolchain_env::PREFIX_ENV_KEYS_FOR_RERUN {
         cargo_out::rerun_if_env_changed(key);
     }
+
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
+    let builtin_skill_root = Path::new(&manifest_dir).join("skills");
+    cargo_out::rerun_if_changed(builtin_skill_root.to_string_lossy());
+    cargo_out::rustc_env(
+        "APXM_BUILTIN_SKILL_ROOT",
+        builtin_skill_root.to_string_lossy(),
+    );
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     cargo_out::rustc_link_arg(link_flag::install_name_toolchain_libs_dir());

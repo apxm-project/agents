@@ -149,8 +149,23 @@ impl ExecutionStore {
         session_id: &str,
         session_dir: &str,
     ) -> ExecutionRecord {
+        self.start_skill_execution_with_provenance_and_execution_id(
+            uuid::Uuid::new_v4().to_string(),
+            provenance,
+            session_id,
+            session_dir,
+        )
+    }
+
+    pub(crate) fn start_skill_execution_with_provenance_and_execution_id(
+        &self,
+        execution_id: String,
+        provenance: SkillExecutionProvenance,
+        session_id: &str,
+        session_dir: &str,
+    ) -> ExecutionRecord {
         let record = ExecutionRecord {
-            execution_id: uuid::Uuid::new_v4().to_string(),
+            execution_id,
             skill_id: provenance.skill_id,
             skill_version: provenance.skill_version,
             entry_flow: provenance.entry_flow,

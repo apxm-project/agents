@@ -10,7 +10,7 @@ async fn mcp_initialize_returns_protocol_version() {
             "jsonrpc": MCP_JSONRPC_VERSION,
             "id": 1,
             "method": MCP_METHOD_INITIALIZE,
-            "params": { "protocolVersion": apxm_core::constants::protocols::MCP_VERSION }
+            "params": { (mcp_fields::PROTOCOL_VERSION): apxm_core::constants::protocols::MCP_VERSION }
         }),
     )
     .await;
@@ -18,8 +18,18 @@ async fn mcp_initialize_returns_protocol_version() {
     assert_eq!(body["jsonrpc"], MCP_JSONRPC_VERSION);
     assert_eq!(body["id"], 1);
     assert!(body["result"].is_object(), "expected result object: {body}");
-    let version = body["result"]["protocolVersion"].as_str().unwrap_or("");
+    let version = body["result"][mcp_fields::PROTOCOL_VERSION]
+        .as_str()
+        .unwrap_or("");
     assert!(!version.is_empty(), "protocolVersion missing: {body}");
+    assert_eq!(
+        body["result"][mcp_fields::CAPABILITIES][mcp_fields::RESOURCES][mcp_fields::LIST_CHANGED],
+        false
+    );
+    assert_eq!(
+        body["result"][mcp_fields::CAPABILITIES][mcp_fields::RESOURCES][mcp_fields::SUBSCRIBE],
+        false
+    );
 }
 
 #[tokio::test]
@@ -39,6 +49,159 @@ async fn mcp_tools_list_returns_array() {
     assert_eq!(status, StatusCode::OK);
     let tools = &body["result"]["tools"];
     assert!(tools.is_array(), "expected tools array: {body}");
+}
+
+#[tokio::test]
+async fn mcp_resources_list_returns_skill_resources() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    write_complete_skill(temp.path());
+    let app = build_app(test_state_with_skill_roots(vec![temp.path().to_path_buf()]).await);
+
+    let (status, body) = post_json(
+        app,
+        routes::MCP,
+        serde_json::json!({
+            "jsonrpc": MCP_JSONRPC_VERSION,
+            "id": 12,
+            "method": MCP_METHOD_RESOURCES_LIST,
+            "params": {}
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "MCP resources/list failed: {body}");
+    let resources = body["result"][mcp_fields::RESOURCES]
+        .as_array()
+        .expect("resources array");
+    let uris: Vec<&str> = resources
+        .iter()
+        .filter_map(|resource| resource[mcp_fields::URI].as_str())
+        .collect();
+    assert!(
+        uris.contains(&"skill://checkout-context-triage/SKILL.md"),
+        "resources: {body}"
+    );
+    assert!(
+        uris.contains(&"skill://checkout-context-triage/_manifest"),
+        "resources: {body}"
+    );
+}
+
+#[tokio::test]
+async fn mcp_resources_read_returns_skill_content() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    write_complete_skill(temp.path());
+    let app = build_app(test_state_with_skill_roots(vec![temp.path().to_path_buf()]).await);
+    let mut params = serde_json::Map::new();
+    params.insert(
+        MCP_PARAM_URI.to_string(),
+        serde_json::Value::String("skill://checkout-context-triage/SKILL.md".to_string()),
+    );
+
+    let (status, body) = post_json(
+        app,
+        routes::MCP,
+        serde_json::json!({
+            "jsonrpc": MCP_JSONRPC_VERSION,
+            "id": 13,
+            "method": MCP_METHOD_RESOURCES_READ,
+            "params": serde_json::Value::Object(params)
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "MCP resources/read failed: {body}");
+    assert_eq!(
+        body["result"][mcp_fields::CONTENTS][0][mcp_fields::MIME_TYPE],
+        "text/markdown"
+    );
+    assert_eq!(
+        body["result"][mcp_fields::CONTENTS][0][mcp_fields::TEXT],
+        FIXTURE_SOURCE
+    );
+}
+
+#[tokio::test]
+async fn mcp_resources_require_versioned_uri_for_duplicate_skill_ids() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    write_complete_skill_with_version(temp.path(), FIXTURE_PACKAGE_DIR, FIXTURE_SKILL_VERSION);
+    write_complete_skill_with_version(
+        temp.path(),
+        FIXTURE_PACKAGE_V2_DIR,
+        FIXTURE_SKILL_NEXT_VERSION,
+    );
+    let app = build_app(test_state_with_skill_roots(vec![temp.path().to_path_buf()]).await);
+    let versioned_v1_id = format!("{FIXTURE_SKILL_ID}@{FIXTURE_SKILL_VERSION}");
+    let versioned_v2_id = format!("{FIXTURE_SKILL_ID}@{FIXTURE_SKILL_NEXT_VERSION}");
+    let versioned_v1_uri = skill_resource_uri(&versioned_v1_id, FILE_SKILL_SOURCE);
+    let versioned_v2_uri = skill_resource_uri(&versioned_v2_id, FILE_SKILL_SOURCE);
+
+    let (status, body) = post_json(
+        app.clone(),
+        routes::MCP,
+        serde_json::json!({
+            "jsonrpc": MCP_JSONRPC_VERSION,
+            "id": 14,
+            "method": MCP_METHOD_RESOURCES_LIST,
+            "params": {}
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "MCP resources/list failed: {body}");
+    let resources = body["result"][mcp_fields::RESOURCES]
+        .as_array()
+        .expect("resources array");
+    let uris: Vec<&str> = resources
+        .iter()
+        .filter_map(|resource| resource[mcp_fields::URI].as_str())
+        .collect();
+    assert!(
+        uris.contains(&versioned_v1_uri.as_str()),
+        "resources: {body}"
+    );
+    assert!(
+        uris.contains(&versioned_v2_uri.as_str()),
+        "resources: {body}"
+    );
+
+    let (status, body) = post_json(
+        app.clone(),
+        routes::MCP,
+        serde_json::json!({
+            "jsonrpc": MCP_JSONRPC_VERSION,
+            "id": 15,
+            "method": MCP_METHOD_RESOURCES_READ,
+            "params": { (MCP_PARAM_URI): skill_resource_uri(FIXTURE_SKILL_ID, FILE_SKILL_SOURCE) }
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "MCP resources/read failed: {body}");
+    assert_eq!(body["error"]["code"], -32602);
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("multiple versions"),
+        "expected ambiguity error: {body}"
+    );
+
+    let (status, body) = post_json(
+        app,
+        routes::MCP,
+        serde_json::json!({
+            "jsonrpc": MCP_JSONRPC_VERSION,
+            "id": 16,
+            "method": MCP_METHOD_RESOURCES_READ,
+            "params": { (MCP_PARAM_URI): versioned_v2_uri }
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "MCP resources/read failed: {body}");
+    assert_eq!(
+        body["result"][mcp_fields::CONTENTS][0][mcp_fields::TEXT],
+        FIXTURE_SOURCE
+    );
 }
 
 #[tokio::test]
@@ -68,6 +231,490 @@ async fn mcp_tools_list_includes_skill_inventory_tools() {
         "tools: {body}"
     );
     assert!(names.contains(&MCP_TOOL_APXM_SKILL_CALL), "tools: {body}");
+    assert!(
+        names.contains(&MCP_TOOL_APXM_PLAN_AS_GRAPH),
+        "tools: {body}"
+    );
+    assert!(names.contains(&MCP_TOOL_APXM_TRACE_FETCH), "tools: {body}");
+    assert!(names.contains(&MCP_TOOL_APXM_AAM_RECALL), "tools: {body}");
+    assert!(
+        names.contains(&MCP_TOOL_APXM_EVIDENCE_LOOKUP),
+        "tools: {body}"
+    );
+    assert!(
+        names.contains(&MCP_TOOL_APXM_CAPABILITY_LIST),
+        "tools: {body}"
+    );
+}
+
+#[tokio::test]
+async fn mcp_plan_as_graph_reports_missing_router_as_tool_error() {
+    let app = build_app(test_state().await);
+
+    let (status, body) = post_json(
+        app,
+        routes::MCP,
+        serde_json::json!({
+            "jsonrpc": MCP_JSONRPC_VERSION,
+            "id": 26,
+            "method": MCP_METHOD_TOOLS_CALL,
+            "params": {
+                (MCP_PARAM_NAME): MCP_TOOL_APXM_PLAN_AS_GRAPH,
+                (MCP_PARAM_ARGUMENTS): {
+                    (mcp_args::TASK): "audit this repository",
+                    (mcp_args::EXECUTE): false
+                }
+            }
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "MCP tool call failed: {body}");
+    assert_eq!(body["result"]["isError"], true);
+    assert!(
+        body["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("model router unavailable"),
+        "expected router guidance: {body}"
+    );
+}
+
+#[tokio::test]
+async fn mcp_plan_as_graph_compiles_mock_model_plan() {
+    let app = build_app(test_state_with_mock_plan_response(mock_yield_plan_response()).await);
+
+    let (status, body) = post_json(
+        app,
+        routes::MCP,
+        mcp_call(
+            MCP_TOOL_APXM_PLAN_AS_GRAPH,
+            serde_json::json!({
+                (mcp_args::TASK): FIXTURE_PLAN_TASK,
+                (mcp_args::EXECUTE): false
+            }),
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "mcp plan-as-graph failed: {body}");
+    assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
+    let response: serde_json::Value =
+        serde_json::from_str(tool_text(&body)).expect("plan response JSON");
+    assert_eq!(response[tool_result::STATUS], mcp_status::COMPILED);
+    assert!(
+        response[tool_result::TRACE_ID]
+            .as_str()
+            .is_some_and(|trace| !trace.is_empty()),
+        "trace_id missing: {response}"
+    );
+    assert!(
+        response[tool_result::AIR_HASH]
+            .as_str()
+            .is_some_and(|hash| hash.starts_with(REDACTION_HASH_PREFIX_BLAKE3)),
+        "air hash missing: {response}"
+    );
+    assert!(
+        response[tool_result::ARTIFACT_HASH]
+            .as_str()
+            .is_some_and(|hash| hash.starts_with(REDACTION_HASH_PREFIX_BLAKE3)),
+        "artifact hash missing: {response}"
+    );
+    assert_eq!(
+        response[tool_result::PLAN][plan_field::NAME],
+        FIXTURE_PLAN_NAME
+    );
+    assert_eq!(
+        response[tool_result::SUMMARY][tool_result::EXECUTED_NODES],
+        0
+    );
+}
+
+#[tokio::test]
+async fn mcp_plan_as_graph_normalizes_named_dependency_refs() {
+    let app =
+        build_app(test_state_with_mock_plan_response(mock_named_dependency_plan_response()).await);
+
+    let (status, body) = post_json(
+        app,
+        routes::MCP,
+        mcp_call(
+            MCP_TOOL_APXM_PLAN_AS_GRAPH,
+            serde_json::json!({
+                (mcp_args::TASK): FIXTURE_PLAN_TASK,
+                (mcp_args::EXECUTE): false
+            }),
+        ),
+    )
+    .await;
+
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "mcp named dependency normalization failed: {body}"
+    );
+    assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
+    let response: serde_json::Value =
+        serde_json::from_str(tool_text(&body)).expect("plan response JSON");
+    assert_eq!(
+        response[tool_result::PLAN][plan_field::NODES][1][plan_field::DEPENDS_ON][0]
+            [plan_field::NODE],
+        1
+    );
+}
+
+#[tokio::test]
+async fn mcp_plan_as_graph_repairs_invalid_candidate_before_compile() {
+    let backend = MockLLMBackend::static_response(mock_invalid_plan_response().to_string())
+        .when_prompt_contains(
+            FIXTURE_PLAN_REPAIR_MARKER,
+            mock_yield_plan_response().to_string(),
+        );
+    let app = build_app(
+        test_state_with_runtime_and_skill_roots(
+            runtime_with_mock_plan_backend(backend).await,
+            Vec::new(),
+        )
+        .await,
+    );
+
+    let (status, body) = post_json(
+        app,
+        routes::MCP,
+        mcp_call(
+            MCP_TOOL_APXM_PLAN_AS_GRAPH,
+            serde_json::json!({
+                (mcp_args::TASK): FIXTURE_PLAN_TASK,
+                (mcp_args::EXECUTE): false
+            }),
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "mcp plan repair failed: {body}");
+    assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
+    let response: serde_json::Value =
+        serde_json::from_str(tool_text(&body)).expect("plan response JSON");
+    assert_eq!(response[tool_result::STATUS], mcp_status::COMPILED);
+    assert_eq!(
+        response[tool_result::PLAN][plan_field::NODES][0][plan_field::OP],
+        FIXTURE_PLAN_OP_YIELD
+    );
+}
+
+#[tokio::test]
+async fn mcp_plan_as_graph_records_execution_under_trace_id() {
+    let app = build_app(test_state_with_mock_plan_response(mock_yield_plan_response()).await);
+
+    let (status, body) = post_json(
+        app.clone(),
+        routes::MCP,
+        mcp_call(
+            MCP_TOOL_APXM_PLAN_AS_GRAPH,
+            serde_json::json!({
+                (mcp_args::TASK): FIXTURE_PLAN_TASK,
+                (mcp_args::EXECUTE): true,
+                (mcp_args::TRACE_ID): FIXTURE_PLAN_TRACE_ID
+            }),
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "mcp plan execution failed: {body}");
+    assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
+    let response: serde_json::Value =
+        serde_json::from_str(tool_text(&body)).expect("plan response JSON");
+    assert_eq!(response[tool_result::STATUS], mcp_status::EXECUTED);
+    assert_eq!(
+        response[tool_result::EXECUTION_ID],
+        FIXTURE_PLAN_TRACE_ID,
+        "execution_id should be the requested trace_id: {response}"
+    );
+
+    let (status, body) = post_json(
+        app,
+        routes::MCP,
+        mcp_call(
+            MCP_TOOL_APXM_TRACE_FETCH,
+            serde_json::json!({ (mcp_args::TRACE_ID): FIXTURE_PLAN_TRACE_ID }),
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "mcp trace fetch failed: {body}");
+    assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
+    let trace: serde_json::Value =
+        serde_json::from_str(tool_text(&body)).expect("trace response JSON");
+    assert_eq!(trace[tool_result::STATUS], mcp_status::FOUND);
+    assert_eq!(
+        trace[tool_result::EXECUTION][tool_result::EXECUTION_ID],
+        FIXTURE_PLAN_TRACE_ID
+    );
+    assert_eq!(
+        trace[tool_result::EXECUTION][tool_result::SKILL_ID],
+        plan_skill::ID
+    );
+}
+
+#[tokio::test]
+async fn mcp_plan_as_graph_rejects_unsafe_generated_direct_tool() {
+    let state =
+        test_state_with_mock_plan_response(mock_inv_tool_plan_response(FIXTURE_WRITE_TOOL)).await;
+    state
+        .runtime
+        .capability_system()
+        .register(Arc::new(FixtureSideEffectCapability::new(
+            FIXTURE_WRITE_TOOL,
+        )))
+        .expect("register side-effectful fixture capability");
+    let app = build_app(state);
+
+    let (status, body) = post_json(
+        app,
+        routes::MCP,
+        mcp_call(
+            MCP_TOOL_APXM_PLAN_AS_GRAPH,
+            serde_json::json!({
+                (mcp_args::TASK): FIXTURE_PLAN_TASK,
+                (mcp_args::EXECUTE): true
+            }),
+        ),
+    )
+    .await;
+
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "MCP tool errors should stay JSON-RPC 200: {body}"
+    );
+    assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], true);
+    assert!(
+        tool_text(&body).contains(ERROR_MCP_AGENT_SAFE),
+        "expected generated-plan side-effect rejection: {body}"
+    );
+}
+
+#[tokio::test]
+async fn mcp_plan_as_graph_allows_sandboxed_generated_tool() {
+    let mut runtime = runtime_with_mock_plan_backend(MockLLMBackend::static_response(
+        mock_inv_tool_plan_response(FIXTURE_WRITE_TOOL).to_string(),
+    ))
+    .await;
+    runtime.set_sandbox_registry(Arc::new(fixture_sandbox_registry()));
+    runtime
+        .capability_system()
+        .register(Arc::new(FixtureSandboxedCapability::new(
+            FIXTURE_WRITE_TOOL,
+        )))
+        .expect("register fixture sandboxed capability");
+    let app = build_app(test_state_with_runtime_and_skill_roots(runtime, Vec::new()).await);
+
+    let (status, body) = post_json(
+        app,
+        routes::MCP,
+        mcp_call(
+            MCP_TOOL_APXM_PLAN_AS_GRAPH,
+            serde_json::json!({
+                (mcp_args::TASK): FIXTURE_PLAN_TASK,
+                (mcp_args::EXECUTE): true,
+                (mcp_args::TRACE_ID): FIXTURE_PLAN_SANDBOX_TRACE_ID
+            }),
+        ),
+    )
+    .await;
+
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "sandboxed generated plan should return MCP 200: {body}"
+    );
+    assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], false);
+    let response: serde_json::Value =
+        serde_json::from_str(tool_text(&body)).expect("plan response JSON");
+    assert_eq!(response[tool_result::STATUS], mcp_status::EXECUTED);
+    assert_eq!(
+        response[tool_result::EXECUTION_ID],
+        FIXTURE_PLAN_SANDBOX_TRACE_ID
+    );
+}
+
+#[tokio::test]
+async fn mcp_plan_as_graph_rejects_unsafe_trace_id_before_emission() {
+    let app = build_app(test_state().await);
+
+    let (status, body) = post_json(
+        app,
+        routes::MCP,
+        mcp_call(
+            MCP_TOOL_APXM_PLAN_AS_GRAPH,
+            serde_json::json!({
+                (mcp_args::TASK): FIXTURE_PLAN_TASK,
+                (mcp_args::EXECUTE): false,
+                (mcp_args::TRACE_ID): FIXTURE_PLAN_INVALID_TRACE_ID
+            }),
+        ),
+    )
+    .await;
+
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "mcp plan trace validation failed: {body}"
+    );
+    assert_eq!(body[tool_result::RESULT][mcp_fields::IS_ERROR], true);
+    assert!(
+        tool_text(&body).contains(admission_error::TRACE_ID_UNSAFE),
+        "expected trace_id validation error: {body}"
+    );
+}
+
+#[tokio::test]
+async fn mcp_trace_fetch_returns_execution_store_summary() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let store = ExecutionStore::new();
+    let session_dir = temp.path().to_string_lossy().to_string();
+    let record = store.start_skill_execution(
+        FIXTURE_SKILL_ID,
+        FIXTURE_SKILL_VERSION,
+        FIXTURE_SESSION_ID,
+        &session_dir,
+    );
+    let trace_id = record.execution_id.clone();
+    let app = build_app(test_state_with_skill_roots_and_execution_store(Vec::new(), store).await);
+
+    let (status, body) = post_json(
+        app,
+        routes::MCP,
+        mcp_call(
+            MCP_TOOL_APXM_TRACE_FETCH,
+            serde_json::json!({ (mcp_args::TRACE_ID): trace_id }),
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "mcp trace fetch failed: {body}");
+    assert_eq!(body["result"]["isError"], false);
+    let response: serde_json::Value =
+        serde_json::from_str(tool_text(&body)).expect("trace response JSON");
+    assert_eq!(response[tool_result::STATUS], mcp_status::FOUND);
+    assert_eq!(
+        response[tool_result::EXECUTION][tool_result::EXECUTION_ID],
+        record.execution_id
+    );
+    assert_eq!(
+        response[tool_result::EXECUTION][tool_result::SKILL_ID],
+        FIXTURE_SKILL_ID
+    );
+}
+
+#[tokio::test]
+async fn mcp_aam_recall_returns_matching_beliefs() {
+    let state = test_state().await;
+    state.runtime.aam().set_belief(
+        FIXTURE_AAM_KEY.to_string(),
+        Value::String(FIXTURE_AAM_VALUE.to_string()),
+        TransitionLabel::custom("fixture"),
+    );
+    let app = build_app(state);
+
+    let (status, body) = post_json(
+        app,
+        routes::MCP,
+        mcp_call(
+            MCP_TOOL_APXM_AAM_RECALL,
+            serde_json::json!({ (mcp_args::QUERY): FIXTURE_AAM_QUERY }),
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "mcp aam recall failed: {body}");
+    assert_eq!(body["result"]["isError"], false);
+    let response: serde_json::Value =
+        serde_json::from_str(tool_text(&body)).expect("AAM response JSON");
+    let beliefs = response[tool_result::AAM][tool_result::BELIEFS]
+        .as_array()
+        .expect("beliefs array");
+    assert!(
+        beliefs
+            .iter()
+            .any(|belief| belief[tool_result::NAME] == FIXTURE_AAM_KEY),
+        "beliefs: {response}"
+    );
+}
+
+#[tokio::test]
+async fn mcp_evidence_lookup_reads_repo_local_apxm_docs() {
+    let app = build_app(test_state().await);
+    let evidence_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(3)
+        .expect("workspace root")
+        .join(FIXTURE_EVIDENCE_PATH);
+
+    let (status, body) = post_json(
+        app,
+        routes::MCP,
+        mcp_call(
+            MCP_TOOL_APXM_EVIDENCE_LOOKUP,
+            serde_json::json!({
+                (mcp_args::PATH): evidence_path,
+                (mcp_args::QUERY): FIXTURE_EVIDENCE_QUERY,
+            }),
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "mcp evidence lookup failed: {body}");
+    assert_eq!(body["result"]["isError"], false);
+    let response: serde_json::Value =
+        serde_json::from_str(tool_text(&body)).expect("evidence response JSON");
+    let matches = response[tool_result::MATCHES]
+        .as_array()
+        .expect("evidence matches array");
+    assert_eq!(matches.len(), 1, "matches: {response}");
+    assert!(
+        matches[0][mcp_args::PATH]
+            .as_str()
+            .unwrap_or_default()
+            .ends_with("MCP-SERVER-PLAN.md"),
+        "matches: {response}"
+    );
+}
+
+#[tokio::test]
+async fn mcp_capability_list_returns_registered_runtime_capabilities() {
+    let state = test_state().await;
+    state
+        .runtime
+        .capability_system()
+        .register(Arc::new(FixtureReadCapability::new(FIXTURE_TOOL)))
+        .expect("register fixture capability");
+    let app = build_app(state);
+
+    let (status, body) = post_json(
+        app,
+        routes::MCP,
+        mcp_call(
+            MCP_TOOL_APXM_CAPABILITY_LIST,
+            serde_json::json!({ (mcp_args::QUERY): FIXTURE_TOOL }),
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "mcp capability list failed: {body}");
+    assert_eq!(body["result"]["isError"], false);
+    let response: serde_json::Value =
+        serde_json::from_str(tool_text(&body)).expect("capability response JSON");
+    let capabilities = response[tool_result::CAPABILITIES]
+        .as_array()
+        .expect("capabilities array");
+    assert!(
+        capabilities
+            .iter()
+            .any(|capability| capability[tool_result::NAME] == FIXTURE_TOOL),
+        "capabilities: {response}"
+    );
+    assert!(response[tool_result::BACKENDS].is_array(), "{response}");
 }
 
 #[tokio::test]
@@ -81,7 +728,9 @@ async fn mcp_tools_list_exposes_only_read_only_generic_capabilities() {
     state
         .runtime
         .capability_system()
-        .register(Arc::new(FixtureSideEffectCapability::new("write_file")))
+        .register(Arc::new(FixtureSideEffectCapability::new(
+            FIXTURE_WRITE_TOOL,
+        )))
         .expect("register side-effectful fixture capability");
     let app = build_app(state);
 
@@ -104,7 +753,7 @@ async fn mcp_tools_list_exposes_only_read_only_generic_capabilities() {
         .filter_map(|tool| tool["name"].as_str())
         .collect();
     assert!(names.contains(&FIXTURE_TOOL), "tools: {body}");
-    assert!(!names.contains(&"write_file"), "tools: {body}");
+    assert!(!names.contains(&FIXTURE_WRITE_TOOL), "tools: {body}");
 }
 
 #[tokio::test]

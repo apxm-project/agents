@@ -1,0 +1,30 @@
+{
+  "task": "Add a new AIS operation across compiler, runtime, and tests.",
+  "graph": {
+    "name": "add_operation",
+    "entry": "add_op",
+    "parameters": [
+      { "name": "op_name", "type": "str", "required": true },
+      { "name": "op_description", "type": "str", "required": true }
+    ],
+    "nodes": [
+      { "id": 1, "name": "architect_plan", "op": "ask", "agent": "architect", "prompt": "Create the operation implementation plan: wire index, attributes, MLIR mnemonic, runtime handler behavior, and tests." },
+      { "id": 2, "name": "compiler_changes", "op": "ask", "agent": "compiler_dev", "prompt": "Implement compiler-side changes from the plan.", "depends_on": [
+        { "node": 1, "dependency": "Data" }
+      ] },
+      { "id": 3, "name": "runtime_changes", "op": "ask", "agent": "runtime_dev", "prompt": "Implement runtime handler, dispatcher wiring, and handler tests from the plan.", "depends_on": [
+        { "node": 1, "dependency": "Data" }
+      ] },
+      { "id": 4, "name": "wait_for_implementation", "op": "wait_all", "depends_on": [
+        { "node": 2, "dependency": "Control" },
+        { "node": 3, "dependency": "Control" }
+      ] },
+      { "id": 5, "name": "review_and_verify", "op": "ask", "agent": "reviewer", "prompt": "Review compiler and runtime changes for consistency, run focused tests, and report readiness.", "depends_on": [
+        { "node": 4, "dependency": "Control" }
+      ] },
+      { "id": 6, "name": "return_summary", "op": "yield", "depends_on": [
+        { "node": 5, "dependency": "Data" }
+      ] }
+    ]
+  }
+}

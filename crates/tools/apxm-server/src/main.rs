@@ -13,7 +13,7 @@
 //!   `POST /v1/tasks/{queue}/claim`, `POST /v1/tasks/{id}/complete`
 //! - **HITL checkpoints (PAUSE/RESUME)**: `POST /v1/checkpoints`,
 //!   `GET /v1/checkpoints/{id}`, `POST /v1/checkpoints/{id}/resume`
-//! - **MCP 2025-11-05** (JSON-RPC 2.0): `POST /v1/mcp`
+//! - **MCP 2025-11-25** (JSON-RPC 2.0): `POST /v1/mcp`
 //! - **A2A v0.3** (REST): `POST /a2a/tasks/send`, `GET /a2a/tasks/{id}`,
 //!   `GET /.well-known/agent.json`
 //!
@@ -40,8 +40,12 @@ mod generate;
 mod health;
 mod helpers;
 mod mcp;
+mod mcp_protocol;
+mod mcp_tools;
 mod memory;
 mod routes;
+mod runtime_setup;
+mod skill_resources;
 mod skills;
 mod startup;
 mod state;
@@ -51,7 +55,9 @@ mod types;
 #[cfg(test)]
 mod tests;
 
+#[allow(unused_imports)]
 pub(crate) use app::build_app;
+#[allow(unused_imports)]
 pub(crate) use startup::build_server_runtime;
 
 pub(crate) const DEFAULT_ADDR: &str = "127.0.0.1:18800";
