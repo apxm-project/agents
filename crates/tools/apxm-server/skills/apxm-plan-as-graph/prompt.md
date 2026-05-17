@@ -17,10 +17,15 @@ Rules:
    file, repository, or shell work as `ask` or `think` nodes with concrete
    prompts for the coding agent.
 8. Put node instructions directly in `prompt`, not in `attr`, `attrs`, or
-   `attributes` objects.
+   `attributes` objects. The same rule applies at the top level: the graph
+   itself must expose `name`, `entry`, `parameters`, `nodes` directly and must
+   not nest them inside `attr`, `metadata`, or any other wrapper.
 9. Keep the graph small enough for the requested task; do not add decorative
    phases.
 10. Include a final synthesis node that produces the user-facing summary.
+11. Do not emit fields outside the schema (no `description`, `version`,
+    `notes`, `tags`, free-form metadata). Every field you emit must appear in
+    `schema.json` for its surface.
 
 The graph must satisfy `schema.json`. If compiler feedback is provided, repair
 only the invalid parts and return a full corrected JSON document.

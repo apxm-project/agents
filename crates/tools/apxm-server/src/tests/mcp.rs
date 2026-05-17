@@ -403,6 +403,57 @@ async fn mcp_plan_as_graph_repairs_invalid_candidate_before_compile() {
 }
 
 #[tokio::test]
+async fn mcp_plan_as_graph_normalizes_top_level_attribute_alias() {
+    // A plan wrapped in a top-level `attr` alias with a stray `description`
+    // field must compile on the first try via the
+    // normalize_plan_top_level_attribute_aliases pass — without it, the
+    // wrapper would burn a repair turn before serde could parse the graph.
+    let app = build_app(
+        test_state_with_mock_plan_response(mock_top_level_attr_alias_plan_response()).await,
+    );
+
+    let (status, body) = post_json(
+        app,
+        routes::MCP,
+        mcp_call(
+            MCP_TOOL_APXM_PLAN_AS_GRAPH,
+            serde_json::json!({
+                (mcp_args::TASK): FIXTURE_PLAN_TASK,
+                (mcp_args::EXECUTE): false
+            }),
+        ),
+    )
+    .await;
+
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "mcp top-level attr-alias normalization failed: {body}"
+    );
+    assert_eq!(
+        body[tool_result::RESULT][mcp_fields::IS_ERROR],
+        false,
+        "top-level attr-alias normalization returned an error: {body}"
+    );
+    let response: serde_json::Value =
+        serde_json::from_str(tool_text(&body)).expect("plan response JSON");
+    assert_eq!(response[tool_result::STATUS], mcp_status::COMPILED);
+    assert_eq!(
+        response[tool_result::PLAN][plan_field::NAME],
+        FIXTURE_PLAN_NAME
+    );
+    assert_eq!(
+        response[tool_result::PLAN][plan_field::NODES][0][plan_field::OP],
+        FIXTURE_PLAN_OP_YIELD
+    );
+    // The stray top-level field must not survive normalization.
+    assert!(
+        response[tool_result::PLAN].get("description").is_none(),
+        "stray top-level field leaked into normalized plan: {response}"
+    );
+}
+
+#[tokio::test]
 async fn mcp_plan_as_graph_records_execution_under_trace_id() {
     let app = build_app(test_state_with_mock_plan_response(mock_yield_plan_response()).await);
 

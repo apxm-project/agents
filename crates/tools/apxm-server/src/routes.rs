@@ -120,26 +120,37 @@ impl ServerRoute {
     }
 }
 
+// Path constructors for the public REST surface. The release binary builds
+// URLs from string literals at request-handler registration time, so these
+// helpers look unused to `dead_code`; they are exercised by the in-crate
+// integration tests (see `tests/`) which use them as the single source of
+// truth for route shapes.
+#[allow(dead_code)]
 pub(crate) fn skill_detail_path(id: impl Display) -> String {
     format!("{SKILLS}/{id}")
 }
 
+#[allow(dead_code)]
 pub(crate) fn skill_validate_path(id: impl Display) -> String {
     format!("{SKILLS}/{id}/validate")
 }
 
+#[allow(dead_code)]
 pub(crate) fn skill_execute_path(id: impl Display) -> String {
     format!("{SKILLS}/{id}/execute")
 }
 
+#[allow(dead_code)]
 pub(crate) fn skill_execute_stream_path(id: impl Display) -> String {
     format!("{SKILLS}/{id}/execute/stream")
 }
 
+#[allow(dead_code)]
 pub(crate) fn execution_detail_path(id: impl Display) -> String {
     format!("{EXECUTIONS}/{id}")
 }
 
+#[allow(dead_code)]
 pub(crate) fn execution_node_detail_path(
     execution_id: impl Display,
     node_id: impl Display,
@@ -147,14 +158,17 @@ pub(crate) fn execution_node_detail_path(
     format!("{EXECUTIONS}/{execution_id}/nodes/{node_id}")
 }
 
+#[allow(dead_code)]
 pub(crate) fn task_queue_path(queue: impl Display) -> String {
     format!("{TASKS}/{queue}")
 }
 
+#[allow(dead_code)]
 pub(crate) fn task_claim_path(queue: impl Display) -> String {
     format!("{TASKS}/{queue}/claim")
 }
 
+#[allow(dead_code)]
 pub(crate) fn task_complete_path(id: impl Display) -> String {
     format!("{TASKS}/{id}/complete")
 }

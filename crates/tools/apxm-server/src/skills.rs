@@ -548,6 +548,10 @@ pub(crate) fn parse_skill_roots(args: &[String]) -> Vec<PathBuf> {
     parse_skill_roots_impl(args)
 }
 
+// Re-export of the `apxm-skill` CLI-style parser; consumed by in-crate
+// integration tests (see `tests/skills_inventory.rs`). The release binary
+// uses `parse_skill_roots` directly.
+#[allow(dead_code)]
 pub(crate) fn parse_cli_skill_roots(args: &[String]) -> Vec<PathBuf> {
     parse_cli_skill_roots_impl(args)
 }
@@ -948,6 +952,10 @@ fn parse_manifest_file(path: &Path) -> Result<SkillManifest, String> {
     apxm_skill::parse_manifest_file(path)
 }
 
+// String-form manifest parser used by the in-crate unit tests
+// (`parses_top_level_manifest`, `parses_nested_skill_manifest`). The release
+// binary parses manifests via `parse_manifest_file`.
+#[allow(dead_code)]
 fn parse_manifest(contents: &str) -> Result<SkillManifest, toml::de::Error> {
     apxm_skill::parse_manifest(contents)
 }

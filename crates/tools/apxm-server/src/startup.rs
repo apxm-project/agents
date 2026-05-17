@@ -33,6 +33,10 @@ pub(crate) fn execution_store_from_paths() -> ExecutionStore {
     }
 }
 
+// Default-config runtime constructor used exclusively by integration tests
+// (see `tests/execute.rs`). The release binary builds its runtime through
+// `run_server` with explicit CLI-derived configuration.
+#[allow(dead_code)]
 pub(crate) async fn build_server_runtime() -> Result<Runtime, apxm_core::error::RuntimeError> {
     build_runtime_without_router(RuntimeConfig::default()).await
 }
