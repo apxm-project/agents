@@ -58,8 +58,10 @@ use crate::mcp_protocol::{
     status as mcp_status, tool_result,
 };
 use crate::routes;
-use crate::skill_resources::skill_uri as skill_resource_uri;
-use crate::skills::SkillLibrary;
+use crate::skill_resources::{
+    prepend_builtin_skill_root, skill_uri as skill_resource_uri,
+};
+use crate::skills::{SkillLibrary, parse_skill_roots};
 use crate::state::AppState;
 use crate::tasks::{QueuedTask, TaskQueueManager, TaskStatus};
 use crate::types::responses::{ExecutionStats, LlmUsageSummary};
