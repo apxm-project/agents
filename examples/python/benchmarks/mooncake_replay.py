@@ -53,7 +53,7 @@ DATA_DIR = WORKLOADS_DIR / "data"
 DEFAULT_TRACE = DATA_DIR / "mooncake_sample.jsonl"
 DEFAULT_OUTPUT = REPO_ROOT / ".apxm" / "benchmarks" / "results" / "mooncake.csv"
 DEFAULT_ROW_GRAPH = WORKLOADS_DIR / "mooncake_row.py"
-DEFAULT_APXM_ENDPOINT = "http://127.0.0.1:8916"
+DEFAULT_APXM_ENDPOINT = os.environ.get("APXM_ENDPOINT", "")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from util import prom_pull  # noqa: E402

@@ -118,8 +118,9 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     p.add_argument("--stagger-ms", type=int, default=200,
                    help="Submission stagger between tenants per batch.")
-    p.add_argument("--apxm-endpoint", default="http://127.0.0.1:8916",
-                   help="Base URL for /v1/apxm/* (vLLM service endpoint without /v1).")
+    p.add_argument("--apxm-endpoint", default=os.environ.get("APXM_ENDPOINT", ""),
+                   help="Base URL for /v1/apxm/* (vLLM service endpoint without /v1). "
+                        "Falls back to APXM_ENDPOINT env; no hardcoded port default.")
     p.add_argument("--target", default="latency")
     p.add_argument("--interleave-opt-levels", action="store_true", default=True)
     p.add_argument("--cell-label", default=os.environ.get(PHASEG_CELL_LABEL_ENV, ""),

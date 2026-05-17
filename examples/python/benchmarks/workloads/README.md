@@ -79,7 +79,7 @@ python3 examples/python/benchmarks/phase_g_concurrent.py \
   --graph examples/python/benchmarks/workloads/gsp.py \
   --concurrency 4 --iterations 5 --opt-levels 0 2 \
   --output .apxm/benchmarks/results/gsp-phase-g.csv \
-  --metrics-url http://127.0.0.1:8916/metrics
+  --metrics-url "${APXM_ENDPOINT}/metrics"
 ```
 
 ## Running Tier-2 (Mooncake)

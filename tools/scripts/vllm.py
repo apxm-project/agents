@@ -54,7 +54,6 @@ from apxm_vllm_contract import (
     apxm_config_path,
     arg_value,
     build_layout,
-    display_hf_home,
     effective_hf_home,
     enum_values,
     env_name,
@@ -77,7 +76,6 @@ APXM_CONFIG = apxm_config_path(REPO_ROOT)
 
 DEFAULT_BACKEND_NAME = DEFAULTS.backend_name
 DEFAULT_HOST = DEFAULTS.host
-DEFAULT_PORT = DEFAULTS.port
 DEFAULT_REQUEST_TIMEOUT_SECONDS = DEFAULTS.request_timeout_seconds
 DEFAULT_STARTUP_TIMEOUT_SECONDS = DEFAULTS.startup_timeout_seconds
 DEFAULT_STOP_TIMEOUT_SECONDS = DEFAULTS.stop_timeout_seconds
@@ -111,8 +109,15 @@ ENV_MAX_NUM_SEQS = env_name(EnvVar.MAX_NUM_SEQS)
 ENV_SCHEDULING_POLICY = env_name(EnvVar.SCHEDULING_POLICY)
 ENV_ENABLE_PREFIX_CACHING = env_name(EnvVar.ENABLE_PREFIX_CACHING)
 ENV_STARTUP_TIMEOUT_SECONDS = env_name(EnvVar.STARTUP_TIMEOUT_SECONDS)
+ENV_TENSOR_PARALLEL_SIZE = env_name(EnvVar.TENSOR_PARALLEL_SIZE)
+ENV_PIPELINE_PARALLEL_SIZE = env_name(EnvVar.PIPELINE_PARALLEL_SIZE)
+ENV_GPUS = env_name(EnvVar.GPUS)
+ENV_NODES = env_name(EnvVar.NODES)
+ENV_RAY_PORT = env_name(EnvVar.RAY_PORT)
 ENV_SLURM_JOB_ID = env_name(EnvVar.SLURM_JOB_ID)
 ENV_SLURM_JOB_NODELIST = env_name(EnvVar.SLURM_JOB_NODELIST)
+PORT_ALLOCATOR_MIN = 8916
+PORT_ALLOCATOR_MAX = 8999
 STATE_VERSION = 1
 GIT = ToolName.GIT.value
 DOCKER = ToolName.DOCKER.value
@@ -137,10 +142,15 @@ COMMANDS_WITHOUT_EXTRA_ARGS = {
     VllmCommand.DOCKER_STATUS.value,
     VllmCommand.DOCKER_LOGS.value,
     VllmCommand.DOCKER_SAVE.value,
-    VllmCommand.SERVICE_ADOPT.value,
     VllmCommand.SERVICE_START.value,
     VllmCommand.SERVICE_STATUS.value,
+    VllmCommand.SERVICE_LIST.value,
     VllmCommand.SERVICE_STOP.value,
+    VllmCommand.ZOO_APPLY.value,
+    VllmCommand.ZOO_STATUS.value,
+    VllmCommand.ZOO_SCALE.value,
+    VllmCommand.ZOO_CACHE_WARM.value,
+    VllmCommand.ZOO_LOGS.value,
 }
 
 
@@ -266,17 +276,37 @@ def _doctor_payload() -> str:
     )
 
 
-def _hf_home(args: argparse.Namespace) -> str | None:
-    return effective_hf_home(explicit=arg_value(args, ArgName.HF_HOME))
+def _hf_home(args: argparse.Namespace | None = None) -> str:
+    """Return the HF cache root from the single mandatory env var.
+
+    The `args` parameter is kept for call-site compatibility but ignored;
+    `APXM_VLLM_HF_HOME` is the only accepted source.
+    """
+    del args
+    return effective_hf_home()
 
 
 def _api_key(args: argparse.Namespace) -> str | None:
+    """Resolve the vLLM API key.
+
+    Three explicit, non-overlapping sources, in precedence order: the
+    `--api-key` flag, the env var named by `--api-key-env`, and the
+    well-known `VLLM_API_KEY`. Returns `None` if none are set — that is
+    legitimate (a local-only vLLM instance often runs without auth) and
+    is not the same as a missing required value.
+    """
+    explicit = arg_value(args, ArgName.API_KEY)
+    if explicit:
+        return explicit
     api_key_env = arg_value(args, ArgName.API_KEY_ENV)
-    return (
-        arg_value(args, ArgName.API_KEY)
-        or (os.environ.get(api_key_env) if api_key_env else None)
-        or os.environ.get(ENV_VLLM_API_KEY)
-    )
+    if api_key_env:
+        named = os.environ.get(api_key_env)
+        if named:
+            return named
+    fallback_env = os.environ.get(ENV_VLLM_API_KEY)
+    if fallback_env:
+        return fallback_env
+    return None
 
 
 def _api_key_config_reference(args: argparse.Namespace) -> str | None:
@@ -293,7 +323,15 @@ def _endpoint(port: int) -> str:
 
 
 def _endpoint_for_args(args: argparse.Namespace) -> str:
-    return _normalize_endpoint(arg_value(args, ArgName.ENDPOINT) or _endpoint(args.port))
+    explicit = arg_value(args, ArgName.ENDPOINT)
+    if explicit:
+        return _normalize_endpoint(explicit)
+    port = arg_value(args, ArgName.PORT)
+    if port is None:
+        raise SystemExit(
+            "endpoint resolution requires either --endpoint or --port."
+        )
+    return _normalize_endpoint(_endpoint(port))
 
 
 def _normalize_endpoint(endpoint: str) -> str:
@@ -310,13 +348,6 @@ def _temporary_id(prefix: str) -> str:
 
 def _container_state_file(port: int) -> Path:
     return LOG_DIR / f"container-{port}.json"
-
-
-def _default_container_name(port: int) -> str:
-    slurm_job_id = os.environ.get(ENV_SLURM_JOB_ID, "").strip()
-    if slurm_job_id:
-        return f"apxm-vllm-{slurm_job_id}-{port}"
-    return f"apxm-vllm-{port}"
 
 
 def _docker_available() -> bool:
@@ -613,11 +644,18 @@ def _extend_container_env(cmd: list[str], env_specs: list[str]) -> bool:
     return True
 
 
-def _warn_if_public_bind_without_key(args: argparse.Namespace) -> None:
+def _require_api_key_for_public_bind(args: argparse.Namespace) -> None:
+    """Refuse to start vLLM bound to a wildcard host without an API key.
+
+    A wildcard bind without auth would expose the container on shared
+    hosts; surface the missing config as a hard error at startup rather
+    than silently leaving the port open.
+    """
     if args.host in {ANY_HOST, ANY_HOST_V6} and not _api_key(args):
-        _print(
-            "Warning: binding vLLM on a wildcard host without an API key. "
-            f"For shared or remote hosts, set {ENV_VLLM_API_KEY} or pass --api-key."
+        raise SystemExit(
+            f"refusing to bind vLLM on wildcard host {args.host!r} without an "
+            f"API key. Set {ENV_VLLM_API_KEY} or pass --api-key (or bind "
+            f"loopback with --host {HostAddress.LOOPBACK.value})."
         )
 
 
@@ -658,11 +696,14 @@ def doctor_cmd(args: argparse.Namespace) -> int:
     )
     print(f"slurm_job_id={os.environ.get(ENV_SLURM_JOB_ID, '')}")
     print(f"slurm_job_nodelist={os.environ.get(ENV_SLURM_JOB_NODELIST, '')}")
-    print(f"HF_HOME={display_hf_home(_hf_home(args))}")
-    print(f"APXM_VLLM_HF_HOME={os.environ.get(ENV_APXM_VLLM_HF_HOME, '')}")
-    print(f"container_state_file={_container_state_file(args.port)}")
-    pids = _port_pids(args.port)
-    print(f"port_{args.port}_pids={','.join(map(str, pids)) if pids else ''}")
+    hf_value = os.environ.get(ENV_APXM_VLLM_HF_HOME, "").strip()
+    print(f"APXM_VLLM_HF_HOME={hf_value or '<unset>'}")
+    if not hf_value:
+        _check_line("FAIL", "APXM_VLLM_HF_HOME unset", "set APXM_VLLM_HF_HOME to the HF cache root")
+        errors += 1
+    if args.port is not None:
+        pids = _port_pids(args.port)
+        print(f"port_{args.port}_pids={','.join(map(str, pids)) if pids else ''}")
 
     return 1 if errors else 0
 
@@ -795,14 +836,28 @@ def enable_cmd(args: argparse.Namespace) -> int:
             )
             _print(f"Remove or update {args.backend_name}, or choose another --backend-name.")
             return 1
-        else:
-            _print(f"Backend {args.backend_name} already exists; skipping backend add.")
-    elif _run(add, cwd=REPO_ROOT) != 0:
+        # Endpoint matches — but `enable` is a registration entry point, not
+        # a reconciler. Reconciliation belongs to `zoo apply`; refuse to
+        # silently no-op on an existing registration.
+        _print(
+            f"Backend {args.backend_name} is already registered against "
+            f"endpoint {existing_endpoint}. `enable` does not reconcile — "
+            f"either delete the backend (`dekk apxm backend delete "
+            f"{args.backend_name}`) and re-enable, or use `zoo apply` to "
+            f"manage drift."
+        )
+        return 1
+    if _run(add, cwd=REPO_ROOT) != 0:
         return 1
 
     if _backend_model_exists(args.backend_name, model):
-        _print(f"Model {model} already exists on backend {args.backend_name}; skipping model add.")
-    elif _run(add_model, cwd=REPO_ROOT) != 0:
+        _print(
+            f"Model {model} is already registered on backend "
+            f"{args.backend_name}. Reconciliation belongs to `zoo apply`; "
+            f"`enable` refuses to silently no-op on existing model registrations."
+        )
+        return 1
+    if _run(add_model, cwd=REPO_ROOT) != 0:
         return 1
     return _run(test, cwd=REPO_ROOT)
 
@@ -1022,28 +1077,41 @@ def docker_load_cmd(args: argparse.Namespace) -> int:
     return 0
 
 
-def _default_image_tag() -> str:
-    apxm_commit = _capture([GIT, "-C", str(REPO_ROOT), "rev-parse", "--short", "HEAD"]).stdout.strip()
-    vllm_commit = _capture([GIT, "-C", str(VLLM_DIR), "rev-parse", "--short", "HEAD"]).stdout.strip()
-    return f"apxm-vllm-runtime:{apxm_commit or 'apxm'}-{vllm_commit or 'vllm'}"
+def _resolve_image(args: argparse.Namespace | None = None) -> str:
+    """Return the APXM-vLLM image tag, requiring an explicit source.
+
+    Precedence: `--image` flag on the caller's args, else `APXM_VLLM_IMAGE`
+    env. No fallback derived from git SHAs — a silently shifting default
+    masks image/source-drift bugs, so the image tag must be named outright.
+    """
+    if args is not None:
+        explicit = arg_value(args, ArgName.IMAGE)
+        if explicit:
+            return str(explicit)
+    env_value = os.environ.get(ENV_APXM_VLLM_IMAGE, "").strip()
+    if env_value:
+        return env_value
+    raise SystemExit(
+        f"required image not supplied: pass --image, set {ENV_APXM_VLLM_IMAGE}, "
+        f"or add `image = '<tag>'` to the manifest entry."
+    )
 
 
 def cache_warm_cmd(args: argparse.Namespace) -> int:
     """Download a model to the shared HF cache without GPU allocation.
 
-    Runs `huggingface-cli download <model>` inside the APXM-vLLM Docker
-    container with no `--gpus` flag, mounting the shared host HF cache so
-    weights persist across runs. Idempotent — `huggingface-cli` resumes
-    partial downloads via the standard HF cache layout.
+    Runs `hf download <model>` inside the APXM-vLLM Docker container with
+    no `--gpus` flag, mounting the shared host HF cache so weights persist
+    across runs. Idempotent — `hf download` resumes partial downloads via
+    the standard HF cache layout.
 
-    The model-zoo deploy pattern is: cache-warm once per model, then any
-    subsequent `service-start` for that model boots in ~10 min instead of
-    waiting on a multi-hour HF download under a GPU allocation.
+    The model-zoo deploy pattern is: cache-warm once per model, then `zoo
+    apply` boots services that find the weights already on disk.
     """
     if not _docker_available():
         _print("Docker is not installed or the daemon is not reachable.")
         return 1
-    image = args.image or os.environ.get(ENV_APXM_VLLM_IMAGE) or _default_image_tag()
+    image = _resolve_image(args)
     if _docker_image_metadata(image) is None:
         _print(
             f"APXM-vLLM image not loaded: {image}\n"
@@ -1051,12 +1119,7 @@ def cache_warm_cmd(args: argparse.Namespace) -> int:
         )
         return 1
 
-    hf_home = (
-        args.hf_home
-        or os.environ.get(ENV_APXM_VLLM_HF_HOME)
-        or os.environ.get(ENV_HF_HOME)
-        or os.path.expanduser("~/.cache/huggingface-apxm-vllm")
-    )
+    hf_home = effective_hf_home()
     Path(hf_home).mkdir(parents=True, exist_ok=True)
 
     # The APXM-vLLM image's ENTRYPOINT is the vLLM OpenAI API server.
@@ -1124,114 +1187,600 @@ def _service_job_id(state: dict[str, Any]) -> str | None:
     return str(job_id) if job_id else None
 
 
-def service_start_cmd(args: argparse.Namespace) -> int:
+def _list_service_states() -> list[dict[str, Any]]:
+    """Return every recorded service state under SERVICE_DIR, sorted by name."""
+    if not SERVICE_DIR.is_dir():
+        return []
+    states: list[dict[str, Any]] = []
+    for path in sorted(SERVICE_DIR.glob("*.json")):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, dict):
+            states.append(payload)
+    return states
+
+
+def _allocated_ports() -> set[int]:
+    """Read every recorded service state and return the set of ports in use."""
+    ports: set[int] = set()
+    for state in _list_service_states():
+        port = state.get("port")
+        if isinstance(port, int):
+            ports.add(port)
+        elif isinstance(port, str) and port.isdigit():
+            ports.add(int(port))
+    return ports
+
+
+def _allocate_port(*, preferred: int | None = None) -> int:
+    """Return the first free port in [PORT_ALLOCATOR_MIN, PORT_ALLOCATOR_MAX].
+
+    The allocator scans recorded service states under SERVICE_DIR — there is no
+    runtime port probe. Hard-fails when the range is exhausted instead of
+    silently reusing a port, because reuse would let two services point at the
+    same Docker container and corrupt service state.
+    """
+    taken = _allocated_ports()
+    if preferred is not None and preferred not in taken:
+        return preferred
+    for candidate in range(PORT_ALLOCATOR_MIN, PORT_ALLOCATOR_MAX + 1):
+        if candidate not in taken:
+            return candidate
+    raise SystemExit(
+        f"port allocator exhausted: every port in "
+        f"[{PORT_ALLOCATOR_MIN}, {PORT_ALLOCATOR_MAX}] is already bound to a "
+        f"recorded service under {SERVICE_DIR}"
+    )
+
+
+def _squeue_state(job_id: str) -> str:
+    if not shutil.which(SQUEUE):
+        return "?"
+    result = _capture(
+        [SQUEUE, "-h", "-j", job_id, "-o", "%T"],
+        cwd=REPO_ROOT,
+    )
+    state = result.stdout.strip().splitlines()
+    return state[0] if state else "GONE"
+
+
+def _start_one_service(
+    *,
+    name: str,
+    model: str,
+    port: int,
+    image: str,
+    backend_name: str,
+    served_model_name: str | None = None,
+    hf_home: str | None = None,
+    max_model_len: int | None = None,
+    max_num_seqs: int | None = None,
+    scheduling_policy: str | None = None,
+    enable_prefix_caching: bool | None = None,
+    startup_timeout: float | None = None,
+    gpus: str | None = None,
+    tensor_parallel_size: int | None = None,
+    pipeline_parallel_size: int | None = None,
+    nodes: int = 1,
+    ray_port: int | None = None,
+) -> tuple[int, dict[str, Any] | None]:
+    """Submit one Slurm-owned APXM-vLLM service. Returns (rc, state).
+
+    Pure helper: callers (CLI `service-start`, `zoo apply`) build the kwargs
+    explicitly so there is exactly one entry point that turns a configured
+    service into a Slurm submission. The function does not inspect argparse
+    Namespaces, so `zoo apply` can drive it from manifest data without
+    fabricating one.
+    """
     if not shutil.which(SBATCH):
         _print("sbatch is not available on this host.")
-        return 1
-    name = _service_name(args.name)
-    image = args.image or os.environ.get(ENV_APXM_VLLM_IMAGE) or _default_image_tag()
-    model = args.model
-    served_model = args.served_model_name or args.model
-    port = str(args.port)
-    log_path = LOG_DIR / f"slurm-apxm-vllm-service-{name}-%j.out"
-    script = REPO_ROOT / "deploy" / "vllm" / "run-vllm-slurm.sh"
+        return 1, None
+    canonical = _service_name(name)
+    served = served_model_name or model
+    log_pattern = (
+        f"slurm-apxm-vllm-service-{canonical}-%j.node%t.out"
+        if nodes > 1
+        else f"slurm-apxm-vllm-service-{canonical}-%j.out"
+    )
+    log_path = LOG_DIR / log_pattern
+    script = REPO_ROOT / "deploy" / "vllm" / "run-vllm.sh"
     if not script.is_file():
-        _print(f"Slurm service wrapper not found: {script}")
-        return 1
+        _print(f"Unified vLLM service wrapper not found: {script}")
+        return 1, None
 
     env = dict(os.environ)
     env.update(
         {
-            ENV_APXM_VLLM_SERVICE_NAME: name,
+            ENV_APXM_VLLM_SERVICE_NAME: canonical,
             ENV_APXM_VLLM_IMAGE: image,
             ENV_MODEL_REF: model,
-            ENV_SERVED_MODEL_ID: served_model,
-            ENV_BACKEND_NAME: args.backend_name,
-            ENV_PORT: port,
+            ENV_SERVED_MODEL_ID: served,
+            ENV_BACKEND_NAME: backend_name,
+            ENV_PORT: str(port),
+            ENV_NODES: str(nodes),
         }
     )
-    if args.hf_home:
-        env[ENV_HF_HOME_HOST] = args.hf_home
-    if args.max_model_len is not None:
-        env[ENV_MAX_MODEL_LEN] = str(args.max_model_len)
-    if args.max_num_seqs is not None:
-        env[ENV_MAX_NUM_SEQS] = str(args.max_num_seqs)
-    if args.scheduling_policy:
-        env[ENV_SCHEDULING_POLICY] = str(args.scheduling_policy)
-    if args.enable_prefix_caching is not None:
-        env[ENV_ENABLE_PREFIX_CACHING] = "1" if args.enable_prefix_caching else "0"
-    if args.startup_timeout is not None:
-        env[ENV_STARTUP_TIMEOUT_SECONDS] = str(args.startup_timeout)
+    if hf_home:
+        env[ENV_HF_HOME_HOST] = hf_home
+    if max_model_len is not None:
+        env[ENV_MAX_MODEL_LEN] = str(max_model_len)
+    if max_num_seqs is not None:
+        env[ENV_MAX_NUM_SEQS] = str(max_num_seqs)
+    if scheduling_policy:
+        env[ENV_SCHEDULING_POLICY] = str(scheduling_policy)
+    if enable_prefix_caching is not None:
+        env[ENV_ENABLE_PREFIX_CACHING] = "1" if enable_prefix_caching else "0"
+    if startup_timeout is not None:
+        env[ENV_STARTUP_TIMEOUT_SECONDS] = str(startup_timeout)
+    if gpus:
+        env[ENV_GPUS] = gpus
+    if tensor_parallel_size is not None:
+        env[ENV_TENSOR_PARALLEL_SIZE] = str(tensor_parallel_size)
+    if pipeline_parallel_size is not None:
+        env[ENV_PIPELINE_PARALLEL_SIZE] = str(pipeline_parallel_size)
+    if ray_port is not None:
+        env[ENV_RAY_PORT] = str(ray_port)
 
-    cmd = [
+    sbatch_cmd = [
         SBATCH,
         "--job-name",
-        f"apxm-vllm-{name}",
+        f"apxm-vllm-{canonical}",
         "--output",
         str(log_path),
-        str(script),
     ]
-    result = _capture(cmd, cwd=REPO_ROOT, env=env)
+    if nodes > 1:
+        sbatch_cmd.extend(["--nodes", str(nodes), "--ntasks-per-node=1", "--exclusive"])
+    sbatch_cmd.append(str(script))
+
+    result = _capture(sbatch_cmd, cwd=REPO_ROOT, env=env)
     if result.stdout.strip():
         print(result.stdout.strip())
     if result.stderr.strip():
         _print(result.stderr.strip())
     if result.returncode != 0:
-        return result.returncode
+        return result.returncode, None
     match = re.search(r"Submitted batch job\s+(\d+)", result.stdout)
     if not match:
         _print("Could not parse Slurm job id from sbatch output.")
-        return 1
+        return 1, None
     job_id = match.group(1)
     state = {
         "version": STATE_VERSION,
         "managed_by": MANAGED_BY,
-        "name": name,
+        "name": canonical,
         "job_id": job_id,
         "image": image,
         "model": model,
-        "served_model_name": served_model,
-        "backend_name": args.backend_name,
-        "port": args.port,
-        "local_endpoint": _endpoint(args.port),
-        "max_model_len": args.max_model_len,
-        "max_num_seqs": args.max_num_seqs,
-        "scheduling_policy": args.scheduling_policy,
-        "enable_prefix_caching": args.enable_prefix_caching,
+        "served_model_name": served,
+        "backend_name": backend_name,
+        "port": port,
+        "local_endpoint": _endpoint(port),
+        "max_model_len": max_model_len,
+        "max_num_seqs": max_num_seqs,
+        "scheduling_policy": scheduling_policy,
+        "enable_prefix_caching": enable_prefix_caching,
+        "tensor_parallel_size": tensor_parallel_size,
+        "pipeline_parallel_size": pipeline_parallel_size,
+        "gpus": gpus,
+        "nodes": nodes,
+        "ray_port": ray_port,
         "log_pattern": str(log_path),
         "submitted_at": time.time(),
     }
-    path = _write_service_state(name, state)
-    print(f"service={name}")
-    print(f"job_id={job_id}")
-    print(f"state={path}")
-    print(f"exec=dekk apxm vllm service-exec {name} -- <command>")
+    return 0, state
+
+
+def service_start_cmd(args: argparse.Namespace) -> int:
+    """Stub that redirects callers to the manifest-driven deploy path.
+
+    Operators write a manifest entry in `deploy/vllm/zoo.toml` and call
+    `dekk apxm vllm zoo-apply`. `_start_one_service` remains as the
+    internal entry point that `zoo-apply` invokes.
+    """
+    del args
+    _print(
+        "service-start is not supported. "
+        "Add a [[deployment]] entry to deploy/vllm/zoo.toml and run "
+        "`dekk apxm vllm zoo-apply` instead. See docs/backends/model-zoo.md."
+    )
+    return 2
+
+
+ZOO_MANIFEST_SCHEMA_VERSION = 1
+ZOO_SNAPSHOT_DIR = LAYOUT.workspace_dir / "deploy"
+
+
+def _load_zoo_manifest(path: str | Path) -> dict[str, Any]:
+    """Parse and validate a zoo manifest TOML file."""
+    manifest_path = Path(path)
+    if not manifest_path.is_absolute():
+        manifest_path = (REPO_ROOT / manifest_path).resolve()
+    if not manifest_path.is_file():
+        raise SystemExit(f"zoo manifest not found: {manifest_path}")
+    with manifest_path.open("rb") as handle:
+        data = tomllib.load(handle)
+    version = data.get("schema_version", ZOO_MANIFEST_SCHEMA_VERSION)
+    if version != ZOO_MANIFEST_SCHEMA_VERSION:
+        raise SystemExit(
+            f"zoo manifest schema_version={version!r} unsupported "
+            f"(controller understands {ZOO_MANIFEST_SCHEMA_VERSION})"
+        )
+    deployments = data.get("deployment")
+    if not isinstance(deployments, list) or not deployments:
+        raise SystemExit(
+            f"{manifest_path}: must contain at least one [[deployment]] entry"
+        )
+    required_keys = {"name", "model"}
+    seen_names: set[str] = set()
+    for entry in deployments:
+        missing = required_keys - entry.keys()
+        if missing:
+            raise SystemExit(
+                f"{manifest_path}: deployment {entry!r} missing required keys {missing}"
+            )
+        if entry["name"] in seen_names:
+            raise SystemExit(
+                f"{manifest_path}: duplicate deployment name {entry['name']!r}"
+            )
+        seen_names.add(entry["name"])
+    data["__path__"] = str(manifest_path)
+    return data
+
+
+def _zoo_replica_names(entry: dict[str, Any]) -> list[str]:
+    name = entry["name"]
+    replicas = int(entry.get("replicas", 1))
+    if replicas < 0:
+        raise SystemExit(f"zoo entry {name!r}: replicas must be >= 0")
+    if replicas <= 1:
+        return [name]
+    return [f"{name}-r{i}" for i in range(replicas)]
+
+
+def _zoo_replica_port(entry: dict[str, Any], replica_index: int) -> int:
+    """Resolve the listener port for a single replica.
+
+    Manifest expansion must be deterministic, so the port has to come from
+    the manifest. `port_base` covers multi-replica entries, `port` covers
+    single-replica entries. Falling back to the runtime port allocator
+    would make `zoo expand` non-reproducible — two consecutive runs could
+    produce different snapshots — so this raises instead.
+    """
+    if "port_base" in entry:
+        return int(entry["port_base"]) + replica_index
+    if "port" in entry and int(entry.get("replicas", 1)) <= 1:
+        return int(entry["port"])
+    raise SystemExit(
+        f"zoo entry {entry['name']!r}: missing 'port' (single replica) or "
+        f"'port_base' (replicas > 1). Manifest must specify an explicit "
+        f"port so expansion is deterministic."
+    )
+
+
+def _zoo_replica_gpus(entry: dict[str, Any], replica_index: int) -> str | None:
+    explicit_groups = entry.get("gpu_groups")
+    if explicit_groups is not None:
+        try:
+            group = explicit_groups[replica_index]
+        except IndexError as exc:
+            raise SystemExit(
+                f"zoo entry {entry['name']!r}: gpu_groups has fewer entries than replicas"
+            ) from exc
+        return ",".join(str(idx) for idx in group)
+    return entry.get("gpus")
+
+
+def _zoo_expand_entries(manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    """Expand manifest deployment entries into one record per service to start."""
+    expanded: list[dict[str, Any]] = []
+    for entry in manifest["deployment"]:
+        replica_names = _zoo_replica_names(entry)
+        for idx, replica_name in enumerate(replica_names):
+            expanded.append(
+                {
+                    "name": replica_name,
+                    "manifest_name": entry["name"],
+                    "replica_index": idx,
+                    "replica_count": len(replica_names),
+                    "model": entry["model"],
+                    # Per-entry `image` override (manifest > env).
+                    "image": entry.get("image"),
+                    "served_model_name": entry.get("served_model_name", entry["model"]),
+                    "backend_name": (
+                        entry.get("backend_name") if len(replica_names) == 1
+                        else f"{entry.get('backend_name', entry['name'])}-r{idx}"
+                    ),
+                    "port": _zoo_replica_port(entry, idx),
+                    "gpus": _zoo_replica_gpus(entry, idx),
+                    "tensor_parallel_size": entry.get("tensor_parallel"),
+                    "pipeline_parallel_size": entry.get("pipeline_parallel"),
+                    "nodes": int(entry.get("nodes", 1)),
+                    "ray_port": entry.get("ray_port"),
+                    "max_model_len": entry.get("max_model_len"),
+                    "max_num_seqs": entry.get("max_num_seqs"),
+                    "scheduling_policy": entry.get(
+                        "scheduling_policy", SERVICE_DEFAULTS.scheduling_policy
+                    ),
+                    "enable_prefix_caching": entry.get(
+                        "enable_prefix_caching", SERVICE_DEFAULTS.enable_prefix_caching
+                    ),
+                    "startup_timeout": entry.get(
+                        "startup_timeout", SERVICE_DEFAULTS.startup_timeout_seconds
+                    ),
+                    "weights_gb": entry.get("weights_gb"),
+                }
+            )
+    return expanded
+
+
+def _zoo_disk_pre_check(manifest: dict[str, Any]) -> None:
+    """Refuse to start if WekaFS free space < Σ(weights_gb)*1.2 (Risk 6)."""
+    total_weights_gb = sum(
+        float(entry.get("weights_gb") or 0)
+        for entry in manifest["deployment"]
+    )
+    if total_weights_gb <= 0:
+        return
+    required_gb = total_weights_gb * 1.2
+    home = Path.home()
+    try:
+        usage = shutil.disk_usage(home)
+    except OSError as exc:
+        raise SystemExit(
+            f"could not stat HF cache filesystem at {home}: {exc}"
+        ) from exc
+    free_gb = usage.free / (1024**3)
+    if free_gb < required_gb:
+        raise SystemExit(
+            f"zoo cache-warm refused: WekaFS free at {home} = {free_gb:.1f} GB; "
+            f"required = Σ(weights_gb) * 1.2 = {required_gb:.1f} GB. "
+            f"Free up space or coordinate a shared HF cache namespace before retrying."
+        )
+
+
+def zoo_cache_warm_cmd(args: argparse.Namespace) -> int:
+    """Warm the HF cache for every model in the manifest (CPU-only, idempotent)."""
+    manifest = _load_zoo_manifest(args.manifest)
+    _zoo_disk_pre_check(manifest)
+    seen: set[str] = set()
+    rc = 0
+    for entry in manifest["deployment"]:
+        model = entry["model"]
+        if model in seen:
+            continue
+        seen.add(model)
+        print(f"[zoo cache-warm] {model}")
+        ns = argparse.Namespace(
+            model=model,
+            image=getattr(args, "image", None),
+            hf_home=getattr(args, "hf_home", None),
+            revision=entry.get("revision"),
+        )
+        step_rc = cache_warm_cmd(ns)
+        if step_rc != 0:
+            _print(f"cache-warm failed for {model} (rc={step_rc})")
+            rc = step_rc
+    return rc
+
+
+def _zoo_snapshot_dir() -> Path:
+    ts = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    target = ZOO_SNAPSHOT_DIR / ts
+    target.mkdir(parents=True, exist_ok=True)
+    return target
+
+
+def _write_zoo_snapshot(manifest: dict[str, Any], started: list[dict[str, Any]]) -> Path:
+    target = _zoo_snapshot_dir()
+    payload = {
+        "manifest_path": manifest.get("__path__"),
+        "manifest": {k: v for k, v in manifest.items() if k != "__path__"},
+        "services": started,
+        "captured_at": time.time(),
+    }
+    snapshot = target / "zoo-snapshot.json"
+    snapshot.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return snapshot
+
+
+def zoo_apply_cmd(args: argparse.Namespace) -> int:
+    """Reconcile the zoo manifest against currently-recorded services.
+
+    Reconciliation rules:
+      - Missing → _start_one_service.
+      - Removed → warn only (operator must `zoo scale --replicas 0` or
+        `zoo apply --prune` to opt into cancellation, protecting peer jobs).
+      - Present → service_status_cmd probe.
+    Always emits `.apxm/deploy/<TIMESTAMP>/zoo-snapshot.json` for provenance.
+    """
+    manifest = _load_zoo_manifest(args.manifest)
+    desired = _zoo_expand_entries(manifest)
+    desired_names = {entry["name"] for entry in desired}
+    existing = {state.get("name"): state for state in _list_service_states()}
+    # No `_default_image_tag()` fallback — every manifest entry must either
+    # specify `image = '<tag>'` or rely on the operator's APXM_VLLM_IMAGE
+    # env. _resolve_image hard-fails if neither is set.
+
+    started: list[dict[str, Any]] = []
+    rc = 0
+    for entry in desired:
+        if entry["name"] in existing:
+            print(f"[zoo apply] already running: {entry['name']} (probing)")
+            probe_ns = argparse.Namespace(name=entry["name"], probe=False)
+            service_status_cmd(probe_ns)
+            started.append({"name": entry["name"], "job_id": existing[entry["name"]].get("job_id"), "status": "existing"})
+            continue
+        print(f"[zoo apply] starting {entry['name']} on port {entry['port']}")
+        step_rc, state = _start_one_service(
+            name=entry["name"],
+            model=entry["model"],
+            port=entry["port"],
+            image=entry["image"] or _resolve_image(),
+            backend_name=entry["backend_name"] or DEFAULT_BACKEND_NAME,
+            served_model_name=entry["served_model_name"],
+            hf_home=effective_hf_home(),
+            max_model_len=entry["max_model_len"],
+            max_num_seqs=entry["max_num_seqs"],
+            scheduling_policy=entry["scheduling_policy"],
+            enable_prefix_caching=entry["enable_prefix_caching"],
+            startup_timeout=entry["startup_timeout"],
+            gpus=entry["gpus"],
+            tensor_parallel_size=entry["tensor_parallel_size"],
+            pipeline_parallel_size=entry["pipeline_parallel_size"],
+            nodes=entry["nodes"],
+            ray_port=entry["ray_port"],
+        )
+        if step_rc != 0 or state is None:
+            _print(f"[zoo apply] failed to start {entry['name']} (rc={step_rc})")
+            rc = step_rc or 1
+            continue
+        _write_service_state(entry["name"], state)
+        started.append({"name": entry["name"], "job_id": state["job_id"], "status": "started"})
+
+    for stale_name in sorted(existing.keys() - desired_names):
+        if not getattr(args, ArgName.PRUNE.value, False):
+            _print(
+                f"[zoo apply] WARN: service {stale_name!r} is recorded but not in "
+                f"manifest. Re-run with --prune to cancel (peer-protection: off by default)."
+            )
+            continue
+        _print(f"[zoo apply] pruning {stale_name}")
+        stop_ns = argparse.Namespace(name=stale_name, remove_state=True)
+        service_stop_cmd(stop_ns)
+
+    snapshot = _write_zoo_snapshot(manifest, started)
+    print(f"snapshot={snapshot}")
+    return rc
+
+
+def zoo_status_cmd(args: argparse.Namespace) -> int:
+    manifest = _load_zoo_manifest(args.manifest)
+    desired = _zoo_expand_entries(manifest)
+    for entry in desired:
+        print(f"--- {entry['name']} ---")
+        ns = argparse.Namespace(name=entry["name"], probe=False)
+        service_status_cmd(ns)
     return 0
 
 
-def service_adopt_cmd(args: argparse.Namespace) -> int:
-    name = _service_name(args.name)
-    state = {
-        "version": STATE_VERSION,
-        "managed_by": MANAGED_BY,
-        "name": name,
-        "job_id": str(args.job_id),
-        "image": args.image or "",
-        "model": args.model or "",
-        "served_model_name": args.served_model_name or args.model or "",
-        "backend_name": args.backend_name,
-        "port": args.port,
-        "local_endpoint": _endpoint(args.port),
-        "max_model_len": args.max_model_len,
-        "max_num_seqs": args.max_num_seqs,
-        "scheduling_policy": args.scheduling_policy,
-        "enable_prefix_caching": args.enable_prefix_caching,
-        "adopted_at": time.time(),
+def zoo_scale_cmd(args: argparse.Namespace) -> int:
+    manifest = _load_zoo_manifest(args.manifest)
+    name = args.name
+    replicas = int(args.replicas)
+    entry = next((d for d in manifest["deployment"] if d["name"] == name), None)
+    if entry is None:
+        _print(f"zoo entry {name!r} not found in {manifest['__path__']}")
+        return 1
+    entry["replicas"] = replicas
+    desired = _zoo_expand_entries({"deployment": [entry]})
+    desired_names = {e["name"] for e in desired}
+    existing = {
+        state["name"]: state
+        for state in _list_service_states()
+        if isinstance(state.get("name"), str)
+        and (state["name"] == name or state["name"].startswith(f"{name}-r"))
     }
-    path = _write_service_state(name, state)
-    print(f"service={name}")
-    print(f"job_id={args.job_id}")
-    print(f"state={path}")
+    rc = 0
+    for stale_name in sorted(existing.keys() - desired_names):
+        _print(f"[zoo scale] stopping {stale_name}")
+        stop_ns = argparse.Namespace(name=stale_name, remove_state=True)
+        service_stop_cmd(stop_ns)
+    # No `_default_image_tag()` fallback — every manifest entry must either
+    # specify `image = '<tag>'` or rely on the operator's APXM_VLLM_IMAGE
+    # env. _resolve_image hard-fails if neither is set.
+    for e in desired:
+        if e["name"] in existing:
+            continue
+        step_rc, state = _start_one_service(
+            name=e["name"],
+            model=e["model"],
+            port=e["port"],
+            image=entry["image"] or _resolve_image(),
+            backend_name=e["backend_name"] or DEFAULT_BACKEND_NAME,
+            served_model_name=e["served_model_name"],
+            hf_home=effective_hf_home(),
+            max_model_len=e["max_model_len"],
+            max_num_seqs=e["max_num_seqs"],
+            scheduling_policy=e["scheduling_policy"],
+            enable_prefix_caching=e["enable_prefix_caching"],
+            startup_timeout=e["startup_timeout"],
+            gpus=e["gpus"],
+            tensor_parallel_size=e["tensor_parallel_size"],
+            pipeline_parallel_size=e["pipeline_parallel_size"],
+            nodes=e["nodes"],
+            ray_port=e["ray_port"],
+        )
+        if step_rc != 0 or state is None:
+            rc = step_rc or 1
+            continue
+        _write_service_state(e["name"], state)
+    return rc
+
+
+def zoo_logs_cmd(args: argparse.Namespace) -> int:
+    manifest = _load_zoo_manifest(args.manifest)
+    desired_names = {e["name"] for e in _zoo_expand_entries(manifest)}
+    for state in _list_service_states():
+        name = state.get("name")
+        if name not in desired_names:
+            continue
+        job_id = _service_job_id(state)
+        if not job_id:
+            continue
+        print(f"--- {name} (job_id={job_id}) ---")
+        port = state.get("port")
+        if not port:
+            _print(f"[zoo logs] skipping {name}: state has no recorded port")
+            continue
+        _run(
+            [SRUN, "--jobid", job_id, "--overlap", "docker", "logs", "--tail=80",
+             f"apxm-vllm-{job_id}-{port}"],
+            cwd=REPO_ROOT,
+        )
+    return 0
+
+
+def zoo_dispatch(args: argparse.Namespace, cmd: VllmCommand) -> int:
+    handlers = {
+        VllmCommand.ZOO_APPLY: zoo_apply_cmd,
+        VllmCommand.ZOO_STATUS: zoo_status_cmd,
+        VllmCommand.ZOO_SCALE: zoo_scale_cmd,
+        VllmCommand.ZOO_CACHE_WARM: zoo_cache_warm_cmd,
+        VllmCommand.ZOO_LOGS: zoo_logs_cmd,
+    }
+    handler = handlers.get(cmd)
+    if handler is None:
+        raise SystemExit(f"unknown zoo command: {cmd.value}")
+    return handler(args)
+
+
+def service_list_cmd(args: argparse.Namespace) -> int:
+    """Print every recorded service alongside its current Slurm state."""
+    states = _list_service_states()
+    if not states:
+        print(f"(no services recorded under {SERVICE_DIR})")
+        return 0
+    rows = []
+    for state in states:
+        job_id = _service_job_id(state) or "-"
+        slurm_state = _squeue_state(job_id) if job_id != "-" else "-"
+        rows.append(
+            {
+                "name": state.get("name", "?"),
+                "port": str(state.get("port", "?")),
+                "job_id": job_id,
+                "slurm": slurm_state,
+                "model": state.get("model", "?"),
+                "backend": state.get("backend_name", "?"),
+            }
+        )
+    widths = {key: max(len(key), max(len(row[key]) for row in rows)) for key in rows[0]}
+    header = "  ".join(key.upper().ljust(widths[key]) for key in rows[0])
+    print(header)
+    for row in rows:
+        print("  ".join(row[key].ljust(widths[key]) for key in rows[0]))
     return 0
 
 
@@ -1251,6 +1800,10 @@ def service_status_cmd(args: argparse.Namespace) -> int:
         if result.stderr.strip():
             _print(result.stderr.strip())
     if args.probe and job_id:
+        port = state.get("port")
+        if not port:
+            _print(f"[service-status] cannot probe {args.name}: state has no recorded port")
+            return 1
         return _run(
             [
                 SRUN,
@@ -1261,7 +1814,7 @@ def service_status_cmd(args: argparse.Namespace) -> int:
                 str(Path(__file__).resolve()),
                 VllmCommand.PROBE.value,
                 "--port",
-                str(state.get("port", DEFAULT_PORT)),
+                str(port),
             ],
             cwd=REPO_ROOT,
         )
@@ -1330,8 +1883,18 @@ def docker_start_cmd(args: argparse.Namespace, extra_args: list[str]) -> int:
     if not args.image:
         _print("--image is required for docker-start")
         return 1
+    if args.port is None:
+        _print("--port is required for docker-start")
+        return 1
 
-    container_name = args.container_name or _default_container_name(args.port)
+    container_name = args.container_name
+    if not container_name:
+        _print(
+            "--container-name is required for docker-start. "
+            "The unified wrapper deploy/vllm/run-vllm.sh derives it from "
+            "the service name."
+        )
+        return 1
     if _docker_container_running(container_name):
         _print(f"Container {container_name} is already running.")
         return 1
@@ -1399,11 +1962,11 @@ def docker_start_cmd(args: argparse.Namespace, extra_args: list[str]) -> int:
     cmd.append(args.image)
     cmd.extend(_build_container_vllm_args(args, extra_args))
 
-    _warn_if_public_bind_without_key(args)
+    _require_api_key_for_public_bind(args)
     _print(f"Starting APXM-vLLM container {container_name}")
     _print(f"image={args.image}")
     _print(f"endpoint={endpoint}")
-    _print(f"hf_home={display_hf_home(hf_home)}")
+    _print(f"hf_home={hf_home}")
     result = _capture(cmd, cwd=REPO_ROOT)
     if result.returncode != 0:
         if result.stdout.strip():
@@ -1478,7 +2041,11 @@ def _container_name_from_args(args: argparse.Namespace) -> str:
     state = _read_container_state(args.port)
     if state and isinstance(state.get("container_name"), str):
         return state["container_name"]
-    return _default_container_name(args.port)
+    raise SystemExit(
+        f"--container-name required (no container state at "
+        f"{_container_state_file(args.port)}); the name comes from the "
+        f"service state recorded by `zoo-apply`."
+    )
 
 
 def docker_stop_cmd(args: argparse.Namespace) -> int:
@@ -1539,7 +2106,7 @@ def _add_model_args(parser: argparse.ArgumentParser) -> None:
         default=DEFAULT_HOST,
         help="vLLM bind host; does not change the APXM registration endpoint",
     )
-    parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="Bind port for vLLM")
+    parser.add_argument("--port", type=int, default=None, help="Bind port for vLLM")
     parser.add_argument(
         "--hf-home",
         help=(
@@ -1614,9 +2181,9 @@ def _add_model_args(parser: argparse.ArgumentParser) -> None:
         choices=[p.value for p in SchedulingPolicy],
         default=DEFAULTS.scheduling_policy,
         help=(
-            "vLLM scheduler policy. APXM ships with 'priority' so that "
-            "compiler-stamped critical-path hints actually re-order the "
-            "waiting queue; pass 'fcfs' to disable."
+            "vLLM scheduler policy. Single-variant under APXM (priority) "
+            "so compiler-stamped critical-path hints re-order the waiting "
+            "queue. The upstream FCFS branch is no longer selectable."
         ),
     )
     parser.add_argument(
@@ -1645,7 +2212,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--hf-home",
         help=f"HF_HOME value to report/use for Hugging Face-backed refs (or set {ENV_APXM_VLLM_HF_HOME}/{ENV_HF_HOME})",
     )
-    doctor.add_argument("--port", type=int, default=DEFAULT_PORT, help="vLLM port")
+    doctor.add_argument("--port", type=int, default=None, help="vLLM port")
     doctor.set_defaults(**{ArgName.HANDLER.value: lambda ns, extra: doctor_cmd(ns)})
 
     docker_build = subparsers.add_parser(
@@ -1791,7 +2358,7 @@ def build_parser() -> argparse.ArgumentParser:
         (VllmCommand.DOCKER_LOGS, "Show Dekk-managed vLLM container logs", docker_logs_cmd),
     ):
         docker_parser = subparsers.add_parser(subcommand.value, help=help_text)
-        docker_parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="vLLM port")
+        docker_parser.add_argument("--port", type=int, default=None, help="vLLM port")
         docker_parser.add_argument(
             "--container-name",
             dest=ArgName.CONTAINER_NAME.value,
@@ -1802,33 +2369,10 @@ def build_parser() -> argparse.ArgumentParser:
             docker_parser.add_argument("--follow", action="store_true", help="Follow the log")
         docker_parser.set_defaults(**{ArgName.HANDLER.value: lambda ns, extra, h=handler: h(ns)})
 
-    service_adopt = subparsers.add_parser(
-        VllmCommand.SERVICE_ADOPT.value,
-        help="Record an existing Slurm APXM-vLLM service job",
-    )
-    service_adopt.add_argument(ArgName.NAME.value, help="Service name")
-    service_adopt.add_argument("--job-id", required=True, help="Existing Slurm job id")
-    service_adopt.add_argument("--image", dest=ArgName.IMAGE.value, help="APXM-vLLM image tag/digest")
-    service_adopt.add_argument("--model", dest=ArgName.MODEL.value, help="Model ref loaded by vLLM")
-    service_adopt.add_argument("--served-model-name", dest=ArgName.SERVED_MODEL_NAME.value, help="Served model id")
-    service_adopt.add_argument("--backend-name", default=DEFAULT_BACKEND_NAME, help="APXM backend name")
-    service_adopt.add_argument("--port", type=int, default=DEFAULT_PORT, help="vLLM port")
-    service_adopt.add_argument("--max-model-len", type=int, help="Recorded MAX_MODEL_LEN for this service")
-    service_adopt.add_argument("--max-num-seqs", dest=ArgName.MAX_NUM_SEQS.value, type=int, help="Recorded MAX_NUM_SEQS for this service")
-    service_adopt.add_argument(
-        VllmServeFlag.SCHEDULING_POLICY.value,
-        dest=ArgName.SCHEDULING_POLICY.value,
-        choices=[p.value for p in SchedulingPolicy],
-        help="Recorded scheduler policy for this service",
-    )
-    service_adopt.add_argument(
-        "--enable-prefix-caching",
-        dest=ArgName.ENABLE_PREFIX_CACHING.value,
-        action=argparse.BooleanOptionalAction,
-        default=None,
-        help="Recorded prefix-cache state for this service",
-    )
-    service_adopt.set_defaults(**{ArgName.HANDLER.value: lambda ns, extra: service_adopt_cmd(ns)})
+    # Adopting an externally-started job is done by appending a [[deployment]]
+    # entry to deploy/vllm/zoo.toml (or your own manifest) and running
+    # `zoo apply`; idempotent reconciliation covers the "record an existing
+    # job" workflow.
 
     service_start = subparsers.add_parser(
         VllmCommand.SERVICE_START.value,
@@ -1842,7 +2386,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="APXM-vLLM image tag/digest (default: APXM_VLLM_IMAGE or apxm-vllm-runtime:<apxm>-<vllm>)",
     )
     service_start.add_argument("--backend-name", default=DEFAULT_BACKEND_NAME, help="APXM backend name")
-    service_start.add_argument("--port", type=int, default=DEFAULT_PORT, help="vLLM port")
+    service_start.add_argument("--port", type=int, default=None, help="vLLM port")
     service_start.add_argument("--served-model-name", dest=ArgName.SERVED_MODEL_NAME.value, help="Served model id")
     service_start.add_argument(
         "--hf-home",
@@ -1882,7 +2426,75 @@ def build_parser() -> argparse.ArgumentParser:
         default=SERVICE_DEFAULTS.startup_timeout_seconds,
         help="STARTUP_TIMEOUT_SECONDS exported to the Slurm wrapper",
     )
+    service_start.add_argument(
+        "--gpus",
+        dest=ArgName.GPUS.value,
+        help="GPU subset to pin (forwarded to the wrapper as HIP_VISIBLE_DEVICES/CUDA_VISIBLE_DEVICES)",
+    )
+    service_start.add_argument(
+        "--tensor-parallel-size",
+        dest=ArgName.TENSOR_PARALLEL_SIZE.value,
+        type=int,
+        help="TENSOR_PARALLEL_SIZE exported to the Slurm wrapper",
+    )
+    service_start.add_argument(
+        "--pipeline-parallel-size",
+        dest=ArgName.PIPELINE_PARALLEL_SIZE.value,
+        type=int,
+        help="PIPELINE_PARALLEL_SIZE exported to the Slurm wrapper (multi-node only)",
+    )
+    service_start.add_argument(
+        "--nodes",
+        dest=ArgName.NODES.value,
+        type=int,
+        default=1,
+        help="Number of Slurm nodes for this service (1 = single-node, >1 = Ray multi-node)",
+    )
+    service_start.add_argument(
+        "--ray-port",
+        dest=ArgName.RAY_PORT.value,
+        type=int,
+        help="RAY_PORT for the Ray head when --nodes > 1",
+    )
     service_start.set_defaults(**{ArgName.HANDLER.value: lambda ns, extra: service_start_cmd(ns)})
+
+    service_list = subparsers.add_parser(
+        VllmCommand.SERVICE_LIST.value,
+        help="List every recorded APXM-vLLM service and its current Slurm state",
+    )
+    service_list.set_defaults(**{ArgName.HANDLER.value: lambda ns, extra: service_list_cmd(ns)})
+
+    for zoo_cmd, help_text in (
+        (VllmCommand.ZOO_APPLY, "Reconcile the zoo manifest against currently-recorded services"),
+        (VllmCommand.ZOO_STATUS, "Probe every service in the zoo manifest"),
+        (VllmCommand.ZOO_SCALE, "Scale a zoo-managed service's replica count"),
+        (VllmCommand.ZOO_CACHE_WARM, "Warm the HF cache for every model in the manifest"),
+        (VllmCommand.ZOO_LOGS, "Tail container logs for a zoo-managed service"),
+    ):
+        zoo_parser = subparsers.add_parser(zoo_cmd.value, help=help_text)
+        zoo_parser.add_argument(
+            "manifest",
+            nargs="?",
+            default="deploy/vllm/zoo.toml",
+            help="Path to the zoo manifest (default: deploy/vllm/zoo.toml)",
+        )
+        if zoo_cmd is VllmCommand.ZOO_APPLY:
+            zoo_parser.add_argument(
+                "--prune",
+                dest=ArgName.PRUNE.value,
+                action="store_true",
+                help="Cancel services not present in the manifest (off by default to protect peer jobs)",
+            )
+        if zoo_cmd is VllmCommand.ZOO_SCALE:
+            zoo_parser.add_argument(ArgName.NAME.value, help="Service name to scale")
+            zoo_parser.add_argument(
+                "--replicas",
+                dest=ArgName.REPLICAS.value,
+                type=int,
+                required=True,
+                help="Target replica count (0 = stop)",
+            )
+        zoo_parser.set_defaults(**{ArgName.HANDLER.value: lambda ns, extra, c=zoo_cmd: zoo_dispatch(ns, c)})
 
     service_status = subparsers.add_parser(
         VllmCommand.SERVICE_STATUS.value,
@@ -1912,7 +2524,7 @@ def build_parser() -> argparse.ArgumentParser:
         VllmCommand.PROBE.value,
         help="Probe /models and APXM graph endpoints by registering and deleting a temporary graph",
     )
-    probe.add_argument("--port", type=int, default=DEFAULT_PORT, help="vLLM port")
+    probe.add_argument("--port", type=int, default=None, help="vLLM port")
     probe.add_argument("--endpoint", dest=ArgName.ENDPOINT.value, help="Override OpenAI-compatible endpoint")
     probe.add_argument(
         "--api-key",
@@ -1927,7 +2539,7 @@ def build_parser() -> argparse.ArgumentParser:
     def add_registration_args(registration: argparse.ArgumentParser) -> None:
         registration.add_argument(ArgName.MODEL.value, help="Served model name exposed by /v1/models")
         registration.add_argument("--backend-name", default=DEFAULT_BACKEND_NAME, help="APXM backend name")
-        registration.add_argument("--port", type=int, default=DEFAULT_PORT, help="vLLM port")
+        registration.add_argument("--port", type=int, default=None, help="vLLM port")
         registration.add_argument("--endpoint", dest=ArgName.ENDPOINT.value, help="Override APXM backend endpoint")
         registration.add_argument(
             "--api-key",

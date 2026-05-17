@@ -25,6 +25,7 @@ class EnvVar(str, Enum):
     BACKEND_NAME = "BACKEND_NAME"
     CUDA_VISIBLE_DEVICES = "CUDA_VISIBLE_DEVICES"
     ENABLE_PREFIX_CACHING = "ENABLE_PREFIX_CACHING"
+    GPUS = "GPUS"
     HF_HOME_HOST = "HF_HOME_HOST"
     HF_HOME = "HF_HOME"
     HF_TOKEN = "HF_TOKEN"
@@ -32,13 +33,17 @@ class EnvVar(str, Enum):
     MAX_MODEL_LEN = "MAX_MODEL_LEN"
     MAX_NUM_SEQS = "MAX_NUM_SEQS"
     MODEL_REF = "MODEL_REF"
+    NODES = "NODES"
+    PIPELINE_PARALLEL_SIZE = "PIPELINE_PARALLEL_SIZE"
     PORT = "PORT"
+    RAY_PORT = "RAY_PORT"
     SCHEDULING_POLICY = "SCHEDULING_POLICY"
     SERVED_MODEL_ID = "SERVED_MODEL_ID"
     SLURM_JOB_ID = "SLURM_JOB_ID"
     SLURM_JOB_NODELIST = "SLURM_JOB_NODELIST"
     SLURM_JOB_PARTITION = "SLURM_JOB_PARTITION"
     STARTUP_TIMEOUT_SECONDS = "STARTUP_TIMEOUT_SECONDS"
+    TENSOR_PARALLEL_SIZE = "TENSOR_PARALLEL_SIZE"
     VLLM_API_KEY = "VLLM_API_KEY"
     XDG_CACHE_HOME = "XDG_CACHE_HOME"
 
@@ -152,11 +157,16 @@ class VllmCommand(str, Enum):
     DOCKER_STOP = "docker-stop"
     DOCKER_STATUS = "docker-status"
     DOCKER_LOGS = "docker-logs"
-    SERVICE_ADOPT = "service-adopt"
     SERVICE_START = "service-start"
     SERVICE_STATUS = "service-status"
+    SERVICE_LIST = "service-list"
     SERVICE_EXEC = "service-exec"
     SERVICE_STOP = "service-stop"
+    ZOO_APPLY = "zoo-apply"
+    ZOO_STATUS = "zoo-status"
+    ZOO_SCALE = "zoo-scale"
+    ZOO_CACHE_WARM = "zoo-cache-warm"
+    ZOO_LOGS = "zoo-logs"
 
 
 class DockerCommand(str, Enum):
@@ -242,6 +252,7 @@ class ApxmWorkspacePath(str, Enum):
     VLLM_LOGS = "vllm-logs"
     VLLM_IMAGES = "vllm-images"
     VLLM_SERVICES = "vllm-services"
+    DEPLOY = "deploy"
     BENCHMARKS = "benchmarks"
     EVALUATION = "evaluation"
     GEMMA4 = "gemma4"
@@ -280,15 +291,24 @@ class ArgName(str, Enum):
     ENABLE_FORCE_INCLUDE_USAGE = "enable_force_include_usage"
     ENABLE_PREFIX_CACHING = "enable_prefix_caching"
     ENABLE_PROMPT_TOKENS_DETAILS = "enable_prompt_tokens_details"
+    GPUS = "gpus"
     HANDLER = "handler"
     HF_HOME = "hf_home"
     IMAGE = "image"
+    MANIFEST = "manifest"
     MAX_NUM_SEQS = "max_num_seqs"
     MODEL = "model"
     NAME = "name"
+    NODES = "nodes"
+    PIPELINE_PARALLEL_SIZE = "pipeline_parallel_size"
+    PORT = "port"
+    PRUNE = "prune"
+    RAY_PORT = "ray_port"
     REASONING_PARSER = "reasoning_parser"
+    REPLICAS = "replicas"
     SCHEDULING_POLICY = "scheduling_policy"
     SERVED_MODEL_NAME = "served_model_name"
+    TENSOR_PARALLEL_SIZE = "tensor_parallel_size"
     WAIT = "wait"
 
 
@@ -304,14 +324,15 @@ class VllmServeFlag(str, Enum):
 
 
 class SchedulingPolicy(str, Enum):
-    """vLLM scheduler policy values understood by the APXM fork.
+    """vLLM scheduler policy values the APXM controller will emit.
 
-    The fork's per-request critical-path boost only takes effect under
-    PRIORITY mode; FCFS silently ignores per-request priority hints. The
-    APXM-fork default is PRIORITY (see external/vllm/vllm/config/scheduler.py).
+    Single-variant enum: the upstream fork still implements the FCFS branch,
+    but APXM never selects it — per-request critical-path boosts only take
+    effect under PRIORITY mode, and the zoo manifest disallows anything
+    else. The upstream FCFS code path is documented as not exercised by
+    APXM.
     """
 
-    FCFS = "fcfs"
     PRIORITY = "priority"
 
 
@@ -321,15 +342,13 @@ class VllmDefaults:
 
     backend_name: str = "vllm-fork"
     host: str = HostAddress.LOOPBACK.value
-    port: int = 8916
     request_timeout_seconds: int = 15
     startup_timeout_seconds: int = 900
     stop_timeout_seconds: float = 20.0
     download_workers: int = 8
     log_lines: int = 80
     # APXM ships with priority on by default so compiler-stamped critical-path
-    # hints actually reorder the waiting queue. Operators can override by
-    # passing --scheduling-policy fcfs explicitly.
+    # hints actually reorder the waiting queue.
     scheduling_policy: str = SchedulingPolicy.PRIORITY.value
     # APXM ships with prompt_tokens_details on by default so the OpenAI parser
     # at apxm-backends/src/llm/backends/openai/backend.rs:779-789 can populate
@@ -342,7 +361,7 @@ class VllmDefaults:
 
 @dataclass(frozen=True)
 class SlurmServiceDefaults:
-    """Defaults exported by `dekk apxm vllm service-start` to the Slurm wrapper."""
+    """Defaults exported by the zoo apply path to the unified Slurm wrapper."""
 
     max_model_len: int = 32768
     max_num_seqs: int = 64
@@ -462,20 +481,23 @@ def apxm_config_path(start: Path | None = None) -> Path:
 
 def effective_hf_home(
     *,
-    explicit: str | None = None,
     environ: dict[str, str] | os._Environ[str] = os.environ,
-) -> str | None:
-    """Resolve HF cache policy without inventing a machine-specific path."""
+) -> str:
+    """Resolve the HF cache root from the single mandatory env var.
 
-    return (
-        explicit
-        or environ.get(env_name(EnvVar.APXM_VLLM_HF_HOME))
-        or environ.get(env_name(EnvVar.HF_HOME))
-    )
-
-
-def display_hf_home(value: str | None) -> str:
-    return value if value else "<huggingface default>"
+    `APXM_VLLM_HF_HOME` is the only accepted source. A multi-way fallback
+    chain silently routes weights to inconsistent locations across runs
+    when callers disagree with the wrapper, so hard-fail immediately and
+    force the operator to set the env once.
+    """
+    value = environ.get(env_name(EnvVar.APXM_VLLM_HF_HOME), "").strip()
+    if not value:
+        raise SystemExit(
+            f"required env var {env_name(EnvVar.APXM_VLLM_HF_HOME)!r} is not set. "
+            "Export it once (e.g. `export APXM_VLLM_HF_HOME=$HOME/.cache/huggingface-apxm-vllm`) "
+            "and re-run."
+        )
+    return value
 
 
 def local_endpoint(*, host: str, port: int) -> str:

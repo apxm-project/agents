@@ -512,6 +512,63 @@ async fn vllm_health_check_hard_fails_when_apxm_endpoints_missing() {
     drop(server);
 }
 
+/// A fork that serves /v1/apxm/graphs/* but not /v1/apxm/scheduler must also
+/// hard-fail `health_check`. The scheduler probe is mandatory: a partial APXM
+/// surface is a misconfiguration, not a capability tier.
+#[tokio::test]
+async fn vllm_health_check_hard_fails_when_scheduler_route_missing() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path(versioned_path(api_paths::MODELS)))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "object": "list",
+            "data": [],
+        })))
+        .mount(&server)
+        .await;
+
+    // Graphs probe succeeds — looks like a partial fork.
+    let probe_path = format!(
+        "{}{}/{}",
+        api_paths::VERSION_PREFIX,
+        api_paths::APXM_GRAPHS,
+        PROBE_GRAPH_ID,
+    );
+    Mock::given(method("GET"))
+        .and(path(probe_path))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "object": "apxm.graph.status",
+            "graph_id": PROBE_GRAPH_ID,
+            "registered": false,
+            "pinned_handles": 0,
+            "pinned_blocks": 0,
+            "node_count": 0,
+            "critical_path_length": 0,
+        })))
+        .mount(&server)
+        .await;
+
+    // ...but the scheduler endpoint is missing (404).
+    Mock::given(method("GET"))
+        .and(path(versioned_path(api_paths::APXM_SCHEDULER)))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&server)
+        .await;
+
+    let backend = make_backend(&server.uri(), "Qwen/Qwen2.5-7B-Instruct").await;
+
+    let err = LLMBackend::health_check(&backend)
+        .await
+        .expect_err("missing /v1/apxm/scheduler must hard-fail health_check");
+    assert!(
+        err.to_string().contains("/v1/apxm/scheduler"),
+        "error must name the missing route, got: {err}"
+    );
+
+    drop(server);
+}
+
 /// `get_graph_status` returns pin telemetry from the fork before release.
 /// Verifies the GET fires, returns the expected shape, and DELETE follows.
 #[tokio::test]

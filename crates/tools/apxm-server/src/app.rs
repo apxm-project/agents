@@ -71,12 +71,12 @@ pub(crate) fn build_app(state: AppState) -> Router {
             ServerRoute::AgentDetail.path(),
             get(get_agent).delete(deregister_agent),
         )
-        // Task queue (Plan 07 - CLAIM op backend)
+        // Task queue (CLAIM op backend)
         .route(ServerRoute::Tasks.path(), post(create_task))
         .route(ServerRoute::TaskQueue.path(), get(list_tasks))
         .route(ServerRoute::TaskClaim.path(), post(claim_task))
         .route(ServerRoute::TaskComplete.path(), post(complete_task))
-        // Checkpoints (Plan 07 - PAUSE/RESUME HITL)
+        // Checkpoints (PAUSE/RESUME HITL)
         .route(ServerRoute::Checkpoints.path(), post(create_checkpoint))
         .route(ServerRoute::CheckpointDetail.path(), get(get_checkpoint))
         .route(

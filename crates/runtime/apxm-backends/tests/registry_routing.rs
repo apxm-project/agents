@@ -19,6 +19,11 @@ async fn test_round_robin_rotates_across_backends() {
     registry.register("backend2", mock2).unwrap();
     registry.register("backend3", mock3).unwrap();
 
+    // Round-robin treats Unknown as unroutable, so the pool must be probed
+    // before requests can be served. In production this is the explicit
+    // post-registration step the operator (or registration code) runs.
+    registry.check_all_backends().await;
+
     // Make multiple requests and track which backends are selected
     let mut selected_backends = Vec::new();
     for _ in 0..9 {
@@ -85,6 +90,7 @@ async fn test_round_robin_single_backend() {
 
     let mock = MockLLMBackend::static_response("response").named("only");
     registry.register("only", mock).unwrap();
+    registry.check_all_backends().await;
 
     // Multiple requests should all use the same backend
     for _ in 0..5 {
@@ -104,6 +110,7 @@ async fn test_round_robin_counter_overflow_handling() {
 
     registry.register("backend1", mock1).unwrap();
     registry.register("backend2", mock2).unwrap();
+    registry.check_all_backends().await;
 
     // Simulate many requests (won't actually overflow, but tests the modulo logic)
     for _ in 0..1000 {

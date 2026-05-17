@@ -98,7 +98,7 @@ Example categories:
 | `multi-agent/`, `real-world/`, `self-hosted/` | Generated ACP agent profiles and authenticated agent CLIs |
 | `self-hosted/vllm_graph_smoke.py` | APXM vLLM fork plus a registered served model alias |
 | `benchmarks/`, `benchmarks/stress/` | Use `--compile-only` when no backend is configured |
-| `demos/gemma4/` | Local vLLM fork on port 8916 plus a registered served model alias |
+| `demos/gemma4/` | Local vLLM fork (endpoint from `APXM_ENDPOINT` env or `--base-url`) plus a registered served model alias |
 
 Generated ACP profiles are typed imports. If an example imports
 `apxm._generated.agents.claude`, the profile must exist in generated frontend
