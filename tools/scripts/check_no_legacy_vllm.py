@@ -124,6 +124,7 @@ RULES: tuple[LintRule, ...] = (
             "tools/scripts/apxm_vllm_contract.py",
             "crates/runtime/apxm-backends/**/*.rs",
             "tools/scripts/vllm.py",
+            "examples/python/benchmarks/**/*.py",
         ),
         exclude_globs=("tools/scripts/check_no_legacy_vllm.py",),
     ),
