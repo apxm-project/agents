@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import textwrap
 from datetime import datetime, timezone
@@ -27,7 +28,7 @@ from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 
-DEFAULT_BASE_URL = "http://127.0.0.1:8916/v1"
+DEFAULT_BASE_URL = os.environ.get("APXM_ENDPOINT", "")  # set by `dekk apxm vllm zoo-apply` consumers
 SHOWCASE_ALIAS = "showcase"
 BENCHMARK_ALIAS = "benchmark"
 

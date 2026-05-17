@@ -135,8 +135,6 @@ pub struct GraphAwareVllmBackend {
     client: reqwest::Client,
     /// Counter for generating unique execution IDs.
     execution_counter: AtomicU64,
-    /// Whether the server exposes `/v1/apxm/*`. Probed on `health_check`.
-    apxm_endpoints_available: AtomicBool,
     /// Whether the server accepts `tool_choice="auto"`. Default `true`.
     auto_tool_choice_supported: AtomicBool,
     /// Whether the backend config included a concrete default model.
@@ -211,7 +209,6 @@ impl GraphAwareVllmBackend {
             base_url,
             client,
             execution_counter: AtomicU64::new(0),
-            apxm_endpoints_available: AtomicBool::new(true),
             auto_tool_choice_supported: AtomicBool::new(auto_tool_choice),
             default_model_configured,
             structured_outputs_supported,
@@ -557,7 +554,8 @@ impl LLMBackend for GraphAwareVllmBackend {
         // Probe the APXM extension surface. A definitive 404 means the server
         // is stock vLLM, not the APXM fork. APXM requires the graph-aware
         // contract for `protocol = "vllm"` so scheduling hints cannot be
-        // silently ignored.
+        // silently ignored — the previous "graceful degrade" path that hid
+        // missing routes behind a capability flag has been removed.
         let url = self.graph_status_url(super::graph_meta::PROBE_GRAPH_ID);
         match self
             .inner
@@ -565,45 +563,88 @@ impl LLMBackend for GraphAwareVllmBackend {
             .send()
             .await
         {
-            Ok(response) if response.status().is_success() => {
-                self.apxm_endpoints_available.store(true, Ordering::Relaxed);
-            }
+            Ok(response) if response.status().is_success() => {}
             Ok(response) if response.status() == reqwest::StatusCode::NOT_FOUND => {
-                self.apxm_endpoints_available
-                    .store(false, Ordering::Relaxed);
                 anyhow::bail!(
                     "vLLM server at {} does not expose /v1/apxm/* endpoints. \
                      This is stock vLLM, which silently drops vllm_xargs.apxm \
-                     scheduling hints. Install and run the graph-aware fork.",
+                     scheduling hints. Install and run the graph-aware fork, \
+                     or register vanilla vLLM under the OpenAIBackend type instead.",
                     url
                 );
             }
             Ok(response) => {
-                let status = response.status();
-                self.apxm_endpoints_available
-                    .store(false, Ordering::Relaxed);
                 anyhow::bail!(
                     "vLLM server at {} exposes the APXM graph route but it is not ready \
                      (status {}). Check the fork server logs and rerun the vLLM probe.",
                     url,
-                    status
+                    response.status(),
                 );
             }
             Err(err) => {
-                self.apxm_endpoints_available
-                    .store(false, Ordering::Relaxed);
                 return Err(err)
                     .context("failed to probe vLLM APXM graph route during health_check");
             }
         }
 
-        // Probe the scheduler-policy endpoint so the operator gets a loud
-        // warning if the fork is running in FCFS mode (in which case
-        // APXM-stamped per-request priorities are ignored). The probe is
-        // best-effort and warn-once: it never aborts health_check, because
-        // vllm_xargs.apxm hints (graph_id, pin_policy, …) remain useful for
-        // KV pinning regardless of scheduler policy.
-        self.probe_scheduler_policy().await;
+        // Probe the scheduler-policy endpoint synchronously. A missing
+        // `/v1/apxm/scheduler` route means this is not the APXM fork at all
+        // (the route is part of the fork patch set). Hard-fail rather than
+        // warn — registration must fully verify the graph-aware contract.
+        let scheduler_url = self.scheduler_info_url();
+        match self
+            .inner
+            .apply_transport_headers(self.client.get(&scheduler_url))
+            .send()
+            .await
+        {
+            Ok(response) if response.status().is_success() => {
+                if let Ok(body) = response.json::<SchedulerInfoResponse>().await {
+                    let policy = body.policy.clone();
+                    *self.scheduler_policy.write() = Some(policy);
+                    // Warn-once on non-priority policy (the manifest disallows
+                    // FCFS, so reaching here indicates the fork was started
+                    // with the wrong --scheduling-policy flag). Still a soft
+                    // warning: per-request `vllm_xargs.apxm` hints continue to
+                    // do KV pinning regardless of scheduler policy.
+                    if !self.scheduler_policy_warned.swap(true, Ordering::Relaxed) {
+                        let policy = self.scheduler_policy.read().clone();
+                        if policy.as_deref()
+                            != Some(super::graph_meta::SCHEDULER_POLICY_PRIORITY)
+                        {
+                            tracing::warn!(
+                                "vLLM fork at {} reports scheduler policy {:?}; \
+                                 APXM ships with priority enabled — per-request \
+                                 priority hints are inert outside priority mode.",
+                                scheduler_url,
+                                policy,
+                            );
+                        }
+                    }
+                }
+            }
+            Ok(response) if response.status() == reqwest::StatusCode::NOT_FOUND => {
+                anyhow::bail!(
+                    "vLLM server at {} is missing /v1/apxm/scheduler. The APXM \
+                     fork exposes this route to advertise scheduler policy; its \
+                     absence means this is stock vLLM. Install and run the fork.",
+                    scheduler_url,
+                );
+            }
+            Ok(response) => {
+                anyhow::bail!(
+                    "vLLM server at {} returned status {} for /v1/apxm/scheduler. \
+                     Check the fork server logs.",
+                    scheduler_url,
+                    response.status(),
+                );
+            }
+            Err(err) => {
+                return Err(err).context(
+                    "failed to probe vLLM /v1/apxm/scheduler during health_check",
+                );
+            }
+        }
 
         Ok(())
     }
@@ -637,7 +678,12 @@ impl LLMBackend for GraphAwareVllmBackend {
     }
 
     fn graph_capabilities(&self) -> BackendGraphCapabilities {
-        let endpoints = self.apxm_endpoints_available.load(Ordering::Relaxed);
+        // A registered GraphAwareVllmBackend is guaranteed to have passed
+        // the synchronous /v1/apxm/* probe in `health_check`; the previous
+        // per-call `apxm_endpoints_available` gate has been removed. If the
+        // fork process later drops the routes, that surfaces through
+        // health_check downgrading the backend, not through a silently
+        // degraded capability surface.
         let scheduler_is_priority = self
             .scheduler_policy
             .read()
@@ -645,22 +691,22 @@ impl LLMBackend for GraphAwareVllmBackend {
             .map(|policy| policy == super::graph_meta::SCHEDULER_POLICY_PRIORITY)
             .unwrap_or(false);
         BackendGraphCapabilities {
-            supports_graph_registration: endpoints,
-            supports_request_hints: endpoints,
+            supports_graph_registration: true,
+            supports_request_hints: true,
             supports_priority: scheduler_is_priority,
-            supports_prefix_cohorts: endpoints,
-            supports_pin_release: endpoints,
+            supports_prefix_cohorts: true,
+            supports_pin_release: true,
             supports_structured_outputs: self.structured_outputs_supported,
             supports_backend_queue_state: false,
-            supports_backend_cache_state: endpoints,
+            supports_backend_cache_state: true,
             supports_cancel_groups: false,
-            supports_dispatch_ir_v1_internal: endpoints,
-            supports_admin_reset_prefix_cache: endpoints,
+            supports_dispatch_ir_v1_internal: true,
+            supports_admin_reset_prefix_cache: true,
         }
     }
 
     fn supports_graph_extensions(&self) -> bool {
-        self.apxm_endpoints_available.load(Ordering::Relaxed)
+        true
     }
 
     fn supports_auto_tool_choice(&self) -> bool {
@@ -690,9 +736,6 @@ impl LLMBackend for GraphAwareVllmBackend {
         &self,
         graph_id: &str,
     ) -> anyhow::Result<Option<GraphStatusSnapshot>> {
-        if !self.apxm_endpoints_available.load(Ordering::Relaxed) {
-            return Ok(None);
-        }
         match self.get_graph_status_typed(graph_id).await {
             Ok(status) => Ok(Some(
                 GraphStatusSnapshot::graph_aware(status.graph_id)
@@ -1040,18 +1083,12 @@ mod tests {
         *backend.scheduler_policy.write() = Some(graph_meta::SCHEDULER_POLICY_PRIORITY.to_string());
         let caps_with_priority = backend.graph_capabilities();
         assert!(caps_with_priority.supports_priority);
-
-        backend
-            .apxm_endpoints_available
-            .store(false, Ordering::Relaxed);
-        let caps_without_endpoints = backend.graph_capabilities();
-        assert!(!caps_without_endpoints.supports_graph_registration);
-        assert!(!caps_without_endpoints.supports_request_hints);
-        assert!(!caps_without_endpoints.supports_backend_cache_state);
     }
 
     #[tokio::test]
-    async fn test_supports_graph_extensions_flag() {
+    async fn test_supports_graph_extensions_always_true() {
+        // A registered GraphAwareVllmBackend is guaranteed to expose the APXM
+        // routes: construction does not probe, registration does.
         let backend = GraphAwareVllmBackend::new(
             "test-key",
             Some(serde_json::json!({"base_url": "http://localhost:8916/v1"})),
@@ -1059,15 +1096,7 @@ mod tests {
         .await
         .unwrap();
 
-        // A freshly-constructed backend optimistically claims support; the flag
-        // is only flipped to false on a definitive 404 from health_check.
         assert!(backend.supports_graph_extensions());
-
-        // Simulate the health_check seeing a missing APXM graph-status route.
-        backend
-            .apxm_endpoints_available
-            .store(false, Ordering::Relaxed);
-        assert!(!backend.supports_graph_extensions());
     }
 
     #[tokio::test]

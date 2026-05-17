@@ -76,7 +76,7 @@ impl CheckpointStore {
     }
 }
 
-// ─── Checkpoint Handlers (Plan 07 — PAUSE/RESUME HITL) ───────────────────────
+// ─── Checkpoint Handlers (PAUSE/RESUME HITL) ─────────────────────────────────
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct CreateCheckpointRequest {

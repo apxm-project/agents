@@ -66,11 +66,21 @@ pub fn resolve(
         anyhow::bail!("Explicitly requested backend '{}' not found", backend_name);
     }
 
-    // Priority 2: Model-based routing
-    if let Some(ref model) = criteria.model
-        && let Some(backend_name) = find_backend_for_model(backends, model)
-    {
-        return Ok(backend_name);
+    // Priority 2: Model-based routing — collect every backend whose model()
+    // matches and apply the routing strategy across that subset. A first-match
+    // short-circuit here would pin all replica traffic to one backend and
+    // defeat `replicas > 1`.
+    if let Some(ref model) = criteria.model {
+        let candidates = find_backends_for_model(backends, model);
+        if !candidates.is_empty() {
+            return select_by_strategy(
+                &candidates,
+                health_monitor,
+                strategy,
+                round_robin_counter,
+                Some(model.as_str()),
+            );
+        }
     }
 
     // Priority 3: Operation-specific default
@@ -93,35 +103,54 @@ pub fn resolve(
         }
     }
 
-    // Priority 5: Select based on strategy
-    select_by_strategy(backends, health_monitor, strategy, round_robin_counter)
+    // Priority 5: Select across all backends based on strategy
+    let all: Vec<String> = backends.read().keys().cloned().collect();
+    select_by_strategy(&all, health_monitor, strategy, round_robin_counter, None)
 }
 
-/// Find a backend that supports the given model.
-fn find_backend_for_model(
+/// Collect every backend whose `model()` matches the requested model id.
+///
+/// Returning every match (rather than the first) lets the routing strategy
+/// distribute traffic across replicas registered under distinct backend names
+/// but sharing the same served-model id.
+fn find_backends_for_model(
     backends: &Arc<RwLock<HashMap<String, Arc<dyn LLMBackend>>>>,
     model: &str,
-) -> Option<String> {
+) -> Vec<String> {
     // Only use explicit backend registrations. Provider-name heuristics belong
     // outside the registry because they undermine APXM's registration model.
     let guard = backends.read();
-    for (name, backend) in guard.iter() {
-        if backend.model() == model {
-            return Some(name.clone());
-        }
-    }
-
-    None
+    let mut matches: Vec<String> = guard
+        .iter()
+        .filter_map(|(name, backend)| {
+            if backend.model() == model {
+                Some(name.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+    // Deterministic order is required for round-robin: the AtomicUsize counter
+    // indexes into this vector, and an unstable iteration order would scramble
+    // the distribution across requests.
+    matches.sort();
+    matches
 }
 
-/// Select a backend based on routing strategy.
+/// Select a backend from `candidates` using the configured strategy.
+///
+/// `candidates` is the pre-filtered set (e.g. all backends serving a
+/// particular model, or every registered backend when no model filter
+/// applies). `model_filter` is only used to build a clearer error message
+/// when no candidate is routable.
 fn select_by_strategy(
-    backends: &Arc<RwLock<HashMap<String, Arc<dyn LLMBackend>>>>,
+    candidates: &[String],
     health_monitor: &HealthMonitor,
     strategy: &RoutingStrategy,
     round_robin_counter: &Arc<AtomicUsize>,
+    model_filter: Option<&str>,
 ) -> Result<String> {
-    if backends.read().is_empty() {
+    if candidates.is_empty() {
         anyhow::bail!(
             "No backends registered in the LLM registry.\n\
              Check that the APXM backend configuration has [[backends]] entries."
@@ -129,110 +158,121 @@ fn select_by_strategy(
     }
 
     match strategy {
-        RoutingStrategy::FirstHealthy => select_first_healthy(backends, health_monitor),
-        RoutingStrategy::RoundRobin => {
-            select_round_robin(backends, health_monitor, round_robin_counter)
+        RoutingStrategy::FirstHealthy => {
+            select_first_healthy(candidates, health_monitor, model_filter)
         }
-        RoutingStrategy::LowLatency => select_low_latency(backends, health_monitor),
+        RoutingStrategy::RoundRobin => select_round_robin(
+            candidates,
+            health_monitor,
+            round_robin_counter,
+            model_filter,
+        ),
+        RoutingStrategy::LowLatency => {
+            select_low_latency(candidates, health_monitor, model_filter)
+        }
     }
 }
 
-/// Select the first healthy backend.
+/// Select the first healthy (or degraded) backend.
+///
+/// Unhealthy backends are never returned: surfacing an explicit error keeps
+/// misconfigurations visible at the call site instead of silently masking
+/// them by routing to a known-bad backend.
 fn select_first_healthy(
-    backends: &Arc<RwLock<HashMap<String, Arc<dyn LLMBackend>>>>,
+    candidates: &[String],
     health_monitor: &HealthMonitor,
+    model_filter: Option<&str>,
 ) -> Result<String> {
-    let guard = backends.read();
-
-    // Try to find a healthy backend
-    for name in guard.keys() {
+    for name in candidates {
         let status = health_monitor.status(name);
         if status == HealthStatus::Healthy || status == HealthStatus::Unknown {
             return Ok(name.clone());
         }
     }
 
-    // If no healthy backend, try degraded
-    for name in guard.keys() {
-        let status = health_monitor.status(name);
-        if status == HealthStatus::Degraded {
+    for name in candidates {
+        if health_monitor.status(name) == HealthStatus::Degraded {
             return Ok(name.clone());
         }
     }
 
-    // Last resort: return any backend
-    if let Some(name) = guard.keys().next() {
-        Ok(name.clone())
-    } else {
-        anyhow::bail!("No backends registered (unexpected)")
-    }
+    Err(no_healthy_backends_error(candidates, model_filter))
 }
 
-/// Select backend using round-robin across healthy backends.
+/// Round-robin across the candidates that are currently Healthy.
+///
+/// `Unknown` is treated as Unhealthy for round-robin: a backend that has
+/// never been probed must not silently absorb production traffic.
+/// `Degraded` is included so a single misbehaving replica does not collapse
+/// the whole pool, but it never falls back to returning an unhealthy
+/// backend — exhausted pools surface as an explicit routing error.
 fn select_round_robin(
-    backends: &Arc<RwLock<HashMap<String, Arc<dyn LLMBackend>>>>,
+    candidates: &[String],
     health_monitor: &HealthMonitor,
     counter: &Arc<AtomicUsize>,
+    model_filter: Option<&str>,
 ) -> Result<String> {
-    let guard = backends.read();
-
-    // Collect healthy backends
-    let healthy: Vec<String> = guard
-        .keys()
+    let routable: Vec<&String> = candidates
+        .iter()
         .filter(|name| {
-            let status = health_monitor.status(name);
-            status == HealthStatus::Healthy || status == HealthStatus::Unknown
+            matches!(
+                health_monitor.status(name),
+                HealthStatus::Healthy | HealthStatus::Degraded
+            )
         })
-        .cloned()
         .collect();
 
-    drop(guard);
-
-    if healthy.is_empty() {
-        // Fall back to first_healthy logic (which includes degraded backends)
-        return select_first_healthy(backends, health_monitor);
+    if routable.is_empty() {
+        return Err(no_healthy_backends_error(candidates, model_filter));
     }
 
-    // Atomic round-robin selection
-    let idx = counter.fetch_add(1, Ordering::Relaxed) % healthy.len();
-    Ok(healthy[idx].clone())
+    let idx = counter.fetch_add(1, Ordering::Relaxed) % routable.len();
+    Ok(routable[idx].clone())
 }
 
-/// Select backend with lowest average latency.
+/// Select backend with lowest average latency. Ignores Unhealthy backends.
 fn select_low_latency(
-    backends: &Arc<RwLock<HashMap<String, Arc<dyn LLMBackend>>>>,
+    candidates: &[String],
     health_monitor: &HealthMonitor,
+    model_filter: Option<&str>,
 ) -> Result<String> {
-    let guard = backends.read();
     let mut best_backend: Option<(String, std::time::Duration)> = None;
 
-    for name in guard.keys() {
-        let status = health_monitor.status(name);
-
-        if status == HealthStatus::Unhealthy {
+    for name in candidates {
+        if health_monitor.status(name) == HealthStatus::Unhealthy {
             continue;
         }
 
         if let Some(avg_latency) = health_monitor.average_latency(name) {
             match &best_backend {
-                None => {
+                None => best_backend = Some((name.clone(), avg_latency)),
+                Some((_, best_latency)) if avg_latency < *best_latency => {
                     best_backend = Some((name.clone(), avg_latency));
                 }
-                Some((_, best_latency)) => {
-                    if avg_latency < *best_latency {
-                        best_backend = Some((name.clone(), avg_latency));
-                    }
-                }
+                _ => {}
             }
         }
     }
 
-    drop(guard);
-
     if let Some((name, _)) = best_backend {
         Ok(name)
     } else {
-        select_first_healthy(backends, health_monitor)
+        // No backend has observed latency yet; defer to first-healthy
+        // semantics over the same candidate set so the error path is
+        // consistent (and still hard-fails when nothing is routable).
+        select_first_healthy(candidates, health_monitor, model_filter)
+    }
+}
+
+fn no_healthy_backends_error(candidates: &[String], model_filter: Option<&str>) -> anyhow::Error {
+    if let Some(model) = model_filter {
+        anyhow::anyhow!(
+            "no healthy backends for model '{}'; candidates = {:?}",
+            model,
+            candidates
+        )
+    } else {
+        anyhow::anyhow!("no healthy backends; candidates = {:?}", candidates)
     }
 }
 
@@ -240,14 +280,99 @@ fn select_low_latency(
 mod tests {
     use super::*;
 
+    fn names() -> Arc<RwLock<HashMap<String, Arc<dyn LLMBackend>>>> {
+        Arc::new(RwLock::new(HashMap::new()))
+    }
+
     #[test]
     fn test_routing_strategy_default() {
         assert_eq!(RoutingStrategy::default(), RoutingStrategy::FirstHealthy);
     }
 
     #[test]
-    fn test_model_matching() {
-        let backends = Arc::new(RwLock::new(HashMap::<String, Arc<dyn LLMBackend>>::new()));
-        assert!(find_backend_for_model(&backends, "gpt-4").is_none());
+    fn test_find_backends_for_model_empty() {
+        assert!(find_backends_for_model(&names(), "gpt-4").is_empty());
+    }
+
+    #[test]
+    fn round_robin_alternates_between_healthy_candidates() {
+        let monitor = HealthMonitor::new();
+        monitor.register_backend("a");
+        monitor.register_backend("b");
+        monitor.set_status("a", HealthStatus::Healthy);
+        monitor.set_status("b", HealthStatus::Healthy);
+
+        let candidates = vec!["a".to_string(), "b".to_string()];
+        let counter = Arc::new(AtomicUsize::new(0));
+
+        let picks: Vec<String> = (0..4)
+            .map(|_| select_round_robin(&candidates, &monitor, &counter, Some("m")).unwrap())
+            .collect();
+
+        assert_eq!(picks, vec!["a", "b", "a", "b"]);
+    }
+
+    #[test]
+    fn round_robin_treats_unknown_as_unroutable() {
+        let monitor = HealthMonitor::new();
+        monitor.register_backend("a");
+        monitor.register_backend("b");
+        monitor.set_status("a", HealthStatus::Healthy);
+        // "b" stays at default Unknown.
+
+        let candidates = vec!["a".to_string(), "b".to_string()];
+        let counter = Arc::new(AtomicUsize::new(0));
+
+        let picks: Vec<String> = (0..3)
+            .map(|_| select_round_robin(&candidates, &monitor, &counter, Some("m")).unwrap())
+            .collect();
+
+        assert!(picks.iter().all(|name| name == "a"));
+    }
+
+    #[test]
+    fn round_robin_errors_when_all_unhealthy() {
+        let monitor = HealthMonitor::new();
+        monitor.register_backend("a");
+        monitor.register_backend("b");
+        monitor.set_status("a", HealthStatus::Unhealthy);
+        monitor.set_status("b", HealthStatus::Unhealthy);
+
+        let candidates = vec!["a".to_string(), "b".to_string()];
+        let counter = Arc::new(AtomicUsize::new(0));
+
+        let err = select_round_robin(&candidates, &monitor, &counter, Some("m"))
+            .expect_err("must hard-fail when no candidate is routable");
+        let msg = err.to_string();
+        assert!(msg.contains("no healthy backends"), "msg = {msg}");
+        assert!(msg.contains("'m'"), "msg = {msg}");
+    }
+
+    #[test]
+    fn first_healthy_does_not_return_unhealthy_when_pool_drained() {
+        let monitor = HealthMonitor::new();
+        monitor.register_backend("a");
+        monitor.register_backend("b");
+        monitor.set_status("a", HealthStatus::Unhealthy);
+        monitor.set_status("b", HealthStatus::Unhealthy);
+
+        let candidates = vec!["a".to_string(), "b".to_string()];
+
+        let err = select_first_healthy(&candidates, &monitor, None)
+            .expect_err("first-healthy must not fall back to an unhealthy backend");
+        assert!(err.to_string().contains("no healthy backends"));
+    }
+
+    #[test]
+    fn first_healthy_prefers_degraded_over_failure() {
+        let monitor = HealthMonitor::new();
+        monitor.register_backend("a");
+        monitor.register_backend("b");
+        monitor.set_status("a", HealthStatus::Unhealthy);
+        monitor.set_status("b", HealthStatus::Degraded);
+
+        let candidates = vec!["a".to_string(), "b".to_string()];
+        let picked = select_first_healthy(&candidates, &monitor, None).unwrap();
+        assert_eq!(picked, "b");
     }
 }

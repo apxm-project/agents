@@ -1,0 +1,83 @@
+# APXM vLLM model zoo manifest.
+#
+# This file is the sole source of truth for what runs under APXM. Operators
+# never call `service-start` directly — `dekk apxm vllm zoo apply` expands
+# every [[deployment]] into one or more Slurm-owned vLLM services.
+#
+# Schema: see tools/scripts/vllm.py:_load_zoo_manifest.
+#
+# Total weights ≈ 1.75 TB; concurrent execution needs 1 + 1 + 2 + 3 = 7 nodes.
+
+schema_version = 1
+
+# Single-node single-instance — TP=8, 1 node, GPUs 0–7.
+[[deployment]]
+name = "vllm-gptoss"
+model = "openai/gpt-oss-120b"
+served_model_name = "gpt-oss-120b"
+backend_name = "vllm-fork"
+nodes = 1
+tensor_parallel = 8
+replicas = 1
+port = 8916
+gpus = "0,1,2,3,4,5,6,7"
+weights_gb = 240
+max_model_len = 32768
+max_num_seqs = 64
+scheduling_policy = "priority"
+enable_prefix_caching = true
+
+# Single-node multi-instance — 4 replicas of Qwen3-32B on TP=2 each.
+# Replica r0 → GPUs 0,1; r1 → 2,3; r2 → 4,5; r3 → 6,7.
+[[deployment]]
+name = "vllm-qwen3-fast"
+model = "Qwen/Qwen3-32B"
+served_model_name = "Qwen3-32B"
+backend_name = "vllm-fork-qwen3"
+nodes = 1
+tensor_parallel = 2
+replicas = 4
+port_base = 8920
+gpu_groups = [[0, 1], [2, 3], [4, 5], [6, 7]]
+weights_gb = 64
+max_model_len = 32768
+max_num_seqs = 64
+scheduling_policy = "priority"
+enable_prefix_caching = true
+
+# Single-node single-instance, 2 replicas on 2 different nodes — TP=8 each.
+[[deployment]]
+name = "vllm-deepseek"
+model = "deepseek-ai/DeepSeek-V3-0324"
+served_model_name = "DeepSeek-V3-0324"
+backend_name = "vllm-fork-deepseek"
+nodes = 1
+tensor_parallel = 8
+replicas = 2
+port_base = 8930
+gpus = "0,1,2,3,4,5,6,7"
+weights_gb = 400
+max_model_len = 32768
+max_num_seqs = 64
+scheduling_policy = "priority"
+enable_prefix_caching = true
+
+# Multi-node single-instance — TP=8 PP=3, 3 nodes. Risk 4: must pass the
+# cross-shard pin test before being committed to production.
+[[deployment]]
+name = "vllm-kimi"
+model = "moonshotai/Kimi-K2-Instruct"
+served_model_name = "Kimi-K2-Instruct"
+backend_name = "vllm-fork-kimi"
+nodes = 3
+tensor_parallel = 8
+pipeline_parallel = 3
+replicas = 1
+port = 8940
+ray_port = 6379
+gpus = "0,1,2,3,4,5,6,7"
+weights_gb = 1050
+max_model_len = 65536
+max_num_seqs = 32
+scheduling_policy = "priority"
+enable_prefix_caching = true

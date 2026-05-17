@@ -170,7 +170,7 @@ impl TaskQueueManager {
     }
 }
 
-// ─── Task Queue Handlers (Plan 07 — CLAIM op backend) ───────────────────────
+// ─── Task Queue Handlers (CLAIM op backend) ─────────────────────────────────
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct CreateTaskRequest {

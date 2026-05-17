@@ -1,122 +1,60 @@
-# APXM vLLM Deployment
+# APXM vLLM deployment
 
-Status: operational deployment plan, 2026-05-12.
+This directory is the deployment surface for APXM graph-aware vLLM. **It is
+not the operator runbook.** All operational procedures live in
+[`docs/backends/model-zoo.md`](../../docs/backends/model-zoo.md).
 
-This directory is the Dekk-controlled deployment surface for APXM graph-aware
-vLLM.
+## Layout
 
-## Builder Policy
+| File | Role |
+|---|---|
+| `zoo.toml` | The **sole source of truth** for what runs. Manifest of every vLLM service the cluster should host. |
+| `run-vllm.sh` | Unified Slurm wrapper. `NODES=1` is the single-node path; `NODES>1` is the multi-node Ray path. Invoked by `_start_one_service` via `sbatch`. |
+| `Dockerfile.apxm` | Python-source-overlay Dockerfile that lays the `external/vllm/` fork on top of a pinned ROCm vLLM base image. |
 
-`dekk apxm vllm docker-build` uses Docker BuildKit through `docker buildx build
---load`. Docker's legacy builder is not an allowed APXM path.
-`dekk apxm vllm doctor` must report `docker_buildx_ready=true` before image
-builds are considered ready.
+## How a service starts
 
-## Communication Model
+1. Operator edits `zoo.toml` (or relies on the checked-in 4-model set).
+2. `dekk apxm vllm zoo-cache-warm` pulls weights to the shared HF cache.
+   CPU-only; refuses to start if WekaFS free < Σ(weights_gb) × 1.2.
+3. `dekk apxm vllm zoo-apply` expands the manifest, calls
+   `_start_one_service(...)` per replica, which submits a Slurm job that
+   runs `run-vllm.sh`.
+4. The wrapper loads the image (`docker-load`), starts the container, and
+   blocks on `sleep infinity` until the Slurm job is cancelled.
 
-APXM does not call Docker directly during graph execution. Docker only owns the
-server process. The runtime talks to vLLM over HTTP:
+Direct CLI invocations of `docker-*` are internal to the wrapper; operators
+should not call them by hand. `service-start` is not a public CLI surface;
+invoking it prints a migration message pointing at `zoo-apply` and exits
+non-zero.
 
-```text
-APXM runtime / dekk
-  -> http://127.0.0.1:8916/v1/models
-  -> http://127.0.0.1:8916/v1/chat/completions
-  -> http://127.0.0.1:8916/v1/apxm/graphs/register
-  -> http://127.0.0.1:8916/v1/apxm/graphs/{graph_id}
-  -> http://127.0.0.1:8916/v1/apxm/scheduler
+## Builder policy
 
-Docker container
-  runs python -m vllm.entrypoints.openai.api_server
-  binds 0.0.0.0:8916 with --network host
-```
+`dekk apxm vllm docker-build` uses Docker BuildKit through
+`docker buildx build --load`. Docker's legacy builder is not allowed.
+`dekk apxm vllm doctor` must report `docker_buildx_ready=true` before
+image builds are considered ready.
 
-The APXM backend registry stores `http://127.0.0.1:8916/v1` as the endpoint.
-The graph-aware `vllm` backend is valid only when `/v1/apxm/graphs/*` exists.
-Priority-latency claims additionally require `/v1/apxm/scheduler` to report
-`policy = "priority"`.
+The Dockerfile takes a single required `--build-arg BASE_IMAGE=…` pinning
+the ROCm vLLM base; image tags follow
+`apxm-vllm-runtime:<APXM_SHA>-<VLLM_SHA>` by convention but are
+operator-supplied — the controller does not synthesize a default tag, so
+the tag can never silently drift with HEAD.
 
-## Dekk Is The Authority
+## Communication model
 
-Operators should use a persistent service for cluster work. The direct Docker
-commands are allocation-local primitives used by the Slurm wrapper, not the
-normal benchmark loop.
+vLLM listens on a TCP port chosen by the zoo manifest (typically the
+[8916, 8999] allocator range — but never assume any specific value;
+allocator state lives in `.apxm/vllm-services/<name>.json`). The container
+joins the host network so APXM clients reach the API server on
+`http://<HOST>:<PORT>/v1/...`.
 
-```bash
-dekk apxm vllm docker-build \
-  --image apxm-vllm-runtime:<tag> \
-  --base-image <VLLM_IMAGE_TAG_OR_DIGEST>
+For local-only deployments the host is `127.0.0.1`. For shared/remote
+hosts the `--host 0.0.0.0` bind is allowed only with an explicit API key
+(`VLLM_API_KEY` or `--api-key`); without one, the controller refuses to
+start (hard error, not a warning).
 
-dekk apxm vllm docker-save \
-  --image apxm-vllm-runtime:<tag>
+## Contract reference
 
-dekk apxm vllm service-start gptoss120b openai/gpt-oss-120b \
-  --image apxm-vllm-runtime:<tag-or-digest> \
-  --served-model-name gpt-oss-120b \
-  --backend-name vllm-fork \
-  --hf-home "$HOME/.cache/huggingface-apxm-vllm" \
-  --max-model-len 32768
-
-dekk apxm vllm service-status gptoss120b --probe
-dekk apxm vllm service-exec gptoss120b -- dekk apxm execute <GRAPH.py>
-```
-
-The service wrapper loads the saved image, starts Docker with the APXM-vLLM
-flags, waits for `/v1/models`, runs the APXM graph-route probe, and registers
-the endpoint/model in the APXM backend registry.
-
-## Slurm
-
-Slurm must own GPU allocation and accounting. The wrapper does not build
-images. It loads the exact APXM image archive from `.apxm/vllm-images` into the
-allocated node's Docker daemon, then starts the container.
-
-Create the image-store artifact once before submitting jobs:
-
-```bash
-APXM_COMMIT="$(git rev-parse --short HEAD)"
-VLLM_COMMIT="$(git -C external/vllm rev-parse --short HEAD)"
-IMAGE="apxm-vllm-runtime:${APXM_COMMIT}-${VLLM_COMMIT}"
-
-dekk apxm vllm docker-build --image "$IMAGE" --base-image <VLLM_IMAGE_TAG_OR_DIGEST>
-dekk apxm vllm docker-save --image "$IMAGE"
-```
-
-Then launch:
-
-```bash
-dekk apxm vllm service-start gptoss120b openai/gpt-oss-120b \
-  --image "$IMAGE" \
-  --served-model-name gpt-oss-120b \
-  --hf-home "$HOME/.cache/huggingface-apxm-vllm" \
-  --max-model-len 32768
-```
-
-Run commands against that persistent allocation:
-
-```bash
-dekk apxm vllm service-status gptoss120b --probe
-dekk apxm vllm service-exec gptoss120b -- \
-  python3 examples/python/benchmarks/benchmark_e2e.py \
-    --iterations 3 \
-    --precompile-artifacts \
-    --emit-compiler-diagnostics
-```
-
-`service-exec` uses `srun --jobid <service-job> --overlap`, so APXM runs on
-the same node as the container and `http://127.0.0.1:8916/v1` remains the
-correct backend endpoint. Submit a new service job only when changing the
-image, model, context length, or other server startup contract.
-
-Override `APXM_VLLM_IMAGE_ARCHIVE` only when the archive is intentionally stored
-outside the default APXM image store. Missing archives are hard failures.
-
-## Image Policy
-
-APXM-vLLM images must use explicit tags or digests. Runs must record:
-
-- image tag and immutable image id/digest;
-- APXM commit and dirty-worktree status;
-- `external/vllm` commit;
-- Slurm job id, node list, partition, and GRES;
-- model ref, served model id, and model snapshot path/hash when available;
-- exact Dekk command and vLLM logs.
+The five `/v1/apxm/*` routes that distinguish the fork from stock vLLM are
+documented in [`docs/backends/vllm.md`](../../docs/backends/vllm.md).
