@@ -50,18 +50,26 @@ at the graph-aware vLLM fork APXM uses. The supported APXM-vLLM serving path is
 the Dekk-controlled Docker image path:
 
 ```bash
+export APXM_VLLM_HF_HOME="$HOME/.cache/huggingface-apxm-vllm"
 dekk apxm vllm doctor
 dekk apxm vllm docker-build --image apxm-vllm-runtime:<TAG> --base-image <VLLM_IMAGE_TAG_OR_DIGEST>
 dekk apxm vllm docker-save --image apxm-vllm-runtime:<TAG>
-dekk apxm vllm service-start <NAME> <MODEL_REF> \
-  --image apxm-vllm-runtime:<TAG> \
-  --served-model-name <SERVED_MODEL_ID> \
-  --max-model-len 32768
+
+# Author a local zoo manifest from the template, then apply it.
+cp deploy/vllm/zoo.example.toml deploy/vllm/zoo.toml  # then edit
+dekk apxm vllm zoo-cache-warm                          # CPU-only HF download
+dekk apxm vllm zoo-apply                               # submits Slurm jobs
+dekk apxm vllm service-list                            # watch readiness
 dekk apxm vllm service-exec <NAME> -- dekk apxm execute <GRAPH.py>
 ```
 
-See [`docs/external-vllm-fork.md`](docs/external-vllm-fork.md) for the
-architecture and the integration contract.
+The zoo manifest is the single operator surface — `service-start` and
+`service-adopt` are not public CLI. See
+[`docs/backends/model-zoo-quickstart.md`](docs/backends/model-zoo-quickstart.md)
+for the 15-minute walkthrough,
+[`docs/backends/model-zoo.md`](docs/backends/model-zoo.md) for the
+reference, and [`docs/external-vllm-fork.md`](docs/external-vllm-fork.md)
+for the integration contract.
 
 ## Submitting a change
 
