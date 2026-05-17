@@ -10,6 +10,10 @@ the role of the fork) lives in [`docs/backends/vllm.md`](vllm.md).
 ## Quick start
 
 ```bash
+# 0. The shared HF cache root is the single mandatory env var (no fallback).
+#    Set it once per shell — the controller hard-fails without it.
+export APXM_VLLM_HF_HOME=$HOME/.cache/huggingface-apxm-vllm
+
 # 1. Warm the HF cache for every model in the manifest (CPU-only, idempotent,
 #    refuses to start if WekaFS free < Σ(weights_gb) × 1.2).
 dekk apxm vllm zoo-cache-warm

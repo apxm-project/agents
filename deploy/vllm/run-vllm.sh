@@ -54,6 +54,10 @@ APXM_VLLM_SERVICE_NAME="${APXM_VLLM_SERVICE_NAME:-$SLURM_JOB_NAME}"
 CONTAINER_NAME="${CONTAINER_NAME:-apxm-vllm-${SLURM_JOB_ID:-manual}-rank${SLURM_PROCID:-0}-${PORT}}"
 
 cleanup() {
+  # Deregister the APXM backend first so subsequent zoo-apply runs do not
+  # see a stale registration pointing at a dead endpoint. Best-effort —
+  # never let a deregister failure mask the container teardown.
+  dekk apxm backend remove "$BACKEND_NAME" >/dev/null 2>&1 || true
   docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT INT TERM
