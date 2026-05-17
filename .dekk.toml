@@ -110,6 +110,13 @@ service-status = { run = "python tools/scripts/vllm.py service-status", descript
 service-exec = { run = "python tools/scripts/vllm.py service-exec", description = "Run a command inside a persistent APXM-vLLM service allocation" }
 service-stop = { run = "python tools/scripts/vllm.py service-stop", description = "Cancel a persistent APXM-vLLM service job" }
 
+[commands.mcp]
+description = "Install the APXM MCP server into supported coding-agent configs"
+group = "Configuration"
+install = { run = "python tools/scripts/apxm_mcp_install.py install", description = "Install apxm-mcp-server into detected agent configs" }
+list = { run = "python tools/scripts/apxm_mcp_install.py list", description = "List detected MCP-capable agent configs and APXM install status" }
+uninstall = { run = "python tools/scripts/apxm_mcp_install.py uninstall", description = "Remove APXM MCP registration from agent configs" }
+
 [commands.ops]
 description = "Browse AIS operations"
 group = "Discovery"

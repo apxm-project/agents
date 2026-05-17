@@ -1,0 +1,22 @@
+{
+  "task": "Run a design, implementation, and review pipeline for a feature.",
+  "graph": {
+    "name": "sdlc_pipeline",
+    "entry": "sdlc",
+    "parameters": [
+      { "name": "feature", "type": "str", "required": true }
+    ],
+    "nodes": [
+      { "id": 1, "name": "design_feature", "op": "ask", "agent": "architect", "prompt": "Design the feature with required attributes, runtime behavior, and test strategy." },
+      { "id": 2, "name": "implement_feature", "op": "ask", "agent": "coder", "prompt": "Implement the feature from the design while keeping changes scoped.", "depends_on": [
+        { "node": 1, "dependency": "Data" }
+      ] },
+      { "id": 3, "name": "review_feature", "op": "ask", "agent": "reviewer", "prompt": "Review the implementation against the design and identify required fixes.", "depends_on": [
+        { "node": 2, "dependency": "Data" }
+      ] },
+      { "id": 4, "name": "return_summary", "op": "yield", "depends_on": [
+        { "node": 3, "dependency": "Data" }
+      ] }
+    ]
+  }
+}

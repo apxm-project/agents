@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -26,6 +26,11 @@ use tokio::sync::mpsc;
 use crate::error::ApiError;
 use crate::execute::{ExecuteResponse, to_execute_response};
 use crate::executions::ExecutionRecordingEmitter;
+use crate::skill_resources::{
+    SkillResource, SkillResourceContent, SkillResourceError, list_skill_resources,
+    parse_cli_skill_roots as parse_cli_skill_roots_impl,
+    parse_skill_roots as parse_skill_roots_impl, resolve_skill_uri, resource_package,
+};
 use crate::state::{AppState, TokioChannelEmitter};
 
 const MANIFEST_FILE: &str = apxm_skill::MANIFEST_FILE;
@@ -35,8 +40,6 @@ const ARTIFACT_FILE: &str = "skill.apxmobj";
 const CONVERSION_REPORT_FILE: &str = "conversion-report.json";
 const RESOURCES_DIR: &str = "resources";
 const TESTS_DIR: &str = "tests";
-const SKILL_ROOT_FLAG: &str = "--skill-root";
-const SKILL_ROOTS_ENV: &str = "APXM_SKILL_ROOTS";
 const SKILL_SESSION_DIR: &str = "skills";
 const SIDE_EFFECT_POLICY_READ_ONLY: &str = "read_only";
 const SIDE_EFFECT_POLICY_SANDBOXED: &str = "sandboxed";
@@ -105,6 +108,36 @@ impl SkillLibrary {
             record,
             artifact_path,
         })
+    }
+
+    pub(crate) fn list_skill_resources(&self) -> Vec<SkillResource> {
+        list_skill_resources(&self.resource_packages())
+    }
+
+    pub(crate) fn resolve_skill_uri(
+        &self,
+        uri: &str,
+    ) -> Result<SkillResourceContent, SkillResourceError> {
+        resolve_skill_uri(&self.resource_packages(), uri)
+    }
+
+    fn resource_packages(&self) -> Vec<crate::skill_resources::ResourcePackage> {
+        self.scan()
+            .data
+            .into_iter()
+            .filter_map(|record| {
+                let manifest = record.manifest.as_ref()?;
+                let manifest_value = serde_json::to_value(manifest).ok()?;
+                Some(resource_package(
+                    manifest.skill_id.clone(),
+                    Some(manifest.version.clone()),
+                    manifest.display_name.clone(),
+                    manifest.description.clone(),
+                    record.package_dir,
+                    manifest_value,
+                ))
+            })
+            .collect()
     }
 }
 
@@ -512,34 +545,11 @@ async fn await_skill_execution(
 }
 
 pub(crate) fn parse_skill_roots(args: &[String]) -> Vec<PathBuf> {
-    let mut roots = parse_cli_skill_roots(args);
-
-    if let Some(env_roots) = std::env::var_os(SKILL_ROOTS_ENV) {
-        roots.extend(std::env::split_paths(&env_roots));
-    }
-
-    if roots.is_empty() {
-        if let Ok(current_dir) = std::env::current_dir() {
-            let repo_skills = current_dir.join(".agents").join("skills");
-            if repo_skills.is_dir() {
-                roots.push(repo_skills);
-            }
-        }
-    }
-
-    dedupe_paths(roots)
+    parse_skill_roots_impl(args)
 }
 
 pub(crate) fn parse_cli_skill_roots(args: &[String]) -> Vec<PathBuf> {
-    let mut roots = Vec::new();
-    for (index, arg) in args.iter().enumerate() {
-        if arg == SKILL_ROOT_FLAG
-            && let Some(root) = args.get(index + 1)
-        {
-            roots.push(PathBuf::from(root));
-        }
-    }
-    dedupe_paths(roots)
+    parse_cli_skill_roots_impl(args)
 }
 
 fn load_record(package_dir: &Path) -> SkillRecord {
@@ -1118,14 +1128,6 @@ fn skill_lookup_error(error: SkillLookupError) -> ApiError {
             "skill id has multiple versions; request {id}@<version>"
         )),
     }
-}
-
-fn dedupe_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
-    let mut seen = BTreeMap::new();
-    for path in paths {
-        seen.entry(path.clone()).or_insert(path);
-    }
-    seen.into_values().collect()
 }
 
 #[cfg(test)]

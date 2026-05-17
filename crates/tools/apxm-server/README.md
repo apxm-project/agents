@@ -4,7 +4,7 @@ HTTP/SSE gateway exposing the APXM agent runtime over REST, MCP, and A2A protoco
 
 ## Overview
 
-`apxm-server` is an Axum-based HTTP server that wraps `apxm-runtime` and `apxm-compiler` behind a REST v1 API with SSE streaming. It also exposes an MCP 2025-11-05 JSON-RPC endpoint and an A2A v0.3 task interface.
+`apxm-server` is an Axum-based HTTP server that wraps `apxm-runtime` and `apxm-compiler` behind a REST v1 API with SSE streaming. It also exposes an MCP 2025-11-25 JSON-RPC endpoint and an A2A v0.3 task interface.
 
 ## Binaries
 
@@ -42,7 +42,31 @@ HTTP/SSE gateway exposing the APXM agent runtime over REST, MCP, and A2A protoco
 
 ## MCP Endpoint
 
-`POST /v1/mcp` -- JSON-RPC 2.0 per MCP 2025-11-05 specification.
+`POST /v1/mcp` -- JSON-RPC 2.0 per MCP 2025-11-25 specification.
+
+The HTTP MCP endpoint exposes both tools and resources. Skill resources are
+served under the `skill://` URI scheme so MCP clients can discover the bundled
+skill instructions, manifests, prompts, schemas, and examples without copying a
+per-agent skill directory.
+
+Supported resource methods:
+
+- `resources/list` -- list bundled and configured skill resources
+- `resources/read` -- read an allowlisted `skill://...` resource
+
+Supported skill resource shapes:
+
+- `skill://<skill-id>/SKILL.md`
+- `skill://<skill-id>@<version>/<resource>` when multiple versions of one skill id are installed
+- `skill://<skill-id>/_manifest`
+- `skill://<skill-id>/prompt.md`
+- `skill://<skill-id>/schema.json`
+- `skill://<skill-id>/examples/<file>`
+
+Resource resolution is allowlisted to the files above plus `examples/*`;
+traversal components and symlinked resources are rejected. If multiple
+versions of the same skill id are installed, unversioned reads are rejected as
+ambiguous and clients should use `skill://<skill-id>@<version>/...`.
 
 The HTTP MCP endpoint also exposes APXM skill library tools:
 
@@ -50,10 +74,16 @@ The HTTP MCP endpoint also exposes APXM skill library tools:
 - `apxm_skill_get` -- return one skill manifest and validation record
 - `apxm_skill_validate` -- re-read and validate one installed skill
 - `apxm_skill_call` -- execute a static skill artifact from the server-owned library
+- `apxm_plan_as_graph` -- route task-to-graph emission through `model_router`, validate/repair the emitted JSON with compiler feedback, canonicalize common structured-output drift, lower through `AirModule`, compile, optionally execute, and return a compact summary with `trace_id`
+- `apxm_trace_fetch` -- fetch execution, episodic, or session trace details by `trace_id`
+- `apxm_aam_recall` -- query AAM beliefs/goals/transitions plus runtime memory
+- `apxm_evidence_lookup` -- query repo-local `.apxm` claim/evaluation evidence
+- `apxm_capability_list` -- list runtime capabilities, LLM backends, and model-router health
 
-Skill inventory is configured with repeated `--skill-root <path>` arguments or
-the `APXM_SKILL_ROOTS` path list. Requests cannot provide arbitrary roots,
-artifact paths, raw AIR, or session roots.
+Skill inventory prepends the bundled server skill root and then appends roots
+configured with repeated `--skill-root <path>` arguments or the
+`APXM_SKILL_ROOTS` path list. Requests cannot provide arbitrary roots, artifact
+paths, raw AIR, or session roots.
 
 `POST /v1/skills/:id/execute`, `POST /v1/skills/:id/execute/stream`, and
 `apxm_skill_call` are intentionally narrow. They only run already compiled
@@ -66,6 +96,15 @@ declared capabilities/tools that are registered in the runtime. With omitted or
 `read_only` side-effect policy those capabilities must be read-only; with
 `sandboxed` policy, side-effectful capabilities must declare sandbox execution
 and pass sandbox preflight. Python-backed `INV_TOOL` handlers are rejected.
+Generated plans from `apxm_plan_as_graph` follow the same safety shape before
+execution: Python tool sections and Python-backed handlers are rejected,
+side-effectful direct capabilities are rejected, sandbox-capable tools must
+pass sandbox preflight, and HTTP MCP executions are recorded with
+`execution_id == trace_id` so `apxm_trace_fetch` can retrieve them directly.
+Plan emission also adds runtime capability guidance to the model prompt and
+canonicalizes numeric-string and symbolic node ids, named dependency
+references, shorthand `depends_on` node references, `attr` aliases, and missing
+generated names before typed validation.
 Sessions are created under APXM-owned skill session directories using a
 generated or simple validated `session_id`, streamed skill runs emit typed
 `node_output` and `node_metrics` events, prompt and node-output observability is
@@ -99,14 +138,55 @@ The `apxm-mcp-server` binary exposes these tools over stdio:
 - `apxm_validate` -- validate AIR text
 - `apxm_compile` -- compile AIR text to an optimized artifact
 - `apxm_get_contract` -- return the full AIS contract
+- `apxm_analyze` -- analyze graph phases, parallelism, and critical path
+- `apxm_plan_as_graph` -- emit, validate/repair with compiler feedback, compile, and optionally execute a plan graph via the model router
+- `apxm_trace_fetch` -- fetch a compact trace summary by `trace_id`
+- `apxm_aam_recall` -- query AAM state and memory
+- `apxm_evidence_lookup` -- query `.apxm` evidence stores
+- `apxm_capability_list` -- list runtime capabilities and backend health
 
-`apxm-mcp-server` is a developer/debug compiler server, not the safe skill-call
-surface. It does not scan server-owned skill roots or apply the manifest
-admission policy used by HTTP MCP `apxm_skill_call`. Raw AIR execution through
-`apxm_execute` is hidden from `tools/list` and rejected by `tools/call` by
-default. Set `APXM_MCP_ENABLE_RAW_EXECUTE=1` explicitly to expose and enable it
-for local debugging. This stdio-only gate is separate from the raw HTTP
-`/v1/execute` developer/debug API described above.
+It also exposes MCP resources:
+
+- `resources/list` -- list `skill://` resources from bundled and configured skill roots
+- `resources/read` -- read allowlisted skill resource content
+
+The default bundled skill root is `crates/tools/apxm-server/skills/`, currently
+including `skill://apxm-plan-as-graph/SKILL.md`.
+
+The stdio and HTTP MCP surfaces share protocol method names, tool names,
+resource fields, schema keys, and tool-result keys through
+`src/mcp_protocol.rs` so the wire contract does not drift across transports.
+
+Cross-agent config installation is available through:
+
+```bash
+dekk apxm mcp install --auto-detect
+```
+
+The installer merges APXM into project `.mcp.json` for Claude Code, into JSON
+`mcpServers` blocks for Gemini CLI and Cursor, and into `[mcp_servers.apxm]`
+for Codex CLI. Use
+`dekk apxm mcp list --auto-detect` to inspect detected configs, or
+`dekk apxm mcp uninstall --auto-detect` to remove the registration.
+
+Real-backend plan-as-graph dogfood runs can be repeated with:
+
+```bash
+python3 tools/scripts/apxm_plan_as_graph_dogfood.py
+```
+
+The runner invokes `apxm_plan_as_graph` through the release stdio MCP binary,
+uses `dekk apxm vllm service-exec gptoss120b` by default, and writes run
+evidence under `.apxm/evaluation/mcp-server/runs/<UTC>/`.
+
+`apxm-mcp-server` can expose skill resources safely, but raw AIR execution is
+still a developer/debug path. `apxm_execute` is hidden from `tools/list` and
+rejected by `tools/call` by default. Set `APXM_MCP_ENABLE_RAW_EXECUTE=1`
+explicitly to expose and enable it for local debugging. Safe static skill
+execution should continue to use the HTTP MCP `apxm_skill_call` tool or REST
+skill execution routes so execution goes through manifest validation, hash
+checks, and sandbox preflight. This stdio-only raw-execution gate is separate
+from the raw HTTP `/v1/execute` developer/debug API described above.
 
 ## Dependencies
 

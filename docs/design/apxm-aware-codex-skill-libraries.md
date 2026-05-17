@@ -54,7 +54,7 @@ APXM already has enough surface area to make this concrete.
 | Generated `AGENTS.md` | `ContextAssembler` renders Codex node context and references available skills. | Codex can be made APXM-aware per node without rewriting Codex. |
 | ACP profiles | `apxm-acp` has profile templates including `codex`, permissions, env, and capability servers. | APXM can spawn Codex as a subprocess and provision capabilities. |
 | `apxm-server` | HTTP gateway for execution, capabilities, agents, tasks, checkpoints, MCP, and A2A. | Correct home for a shared skill-library API. |
-| `apxm-mcp-server` | Stdio MCP server exposes APXM compiler/runtime tools. | External agents can call APXM tools without shelling out. |
+| `apxm-mcp-server` | Stdio MCP server exposes APXM compiler/runtime tools and `skill://` resources. | External agents can call APXM tools and discover bundled skills without shelling out or copying per-agent skill directories. |
 | Session artifacts | Execute/run paths emit session directories, metrics, traces, and node outputs. | Required evidence layer for evaluation and debugging. |
 | Quality/eval tools | `quality_eval`, `ablation`, `trace_diff`, and `benchmark_e2e.py`. | Existing measurement machinery should be reused. |
 

@@ -2,9 +2,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use apxm_backends::BackendRegistration;
 use apxm_core::paths::ApxmPaths;
-use apxm_driver::runtime::sandbox::configure_sandbox_registry;
 use apxm_runtime::{Runtime, RuntimeConfig};
 use dashmap::DashMap;
 use tracing::{info, warn};
@@ -12,6 +10,8 @@ use tracing::{info, warn};
 use crate::app::build_app;
 use crate::checkpoints::CheckpointStore;
 use crate::executions::ExecutionStore;
+use crate::runtime_setup::{build_runtime_with_router, build_runtime_without_router};
+use crate::skill_resources::prepend_builtin_skill_root;
 use crate::skills::{SkillLibrary, parse_skill_roots};
 use crate::state::AppState;
 use crate::tasks::TaskQueueManager;
@@ -34,18 +34,15 @@ pub(crate) fn execution_store_from_paths() -> ExecutionStore {
 }
 
 pub(crate) async fn build_server_runtime() -> Result<Runtime, apxm_core::error::RuntimeError> {
-    let mut runtime = Runtime::new(RuntimeConfig::default()).await?;
-    runtime.set_sandbox_registry(configure_sandbox_registry());
-    Ok(runtime)
+    build_runtime_without_router(RuntimeConfig::default()).await
 }
 
 pub(crate) async fn run_server() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
-    let skill_roots = parse_skill_roots(&args);
+    let skill_roots = prepend_builtin_skill_root(parse_skill_roots(&args));
     let skill_library = SkillLibrary::new(skill_roots);
 
-    let runtime = Arc::new(build_server_runtime().await?);
-    load_llm_backends(&runtime).await;
+    let runtime = Arc::new(build_runtime_with_router(RuntimeConfig::default()).await?);
 
     let state = AppState {
         runtime,
@@ -67,49 +64,6 @@ pub(crate) async fn run_server() -> anyhow::Result<()> {
         .with_graceful_shutdown(shutdown_signal())
         .await?;
     Ok(())
-}
-
-async fn load_llm_backends(runtime: &Runtime) {
-    let mut loaded = 0u32;
-    let mut first_name: Option<String> = None;
-    match apxm_credentials::BackendStore::open() {
-        Ok(store) => match store.list() {
-            Ok(backends) if backends.is_empty() => {
-                warn!("backend store is empty - no LLM backends registered");
-            }
-            Ok(backends) => {
-                for backend in backends {
-                    match BackendRegistration::from_backend_config(&backend) {
-                        Ok(registration) => {
-                            if let Err(e) = registration.register(runtime.llm_registry()).await {
-                                warn!(name = %backend.name, error = %e, "failed to register LLM backend");
-                                continue;
-                            }
-                            if first_name.is_none() {
-                                first_name = Some(backend.name.clone());
-                            }
-                            loaded += 1;
-                        }
-                        Err(e) => {
-                            warn!(name = %backend.name, error = %e, "failed to build backend registration");
-                        }
-                    }
-                }
-                if let Some(ref default) = first_name
-                    && let Err(e) = runtime.llm_registry().set_default(default)
-                {
-                    warn!(backend = %default, error = %e, "failed to set default backend");
-                }
-                info!(count = loaded, "loaded LLM backends from backend store");
-            }
-            Err(e) => {
-                warn!(error = %e, "failed to read backend store");
-            }
-        },
-        Err(e) => {
-            warn!(error = %e, "credential store unavailable - no LLM backends registered");
-        }
-    }
 }
 
 fn server_addr(args: &[String]) -> SocketAddr {

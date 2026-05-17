@@ -91,8 +91,16 @@ pub(crate) struct ToolsCapability {
 }
 
 #[derive(Debug, Serialize)]
+pub(crate) struct ResourcesCapability {
+    #[serde(rename = "listChanged")]
+    pub(crate) list_changed: bool,
+    pub(crate) subscribe: bool,
+}
+
+#[derive(Debug, Serialize)]
 pub(crate) struct McpInitializeCapabilities {
     pub(crate) tools: ToolsCapability,
+    pub(crate) resources: ResourcesCapability,
 }
 
 #[derive(Debug, Serialize)]

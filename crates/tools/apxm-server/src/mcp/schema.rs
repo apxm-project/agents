@@ -1,24 +1,36 @@
 use serde::Deserialize;
 use serde_json::Value as JsonValue;
 
+use crate::mcp_protocol::{
+    McpMethod, SkillTool, Tier3Tool, args, fields, schema_type, tool_description,
+};
 use crate::types::responses::ToolEntry;
 
-pub(crate) const MCP_METHOD_TOOLS_LIST: &str = "tools/list";
-pub(crate) const MCP_METHOD_TOOLS_CALL: &str = "tools/call";
-pub(crate) const MCP_METHOD_INITIALIZE: &str = "initialize";
+pub(crate) const MCP_METHOD_TOOLS_LIST: &str = McpMethod::ToolsList.as_str();
+pub(crate) const MCP_METHOD_TOOLS_CALL: &str = McpMethod::ToolsCall.as_str();
+pub(crate) const MCP_METHOD_RESOURCES_LIST: &str = McpMethod::ResourcesList.as_str();
+pub(crate) const MCP_METHOD_RESOURCES_READ: &str = McpMethod::ResourcesRead.as_str();
+pub(crate) const MCP_METHOD_INITIALIZE: &str = McpMethod::Initialize.as_str();
 
-pub(crate) const MCP_TOOL_APXM_SKILLS_LIST: &str = "apxm_skills_list";
-pub(crate) const MCP_TOOL_APXM_SKILL_GET: &str = "apxm_skill_get";
-pub(crate) const MCP_TOOL_APXM_SKILL_VALIDATE: &str = "apxm_skill_validate";
-pub(crate) const MCP_TOOL_APXM_SKILL_CALL: &str = "apxm_skill_call";
+pub(crate) const MCP_RESOURCE_PARAM_URI: &str = fields::URI;
 
-pub(crate) const MCP_TOOL_ARG_ID: &str = "id";
-pub(crate) const MCP_TOOL_ARG_ARGS: &str = "args";
-pub(crate) const MCP_TOOL_ARG_SESSION_ID: &str = "session_id";
-pub(crate) const MCP_TOOL_PARAM_NAME: &str = "name";
-pub(crate) const MCP_TOOL_PARAM_ARGUMENTS: &str = "arguments";
+pub(crate) const MCP_TOOL_APXM_SKILLS_LIST: &str = SkillTool::List.as_str();
+pub(crate) const MCP_TOOL_APXM_SKILL_GET: &str = SkillTool::Get.as_str();
+pub(crate) const MCP_TOOL_APXM_SKILL_VALIDATE: &str = SkillTool::Validate.as_str();
+pub(crate) const MCP_TOOL_APXM_SKILL_CALL: &str = SkillTool::Call.as_str();
+pub(crate) const MCP_TOOL_APXM_PLAN_AS_GRAPH: &str = Tier3Tool::PlanAsGraph.as_str();
+pub(crate) const MCP_TOOL_APXM_TRACE_FETCH: &str = Tier3Tool::TraceFetch.as_str();
+pub(crate) const MCP_TOOL_APXM_AAM_RECALL: &str = Tier3Tool::AamRecall.as_str();
+pub(crate) const MCP_TOOL_APXM_EVIDENCE_LOOKUP: &str = Tier3Tool::EvidenceLookup.as_str();
+pub(crate) const MCP_TOOL_APXM_CAPABILITY_LIST: &str = Tier3Tool::CapabilityList.as_str();
 
-/// MCP 2025-11-05 compatible JSON-RPC request.
+pub(crate) const MCP_TOOL_ARG_ID: &str = args::ID;
+pub(crate) const MCP_TOOL_ARG_ARGS: &str = args::ARGS;
+pub(crate) const MCP_TOOL_ARG_SESSION_ID: &str = args::SESSION_ID;
+pub(crate) const MCP_TOOL_PARAM_NAME: &str = fields::NAME;
+pub(crate) const MCP_TOOL_PARAM_ARGUMENTS: &str = fields::ARGUMENTS;
+
+/// MCP 2025-11-25 compatible JSON-RPC request.
 ///
 /// Wire format: `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`
 #[derive(Debug, Deserialize)]
@@ -31,14 +43,14 @@ pub(crate) struct McpRequest {
 }
 
 pub(crate) fn skill_tool_entries() -> Vec<ToolEntry> {
-    vec![
+    let mut tools = vec![
         ToolEntry {
             name: MCP_TOOL_APXM_SKILLS_LIST.to_string(),
             description: "List APXM skills installed in the server-owned skill library".to_string(),
             input_schema: serde_json::json!({
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {}
+                (fields::TYPE): schema_type::OBJECT,
+                (fields::ADDITIONAL_PROPERTIES): false,
+                (fields::PROPERTIES): {}
             }),
         },
         ToolEntry {
@@ -58,6 +70,38 @@ pub(crate) fn skill_tool_entries() -> Vec<ToolEntry> {
                 .to_string(),
             input_schema: skill_call_input_schema(),
         },
+    ];
+    tools.extend(tier3_tool_entries());
+    tools
+}
+
+pub(crate) fn tier3_tool_entries() -> Vec<ToolEntry> {
+    vec![
+        ToolEntry {
+            name: MCP_TOOL_APXM_PLAN_AS_GRAPH.to_string(),
+            description: tool_description::tier3(Tier3Tool::PlanAsGraph).to_string(),
+            input_schema: plan_as_graph_input_schema(),
+        },
+        ToolEntry {
+            name: MCP_TOOL_APXM_TRACE_FETCH.to_string(),
+            description: tool_description::tier3(Tier3Tool::TraceFetch).to_string(),
+            input_schema: trace_fetch_input_schema(),
+        },
+        ToolEntry {
+            name: MCP_TOOL_APXM_AAM_RECALL.to_string(),
+            description: tool_description::tier3(Tier3Tool::AamRecall).to_string(),
+            input_schema: query_input_schema(),
+        },
+        ToolEntry {
+            name: MCP_TOOL_APXM_EVIDENCE_LOOKUP.to_string(),
+            description: tool_description::tier3(Tier3Tool::EvidenceLookup).to_string(),
+            input_schema: evidence_lookup_input_schema(),
+        },
+        ToolEntry {
+            name: MCP_TOOL_APXM_CAPABILITY_LIST.to_string(),
+            description: tool_description::tier3(Tier3Tool::CapabilityList).to_string(),
+            input_schema: query_input_schema(),
+        },
     ]
 }
 
@@ -66,15 +110,15 @@ fn skill_id_input_schema() -> JsonValue {
     properties.insert(
         MCP_TOOL_ARG_ID.to_string(),
         serde_json::json!({
-            "type": "string",
-            "description": "Skill id, or skill id plus @version when multiple versions are installed"
+            (fields::TYPE): schema_type::STRING,
+            (fields::DESCRIPTION): "Skill id, or skill id plus @version when multiple versions are installed"
         }),
     );
     serde_json::json!({
-        "type": "object",
-        "additionalProperties": false,
-        "required": [MCP_TOOL_ARG_ID],
-        "properties": properties,
+        (fields::TYPE): schema_type::OBJECT,
+        (fields::ADDITIONAL_PROPERTIES): false,
+        (fields::REQUIRED): [MCP_TOOL_ARG_ID],
+        (fields::PROPERTIES): properties,
     })
 }
 
@@ -83,29 +127,132 @@ fn skill_call_input_schema() -> JsonValue {
     properties.insert(
         MCP_TOOL_ARG_ID.to_string(),
         serde_json::json!({
-            "type": "string",
-            "description": "Skill id, or skill id plus @version when multiple versions are installed"
+            (fields::TYPE): schema_type::STRING,
+            (fields::DESCRIPTION): "Skill id, or skill id plus @version when multiple versions are installed"
         }),
     );
     properties.insert(
         MCP_TOOL_ARG_ARGS.to_string(),
         serde_json::json!({
-            "type": "array",
-            "items": { "type": "string" },
-            "description": "Positional skill arguments"
+            (fields::TYPE): schema_type::ARRAY,
+            (fields::ITEMS): { (fields::TYPE): schema_type::STRING },
+            (fields::DESCRIPTION): "Positional skill arguments"
         }),
     );
     properties.insert(
         MCP_TOOL_ARG_SESSION_ID.to_string(),
         serde_json::json!({
-            "type": "string",
-            "description": "Optional simple session identifier. Path separators and dot-only components are rejected."
+            (fields::TYPE): schema_type::STRING,
+            (fields::DESCRIPTION): "Optional simple session identifier. Path separators and dot-only components are rejected."
         }),
     );
     serde_json::json!({
-        "type": "object",
-        "additionalProperties": false,
-        "required": [MCP_TOOL_ARG_ID],
-        "properties": properties,
+        (fields::TYPE): schema_type::OBJECT,
+        (fields::ADDITIONAL_PROPERTIES): false,
+        (fields::REQUIRED): [MCP_TOOL_ARG_ID],
+        (fields::PROPERTIES): properties,
+    })
+}
+
+fn plan_as_graph_input_schema() -> JsonValue {
+    serde_json::json!({
+        (fields::TYPE): schema_type::OBJECT,
+        (fields::ADDITIONAL_PROPERTIES): false,
+        (fields::REQUIRED): [args::TASK],
+        (fields::PROPERTIES): {
+            (args::TASK): {
+                (fields::TYPE): schema_type::STRING,
+                (fields::DESCRIPTION): "Natural-language task to convert into an APXM execution graph"
+            },
+            (args::CONTEXT): {
+                (fields::TYPE): schema_type::STRING,
+                (fields::DESCRIPTION): "Optional context that should shape the graph"
+            },
+            (args::CONSTRAINTS): {
+                (fields::TYPE): schema_type::OBJECT,
+                (fields::DESCRIPTION): "Optional structured constraints for the graph emitter"
+            },
+            (args::PARAMETERS): {
+                (fields::TYPE): schema_type::OBJECT,
+                (fields::DESCRIPTION): "Optional runtime parameter values keyed by emitted parameter name"
+            },
+            (args::EXECUTE): {
+                (fields::TYPE): schema_type::BOOLEAN,
+                (fields::DESCRIPTION): "Whether to execute after successful compile. Default: true"
+            },
+            (args::TRACE_ID): {
+                (fields::TYPE): schema_type::STRING,
+                (fields::DESCRIPTION): "Optional caller-provided trace id"
+            }
+        }
+    })
+}
+
+fn trace_fetch_input_schema() -> JsonValue {
+    serde_json::json!({
+        (fields::TYPE): schema_type::OBJECT,
+        (fields::ADDITIONAL_PROPERTIES): false,
+        (fields::REQUIRED): [args::TRACE_ID],
+        (fields::PROPERTIES): {
+            (args::TRACE_ID): {
+                (fields::TYPE): schema_type::STRING,
+                (fields::DESCRIPTION): "Execution trace id returned by apxm_plan_as_graph or skill execution"
+            },
+            (args::NODE_ID): {
+                (fields::TYPE): schema_type::INTEGER,
+                (fields::MINIMUM): 1,
+                (fields::DESCRIPTION): "Optional node id to focus the trace response"
+            },
+            (args::FULL): {
+                (fields::TYPE): schema_type::BOOLEAN,
+                (fields::DESCRIPTION): "Return the full execution record instead of a compact summary"
+            }
+        }
+    })
+}
+
+fn query_input_schema() -> JsonValue {
+    serde_json::json!({
+        (fields::TYPE): schema_type::OBJECT,
+        (fields::ADDITIONAL_PROPERTIES): false,
+        (fields::PROPERTIES): {
+            (args::QUERY): {
+                (fields::TYPE): schema_type::STRING,
+                (fields::DESCRIPTION): "Optional substring query"
+            },
+            (args::TOP_K): {
+                (fields::TYPE): schema_type::INTEGER,
+                (fields::MINIMUM): 1,
+                (fields::MAXIMUM): 100,
+                (fields::DESCRIPTION): "Maximum number of entries to return. Default: 10"
+            }
+        }
+    })
+}
+
+fn evidence_lookup_input_schema() -> JsonValue {
+    serde_json::json!({
+        (fields::TYPE): schema_type::OBJECT,
+        (fields::ADDITIONAL_PROPERTIES): false,
+        (fields::PROPERTIES): {
+            (args::QUERY): {
+                (fields::TYPE): schema_type::STRING,
+                (fields::DESCRIPTION): "Evidence text or filename query"
+            },
+            (args::CLAIM_ID): {
+                (fields::TYPE): schema_type::STRING,
+                (fields::DESCRIPTION): "Claim id to search for"
+            },
+            (args::PATH): {
+                (fields::TYPE): schema_type::STRING,
+                (fields::DESCRIPTION): "Optional evidence path under allowed APXM evidence roots"
+            },
+            (args::LIMIT): {
+                (fields::TYPE): schema_type::INTEGER,
+                (fields::MINIMUM): 1,
+                (fields::MAXIMUM): 100,
+                (fields::DESCRIPTION): "Maximum matches to return. Default: 10"
+            }
+        }
     })
 }

@@ -1,0 +1,23 @@
+{
+  "task": "Run a parallel code-review council and synthesize a final verdict.",
+  "graph": {
+    "name": "code_review_council",
+    "entry": "review",
+    "parameters": [
+      { "name": "code", "type": "str", "required": true }
+    ],
+    "nodes": [
+      { "id": 1, "name": "security_review", "op": "ask", "agent": "security_reviewer", "prompt": "Review the code for vulnerabilities and severity." },
+      { "id": 2, "name": "performance_review", "op": "ask", "agent": "performance_reviewer", "prompt": "Review the code for bottlenecks and optimization opportunities." },
+      { "id": 3, "name": "maintainability_review", "op": "ask", "agent": "maintainability_reviewer", "prompt": "Review the code for clarity, structure, and maintainability." },
+      { "id": 4, "name": "synthesize_verdict", "op": "think", "prompt": "Synthesize the three reviews into priority issues and concrete fixes.", "depends_on": [
+        { "node": 1, "dependency": "Data" },
+        { "node": 2, "dependency": "Data" },
+        { "node": 3, "dependency": "Data" }
+      ] },
+      { "id": 5, "name": "return_summary", "op": "yield", "depends_on": [
+        { "node": 4, "dependency": "Data" }
+      ] }
+    ]
+  }
+}

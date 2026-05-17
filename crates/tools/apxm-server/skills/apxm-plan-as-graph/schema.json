@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "APXM plan emission v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "entry", "nodes"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "entry": {
+      "type": "string",
+      "minLength": 1
+    },
+    "parameters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "type"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "type": { "enum": ["str", "int", "float", "bool", "json"] },
+          "required": { "type": "boolean" }
+        }
+      }
+    },
+    "nodes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "op"],
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "op": { "const": "inv_tool" }
+              },
+              "required": ["op"]
+            },
+            "then": {
+              "required": ["capability", "args"],
+              "properties": {
+                "capability": { "type": "string", "minLength": 1 },
+                "args": { "type": "object" }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "op": { "enum": ["agent", "ask", "think", "yield"] }
+              },
+              "required": ["op"]
+            },
+            "then": {
+              "required": ["prompt"],
+              "properties": {
+                "prompt": { "type": "string", "minLength": 1 }
+              }
+            }
+          }
+        ],
+        "properties": {
+          "id": { "type": "integer", "minimum": 1 },
+          "name": { "type": "string", "minLength": 1 },
+          "op": {
+            "enum": ["agent", "ask", "think", "inv_tool", "wait_all", "yield"]
+          },
+          "prompt": { "type": "string" },
+          "agent": { "type": "string" },
+          "capability": { "type": "string" },
+          "args": { "type": "object" },
+          "depends_on": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["node", "dependency"],
+              "additionalProperties": false,
+              "properties": {
+                "node": { "type": "integer", "minimum": 1 },
+                "dependency": { "enum": ["Data", "Control", "Effect"] }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

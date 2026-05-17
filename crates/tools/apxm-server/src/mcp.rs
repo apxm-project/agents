@@ -7,21 +7,24 @@ use axum::extract::State;
 use serde_json::Value as JsonValue;
 
 use crate::helpers::{jsonrpc_err, jsonrpc_ok, mcp_tool_result};
+use crate::mcp_protocol::{fields, server_name};
 use crate::state::AppState;
 use crate::types::responses::{
-    McpInitializeCapabilities, McpInitializeResult, ServerInfo, ToolEntry, ToolsCapability,
+    McpInitializeCapabilities, McpInitializeResult, ResourcesCapability, ServerInfo, ToolEntry,
+    ToolsCapability,
 };
 
 mod dispatch;
 mod schema;
 
-use schema::{
-    MCP_METHOD_INITIALIZE, MCP_METHOD_TOOLS_CALL, MCP_METHOD_TOOLS_LIST, MCP_TOOL_PARAM_ARGUMENTS,
-    MCP_TOOL_PARAM_NAME,
-};
+#[allow(unused_imports)]
 pub(crate) use schema::{
+    MCP_METHOD_INITIALIZE, MCP_METHOD_RESOURCES_LIST, MCP_METHOD_RESOURCES_READ,
+    MCP_METHOD_TOOLS_CALL, MCP_METHOD_TOOLS_LIST, MCP_RESOURCE_PARAM_URI, MCP_TOOL_APXM_AAM_RECALL,
+    MCP_TOOL_APXM_CAPABILITY_LIST, MCP_TOOL_APXM_EVIDENCE_LOOKUP, MCP_TOOL_APXM_PLAN_AS_GRAPH,
     MCP_TOOL_APXM_SKILL_CALL, MCP_TOOL_APXM_SKILL_GET, MCP_TOOL_APXM_SKILL_VALIDATE,
-    MCP_TOOL_APXM_SKILLS_LIST, McpRequest,
+    MCP_TOOL_APXM_SKILLS_LIST, MCP_TOOL_APXM_TRACE_FETCH, MCP_TOOL_PARAM_ARGUMENTS,
+    MCP_TOOL_PARAM_NAME, McpRequest,
 };
 
 const MCP_ERROR_ARGUMENTS_OBJECT: &str = "arguments must be an object";
@@ -30,13 +33,15 @@ const MCP_ERROR_CAPABILITY_NOT_AGENT_SAFE: &str =
     "capability is not read-only and does not declare sandbox execution";
 const MCP_ERROR_SANDBOX_PREFLIGHT_PREFIX: &str = "capability failed sandbox preflight";
 
-// ─── MCP 2025-11-05 JSON-RPC endpoint (/v1/mcp) ─────────────────────────────
+// ─── MCP 2025-11-25 JSON-RPC endpoint (/v1/mcp) ─────────────────────────────
 
-/// MCP 2025-11-05 compatible JSON-RPC handler.
+/// MCP 2025-11-25 compatible JSON-RPC handler.
 ///
 /// Supports:
 /// - `tools/list`  — enumerate APXM capabilities as MCP tools
 /// - `tools/call`  — invoke an APXM capability by name
+/// - `resources/list` — enumerate bundled and configured APXM skill resources
+/// - `resources/read` — read `skill://...` skill resources
 ///
 pub(crate) async fn mcp_jsonrpc(
     State(state): State<AppState>,
@@ -44,6 +49,23 @@ pub(crate) async fn mcp_jsonrpc(
 ) -> Json<JsonValue> {
     let id = req.id.clone();
     match req.method.as_str() {
+        MCP_METHOD_RESOURCES_LIST => jsonrpc_ok(
+            id,
+            serde_json::json!({ (fields::RESOURCES): state.skill_library.list_skill_resources() }),
+        ),
+        MCP_METHOD_RESOURCES_READ => {
+            let Some(uri) = req
+                .params
+                .get(MCP_RESOURCE_PARAM_URI)
+                .and_then(JsonValue::as_str)
+            else {
+                return jsonrpc_err(id, -32602, "resources/read missing params.uri");
+            };
+            match state.skill_library.resolve_skill_uri(uri) {
+                Ok(content) => jsonrpc_ok(id, serde_json::json!({ (fields::CONTENTS): [content] })),
+                Err(error) => jsonrpc_err(id, -32602, error.to_string()),
+            }
+        }
         MCP_METHOD_TOOLS_LIST => {
             let mut tools: Vec<ToolEntry> = schema::skill_tool_entries();
             tools.extend(
@@ -61,7 +83,7 @@ pub(crate) async fn mcp_jsonrpc(
             );
             jsonrpc_ok(
                 id,
-                serde_json::json!({ "tools": serde_json::to_value(&tools).unwrap_or(JsonValue::Null) }),
+                serde_json::json!({ (fields::TOOLS): serde_json::to_value(&tools).unwrap_or(JsonValue::Null) }),
             )
         }
         MCP_METHOD_TOOLS_CALL => {
@@ -144,12 +166,16 @@ pub(crate) async fn mcp_jsonrpc(
             let result = McpInitializeResult {
                 protocol_version: apxm_core::constants::protocols::MCP_VERSION,
                 server_info: ServerInfo {
-                    name: "apxm-server",
+                    name: server_name::HTTP,
                     version: env!("CARGO_PKG_VERSION"),
                 },
                 capabilities: McpInitializeCapabilities {
                     tools: ToolsCapability {
                         list_changed: false,
+                    },
+                    resources: ResourcesCapability {
+                        list_changed: false,
+                        subscribe: false,
                     },
                 },
             };

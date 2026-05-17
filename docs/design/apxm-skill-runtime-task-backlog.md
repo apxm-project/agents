@@ -14,6 +14,7 @@ The first implementation slice now exists in `apxm-server`:
 
 - configured server skill roots through repeated `--skill-root <path>` and
   `APXM_SKILL_ROOTS`;
+- a bundled skill root in `crates/tools/apxm-server/skills/`;
 - `SkillManifest` parsing and `SkillLibrary` scanning for `skill.toml`,
   `SKILL.md`, `skill.air`, and `skill.apxmobj`;
 - server-owned inventory routes:
@@ -31,6 +32,13 @@ POST /v1/skills/{id}/validate
   `GET /v1/executions/{execution_id}/nodes/{node_id}`;
 - MCP tools `apxm_skills_list`, `apxm_skill_get`,
   `apxm_skill_validate`, and `apxm_skill_call`.
+- MCP `resources/list` and `resources/read` for allowlisted `skill://`
+  resources such as `SKILL.md`, `_manifest`, `prompt.md`, `schema.json`, and
+  `examples/*`.
+- versioned `skill://<skill-id>@<version>/...` resource URIs when duplicate
+  skill ids are installed, with ambiguous unversioned reads rejected.
+- a shared MCP protocol registry for method names, tool names, schema fields,
+  server names, and stdio tool-result keys.
 
 The static execution path only accepts manifest-identified, precompiled
 artifacts from server-owned skill roots. It rejects raw AIR, client-provided

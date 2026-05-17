@@ -1,0 +1,25 @@
+{
+  "task": "Audit the APXM project for build, test, policy, TODO, and compiler coverage issues.",
+  "graph": {
+    "name": "project_audit",
+    "entry": "audit",
+    "parameters": [
+      { "name": "scope", "type": "str", "required": false }
+    ],
+    "nodes": [
+      { "id": 1, "name": "build_check", "op": "ask", "agent": "architect", "prompt": "Run the APXM build and summarize warnings and errors as JSON." },
+      { "id": 2, "name": "test_check", "op": "ask", "agent": "architect", "prompt": "Run the test suite and summarize pass/fail counts as JSON." },
+      { "id": 3, "name": "policy_check", "op": "ask", "agent": "architect", "prompt": "Run policy checks and summarize violations as JSON." },
+      { "id": 4, "name": "todo_scan", "op": "ask", "agent": "architect", "prompt": "Count TODO, FIXME, stub, and unimplemented markers in core crates." },
+      { "id": 5, "name": "synthesize_audit", "op": "think", "prompt": "Synthesize audit findings into status, prioritized issues, and concrete next actions.", "depends_on": [
+        { "node": 1, "dependency": "Data" },
+        { "node": 2, "dependency": "Data" },
+        { "node": 3, "dependency": "Data" },
+        { "node": 4, "dependency": "Data" }
+      ] },
+      { "id": 6, "name": "return_summary", "op": "yield", "depends_on": [
+        { "node": 5, "dependency": "Data" }
+      ] }
+    ]
+  }
+}

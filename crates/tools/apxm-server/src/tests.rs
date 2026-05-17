@@ -16,6 +16,7 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use apxm_artifact::{Artifact, ArtifactMetadata};
+use apxm_backends::llm::backends::MockLLMBackend;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::error::RuntimeError;
 use apxm_core::events::payload::{REDACTION_HASH_PREFIX_BLAKE3, RedactedContent};
@@ -26,9 +27,9 @@ use apxm_core::types::values::Value;
 use apxm_runtime::capability::executor::CapabilityExecutor;
 use apxm_runtime::capability::metadata::CapabilityMetadata;
 use apxm_runtime::{
-    DefaultBackend, ExecRequest, ExecResult, IsolationLevel, Runtime, RuntimeConfig,
-    SandboxBackend, SandboxCapabilities, SandboxContext, SandboxError, SandboxRegistry,
-    ValidationResult,
+    DefaultBackend, ExecRequest, ExecResult, IsolationLevel, ModelRouterConfig, Runtime,
+    RuntimeConfig, SandboxBackend, SandboxCapabilities, SandboxContext, SandboxError,
+    SandboxRegistry, TransitionLabel, ValidationResult,
 };
 use async_trait::async_trait;
 use axum::Router;
@@ -45,10 +46,19 @@ use crate::execute::{ExecuteRequest, ExecuteResponse, prepare_request};
 use crate::executions::{ExecutionStore, execution_record_snapshot_path};
 use crate::helpers::{jsonrpc_err, jsonrpc_ok, mcp_tool_result, now_ms};
 use crate::mcp::{
-    MCP_TOOL_APXM_SKILL_CALL, MCP_TOOL_APXM_SKILL_GET, MCP_TOOL_APXM_SKILL_VALIDATE,
-    MCP_TOOL_APXM_SKILLS_LIST,
+    MCP_METHOD_INITIALIZE, MCP_METHOD_RESOURCES_LIST, MCP_METHOD_RESOURCES_READ,
+    MCP_METHOD_TOOLS_CALL, MCP_METHOD_TOOLS_LIST, MCP_RESOURCE_PARAM_URI as MCP_PARAM_URI,
+    MCP_TOOL_APXM_AAM_RECALL, MCP_TOOL_APXM_CAPABILITY_LIST, MCP_TOOL_APXM_EVIDENCE_LOOKUP,
+    MCP_TOOL_APXM_PLAN_AS_GRAPH, MCP_TOOL_APXM_SKILL_CALL, MCP_TOOL_APXM_SKILL_GET,
+    MCP_TOOL_APXM_SKILL_VALIDATE, MCP_TOOL_APXM_SKILLS_LIST, MCP_TOOL_APXM_TRACE_FETCH,
+    MCP_TOOL_PARAM_ARGUMENTS as MCP_PARAM_ARGUMENTS, MCP_TOOL_PARAM_NAME as MCP_PARAM_NAME,
+};
+use crate::mcp_protocol::{
+    admission_error, args as mcp_args, fields as mcp_fields, plan_field, plan_skill,
+    status as mcp_status, tool_result,
 };
 use crate::routes;
+use crate::skill_resources::skill_uri as skill_resource_uri;
 use crate::skills::SkillLibrary;
 use crate::state::AppState;
 use crate::tasks::{QueuedTask, TaskQueueManager, TaskStatus};
@@ -69,13 +79,8 @@ mod tasks;
 
 // ── Test helpers ──────────────────────────────────────────────────────────
 
-const MCP_METHOD_INITIALIZE: &str = "initialize";
-const MCP_METHOD_TOOLS_LIST: &str = "tools/list";
-const MCP_METHOD_TOOLS_CALL: &str = "tools/call";
 const MCP_JSONRPC_VERSION: &str = "2.0";
 const MCP_REQUEST_ID: u64 = 23;
-const MCP_PARAM_NAME: &str = "name";
-const MCP_PARAM_ARGUMENTS: &str = "arguments";
 const MCP_ARG_ID: &str = "id";
 const MCP_ARG_SESSION_ID: &str = "session_id";
 const EVENT_SKILL_EXECUTE_STARTED: &str = "skill_execute_started";
@@ -111,6 +116,27 @@ const FIXTURE_AIR: &str = "module { func.func @main() attributes {ais.entry} }";
 const FIXTURE_OUTPUT: &str = "ok";
 const FIXTURE_OUTPUT_SUMMARY: &str = "string(chars=2)";
 const FIXTURE_OUTPUT_V2: &str = "ok-v2";
+const FIXTURE_AAM_KEY: &str = "fixture_mcp_belief";
+const FIXTURE_AAM_VALUE: &str = "mcp memory ready";
+const FIXTURE_AAM_QUERY: &str = "fixture_mcp";
+const FIXTURE_EVIDENCE_PATH: &str = ".apxm/docs/evaluation/MCP-SERVER-PLAN.md";
+const FIXTURE_EVIDENCE_QUERY: &str = "rust implementation";
+const FIXTURE_PLAN_BACKEND: &str = "mock-plan";
+const FIXTURE_PLAN_NAME: &str = "fixture_generated_plan";
+const FIXTURE_PLAN_NODE_NAME: &str = "final";
+const FIXTURE_PLAN_INSPECT_NODE_NAME: &str = "inspect_readme";
+const FIXTURE_PLAN_SUMMARY_NODE_NAME: &str = "summarize_risk";
+const FIXTURE_PLAN_TASK: &str = "summarize release risk";
+const FIXTURE_PLAN_TRACE_ID: &str = "plan-record-test";
+const FIXTURE_PLAN_SANDBOX_TRACE_ID: &str = "plan-sandbox-test";
+const FIXTURE_PLAN_INVALID_TRACE_ID: &str = "../bad";
+const FIXTURE_PLAN_REPAIR_MARKER: &str = "Compiler or validation feedback to repair:";
+const FIXTURE_PLAN_OP_YIELD: &str = "yield";
+const FIXTURE_PLAN_OP_ASK: &str = "ask";
+const FIXTURE_PLAN_OP_INV_TOOL: &str = "inv_tool";
+const FIXTURE_PLAN_OP_UNKNOWN: &str = "unknown_op";
+const FIXTURE_PLAN_ATTR_ALIAS: &str = "attr";
+const FIXTURE_WRITE_TOOL: &str = apxm_core::constants::capabilities::WRITE;
 const FIXTURE_NODE_ID: u64 = 1;
 const FIXTURE_COMPILER_VERSION: &str = "test-compiler";
 const FIXTURE_CONVERSION_REPORT: &str = r#"{"status":"hand-authored","unmapped":[]}"#;
@@ -319,6 +345,31 @@ async fn test_state() -> AppState {
     test_state_with_skill_roots(Vec::new()).await
 }
 
+async fn test_state_with_mock_plan_response(plan_response: serde_json::Value) -> AppState {
+    let runtime =
+        runtime_with_mock_plan_backend(MockLLMBackend::static_response(plan_response.to_string()))
+            .await;
+    test_state_with_runtime_and_skill_roots(runtime, Vec::new()).await
+}
+
+async fn runtime_with_mock_plan_backend(backend: MockLLMBackend) -> Runtime {
+    let mut runtime = Runtime::new(RuntimeConfig::in_memory())
+        .await
+        .expect("test runtime");
+    runtime
+        .llm_registry()
+        .register(FIXTURE_PLAN_BACKEND, backend)
+        .expect("register mock plan backend");
+    runtime
+        .llm_registry()
+        .set_default(FIXTURE_PLAN_BACKEND)
+        .expect("set mock plan backend default");
+    runtime
+        .init_model_router(ModelRouterConfig::default())
+        .expect("init test model router");
+    runtime
+}
+
 async fn test_state_with_skill_roots(skill_roots: Vec<std::path::PathBuf>) -> AppState {
     test_state_with_skill_roots_and_execution_store(skill_roots, ExecutionStore::new()).await
 }
@@ -411,6 +462,73 @@ async fn get_json(app: Router, path: &str) -> (StatusCode, serde_json::Value) {
 fn write_skill_manifest(dir: &std::path::Path, contents: &str) {
     std::fs::create_dir_all(dir).expect(MSG_SKILL_DIR);
     std::fs::write(dir.join(FILE_SKILL_MANIFEST), contents).expect(FILE_SKILL_MANIFEST);
+}
+
+fn mock_yield_plan_response() -> serde_json::Value {
+    serde_json::json!({
+        (plan_field::NAME): FIXTURE_PLAN_NAME,
+        (plan_field::ENTRY): FIXTURE_ENTRY_FLOW,
+        (plan_field::NODES): [
+            {
+                (plan_field::ID): FIXTURE_NODE_ID,
+                (plan_field::NAME): FIXTURE_PLAN_NODE_NAME,
+                (plan_field::OP): FIXTURE_PLAN_OP_YIELD,
+                (plan_field::PROMPT): FIXTURE_OUTPUT
+            }
+        ]
+    })
+}
+
+fn mock_inv_tool_plan_response(capability: &str) -> serde_json::Value {
+    serde_json::json!({
+        (plan_field::NAME): FIXTURE_PLAN_NAME,
+        (plan_field::ENTRY): FIXTURE_ENTRY_FLOW,
+        (plan_field::NODES): [
+            {
+                (plan_field::ID): FIXTURE_NODE_ID,
+                (plan_field::NAME): FIXTURE_PLAN_NODE_NAME,
+                (plan_field::OP): FIXTURE_PLAN_OP_INV_TOOL,
+                (plan_field::CAPABILITY): capability,
+                (plan_field::ARGS): {}
+            }
+        ]
+    })
+}
+
+fn mock_named_dependency_plan_response() -> serde_json::Value {
+    serde_json::json!({
+        (plan_field::ENTRY): FIXTURE_ENTRY_FLOW,
+        (plan_field::NODES): [
+            {
+                (plan_field::ID): FIXTURE_PLAN_INSPECT_NODE_NAME,
+                (plan_field::NAME): FIXTURE_PLAN_INSPECT_NODE_NAME,
+                (plan_field::OP): FIXTURE_PLAN_OP_ASK,
+                (plan_field::PROMPT): "Inspect README changes and report notable diffs."
+            },
+            {
+                (plan_field::ID): FIXTURE_PLAN_SUMMARY_NODE_NAME,
+                (plan_field::OP): FIXTURE_PLAN_OP_YIELD,
+                (FIXTURE_PLAN_ATTR_ALIAS): {
+                    (plan_field::PROMPT): "Summarize risk from the README inspection."
+                },
+                (plan_field::DEPENDS_ON): [FIXTURE_PLAN_INSPECT_NODE_NAME]
+            }
+        ]
+    })
+}
+
+fn mock_invalid_plan_response() -> serde_json::Value {
+    serde_json::json!({
+        (plan_field::NAME): FIXTURE_PLAN_NAME,
+        (plan_field::ENTRY): FIXTURE_ENTRY_FLOW,
+        (plan_field::NODES): [
+            {
+                (plan_field::ID): FIXTURE_NODE_ID,
+                (plan_field::NAME): FIXTURE_PLAN_NODE_NAME,
+                (plan_field::OP): FIXTURE_PLAN_OP_UNKNOWN
+            }
+        ]
+    })
 }
 
 fn write_valid_skill(root: &std::path::Path, name: &str) -> std::path::PathBuf {
