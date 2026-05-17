@@ -8,13 +8,14 @@ not the operator runbook.** All operational procedures live in
 
 | File | Role |
 |---|---|
-| `zoo.toml` | The **sole source of truth** for what runs. Manifest of every vLLM service the cluster should host. |
-| `run-vllm.sh` | Unified Slurm wrapper. `NODES=1` is the single-node path; `NODES>1` is the multi-node Ray path. Invoked by `_start_one_service` via `sbatch`. |
+| `zoo.example.toml` | Schema reference + 3-shape template. Operators copy to `zoo.toml` (gitignored) and edit. |
+| `zoo.toml` | Operator's local manifest (gitignored). **Sole source of truth** for what runs once present. |
+| `run-vllm.sh` | Slurm wrapper invoked by `_start_one_service` via `sbatch`. Single-node only; multi-node Ray (cross-node TP+PP) is out of scope — one service per node. |
 | `Dockerfile.apxm` | Python-source-overlay Dockerfile that lays the `external/vllm/` fork on top of a pinned ROCm vLLM base image. |
 
 ## How a service starts
 
-1. Operator edits `zoo.toml` (or relies on the checked-in 4-model set).
+1. Operator copies `zoo.example.toml` to `zoo.toml` and edits.
 2. `dekk apxm vllm zoo-cache-warm` pulls weights to the shared HF cache.
    CPU-only; refuses to start if WekaFS free < Σ(weights_gb) × 1.2.
 3. `dekk apxm vllm zoo-apply` expands the manifest, calls
