@@ -49,8 +49,18 @@ static graph script per tenant. Currently shipped:
   `SHAREGPT_CONVERSATION_JSON`, `SHAREGPT_ROW_INDEX`,
   `SHAREGPT_MAX_TURNS` (default 8).
 
-LooGLE long-shared-context (W4c) reuses the same template and is not
-yet shipped.
+- **LooGLE long-shared-context (W4c)** — `workloads/loogle_row.py`
+  (per-row graph) + `workloads/data/loogle_sample.jsonl`
+  (2-document vendored smoke sample) + `workloads/data/fetch_loogle.sh`
+  (fetcher for `longdep_qa.jsonl` + `shortdep_qa.jsonl` from
+  `bigai-nlco/LooGLE` into gitignored `.apxm/datasets/loogle/`). The
+  row adapter emits a fan-out graph: one ASK per sub-question, each
+  prompted with `document + question`. The document is byte-identical
+  across all questions in a row, so the prefix cache sees the
+  document once and reuses it for every question — the canonical
+  long-shared-context speedup pattern. Env contract:
+  `LOOGLE_DOCUMENT`, `LOOGLE_QUESTIONS_JSON`, `LOOGLE_ROW_INDEX`,
+  `LOOGLE_MAX_QUESTIONS` (default 6).
 
 ## Env-var contract
 
