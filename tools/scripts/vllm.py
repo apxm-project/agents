@@ -1412,6 +1412,17 @@ def _load_zoo_manifest(path: str | Path) -> dict[str, Any]:
         raise SystemExit(
             f"{manifest_path}: must contain at least one [[deployment]] entry"
         )
+    defaults = data.get("defaults") or {}
+    if not isinstance(defaults, dict):
+        raise SystemExit(
+            f"{manifest_path}: [defaults] section must be a table, got {type(defaults).__name__}"
+        )
+    # Merge defaults into every entry that does not override the key. This
+    # is done at load time so downstream code sees fully-resolved entries
+    # and never has to look at the defaults table again.
+    for entry in deployments:
+        for key, value in defaults.items():
+            entry.setdefault(key, value)
     required_keys = {"name", "model"}
     seen_names: set[str] = set()
     for entry in deployments:
