@@ -220,6 +220,23 @@ impl ExecutionEventEmitter for EmitterAdapter {
         });
     }
 
+    fn emit_plan_graph_emitted(
+        &self,
+        plan_id: &str,
+        generating_model: &str,
+        node_count: usize,
+        task_ids: &[u64],
+        parallel_fanout_max: usize,
+    ) {
+        self.emit(PlanGraphEmittedPayload {
+            plan_id: plan_id.to_string(),
+            generating_model: generating_model.to_string(),
+            node_count,
+            task_ids: task_ids.to_vec(),
+            parallel_fanout_max,
+        });
+    }
+
     fn emit_memory_read(&self, scope: &str, key: &str) {
         self.emit(MemoryReadPayload {
             scope: scope.to_string(),
