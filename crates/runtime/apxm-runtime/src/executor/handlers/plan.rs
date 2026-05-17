@@ -243,12 +243,28 @@ async fn execute_plan_once(
             );
         }
 
-        // Plans-as-graphs telemetry: when the LLM emitted a structured
-        // task DAG (vs free-text steps or raw AIR), record what we
-        // received so trace consumers can tell the paths apart.
-        // depends_on counts: how many tasks share each "deps fingerprint"
-        // — the largest bucket is the maximum parallel fan-out.
+        // Plans-as-graphs: validate the LLM-emitted task DAG up-front so
+        // a malformed graph (cycle, dangling depends_on, dup ids) fails
+        // with an actionable error tied to the PLAN node, not buried
+        // inside link_task_dag → compile. validate() is also called by
+        // task_dag_to_air_module, so this is defence-in-depth + better
+        // UX, not a correctness change. Telemetry follows: emit the
+        // PlanGraphEmitted event with the extracted parallel fan-out so
+        // trace consumers can tell "LLM produced an executable graph"
+        // from "LLM produced free-text steps."
         if let Some(task_dag) = plan.inner_plan.as_ref().and_then(|ip| ip.task_dag.as_ref()) {
+            if let Err(err) = task_dag.validate() {
+                tracing::error!(
+                    execution_id = %ctx.execution_id,
+                    error = %err,
+                    "LLM-emitted task_dag is malformed; rejecting before link"
+                );
+                return Err(RuntimeError::State(format!(
+                    "PLAN at node {} produced a malformed task_dag: {}. \
+                     Drop the inner_plan or fix the dependency structure.",
+                    node.id, err
+                )));
+            }
             if let Some(emitter) = &ctx.event_emitter {
                 let mut deps_buckets: HashMap<Vec<u64>, usize> = HashMap::new();
                 for task in &task_dag.tasks {
@@ -597,6 +613,74 @@ Done."#;
         assert_eq!(task_dag.tasks[0].depends_on, Vec::<u64>::new());
         assert_eq!(task_dag.tasks[1].depends_on, vec![1]);
         assert_eq!(task_dag.tasks[4].depends_on, vec![2, 3, 4]);
+    }
+
+    /// LLM-emitted task DAGs that reference missing parent ids are
+    /// rejected before any compile attempt. Mirrors the up-front
+    /// validate() the PLAN handler runs so a malformed dangling-deps
+    /// graph surfaces with a clear error.
+    #[test]
+    fn test_task_dag_validate_rejects_dangling_depends_on() {
+        let json = r#"{
+            "plan": [],
+            "result": "ok",
+            "inner_plan": {
+                "task_dag": {
+                    "name": "broken",
+                    "tasks": [
+                        {"id": 1, "name": "a", "description": "first", "nodes": [], "depends_on": [], "metadata": {}},
+                        {"id": 2, "name": "b", "description": "second", "nodes": [], "depends_on": [999], "metadata": {}}
+                    ],
+                    "metadata": {}
+                }
+            }
+        }"#;
+
+        let output = parse_plan_output(json).unwrap();
+        let task_dag = output
+            .inner_plan
+            .as_ref()
+            .and_then(|ip| ip.task_dag.as_ref())
+            .expect("task_dag must parse");
+        let err = task_dag.validate().expect_err("dangling depends_on must reject");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("999"),
+            "error must cite the offending id, got: {msg}"
+        );
+    }
+
+    /// Cycle detection is the third reject path; covers the Kahn's
+    /// algorithm branch in TaskDag::validate. A 2-task cycle is the
+    /// minimum interesting case.
+    #[test]
+    fn test_task_dag_validate_rejects_cycle() {
+        let json = r#"{
+            "plan": [],
+            "result": "ok",
+            "inner_plan": {
+                "task_dag": {
+                    "name": "circular",
+                    "tasks": [
+                        {"id": 1, "name": "a", "description": "first", "nodes": [], "depends_on": [2], "metadata": {}},
+                        {"id": 2, "name": "b", "description": "second", "nodes": [], "depends_on": [1], "metadata": {}}
+                    ],
+                    "metadata": {}
+                }
+            }
+        }"#;
+
+        let output = parse_plan_output(json).unwrap();
+        let task_dag = output
+            .inner_plan
+            .as_ref()
+            .and_then(|ip| ip.task_dag.as_ref())
+            .expect("task_dag must parse");
+        let err = task_dag.validate().expect_err("cycle must reject");
+        assert!(
+            format!("{err}").to_lowercase().contains("cycle"),
+            "error must mention cycle, got: {err}"
+        );
     }
 
     /// Verifies the parallel-fanout calculation that
