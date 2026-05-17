@@ -233,6 +233,35 @@ async fn validate_vllm(
         .map_err(|e| validation_err(name, format!("Request failed: {e}")))?;
 
     if resp.status().is_success() {
+        // The vllm protocol contract is the APXM-fork's graph-aware HTTP
+        // surface. A backend that serves /v1/models but is missing
+        // /v1/apxm/scheduler is upstream vanilla vLLM, not the APXM
+        // fork — refuse to validate so the operator catches the
+        // mismatch at registration time instead of at first graph
+        // execution.
+        let scheduler_url = format!("{base}/apxm/scheduler");
+        let mut sreq = client.get(&scheduler_url);
+        if let Some(api_key) = backend.api_key.as_deref().filter(|key| !key.is_empty()) {
+            sreq = sreq.bearer_auth(api_key);
+        }
+        for (k, v) in &backend.headers {
+            sreq = sreq.header(k.as_str(), v.as_str());
+        }
+        let sresp = sreq
+            .send()
+            .await
+            .map_err(|e| validation_err(name, format!("/v1/apxm/scheduler probe failed: {e}")))?;
+        if !sresp.status().is_success() {
+            return Err(validation_err(
+                name,
+                format!(
+                    "vLLM server at {base} is missing /v1/apxm/scheduler (HTTP {}). \
+                     The vllm protocol expects the APXM fork; register vanilla \
+                     vLLM under protocol=openai instead.",
+                    sresp.status()
+                ),
+            ));
+        }
         return Ok(format!("OK ({})", resp.status()));
     }
 

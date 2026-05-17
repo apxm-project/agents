@@ -97,3 +97,6 @@ apxm.toml.local
 .venv/
 .cursor*/
 .tmp/
+
+# Operator's local zoo manifest (gitignored; copy zoo.example.toml to seed)
+deploy/vllm/zoo.toml
