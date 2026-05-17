@@ -37,8 +37,20 @@ static graph script per tenant. Currently shipped:
   deterministically from `hash_ids`). Open-loop arrival timing is a
   follow-up wave — see `mooncake_replay.py` docstring.
 
-ShareGPT multi-turn (W4b) and LooGLE long-shared-context (W4c) reuse the
-same driver framework and are not yet shipped.
+- **ShareGPT multi-turn (W4b)** — `workloads/sharegpt_row.py` (per-row
+  graph) + `workloads/data/sharegpt_sample.jsonl` (3-conversation
+  vendored smoke sample) + `workloads/data/fetch_sharegpt.sh`
+  (idempotent fetcher for `ShareGPT_V3_unfiltered_cleaned_split.json`
+  into gitignored `.apxm/datasets/sharegpt/`). The row adapter emits a
+  sequential ASK chain — one node per `human` turn, each prompted with
+  the full prior-turn history — so the rendered prefix grows
+  monotonically and RadixAttention / the APXM pin path see the real
+  multi-turn prefix-cache pattern. Env contract:
+  `SHAREGPT_CONVERSATION_JSON`, `SHAREGPT_ROW_INDEX`,
+  `SHAREGPT_MAX_TURNS` (default 8).
+
+LooGLE long-shared-context (W4c) reuses the same template and is not
+yet shipped.
 
 ## Env-var contract
 
