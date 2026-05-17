@@ -1206,3 +1206,286 @@ async fn mcp_tools_call_rejects_non_object_arguments() {
         "expected argument shape rejection: {body}"
     );
 }
+
+// ── Skill-root discovery (CLI args + APXM_SKILL_ROOTS env var) ──────────────
+//
+// These tests exercise `parse_skill_roots` and `prepend_builtin_skill_root`,
+// which are the same functions used by `apxm-server` (HTTP) startup and
+// `apxm-mcp-server` (stdio) `discovered_skill_roots`. The env-var path mutates
+// process global state, so tests that touch APXM_SKILL_ROOTS serialize through
+// `SKILL_ROOTS_ENV_LOCK` and restore the previous value when they finish.
+
+const APXM_SKILL_ROOTS_ENV: &str = "APXM_SKILL_ROOTS";
+const USER_SKILL_PACKAGE_DIR: &str = "user-skill-fixture";
+const USER_SKILL_ID: &str = "user-skill-fixture";
+const USER_SKILL_VERSION: &str = "0.1.0";
+const USER_SKILL_SOURCE: &str = "# User Skill Fixture\n";
+const ALT_USER_SKILL_PACKAGE_DIR: &str = "alt-user-skill";
+const ALT_USER_SKILL_ID: &str = "alt-user-skill";
+const ALT_USER_SKILL_VERSION: &str = "0.2.0";
+const ALT_USER_SKILL_SOURCE: &str = "# Alt User Skill\n";
+const BUILTIN_SKILL_ID: &str = "apxm-plan-as-graph";
+const COLLIDING_USER_VERSION: &str = "9.9.9-user-override";
+const COLLIDING_USER_SOURCE: &str = "# User override of apxm-plan-as-graph\n";
+
+static SKILL_ROOTS_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+struct SkillRootsEnvGuard {
+    prior: Option<std::ffi::OsString>,
+    _lock: std::sync::MutexGuard<'static, ()>,
+}
+
+impl SkillRootsEnvGuard {
+    #[allow(unsafe_code)]
+    fn set(value: Option<&std::ffi::OsStr>) -> Self {
+        let lock = SKILL_ROOTS_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let prior = std::env::var_os(APXM_SKILL_ROOTS_ENV);
+        // SAFETY: tests that touch APXM_SKILL_ROOTS hold SKILL_ROOTS_ENV_LOCK,
+        // so no other test thread observes the mutation. The previous value
+        // is restored on drop. `std::env::set_var`/`remove_var` require
+        // `unsafe` in Rust 2024 because they are process-global.
+        unsafe {
+            match value {
+                Some(value) => std::env::set_var(APXM_SKILL_ROOTS_ENV, value),
+                None => std::env::remove_var(APXM_SKILL_ROOTS_ENV),
+            }
+        }
+        Self { prior, _lock: lock }
+    }
+}
+
+impl Drop for SkillRootsEnvGuard {
+    #[allow(unsafe_code)]
+    fn drop(&mut self) {
+        // SAFETY: lock is still held; restore prior value (or remove if unset).
+        unsafe {
+            match self.prior.take() {
+                Some(value) => std::env::set_var(APXM_SKILL_ROOTS_ENV, value),
+                None => std::env::remove_var(APXM_SKILL_ROOTS_ENV),
+            }
+        }
+    }
+}
+
+fn write_minimal_user_skill(
+    root: &std::path::Path,
+    package_dir: &str,
+    skill_id: &str,
+    version: &str,
+    source: &str,
+) {
+    let skill_dir = root.join(package_dir);
+    std::fs::create_dir_all(&skill_dir).expect("user skill dir");
+    std::fs::write(
+        skill_dir.join("skill.toml"),
+        format!(
+            r#"skill_id = "{skill_id}"
+version = "{version}"
+display_name = "User Skill {skill_id}"
+description = "User-provided skill fixture"
+entry_flow = "noop"
+required_capabilities = []
+timeout_ms = 60000
+token_limit = 4096
+side_effect_policy = "read_only"
+"#
+        ),
+    )
+    .expect("user manifest");
+    std::fs::write(skill_dir.join(FILE_SKILL_SOURCE), source).expect("user SKILL.md");
+}
+
+async fn list_mcp_resource_uris(app: Router) -> Vec<String> {
+    let (status, body) = post_json(
+        app,
+        routes::MCP,
+        serde_json::json!({
+            "jsonrpc": MCP_JSONRPC_VERSION,
+            "id": 42,
+            "method": MCP_METHOD_RESOURCES_LIST,
+            "params": {}
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "MCP resources/list failed: {body}");
+    body["result"][mcp_fields::RESOURCES]
+        .as_array()
+        .expect("resources array")
+        .iter()
+        .filter_map(|resource| resource[mcp_fields::URI].as_str().map(str::to_string))
+        .collect()
+}
+
+#[tokio::test]
+async fn mcp_resources_list_includes_user_skill_from_cli_root() {
+    let _guard = SkillRootsEnvGuard::set(None);
+    let temp = tempfile::tempdir().expect("tempdir");
+    write_minimal_user_skill(
+        temp.path(),
+        USER_SKILL_PACKAGE_DIR,
+        USER_SKILL_ID,
+        USER_SKILL_VERSION,
+        USER_SKILL_SOURCE,
+    );
+    let args = vec![
+        "apxm-mcp-server".to_string(),
+        "--skill-root".to_string(),
+        temp.path().to_string_lossy().to_string(),
+    ];
+    let roots = prepend_builtin_skill_root(parse_skill_roots(&args));
+
+    let app = build_app(test_state_with_skill_roots(roots).await);
+    let uris = list_mcp_resource_uris(app).await;
+    let user_uri = skill_resource_uri(USER_SKILL_ID, FILE_SKILL_SOURCE);
+    let builtin_uri = skill_resource_uri(BUILTIN_SKILL_ID, FILE_SKILL_SOURCE);
+    assert!(
+        uris.contains(&user_uri),
+        "user skill missing from CLI root resources: {uris:?}"
+    );
+    assert!(
+        uris.contains(&builtin_uri),
+        "builtin skill missing from resources: {uris:?}"
+    );
+}
+
+#[tokio::test]
+async fn mcp_resources_list_includes_user_skill_from_env_var() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    write_minimal_user_skill(
+        temp.path(),
+        USER_SKILL_PACKAGE_DIR,
+        USER_SKILL_ID,
+        USER_SKILL_VERSION,
+        USER_SKILL_SOURCE,
+    );
+    let _guard = SkillRootsEnvGuard::set(Some(temp.path().as_os_str()));
+    let args = vec!["apxm-mcp-server".to_string()];
+    let roots = prepend_builtin_skill_root(parse_skill_roots(&args));
+
+    let app = build_app(test_state_with_skill_roots(roots).await);
+    let uris = list_mcp_resource_uris(app).await;
+    let user_uri = skill_resource_uri(USER_SKILL_ID, FILE_SKILL_SOURCE);
+    let builtin_uri = skill_resource_uri(BUILTIN_SKILL_ID, FILE_SKILL_SOURCE);
+    assert!(
+        uris.contains(&user_uri),
+        "user skill missing from APXM_SKILL_ROOTS env resources: {uris:?}"
+    );
+    assert!(
+        uris.contains(&builtin_uri),
+        "builtin skill missing from resources: {uris:?}"
+    );
+}
+
+#[tokio::test]
+async fn mcp_resources_list_combines_cli_and_env_roots() {
+    let cli_root = tempfile::tempdir().expect("cli tempdir");
+    let env_root = tempfile::tempdir().expect("env tempdir");
+    write_minimal_user_skill(
+        cli_root.path(),
+        USER_SKILL_PACKAGE_DIR,
+        USER_SKILL_ID,
+        USER_SKILL_VERSION,
+        USER_SKILL_SOURCE,
+    );
+    write_minimal_user_skill(
+        env_root.path(),
+        ALT_USER_SKILL_PACKAGE_DIR,
+        ALT_USER_SKILL_ID,
+        ALT_USER_SKILL_VERSION,
+        ALT_USER_SKILL_SOURCE,
+    );
+    let _guard = SkillRootsEnvGuard::set(Some(env_root.path().as_os_str()));
+    let args = vec![
+        "apxm-mcp-server".to_string(),
+        "--skill-root".to_string(),
+        cli_root.path().to_string_lossy().to_string(),
+    ];
+    let roots = prepend_builtin_skill_root(parse_skill_roots(&args));
+
+    let app = build_app(test_state_with_skill_roots(roots).await);
+    let uris = list_mcp_resource_uris(app).await;
+    let cli_uri = skill_resource_uri(USER_SKILL_ID, FILE_SKILL_SOURCE);
+    let env_uri = skill_resource_uri(ALT_USER_SKILL_ID, FILE_SKILL_SOURCE);
+    let builtin_uri = skill_resource_uri(BUILTIN_SKILL_ID, FILE_SKILL_SOURCE);
+    assert!(
+        uris.contains(&cli_uri),
+        "CLI-root user skill missing: {uris:?}"
+    );
+    assert!(
+        uris.contains(&env_uri),
+        "env-root user skill missing: {uris:?}"
+    );
+    assert!(
+        uris.contains(&builtin_uri),
+        "builtin skill missing: {uris:?}"
+    );
+}
+
+#[tokio::test]
+async fn mcp_resources_list_builtin_wins_on_id_collision() {
+    // User attempts to shadow the bundled `apxm-plan-as-graph` skill by
+    // contributing a package with the same skill_id (different version) via
+    // `--skill-root`. The builtin must still appear, and listings must
+    // disambiguate by version so the bundled artifact is not silently
+    // overridden.
+    let _guard = SkillRootsEnvGuard::set(None);
+    let temp = tempfile::tempdir().expect("tempdir");
+    write_minimal_user_skill(
+        temp.path(),
+        "user-plan-override",
+        BUILTIN_SKILL_ID,
+        COLLIDING_USER_VERSION,
+        COLLIDING_USER_SOURCE,
+    );
+    let args = vec![
+        "apxm-mcp-server".to_string(),
+        "--skill-root".to_string(),
+        temp.path().to_string_lossy().to_string(),
+    ];
+    let roots = prepend_builtin_skill_root(parse_skill_roots(&args));
+
+    let state = test_state_with_skill_roots(roots).await;
+    let library = state.skill_library.clone();
+    let app = build_app(state);
+
+    let uris = list_mcp_resource_uris(app.clone()).await;
+    let user_versioned_id = format!("{BUILTIN_SKILL_ID}@{COLLIDING_USER_VERSION}");
+    let user_versioned_uri = skill_resource_uri(&user_versioned_id, FILE_SKILL_SOURCE);
+    let unversioned_uri = skill_resource_uri(BUILTIN_SKILL_ID, FILE_SKILL_SOURCE);
+    assert!(
+        uris.contains(&user_versioned_uri),
+        "expected versioned user URI on id collision: {uris:?}"
+    );
+    assert!(
+        uris.iter().any(|uri| uri.starts_with(&format!(
+            "skill://{BUILTIN_SKILL_ID}@"
+        )) && uri.ends_with(&format!("/{FILE_SKILL_SOURCE}"))
+            && uri != &user_versioned_uri),
+        "expected builtin to appear as a separate versioned URI on collision: {uris:?}"
+    );
+    assert!(
+        !uris.contains(&unversioned_uri),
+        "unversioned URI must not appear when skill_id is duplicated: {uris:?}"
+    );
+
+    // Resolving the unversioned URI must be ambiguous — the builtin is not
+    // silently overridden by the user package.
+    let resolve_error = library
+        .resolve_skill_uri(&unversioned_uri)
+        .expect_err("ambiguous unversioned resolve");
+    assert!(
+        resolve_error.to_string().contains("multiple versions"),
+        "expected ambiguity error, got: {resolve_error}"
+    );
+
+    // The user-contributed version is still readable via its versioned URI;
+    // its contents are the user-supplied source (not the builtin) — the
+    // builtin remains addressable under its own version, which is what
+    // "builtin wins" means here: the user cannot silently replace it.
+    let user_read = library
+        .resolve_skill_uri(&user_versioned_uri)
+        .expect("user versioned read");
+    assert_eq!(user_read.text, COLLIDING_USER_SOURCE);
+}
