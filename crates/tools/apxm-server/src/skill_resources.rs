@@ -199,6 +199,9 @@ pub(crate) fn parse_cli_skill_roots(args: &[String]) -> Vec<PathBuf> {
     dedupe_paths(roots)
 }
 
+// Used by the sibling `apxm_mcp` binary (which #[path]-includes this module)
+// and by in-crate tests; invisible to the `apxm-server` binary's dead_code lint.
+#[allow(dead_code)]
 pub(crate) fn scan_resource_packages(roots: &[PathBuf]) -> Vec<ResourcePackage> {
     let mut package_dirs = Vec::new();
     for root in roots {
@@ -295,6 +298,9 @@ pub(crate) fn resource_package(
     }
 }
 
+// Helper for `scan_resource_packages`; reachable only via that public entry
+// point (used by `apxm_mcp` binary + tests).
+#[allow(dead_code)]
 fn resource_package_from_manifest(package_dir: &Path) -> Option<ResourcePackage> {
     let manifest_path = package_dir.join(apxm_skill::MANIFEST_FILE);
     let manifest = apxm_skill::parse_manifest_file(&manifest_path).ok()?;
@@ -442,6 +448,9 @@ fn validate_resource_path(path: &str) -> Result<PathBuf, SkillResourceError> {
     Ok(candidate)
 }
 
+// Helper for `scan_resource_packages`; reachable only via that public entry
+// point (used by `apxm_mcp` binary + tests).
+#[allow(dead_code)]
 fn find_manifest_dirs(root: &Path, packages: &mut Vec<PathBuf>) {
     if !root.exists() || is_symlink(root) {
         return;

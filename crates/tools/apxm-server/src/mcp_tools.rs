@@ -20,7 +20,7 @@ use apxm_runtime::{
     EmitterAdapter, ExecutionEventEmitter, MemorySpace, Runtime, RuntimeExecutionResult,
 };
 use serde::Deserialize;
-use serde_json::{Value as JsonValue, json};
+use serde_json::{Map, Value as JsonValue, json};
 
 use crate::mcp_protocol::{
     admission_error, args as mcp_args, defaults as mcp_defaults, evidence_path, plan_field,
@@ -31,7 +31,12 @@ const PLAN_PROMPT: &str = include_str!("../skills/apxm-plan-as-graph/prompt.md")
 const PLAN_SCHEMA: &str = include_str!("../skills/apxm-plan-as-graph/schema.json");
 const PLAN_MAX_TOKENS: usize = 8192;
 const PLAN_TEMPERATURE: f64 = 0.0;
-const PLAN_REPAIR_ATTEMPTS: usize = 2;
+// Three attempts cover the observed worst case where the first emission
+// violates the schema one way (e.g. an unknown wrapper field) and the
+// second-turn repair introduces a different violation (e.g. omits a
+// required top-level key); two attempts can exhaust before the second
+// class of error is corrected.
+const PLAN_REPAIR_ATTEMPTS: usize = 3;
 const PLAN_REPAIR_FEEDBACK_HEADING: &str = "Compiler or validation feedback to repair:";
 const PLAN_REPAIR_FEEDBACK_PREFIX: &str =
     "The previous response could not be converted into executable APXM AIR";
@@ -62,6 +67,17 @@ const PLAN_NODE_NESTED_ATTRIBUTE_FIELDS: &[&str] = &[
     plan_field::AGENT,
     plan_field::CAPABILITY,
     plan_field::ARGS,
+];
+// Top-level (graph) fields tolerated by serde for PlanGraph. Any other key the
+// LLM volunteered (e.g. `attr`, `description`, `metadata`) is stripped during
+// normalization so a small schema slip does not waste a repair attempt. At
+// graph scope every allowed field is also lift-eligible, so the alias-lift
+// pass passes this same slice as both `allowed` and `nestable`.
+const PLAN_GRAPH_ALLOWED_FIELDS: &[&str] = &[
+    plan_field::NAME,
+    plan_field::ENTRY,
+    plan_field::PARAMETERS,
+    plan_field::NODES,
 ];
 const EVIDENCE_MAX_FILE_BYTES: u64 = 128 * 1024;
 const EVIDENCE_MAX_SCAN_FILES: usize = 4_096;
@@ -636,6 +652,7 @@ fn build_compiled_plan_graph(value: JsonValue) -> Result<CompiledPlanGraph, Stri
 }
 
 fn normalize_plan_value(mut plan: JsonValue) -> Result<JsonValue, String> {
+    normalize_plan_top_level_attribute_aliases(&mut plan);
     normalize_plan_top_level_defaults(&mut plan);
     normalize_plan_node_attribute_aliases(&mut plan);
     let node_id_aliases = normalize_plan_node_ids(&mut plan)?;
@@ -698,6 +715,42 @@ fn normalize_plan_value(mut plan: JsonValue) -> Result<JsonValue, String> {
     Ok(plan)
 }
 
+/// Strip non-schema top-level fields and lift nested `attr`/`attrs`/
+/// `attributes` wrappers. Mirrors `normalize_plan_node_attribute_aliases`
+/// at the graph surface so both layers tolerate the same shape drift.
+fn normalize_plan_top_level_attribute_aliases(plan: &mut JsonValue) {
+    let Some(object) = plan.as_object_mut() else {
+        return;
+    };
+    lift_aliases_into_object(object, PLAN_GRAPH_ALLOWED_FIELDS, PLAN_GRAPH_ALLOWED_FIELDS);
+}
+
+/// Move fields out of an `attr`/`attrs`/`attributes` wrapper into the parent
+/// object, then drop any sibling key that is not in `allowed_fields`. Existing
+/// canonical fields take priority over wrapper-supplied values.
+fn lift_aliases_into_object(
+    object: &mut Map<String, JsonValue>,
+    nestable_fields: &[&str],
+    allowed_fields: &[&str],
+) {
+    for alias in PLAN_NODE_ATTRIBUTE_ALIASES {
+        let Some(alias_value) = object.remove(*alias) else {
+            continue;
+        };
+        let Some(alias_object) = alias_value.as_object() else {
+            continue;
+        };
+        for field in nestable_fields {
+            if !object.contains_key(*field)
+                && let Some(value) = alias_object.get(*field)
+            {
+                object.insert((*field).to_string(), value.clone());
+            }
+        }
+    }
+    object.retain(|field, _| allowed_fields.contains(&field.as_str()));
+}
+
 fn normalize_plan_top_level_defaults(plan: &mut JsonValue) {
     let Some(object) = plan.as_object_mut() else {
         return;
@@ -736,25 +789,13 @@ fn normalize_plan_node_attribute_aliases(plan: &mut JsonValue) {
         return;
     };
     for node in nodes {
-        let Some(object) = node.as_object_mut() else {
-            continue;
-        };
-        for alias in PLAN_NODE_ATTRIBUTE_ALIASES {
-            let Some(alias_value) = object.remove(*alias) else {
-                continue;
-            };
-            let Some(alias_object) = alias_value.as_object() else {
-                continue;
-            };
-            for field in PLAN_NODE_NESTED_ATTRIBUTE_FIELDS {
-                if !object.contains_key(*field)
-                    && let Some(value) = alias_object.get(*field)
-                {
-                    object.insert((*field).to_string(), value.clone());
-                }
-            }
+        if let Some(object) = node.as_object_mut() {
+            lift_aliases_into_object(
+                object,
+                PLAN_NODE_NESTED_ATTRIBUTE_FIELDS,
+                PLAN_NODE_ALLOWED_FIELDS,
+            );
         }
-        object.retain(|field, _| PLAN_NODE_ALLOWED_FIELDS.contains(&field.as_str()));
     }
 }
 
@@ -986,13 +1027,29 @@ fn decode_plan_graph(value: &JsonValue) -> Result<JsonValue, String> {
     if value.get(plan_field::NODES).is_some() {
         return Ok(value.clone());
     }
-    value.get(plan_field::GRAPH).cloned().ok_or_else(|| {
-        format!(
-            "expected top-level '{}' or '{}'",
-            plan_field::NODES,
-            plan_field::GRAPH
-        )
-    })
+    if let Some(graph) = value.get(plan_field::GRAPH) {
+        return Ok(graph.clone());
+    }
+    // gpt-oss-120b occasionally wraps the entire plan inside one of the
+    // PLAN_NODE_ATTRIBUTE_ALIASES keys (`attr`/`attrs`/`attributes`). If that
+    // wrapper exposes `nodes` or `graph`, treat it as the real plan envelope
+    // rather than burning a repair attempt rejecting an unknown top-level key.
+    for alias in PLAN_NODE_ATTRIBUTE_ALIASES {
+        let Some(wrapped) = value.get(*alias) else {
+            continue;
+        };
+        if wrapped.get(plan_field::NODES).is_some() {
+            return Ok(wrapped.clone());
+        }
+        if let Some(graph) = wrapped.get(plan_field::GRAPH) {
+            return Ok(graph.clone());
+        }
+    }
+    Err(format!(
+        "expected top-level '{}' or '{}'",
+        plan_field::NODES,
+        plan_field::GRAPH
+    ))
 }
 
 fn parse_plan_graph(value: JsonValue) -> Result<(PlanGraph, JsonValue), String> {

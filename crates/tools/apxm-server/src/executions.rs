@@ -125,6 +125,10 @@ impl ExecutionStore {
         loaded
     }
 
+    // Convenience overload (no provenance) used by in-crate tests
+    // (`tests/skills_records.rs`, `tests/mcp.rs`). Production code paths
+    // call `start_skill_execution_with_provenance{,_and_execution_id}`.
+    #[allow(dead_code)]
     pub(crate) fn start_skill_execution(
         &self,
         skill_id: &str,

@@ -519,6 +519,28 @@ fn mock_named_dependency_plan_response() -> serde_json::Value {
     })
 }
 
+fn mock_top_level_attr_alias_plan_response() -> serde_json::Value {
+    // Exercises normalize_plan_top_level_attribute_aliases: the model nests
+    // the entire graph inside a top-level `attr` wrapper and also volunteers
+    // an unrelated `description` field. The normalizer must lift the nested
+    // fields and strip the stray top-level keys before serde sees them.
+    serde_json::json!({
+        (FIXTURE_PLAN_ATTR_ALIAS): {
+            (plan_field::NAME): FIXTURE_PLAN_NAME,
+            (plan_field::ENTRY): FIXTURE_ENTRY_FLOW,
+            (plan_field::NODES): [
+                {
+                    (plan_field::ID): FIXTURE_NODE_ID,
+                    (plan_field::NAME): FIXTURE_PLAN_NODE_NAME,
+                    (plan_field::OP): FIXTURE_PLAN_OP_YIELD,
+                    (plan_field::PROMPT): FIXTURE_OUTPUT
+                }
+            ]
+        },
+        "description": "free-form metadata the model volunteered"
+    })
+}
+
 fn mock_invalid_plan_response() -> serde_json::Value {
     serde_json::json!({
         (plan_field::NAME): FIXTURE_PLAN_NAME,
