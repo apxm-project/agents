@@ -166,6 +166,8 @@ fn boxed_core_payload_from_json(
         boxed!(PlanStepStartedPayload)
     } else if kind_name == kind::PLAN_STEP_COMPLETED.name() {
         boxed!(PlanStepCompletedPayload)
+    } else if kind_name == kind::PLAN_GRAPH_EMITTED.name() {
+        boxed!(PlanGraphEmittedPayload)
     } else if kind_name == kind::MEMORY_READ.name() {
         boxed!(MemoryReadPayload)
     } else if kind_name == kind::MEMORY_WRITE.name() {
@@ -569,6 +571,33 @@ pub struct PlanStepCompletedPayload {
     pub success: bool,
 }
 impl_event_payload!(PlanStepCompletedPayload, kind::PLAN_STEP_COMPLETED);
+
+/// An LLM-emitted plan included a structured task DAG that the runtime
+/// is about to compile and splice into the live execution graph.
+///
+/// Emitted from the PLAN handler after the planner LLM response is
+/// parsed and before the inner-plan linker compiles the DAG. Lets
+/// observers tell apart the "LLM produced free-text steps" path from
+/// the "LLM produced an executable graph" path, and captures the
+/// shape of that graph for trace analysis.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanGraphEmittedPayload {
+    /// Plan identifier (the outer PLAN node's id).
+    pub plan_id: String,
+    /// Model that emitted the task DAG.
+    pub generating_model: String,
+    /// Number of tasks (nodes) in the emitted DAG.
+    pub node_count: usize,
+    /// Task ids as declared by the LLM (preserves the order the model
+    /// wrote them; the linker may renumber).
+    pub task_ids: Vec<u64>,
+    /// Maximum fan-out across the DAG — i.e. the largest set of tasks
+    /// that share the same `depends_on` and can therefore run in
+    /// parallel. 1 means a linear chain; >1 quantifies extracted
+    /// parallelism.
+    pub parallel_fanout_max: usize,
+}
+impl_event_payload!(PlanGraphEmittedPayload, kind::PLAN_GRAPH_EMITTED);
 
 /// A memory read event.
 #[derive(Debug, Clone, Serialize, Deserialize)]

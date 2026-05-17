@@ -55,6 +55,13 @@ pub enum ExecutionEvent {
         step_index: usize,
         success: bool,
     },
+    PlanGraphEmitted {
+        plan_id: String,
+        generating_model: String,
+        node_count: usize,
+        task_ids: Vec<u64>,
+        parallel_fanout_max: usize,
+    },
 
     // ── Memory events ───────────────────────────────────────────────
     MemoryRead {
@@ -186,6 +193,15 @@ pub trait ExecutionEventEmitter: Send + Sync {
     fn emit_plan_created(&self, _plan_id: &str, _steps: usize) {}
     fn emit_plan_step_started(&self, _plan_id: &str, _step_index: usize) {}
     fn emit_plan_step_completed(&self, _plan_id: &str, _step_index: usize, _success: bool) {}
+    fn emit_plan_graph_emitted(
+        &self,
+        _plan_id: &str,
+        _generating_model: &str,
+        _node_count: usize,
+        _task_ids: &[u64],
+        _parallel_fanout_max: usize,
+    ) {
+    }
 
     // ── Memory ──────────────────────────────────────────────────────
     fn emit_memory_read(&self, _scope: &str, _key: &str) {}

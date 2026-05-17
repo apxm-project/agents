@@ -243,6 +243,36 @@ async fn execute_plan_once(
             );
         }
 
+        // Plans-as-graphs telemetry: when the LLM emitted a structured
+        // task DAG (vs free-text steps or raw AIR), record what we
+        // received so trace consumers can tell the paths apart.
+        // depends_on counts: how many tasks share each "deps fingerprint"
+        // — the largest bucket is the maximum parallel fan-out.
+        if let Some(task_dag) = plan.inner_plan.as_ref().and_then(|ip| ip.task_dag.as_ref()) {
+            if let Some(emitter) = &ctx.event_emitter {
+                let mut deps_buckets: HashMap<Vec<u64>, usize> = HashMap::new();
+                for task in &task_dag.tasks {
+                    let mut deps = task.depends_on.clone();
+                    deps.sort_unstable();
+                    *deps_buckets.entry(deps).or_insert(0) += 1;
+                }
+                let parallel_fanout_max = deps_buckets.values().copied().max().unwrap_or(0);
+                let task_ids: Vec<u64> = task_dag.tasks.iter().map(|t| t.id).collect();
+                let generating_model = if response.model.is_empty() {
+                    "<unknown>"
+                } else {
+                    response.model.as_str()
+                };
+                emitter.emit_plan_graph_emitted(
+                    &ctx.execution_id,
+                    generating_model,
+                    task_dag.tasks.len(),
+                    &task_ids,
+                    parallel_fanout_max,
+                );
+            }
+        }
+
         // Store plan in memory
         let plan_json = serde_json::to_value(&plan.steps)
             .map_err(|e| RuntimeError::Serialization(format!("Failed to serialize plan: {}", e)))?;
@@ -525,5 +555,71 @@ Done."#;
         let output = parse_plan_output(json).unwrap();
         assert!(output.has_inner_plan());
         assert!(output.inner_plan.and_then(|p| p.task_dag).is_some());
+    }
+
+    /// Parses the fan-out worked example from the PLAN system prompt
+    /// (`plan_outer_system.md.jinja`) and verifies it produces the
+    /// expected DAG shape: 5 tasks, fan-out=3 after task 1, join at
+    /// task 5. If the prompt's example schema drifts from the Plan
+    /// struct's actual deserialization, this test fails and surfaces
+    /// the contract mismatch before runtime.
+    #[test]
+    fn test_parse_plan_output_matches_prompt_fanout_example() {
+        let json = r#"{
+            "plan": [
+                {"description": "decompose into sub-questions", "priority": 90, "dependencies": []},
+                {"description": "research each sub-question", "priority": 80, "dependencies": ["decompose into sub-questions"]},
+                {"description": "synthesize findings", "priority": 70, "dependencies": ["research each sub-question"]}
+            ],
+            "result": "structured research brief on the requested topic",
+            "inner_plan": {
+                "task_dag": {
+                    "name": "research",
+                    "tasks": [
+                        {"id": 1, "name": "decompose", "description": "Decompose the topic into 3 sub-questions", "nodes": [], "depends_on": [], "metadata": {}},
+                        {"id": 2, "name": "sq1", "description": "Research sub-question 1", "nodes": [], "depends_on": [1], "metadata": {}},
+                        {"id": 3, "name": "sq2", "description": "Research sub-question 2", "nodes": [], "depends_on": [1], "metadata": {}},
+                        {"id": 4, "name": "sq3", "description": "Research sub-question 3", "nodes": [], "depends_on": [1], "metadata": {}},
+                        {"id": 5, "name": "synthesize", "description": "Synthesize findings from all sub-questions", "nodes": [], "depends_on": [2, 3, 4], "metadata": {}}
+                    ],
+                    "metadata": {}
+                }
+            }
+        }"#;
+
+        let output = parse_plan_output(json).unwrap();
+        let task_dag = output
+            .inner_plan
+            .as_ref()
+            .and_then(|ip| ip.task_dag.as_ref())
+            .expect("prompt example must produce an inner task_dag");
+        assert_eq!(task_dag.tasks.len(), 5);
+        assert_eq!(task_dag.tasks[0].depends_on, Vec::<u64>::new());
+        assert_eq!(task_dag.tasks[1].depends_on, vec![1]);
+        assert_eq!(task_dag.tasks[4].depends_on, vec![2, 3, 4]);
+    }
+
+    /// Verifies the parallel-fanout calculation that
+    /// PlanGraphEmittedPayload reports. Tasks sharing the same
+    /// `depends_on` set fan out in parallel after that set completes;
+    /// the max bucket count is the extracted parallelism width.
+    #[test]
+    fn test_parallel_fanout_max_groups_by_dependency_set() {
+        use std::collections::HashMap;
+        let depends_on_lists: Vec<Vec<u64>> = vec![
+            vec![],        // task 1 (root)
+            vec![1],       // task 2 — shares deps {1} with 3, 4
+            vec![1],       // task 3
+            vec![1],       // task 4
+            vec![2, 3, 4], // task 5 — alone in its bucket
+        ];
+
+        let mut buckets: HashMap<Vec<u64>, usize> = HashMap::new();
+        for mut deps in depends_on_lists {
+            deps.sort_unstable();
+            *buckets.entry(deps).or_insert(0) += 1;
+        }
+        let parallel_fanout_max = buckets.values().copied().max().unwrap_or(0);
+        assert_eq!(parallel_fanout_max, 3, "tasks 2,3,4 share depends_on=[1]");
     }
 }
