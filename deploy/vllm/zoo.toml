@@ -10,6 +10,15 @@
 
 schema_version = 1
 
+# Cluster-wide defaults applied to every [[deployment]] that does not
+# explicitly override the key. Pin the runtime image here so `zoo-apply`
+# never silently falls through to the APXM_VLLM_IMAGE env or hard-errors.
+[defaults]
+image = "apxm-vllm-runtime:a0e42ad3-e4e3a9af-post-rebase"
+scheduling_policy = "priority"
+enable_prefix_caching = true
+max_num_seqs = 64
+
 # Single-node single-instance — TP=8, 1 node, GPUs 0–7.
 [[deployment]]
 name = "vllm-gptoss"
