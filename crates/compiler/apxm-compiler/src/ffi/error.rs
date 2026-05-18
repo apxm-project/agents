@@ -28,15 +28,6 @@ pub fn error_collector_get_all() -> Vec<*mut raw::ApxmError> {
     ptrs
 }
 
-/// Get first error
-///
-/// Returns a raw pointer that must be freed with `error_free`
-#[allow(dead_code)]
-pub fn error_collector_get_first() -> Option<*const raw::ApxmError> {
-    let ptr = unsafe { raw::apxm_error_collector_get_first() };
-    if ptr.is_null() { None } else { Some(ptr) }
-}
-
 /// Free a error allocated by the C API
 pub fn error_free(err: *mut raw::ApxmError) {
     if !err.is_null() {
