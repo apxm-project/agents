@@ -7,6 +7,32 @@ contract is committed to.
 
 ## [Unreleased]
 
+### Fixed — fork-side v0.21.0 rebase regression
+- `external/vllm` bumped to `cc1fbf4c0` on the `apxm` branch:
+  the APXM patch in `vllm/v1/core/sched/scheduler.py` called the
+  pre-rename `request.num_cached_tokens` attribute in its debug log,
+  crashing the engine on the first APXM-tagged request. Renamed to
+  `request.num_computed_tokens` per upstream v0.21.0.
+
+### Added — Plan 01 EVAL canonical 2×2 matrix
+- First complete Phase-G 2×2 matrix on `openai/gpt-oss-120b` (TP=8
+  on 1 × MI300X, vLLM-fork `cc1fbf4c0`,
+  `gpu-memory-utilization=0.9`, `max-num-seqs=64`,
+  `--scheduling-policy=priority`, `--enable-prefix-caching`
+  per-cell). 4 cells × 10 iter × concurrency 32 on the `pin_demo`
+  workload; **0 failed tenants across 1280 invocations**. Headline:
+  Cell D (APXM-on + prefix-cache, warm) vs Cell B (flat-HTTP +
+  prefix-cache, warm) paired bootstrap-CI **[0.076, 0.823]** cleanly
+  excludes 1.0 — APXM-on delivers a 17.7%–92.4% reduction in
+  `batch_wall_ms`. Pin engagement verified
+  (`pinned_blocks_peak_max=4451`). Honest negative reported:
+  cold-cache cell C is 18% slower than cell A on central tendency.
+- Default workload for `examples/python/benchmarks/concurrent_matrix.py`
+  switched to `workloads/pin_demo.py` — the previous default
+  `stress/prefix_fanout_concurrent.py` is documented as
+  engine-crashing in
+  `examples/python/benchmarks/KNOWN-ISSUES.md`.
+
 ### Added — dispatch-IR honesty closure
 - **Runtime-time capability gating** — `evaluate_required_capabilities`
   in `apxm-runtime::dispatch::v1` gates graph registration on the backend's
