@@ -29,6 +29,13 @@ ENV_INPUT_TEXT_PATH = "MOONCAKE_INPUT_TEXT_PATH"
 ENV_MAX_TOKENS = "MOONCAKE_MAX_TOKENS"
 ENV_ROW_INDEX = "MOONCAKE_ROW_INDEX"
 ENV_VARIANT = "APXM_MATRIX_VARIANT"
+# Cohort tag derived from the trace's hash_ids[0] (the first
+# prefix-cache block id). Rows that share their first hash_id land in
+# the same APXM reuse_group, which is the runtime's cohort hook for
+# the pin path. Without this, the Mooncake replay's natural
+# prefix-cache sharing structure is invisible to the APXM scheduler.
+# Driver-set via the row adapter env var below.
+ENV_REUSE_GROUP = "MOONCAKE_REUSE_GROUP"
 
 DEFAULT_PROMPT = (
     "Default Mooncake row prompt. Driver did not set MOONCAKE_INPUT_TEXT; "
@@ -57,12 +64,26 @@ def _row_index() -> str:
     return os.environ.get(ENV_ROW_INDEX, "0")
 
 
+def _reuse_group() -> str | None:
+    """Cohort tag for the APXM pin path. The driver derives it from
+    `hash_ids[0]` of the trace row — rows sharing their first
+    prefix-cache block land in the same cohort. When unset (legacy
+    driver or smoke-only invocation), return None so the runtime
+    treats the request as solo."""
+    val = os.environ.get(ENV_REUSE_GROUP, "").strip()
+    return val or None
+
+
 @compile(default_provider=VLLM, default_route=VLLM_ROUTE)
 def mooncake_row(g: GraphRecorder):
-    answer = g.ask(
-        name=f"mooncake_row_{_row_index()}",
-        prompt=_row_prompt(),
-    )
+    kwargs = {
+        "name": f"mooncake_row_{_row_index()}",
+        "prompt": _row_prompt(),
+    }
+    cohort = _reuse_group()
+    if cohort:
+        kwargs["reuse_group"] = cohort
+    answer = g.ask(**kwargs)
     g.done(answer)
 
 
