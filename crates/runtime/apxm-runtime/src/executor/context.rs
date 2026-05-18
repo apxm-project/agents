@@ -266,6 +266,12 @@ impl ExecutionContext {
         self
     }
 
+    /// Replace the flow registry used by flow-control operation handlers.
+    pub fn with_flow_registry(mut self, flow_registry: Arc<FlowRegistry>) -> Self {
+        self.flow_registry = flow_registry;
+        self
+    }
+
     /// Set a cancellation token (replaces the default root token).
     pub fn with_cancellation_token(mut self, token: CancellationToken) -> Self {
         self.cancellation_token = token;

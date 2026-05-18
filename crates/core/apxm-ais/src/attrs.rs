@@ -182,7 +182,7 @@ pub const REUSE_GROUP: &str = "shared_prefix_group";
 /// `examples/python/benchmarks/workloads/pin_demo.py`). The long-term
 /// resolution is to define a single canonical attribute enum that
 /// every layer (Python kwarg, MLIR pass, Rust runtime) shares — see
-/// the followup tracked in `docs/claims/dispatch-phase1-honest-null.md`.
+/// the followup tracked in the dispatch honesty claim.
 pub const REUSE_GROUP_LEGACY: &str = "reuse_group";
 pub const EST_TEMPLATE_TOKENS: &str = "est_template_tokens";
 

@@ -13,7 +13,7 @@ node's `goal`. When the planner LLM responds with a structured
      splice into the live ExecutionDag (the `inner_plan` path).
   4. Runs the spliced sub-graph end-to-end and returns the result.
 
-Equivalent to the Rust `dispatch_open_ended()` helper Plan 06 stretch B
+Equivalent to the Rust `dispatch_open_ended()` helper
 calls out, but built from existing primitives — no new runtime module,
 no SkillResolver shim. The wedge (commit a0054a3c) + validator (commit
 84e179ac) already plumbed every part except this one Python entry.

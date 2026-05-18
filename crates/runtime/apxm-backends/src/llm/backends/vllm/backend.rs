@@ -115,11 +115,25 @@ pub struct GraphStatusResponse {
 /// The fork's critical-path boost (which rewrites a request's priority to -1)
 /// is only consulted when `policy == "priority"`. If the running fork is in
 /// FCFS mode, APXM-stamped hints round-trip without effect.
+/// Tag the APXM fork advertises in `SchedulerInfoResponse.dispatch_ir_version`
+/// to confirm the running router understands the v1 dispatch-IR schema.
+/// The fork-side emitter ships the value; APXM gates
+/// `supports_dispatch_ir_v1_internal` on it when present.
+pub const DISPATCH_IR_V1_VERSION_TAG: &str = "v1";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SchedulerInfoResponse {
     pub object: String,
     pub policy: String,
     pub default: Option<String>,
+    /// Set by the APXM fork's `/v1/apxm/scheduler`
+    /// handler to advertise the dispatch-IR schema version it
+    /// understands (currently `"v1"`). Forward-compatible: older
+    /// fork builds omit the field and APXM falls back to "routes
+    /// exist" as the gating signal. Once the fork advertises, this
+    /// field is the authoritative source.
+    #[serde(default)]
+    pub dispatch_ir_version: Option<String>,
 }
 
 /// Graph-aware vLLM backend.
@@ -147,6 +161,12 @@ pub struct GraphAwareVllmBackend {
     scheduler_policy_warned: AtomicBool,
     /// Last successfully observed scheduler policy from `/v1/apxm/scheduler`.
     scheduler_policy: parking_lot::RwLock<Option<String>>,
+    /// Last successfully observed `dispatch_ir_version` from
+    /// `/v1/apxm/scheduler`. `None` when the fork build predates the
+    /// dispatch-IR advertising commit, in which case
+    /// `supports_dispatch_ir_v1_internal` falls back to "routes exist"
+    /// gating (set on successful synchronous probe).
+    dispatch_ir_version: parking_lot::RwLock<Option<String>>,
 }
 
 impl GraphAwareVllmBackend {
@@ -214,6 +234,7 @@ impl GraphAwareVllmBackend {
             structured_outputs_supported,
             scheduler_policy_warned: AtomicBool::new(false),
             scheduler_policy: parking_lot::RwLock::new(None),
+            dispatch_ir_version: parking_lot::RwLock::new(None),
         })
     }
 
@@ -245,12 +266,14 @@ impl GraphAwareVllmBackend {
                 match info {
                     Ok(info) if info.policy == super::graph_meta::SCHEDULER_POLICY_PRIORITY => {
                         *self.scheduler_policy.write() = Some(info.policy);
+                        *self.dispatch_ir_version.write() = info.dispatch_ir_version;
                         // Priority mode is active — APXM hints will reorder admission.
                         // Nothing to log; keep `scheduler_policy_warned` false so we
                         // re-check if a future health tick sees a different policy.
                     }
                     Ok(info) => {
                         *self.scheduler_policy.write() = Some(info.policy.clone());
+                        *self.dispatch_ir_version.write() = info.dispatch_ir_version.clone();
                         if !self.scheduler_policy_warned.swap(true, Ordering::Relaxed) {
                             tracing::warn!(
                                 policy = %info.policy,
@@ -602,6 +625,7 @@ impl LLMBackend for GraphAwareVllmBackend {
                 if let Ok(body) = response.json::<SchedulerInfoResponse>().await {
                     let policy = body.policy.clone();
                     *self.scheduler_policy.write() = Some(policy);
+                    *self.dispatch_ir_version.write() = body.dispatch_ir_version.clone();
                     // Warn-once on non-priority policy (the manifest disallows
                     // FCFS, so reaching here indicates the fork was started
                     // with the wrong --scheduling-policy flag). Still a soft
@@ -609,9 +633,7 @@ impl LLMBackend for GraphAwareVllmBackend {
                     // do KV pinning regardless of scheduler policy.
                     if !self.scheduler_policy_warned.swap(true, Ordering::Relaxed) {
                         let policy = self.scheduler_policy.read().clone();
-                        if policy.as_deref()
-                            != Some(super::graph_meta::SCHEDULER_POLICY_PRIORITY)
-                        {
+                        if policy.as_deref() != Some(super::graph_meta::SCHEDULER_POLICY_PRIORITY) {
                             tracing::warn!(
                                 "vLLM fork at {} reports scheduler policy {:?}; \
                                  APXM ships with priority enabled — per-request \
@@ -640,9 +662,8 @@ impl LLMBackend for GraphAwareVllmBackend {
                 );
             }
             Err(err) => {
-                return Err(err).context(
-                    "failed to probe vLLM /v1/apxm/scheduler during health_check",
-                );
+                return Err(err)
+                    .context("failed to probe vLLM /v1/apxm/scheduler during health_check");
             }
         }
 
@@ -690,6 +711,17 @@ impl LLMBackend for GraphAwareVllmBackend {
             .as_deref()
             .map(|policy| policy == super::graph_meta::SCHEDULER_POLICY_PRIORITY)
             .unwrap_or(false);
+        // If the fork advertises a `dispatch_ir_version`,
+        // gate `supports_dispatch_ir_v1_internal` on the tag matching
+        // `DISPATCH_IR_V1_VERSION_TAG` exactly. Older fork builds omit
+        // the field; for those, "registration succeeded" is the gating
+        // signal (the synchronous probe already proved /v1/apxm/* exist).
+        // Once every supported fork build advertises, the `None` branch
+        // becomes dead and can be removed.
+        let dispatch_ir_v1_supported = match self.dispatch_ir_version.read().as_deref() {
+            Some(tag) => tag == DISPATCH_IR_V1_VERSION_TAG,
+            None => true,
+        };
         BackendGraphCapabilities {
             supports_graph_registration: true,
             supports_request_hints: true,
@@ -700,7 +732,7 @@ impl LLMBackend for GraphAwareVllmBackend {
             supports_backend_queue_state: false,
             supports_backend_cache_state: true,
             supports_cancel_groups: false,
-            supports_dispatch_ir_v1_internal: true,
+            supports_dispatch_ir_v1_internal: dispatch_ir_v1_supported,
             supports_admin_reset_prefix_cache: true,
         }
     }

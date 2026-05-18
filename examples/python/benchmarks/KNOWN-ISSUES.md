@@ -2,7 +2,7 @@
 
 ## `stress/prefix_fanout_concurrent.py` reliably crashes vLLM engines
 
-**Symptom.** Running `phase_g_concurrent.py` (which dispatches the
+**Symptom.** Running `concurrent_matrix.py` (which dispatches the
 above as tenants) against any live vLLM service produces, after the
 first batch:
 
@@ -46,7 +46,7 @@ first batch:
 4. Bisect by reducing the prompt-generation length in
    `prefix_fanout_concurrent.py` until the engine survives.
 
-**Until fixed, don't use `phase_g_concurrent.py` against any
+**Until fixed, don't use `concurrent_matrix.py` against any
 production zoo service.** The crash kills the service, and the
 `sleep infinity` at the end of `run-vllm.sh` keeps the Slurm job
 in `R` state — so the only signal that the service is dead is

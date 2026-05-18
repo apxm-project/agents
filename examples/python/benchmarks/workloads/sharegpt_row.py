@@ -23,7 +23,7 @@ Env-var contract (set by the driver):
   SHAREGPT_MAX_TURNS            int   cap on human turns to emit (default 8;
                                        large conversations would otherwise
                                        overflow max_model_len)
-  APXM_PHASEG_VARIANT           int   tenant index (existing convention)
+  APXM_MATRIX_VARIANT           int   tenant index (existing convention)
 """
 import json
 import os
@@ -35,7 +35,7 @@ from _config import VLLM, VLLM_ROUTE
 ENV_CONVERSATION = "SHAREGPT_CONVERSATION_JSON"
 ENV_ROW_INDEX = "SHAREGPT_ROW_INDEX"
 ENV_MAX_TURNS = "SHAREGPT_MAX_TURNS"
-ENV_VARIANT = "APXM_PHASEG_VARIANT"
+ENV_VARIANT = "APXM_MATRIX_VARIANT"
 
 DEFAULT_MAX_TURNS = 8
 

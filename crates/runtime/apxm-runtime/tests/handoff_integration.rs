@@ -131,11 +131,8 @@ async fn handoff_transfers_execution_to_target_agent() {
 
     let emitter = Arc::new(RecordingEmitter::default());
     let ctx = ExecutionContext::new(memory, llm_registry, capability_system, Aam::new())
-        .with_event_emitter(Some(emitter.clone()));
-    let ctx = ExecutionContext {
-        flow_registry,
-        ..ctx
-    };
+        .with_event_emitter(Some(emitter.clone()))
+        .with_flow_registry(flow_registry);
 
     // Build a DAG: CONST_STR → HANDOFF
     let dag = ExecutionDag {
@@ -239,11 +236,8 @@ async fn handoff_without_transfer_state() {
     let flow_registry = Arc::new(FlowRegistry::new());
     flow_registry.register_flow("target_bot", "communicate", target_dag);
 
-    let ctx = ExecutionContext::new(memory, llm_registry, capability_system, Aam::new());
-    let ctx = ExecutionContext {
-        flow_registry,
-        ..ctx
-    };
+    let ctx = ExecutionContext::new(memory, llm_registry, capability_system, Aam::new())
+        .with_flow_registry(flow_registry);
 
     let dag = ExecutionDag {
         nodes: vec![

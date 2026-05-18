@@ -99,11 +99,8 @@ async fn make_engine(registry: Arc<FlowRegistry>) -> ExecutorEngine {
         llm_registry,
         capability_system,
         apxm_runtime::aam::Aam::new(),
-    );
-    let ctx = ExecutionContext {
-        flow_registry: registry,
-        ..ctx
-    };
+    )
+    .with_flow_registry(registry);
     ExecutorEngine::new(ctx)
 }
 

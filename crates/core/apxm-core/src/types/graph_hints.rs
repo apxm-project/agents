@@ -193,27 +193,66 @@ pub struct BackendGraphCapabilities {
 }
 
 impl BackendGraphCapabilities {
+    /// Returns the subset of `fields_sent` the backend reports it does
+    /// NOT support. The runtime emits this in `runtime.dispatch_ir_v1`
+    /// telemetry so claim evidence shows which APXM hints were silently
+    /// dropped because the backend cannot honor them.
     pub fn unsupported_dispatch_fields<'a>(
         &self,
         fields_sent: impl IntoIterator<Item = &'a str>,
     ) -> Vec<String> {
         fields_sent
             .into_iter()
-            .filter(|field| match *field {
-                "graph_registration" => !self.supports_graph_registration,
-                "request_hints" => !self.supports_request_hints,
-                "priority" => !self.supports_priority,
-                "prefix_cohorts" => !self.supports_prefix_cohorts,
-                "pin_release" => !self.supports_pin_release,
-                "structured_outputs" => !self.supports_structured_outputs,
-                "backend_queue_state" => !self.supports_backend_queue_state,
-                "backend_cache_state" => !self.supports_backend_cache_state,
-                "cancel_groups" => !self.supports_cancel_groups,
-                "dispatch_ir_v1_internal" => !self.supports_dispatch_ir_v1_internal,
-                _ => false,
-            })
+            .filter(|field| !self.field_supported(field))
             .map(ToOwned::to_owned)
             .collect()
+    }
+
+    /// Returns the subset of `fields_sent` the backend's *static
+    /// capability table* reports as supported — the complement of
+    /// `unsupported_dispatch_fields` over the same input. Together the
+    /// two lists partition the request's hint surface.
+    ///
+    /// Distinct from `fields_honored`, which is per-request runtime
+    /// evidence from the backend (the `x-apxm-fields-honored` response
+    /// header — see `crate::constants::llm::apxm::APXM_FIELDS_HONORED_HEADER`).
+    /// Capability-supported says "the backend declares it CAN honor this
+    /// field"; honored says "the backend reported it DID honor this
+    /// field on this specific request." The runtime-evidence contract reserves the
+    /// `fields_honored` name for the runtime-evidence signal; do not
+    /// conflate the two.
+    pub fn dispatch_fields_capability_supported<'a>(
+        &self,
+        fields_sent: impl IntoIterator<Item = &'a str>,
+    ) -> Vec<String> {
+        fields_sent
+            .into_iter()
+            .filter(|field| self.field_supported(field))
+            .map(ToOwned::to_owned)
+            .collect()
+    }
+
+    fn field_supported(&self, field: &str) -> bool {
+        use crate::constants::llm::apxm::dispatch_fields as df;
+        match field {
+            df::GRAPH_REGISTRATION => self.supports_graph_registration,
+            df::REQUEST_HINTS => self.supports_request_hints,
+            df::PRIORITY => self.supports_priority,
+            df::PREFIX_COHORTS => self.supports_prefix_cohorts,
+            df::PIN_RELEASE => self.supports_pin_release,
+            df::STRUCTURED_OUTPUTS => self.supports_structured_outputs,
+            df::BACKEND_QUEUE_STATE => self.supports_backend_queue_state,
+            df::BACKEND_CACHE_STATE => self.supports_backend_cache_state,
+            df::CANCEL_GROUPS => self.supports_cancel_groups,
+            df::DISPATCH_IR_V1_INTERNAL => self.supports_dispatch_ir_v1_internal,
+            df::ADMIN_RESET_PREFIX_CACHE => self.supports_admin_reset_prefix_cache,
+            // Unknown field name is reported as unsupported so a caller
+            // shipping an unrecognized hint cannot infer the backend
+            // applied it. The runtime's fields-sent collector should
+            // only emit names declared above; this branch is the
+            // defensive seam.
+            _ => false,
+        }
     }
 }
 
@@ -712,11 +751,8 @@ mod tests {
             Value::String("pin_demo_cohort".to_owned()),
         );
 
-        let hints = ApxmGraphHints::from_node_attrs(
-            "graph-pin-fix".to_owned(),
-            "0".to_owned(),
-            &attrs_map,
-        );
+        let hints =
+            ApxmGraphHints::from_node_attrs("graph-pin-fix".to_owned(), "0".to_owned(), &attrs_map);
 
         assert_eq!(
             hints.reuse_group.as_deref(),
@@ -753,6 +789,87 @@ mod tests {
         assert_eq!(
             metadata.nodes[0].priority_class,
             Some(PriorityClass::CriticalPath)
+        );
+    }
+
+    fn caps_priority_only() -> BackendGraphCapabilities {
+        BackendGraphCapabilities {
+            supports_graph_registration: true,
+            supports_request_hints: true,
+            supports_priority: true,
+            supports_prefix_cohorts: false,
+            supports_pin_release: false,
+            supports_structured_outputs: false,
+            supports_backend_queue_state: false,
+            supports_backend_cache_state: false,
+            supports_cancel_groups: false,
+            supports_dispatch_ir_v1_internal: false,
+            supports_admin_reset_prefix_cache: false,
+        }
+    }
+
+    #[test]
+    fn dispatch_fields_capability_supported_is_complement_of_unsupported() {
+        use crate::constants::llm::apxm::dispatch_fields as df;
+        let caps = caps_priority_only();
+        let sent = [
+            df::PRIORITY,
+            df::PIN_RELEASE,
+            df::PREFIX_COHORTS,
+            df::REQUEST_HINTS,
+        ];
+
+        let honored = caps.dispatch_fields_capability_supported(sent.iter().copied());
+        let dropped = caps.unsupported_dispatch_fields(sent.iter().copied());
+
+        assert_eq!(honored, vec![df::PRIORITY, df::REQUEST_HINTS]);
+        assert_eq!(dropped, vec![df::PIN_RELEASE, df::PREFIX_COHORTS]);
+
+        let mut union: Vec<_> = honored.iter().chain(dropped.iter()).cloned().collect();
+        union.sort();
+        let mut expected: Vec<_> = sent.iter().map(|s| s.to_string()).collect();
+        expected.sort();
+        assert_eq!(
+            union, expected,
+            "honored and dropped must partition fields_sent"
+        );
+    }
+
+    #[test]
+    fn dispatch_fields_capability_supported_treats_unknown_field_as_dropped() {
+        use crate::constants::llm::apxm::dispatch_fields as df;
+        let caps = caps_priority_only();
+        // First entry uses the contract constant; second is a deliberate
+        // unknown literal — the whole point of this test is that an
+        // off-contract name cannot be inferred as honored.
+        let sent = [df::PRIORITY, "an_invented_field"];
+
+        let honored = caps.dispatch_fields_capability_supported(sent.iter().copied());
+        let dropped = caps.unsupported_dispatch_fields(sent.iter().copied());
+
+        assert_eq!(honored, vec![df::PRIORITY]);
+        assert_eq!(
+            dropped,
+            vec!["an_invented_field"],
+            "unknown field names must report as dropped so callers cannot silently \
+             ship an unrecognized hint and assume the backend applied it"
+        );
+    }
+
+    #[test]
+    fn dispatch_fields_capability_supported_recognizes_admin_reset_prefix_cache() {
+        use crate::constants::llm::apxm::dispatch_fields as df;
+        let mut caps = caps_priority_only();
+        caps.supports_admin_reset_prefix_cache = true;
+        let sent = [df::ADMIN_RESET_PREFIX_CACHE];
+
+        assert_eq!(
+            caps.dispatch_fields_capability_supported(sent.iter().copied()),
+            vec![df::ADMIN_RESET_PREFIX_CACHE.to_owned()]
+        );
+        assert!(
+            caps.unsupported_dispatch_fields(sent.iter().copied())
+                .is_empty()
         );
     }
 }

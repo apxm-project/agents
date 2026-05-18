@@ -29,7 +29,7 @@ pub mod print;
 pub mod qmem;
 pub mod reflect;
 pub mod register_capability;
-pub mod resume; // Phase 1: RESUME
+pub mod resume; // RESUME handler
 pub mod return_op;
 pub mod spawn_agent;
 pub mod spawn_team;

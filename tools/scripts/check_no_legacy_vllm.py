@@ -30,27 +30,27 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 RULES: tuple[LintRule, ...] = (
-    # --- Legacy CLI tokens (§6.8) ---------------------------------------
+    # --- Legacy CLI tokens ---------------------------------------------
     LintRule(
-        # CLI invocations only — retrospective comments ("X was removed in
-        # Phase 6") are legitimate and must not trigger the lint.
+        # CLI invocations only; retrospective comments about removed commands
+        # are legitimate and must not trigger the lint.
         name="legacy-service-start",
         pattern=r"dekk\s+apxm\s+vllm\s+service-start\b|sbatch\s+.*service-start",
-        description="`service-start` CLI removed in Phase 6; use `zoo apply` instead",
+        description="`service-start` CLI removed by the model-zoo migration; use `zoo apply` instead",
         include_globs=("tools/**/*.py", "docs/**/*.md", "deploy/**/*", "examples/**/*", ".dekk.toml", "README.md"),
         exclude_globs=("tools/scripts/check_no_legacy_vllm.py",),
     ),
     LintRule(
         name="legacy-service-adopt",
         pattern=r"dekk\s+apxm\s+vllm\s+service-adopt\b",
-        description="`service-adopt` CLI deleted in Phase 6; write a zoo.toml entry + zoo apply",
+        description="`service-adopt` CLI deleted by the model-zoo migration; write a zoo.toml entry + zoo apply",
         include_globs=("tools/**/*.py", "docs/**/*.md", "deploy/**/*", "examples/**/*", ".dekk.toml", "README.md"),
         exclude_globs=("tools/scripts/check_no_legacy_vllm.py",),
     ),
     LintRule(
         name="legacy-run-vllm-slurm",
         pattern=r"run-vllm-slurm\.sh",
-        description="`run-vllm-slurm.sh` deleted in Phase 6; use unified deploy/vllm/run-vllm.sh",
+        description="`run-vllm-slurm.sh` deleted by the model-zoo migration; use unified deploy/vllm/run-vllm.sh",
         include_globs=("tools/**/*.py", "docs/**/*.md", "deploy/**/*", "examples/**/*", ".dekk.toml", "README.md"),
         exclude_globs=("tools/scripts/check_no_legacy_vllm.py",),
     ),
@@ -79,7 +79,7 @@ RULES: tuple[LintRule, ...] = (
             "**/tests/**",
         ),
     ),
-    # --- Fallback / capability-flag patterns (§6.7) ----------------------
+    # --- Fallback / capability-flag patterns ---------------------------
     LintRule(
         name="apxm-endpoints-available-flag",
         # Match actual references (declaration, field access, method call) —
@@ -167,6 +167,42 @@ RULES: tuple[LintRule, ...] = (
             "Empty defaults `${VAR:-}` are allowed."
         ),
         include_globs=("deploy/**/*.sh",),
+    ),
+    LintRule(
+        # Dispatch-IR field names ("graph_registration", "request_hints",
+        # "priority", "prefix_cohorts", "pin_release", "structured_outputs",
+        # "backend_queue_state", "backend_cache_state", "cancel_groups",
+        # "dispatch_ir_v1_internal", "admin_reset_prefix_cache") are
+        # contract strings that must agree across the producer (the
+        # runtime's `dispatch_fields_sent` collector) and the consumer
+        # (`BackendGraphCapabilities::field_supported`). Hardcoding them
+        # outside the constants module is exactly the drift the
+        # no-legacy/no-fallback discipline guards against. Use
+        # `apxm_core::constants::llm::apxm::dispatch_fields` instead.
+        #
+        # The pattern only matches the multi-word, contract-specific
+        # names ("graph_registration", "prefix_cohorts", etc.) — bare
+        # words like "priority" appear too widely in unrelated contexts
+        # (LLM request bodies, plan-step priority, etc.) to be regex-safe.
+        name="hardcoded-dispatch-field-literal",
+        pattern=(
+            r'"(graph_registration|request_hints|prefix_cohorts|pin_release|'
+            r'backend_queue_state|backend_cache_state|cancel_groups|'
+            r'dispatch_ir_v1_internal|admin_reset_prefix_cache)"'
+        ),
+        description=(
+            "Dispatch-IR field name hardcoded as a string literal. "
+            "Use `apxm_core::constants::llm::apxm::dispatch_fields::*` "
+            "instead — the constants module is the single source of "
+            "truth for producer (`dispatch_fields_sent`) and consumer "
+            "(`BackendGraphCapabilities::field_supported`)."
+        ),
+        include_globs=("crates/**/*.rs",),
+        exclude_globs=(
+            # The constants module IS the source of truth.
+            "crates/core/apxm-core/src/constants.rs",
+            "tools/scripts/check_no_legacy_vllm.py",
+        ),
     ),
 )
 

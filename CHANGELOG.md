@@ -7,6 +7,47 @@ contract is committed to.
 
 ## [Unreleased]
 
+### Added — dispatch-IR honesty closure
+- **Runtime-time capability gating** — `evaluate_required_capabilities`
+  in `apxm-runtime::dispatch::v1` gates graph registration on the backend's
+  static capability table. A missed `required` field skips
+  `register_graph` for that backend, falls back to flat-HTTP dispatch
+  (no `vllm_xargs.apxm` injection), and records the decision in
+  `dispatch_ir_metrics.fallbacks[*]` with `fallback_triggered=true`. No
+  silent proceed.
+- **APXM-side ingestion for `x-apxm-fields-honored`** — the
+  OpenAI backend's `generate` path captures the comma-separated header
+  into `LLMResponse.metadata["fields_honored"]`. Contract constants
+  `APXM_FIELDS_HONORED_HEADER` and `FIELDS_HONORED_RECORD_KEY` ship in
+  `apxm_core::constants::llm::apxm`. Fork-side emitter is the
+  remaining gate.
+- **`SchedulerInfoResponse.dispatch_ir_version`** — forward-
+  compatible wire field the fork is expected to advertise; APXM gates
+  `supports_dispatch_ir_v1_internal` on the tag matching
+  `DISPATCH_IR_V1_VERSION_TAG = "v1"` when present. Older fork builds
+  omit the field; the absent-field branch defaults to "routes exist"
+  gating until universal advertising is shipped.
+- **`DispatchIrV1` JSON wire-format round-trip test** —
+  `dispatch_ir_round_trips_through_json` pins serialize → deserialize
+  → reserialize as byte-identical. Any new IR field forces serde to
+  round-trip or the test fails.
+- **`dispatch_ir_accounting_json` enrichment** — new keys:
+  `fields_honored` (empty until the fork header ships), `fields_passthrough_only`
+  (the v1 scheduler passthrough telemetry list),
+  `fallback_triggered`, `fallbacks[*]` (with `backend`,
+  `missing_required`, `reason`). The renamed
+  `fields_capability_supported_by_backend` (was the misleading
+  `fields_honored_by_backend`) makes the static-capability partition
+  explicit and leaves `fields_honored` reserved for runtime evidence.
+- **Constants module for dispatch field names** —
+  `apxm_core::constants::llm::apxm::dispatch_fields` is the single
+  source of truth used by producer (`dispatch_fields_sent`) and
+  consumer (`BackendGraphCapabilities::field_supported`); 4 sites
+  migrated off raw string literals.
+- **Lint rule `hardcoded-dispatch-field-literal`** in
+  `tools/scripts/check_no_legacy_vllm.py` — rejects raw dispatch-field
+  string literals outside the constants module to prevent regression.
+
 ### Added — model zoo
 - `dekk apxm vllm zoo-apply | zoo-status | zoo-scale | zoo-cache-warm |
   zoo-logs` — the operator-facing CLI surface for the vLLM service fleet.
@@ -22,7 +63,7 @@ contract is committed to.
   / no-fallback discipline across `tools/`, `crates/`, `deploy/`,
   `docs/`, `examples/`. 12 rules; all green on the current tree.
 
-### Added — plans-as-graphs (Plan 06 wedge)
+### Added — plans-as-graphs
 - LLM PLAN prompt teaches the `inner_plan.task_dag` schema with three
   worked examples (fan-out, diamond, linear). Backwards-compatible:
   the legacy `plan: [steps]` shape still parses.
@@ -35,7 +76,7 @@ contract is committed to.
   malformed LLM-emitted DAGs (cycles, dangling `depends_on`, dup ids)
   fail at the PLAN node context with an actionable error.
 
-### Added — workloads (Plan 03 W4 tier)
+### Added — workloads
 - `examples/python/benchmarks/workloads/sharegpt_row.py` — ShareGPT
   multi-turn adapter, sequential ASK chain with growing prefix.
 - `examples/python/benchmarks/workloads/loogle_row.py` — LooGLE

@@ -21,7 +21,7 @@ Usage:
   APXM_WORKLOAD_PREFIX_TOK=4096 APXM_WORKLOAD_FANOUT=8 \\
     dekk apxm execute examples/python/benchmarks/workloads/gsp.py -O2
 
-Or as a Phase-G matrix cell (see workloads/README.md).
+Or as a concurrent matrix cell (see workloads/README.md).
 """
 from apxm import compile, GraphRecorder
 

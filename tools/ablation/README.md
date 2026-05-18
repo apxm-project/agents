@@ -20,7 +20,7 @@ then re-compiles each graph with each MLIR-side pass disabled
 - disabling a pass regresses `ops_after` by more than 5% on any graph.
 
 `fired` is approximated as `fired_count > 0 OR ops_delta != 0` until Task 7
-in the Phase B plan wires per-pass `_fired_count` IntegerAttrs into every
+per-pass `_fired_count` IntegerAttrs are wired into every
 C++ transform, after which `fired_count` becomes authoritative.
 
 ## Conflict matrix

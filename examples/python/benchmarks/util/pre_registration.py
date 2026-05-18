@@ -1,7 +1,7 @@
 """Pre-registration file gate for benchmark harnesses.
 
 The pre-registration discipline (see `docs/plans/00-evaluation-methodology.md`
-§5) requires that hypotheses, SLOs, and metric tiers be committed in writing
+requires that hypotheses, SLOs, and metric tiers be committed in writing
 *before* a measurement run starts. This module provides the file gate that
 benchmark harnesses use to enforce that.
 

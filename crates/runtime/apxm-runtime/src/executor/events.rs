@@ -89,7 +89,7 @@ pub enum ExecutionEvent {
         reason: String,
     },
 
-    // ── Hardware events (Phase 2 prep) ──────────────────────────────
+    // ── Hardware events ───────────────────────────────────────────────
     GpuUtilization {
         gpu_id: u32,
         utilization_pct: f32,

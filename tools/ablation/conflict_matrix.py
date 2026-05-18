@@ -1,4 +1,4 @@
-"""Pass-conflict matrix (Phase B Task 12).
+"""Pass-conflict matrix.
 
 For each suspicious pass pair, run both orderings against the stress
 corpus and flag any (pair, graph) cell where the final op count diverges
@@ -12,7 +12,7 @@ Exit code:
     1   at least one ordering produced a different final_ops.
     2   environment/setup failure (missing dekk, missing graph, etc.).
 
-The plan originally calls for `--emit-metrics`; that flag is only
+The metrics workflow calls for `--emit-metrics`; that flag is only
 partially implemented today, so we reuse `--emit-diagnostics` (which
 is what the Task 11 harness already drives) and read
 ``pass_summary.final_ops``.

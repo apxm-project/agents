@@ -16,7 +16,7 @@ get created. `pinned_blocks_peak_max` rises above 0 in the apxm-on arm.
 Knobs (env-var):
   APXM_WORKLOAD_PREFIX_TOK   default 4096   shared-prefix size
   APXM_WORKLOAD_FANOUT       default 8      branches sharing the prefix
-  APXM_PHASEG_VARIANT        default 0      tenant index (driver-set)
+  APXM_MATRIX_VARIANT        default 0      tenant index (driver-set)
 """
 import os
 

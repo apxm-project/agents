@@ -1,4 +1,4 @@
-"""Compiler-pass ablation harness (Phase B).
+"""Compiler-pass ablation harness.
 
 Toggle each registered pass off across the stress-graph corpus, parse the
 emitted diagnostics JSON, and print a Markdown delta table.
@@ -10,7 +10,7 @@ Exit code:
         or a regression threshold is exceeded.
 
 Note: "fired" is currently approximated as ``ops_delta != 0 OR fired_count > 0``.
-Once Task 7 in the Phase B plan wires per-pass ``_fired_count`` IntegerAttrs
+Once per-pass ``_fired_count`` IntegerAttrs are wired
 into every C++ transform, ``fired_count`` alone becomes authoritative and we
 can drop the ``ops_delta`` fallback.
 """
@@ -52,7 +52,7 @@ PASSES = [
 ]
 
 # Passes whose fired_count is structurally unobservable via the
-# `ais.<pass>_fired_count` attribute. After Phase B Task 7 every APXM-side
+# `ais.<pass>_fired_count` attribute. Once every APXM-side
 # transform writes that attr, so the only remaining exemptions are upstream
 # MLIR passes (cse, symbol-dce, canonicalizer) which live outside our
 # Transforms/ tree and we cannot patch. The dead-pass check skips these;

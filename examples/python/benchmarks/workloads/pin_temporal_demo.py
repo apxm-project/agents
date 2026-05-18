@@ -9,31 +9,31 @@ Pin's value is *preferential preservation across diverse traffic* — keeping
 
 This workload manufactures that exact scenario inside a single graph:
 
-  Phase A — anchor:    cohort_A used with shared_prefix_text(0)
-  Phase B — flood:     `flood_branches` parallel ASKs with per-branch
-                       distinct prefixes (cohort_unique_per_branch).
-                       Goal: fill the prefix-cache with traffic the
-                       scheduler has no reason to keep.
-  Phase C — comeback:  cohort_A used again.
+  Anchor warmup:  cohort_A used with shared_prefix_text(0)
+  Flood:          `flood_branches` parallel ASKs with per-branch
+                  distinct prefixes (cohort_unique_per_branch).
+                  Goal: fill the prefix-cache with traffic the
+                  scheduler has no reason to keep.
+  Anchor return:  cohort_A used again.
 
-All tenants share cohort_A (`reuse_group="pin_temporal_anchor"` in phase A
-and C) so the runtime stamps `pin_policy.mode = "prefix"` on those nodes.
-Phase B's distinct cohort tags rotate so they do NOT pin (no `reuse_group`
+All tenants share cohort_A (`reuse_group="pin_temporal_anchor"` in the
+anchor nodes) so the runtime stamps `pin_policy.mode = "prefix"` on those nodes.
+Flood branch cohort tags rotate so they do NOT pin (no `reuse_group`
 kwarg → `pin_policy.mode = "none"`), letting RadixAttention LRU evict
 them naturally.
 
-Without pin: phase B traffic + LRU may evict cohort_A blocks before
-phase C lands → phase C re-prefills the anchor → measurable latency hit.
-With pin:    cohort_A blocks survive phase B → phase C hits the cache →
+Without pin: flood traffic + LRU may evict cohort_A blocks before
+the return node lands → the return node re-prefills the anchor → measurable latency hit.
+With pin:    cohort_A blocks survive the flood → the return node hits the cache →
              measurably faster.
 
-Latency delta on phase C (and therefore total batch wall) is the signal.
+Latency delta on the return node (and therefore total batch wall) is the signal.
 
 Knobs (env-var):
   APXM_WORKLOAD_PREFIX_TOK    default 4096   per-cohort prefix size
   APXM_WORKLOAD_FANOUT        default 8      flood branches per tenant
                                               (drives cache pressure)
-  APXM_PHASEG_VARIANT         default 0      tenant index (driver-set)
+  APXM_MATRIX_VARIANT         default 0      tenant index (driver-set)
 """
 import os
 

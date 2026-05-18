@@ -16,6 +16,9 @@ use crate::dispatch::v1::{
 use anyhow::{Context, Result};
 use apxm_backends::llm::backends::traits::LLMBackend;
 use apxm_core::constants::graph::{attrs as graph_attrs, metadata as graph_meta};
+use apxm_core::constants::llm::apxm as apxm_llm;
+use apxm_core::constants::llm::apxm::dispatch_fields as df;
+use apxm_core::constants::llm::apxm::telemetry_metrics as tm;
 use apxm_core::types::execution::{ExecutionDag, Node};
 use apxm_core::types::{
     ApxmGraphHints, GraphMetadata, GraphStatusSnapshot, NodeGraphMetrics, NodeSpec, PriorityClass,
@@ -132,20 +135,23 @@ pub(crate) fn graph_dispatch_ir_from_dag(
         BackendCapabilityRequirements {
             backend: None,
             protocol: None,
-            required: vec!["graph_registration".to_owned(), "request_hints".to_owned()],
+            required: vec![
+                df::GRAPH_REGISTRATION.to_owned(),
+                df::REQUEST_HINTS.to_owned(),
+            ],
             optional: vec![
-                "priority".to_owned(),
-                "prefix_cohorts".to_owned(),
-                "pin_release".to_owned(),
-                "backend_cache_state".to_owned(),
+                df::PRIORITY.to_owned(),
+                df::PREFIX_COHORTS.to_owned(),
+                df::PIN_RELEASE.to_owned(),
+                df::BACKEND_CACHE_STATE.to_owned(),
             ],
         },
         TelemetryContract {
-            required_labels: vec!["graph_id".to_owned(), "node_id".to_owned()],
+            required_labels: vec![apxm_llm::GRAPH_ID.to_owned(), apxm_llm::NODE_ID.to_owned()],
             requested_metrics: vec![
-                "scheduler_policy".to_owned(),
-                "graph_status".to_owned(),
-                "pinned_blocks_peak".to_owned(),
+                tm::SCHEDULER_POLICY.to_owned(),
+                tm::GRAPH_STATUS.to_owned(),
+                tm::PINNED_BLOCKS_PEAK.to_owned(),
             ],
         },
     )

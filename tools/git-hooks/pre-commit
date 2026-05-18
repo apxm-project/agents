@@ -7,7 +7,7 @@
 #
 # Runs the no-legacy lint in --strict mode. Any legacy CLI token,
 # fallback chain, or capability-flag regression fails the commit.
-# Mirror of the §6.8 mandate from the Plan 02 model-zoo plan.
+# Mirror of the model-zoo migration mandate.
 
 set -e
 

@@ -70,7 +70,7 @@ ARM_FLAT_HTTP = "flat-http"
 MOONCAKE_INPUT_TEXT_ENV = "MOONCAKE_INPUT_TEXT"
 MOONCAKE_MAX_TOKENS_ENV = "MOONCAKE_MAX_TOKENS"
 MOONCAKE_ROW_INDEX_ENV = "MOONCAKE_ROW_INDEX"
-PHASEG_VARIANT_ENV = "APXM_PHASEG_VARIANT"
+MATRIX_VARIANT_ENV = "APXM_MATRIX_VARIANT"
 APXM_VLLM_CACHE_SALT_ENV = "APXM_VLLM_CACHE_SALT"
 
 DEKK_EXECUTE_CMD = ["dekk", "apxm", "execute"]
@@ -126,7 +126,7 @@ def _parse_args() -> argparse.Namespace:
                    help="Number of rows to replay (0 = entire trace)")
     p.add_argument("--iterations", type=int, default=5,
                    help="Iterations per opt level (each iteration = one full trace pass; "
-                        "Plan 00 §3.5 requires >=5 for Wilcoxon-quality numbers)")
+                        "paired significance checks require >=5 for Wilcoxon-quality numbers)")
     p.add_argument("--opt-levels", type=int, nargs="+", default=[0, 2])
     p.add_argument("--apxm-endpoint", default=DEFAULT_APXM_ENDPOINT,
                    help="vLLM service base URL (without /v1)")
@@ -209,7 +209,7 @@ def _execute_row(
     env[MOONCAKE_INPUT_TEXT_ENV] = prompt
     env[MOONCAKE_MAX_TOKENS_ENV] = str(output_length)
     env[MOONCAKE_ROW_INDEX_ENV] = str(row_index)
-    env[PHASEG_VARIANT_ENV] = str(row_index)
+    env[MATRIX_VARIANT_ENV] = str(row_index)
     # Salt scoped per (arm, opt_level): isolates the two arms' cache
     # namespaces and prevents opt=2 from inheriting opt=0's warm cache,
     # while leaving rows within a single (arm, opt) cell free to share
