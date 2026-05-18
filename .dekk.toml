@@ -104,7 +104,7 @@ docker-start = { run = "python tools/scripts/vllm.py docker-start", description 
 docker-stop = { run = "python tools/scripts/vllm.py docker-stop", description = "Stop allocation-local Docker vLLM" }
 docker-status = { run = "python tools/scripts/vllm.py docker-status", description = "Show allocation-local Docker vLLM status" }
 docker-logs = { run = "python tools/scripts/vllm.py docker-logs", description = "Show allocation-local Docker vLLM logs" }
-service-start = { run = "python tools/scripts/vllm.py service-start", description = "Removed in Plan 02 Phase 6 — prints migration message" }
+service-start = { run = "python tools/scripts/vllm.py service-start", description = "Removed by the model-zoo migration; prints migration message" }
 service-list = { run = "python tools/scripts/vllm.py service-list", description = "List every recorded APXM-vLLM service and its Slurm state" }
 service-status = { run = "python tools/scripts/vllm.py service-status", description = "Show persistent APXM-vLLM service status" }
 service-exec = { run = "python tools/scripts/vllm.py service-exec", description = "Run a command inside a persistent APXM-vLLM service allocation" }
@@ -114,7 +114,7 @@ zoo-status = { run = "python tools/scripts/vllm.py zoo-status", description = "P
 zoo-scale = { run = "python tools/scripts/vllm.py zoo-scale", description = "Scale a zoo-managed service's replica count" }
 zoo-cache-warm = { run = "python tools/scripts/vllm.py zoo-cache-warm", description = "Warm the HF cache for every model in the manifest" }
 zoo-logs = { run = "python tools/scripts/vllm.py zoo-logs", description = "Tail container logs for a zoo-managed service" }
-check-no-legacy = { run = "python tools/scripts/check_no_legacy_vllm.py", description = "Lint for legacy CLI / fallback patterns slated for removal in Plan 02 Phase 6" }
+check-no-legacy = { run = "python tools/scripts/check_no_legacy_vllm.py", description = "Lint for legacy CLI / fallback patterns removed by the model-zoo migration" }
 verify-cross-shard-pins = { run = "python tools/scripts/verify_cross_shard_pins.py", description = "Cross-shard pin broadcast verification for multi-node Ray vLLM services" }
 
 [commands.mcp]

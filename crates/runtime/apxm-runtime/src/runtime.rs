@@ -10,7 +10,9 @@ use crate::{
     agent_pool::AgentPool,
     capability::{CapabilitySystem, flow_registry::FlowRegistry},
     context_stack::ContextStack,
-    dispatch::v1::{DispatchIrV1, dispatch_ir_accounting_json},
+    dispatch::v1::{
+        DispatchFallback, DispatchIrV1, dispatch_ir_accounting_json, evaluate_required_capabilities,
+    },
     executor::{
         ExecutionContext, ExecutionEventEmitter, ExecutionHook, ExecutionHookContext,
         ExecutorEngine, InnerPlanLinker, NoOpLinker, NoOpWorkflowSpawner, OperationMiddleware,
@@ -386,7 +388,8 @@ impl Runtime {
         let dispatch_ir =
             graph_dispatch_ir_from_dag(&context.graph_id, &context.execution_id, &dag);
         context.set_dispatch_ir_v1(dispatch_ir.clone());
-        let lifecycles = build_graph_lifecycles(&self.llm_registry, &dispatch_ir).await;
+        let (lifecycles, dispatch_fallbacks) =
+            build_graph_lifecycles(&self.llm_registry, &dispatch_ir).await;
         let graph_emitter = context.event_emitter.as_ref().map(Arc::clone);
         let execution_id = context.execution_id.clone();
         let node_count = dag.nodes.len();
@@ -433,6 +436,7 @@ impl Runtime {
             Some(&dispatch_ir),
             &backend_graph_capabilities,
             &graph_status_snapshots,
+            &dispatch_fallbacks,
         );
 
         Ok(RuntimeExecutionResult {
@@ -490,7 +494,8 @@ impl Runtime {
         let dispatch_ir =
             graph_dispatch_ir_from_dag(&context.graph_id, &context.execution_id, &entry_dag);
         context.set_dispatch_ir_v1(dispatch_ir.clone());
-        let lifecycles = build_graph_lifecycles(&self.llm_registry, &dispatch_ir).await;
+        let (lifecycles, dispatch_fallbacks) =
+            build_graph_lifecycles(&self.llm_registry, &dispatch_ir).await;
         let executor = Arc::new(ExecutorEngine::new(context.clone()));
         let token_accountant = Arc::clone(&context.token_accountant);
         let graph_metrics = Arc::clone(&context.graph_metrics);
@@ -516,6 +521,7 @@ impl Runtime {
             Some(&dispatch_ir),
             &backend_graph_capabilities,
             &graph_status_snapshots,
+            &dispatch_fallbacks,
         );
 
         Ok(RuntimeExecutionResult {
@@ -592,7 +598,8 @@ impl Runtime {
         let dispatch_ir =
             graph_dispatch_ir_from_dag(&context.graph_id, &context.execution_id, &entry_dag);
         context.set_dispatch_ir_v1(dispatch_ir.clone());
-        let lifecycles = build_graph_lifecycles(&self.llm_registry, &dispatch_ir).await;
+        let (lifecycles, dispatch_fallbacks) =
+            build_graph_lifecycles(&self.llm_registry, &dispatch_ir).await;
         if let Some(emitter) = &graph_emitter {
             emitter.emit_graph_start(&execution_id, node_count);
         }
@@ -625,6 +632,7 @@ impl Runtime {
             Some(&dispatch_ir),
             &backend_graph_capabilities,
             &graph_status_snapshots,
+            &dispatch_fallbacks,
         );
 
         Ok(RuntimeExecutionResult {
@@ -722,9 +730,31 @@ impl Runtime {
 async fn build_graph_lifecycles(
     registry: &LLMRegistry,
     dispatch_ir: &DispatchIrV1,
-) -> Vec<BackendGraphLifecycle> {
+) -> (Vec<BackendGraphLifecycle>, Vec<DispatchFallback>) {
     let mut lifecycles = Vec::new();
+    let mut fallbacks = Vec::new();
     for (backend_name, backend) in registry.find_graph_aware_backends() {
+        // Runtime-time capability gating. Before registering the graph,
+        // verify the backend declares it can
+        // honor every `required` dispatch field. A missing required
+        // capability MUST NOT silently proceed (which would silently
+        // ship hints the backend will drop); skip registration for
+        // that backend and record the fallback in dispatch_ir_metrics.
+        let backend_caps = backend.graph_capabilities();
+        if let Some(fallback) =
+            evaluate_required_capabilities(&backend_name, &backend_caps, dispatch_ir)
+        {
+            tracing::warn!(
+                graph_id = %dispatch_ir.graph.graph_id,
+                backend = %backend_name,
+                missing_required = ?fallback.missing_required,
+                "Backend missing required dispatch capability; falling back \
+                 to flat-HTTP dispatch (no graph registration)"
+            );
+            fallbacks.push(fallback);
+            continue;
+        }
+
         match BackendGraphLifecycle::register_dispatch_ir(backend.clone(), dispatch_ir).await {
             Ok(lifecycle) => lifecycles.push(lifecycle),
             Err(e) => {
@@ -734,10 +764,18 @@ async fn build_graph_lifecycles(
                     error = %e,
                     "Backend register_graph failed; continuing without graph-aware hints"
                 );
+                // Registration failed at the transport layer (e.g. fork
+                // route returned 500). Record this as a fallback too so
+                // the claim cannot inherit "we sent X" semantics.
+                fallbacks.push(DispatchFallback {
+                    backend_name: backend_name.clone(),
+                    missing_required: Vec::new(),
+                    reason: format!("register_graph transport failure: {e}"),
+                });
             }
         }
     }
-    lifecycles
+    (lifecycles, fallbacks)
 }
 
 async fn release_graph_lifecycles(

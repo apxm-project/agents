@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
 """prefix_fanout_concurrent.py - Concurrent multi-tenant prefix-fanout source
 
-Phase-G workload. Same structural shape as ``prefix_fanout_large`` (one ~4K
+Concurrent matrix workload. Same structural shape as ``prefix_fanout_large`` (one ~4K
 shared context with 8-way fan-out reviewers, then a merge + print), but
 parameterised over a tenant index so multiple instances launched in parallel
 present *different* prefixes to the backend. The aggregate prefix mass across
 the four tenants is large enough to put the vLLM KV cache into the regime
 where ``_APXM_PIN_ALLOW_USAGE`` (0.85) gates the pin handle on, which is the
-precondition the Phase-F readiness doc identified as missing.
+precondition the readiness notes identified as missing.
 
-Tenant index source: ``APXM_PHASEG_VARIANT`` env var (default 0). Valid
+Tenant index source: ``APXM_MATRIX_VARIANT`` env var (default 0). Valid
 values are 0..3. Each tenant's context is byte-distinct from byte 0 so the
 backend's auto-prefix-cache treats them as disjoint blocks; *within* a single
 tenant the 8-way fan-out still shares the full 4K prefix.
 
 Usage:
-  APXM_PHASEG_VARIANT=0 dekk apxm execute prefix_fanout_concurrent.py -O2
-  APXM_PHASEG_VARIANT=1 dekk apxm execute prefix_fanout_concurrent.py -O2
+  APXM_MATRIX_VARIANT=0 dekk apxm execute prefix_fanout_concurrent.py -O2
+  APXM_MATRIX_VARIANT=1 dekk apxm execute prefix_fanout_concurrent.py -O2
   ...
 """
 
@@ -56,7 +56,7 @@ _VARIANT_PROFILES = [
 
 
 def _variant_index() -> int:
-    raw = os.environ.get("APXM_PHASEG_VARIANT", "0")
+    raw = os.environ.get("APXM_MATRIX_VARIANT", "0")
     try:
         idx = int(raw)
     except ValueError:

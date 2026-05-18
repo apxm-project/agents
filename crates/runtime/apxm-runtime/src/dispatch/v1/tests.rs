@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 
+use apxm_core::constants::llm::apxm::dispatch_fields as df;
 use apxm_core::types::graph_hints::{
     ApxmGraphHints, GraphMetadata, NodeSpec, PinMode, PinPolicy, PriorityClass,
 };
@@ -172,8 +173,8 @@ fn dispatch_ir_serializes_with_expected_schema_version() {
         BackendCapabilityRequirements {
             backend: Some("vllm-fork".to_owned()),
             protocol: Some("vllm".to_owned()),
-            required: vec!["priority".to_owned(), "prefix_cohorts".to_owned()],
-            optional: vec!["pin_release".to_owned()],
+            required: vec![df::PRIORITY.to_owned(), df::PREFIX_COHORTS.to_owned()],
+            optional: vec![df::PIN_RELEASE.to_owned()],
         },
         TelemetryContract {
             required_labels: vec!["graph_id".to_owned(), "node_id".to_owned()],
@@ -187,4 +188,147 @@ fn dispatch_ir_serializes_with_expected_schema_version() {
     assert_eq!(json["requirements"]["backend"], "vllm-fork");
     assert_eq!(json["nodes"][0]["fanout_count"], 8);
     assert_eq!(json["telemetry"]["required_labels"][0], "graph_id");
+}
+
+mod gating {
+    use super::*;
+    use crate::dispatch::v1::{
+        DispatchFallback, dispatch_ir_accounting_json, evaluate_required_capabilities,
+    };
+    use apxm_core::types::BackendGraphCapabilities;
+    use std::collections::HashMap;
+
+    fn caps_full() -> BackendGraphCapabilities {
+        BackendGraphCapabilities {
+            supports_graph_registration: true,
+            supports_request_hints: true,
+            supports_priority: true,
+            supports_prefix_cohorts: true,
+            supports_pin_release: true,
+            supports_structured_outputs: true,
+            supports_backend_queue_state: true,
+            supports_backend_cache_state: true,
+            supports_cancel_groups: true,
+            supports_dispatch_ir_v1_internal: true,
+            supports_admin_reset_prefix_cache: true,
+        }
+    }
+
+    fn caps_no_graph_registration() -> BackendGraphCapabilities {
+        let mut c = caps_full();
+        c.supports_graph_registration = false;
+        c
+    }
+
+    fn one_node_ir() -> super::super::plan::DispatchIrV1 {
+        let metadata = sample_metadata();
+        let mut node_hints = HashMap::new();
+        node_hints.insert(7, sample_hints());
+        lower_graph(
+            &metadata,
+            &node_hints,
+            BackendCapabilityRequirements {
+                backend: None,
+                protocol: None,
+                required: vec![
+                    df::GRAPH_REGISTRATION.to_owned(),
+                    df::REQUEST_HINTS.to_owned(),
+                ],
+                optional: vec![df::PRIORITY.to_owned()],
+            },
+            TelemetryContract::default(),
+        )
+    }
+
+    #[test]
+    fn evaluate_required_capabilities_returns_none_when_backend_full() {
+        let ir = one_node_ir();
+        let caps = caps_full();
+        assert!(evaluate_required_capabilities("vllm", &caps, &ir).is_none());
+    }
+
+    #[test]
+    fn evaluate_required_capabilities_returns_fallback_when_required_missing() {
+        let ir = one_node_ir();
+        let caps = caps_no_graph_registration();
+        let fb = evaluate_required_capabilities("vllm", &caps, &ir)
+            .expect("backend missing required capability must produce a fallback");
+        assert_eq!(fb.backend_name, "vllm");
+        assert_eq!(fb.missing_required, vec![df::GRAPH_REGISTRATION.to_owned()]);
+        assert!(
+            fb.reason.contains("flat-HTTP"),
+            "fallback reason must name the degraded path so the claim cannot \
+             inherit graph-registered semantics; got: {}",
+            fb.reason
+        );
+    }
+
+    #[test]
+    fn accounting_json_surfaces_fallback_records_and_new_keys() {
+        let ir = one_node_ir();
+        let mut backend_capabilities = HashMap::new();
+        backend_capabilities.insert("vllm".to_owned(), caps_full());
+
+        let fb = DispatchFallback {
+            backend_name: "openai-shim".to_owned(),
+            missing_required: vec![df::REQUEST_HINTS.to_owned()],
+            reason: "test fallback".to_owned(),
+        };
+
+        let json = dispatch_ir_accounting_json(Some(&ir), &backend_capabilities, &[], &[fb]);
+
+        assert_eq!(json["fallback_triggered"], true);
+        assert_eq!(json["fallbacks"][0]["backend"], "openai-shim");
+        assert_eq!(
+            json["fallbacks"][0]["missing_required"][0],
+            df::REQUEST_HINTS
+        );
+        // fields_honored is the per-request runtime-evidence channel
+        // It MUST start empty under a populated
+        // fields_sent because no fork-side x-apxm-fields-honored
+        // emitter is installed in this test.
+        assert!(json["fields_honored"].is_object());
+        assert_eq!(json["fields_honored"].as_object().unwrap().len(), 0);
+        // fields_passthrough_only must list the v1 vLLM scheduler's
+        // unhonored telemetry fields explicitly.
+        assert!(
+            json["fields_passthrough_only"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|v| v == "latency_class"),
+            "passthrough list must name latency_class explicitly"
+        );
+    }
+
+    #[test]
+    fn dispatch_ir_round_trips_through_json() {
+        // Pin the wire-format round-trip so any field
+        // added to DispatchIrV1 must deserialize cleanly. If you add
+        // a field and this test still passes, you forgot to wire
+        // serde — or the field is optional in a way that lets
+        // round-trip-lossy schemas slip through.
+        let ir = one_node_ir();
+        let json = serde_json::to_value(&ir).expect("serialize");
+        let parsed: super::super::plan::DispatchIrV1 =
+            serde_json::from_value(json.clone()).expect("deserialize");
+        let reserialized = serde_json::to_value(&parsed).expect("re-serialize");
+        assert_eq!(
+            json, reserialized,
+            "round-trip must be lossless; mismatched keys: {} vs {}",
+            json, reserialized
+        );
+        assert_eq!(parsed.schema_version, super::DISPATCH_IR_V1_SCHEMA_VERSION);
+        assert_eq!(parsed.nodes.len(), 1);
+    }
+
+    #[test]
+    fn accounting_json_reports_no_fallback_when_all_backends_meet_required() {
+        let ir = one_node_ir();
+        let mut backend_capabilities = HashMap::new();
+        backend_capabilities.insert("vllm".to_owned(), caps_full());
+        let json = dispatch_ir_accounting_json(Some(&ir), &backend_capabilities, &[], &[]);
+        assert_eq!(json["fallback_triggered"], false);
+        assert!(json["fallbacks"].as_array().unwrap().is_empty());
+    }
 }

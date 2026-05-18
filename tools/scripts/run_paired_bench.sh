@@ -16,14 +16,14 @@ echo "[paired] WORKLOAD=$(basename $WORKLOAD) c=$CONCURRENCY prefix=$PREFIX_TOK 
 echo "[paired] APXM-on arm"
 APXM_WORKLOAD_PREFIX_TOK=$PREFIX_TOK \
 APXM_WORKLOAD_FANOUT=$FANOUT \
-python3 examples/python/benchmarks/phase_g_concurrent.py \
+python3 examples/python/benchmarks/concurrent_matrix.py \
   --concurrency "$CONCURRENCY" --iterations "$ITERATIONS" --opt-levels $OPTS \
   --graph "$WORKLOAD" --output "$EVAL_DIR/apxm.csv" \
   --metrics-url http://127.0.0.1:8916/metrics
 echo "[paired] flat-HTTP arm"
 APXM_WORKLOAD_PREFIX_TOK=$PREFIX_TOK \
 APXM_WORKLOAD_FANOUT=$FANOUT \
-python3 examples/python/benchmarks/phase_g_concurrent.py \
+python3 examples/python/benchmarks/concurrent_matrix.py \
   --concurrency "$CONCURRENCY" --iterations "$ITERATIONS" --opt-levels $OPTS \
   --graph "$WORKLOAD" --no-apxm-hints --output "$EVAL_DIR/flat.csv" \
   --metrics-url http://127.0.0.1:8916/metrics

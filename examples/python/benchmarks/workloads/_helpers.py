@@ -1,12 +1,12 @@
 """Helpers shared across the comparable-workloads suite.
 
 Workload scripts under `workloads/` follow a strict env-var contract so the
-existing `phase_g_concurrent.py` driver can launch many tenants in parallel
+existing `concurrent_matrix.py` driver can launch many tenants in parallel
 with `--graph workloads/<name>.py` and collect a `BatchRow` CSV without per-
 workload special-casing. This module centralises that contract.
 
 Env-var contract (read by every workload):
-  APXM_PHASEG_VARIANT       int >= 0  — tenant index, set by the driver
+  APXM_MATRIX_VARIANT       int >= 0  — tenant index, set by the driver
   APXM_WORKLOAD_PREFIX_TOK  int       — target token count for shared prefix
   APXM_WORKLOAD_FANOUT      int       — number of parallel branches
   APXM_WORKLOAD_COHORT_SIZE int       — tenants sharing the same prefix root
@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import os
 
-ENV_VARIANT = "APXM_PHASEG_VARIANT"
+ENV_VARIANT = "APXM_MATRIX_VARIANT"
 ENV_PREFIX_TOK = "APXM_WORKLOAD_PREFIX_TOK"
 ENV_FANOUT = "APXM_WORKLOAD_FANOUT"
 ENV_COHORT_SIZE = "APXM_WORKLOAD_COHORT_SIZE"

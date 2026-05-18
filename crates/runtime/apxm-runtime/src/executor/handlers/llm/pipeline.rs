@@ -28,7 +28,7 @@ pub(super) fn default_memoizable_for_backend(backend: Option<&str>) -> bool {
     }
 }
 
-/// Token pipeline for streaming producer → consumer (Phase 4 research).
+/// Token pipeline for streaming producer → consumer.
 ///
 /// Enables overlapping producer completion with downstream prefill by
 /// streaming tokens as they're generated.

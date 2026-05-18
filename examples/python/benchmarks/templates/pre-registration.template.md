@@ -2,7 +2,7 @@
 
 > Commit this file BEFORE the measurement run starts. Post-hoc edits invalidate
 > any goodput / SLO claim derived from the run. See
-> `docs/plans/00-evaluation-methodology.md` §5 for the discipline this enforces.
+> Follow the evaluation methodology for the discipline this enforces.
 
 ## Run identity
 
@@ -15,7 +15,7 @@
 
 - Workload(s): `<e.g. mooncake-trace + apxm-pfx-cancel>`
 - Why this mix: `<one or two sentences justifying the choice with respect to the
-  hypothesis below; reference Plan 00 §6 if the workload exercises a specific
+  hypothesis below; reference the relevant workload trap if the workload exercises a specific
   trap (cross-instance prefix sharing, parallel branches with cancellation, etc.)>`
 
 ## Hypothesis under test
@@ -45,7 +45,7 @@
   CLI sets the highest performance level for the duration of the run.
 - Thermal soak between cells: `5 minutes`
 - Reject-run threshold: ambient `> <DEG_C>` at cell start
-- Power sampling interval: `100 ms` (Wave 2 / Plan 04)
+- Power sampling interval: `100 ms`
 
 ## GPU-hour budget
 

@@ -14,7 +14,7 @@ merge is the terminal.
 
 This workload exists to feed the comparable-workloads suite a graph shape
 that exercises both prefix-cohort routing AND APXM's existing compile-time
-elimination surface. When the Phase-2 in-flight `CancelGroup` protocol
+elimination surface. When the in-flight `CancelGroup` protocol
 ships, the same shape can be re-instrumented to record real
 `cancel_count`, `tokens_avoided`, and `cancel_latency_ms` runtime fields.
 

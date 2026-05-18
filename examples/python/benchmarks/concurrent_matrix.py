@@ -1,23 +1,28 @@
 #!/usr/bin/env python3
-"""Phase-G concurrent multi-tenant driver.
+"""Concurrent multi-tenant matrix driver.
 
-Spawns N copies of ``stress/prefix_fanout_concurrent.py`` in parallel
-(differentiated by ``APXM_PHASEG_VARIANT``), times the batch wallclock,
+Spawns N copies of the chosen workload (``--graph``) in parallel
+(differentiated by ``APXM_MATRIX_VARIANT``), times the batch wallclock,
 and writes a CSV with one row per batch trial. Per-trial it also queries
 ``GET /v1/apxm/graphs/{id}`` for each tenant to capture pin telemetry.
 
 The point of this harness is to exercise the four preconditions for
-APXM's Phase-C scheduler hint to do measurable work, identified in
-``.apxm/evaluation/gptoss120b/runs/20260513T1616Z/phase-f-readiness.md``:
+APXM's priority scheduler hint to do measurable work:
     1. ``--enable-prefix-caching`` ON                         (already met)
-    2. KV utilization >= ``_APXM_PIN_ALLOW_USAGE`` (0.85)     (this is what concurrent tenants generate)
+    2. KV utilization >= ``_APXM_PIN_ALLOW_USAGE`` (0.85)     (concurrent tenants generate this)
     3. ``--scheduling-policy priority``                       (already met)
     4. queue contention exists                                (this too)
 
+Default workload: ``workloads/pin_demo.py``. The earlier default
+``stress/prefix_fanout_concurrent.py`` is documented in
+``KNOWN-ISSUES.md`` as reliably crashing vLLM engines on every model
+APXM has tried; ``pin_demo`` is the known-working path that produced
+INT-03's pin-latency-win claim.
+
 Usage:
-    python3 examples/python/benchmarks/phase_g_concurrent.py \\
+    python3 examples/python/benchmarks/concurrent_matrix.py \\
         --concurrency 4 --iterations 5 --opt-levels 0 2 \\
-        --output .apxm/benchmarks/results/phase-g-concurrent.csv
+        --output .apxm/benchmarks/results/concurrent-matrix.csv
 """
 
 from __future__ import annotations
@@ -42,9 +47,9 @@ from util import prom_pull  # noqa: E402
 from util import pre_registration  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_GRAPH = REPO_ROOT / "examples" / "python" / "benchmarks" / "stress" / "prefix_fanout_concurrent.py"
+DEFAULT_GRAPH = REPO_ROOT / "examples" / "python" / "benchmarks" / "workloads" / "pin_demo.py"
 DEFAULT_RESULTS_DIR = REPO_ROOT / ".apxm" / "benchmarks" / "results"
-DEFAULT_OUTPUT = DEFAULT_RESULTS_DIR / "phase-g-concurrent.csv"
+DEFAULT_OUTPUT = DEFAULT_RESULTS_DIR / "concurrent-matrix.csv"
 
 APXM_DISABLE_HINTS_ENV = "APXM_DISABLE_HINTS"
 DISABLE_HINTS_ENABLED = "1"
@@ -63,8 +68,8 @@ EXPECTED_MATRIX_CELLS = {
     "D": {"server_prefix_caching": True, "arm": ARM_APXM_ON, "opt_level": 2},
 }
 
-PHASEG_VARIANT_ENV = "APXM_PHASEG_VARIANT"
-PHASEG_CELL_LABEL_ENV = "APXM_PHASEG_CELL_LABEL"
+MATRIX_VARIANT_ENV = "APXM_MATRIX_VARIANT"
+MATRIX_CELL_LABEL_ENV = "APXM_MATRIX_CELL_LABEL"
 APXM_VLLM_CACHE_SALT_ENV = "APXM_VLLM_CACHE_SALT"
 
 
@@ -128,7 +133,7 @@ def _parse_args() -> argparse.Namespace:
                         "Falls back to APXM_ENDPOINT env; no hardcoded port default.")
     p.add_argument("--target", default="latency")
     p.add_argument("--interleave-opt-levels", action="store_true", default=True)
-    p.add_argument("--cell-label", default=os.environ.get(PHASEG_CELL_LABEL_ENV, ""),
+    p.add_argument("--cell-label", default=os.environ.get(MATRIX_CELL_LABEL_ENV, ""),
                    help="Benchmark matrix cell label. Defaults to A/B/C/D inference from server controls and opt level.")
     p.add_argument("--server-scheduling-policy", default=os.environ.get("SCHEDULING_POLICY", "priority"))
     p.add_argument("--server-prefix-caching", action=argparse.BooleanOptionalAction,
@@ -204,20 +209,21 @@ def _execute_tenant(
     arm: str = ARM_APXM_ON,
 ) -> TenantResult:
     env = os.environ.copy()
-    env[PHASEG_VARIANT_ENV] = str(variant)
+    env[MATRIX_VARIANT_ENV] = str(variant)
     # Salt scoped per (arm, opt_level). Arm prevents the second arm of
     # a paired-arm A/B from hitting the first arm's cache (the prior
     # per-(iter, variant) scheme caused a ~99 % vs 0 % hit-rate inversion
     # — see docs/claims/mooncake-paired-arms-smoke.md). Opt_level
     # prevents O2 from inheriting O0's warm cache. Variant is NOT in
     # the salt: tenant differentiation comes from byte-distinct contexts
-    # in the workload itself (per prefix_fanout_concurrent's docstring),
+    # in the workload itself (each tenant uses its variant index to vary
+    # the prompt body deterministically — see the workload's own docstring),
     # so all tenants in a cell legitimately share salt and the cache
     # reflects the workload's true prefix-sharing structure (which is
     # what we want for cohort-routing measurements).
-    env[APXM_VLLM_CACHE_SALT_ENV] = f"phaseg-arm-{arm}-opt-{opt_level}"
+    env[APXM_VLLM_CACHE_SALT_ENV] = f"matrix-arm-{arm}-opt-{opt_level}"
     import tempfile
-    metrics_dir = Path(tempfile.mkdtemp(prefix=f"phaseg-metrics-v{variant}-it{iteration}-"))
+    metrics_dir = Path(tempfile.mkdtemp(prefix=f"matrix-metrics-v{variant}-it{iteration}-"))
     metrics_path = metrics_dir / "metrics.json"
     cmd = [
         "dekk", "apxm", "execute",
@@ -347,7 +353,7 @@ def _run_batch(
         try:
             metrics_before = prom_pull.snapshot(metrics_url)
         except (urllib.error.URLError, TimeoutError) as exc:
-            print(f"[phase-g] warn: metrics snapshot before batch failed: {exc!r}", flush=True)
+            print(f"[concurrent-matrix] warn: metrics snapshot before batch failed: {exc!r}", flush=True)
 
     batch_start = time.perf_counter()
 
@@ -383,7 +389,7 @@ def _run_batch(
             metrics_after = prom_pull.snapshot(metrics_url)
             metrics_delta = prom_pull.delta(metrics_before, metrics_after)
         except (urllib.error.URLError, TimeoutError) as exc:
-            print(f"[phase-g] warn: metrics snapshot after batch failed: {exc!r}", flush=True)
+            print(f"[concurrent-matrix] warn: metrics snapshot after batch failed: {exc!r}", flush=True)
     cell_hit_rate = prom_pull.hit_rate(metrics_delta) if metrics_delta else None
     queries_delta = metrics_delta.get(prom_pull.PREFIX_CACHE_QUERIES_TOTAL, 0.0)
     hits_delta = metrics_delta.get(prom_pull.PREFIX_CACHE_HITS_TOTAL, 0.0)
@@ -463,7 +469,7 @@ def _write_matrix_report(
         }
 
     payload = {
-        "matrix": "phase_g_concurrent_2x2",
+        "matrix": "concurrent_matrix_2x2",
         "ok": ok,
         "cells": cells,
         "pre_registration_path": pre_registration_path,
@@ -529,7 +535,7 @@ def main() -> int:
     rows: list[BatchRow] = []
     detail_rows: list[TenantResult] = []
     for (opt, it) in iter_plan:
-        print(f"[phase-g] opt={opt} iter={it} concurrency={args.concurrency}", flush=True)
+        print(f"[concurrent-matrix] opt={opt} iter={it} concurrency={args.concurrency}", flush=True)
         row, tenants = _run_batch(
             graph=args.graph,
             opt_level=opt,
@@ -583,7 +589,7 @@ def main() -> int:
             for r in detail_rows:
                 w.writerow(asdict(r))
 
-    print("\n=== Phase-G batch summary ===")
+    print("\n=== Concurrent matrix batch summary ===")
     by_opt: dict[int, list[float]] = {}
     by_opt_pin: dict[int, list[int]] = {}
     by_opt_failed: dict[int, int] = {}
@@ -627,7 +633,7 @@ def main() -> int:
         matrix_ok = _write_matrix_report(
             rows, args.matrix_report, pre_registration_path=pre_reg_sidecar
         )
-        print(f"Wrote Phase-G matrix report to {args.matrix_report}")
+        print(f"Wrote Concurrent matrix matrix report to {args.matrix_report}")
         if args.require_matrix and not matrix_ok:
             return 1
     return 0

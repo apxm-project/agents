@@ -249,6 +249,56 @@ pub mod llm {
 
         pub const PIN_MODE_PREFIX: &str = "prefix";
         pub const PIN_MODE_NONE: &str = "none";
+
+        /// Wire names for the dispatch-IR hint fields a backend can
+        /// honor or drop. These are the single source of truth used by
+        /// the runtime to collect `fields_sent` (apxm-runtime
+        /// `dispatch::v1::mod`) and by `BackendGraphCapabilities` to
+        /// classify each into `dispatch_fields_honored` /
+        /// `unsupported_dispatch_fields`. Adding a new dispatch hint
+        /// means adding a constant here AND a `supports_*` flag on
+        /// `BackendGraphCapabilities` — keep the two in lockstep.
+        pub mod dispatch_fields {
+            pub const GRAPH_REGISTRATION: &str = "graph_registration";
+            pub const REQUEST_HINTS: &str = "request_hints";
+            pub const PRIORITY: &str = "priority";
+            pub const PREFIX_COHORTS: &str = "prefix_cohorts";
+            pub const PIN_RELEASE: &str = "pin_release";
+            pub const STRUCTURED_OUTPUTS: &str = "structured_outputs";
+            pub const BACKEND_QUEUE_STATE: &str = "backend_queue_state";
+            pub const BACKEND_CACHE_STATE: &str = "backend_cache_state";
+            pub const CANCEL_GROUPS: &str = "cancel_groups";
+            pub const DISPATCH_IR_V1_INTERNAL: &str = "dispatch_ir_v1_internal";
+            pub const ADMIN_RESET_PREFIX_CACHE: &str = "admin_reset_prefix_cache";
+        }
+
+        /// Wire names for the metrics + telemetry surface APXM declares
+        /// in `BackendCapabilityRequirements.optional` /
+        /// `TelemetryContract.requested_metrics`. Adding a metric the
+        /// runtime asks the backend to expose means adding a constant
+        /// here so producer + consumer share a single source of truth.
+        pub mod telemetry_metrics {
+            pub const SCHEDULER_POLICY: &str = "scheduler_policy";
+            pub const GRAPH_STATUS: &str = "graph_status";
+            pub const PINNED_BLOCKS_PEAK: &str =
+                crate::types::metrics::GraphStatusKey::PinnedBlocksPeak.as_str();
+        }
+
+        /// HTTP response-header contract for per-request runtime
+        /// evidence from the vLLM fork. The fork-side emitter is
+        /// covered by the fork-side header emitter; the APXM-side ingestion path
+        /// (apxm-backends `vllm::backend` response handler) reads this
+        /// header and populates `fields_honored` in the per-node
+        /// dispatch record. Distinct from
+        /// `BackendGraphCapabilities::dispatch_fields_capability_supported`
+        /// which is a static capability table, not runtime evidence.
+        pub const APXM_FIELDS_HONORED_HEADER: &str = "x-apxm-fields-honored";
+
+        /// Per-request honor record key surfaced in
+        /// `dispatch_ir_metrics.fields_honored`. Per-request union of
+        /// all `x-apxm-fields-honored` header values observed during
+        /// the graph execution.
+        pub const FIELDS_HONORED_RECORD_KEY: &str = "fields_honored";
     }
 }
 

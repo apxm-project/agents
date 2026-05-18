@@ -19,7 +19,7 @@ Env-var contract (set by the driver):
   LOOGLE_QUESTIONS_JSON    str   JSON list of question strings
   LOOGLE_ROW_INDEX         int   row index within the source split
   LOOGLE_MAX_QUESTIONS     int   cap on questions to fan out (default 6)
-  APXM_PHASEG_VARIANT      int   tenant index (existing convention)
+  APXM_MATRIX_VARIANT      int   tenant index (existing convention)
 """
 import json
 import os
@@ -32,7 +32,7 @@ ENV_DOCUMENT = "LOOGLE_DOCUMENT"
 ENV_QUESTIONS = "LOOGLE_QUESTIONS_JSON"
 ENV_ROW_INDEX = "LOOGLE_ROW_INDEX"
 ENV_MAX_QUESTIONS = "LOOGLE_MAX_QUESTIONS"
-ENV_VARIANT = "APXM_PHASEG_VARIANT"
+ENV_VARIANT = "APXM_MATRIX_VARIANT"
 
 DEFAULT_MAX_QUESTIONS = 6
 

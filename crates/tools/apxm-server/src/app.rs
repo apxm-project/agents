@@ -88,7 +88,7 @@ pub(crate) fn build_app(state: AppState) -> Router {
         .route(ServerRoute::A2a.path(), post(a2a_jsonrpc))
         .route(ServerRoute::A2aTasksSend.path(), post(a2a_send_task))
         .route(ServerRoute::A2aTaskDetail.path(), get(a2a_get_task))
-        // LLM generation (Phase A3 - LLM backend routes)
+        // LLM generation routes
         .route(ServerRoute::Generate.path(), post(handle_generate))
         .route(
             ServerRoute::GenerateStream.path(),

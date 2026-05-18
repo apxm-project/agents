@@ -5,10 +5,10 @@
 
 ## Run identity
 
-- Run name (slug): `20260517T224507Z-gptoss120b-phase-g-matrix`
+- Run name (slug): `20260517T224507Z-gptoss120b-concurrent-matrix`
 - Author: `raherrer`
 - Date (UTC, ISO 8601): `2026-05-17T22:45:07Z`
-- Linked claim file (planned): `docs/claims/gptoss120b-phase-g-matrix.md`
+- Linked claim file (planned): `docs/claims/gptoss120b-concurrent-matrix.md`
 
 ## Workload(s) and rationale
 
@@ -18,7 +18,7 @@
   cache cold/warm conditions. `pin_demo` is the only checked-in workload
   with a demonstrated pin-engagement signal at this concurrency
   (`pinned_blocks_peak_max ≥ 1` was observed in the INT-03 paired runs at
-  the same concurrency). Cross-instance prefix sharing (Plan 00 §6 trap)
+  the same concurrency). Cross-instance prefix sharing
   is not exercised here — this matrix is single-service single-model.
 
 ## Hypothesis under test
@@ -70,8 +70,7 @@
 - Reject-run threshold: GPU junction temp > 80°C at cell start. At
   pre-flight (2026-05-17T22:43Z), junctions were 40-43°C, memory
   34-36°C across all 8 GPUs — well under the reject threshold.
-- Power sampling interval: not collected this run (Wave 2 / Plan 04
-  J/req rocm-smi sampling is out of scope for Plan 01 EVAL).
+- Power sampling interval: not collected this run; J/req rocm-smi sampling is out of scope.
 
 ## GPU-hour budget
 
@@ -102,4 +101,4 @@
 - Cell isolation: cold cells are preceded by
   `POST /v1/apxm/admin/reset_prefix_cache`. The exact mechanism
   (in-harness flag or manual curl) will be recorded in the run
-  manifest after Phase 1.
+  manifest after the first run.

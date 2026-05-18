@@ -1,7 +1,7 @@
 # Comparable workloads
 
 Workloads in this directory follow a strict env-var contract so the existing
-`phase_g_concurrent.py` driver can launch them as `--graph workloads/<name>.py`
+`concurrent_matrix.py` driver can launch them as `--graph workloads/<name>.py`
 and collect the same `BatchRow` CSV schema across very different workload
 shapes.
 
@@ -68,7 +68,7 @@ All Tier-1 workloads honor these env vars (defaults in `_helpers.py`):
 
 | Var | Default | Meaning |
 |---|---|---|
-| `APXM_PHASEG_VARIANT` | 0 | Tenant index assigned by the driver |
+| `APXM_MATRIX_VARIANT` | 0 | Tenant index assigned by the driver |
 | `APXM_WORKLOAD_PREFIX_TOK` | 1024 | Target token count for the shared prefix |
 | `APXM_WORKLOAD_FANOUT` | 8 | Number of parallel branches |
 | `APXM_WORKLOAD_COHORT_SIZE` | 1 | Variants per cohort sharing one prefix |
@@ -84,7 +84,7 @@ Workloads ignore unknown values gracefully (defaults applied).
 4. Add a row to the table above documenting any new env vars.
 5. Smoke-test with `dekk apxm execute workloads/<name>.py -O0`.
 6. Wire into a benchmark cell by passing `--graph workloads/<name>.py` to
-   `phase_g_concurrent.py`.
+   `concurrent_matrix.py`.
 
 ## Running Tier-1 (synthetic)
 
@@ -96,11 +96,11 @@ dekk apxm execute examples/python/benchmarks/workloads/gsp.py -O2
 APXM_WORKLOAD_PREFIX_TOK=4096 APXM_WORKLOAD_FANOUT=16 \
   dekk apxm execute examples/python/benchmarks/workloads/gsp.py -O2
 
-# As a Phase-G matrix cell (4 concurrent tenants, prefix-cache on, priority):
-python3 examples/python/benchmarks/phase_g_concurrent.py \
+# As a concurrent matrix cell (4 concurrent tenants, prefix-cache on, priority):
+python3 examples/python/benchmarks/concurrent_matrix.py \
   --graph examples/python/benchmarks/workloads/gsp.py \
   --concurrency 4 --iterations 5 --opt-levels 0 2 \
-  --output .apxm/benchmarks/results/gsp-phase-g.csv \
+  --output .apxm/benchmarks/results/gsp-concurrent-matrix.csv \
   --metrics-url "${APXM_ENDPOINT}/metrics"
 ```
 

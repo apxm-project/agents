@@ -16,7 +16,7 @@ Env-var contract (set by the driver):
                                   per-ask attribute that the GraphRecorder
                                   API does not expose yet)
   MOONCAKE_ROW_INDEX       int   row index within the trace (informational)
-  APXM_PHASEG_VARIANT      int   tenant index (existing convention)
+  APXM_MATRIX_VARIANT      int   tenant index (existing convention)
 """
 import os
 
@@ -27,7 +27,7 @@ from _config import VLLM, VLLM_ROUTE
 ENV_INPUT_TEXT = "MOONCAKE_INPUT_TEXT"
 ENV_MAX_TOKENS = "MOONCAKE_MAX_TOKENS"
 ENV_ROW_INDEX = "MOONCAKE_ROW_INDEX"
-ENV_VARIANT = "APXM_PHASEG_VARIANT"
+ENV_VARIANT = "APXM_MATRIX_VARIANT"
 
 DEFAULT_PROMPT = (
     "Default Mooncake row prompt. Driver did not set MOONCAKE_INPUT_TEXT; "
