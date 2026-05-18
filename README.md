@@ -35,6 +35,12 @@ cp deploy/vllm/zoo.example.toml deploy/vllm/zoo.toml && $EDITOR deploy/vllm/zoo.
 dekk apxm vllm zoo-cache-warm && dekk apxm vllm zoo-apply
 ```
 
+`APXM_VLLM_HF_HOME` must point at a filesystem every Slurm compute node
+can read at the same path; pick a different mount than `$HOME` when home
+is space-constrained. See
+[docs/backends/storage-layout.md](docs/backends/storage-layout.md) for
+the full rules and the supported migration procedure.
+
 Full walkthrough: [docs/backends/model-zoo-quickstart.md](docs/backends/model-zoo-quickstart.md).
 
 Prerequisites: Python 3.10+, conda/mamba, Git. The installer handles Rust
@@ -61,6 +67,7 @@ docs/          # start at docs/README.md
 - [docs/backends/model-zoo-quickstart.md](docs/backends/model-zoo-quickstart.md) — vLLM zoo in 15 minutes
 - [docs/backends/model-zoo.md](docs/backends/model-zoo.md) — zoo operator reference
 - [docs/backends/vllm.md](docs/backends/vllm.md) — APXM/vLLM contract
+- [docs/backends/storage-layout.md](docs/backends/storage-layout.md) — where APXM puts large files (HF cache, image store, artifacts)
 - [docs/design/apxm-aware-codex-skill-libraries.md](docs/design/apxm-aware-codex-skill-libraries.md) — skill libraries design
 - [docs/compiler/pipeline.md](docs/compiler/pipeline.md) — compiler pass pipeline
 - Run `dekk apxm --help` and `dekk apxm ops list` for live CLI / AIS reference

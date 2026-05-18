@@ -36,7 +36,9 @@ MLIR_DIR = "{environment}/lib/cmake/mlir"
 LLVM_DIR = "{environment}/lib/cmake/llvm"
 MLIR_PREFIX = "{environment}"
 LLVM_PREFIX = "{environment}"
-APXM_HOME = "{project}"
+# Intentionally NOT setting APXM_HOME: it's the user data root
+# (default ~/.apxm), and pinning it to {project} broke roaming-bucket
+# resolution. Override per-shell or via .apxm/config.toml instead.
 PYTHONPATH = "{project}/tools"
 LD_LIBRARY_PATH = "{project}/target/release/lib:{project}/target/release:{environment}/lib"
 

@@ -17,7 +17,7 @@ path; deployment is reconciliation-driven via the model zoo manifest
 (`deploy/vllm/zoo.toml`):
 
 ```bash
-export APXM_VLLM_HF_HOME=$HOME/.cache/huggingface-apxm-vllm  # mandatory
+export APXM_VLLM_HF_HOME=$HOME/.cache/huggingface-apxm-vllm  # mandatory; see backends/storage-layout.md
 dekk apxm vllm doctor
 dekk apxm vllm docker-build --image apxm-vllm-runtime:<tag> --base-image <VLLM_IMAGE_TAG_OR_DIGEST>
 dekk apxm vllm docker-save  --image apxm-vllm-runtime:<tag>

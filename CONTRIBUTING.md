@@ -63,6 +63,12 @@ dekk apxm vllm service-list                            # watch readiness
 dekk apxm vllm service-exec <NAME> -- dekk apxm execute <GRAPH.py>
 ```
 
+`APXM_VLLM_HF_HOME` must point at a filesystem every Slurm compute node
+can read at the same path. If your `$HOME` is space-constrained, point
+it at a cluster-shared mount instead — see
+[`docs/backends/storage-layout.md`](docs/backends/storage-layout.md) for
+the placement rules and a safe migration procedure.
+
 The zoo manifest is the single operator surface — `service-start` and
 `service-adopt` are not public CLI. See
 [`docs/backends/model-zoo-quickstart.md`](docs/backends/model-zoo-quickstart.md)

@@ -1,0 +1,30 @@
+# APXM data-layout configuration.
+#
+# Copy this file to `.apxm/config.toml` (gitignored) and edit. The
+# copy happens automatically on the first `dekk apxm install` or
+# `dekk apxm vllm doctor` run. Every key below is optional; with
+# none set, APXM stores everything under <repo>/.apxm/.
+#
+# Resolution order (highest priority first):
+#   1. CLI flag (e.g. `dekk apxm vllm cache-warm --hf-home ...`)
+#   2. Per-resource env vars (APXM_VLLM_HF_HOME, APXM_VLLM_IMAGE_STORE)
+#   3. APXM_HOME env var
+#   4. Project config:  <repo>/.apxm/config.toml
+#   5. Default:         <repo>/.apxm/<bucket>
+
+schema_version = 1
+
+[data]
+# Umbrella for the roaming buckets (HF model cache + saved Docker
+# images) — the only buckets that need cluster-shared visibility.
+# Default: <repo>/.apxm
+# Example: dir = "/shared/${USER}/.apxm"
+# dir = ""
+
+[data.vllm]
+# Per-bucket overrides. Set only when one bucket needs a different
+# filesystem than `data.dir`.
+# Default: <data.dir>/huggingface
+# hf_cache = ""
+# Default: <data.dir>/vllm-images
+# image_store = ""

@@ -30,8 +30,11 @@ This document is the getting-started guide. The conceptual contract
 ## Prerequisites (do once per cluster)
 
 ```bash
-# 1. The shared HF cache root is the single mandatory env var.
-#    Put it in your shell rc so every session inherits it.
+# 1. The shared HF cache root is the single mandatory env var. It must
+#    point at a filesystem visible from every Slurm compute node at the
+#    same path; see docs/backends/storage-layout.md if $HOME is full or
+#    not cluster-shared. Put it in your shell rc so every session
+#    inherits it.
 export APXM_VLLM_HF_HOME=$HOME/.cache/huggingface-apxm-vllm
 
 # 2. Verify host readiness (Docker, buildx, Slurm tools, fork SHA).
@@ -174,8 +177,9 @@ requests through the dispatcher.
 
 ## Failure modes worth knowing
 
-- **`required env var 'APXM_VLLM_HF_HOME' is not set`** — export it
-  in your shell rc.
+- **HF cache path looks wrong** — run `dekk apxm vllm doctor` and
+  check the `hf_cache` line plus its `[source]` tag. Override via
+  `.apxm/config.toml` (`data.vllm.hf_cache`) or `APXM_VLLM_HF_HOME`.
 - **`required image not supplied`** — pin `image` in `[defaults]` or
   pass via env. No silent factory default.
 - **`zoo manifest not found`** — copy `zoo.example.toml` to
@@ -215,6 +219,7 @@ automatically. Stale entries should never accumulate.
 ## Cross-references
 
 - [`vllm.md`](vllm.md) — concept doc: contract, fork role, route list.
+- [`storage-layout.md`](storage-layout.md) — where the HF cache, the saved image store, and runtime artifacts live on disk (and how to relocate them).
 - [`../../deploy/vllm/zoo.example.toml`](../../deploy/vllm/zoo.example.toml) — bootstrap template.
 - [`../../deploy/vllm/run-vllm.sh`](../../deploy/vllm/run-vllm.sh) — the Slurm wrapper invoked by every service.
 - `dekk apxm vllm check-no-legacy` — CI lint gate that enforces the no-legacy / no-fallback rule.

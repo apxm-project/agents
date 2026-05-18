@@ -18,9 +18,11 @@ class EnvVar(str, Enum):
 
     APXM_CONFIG = "APXM_CONFIG"
     APXM_DISABLE_HINTS = "APXM_DISABLE_HINTS"
+    APXM_HOME = "APXM_HOME"
     APXM_VLLM_CACHE_SALT = "APXM_VLLM_CACHE_SALT"
     APXM_VLLM_HF_HOME = "APXM_VLLM_HF_HOME"
     APXM_VLLM_IMAGE = "APXM_VLLM_IMAGE"
+    APXM_VLLM_IMAGE_STORE = "APXM_VLLM_IMAGE_STORE"
     APXM_VLLM_SERVICE_NAME = "APXM_VLLM_SERVICE_NAME"
     BACKEND_NAME = "BACKEND_NAME"
     CUDA_VISIBLE_DEVICES = "CUDA_VISIBLE_DEVICES"
@@ -444,12 +446,17 @@ def build_layout(script_file: str | Path) -> RepoLayout:
     workspace_dir = workspace_path(repo_root)
     evaluation_dir = workspace_path(repo_root, ApxmWorkspacePath.EVALUATION)
     vllm_dir = repo_root / RepoPath.EXTERNAL.value / RepoPath.VLLM.value
+    # Roaming buckets are relocatable via .apxm/config.toml; pinned
+    # buckets always live at <repo>/.apxm/.
+    from apxm_data_config import resolve_data_layout
+
+    data_layout = resolve_data_layout(repo_root)
     return RepoLayout(
         repo_root=repo_root,
         workspace_dir=workspace_dir,
         vllm_dir=vllm_dir,
         log_dir=workspace_path(repo_root, ApxmWorkspacePath.VLLM_LOGS),
-        image_store_dir=workspace_path(repo_root, ApxmWorkspacePath.VLLM_IMAGES),
+        image_store_dir=data_layout.image_store,
         service_dir=workspace_path(repo_root, ApxmWorkspacePath.VLLM_SERVICES),
         benchmark_results_dir=workspace_path(
             repo_root,
@@ -484,21 +491,12 @@ def effective_hf_home(
     *,
     environ: dict[str, str] | os._Environ[str] = os.environ,
 ) -> str:
-    """Resolve the HF cache root from the single mandatory env var.
+    """Resolve the HF cache root via the shared data-layout chain;
+    ``dekk apxm vllm doctor`` prints the resolved value and its source."""
+    from apxm_data_config import resolve_data_layout
 
-    `APXM_VLLM_HF_HOME` is the only accepted source. A multi-way fallback
-    chain silently routes weights to inconsistent locations across runs
-    when callers disagree with the wrapper, so hard-fail immediately and
-    force the operator to set the env once.
-    """
-    value = environ.get(env_name(EnvVar.APXM_VLLM_HF_HOME), "").strip()
-    if not value:
-        raise SystemExit(
-            f"required env var {env_name(EnvVar.APXM_VLLM_HF_HOME)!r} is not set. "
-            "Export it once (e.g. `export APXM_VLLM_HF_HOME=$HOME/.cache/huggingface-apxm-vllm`) "
-            "and re-run."
-        )
-    return value
+    layout = resolve_data_layout(find_repo_root(Path(__file__)), environ=environ)
+    return str(layout.hf_cache)
 
 
 def local_endpoint(*, host: str, port: int) -> str:
