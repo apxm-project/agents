@@ -22,6 +22,11 @@ Slurm owns GPU allocation and accounting.
   `dekk apxm vllm service-exec <name> -- <command>`.
 - Generated benchmark/evaluation artifacts belong under `.apxm`, not under
   `examples/`.
+- The HF cache (`data.vllm.hf_cache` in `.apxm/config.toml`, or
+  `APXM_VLLM_HF_HOME`) and `.apxm/vllm-images/` must sit on filesystems
+  visible to every Slurm compute node at the same path. See
+  `docs/backends/storage-layout.md` for the rules and the supported migration
+  procedure. Run `dekk apxm vllm doctor` to print the resolved layout.
 
 ## Standard Flow
 
@@ -41,7 +46,7 @@ dekk apxm vllm service-start gptoss120b openai/gpt-oss-120b \
   --image "$IMAGE" \
   --served-model-name gpt-oss-120b \
   --backend-name vllm-fork \
-  --hf-home "$HOME/.cache/huggingface-apxm-vllm" \
+  --hf-home "$APXM_VLLM_HF_HOME" \
   --max-model-len 32768
 
 dekk apxm vllm service-status gptoss120b --probe

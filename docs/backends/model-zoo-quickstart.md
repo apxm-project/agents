@@ -18,8 +18,14 @@ export APXM_VLLM_HF_HOME="$HOME/.cache/huggingface-apxm-vllm"
 ```
 
 Put this in your shell rc. The controller refuses to run without it
-(no silent fallback). The cache should live on a filesystem that every
-compute node can read — typically a cluster-shared mount.
+(no silent fallback). The cache must live on a filesystem that every
+Slurm compute node can read at the same path — typically a
+cluster-shared mount. If your `$HOME` doesn't have room for the cache
+or isn't visible cluster-wide, point `APXM_VLLM_HF_HOME` at a
+shared-mount alternative (e.g.
+`/shared/$USER/.apxm/huggingface-apxm-vllm`). The full rules and the
+in-place migration procedure live in
+[`storage-layout.md`](storage-layout.md).
 
 ## 2. Verify host readiness
 
@@ -204,8 +210,9 @@ prints a peer-protection warning. Use `zoo-scale --replicas 0` or
 
 ## Common pitfalls
 
-- **`required env var 'APXM_VLLM_HF_HOME' is not set`** — export it
-  in your shell rc.
+- **HF cache path looks wrong** — run `dekk apxm vllm doctor` and
+  check the `hf_cache` line plus its `[source]` tag. Override via
+  `.apxm/config.toml` (`data.vllm.hf_cache`) or `APXM_VLLM_HF_HOME`.
 - **`required image not supplied`** — pin `image` in `[defaults]`.
   No silent factory default.
 - **`zoo manifest not found`** — you forgot step 4. Copy the example.

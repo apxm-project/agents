@@ -25,6 +25,11 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from apxm_data_config import (
+    format_layout as format_data_layout,
+    materialize_config as materialize_data_config,
+    resolve_data_layout,
+)
 from apxm_vllm_contract import (
     ApiRoute,
     ArgName,
@@ -693,11 +698,14 @@ def doctor_cmd(args: argparse.Namespace) -> int:
     )
     print(f"slurm_job_id={os.environ.get(ENV_SLURM_JOB_ID, '')}")
     print(f"slurm_job_nodelist={os.environ.get(ENV_SLURM_JOB_NODELIST, '')}")
-    hf_value = os.environ.get(ENV_APXM_VLLM_HF_HOME, "").strip()
-    print(f"APXM_VLLM_HF_HOME={hf_value or '<unset>'}")
-    if not hf_value:
-        _check_line("FAIL", "APXM_VLLM_HF_HOME unset", "set APXM_VLLM_HF_HOME to the HF cache root")
-        errors += 1
+
+    created = materialize_data_config(REPO_ROOT)
+    if created:
+        print("info: wrote .apxm/config.toml from config.example.toml (edit it for non-default paths)")
+    data_layout = resolve_data_layout(REPO_ROOT)
+    print()
+    print(format_data_layout(data_layout, repo_root_label=str(REPO_ROOT)))
+
     if args.port is not None:
         pids = _port_pids(args.port)
         print(f"port_{args.port}_pids={','.join(map(str, pids)) if pids else ''}")
