@@ -18,7 +18,9 @@ class EnvVar(str, Enum):
 
     APXM_CONFIG = "APXM_CONFIG"
     APXM_DISABLE_HINTS = "APXM_DISABLE_HINTS"
+    APXM_ENDPOINT = "APXM_ENDPOINT"
     APXM_HOME = "APXM_HOME"
+    APXM_MATRIX_VARIANT = "APXM_MATRIX_VARIANT"
     APXM_VLLM_CACHE_SALT = "APXM_VLLM_CACHE_SALT"
     APXM_VLLM_HF_HOME = "APXM_VLLM_HF_HOME"
     APXM_VLLM_IMAGE = "APXM_VLLM_IMAGE"
@@ -83,6 +85,24 @@ class ApiRoute(str, Enum):
     APXM_GRAPHS = "apxm/graphs"
     APXM_REGISTER = "register"
     APXM_SCHEDULER = "apxm/scheduler"
+
+
+class ArmName(str, Enum):
+    """Per-arm sentinels used by A/B benchmark drivers to label runs."""
+
+    APXM_ON = "apxm-on"
+    FLAT_HTTP = "flat-http"
+
+
+class WireKey(str, Enum):
+    """Keys carried inside `extra_body` payloads on the OpenAI-compatible wire."""
+
+    REUSE_GROUP = "reuse_group"
+    PIN_POLICY = "pin_policy"
+    PIN_MODE = "mode"
+    PIN_PREFIX = "prefix"
+    PIN_TTL_MS = "ttl_ms"
+    CACHE_SALT = "cache_salt"
 
 
 class HttpHeader(str, Enum):

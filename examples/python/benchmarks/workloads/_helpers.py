@@ -18,8 +18,17 @@ directly with `dekk apxm execute workloads/<name>.py` for ad-hoc testing.
 from __future__ import annotations
 
 import os
+import sys
+from pathlib import Path
 
-ENV_VARIANT = "APXM_MATRIX_VARIANT"
+_REPO_ROOT = Path(__file__).resolve().parents[4]
+_TOOLS_SCRIPT_DIR = str(_REPO_ROOT / "tools" / "scripts")
+if _TOOLS_SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _TOOLS_SCRIPT_DIR)
+
+from apxm_vllm_contract import EnvVar  # noqa: E402
+
+ENV_VARIANT = EnvVar.APXM_MATRIX_VARIANT.value
 ENV_PREFIX_TOK = "APXM_WORKLOAD_PREFIX_TOK"
 ENV_FANOUT = "APXM_WORKLOAD_FANOUT"
 ENV_COHORT_SIZE = "APXM_WORKLOAD_COHORT_SIZE"

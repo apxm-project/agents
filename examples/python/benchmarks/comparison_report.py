@@ -23,6 +23,12 @@ try:
 except ImportError:  # scipy not installed; arm-comparison section will note this
     _scipy_wilcoxon = None  # type: ignore[assignment]
 
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_TOOLS_SCRIPT_DIR = str(_REPO_ROOT / "tools" / "scripts")
+if _TOOLS_SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _TOOLS_SCRIPT_DIR)
+
+from apxm_vllm_contract import ArmName  # noqa: E402
 
 DEFAULT_BOOTSTRAP_SAMPLES = 2000
 DEFAULT_BOOTSTRAP_SEED = 42
@@ -36,8 +42,8 @@ RUNTIME_MODES = {"execute", "run-artifact"}
 COMPILE_MODES = {"compile"}
 
 ARM_COLUMN = "arm"
-ARM_APXM_ON = "apxm-on"
-ARM_FLAT_HTTP = "flat-http"
+ARM_APXM_ON = ArmName.APXM_ON.value
+ARM_FLAT_HTTP = ArmName.FLAT_HTTP.value
 
 # Per-metric direction for the Wilcoxon alternative hypothesis. "less"
 # means we hypothesize APXM-on values are smaller (latency-style metrics);

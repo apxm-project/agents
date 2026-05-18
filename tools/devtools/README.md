@@ -92,8 +92,8 @@ The scaffold + this README give the next agent a concrete attach point.
 Implementation begins when an operator explicitly takes this work.
 
 A complementary approach already exists for one slice:
-`tools/scripts/apxm_plan_as_graph_dogfood.py` (different scope — that
+`tools/scripts/apxm_plan_as_graph_smoke.py` (different scope — that
 script tests plan-as-graph emission on real prompts, not issue
-triage / PR review / release notes). The dogfooding commands
-are the broader surface; the plan-as-graph dogfood script is
+triage / PR review / release notes). The devtools commands
+are the broader surface; the plan-as-graph smoke script is
 complementary, not redundant.

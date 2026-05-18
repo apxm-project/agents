@@ -11,12 +11,20 @@ pub mod env {
     pub const APXM_BACKEND: &str = "APXM_BACKEND";
     /// Path to the APXM project/run configuration file.
     pub const APXM_CONFIG: &str = "APXM_CONFIG";
+    /// Disables dispatch IR hints sent to vLLM-compatible backends.
+    pub const APXM_DISABLE_HINTS: &str = "APXM_DISABLE_HINTS";
     /// Makes Python graph files emit AIR to stdout for the Rust compiler driver.
     pub const APXM_EMIT_AIR: &str = "APXM_EMIT_AIR";
     /// Enables the in-process mock backend used by tests and offline benchmarks.
     pub const APXM_MOCK_BACKEND: &str = "APXM_MOCK_BACKEND";
     /// Configures mock backend latency in milliseconds.
     pub const APXM_MOCK_LATENCY_MS: &str = "APXM_MOCK_LATENCY_MS";
+    /// Disables LLM response caching for this execution.
+    pub const APXM_NO_CACHE: &str = "APXM_NO_CACHE";
+    /// Public base URL the APXM server advertises (e.g. http://host:18800).
+    pub const APXM_PUBLIC_URL: &str = "APXM_PUBLIC_URL";
+    /// Bind address for the APXM server (e.g. 127.0.0.1:18800).
+    pub const APXM_SERVER_ADDR: &str = "APXM_SERVER_ADDR";
     pub const LLVM_DIR: &str = "LLVM_DIR";
     pub const MLIR_DIR: &str = "MLIR_DIR";
     pub const PYTHONPATH: &str = "PYTHONPATH";
@@ -24,6 +32,12 @@ pub mod env {
     pub mod flag_values {
         pub const ENABLED: &str = "1";
     }
+}
+
+/// JSON keys used inside OpenAI-compatible `extra_body` payloads carrying APXM hints.
+pub mod extra_body {
+    pub const CACHE_SALT_KEY: &str = "cache_salt";
+    pub const REUSE_GROUP_KEY: &str = "reuse_group";
 }
 
 pub mod inner_plan {

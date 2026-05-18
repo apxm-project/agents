@@ -9,14 +9,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use apxm_backends::llm::BackendConfig;
+use apxm_core::constants::env::APXM_CONFIG as APXM_CONFIG_ENV_VAR;
 use dirs::home_dir;
 use serde::{Deserialize, Serialize};
 use std::env;
 use thiserror::Error;
 
 pub(crate) type Result<T> = std::result::Result<T, ConfigError>;
-
-pub const APXM_CONFIG_ENV_VAR: &str = "APXM_CONFIG";
 
 /// Model governance configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

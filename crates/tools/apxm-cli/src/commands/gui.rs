@@ -53,8 +53,8 @@ pub fn gui_command(file: Option<PathBuf>, port: u16, open: bool) -> Result<()> {
     }
 
     // Pass APXM_HOME so the GUI can find examples.
-    if let Ok(home) = env::var("APXM_HOME") {
-        cmd.env("APXM_HOME", home);
+    if let Ok(home) = env::var(apxm_core::env::APXM_HOME) {
+        cmd.env(apxm_core::env::APXM_HOME, home);
     }
 
     if open {

@@ -30,6 +30,7 @@ use apxm_backends::llm::backends::vllm::attrs as vllm_attrs;
 use apxm_backends::{LLMRequest, ToolChoice};
 use apxm_core::apxm_llm;
 use apxm_core::constants::{
+    extra_body as extra_body_keys,
     graph::{attrs as graph_attrs, metadata as graph_meta},
     runtime::belief_keys,
 };
@@ -202,7 +203,7 @@ fn attach_cache_salt(mut request: LLMRequest, cache_salt: String) -> LLMRequest 
         extra = JsonValue::Object(Default::default());
     }
     if let JsonValue::Object(ref mut map) = extra {
-        map.insert("cache_salt".to_string(), JsonValue::String(cache_salt));
+        map.insert(extra_body_keys::CACHE_SALT_KEY.to_string(), JsonValue::String(cache_salt));
     }
     request.extra_body = Some(extra);
     request
@@ -849,7 +850,7 @@ mod tests {
             request
                 .extra_body
                 .as_ref()
-                .and_then(|body| body.get("cache_salt"))
+                .and_then(|body| body.get(extra_body_keys::CACHE_SALT_KEY))
                 .and_then(JsonValue::as_str),
             Some("exec-cache-salt")
         );
@@ -884,7 +885,7 @@ mod tests {
             request
                 .extra_body
                 .as_ref()
-                .and_then(|body| body.get("cache_salt"))
+                .and_then(|body| body.get(extra_body_keys::CACHE_SALT_KEY))
                 .and_then(JsonValue::as_str),
             Some("literal-salt")
         );
@@ -934,7 +935,7 @@ mod tests {
             request
                 .extra_body
                 .as_ref()
-                .and_then(|body| body.get("cache_salt"))
+                .and_then(|body| body.get(extra_body_keys::CACHE_SALT_KEY))
                 .and_then(JsonValue::as_str),
             Some("review-synthesis-graph:shared_prefix_analysis_0"),
             "shared_prefix_group must produce a graph-scoped salt, not the execution id"
@@ -968,7 +969,7 @@ mod tests {
             request
                 .extra_body
                 .as_ref()
-                .and_then(|body| body.get("cache_salt"))
+                .and_then(|body| body.get(extra_body_keys::CACHE_SALT_KEY))
                 .and_then(JsonValue::as_str),
             Some("exec-isolated"),
             "explicit `vllm_cache_salt` must take precedence over `shared_prefix_group`"
@@ -1001,7 +1002,7 @@ mod tests {
             request
                 .extra_body
                 .as_ref()
-                .and_then(|body| body.get("cache_salt"))
+                .and_then(|body| body.get(extra_body_keys::CACHE_SALT_KEY))
                 .is_none(),
             "explicit `vllm_cache_salt = none` must skip the salt entirely"
         );

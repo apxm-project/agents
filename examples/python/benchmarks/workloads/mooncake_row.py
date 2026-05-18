@@ -19,6 +19,15 @@ Env-var contract (set by the driver):
   APXM_MATRIX_VARIANT      int   tenant index (existing convention)
 """
 import os
+import sys
+from pathlib import Path
+
+_REPO_ROOT = Path(__file__).resolve().parents[4]
+_TOOLS_SCRIPT_DIR = str(_REPO_ROOT / "tools" / "scripts")
+if _TOOLS_SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _TOOLS_SCRIPT_DIR)
+
+from apxm_vllm_contract import EnvVar, WireKey  # noqa: E402
 
 from apxm import compile, GraphRecorder
 
@@ -28,7 +37,7 @@ ENV_INPUT_TEXT = "MOONCAKE_INPUT_TEXT"
 ENV_INPUT_TEXT_PATH = "MOONCAKE_INPUT_TEXT_PATH"
 ENV_MAX_TOKENS = "MOONCAKE_MAX_TOKENS"
 ENV_ROW_INDEX = "MOONCAKE_ROW_INDEX"
-ENV_VARIANT = "APXM_MATRIX_VARIANT"
+ENV_VARIANT = EnvVar.APXM_MATRIX_VARIANT.value
 # Cohort tag derived from the trace's hash_ids[0] (the first
 # prefix-cache block id). Rows that share their first hash_id land in
 # the same APXM reuse_group, which is the runtime's cohort hook for
@@ -82,7 +91,7 @@ def mooncake_row(g: GraphRecorder):
     }
     cohort = _reuse_group()
     if cohort:
-        kwargs["reuse_group"] = cohort
+        kwargs[WireKey.REUSE_GROUP.value] = cohort
     answer = g.ask(**kwargs)
     g.done(answer)
 
