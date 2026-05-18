@@ -275,7 +275,14 @@ mod gating {
             reason: "test fallback".to_owned(),
         };
 
-        let json = dispatch_ir_accounting_json(Some(&ir), &backend_capabilities, &[], &[fb]);
+        let no_honored = HashMap::<String, Vec<String>>::new();
+        let json = dispatch_ir_accounting_json(
+            Some(&ir),
+            &backend_capabilities,
+            &[],
+            &[fb],
+            &no_honored,
+        );
 
         assert_eq!(json["fallback_triggered"], true);
         assert_eq!(json["fallbacks"][0]["backend"], "openai-shim");
@@ -298,6 +305,46 @@ mod gating {
                 .iter()
                 .any(|v| v == "latency_class"),
             "passthrough list must name latency_class explicitly"
+        );
+    }
+
+    #[test]
+    fn accounting_json_surfaces_runtime_fields_honored() {
+        // Plan 07 §2 closure — proves the per-execution aggregator's
+        // snapshot lands in dispatch_ir_metrics.fields_honored. The
+        // collector itself (FieldsHonoredCollector) has its own unit
+        // tests; this test pins the JSON contract.
+        let ir = one_node_ir();
+        let mut backend_capabilities = HashMap::new();
+        backend_capabilities.insert("vllm-fork".to_owned(), caps_full());
+
+        let mut fields_honored = HashMap::new();
+        fields_honored.insert(
+            "vllm-fork".to_owned(),
+            vec![
+                df::PRIORITY.to_owned(),
+                df::PIN_RELEASE.to_owned(),
+                df::PREFIX_COHORTS.to_owned(),
+            ],
+        );
+
+        let json = dispatch_ir_accounting_json(
+            Some(&ir),
+            &backend_capabilities,
+            &[],
+            &[],
+            &fields_honored,
+        );
+
+        let honored = &json["fields_honored"]["vllm-fork"];
+        assert_eq!(honored.as_array().unwrap().len(), 3);
+        assert!(
+            honored
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|v| v == df::PRIORITY),
+            "expected priority in fields_honored, got: {honored}"
         );
     }
 
@@ -327,7 +374,14 @@ mod gating {
         let ir = one_node_ir();
         let mut backend_capabilities = HashMap::new();
         backend_capabilities.insert("vllm".to_owned(), caps_full());
-        let json = dispatch_ir_accounting_json(Some(&ir), &backend_capabilities, &[], &[]);
+        let no_honored = HashMap::<String, Vec<String>>::new();
+        let json = dispatch_ir_accounting_json(
+            Some(&ir),
+            &backend_capabilities,
+            &[],
+            &[],
+            &no_honored,
+        );
         assert_eq!(json["fallback_triggered"], false);
         assert!(json["fallbacks"].as_array().unwrap().is_empty());
     }

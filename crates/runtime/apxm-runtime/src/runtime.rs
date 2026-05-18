@@ -403,6 +403,7 @@ impl Runtime {
         // Clone context before scheduler takes ownership, so we can snapshot
         // token accounting after execution completes
         let token_accountant = Arc::clone(&context.token_accountant);
+        let fields_honored = Arc::clone(&context.fields_honored);
         let graph_metrics = Arc::clone(&context.graph_metrics);
 
         // Execute with dataflow scheduler for automatic parallelism
@@ -432,11 +433,13 @@ impl Runtime {
         let token_snapshot = token_accountant.snapshot();
         let graph_metrics_snapshot = graph_metrics.snapshot();
         let backend_graph_capabilities = self.llm_registry.graph_capabilities();
+        let fields_honored_by_backend = fields_honored.snapshot();
         let dispatch_ir_metrics = dispatch_ir_accounting_json(
             Some(&dispatch_ir),
             &backend_graph_capabilities,
             &graph_status_snapshots,
             &dispatch_fallbacks,
+            &fields_honored_by_backend,
         );
 
         Ok(RuntimeExecutionResult {
@@ -498,6 +501,7 @@ impl Runtime {
             build_graph_lifecycles(&self.llm_registry, &dispatch_ir).await;
         let executor = Arc::new(ExecutorEngine::new(context.clone()));
         let token_accountant = Arc::clone(&context.token_accountant);
+        let fields_honored = Arc::clone(&context.fields_honored);
         let graph_metrics = Arc::clone(&context.graph_metrics);
         let hook_context = ExecutionHookContext::new(
             context.execution_id.clone(),
@@ -517,11 +521,13 @@ impl Runtime {
         let token_snapshot = token_accountant.snapshot();
         let graph_metrics_snapshot = graph_metrics.snapshot();
         let backend_graph_capabilities = self.llm_registry.graph_capabilities();
+        let fields_honored_by_backend = fields_honored.snapshot();
         let dispatch_ir_metrics = dispatch_ir_accounting_json(
             Some(&dispatch_ir),
             &backend_graph_capabilities,
             &graph_status_snapshots,
             &dispatch_fallbacks,
+            &fields_honored_by_backend,
         );
 
         Ok(RuntimeExecutionResult {
@@ -605,6 +611,7 @@ impl Runtime {
         }
         let executor = Arc::new(ExecutorEngine::new(context.clone()));
         let token_accountant = Arc::clone(&context.token_accountant);
+        let fields_honored = Arc::clone(&context.fields_honored);
         let graph_metrics = Arc::clone(&context.graph_metrics);
         let hook_context = ExecutionHookContext::new(
             context.execution_id.clone(),
@@ -628,11 +635,13 @@ impl Runtime {
         let token_snapshot = token_accountant.snapshot();
         let graph_metrics_snapshot = graph_metrics.snapshot();
         let backend_graph_capabilities = self.llm_registry.graph_capabilities();
+        let fields_honored_by_backend = fields_honored.snapshot();
         let dispatch_ir_metrics = dispatch_ir_accounting_json(
             Some(&dispatch_ir),
             &backend_graph_capabilities,
             &graph_status_snapshots,
             &dispatch_fallbacks,
+            &fields_honored_by_backend,
         );
 
         Ok(RuntimeExecutionResult {

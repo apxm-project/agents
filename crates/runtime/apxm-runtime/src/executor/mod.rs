@@ -12,6 +12,7 @@ mod dispatcher;
 pub mod emitter_adapter;
 mod engine;
 mod events;
+pub mod fields_honored;
 pub mod graph_metrics;
 mod handlers;
 pub mod hooks;

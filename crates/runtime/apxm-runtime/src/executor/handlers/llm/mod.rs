@@ -556,8 +556,32 @@ async fn execute_llm_once(
 
     // Execute LLM request through registry.
     let llm_start = std::time::Instant::now();
+    // Resolve backend name BEFORE the call so we can attribute the
+    // per-request honor evidence even if the call's intermediate
+    // routing transforms the request shape. Failure here is non-fatal —
+    // we want the LLM call to proceed even if backend-name attribution
+    // is unavailable, since the metadata-bearing response still
+    // surfaces token + timing evidence.
+    let pre_call_backend = ctx.llm_registry.resolve_backend_name(&request).ok();
     let response = execute_llm_request_for_node(ctx, node, mode_name, request).await?;
     let total_ms = llm_start.elapsed().as_secs_f64() * 1000.0;
+
+    // Plan 07 §2 closure — fold per-request `x-apxm-fields-honored`
+    // evidence (parsed by the OpenAI backend into
+    // `response.metadata["fields_honored"]`) into the per-execution
+    // collector. The collector union'd snapshot lands in
+    // `dispatch_ir_metrics.fields_honored` at execution end.
+    if let Some(backend_name) = pre_call_backend.as_deref()
+        && let Some(serde_json::Value::Array(fields)) =
+            response.metadata.get(apxm_core::constants::llm::apxm::FIELDS_HONORED_RECORD_KEY)
+    {
+        let honored: Vec<String> = fields
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_owned))
+            .collect();
+        ctx.fields_honored.record(backend_name, honored);
+    }
+
     let (prefill_ms, decode_ms) = response
         .timing
         .map(|t| (t.prefill_ms, t.decode_ms))
