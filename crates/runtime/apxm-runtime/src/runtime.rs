@@ -154,28 +154,19 @@ impl Runtime {
     pub async fn new(config: RuntimeConfig) -> Result<Self, RuntimeError> {
         log_info!("runtime", "Initializing APxM Runtime");
 
-        // Initialize memory system
         let memory = Arc::new(
             MemorySystem::new(config.memory_config.clone())
                 .await
                 .map_err(|e| RuntimeError::State(format!("Failed to initialize memory: {}", e)))?,
         );
 
-        // Initialize LLM registry
         let llm_registry = Arc::new(LLMRegistry::new());
 
-        // Initialize AAM and capability system
         let aam = Aam::new();
         let capability_system = Arc::new(CapabilitySystem::with_aam(aam.clone()));
 
-        // NOTE: No default capabilities are registered here.
-        // Capabilities should be registered by the executor based on what
-        // the workflow declares in its `tools: [...]` list.
-
-        // Initialize flow registry for cross-agent flow calls
         let flow_registry = Arc::new(FlowRegistry::new());
 
-        // Initialize scheduler
         let scheduler = DataflowScheduler::new(config.scheduler_config.clone());
 
         if config.token_budget.is_none() {

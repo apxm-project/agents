@@ -1,15 +1,12 @@
 #!/usr/bin/env python3
 """release_notes.py — synthesize CHANGELOG [Unreleased] from git log.
 
-Plan 05 IMPL surface; smallest of the three dogfood commands. Reads
-commits since the last semver tag, classifies them into Keep-a-Changelog
-categories (Added/Changed/Fixed/Removed) using commit-message prefix
-conventions (feat:/fix:/refactor:/etc.), and emits a Markdown diff
-against the current `[Unreleased]` block in CHANGELOG.md.
-
-Ground truth (per Plan 05 §How to apply): maintainer accept-as-is rate
-when the draft is proposed for the next release commit. Stored in the
-manifest under `.apxm/evaluation/agentic/dogfood/<TS>/release-notes.json`.
+Reads commits since the last semver tag, classifies them into
+Keep-a-Changelog categories (Added/Changed/Fixed/Removed) using
+commit-message prefix conventions (feat:/fix:/refactor:/etc.), and
+emits a Markdown diff against the current `[Unreleased]` block in
+CHANGELOG.md. Maintainer accept-as-is rate is the headline metric;
+results are stored in `.apxm/evaluation/agentic/dogfood/<TS>/release-notes.json`.
 
 Pure stdlib + git. No GPU, no APXM runtime dependency — runs locally on
 any contributor machine.

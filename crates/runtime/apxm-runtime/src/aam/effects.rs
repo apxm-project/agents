@@ -109,14 +109,14 @@ pub fn operation_effects(op: &AISOperationType) -> OperationEffects {
         AISOperationType::Communicate => OperationEffects::new().read(Beliefs).write(Beliefs),
         AISOperationType::Handoff => OperationEffects::new().read(Beliefs).write(Beliefs),
 
-        // Coordination (Phase 1)
+        // Coordination
         AISOperationType::UpdateGoal => OperationEffects::new().read(Goals).write(Goals),
         AISOperationType::Guard => OperationEffects::new().read(Beliefs),
         AISOperationType::Claim => OperationEffects::new().write(ShortTermMemory),
         AISOperationType::Pause => OperationEffects::new(),
         AISOperationType::Resume => OperationEffects::new().write(ShortTermMemory),
 
-        // Coordination (Phase 2)
+        // Multi-agent coordination
         AISOperationType::Delegate => OperationEffects::new().read(Beliefs).write(Beliefs),
         AISOperationType::Negotiate => OperationEffects::new().read(Beliefs).write(Beliefs),
 

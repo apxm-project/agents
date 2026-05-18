@@ -566,7 +566,7 @@ async fn execute_llm_once(
     let response = execute_llm_request_for_node(ctx, node, mode_name, request).await?;
     let total_ms = llm_start.elapsed().as_secs_f64() * 1000.0;
 
-    // Plan 07 §2 closure — fold per-request `x-apxm-fields-honored`
+    // Fold per-request `x-apxm-fields-honored`
     // evidence (parsed by the OpenAI backend into
     // `response.metadata["fields_honored"]`) into the per-execution
     // collector. The collector union'd snapshot lands in

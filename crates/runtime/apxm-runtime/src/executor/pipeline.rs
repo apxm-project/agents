@@ -1,4 +1,4 @@
-//! Token pipelining support (Phase 4 research prototype).
+//! Token pipelining support (research prototype, disabled by default).
 //!
 //! This module provides utilities for detecting and executing pipeline-eligible
 //! node pairs where producer output can stream to consumer before completion.

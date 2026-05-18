@@ -96,7 +96,7 @@ pub enum AISOperationType {
     /// Hand off execution from one agent to another with optional state transfer.
     Handoff,
 
-    // Coordination Operations (Phase 1 ISA Extensions)
+    // Coordination Operations
     /// Update agent goals at runtime (set/remove/clear).
     UpdateGoal,
     /// Enforce preconditions before execution continues.
@@ -108,7 +108,7 @@ pub enum AISOperationType {
     /// Resume a suspended execution from a PAUSE checkpoint.
     Resume,
 
-    // Coordination Operations (Phase 2 ISA Extensions)
+    // Multi-agent coordination operations
     /// Delegate a task to a sub-agent.
     Delegate,
     /// Multi-agent negotiation protocol.
@@ -182,13 +182,13 @@ impl fmt::Display for AISOperationType {
             // Communication
             AISOperationType::Communicate => write!(f, "COMMUNICATE"),
             AISOperationType::Handoff => write!(f, "HANDOFF"),
-            // Coordination (Phase 1 ISA Extensions)
+            // Coordination
             AISOperationType::UpdateGoal => write!(f, "UPDATE_GOAL"),
             AISOperationType::Guard => write!(f, "GUARD"),
             AISOperationType::Claim => write!(f, "CLAIM"),
             AISOperationType::Pause => write!(f, "PAUSE"),
             AISOperationType::Resume => write!(f, "RESUME"),
-            // Coordination (Phase 2)
+            // Multi-agent coordination
             AISOperationType::Delegate => write!(f, "DELEGATE"),
             AISOperationType::Negotiate => write!(f, "NEGOTIATE"),
             // Identity
@@ -322,8 +322,8 @@ impl AISOperationType {
     ///   Inv=0, Ask=1, QMem=2, ..., Print=22, Think=23, Reason=24
     pub fn from_wire_index(index: u32) -> Option<AISOperationType> {
         // Wire-format operation kind table. Index = OperationKind from ArtifactEmitter.cpp.
-        // Indices 0-24: original ops. 25-30: reserved for Phase 1 ISA (agent-05).
-        // Indices 31-37: Phase 2 coordination/identity/self-organization ops.
+        // Indices 0-24: original ops. 25-30: reserved (unassigned).
+        // Indices 31-37: multi-agent coordination/identity/self-organization ops.
         match index {
             0 => Some(AISOperationType::InvTool),
             1 => Some(AISOperationType::Ask),
@@ -350,8 +350,8 @@ impl AISOperationType {
             22 => Some(AISOperationType::Print),
             23 => Some(AISOperationType::Think),
             24 => Some(AISOperationType::Reason),
-            // 25-30: reserved for Phase 1 ISA extensions (agent-05 owns these)
-            // 31-37: Phase 2 ISA extensions
+            // 25-30: reserved (unassigned)
+            // 31-37: multi-agent coordination ops
             31 => Some(AISOperationType::Delegate),
             32 => Some(AISOperationType::Negotiate),
             33 => Some(AISOperationType::Nop),
@@ -401,7 +401,7 @@ impl AISOperationType {
             AISOperationType::Print => Some(22),
             AISOperationType::Think => Some(23),
             AISOperationType::Reason => Some(24),
-            // 25-30: reserved for Phase 1 ISA extensions
+            // 25-30: reserved (unassigned)
             AISOperationType::Delegate => Some(31),
             AISOperationType::Negotiate => Some(32),
             AISOperationType::Nop => Some(33),
@@ -1509,7 +1509,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             syntactic_keywords: &[(super::mlir_keywords::TO, attrs::HANDOFF_TO)],
         },
     },
-    // ========== Phase 1 ISA Extensions (5) ==========
+    // ========== Coordination Extensions ==========
     OperationSpec {
         op_type: AISOperationType::UpdateGoal,
         name: "UpdateGoal",
@@ -1662,7 +1662,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         produces_output: true,
         emission: EMISSION_TOKEN_BRACKETED,
     },
-    // ========== Coordination Operations (Phase 2) ==========
+    // ========== Multi-Agent Coordination Operations ==========
     OperationSpec {
         op_type: AISOperationType::Delegate,
         name: "Delegate",
@@ -2130,15 +2130,15 @@ mod tests {
             AISOperationType::from_wire_index(24),
             Some(AISOperationType::Reason)
         );
-        // 25-30 reserved for Phase 1 ISA (agent-05) — currently return None
+        // 25-30 reserved (unassigned)
         for i in 25..=30 {
             assert_eq!(
                 AISOperationType::from_wire_index(i),
                 None,
-                "Index {i} is reserved for Phase 1 ISA and should be None until assigned"
+                "Index {i} is unassigned and must return None"
             );
         }
-        // Phase 2 wire indices (31-37)
+        // Multi-agent coordination wire indices (31-37)
         assert_eq!(
             AISOperationType::from_wire_index(31),
             Some(AISOperationType::Delegate)
@@ -2187,7 +2187,7 @@ mod tests {
                 "from_wire_index({i}) returned duplicate {op:?}"
             );
         }
-        // Phase 2 ops: 31-37
+        // Multi-agent coordination ops: 31-37
         for i in 31u32..38 {
             let op = AISOperationType::from_wire_index(i);
             assert!(

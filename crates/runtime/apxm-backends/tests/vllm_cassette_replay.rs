@@ -13,9 +13,7 @@
 //! different OpenAI response schema), re-record the fixture:
 //!
 //! ```bash
-//! # TODO: implement automatic recording mode.
-//! # For now, manually curl the vLLM endpoint and paste request + response
-//! # into tests/fixtures/vllm_qwen35_happy.json.
+//! # Re-recording: curl the vLLM endpoint and paste request + response into tests/fixtures/vllm_qwen35_happy.json.
 //! #
 //! # APXM_RECORD_FIXTURE=1 cargo test -p apxm-backends --test vllm_cassette_replay
 //! ```
@@ -58,7 +56,6 @@ async fn cassette_replay_qwen35_happy_path() {
         .mount(&server)
         .await;
 
-    // Build the backend pointed at the mock server.
     // Convention: base_url includes the /v1 prefix.
     let base_url = format!("{}/v1", server.uri());
     let backend = GraphAwareVllmBackend::new(
@@ -71,7 +68,6 @@ async fn cassette_replay_qwen35_happy_path() {
     .await
     .expect("construct GraphAwareVllmBackend");
 
-    // Build the same request shape as the fixture: prompt + hints.
     let prompt = request_fixture["messages"][0]["content"]
         .as_str()
         .expect("fixture request prompt");
@@ -98,7 +94,6 @@ async fn cassette_replay_qwen35_happy_path() {
         .with_temperature(0.1)
         .with_apxm_hints(hints);
 
-    // Execute the request against the mock.
     let response = LLMBackend::generate(&backend, request)
         .await
         .expect("generate from cassette replay");

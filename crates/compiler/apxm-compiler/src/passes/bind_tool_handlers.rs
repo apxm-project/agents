@@ -29,8 +29,7 @@ pub const BIND_TOOL_HANDLERS_PASS_NAME: &str = "bind-tool-handlers";
 /// Returns the number of INV_TOOL nodes annotated, or an error if conflicting
 /// handler IDs are found for the same capability name.
 pub fn bind_tool_handlers(module: &mut AirModule) -> Result<usize> {
-    // Phase 1: Build capability_name -> python_handler_id map from
-    // REGISTER_CAPABILITY nodes. Detect conflicts.
+    // Pass 1: build capability_name -> python_handler_id map from REGISTER_CAPABILITY nodes. Detect conflicts.
     let mut handler_map: HashMap<String, String> = HashMap::new();
     let mut conflicts: Vec<String> = Vec::new();
 
@@ -82,7 +81,7 @@ pub fn bind_tool_handlers(module: &mut AirModule) -> Result<usize> {
         ))));
     }
 
-    // Phase 2: Stamp python_handler_id onto matching INV_TOOL nodes.
+    // Pass 2: stamp python_handler_id onto matching INV_TOOL nodes.
     let mut annotated = 0;
     for node in &mut module.nodes {
         if node.op != AISOperationType::InvTool {
@@ -114,7 +113,7 @@ pub fn bind_tool_handlers(module: &mut AirModule) -> Result<usize> {
 /// Returns the number of INV_TOOL nodes annotated, or `Err` on conflicting
 /// handler IDs (E714).
 pub fn bind_python_handlers_to_dag(dag: &mut ExecutionDag) -> Result<usize> {
-    // Phase 1: Build capability_name -> python_handler_id map.
+    // Pass 1: build capability_name -> python_handler_id map.
     let mut handler_map: HashMap<String, String> = HashMap::new();
     let mut conflicts: Vec<String> = Vec::new();
 
@@ -164,7 +163,7 @@ pub fn bind_python_handlers_to_dag(dag: &mut ExecutionDag) -> Result<usize> {
         ))));
     }
 
-    // Phase 2: Stamp python_handler_id onto matching INV_TOOL nodes.
+    // Pass 2: stamp python_handler_id onto matching INV_TOOL nodes.
     let mut annotated = 0;
     for node in &mut dag.nodes {
         if node.op_type != AISOperationType::InvTool {

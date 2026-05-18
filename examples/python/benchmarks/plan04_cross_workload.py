@@ -1,32 +1,13 @@
 #!/usr/bin/env python3
-"""plan04_cross_workload.py — Plan 04 EVAL driver consuming workload CSVs.
+"""cross_workload.py — stitch per-workload CSVs into a combined cross-system benchmark output.
 
-Plan 04 EVAL is paper-aligned cross-system A/B. Today's IMPL gap is
-the absence of a single driver that consumes the per-workload CSVs
-emitted by Mooncake/ShareGPT/LooGLE/pin_demo and produces a
-combined-shape CSV with the Plan-00-aligned column set. This script
-is that glue: it does NOT replace the per-workload drivers (they
-remain the source of truth for each workload's per-row behaviour) —
-it stitches their outputs into a single Plan-04-ready CSV.
+Reads per-workload CSVs from Mooncake/ShareGPT/LooGLE/pin_demo,
+adds `workload` and `paper_alignment` columns, computes per-(workload, arm)
+bootstrap-CI ratios, and writes a combined CSV plus a per-workload
+comparison summary.
 
-Usage:
-    python3 examples/python/benchmarks/plan04_cross_workload.py \\
-        --input mooncake:.apxm/evaluation/mooncake/runs/<TS>/mooncake-apxm-on.csv \\
-        --input mooncake:.apxm/evaluation/mooncake/runs/<TS>/mooncake-flat-http.csv \\
-        --input pin_demo:.apxm/evaluation/gptoss120b/runs/<TS>/cell-D.csv \\
-        --output .apxm/evaluation/cross-system/runs/<TS>/plan04.csv
-
-Each --input is `workload-name:path-to-csv`. The driver:
-1. Reads each CSV.
-2. Adds a `workload` column with the prefix.
-3. Adds a `paper_alignment` column tagging each row with its
-   methodology charter reference (Mooncake/Parrot/AttentionStore/etc).
-4. Computes per-(workload, arm) bootstrap-CI ratios and writes a
-   per-workload comparison summary.
-
-Plan 04's full claim still requires multi-model coverage + open-loop
-+ rocm-smi power per Plan 00 §3.2; this driver is the IMPL piece that
-unblocks the EVAL run protocol.
+Each --input is `workload-name:path-to-csv`. Arm columns (apxm-on /
+flat-http) must be present in the source CSVs.
 """
 from __future__ import annotations
 
@@ -41,16 +22,13 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
-# Workload → Plan 00 §1 paper-alignment row. When a downstream
-# leaderboard renders this CSV, the `paper_alignment` column tells
-# the reviewer which paper's methodology this row was designed to
-# test against.
+# Per-workload mapping table cites the paper each workload tests against.
 WORKLOAD_TO_PAPER_ALIGNMENT = {
     "mooncake": "Mooncake (FAST 2025) — TTFT SLO satisfaction; production trace replay",
     "sharegpt": "AttentionStore (ATC 2024) — multi-turn KV reuse hit rate",
     "loogle":   "Mooncake/SGLang — long-shared-context fan-out",
     "pin_demo": "Parrot (OSDI 2024) — DAG critical-path latency, named cohort",
-    "pfx_cancel": "Parrot (OSDI 2024) — cancellation effectiveness (note: in-flight cancel surface deferred to Plan 08)",
+    "pfx_cancel": "Parrot (OSDI 2024) — cancellation effectiveness",
     "gsp":      "SGLang/RadixAttention — block-level prefix-cache hit rate diagnostic",
 }
 

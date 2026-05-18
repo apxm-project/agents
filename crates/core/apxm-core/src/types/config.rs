@@ -49,4 +49,3 @@ impl InstructionConfig {
     }
 }
 
-// Tests removed: test_instruction_config_get was a trivial delegation test.

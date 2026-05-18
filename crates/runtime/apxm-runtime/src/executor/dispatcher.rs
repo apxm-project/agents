@@ -140,14 +140,14 @@ impl OperationDispatcher {
             AISOperationType::Communicate => communicate::execute(ctx, node, inputs).await,
             AISOperationType::Handoff => handoff::execute(ctx, node, inputs).await,
 
-            // Phase 1 ISA extensions (UPDATE_GOAL, GUARD, CLAIM, PAUSE, RESUME)
+            // Coordination operations
             AISOperationType::UpdateGoal => update_goal::execute(ctx, node, inputs).await,
             AISOperationType::Guard => guard::execute(ctx, node, inputs).await,
             AISOperationType::Claim => claim::execute(ctx, node, inputs).await,
             AISOperationType::Pause => pause::execute(ctx, node, inputs).await,
             AISOperationType::Resume => resume::execute(ctx, node, inputs).await,
 
-            // Phase 2 ISA extensions (Coordination, Identity, Self-Organization)
+            // Multi-agent operations
             AISOperationType::Delegate => delegate::execute(ctx, node, inputs).await,
             AISOperationType::Negotiate => negotiate::execute(ctx, node, inputs).await,
             AISOperationType::Nop => nop::execute(ctx, node, inputs).await,

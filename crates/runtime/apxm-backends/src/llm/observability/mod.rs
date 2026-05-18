@@ -124,21 +124,18 @@ impl MetricsTracker {
     pub fn record(&self, metrics: RequestMetrics) {
         let mut inner = self.inner.lock();
 
-        // Add to per-backend metrics
         inner
             .backend_metrics
             .entry(metrics.backend.clone())
             .or_default()
             .push(metrics.clone());
 
-        // Add to per-model metrics
         inner
             .model_metrics
             .entry(metrics.model.clone())
             .or_default()
             .push(metrics.clone());
 
-        // Add to global metrics
         inner.requests.push(metrics);
     }
 

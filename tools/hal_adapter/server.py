@@ -3,9 +3,8 @@
 
 Fronts an APXM-registered backend behind an OpenAI-chat-completions
 endpoint so external runners (τ²-bench, GAIA, AppWorld, SWE-bench
-Verified Lite) can dispatch through APXM without modification. Plan 05
-IMPL surface; see `tools/hal_adapter/README.md` and
-`.apxm/docs/plans/05-agentic-accuracy.md`.
+Verified Lite) can dispatch through APXM without modification.
+See `tools/hal_adapter/README.md` for setup and usage.
 
 Pure stdlib (http.server) — no FastAPI or httpx dep. The shim forwards
 to the actual vLLM endpoint via urllib, then post-processes the
@@ -20,7 +19,7 @@ response to add the APXM-specific paired-arm switch behavior:
   benchmark runners express the paired A/B without modification.
 
 Logging: every launch writes a manifest line at
-`.apxm/evaluation/hal/launches/<TS>.json` per Plan 05 manifest contract.
+`.apxm/evaluation/hal/launches/<TS>.json` (manifest path: .apxm/evaluation/hal/launches/<TS>.json).
 Without a manifest, claim files MUST NOT cite the shim's output.
 
 Usage:
@@ -172,7 +171,7 @@ class _Handler(BaseHTTPRequestHandler):
 
 
 def _write_manifest(args: argparse.Namespace) -> Path:
-    """Per-launch manifest line. Plan 05 §IMPL — claim files MUST cite."""
+    """Per-launch manifest entry; written before any results so callers can cite a stable path."""
     MANIFEST_DIR.mkdir(parents=True, exist_ok=True)
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     path = MANIFEST_DIR / f"{ts}-{uuid.uuid4().hex[:8]}.json"

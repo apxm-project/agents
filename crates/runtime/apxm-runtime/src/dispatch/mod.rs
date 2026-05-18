@@ -14,5 +14,4 @@
 // The Dispatch IR is intentionally not yet consumed by any production code path.
 // It is being introduced as the typed envelope that the vLLM adapter (and a
 // future second backend) will lower to. See `.apxm/docs/design/dispatch-ir.md`.
-#[allow(dead_code)]
 pub mod v1;

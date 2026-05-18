@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
 """triage.py — classify recent GitHub issues via the HAL adapter.
 
-Plan 05 IMPL surface — see `tools/dogfood/README.md`. Pulls the last
-N days of GitHub issues via `gh issue list`, sends each one through
-the HAL adapter to an LLM for {bug, feature, question, noise}
-classification + suggested assignees, and emits a Markdown digest
-plus a per-run manifest.
-
-Ground truth (Plan 05): human-applied issue labels and assignee fields
-after the digest is published. Agreement rate is the headline number.
+Pulls the last N days of GitHub issues via `gh issue list`, sends each
+one through the HAL adapter to an LLM for {bug, feature, question, noise}
+classification + suggested assignees, and emits a Markdown digest plus
+a per-run manifest. Agreement rate against human-applied labels is the
+headline metric.
 
 Pure stdlib + gh + urllib. Requires:
 - `gh` authenticated against the target repo

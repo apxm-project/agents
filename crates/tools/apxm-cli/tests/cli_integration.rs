@@ -1032,7 +1032,6 @@ fn explain_pipeline_json() {
     assert_eq!(v["depth"], 3);
     let flow = v["execution_flow"].as_array().unwrap();
     assert_eq!(flow.len(), 3);
-    // Phase 1 and 2 are ASK nodes, Phase 3 is RETURN.
     assert_eq!(flow[0]["nodes"].as_array().unwrap().len(), 1);
     assert_eq!(flow[1]["nodes"].as_array().unwrap().len(), 1);
     assert_eq!(flow[2]["nodes"][0]["op"], "RETURN");
@@ -1049,7 +1048,6 @@ fn explain_parallel_json() {
     assert!(out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     let flow = v["execution_flow"].as_array().unwrap();
-    // Phase 1 should have 2 parallel nodes
     assert!(flow[0]["parallel"].as_bool().unwrap());
     assert_eq!(flow[0]["nodes"].as_array().unwrap().len(), 2);
     assert!(v["summary"]["max_parallelism"].as_u64().unwrap() >= 2);
