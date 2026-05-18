@@ -33,6 +33,11 @@ ENV_QUESTIONS = "LOOGLE_QUESTIONS_JSON"
 ENV_ROW_INDEX = "LOOGLE_ROW_INDEX"
 ENV_MAX_QUESTIONS = "LOOGLE_MAX_QUESTIONS"
 ENV_VARIANT = "APXM_MATRIX_VARIANT"
+# Cohort tag — all questions in a row share the document prefix. The
+# row-index default is fine since each row is its own document; the
+# env override is for drivers that want to coalesce multiple rows of
+# the same document into one cohort.
+ENV_REUSE_GROUP = "LOOGLE_REUSE_GROUP"
 
 DEFAULT_MAX_QUESTIONS = 6
 
@@ -81,6 +86,11 @@ def _row_index() -> str:
     return os.environ.get(ENV_ROW_INDEX, "0")
 
 
+def _reuse_group() -> str | None:
+    val = os.environ.get(ENV_REUSE_GROUP, "").strip()
+    return val or None
+
+
 def _render_prompt(document: str, question: str) -> str:
     """Prefix-then-question. The document is byte-identical across all
     questions in this row, so the prefix cache sees the document once
@@ -97,11 +107,13 @@ def loogle_row(g: GraphRecorder):
     if not questions:
         questions = DEFAULT_QUESTIONS
 
+    cohort = _reuse_group() or f"loogle-document-{row_idx}"
     asks = []
     for i, question in enumerate(questions):
         node = g.ask(
             name=f"loogle_row_{row_idx}_q{i}",
             prompt=_render_prompt(document, question),
+            reuse_group=cohort,
         )
         asks.append(node)
 
