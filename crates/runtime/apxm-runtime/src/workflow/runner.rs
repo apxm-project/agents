@@ -81,14 +81,6 @@ impl WorkflowRunner {
     ///
     /// A `WorkflowResult` containing the status and results of all steps.
     ///
-    /// # Note
-    ///
-    /// This method requires a runtime executor to be available. Since this is in
-    /// apxm-runtime crate, we can't directly use apxm-driver's RuntimeExecutor here.
-    /// Instead, this is a placeholder that would be called from the driver/CLI layer
-    /// which has access to both the runtime and the linker.
-    ///
-    /// The actual execution logic will be in the CLI or a higher-level orchestrator.
     pub async fn run(&self, args: HashMap<String, String>) -> anyhow::Result<WorkflowResult> {
         let start = Instant::now();
 
@@ -174,11 +166,6 @@ impl WorkflowRunner {
                     target = %invocation.target.label(),
                     "Starting step"
                 );
-
-                // NOTE: We can't actually spawn the execution here because we need
-                // access to the Linker/RuntimeExecutor which is in apxm-driver.
-                // This will be handled by the CLI/driver layer.
-                // For now, we'll create a placeholder that returns an error.
 
                 anyhow::bail!(
                     "Workflow execution requires driver-level integration. \

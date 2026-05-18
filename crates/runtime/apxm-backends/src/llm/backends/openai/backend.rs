@@ -298,7 +298,6 @@ impl OpenAIBackend {
             body[openai_keys::TEMPERATURE] = json!(request.temperature);
         }
 
-        // Add optional parameters
         if let Some(max_tokens) = request.max_tokens {
             body[message_keys::MAX_TOKENS] = json!(max_tokens);
         }
@@ -334,7 +333,6 @@ impl OpenAIBackend {
                 [openai_keys::JSON_SCHEMA_STRICT] = json!(true);
         }
 
-        // Add tools if provided
         if let Some(tools) = &request.tools
             && !tools.is_empty()
         {

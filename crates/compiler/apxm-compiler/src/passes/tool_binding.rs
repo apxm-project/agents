@@ -199,8 +199,7 @@ pub fn tool_binding_check(
         }
     }
 
-    // TODO(W214/SchemaDrift): schema-vs-signature drift check when Python
-    // frontend metadata exposes loaded handler signatures to the compiler.
+    // Schema-vs-signature drift check not yet implemented; requires Python handler signatures in compiler metadata.
 
     if !errors.is_empty() {
         let error_messages: Vec<String> = errors.iter().map(|e| e.message.clone()).collect();

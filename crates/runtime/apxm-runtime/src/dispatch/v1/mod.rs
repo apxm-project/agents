@@ -140,16 +140,12 @@ pub(crate) fn dispatch_ir_accounting_json(
         "fields_sent": fields_sent,
         "fields_unsupported_by_backend": unsupported_by_backend,
         "fields_capability_supported_by_backend": capability_supported_by_backend,
-        // Per-request runtime honor evidence union'd by backend
-        // (Plan 07 §2 closure). Populated by the LLM handler from each
-        // per-node response's `metadata["fields_honored"]`, which the
-        // OpenAI backend parses from the vLLM fork's
-        // `x-apxm-fields-honored` response header. An empty map under
-        // a populated `fields_sent` means no backend emitted the
-        // header — either fork-side emitter not installed (pre-490aaad0c
-        // builds) or the dispatch did not invoke the LLM. Distinct from
-        // `fields_capability_supported_by_backend`, which is a
-        // static-capability statement, not runtime evidence.
+        // Per-request runtime honor evidence union'd by backend.
+        // Populated by the LLM handler from each per-node response's
+        // `metadata["fields_honored"]`, which the OpenAI backend parses
+        // from the vLLM fork's `x-apxm-fields-honored` response header.
+        // Distinct from `fields_capability_supported_by_backend`, which
+        // is a static-capability statement, not runtime evidence.
         "fields_honored": fields_honored_by_backend,
         // Fields APXM declares it sends but the v1 vLLM scheduler does
         // not act on. They are present in `fields_sent`

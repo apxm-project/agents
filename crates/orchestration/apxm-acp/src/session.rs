@@ -91,7 +91,7 @@ impl AcpSession {
         let session_id = uuid::Uuid::new_v4().to_string();
         let timeout = Duration::from_millis(profile.session_create_timeout_ms);
 
-        // Phase 1: initialize
+        // Step 1: protocol handshake
         let init_params = serde_json::json!({
             fields::PROTOCOL_VERSION: protocol::ACP_PROTOCOL_VERSION,
             fields::CLIENT_CAPABILITIES: {
@@ -112,7 +112,7 @@ impl AcpSession {
             .await
             .map_err(|_| AcpError::Timeout(format!("{} timed out", methods::INITIALIZE)))??;
 
-        // Phase 2: authenticate if agent requested it
+        // Step 2: optional auth
         if let Some(auth_methods) = init_result
             .get(fields::AUTH_METHODS)
             .and_then(|v| v.as_array())
@@ -141,7 +141,7 @@ impl AcpSession {
             }
         }
 
-        // Phase 3: session/new
+        // Step 3: open session
         let new_params = crate::aam_bridge::render_session_params(cwd, &profile.capabilities);
         let new_id = transport
             .send_request(methods::SESSION_NEW, Some(new_params))

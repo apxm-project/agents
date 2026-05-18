@@ -95,17 +95,17 @@ pub struct NodeMetadata {
     pub task_source_id: Option<TaskId>,
 }
 
-/// Returns `true` when a `u32` is zero (used by `skip_serializing_if`).
+/// Returns `true` when a `u32` is zero.
 fn is_zero(v: &u32) -> bool {
     *v == 0
 }
 
-/// Returns `true` when a `HashMap` is empty (used by `skip_serializing_if`).
+/// Returns `true` when a `HashMap` is empty.
 fn is_empty_map<K, V>(m: &HashMap<K, V>) -> bool {
     m.is_empty()
 }
 
-/// Returns `true` when a `Vec` is empty (used by `skip_serializing_if`).
+/// Returns `true` when a `Vec` is empty.
 fn is_empty_vec<T>(v: &[T]) -> bool {
     v.is_empty()
 }

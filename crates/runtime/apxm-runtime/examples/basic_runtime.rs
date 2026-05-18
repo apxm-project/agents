@@ -15,20 +15,16 @@ use std::collections::HashMap;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Initialize runtime
     let runtime = Runtime::new(RuntimeConfig::in_memory()).await?;
 
-    // --- AAM State Management ---
     let aam = runtime.aam();
 
-    // Set beliefs
     aam.set_belief(
         "user_name".to_string(),
         Value::String("Alice".to_string()),
         TransitionLabel::custom("init"),
     );
 
-    // Create a goal
     let goal = Goal {
         id: GoalId::new(),
         description: "Complete task".to_string(),
@@ -39,12 +35,9 @@ async fn main() -> anyhow::Result<()> {
     let goal_id = goal.id.clone();
     aam.add_goal(goal, TransitionLabel::custom("goal_created"));
 
-    // Inspect state
     println!("Beliefs: {:?}", aam.beliefs());
     println!("Goals: {:?}", aam.goals().len());
 
-    // --- DAG Execution ---
-    // Create a simple DAG: ConstStr -> output
     let node = Node {
         id: 0,
         op_type: AISOperationType::ConstStr,
@@ -65,11 +58,9 @@ async fn main() -> anyhow::Result<()> {
         metadata: Default::default(),
     };
 
-    // Execute
     let result = runtime.execute(dag).await?;
     println!("Execution result: {:?}", result);
 
-    // Mark goal complete
     aam.update_goal_status(
         goal_id,
         GoalStatus::Completed,

@@ -577,8 +577,6 @@ impl LLMBackend for GraphAwareVllmBackend {
         // Probe the APXM extension surface. A definitive 404 means the server
         // is stock vLLM, not the APXM fork. APXM requires the graph-aware
         // contract for `protocol = "vllm"` so scheduling hints cannot be
-        // silently ignored — the previous "graceful degrade" path that hid
-        // missing routes behind a capability flag has been removed.
         let url = self.graph_status_url(super::graph_meta::PROBE_GRAPH_ID);
         match self
             .inner
@@ -716,8 +714,6 @@ impl LLMBackend for GraphAwareVllmBackend {
         // `DISPATCH_IR_V1_VERSION_TAG` exactly. Older fork builds omit
         // the field; for those, "registration succeeded" is the gating
         // signal (the synchronous probe already proved /v1/apxm/* exist).
-        // Once every supported fork build advertises, the `None` branch
-        // becomes dead and can be removed.
         let dispatch_ir_v1_supported = match self.dispatch_ir_version.read().as_deref() {
             Some(tag) => tag == DISPATCH_IR_V1_VERSION_TAG,
             None => true,

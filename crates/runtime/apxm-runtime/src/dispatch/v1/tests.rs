@@ -310,7 +310,7 @@ mod gating {
 
     #[test]
     fn accounting_json_surfaces_runtime_fields_honored() {
-        // Plan 07 §2 closure — proves the per-execution aggregator's
+        // Proves the per-execution aggregator's
         // snapshot lands in dispatch_ir_metrics.fields_honored. The
         // collector itself (FieldsHonoredCollector) has its own unit
         // tests; this test pins the JSON contract.

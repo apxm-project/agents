@@ -491,7 +491,6 @@ mod tests {
         let raw = fanout_graph();
         let ga = GraphAnalysis::from_graph(&raw);
 
-        // Phase 1: [1,2,3] parallel, Phase 2: [4] sync
         assert_eq!(ga.phases.len(), 2);
         assert_eq!(ga.phases[0].len(), 3);
         assert_eq!(ga.phases[1], vec![4]);

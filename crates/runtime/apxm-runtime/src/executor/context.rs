@@ -72,9 +72,9 @@ pub struct ExecutionContext {
     pub event_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
     pub graph_metrics: Arc<GraphMetricsTracker>,
     /// Per-execution union of `x-apxm-fields-honored` evidence by
-    /// backend (Plan 07 §2 closure). Populated by the LLM handler from
-    /// each per-node response's `metadata["fields_honored"]`; drained
-    /// at execution end into `dispatch_ir_metrics.fields_honored`.
+    /// backend. Populated by the LLM handler from each per-node
+    /// response's `metadata["fields_honored"]`; drained at execution
+    /// end into `dispatch_ir_metrics.fields_honored`.
     pub fields_honored: Arc<FieldsHonoredCollector>,
     pub token_accountant: Arc<TokenAccountant>,
     pub timing_tracker: Arc<TimingTracker>,

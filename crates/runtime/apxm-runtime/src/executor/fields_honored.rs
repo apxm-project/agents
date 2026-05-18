@@ -7,12 +7,6 @@
 //! for the entire execution, so `dispatch_ir_accounting_json` can
 //! report `fields_honored` as runtime evidence — distinct from the
 //! static `fields_capability_supported_by_backend` partition.
-//!
-//! Plan 07 §2 closure. The fork-side emitter is at
-//! `external/vllm@490aaad0c`; the APXM-side parser is at
-//! `apxm-backends/openai/backend.rs::parse_apxm_fields_honored_header`;
-//! this is the per-execution aggregation point Plan 07 §2's
-//! "Remaining work" §2 names.
 
 use std::collections::{BTreeSet, HashMap};
 

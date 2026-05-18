@@ -1,15 +1,12 @@
 #!/usr/bin/env python3
 """review.py — draft a PR review by running the project's checklist + LLM.
 
-Plan 05 IMPL surface. Reads a PR diff via `gh pr diff`, runs three
-project-specific checks (no-legacy-vllm reference scan, CHANGELOG
-[Unreleased] touched-when-public-surface-changes, claim-discipline
-when docs/claims/* is modified), and sends the diff + check results
-through the HAL adapter to draft a review comment.
-
-Ground truth (Plan 05): human-reviewer agreement rate on the draft's
-findings (accept / modify / reject). Manifest records the diff size,
-which checks fired, what the LLM said.
+Reads a PR diff via `gh pr diff`, runs three project-specific checks
+(no-legacy-vllm reference scan, CHANGELOG [Unreleased] touched-when-
+public-surface-changes, claim-discipline when docs/claims/* is modified),
+and sends the diff + check results through the HAL adapter to draft a
+review comment. Human-reviewer agreement rate on the draft's findings
+(accept / modify / reject) is the headline metric.
 
 Pure stdlib + gh + urllib.
 """
@@ -140,7 +137,7 @@ def _check_claim_discipline(touched_files: list[str], pr_body: str) -> tuple[boo
         False,
         f"claim-discipline: PR touches {len(claim_paths)} claim file(s) "
         "but the description does NOT cite docs/preregistrations/*. Per "
-        "Plan 00 §5, every claim must reference a pre-committed protocol.",
+        "Every claim must reference a pre-committed measurement protocol.",
     )
 
 
