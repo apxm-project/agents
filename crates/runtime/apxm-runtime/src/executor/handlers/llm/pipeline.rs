@@ -28,59 +28,6 @@ pub(super) fn default_memoizable_for_backend(backend: Option<&str>) -> bool {
     }
 }
 
-/// Token pipeline for streaming producer → consumer.
-///
-/// Enables overlapping producer completion with downstream prefill by
-/// streaming tokens as they're generated.
-#[derive(Debug)]
-#[allow(dead_code)]
-pub struct TokenPipeline {
-    /// Producer node ID
-    pub producer_node_id: u64,
-    /// Consumer node ID
-    pub consumer_node_id: u64,
-    /// Accumulated tokens from producer
-    pub buffer: Vec<String>,
-    /// Whether consumer has been started
-    pub consumer_started: bool,
-    /// Minimum tokens before starting consumer
-    pub min_tokens_before_start: usize,
-}
-
-#[allow(dead_code)]
-impl TokenPipeline {
-    /// Create a new token pipeline
-    pub fn new(producer_id: u64, consumer_id: u64, min_tokens: usize) -> Self {
-        Self {
-            producer_node_id: producer_id,
-            consumer_node_id: consumer_id,
-            buffer: Vec::new(),
-            consumer_started: false,
-            min_tokens_before_start: min_tokens,
-        }
-    }
-
-    /// Add a token to the buffer
-    pub fn push_token(&mut self, token: String) {
-        self.buffer.push(token);
-    }
-
-    /// Check if we have enough tokens to start the consumer
-    pub fn can_start_consumer(&self) -> bool {
-        !self.consumer_started && self.buffer.len() >= self.min_tokens_before_start
-    }
-
-    /// Get the current buffered content
-    pub fn get_content(&self) -> String {
-        self.buffer.join("")
-    }
-
-    /// Mark consumer as started
-    pub fn mark_consumer_started(&mut self) {
-        self.consumer_started = true;
-    }
-}
-
 pub(super) fn resolve_node_output_token_limit(node: &Node) -> Result<Option<usize>> {
     let Some(tokens) = get_optional_u64_attribute(node, graph_attrs::TOKEN_BUDGET)? else {
         return Ok(None);
@@ -145,16 +92,4 @@ mod tests {
         assert!(default_memoizable_for_backend(None));
     }
 
-    #[test]
-    fn token_pipeline_buffers_until_threshold() {
-        let mut pipe = TokenPipeline::new(1, 2, 3);
-        pipe.push_token("a".into());
-        assert!(!pipe.can_start_consumer());
-        pipe.push_token("b".into());
-        pipe.push_token("c".into());
-        assert!(pipe.can_start_consumer());
-        pipe.mark_consumer_started();
-        assert!(!pipe.can_start_consumer());
-        assert_eq!(pipe.get_content(), "abc");
-    }
 }

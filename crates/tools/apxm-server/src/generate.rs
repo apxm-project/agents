@@ -22,7 +22,6 @@ use crate::types::responses::{
 // ─── LLM Generate Types ──────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)] // thinking_config and provider_config reserved for future use
 pub(crate) struct GenerateRequest {
     messages: Vec<MessagePayload>,
     #[serde(default)]
@@ -35,10 +34,6 @@ pub(crate) struct GenerateRequest {
     max_tokens: Option<usize>,
     #[serde(default)]
     tools: Option<Vec<ToolPayload>>,
-    #[serde(default)]
-    thinking_config: Option<ThinkingConfigPayload>,
-    #[serde(default)]
-    provider_config: Option<JsonValue>,
     #[serde(default)]
     trace_id: Option<String>,
 }
@@ -54,14 +49,6 @@ pub(crate) struct ToolPayload {
     name: String,
     description: String,
     parameters: JsonValue,
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct ThinkingConfigPayload {
-    #[allow(dead_code)]
-    enabled: bool,
-    #[allow(dead_code)]
-    budget_tokens: Option<usize>,
 }
 
 #[derive(Debug, Serialize)]

@@ -7,7 +7,6 @@ pub async fn execute(_ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) -
     let strategy = get_optional_string_attribute(node, graph_attrs::STRATEGY)?
         .unwrap_or_else(|| "array".to_string());
 
-    // Optional separator for concat (default: empty string for backward compat)
     let separator =
         get_optional_string_attribute(node, graph_attrs::SEPARATOR)?.unwrap_or_default();
 

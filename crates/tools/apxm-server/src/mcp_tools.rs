@@ -539,7 +539,12 @@ pub(crate) fn capability_list(runtime: &Runtime, args: JsonValue) -> JsonValue {
         .and_then(JsonValue::as_str)
         .unwrap_or_default()
         .to_ascii_lowercase();
-    let mut capabilities = runtime.runtime_capabilities_json();
+    let mut capabilities: Vec<JsonValue> = runtime
+        .capability_system()
+        .list_capabilities()
+        .into_iter()
+        .map(|capability| serde_json::to_value(capability).unwrap_or(JsonValue::Null))
+        .collect();
     if !query.is_empty() {
         capabilities.retain(|value| {
             serde_json::to_string(value)
@@ -1897,16 +1902,3 @@ fn display_path(path: &Path) -> String {
         .to_string()
 }
 
-trait RuntimeCapabilityJson {
-    fn runtime_capabilities_json(&self) -> Vec<JsonValue>;
-}
-
-impl RuntimeCapabilityJson for Runtime {
-    fn runtime_capabilities_json(&self) -> Vec<JsonValue> {
-        self.capability_system()
-            .list_capabilities()
-            .into_iter()
-            .map(|capability| serde_json::to_value(capability).unwrap_or(JsonValue::Null))
-            .collect()
-    }
-}
