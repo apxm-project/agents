@@ -1,92 +1,79 @@
-# APXM vLLM model zoo manifest.
+# APXM-vLLM model-zoo manifest — EXAMPLE / TEMPLATE.
 #
-# This file is the sole source of truth for what runs under APXM. Operators
-# never call `service-start` directly — `dekk apxm vllm zoo apply` expands
-# every [[deployment]] into one or more Slurm-owned vLLM services.
+# This file is illustrative. Operators write their own zoo manifest at
+# `deploy/vllm/zoo.toml` (gitignored) or any path passed to
+# `dekk apxm vllm zoo-apply <path>`. The schema is the same.
 #
-# Schema: see tools/scripts/vllm.py:_load_zoo_manifest.
+# See docs/backends/model-zoo.md for the full operator guide (manifest
+# fields, cache-warm flow, registration, failure modes).
 #
-# Total weights ≈ 1.75 TB; concurrent execution needs 1 + 1 + 2 + 3 = 7 nodes.
+# The infrastructure is model-agnostic: vLLM runs in a container per
+# service, and any model vLLM can load (any HF id, any local path) can
+# be a deployment entry. The entries below exercise three deployment
+# shapes — they are NOT a fixed production set.
 
 schema_version = 1
 
-# Cluster-wide defaults applied to every [[deployment]] that does not
-# explicitly override the key. Pin the runtime image here so `zoo-apply`
-# never silently falls through to the APXM_VLLM_IMAGE env or hard-errors.
+# Cluster-wide defaults. Every [[deployment]] entry inherits these
+# unless it overrides the key explicitly. Pin a known image so
+# zoo-apply does not silently fall back to APXM_VLLM_IMAGE env.
 [defaults]
-image = "apxm-vllm-runtime:a0e42ad3-e4e3a9af-post-rebase"
+image = "apxm-vllm-runtime:<APXM_SHA>-<VLLM_SHA>-post-rebase"
 scheduling_policy = "priority"
 enable_prefix_caching = true
 max_num_seqs = 64
 
-# Single-node single-instance — TP=8, 1 node, GPUs 0–7.
+# --- Shape A: single-node single-instance ----------------------------
+# One vLLM container on one node, all GPUs assigned to one TP group.
+# Use when the model fits a single node and you want maximum
+# per-request throughput (no replica fan-out).
 [[deployment]]
-name = "vllm-gptoss"
-model = "openai/gpt-oss-120b"
-served_model_name = "gpt-oss-120b"
+name = "example-large-model"
+model = "<HF_OR_LOCAL_REF>"               # e.g. openai/gpt-oss-120b, /shared/models/foo
+served_model_name = "<BARE_SERVED_NAME>"  # e.g. gpt-oss-120b (NOT the HF org/repo)
 backend_name = "vllm-fork"
-nodes = 1
 tensor_parallel = 8
 replicas = 1
 port = 8916
 gpus = "0,1,2,3,4,5,6,7"
 weights_gb = 240
 max_model_len = 32768
-max_num_seqs = 64
-scheduling_policy = "priority"
-enable_prefix_caching = true
+# Model-specific parser fields are OPTIONAL. Set ONLY when the model
+# needs them; never default. A wrong reasoning_parser crashes vLLM
+# startup with a vocab KeyError.
+# reasoning_parser = "openai_gptoss"
+# tool_call_parser = "openai"
+# enable_auto_tool_choice = true
 
-# Single-node multi-instance — 4 replicas of Qwen3-32B on TP=2 each.
-# Replica r0 → GPUs 0,1; r1 → 2,3; r2 → 4,5; r3 → 6,7.
+# --- Shape B: single-node multi-instance (gpu_groups) ----------------
+# Several replicas of the same model on ONE node, each replica pinned
+# to a disjoint GPU subset. Use when the model is small enough that
+# you'd rather have N parallel servers than one large TP group.
 [[deployment]]
-name = "vllm-qwen3-fast"
-model = "Qwen/Qwen3-32B"
-served_model_name = "Qwen3-32B"
-backend_name = "vllm-fork-qwen3"
-nodes = 1
+name = "example-fast-model"
+model = "<HF_OR_LOCAL_REF>"
+served_model_name = "<BARE_SERVED_NAME>"
+backend_name = "vllm-fork-fast"
 tensor_parallel = 2
 replicas = 4
 port_base = 8920
 gpu_groups = [[0, 1], [2, 3], [4, 5], [6, 7]]
 weights_gb = 64
 max_model_len = 32768
-max_num_seqs = 64
-scheduling_policy = "priority"
-enable_prefix_caching = true
 
-# Single-node single-instance, 2 replicas on 2 different nodes — TP=8 each.
+# --- Shape C: cross-node multi-instance (replicas) -------------------
+# Same model, multiple Slurm allocations (one node per replica).
+# Use when one replica saturates a node and you want horizontal
+# capacity for the same served_model_name. The APXM registry will
+# round-robin across the backends at request time.
 [[deployment]]
-name = "vllm-deepseek"
-model = "deepseek-ai/DeepSeek-V3-0324"
-served_model_name = "DeepSeek-V3-0324"
-backend_name = "vllm-fork-deepseek"
-nodes = 1
+name = "example-throughput-model"
+model = "<HF_OR_LOCAL_REF>"
+served_model_name = "<BARE_SERVED_NAME>"
+backend_name = "vllm-fork-throughput"
 tensor_parallel = 8
 replicas = 2
 port_base = 8930
 gpus = "0,1,2,3,4,5,6,7"
 weights_gb = 400
 max_model_len = 32768
-max_num_seqs = 64
-scheduling_policy = "priority"
-enable_prefix_caching = true
-
-# Multi-node single-instance — TP=8 PP=3, 3 nodes. Risk 4: must pass the
-# cross-shard pin test before being committed to production.
-[[deployment]]
-name = "vllm-kimi"
-model = "moonshotai/Kimi-K2-Instruct"
-served_model_name = "Kimi-K2-Instruct"
-backend_name = "vllm-fork-kimi"
-nodes = 3
-tensor_parallel = 8
-pipeline_parallel = 3
-replicas = 1
-port = 8940
-ray_port = 6379
-gpus = "0,1,2,3,4,5,6,7"
-weights_gb = 1050
-max_model_len = 65536
-max_num_seqs = 32
-scheduling_policy = "priority"
-enable_prefix_caching = true

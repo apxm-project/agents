@@ -110,10 +110,7 @@ ENV_SCHEDULING_POLICY = env_name(EnvVar.SCHEDULING_POLICY)
 ENV_ENABLE_PREFIX_CACHING = env_name(EnvVar.ENABLE_PREFIX_CACHING)
 ENV_STARTUP_TIMEOUT_SECONDS = env_name(EnvVar.STARTUP_TIMEOUT_SECONDS)
 ENV_TENSOR_PARALLEL_SIZE = env_name(EnvVar.TENSOR_PARALLEL_SIZE)
-ENV_PIPELINE_PARALLEL_SIZE = env_name(EnvVar.PIPELINE_PARALLEL_SIZE)
 ENV_GPUS = env_name(EnvVar.GPUS)
-ENV_NODES = env_name(EnvVar.NODES)
-ENV_RAY_PORT = env_name(EnvVar.RAY_PORT)
 ENV_SLURM_JOB_ID = env_name(EnvVar.SLURM_JOB_ID)
 ENV_SLURM_JOB_NODELIST = env_name(EnvVar.SLURM_JOB_NODELIST)
 PORT_ALLOCATOR_MIN = 8916
@@ -1262,9 +1259,9 @@ def _start_one_service(
     startup_timeout: float | None = None,
     gpus: str | None = None,
     tensor_parallel_size: int | None = None,
-    pipeline_parallel_size: int | None = None,
-    nodes: int = 1,
-    ray_port: int | None = None,
+    reasoning_parser: str | None = None,
+    tool_call_parser: str | None = None,
+    enable_auto_tool_choice: bool | None = None,
 ) -> tuple[int, dict[str, Any] | None]:
     """Submit one Slurm-owned APXM-vLLM service. Returns (rc, state).
 
@@ -1279,12 +1276,7 @@ def _start_one_service(
         return 1, None
     canonical = _service_name(name)
     served = served_model_name or model
-    log_pattern = (
-        f"slurm-apxm-vllm-service-{canonical}-%j.node%t.out"
-        if nodes > 1
-        else f"slurm-apxm-vllm-service-{canonical}-%j.out"
-    )
-    log_path = LOG_DIR / log_pattern
+    log_path = LOG_DIR / f"slurm-apxm-vllm-service-{canonical}-%j.out"
     script = REPO_ROOT / "deploy" / "vllm" / "run-vllm.sh"
     if not script.is_file():
         _print(f"Unified vLLM service wrapper not found: {script}")
@@ -1299,7 +1291,6 @@ def _start_one_service(
             ENV_SERVED_MODEL_ID: served,
             ENV_BACKEND_NAME: backend_name,
             ENV_PORT: str(port),
-            ENV_NODES: str(nodes),
         }
     )
     if hf_home:
@@ -1318,10 +1309,12 @@ def _start_one_service(
         env[ENV_GPUS] = gpus
     if tensor_parallel_size is not None:
         env[ENV_TENSOR_PARALLEL_SIZE] = str(tensor_parallel_size)
-    if pipeline_parallel_size is not None:
-        env[ENV_PIPELINE_PARALLEL_SIZE] = str(pipeline_parallel_size)
-    if ray_port is not None:
-        env[ENV_RAY_PORT] = str(ray_port)
+    if reasoning_parser:
+        env[env_name(EnvVar.REASONING_PARSER)] = str(reasoning_parser)
+    if tool_call_parser:
+        env[env_name(EnvVar.TOOL_CALL_PARSER)] = str(tool_call_parser)
+    if enable_auto_tool_choice is not None:
+        env[env_name(EnvVar.ENABLE_AUTO_TOOL_CHOICE)] = "1" if enable_auto_tool_choice else "0"
 
     sbatch_cmd = [
         SBATCH,
@@ -1329,10 +1322,8 @@ def _start_one_service(
         f"apxm-vllm-{canonical}",
         "--output",
         str(log_path),
+        str(script),
     ]
-    if nodes > 1:
-        sbatch_cmd.extend(["--nodes", str(nodes), "--ntasks-per-node=1", "--exclusive"])
-    sbatch_cmd.append(str(script))
 
     result = _capture(sbatch_cmd, cwd=REPO_ROOT, env=env)
     if result.stdout.strip():
@@ -1362,10 +1353,7 @@ def _start_one_service(
         "scheduling_policy": scheduling_policy,
         "enable_prefix_caching": enable_prefix_caching,
         "tensor_parallel_size": tensor_parallel_size,
-        "pipeline_parallel_size": pipeline_parallel_size,
         "gpus": gpus,
-        "nodes": nodes,
-        "ray_port": ray_port,
         "log_pattern": str(log_path),
         "submitted_at": time.time(),
     }
@@ -1398,7 +1386,11 @@ def _load_zoo_manifest(path: str | Path) -> dict[str, Any]:
     if not manifest_path.is_absolute():
         manifest_path = (REPO_ROOT / manifest_path).resolve()
     if not manifest_path.is_file():
-        raise SystemExit(f"zoo manifest not found: {manifest_path}")
+        raise SystemExit(
+            f"zoo manifest not found: {manifest_path}\n"
+            f"  bootstrap with: cp deploy/vllm/zoo.example.toml "
+            f"deploy/vllm/zoo.toml && edit"
+        )
     with manifest_path.open("rb") as handle:
         data = tomllib.load(handle)
     version = data.get("schema_version", ZOO_MANIFEST_SCHEMA_VERSION)
@@ -1506,9 +1498,6 @@ def _zoo_expand_entries(manifest: dict[str, Any]) -> list[dict[str, Any]]:
                     "port": _zoo_replica_port(entry, idx),
                     "gpus": _zoo_replica_gpus(entry, idx),
                     "tensor_parallel_size": entry.get("tensor_parallel"),
-                    "pipeline_parallel_size": entry.get("pipeline_parallel"),
-                    "nodes": int(entry.get("nodes", 1)),
-                    "ray_port": entry.get("ray_port"),
                     "max_model_len": entry.get("max_model_len"),
                     "max_num_seqs": entry.get("max_num_seqs"),
                     "scheduling_policy": entry.get(
@@ -1521,13 +1510,20 @@ def _zoo_expand_entries(manifest: dict[str, Any]) -> list[dict[str, Any]]:
                         "startup_timeout", SERVICE_DEFAULTS.startup_timeout_seconds
                     ),
                     "weights_gb": entry.get("weights_gb"),
+                    # Model-specific feature toggles: NO default. A silent
+                    # `reasoning_parser=openai_gptoss` default crashes every
+                    # non-gpt-oss model at vLLM startup with a vocab
+                    # KeyError. Manifest must set per-deployment.
+                    "reasoning_parser": entry.get("reasoning_parser"),
+                    "tool_call_parser": entry.get("tool_call_parser"),
+                    "enable_auto_tool_choice": entry.get("enable_auto_tool_choice"),
                 }
             )
     return expanded
 
 
 def _zoo_disk_pre_check(manifest: dict[str, Any]) -> None:
-    """Refuse to start if WekaFS free space < Σ(weights_gb)*1.2 (Risk 6)."""
+    """Refuse to start if the HF cache filesystem has less free space than Σ(weights_gb)*1.2."""
     total_weights_gb = sum(
         float(entry.get("weights_gb") or 0)
         for entry in manifest["deployment"]
@@ -1563,9 +1559,12 @@ def zoo_cache_warm_cmd(args: argparse.Namespace) -> int:
             continue
         seen.add(model)
         print(f"[zoo cache-warm] {model}")
+        # Prefer the manifest entry's image (defaults-merged by
+        # _load_zoo_manifest), then fall through to args/env in
+        # _resolve_image. No silent factory fallback.
         ns = argparse.Namespace(
             model=model,
-            image=getattr(args, "image", None),
+            image=entry.get("image") or getattr(args, "image", None),
             hf_home=getattr(args, "hf_home", None),
             revision=entry.get("revision"),
         )
@@ -1639,9 +1638,9 @@ def zoo_apply_cmd(args: argparse.Namespace) -> int:
             startup_timeout=entry["startup_timeout"],
             gpus=entry["gpus"],
             tensor_parallel_size=entry["tensor_parallel_size"],
-            pipeline_parallel_size=entry["pipeline_parallel_size"],
-            nodes=entry["nodes"],
-            ray_port=entry["ray_port"],
+            reasoning_parser=entry.get("reasoning_parser"),
+            tool_call_parser=entry.get("tool_call_parser"),
+            enable_auto_tool_choice=entry.get("enable_auto_tool_choice"),
         )
         if step_rc != 0 or state is None:
             _print(f"[zoo apply] failed to start {entry['name']} (rc={step_rc})")
@@ -1719,9 +1718,9 @@ def zoo_scale_cmd(args: argparse.Namespace) -> int:
             startup_timeout=e["startup_timeout"],
             gpus=e["gpus"],
             tensor_parallel_size=e["tensor_parallel_size"],
-            pipeline_parallel_size=e["pipeline_parallel_size"],
-            nodes=e["nodes"],
-            ray_port=e["ray_port"],
+            reasoning_parser=e.get("reasoning_parser"),
+            tool_call_parser=e.get("tool_call_parser"),
+            enable_auto_tool_choice=e.get("enable_auto_tool_choice"),
         )
         if step_rc != 0 or state is None:
             rc = step_rc or 1
@@ -2448,25 +2447,6 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         help="TENSOR_PARALLEL_SIZE exported to the Slurm wrapper",
     )
-    service_start.add_argument(
-        "--pipeline-parallel-size",
-        dest=ArgName.PIPELINE_PARALLEL_SIZE.value,
-        type=int,
-        help="PIPELINE_PARALLEL_SIZE exported to the Slurm wrapper (multi-node only)",
-    )
-    service_start.add_argument(
-        "--nodes",
-        dest=ArgName.NODES.value,
-        type=int,
-        default=1,
-        help="Number of Slurm nodes for this service (1 = single-node, >1 = Ray multi-node)",
-    )
-    service_start.add_argument(
-        "--ray-port",
-        dest=ArgName.RAY_PORT.value,
-        type=int,
-        help="RAY_PORT for the Ray head when --nodes > 1",
-    )
     service_start.set_defaults(**{ArgName.HANDLER.value: lambda ns, extra: service_start_cmd(ns)})
 
     service_list = subparsers.add_parser(
@@ -2487,7 +2467,11 @@ def build_parser() -> argparse.ArgumentParser:
             "manifest",
             nargs="?",
             default="deploy/vllm/zoo.toml",
-            help="Path to the zoo manifest (default: deploy/vllm/zoo.toml)",
+            help=(
+                "Path to the zoo manifest "
+                "(default: deploy/vllm/zoo.toml — gitignored; copy "
+                "deploy/vllm/zoo.example.toml to bootstrap)"
+            ),
         )
         if zoo_cmd is VllmCommand.ZOO_APPLY:
             zoo_parser.add_argument(

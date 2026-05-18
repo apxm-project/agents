@@ -1,154 +1,220 @@
-# APXM vLLM model zoo
+# APXM vLLM model zoo — operator guide
 
-The zoo is the **sole** operator surface for deploying vLLM services under
-APXM. `service-start` and `service-adopt` do not exist — every running vLLM
-service is owned by an entry in `deploy/vllm/zoo.toml`.
+The zoo is the **sole** operator surface for deploying vLLM services
+under APXM. `service-start` and `service-adopt` do not exist — every
+running vLLM service is owned by an entry in your zoo manifest.
 
-This document is the runbook. The conceptual contract (`/v1/apxm/*` routes,
-the role of the fork) lives in [`docs/backends/vllm.md`](vllm.md).
+This document is the getting-started guide. The conceptual contract
+(`/v1/apxm/*` routes, the role of the fork) lives in
+[`vllm.md`](vllm.md).
 
-## Quick start
+---
+
+## What this gives you
+
+- One vLLM container per service, scheduled by Slurm onto any node in
+  the cluster.
+- Model-agnostic: any model vLLM can load (HF id, local path, mirror)
+  is a one-line entry in the manifest.
+- Three deployment shapes out of the box: single-instance,
+  multi-instance on one node (GPU groups), and multi-instance across
+  nodes (replicas). Multi-node Ray (cross-node TP+PP for one model) is
+  out of scope — keep one service per node.
+- Round-robin dispatch across replicas of the same `served_model_name`,
+  baked into the APXM resolver.
+- A lint gate that prevents legacy CLI surface and fallback patterns
+  from reappearing (`dekk apxm vllm check-no-legacy`).
+
+---
+
+## Prerequisites (do once per cluster)
 
 ```bash
-# 0. The shared HF cache root is the single mandatory env var (no fallback).
-#    Set it once per shell — the controller hard-fails without it.
+# 1. The shared HF cache root is the single mandatory env var.
+#    Put it in your shell rc so every session inherits it.
 export APXM_VLLM_HF_HOME=$HOME/.cache/huggingface-apxm-vllm
 
-# 1. Warm the HF cache for every model in the manifest (CPU-only, idempotent,
-#    refuses to start if WekaFS free < Σ(weights_gb) × 1.2).
+# 2. Verify host readiness (Docker, buildx, Slurm tools, fork SHA).
+dekk apxm vllm doctor
+
+# 3. Build the APXM-vLLM runtime image. Pick a tag that records the
+#    APXM + vllm-fork SHAs so artifacts are reproducible.
+APXM_SHA=$(git rev-parse --short HEAD)
+VLLM_SHA=$(git -C external/vllm rev-parse --short HEAD)
+IMAGE="apxm-vllm-runtime:${APXM_SHA}-${VLLM_SHA}-post-rebase"
+
+dekk apxm vllm docker-build --image "$IMAGE" \
+    --base-image rocm/vllm-dev:nightly_main_20260411  # or your base
+
+# 4. Save the image to the shared archive store so worker nodes can
+#    docker-load it from WekaFS.
+dekk apxm vllm docker-save --image "$IMAGE"
+```
+
+The image is portable across nodes via the saved `.tar` in
+`.apxm/vllm-images/`; the per-service Slurm wrapper loads it on the
+allocated node before starting the container.
+
+---
+
+## Bootstrap your zoo manifest
+
+```bash
+cp deploy/vllm/zoo.example.toml deploy/vllm/zoo.toml
+$EDITOR deploy/vllm/zoo.toml
+```
+
+`deploy/vllm/zoo.toml` is **gitignored**. The example file is a
+template covering the three deployment shapes. Replace the
+`example-*` entries with your own.
+
+### Schema (per `[[deployment]]`)
+
+| Field | Required | Description |
+|---|---|---|
+| `name` | yes | Service name (unique within the manifest). |
+| `model` | yes | What vLLM loads. HF id (`openai/gpt-oss-120b`), local path, or any vLLM-supported ref. |
+| `served_model_name` | yes | The bare name `/v1/models` will serve. Must match what APXM stores — typically the model name without the HF org/repo prefix. A mismatch produces silent 404s. |
+| `backend_name` | yes | The APXM backend name the registry uses. Distinct per replica. |
+| `tensor_parallel` | yes | GPUs per replica (TP shard count). |
+| `replicas` | no (default 1) | Number of identical containers to spawn. |
+| `port` | when `replicas == 1` | Listener port. |
+| `port_base` | when `replicas > 1` | First replica gets `port_base`, second `port_base + 1`, etc. |
+| `gpus` | one of these two | Comma-separated GPU index list (e.g. `"0,1,2,3,4,5,6,7"`). |
+| `gpu_groups` | one of these two | List of GPU lists, one per replica (e.g. `[[0,1],[2,3]]`). |
+| `weights_gb` | recommended | Approx model size; used by the capacity pre-check. |
+| `max_model_len`, `max_num_seqs` | no | Forwarded to vLLM. |
+| `image` | no (inherits `[defaults].image`) | Per-deployment image override. |
+| `scheduling_policy` | no (default `priority`) | Only `priority` is accepted; FCFS is not supported by APXM. |
+| `enable_prefix_caching` | no (default true) | Toggle vLLM's prefix cache. |
+| `reasoning_parser` | model-specific | Only set when the model needs it (e.g. `openai_gptoss`). A wrong value crashes startup with a vocab `KeyError`. |
+| `tool_call_parser` | model-specific | Same. |
+| `enable_auto_tool_choice` | model-specific | Same. |
+
+`[defaults]` at the top of the manifest applies to every entry unless
+overridden. Pin `image` there so `zoo-apply` never falls through to env.
+
+### Deployment shapes (illustrated in `zoo.example.toml`)
+
+- **Single-instance**: `replicas = 1`, all node GPUs in one TP group.
+  Maximizes per-request throughput for one big model.
+- **Multi-instance on one node**: `replicas = N` with `gpu_groups`.
+  Each replica pins a disjoint GPU subset on the same node. Use for
+  smaller models when N parallel servers beats one big TP group.
+- **Multi-instance across nodes**: `replicas = N` with `gpus`. Each
+  replica gets its own Slurm allocation; APXM round-robins requests
+  across them at the registry layer.
+
+If a model truly exceeds one node, register it under a non-APXM
+backend protocol or shrink TP / `max_model_len` until it fits.
+
+---
+
+## Daily flow
+
+```bash
+# Warm the HF cache for every model in the manifest.
+# CPU-only, idempotent. Refuses to start if WekaFS free space <
+# Σ(weights_gb) × 1.2.
 dekk apxm vllm zoo-cache-warm
 
-# 2. Reconcile the manifest against running services. Starts anything missing,
-#    warns on services not in the manifest (use --prune to opt in to cancel).
+# Reconcile: submit Slurm jobs for any manifest entry that does not
+# already have a recorded service. Idempotent — re-runs probe healthy
+# services, never restarts them.
 dekk apxm vllm zoo-apply
 
-# 3. Inspect.
-dekk apxm vllm zoo-status
+# Watch services come up.
 dekk apxm vllm service-list
 
-# 4. Scale a single entry up/down.
-dekk apxm vllm zoo-scale vllm-qwen3-fast --replicas 2
+# Probe each endpoint for /v1/models + /v1/apxm/* round-trip.
+dekk apxm vllm probe --port <PORT>
 
-# 5. Tail container logs for everything zoo-managed.
-dekk apxm vllm zoo-logs
+# Scale a service down to 0 (the only explicit-removal path; zoo-apply
+# never silently cancels jobs that have peer-protection value).
+dekk apxm vllm zoo-scale <NAME> --replicas 0
+
+# Tail logs.
+dekk apxm vllm zoo-logs <NAME>
 ```
 
-Every `zoo-apply` writes a provenance artifact to
-`.apxm/deploy/<TIMESTAMP>/zoo-snapshot.json` recording the manifest content
-and resolved Slurm job ids. Benchmark pre-registration templates must cite
-this snapshot path.
+`zoo-apply` writes a snapshot of the resolved manifest + Slurm job ids
+to `.apxm/deploy/<TIMESTAMP>/zoo-snapshot.json` on every run, so any
+benchmark or claim can be traced back to the exact zoo state at the
+moment of submission.
 
-## Manifest schema
-
-`deploy/vllm/zoo.toml` is the single source of truth. Schema:
-
-```toml
-schema_version = 1
-
-[[deployment]]
-# Required
-name = "vllm-gptoss"                    # used as Slurm job name + service-state key
-model = "openai/gpt-oss-120b"           # HF model id passed to vLLM
-
-# Optional but normally set
-served_model_name = "gpt-oss-120b"      # served-id alias (defaults to `model`)
-backend_name = "vllm-fork"              # APXM backend name (per-replica suffix added)
-nodes = 1                               # Slurm node count; >1 enables Ray
-tensor_parallel = 8                     # TENSOR_PARALLEL_SIZE
-pipeline_parallel = 1                   # PIPELINE_PARALLEL_SIZE (multi-node only)
-replicas = 1                            # 1 = single instance, N = N replicas
-port = 8916                             # explicit port (single-replica only)
-port_base = 8920                        # base port (replicas=N → port_base..base+N-1)
-gpus = "0,1,2,3,4,5,6,7"                # per-instance GPU subset
-gpu_groups = [[0,1],[2,3],[4,5],[6,7]]  # per-replica GPU subsets (overrides `gpus`)
-ray_port = 6379                         # Ray head port (multi-node only)
-weights_gb = 240                        # used by the Σ(weights)*1.2 disk pre-check
-max_model_len = 32768
-max_num_seqs = 64
-scheduling_policy = "priority"          # priority is the only supported value
-enable_prefix_caching = true
-startup_timeout = 7200
-```
-
-`name` must be unique across entries. The manifest expands to one Slurm
-service per replica; multi-replica entries use `<name>-r<i>` and
-`<port_base>+i`.
-
-## Deployment shapes
-
-The 4-model test set in `deploy/vllm/zoo.toml` exercises every supported
-deployment shape.
-
-| Shape | Example | Per-entry layout |
-|---|---|---|
-| Single-node single-instance | `vllm-gptoss` | TP=8, 1 node, GPUs 0–7 |
-| Single-node N-replica | `vllm-qwen3-fast` (replicas=4) | TP=2, 4 replicas on one node, `gpu_groups` shards the 8 GPUs |
-| N-node 1-replica per node | `vllm-deepseek` (replicas=2) | TP=8 each on 2 different nodes; ports `port_base..base+1` |
-| Multi-node single-instance | `vllm-kimi` (nodes=3, PP=3) | TP=8 PP=3, Ray head on rank 0, workers on ranks 1–2 |
-
-## Storage & log layout
-
-Every path is resolved by `tools/scripts/apxm_vllm_contract.py:RepoLayout`.
-**Do not invent parallel paths.**
-
-| Artifact | Path |
-|---|---|
-| Model weights (HF cache) | `~/.cache/huggingface-apxm-vllm/` (mounted at `/models/hf` inside containers) |
-| Service state | `.apxm/vllm-services/<name>.json` |
-| Image store | `.apxm/vllm-images/<tag>.docker.tar` + sidecar `.json` |
-| Slurm stdout (1-node) | `.apxm/vllm-logs/slurm-apxm-vllm-service-<name>-<jobid>.out` |
-| Slurm stdout (Ray N-node) | `.apxm/vllm-logs/slurm-apxm-vllm-service-<name>-<jobid>.node<N>.out` |
-| Zoo snapshots | `.apxm/deploy/<TIMESTAMP>/zoo-snapshot.json` |
-
-## Port allocator
-
-Ports are drawn from **[8916, 8999]**. The allocator scans
-`.apxm/vllm-services/*.json` for taken ports and returns the first free
-candidate; `service-start --port <PORT>` reuses `<PORT>` if free, else picks
-the next available and logs the substitution. The range is exhausted as a
-hard error — there is no implicit reuse.
+---
 
 ## Adding a new model
 
-1. `dekk apxm vllm cache-warm <hf-model-id>` — pulls weights to the shared
-   HF cache. Idempotent; resumes partial.
-2. Append a `[[deployment]]` block to `deploy/vllm/zoo.toml`.
-3. `dekk apxm vllm zoo-apply` — starts the new service alongside existing
-   ones. Existing services are left untouched.
-4. `dekk apxm vllm probe --port <PORT>` — confirms the APXM graph routes
-   work and the scheduler is in `priority` mode.
+1. `dekk apxm vllm cache-warm <MODEL_REF>` (one-time, CPU-only).
+2. Append a `[[deployment]]` block to your `deploy/vllm/zoo.toml`.
+3. `dekk apxm vllm zoo-apply` — only the new entry will be submitted.
+4. `dekk apxm vllm probe --port <PORT>` confirms the APXM router is up.
+5. The backend is automatically registered in the APXM config; verify
+   with `dekk apxm backend list`.
 
-## Failure modes
+Model-specific parser fields (`reasoning_parser`, `tool_call_parser`,
+`enable_auto_tool_choice`) are **never** defaulted by the wrapper. If
+the model needs them, set them in the manifest entry. If you set the
+wrong one, vLLM crashes with a vocab `KeyError` at startup — the
+container log will tell you which token is missing.
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| `zoo cache-warm refused: WekaFS free < required` | Σ(weights_gb)*1.2 exceeds free space on `$HOME` | Free space, or coordinate a shared HF cache namespace with cluster ops |
-| `port allocator exhausted` | Every port in [8916, 8999] is bound to a recorded service | `service-stop` orphaned entries; verify with `service-list` |
-| `missing /v1/apxm/scheduler` at registration | Stock vLLM image (not the fork) | Verify image tag points to `apxm-vllm-runtime:<APXM>-<VLLM>`; register vanilla vLLM under `OpenAIBackend` instead |
-| Ray worker never joins head | Network/firewall blocks `$RAY_PORT` between nodes | Confirm `--exclusive` allocation; check cluster network policy |
-| Replica drift (manifest replicas=4, only 3 running) | One replica's Slurm job failed | `zoo-status` shows the gap; `zoo-apply` re-creates the missing replica |
-| `probe` returns `policy != "priority"` | Fork running with `--scheduling-policy fcfs` | Per-request priority hints are inert; remove the override or relaunch the service |
+---
 
-## CLI surface
+## Verifying a multi-replica service round-robins
 
-| Subcommand | Status | Notes |
-|---|---|---|
-| `zoo-apply` / `zoo-status` / `zoo-scale` / `zoo-cache-warm` / `zoo-logs` | **Public** | The entire zoo surface |
-| `service-list` / `service-status` / `service-stop` / `service-exec` | **Public** | Operate on zoo-managed services |
-| `cache-warm` / `enable` / `probe` / `doctor` / `docker-build` / `docker-save` / `docker-load` | **Public** | Image-lifecycle and operational primitives |
-| `service-start` / `service-adopt` | **Not provided** | Write a `zoo.toml` entry and call `zoo-apply` |
-| `docker-start` / `docker-stop` / `docker-status` / `docker-logs` | **Internal** | Invoked by `run-vllm.sh`; not part of the public CLI |
+The APXM resolver's `find_backend_for_model` collects every backend
+matching the requested model name and dispatches via the configured
+strategy (default round-robin). Unit tests at
+`crates/runtime/apxm-backends/src/llm/registry/resolver.rs` cover the
+algorithm; a behavioral check inspects the APXM trace after sending N
+requests through the dispatcher.
 
-## Discipline
+---
 
-> Exactly one well-defined path for every operation. Missing config errors
-> loudly at the earliest possible moment — never silently substitutes a
-> default, never silently skips, never gracefully degrades, never keeps a
-> parallel "old way that still works." The zoo manifest is the **sole**
-> source of truth for what runs.
+## Failure modes worth knowing
 
-The CI lint at `tools/scripts/check_no_legacy_vllm.py` (also exposed as
-`dekk apxm vllm check-no-legacy`) catches regressions: any reintroduction of
-the legacy CLI tokens, the `apxm_endpoints_available` capability flag, the
-`or env or default` chains, the `Last resort` fallback, or
-`SchedulingPolicy.FCFS` fails the build.
+- **`required env var 'APXM_VLLM_HF_HOME' is not set`** — export it
+  in your shell rc.
+- **`required image not supplied`** — pin `image` in `[defaults]` or
+  pass via env. No silent factory default.
+- **`zoo manifest not found`** — copy `zoo.example.toml` to
+  `zoo.toml`.
+- **`vLLM server at … is missing /v1/apxm/scheduler`** — the endpoint
+  is vanilla upstream vLLM, not the APXM fork. Either rebuild the
+  image from `external/vllm`, or register it under `protocol=openai`.
+- **`no healthy backends for <model>`** — all replicas are
+  Unhealthy/Unknown. Check `service-list` and the container logs.
+- **`port already in use`** — manifest port collides with a running
+  service or another tenant. The allocator (when used by single-entry
+  CLI) picks the next free port in `8916–8999`; manifest ports are
+  required to be explicit.
+- **`hardcoded-port-8916`** or other lint failures — the CI lint
+  (`dekk apxm vllm check-no-legacy`) refuses any legacy CLI surface,
+  silent fallback chain, or capability flag in non-excluded paths.
+
+---
+
+## Cleanup
+
+```bash
+# Remove a service.
+dekk apxm vllm zoo-scale <NAME> --replicas 0
+
+# Remove ALL services NOT in the current manifest (confirmation by
+# explicit flag; this is the only way zoo-apply auto-cancels jobs).
+dekk apxm vllm zoo-apply --prune
+```
+
+The APXM backend registry deregistration is wired into the container
+cleanup trap, so when a Slurm job ends, the backend entry is removed
+automatically. Stale entries should never accumulate.
+
+---
+
+## Cross-references
+
+- [`vllm.md`](vllm.md) — concept doc: contract, fork role, route list.
+- [`../../deploy/vllm/zoo.example.toml`](../../deploy/vllm/zoo.example.toml) — bootstrap template.
+- [`../../deploy/vllm/run-vllm.sh`](../../deploy/vllm/run-vllm.sh) — the Slurm wrapper invoked by every service.
+- `dekk apxm vllm check-no-legacy` — CI lint gate that enforces the no-legacy / no-fallback rule.
