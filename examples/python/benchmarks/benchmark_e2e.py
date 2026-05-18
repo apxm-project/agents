@@ -73,6 +73,7 @@ if str(TOOLS_SCRIPT_DIR) not in sys.path:
 
 from apxm_vllm_contract import (  # noqa: E402
     ApiRoute,
+    ArmName,
     DockerCommand,
     DockerFlag,
     DockerValue,
@@ -114,8 +115,8 @@ PASS_DSPY_OPTIMIZE = "dspy-optimize"
 ATTR_BENCHMARK_MILESTONE = "benchmark_milestone"
 EVIDENCE_SCHEMA_VERSION = 2
 
-ARM_APXM_ON = "apxm-on"
-ARM_FLAT_HTTP = "flat-http"
+ARM_APXM_ON = ArmName.APXM_ON.value
+ARM_FLAT_HTTP = ArmName.FLAT_HTTP.value
 DISABLE_HINTS_ENABLED = "1"
 
 GPU_SMI = "gpu-smi"

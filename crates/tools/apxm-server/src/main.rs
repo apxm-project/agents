@@ -60,6 +60,10 @@ pub(crate) use app::build_app;
 #[allow(unused_imports)]
 pub(crate) use startup::build_server_runtime;
 
+/// Canonical default port for the APXM server. Both `DEFAULT_ADDR` and
+/// `DEFAULT_PUBLIC_URL` embed this value; update all three together.
+#[allow(dead_code)]
+pub(crate) const DEFAULT_PORT: u16 = 18800;
 pub(crate) const DEFAULT_ADDR: &str = "127.0.0.1:18800";
 pub(crate) const DEFAULT_PUBLIC_URL: &str = "http://localhost:18800";
 

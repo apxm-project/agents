@@ -53,7 +53,12 @@ DATA_DIR = WORKLOADS_DIR / "data"
 DEFAULT_TRACE = DATA_DIR / "mooncake_sample.jsonl"
 DEFAULT_OUTPUT = REPO_ROOT / ".apxm" / "benchmarks" / "results" / "mooncake.csv"
 DEFAULT_ROW_GRAPH = WORKLOADS_DIR / "mooncake_row.py"
-DEFAULT_APXM_ENDPOINT = os.environ.get("APXM_ENDPOINT", "")
+
+_TOOLS_SCRIPT_DIR = str(REPO_ROOT / "tools" / "scripts")
+if _TOOLS_SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _TOOLS_SCRIPT_DIR)
+
+from apxm_vllm_contract import ArmName, EnvVar  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from util import prom_pull  # noqa: E402
@@ -62,18 +67,19 @@ from util import pre_registration  # noqa: E402
 sys.path.insert(0, str(DATA_DIR))
 from _mooncake_hash import synthesize_prompt  # noqa: E402
 
-APXM_DISABLE_HINTS_ENV = "APXM_DISABLE_HINTS"
+APXM_DISABLE_HINTS_ENV = EnvVar.APXM_DISABLE_HINTS.value
 DISABLE_HINTS_ENABLED = "1"
-ARM_APXM_ON = "apxm-on"
-ARM_FLAT_HTTP = "flat-http"
+ARM_APXM_ON = ArmName.APXM_ON.value
+ARM_FLAT_HTTP = ArmName.FLAT_HTTP.value
 
 MOONCAKE_INPUT_TEXT_ENV = "MOONCAKE_INPUT_TEXT"
 MOONCAKE_INPUT_TEXT_PATH_ENV = "MOONCAKE_INPUT_TEXT_PATH"
 MOONCAKE_MAX_TOKENS_ENV = "MOONCAKE_MAX_TOKENS"
 MOONCAKE_ROW_INDEX_ENV = "MOONCAKE_ROW_INDEX"
 MOONCAKE_REUSE_GROUP_ENV = "MOONCAKE_REUSE_GROUP"
-MATRIX_VARIANT_ENV = "APXM_MATRIX_VARIANT"
-APXM_VLLM_CACHE_SALT_ENV = "APXM_VLLM_CACHE_SALT"
+MATRIX_VARIANT_ENV = EnvVar.APXM_MATRIX_VARIANT.value
+APXM_VLLM_CACHE_SALT_ENV = EnvVar.APXM_VLLM_CACHE_SALT.value
+DEFAULT_APXM_ENDPOINT = os.environ.get(EnvVar.APXM_ENDPOINT.value, "")
 
 DEKK_EXECUTE_CMD = ["dekk", "apxm", "execute"]
 DEFAULT_TARGET = "latency"

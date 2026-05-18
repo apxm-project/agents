@@ -23,6 +23,15 @@ Env-var contract (set by the driver):
 """
 import json
 import os
+import sys
+from pathlib import Path
+
+_REPO_ROOT = Path(__file__).resolve().parents[4]
+_TOOLS_SCRIPT_DIR = str(_REPO_ROOT / "tools" / "scripts")
+if _TOOLS_SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _TOOLS_SCRIPT_DIR)
+
+from apxm_vllm_contract import EnvVar  # noqa: E402
 
 from apxm import GraphRecorder, compile
 
@@ -32,7 +41,7 @@ ENV_DOCUMENT = "LOOGLE_DOCUMENT"
 ENV_QUESTIONS = "LOOGLE_QUESTIONS_JSON"
 ENV_ROW_INDEX = "LOOGLE_ROW_INDEX"
 ENV_MAX_QUESTIONS = "LOOGLE_MAX_QUESTIONS"
-ENV_VARIANT = "APXM_MATRIX_VARIANT"
+ENV_VARIANT = EnvVar.APXM_MATRIX_VARIANT.value
 # Cohort tag — all questions in a row share the document prefix. The
 # row-index default is fine since each row is its own document; the
 # env override is for drivers that want to coalesce multiple rows of

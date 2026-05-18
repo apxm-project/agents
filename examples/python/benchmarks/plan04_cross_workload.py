@@ -22,6 +22,12 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
+_TOOLS_SCRIPT_DIR = str(REPO_ROOT / "tools" / "scripts")
+if _TOOLS_SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _TOOLS_SCRIPT_DIR)
+
+from apxm_vllm_contract import ArmName  # noqa: E402
+
 # Per-workload mapping table cites the paper each workload tests against.
 WORKLOAD_TO_PAPER_ALIGNMENT = {
     "mooncake": "Mooncake (FAST 2025) — TTFT SLO satisfaction; production trace replay",
@@ -93,8 +99,8 @@ def _per_workload_summary(combined_rows: list[dict]) -> list[dict]:
     summaries: list[dict] = []
     for workload, rows in sorted(by_workload.items()):
         arm_walls = _by_arm(rows)
-        apxm = arm_walls.get("apxm-on", [])
-        flat = arm_walls.get("flat-http", [])
+        apxm = arm_walls.get(ArmName.APXM_ON.value, [])
+        flat = arm_walls.get(ArmName.FLAT_HTTP.value, [])
         mean, lo, hi = _bootstrap_ratio_ci(apxm, flat)
         summaries.append({
             "workload": workload,

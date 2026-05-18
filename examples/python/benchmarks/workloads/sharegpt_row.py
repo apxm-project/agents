@@ -27,6 +27,15 @@ Env-var contract (set by the driver):
 """
 import json
 import os
+import sys
+from pathlib import Path
+
+_REPO_ROOT = Path(__file__).resolve().parents[4]
+_TOOLS_SCRIPT_DIR = str(_REPO_ROOT / "tools" / "scripts")
+if _TOOLS_SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _TOOLS_SCRIPT_DIR)
+
+from apxm_vllm_contract import EnvVar  # noqa: E402
 
 from apxm import GraphRecorder, compile
 
@@ -35,7 +44,7 @@ from _config import VLLM, VLLM_ROUTE
 ENV_CONVERSATION = "SHAREGPT_CONVERSATION_JSON"
 ENV_ROW_INDEX = "SHAREGPT_ROW_INDEX"
 ENV_MAX_TURNS = "SHAREGPT_MAX_TURNS"
-ENV_VARIANT = "APXM_MATRIX_VARIANT"
+ENV_VARIANT = EnvVar.APXM_MATRIX_VARIANT.value
 # Cohort tag — all turns of the same conversation share the prefix
 # growing-prefix structure. Stamping reuse_group lets the APXM pin
 # path keep this conversation's KV blocks resident across iterations

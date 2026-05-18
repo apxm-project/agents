@@ -172,7 +172,7 @@ for Codex CLI. Use
 Real-backend plan-as-graph dogfood runs can be repeated with:
 
 ```bash
-python3 tools/scripts/apxm_plan_as_graph_dogfood.py
+python3 tools/scripts/apxm_plan_as_graph_smoke.py
 ```
 
 The runner invokes `apxm_plan_as_graph` through the release stdio MCP binary,

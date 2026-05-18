@@ -42,19 +42,26 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+REPO_ROOT = Path(__file__).resolve().parents[3]
+
+_TOOLS_SCRIPT_DIR = str(REPO_ROOT / "tools" / "scripts")
+if _TOOLS_SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _TOOLS_SCRIPT_DIR)
+
+from apxm_vllm_contract import ArmName, EnvVar  # noqa: E402
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from util import prom_pull  # noqa: E402
 from util import pre_registration  # noqa: E402
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_GRAPH = REPO_ROOT / "examples" / "python" / "benchmarks" / "workloads" / "pin_demo.py"
 DEFAULT_RESULTS_DIR = REPO_ROOT / ".apxm" / "benchmarks" / "results"
 DEFAULT_OUTPUT = DEFAULT_RESULTS_DIR / "concurrent-matrix.csv"
 
-APXM_DISABLE_HINTS_ENV = "APXM_DISABLE_HINTS"
+APXM_DISABLE_HINTS_ENV = EnvVar.APXM_DISABLE_HINTS.value
 DISABLE_HINTS_ENABLED = "1"
-ARM_APXM_ON = "apxm-on"
-ARM_FLAT_HTTP = "flat-http"
+ARM_APXM_ON = ArmName.APXM_ON.value
+ARM_FLAT_HTTP = ArmName.FLAT_HTTP.value
 
 # Matrix cells are (prefix-cache state) × (arm). The previous shape
 # (prefix × scheduling_policy) was retired when the APXM controller
@@ -68,9 +75,9 @@ EXPECTED_MATRIX_CELLS = {
     "D": {"server_prefix_caching": True, "arm": ARM_APXM_ON, "opt_level": 2},
 }
 
-MATRIX_VARIANT_ENV = "APXM_MATRIX_VARIANT"
+MATRIX_VARIANT_ENV = EnvVar.APXM_MATRIX_VARIANT.value
 MATRIX_CELL_LABEL_ENV = "APXM_MATRIX_CELL_LABEL"
-APXM_VLLM_CACHE_SALT_ENV = "APXM_VLLM_CACHE_SALT"
+APXM_VLLM_CACHE_SALT_ENV = EnvVar.APXM_VLLM_CACHE_SALT.value
 
 
 @dataclass

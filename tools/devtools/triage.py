@@ -26,6 +26,12 @@ from urllib import error as urllib_error
 from urllib import request as urllib_request
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+_TOOLS_SCRIPT_DIR = str(REPO_ROOT / "tools" / "scripts")
+if _TOOLS_SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _TOOLS_SCRIPT_DIR)
+
+from apxm_vllm_contract import WireKey  # noqa: E402
 MANIFEST_DIR = REPO_ROOT / ".apxm" / "evaluation" / "agentic" / "dogfood"
 
 # Categories the classifier is asked to choose from. Mirroring the
@@ -116,8 +122,8 @@ def _classify_via_hal(
         # so the pin path can engage on the shared system prompt.
         "vllm_xargs": {
             "apxm": {
-                "reuse_group": "dogfood-triage-cohort",
-                "pin_policy": {"mode": "prefix", "ttl_ms": 30000},
+                WireKey.REUSE_GROUP.value: "dogfood-triage-cohort",
+                WireKey.PIN_POLICY.value: {WireKey.PIN_MODE.value: "prefix", WireKey.PIN_TTL_MS.value: 30000},
             }
         },
     }

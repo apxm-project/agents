@@ -38,6 +38,7 @@ from apxm_vllm_contract import (  # noqa: E402
     HttpMethod,
     MediaType,
     VllmDefaults,
+    WireKey,
     local_endpoint,
 )
 
@@ -197,7 +198,7 @@ def _chat(
                 "graph_id": graph_id or f"direct-{uuid.uuid4()}",
                 "node_id": node_id,
                 "priority_class": apxm_class,
-                "pin_policy": {"mode": "none"},
+                WireKey.PIN_POLICY.value: {WireKey.PIN_MODE.value: "none"},
             }
         }
 

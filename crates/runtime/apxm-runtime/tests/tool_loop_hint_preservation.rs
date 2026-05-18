@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 
 use apxm_backends::llm::backends::{LLMBackend, StreamChunk};
 use apxm_backends::{LLMRequest, LLMResponse};
-use apxm_core::constants::llm::apxm as apxm_llm;
+use apxm_core::constants::{extra_body as extra_body_keys, llm::apxm as apxm_llm};
 use apxm_core::types::execution::NodeMetadata;
 use apxm_core::types::operations::AISOperationType;
 use apxm_core::types::values::Value;
@@ -329,7 +329,7 @@ async fn apxm_hints_preserved_across_every_tool_loop_iteration() {
         .as_ref()
         .expect("first call must carry extra_body");
     let cache_salt = first_extra
-        .get("cache_salt")
+        .get(extra_body_keys::CACHE_SALT_KEY)
         .and_then(|value| value.as_str())
         .expect("cache_salt must be lowered into extra_body");
     assert!(

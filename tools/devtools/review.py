@@ -24,6 +24,12 @@ from urllib import error as urllib_error
 from urllib import request as urllib_request
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+_TOOLS_SCRIPT_DIR = str(REPO_ROOT / "tools" / "scripts")
+if _TOOLS_SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _TOOLS_SCRIPT_DIR)
+
+from apxm_vllm_contract import WireKey  # noqa: E402
 MANIFEST_DIR = REPO_ROOT / ".apxm" / "evaluation" / "agentic" / "dogfood"
 
 REVIEW_SYSTEM_PROMPT = textwrap.dedent("""
@@ -187,8 +193,8 @@ def _draft_via_hal(
         "max_tokens": 512,
         "vllm_xargs": {
             "apxm": {
-                "reuse_group": "dogfood-review-cohort",
-                "pin_policy": {"mode": "prefix", "ttl_ms": 30000},
+                WireKey.REUSE_GROUP.value: "dogfood-review-cohort",
+                WireKey.PIN_POLICY.value: {WireKey.PIN_MODE.value: "prefix", WireKey.PIN_TTL_MS.value: 30000},
             }
         },
     }
