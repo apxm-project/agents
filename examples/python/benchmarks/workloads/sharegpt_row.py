@@ -36,6 +36,11 @@ ENV_CONVERSATION = "SHAREGPT_CONVERSATION_JSON"
 ENV_ROW_INDEX = "SHAREGPT_ROW_INDEX"
 ENV_MAX_TURNS = "SHAREGPT_MAX_TURNS"
 ENV_VARIANT = "APXM_MATRIX_VARIANT"
+# Cohort tag — all turns of the same conversation share the prefix
+# growing-prefix structure. Stamping reuse_group lets the APXM pin
+# path keep this conversation's KV blocks resident across iterations
+# the same way Mooncake's hash_ids[0] cohort works (Wave 27).
+ENV_REUSE_GROUP = "SHAREGPT_REUSE_GROUP"
 
 DEFAULT_MAX_TURNS = 8
 
@@ -68,6 +73,11 @@ def _max_turns() -> int:
 
 def _row_index() -> str:
     return os.environ.get(ENV_ROW_INDEX, "0")
+
+
+def _reuse_group() -> str | None:
+    val = os.environ.get(ENV_REUSE_GROUP, "").strip()
+    return val or None
 
 
 def _render_prompt(history: list[dict], current_human: str) -> str:
@@ -109,11 +119,13 @@ def sharegpt_row(g: GraphRecorder):
     if not human_turns:
         human_turns = [(DEFAULT_CONVERSATION[0]["value"], [])]
 
+    cohort = _reuse_group() or f"sharegpt-conversation-{row_idx}"
     last = None
     for i, (human_value, history_so_far) in enumerate(human_turns):
         node = g.ask(
             name=f"sharegpt_row_{row_idx}_turn_{i}",
             prompt=_render_prompt(history_so_far, human_value),
+            reuse_group=cohort,
         )
         last = node
     g.done(last)
