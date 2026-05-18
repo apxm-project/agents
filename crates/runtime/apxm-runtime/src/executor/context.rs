@@ -24,6 +24,7 @@ use std::sync::Arc;
 use super::cancellation::CancellationToken;
 use super::dag_splicer::{DagSplicer, NoOpSplicer};
 use super::events::ExecutionEventEmitter;
+use super::fields_honored::FieldsHonoredCollector;
 use super::graph_metrics::GraphMetricsTracker;
 use super::handlers::warmup::{WarmupConfig, WarmupMetrics};
 use super::inner_plan_linker::{InnerPlanLinker, NoOpLinker};
@@ -70,6 +71,11 @@ pub struct ExecutionContext {
     pub warmup_metrics: Arc<WarmupMetrics>,
     pub event_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
     pub graph_metrics: Arc<GraphMetricsTracker>,
+    /// Per-execution union of `x-apxm-fields-honored` evidence by
+    /// backend (Plan 07 §2 closure). Populated by the LLM handler from
+    /// each per-node response's `metadata["fields_honored"]`; drained
+    /// at execution end into `dispatch_ir_metrics.fields_honored`.
+    pub fields_honored: Arc<FieldsHonoredCollector>,
     pub token_accountant: Arc<TokenAccountant>,
     pub timing_tracker: Arc<TimingTracker>,
     pub response_cache: Arc<MemoCache>,
@@ -169,6 +175,7 @@ impl ExecutionContext {
             warmup_metrics: Arc::new(WarmupMetrics::new()),
             event_emitter: None,
             graph_metrics: Arc::new(GraphMetricsTracker::new()),
+            fields_honored: Arc::new(FieldsHonoredCollector::new()),
             token_accountant: Arc::new(TokenAccountant::new()),
             timing_tracker: Arc::new(TimingTracker::new()),
             response_cache,
@@ -352,6 +359,7 @@ impl ExecutionContext {
             warmup_metrics: Arc::clone(&self.warmup_metrics),
             event_emitter: self.event_emitter.as_ref().map(Arc::clone),
             graph_metrics: Arc::clone(&self.graph_metrics),
+            fields_honored: Arc::clone(&self.fields_honored),
             token_accountant: Arc::clone(&self.token_accountant),
             timing_tracker: Arc::clone(&self.timing_tracker),
             response_cache: Arc::clone(&self.response_cache),

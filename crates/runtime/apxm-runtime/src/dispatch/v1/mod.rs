@@ -84,6 +84,7 @@ pub(crate) fn dispatch_ir_accounting_json(
     backend_capabilities: &HashMap<String, BackendGraphCapabilities>,
     graph_status_snapshots: &[GraphStatusSnapshot],
     fallbacks: &[DispatchFallback],
+    fields_honored_by_backend: &HashMap<String, Vec<String>>,
 ) -> serde_json::Value {
     let Some(ir) = ir else {
         return serde_json::Value::Null;
@@ -139,14 +140,17 @@ pub(crate) fn dispatch_ir_accounting_json(
         "fields_sent": fields_sent,
         "fields_unsupported_by_backend": unsupported_by_backend,
         "fields_capability_supported_by_backend": capability_supported_by_backend,
-        // Per-request runtime honor evidence. Populated when the vLLM
-        // fork emits `x-apxm-fields-honored` response headers; an empty
-        // map under a populated `fields_sent` means the fork-side
-        // emitter is NOT installed. APXM-side ingestion is wired;
-        // fork-side emission is the remaining gate.
-        // Distinct from `fields_capability_supported_by_backend`, which
-        // is a static-capability statement, not runtime evidence.
-        "fields_honored": HashMap::<String, Vec<String>>::new(),
+        // Per-request runtime honor evidence union'd by backend
+        // (Plan 07 §2 closure). Populated by the LLM handler from each
+        // per-node response's `metadata["fields_honored"]`, which the
+        // OpenAI backend parses from the vLLM fork's
+        // `x-apxm-fields-honored` response header. An empty map under
+        // a populated `fields_sent` means no backend emitted the
+        // header — either fork-side emitter not installed (pre-490aaad0c
+        // builds) or the dispatch did not invoke the LLM. Distinct from
+        // `fields_capability_supported_by_backend`, which is a
+        // static-capability statement, not runtime evidence.
+        "fields_honored": fields_honored_by_backend,
         // Fields APXM declares it sends but the v1 vLLM scheduler does
         // not act on. They are present in `fields_sent`
         // only to keep the wire-payload round-trippable; they MUST NOT
