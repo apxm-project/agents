@@ -89,6 +89,15 @@ pub(crate) struct RegisterCapabilityRequest {
     description: String,
     #[serde(default)]
     parameters_schema: JsonValue,
+    /// Mark capability as read-only for raw workflow execution admission.
+    #[serde(default)]
+    read_only: bool,
+    /// Optional least-privilege tool groups exposed to LLM/tool admission.
+    #[serde(default)]
+    groups: Vec<String>,
+    /// Optional tags for inventory and routing.
+    #[serde(default)]
+    tags: Vec<String>,
     /// If set, an `HttpCapability` is created that POSTs to this URL.
     /// Takes priority over `static_response`.
     #[serde(default)]
@@ -139,11 +148,20 @@ pub(crate) async fn register_capability(
     State(state): State<AppState>,
     Json(req): Json<RegisterCapabilityRequest>,
 ) -> Result<Json<OkAckName>, ApiError> {
-    let metadata = CapabilityMetadata::new(
+    let mut metadata = CapabilityMetadata::new(
         req.name.clone(),
         req.description.clone(),
         req.parameters_schema,
     );
+    if req.read_only {
+        metadata = metadata.with_read_only();
+    }
+    if !req.groups.is_empty() {
+        metadata = metadata.with_groups(req.groups.clone());
+    }
+    if !req.tags.is_empty() {
+        metadata = metadata.with_tags(req.tags.clone());
+    }
 
     let capability: Arc<dyn CapabilityExecutor> = if let Some(endpoint) = req.endpoint {
         // HTTP capability — forwards invocations to external server
