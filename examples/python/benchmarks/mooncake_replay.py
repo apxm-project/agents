@@ -68,6 +68,7 @@ ARM_APXM_ON = "apxm-on"
 ARM_FLAT_HTTP = "flat-http"
 
 MOONCAKE_INPUT_TEXT_ENV = "MOONCAKE_INPUT_TEXT"
+MOONCAKE_INPUT_TEXT_PATH_ENV = "MOONCAKE_INPUT_TEXT_PATH"
 MOONCAKE_MAX_TOKENS_ENV = "MOONCAKE_MAX_TOKENS"
 MOONCAKE_ROW_INDEX_ENV = "MOONCAKE_ROW_INDEX"
 MATRIX_VARIANT_ENV = "APXM_MATRIX_VARIANT"
@@ -206,7 +207,19 @@ def _execute_row(
 
     env = os.environ.copy()
     env.update(extra_env)
-    env[MOONCAKE_INPUT_TEXT_ENV] = prompt
+    # Pass the prompt via a tempfile path. Inlining the prompt in env
+    # overflows Linux ARG_MAX once cumulative env+arg crosses ~128 KB
+    # (synthesize_prompt routinely produces 20-30 KB prompts and
+    # _run_iteration's ThreadPoolExecutor accumulates them across
+    # concurrent rows). The workload reads from MOONCAKE_INPUT_TEXT_PATH
+    # when set; the inline MOONCAKE_INPUT_TEXT remains as a fallback
+    # for any external caller still on the old contract.
+    prompt_file = Path(tempfile.mkstemp(
+        prefix=f"mooncake-prompt-r{row_index}-it{iteration}-",
+        suffix=".txt",
+    )[1])
+    prompt_file.write_text(prompt, encoding="utf-8")
+    env[MOONCAKE_INPUT_TEXT_PATH_ENV] = str(prompt_file)
     env[MOONCAKE_MAX_TOKENS_ENV] = str(output_length)
     env[MOONCAKE_ROW_INDEX_ENV] = str(row_index)
     env[MATRIX_VARIANT_ENV] = str(row_index)

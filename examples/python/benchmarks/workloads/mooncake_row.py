@@ -25,6 +25,7 @@ from apxm import compile, GraphRecorder
 from _config import VLLM, VLLM_ROUTE
 
 ENV_INPUT_TEXT = "MOONCAKE_INPUT_TEXT"
+ENV_INPUT_TEXT_PATH = "MOONCAKE_INPUT_TEXT_PATH"
 ENV_MAX_TOKENS = "MOONCAKE_MAX_TOKENS"
 ENV_ROW_INDEX = "MOONCAKE_ROW_INDEX"
 ENV_VARIANT = "APXM_MATRIX_VARIANT"
@@ -36,6 +37,18 @@ DEFAULT_PROMPT = (
 
 
 def _row_prompt() -> str:
+    # Prefer path-based delivery — Mooncake prompts routinely exceed
+    # 20 KB, and Linux ARG_MAX caps cumulative env+arg size, so
+    # passing prompts inline overflows at moderate concurrency. The
+    # driver writes the prompt to a tempfile and exports the path here.
+    path = os.environ.get(ENV_INPUT_TEXT_PATH, "")
+    if path:
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                text = fh.read()
+            return text if text else DEFAULT_PROMPT
+        except OSError:
+            pass
     text = os.environ.get(ENV_INPUT_TEXT, "")
     return text if text else DEFAULT_PROMPT
 
