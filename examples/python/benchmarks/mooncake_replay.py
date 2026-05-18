@@ -71,6 +71,7 @@ MOONCAKE_INPUT_TEXT_ENV = "MOONCAKE_INPUT_TEXT"
 MOONCAKE_INPUT_TEXT_PATH_ENV = "MOONCAKE_INPUT_TEXT_PATH"
 MOONCAKE_MAX_TOKENS_ENV = "MOONCAKE_MAX_TOKENS"
 MOONCAKE_ROW_INDEX_ENV = "MOONCAKE_ROW_INDEX"
+MOONCAKE_REUSE_GROUP_ENV = "MOONCAKE_REUSE_GROUP"
 MATRIX_VARIANT_ENV = "APXM_MATRIX_VARIANT"
 APXM_VLLM_CACHE_SALT_ENV = "APXM_VLLM_CACHE_SALT"
 
@@ -160,19 +161,37 @@ def _parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def _load_trace(path: Path, limit: int) -> list[dict]:
+def _load_trace(path: Path, limit: int, max_total_tokens: int = 0) -> list[dict]:
+    """Read trace rows. When `max_total_tokens > 0`, drop rows whose
+    input_length + output_length exceeds the budget — these otherwise
+    overflow the model's max_model_len and fail at the backend. The
+    drop is recorded for the manifest so the cell honestly reports
+    "ran against N filtered rows of M total."""
     rows: list[dict] = []
+    dropped = 0
     with path.open() as f:
         for line in f:
             line = line.strip()
             if not line:
                 continue
             try:
-                rows.append(json.loads(line))
+                row = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            if max_total_tokens > 0:
+                total = int(row.get("input_length", 0)) + int(row.get("output_length", 0))
+                if total > max_total_tokens:
+                    dropped += 1
+                    continue
+            rows.append(row)
             if limit and len(rows) >= limit:
                 break
+    if dropped:
+        print(
+            f"[mooncake] dropped {dropped} rows whose input+output exceeded "
+            f"max_total_tokens={max_total_tokens}",
+            file=sys.stderr,
+        )
     return rows
 
 
@@ -223,6 +242,14 @@ def _execute_row(
     env[MOONCAKE_MAX_TOKENS_ENV] = str(output_length)
     env[MOONCAKE_ROW_INDEX_ENV] = str(row_index)
     env[MATRIX_VARIANT_ENV] = str(row_index)
+    # Cohort key derived from the trace's first prefix-cache block id.
+    # Rows that share hash_ids[0] land in the same APXM reuse_group;
+    # the runtime's pin path engages on cohort-level KV pressure.
+    # Pre-Wave-27 runs (before commit 0dcef78c) omitted this and the
+    # APXM pin path stayed dormant on Mooncake (Mooncake's prefix
+    # structure exists in hash_ids but was invisible to the runtime).
+    if hash_ids:
+        env[MOONCAKE_REUSE_GROUP_ENV] = f"mooncake-cohort-{hash_ids[0]}"
     # Salt scoped per (arm, opt_level): isolates the two arms' cache
     # namespaces and prevents opt=2 from inheriting opt=0's warm cache,
     # while leaving rows within a single (arm, opt) cell free to share
@@ -516,7 +543,14 @@ def main() -> int:
         output_path=args.output.resolve(),
     )
 
-    trace_rows = _load_trace(args.trace, limit=args.rows)
+    # Filter rows that would exceed the configured max_model_len. The
+    # Mooncake trace was recorded against a longer-context engine; on
+    # gpt-oss-120b with max_model_len=32768, the long tail (~7% of
+    # rows) cannot fit and fails at the backend with a clear out-of-
+    # bounds error. Dropping them is the honest move; the manifest
+    # records the count so the cell still cites N filtered of M total.
+    max_total = int(os.environ.get("MAX_MODEL_LEN", "0") or 0)
+    trace_rows = _load_trace(args.trace, limit=args.rows, max_total_tokens=max_total)
     if not trace_rows:
         print(f"error: no rows loaded from {args.trace}", file=sys.stderr)
         return 1
