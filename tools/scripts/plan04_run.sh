@@ -23,6 +23,13 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 
 : "${APXM_ENDPOINT:?APXM_ENDPOINT (no trailing /v1) is required}"
+# The Rust apxm config resolver picks the FIRST .apxm/config.toml found
+# walking ancestors; the project-local file holds data-bucket paths only
+# (no backends), so without this override `dekk apxm execute` would fail
+# with "No backends configured" while `apxm backend list` shows the
+# registration in ~/.apxm/config.toml. Forcing the user-level file makes
+# the execute path see the backend that `apxm backend add` writes.
+export APXM_CONFIG="${APXM_CONFIG:-$HOME/.apxm/config.toml}"
 : "${ITER:=10}"
 : "${CONC:=32}"
 : "${ROWS:=100}"

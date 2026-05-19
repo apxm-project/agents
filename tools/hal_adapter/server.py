@@ -12,7 +12,10 @@ response to add the APXM-specific paired-arm switch behavior:
 
 - `--backend apxm-on` (default): pass-through with all APXM hints
   intact. Acts as a transparent proxy to the registered vllm-fork
-  endpoint.
+  endpoint. Combine with `--inject-apxm` to *add* a synthetic apxm
+  block to every request — required when the upstream benchmark
+  runner (e.g. tau2-bench, swebench) does not emit `vllm_xargs.apxm`
+  itself, so the paired-arm A/B is genuinely different on the wire.
 - `--backend flat-http`: strip the `extra_body.vllm_xargs.apxm` block
   from the request body before forwarding, equivalent to the
   `--no-apxm-hints` arm of `concurrent_matrix.py`. Lets external
@@ -47,7 +50,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # Shim-server launch identity surfaced in every manifest line so claim
 # files can cite the exact shim configuration that produced an eval.
-HAL_ADAPTER_SHA = "hal-adapter-v0-2026-05-18"
+HAL_ADAPTER_SHA = "hal-adapter-v1-2026-05-19"
 
 # Backend mode constants — matches the contract in the README and the
 # `--no-apxm-hints` arm semantics from concurrent_matrix.py.
@@ -88,12 +91,44 @@ def _strip_apxm_block(body: dict) -> dict:
     return body
 
 
+def _inject_apxm_block(
+    body: dict,
+    *,
+    graph_id: str,
+    priority_class: str,
+    reuse_group: str,
+    pin_mode: str,
+) -> dict:
+    """Insert an `extra_body.vllm_xargs.apxm` block into the request
+    body in-place. Does NOT overwrite an existing apxm block — that
+    would silently drop hints the upstream runner intentionally set.
+    Returns the same dict for chaining."""
+    if body.get("vllm_xargs", {}).get("apxm") is not None:
+        return body
+    if body.get("extra_body", {}).get("vllm_xargs", {}).get("apxm") is not None:
+        return body
+    apxm = {
+        "graph_id": graph_id,
+        "priority_class": priority_class,
+        "reuse_group": reuse_group,
+        "pin_policy": {"mode": pin_mode},
+    }
+    extra = body.setdefault("extra_body", {})
+    xargs = extra.setdefault("vllm_xargs", {})
+    xargs["apxm"] = apxm
+    return body
+
+
 class _Handler(BaseHTTPRequestHandler):
     # Set by main() before serve_forever.
     upstream: str = ""
     backend_mode: str = BACKEND_APXM_ON
     model: str = ""
     manifest_path: Path | None = None
+    inject_apxm: bool = False
+    graph_context: str = ""
+    priority_class: str = "critical_path"
+    pin_mode: str = "graph"
 
     def do_GET(self):  # noqa: N802 — stdlib API
         if self.path == PATH_HEALTH:
@@ -115,6 +150,17 @@ class _Handler(BaseHTTPRequestHandler):
 
         if self.backend_mode == BACKEND_FLAT_HTTP:
             _strip_apxm_block(body)
+        elif self.inject_apxm:
+            request_id = uuid.uuid4().hex[:12]
+            graph_id = self.graph_context or f"hal-{request_id}"
+            reuse_group = self.graph_context or f"hal-cohort-{request_id}"
+            _inject_apxm_block(
+                body,
+                graph_id=graph_id,
+                priority_class=self.priority_class,
+                reuse_group=reuse_group,
+                pin_mode=self.pin_mode,
+            )
         if self.model and not body.get("model"):
             body["model"] = self.model
 
@@ -183,6 +229,9 @@ def _write_manifest(args: argparse.Namespace) -> Path:
         "backend": args.backend,
         "model": args.model,
         "graph_context": args.graph_context,
+        "inject_apxm": args.inject_apxm,
+        "apxm_priority_class": args.apxm_priority_class,
+        "apxm_pin_mode": args.apxm_pin_mode,
         "pid": os.getpid(),
     }
     path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
@@ -223,12 +272,39 @@ def _parse_args() -> argparse.Namespace:
         "--graph-context",
         default="",
         help=(
-            "Optional graph-id stamped on the request so the benchmark's "
-            "per-task multi-call sequence becomes one APXM graph for "
-            "pin / cohort scheduling. Empty disables grouping."
+            "Optional graph-id + reuse_group stamped on every injected "
+            "apxm block. When set, all requests from this shim land in "
+            "the same APXM graph + cohort (use one shim per "
+            "agent-benchmark run for proper grouping). When empty, a "
+            "per-request UUID is used. Only meaningful with --inject-apxm."
         ),
     )
-    return p.parse_args()
+    p.add_argument(
+        "--inject-apxm",
+        action="store_true",
+        help=(
+            "Inject an extra_body.vllm_xargs.apxm block into every "
+            "forwarded request when the upstream runner does not emit "
+            "one itself. Only meaningful with --backend apxm-on. "
+            "Without this, plain OpenAI-API runners (tau2-bench, "
+            "swebench) hit vLLM with no dispatch hints and the "
+            "apxm-on / flat-http arms become indistinguishable."
+        ),
+    )
+    p.add_argument(
+        "--apxm-priority-class",
+        default="critical_path",
+        help="Priority class stamped on injected apxm blocks.",
+    )
+    p.add_argument(
+        "--apxm-pin-mode",
+        default="graph",
+        help="pin_policy.mode stamped on injected apxm blocks.",
+    )
+    args = p.parse_args()
+    if args.inject_apxm and args.backend != BACKEND_APXM_ON:
+        p.error("--inject-apxm requires --backend apxm-on")
+    return args
 
 
 def main() -> int:
@@ -240,6 +316,10 @@ def main() -> int:
     _Handler.backend_mode = args.backend
     _Handler.model = args.model
     _Handler.manifest_path = manifest_path
+    _Handler.inject_apxm = args.inject_apxm
+    _Handler.graph_context = args.graph_context
+    _Handler.priority_class = args.apxm_priority_class
+    _Handler.pin_mode = args.apxm_pin_mode
 
     server = ThreadingHTTPServer(("127.0.0.1", args.port), _Handler)
     print(
