@@ -151,7 +151,11 @@ def _write_manifest(
         "started_at": timestamp.isoformat(),
         "since_ref": ref,
         "commits_scanned": len(commits),
-        "draft_path": str(draft_path.relative_to(REPO_ROOT)),
+        "draft_path": (
+            str(draft_path.relative_to(REPO_ROOT))
+            if draft_path.is_relative_to(REPO_ROOT)
+            else str(draft_path.resolve())
+        ),
         "apxm_sha": _git("rev-parse", "HEAD"),
     }
     path = run_dir / "release-notes.json"
