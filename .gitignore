@@ -96,8 +96,14 @@ examples/python/demos/gemma4/runs/
 *.pem
 apxm.toml.local
 .venv/
+.venv-*/
 .cursor*/
 .tmp/
+slurm-*.out
 
 # Operator's local zoo manifest (gitignored; copy zoo.example.toml to seed)
 deploy/vllm/zoo.toml
+
+# Vendored upstream benchmarks live as working clones (too large + stale-prone
+# to track). Refresh via the pin sha recorded in tools/external/_apxm-notes/.
+tools/external/tau2-bench/
