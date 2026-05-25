@@ -287,6 +287,7 @@ class RepoMarker(str, Enum):
 
     CARGO_TOML = "Cargo.toml"
     CRATES = "crates"
+    GIT = ".git"
 
 
 class RepoPath(str, Enum):
@@ -452,6 +453,7 @@ def find_repo_root(start: str | Path) -> Path:
                 (candidate / RepoMarker.CARGO_TOML.value).is_file()
                 and (candidate / RepoMarker.CRATES.value).is_dir()
             )
+            or (candidate / RepoMarker.GIT.value).exists()
         ):
             return candidate
     raise RuntimeError(f"could not locate APXM repo root from {start_path}")
