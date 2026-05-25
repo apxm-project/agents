@@ -8,7 +8,7 @@ use crate::llm::backends::{
     MockLLMBackend, OllamaBackend, OpenAIBackend,
 };
 use crate::llm::{ProviderProtocol, ProviderSpec};
-use apxm_core::types::{ModelCapabilities, ModelInfo};
+use apxm_core::types::{BackendGraphCapabilities, ModelCapabilities, ModelInfo};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -191,6 +191,10 @@ impl LLMBackend for Provider {
 
     fn capabilities(&self) -> ModelCapabilities {
         self.backend_ref().capabilities()
+    }
+
+    fn graph_capabilities(&self) -> BackendGraphCapabilities {
+        self.backend_ref().graph_capabilities()
     }
 
     async fn register_graph(

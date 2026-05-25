@@ -1008,6 +1008,11 @@ impl apxm_core::MetricsSource for RuntimeMetricsSource<'_> {
                 serde_json::to_value(observed).unwrap_or(serde_json::Value::Null),
             );
         }
+        map.insert(
+            "node_statuses".to_owned(),
+            serde_json::to_value(&self.execution.stats.node_statuses)
+                .unwrap_or(serde_json::Value::Null),
+        );
         #[cfg(feature = "metrics")]
         {
             map.insert(
