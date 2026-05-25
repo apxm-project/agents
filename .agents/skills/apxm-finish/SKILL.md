@@ -1,13 +1,13 @@
 ---
 name: apxm-finish
-description: Pre-claim gate — runs focused dekk apxm test, doctor, no-legacy lint, secrets scan, artifact-placement check, and preregistration check before any claim of completion. Refuses to claim done until all pass.
+description: Pre-claim gate — runs focused dekk apxm test, doctor, no-legacy lint, secrets scan, and artifact-placement check before any claim of completion. Refuses to claim done until all pass.
 user-invocable: true
 ---
 
 # APXM Finish
 
-Load `_shared/apxm-agent-operating-rules.md`, `_shared/apxm-no-legacy-rules.md`,
-and `_shared/apxm-evaluation-rules.md` before running this gate.
+Load `_shared/apxm-agent-operating-rules.md` and
+`_shared/apxm-no-legacy-rules.md` before running this gate.
 
 Enforces that "completion" claims are backed by checks, not by agent
 confidence. Run before any verbal "done", PR-ready, or handoff to user.
@@ -41,17 +41,12 @@ Run these in order. If any fail, do **not** claim completion:
    ```
    Should return nothing. Also confirm `.claude/settings.local.json`
    is **not** staged (it's gitignored for a reason).
-10. **Artifact placement** if benchmark/eval files were touched:
+10. **Artifact placement** if any new path is added:
     - All generated artifacts under `.apxm/`?
-    - Nothing under `examples/python/benchmarks/results/`,
-      `examples/python/demos/*/runs/`, or `examples/**/sessions/`?
+    - Nothing under `examples/**/results/`, `examples/**/runs/`, or
+      `examples/**/sessions/`?
     - `RepoLayout` used for any new path?
-11. **Preregistration interlock** if the change is claim-bearing:
-    - Matching file exists in `docs/preregistrations/`?
-    - Preregistration commit timestamp is *before* the first artifact
-      in `.apxm/evaluation/<scenario>/runs/<UTC>/`?
-    - Write-up cites the preregistration commit SHA?
-12. **Report concretely** to the user:
+11. **Report concretely** to the user:
     - What changed (per file/crate).
     - What passed (each command + exit code).
     - What's local-only (build artifacts, local config).
@@ -84,7 +79,6 @@ Run these in order. If any fail, do **not** claim completion:
 
 - "Tests pass" without naming which tests.
 - Skipping the secrets scan because "I'm sure it's clean".
-- Claim-bearing work without a preregistration commit.
 - Marking done when a hook warned but you didn't address it.
 - "I didn't run X because it's slow" — slow is not a reason to skip;
   scope down the command instead.

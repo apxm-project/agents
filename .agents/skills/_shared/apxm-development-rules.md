@@ -58,7 +58,6 @@ configure backends.
   already exist (`vllm.py`, `cargo.py`, `check_no_legacy_vllm.py`,
   `apxm_mcp_install.py`). The shared APXM/vLLM operational names live
   in the `apxm` Python package at `crates/compiler/apxm-frontend/python/`.
-- Before adding a Python utility, check `tools/quality_eval/`.
 
 ## Targeted verification
 

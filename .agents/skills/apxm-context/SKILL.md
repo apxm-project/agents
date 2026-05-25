@@ -23,25 +23,22 @@ for typo fixes or single-line edits.
    - `.agents/project.md` — the SSOT.
    - The closest relevant `_shared/` rule(s):
      - Code edits → `_shared/apxm-development-rules.md`
-     - Benchmark / evaluation → `_shared/apxm-evaluation-rules.md` +
-       `_shared/apxm-preregistration-rules.md`
      - Touching `~/.apxm/config.toml`, HF cache, zoo manifests, build
        paths → `_shared/apxm-storage-layout-rules.md`
      - Anything with a git mutation → `_shared/apxm-agent-operating-rules.md`
      - About to invent or invoke a vLLM CLI pattern →
        `_shared/apxm-no-legacy-rules.md`
+   - For benchmark / evaluation / preregistration workflows, see the
+     companion repo `apxm-project/apxm-eval`.
 4. **Read the closest subsystem doc**:
    - Compiler/passes → `docs/compiler/pipeline.md`
    - Backends/zoo → `docs/backends/model-zoo.md`,
      `docs/backends/storage-layout.md`
-   - Plans → `docs/plans/MASTER.md`
-   - Paper / evaluation status → `docs/paper/`, `docs/evaluation/`
 5. **Recall memory** — APXM has 20+ memories in
    `~/.claude/.../memory/`. Always check for matches on:
    `apxm_*`, `feedback_*`. Especially:
    - `apxm_positioning` (don't call APXM "an agent framework")
    - `apxm_phase_status` (what's actually shipped)
-   - `apxm_eval_status` (what's in flight)
    - `feedback_no_legacy_no_fallback`
    - `feedback_no_referential_comments`
    - `feedback_no_kill_user_slurm`
@@ -49,7 +46,6 @@ for typo fixes or single-line edits.
    - Compiler edits → `crates/compiler/`
    - Runtime edits → `crates/runtime/`
    - AIS op edits → `crates/core/` only (everything else consumes)
-   - Eval harness → `tools/quality_eval/`, `examples/python/benchmarks/`
    - vLLM glue → `crates/runtime/apxm-backends/`, `tools/scripts/vllm.py`,
      `external/vllm/`
 

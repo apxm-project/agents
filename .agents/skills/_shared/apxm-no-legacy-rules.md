@@ -20,9 +20,7 @@ the pre-write hook).
    unified `deploy/vllm/run-vllm.sh`.
 4. **`hardcoded-port-8916`** — never the literal `8916` outside the
    allocator-range default. Use `_allocate_port()` or a manifest-supplied
-   port. Evidence files in `docs/preregistrations/`, `docs/claims/`,
-   `docs/evaluation/`, `docs/paper/` are allowed (they cite exact run
-   state).
+   port.
 5. **`apxm-endpoints-available-flag`** — no `apxm_endpoints_available`,
    `apxm_routes_available`, or equivalent capability flags that paper
    over a missing APXM-vLLM fork. Probe-fail at startup.
