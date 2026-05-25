@@ -1,76 +1,70 @@
 ---
 name: apxm-vllm-service
 description: Use when building, launching, probing, or running APXM workloads against the Dockerized APXM-vLLM backend, especially on Slurm compute nodes. Enforces Dekk as the authority CLI, persistent service allocations, image-store reuse, and service-exec for commands that need the vLLM endpoint.
+user-invocable: true
 ---
 
 # APXM-vLLM Service
 
-Use the Dekk-controlled APXM-vLLM service path for graph-aware vLLM work.
-Docker isolates the vLLM server process; APXM communicates with it over HTTP.
-Slurm owns GPU allocation and accounting.
+Load `_shared/apxm-development-rules.md`,
+`_shared/apxm-no-legacy-rules.md`, and
+`_shared/apxm-storage-layout-rules.md` before broad work.
 
-## Operating Rules
+Use the Dekk-controlled APXM-vLLM service path for graph-aware vLLM
+work. Docker isolates the vLLM server process; APXM communicates with
+it over HTTP. Slurm owns GPU allocation and accounting.
 
-- `dekk apxm` is the authority CLI. Do not bypass it with raw `docker`, `srun`,
-  or ad hoc Python vLLM commands unless debugging the controller itself.
-- Build the APXM-vLLM image once, save it into `.apxm/vllm-images`, then launch
-  or reuse a persistent service. Do not rebuild or reinstall vLLM inside every
-  Slurm allocation.
-- Prefer an existing service. Start a new service only when changing image,
-  model, context length, GPU allocation, or server startup flags.
+## Operating rules
+
+- `dekk apxm` is the authority CLI. No raw `docker`, `srun`, or ad-hoc
+  Python vLLM commands except for debugging the controller itself.
+- Build the APXM-vLLM image once, save it into `.apxm/vllm-images`,
+  then launch or reuse a persistent service. Do not rebuild or
+  reinstall vLLM inside every Slurm allocation.
+- Prefer an existing service. Start a new service only when changing
+  image, model, context length, GPU allocation, or server startup
+  flags.
 - Run claim-bearing APXM commands from the service allocation with
   `dekk apxm vllm service-exec <name> -- <command>`.
-- Generated benchmark/evaluation artifacts belong under `.apxm`, not under
-  `examples/`.
-- The HF cache (`data.vllm.hf_cache` in `.apxm/config.toml`, or
-  `APXM_VLLM_HF_HOME`) and `.apxm/vllm-images/` must sit on filesystems
-  visible to every Slurm compute node at the same path. See
-  `docs/backends/storage-layout.md` for the rules and the supported migration
-  procedure. Run `dekk apxm vllm doctor` to print the resolved layout.
+- Generated benchmark/evaluation artifacts belong under `.apxm/`, not
+  `examples/`. See `_shared/apxm-evaluation-rules.md`.
+- HF cache + `.apxm/vllm-images/` must be visible from every Slurm
+  compute node at the same path. See
+  `_shared/apxm-storage-layout-rules.md`. Run `dekk apxm vllm doctor`
+  to print the resolved layout.
+- Never `scancel` a Slurm job owned by `apxm`. Always allocate
+  fresh.
 
-## Standard Flow
-
-From the APXM repo root:
+## Standard flow (zoo path)
 
 ```bash
 dekk apxm vllm doctor
+dekk apxm vllm docker-load                       # from .apxm/vllm-images/
+dekk apxm vllm zoo-cache-warm                    # without GPU allocation
+dekk apxm vllm zoo-apply                         # provision per manifest
+dekk apxm vllm zoo-status                        # probe everything
 
+dekk apxm vllm service-list                      # what's registered
+dekk apxm vllm service-status <name> --probe     # one service
+dekk apxm vllm service-exec <name> -- <command>  # run inside allocation
+```
+
+To build a new image:
+
+```bash
 APXM_COMMIT="$(git rev-parse --short HEAD)"
 VLLM_COMMIT="$(git -C external/vllm rev-parse --short HEAD)"
 IMAGE="apxm-vllm-runtime:${APXM_COMMIT}-${VLLM_COMMIT}"
 
-dekk apxm vllm docker-build --image "$IMAGE" --base-image <VLLM_IMAGE_TAG_OR_DIGEST>
-dekk apxm vllm docker-save --image "$IMAGE"
-
-dekk apxm vllm service-start gptoss120b openai/gpt-oss-120b \
-  --image "$IMAGE" \
-  --served-model-name gpt-oss-120b \
-  --backend-name vllm-fork \
-  --hf-home "$APXM_VLLM_HF_HOME" \
-  --max-model-len 32768
-
-dekk apxm vllm service-status gptoss120b --probe
+dekk apxm vllm docker-build --image "$IMAGE" --base-image <UPSTREAM_TAG_OR_DIGEST>
+dekk apxm vllm docker-save  --image "$IMAGE"
 ```
 
-Run APXM workloads inside the service allocation:
+## Communication contract
 
-```bash
-dekk apxm vllm service-exec gptoss120b -- \
-  python3 examples/python/benchmarks/benchmark_e2e.py \
-    --iterations 3 \
-    --precompile-artifacts \
-    --emit-compiler-diagnostics
-```
-
-## Communication Contract
-
-Inside the service allocation, APXM uses the registered endpoint:
-
-```text
-http://127.0.0.1:8916/v1
-```
-
-Required routes for graph-aware APXM-vLLM:
+Inside the service allocation, APXM uses the registered endpoint
+(port allocated by `_allocate_port()`, not literal `8916`). Required
+routes for graph-aware APXM-vLLM:
 
 - `/v1/models`
 - `/v1/chat/completions`
@@ -83,21 +77,23 @@ Priority-latency claims require `/v1/apxm/scheduler` to report
 
 ## Diagnostics
 
-- Service status and capability probe:
-  `dekk apxm vllm service-status <name> --probe`
-- Container logs:
-  `dekk apxm vllm service-exec <name> -- dekk apxm vllm docker-logs`
-- Run a one-off health command in the allocation:
-  `dekk apxm vllm service-exec <name> -- curl -s http://127.0.0.1:8916/v1/models`
-- Stop only when intentionally releasing the service allocation:
-  `dekk apxm vllm service-stop <name>`
+- `dekk apxm vllm service-status <name> --probe`
+- `dekk apxm vllm service-exec <name> -- dekk apxm vllm docker-logs`
+- `dekk apxm vllm service-exec <name> -- curl -s http://127.0.0.1:<port>/v1/models`
+- `dekk apxm vllm service-stop <name>` — only when intentionally
+  releasing the service allocation.
 
-## Anti-Patterns
+## Anti-patterns
 
-- Do not use deprecated `install`, `download`, `start`, `serve`, `status`, or
-  `logs` legacy commands.
-- Do not submit a new Slurm job for every benchmark iteration.
-- Do not make graph-aware claims from a stock vLLM server or from an APXM-vLLM
+- `dekk apxm vllm service-start` / `service-adopt` — both lint as
+  `legacy-*` rules. Use `zoo apply` against a `zoo*.toml` manifest.
+- A new Slurm job per benchmark iteration.
+- Graph-aware claims from a stock vLLM server, or from an APXM-vLLM
   server whose scheduler probe is missing.
-- Do not put CSVs, sessions, compiler diagnostics, evidence manifests, or
+- CSVs, sessions, compiler diagnostics, evidence manifests, or
   `.apxmobj` artifacts under `examples/`.
+- Hardcoding port `8916` in code (lints as `hardcoded-port-8916`).
+  Evidence files under `docs/preregistrations/`, `docs/claims/`,
+  `docs/evaluation/`, `docs/paper/` are allowed.
+- Re-introducing BaseHTTPMiddleware in the vLLM fork — silently
+  breaks chat completions. See `feedback_basehttpmiddleware_breaks_chat`.

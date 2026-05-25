@@ -79,3 +79,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for build, test, and PR conventions, and
 issues, follow [SECURITY.md](SECURITY.md). Released under the
 [MIT License](LICENSE); the bundled vLLM fork at
 [`external/vllm`](external/vllm) is Apache-2.0.
+
+**For coding agents** (Claude Code, Codex CLI, Cursor, Aider, Gemini): read
+[AGENTS.md](AGENTS.md) (or [CLAUDE.md](CLAUDE.md)) before doing any work, and
+follow the 6-skill lifecycle (`apxm-context` → `apxm-plan` →
+`apxm-execute-plan` → `apxm-simplify` → `apxm-finish` → `apxm-commit`). For
+Codex, run `dekk apxm skills sync` to sync skills into `~/.codex/skills/`.
+See [DOMAIN.md](DOMAIN.md) for a one-page orientation.

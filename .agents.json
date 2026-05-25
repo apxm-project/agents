@@ -1,0 +1,103 @@
+{
+  "project": "apxm",
+  "source_of_truth": ".agents/",
+  "agent_configs": {
+    "claude": {
+      "instructions": "CLAUDE.md",
+      "skills": ".claude/skills/"
+    },
+    "codex": {
+      "instructions": "AGENTS.md",
+      "skills": "~/.codex/skills/"
+    },
+    "copilot": {
+      "instructions": ".github/copilot-instructions.md",
+      "per_directory": ".github/instructions/"
+    },
+    "cursor": {
+      "instructions": ".cursorrules"
+    }
+  },
+  "skills": [
+    {
+      "name": "apxm-ais-op-design",
+      "description": "Use before adding or modifying an AIS op in apxm-core. Enforces the design-before-code gate, the canonical-attribute rule, and the build-dialect + codegen cadence."
+    },
+    {
+      "name": "apxm-backend-add",
+      "description": "Use when registering a new APXM inference backend (cloud, on-prem, or local). Enforces hard-fail-at-config-time and the no-legacy / no-fallback contract on resolver behavior."
+    },
+    {
+      "name": "apxm-claim-evidence",
+      "description": "Use after a claim-bearing run completes. Writes the docs/evaluation/ write-up, promotes a claim card under docs/claims/ if paper-bound, and links the preregistration + artifact paths."
+    },
+    {
+      "name": "apxm-commit",
+      "description": "Pre-PR gate \u2014 enforces no auto-commit, no push without explicit approval, no push to main, no --no-verify, and PR-for-pushed-work-only. Drafts commit message in repo log style; asks for explicit user approval before each commit."
+    },
+    {
+      "name": "apxm-compile-and-execute",
+      "description": "Use when compiling APXM graphs, running .apxmobj artifacts, or executing AIR/IR through the runtime. Enforces dekk apxm as the authority CLI and correct artifact placement under .apxm/."
+    },
+    {
+      "name": "apxm-context",
+      "description": "Prime an APXM session before broad work \u2014 runs doctor, reads project.md and the relevant _shared rules, surfaces subsystem ownership, and recalls APXM memory. Run at the start of any session that will touch >1 file or any non-trivial change."
+    },
+    {
+      "name": "apxm-evaluation-artifacts",
+      "description": "Use when creating, moving, reviewing, or documenting APXM benchmark, evaluation, session, compiler-diagnostic, evidence, or vLLM-run artifacts. Enforces that generated artifacts live in the repo-local .apxm workspace rather than examples or docs source trees."
+    },
+    {
+      "name": "apxm-execute-plan",
+      "description": "Drive an APXM plan to completion without scope creep. Tracks phases with the harness's task tracker, runs focused per-phase verification, refuses to add features beyond the plan, and surfaces blockers immediately. Invoke only after apxm-plan produces an approved plan."
+    },
+    {
+      "name": "apxm-finish",
+      "description": "Pre-claim gate \u2014 runs focused dekk apxm test, doctor, no-legacy lint, secrets scan, artifact-placement check, and preregistration check before any claim of completion. Refuses to claim done until all pass."
+    },
+    {
+      "name": "apxm-fork-vllm-rebase",
+      "description": "Use when rebasing the external/vllm fork onto a new upstream tag, cherry-picking APXM commits, or resolving conflicts in the fork. Covers the G1 build/smoke gate."
+    },
+    {
+      "name": "apxm-mcp-server",
+      "description": "Use when working on or registering the APXM MCP server (mcp/apxm_server.py). Each tool shells dekk apxm <cmd>; registration goes through dekk apxm mcp install."
+    },
+    {
+      "name": "apxm-mlir-pass-development",
+      "description": "Use when adding, modifying, or reordering MLIR passes in the APXM compiler pipeline. Enforces the single pass-list source of truth, the AIS-core ownership rule, and the build-dialect + codegen cadence after .td edits."
+    },
+    {
+      "name": "apxm-model-zoo-operate",
+      "description": "Use when adding, scaling, or probing models in the vLLM zoo (deploy/vllm/zoo*.toml). Enforces the docker-load \u2192 cache-warm \u2192 service-start \u2192 service-exec order and zoo-apply over service-start."
+    },
+    {
+      "name": "apxm-plan",
+      "description": "Produce a written plan before non-trivial APXM implementation. Required for changes touching >3 files, modifying a public API or AIS op, introducing a claim, or needing Slurm GPU allocation. Enforces APXM-specific gates (preregistration, AIS-op-vs-compose decision, dialect-codegen impact)."
+    },
+    {
+      "name": "apxm-preregistration",
+      "description": "Use before any claim-bearing APXM run (benchmark, evaluation, paper-bound number). Drafts, commits, and verifies a docs/preregistrations/ entry under the project's append-only norm."
+    },
+    {
+      "name": "apxm-priority-lane-bench",
+      "description": "Use when running the APXM priority-lane benchmark (foreground vs background concurrency). Enforces preregistration, paired-arm cache-salt scoping, and artifact placement under .apxm/."
+    },
+    {
+      "name": "apxm-review-council-bench",
+      "description": "Use when running the APXM review-council benchmark (multi-judge review). Enforces preregistration, model-zoo deploy order, and artifact placement under .apxm/."
+    },
+    {
+      "name": "apxm-simplify",
+      "description": "Pre-finish review pass \u2014 remove copied _shared text, weak abstractions, referential comments, and over-large skill bodies before claiming completion. Mandatory before apxm-finish and any commit."
+    },
+    {
+      "name": "apxm-skill-authoring",
+      "description": "Use when adding or editing an APXM agent skill under .agents/skills/. Enforces SSOT pattern, _shared/ pointers (never inlined text), \u2264100 lines per SKILL.md, and dual Claude+Codex compatibility."
+    },
+    {
+      "name": "apxm-vllm-service",
+      "description": "Use when building, launching, probing, or running APXM workloads against the Dockerized APXM-vLLM backend, especially on Slurm compute nodes. Enforces Dekk as the authority CLI, persistent service allocations, image-store reuse, and service-exec for commands that need the vLLM endpoint."
+    }
+  ]
+}
