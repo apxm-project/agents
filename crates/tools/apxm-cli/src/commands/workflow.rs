@@ -804,7 +804,7 @@ fn build_graph_metrics_json(
         metrics_json[metrics_keys::RUNTIME_OBSERVED_GRAPH] =
             serde_json::to_value(observed).unwrap_or(serde_json::Value::Null);
     }
-    metrics_json["node_statuses"] =
+    metrics_json[metrics_keys::RUNTIME_NODE_STATUSES] =
         serde_json::to_value(&result.execution.stats.node_statuses)
             .unwrap_or(serde_json::Value::Null);
     #[cfg(feature = "metrics")]
