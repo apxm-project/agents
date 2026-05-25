@@ -47,7 +47,7 @@ configure backends.
   attrs, Rust executors all resolve through it. See the
   `feedback_attribute_dual_naming` incident.
 - vLLM fork lives at `external/vllm` (submodule, branch
-  `apxm-rebase-v0.21.0`, upstream `randreshg/vllm`). Edits there require
+  `apxm-rebase-v0.21.0`, upstream `apxm-project/vllm`). Edits there require
   a cherry-pick plan and the G1 build/smoke gate.
 
 ## Reuse-first

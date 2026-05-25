@@ -86,7 +86,7 @@ new content. Skills inside the lifecycle can invoke domain skills (e.g.
   - `crates/tools/apxm-cli/` — `apxm` binary subcommands.
 - **`external/vllm/`** — git submodule, vLLM fork on branch
   `apxm-rebase-v0.21.0` (upstream v0.21.0 + 5 APXM commits at
-  `randreshg/vllm`). Never edit upstream files there directly without a
+  `apxm-project/vllm`). Never edit upstream files there directly without a
   cherry-pick plan.
 - **`tools/scripts/`** — Python wrappers Dekk calls into (`vllm.py`,
   `cargo.py`, `check_no_legacy_vllm.py`, `apxm_mcp_install.py`).
