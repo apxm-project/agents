@@ -52,12 +52,12 @@ configure backends.
 
 ## Reuse-first
 
-- Before inventing a path string, check
-  `tools/scripts/apxm_vllm_contract.py::RepoLayout` /
-  `build_layout()`.
+- Before inventing a path string, check `apxm.contract.RepoLayout` /
+  `apxm.contract.build_layout()`.
 - Before adding a new script, look in `tools/scripts/` — many wrappers
   already exist (`vllm.py`, `cargo.py`, `check_no_legacy_vllm.py`,
-  `apxm_vllm_contract.py`, `apxm_mcp_install.py`).
+  `apxm_mcp_install.py`). The shared APXM/vLLM operational names live
+  in the `apxm` Python package at `crates/compiler/apxm-frontend/python/`.
 - Before adding a Python utility, check `tools/quality_eval/`.
 
 ## Targeted verification

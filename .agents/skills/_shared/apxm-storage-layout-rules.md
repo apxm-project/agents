@@ -19,11 +19,11 @@ zoo manifests, or `~/.apxm/config.toml`.
 
 ## Canonical paths
 
-Use `tools/scripts/apxm_vllm_contract.py::RepoLayout` /
-`build_layout()` — never invent path strings:
+Use `apxm.contract.RepoLayout` / `build_layout()` — never invent path
+strings:
 
 ```python
-from tools.scripts.apxm_vllm_contract import build_layout
+from apxm.contract import build_layout
 layout = build_layout(__file__)
 # layout.benchmarks_results_dir
 # layout.evaluation_dir

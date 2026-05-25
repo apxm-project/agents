@@ -2,6 +2,7 @@
 name: apxm-preregistration
 description: Use before any claim-bearing APXM run (benchmark, evaluation, paper-bound number). Drafts, commits, and verifies a docs/preregistrations/ entry under the project's append-only norm.
 user-invocable: true
+repo: apxm-eval
 ---
 
 # APXM Preregistration

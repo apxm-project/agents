@@ -2,6 +2,7 @@
 name: apxm-evaluation-artifacts
 description: Use when creating, moving, reviewing, or documenting APXM benchmark, evaluation, session, compiler-diagnostic, evidence, or vLLM-run artifacts. Enforces that generated artifacts live in the repo-local .apxm workspace rather than examples or docs source trees.
 user-invocable: true
+repo: apxm-eval
 ---
 
 # APXM Evaluation Artifacts
@@ -17,8 +18,7 @@ the checked-in tree; run outputs do not.
 
 - Benchmark harness outputs: `.apxm/benchmarks/results/`
 - Evaluation runs: `.apxm/evaluation/<scenario>/runs/<UTC>/`
-- vLLM logs/images/service state — via
-  `tools/scripts/apxm_vllm_contract.py::RepoLayout`.
+- vLLM logs/images/service state — via `apxm.contract.RepoLayout`.
 
 Do not write generated CSVs, session directories, `.apxmobj` files,
 compiler diagnostics, evidence manifests, or per-run configs under
@@ -26,9 +26,9 @@ compiler diagnostics, evidence manifests, or per-run configs under
 
 ## Workflow
 
-1. Before changing artifact paths, inspect
-   `tools/scripts/apxm_vllm_contract.py` and reuse `build_layout()` /
-   `RepoLayout` — never invent path strings.
+1. Before changing artifact paths, inspect the `apxm.contract` module
+   and reuse `build_layout()` / `RepoLayout` — never invent path
+   strings.
 2. Keep benchmark defaults pointed at `.apxm/benchmarks/results/`.
 3. For claim-bearing vLLM evaluation, run through the persistent
    service path:
@@ -52,7 +52,7 @@ rg "examples/python/benchmarks/results|examples/python/demos/gemma4/runs" \
 find examples -path '*/results/*' -o -path '*/sessions/*' -o -path '*/runs/*'
 
 # Contract module sanity:
-python3 -m py_compile tools/scripts/apxm_vllm_contract.py \
+python3 -m py_compile crates/compiler/apxm-frontend/python/apxm/contract.py \
                       examples/python/benchmarks/benchmark_e2e.py
 ```
 

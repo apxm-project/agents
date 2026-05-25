@@ -2,6 +2,7 @@
 name: apxm-claim-evidence
 description: Use after a claim-bearing run completes. Writes the docs/evaluation/ write-up, promotes a claim card under docs/claims/ if paper-bound, and links the preregistration + artifact paths.
 user-invocable: true
+repo: apxm-eval
 ---
 
 # APXM Claim Evidence

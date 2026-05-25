@@ -2,6 +2,7 @@
 name: apxm-priority-lane-bench
 description: Use when running the APXM priority-lane benchmark (foreground vs background concurrency). Enforces preregistration, paired-arm cache-salt scoping, and artifact placement under .apxm/.
 user-invocable: true
+repo: apxm-eval
 ---
 
 # APXM Priority-Lane Benchmark

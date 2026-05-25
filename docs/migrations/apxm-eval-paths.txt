@@ -1,0 +1,52 @@
+# Paths that move from apxm to apxm-project/apxm-eval in the reorganization.
+# Format: one path per line, comments allowed. Consumed by git filter-repo
+# as `--path` / `--path-glob` arguments in Phase R.2.
+#
+# Doc trees
+docs/preregistrations/
+docs/evaluation/
+docs/claims/
+docs/paper/
+#
+# Eval harnesses + frameworks
+tools/quality_eval/
+tools/eval_harness/
+tools/hal_adapter/
+tools/ablation/
+tools/apxm_dspy/
+tools/devtools/
+#
+# External benchmark adapter notes (operator notes pin the upstream
+# commit + document APXM-specific integration tweaks).
+#
+# NB: tools/external/tau2-bench/ itself is NOT in apxm history (it is a
+# locally cloned upstream repo, not vcs-tracked here). It re-enters
+# apxm-eval as a submodule in R.3 driven by the pin file under
+# _apxm-notes/. Do not list it in filter-repo paths.
+tools/external/_apxm-notes/
+#
+# Benchmark workloads + drivers + eval-flavored demos
+examples/python/benchmarks/
+examples/python/demos/gemma4/
+examples/python/skill-evals/
+#
+# Eval test fixtures (quality_eval rubric corpora)
+tests/quality_fixtures/
+#
+# Eval-bound scripts under tools/scripts/
+tools/scripts/analyze_apxm_priority_lane_combined.py
+tools/scripts/analyze_apxm_priority_lane_run.py
+tools/scripts/assess_apxm_review_council_quality.py
+tools/scripts/cross_system_per_cell.sh
+tools/scripts/make_apxm_paper_figures.py
+tools/scripts/run_apxm_priority_lane.sh
+tools/scripts/run_apxm_priority_lane_interleaved.sh
+tools/scripts/run_apxm_review_council.sh
+tools/scripts/run_apxm_review_multimodel.sh
+#
+# Eval-bound .agents/skills (frontmatter `repo: apxm-eval`)
+.agents/skills/apxm-claim-evidence/
+.agents/skills/apxm-evaluation-artifacts/
+.agents/skills/apxm-preregistration/
+.agents/skills/apxm-priority-lane-bench/
+.agents/skills/apxm-review-council-bench/
