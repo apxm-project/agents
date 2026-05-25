@@ -17,7 +17,9 @@ members = [
 	# ── Tools (CLI + GUI + Server) ────────────────
 	"crates/tools/apxm-cli",
 	"crates/tools/apxm-gui",
-	"crates/tools/apxm-server",
+	"crates/tools/apxm-server", 
+    # -- Facade ---------
+    "crates/apxm",
 ]
 
 resolver = "3"
@@ -29,6 +31,9 @@ license = "MIT"
 repository = "https://github.com/randreshg/apxm"
 homepage = "https://github.com/randreshg/apxm"
 authors = ["The APXM authors"]
+keywords = ["agents", "llm", "compiler", "runtime", "ai"]
+categories = ["AI", "compilers", "science"]
+readme = "README.md"
 
 [workspace.dependencies]
 # ── Internal crates ──────────────────────────────────────────
@@ -42,6 +47,7 @@ apxm-credentials = { version = "0.0.1", path = "crates/runtime/apxm-credentials"
 apxm-driver = { version = "0.0.1", path = "crates/orchestration/apxm-driver" }
 apxm-acp = { version = "0.0.1", path = "crates/orchestration/apxm-acp" }
 apxm-artifact = { version = "0.0.1", path = "crates/orchestration/apxm-artifact" }
+apxm = { version = "0.0.1", path = "crates/apxm"}
 
 # ── Serialization ────────────────────────────────────────────
 serde = { version = "1.0", features = ["derive"] }
