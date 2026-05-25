@@ -365,6 +365,9 @@ class VllmDefaults:
 
     backend_name: str = "vllm-fork"
     host: str = HostAddress.LOOPBACK.value
+    # Default local service port for single-service benchmark helpers. The
+    # model-zoo allocator still owns real service port selection.
+    port: int = 8916
     request_timeout_seconds: int = 15
     startup_timeout_seconds: int = 900
     stop_timeout_seconds: float = 20.0
