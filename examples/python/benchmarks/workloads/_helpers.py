@@ -22,11 +22,11 @@ import sys
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
-_TOOLS_SCRIPT_DIR = str(_REPO_ROOT / "tools" / "scripts")
-if _TOOLS_SCRIPT_DIR not in sys.path:
-    sys.path.insert(0, _TOOLS_SCRIPT_DIR)
+_APXM_PKG_DIR = str(_REPO_ROOT / "crates" / "compiler" / "apxm-frontend" / "python")
+if _APXM_PKG_DIR not in sys.path:
+    sys.path.insert(0, _APXM_PKG_DIR)
 
-from apxm_vllm_contract import EnvVar  # noqa: E402
+from apxm.contract import EnvVar  # noqa: E402
 
 ENV_VARIANT = EnvVar.APXM_MATRIX_VARIANT.value
 ENV_PREFIX_TOK = "APXM_WORKLOAD_PREFIX_TOK"

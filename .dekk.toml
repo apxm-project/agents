@@ -39,7 +39,7 @@ LLVM_PREFIX = "{environment}"
 # Intentionally NOT setting APXM_HOME: it's the user data root
 # (default ~/.apxm), and pinning it to {project} broke roaming-bucket
 # resolution. Override per-shell or via .apxm/config.toml instead.
-PYTHONPATH = "{project}/tools"
+PYTHONPATH = "{project}/crates/compiler/apxm-frontend/python:{project}/tools"
 LD_LIBRARY_PATH = "{project}/target/release/lib:{project}/target/release:{environment}/lib"
 
 [paths]
@@ -70,6 +70,8 @@ run = { run = "apxm run", description = "Run a pre-compiled .apxmobj artifact", 
 decompile = { run = "apxm decompile", description = "Reverse-map artifact back to AIR", group = "Compilation" }
 doctor = { run = "apxm doctor", description = "Diagnose the real APXM compiler/runtime environment", group = "Configuration" }
 server = { run = "apxm-server", description = "Launch the APXM HTTP server", group = "Configuration" }
+commit-lint = { run = "python tools/scripts/check_commit_message.py", description = "Lint a commit message file, --current (HEAD), or --range REV1..REV2", group = "Configuration" }
+install-hooks = { run = "python tools/scripts/install_git_hooks.py", description = "Install APXM git hooks (commit-msg + prepare-commit-msg); idempotent", group = "Configuration" }
 
 gui = { run = "apxm gui", description = "Launch the web-based GUI dashboard", skill = true, group = "Authoring" }
 validate = { run = "apxm validate", description = "Validate graph against AIS contract", skill = true, group = "Authoring" }

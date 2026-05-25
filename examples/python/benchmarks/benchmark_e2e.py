@@ -46,6 +46,9 @@ class BootstrapPath(StrEnum):
     CRATES = "crates"
     TOOLS = "tools"
     SCRIPTS = "scripts"
+    COMPILER = "compiler"
+    APXM_FRONTEND = "apxm-frontend"
+    PYTHON = "python"
 
 
 class BenchmarkPath(StrEnum):
@@ -67,11 +70,17 @@ def _find_repo_root(start: Path) -> Path:
 
 REPO_ROOT = _find_repo_root(Path(__file__))
 BENCHMARK_DIR = Path(__file__).resolve().parent
-TOOLS_SCRIPT_DIR = REPO_ROOT / BootstrapPath.TOOLS.value / BootstrapPath.SCRIPTS.value
-if str(TOOLS_SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(TOOLS_SCRIPT_DIR))
+APXM_PKG_DIR = (
+    REPO_ROOT
+    / BootstrapPath.CRATES.value
+    / BootstrapPath.COMPILER.value
+    / BootstrapPath.APXM_FRONTEND.value
+    / BootstrapPath.PYTHON.value
+)
+if str(APXM_PKG_DIR) not in sys.path:
+    sys.path.insert(0, str(APXM_PKG_DIR))
 
-from apxm_vllm_contract import (  # noqa: E402
+from apxm.contract import (  # noqa: E402
     ApiRoute,
     ArmName,
     DockerCommand,

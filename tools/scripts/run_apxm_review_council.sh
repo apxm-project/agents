@@ -21,11 +21,11 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 
 mapfile -t LAYOUT_LINES < <(
-  PYTHONPATH="$REPO_ROOT/tools/scripts${PYTHONPATH:+:$PYTHONPATH}" \
+  PYTHONPATH="$REPO_ROOT/crates/compiler/apxm-frontend/python${PYTHONPATH:+:$PYTHONPATH}" \
     python3 - "$REPO_ROOT" <<'PY'
 import sys
 from pathlib import Path
-from apxm_vllm_contract import build_layout
+from apxm.contract import build_layout
 
 layout = build_layout(Path(sys.argv[1]) / "tools/scripts/run_apxm_review_council.sh")
 print(layout.evaluation_dir / "apxm-review-council")
@@ -125,7 +125,7 @@ run_cell() {
 run_cell "APXM-on" "REVIEW-ON" "review.apxm-on.csv"
 run_cell "flat-HTTP" "REVIEW-FH" "review.flat-http.csv" --no-apxm-hints
 
-python3 examples/python/benchmarks/plan04_cross_workload.py \
+python3 examples/python/benchmarks/cross_workload.py \
   --input "apxm-review-council:$OUT_DIR/review.apxm-on.csv" \
   --input "apxm-review-council:$OUT_DIR/review.flat-http.csv" \
   --output "$OUT_DIR/combined.csv" \

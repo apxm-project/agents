@@ -25,11 +25,11 @@ from urllib import request as urllib_request
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-_TOOLS_SCRIPT_DIR = str(REPO_ROOT / "tools" / "scripts")
-if _TOOLS_SCRIPT_DIR not in sys.path:
-    sys.path.insert(0, _TOOLS_SCRIPT_DIR)
+_APXM_PKG_DIR = str(REPO_ROOT / "crates" / "compiler" / "apxm-frontend" / "python")
+if _APXM_PKG_DIR not in sys.path:
+    sys.path.insert(0, _APXM_PKG_DIR)
 
-from apxm_vllm_contract import WireKey  # noqa: E402
+from apxm.contract import WireKey  # noqa: E402
 MANIFEST_DIR = REPO_ROOT / ".apxm" / "evaluation" / "agentic" / "dogfood"
 
 REVIEW_SYSTEM_PROMPT = textwrap.dedent("""

@@ -64,7 +64,7 @@ RULES: tuple[LintRule, ...] = (
         include_globs=("tools/**/*.py", "docs/**/*.md", "deploy/**/*", "examples/**/*", "README.md"),
         exclude_globs=(
             "tools/scripts/vllm.py",  # PORT_ALLOCATOR_MIN definition
-            "tools/scripts/apxm_vllm_contract.py",  # historical defaults removed
+            "crates/compiler/apxm-frontend/python/apxm/contract.py",  # historical defaults removed
             "tools/scripts/check_no_legacy_vllm.py",
             "docs/backends/model-zoo.md",  # explains the allocator range
             "docs/backends/vllm.md",  # legitimate concept reference
@@ -125,7 +125,7 @@ RULES: tuple[LintRule, ...] = (
             "accepts `priority`. Fork's FCFS branch becomes upstream-only."
         ),
         include_globs=(
-            "tools/scripts/apxm_vllm_contract.py",
+            "crates/compiler/apxm-frontend/python/apxm/contract.py",
             "crates/runtime/apxm-backends/**/*.rs",
             "tools/scripts/vllm.py",
             "examples/python/benchmarks/**/*.py",

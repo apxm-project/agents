@@ -23,11 +23,11 @@ import sys
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
-_TOOLS_SCRIPT_DIR = str(_REPO_ROOT / "tools" / "scripts")
-if _TOOLS_SCRIPT_DIR not in sys.path:
-    sys.path.insert(0, _TOOLS_SCRIPT_DIR)
+_APXM_PKG_DIR = str(_REPO_ROOT / "crates" / "compiler" / "apxm-frontend" / "python")
+if _APXM_PKG_DIR not in sys.path:
+    sys.path.insert(0, _APXM_PKG_DIR)
 
-from apxm_vllm_contract import EnvVar, WireKey  # noqa: E402
+from apxm.contract import EnvVar, WireKey  # noqa: E402
 
 from apxm import compile, GraphRecorder
 
