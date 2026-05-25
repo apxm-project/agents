@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# Per-cell Plan 04 orchestrator with engine restart between cells.
+# Per-cell cross-system benchmark orchestrator with engine restart
+# between cells.
+#
+# Anchor preregistration:
+#   docs/preregistrations/20260519T030358Z-plan04-cross-system.md
 #
 # Upstream vLLM v0.21 + gpt-oss-120b + TP=8 + sustained concurrent load
 # triggers a TCPStore/HeartbeatMonitor broken-pipe race that kills
@@ -11,7 +15,7 @@
 # this script: scancels the prior service, archives its state record,
 # zoo-applies a fresh vllm-gptoss, waits for "vLLM is ready" on the
 # slurm log, runs that single cell via `dekk apxm vllm service-exec`,
-# and moves on. After all 6 cells, runs plan04_cross_workload.py stitch.
+# and moves on. After all 6 cells, runs cross_workload.py to stitch.
 #
 # Required env:
 #   APXM_ENDPOINT — e.g. http://127.0.0.1:8916
@@ -25,13 +29,13 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 
 mapfile -t LAYOUT_LINES < <(
-  PYTHONPATH="$REPO_ROOT/tools/scripts${PYTHONPATH:+:$PYTHONPATH}" \
+  PYTHONPATH="$REPO_ROOT/crates/compiler/apxm-frontend/python${PYTHONPATH:+:$PYTHONPATH}" \
     python3 - "$REPO_ROOT" <<'PY'
 import sys
 from pathlib import Path
-from apxm_vllm_contract import build_layout
+from apxm.contract import build_layout
 
-layout = build_layout(Path(sys.argv[1]) / "tools/scripts/plan04_run_per_cell.sh")
+layout = build_layout(Path(sys.argv[1]) / "tools/scripts/cross_system_per_cell.sh")
 print(layout.service_dir / "vllm-gptoss.json")
 print(layout.log_dir)
 print(layout.evaluation_dir / "cross-system")
@@ -58,9 +62,9 @@ OUT_DIR="${CROSS_SYSTEM_DIR}/${TS}"
 POWER_HELPER_DIR="$REPO_ROOT/.apxm/evaluation/agentic/_run_template"
 mkdir -p "$OUT_DIR"
 
-echo "[plan04-per-cell] run dir: $OUT_DIR"
-echo "[plan04-per-cell] endpoint: $APXM_ENDPOINT  iter=$ITER conc=$CONC rows=$ROWS"
-echo "[plan04-per-cell] power_capture=$POWER_CAPTURE opt_levels(apxm=$APXM_ON_OPT_LEVELS flat=$FLAT_HTTP_OPT_LEVELS)"
+echo "[per-cell] run dir: $OUT_DIR"
+echo "[per-cell] endpoint: $APXM_ENDPOINT  iter=$ITER conc=$CONC rows=$ROWS"
+echo "[per-cell] power_capture=$POWER_CAPTURE opt_levels(apxm=$APXM_ON_OPT_LEVELS flat=$FLAT_HTTP_OPT_LEVELS)"
 
 # ── helpers ──────────────────────────────────────────────────────────────
 
@@ -71,30 +75,30 @@ current_job_id() {
 teardown_service() {
   local jid="${1:-}"
   if [ -n "$jid" ]; then
-    echo "[plan04-per-cell] scancel $jid"
+    echo "[per-cell] scancel $jid"
     scancel "$jid" 2>/dev/null || true
     # Wait until squeue stops listing it
     local waited=0
     while squeue -j "$jid" -h 2>/dev/null | grep -q "$jid"; do
       sleep 2; waited=$((waited+2))
-      if [ "$waited" -gt 60 ]; then echo "[plan04-per-cell] WARN: scancel of $jid still pending after 60s"; break; fi
+      if [ "$waited" -gt 60 ]; then echo "[per-cell] WARN: scancel of $jid still pending after 60s"; break; fi
     done
     mv -f "$SVC_STATE" "${SVC_STATE}.cancelled-${jid}" 2>/dev/null || true
   fi
 }
 
 bring_up_service_wait_ready() {
-  echo "[plan04-per-cell] zoo-apply (fresh vllm-gptoss)"
+  echo "[per-cell] zoo-apply (fresh vllm-gptoss)"
   local out
   out=$(dekk apxm vllm zoo-apply 2>&1)
   local jid
   jid=$(echo "$out" | grep -oE "Submitted batch job [0-9]+" | head -1 | awk '{print $4}')
   if [ -z "$jid" ]; then
-    echo "[plan04-per-cell] ERROR: zoo-apply did not submit a job"
+    echo "[per-cell] ERROR: zoo-apply did not submit a job"
     echo "$out" | tail -20
     exit 1
   fi
-  echo "[plan04-per-cell] new vllm-gptoss job_id=$jid"
+  echo "[per-cell] new vllm-gptoss job_id=$jid"
   CURRENT_JOB_ID="$jid"
   local log="${LOG_DIR}/slurm-apxm-vllm-service-vllm-gptoss-${jid}.out"
   local waited=0
@@ -102,38 +106,38 @@ bring_up_service_wait_ready() {
   while [ ! -f "$log" ]; do
     sleep 5; waited=$((waited+5))
     if [ "$waited" -gt "$max_wait" ]; then
-      echo "[plan04-per-cell] ERROR: log $log never appeared after ${max_wait}s"
+      echo "[per-cell] ERROR: log $log never appeared after ${max_wait}s"
       exit 1
     fi
   done
-  echo "[plan04-per-cell] log present; waiting for ready signal"
+  echo "[per-cell] log present; waiting for ready signal"
   waited=0
   max_wait=900
   while ! grep -q "vLLM is ready" "$log" 2>/dev/null; do
     if grep -qE "EngineDeadError|CUDA out of memory|FATAL" "$log" 2>/dev/null; then
-      echo "[plan04-per-cell] ERROR: startup failed; tail of $log:"
+      echo "[per-cell] ERROR: startup failed; tail of $log:"
       tail -30 "$log"
       exit 1
     fi
     sleep 5; waited=$((waited+5))
     if [ "$waited" -gt "$max_wait" ]; then
-      echo "[plan04-per-cell] ERROR: ready signal never arrived in ${max_wait}s"
+      echo "[per-cell] ERROR: ready signal never arrived in ${max_wait}s"
       tail -30 "$log"
       exit 1
     fi
   done
-  echo "[plan04-per-cell] vllm-gptoss $jid READY"
+  echo "[per-cell] vllm-gptoss $jid READY"
   # Capture service-state once per run on first cell only
   if [ ! -f "$OUT_DIR/service-state.json" ]; then
     dekk apxm vllm service-status vllm-gptoss --probe 2>/dev/null > "$OUT_DIR/service-state.json" \
-      || echo "[plan04-per-cell] WARN: could not capture service-state"
+      || echo "[per-cell] WARN: could not capture service-state"
   fi
 }
 
 reset_cache() {
   curl -fsS -X POST "$APXM_ENDPOINT/v1/apxm/admin/reset_prefix_cache" \
     -H 'content-type: application/json' -d '{}' >/dev/null \
-    || echo "[plan04-per-cell] WARN: reset_prefix_cache returned non-zero"
+    || echo "[per-cell] WARN: reset_prefix_cache returned non-zero"
 }
 
 truthy() {
@@ -162,7 +166,7 @@ run_cell() {
   local extra_flags="$1"; shift
   local opt_levels="$1"; shift
   local n_tasks_per_iter="$1"; shift
-  echo "[plan04-per-cell] === cell: $label ==="
+  echo "[per-cell] === cell: $label ==="
   # Fresh engine for this cell:
   teardown_service "$(current_job_id)"
   bring_up_service_wait_ready
@@ -171,13 +175,13 @@ run_cell() {
   local power_dir="$OUT_DIR/power/${workload}.${arm_name}"
   if truthy "$POWER_CAPTURE"; then
     mkdir -p "$power_dir"
-    echo "[plan04-per-cell] starting rocm-smi sidecar for job $CURRENT_JOB_ID -> $power_dir/rocm-smi.csv"
+    echo "[per-cell] starting rocm-smi sidecar for job $CURRENT_JOB_ID -> $power_dir/rocm-smi.csv"
     ROCM_SMI_INTERVAL_SECONDS="$ROCM_SMI_INTERVAL_SECONDS" \
       "$POWER_HELPER_DIR/rocm-smi-sidecar.sh" "$power_dir/rocm-smi.csv" "$CURRENT_JOB_ID" \
       > "$power_dir/sidecar.log" 2>&1 &
     sidecar_pid="$!"
   fi
-  echo "[plan04-per-cell] launching cell driver via service-exec"
+  echo "[per-cell] launching cell driver via service-exec"
   local cmd="python3 examples/python/benchmarks/${driver} \
     --apxm-endpoint $APXM_ENDPOINT \
     ${workload_arg} \
@@ -196,7 +200,7 @@ run_cell() {
   stop_sidecar "$sidecar_pid"
   tail -200 "$OUT_DIR/${out_csv}.log"
   if [ "$cell_status" -ne 0 ]; then
-    echo "[plan04-per-cell] ERROR: cell failed with status $cell_status ($label)"
+    echo "[per-cell] ERROR: cell failed with status $cell_status ($label)"
     exit "$cell_status"
   fi
   if truthy "$POWER_CAPTURE"; then
@@ -206,7 +210,7 @@ run_cell() {
       --n-tasks "$((ITER * n_tasks_per_iter))" \
       --arm "$arm_name" \
       > "$power_dir/joules.json" \
-      || echo "[plan04-per-cell] WARN: joule integration failed for $label"
+      || echo "[per-cell] WARN: joule integration failed for $label"
   fi
 }
 
@@ -220,8 +224,8 @@ run_cell "loogle / apxm-on"     "loogle"   "apxm-on"   "concurrent_matrix.py" "-
 run_cell "loogle / flat-http"   "loogle"   "flat-http" "concurrent_matrix.py" "--graph examples/python/benchmarks/workloads/loogle_row.py"   "L-FH" "loogle.flat-http.csv"   "--no-apxm-hints" "$FLAT_HTTP_OPT_LEVELS" "$CONC"
 
 # ── stitch ──────────────────────────────────────────────────────────────
-echo "[plan04-per-cell] stitching combined.csv + summary.json"
-python3 examples/python/benchmarks/plan04_cross_workload.py \
+echo "[per-cell] stitching combined.csv + summary.json"
+python3 examples/python/benchmarks/cross_workload.py \
   --input "mooncake:$OUT_DIR/mooncake.apxm-on.csv" \
   --input "mooncake:$OUT_DIR/mooncake.flat-http.csv" \
   --input "sharegpt:$OUT_DIR/sharegpt.apxm-on.csv" \
@@ -233,15 +237,15 @@ python3 examples/python/benchmarks/plan04_cross_workload.py \
   --manifest "$OUT_DIR/summary.json"
 
 if truthy "$POWER_CAPTURE"; then
-  echo "[plan04-per-cell] computing per-workload J/req bootstrap summaries"
+  echo "[per-cell] computing per-workload J/req bootstrap summaries"
   for workload in mooncake sharegpt loogle; do
     python3 "$POWER_HELPER_DIR/per-iter-energy.py" \
       --apxm-on-dir "$OUT_DIR/power/${workload}.apxm-on" \
       --flat-http-dir "$OUT_DIR/power/${workload}.flat-http" \
       > "$OUT_DIR/jreq.${workload}.json" \
-      || echo "[plan04-per-cell] WARN: per-iter J/req bootstrap failed for $workload"
+      || echo "[per-cell] WARN: per-iter J/req bootstrap failed for $workload"
   done
 fi
 
-echo "[plan04-per-cell] DONE — $OUT_DIR"
+echo "[per-cell] DONE — $OUT_DIR"
 ls -la "$OUT_DIR"
