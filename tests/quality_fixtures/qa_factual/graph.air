@@ -1,7 +1,0 @@
-module {
-  func.func @qa_factual() -> !ais.token attributes {ais.entry} {
-    %ans = ais.ask "What is the capital of France? Answer with just the city name." : !ais.token
-    ais.print "{ans}" [%ans : !ais.token] {input_names = ["ans"]}
-    func.return %ans : !ais.token
-  }
-}
