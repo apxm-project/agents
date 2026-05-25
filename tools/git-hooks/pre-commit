@@ -28,4 +28,4 @@ else
   PYTHON="python3"
 fi
 
-"$PYTHON" "$script" --strict
+"$PYTHON" "$script" --strict --staged-only
