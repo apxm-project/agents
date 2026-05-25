@@ -4,8 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "apxm"
-version = "0.0.1"
+version = "0.1.0"
 description = "Python frontend for APXM graph construction, AIR emission, and workflow execution"
+readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "The APXM authors" }]
@@ -13,7 +14,10 @@ keywords = ["apxm", "workflows", "graphs", "agents", "mlir"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.10",
@@ -22,6 +26,7 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Code Generators",
     "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
 ]
 dependencies = ["tomli>=2.0; python_version<'3.11'"]
 
@@ -29,6 +34,8 @@ dependencies = ["tomli>=2.0; python_version<'3.11'"]
 Homepage = "https://github.com/apxm-project/apxm"
 Repository = "https://github.com/apxm-project/apxm"
 Issues = "https://github.com/apxm-project/apxm/issues"
+Documentation = "https://github.com/apxm-project/apxm/tree/main/docs"
+Changelog = "https://github.com/apxm-project/apxm/releases"
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0", "pytest-asyncio>=0.21"]
