@@ -107,8 +107,11 @@ new content. Skills inside the lifecycle can invoke domain skills (e.g.
 The evaluation harness, preregistrations, benchmarks, claim cards, and
 paper drafts live in `apxm-project/apxm-eval`. The compiled-skill
 library (loaded by `apxm-server` via `APXM_SKILLS_PATH`) lives in
-`apxm-project/apxm-libs`. Skills under `.agents/skills/` are
-agent-tooling for working *on* APXM and stay here.
+`apxm-project/apxm-libs`. The web GUI dashboard (axum backend + React
+frontend) ships as a standalone binary from `apxm-project/apxm-gui` —
+install separately; `dekk apxm gui` shells to it on PATH. Skills under
+`.agents/skills/` are agent-tooling for working *on* APXM and stay
+here.
 
 ## 5. Build, test, codegen
 

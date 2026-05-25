@@ -14,10 +14,9 @@ members = [
 	"crates/orchestration/apxm-driver",
 	"crates/orchestration/apxm-acp",
 	"crates/orchestration/apxm-artifact",
-	# ── Tools (CLI + GUI + Server) ────────────────
+	# ── Tools (CLI + Server) ──────────────────────
 	"crates/tools/apxm-cli",
-	"crates/tools/apxm-gui",
-	"crates/tools/apxm-server", 
+	"crates/tools/apxm-server",
     # -- Facade ---------
     "crates/apxm",
 ]
