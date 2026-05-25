@@ -52,9 +52,9 @@ slogan. Five commitments back the library thesis:
 1. **Typed isolation.** Every skill declares its capabilities, side-effect policy, and
    approval gates in a manifest. The runtime enforces them in a sandbox: a tool the manifest
    does not authorize cannot be called, full stop. Recent hardening work
-   ([`af71601`](https://github.com/randreshg/apxm/commit/af71601),
-   [`e0eb949`](https://github.com/randreshg/apxm/commit/e0eb949),
-   [`db198d4`](https://github.com/randreshg/apxm/commit/db198d4)) tightens the boundary
+   ([`af71601`](https://github.com/apxm-project/apxm/commit/af71601),
+   [`e0eb949`](https://github.com/apxm-project/apxm/commit/e0eb949),
+   [`db198d4`](https://github.com/apxm-project/apxm/commit/db198d4)) tightens the boundary
    between agent-triggered execution and declared policy.
 2. **Reproducible sessions.** Every execution emits a session directory with metrics,
    traces, node outputs, and pass diagnostics that you can replay. Persistent skill
