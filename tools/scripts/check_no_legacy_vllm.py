@@ -71,8 +71,11 @@ RULES: tuple[LintRule, ...] = (
             "deploy/vllm/zoo.toml",  # operator's local manifest (gitignored)
             "deploy/vllm/zoo.example.toml",  # template for operators
             "deploy/vllm/zoo.test-*.toml",  # checked-in smoke-test manifests
+            "deploy/vllm/zoo.review-*.toml",  # checked-in evaluation-service manifests
             "docs/preregistrations/**",  # evidence artifacts cite exact run state
             "docs/claims/**",  # claim files cite exact run state
+            "docs/evaluation/**",  # result write-ups cite exact run state
+            "docs/paper/**",  # paper drafts cite exact run state
             "docs/backends/model-zoo-quickstart.md",  # operator walkthrough; concrete example port
             "deploy/vllm/README.md",  # references allocator range
             # Test fixtures: stub endpoints, never actually contacted.
