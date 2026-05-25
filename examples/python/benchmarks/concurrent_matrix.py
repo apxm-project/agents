@@ -34,6 +34,7 @@ import os
 import statistics
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -41,6 +42,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -267,6 +269,146 @@ def _fields_honored_union(tenants: list[TenantResult]) -> str:
     )
 
 
+def _parse_execute_stdout(stdout: str) -> tuple[str, int, int]:
+    """Extract (execution_id, llm_calls, cached_input) from `dekk apxm execute --json` stdout."""
+    if not stdout:
+        return "", 0, 0
+    try:
+        obj = json.loads(stdout)
+    except json.JSONDecodeError:
+        return "", 0, 0
+    if not isinstance(obj, dict):
+        return "", 0, 0
+    execution_id = ""
+    ex = obj.get("execution_id")
+    if isinstance(ex, str):
+        execution_id = ex
+    usage = obj.get("llm_usage") or {}
+    llm_calls = int(usage.get("total_requests", 0) or 0)
+    cached_input = int(usage.get("cached_input_tokens", 0) or 0)
+    return execution_id, llm_calls, cached_input
+
+
+def _dict_get(d: object, key: str) -> dict:
+    """Return d[key] if d is a dict and the value is a dict, else {}."""
+    if not isinstance(d, dict):
+        return {}
+    v = d.get(key, {})
+    return v if isinstance(v, dict) else {}
+
+
+def _list_get(d: object, key: str) -> list:
+    """Return d[key] if d is a dict and the value is a list, else []."""
+    if not isinstance(d, dict):
+        return []
+    v = d.get(key, [])
+    return v if isinstance(v, list) else []
+
+
+def _parse_metrics_file(
+    metrics_path: Path, focus_node_id: int
+) -> dict[str, Any]:
+    """Extract per-tenant counters from an emitted metrics.json.
+
+    Returns a flat dict with all the fields TenantResult cares about.
+    Defaults are zero / empty so callers can unpack unconditionally.
+    """
+    fields: dict[str, Any] = {
+        "pin_peak": 0,
+        "cached_input_delta": 0,
+        "llm_calls_delta": 0,
+        "dispatch_fallback_triggered": False,
+        "dispatch_pin_peak": 0,
+        "fields_honored": "",
+        "critical_path_duration_ms": 0.0,
+        "critical_path_finish_ms": 0.0,
+        "critical_path_node_count": 0,
+        "critical_path_nodes": "",
+        "queue_wait_critical_path_total_ms": 0.0,
+        "queue_wait_max_ms": 0.0,
+        "focus_node_finish_ms": 0.0,
+        "focus_node_duration_ms": 0.0,
+        "focus_node_queue_wait_ms": 0.0,
+    }
+    if not metrics_path.exists():
+        return fields
+    try:
+        metrics = json.loads(metrics_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return fields
+
+    backends = _dict_get(metrics, "backends")
+    for g in _list_get(backends, "graphs"):
+        if not isinstance(g, dict):
+            continue
+        p = int(g.get("pinned_blocks_peak", g.get("pinned_blocks", 0)) or 0)
+        if p > fields["pin_peak"]:
+            fields["pin_peak"] = p
+    agg = _dict_get(backends, "aggregate")
+    # cached_input_tokens shows up under aggregate in some layouts; the
+    # caller takes max with the stdout-derived value.
+    fields["cached_input_delta"] = int(agg.get("total_cached_input_tokens", 0) or 0)
+    fields["llm_calls_delta"] = int(agg.get("total_requests", 0) or 0)
+
+    dispatch = _dict_get(metrics, "dispatch_ir_v1")
+    if not dispatch:
+        dispatch = _dict_get(_dict_get(metrics, "runtime"), "dispatch_ir_v1")
+    if dispatch:
+        fields["dispatch_fallback_triggered"] = bool(
+            dispatch.get("fallback_triggered", False)
+        )
+        evidence = _dict_get(dispatch, "evidence")
+        if evidence:
+            dpp = int(evidence.get("pinned_blocks_peak_max", 0) or 0)
+            fields["dispatch_pin_peak"] = dpp
+            if dpp > fields["pin_peak"]:
+                fields["pin_peak"] = dpp
+        fields["fields_honored"] = _fields_honored_summary(
+            dispatch.get("fields_honored")
+        )
+
+    runtime = _dict_get(metrics, "runtime")
+    observed = _dict_get(runtime, "observed_graph")
+    critical_path = _dict_get(observed, "critical_path")
+    if critical_path:
+        fields["critical_path_duration_ms"] = float(
+            critical_path.get("duration_ms", 0) or 0
+        )
+        fields["critical_path_finish_ms"] = float(
+            critical_path.get("finish_ms", 0) or 0
+        )
+        fields["critical_path_node_count"] = int(
+            critical_path.get("node_count", 0) or 0
+        )
+        nodes = critical_path.get("nodes", [])
+        if isinstance(nodes, list):
+            fields["critical_path_nodes"] = "|".join(str(node) for node in nodes)
+    queue_wait = _dict_get(observed, "queue_wait")
+    if queue_wait:
+        fields["queue_wait_critical_path_total_ms"] = float(
+            queue_wait.get("critical_path_total_ms", 0) or 0
+        )
+        fields["queue_wait_max_ms"] = float(queue_wait.get("max_ms", 0) or 0)
+
+    if focus_node_id > 0:
+        for status in _list_get(runtime, "node_statuses"):
+            if not isinstance(status, dict):
+                continue
+            if int(status.get("node_id", 0) or 0) != focus_node_id:
+                continue
+            fields["focus_node_finish_ms"] = float(
+                status.get("finished_at_ms", 0) or 0
+            )
+            fields["focus_node_duration_ms"] = float(
+                status.get("duration_ms", 0) or 0
+            )
+            fields["focus_node_queue_wait_ms"] = float(
+                status.get("queue_wait_ms", 0) or 0
+            )
+            break
+    return fields
+
+
 def _execute_tenant(
     *,
     graph: Path,
@@ -298,7 +440,6 @@ def _execute_tenant(
     # reflects the workload's true prefix-sharing structure (which is
     # what we want for cohort-routing measurements).
     env[APXM_VLLM_CACHE_SALT_ENV] = f"matrix-arm-{arm}-opt-{opt_level}"
-    import tempfile
     metrics_dir = Path(tempfile.mkdtemp(prefix=f"matrix-metrics-v{variant}-it{iteration}-"))
     metrics_path = metrics_dir / "metrics.json"
     cmd = [
@@ -321,124 +462,11 @@ def _execute_tenant(
     )
     wall_ms = (time.perf_counter() - start) * 1000.0
 
-    execution_id = ""
-    cached_input = 0
-    llm_calls = 0
-    pin_peak = 0
-    dispatch_fallback_triggered = False
-    dispatch_pin_peak = 0
-    fields_honored = ""
-    critical_path_duration_ms = 0.0
-    critical_path_finish_ms = 0.0
-    critical_path_node_count = 0
-    critical_path_nodes = ""
-    queue_wait_critical_path_total_ms = 0.0
-    queue_wait_max_ms = 0.0
-    focus_node_finish_ms = 0.0
-    focus_node_duration_ms = 0.0
-    focus_node_queue_wait_ms = 0.0
-    if proc.stdout:
-        try:
-            obj = json.loads(proc.stdout)
-            if isinstance(obj, dict):
-                ex = obj.get("execution_id")
-                if isinstance(ex, str):
-                    execution_id = ex
-                usage = obj.get("llm_usage") or {}
-                llm_calls = int(usage.get("total_requests", 0) or 0)
-                cached_input = int(usage.get("cached_input_tokens", 0) or 0)
-        except json.JSONDecodeError:
-            pass
-
-    # Pull pin peak from the emitted metrics JSON. The detailed level
-    # populates pinned_blocks_peak per backend graph; we max across them.
-    if metrics_path.exists():
-        try:
-            metrics = json.loads(metrics_path.read_text())
-            graphs = (
-                metrics.get("backends", {}).get("graphs", [])
-                if isinstance(metrics, dict) else []
-            )
-            if isinstance(graphs, list):
-                for g in graphs:
-                    if not isinstance(g, dict):
-                        continue
-                    p = int(g.get("pinned_blocks_peak", g.get("pinned_blocks", 0)) or 0)
-                    if p > pin_peak:
-                        pin_peak = p
-            agg = (
-                metrics.get("backends", {}).get("aggregate", {})
-                if isinstance(metrics, dict) else {}
-            )
-            if isinstance(agg, dict):
-                # cached_input_tokens shows up under aggregate in some
-                # layouts; fall back to llm_usage from stdout otherwise.
-                ci = int(agg.get("total_cached_input_tokens", 0) or 0)
-                if ci > cached_input:
-                    cached_input = ci
-                lc = int(agg.get("total_requests", 0) or 0)
-                if lc > llm_calls:
-                    llm_calls = lc
-            dispatch = {}
-            if isinstance(metrics, dict):
-                dispatch = metrics.get("dispatch_ir_v1", {})
-                if not isinstance(dispatch, dict) or not dispatch:
-                    runtime = metrics.get("runtime", {})
-                    dispatch = runtime.get("dispatch_ir_v1", {}) if isinstance(runtime, dict) else {}
-            if isinstance(dispatch, dict):
-                dispatch_fallback_triggered = bool(dispatch.get("fallback_triggered", False))
-                evidence = dispatch.get("evidence", {})
-                if isinstance(evidence, dict):
-                    dispatch_pin_peak = int(evidence.get("pinned_blocks_peak_max", 0) or 0)
-                    if dispatch_pin_peak > pin_peak:
-                        pin_peak = dispatch_pin_peak
-                fields_honored = _fields_honored_summary(dispatch.get("fields_honored"))
-            runtime = metrics.get("runtime", {}) if isinstance(metrics, dict) else {}
-            observed = runtime.get("observed_graph", {}) if isinstance(runtime, dict) else {}
-            if isinstance(observed, dict):
-                critical_path = observed.get("critical_path", {})
-                if isinstance(critical_path, dict):
-                    critical_path_duration_ms = float(
-                        critical_path.get("duration_ms", 0) or 0
-                    )
-                    critical_path_finish_ms = float(
-                        critical_path.get("finish_ms", 0) or 0
-                    )
-                    critical_path_node_count = int(
-                        critical_path.get("node_count", 0) or 0
-                    )
-                    nodes = critical_path.get("nodes", [])
-                    if isinstance(nodes, list):
-                        critical_path_nodes = "|".join(str(node) for node in nodes)
-                queue_wait = observed.get("queue_wait", {})
-                if isinstance(queue_wait, dict):
-                    queue_wait_critical_path_total_ms = float(
-                        queue_wait.get("critical_path_total_ms", 0) or 0
-                    )
-                    queue_wait_max_ms = float(queue_wait.get("max_ms", 0) or 0)
-            if focus_node_id > 0:
-                statuses = (
-                    runtime.get("node_statuses", [])
-                    if isinstance(runtime, dict) else []
-                )
-                if isinstance(statuses, list):
-                    for status in statuses:
-                        if not isinstance(status, dict):
-                            continue
-                        if int(status.get("node_id", 0) or 0) != focus_node_id:
-                            continue
-                        focus_node_finish_ms = float(
-                            status.get("finished_at_ms", 0) or 0
-                        )
-                        focus_node_duration_ms = float(
-                            status.get("duration_ms", 0) or 0
-                        )
-                        focus_node_queue_wait_ms = float(
-                            status.get("queue_wait_ms", 0) or 0
-                        )
-                        break
-        except (json.JSONDecodeError, OSError):
-            pass
+    execution_id, llm_calls, cached_input = _parse_execute_stdout(proc.stdout)
+    m = _parse_metrics_file(metrics_path, focus_node_id)
+    # Aggregate-derived counts beat stdout-derived in some layouts; take max.
+    cached_input = max(cached_input, m["cached_input_delta"])
+    llm_calls = max(llm_calls, m["llm_calls_delta"])
 
     # Best-effort cleanup of the temp metrics dir.
     try:
@@ -461,23 +489,23 @@ def _execute_tenant(
         returncode=proc.returncode,
         wall_ms=wall_ms,
         execution_id=execution_id,
-        pinned_blocks_peak=pin_peak,
+        pinned_blocks_peak=m["pin_peak"],
         cached_input_tokens=cached_input,
         llm_calls=llm_calls,
-        dispatch_fallback_triggered=dispatch_fallback_triggered,
-        dispatch_pinned_blocks_peak_max=dispatch_pin_peak,
-        fields_honored=fields_honored,
+        dispatch_fallback_triggered=m["dispatch_fallback_triggered"],
+        dispatch_pinned_blocks_peak_max=m["dispatch_pin_peak"],
+        fields_honored=m["fields_honored"],
         arm=arm,
-        critical_path_duration_ms=critical_path_duration_ms,
-        critical_path_finish_ms=critical_path_finish_ms,
-        critical_path_node_count=critical_path_node_count,
-        critical_path_nodes=critical_path_nodes,
-        queue_wait_critical_path_total_ms=queue_wait_critical_path_total_ms,
-        queue_wait_max_ms=queue_wait_max_ms,
+        critical_path_duration_ms=m["critical_path_duration_ms"],
+        critical_path_finish_ms=m["critical_path_finish_ms"],
+        critical_path_node_count=m["critical_path_node_count"],
+        critical_path_nodes=m["critical_path_nodes"],
+        queue_wait_critical_path_total_ms=m["queue_wait_critical_path_total_ms"],
+        queue_wait_max_ms=m["queue_wait_max_ms"],
         focus_node_id=focus_node_id,
-        focus_node_finish_ms=focus_node_finish_ms,
-        focus_node_duration_ms=focus_node_duration_ms,
-        focus_node_queue_wait_ms=focus_node_queue_wait_ms,
+        focus_node_finish_ms=m["focus_node_finish_ms"],
+        focus_node_duration_ms=m["focus_node_duration_ms"],
+        focus_node_queue_wait_ms=m["focus_node_queue_wait_ms"],
         stdout_tail=_tail_for_csv(proc.stdout),
         stderr_tail=_tail_for_csv(proc.stderr),
     )
