@@ -1,0 +1,25 @@
+[package]
+name = "apxm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme.workspace = true
+description = "Agent Programming eXecution Model — compile, optimize, and execute agent programs with multi-tier memory, LLM backends, and a work-stealing scheduler."
+
+[lints]
+workspace = true
+
+[dependencies]
+apxm-core = { workspace = true }
+apxm-ais = { workspace = true }
+apxm-compiler = { workspace = true }
+apxm-runtime = { workspace = true }
+apxm-backends = { workspace = true }
+
+[features]
+default = ["compiler"]
+compiler = []
