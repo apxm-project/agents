@@ -12,7 +12,7 @@ small set of TypeScript/CSS for the GUI. The supported install path is
 [Dekk](https://github.com/randreshg/dekk).
 
 ```bash
-git clone https://github.com/randreshg/apxm
+git clone https://github.com/apxm-project/apxm
 cd apxm
 git submodule update --init --recursive    # APXM-vLLM fork under external/vllm
 dekk apxm install --no-interactive
@@ -93,7 +93,7 @@ for the integration contract.
 
 ## Reporting bugs
 
-Open an issue at <https://github.com/randreshg/apxm/issues> with:
+Open an issue at <https://github.com/apxm-project/apxm/issues> with:
 
 - The version (`dekk apxm doctor` output is helpful).
 - The minimal AIR / Python frontend reproduction.

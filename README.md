@@ -20,7 +20,7 @@ hands-on, keep reading.
 ## Quick start
 
 ```bash
-git clone https://github.com/randreshg/apxm && cd apxm
+git clone https://github.com/apxm-project/apxm && cd apxm
 git submodule update --init --recursive      # external/vllm fork
 dekk apxm install --no-interactive
 dekk apxm doctor                              # verify environment
