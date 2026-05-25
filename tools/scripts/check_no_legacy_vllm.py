@@ -223,15 +223,27 @@ def _git_tracked(globs: tuple[str, ...]) -> list[Path]:
     return [REPO_ROOT / line for line in result.stdout.splitlines() if line]
 
 
+def _staged_files() -> set[Path]:
+    cmd = [
+        "git", "-C", str(REPO_ROOT), "diff", "--cached",
+        "--name-only", "--diff-filter=ACMR", "-z",
+    ]
+    result = subprocess.run(cmd, check=False, capture_output=True, text=True)
+    return {REPO_ROOT / p for p in result.stdout.split("\0") if p}
+
+
 def _matches_any(path: Path, globs: tuple[str, ...]) -> bool:
     rel = path.relative_to(REPO_ROOT)
     return any(rel.match(g) for g in globs)
 
 
-def _scan(rule: LintRule) -> list[tuple[Path, int, str]]:
+def _scan(rule: LintRule, staged: set[Path] | None) -> list[tuple[Path, int, str]]:
     regex = re.compile(rule.pattern)
     hits: list[tuple[Path, int, str]] = []
-    for path in _git_tracked(rule.include_globs):
+    candidates = _git_tracked(rule.include_globs)
+    if staged is not None:
+        candidates = [p for p in candidates if p in staged]
+    for path in candidates:
         if not path.is_file():
             continue
         if rule.exclude_globs and _matches_any(path, rule.exclude_globs):
@@ -257,13 +269,26 @@ def main() -> int:
         "--rule",
         help="Run only the named rule (for debugging).",
     )
+    parser.add_argument(
+        "--staged-only",
+        action="store_true",
+        help=(
+            "Scan only files in the git index (added/modified/renamed). "
+            "Pre-commit-hook mode: fast, skips files the commit doesn't touch."
+        ),
+    )
     args = parser.parse_args()
+
+    staged: set[Path] | None = _staged_files() if args.staged_only else None
+    if staged is not None and not staged:
+        print("[skip] no staged files; nothing to scan")
+        return 0
 
     total = 0
     for rule in RULES:
         if args.rule and rule.name != args.rule:
             continue
-        hits = _scan(rule)
+        hits = _scan(rule, staged)
         if not hits:
             print(f"[OK] {rule.name}: 0 matches")
             continue
