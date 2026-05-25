@@ -239,13 +239,12 @@ fn apply_vllm_request_overrides_from_node(
         }
     }
 
-    let reuse_group = get_optional_string_attribute(node, graph_attrs::REUSE_GROUP)?
-        .or(get_optional_string_attribute(
-            node,
-            graph_attrs::REUSE_GROUP_LEGACY,
-        )?)
-        .map(|g| g.trim().to_owned())
-        .filter(|g| !g.is_empty());
+    let reuse_group = match get_optional_string_attribute(node, graph_attrs::REUSE_GROUP)? {
+        Some(g) => Some(g),
+        None => get_optional_string_attribute(node, graph_attrs::REUSE_GROUP_LEGACY)?,
+    }
+    .map(|g| g.trim().to_owned())
+    .filter(|g| !g.is_empty());
     if let Some(group) = reuse_group {
         let cache_salt = format!("{}:{}", ctx.graph_id, group);
         return Ok(attach_cache_salt(request, cache_salt));
