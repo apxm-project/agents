@@ -133,6 +133,19 @@ unless the note explicitly says they are implemented.
   large files (HF cache, image store, evaluation artifacts) and the supported
   relocation procedure
 
+## Evaluation Results
+
+- [evaluation/apxm-results-20260521.md](evaluation/apxm-results-20260521.md) —
+  current publication-facing APXM results summary. Headline: APXM graph-aware
+  priority hints reduce user-visible critical-lane latency under background
+  LLM queue contention; boundary: this is not a broad APXM speedup, batch-wall,
+  or prefix-pinning claim.
+- [evaluation/README.md](evaluation/README.md) — entry point for the public
+  evaluation plans, run recipes, briefs, and result write-ups.
+- [paper/apxm-paper-draft.md](paper/apxm-paper-draft.md) — working paper draft
+  with narrative, system design, evaluation, figures, limitations, and future
+  work.
+
 ## Trying It Out
 
 ```

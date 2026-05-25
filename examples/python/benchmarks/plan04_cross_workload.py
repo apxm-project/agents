@@ -36,6 +36,14 @@ WORKLOAD_TO_PAPER_ALIGNMENT = {
     "pin_demo": "Parrot (OSDI 2024) — DAG critical-path latency, named cohort",
     "pfx_cancel": "Parrot (OSDI 2024) — cancellation effectiveness",
     "gsp":      "SGLang/RadixAttention — block-level prefix-cache hit rate diagnostic",
+    "apxm-review-council": (
+        "APXM dogfood — shared-context agentic review fanout over APXM's "
+        "own vLLM/evaluation path"
+    ),
+    "apxm-priority-lane": (
+        "APXM dogfood — user-visible critical-lane latency under background "
+        "LLM queue contention"
+    ),
 }
 
 

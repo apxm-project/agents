@@ -62,6 +62,31 @@ static graph script per tenant. Currently shipped:
   `LOOGLE_DOCUMENT`, `LOOGLE_QUESTIONS_JSON`, `LOOGLE_ROW_INDEX`,
   `LOOGLE_MAX_QUESTIONS` (default 6).
 
+**Tier 3 — Dogfood workflows.** Real APXM work shaped as benchmarkable
+graphs. These are not public trace replays, but they are the clearest way to
+show APXM's own compiler/runtime/vLLM path on a workflow the project actually
+needs.
+
+- **APXM Review Council** — `workloads/apxm_review_council.py`. One large
+  shared prefix built from APXM's vLLM/backend/evaluation source files, N
+  parallel specialist reviewers, and one critical-path synthesis node. It is
+  designed to exercise APXM-on vs flat-HTTP under the exact graph-aware vLLM
+  mechanisms APXM claims: `reuse_group`, graph registration, priority
+  scheduling, pin telemetry, cache reuse, and J/req. Env contract:
+  `APXM_WORKLOAD_PREFIX_TOK` (default 4096), `APXM_WORKLOAD_FANOUT`
+  (default 6), `APXM_MATRIX_VARIANT`.
+
+- **APXM Priority Lane** — `workloads/apxm_priority_lane.py`. One short
+  user-visible critical chain competes with many longer background branches.
+  The primary metric is the finish time of focus node id `4`
+  (`critical_user_answer`), not total batch wall time. This is the claim-shaped
+  workload for APXM priority scheduling under backend queue contention. Env
+  contract: `APXM_WORKLOAD_PREFIX_TOK` (default 2048),
+  `APXM_WORKLOAD_FANOUT` (default 10),
+  `APXM_PRIORITY_CRITICAL_MAX_TOKENS` (default 96),
+  `APXM_PRIORITY_BACKGROUND_MAX_TOKENS` (default 384),
+  `APXM_MATRIX_VARIANT`.
+
 ## Env-var contract
 
 All Tier-1 workloads honor these env vars (defaults in `_helpers.py`):
@@ -102,6 +127,39 @@ python3 examples/python/benchmarks/concurrent_matrix.py \
   --concurrency 4 --iterations 5 --opt-levels 0 2 \
   --output .apxm/benchmarks/results/gsp-concurrent-matrix.csv \
   --metrics-url "${APXM_ENDPOINT}/metrics"
+```
+
+## Running Tier-3 (APXM Review Council)
+
+```bash
+# Single invocation against a registered vLLM backend:
+APXM_WORKLOAD_PREFIX_TOK=8192 APXM_WORKLOAD_FANOUT=6 \
+  dekk apxm execute examples/python/benchmarks/workloads/apxm_review_council.py -O2
+
+# Claim-shaped APXM-on / flat-HTTP matrix. Run this through
+# `dekk apxm vllm service-exec vllm-gptoss -- ...` for evidence cells.
+tools/scripts/run_apxm_review_council.sh
+
+# One-iteration service smoke:
+SMOKE=1 tools/scripts/run_apxm_review_council.sh
+```
+
+## Running Tier-3 (APXM Priority Lane)
+
+```bash
+# Single invocation against a registered vLLM backend:
+APXM_WORKLOAD_PREFIX_TOK=2048 APXM_WORKLOAD_FANOUT=10 \
+  dekk apxm execute examples/python/benchmarks/workloads/apxm_priority_lane.py -O2
+
+# Sequential APXM-on / flat-HTTP priority-lane run. Run this through
+# the Dekk-managed service path; artifacts land under .apxm/evaluation/.
+tools/scripts/run_apxm_priority_lane.sh
+
+# Publication confirmation: interleave one batch per arm, alternating order.
+tools/scripts/run_apxm_priority_lane_interleaved.sh
+
+# Two-tenant smoke:
+SMOKE=1 tools/scripts/run_apxm_priority_lane.sh
 ```
 
 ## Running Tier-2 (Mooncake)

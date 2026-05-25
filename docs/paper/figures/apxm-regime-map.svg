@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="600" viewBox="0 0 980 600" role="img">
+  <style>
+    text { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #1f2933; }
+    .title { font-size: 22px; font-weight: 700; }
+    .subtitle { font-size: 13px; fill: #52606d; }
+    .label { font-size: 12px; fill: #334e68; }
+    .small { font-size: 11px; fill: #627d98; }
+    .axis { stroke: #9fb3c8; stroke-width: 1; }
+    .grid { stroke: #d9e2ec; stroke-width: 1; }
+    .apxm { fill: #2f80ed; }
+    .flat { fill: #d64545; }
+    .neutral { fill: #f0b429; }
+    .good { fill: #2f9e44; }
+    .bad { fill: #d64545; }
+    .card { fill: #ffffff; stroke: #bcccdc; stroke-width: 1.2; rx: 8; }
+  </style>
+  <rect width="980" height="600" fill="#ffffff"/>
+  <text x="52" y="42" class="title">APXM evidence is a regime map, not a universal speedup</text>
+  <text x="52" y="66" class="subtitle">Positive cells appear when APXM hints match backend pressure and the measured metric.</text>
+  <rect x="60" y="102" width="860" height="46" rx="8" fill="#dcfce7" stroke="#bcccdc"/>
+  <text x="82" y="131" font-size="14" font-weight="700">Priority lane</text>
+  <text x="330" y="131" class="label">combined mean 0.661, batch CI &lt; 1</text>
+  <text x="780" y="131" class="label" font-weight="700">Positive</text>
+  <rect x="60" y="162" width="860" height="46" rx="8" fill="#dcfce7" stroke="#bcccdc"/>
+  <text x="82" y="191" font-size="14" font-weight="700">Constrained KV pin</text>
+  <text x="330" y="191" class="label">CI [0.6179, 0.7431]</text>
+  <text x="780" y="191" class="label" font-weight="700">Positive</text>
+  <rect x="60" y="222" width="860" height="46" rx="8" fill="#dcfce7" stroke="#bcccdc"/>
+  <text x="82" y="251" font-size="14" font-weight="700">Warm cache matrix</text>
+  <text x="330" y="251" class="label">CI [0.076, 0.823]</text>
+  <text x="780" y="251" class="label" font-weight="700">Positive</text>
+  <rect x="60" y="282" width="860" height="46" rx="8" fill="#fef3c7" stroke="#bcccdc"/>
+  <text x="82" y="311" font-size="14" font-weight="700">Mooncake default</text>
+  <text x="330" y="311" class="label">1.073, CI crosses 1</text>
+  <text x="780" y="311" class="label" font-weight="700">Null</text>
+  <rect x="60" y="342" width="860" height="46" rx="8" fill="#fef3c7" stroke="#bcccdc"/>
+  <text x="82" y="371" font-size="14" font-weight="700">LooGLE default</text>
+  <text x="330" y="371" class="label">1.001, CI crosses 1</text>
+  <text x="780" y="371" class="label" font-weight="700">Null</text>
+  <rect x="60" y="402" width="860" height="46" rx="8" fill="#fee2e2" stroke="#bcccdc"/>
+  <text x="82" y="431" font-size="14" font-weight="700">ShareGPT default</text>
+  <text x="330" y="431" class="label">1.223 flat wins</text>
+  <text x="780" y="431" class="label" font-weight="700">Negative</text>
+  <rect x="60" y="462" width="860" height="46" rx="8" fill="#fee2e2" stroke="#bcccdc"/>
+  <text x="82" y="491" font-size="14" font-weight="700">Review Council</text>
+  <text x="330" y="491" class="label">1.222 flat wins</text>
+  <text x="780" y="491" class="label" font-weight="700">Negative</text>
+  <rect x="60" y="522" width="860" height="46" rx="8" fill="#fee2e2" stroke="#bcccdc"/>
+  <text x="82" y="551" font-size="14" font-weight="700">Current pin demo</text>
+  <text x="330" y="551" class="label">1.064 flat wins</text>
+  <text x="780" y="551" class="label" font-weight="700">Negative</text>
+  <text x="60" y="580" class="small">Claim boundary: APXM priority hints improve user-visible critical-lane latency under contention; do not claim broad batch-wall speedup.</text>
+</svg>
