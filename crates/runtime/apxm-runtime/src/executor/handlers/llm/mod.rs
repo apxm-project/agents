@@ -718,6 +718,37 @@ mod tests {
         )
     }
 
+    /// Scope guard for a process-global env var. Captures the prior value
+    /// on construction and restores (or unsets) it on drop, so cache-salt
+    /// tests can assert one value without leaking it to sibling tests.
+    struct EnvVarGuard {
+        key: &'static str,
+        prev: Option<String>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let prev = std::env::var(key).ok();
+            #[allow(unsafe_code)]
+            unsafe {
+                std::env::set_var(key, value);
+            }
+            Self { key, prev }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            #[allow(unsafe_code)]
+            unsafe {
+                match self.prev.take() {
+                    Some(v) => std::env::set_var(self.key, v),
+                    None => std::env::remove_var(self.key),
+                }
+            }
+        }
+    }
+
     #[test]
     fn test_llm_mode_from_op_type() {
         assert_eq!(LlmMode::from(&AISOperationType::Ask), LlmMode::Ask);
@@ -912,28 +943,16 @@ mod tests {
             Value::String("shared_prefix_analysis_0".to_string()),
         );
 
-        // Simulate the harness env var so we exercise the precedence rule:
-        // compiler hint must win over env-var-driven execution salting.
-        // SAFETY: this test runs in a tokio task; we don't share the env var
-        // across threads concurrently here. The other env-mutating tests live
-        // in `vllm/attrs.rs` under their own serialization mutex.
-        let prev = std::env::var(vllm_attrs::CACHE_SALT_ENV_VAR).ok();
-        #[allow(unsafe_code)]
-        unsafe {
-            std::env::set_var(vllm_attrs::CACHE_SALT_ENV_VAR, "execution");
-        }
+        // Exercise the precedence rule: compiler hint must win over the
+        // env-var-driven `execution` salting the harness sets for ungrouped
+        // iteration isolation. SAFETY: other env-mutating tests live under
+        // their own serialization mutex in `vllm/attrs.rs`; this one runs
+        // single-threaded in a tokio task.
+        let _salt_env = EnvVarGuard::set(vllm_attrs::CACHE_SALT_ENV_VAR, "execution");
 
         let request =
             apply_vllm_request_overrides_from_node(&ctx, &node, LLMRequest::new("prompt"))
                 .expect("compiler-hint salt override should apply");
-
-        #[allow(unsafe_code)]
-        unsafe {
-            match prev {
-                Some(v) => std::env::set_var(vllm_attrs::CACHE_SALT_ENV_VAR, v),
-                None => std::env::remove_var(vllm_attrs::CACHE_SALT_ENV_VAR),
-            }
-        }
 
         assert_eq!(
             request
@@ -958,23 +977,11 @@ mod tests {
             Value::String("apxm_review_council_shared_context".to_string()),
         );
 
-        let prev = std::env::var(vllm_attrs::CACHE_SALT_ENV_VAR).ok();
-        #[allow(unsafe_code)]
-        unsafe {
-            std::env::set_var(vllm_attrs::CACHE_SALT_ENV_VAR, "execution");
-        }
+        let _salt_env = EnvVarGuard::set(vllm_attrs::CACHE_SALT_ENV_VAR, "execution");
 
         let request =
             apply_vllm_request_overrides_from_node(&ctx, &node, LLMRequest::new("prompt"))
                 .expect("python reuse_group kwarg should apply graph-scoped salt");
-
-        #[allow(unsafe_code)]
-        unsafe {
-            match prev {
-                Some(v) => std::env::set_var(vllm_attrs::CACHE_SALT_ENV_VAR, v),
-                None => std::env::remove_var(vllm_attrs::CACHE_SALT_ENV_VAR),
-            }
-        }
 
         assert_eq!(
             request
