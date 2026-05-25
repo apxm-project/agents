@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """cross_workload.py — stitch per-workload CSVs into a combined cross-system benchmark output.
 
+Anchor preregistration:
+  docs/preregistrations/20260519T030358Z-plan04-cross-system.md
+
 Reads per-workload CSVs from Mooncake/ShareGPT/LooGLE/pin_demo,
 adds `workload` and `paper_alignment` columns, computes per-(workload, arm)
 bootstrap-CI ratios, and writes a combined CSV plus a per-workload
@@ -22,11 +25,11 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
-_TOOLS_SCRIPT_DIR = str(REPO_ROOT / "tools" / "scripts")
-if _TOOLS_SCRIPT_DIR not in sys.path:
-    sys.path.insert(0, _TOOLS_SCRIPT_DIR)
+_APXM_PKG_DIR = str(REPO_ROOT / "crates" / "compiler" / "apxm-frontend" / "python")
+if _APXM_PKG_DIR not in sys.path:
+    sys.path.insert(0, _APXM_PKG_DIR)
 
-from apxm_vllm_contract import ArmName  # noqa: E402
+from apxm.contract import ArmName  # noqa: E402
 
 # Per-workload mapping table cites the paper each workload tests against.
 WORKLOAD_TO_PAPER_ALIGNMENT = {
@@ -190,7 +193,7 @@ def main() -> int:
         w.writeheader()
         for r in combined_rows:
             w.writerow(r)
-    print(f"[plan04] wrote {len(combined_rows)} rows from {len(sources)} sources → {args.output}", file=sys.stderr)
+    print(f"[cross-workload] wrote {len(combined_rows)} rows from {len(sources)} sources → {args.output}", file=sys.stderr)
 
     summaries = _per_workload_summary(combined_rows)
     summary_path = args.summary or args.output.with_name(args.output.stem + ".summary.csv")
@@ -200,7 +203,7 @@ def main() -> int:
         w.writeheader()
         for s in summaries:
             w.writerow(s)
-    print(f"[plan04] per-workload summary → {summary_path}", file=sys.stderr)
+    print(f"[cross-workload] per-workload summary → {summary_path}", file=sys.stderr)
 
     if args.manifest:
         manifest = {
@@ -214,7 +217,7 @@ def main() -> int:
         }
         args.manifest.parent.mkdir(parents=True, exist_ok=True)
         args.manifest.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-        print(f"[plan04] manifest → {args.manifest}", file=sys.stderr)
+        print(f"[cross-workload] manifest → {args.manifest}", file=sys.stderr)
 
     print("\n=== per-workload summary ===", file=sys.stderr)
     for s in summaries:
