@@ -392,8 +392,7 @@ pub mod session {
         pub const NODES_DIR: &str = "nodes";
     }
 
-    /// JSON keys serialized into `results.json`. Mirrored on the Python side
-    /// by `tools/quality_eval/_keys.py::ResultsKeys`. Drift breaks tier-3.
+    /// JSON keys serialized into `results.json`.
     pub mod results_keys {
         pub const NODE_OUTPUTS: &str = "node_outputs";
         pub const TOKEN_VALUES: &str = "token_values";
