@@ -97,7 +97,22 @@ class TenantResult:
     pinned_blocks_peak: int
     cached_input_tokens: int
     llm_calls: int
+    dispatch_fallback_triggered: bool = False
+    dispatch_pinned_blocks_peak_max: int = 0
+    fields_honored: str = ""
     arm: str = ARM_APXM_ON
+    critical_path_duration_ms: float = 0.0
+    critical_path_finish_ms: float = 0.0
+    critical_path_node_count: int = 0
+    critical_path_nodes: str = ""
+    queue_wait_critical_path_total_ms: float = 0.0
+    queue_wait_max_ms: float = 0.0
+    focus_node_id: int = 0
+    focus_node_finish_ms: float = 0.0
+    focus_node_duration_ms: float = 0.0
+    focus_node_queue_wait_ms: float = 0.0
+    stdout_tail: str = ""
+    stderr_tail: str = ""
 
 
 @dataclass
@@ -120,7 +135,20 @@ class BatchRow:
     pinned_blocks_peak_sum: int
     cached_input_tokens_sum: int
     llm_calls_sum: int
+    dispatch_fallback_tenants: int = 0
+    dispatch_pinned_blocks_peak_max: int = 0
+    fields_honored_union: str = ""
     arm: str = ARM_APXM_ON
+    critical_path_duration_ms_max: float = 0.0
+    critical_path_duration_ms_mean: float = 0.0
+    critical_path_finish_ms_max: float = 0.0
+    critical_path_finish_ms_mean: float = 0.0
+    queue_wait_critical_path_total_ms_max: float = 0.0
+    queue_wait_max_ms_max: float = 0.0
+    focus_node_finish_ms_max: float = 0.0
+    focus_node_finish_ms_mean: float = 0.0
+    focus_node_duration_ms_mean: float = 0.0
+    focus_node_queue_wait_ms_max: float = 0.0
     prefix_cache_hit_rate: float | None = None
     prefix_cache_queries_delta: float = 0.0
     prefix_cache_hits_delta: float = 0.0
@@ -164,6 +192,8 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--require-pre-registration", action="store_true",
                    help="Refuse to start when --pre-registration is missing. "
                         "Use for runs whose evidence will be cited in docs/claims/.")
+    p.add_argument("--focus-node-id", type=int, default=int(os.environ.get("APXM_FOCUS_NODE_ID", "0") or 0),
+                   help="Optional APXM node id whose finish/duration/queue-wait timing should be summarized.")
     return p.parse_args()
 
 
@@ -199,6 +229,44 @@ def _fetch_graph_status(endpoint: str, execution_id: str) -> dict:
         return {}
 
 
+def _tail_for_csv(text: str, *, limit: int = 20000) -> str:
+    if not text:
+        return ""
+    return text[-limit:].replace("\r", "\\r")
+
+
+def _fields_honored_summary(fields_honored: object) -> str:
+    if not isinstance(fields_honored, dict):
+        return ""
+    parts: list[str] = []
+    for backend in sorted(fields_honored):
+        raw_fields = fields_honored.get(backend)
+        if not isinstance(raw_fields, list):
+            continue
+        fields = sorted({str(item) for item in raw_fields if item})
+        if fields:
+            parts.append(f"{backend}:{'|'.join(fields)}")
+    return ";".join(parts)
+
+
+def _fields_honored_union(tenants: list[TenantResult]) -> str:
+    by_backend: dict[str, set[str]] = {}
+    for tenant in tenants:
+        if not tenant.fields_honored:
+            continue
+        for backend_part in tenant.fields_honored.split(";"):
+            if ":" not in backend_part:
+                continue
+            backend, raw_fields = backend_part.split(":", 1)
+            fields = {field for field in raw_fields.split("|") if field}
+            if fields:
+                by_backend.setdefault(backend, set()).update(fields)
+    return ";".join(
+        f"{backend}:{'|'.join(sorted(fields))}"
+        for backend, fields in sorted(by_backend.items())
+    )
+
+
 def _execute_tenant(
     *,
     graph: Path,
@@ -214,6 +282,7 @@ def _execute_tenant(
     model: str,
     service_name: str,
     arm: str = ARM_APXM_ON,
+    focus_node_id: int = 0,
 ) -> TenantResult:
     env = os.environ.copy()
     env[MATRIX_VARIANT_ENV] = str(variant)
@@ -256,6 +325,18 @@ def _execute_tenant(
     cached_input = 0
     llm_calls = 0
     pin_peak = 0
+    dispatch_fallback_triggered = False
+    dispatch_pin_peak = 0
+    fields_honored = ""
+    critical_path_duration_ms = 0.0
+    critical_path_finish_ms = 0.0
+    critical_path_node_count = 0
+    critical_path_nodes = ""
+    queue_wait_critical_path_total_ms = 0.0
+    queue_wait_max_ms = 0.0
+    focus_node_finish_ms = 0.0
+    focus_node_duration_ms = 0.0
+    focus_node_queue_wait_ms = 0.0
     if proc.stdout:
         try:
             obj = json.loads(proc.stdout)
@@ -298,6 +379,64 @@ def _execute_tenant(
                 lc = int(agg.get("total_requests", 0) or 0)
                 if lc > llm_calls:
                     llm_calls = lc
+            dispatch = {}
+            if isinstance(metrics, dict):
+                dispatch = metrics.get("dispatch_ir_v1", {})
+                if not isinstance(dispatch, dict) or not dispatch:
+                    runtime = metrics.get("runtime", {})
+                    dispatch = runtime.get("dispatch_ir_v1", {}) if isinstance(runtime, dict) else {}
+            if isinstance(dispatch, dict):
+                dispatch_fallback_triggered = bool(dispatch.get("fallback_triggered", False))
+                evidence = dispatch.get("evidence", {})
+                if isinstance(evidence, dict):
+                    dispatch_pin_peak = int(evidence.get("pinned_blocks_peak_max", 0) or 0)
+                    if dispatch_pin_peak > pin_peak:
+                        pin_peak = dispatch_pin_peak
+                fields_honored = _fields_honored_summary(dispatch.get("fields_honored"))
+            runtime = metrics.get("runtime", {}) if isinstance(metrics, dict) else {}
+            observed = runtime.get("observed_graph", {}) if isinstance(runtime, dict) else {}
+            if isinstance(observed, dict):
+                critical_path = observed.get("critical_path", {})
+                if isinstance(critical_path, dict):
+                    critical_path_duration_ms = float(
+                        critical_path.get("duration_ms", 0) or 0
+                    )
+                    critical_path_finish_ms = float(
+                        critical_path.get("finish_ms", 0) or 0
+                    )
+                    critical_path_node_count = int(
+                        critical_path.get("node_count", 0) or 0
+                    )
+                    nodes = critical_path.get("nodes", [])
+                    if isinstance(nodes, list):
+                        critical_path_nodes = "|".join(str(node) for node in nodes)
+                queue_wait = observed.get("queue_wait", {})
+                if isinstance(queue_wait, dict):
+                    queue_wait_critical_path_total_ms = float(
+                        queue_wait.get("critical_path_total_ms", 0) or 0
+                    )
+                    queue_wait_max_ms = float(queue_wait.get("max_ms", 0) or 0)
+            if focus_node_id > 0:
+                statuses = (
+                    runtime.get("node_statuses", [])
+                    if isinstance(runtime, dict) else []
+                )
+                if isinstance(statuses, list):
+                    for status in statuses:
+                        if not isinstance(status, dict):
+                            continue
+                        if int(status.get("node_id", 0) or 0) != focus_node_id:
+                            continue
+                        focus_node_finish_ms = float(
+                            status.get("finished_at_ms", 0) or 0
+                        )
+                        focus_node_duration_ms = float(
+                            status.get("duration_ms", 0) or 0
+                        )
+                        focus_node_queue_wait_ms = float(
+                            status.get("queue_wait_ms", 0) or 0
+                        )
+                        break
         except (json.JSONDecodeError, OSError):
             pass
 
@@ -325,7 +464,22 @@ def _execute_tenant(
         pinned_blocks_peak=pin_peak,
         cached_input_tokens=cached_input,
         llm_calls=llm_calls,
+        dispatch_fallback_triggered=dispatch_fallback_triggered,
+        dispatch_pinned_blocks_peak_max=dispatch_pin_peak,
+        fields_honored=fields_honored,
         arm=arm,
+        critical_path_duration_ms=critical_path_duration_ms,
+        critical_path_finish_ms=critical_path_finish_ms,
+        critical_path_node_count=critical_path_node_count,
+        critical_path_nodes=critical_path_nodes,
+        queue_wait_critical_path_total_ms=queue_wait_critical_path_total_ms,
+        queue_wait_max_ms=queue_wait_max_ms,
+        focus_node_id=focus_node_id,
+        focus_node_finish_ms=focus_node_finish_ms,
+        focus_node_duration_ms=focus_node_duration_ms,
+        focus_node_queue_wait_ms=focus_node_queue_wait_ms,
+        stdout_tail=_tail_for_csv(proc.stdout),
+        stderr_tail=_tail_for_csv(proc.stderr),
     )
 
 
@@ -346,6 +500,7 @@ def _run_batch(
     service_name: str,
     arm: str = ARM_APXM_ON,
     metrics_url: str | None = None,
+    focus_node_id: int = 0,
 ) -> tuple[BatchRow, list[TenantResult]]:
     tenants: list[TenantResult] = []
     cell_label = _cell_label(
@@ -382,6 +537,7 @@ def _run_batch(
                 model=model,
                 service_name=service_name,
                 arm=arm,
+                focus_node_id=focus_node_id,
             ))
             if variant < concurrency - 1 and stagger_ms > 0:
                 time.sleep(stagger_ms / 1000.0)
@@ -409,9 +565,45 @@ def _run_batch(
         pin_peak_sum = sum(t.pinned_blocks_peak for t in tenants)
         cached_sum = sum(t.cached_input_tokens for t in tenants)
         llm_calls_sum = sum(t.llm_calls for t in tenants)
+        dispatch_fallback_tenants = sum(1 for t in tenants if t.dispatch_fallback_triggered)
+        dispatch_pin_peak_max = max(t.dispatch_pinned_blocks_peak_max for t in tenants)
+        fields_honored_union = _fields_honored_union(tenants)
+        critical_durations = [
+            t.critical_path_duration_ms for t in tenants
+            if t.critical_path_duration_ms > 0
+        ]
+        critical_finishes = [
+            t.critical_path_finish_ms for t in tenants
+            if t.critical_path_finish_ms > 0
+        ]
+        queue_wait_critical = [
+            t.queue_wait_critical_path_total_ms for t in tenants
+            if t.queue_wait_critical_path_total_ms > 0
+        ]
+        queue_wait_maxes = [
+            t.queue_wait_max_ms for t in tenants if t.queue_wait_max_ms > 0
+        ]
+        focus_finishes = [
+            t.focus_node_finish_ms for t in tenants if t.focus_node_finish_ms > 0
+        ]
+        focus_durations = [
+            t.focus_node_duration_ms for t in tenants if t.focus_node_duration_ms > 0
+        ]
+        focus_queue_waits = [
+            t.focus_node_queue_wait_ms for t in tenants if t.focus_node_queue_wait_ms > 0
+        ]
     else:
         max_wall = sum_wall = 0.0
         pin_peak_max = pin_peak_sum = cached_sum = llm_calls_sum = 0
+        dispatch_fallback_tenants = dispatch_pin_peak_max = 0
+        fields_honored_union = ""
+        critical_durations = []
+        critical_finishes = []
+        queue_wait_critical = []
+        queue_wait_maxes = []
+        focus_finishes = []
+        focus_durations = []
+        focus_queue_waits = []
 
     row = BatchRow(
         timestamp=datetime.now(timezone.utc).isoformat(),
@@ -432,7 +624,30 @@ def _run_batch(
         pinned_blocks_peak_sum=pin_peak_sum,
         cached_input_tokens_sum=cached_sum,
         llm_calls_sum=llm_calls_sum,
+        dispatch_fallback_tenants=dispatch_fallback_tenants,
+        dispatch_pinned_blocks_peak_max=dispatch_pin_peak_max,
+        fields_honored_union=fields_honored_union,
         arm=arm,
+        critical_path_duration_ms_max=max(critical_durations, default=0.0),
+        critical_path_duration_ms_mean=(
+            sum(critical_durations) / len(critical_durations)
+            if critical_durations else 0.0
+        ),
+        critical_path_finish_ms_max=max(critical_finishes, default=0.0),
+        critical_path_finish_ms_mean=(
+            sum(critical_finishes) / len(critical_finishes)
+            if critical_finishes else 0.0
+        ),
+        queue_wait_critical_path_total_ms_max=max(queue_wait_critical, default=0.0),
+        queue_wait_max_ms_max=max(queue_wait_maxes, default=0.0),
+        focus_node_finish_ms_max=max(focus_finishes, default=0.0),
+        focus_node_finish_ms_mean=(
+            sum(focus_finishes) / len(focus_finishes) if focus_finishes else 0.0
+        ),
+        focus_node_duration_ms_mean=(
+            sum(focus_durations) / len(focus_durations) if focus_durations else 0.0
+        ),
+        focus_node_queue_wait_ms_max=max(focus_queue_waits, default=0.0),
         prefix_cache_hit_rate=cell_hit_rate,
         prefix_cache_queries_delta=queries_delta,
         prefix_cache_hits_delta=hits_delta,
@@ -559,12 +774,15 @@ def main() -> int:
             service_name=args.service_name,
             arm=arm,
             metrics_url=metrics_url,
+            focus_node_id=args.focus_node_id,
         )
         rows.append(row)
         detail_rows.extend(tenants)
         print(
             f"  batch_wall_ms={row.batch_wall_ms:.1f} "
             f"max_tenant_ms={row.max_tenant_wall_ms:.1f} "
+            f"critical_finish_mean={row.critical_path_finish_ms_mean:.1f} "
+            f"focus_finish_mean={row.focus_node_finish_ms_mean:.1f} "
             f"failed={row.failed_tenants} "
             f"pinned_peak_max={row.pinned_blocks_peak_max} "
             f"cached_sum={row.cached_input_tokens_sum}",
@@ -577,7 +795,14 @@ def main() -> int:
         "opt_level", "iteration", "concurrency",
         "batch_wall_ms", "max_tenant_wall_ms", "sum_tenant_wall_ms",
         "failed_tenants", "pinned_blocks_peak_max", "pinned_blocks_peak_sum",
-        "cached_input_tokens_sum", "llm_calls_sum", "arm",
+        "cached_input_tokens_sum", "llm_calls_sum",
+        "dispatch_fallback_tenants", "dispatch_pinned_blocks_peak_max",
+        "fields_honored_union", "arm",
+        "critical_path_duration_ms_max", "critical_path_duration_ms_mean",
+        "critical_path_finish_ms_max", "critical_path_finish_ms_mean",
+        "queue_wait_critical_path_total_ms_max", "queue_wait_max_ms_max",
+        "focus_node_finish_ms_max", "focus_node_finish_ms_mean",
+        "focus_node_duration_ms_mean", "focus_node_queue_wait_ms_max",
         "prefix_cache_hit_rate",
         "prefix_cache_queries_delta", "prefix_cache_hits_delta",
     ]
