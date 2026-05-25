@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="560" viewBox="0 0 960 560" role="img">
+  <style>
+    text { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #1f2933; }
+    .title { font-size: 22px; font-weight: 700; }
+    .subtitle { font-size: 13px; fill: #52606d; }
+    .label { font-size: 12px; fill: #334e68; }
+    .small { font-size: 11px; fill: #627d98; }
+    .axis { stroke: #9fb3c8; stroke-width: 1; }
+    .grid { stroke: #d9e2ec; stroke-width: 1; }
+    .apxm { fill: #2f80ed; }
+    .flat { fill: #d64545; }
+    .neutral { fill: #f0b429; }
+    .good { fill: #2f9e44; }
+    .bad { fill: #d64545; }
+    .card { fill: #ffffff; stroke: #bcccdc; stroke-width: 1.2; rx: 8; }
+  </style>
+  <rect width="960" height="560" fill="#ffffff"/>
+  <text x="52" y="42" class="title">Priority-lane result progression</text>
+  <text x="52" y="66" class="subtitle">APXM/flat ratios below 1.0 favor APXM. Bars show tenant-level bootstrap intervals.</text>
+  <line x1="90" y1="434.0" x2="820" y2="434.0" class="grid"/>
+  <text x="46" y="438.0" class="small">0.00</text>
+  <line x1="90" y1="365.2" x2="820" y2="365.2" class="grid"/>
+  <text x="46" y="369.2" class="small">0.25</text>
+  <line x1="90" y1="296.5" x2="820" y2="296.5" class="grid"/>
+  <text x="46" y="300.5" class="small">0.50</text>
+  <line x1="90" y1="227.8" x2="820" y2="227.8" class="grid"/>
+  <text x="46" y="231.8" class="small">0.75</text>
+  <line x1="90" y1="159.0" x2="820" y2="159.0" class="grid"/>
+  <text x="46" y="163.0" class="small">1.00</text>
+  <line x1="90" y1="159.0" x2="820" y2="159.0" stroke="#d64545" stroke-width="2" stroke-dasharray="6 5"/>
+  <line x1="90" y1="104" x2="90" y2="434" class="axis"/>
+  <line x1="90" y1="434" x2="820" y2="434" class="axis"/>
+  <rect x="117.2" y="315.5" width="54" height="118.5" fill="#2f80ed" rx="4"/>
+  <line x1="144.2" y1="320.4" x2="144.2" y2="310.8" stroke="#1f2933" stroke-width="2"/>
+  <line x1="128.2" y1="320.4" x2="160.2" y2="320.4" stroke="#1f2933" stroke-width="2"/>
+  <line x1="128.2" y1="310.8" x2="160.2" y2="310.8" stroke="#1f2933" stroke-width="2"/>
+  <text x="144.2" y="307.5" class="small" text-anchor="middle">0.431</text>
+  <rect x="191.2" y="291.8" width="54" height="142.2" fill="#2f9e44" rx="4"/>
+  <line x1="218.2" y1="294.6" x2="218.2" y2="287.4" stroke="#1f2933" stroke-width="2"/>
+  <line x1="202.2" y1="294.6" x2="234.2" y2="294.6" stroke="#1f2933" stroke-width="2"/>
+  <line x1="202.2" y1="287.4" x2="234.2" y2="287.4" stroke="#1f2933" stroke-width="2"/>
+  <text x="218.2" y="283.8" class="small" text-anchor="middle">0.517</text>
+  <text x="181.2" y="466" class="label" text-anchor="middle">Sequential</text>
+  <text x="181.2" y="485" class="small" text-anchor="middle">n=80</text>
+  <rect x="299.8" y="249.8" width="54" height="184.2" fill="#2f80ed" rx="4"/>
+  <line x1="326.8" y1="279.4" x2="326.8" y2="214.5" stroke="#1f2933" stroke-width="2"/>
+  <line x1="310.8" y1="279.4" x2="342.8" y2="279.4" stroke="#1f2933" stroke-width="2"/>
+  <line x1="310.8" y1="214.5" x2="342.8" y2="214.5" stroke="#1f2933" stroke-width="2"/>
+  <text x="326.8" y="241.8" class="small" text-anchor="middle">0.670</text>
+  <rect x="373.8" y="297.0" width="54" height="137.0" fill="#2f9e44" rx="4"/>
+  <line x1="400.8" y1="301.2" x2="400.8" y2="294.6" stroke="#1f2933" stroke-width="2"/>
+  <line x1="384.8" y1="301.2" x2="416.8" y2="301.2" stroke="#1f2933" stroke-width="2"/>
+  <line x1="384.8" y1="294.6" x2="416.8" y2="294.6" stroke="#1f2933" stroke-width="2"/>
+  <text x="400.8" y="289.0" class="small" text-anchor="middle">0.498</text>
+  <text x="363.8" y="466" class="label" text-anchor="middle">Interleaved</text>
+  <text x="363.8" y="485" class="small" text-anchor="middle">n=80</text>
+  <rect x="482.2" y="233.5" width="54" height="200.5" fill="#2f80ed" rx="4"/>
+  <line x1="509.2" y1="251.1" x2="509.2" y2="214.8" stroke="#1f2933" stroke-width="2"/>
+  <line x1="493.2" y1="251.1" x2="525.2" y2="251.1" stroke="#1f2933" stroke-width="2"/>
+  <line x1="493.2" y1="214.8" x2="525.2" y2="214.8" stroke="#1f2933" stroke-width="2"/>
+  <text x="509.2" y="225.5" class="small" text-anchor="middle">0.729</text>
+  <rect x="556.2" y="282.2" width="54" height="151.8" fill="#2f9e44" rx="4"/>
+  <line x1="583.2" y1="286.0" x2="583.2" y2="279.2" stroke="#1f2933" stroke-width="2"/>
+  <line x1="567.2" y1="286.0" x2="599.2" y2="286.0" stroke="#1f2933" stroke-width="2"/>
+  <line x1="567.2" y1="279.2" x2="599.2" y2="279.2" stroke="#1f2933" stroke-width="2"/>
+  <text x="583.2" y="274.2" class="small" text-anchor="middle">0.552</text>
+  <text x="546.2" y="466" class="label" text-anchor="middle">Fresh service</text>
+  <text x="546.2" y="485" class="small" text-anchor="middle">n=160</text>
+  <rect x="664.8" y="292.9" width="54" height="141.1" fill="#2f80ed" rx="4"/>
+  <line x1="691.8" y1="322.1" x2="691.8" y2="253.3" stroke="#1f2933" stroke-width="2"/>
+  <line x1="675.8" y1="322.1" x2="707.8" y2="322.1" stroke="#1f2933" stroke-width="2"/>
+  <line x1="675.8" y1="253.3" x2="707.8" y2="253.3" stroke="#1f2933" stroke-width="2"/>
+  <text x="691.8" y="284.9" class="small" text-anchor="middle">0.513</text>
+  <rect x="738.8" y="385.3" width="54" height="48.7" fill="#2f9e44" rx="4"/>
+  <line x1="765.8" y1="386.1" x2="765.8" y2="384.2" stroke="#1f2933" stroke-width="2"/>
+  <line x1="749.8" y1="386.1" x2="781.8" y2="386.1" stroke="#1f2933" stroke-width="2"/>
+  <line x1="749.8" y1="384.2" x2="781.8" y2="384.2" stroke="#1f2933" stroke-width="2"/>
+  <text x="765.8" y="377.3" class="small" text-anchor="middle">0.177</text>
+  <text x="728.8" y="466" class="label" text-anchor="middle">Fresh repeat 2</text>
+  <text x="728.8" y="485" class="small" text-anchor="middle">n=160</text>
+  <rect x="735" y="90" width="14" height="14" fill="#2f80ed" rx="3"/><text x="756" y="102" class="small">Mean focus finish</text>
+  <rect x="735" y="112" width="14" height="14" fill="#2f9e44" rx="3"/><text x="756" y="124" class="small">p95 focus finish</text>
+  <line x1="735" y1="142" x2="749" y2="142" stroke="#d64545" stroke-width="2" stroke-dasharray="6 5"/><text x="756" y="146" class="small">No effect</text>
+  <text x="52" y="506" class="small">Combined fresh-service evidence: tenant mean 0.661 [0.598, 0.729], p95 0.532 [0.320, 0.590].</text>
+  <text x="52" y="526" class="small">Batch-level combined focus CI now excludes 1.0: 0.661 [0.445, 0.963].</text>
+</svg>
