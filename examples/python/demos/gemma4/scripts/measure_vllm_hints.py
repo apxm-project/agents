@@ -28,11 +28,11 @@ def _find_repo_root(start: Path) -> Path:
 
 
 REPO_ROOT = _find_repo_root(Path(__file__))
-TOOLS_SCRIPT_DIR = REPO_ROOT / "tools" / "scripts"
-if str(TOOLS_SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(TOOLS_SCRIPT_DIR))
+APXM_PKG_DIR = REPO_ROOT / "crates" / "compiler" / "apxm-frontend" / "python"
+if str(APXM_PKG_DIR) not in sys.path:
+    sys.path.insert(0, str(APXM_PKG_DIR))
 
-from apxm_vllm_contract import (  # noqa: E402
+from apxm.contract import (  # noqa: E402
     ApiRoute,
     HttpHeader,
     HttpMethod,

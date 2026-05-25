@@ -471,7 +471,7 @@ def build_layout(script_file: str | Path) -> RepoLayout:
     vllm_dir = repo_root / RepoPath.EXTERNAL.value / RepoPath.VLLM.value
     # Roaming buckets are relocatable via .apxm/config.toml; pinned
     # buckets always live at <repo>/.apxm/.
-    from apxm_data_config import resolve_data_layout
+    from apxm.data_config import resolve_data_layout
 
     data_layout = resolve_data_layout(repo_root)
     return RepoLayout(
@@ -516,7 +516,7 @@ def effective_hf_home(
 ) -> str:
     """Resolve the HF cache root via the shared data-layout chain;
     ``dekk apxm vllm doctor`` prints the resolved value and its source."""
-    from apxm_data_config import resolve_data_layout
+    from apxm.data_config import resolve_data_layout
 
     layout = resolve_data_layout(find_repo_root(Path(__file__)), environ=environ)
     return str(layout.hf_cache)

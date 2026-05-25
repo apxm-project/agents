@@ -25,12 +25,12 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from apxm_data_config import (
+from apxm.data_config import (
     format_layout as format_data_layout,
     materialize_config as materialize_data_config,
     resolve_data_layout,
 )
-from apxm_vllm_contract import (
+from apxm.contract import (
     ApiRoute,
     ArgName,
     AuthScheme,

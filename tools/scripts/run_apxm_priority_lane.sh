@@ -16,11 +16,11 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 
 mapfile -t LAYOUT_LINES < <(
-  PYTHONPATH="$REPO_ROOT/tools/scripts${PYTHONPATH:+:$PYTHONPATH}" \
+  PYTHONPATH="$REPO_ROOT/crates/compiler/apxm-frontend/python${PYTHONPATH:+:$PYTHONPATH}" \
     python3 - "$REPO_ROOT" <<'PY'
 import sys
 from pathlib import Path
-from apxm_vllm_contract import build_layout
+from apxm.contract import build_layout
 
 layout = build_layout(Path(sys.argv[1]) / "tools/scripts/run_apxm_priority_lane.sh")
 print(layout.evaluation_dir / "apxm-priority-lane")

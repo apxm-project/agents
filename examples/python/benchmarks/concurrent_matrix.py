@@ -46,11 +46,11 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
-_TOOLS_SCRIPT_DIR = str(REPO_ROOT / "tools" / "scripts")
-if _TOOLS_SCRIPT_DIR not in sys.path:
-    sys.path.insert(0, _TOOLS_SCRIPT_DIR)
+_APXM_PKG_DIR = str(REPO_ROOT / "crates" / "compiler" / "apxm-frontend" / "python")
+if _APXM_PKG_DIR not in sys.path:
+    sys.path.insert(0, _APXM_PKG_DIR)
 
-from apxm_vllm_contract import ArmName, EnvVar  # noqa: E402
+from apxm.contract import ArmName, EnvVar  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from util import prom_pull  # noqa: E402

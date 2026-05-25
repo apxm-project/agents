@@ -46,8 +46,8 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 SOURCE_PATHS = [
     "docs/backends/vllm.md",
     "docs/backends/model-zoo.md",
-    "tools/scripts/apxm_vllm_contract.py",
-    "tools/scripts/plan04_run_per_cell.sh",
+    "crates/compiler/apxm-frontend/python/apxm/contract.py",
+    "tools/scripts/cross_system_per_cell.sh",
     "examples/python/benchmarks/concurrent_matrix.py",
     "examples/python/benchmarks/workloads/apxm_review_council.py",
 ]

@@ -24,11 +24,11 @@ except ImportError:  # scipy not installed; arm-comparison section will note thi
     _scipy_wilcoxon = None  # type: ignore[assignment]
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-_TOOLS_SCRIPT_DIR = str(_REPO_ROOT / "tools" / "scripts")
-if _TOOLS_SCRIPT_DIR not in sys.path:
-    sys.path.insert(0, _TOOLS_SCRIPT_DIR)
+_APXM_PKG_DIR = str(_REPO_ROOT / "crates" / "compiler" / "apxm-frontend" / "python")
+if _APXM_PKG_DIR not in sys.path:
+    sys.path.insert(0, _APXM_PKG_DIR)
 
-from apxm_vllm_contract import ArmName  # noqa: E402
+from apxm.contract import ArmName  # noqa: E402
 
 DEFAULT_BOOTSTRAP_SAMPLES = 2000
 DEFAULT_BOOTSTRAP_SEED = 42
