@@ -28,10 +28,6 @@
       "description": "Use when registering a new APXM inference backend (cloud, on-prem, or local). Enforces hard-fail-at-config-time and the no-legacy / no-fallback contract on resolver behavior."
     },
     {
-      "name": "apxm-claim-evidence",
-      "description": "Use after a claim-bearing run completes. Writes the docs/evaluation/ write-up, promotes a claim card under docs/claims/ if paper-bound, and links the preregistration + artifact paths."
-    },
-    {
       "name": "apxm-commit",
       "description": "Pre-PR gate \u2014 enforces no auto-commit, no push without explicit approval, no push to main, no --no-verify, and PR-for-pushed-work-only. Drafts commit message in repo log style; asks for explicit user approval before each commit."
     },
@@ -42,10 +38,6 @@
     {
       "name": "apxm-context",
       "description": "Prime an APXM session before broad work \u2014 runs doctor, reads project.md and the relevant _shared rules, surfaces subsystem ownership, and recalls APXM memory. Run at the start of any session that will touch >1 file or any non-trivial change."
-    },
-    {
-      "name": "apxm-evaluation-artifacts",
-      "description": "Use when creating, moving, reviewing, or documenting APXM benchmark, evaluation, session, compiler-diagnostic, evidence, or vLLM-run artifacts. Enforces that generated artifacts live in the repo-local .apxm workspace rather than examples or docs source trees."
     },
     {
       "name": "apxm-execute-plan",
@@ -74,18 +66,6 @@
     {
       "name": "apxm-plan",
       "description": "Produce a written plan before non-trivial APXM implementation. Required for changes touching >3 files, modifying a public API or AIS op, or needing Slurm GPU allocation. Enforces APXM-specific gates (AIS-op-vs-compose decision, dialect-codegen impact)."
-    },
-    {
-      "name": "apxm-preregistration",
-      "description": "Use before any claim-bearing APXM run (benchmark, evaluation, paper-bound number). Drafts, commits, and verifies a docs/preregistrations/ entry under the project's append-only norm."
-    },
-    {
-      "name": "apxm-priority-lane-bench",
-      "description": "Use when running the APXM priority-lane benchmark (foreground vs background concurrency). Enforces preregistration, paired-arm cache-salt scoping, and artifact placement under .apxm/."
-    },
-    {
-      "name": "apxm-review-council-bench",
-      "description": "Use when running the APXM review-council benchmark (multi-judge review). Enforces preregistration, model-zoo deploy order, and artifact placement under .apxm/."
     },
     {
       "name": "apxm-simplify",
