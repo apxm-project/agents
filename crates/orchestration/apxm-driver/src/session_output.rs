@@ -277,11 +277,9 @@ impl SessionOutputWriter {
         node_map: &HashMap<u64, Vec<u64>>,
         exit_values: &HashMap<u64, Value>,
     ) -> io::Result<()> {
-        // Phase C contract: tier-3 quality_eval reads `final_output` directly,
-        // without having to parse `exit_values` and follow `node_map`. When the
-        // entry function returns one value we surface its node id + string
-        // form; for multi-return entries we concatenate (newline-separated) so
-        // a rubric can still apply. Non-string returns serialise via JSON.
+        // Single-return entries surface their node id + string form; multi-return
+        // entries concatenate outputs newline-separated. Non-string returns
+        // serialise via JSON.
         let (final_node_id, final_output) = derive_final_output(exit_values, all_outputs);
         use constants::session::results_keys as rk;
         let results = serde_json::json!({
