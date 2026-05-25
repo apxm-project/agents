@@ -47,9 +47,7 @@ to stand up a vLLM zoo. You need:
 
 - `APXM_VLLM_HF_HOME` exported.
 - One vLLM backend registered in your APXM config (the demo uses the
-  `benchmark` alias / `APXM_BENCHMARK_BACKEND` override path; both work
-  the same as for the workloads under
-  `examples/python/benchmarks/workloads/`).
+  `benchmark` alias / `APXM_BENCHMARK_BACKEND` override path).
 
 ## Running
 

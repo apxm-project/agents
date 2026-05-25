@@ -26,8 +26,7 @@ the env contract, target dir, and process accounting stay consistent.
 Command groups (see `dekk apxm --help` for the live list):
 
 - **Build & Test**: `build`, `build-dialect`, `test`, `test-cli`,
-  `test-python-frontend`, `codegen`, `clean`, `scrub-rustc-cache`,
-  `quality-eval`, `test-quality-eval`
+  `test-python-frontend`, `codegen`, `clean`, `scrub-rustc-cache`
 - **Compilation**: `compile`, `execute`, `run`, `decompile`
 - **Authoring**: `validate`, `analyze`, `explain`, `gui`, `tokenize`
 - **Configuration**: `doctor`, `backend`, `vllm`, `agent`, `tool`, `cache`,
@@ -62,8 +61,8 @@ content themselves; they point at `_shared/` rules.
    declaring done.
 5. **`/apxm-org:apxm-finish`** — pre-claim gate: run focused
    `dekk apxm test`, `dekk apxm doctor`, `check_no_legacy_vllm.py
-   --strict`, secrets scan, artifact-placement check, preregistration
-   check. Refuse to claim "done" until all pass.
+   --strict`, secrets scan, artifact-placement check. Refuse to claim
+   "done" until all pass.
 6. **`/apxm-org:apxm-commit`** — pre-commit/pre-push gate: enforce the
    user's commit rules — no auto-commit, no push without explicit
    approval, PRs only for pushed work, never push to `main`, never
@@ -71,7 +70,7 @@ content themselves; they point at `_shared/` rules.
 
 This is the *ironbear pattern* — each skill is a checkpoint, not a body of
 new content. Skills inside the lifecycle can invoke domain skills (e.g.
-`apxm-plan` calls `apxm-preregistration` for claim-bearing changes).
+`apxm-vllm-service` for vLLM service operations).
 
 ## 4. Repo layout
 
@@ -95,22 +94,21 @@ new content. Skills inside the lifecycle can invoke domain skills (e.g.
   Python package. `apxm.contract` owns the APXM/vLLM operational names
   (env vars, routes, dataclasses, `build_layout()`); `apxm.data_config`
   resolves the `.apxm/` data buckets.
-- **`tools/quality_eval/`** — tier-3 quality eval harness.
 - **`deploy/vllm/`** — `zoo.toml` manifests (operator state) and
   `run-vllm.sh` (the unified deploy script — never `run-vllm-slurm.sh`).
-- **`examples/python/benchmarks/`** — benchmark workloads and harnesses
-  (source — never generated artifacts).
-- **`docs/`** — design docs, plans, prereg, claims, paper.
-- **`docs/preregistrations/`** — frozen pre-experiment commitments
-  (append-only). Plan/campaign IDs (`plan04`, `plan05`, `plan09`) live
-  here as filename prefixes.
-- **`docs/claims/`** — claim cards backing the paper (created as
-  paper-bound claims land; may be empty in early branches).
-- **`docs/evaluation/`** — write-ups of completed runs.
+- **`docs/`** — design docs for the core runtime.
 - **`.agents/`** — this SSOT plus `_shared/` rules, lifecycle skills,
   domain skills, and `domains/` navigation README-only directories.
 - **`.apxm/`** — generated artifacts (gitignored): benchmark results,
   evaluation runs, service registry, compiler diagnostics, vLLM images.
+
+### Companion repos
+
+The evaluation harness, preregistrations, benchmarks, claim cards, and
+paper drafts live in `apxm-project/apxm-eval`. The compiled-skill
+library (loaded by `apxm-server` via `APXM_SKILLS_PATH`) lives in
+`apxm-project/apxm-libs`. Skills under `.agents/skills/` are
+agent-tooling for working *on* APXM and stay here.
 
 ## 5. Build, test, codegen
 
@@ -131,7 +129,6 @@ dekk apxm codegen               # regen Python frontend bindings after .td edits
 dekk apxm test                  # workspace tests (excluding compiler+cli)
 dekk apxm test-cli              # cli-only (preserves MLIR-linked binary)
 dekk apxm test-python-frontend  # pytest the Python frontend
-dekk apxm quality-eval          # tier-3 rubric/budget/judge harness
 ```
 
 Run **focused** checks during iteration. Full `test-all` is for pre-PR
@@ -207,30 +204,12 @@ source of truth — refer to them, don't duplicate the literal.
 
 ## 8. Preregistration before claims
 
-Any run whose output backs a quality/perf claim (the paper, a benchmark
-table, a "X is faster than Y" statement) requires a committed
-preregistration **before** the run starts.
-
-Layout:
-
-- `docs/preregistrations/<UTC>-<descriptor>.md` — frozen, append-only.
-  Once committed, do not edit; if the protocol changes, write a new
-  preregistration with a `-corrective` or `-restart` suffix and reference
-  the prior one.
-- `docs/claims/<id>.md` — claim cards consumed by the paper.
-- `docs/evaluation/<scenario>/` — write-ups of completed runs.
-
-Workflow (and what `apxm-preregistration` enforces):
-
-1. Draft preregistration → commit.
-2. Run the benchmark or evaluation → artifacts land under
-   `.apxm/evaluation/<scenario>/runs/<UTC>/`.
-3. Write up under `docs/evaluation/` citing the preregistration commit
-   SHA and the artifact path.
-4. Promote a claim card under `docs/claims/` if it's paper-bound.
-
-`apxm-finish` refuses to claim completion of a claim-bearing run if the
-preregistration commit isn't present.
+Quality/perf claim workflow (preregistrations, benchmarks, claim cards,
+write-ups) lives in `apxm-project/apxm-eval`. Claim-bearing runs against
+the core runtime should reference that repo for the preregistration
+template, evidence layout, and `apxm-finish`-style claim gating. The
+`apxm-finish` lifecycle skill in this repo no longer enforces a
+preregistration check — that gate lives next to the eval harness.
 
 ## 9. AIS dialect ownership
 

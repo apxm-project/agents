@@ -6,13 +6,13 @@ routes through these:
 1. **apxm-context** — prime the session (doctor, project.md,
    `_shared/` rules, subsystem ownership).
 2. **apxm-plan** — design before implementing; required for >3 files,
-   public API changes, claim-bearing runs, or Slurm allocations.
+   public API changes, or Slurm allocations.
 3. **apxm-execute-plan** — drive the plan with `TaskCreate`/
    `TaskUpdate`, focused verification, no scope creep.
 4. **apxm-simplify** — remove copied `_shared/` text, weak
    abstractions, referential comments before claiming done.
 5. **apxm-finish** — focused tests, doctor, no-legacy lint, secrets
-   scan, artifact placement, preregistration interlock.
+   scan, artifact placement.
 6. **apxm-commit** — pre-PR gate; no auto-commit, no push without
    approval, no push to main, no `--no-verify`.
 

@@ -1,6 +1,6 @@
 ---
 name: apxm-plan
-description: Produce a written plan before non-trivial APXM implementation. Required for changes touching >3 files, modifying a public API or AIS op, introducing a claim, or needing Slurm GPU allocation. Enforces APXM-specific gates (preregistration, AIS-op-vs-compose decision, dialect-codegen impact).
+description: Produce a written plan before non-trivial APXM implementation. Required for changes touching >3 files, modifying a public API or AIS op, or needing Slurm GPU allocation. Enforces APXM-specific gates (AIS-op-vs-compose decision, dialect-codegen impact).
 user-invocable: true
 ---
 
@@ -14,8 +14,6 @@ APXM gates that generic planning skips.
 - Change touches **>3 files**.
 - Change modifies a **public API or AIS op** (anything other crates or
   the Python frontend will see).
-- Change is **claim-bearing** (output backs a benchmark, paper, or
-  "X is faster than Y" assertion).
 - Change requires a **Slurm GPU allocation**.
 - Change rebases or edits `external/vllm`.
 
@@ -29,16 +27,14 @@ local scope do not require this skill.
 2. **Decide AIS-op-vs-compose** if the change adds or modifies behavior
    currently expressed in `apxm-core`. Adding an op? Invoke
    `apxm-ais-op-design` first — it owns the design-before-code gate.
-3. **Decide claim-bearing?** If yes, invoke `apxm-preregistration`
-   first. The preregistration must be committed before the run starts.
-4. **State expected verification**: which `dekk apxm test -p <crate>`,
+3. **State expected verification**: which `dekk apxm test -p <crate>`,
    which integration test, which `dekk apxm vllm zoo-status` probe,
    which `--strict` lint.
-5. **State boundaries** — what the change is **NOT** doing. Prevents
+4. **State boundaries** — what the change is **NOT** doing. Prevents
    scope creep during execution.
-6. **State a rollback plan** — branch name, what's reversible, what's
+5. **State a rollback plan** — branch name, what's reversible, what's
    not (e.g. codegen output, manifests committed mid-flight).
-7. **Get user sign-off** — use the harness's plan-approval surface
+6. **Get user sign-off** — use the harness's plan-approval surface
    (Claude Code: `ExitPlanMode`) or an explicit confirmation from the
    user in conversation. Do not proceed without it.
 
@@ -58,7 +54,6 @@ local scope do not require this skill.
 
 ## Pre-work
 - [ ] apxm-ais-op-design (if adding an AIS op)
-- [ ] apxm-preregistration (if claim-bearing)
 - [ ] dekk apxm build-dialect + codegen (if editing .td)
 
 ## Verification per phase
@@ -81,7 +76,6 @@ local scope do not require this skill.
 - Plans that omit the boundaries section — scope creep happens precisely
   where boundaries aren't drawn.
 - "Add new AIS op" plans that skip `apxm-ais-op-design`.
-- Claim-bearing plans without preregistration in the pre-work checklist.
 
 ## Next step
 
