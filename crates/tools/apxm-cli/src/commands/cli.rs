@@ -235,14 +235,6 @@ pub enum Commands {
         #[arg(long)]
         model: Option<String>,
     },
-    /// Run the tier-3 quality-eval harness.
-    /// Trailing args are forwarded verbatim — see `dekk apxm quality-eval -- --help`.
-    #[command(name = "quality-eval", trailing_var_arg = true)]
-    QualityEval {
-        /// Arguments forwarded to the Python harness (--fixture / --all / --opt / ...)
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
-    },
     /// Launch the web-based GUI dashboard
     Gui {
         /// Graph file to open on startup (.air)
