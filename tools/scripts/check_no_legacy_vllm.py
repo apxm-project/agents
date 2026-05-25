@@ -72,10 +72,6 @@ RULES: tuple[LintRule, ...] = (
             "deploy/vllm/zoo.example.toml",  # template for operators
             "deploy/vllm/zoo.test-*.toml",  # checked-in smoke-test manifests
             "deploy/vllm/zoo.review-*.toml",  # checked-in evaluation-service manifests
-            "docs/preregistrations/**",  # evidence artifacts cite exact run state
-            "docs/claims/**",  # claim files cite exact run state
-            "docs/evaluation/**",  # result write-ups cite exact run state
-            "docs/paper/**",  # paper drafts cite exact run state
             "docs/backends/model-zoo-quickstart.md",  # operator walkthrough; concrete example port
             "deploy/vllm/README.md",  # references allocator range
             # Test fixtures: stub endpoints, never actually contacted.
@@ -128,7 +124,6 @@ RULES: tuple[LintRule, ...] = (
             "crates/compiler/apxm-frontend/python/apxm/contract.py",
             "crates/runtime/apxm-backends/**/*.rs",
             "tools/scripts/vllm.py",
-            "examples/python/benchmarks/**/*.py",
         ),
         exclude_globs=("tools/scripts/check_no_legacy_vllm.py",),
     ),
