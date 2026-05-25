@@ -167,6 +167,16 @@ group = "Configuration"
 list = { run = "apxm process list", description = "List APXM compile/run/execute/workflow jobs" }
 stop = { run = "apxm process stop", description = "Stop APXM compile/run/execute/workflow jobs" }
 
+[commands.libs]
+description = "Install, inspect, and verify packs from apxm-project/apxm-libs"
+group = "Configuration"
+list = { run = "python tools/scripts/apxm_libs.py list", description = "List installed packs under ~/.apxm/libs/" }
+install = { run = "python tools/scripts/apxm_libs.py install", description = "Install a pack (sibling-clone by default; --source github for releases)" }
+uninstall = { run = "python tools/scripts/apxm_libs.py uninstall", description = "Remove an installed pack" }
+search = { run = "python tools/scripts/apxm_libs.py search", description = "Substring-match pack id, skill, description across sibling catalog" }
+verify = { run = "python tools/scripts/apxm_libs.py verify", description = "Recompute pack_hash and compare to pack.toml [integrity]" }
+pack = { run = "python tools/scripts/apxm_libs.py pack", description = "Build release tarball + compute pack_hash (maintainer; in apxm-libs)" }
+
 [install]
 wrap = { name = "apxm", target = "target/release/apxm" }
 
