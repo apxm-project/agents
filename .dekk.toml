@@ -48,7 +48,6 @@ lib = ["{project}/target/release/lib", "{environment}/lib"]
 
 [commands]
 build = { run = "python tools/scripts/cargo.py build -p apxm-cli --features driver,metrics --release", description = "Build APXM", skill = true, group = "Build & Test" }
-build-gui = { run = "python tools/scripts/cargo.py build -p apxm-gui --release", description = "Build GUI dashboard server", group = "Build & Test" }
 build-dialect = { run = "python tools/scripts/cargo.py build-dialect", description = "Rebuild MLIR dialect (TableGen + C++ + Rust) after editing .td or .cpp files", skill = true, group = "Build & Test" }
 test = { run = "python tools/scripts/cargo.py test --workspace --exclude apxm-compiler --exclude apxm-cli", description = "Run tests", skill = true, group = "Build & Test" }
 test-all = { run = "python tools/scripts/cargo.py test --workspace", description = "All tests (requires MLIR)", group = "Build & Test" }
@@ -183,13 +182,6 @@ label = "MCP Server"
 description = "HTTP API + MCP protocol server for IDE integration"
 run = "python tools/scripts/cargo.py build -p apxm-server --release"
 default = true
-
-[[install.components]]
-name = "gui"
-label = "GUI Dashboard"
-description = "Web dashboard with multi-model agent chat (requires >=1 backend)"
-run = "python tools/scripts/cargo.py build -p apxm-gui --release"
-default = false
 
 [[install.components]]
 name = "vllm"
