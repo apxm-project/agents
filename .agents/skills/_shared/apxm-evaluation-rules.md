@@ -22,7 +22,7 @@ Canonical sub-locations:
 Use the helper rather than inventing path strings:
 
 ```python
-from tools.scripts.apxm_vllm_contract import RepoLayout, build_layout
+from apxm.contract import RepoLayout, build_layout
 layout = build_layout(__file__)
 results_dir = layout.benchmarks_results_dir
 ```

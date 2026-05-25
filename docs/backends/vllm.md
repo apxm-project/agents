@@ -9,7 +9,16 @@ This document defines the **contract** between APXM and the vLLM fork at
 
 The fork (`https://github.com/randreshg/vllm`, branch `apxm`) is a thin
 patch stack on upstream vLLM that adds the **graph-aware HTTP surface**
-APXM dispatches against. The patch set adds:
+APXM dispatches against.
+
+> **TODO (Phase R.6)**: This fork is scheduled to migrate from
+> `randreshg/vllm` to `apxm-project/vllm` as part of the org reorganization.
+> The migration uses `git clone --mirror` to preserve all refs/tags and
+> updates `.gitmodules` in a single atomic commit, gated on a G1
+> build/smoke check (docker image layer-digest equality + one golden
+> benchmark within ±5%). Until then, this URL is canonical.
+
+The patch set adds:
 
 - The OpenAI-compatible API server mounts an `/v1/apxm/*` router.
 - Each chat/completion/responses/speech-to-text request accepts a

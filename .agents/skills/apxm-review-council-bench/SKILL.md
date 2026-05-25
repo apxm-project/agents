@@ -2,6 +2,7 @@
 name: apxm-review-council-bench
 description: Use when running the APXM review-council benchmark (multi-judge review). Enforces preregistration, model-zoo deploy order, and artifact placement under .apxm/.
 user-invocable: true
+repo: apxm-eval
 ---
 
 # APXM Review-Council Benchmark

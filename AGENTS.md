@@ -31,7 +31,7 @@ Command groups (see `dekk apxm --help` for the live list):
 - **Compilation**: `compile`, `execute`, `run`, `decompile`
 - **Authoring**: `validate`, `analyze`, `explain`, `gui`, `tokenize`
 - **Configuration**: `doctor`, `backend`, `vllm`, `agent`, `tool`, `cache`,
-  `process`, `mcp`, `server`
+  `process`, `mcp`, `server`, `commit-lint`, `install-hooks`
 - **Discovery**: `ops`, `template`
 - **vLLM operate**: `dekk apxm vllm {doctor, probe, cache-warm,
   docker-build, docker-save, docker-load, zoo-apply, zoo-status, zoo-scale,
@@ -90,8 +90,11 @@ new content. Skills inside the lifecycle can invoke domain skills (e.g.
   `randreshg/vllm`). Never edit upstream files there directly without a
   cherry-pick plan.
 - **`tools/scripts/`** — Python wrappers Dekk calls into (`vllm.py`,
-  `cargo.py`, `check_no_legacy_vllm.py`, `apxm_vllm_contract.py`,
-  `apxm_mcp_install.py`).
+  `cargo.py`, `check_no_legacy_vllm.py`, `apxm_mcp_install.py`).
+- **`crates/compiler/apxm-frontend/python/apxm/`** — installable `apxm`
+  Python package. `apxm.contract` owns the APXM/vLLM operational names
+  (env vars, routes, dataclasses, `build_layout()`); `apxm.data_config`
+  resolves the `.apxm/` data buckets.
 - **`tools/quality_eval/`** — tier-3 quality eval harness.
 - **`deploy/vllm/`** — `zoo.toml` manifests (operator state) and
   `run-vllm.sh` (the unified deploy script — never `run-vllm-slurm.sh`).
@@ -99,18 +102,15 @@ new content. Skills inside the lifecycle can invoke domain skills (e.g.
   (source — never generated artifacts).
 - **`docs/`** — design docs, plans, prereg, claims, paper.
 - **`docs/preregistrations/`** — frozen pre-experiment commitments
-  (append-only).
+  (append-only). Plan/campaign IDs (`plan04`, `plan05`, `plan09`) live
+  here as filename prefixes.
 - **`docs/claims/`** — claim cards backing the paper (created as
   paper-bound claims land; may be empty in early branches).
 - **`docs/evaluation/`** — write-ups of completed runs.
-- **`docs/plans/`** — MASTER plus 9 numbered sub-plans (created as
-  plans land; may be empty in early branches).
 - **`.agents/`** — this SSOT plus `_shared/` rules, lifecycle skills,
   domain skills, and `domains/` navigation README-only directories.
 - **`.apxm/`** — generated artifacts (gitignored): benchmark results,
   evaluation runs, service registry, compiler diagnostics, vLLM images.
-- **`mcp/`**, **`hooks/`**, **`plugins/`** — agent surfaces (added
-  alongside the Claude plugin + MCP server).
 
 ## 5. Build, test, codegen
 
@@ -151,7 +151,7 @@ diagnostics, evidence manifests, vLLM logs, or per-run configs under
 Use the helper:
 
 ```python
-from tools.scripts.apxm_vllm_contract import RepoLayout, build_layout
+from apxm.contract import RepoLayout, build_layout
 layout = build_layout(__file__)  # paths for benchmarks/evaluation/vllm-*
 ```
 
@@ -290,7 +290,11 @@ supported migration procedure.
   pushed work reaches `main`.
 - **`git push --force`** anywhere.
 - **`--no-verify`** to bypass hooks. If a hook fails, fix the root
-  cause; never re-stage and bypass.
+  cause; never re-stage and bypass. The `commit-msg` hook installed
+  by `dekk apxm install-hooks` enforces
+  `_shared/apxm-commit-message-rules.md` (allowed types, no AI
+  attribution, no `planNN` scope outside `prereg(...)`/`eval(...)`,
+  no `wip`/`fix stuff` subjects).
 - **`scancel`** a Slurm job owned by `apxm`. Always allocate a
   fresh service job alongside.
 - **Commit secrets**: `LLM_GATEWAY_KEY`, OAuth tokens, HF tokens.
