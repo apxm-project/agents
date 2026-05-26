@@ -1,6 +1,6 @@
 ---
 name: apxm-commit
-description: Pre-PR gate — enforces no auto-commit, no push without explicit approval, no push to main, no --no-verify, and PR-for-pushed-work-only. Drafts commit message in repo log style; asks for explicit user approval before each commit.
+description: Commit gate — runs apxm-simplify + apxm-finish first, drafts message in repo log style, lints it, and commits. Auto-commit allowed; never pushes to main; never --force; never --no-verify. Does not open PRs.
 user-invocable: true
 ---
 
@@ -14,10 +14,10 @@ any commit or push. Both are non-negotiable.
 
 1. **Run `apxm-simplify` and `apxm-finish` first.** Refuse to proceed
    if either reported failures.
-2. **Verify scope**: one logical slice, not a grab-bag. Flag cross-crate
-   changes for user confirmation. Stage selectively — never `git add -A`.
+2. **Verify scope**: one logical slice, not a grab-bag. Stage
+   selectively — never `git add -A`.
 3. **Verify branch**: `git branch --show-current` must not be `main` or
-   a detached HEAD. If on `main`, instruct user to branch and re-run.
+   a detached HEAD. If on `main`, branch and re-run.
 4. **Review the change**: read `git status --short`, `git diff --stat`,
    and `git diff --staged` before drafting.
 5. **Confirm no unrelated changes staged**. Unstage with
@@ -25,12 +25,10 @@ any commit or push. Both are non-negotiable.
 6. **Draft the commit message** per `_shared/apxm-commit-message-rules.md`.
    Allowed types: `feat fix perf refactor docs test chore bench eval prereg`.
    `planNN` scope is valid only for `prereg(...)` / `eval(...)`.
-7. **Lint the draft** before showing it to the user:
+7. **Lint the draft**:
    `echo "<message>" > /tmp/apxm-commit-msg && dekk apxm commit-lint /tmp/apxm-commit-msg`.
    Fix any finding before proceeding.
-8. **Ask the user for explicit approval** of the message before
-   running `git commit`. Show the exact message.
-9. **Commit** only after approval. Use a HEREDOC:
+8. **Commit** with a HEREDOC:
    ```bash
    git commit -m "$(cat <<'EOF'
    feat(<scope>): <subject>
@@ -42,39 +40,24 @@ any commit or push. Both are non-negotiable.
    The `commit-msg` hook (installed by `dekk apxm install-hooks`)
    runs the same lint at commit time. If it blocks, fix the message —
    never `--no-verify`.
-10. **If a pre-commit hook fails**: fix the underlying issue, re-stage,
-    make a **new** commit. Never `--amend` to bypass; never `--no-verify`.
-11. **If asked to push**: confirm branch ≠ `main`, confirm with user once
-    more, then `git push -u origin <branch>` (first push) or `git push`.
-    Never `--force`.
-12. **For pushed work**: draft PR title (≤70 chars) and body (Summary +
-    Test plan); run `gh pr create` only after explicit approval.
+9. **If a pre-commit hook fails**: fix the underlying issue, re-stage,
+   make a **new** commit. Never `--amend` to bypass; never `--no-verify`.
+10. **If pushing**: confirm branch ≠ `main`, then
+    `git push -u origin <branch>` (first push) or `git push`.
+    Never `--force` without explicit user request.
+
+## Out of scope
+
+- **PR creation.** This skill never runs `gh pr create`. The user opens
+  PRs through their own flow when they want one.
 
 ## Anti-patterns
 
-- "I'll just commit this and we can fix later." Ask first.
 - `git add -A` / `git add .`. Always name files.
 - `git commit --amend` on a commit that already passed a hook.
 - `--no-verify` to bypass a hook.
-- Pushing to `main`. Always branch + PR.
-- PR title/body without explicit approval.
-
-## Output template
-
-```
-## Commit ready
-
-Branch: <branch>
-Files: <list>
-
-Proposed message:
-
-  <type>(<scope>): <subject>
-
-  <body>
-
-Confirm to commit? (yes / edit / cancel)
-```
+- Pushing to `main`. Always branch.
+- `git push --force` without explicit approval.
 
 ## Prerequisite gates
 

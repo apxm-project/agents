@@ -6,13 +6,13 @@ project conventions and skill defaults.
 
 ## Commit & push discipline
 
-- **No auto-commits.** Always ask for explicit user approval before
-  every `git commit`, even if the user said "commit this" in a previous
-  turn. Approval is per-action, not per-session.
-- **No push without explicit approval.** The user must explicitly ask
-  for the push.
-- **No push to `main`.** Always push to a feature branch; PRs are how
-  pushed work reaches `main`.
+- **Auto-commit is allowed.** When work is at a clean stopping point
+  (apxm-finish gate passed, message drafted in repo style), commit
+  without an extra approval round-trip.
+- **Push directly to a feature branch is allowed** once the local
+  commit is sound. No PR step — the user moves work to `main` through
+  their own flow when ready.
+- **No push to `main`.** Always push to a feature branch.
 - **No `git push --force`** anywhere. Even on a feature branch, ask
   first.
 - **No `--no-verify`.** If a hook fails, fix the root cause; never
@@ -21,6 +21,7 @@ project conventions and skill defaults.
 - **No `git add -A` / `git add .`** — name files explicitly so secrets
   and generated artifacts don't slip in.
 - **No interactive rebase** (`-i`); skill flow doesn't support it.
+- **No `gh pr create`** unless the user explicitly asks for a PR.
 
 ## Slurm & shared infra
 
