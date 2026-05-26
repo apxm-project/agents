@@ -74,6 +74,118 @@ server-managed executions:
    `sandboxed` static `INV_TOOL` paths, including richer policy surfaces and
    nested-skill propagation.
 
+The mental model for how this runtime work fits into the larger
+compile-link-load story for skill artifacts lives at
+[`docs/design/skill-library-model.md`](skill-library-model.md). Read it
+before adding a cross-skill call op or extending the loader.
+
+## Phase R: Multi-Repo Reorganization Under `apxm-project`
+
+**Status:** shipped 2026-05-26, merged at commit `4b10014e`.
+
+The single `apxm` tree is now split into five public repos under the
+`apxm-project` GitHub org plus the private `apxm-os`. All four split PRs
+landed on `apxm:main` at `4b10014e`; the five public repos
+(`apxm`, `apxm-eval`, `apxm-libs`, `apxm-gui`, `vllm`) are live, history
+preserved on extracted subtrees, no `main` rewrites. The sections below
+are kept as the historical record of what was committed; they are not
+open tasks.
+
+History strategy: `git filter-repo --path` per target subtree on clean
+clones — preserved authorship and timestamps on extracted files; the
+existing `apxm` repo only received forward deletion commits.
+
+### R.0 Promote `apxm_vllm_contract.py` Into The `apxm` Package
+
+`tools/scripts/apxm_vllm_contract.py` moved to
+`crates/compiler/apxm-frontend/python/apxm/contract.py`. `RepoLayout` and
+`build_layout` re-exported from `apxm/__init__.py`. All importers updated
+to `from apxm.contract import ...`. `.dekk.toml` `PYTHONPATH` updated so
+`dekk apxm` invocations and shell heredocs both resolve `apxm.contract`
+without an editable install. Atomic refactor, no compatibility shim.
+
+### R.1 SSOT Cleanup And Eval-Boundary Pinning
+
+`docs/claims/README.md` describes the intent and the linkage to
+preregistrations. Stale `mcp/`, `hooks/`, `plugins/` lines dropped from
+`.agents/project.md`; `CLAUDE.md` and `AGENTS.md` regenerated via
+`dekk apxm skills generate`. Eval-bound `.agents/skills/*/SKILL.md` files
+(`apxm-claim-evidence`, `apxm-evaluation-artifacts`,
+`apxm-preregistration`, `apxm-priority-lane-bench`,
+`apxm-review-council-bench`) carry `repo: apxm-eval` frontmatter. The
+eval-bound path manifest lives at `docs/migrations/apxm-eval-paths.txt`.
+
+### R.2 Create Org And Extract Subtrees
+
+`apxm-project` org created; `apxm-eval`, `apxm-libs` extracted from clean
+clones via `git filter-repo`, restructured at repo root. One forward
+commit on `apxm` `main` deleted the moved paths.
+
+### R.3 Wire Sibling Repos Together
+
+`apxm-eval/pyproject.toml` declares the editable dep on `apxm`; the
+sibling-clone workflow documented in `apxm-eval/README.md`. `apxm-server`
+skill loader honors `APXM_SKILLS_PATH` (default `~/.apxm/libs/`, then
+`./skills/`). `apxm-libs/README.md` documents the install path. All
+`randreshg/apxm` URLs rewritten to `apxm-project/apxm`.
+
+### R.4 End-To-End Verification
+
+Per-repo independent verification from fresh `/tmp` clones: `apxm` passed
+`dekk apxm doctor`, `dekk apxm test`, and
+`dekk apxm vllm check-no-legacy --strict`; `apxm-eval` ran a preregistered
+benchmark end-to-end with artifacts under `.apxm/evaluation/`;
+`apxm-libs` resolved the seed skill via `apxm-server` with
+`APXM_SKILLS_PATH`. Cross-repo dangling-reference audit clean.
+
+### R.5 Backlog Update (This Section)
+
+Phase R recorded in this file (this section). T4 rerouted to land the
+`skill-evals/corpus/` target in `apxm-eval` from the start — no
+mid-flight migration.
+
+### R.6 vLLM Fork Migration To `apxm-project/vllm`
+
+Fork mirrored from `randreshg/vllm` to `apxm-project/vllm` via
+`git clone --mirror` + `git push --mirror`, preserving every ref and tag
+including `apxm-rebase-v0.21.0`. `apxm` submodule repointed via
+`.gitmodules` URL change. Remaining `randreshg/vllm` references rewritten.
+G1 build/smoke gate remains in Track C.1.
+
+### R.7 Publish `apxm` To PyPI
+
+Maintainer-driven publish flow documented in `apxm/RELEASING.md`. PyPI
+release itself is sequenced after the README rebrand (Track D.3) so the
+PyPI README matches the GitHub README.
+
+### R.8 Seed `apxm-libs` With Compiled Skill Packs
+
+Eight pack scaffolds live under `apxm-libs/`. Two priority packs
+(`apxm-orient`, `apxm-demos-benchmarks`) implemented end-to-end. The
+shipping pack-compile workflow that produces hash-pinned `.apxmobj`
+artifacts is tracked in the post-Phase-R work as Track B.0.
+
+### R.9 Registry Layer For `apxm-libs`
+
+GitHub Releases on `apxm-project/apxm-libs` is the v1 registry transport.
+CLI surface `dekk apxm libs {install, list, search, publish}` shipped.
+`apxm-server` resolver lookup order (`~/.apxm/libs/<skill-id>/` →
+`APXM_SKILLS_PATH` → bundled root) implemented. `skill.toml.artifact_hash`
+(`blake3:...`) recomputed and verified on install. End-to-end
+tamper-detection coverage at install time is tracked in the post-Phase-R
+work as Track B.0.5.
+
+### R.10 Extract `apxm-gui` To Its Own Repo
+
+`crates/tools/apxm-gui/` extracted via `git filter-repo --path`,
+restructured to the new repo root. Dependency model v1: sibling-clone
+path deps in `Cargo.toml` for the five internal crates (`apxm-core`,
+`apxm-backends`, `apxm-acp`, `apxm-compiler`, `apxm-credentials`). In
+`apxm`, the workspace member dropped; `dekk apxm gui` shells out to the
+external binary when it is on `PATH`; `dekk apxm doctor` reports the
+missing binary as a tier-2 warning. Dependency model v2 (post-PyPI)
+remains as future work.
+
 ## Operating Principles
 
 - Start with read-only discovery and validation. Do not execute skills until
