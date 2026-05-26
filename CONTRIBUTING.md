@@ -1,10 +1,8 @@
 # Contributing to APXM
 
-APXM is a graph-aware dispatch and scheduling layer for vLLM. The runtime, the
-MLIR dialect, and the Python frontend live here; the evaluation harness, the
-compiled-skill library, the GUI, and the vLLM fork live in sibling repos
-under [`apxm-project`](https://github.com/apxm-project). This guide covers
-working on this repo.
+APXM is a graph-aware dispatch and scheduling layer for vLLM. The runtime,
+the MLIR dialect, the Python frontend, and the vendored vLLM fork at
+`external/vllm` live here. This guide covers working on this repo.
 
 ## Getting set up
 
@@ -150,7 +148,7 @@ of a public issue.
 The SSOT for skill content is `.agents/`. To add a skill:
 
 1. Add `.agents/skills/<name>/SKILL.md` from the template in the
-   `apxm-skill-authoring` skill (now in `apxm-project/apxm-libs`).
+   `apxm-skill-authoring` skill.
 2. Run `dekk apxm skills status` to confirm registration.
 3. Run `dekk apxm skills generate --target all` to regenerate
    `AGENTS.md`, `CLAUDE.md`, `.agents.json`, `.cursorrules`, and

@@ -43,32 +43,6 @@ resolved environment (MLIR/LLVM 22, conda env, `CARGO_TARGET_DIR`, vLLM image
 store, HF cache, service registry) and refuses to continue if anything is
 misaligned.
 
-## Companion repos
-
-The APXM org follows the lineage: PXM theory led to APXM core; APXM then
-produced children for evaluation, reusable libraries, the always-on supervisor,
-the GUI, and the graph-aware vLLM fork. Each child owns its own docs, rules,
-and release surface:
-
-- **[`apxm-project/apxm-eval`](https://github.com/apxm-project/apxm-eval)** —
-  preregistrations, benchmarks, claim cards, paper-draft notes. Any quality
-  or performance claim against this runtime is preregistered and reproduced
-  here.
-- **[`apxm-project/apxm-paper`](https://github.com/apxm-project/apxm-paper)** —
-  LaTeX publication source for the APXM library-of-skills paper; consumes
-  figures and evidence from `apxm-eval`.
-- **[`apxm-project/apxm-libs`](https://github.com/apxm-project/apxm-libs)** —
-  compiled-skill library loaded by `apxm-server` via `APXM_SKILLS_PATH`. Each
-  pack ships a hash-pinned `.apxmobj` artifact plus its manifest.
-- **[`apxm-project/apxm-gui`](https://github.com/apxm-project/apxm-gui)** —
-  axum backend + React frontend served as a standalone binary. Install
-  separately; `dekk apxm gui` shells out to it when it is on `PATH`.
-- **[`apxm-project/apxm-os`](https://github.com/apxm-project/apxm-os)** —
-  always-on supervisor for long-lived APXM agents and their manifests.
-- **[`apxm-project/vllm`](https://github.com/apxm-project/vllm)** — the APXM
-  fork of vLLM that accepts dispatch hints. Vendored as the
-  `external/vllm` submodule on branch `apxm-rebase-v0.21.0`.
-
 ## Documentation
 
 - [`docs/README.md`](docs/README.md) — full docs index.
@@ -79,8 +53,6 @@ and release surface:
 - [`docs/backends/vllm.md`](docs/backends/vllm.md) — APXM/vLLM contract.
 - [`docs/backends/storage-layout.md`](docs/backends/storage-layout.md) —
   where APXM puts large files (HF cache, image store, artifacts).
-- [`apxm-project/apxm-libs`](https://github.com/apxm-project/apxm-libs) —
-  home for skill-library design and pack documentation.
 - Run `dekk apxm --help` and `dekk apxm ops list` for live CLI and AIS
   references.
 
