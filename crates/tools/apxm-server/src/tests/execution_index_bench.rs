@@ -19,6 +19,7 @@ fn make_record(execution_id: &str, session_dir: &Path) -> ExecutionRecord {
         parent_execution_id: None,
         parent_skill_id: None,
         parent_skill_version: None,
+        scope_id: None,
         session_id: "session".to_string(),
         session_dir: session_dir.to_string_lossy().into_owned(),
         status: ExecutionStatus::Succeeded,
