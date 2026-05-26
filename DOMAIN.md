@@ -32,8 +32,8 @@ hints. Not an "agent framework", not an "LLM orchestrator".
   for the 15-minute walkthrough.
 - [`docs/external-vllm-fork.md`](docs/external-vllm-fork.md) — the
   fork integration contract.
-- [`docs/plans/MASTER.md`](docs/plans/MASTER.md) — 9 numbered sub-plans.
-- [`docs/paper/`](docs/paper/) — paper drafts and figures.
+- `apxm-project/apxm-eval` — preregistrations, evaluation harness, claim
+  cards, paper drafts, and paper-bound evidence.
 
 ## Phase status
 

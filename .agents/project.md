@@ -104,14 +104,23 @@ new content. Skills inside the lifecycle can invoke domain skills (e.g.
 
 ### Companion repos
 
-The evaluation harness, preregistrations, benchmarks, claim cards, and
-paper drafts live in `apxm-project/apxm-eval`. The compiled-skill
-library (loaded by `apxm-server` via `APXM_SKILLS_PATH`) lives in
-`apxm-project/apxm-libs`. The web GUI dashboard (axum backend + React
-frontend) ships as a standalone binary from `apxm-project/apxm-gui` —
-install separately; `dekk apxm gui` shells to it on PATH. Skills under
-`.agents/skills/` are agent-tooling for working *on* APXM and stay
-here.
+The APXM org is split by ownership boundary. This repo stays focused on
+graph-aware dispatch for vLLM; companion repos carry the children that were
+born from APXM for their own scopes:
+
+- `apxm-project/apxm-eval` — born from APXM to keep preregistrations,
+  benchmarks, claim cards, and paper drafts independent from the runtime.
+- `apxm-project/apxm-libs` — born from APXM to package compiled skills and
+  manifests that `apxm-server` can load via `APXM_SKILLS_PATH`.
+- `apxm-project/apxm-os` — born from APXM to supervise long-lived agents and
+  their manifests outside the core compiler/runtime repo.
+- `apxm-project/apxm-gui` — born from APXM to ship the axum + React dashboard
+  as a standalone binary; `dekk apxm gui` shells to it when it is on `PATH`.
+- `apxm-project/vllm` — born from APXM to carry the graph-aware vLLM fork that
+  accepts APXM dispatch hints; this repo vendors it as `external/vllm`.
+
+Skills under `.agents/skills/` are agent-tooling for working *on* APXM and
+stay here unless a later PR explicitly migrates them to a child repo.
 
 ## 5. Build, test, codegen
 

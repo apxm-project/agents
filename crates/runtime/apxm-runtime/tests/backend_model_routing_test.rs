@@ -23,7 +23,10 @@ use apxm_runtime::capability::executor::EchoCapability;
 use apxm_runtime::{Runtime, RuntimeConfig};
 use async_trait::async_trait;
 use parking_lot::RwLock;
+use tokio::sync::Mutex as AsyncMutex;
 use tokio_stream::Stream;
+
+static ROUTING_TEST_LOCK: AsyncMutex<()> = AsyncMutex::const_new(());
 
 fn single_ask_dag(prompt: &str, backend: &str, model: &str) -> ExecutionDag {
     let mut attrs = HashMap::new();
@@ -184,6 +187,10 @@ impl LLMBackend for ToolLoopRoutingBackend {
 
 #[tokio::test]
 async fn ask_backend_attr_overrides_default_backend_without_changing_model() {
+    let _guard = ROUTING_TEST_LOCK.lock().await;
+    const DEFAULT_BACKEND: &str = "default-backend-single";
+    const OVERRIDE_BACKEND: &str = "override-backend-single";
+
     let runtime = Runtime::new(RuntimeConfig::in_memory())
         .await
         .expect("runtime init");
@@ -197,21 +204,21 @@ async fn ask_backend_attr_overrides_default_backend_without_changing_model() {
 
     runtime
         .llm_registry()
-        .register("default-backend", default_backend.clone())
+        .register(DEFAULT_BACKEND, default_backend.clone())
         .expect("register default backend");
     runtime
         .llm_registry()
-        .register("override-backend", override_backend.clone())
+        .register(OVERRIDE_BACKEND, override_backend.clone())
         .expect("register override backend");
     runtime
         .llm_registry()
-        .set_default("default-backend")
+        .set_default(DEFAULT_BACKEND)
         .expect("set default backend");
 
     runtime
         .execute(single_ask_dag(
             "test prompt",
-            "override-backend",
+            OVERRIDE_BACKEND,
             "requested-model",
         ))
         .await
@@ -238,8 +245,11 @@ async fn ask_backend_attr_overrides_default_backend_without_changing_model() {
     );
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test]
 async fn ask_tool_loop_preserves_backend_override_across_retries() {
+    let _guard = ROUTING_TEST_LOCK.lock().await;
+    const DEFAULT_BACKEND: &str = "default-backend-loop";
+    const OVERRIDE_BACKEND: &str = "override-backend-loop";
     const TOOL_ITERATIONS: usize = 2;
 
     let runtime = Arc::new(
@@ -254,15 +264,15 @@ async fn ask_tool_loop_preserves_backend_override_across_retries() {
 
     runtime
         .llm_registry()
-        .register("default-backend", default_backend.clone())
+        .register(DEFAULT_BACKEND, default_backend.clone())
         .expect("register default backend");
     runtime
         .llm_registry()
-        .register("override-backend", override_backend)
+        .register(OVERRIDE_BACKEND, override_backend)
         .expect("register override backend");
     runtime
         .llm_registry()
-        .set_default("default-backend")
+        .set_default(DEFAULT_BACKEND)
         .expect("set default backend");
     runtime
         .capability_system()
@@ -272,7 +282,7 @@ async fn ask_tool_loop_preserves_backend_override_across_retries() {
     runtime
         .execute(ask_tool_loop_dag(
             "tool prompt",
-            "override-backend",
+            OVERRIDE_BACKEND,
             "requested-model",
             TOOL_ITERATIONS + 1,
         ))
@@ -294,7 +304,7 @@ async fn ask_tool_loop_preserves_backend_override_across_retries() {
     for (index, request) in snapshots.iter().enumerate() {
         assert_eq!(
             request.backend.as_deref(),
-            Some("override-backend"),
+            Some(OVERRIDE_BACKEND),
             "iteration {index} lost the explicit backend override",
         );
         assert_eq!(

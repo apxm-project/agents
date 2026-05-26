@@ -45,8 +45,10 @@ misaligned.
 
 ## Companion repos
 
-The runtime in this repo is the central piece; four sibling repos under
-`apxm-project` complete the system:
+The APXM org follows the lineage: PXM theory led to APXM core; APXM then
+produced children for evaluation, reusable libraries, the always-on supervisor,
+the GUI, and the graph-aware vLLM fork. Each child owns its own docs, rules,
+and release surface:
 
 - **[`apxm-project/apxm-eval`](https://github.com/apxm-project/apxm-eval)** —
   preregistrations, benchmarks, claim cards, paper drafts. Any quality or
@@ -57,31 +59,24 @@ The runtime in this repo is the central piece; four sibling repos under
 - **[`apxm-project/apxm-gui`](https://github.com/apxm-project/apxm-gui)** —
   axum backend + React frontend served as a standalone binary. Install
   separately; `dekk apxm gui` shells out to it when it is on `PATH`.
+- **[`apxm-project/apxm-os`](https://github.com/apxm-project/apxm-os)** —
+  always-on supervisor for long-lived APXM agents and their manifests.
 - **[`apxm-project/vllm`](https://github.com/apxm-project/vllm)** — the APXM
   fork of vLLM that accepts dispatch hints. Vendored as the
   `external/vllm` submodule on branch `apxm-rebase-v0.21.0`.
 
-## Skill library: how APXM stages compiled work
-
-The "skill library" concept — how authored AIR becomes a compiled, hash-pinned,
-importable artifact analogous to a classical `.a` archive plus its loader — is
-the canonical answer to *what is a skill library in APXM terms?* It lives at
-[`docs/design/skill-library-model.md`](docs/design/skill-library-model.md).
-Read it before working on `apxm-libs`, on the cross-skill call surface, or on
-the pack-compile flow.
-
 ## Documentation
 
 - [`docs/README.md`](docs/README.md) — full docs index.
-- [`docs/design/skill-library-model.md`](docs/design/skill-library-model.md)
-  — the skill-library mental model and the resolved v1 decisions.
-- [`docs/design/apxm-skill-runtime-task-backlog.md`](docs/design/apxm-skill-runtime-task-backlog.md)
-  — runtime backlog (Phase R shipped; T3.x and pack-compile work next).
+- [`docs/pxm/readme.md`](docs/pxm/readme.md) — PXM theory and APXM's origin
+  story.
 - [`docs/compiler/pipeline.md`](docs/compiler/pipeline.md) — compiler pass
   pipeline.
 - [`docs/backends/vllm.md`](docs/backends/vllm.md) — APXM/vLLM contract.
 - [`docs/backends/storage-layout.md`](docs/backends/storage-layout.md) —
   where APXM puts large files (HF cache, image store, artifacts).
+- [`apxm-project/apxm-libs`](https://github.com/apxm-project/apxm-libs) —
+  home for skill-library design and pack documentation.
 - Run `dekk apxm --help` and `dekk apxm ops list` for live CLI and AIS
   references.
 
