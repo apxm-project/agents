@@ -382,11 +382,12 @@ async fn test_state_with_skill_roots_and_execution_store(
     execution_store: ExecutionStore,
 ) -> AppState {
     // Use in-memory LTM to avoid SQLite file-locking across parallel tests.
-    let runtime = Arc::new(
-        Runtime::new(RuntimeConfig::in_memory())
-            .await
-            .expect("test runtime"),
-    );
+    let runtime = Runtime::new(RuntimeConfig::in_memory())
+        .await
+        .expect("test runtime");
+    let mut runtime = Arc::new(runtime);
+    let skill_library = SkillLibrary::new(skill_roots);
+    crate::call_skill::install(&mut runtime, skill_library.clone());
     AppState {
         runtime,
         agent_registry: Arc::new(DashMap::new()),
@@ -394,7 +395,7 @@ async fn test_state_with_skill_roots_and_execution_store(
         checkpoint_store: CheckpointStore::new(),
         start_time: SystemTime::now(),
         a2a_tasks: Arc::new(DashMap::new()),
-        skill_library: SkillLibrary::new(skill_roots),
+        skill_library,
         execution_store,
     }
 }
@@ -403,14 +404,17 @@ async fn test_state_with_runtime_and_skill_roots(
     runtime: Runtime,
     skill_roots: Vec<std::path::PathBuf>,
 ) -> AppState {
+    let mut runtime = Arc::new(runtime);
+    let skill_library = SkillLibrary::new(skill_roots);
+    crate::call_skill::install(&mut runtime, skill_library.clone());
     AppState {
-        runtime: Arc::new(runtime),
+        runtime,
         agent_registry: Arc::new(DashMap::new()),
         task_manager: TaskQueueManager::new(),
         checkpoint_store: CheckpointStore::new(),
         start_time: SystemTime::now(),
         a2a_tasks: Arc::new(DashMap::new()),
-        skill_library: SkillLibrary::new(skill_roots),
+        skill_library,
         execution_store: ExecutionStore::new(),
     }
 }
