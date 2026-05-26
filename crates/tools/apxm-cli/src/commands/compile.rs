@@ -247,6 +247,25 @@ fn resolve_directory_air_source(dir: &Path) -> Result<PathBuf> {
     }
 }
 
+/// Strip `artifact_hash` from a `skill.toml` text so the resulting bytes can
+/// be embedded inside the artifact they would otherwise hash. Other fields are
+/// preserved verbatim so the server's `validate_embedded_manifest_field`
+/// round-trip succeeds field-for-field against the on-disk manifest.
+#[cfg(feature = "driver")]
+fn strip_artifact_hash_for_embed(manifest_toml: &str) -> Result<Vec<u8>> {
+    let mut value: toml::Value = toml::from_str(manifest_toml)
+        .with_context(|| "failed to parse skill.toml for --embed-manifest")?;
+    if let Some(table) = value.as_table_mut() {
+        table.remove("artifact_hash");
+        if let Some(nested) = table.get_mut("skill").and_then(|v| v.as_table_mut()) {
+            nested.remove("artifact_hash");
+        }
+    }
+    let text = toml::to_string(&value)
+        .with_context(|| "failed to re-serialize skill.toml for --embed-manifest")?;
+    Ok(text.into_bytes())
+}
+
 #[cfg(feature = "driver")]
 #[allow(clippy::too_many_arguments)]
 pub fn compile_command(
@@ -262,6 +281,7 @@ pub fn compile_command(
     disable_passes: Vec<String>,
     pass_list_override: Option<Vec<String>>,
     config: Option<PathBuf>,
+    embed_manifest: Option<PathBuf>,
 ) -> Result<()> {
     use apxm_core::constants::diagnostics;
     use apxm_core::constants::session::metrics_keys;
@@ -374,6 +394,24 @@ pub fn compile_command(
                 kind: apxm_runtime::python_tools::CAPABILITY_NAME.into(),
                 data: sidecar_data.clone(),
             });
+        }
+
+        // Embed the supplied skill.toml as an apxm.skill_manifest.v1 section.
+        // The embedded copy has artifact_hash stripped (it cannot live inside
+        // the artifact it hashes); the server's
+        // `validate_embedded_manifest_field` round-trip succeeds against the
+        // on-disk manifest because all other fields are preserved verbatim.
+        if let Some(manifest_path) = embed_manifest.as_ref() {
+            let manifest_toml = std::fs::read_to_string(manifest_path)
+                .with_context(|| format!("Failed to read {}", manifest_path.display()))?;
+            let stripped = strip_artifact_hash_for_embed(&manifest_toml)?;
+            artifact.add_section(apxm_artifact::ArtifactSection {
+                kind: apxm_artifact::section_kinds::SKILL_MANIFEST_V1.into(),
+                data: stripped,
+            });
+            // Pin created_at to 0 so the wire bytes (and the BLAKE3 recorded
+            // in skill.toml::artifact_hash) are stable across rebuilds.
+            artifact.set_created_at(0);
         }
 
         let bytes = artifact
@@ -509,6 +547,95 @@ mod tests {
     #[test]
     fn mlir_air_text_rejects_json_graph() {
         assert!(!is_mlir_air_text("{\"nodes\": []}"));
+    }
+
+    #[test]
+    fn strip_artifact_hash_round_trips_other_fields() {
+        let original = r#"
+skill_id = "demo"
+version = "0.1.0"
+entry_flow = "main"
+artifact_hash = "blake3:deadbeef"
+required_capabilities = ["plan_emission_v1"]
+"#;
+        let stripped = strip_artifact_hash_for_embed(original).expect("strip");
+        let parsed = apxm_skill::parse_manifest(
+            std::str::from_utf8(&stripped).expect("utf8"),
+        )
+        .expect("re-parse stripped manifest");
+        assert_eq!(parsed.skill_id, "demo");
+        assert_eq!(parsed.version, "0.1.0");
+        assert_eq!(parsed.entry_flow, "main");
+        assert_eq!(parsed.artifact_hash, None);
+        assert_eq!(parsed.required_capabilities, vec!["plan_emission_v1"]);
+    }
+
+    #[test]
+    fn embedded_manifest_section_round_trips_through_artifact() {
+        use apxm_artifact::{Artifact, ArtifactMetadata, ArtifactSection, section_kinds};
+
+        let manifest_toml = r#"
+skill_id = "demo"
+version = "0.1.0"
+entry_flow = "main"
+required_capabilities = ["plan_emission_v1"]
+"#;
+        let stripped = strip_artifact_hash_for_embed(manifest_toml).expect("strip");
+
+        let mut artifact = Artifact::new(
+            ArtifactMetadata::new(Some("demo".into()), "test"),
+            Vec::new(),
+        );
+        artifact.add_section(ArtifactSection {
+            kind: section_kinds::SKILL_MANIFEST_V1.into(),
+            data: stripped.clone(),
+        });
+
+        let bytes = artifact.to_bytes().expect("serialize artifact");
+        let decoded = Artifact::from_bytes(&bytes).expect("read back artifact");
+        let section_bytes = decoded
+            .section_data(section_kinds::SKILL_MANIFEST_V1)
+            .expect("embedded skill_manifest section");
+        assert_eq!(section_bytes, stripped.as_slice());
+
+        let reparsed = apxm_skill::parse_manifest(
+            std::str::from_utf8(section_bytes).expect("utf8"),
+        )
+        .expect("re-parse embedded manifest");
+        let original =
+            apxm_skill::parse_manifest(manifest_toml).expect("parse original manifest");
+        // artifact_hash is intentionally stripped; every other declared field
+        // matches the on-disk manifest field-for-field.
+        let mut expected = original;
+        expected.artifact_hash = None;
+        assert_eq!(reparsed, expected);
+    }
+
+    #[test]
+    fn set_created_at_yields_byte_identical_artifacts() {
+        // When the compiler pins created_at, two consecutive serializations
+        // of the same (graph + manifest + sections) tuple must produce
+        // identical bytes — required for the artifact_hash chain to mean
+        // anything across rebuilds.
+        use apxm_artifact::{Artifact, ArtifactMetadata, ArtifactSection, section_kinds};
+
+        let make = || {
+            let mut a = Artifact::new(
+                ArtifactMetadata::new(Some("demo".into()), "test"),
+                Vec::new(),
+            );
+            a.add_section(ArtifactSection {
+                kind: section_kinds::SKILL_MANIFEST_V1.into(),
+                data: b"skill_id = \"demo\"\n".to_vec(),
+            });
+            a.set_created_at(0);
+            a.to_bytes().expect("serialize artifact")
+        };
+
+        let b1 = make();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let b2 = make();
+        assert_eq!(b1, b2, "set_created_at must produce byte-identical output");
     }
 }
 
