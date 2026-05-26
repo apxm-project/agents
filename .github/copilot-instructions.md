@@ -108,16 +108,23 @@ The APXM org is split by ownership boundary. This repo stays focused on
 graph-aware dispatch for vLLM; companion repos carry the children that were
 born from APXM for their own scopes:
 
-- `apxm-project/apxm-eval` — born from APXM to keep preregistrations,
-  benchmarks, claim cards, and paper drafts independent from the runtime.
-- `apxm-project/apxm-libs` — born from APXM to package compiled skills and
-  manifests that `apxm-server` can load via `APXM_SKILLS_PATH`.
-- `apxm-project/apxm-os` — born from APXM to supervise long-lived agents and
-  their manifests outside the core compiler/runtime repo.
-- `apxm-project/apxm-gui` — born from APXM to ship the axum + React dashboard
-  as a standalone binary; `dekk apxm gui` shells to it when it is on `PATH`.
-- `apxm-project/vllm` — born from APXM to carry the graph-aware vLLM fork that
-  accepts APXM dispatch hints; this repo vendors it as `external/vllm`.
+- `apxm-project/apxm-eval` — empirical scaffolding for paper-bound APXM
+  claims; preregistrations, benchmarks, claim cards, and paper drafts on
+  a release cadence independent of the runtime.
+- `apxm-project/apxm-libs` — the compiled-skill library; pack catalog with
+  its own SemVer cadence, conforming to the `SkillManifest` contract this
+  repo owns. Thesis: agents scale only when skills become compiled,
+  versioned, linkable, and governed.
+- `apxm-project/apxm-os` — supervisor binary that runs many long-lived
+  APXM agents as supervised tokio tasks on one host; each agent is a
+  domain expert that subscribes to events, curates its own AAM beliefs +
+  episodic memory, and answers questions from what it already knows.
+- `apxm-project/apxm-gui` — standalone visual surface (axum backend +
+  embedded React SPA): graph visualization, optimization diffs, live
+  session traces. `dekk apxm gui` shells to it when it is on `PATH`.
+- `apxm-project/vllm` — graph-aware vLLM fork exposing five `/v1/apxm/*`
+  routes and the `vllm_xargs.apxm` request-hint envelope; vendored here
+  as `external/vllm`. Branch of record: `apxm-rebase-v0.21.0`.
 
 Skills under `.agents/skills/` are agent-tooling for working *on* APXM and
 stay here unless a later PR explicitly migrates them to a child repo.
