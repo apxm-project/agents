@@ -29,7 +29,7 @@
     },
     {
       "name": "apxm-commit",
-      "description": "Pre-PR gate \u2014 enforces no auto-commit, no push without explicit approval, no push to main, no --no-verify, and PR-for-pushed-work-only. Drafts commit message in repo log style; asks for explicit user approval before each commit."
+      "description": "Commit gate \u2014 runs apxm-simplify + apxm-finish first, drafts message in repo log style, lints it, and commits. Auto-commit allowed; never pushes to main; never --force; never --no-verify. Does not open PRs."
     },
     {
       "name": "apxm-compile-and-execute",
