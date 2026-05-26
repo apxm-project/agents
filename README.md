@@ -1,88 +1,98 @@
-# APXM — A Library System for Agent Skills
+# APXM
 
-> Software scaled when code became libraries. Agents will scale only when skills do.
+APXM is a **graph-aware dispatch and scheduling layer for vLLM**. It splits the
+work across an AMD-aligned CPU/GPU boundary: planning, validation, compilation,
+and analysis stay on CPU; inference runs on GPU through a vLLM fork that
+accepts dispatch hints. The public surface is an MLIR dialect (AIS), a Rust
+runtime, and a vLLM fork at `apxm-project/vllm`.
 
-Every team encodes the same processes as different "skills" and rewrites them.
-APXM compiles each skill into a typed AIR graph and a reusable `.apxmobj`
-artifact — the way a function compiles to an object file. The same artifact
-runs across deployments with reproducible sessions, enforced capabilities, and
-compiler diagnostics that compound across every existing skill.
+APXM sits underneath the frameworks and orchestrators that call vLLM — a
+typed IR plus a runtime that lets higher-level systems express *what* they
+want dispatched and lets the platform decide *how*.
 
-Under the hood: an MLIR-based compiler (the AIS dialect), a runtime with
-scheduling, memory, tools, backend routing, and graph metrics, a Dekk-first
-CLI, and `apxm-server` — one skill inventory that Codex, Claude Code, the GUI,
-and `apxm-cli` all see through a single REST/MCP surface.
+## What is in this repo
 
-For the "why" read [VISION.md](VISION.md); for the formal model
-("LLVM for agents") read [docs/pxm/readme.md](docs/pxm/readme.md); for
-hands-on, keep reading.
+- **AIS dialect** (`crates/core/`) — the public IR contract. TableGen-defined
+  ops; `apxm-core` is the only crate that defines AIS ops.
+- **Compiler** (`crates/compiler/`) — MLIR pass pipeline + Python frontend
+  (decorator DSL → canonical AIR).
+- **Runtime** (`crates/runtime/`) — executor, handlers, backend adapters
+  (LLM, local, tool); `apxm-backends` holds the vLLM-fork glue.
+- **Tools** (`crates/tools/`) — `apxm-cli`, `apxm-server` (HTTP + MCP), the
+  one inventory of installed skills that every client reads from.
+- **`external/vllm`** — git submodule, vLLM fork on branch
+  `apxm-rebase-v0.21.0`. Pinned to `apxm-project/vllm`.
 
-## Quick start
+## Getting started
+
+Use [Dekk](https://github.com/randreshg/dekk) as the authority CLI. Every
+build, test, and run goes through it so the env contract, target dir, and
+process accounting stay consistent.
 
 ```bash
-git clone https://github.com/randreshg/apxm && cd apxm
-git submodule update --init --recursive      # external/vllm fork
-dekk apxm install --no-interactive
+git clone https://github.com/apxm-project/apxm
+cd apxm
+git submodule update --init --recursive
 dekk apxm doctor                              # verify environment
-dekk apxm execute examples/python/getting-started/hello.air
+dekk apxm build                               # release build
 ```
 
-Stand up a vLLM model zoo:
+`dekk apxm doctor` is the first command of every session. It prints the
+resolved environment (MLIR/LLVM 22, conda env, `CARGO_TARGET_DIR`, vLLM image
+store, HF cache, service registry) and refuses to continue if anything is
+misaligned.
 
-```bash
-export APXM_VLLM_HF_HOME=$HOME/.cache/huggingface-apxm-vllm
-cp deploy/vllm/zoo.example.toml deploy/vllm/zoo.toml && $EDITOR deploy/vllm/zoo.toml
-dekk apxm vllm zoo-cache-warm && dekk apxm vllm zoo-apply
-```
+## Companion repos
 
-`APXM_VLLM_HF_HOME` must point at a filesystem every Slurm compute node
-can read at the same path; pick a different mount than `$HOME` when home
-is space-constrained. See
-[docs/backends/storage-layout.md](docs/backends/storage-layout.md) for
-the full rules and the supported migration procedure.
+The runtime in this repo is the central piece; four sibling repos under
+`apxm-project` complete the system:
 
-Full walkthrough: [docs/backends/model-zoo-quickstart.md](docs/backends/model-zoo-quickstart.md).
+- **[`apxm-project/apxm-eval`](https://github.com/apxm-project/apxm-eval)** —
+  preregistrations, benchmarks, claim cards, paper drafts. Any quality or
+  performance claim against this runtime is preregistered and reproduced here.
+- **[`apxm-project/apxm-libs`](https://github.com/apxm-project/apxm-libs)** —
+  compiled-skill library loaded by `apxm-server` via `APXM_SKILLS_PATH`. Each
+  pack ships a hash-pinned `.apxmobj` artifact plus its manifest.
+- **[`apxm-project/apxm-gui`](https://github.com/apxm-project/apxm-gui)** —
+  axum backend + React frontend served as a standalone binary. Install
+  separately; `dekk apxm gui` shells out to it when it is on `PATH`.
+- **[`apxm-project/vllm`](https://github.com/apxm-project/vllm)** — the APXM
+  fork of vLLM that accepts dispatch hints. Vendored as the
+  `external/vllm` submodule on branch `apxm-rebase-v0.21.0`.
 
-Prerequisites: Python 3.10+, conda/mamba, Git. The installer handles Rust
-nightly, CMake, and MLIR/LLVM 22 in a repo-local conda env.
+## Skill library: how APXM stages compiled work
 
-## Project layout
-
-```text
-crates/
-  core/         # AIS dialect, graph types, codegen authoring
-  compiler/    # MLIR compiler + Python frontend
-  orchestration/# driver, artifact, ACP glue
-  runtime/     # LLM backends, credentials, execution engine
-  tools/       # CLI, HTTP/MCP server, browser GUI
-examples/python/ # getting-started, parallelism, optimization, benchmarks, demos
-deploy/vllm/   # zoo.example.toml, run-vllm.sh, Dockerfile.apxm
-docs/          # start at docs/README.md
-```
+The "skill library" concept — how authored AIR becomes a compiled, hash-pinned,
+importable artifact analogous to a classical `.a` archive plus its loader — is
+the canonical answer to *what is a skill library in APXM terms?* It lives at
+[`docs/design/skill-library-model.md`](docs/design/skill-library-model.md).
+Read it before working on `apxm-libs`, on the cross-skill call surface, or on
+the pack-compile flow.
 
 ## Documentation
 
-- [VISION.md](VISION.md) + [docs/pxm/readme.md](docs/pxm/readme.md) — positioning + formal model
-- [docs/README.md](docs/README.md) — full docs index
-- [docs/backends/model-zoo-quickstart.md](docs/backends/model-zoo-quickstart.md) — vLLM zoo in 15 minutes
-- [docs/backends/model-zoo.md](docs/backends/model-zoo.md) — zoo operator reference
-- [docs/backends/vllm.md](docs/backends/vllm.md) — APXM/vLLM contract
-- [docs/backends/storage-layout.md](docs/backends/storage-layout.md) — where APXM puts large files (HF cache, image store, artifacts)
-- [docs/design/apxm-aware-codex-skill-libraries.md](docs/design/apxm-aware-codex-skill-libraries.md) — skill libraries design
-- [docs/compiler/pipeline.md](docs/compiler/pipeline.md) — compiler pass pipeline
-- Run `dekk apxm --help` and `dekk apxm ops list` for live CLI / AIS reference
+- [`docs/README.md`](docs/README.md) — full docs index.
+- [`docs/design/skill-library-model.md`](docs/design/skill-library-model.md)
+  — the skill-library mental model and the resolved v1 decisions.
+- [`docs/design/apxm-skill-runtime-task-backlog.md`](docs/design/apxm-skill-runtime-task-backlog.md)
+  — runtime backlog (Phase R shipped; T3.x and pack-compile work next).
+- [`docs/compiler/pipeline.md`](docs/compiler/pipeline.md) — compiler pass
+  pipeline.
+- [`docs/backends/vllm.md`](docs/backends/vllm.md) — APXM/vLLM contract.
+- [`docs/backends/storage-layout.md`](docs/backends/storage-layout.md) —
+  where APXM puts large files (HF cache, image store, artifacts).
+- Run `dekk apxm --help` and `dekk apxm ops list` for live CLI and AIS
+  references.
 
-## Contributing & license
+## Contributing and license
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for build, test, and PR conventions, and
-[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community standards. For security
-issues, follow [SECURITY.md](SECURITY.md). Released under the
-[MIT License](LICENSE); the bundled vLLM fork at
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the clone flow, the lifecycle
+workflow that every non-trivial session routes through, and the commit-message
+rules. Released under the [MIT License](LICENSE); the bundled vLLM fork at
 [`external/vllm`](external/vllm) is Apache-2.0.
 
-**For coding agents** (Claude Code, Codex CLI, Cursor, Aider, Gemini): read
-[AGENTS.md](AGENTS.md) (or [CLAUDE.md](CLAUDE.md)) before doing any work, and
-follow the 6-skill lifecycle (`apxm-context` → `apxm-plan` →
-`apxm-execute-plan` → `apxm-simplify` → `apxm-finish` → `apxm-commit`). For
-Codex, run `dekk apxm skills sync` to sync skills into `~/.codex/skills/`.
-See [DOMAIN.md](DOMAIN.md) for a one-page orientation.
+For coding agents (Claude Code, Codex CLI, Cursor, Aider, Gemini): read
+[`AGENTS.md`](AGENTS.md) (or [`CLAUDE.md`](CLAUDE.md)) before doing any work.
+The 6-skill lifecycle — `/apxm-org:apxm-context` → `apxm-plan` →
+`apxm-execute-plan` → `apxm-simplify` → `apxm-finish` → `apxm-commit` — is
+the project-wide pattern.
