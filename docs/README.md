@@ -72,8 +72,7 @@ runtime →  apxm-runtime, apxm-backends, (execution, LLM I/O, secrets)
            apxm-credentials
 orchestr→  apxm-driver, apxm-acp,       (CLI/library glue, ACP protocol,
            apxm-artifact                 artifact load/save)
-tools   →  apxm-cli, apxm-server,       (binary, HTTP API, browser UI)
-           apxm-gui
+tools   →  apxm-cli, apxm-server         (binary, HTTP API)
 ```
 
 Each crate has a README under `crates/<tier>/<name>/README.md` describing what it
@@ -117,9 +116,6 @@ unless the note explicitly says they are implemented.
   guardrails and inter-agent handoffs as first-class AIR constructs
 - [design/ais-ops/](design/ais-ops/) — per-op design specs (call-skill,
   isolation-tests, ...)
-- Skill-library architecture, pack model, runtime task backlog, and the
-  Codex/server/MCP integration surfaces live in
-  [`apxm-project/apxm-libs/docs/`](https://github.com/apxm-project/apxm-libs/tree/main/docs).
 
 ## Backend Guides
 
@@ -131,13 +127,6 @@ unless the note explicitly says they are implemented.
 - [backends/storage-layout.md](backends/storage-layout.md) — where APXM puts
   large files (HF cache, image store, evaluation artifacts) and the supported
   relocation procedure
-
-## Evaluation Results
-
-Publication-facing evaluations, preregistrations, claim cards, and paper drafts
-belong in [`apxm-project/apxm-eval`](https://github.com/apxm-project/apxm-eval).
-This repo keeps the runtime, compiler, backend contracts, and PXM theory that
-those evaluations exercise.
 
 ## Trying It Out
 

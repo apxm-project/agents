@@ -5,11 +5,12 @@ linking. This document is the implementation contract — the runtime
 handler, capability admission, depth limit, provenance schema, and
 failure modes below are normative.
 
-For background on why this op exists at all, see the skill-library
-architecture in
-[`apxm-project/apxm-libs/docs/architecture.md`](https://github.com/apxm-project/apxm-libs/tree/main/docs/architecture.md).
-For the parallel `FLOW_CALL` (intra-artifact dispatch), see the existing
-op definition at `apxm-core/src/ais_ops.td`.
+`CALL_SKILL` is the *cross-artifact* counterpart of `FLOW_CALL`
+(intra-artifact dispatch, defined at `apxm-core/src/ais_ops.td`). It
+binds a skill by manifest identity at execution time, against whatever
+`SkillLibrary` the runtime is configured to consult, and is the
+classical-library analogue of an unresolved symbol the loader binds at
+link or load time.
 
 ## Purpose
 
@@ -47,9 +48,10 @@ leading or trailing whitespace, empty string → rejected with
    grants — see "Capability admission" below.
 4. **Dispatch** the child's entry DAG with the forwarded `args`,
    under a new execution context whose `parent_execution_id`,
-   `parent_skill_id`, and `scope_id` are propagated from the parent
-   (see provenance discipline in
-   [`apxm-project/apxm-libs/docs/manifests.md`](https://github.com/apxm-project/apxm-libs/tree/main/docs/manifests.md)).
+   `parent_skill_id`, and `scope_id` are propagated from the parent.
+   Provenance is recorded as the resolved
+   `(skill_id, version, artifact_hash)` triple plus the parent's
+   ids; the schema is reproduced under "Provenance" below.
 5. **Return** the child's `node_output_map` namespaced under the
    `CALL_SKILL` op's instance id, so multiple linked calls in the
    same parent DAG cannot collide.

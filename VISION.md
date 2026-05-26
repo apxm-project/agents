@@ -12,27 +12,14 @@ runtime, the CLI/server, and the contract with the graph-aware vLLM fork.
 
 ## Lineage
 
-The org structure follows the project lineage:
+PXM theory led to APXM core: a dispatch and scheduling layer for vLLM, with
+an AMD-aligned CPU/GPU split where planning, validation, compilation, and
+analysis stay on CPU while inference runs on GPU. The IR, compiler, runtime,
+backend contracts, and the PXM origin story all live here.
 
-- PXM theory led to APXM core: a dispatch + scheduling layer for vLLM, with an
-  AMD-aligned CPU/GPU split where planning, validation, compilation, and
-  analysis stay on CPU while inference runs on GPU.
-- `apxm-project/apxm-eval` was born from APXM to keep evaluation methodology,
-  preregistrations, claim cards, and paper-draft notes independent from
-  runtime implementation.
-- `apxm-project/apxm-paper` was born from APXM to host the LaTeX publication
-  source that consumes the eval evidence and renders the arXiv preprint.
-- `apxm-project/apxm-libs` was born from APXM to package compiled skills as
-  versioned, hash-pinned artifacts and manifests.
-- `apxm-project/apxm-os` was born from APXM to supervise long-lived agents and
-  their manifests outside the core compiler/runtime.
-- `apxm-project/apxm-gui` was born from APXM to make graph compilation,
-  execution, traces, and service state inspectable from a standalone dashboard.
-- `apxm-project/vllm` was born from APXM to host the graph-aware vLLM fork that
-  accepts dispatch hints from this runtime.
-
-Each child carries its own vision and docs. APXM core remains the substrate:
-IR, compiler, runtime, backend contracts, and the PXM origin story.
+The graph-aware vLLM fork is vendored as `external/vllm` (branch
+`apxm-rebase-v0.21.0`); the runtime depends on it to honor dispatch hints
+end to end.
 
 ## What APXM Core Provides
 
@@ -57,12 +44,6 @@ APXM core is not an agent framework, an LLM orchestrator, or a multi-agent
 runtime. It sits below those systems. Its job is to make graph execution,
 dispatch metadata, backend behavior, and evidence explicit enough that callers
 can build reliable products on top.
-
-Skill-library design and pack-authoring docs belong in `apxm-project/apxm-libs`.
-Paper drafts, preregistrations, benchmark plans, and claim cards belong in
-`apxm-project/apxm-eval`. GUI design belongs in `apxm-project/apxm-gui`.
-Long-lived supervisor design belongs in `apxm-project/apxm-os`. Fork-local
-implementation notes belong in `apxm-project/vllm`.
 
 ## Where To Read Next
 

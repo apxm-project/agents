@@ -102,25 +102,15 @@ new content. Skills inside the lifecycle can invoke domain skills (e.g.
 - **`.apxm/`** — generated artifacts (gitignored): benchmark results,
   evaluation runs, service registry, compiler diagnostics, vLLM images.
 
-### Companion repos
+### External dependency: vLLM fork
 
-The APXM org is split by ownership boundary. This repo stays focused on
-graph-aware dispatch for vLLM; companion repos carry the children that were
-born from APXM for their own scopes:
-
-- `apxm-project/apxm-eval` — born from APXM to keep preregistrations,
-  benchmarks, claim cards, and paper drafts independent from the runtime.
-- `apxm-project/apxm-libs` — born from APXM to package compiled skills and
-  manifests that `apxm-server` can load via `APXM_SKILLS_PATH`.
-- `apxm-project/apxm-os` — born from APXM to supervise long-lived agents and
-  their manifests outside the core compiler/runtime repo.
-- `apxm-project/apxm-gui` — born from APXM to ship the axum + React dashboard
-  as a standalone binary; `dekk apxm gui` shells to it when it is on `PATH`.
-- `apxm-project/vllm` — born from APXM to carry the graph-aware vLLM fork that
-  accepts APXM dispatch hints; this repo vendors it as `external/vllm`.
+`apxm-project/vllm` is the graph-aware vLLM fork that exposes five
+`/v1/apxm/*` routes and the `vllm_xargs.apxm` request-hint envelope. It
+is vendored at `external/vllm` on branch `apxm-rebase-v0.21.0` and is the
+only external repo this codebase depends on directly.
 
 Skills under `.agents/skills/` are agent-tooling for working *on* APXM and
-stay here unless a later PR explicitly migrates them to a child repo.
+stay here.
 
 ## 5. Build, test, codegen
 
@@ -216,12 +206,12 @@ source of truth — refer to them, don't duplicate the literal.
 
 ## 8. Preregistration before claims
 
-Quality/perf claim workflow (preregistrations, benchmarks, claim cards,
-write-ups) lives in `apxm-project/apxm-eval`. Claim-bearing runs against
-the core runtime should reference that repo for the preregistration
-template, evidence layout, and `apxm-finish`-style claim gating. The
-`apxm-finish` lifecycle skill in this repo no longer enforces a
-preregistration check — that gate lives next to the eval harness.
+The `apxm-finish` lifecycle skill in this repo does not enforce a
+preregistration check; quality and perf claim workflows (preregistrations,
+benchmarks, claim cards, write-ups) live with the consuming evaluation
+harness, not in the runtime. Claim-bearing runs against the core runtime
+should follow whatever preregistration template and evidence layout the
+consuming harness defines.
 
 ## 9. AIS dialect ownership
 
