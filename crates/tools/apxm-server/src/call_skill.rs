@@ -8,43 +8,70 @@
 //! 1. Resolves `(skill_id, requested_version)` through [`SkillLibrary`].
 //! 2. Loads and admits the resolved manifest against the parent's effective
 //!    capability grant (no-widen invariant).
-//! 3. Returns the resolved `(skill_id, version, artifact_hash)` triple so the
-//!    runtime can record it in the parent's provenance.
-//!
-//! Step 4 (dispatching the child's entry DAG and surfacing its outputs)
-//! lives behind a follow-up integration plug. Today this resolver explicitly
-//! refuses to silently dispatch the child: the runtime gets back a typed
-//! [`RuntimeError::Capability`] tagged `call_skill:child_dispatch_unwired`
-//! with the resolved triple in the message so callers can distinguish "we
-//! got as far as resolving and admitting your child, but the dispatcher
-//! plug is not installed" from "your id was invalid" or "version not found".
-//!
-//! This honours the project's no-fallback contract: rather than silently
-//! producing a `Value::Null` and claiming success, we hard-fail at exactly
-//! the boundary the host has not yet supplied.
+//! 3. Dispatches the child's entry DAG against the same [`Runtime`] the
+//!    parent is executing on, propagating `parent_execution_id`,
+//!    `parent_scope_id`, and the nested `call_skill_depth` counter.
+//! 4. Returns the resolved `(skill_id, version, artifact_hash)` triple plus
+//!    the child execution id and its final node-output map so the runtime
+//!    handler can namespace outputs under the parent's `CALL_SKILL` node id
+//!    and record provenance.
 
-use std::collections::HashSet;
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, OnceLock, Weak};
 
+use apxm_artifact::Artifact;
 use apxm_core::error::RuntimeError;
-use apxm_runtime::{CallSkillRequest, CallSkillResult, SkillResolver};
+use apxm_core::types::values::Value;
+use apxm_runtime::{metadata_keys as metadata, CallSkillRequest, CallSkillResult, Runtime, SkillResolver};
 use apxm_skill::SkillManifest;
 use async_trait::async_trait;
 
-use crate::skills::{SkillLibrary, SkillLookupError};
+use crate::skills::{ExecutableSkill, SkillLibrary, SkillLookupError};
 
 /// Capability prefix every `CALL_SKILL` failure surfaces under. The suffix
 /// after the colon distinguishes the precise gate that rejected the call.
 const CAPABILITY_TAG: &str = "call_skill";
 
-/// [`SkillResolver`] backed by [`SkillLibrary`].
+/// [`SkillResolver`] backed by [`SkillLibrary`] and the host [`Runtime`].
+///
+/// The runtime is held by [`Weak`] so the resolver does not extend its
+/// lifetime; the install sequence wires the weak reference once the
+/// runtime is wrapped in [`Arc`].
 pub(crate) struct SkillLibrarySkillResolver {
     library: SkillLibrary,
+    runtime: OnceLock<Weak<Runtime>>,
 }
 
 impl SkillLibrarySkillResolver {
     pub(crate) fn new(library: SkillLibrary) -> Self {
-        Self { library }
+        Self {
+            library,
+            runtime: OnceLock::new(),
+        }
+    }
+
+    /// Attach the host runtime via a weak reference. Must be called once
+    /// after the runtime is wrapped in [`Arc`] but before any `CALL_SKILL`
+    /// is dispatched. Subsequent calls are no-ops.
+    pub(crate) fn attach_runtime(&self, runtime: &Arc<Runtime>) {
+        // First-wins by design — the runtime is configured once at startup.
+        let _ = self.runtime.set(Arc::downgrade(runtime));
+    }
+
+    fn upgrade_runtime(&self, skill_id: &str) -> Result<Arc<Runtime>, RuntimeError> {
+        let weak = self.runtime.get().ok_or_else(|| RuntimeError::Capability {
+            capability: format!("{CAPABILITY_TAG}:resolver_unattached:{skill_id}"),
+            message: format!(
+                "SkillLibrarySkillResolver was not attached to a Runtime before \
+                 dispatching CALL_SKILL '{skill_id}'"
+            ),
+        })?;
+        weak.upgrade().ok_or_else(|| RuntimeError::Capability {
+            capability: format!("{CAPABILITY_TAG}:runtime_dropped:{skill_id}"),
+            message: format!(
+                "host Runtime has been dropped; cannot dispatch CALL_SKILL '{skill_id}'"
+            ),
+        })
     }
 }
 
@@ -86,31 +113,216 @@ impl SkillResolver for SkillLibrarySkillResolver {
                     request.skill_id
                 ),
             })?;
+        let resolved_skill_id = manifest.skill_id.clone();
+        let resolved_version = manifest.version.clone();
 
         // Step 2: capability admission — child must not widen the parent's
         // grant. The parent's grant is not yet plumbed through the
         // CallSkillRequest, so today we enforce only the conservative
         // "no required_capabilities" subset rule when invoked from the
         // default context. The full subset check belongs to the
-        // ExecutionContext refactor that ships with the dispatcher plug.
+        // ExecutionContext refactor that ships parent-grant plumbing.
         admit_required_capabilities(manifest)?;
 
-        // Step 4 (dispatch the child DAG and collect its outputs) is the
-        // missing host plug. Refuse loudly instead of returning empty
-        // outputs and claiming success.
-        Err(RuntimeError::Capability {
-            capability: format!(
-                "{CAPABILITY_TAG}:child_dispatch_unwired:{}",
-                manifest.skill_id
-            ),
-            message: format!(
-                "resolved '{}@{}' (artifact_hash={}); child-skill dispatcher is not yet \
-                 wired into the server runtime. Resolved manifest is admissible but no \
-                 host plug is installed to execute the child entry DAG.",
-                manifest.skill_id, manifest.version, artifact_hash
-            ),
+        // Step 3: load the artifact bytes and parse.
+        let runtime = self.upgrade_runtime(&request.skill_id)?;
+        let artifact = load_child_artifact(&executable)?;
+
+        // Step 4: dispatch the child entry DAG. Args are coerced into
+        // strings to match the runtime entry-point ABI; non-string values
+        // fail typed rather than silently lossy.
+        let args = coerce_args_to_strings(&request)?;
+        let parent_metadata = build_child_metadata(&request);
+        let child_session_id = derive_child_session_id(&request);
+
+        let child_result = runtime
+            .execute_artifact_as_child(
+                artifact,
+                args,
+                Some(child_session_id.clone()),
+                None,
+                request.parent_session_dir.clone(),
+                parent_metadata,
+            )
+            .await
+            .map_err(|error| RuntimeError::Capability {
+                capability: format!(
+                    "{CAPABILITY_TAG}:child_failed:{resolved_skill_id}"
+                ),
+                message: format!(
+                    "child execution of '{resolved_skill_id}@{resolved_version}' failed: {error}"
+                ),
+            })?;
+
+        let (child_outputs, return_value) = project_child_result(&child_result);
+
+        Ok(CallSkillResult {
+            resolved_skill_id,
+            resolved_version,
+            resolved_artifact_hash: artifact_hash,
+            child_execution_id: child_session_id,
+            child_session_dir: None,
+            child_outputs,
+            return_value,
         })
     }
+}
+
+/// Read, hash-verify, and parse the child's `.apxmobj`.
+fn load_child_artifact(executable: &ExecutableSkill) -> Result<Artifact, RuntimeError> {
+    let bytes = std::fs::read(&executable.artifact_path).map_err(|error| {
+        RuntimeError::Capability {
+            capability: format!(
+                "{CAPABILITY_TAG}:artifact_read_failed:{}",
+                executable
+                    .record
+                    .skill_id
+                    .clone()
+                    .unwrap_or_else(|| "<unknown>".to_string())
+            ),
+            message: format!(
+                "failed to read child artifact at {}: {error}",
+                executable.artifact_path.display()
+            ),
+        }
+    })?;
+
+    let declared_hash = executable
+        .record
+        .hashes
+        .artifact_hash
+        .as_deref()
+        .ok_or_else(|| RuntimeError::Capability {
+            capability: format!(
+                "{CAPABILITY_TAG}:missing_artifact_hash:{}",
+                executable
+                    .record
+                    .skill_id
+                    .clone()
+                    .unwrap_or_else(|| "<unknown>".to_string())
+            ),
+            message: "child artifact has no declared hash to verify against".to_string(),
+        })?;
+    let actual_hash = format!("blake3:{}", blake3::hash(&bytes).to_hex());
+    if !hashes_match(declared_hash, &actual_hash) {
+        return Err(RuntimeError::Capability {
+            capability: format!(
+                "{CAPABILITY_TAG}:artifact_hash_mismatch:{}",
+                executable
+                    .record
+                    .skill_id
+                    .clone()
+                    .unwrap_or_else(|| "<unknown>".to_string())
+            ),
+            message: format!(
+                "child artifact hash mismatch: manifest={declared_hash} actual={actual_hash}"
+            ),
+        });
+    }
+
+    Artifact::from_bytes(&bytes).map_err(|error| RuntimeError::Capability {
+        capability: format!(
+            "{CAPABILITY_TAG}:artifact_parse_failed:{}",
+            executable
+                .record
+                .skill_id
+                .clone()
+                .unwrap_or_else(|| "<unknown>".to_string())
+        ),
+        message: format!("failed to parse child artifact: {error}"),
+    })
+}
+
+fn hashes_match(declared: &str, actual: &str) -> bool {
+    declared.eq_ignore_ascii_case(actual)
+}
+
+/// Coerce the parent-supplied [`Value`] args into strings. The runtime
+/// entry-flow signature is `Vec<String>`; the parent's positional
+/// argument values are typically strings already, but anything else
+/// (number, bool, null) is rendered via its JSON form.
+fn coerce_args_to_strings(request: &CallSkillRequest) -> Result<Vec<String>, RuntimeError> {
+    let mut out = Vec::with_capacity(request.args.len());
+    for (index, value) in request.args.iter().enumerate() {
+        match value {
+            Value::String(s) => out.push(s.clone()),
+            Value::Number(_) | Value::Bool(_) | Value::Null => out.push(value.to_string()),
+            Value::Array(_) | Value::Object(_) | Value::Token(_) => {
+                return Err(RuntimeError::Capability {
+                    capability: format!(
+                        "{CAPABILITY_TAG}:arg_type_unsupported:{}",
+                        request.skill_id
+                    ),
+                    message: format!(
+                        "CALL_SKILL arg #{index} for '{}' is not coerceable into the child's \
+                         entry-flow ABI; only strings, numbers, bools, and null are accepted",
+                        request.skill_id
+                    ),
+                });
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Build the metadata map the runtime layers onto the child's context.
+/// This is the propagation point for the depth counter and the
+/// parent-link breadcrumbs the nested-provenance schema relies on.
+fn build_child_metadata(request: &CallSkillRequest) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    map.insert(
+        metadata::CALL_SKILL_DEPTH.to_string(),
+        request.depth.to_string(),
+    );
+    map.insert(
+        metadata::PARENT_EXECUTION_ID.to_string(),
+        request.parent_execution_id.clone(),
+    );
+    map.insert(
+        metadata::PARENT_SCOPE_ID.to_string(),
+        request.parent_scope_id.clone(),
+    );
+    map
+}
+
+/// Derive a deterministic child session id from the parent's invocation
+/// site so repeated dispatches under the same `(parent_execution, node)`
+/// reuse the same lane.
+fn derive_child_session_id(request: &CallSkillRequest) -> String {
+    format!(
+        "{}::call_skill::{}",
+        request.parent_execution_id, request.spawn_node_id
+    )
+}
+
+/// Project the child's [`RuntimeExecutionResult`] into the resolver's
+/// [`CallSkillResult`] shape: namespace outputs by stringified child
+/// node id and pick the entry/exit token's value as the return value.
+fn project_child_result(
+    child: &apxm_runtime::RuntimeExecutionResult,
+) -> (HashMap<String, Value>, Value) {
+    let child_outputs = child
+        .all_outputs
+        .as_ref()
+        .map(|map| {
+            map.iter()
+                .map(|(node_id, value)| (node_id.to_string(), value.clone()))
+                .collect::<HashMap<String, Value>>()
+        })
+        .unwrap_or_default();
+
+    // The runtime's `results` map is keyed by output token id. For the
+    // common single-exit entry flow that is also the child's return
+    // value. Pick deterministically (smallest token id) so the choice is
+    // reproducible across executions.
+    let return_value = child
+        .results
+        .iter()
+        .min_by_key(|(token_id, _)| *token_id)
+        .map(|(_, value)| value.clone())
+        .unwrap_or(Value::Null);
+
+    (child_outputs, return_value)
 }
 
 /// Translate a [`SkillLookupError`] into a typed runtime error preserving
@@ -144,11 +356,12 @@ fn admit_required_capabilities(manifest: &SkillManifest) -> Result<(), RuntimeEr
     if manifest.required_capabilities.is_empty() {
         return Ok(());
     }
-    let mut declared: HashSet<&str> = HashSet::new();
-    for capability in &manifest.required_capabilities {
-        declared.insert(capability.as_str());
-    }
-    let summary = declared.iter().copied().collect::<Vec<_>>().join(",");
+    let summary = manifest
+        .required_capabilities
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join(",");
     Err(RuntimeError::Capability {
         capability: format!(
             "{CAPABILITY_TAG}:capability_widen:{}",
@@ -163,8 +376,22 @@ fn admit_required_capabilities(manifest: &SkillManifest) -> Result<(), RuntimeEr
 }
 
 /// Install `library` as the runtime's [`SkillResolver`] on the supplied
-/// runtime. Hosts call this once during startup after the library has been
-/// scanned.
-pub(crate) fn install(runtime: &mut apxm_runtime::Runtime, library: SkillLibrary) {
-    runtime.set_skill_resolver(Arc::new(SkillLibrarySkillResolver::new(library)));
+/// runtime and attach the runtime's [`Arc`] for child dispatch. Hosts
+/// call this once during startup after the library has been scanned and
+/// after the runtime has been wrapped in [`Arc`].
+///
+/// Order is load-bearing: the resolver is wired into the runtime via
+/// [`Arc::get_mut`] **before** any [`Weak`] reference is taken, because
+/// `get_mut` rejects an [`Arc`] that has any outstanding `Weak` peers.
+/// Once the resolver is in place we downgrade the now-shared runtime and
+/// thread the [`Weak`] into the resolver for child dispatch.
+pub(crate) fn install(runtime: &mut Arc<Runtime>, library: SkillLibrary) {
+    let resolver = Arc::new(SkillLibrarySkillResolver::new(library));
+    {
+        let runtime_mut = Arc::get_mut(runtime).expect(
+            "install must be called while the runtime Arc has no other strong or weak references",
+        );
+        runtime_mut.set_skill_resolver(Arc::clone(&resolver) as Arc<dyn SkillResolver>);
+    }
+    resolver.attach_runtime(runtime);
 }

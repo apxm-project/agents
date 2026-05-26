@@ -581,6 +581,53 @@ impl Runtime {
         event_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
         session_dir: Option<String>,
     ) -> Result<RuntimeExecutionResult, RuntimeError> {
+        self.execute_artifact_inner(
+            artifact,
+            args,
+            session_id,
+            event_emitter,
+            session_dir,
+            HashMap::new(),
+        )
+        .await
+    }
+
+    /// Execute an artifact as the child of a parent execution.
+    ///
+    /// `parent_metadata` is layered onto the child context's metadata map so
+    /// the child handler sees `call_skill_depth`, `parent_execution_id`, and
+    /// `parent_scope_id` from the parent. `CALL_SKILL` uses this entry point
+    /// via the [`SkillResolver`] bridge to dispatch child entry DAGs while
+    /// preserving the no-widen / depth-limit invariants.
+    pub async fn execute_artifact_as_child(
+        &self,
+        artifact: Artifact,
+        args: Vec<String>,
+        session_id: Option<String>,
+        event_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
+        session_dir: Option<String>,
+        parent_metadata: HashMap<String, String>,
+    ) -> Result<RuntimeExecutionResult, RuntimeError> {
+        self.execute_artifact_inner(
+            artifact,
+            args,
+            session_id,
+            event_emitter,
+            session_dir,
+            parent_metadata,
+        )
+        .await
+    }
+
+    async fn execute_artifact_inner(
+        &self,
+        artifact: Artifact,
+        args: Vec<String>,
+        session_id: Option<String>,
+        event_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
+        session_dir: Option<String>,
+        extra_metadata: HashMap<String, String>,
+    ) -> Result<RuntimeExecutionResult, RuntimeError> {
         let _lane_permit = if let Some(ref sid) = session_id {
             Some(self.session_lane_guard.acquire(sid).await)
         } else {
@@ -597,11 +644,19 @@ impl Runtime {
 
         let arg_values: Vec<Value> = args.into_iter().map(Value::String).collect();
         #[cfg(feature = "metrics")]
-        self.llm_registry.metrics().reset();
+        if extra_metadata.is_empty() {
+            // Child executions inherit the parent's accounting; only reset for
+            // a top-level entry call so we don't zero out the parent's in-flight metrics.
+            self.llm_registry.metrics().reset();
+        }
 
-        let context = self
+        let mut context = self
             .build_context_with_bridge(session_id, event_emitter, session_dir, python_bridge)
             .with_graph_id(graph_id_from_dag(&entry_dag));
+        for (key, value) in extra_metadata {
+            context.metadata.insert(key, value);
+        }
+        let context = context;
         let graph_emitter = context.event_emitter.as_ref().map(Arc::clone);
         let execution_id = context.execution_id.clone();
         let node_count = entry_dag.nodes.len();
