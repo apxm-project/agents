@@ -18,8 +18,10 @@ The org structure follows the project lineage:
   AMD-aligned CPU/GPU split where planning, validation, compilation, and
   analysis stay on CPU while inference runs on GPU.
 - `apxm-project/apxm-eval` was born from APXM to keep evaluation methodology,
-  preregistrations, claim cards, and paper drafts independent from runtime
-  implementation.
+  preregistrations, claim cards, and paper-draft notes independent from
+  runtime implementation.
+- `apxm-project/apxm-paper` was born from APXM to host the LaTeX publication
+  source that consumes the eval evidence and renders the arXiv preprint.
 - `apxm-project/apxm-libs` was born from APXM to package compiled skills as
   versioned, hash-pinned artifacts and manifests.
 - `apxm-project/apxm-os` was born from APXM to supervise long-lived agents and

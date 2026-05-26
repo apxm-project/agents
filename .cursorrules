@@ -109,8 +109,11 @@ graph-aware dispatch for vLLM; companion repos carry the children that were
 born from APXM for their own scopes:
 
 - `apxm-project/apxm-eval` — empirical scaffolding for paper-bound APXM
-  claims; preregistrations, benchmarks, claim cards, and paper drafts on
-  a release cadence independent of the runtime.
+  claims; preregistrations, benchmarks, claim cards, and paper-draft
+  notes on a release cadence independent of the runtime.
+- `apxm-project/apxm-paper` — LaTeX publication source for the APXM
+  library-of-skills paper; consumes figures and evidence from
+  `apxm-eval` and renders the arXiv-targeted preprint.
 - `apxm-project/apxm-libs` — the compiled-skill library; pack catalog with
   its own SemVer cadence, conforming to the `SkillManifest` contract this
   repo owns. Thesis: agents scale only when skills become compiled,
