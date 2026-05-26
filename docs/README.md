@@ -115,11 +115,11 @@ unless the note explicitly says they are implemented.
 
 - [design/guardrails_handoffs.md](design/guardrails_handoffs.md) — input/output
   guardrails and inter-agent handoffs as first-class AIR constructs
-- [design/apxm-skill-runtime-task-backlog.md](design/apxm-skill-runtime-task-backlog.md) —
-  PR-sized task backlog for read-only skill discovery, static execution,
-  observability gaps, nested skill evidence, benchmarks, and checkpoint/replay
-- Skill-library and pack-authoring design belongs in
-  [`apxm-project/apxm-libs`](https://github.com/apxm-project/apxm-libs).
+- [design/ais-ops/](design/ais-ops/) — per-op design specs (call-skill,
+  isolation-tests, ...)
+- Skill-library architecture, pack model, runtime task backlog, and the
+  Codex/server/MCP integration surfaces live in
+  [`apxm-project/apxm-libs/docs/`](https://github.com/apxm-project/apxm-libs/tree/main/docs).
 
 ## Backend Guides
 
