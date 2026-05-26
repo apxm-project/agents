@@ -80,20 +80,15 @@ owns and how it composes with its neighbors.
 
 ## Core Concepts
 
-The **Process Algebra of Minds** (PAM, the "M" in APXM) is the formal model. These
-docs are the order to read them in:
+The runtime is modeled around an abstract machine and a typed instruction set.
+Read in this order:
 
 | # | Doc                                | What you learn                                                     |
 |---|------------------------------------|--------------------------------------------------------------------|
-| 1 | [history](pxm/history.md)          | Why every domain hits the same "ad-hoc wiring → opacity wall" cycle |
-| 2 | [foundations](pxm/foundations.md)  | The agentic von-Neumann bottleneck and PAM's five separations       |
-| 3 | [aam](pxm/aam.md)                  | Agent Abstract Machine — the formal `(B, G, C)` state model         |
-| 4 | [ais](pxm/ais.md)                  | Agent Instruction Set — typed operations, MLIR dialect              |
-| 5 | [compute](pxm/compute.md)          | How seven different PXMs treat compute (and what APXM steals)       |
-| 6 | [memory](pxm/memory.md)            | The STM / LTM / Episodic tiers and first-class memory ops           |
-| 7 | [scheduling](pxm/scheduling.md)    | Token-counting dataflow with O(1) readiness detection               |
-| 8 | [processes](pxm/processes.md)      | Agent lifecycle, the process/thread distinction                     |
-| 9 | [vision](pxm/vision.md)            | The "LLVM for agents" thesis                                        |
+| 1 | [aam](pxm/aam.md)                  | Agent Abstract Machine — the formal `(B, G, C)` state model         |
+| 2 | [ais](pxm/ais.md)                  | Agent Instruction Set — typed operations, MLIR dialect              |
+| 3 | [memory](pxm/memory.md)            | The STM / LTM / Episodic tiers and first-class memory ops           |
+| 4 | [processes](pxm/processes.md)      | Agent lifecycle, the process/thread distinction                     |
 
 ## The Compiler
 
@@ -106,16 +101,6 @@ graph metadata and optimization hints, not vLLM-specific runtime policy.
 → [compiler/pipeline.md](compiler/pipeline.md) — pipeline diagram and pass-by-pass
 purpose. The live ordering is in
 `crates/compiler/apxm-compiler/src/passes/pipeline.rs`.
-
-## Design Notes
-
-Design notes capture context for areas that are not part of the runnable API
-unless the note explicitly says they are implemented.
-
-- [design/guardrails_handoffs.md](design/guardrails_handoffs.md) — input/output
-  guardrails and inter-agent handoffs as first-class AIR constructs
-- [design/ais-ops/](design/ais-ops/) — per-op design specs (call-skill,
-  isolation-tests, ...)
 
 ## Backend Guides
 
