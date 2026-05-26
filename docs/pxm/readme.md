@@ -28,4 +28,4 @@ implementation details, see the crate READMEs:
 
 - [apxm-compiler](../../crates/compiler/apxm-compiler/README.md): MLIR pipeline, [optimization pipeline](../compiler/pipeline.md), artifact format
 - [apxm-runtime](../../crates/runtime/apxm-runtime/README.md): dataflow scheduler, memory hierarchy, multi-agent
-- [apxm-ais](../../crates/core/apxm-ais/README.md): 41 AIS operations, attributes, types
+- [apxm-ais](../../crates/core/apxm-ais/README.md): 43 AIS operations, attributes, types
