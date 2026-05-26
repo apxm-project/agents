@@ -120,6 +120,7 @@ async fn run_cli(cli: Cli) -> Result<()> {
             warn,
             disable_passes,
             pass_list_override,
+            embed_manifest,
         } => compile_command(
             input,
             output,
@@ -133,6 +134,7 @@ async fn run_cli(cli: Cli) -> Result<()> {
             disable_passes,
             pass_list_override,
             cli.config,
+            embed_manifest,
         ),
         Commands::Decompile { artifact, output } => decompile_command(artifact, output),
         Commands::Execute {

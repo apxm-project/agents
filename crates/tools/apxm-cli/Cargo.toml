@@ -39,16 +39,18 @@ chrono.workspace = true
 reqwest = { workspace = true, features = ["blocking"] }
 walkdir.workspace = true
 tempfile.workspace = true
+toml = { workspace = true, optional = true }
 rusqlite = { workspace = true, optional = true }
 
 [dev-dependencies]
 serde_json.workspace = true
+apxm-skill.workspace = true
 
 [build-dependencies]
 apxm-core.workspace = true
 
 [features]
 default = []
-driver = ["dep:apxm-driver", "tokio/rt-multi-thread", "dep:apxm-artifact", "dep:tracing-subscriber", "dep:rusqlite"]
+driver = ["dep:apxm-driver", "tokio/rt-multi-thread", "dep:apxm-artifact", "dep:tracing-subscriber", "dep:rusqlite", "dep:toml"]
 metrics = ["driver", "apxm-driver/metrics"]
 no-trace = ["apxm-driver/no-trace", "apxm-core/no-trace"]
