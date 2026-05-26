@@ -341,7 +341,6 @@ push, an overwritten branch, or a tainted benchmark.
 | `apxm-model-zoo-operate` | Use when adding, scaling, or probing models in the vLLM zoo (deploy/vllm/zoo*.toml). Enforces the docker-load → cache-warm → service-start → service-exec order and zoo-apply over service-start. | `.agents/skills/apxm-model-zoo-operate/SKILL.md` |
 | `apxm-plan` | Produce a written plan before non-trivial APXM implementation. Required for changes touching >3 files, modifying a public API or AIS op, or needing Slurm GPU allocation. Enforces APXM-specific gates (AIS-op-vs-compose decision, dialect-codegen impact). | `.agents/skills/apxm-plan/SKILL.md` |
 | `apxm-simplify` | Pre-finish review pass — remove copied _shared text, weak abstractions, referential comments, and over-large skill bodies before claiming completion. Mandatory before apxm-finish and any commit. | `.agents/skills/apxm-simplify/SKILL.md` |
-| `apxm-skill-authoring` | Use when adding or editing an APXM agent skill under .agents/skills/. Enforces SSOT pattern, _shared/ pointers (never inlined text), ≤100 lines per SKILL.md, and dual Claude+Codex compatibility. | `.agents/skills/apxm-skill-authoring/SKILL.md` |
 | `apxm-vllm-service` | Use when building, launching, probing, or running APXM workloads against the Dockerized APXM-vLLM backend, especially on Slurm compute nodes. Enforces Dekk as the authority CLI, persistent service allocations, image-store reuse, and service-exec for commands that need the vLLM endpoint. | `.agents/skills/apxm-vllm-service/SKILL.md` |
 
 <!-- END SKILLS INVENTORY -->
