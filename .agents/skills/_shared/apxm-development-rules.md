@@ -47,18 +47,17 @@ configure backends.
   attrs, Rust executors all resolve through it. See the
   `feedback_attribute_dual_naming` incident.
 - vLLM fork lives at `external/vllm` (submodule, branch
-  `apxm-rebase-v0.21.0`, upstream `randreshg/vllm`). Edits there require
+  `apxm-rebase-v0.21.0`, upstream `apxm-project/vllm`). Edits there require
   a cherry-pick plan and the G1 build/smoke gate.
 
 ## Reuse-first
 
-- Before inventing a path string, check
-  `tools/scripts/apxm_vllm_contract.py::RepoLayout` /
-  `build_layout()`.
+- Before inventing a path string, check `apxm.contract.RepoLayout` /
+  `apxm.contract.build_layout()`.
 - Before adding a new script, look in `tools/scripts/` — many wrappers
   already exist (`vllm.py`, `cargo.py`, `check_no_legacy_vllm.py`,
-  `apxm_vllm_contract.py`, `apxm_mcp_install.py`).
-- Before adding a Python utility, check `tools/quality_eval/`.
+  `apxm_mcp_install.py`). The shared APXM/vLLM operational names live
+  in the `apxm` Python package at `crates/compiler/apxm-frontend/python/`.
 
 ## Targeted verification
 

@@ -8,12 +8,13 @@ cut across them.
   simplify → finish → commit
 - [compiler/](compiler/README.md) — AIS dialect, passes, codegen
 - [execution/](execution/README.md) — runtime, handlers, backends
-- [evaluation/](evaluation/README.md) — benchmarks, preregistration,
-  claim cards
 - [operations/](operations/README.md) — vLLM service / zoo /
   storage layout
 - [meta/](meta/README.md) — skill authoring, MCP server, agent
   contracts
+
+Benchmarks, preregistration, claim cards, and the paper live in the
+companion repo `apxm-project/apxm-eval`.
 
 The skills themselves live in flat layout under
 `.agents/skills/<name>/SKILL.md` (adapter-compatible). These

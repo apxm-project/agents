@@ -72,6 +72,13 @@ pub enum Commands {
         /// selection. --no-cse-llm and --disable-pass still filter the list.
         #[arg(long = "pass-list", value_name = "A,B,C", value_delimiter = ',')]
         pass_list_override: Option<Vec<String>>,
+        /// Embed the given `skill.toml` as an `apxm.skill_manifest.v1` section
+        /// in the output artifact. The embedded copy has `artifact_hash`
+        /// stripped (it cannot be inside the artifact it hashes); all other
+        /// fields are preserved verbatim so the server's
+        /// `validate_embedded_manifest_field` round-trip succeeds.
+        #[arg(long = "embed-manifest", value_name = "skill.toml")]
+        embed_manifest: Option<PathBuf>,
     },
     /// Decompile an artifact back to AIR
     Decompile {
@@ -234,14 +241,6 @@ pub enum Commands {
         /// Model name used to select the tokenizer family.
         #[arg(long)]
         model: Option<String>,
-    },
-    /// Run the tier-3 quality-eval harness.
-    /// Trailing args are forwarded verbatim — see `dekk apxm quality-eval -- --help`.
-    #[command(name = "quality-eval", trailing_var_arg = true)]
-    QualityEval {
-        /// Arguments forwarded to the Python harness (--fixture / --all / --opt / ...)
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
     },
     /// Launch the web-based GUI dashboard
     Gui {

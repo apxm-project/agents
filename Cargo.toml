@@ -14,10 +14,9 @@ members = [
 	"crates/orchestration/apxm-driver",
 	"crates/orchestration/apxm-acp",
 	"crates/orchestration/apxm-artifact",
-	# ── Tools (CLI + GUI + Server) ────────────────
+	# ── Tools (CLI + Server) ──────────────────────
 	"crates/tools/apxm-cli",
-	"crates/tools/apxm-gui",
-	"crates/tools/apxm-server", 
+	"crates/tools/apxm-server",
     # -- Facade ---------
     "crates/apxm",
 ]
@@ -28,8 +27,8 @@ resolver = "3"
 version = "0.0.1"
 edition = "2024"
 license = "MIT"
-repository = "https://github.com/randreshg/apxm"
-homepage = "https://github.com/randreshg/apxm"
+repository = "https://github.com/apxm-project/apxm"
+homepage = "https://github.com/apxm-project/apxm"
 authors = ["The APXM authors"]
 keywords = ["agents", "llm", "compiler", "runtime", "ai"]
 categories = ["AI", "compilers", "science"]

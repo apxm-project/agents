@@ -39,7 +39,7 @@ LLVM_PREFIX = "{environment}"
 # Intentionally NOT setting APXM_HOME: it's the user data root
 # (default ~/.apxm), and pinning it to {project} broke roaming-bucket
 # resolution. Override per-shell or via .apxm/config.toml instead.
-PYTHONPATH = "{project}/tools"
+PYTHONPATH = "{project}/crates/compiler/apxm-frontend/python:{project}/tools"
 LD_LIBRARY_PATH = "{project}/target/release/lib:{project}/target/release:{environment}/lib"
 
 [paths]
@@ -48,20 +48,17 @@ lib = ["{project}/target/release/lib", "{environment}/lib"]
 
 [commands]
 build = { run = "python tools/scripts/cargo.py build -p apxm-cli --features driver,metrics --release", description = "Build APXM", skill = true, group = "Build & Test" }
-build-gui = { run = "python tools/scripts/cargo.py build -p apxm-gui --release", description = "Build GUI dashboard server", group = "Build & Test" }
 build-dialect = { run = "python tools/scripts/cargo.py build-dialect", description = "Rebuild MLIR dialect (TableGen + C++ + Rust) after editing .td or .cpp files", skill = true, group = "Build & Test" }
 test = { run = "python tools/scripts/cargo.py test --workspace --exclude apxm-compiler --exclude apxm-cli", description = "Run tests", skill = true, group = "Build & Test" }
 test-all = { run = "python tools/scripts/cargo.py test --workspace", description = "All tests (requires MLIR)", group = "Build & Test" }
 test-cli = { run = "python tools/scripts/cargo.py test -p apxm-cli --features driver,metrics --release", description = "Run CLI tests with driver (preserves MLIR-linked binary)", group = "Build & Test" }
 test-python-frontend = { run = "python -m pytest crates/compiler/apxm-frontend/python/tests -q", description = "Run Python frontend tests", group = "Build & Test" }
-test-quality-eval = { run = "python -m pytest tools/quality_eval/tests -q", description = "Run offline quality-eval harness tests", group = "Build & Test" }
 clean = { run = "python tools/scripts/cargo.py clean", description = "Clean", group = "Build & Test" }
 scrub-rustc-cache = { run = "python tools/scripts/cargo.py scrub-sigbus-cache", description = "Remove stale rustc SIGBUS diagnostics from Cargo caches", group = "Build & Test" }
 stop = { run = "apxm process stop", description = "Stop APXM compile/run/execute/workflow jobs", group = "Configuration" }
 clean-processes = { run = "apxm process stop", description = "Stop APXM job processes without cleaning build outputs", group = "Configuration" }
 
 codegen = { run = "apxm codegen", description = "Regenerate frontend bindings from Core definitions", skill = true, group = "Build & Test" }
-quality-eval = { run = "apxm quality-eval", description = "Run tier-3 quality-eval harness (rubric + budget + judge)", skill = true, group = "Build & Test" }
 tokenize = { run = "apxm tokenize", description = "Count text with APXM's compiler-side tokenizer", skill = true, group = "Discovery" }
 
 compile = { run = "apxm compile", description = "Compile graph to .apxmobj artifact", skill = true, group = "Compilation" }
@@ -70,6 +67,8 @@ run = { run = "apxm run", description = "Run a pre-compiled .apxmobj artifact", 
 decompile = { run = "apxm decompile", description = "Reverse-map artifact back to AIR", group = "Compilation" }
 doctor = { run = "apxm doctor", description = "Diagnose the real APXM compiler/runtime environment", group = "Configuration" }
 server = { run = "apxm-server", description = "Launch the APXM HTTP server", group = "Configuration" }
+commit-lint = { run = "python tools/scripts/check_commit_message.py", description = "Lint a commit message file, --current (HEAD), or --range REV1..REV2", group = "Configuration" }
+install-hooks = { run = "python tools/scripts/install_git_hooks.py", description = "Install APXM git hooks (commit-msg + prepare-commit-msg); idempotent", group = "Configuration" }
 
 gui = { run = "apxm gui", description = "Launch the web-based GUI dashboard", skill = true, group = "Authoring" }
 validate = { run = "apxm validate", description = "Validate graph against AIS contract", skill = true, group = "Authoring" }
@@ -167,6 +166,18 @@ group = "Configuration"
 list = { run = "apxm process list", description = "List APXM compile/run/execute/workflow jobs" }
 stop = { run = "apxm process stop", description = "Stop APXM compile/run/execute/workflow jobs" }
 
+[commands.libs]
+description = "Install, inspect, and verify packs from apxm-project/apxm-libs"
+group = "Configuration"
+list = { run = "python tools/scripts/apxm_libs.py list", description = "List installed packs under ~/.apxm/libs/" }
+install = { run = "python tools/scripts/apxm_libs.py install", description = "Install a pack (sibling-clone by default; --source github for releases)" }
+uninstall = { run = "python tools/scripts/apxm_libs.py uninstall", description = "Remove an installed pack" }
+search = { run = "python tools/scripts/apxm_libs.py search", description = "Substring-match pack id, skill, description across sibling catalog" }
+verify = { run = "python tools/scripts/apxm_libs.py verify", description = "Recompute pack_hash and compare to pack.toml [integrity]" }
+pack = { run = "python tools/scripts/apxm_libs.py pack", description = "Build release tarball + compute pack_hash (maintainer; in apxm-libs)" }
+build = { run = "python tools/scripts/apxm_libs.py build", description = "Compile every skill in a pack at the declared opt level and canonicalize artifact_hash / pack_hash" }
+publish = { run = "python tools/scripts/apxm_libs.py publish", description = "Build a pack and print the gh release create invocation (no network call)" }
+
 [install]
 wrap = { name = "apxm", target = "target/release/apxm" }
 
@@ -183,13 +194,6 @@ label = "MCP Server"
 description = "HTTP API + MCP protocol server for IDE integration"
 run = "python tools/scripts/cargo.py build -p apxm-server --release"
 default = true
-
-[[install.components]]
-name = "gui"
-label = "GUI Dashboard"
-description = "Web dashboard with multi-model agent chat (requires >=1 backend)"
-run = "python tools/scripts/cargo.py build -p apxm-gui --release"
-default = false
 
 [[install.components]]
 name = "vllm"

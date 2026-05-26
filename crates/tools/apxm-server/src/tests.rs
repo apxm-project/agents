@@ -68,8 +68,10 @@ use crate::types::responses::{ExecutionStats, LlmUsageSummary};
 
 mod agent;
 mod basic;
+mod call_skill_isolation;
 mod checkpoints;
 mod execute;
+mod execution_index_bench;
 mod helpers;
 mod mcp;
 mod skills_admission;

@@ -38,13 +38,6 @@ project conventions and skill defaults.
   `.claude/settings.local.json`.
 - `apxm-finish` scans for these before any commit.
 
-## Plans, prereg, claims
-
-- Frozen records: once `docs/preregistrations/<file>.md` or
-  `docs/claims/<id>.md` is committed, do **not** rewrite history. Append
-  a new file with a `-corrective` / `-restart` suffix that references
-  the prior commit.
-
 ## Code style (operating discipline)
 
 - Default to no comments; only justify *why*, never *what*.

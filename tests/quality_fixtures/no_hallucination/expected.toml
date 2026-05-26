@@ -1,5 +1,0 @@
-must_contain = ["1889", "iron"]
-must_not_contain = ["1492", "the moon", "steel", "concrete"]
-case_sensitive = false
-min_chars = 10
-max_chars = 400

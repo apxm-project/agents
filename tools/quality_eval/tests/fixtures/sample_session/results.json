@@ -1,7 +1,0 @@
-{
-  "node_outputs": {"5": [42]},
-  "token_values": {"42": "Paris."},
-  "exit_values": {"5": "Paris."},
-  "final_node_id": 5,
-  "final_output": "Paris."
-}

@@ -131,3 +131,27 @@ def test_path_helpers_find_repo_root_and_home_override(tmp_path, monkeypatch):
     override = tmp_path / "agent-cwd"
     monkeypatch.setenv(ENV_APXM_HOME, str(override))
     assert agent_cwd() == str(override)
+
+
+def test_path_helpers_find_repo_root_accepts_git_marker(tmp_path):
+    """Sibling repos like apxm-eval qualify via a bare `.git` marker."""
+    from apxm.paths import find_repo_root
+
+    sibling_root = tmp_path / "apxm-eval"
+    nested = sibling_root / "examples" / "python" / "benchmarks"
+    nested.mkdir(parents=True)
+    (sibling_root / ".git").mkdir()
+
+    assert find_repo_root(nested) == sibling_root
+
+
+def test_contract_find_repo_root_accepts_git_marker(tmp_path):
+    """apxm.contract.find_repo_root accepts `.git` for companion repos."""
+    from apxm.contract import find_repo_root as contract_find_repo_root
+
+    sibling_root = tmp_path / "apxm-eval"
+    nested = sibling_root / "examples" / "python" / "benchmarks"
+    nested.mkdir(parents=True)
+    (sibling_root / ".git").mkdir()
+
+    assert contract_find_repo_root(nested) == sibling_root
