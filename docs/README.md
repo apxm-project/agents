@@ -115,12 +115,11 @@ unless the note explicitly says they are implemented.
 
 - [design/guardrails_handoffs.md](design/guardrails_handoffs.md) — input/output
   guardrails and inter-agent handoffs as first-class AIR constructs
-- [design/apxm-aware-codex-skill-libraries.md](design/apxm-aware-codex-skill-libraries.md) —
-  roadmap for APXM-aware Codex skills, server-exposed skill libraries, AIR
-  conversion, and A0-A4 evaluation
 - [design/apxm-skill-runtime-task-backlog.md](design/apxm-skill-runtime-task-backlog.md) —
   PR-sized task backlog for read-only skill discovery, static execution,
   observability gaps, nested skill evidence, benchmarks, and checkpoint/replay
+- Skill-library and pack-authoring design belongs in
+  [`apxm-project/apxm-libs`](https://github.com/apxm-project/apxm-libs).
 
 ## Backend Guides
 
@@ -135,16 +134,10 @@ unless the note explicitly says they are implemented.
 
 ## Evaluation Results
 
-- [evaluation/apxm-results-20260521.md](evaluation/apxm-results-20260521.md) —
-  current publication-facing APXM results summary. Headline: APXM graph-aware
-  priority hints reduce user-visible critical-lane latency under background
-  LLM queue contention; boundary: this is not a broad APXM speedup, batch-wall,
-  or prefix-pinning claim.
-- [evaluation/README.md](evaluation/README.md) — entry point for the public
-  evaluation plans, run recipes, briefs, and result write-ups.
-- [paper/apxm-paper-draft.md](paper/apxm-paper-draft.md) — working paper draft
-  with narrative, system design, evaluation, figures, limitations, and future
-  work.
+Publication-facing evaluations, preregistrations, claim cards, and paper drafts
+belong in [`apxm-project/apxm-eval`](https://github.com/apxm-project/apxm-eval).
+This repo keeps the runtime, compiler, backend contracts, and PXM theory that
+those evaluations exercise.
 
 ## Trying It Out
 
