@@ -172,9 +172,7 @@ for controlled experiments, but they are not part of O1/O2/O3 defaults:
 
 ## Where to Read More
 
-- Conceptual layer: [`pxm/compute.md`](../pxm/compute.md) — what "compute" means
-  for an agent program, and how APXM's choice of MLIR fits the model.
-- AIS surface: [`pxm/ais.md`](../pxm/ais.md) — the operation set the passes are
+- AIS surface: [`pxm/ais.md`](../pxm/ais.md), the operation set the passes are
   rewriting. For the live op list, run `dekk apxm ops list`.
 - Live source: `crates/compiler/apxm-compiler/src/passes/pipeline.rs` is the
   ground truth for ordering. The pass implementations live in the per-pass files
