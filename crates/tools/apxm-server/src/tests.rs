@@ -70,6 +70,7 @@ mod agent;
 mod basic;
 mod checkpoints;
 mod execute;
+mod execution_index_bench;
 mod helpers;
 mod mcp;
 mod skills_admission;
