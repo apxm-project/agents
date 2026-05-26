@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::ApiError;
 use crate::execute::ExecuteResponse;
+use crate::execution_index::{ExecutionIndex, IndexEntry};
 use crate::helpers::now_ms;
 use crate::state::AppState;
 
@@ -96,12 +97,18 @@ pub(crate) struct NodeExecutionDetail {
 #[derive(Clone)]
 pub(crate) struct ExecutionStore {
     inner: Arc<DashMap<String, ExecutionRecord>>,
+    index: ExecutionIndex,
 }
 
 impl ExecutionStore {
     pub(crate) fn new() -> Self {
+        Self::with_index(ExecutionIndex::new())
+    }
+
+    pub(crate) fn with_index(index: ExecutionIndex) -> Self {
         Self {
             inner: Arc::new(DashMap::new()),
+            index,
         }
     }
 
@@ -120,9 +127,17 @@ impl ExecutionStore {
         I: IntoIterator<Item = P>,
         P: AsRef<FsPath>,
     {
+        let roots: Vec<std::path::PathBuf> = session_roots
+            .into_iter()
+            .map(|root| root.as_ref().to_path_buf())
+            .collect();
+        // Seed the index from disk first — directory wins. This is cheap
+        // because it only parses each snapshot once.
+        self.index.reload_from_session_roots(roots.iter());
+
         let mut loaded = 0;
-        for root in session_roots {
-            loaded += self.load_records_from_tree(root.as_ref());
+        for root in &roots {
+            loaded += self.load_records_from_tree(root);
         }
         loaded
     }
@@ -195,6 +210,7 @@ impl ExecutionStore {
         self.inner
             .insert(record.execution_id.clone(), record.clone());
         persist_record_snapshot(&record);
+        self.index.upsert_from_record(&record);
         record
     }
 
@@ -211,6 +227,7 @@ impl ExecutionStore {
         let record = entry.clone();
         drop(entry);
         persist_record_snapshot(&record);
+        self.index.upsert_from_record(&record);
         Some(record)
     }
 
@@ -227,11 +244,22 @@ impl ExecutionStore {
         let record = entry.clone();
         drop(entry);
         persist_record_snapshot(&record);
+        self.index.upsert_from_record(&record);
         Some(record)
     }
 
     pub(crate) fn get(&self, execution_id: &str) -> Option<ExecutionRecord> {
-        self.inner.get(execution_id).map(|entry| entry.clone())
+        if let Some(entry) = self.inner.get(execution_id) {
+            return Some(entry.clone());
+        }
+        // Fall back through the index: cheap metadata probe → resolve the
+        // snapshot path → rehydrate the full record into the hot map.
+        let entry: IndexEntry = self.index.get(execution_id)?;
+        let path = entry.snapshot_path(execution_id);
+        let record = read_execution_record_snapshot(&path)?;
+        self.inner
+            .insert(record.execution_id.clone(), record.clone());
+        Some(record)
     }
 
     pub(crate) fn list(&self) -> Vec<ExecutionRecord> {
@@ -266,6 +294,7 @@ impl ExecutionStore {
         let record = entry.clone();
         drop(entry);
         persist_record_snapshot(&record);
+        self.index.upsert_from_record(&record);
         Some(record)
     }
 
@@ -286,6 +315,7 @@ impl ExecutionStore {
         let record = entry.clone();
         drop(entry);
         persist_record_snapshot(&record);
+        self.index.upsert_from_record(&record);
         Some(record)
     }
 
@@ -370,6 +400,7 @@ impl ExecutionStore {
             if self.inner.contains_key(&record.execution_id) {
                 continue;
             }
+            self.index.upsert_from_record(&record);
             self.inner.insert(record.execution_id.clone(), record);
             loaded += 1;
         }
