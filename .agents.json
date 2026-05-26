@@ -1,5 +1,5 @@
 {
-  "project": "r14-org-doc-reorg-a1",
+  "project": "apxm",
   "source_of_truth": ".agents/",
   "agent_configs": {
     "claude": {
