@@ -72,10 +72,6 @@
       "description": "Pre-finish review pass \u2014 remove copied _shared text, weak abstractions, referential comments, and over-large skill bodies before claiming completion. Mandatory before apxm-finish and any commit."
     },
     {
-      "name": "apxm-skill-authoring",
-      "description": "Use when adding or editing an APXM agent skill under .agents/skills/. Enforces SSOT pattern, _shared/ pointers (never inlined text), \u2264100 lines per SKILL.md, and dual Claude+Codex compatibility."
-    },
-    {
       "name": "apxm-vllm-service",
       "description": "Use when building, launching, probing, or running APXM workloads against the Dockerized APXM-vLLM backend, especially on Slurm compute nodes. Enforces Dekk as the authority CLI, persistent service allocations, image-store reuse, and service-exec for commands that need the vLLM endpoint."
     }

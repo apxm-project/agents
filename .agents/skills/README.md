@@ -34,8 +34,10 @@ Run in order for any non-trivial session:
 - `apxm-model-zoo-operate` — operate the vLLM zoo manifests.
 - `apxm-backend-add` — register new APXM backends.
 - `apxm-ais-op-design` — design-before-code for new AIS ops.
-- `apxm-skill-authoring` — add/edit agent skills.
 - `apxm-mcp-server` — work on the APXM MCP server.
+
+Skill-authoring lives in the companion repo
+`apxm-project/apxm-libs` (`.agents/skills/apxm-skill-authoring/`).
 
 Benchmark, preregistration, claim-evidence, and evaluation-artifact
 skills live in the companion repo `apxm-project/apxm-eval`.
@@ -53,7 +55,8 @@ skills live in the companion repo `apxm-project/apxm-eval`.
 
 ## How to add a skill
 
-See `apxm-skill-authoring` for the rules. In short:
+The authoring rules live in `apxm-project/apxm-libs`
+(`.agents/skills/apxm-skill-authoring/`). In short:
 
 1. Add `.agents/skills/<name>/SKILL.md` from the template.
 2. `dekk apxm skills status` — confirm registration.
