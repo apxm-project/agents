@@ -106,6 +106,14 @@ impl Artifact {
         &self.metadata
     }
 
+    /// Overwrite the embedded `created_at` timestamp. `ArtifactMetadata::new`
+    /// stamps `SystemTime::now()`, which makes the wire bytes (and any BLAKE3
+    /// over them) non-deterministic across rebuilds. Pin to a constant for
+    /// reproducible artifact hashing.
+    pub fn set_created_at(&mut self, created_at: u64) {
+        self.metadata.created_at = created_at;
+    }
+
     /// Get all DAGs in the artifact
     pub fn dags(&self) -> &[ExecutionDag] {
         &self.dags
