@@ -1,7 +1,7 @@
 //! AIS Operation Definitions - Single Source of Truth
 //!
-//! This module contains the complete specification for all 43 AIS operations
-//! (40 public + 1 metadata + 2 internal). Both the compiler and runtime use
+//! This module contains the complete specification for all 44 AIS operations
+//! (41 public + 1 metadata + 2 internal). Both the compiler and runtime use
 //! these definitions to ensure consistent semantics.
 
 use super::category::OperationCategory;
@@ -15,9 +15,9 @@ use std::fmt;
 
 /// Represents all AIS operation types.
 ///
-/// This enum is the canonical list of operations (43 total):
+/// This enum is the canonical list of operations (44 total):
 /// - 1 metadata operation (AgentOp)
-/// - 40 public operations
+/// - 41 public operations
 /// - 2 internal operations (ConstStr, Yield)
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -75,6 +75,11 @@ pub enum AISOperationType {
     FlowCall,
     /// Spawn an external graph, artifact, or workflow as a child execution.
     WorkflowSpawn,
+    /// Call another skill by manifest identity (`<skill_id>[@<version>]`).
+    /// The runtime resolves the id through the live `SkillLibrary` and
+    /// records the resolved `(skill_id, version, artifact_hash)` triple in
+    /// the parent's provenance.
+    CallSkill,
 
     // Synchronization Operations (3)
     /// Merge multiple tokens into one.
@@ -172,6 +177,7 @@ impl fmt::Display for AISOperationType {
             AISOperationType::Switch => write!(f, "SWITCH"),
             AISOperationType::FlowCall => write!(f, "FLOW_CALL"),
             AISOperationType::WorkflowSpawn => write!(f, "WORKFLOW_SPAWN"),
+            AISOperationType::CallSkill => write!(f, "CALL_SKILL"),
             // Synchronization
             AISOperationType::Merge => write!(f, "MERGE"),
             AISOperationType::Fence => write!(f, "FENCE"),
@@ -236,6 +242,7 @@ impl std::str::FromStr for AISOperationType {
             "switch" => Ok(AISOperationType::Switch),
             "flow_call" => Ok(AISOperationType::FlowCall),
             "workflow_spawn" => Ok(AISOperationType::WorkflowSpawn),
+            "call_skill" => Ok(AISOperationType::CallSkill),
             "merge" => Ok(AISOperationType::Merge),
             "fence" => Ok(AISOperationType::Fence),
             "wait_all" => Ok(AISOperationType::WaitAll),
@@ -288,6 +295,7 @@ impl AISOperationType {
             AISOperationType::Switch => "switch",
             AISOperationType::FlowCall => "flow_call",
             AISOperationType::WorkflowSpawn => "workflow_spawn",
+            AISOperationType::CallSkill => "call_skill",
             AISOperationType::Merge => "merge",
             AISOperationType::Fence => "fence",
             AISOperationType::WaitAll => "wait_all",
@@ -363,6 +371,7 @@ impl AISOperationType {
             39 => Some(AISOperationType::SpawnTeam),
             40 => Some(AISOperationType::Handoff),
             41 => Some(AISOperationType::WorkflowSpawn),
+            42 => Some(AISOperationType::CallSkill),
             _ => None,
         }
     }
@@ -413,12 +422,13 @@ impl AISOperationType {
             AISOperationType::SpawnTeam => Some(39),
             AISOperationType::Handoff => Some(40),
             AISOperationType::WorkflowSpawn => Some(41),
+            AISOperationType::CallSkill => Some(42),
             // Ops without wire indices
             _ => None,
         }
     }
 
-    /// Get all operation types (43 total).
+    /// Get all operation types (44 total).
     pub fn all_operations() -> &'static [AISOperationType] {
         &[
             AISOperationType::Agent,
@@ -441,6 +451,7 @@ impl AISOperationType {
             AISOperationType::Switch,
             AISOperationType::FlowCall,
             AISOperationType::WorkflowSpawn,
+            AISOperationType::CallSkill,
             AISOperationType::Merge,
             AISOperationType::Fence,
             AISOperationType::WaitAll,
@@ -1323,6 +1334,48 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             syntactic_keywords: &[],
         },
     },
+    OperationSpec {
+        op_type: AISOperationType::CallSkill,
+        name: "CallSkill",
+        category: OperationCategory::ControlFlow,
+        description: "Call another skill by manifest identity (id or id@version)",
+        long_description: "Invokes another skill resolved by manifest identity through the live \
+            SkillLibrary, rather than by raw artifact path. Resolution is lazy: the runtime parses \
+            `<skill_id>[@<version>]`, looks up the matching .apxmobj, admits the child's required \
+            capabilities against the parent's grant, dispatches the child entry DAG, and records \
+            the resolved (skill_id, version, artifact_hash) triple in the parent's provenance. \
+            Failure modes are typed: InvalidSkillId, SkillNotFound, SkillVersionNotFound, \
+            CapabilityWiden, CallSkillDepthExceeded, ChildExecutionFailed.",
+        latency: OperationLatency::High,
+        example_json: Some(
+            r#"{"id": 6, "op": "CALL_SKILL", "attributes": {"skill_id": "apxm-orient@0.2.0", "args": ["context"], "input_names": ["context"]}}"#,
+        ),
+        fields: &[
+            OperationField::required(
+                attrs::SKILL_ID,
+                "Skill identifier: \"id\" (latest) or \"id@version\" (pinned)",
+            ),
+            OperationField::optional(
+                attrs::ARGS,
+                "Positional arguments forwarded to the child's entry-flow input vector",
+            ),
+            OperationField::optional(
+                attrs::INPUT_NAMES,
+                "Optional name vector mapping parent outputs onto the child's positional args",
+            ),
+        ],
+        needs_submission: true,
+        min_inputs: 0,
+        produces_output: true,
+        emission: MlirEmissionSpec {
+            primary_attr: Some(attrs::SKILL_ID),
+            context_style: ContextStyle::Parenthesized,
+            result_type: MlirResultType::Token,
+            positional_attrs: &[],
+            keywords: &[attrs::ARGS, attrs::INPUT_NAMES],
+            syntactic_keywords: &[],
+        },
+    },
     // ========== Synchronization Operations (3) ==========
     OperationSpec {
         op_type: AISOperationType::Merge,
@@ -2087,13 +2140,13 @@ mod tests {
     fn test_operation_counts() {
         assert_eq!(
             AIS_OPERATIONS.len(),
-            43,
-            "Expected 43 total operations (1 metadata + 40 public + 2 internal)"
+            44,
+            "Expected 44 total operations (1 metadata + 41 public + 2 internal)"
         );
         assert_eq!(
             AISOperationType::all_operations().len(),
-            43,
-            "Expected 43 total operation types"
+            44,
+            "Expected 44 total operation types"
         );
     }
 

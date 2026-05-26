@@ -148,6 +148,10 @@ pub const PROPOSAL: &str = "proposal";
 pub const MAX_ROUNDS: &str = "max_rounds";
 pub const ARGS: &str = "args";
 pub const SESSION_ROOT: &str = "session_root";
+
+// -- Skill linkage (CALL_SKILL) --
+/// Canonical skill identifier on a `CALL_SKILL` op (`"id"` or `"id@version"`).
+pub const SKILL_ID: &str = "skill_id";
 pub const HANDOFF: &str = "handoff";
 pub const HANDOFF_FROM: &str = "handoff_from";
 pub const HANDOFF_TO: &str = "handoff_to";
@@ -358,6 +362,7 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     PROPOSAL,
     MAX_ROUNDS,
     ARGS,
+    SKILL_ID,
     SESSION_ROOT,
     HANDOFF,
     HANDOFF_FROM,
