@@ -3,8 +3,8 @@ use std::sync::{Arc, Mutex};
 use apxm_backends::llm::backends::{LLMBackend, LLMRequest, LLMResponse, TokenUsage};
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::types::{
-    AISOperationType, ExecutionDag, FinishReason, GraphBackendKind, GraphMetadata,
-    GraphStatusSnapshot, ModelInfo, Node, Value,
+    AISOperationType, BackendGraphCapabilities, ExecutionDag, FinishReason, GraphBackendKind,
+    GraphMetadata, GraphStatusSnapshot, ModelInfo, Node, Value,
 };
 use apxm_runtime::{Runtime, RuntimeConfig};
 use async_trait::async_trait;
@@ -106,6 +106,14 @@ impl LLMBackend for RecordingGraphBackend {
 
     fn supports_graph_extensions(&self) -> bool {
         true
+    }
+
+    fn graph_capabilities(&self) -> BackendGraphCapabilities {
+        BackendGraphCapabilities {
+            supports_graph_registration: true,
+            supports_request_hints: true,
+            ..BackendGraphCapabilities::default()
+        }
     }
 
     async fn get_graph_status(

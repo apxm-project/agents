@@ -295,7 +295,7 @@ async fn runtime_inv_node_with_sandbox_registry_configured() {
     let mut registry = SandboxRegistry::new();
     registry.register(Arc::new(DefaultBackend::new(
         SandboxCapabilities {
-            isolation_level: IsolationLevel::PolicyOnly,
+            isolation_level: IsolationLevel::OsLevel,
             supports_filesystem_restriction: false,
             supports_network_restriction: false,
             supports_syscall_filtering: false,

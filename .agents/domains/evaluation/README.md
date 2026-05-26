@@ -1,6 +1,8 @@
 # Domain — evaluation
 
-Benchmarks, preregistration, claim cards, paper.
+Benchmarks, preregistration, claim cards, and paper-bound evidence now live in
+`apxm-project/apxm-eval`. This domain file is a pointer for APXM core agents
+who encounter evaluation references while working in this repo.
 
 ## Skills
 
@@ -14,17 +16,17 @@ Benchmarks, preregistration, claim cards, paper.
 ## Norm
 
 Every claim-bearing run requires a **committed preregistration before
-the run starts**. `apxm-finish` enforces this — it refuses to claim
-done if the prereg commit timestamp is after the first artifact.
+the run starts**. The current gate lives with the eval harness in
+`apxm-project/apxm-eval`; APXM core does not host paper drafts or claim cards.
 
 ## Layout
 
-- `docs/preregistrations/<UTC>-<descriptor>.md` — frozen, append-only.
-- `docs/claims/<id>.md` — claim cards for paper-bound numbers.
-- `docs/evaluation/<scenario>/<UTC>.md` — write-ups.
-- `.apxm/evaluation/<scenario>/runs/<UTC>/` — raw artifacts.
-- `docs/paper/` — paper drafts.
-- `docs/plans/MASTER.md` — the 9 numbered sub-plans.
+- `apxm-project/apxm-eval/docs/preregistrations/` — frozen, append-only
+  preregistrations.
+- `apxm-project/apxm-eval/docs/claims/` — claim cards for paper-bound numbers.
+- `apxm-project/apxm-eval/docs/evaluation/` — scenario write-ups.
+- `.apxm/evaluation/<scenario>/runs/<UTC>/` — raw artifacts in the repo where
+  the run is executed.
 
 ## Paired-arm benchmarks
 

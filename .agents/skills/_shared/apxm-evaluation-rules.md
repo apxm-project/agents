@@ -35,7 +35,7 @@ there — do not add an ignore guard to mask the bug.
 
 A run is *claim-bearing* if its output backs:
 
-- The APXM paper (anything in `docs/paper/`).
+- The APXM paper in `apxm-project/apxm-eval`.
 - A claim card under `docs/claims/`.
 - A benchmark number cited in a PR description, README, or `docs/`.
 - A "X is faster than Y" / "X matches Y in quality" assertion.
