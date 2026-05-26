@@ -13,8 +13,8 @@ use apxm_core::paths::ApxmPaths;
 use apxm_core::types::{AISOperationType, Value};
 use apxm_runtime::capability::CapabilitySandboxPreflight;
 use apxm_skill::{
-    SkillExecutionProvenance, SkillManifest, SkillPackageHashes, SkillValidationReport,
-    ValidationStatus,
+    CapabilityPolicy, SkillExecutionProvenance, SkillManifest, SkillPackageHashes,
+    SkillValidationReport, ValidationStatus,
 };
 use axum::Json;
 use axum::extract::{Path as AxumPath, State};
@@ -42,8 +42,6 @@ const CONVERSION_REPORT_FILE: &str = "conversion-report.json";
 const RESOURCES_DIR: &str = "resources";
 const TESTS_DIR: &str = "tests";
 const SKILL_SESSION_DIR: &str = "skills";
-const SIDE_EFFECT_POLICY_READ_ONLY: &str = "read_only";
-const SIDE_EFFECT_POLICY_SANDBOXED: &str = "sandboxed";
 const SKILL_EXECUTE_STARTED: EventKind =
     EventKind::new("skill_execute_started", EventCategory::Lifecycle, false);
 const SKILL_EXECUTE_COMPLETE: EventKind =
@@ -510,6 +508,7 @@ fn prepare_skill_execution(
             parent_execution_id: None,
             parent_skill_id: None,
             parent_skill_version: None,
+            scope_id: None,
         },
         &session_id,
         &session_dir,
@@ -845,18 +844,14 @@ fn validate_static_skill_admission(
         }
     }
 
-    let side_effect_policy = manifest
-        .side_effect_policy
-        .as_deref()
-        .unwrap_or(SIDE_EFFECT_POLICY_READ_ONLY);
-    if !matches!(
-        side_effect_policy,
-        SIDE_EFFECT_POLICY_READ_ONLY | SIDE_EFFECT_POLICY_SANDBOXED
-    ) {
-        return Err(ApiError::bad_request(format!(
-            "static skill execution does not support side_effect_policy '{side_effect_policy}' yet"
-        )));
-    }
+    let declared_policy_value = manifest.side_effect_policy.as_deref();
+    let policy = CapabilityPolicy::from_manifest_value(declared_policy_value).ok_or_else(|| {
+        let declared = declared_policy_value.unwrap_or("");
+        ApiError::bad_request(format!(
+            "static skill execution does not support side_effect_policy '{declared}' yet"
+        ))
+    })?;
+
     let allowed_tools: HashSet<&str> = if manifest.allowed_tools.is_empty() {
         manifest
             .required_capabilities
@@ -866,12 +861,26 @@ fn validate_static_skill_admission(
     } else {
         manifest.allowed_tools.iter().map(String::as_str).collect()
     };
-    if side_effect_policy == SIDE_EFFECT_POLICY_READ_ONLY {
-        for name in &allowed_tools {
-            if !capability_system.is_read_only(name) {
-                return Err(ApiError::bad_request(format!(
-                    "skill capability '{name}' is not read-only"
-                )));
+
+    match &policy {
+        CapabilityPolicy::ReadOnly => {
+            for name in &allowed_tools {
+                if !capability_system.is_read_only(name) {
+                    return Err(ApiError::bad_request(format!(
+                        "skill capability '{name}' is not read-only"
+                    )));
+                }
+            }
+        }
+        CapabilityPolicy::Sandboxed => {}
+        CapabilityPolicy::Broader { admits } => {
+            for name in &allowed_tools {
+                if !admits.contains(*name) && !capability_system.is_read_only(name) {
+                    return Err(ApiError::bad_request(format!(
+                        "skill capability '{name}' is not admitted by broader policy {}",
+                        policy.name()
+                    )));
+                }
             }
         }
     }
@@ -880,7 +889,7 @@ fn validate_static_skill_admission(
         for node in &dag.nodes {
             if node.op_type == AISOperationType::InvTool {
                 validate_inv_tool_node(node, &allowed_tools)?;
-                if side_effect_policy == SIDE_EFFECT_POLICY_SANDBOXED {
+                if matches!(policy, CapabilityPolicy::Sandboxed) {
                     validate_sandboxed_inv_tool_node(node, state)?;
                 }
             } else if !is_allowed_static_skill_op(node.op_type) {

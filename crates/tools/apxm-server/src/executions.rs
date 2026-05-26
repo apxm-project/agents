@@ -45,6 +45,8 @@ pub(crate) struct ExecutionRecord {
     pub(crate) parent_skill_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) parent_skill_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) scope_id: Option<String>,
     pub(crate) session_id: String,
     pub(crate) session_dir: String,
     pub(crate) status: ExecutionStatus,
@@ -179,6 +181,7 @@ impl ExecutionStore {
             parent_execution_id: provenance.parent_execution_id,
             parent_skill_id: provenance.parent_skill_id,
             parent_skill_version: provenance.parent_skill_version,
+            scope_id: provenance.scope_id,
             session_id: session_id.to_string(),
             session_dir: session_dir.to_string(),
             status: ExecutionStatus::Running,
