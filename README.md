@@ -32,7 +32,8 @@ process accounting stay consistent.
 ```bash
 git clone https://github.com/apxm-project/apxm
 cd apxm
-git submodule update --init --recursive
+git submodule update --init --recursive      # external/vllm fork
+dekk apxm install --no-interactive
 dekk apxm doctor                              # verify environment
 dekk apxm build                               # release build
 ```

@@ -1,5 +1,0 @@
-max_llm_calls = 1
-# Bumped to accommodate reasoning models that emit `<think>` tokens before
-# the visible answer. The user-facing rubric (`max_chars` in expected.toml)
-# remains tight — this cap is purely on total tokens spent at the backend.
-max_total_tokens = 2000

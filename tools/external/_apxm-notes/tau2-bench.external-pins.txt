@@ -1,5 +1,0 @@
-# Vendored 2026-05-19 for Plan 05 EVAL τ²-bench integration.
-# Refresh deliberately, not silently — see plan 05 risk #2.
-repo=https://github.com/sierra-research/tau2-bench
-pinned_sha=0ed8c0ef0a1f6b024a0fb733e186922411874879
-vendor_date=2026-05-19

@@ -13,8 +13,8 @@ use apxm_core::paths::ApxmPaths;
 use apxm_core::types::{AISOperationType, Value};
 use apxm_runtime::capability::CapabilitySandboxPreflight;
 use apxm_skill::{
-    SkillExecutionProvenance, SkillManifest, SkillPackageHashes, SkillValidationReport,
-    ValidationStatus,
+    CapabilityPolicy, SkillExecutionProvenance, SkillManifest, SkillPackageHashes,
+    SkillValidationReport, ValidationStatus,
 };
 use axum::Json;
 use axum::extract::{Path as AxumPath, State};
@@ -34,6 +34,7 @@ use crate::skill_resources::{
 use crate::state::{AppState, TokioChannelEmitter};
 
 const MANIFEST_FILE: &str = apxm_skill::MANIFEST_FILE;
+const PACK_FILE: &str = "pack.toml";
 const SOURCE_FILE: &str = "SKILL.md";
 const AIR_FILE: &str = "skill.air";
 const ARTIFACT_FILE: &str = "skill.apxmobj";
@@ -41,8 +42,6 @@ const CONVERSION_REPORT_FILE: &str = "conversion-report.json";
 const RESOURCES_DIR: &str = "resources";
 const TESTS_DIR: &str = "tests";
 const SKILL_SESSION_DIR: &str = "skills";
-const SIDE_EFFECT_POLICY_READ_ONLY: &str = "read_only";
-const SIDE_EFFECT_POLICY_SANDBOXED: &str = "sandboxed";
 const SKILL_EXECUTE_STARTED: EventKind =
     EventKind::new("skill_execute_started", EventCategory::Lifecycle, false);
 const SKILL_EXECUTE_COMPLETE: EventKind =
@@ -164,8 +163,21 @@ pub(crate) struct SkillRecord {
     pub(crate) hashes: SkillPackageHashes,
     pub(crate) compile_status: CompileStatus,
     pub(crate) validation: SkillValidationReport,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) pack: Option<PackInfo>,
     #[serde(skip)]
     pub(crate) package_dir: PathBuf,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct PackInfo {
+    pub(crate) pack_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) pack_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) source_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) source_upstream: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -496,6 +508,7 @@ fn prepare_skill_execution(
             parent_execution_id: None,
             parent_skill_id: None,
             parent_skill_version: None,
+            scope_id: None,
         },
         &session_id,
         &session_dir,
@@ -645,6 +658,8 @@ fn load_record(package_dir: &Path) -> SkillRecord {
         warnings,
     };
 
+    let pack = load_pack_info(package_dir);
+
     SkillRecord {
         skill_id: manifest.as_ref().map(|manifest| manifest.skill_id.clone()),
         version: manifest.as_ref().map(|manifest| manifest.version.clone()),
@@ -654,8 +669,43 @@ fn load_record(package_dir: &Path) -> SkillRecord {
         hashes,
         compile_status,
         validation,
+        pack,
         package_dir: package_dir.to_path_buf(),
     }
+}
+
+/// Walk up from a skill package directory to find an enclosing `pack.toml`.
+///
+/// Pack layout: `<libs-root>/<pack-id>/skills/<skill-id>/skill.toml`. The
+/// pack manifest sits two levels above the skill manifest dir.
+fn load_pack_info(package_dir: &Path) -> Option<PackInfo> {
+    let pack_dir = package_dir.parent()?.parent()?;
+    let pack_path = pack_dir.join(PACK_FILE);
+    if !pack_path.is_file() {
+        return None;
+    }
+    let text = fs::read_to_string(&pack_path).ok()?;
+    let value: toml::Value = toml::from_str(&text).ok()?;
+    let pack_id = value.get("pack_id")?.as_str()?.to_string();
+    let pack_version = value
+        .get("version")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let source = value.get("source").and_then(|v| v.as_table());
+    let source_kind = source
+        .and_then(|s| s.get("kind"))
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let source_upstream = source
+        .and_then(|s| s.get("upstream"))
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    Some(PackInfo {
+        pack_id,
+        pack_version,
+        source_kind,
+        source_upstream,
+    })
 }
 
 fn load_static_skill_artifact(
@@ -728,11 +778,23 @@ fn validate_embedded_skill_manifest(
         embedded.air_hash.as_deref(),
         manifest.air_hash.as_deref(),
     )?;
-    validate_embedded_manifest_option(
-        "artifact_hash",
+    // artifact_hash is the BLAKE3 of the artifact bytes themselves;
+    // it cannot live *inside* the artifact it hashes. `dekk apxm libs
+    // build` strips it from the embedded copy by design. The only
+    // legal pair here is embedded=None, manifest=Some(...); anything
+    // else means a tampered/divergent embed.
+    match (
         embedded.artifact_hash.as_deref(),
         manifest.artifact_hash.as_deref(),
-    )?;
+    ) {
+        (None, _) => {}
+        (Some(e), Some(m)) if e == m => {}
+        _ => {
+            return Err(ApiError::bad_request(
+                "embedded skill manifest artifact_hash does not match skill.toml",
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -782,18 +844,14 @@ fn validate_static_skill_admission(
         }
     }
 
-    let side_effect_policy = manifest
-        .side_effect_policy
-        .as_deref()
-        .unwrap_or(SIDE_EFFECT_POLICY_READ_ONLY);
-    if !matches!(
-        side_effect_policy,
-        SIDE_EFFECT_POLICY_READ_ONLY | SIDE_EFFECT_POLICY_SANDBOXED
-    ) {
-        return Err(ApiError::bad_request(format!(
-            "static skill execution does not support side_effect_policy '{side_effect_policy}' yet"
-        )));
-    }
+    let declared_policy_value = manifest.side_effect_policy.as_deref();
+    let policy = CapabilityPolicy::from_manifest_value(declared_policy_value).ok_or_else(|| {
+        let declared = declared_policy_value.unwrap_or("");
+        ApiError::bad_request(format!(
+            "static skill execution does not support side_effect_policy '{declared}' yet"
+        ))
+    })?;
+
     let allowed_tools: HashSet<&str> = if manifest.allowed_tools.is_empty() {
         manifest
             .required_capabilities
@@ -803,12 +861,26 @@ fn validate_static_skill_admission(
     } else {
         manifest.allowed_tools.iter().map(String::as_str).collect()
     };
-    if side_effect_policy == SIDE_EFFECT_POLICY_READ_ONLY {
-        for name in &allowed_tools {
-            if !capability_system.is_read_only(name) {
-                return Err(ApiError::bad_request(format!(
-                    "skill capability '{name}' is not read-only"
-                )));
+
+    match &policy {
+        CapabilityPolicy::ReadOnly => {
+            for name in &allowed_tools {
+                if !capability_system.is_read_only(name) {
+                    return Err(ApiError::bad_request(format!(
+                        "skill capability '{name}' is not read-only"
+                    )));
+                }
+            }
+        }
+        CapabilityPolicy::Sandboxed => {}
+        CapabilityPolicy::Broader { admits } => {
+            for name in &allowed_tools {
+                if !admits.contains(*name) && !capability_system.is_read_only(name) {
+                    return Err(ApiError::bad_request(format!(
+                        "skill capability '{name}' is not admitted by broader policy {}",
+                        policy.name()
+                    )));
+                }
             }
         }
     }
@@ -817,7 +889,7 @@ fn validate_static_skill_admission(
         for node in &dag.nodes {
             if node.op_type == AISOperationType::InvTool {
                 validate_inv_tool_node(node, &allowed_tools)?;
-                if side_effect_policy == SIDE_EFFECT_POLICY_SANDBOXED {
+                if matches!(policy, CapabilityPolicy::Sandboxed) {
                     validate_sandboxed_inv_tool_node(node, state)?;
                 }
             } else if !is_allowed_static_skill_op(node.op_type) {
@@ -1177,5 +1249,43 @@ entry_flow = "{TEST_ENTRY_FLOW}"
         assert_eq!(manifest.skill_id, TEST_SKILL_ID);
         assert_eq!(manifest.version, TEST_SKILL_VERSION);
         assert_eq!(manifest.entry_flow, TEST_ENTRY_FLOW);
+    }
+
+    #[test]
+    fn load_pack_info_extracts_pack_metadata() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pack_dir = tmp.path().join("obra-superpowers-brainstorming");
+        let skill_dir = pack_dir.join("skills").join("obra-superpowers-brainstorming");
+        fs::create_dir_all(&skill_dir).expect("mkdir");
+        fs::write(
+            pack_dir.join(PACK_FILE),
+            r#"
+pack_id = "obra-superpowers-brainstorming"
+version = "0.0.1"
+skill = "obra-superpowers-brainstorming"
+
+[source]
+kind = "port"
+upstream = "https://github.com/obra/superpowers"
+"#,
+        )
+        .expect("write pack.toml");
+
+        let info = load_pack_info(&skill_dir).expect("pack info");
+        assert_eq!(info.pack_id, "obra-superpowers-brainstorming");
+        assert_eq!(info.pack_version.as_deref(), Some("0.0.1"));
+        assert_eq!(info.source_kind.as_deref(), Some("port"));
+        assert_eq!(
+            info.source_upstream.as_deref(),
+            Some("https://github.com/obra/superpowers")
+        );
+    }
+
+    #[test]
+    fn load_pack_info_returns_none_for_legacy_layout() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let skill_dir = tmp.path().join("legacy-skill");
+        fs::create_dir_all(&skill_dir).expect("mkdir");
+        assert!(load_pack_info(&skill_dir).is_none());
     }
 }

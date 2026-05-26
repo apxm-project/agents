@@ -1,7 +1,0 @@
-# Pure non-LLM template; the const string must survive every -O level.
-# Asserted byte-exact via must_contain (full string) plus min/max char
-# bracketing so the rubric also catches accidental wrapping/quoting.
-must_contain = ["OPTIMISATION_INVARIANT_CANARY_42"]
-case_sensitive = true
-min_chars = 32
-max_chars = 64

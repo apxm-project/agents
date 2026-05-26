@@ -235,6 +235,7 @@ dependencies = [
  "apxm-credentials",
  "apxm-driver",
  "apxm-runtime",
+ "apxm-skill",
  "chrono",
  "clap",
  "colored",
@@ -246,6 +247,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "toml",
  "tracing-subscriber",
  "walkdir",
 ]
@@ -327,31 +329,6 @@ dependencies = [
  "tokio",
  "toml",
  "tracing",
-]
-
-[[package]]
-name = "apxm-gui"
-version = "0.0.1"
-dependencies = [
- "apxm-acp",
- "apxm-backends",
- "apxm-compiler",
- "apxm-core",
- "apxm-credentials",
- "async-stream",
- "axum",
- "clap",
- "dashmap",
- "futures",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
- "tokio-stream",
- "toml",
- "tower-http",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

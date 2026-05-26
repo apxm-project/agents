@@ -7,7 +7,7 @@ user-invocable: true
 # APXM vLLM Fork Rebase
 
 The APXM-vLLM fork lives at `external/vllm` (submodule), on branch
-`apxm-rebase-v0.21.0`, upstream `randreshg/vllm`. It holds upstream
+`apxm-rebase-v0.21.0`, upstream `apxm-project/vllm`. It holds upstream
 v0.21.0 plus 5 APXM commits.
 
 Load `_shared/apxm-development-rules.md` before broad work.
@@ -50,7 +50,7 @@ Load `_shared/apxm-development-rules.md` before broad work.
 - Never edit upstream files inside `external/vllm` outside a
   cherry-pick plan. Use the submodule's branch — never bypass via
   detached HEAD edits.
-- Never `git push --force` to `randreshg/vllm`. Push to a new branch
+- Never `git push --force` to `apxm-project/vllm`. Push to a new branch
   and open a PR against the fork's `main` if needed.
 - The 4 `/v1/apxm/*` routes are the public contract — see
   `apxm_vllm_boundary` memory. Breaking them breaks every claim-bearing

@@ -7,9 +7,11 @@ This document defines the **contract** between APXM and the vLLM fork at
 
 ## What APXM gets from the fork
 
-The fork (`https://github.com/randreshg/vllm`, branch `apxm`) is a thin
-patch stack on upstream vLLM that adds the **graph-aware HTTP surface**
-APXM dispatches against. The patch set adds:
+The fork (`https://github.com/apxm-project/vllm`, branch `apxm`) is a
+thin patch stack on upstream vLLM that adds the **graph-aware HTTP
+surface** APXM dispatches against.
+
+The patch set adds:
 
 - The OpenAI-compatible API server mounts an `/v1/apxm/*` router.
 - Each chat/completion/responses/speech-to-text request accepts a

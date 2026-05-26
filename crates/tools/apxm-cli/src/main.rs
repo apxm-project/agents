@@ -120,6 +120,7 @@ async fn run_cli(cli: Cli) -> Result<()> {
             warn,
             disable_passes,
             pass_list_override,
+            embed_manifest,
         } => compile_command(
             input,
             output,
@@ -133,6 +134,7 @@ async fn run_cli(cli: Cli) -> Result<()> {
             disable_passes,
             pass_list_override,
             cli.config,
+            embed_manifest,
         ),
         Commands::Decompile { artifact, output } => decompile_command(artifact, output),
         Commands::Execute {
@@ -203,7 +205,6 @@ async fn run_cli(cli: Cli) -> Result<()> {
         Commands::Workflow { action } => workflow_command(action, cli.json).await,
         Commands::Cache { action } => cache_command(action, cli.json),
         Commands::Tokenize { text, file, model } => tokenize_command(text, file, model, cli.json),
-        Commands::QualityEval { args } => quality_eval_command(args),
         Commands::Gui { file, port, open } => gui_command(file, port, open),
     }
 }
@@ -231,7 +232,6 @@ async fn run_cli_no_driver(cli: Cli) -> Result<()> {
         Commands::Workflow { action } => workflow_command_no_driver(action, cli.json),
         Commands::Cache { action } => cache_command(action, cli.json),
         Commands::Tokenize { text, file, model } => tokenize_command(text, file, model, cli.json),
-        Commands::QualityEval { args } => quality_eval_command(args),
         Commands::Gui { file, port, open } => gui_command(file, port, open),
         _ => Err(anyhow::anyhow!(
             "Command requires the `driver` feature. Rebuild through `{}`, then re-run the command.",

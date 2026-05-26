@@ -1,7 +1,0 @@
-module {
-  func.func @code_completion() -> !ais.token attributes {ais.entry} {
-    %code = ais.ask "Write a single Python function named `factorial` that returns n! for non-negative integers. Output the function only — no surrounding markdown, no explanation." : !ais.token
-    ais.print "{code}" [%code : !ais.token] {input_names = ["code"]}
-    func.return %code : !ais.token
-  }
-}

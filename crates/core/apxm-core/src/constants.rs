@@ -194,6 +194,18 @@ pub mod memory {
     pub const EPISODIC: &str = "episodic";
 }
 
+pub mod call_skill {
+    /// Maximum nested `CALL_SKILL` depth before the runtime fails the call with
+    /// `CallSkillDepthExceeded`. Cross-skill calls compose independent
+    /// contracts, so the depth is intentionally tighter than the intra-artifact
+    /// `MAX_FLOW_CALL_DEPTH`.
+    pub const MAX_CALL_SKILL_DEPTH: usize = 8;
+
+    /// Canonical attribute name carrying the resolved skill identifier
+    /// (`"id"` or `"id@version"`) on a `CALL_SKILL` op.
+    pub const SKILL_ID_ATTR: &str = "skill_id";
+}
+
 pub mod protocols {
     /// MCP (Model Context Protocol) version string.
     pub const MCP_VERSION: &str = "2025-11-25";
@@ -392,8 +404,7 @@ pub mod session {
         pub const NODES_DIR: &str = "nodes";
     }
 
-    /// JSON keys serialized into `results.json`. Mirrored on the Python side
-    /// by `tools/quality_eval/_keys.py::ResultsKeys`. Drift breaks tier-3.
+    /// JSON keys serialized into `results.json`.
     pub mod results_keys {
         pub const NODE_OUTPUTS: &str = "node_outputs";
         pub const TOKEN_VALUES: &str = "token_values";

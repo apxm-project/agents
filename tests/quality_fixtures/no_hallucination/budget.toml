@@ -1,4 +1,0 @@
-max_llm_calls = 1
-# Bumped for reasoning-model thinking budget; visible answer still capped by
-# `max_chars` in expected.toml.
-max_total_tokens = 3000

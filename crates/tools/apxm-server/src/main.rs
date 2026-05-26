@@ -31,10 +31,12 @@
 mod a2a;
 mod agent;
 mod app;
+mod call_skill;
 mod capability;
 mod checkpoints;
 mod error;
 mod execute;
+mod execution_index;
 mod executions;
 mod generate;
 mod health;

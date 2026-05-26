@@ -24,10 +24,9 @@ it over HTTP. Slurm owns GPU allocation and accounting.
 - Prefer an existing service. Start a new service only when changing
   image, model, context length, GPU allocation, or server startup
   flags.
-- Run claim-bearing APXM commands from the service allocation with
-  `dekk apxm vllm service-exec <name> -- <command>`.
-- Generated benchmark/evaluation artifacts belong under `.apxm/`, not
-  `examples/`. See `_shared/apxm-evaluation-rules.md`.
+- Run APXM commands that need the service from the service allocation
+  with `dekk apxm vllm service-exec <name> -- <command>`.
+- Generated artifacts belong under `.apxm/`, not `examples/`.
 - HF cache + `.apxm/vllm-images/` must be visible from every Slurm
   compute node at the same path. See
   `_shared/apxm-storage-layout-rules.md`. Run `dekk apxm vllm doctor`
@@ -93,7 +92,5 @@ Priority-latency claims require `/v1/apxm/scheduler` to report
 - CSVs, sessions, compiler diagnostics, evidence manifests, or
   `.apxmobj` artifacts under `examples/`.
 - Hardcoding port `8916` in code (lints as `hardcoded-port-8916`).
-  Evidence files under `docs/preregistrations/`, `docs/claims/`,
-  `docs/evaluation/`, `docs/paper/` are allowed.
 - Re-introducing BaseHTTPMiddleware in the vLLM fork — silently
   breaks chat completions. See `feedback_basehttpmiddleware_breaks_chat`.

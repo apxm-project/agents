@@ -6,14 +6,9 @@ user-invocable: true
 
 # APXM Commit
 
-Load `_shared/apxm-agent-operating-rules.md` before any commit or push.
-
-The user's commit discipline is **non-negotiable**:
-
-- **No auto-commits.** Ask explicit user approval before every commit.
-- **No push without explicit approval.** Per-action, not per-session.
-- **No push to `main`.** Always a feature branch + PR.
-- **No `--no-verify`.** Fix the hook; never bypass.
+Load `_shared/apxm-agent-operating-rules.md` (commit/push discipline)
+and `_shared/apxm-commit-message-rules.md` (message contract) before
+any commit or push. Both are non-negotiable.
 
 ## What this skill does
 
@@ -27,16 +22,15 @@ The user's commit discipline is **non-negotiable**:
    and `git diff --staged` before drafting.
 5. **Confirm no unrelated changes staged**. Unstage with
    `git reset HEAD -- <path>` if needed.
-6. **Draft the commit message** in repo log style:
-   - First line ≤72 chars, imperative.
-   - Type prefix: `feat(<scope>)`, `fix(<scope>)`, `refactor(<scope>)`,
-     `docs(<scope>)`, `prereg(<plan>)`, `chore(<scope>)`,
-     `eval(<scenario>)`, `bench(<scenario>)`.
-   - Body explains *why*; the diff shows *what*.
-   - No plan/ticket/skill references in the body (those go in PR desc).
-7. **Ask the user for explicit approval** of the message before
+6. **Draft the commit message** per `_shared/apxm-commit-message-rules.md`.
+   Allowed types: `feat fix perf refactor docs test chore bench eval prereg`.
+   `planNN` scope is valid only for `prereg(...)` / `eval(...)`.
+7. **Lint the draft** before showing it to the user:
+   `echo "<message>" > /tmp/apxm-commit-msg && dekk apxm commit-lint /tmp/apxm-commit-msg`.
+   Fix any finding before proceeding.
+8. **Ask the user for explicit approval** of the message before
    running `git commit`. Show the exact message.
-8. **Commit** only after approval. Use a HEREDOC:
+9. **Commit** only after approval. Use a HEREDOC:
    ```bash
    git commit -m "$(cat <<'EOF'
    feat(<scope>): <subject>
@@ -45,12 +39,15 @@ The user's commit discipline is **non-negotiable**:
    EOF
    )"
    ```
-9. **If a pre-commit hook fails**: fix the underlying issue, re-stage,
-   make a **new** commit. Never `--amend` to bypass; never `--no-verify`.
-10. **If asked to push**: confirm branch ≠ `main`, confirm with user once
+   The `commit-msg` hook (installed by `dekk apxm install-hooks`)
+   runs the same lint at commit time. If it blocks, fix the message —
+   never `--no-verify`.
+10. **If a pre-commit hook fails**: fix the underlying issue, re-stage,
+    make a **new** commit. Never `--amend` to bypass; never `--no-verify`.
+11. **If asked to push**: confirm branch ≠ `main`, confirm with user once
     more, then `git push -u origin <branch>` (first push) or `git push`.
     Never `--force`.
-11. **For pushed work**: draft PR title (≤70 chars) and body (Summary +
+12. **For pushed work**: draft PR title (≤70 chars) and body (Summary +
     Test plan); run `gh pr create` only after explicit approval.
 
 ## Anti-patterns

@@ -153,6 +153,7 @@ impl PlanExecutionRecorder for HttpPlanExecutionRecorder {
                     parent_execution_id: None,
                     parent_skill_id: None,
                     parent_skill_version: None,
+                    scope_id: None,
                 },
                 &start.session_id,
                 &start.session_dir,

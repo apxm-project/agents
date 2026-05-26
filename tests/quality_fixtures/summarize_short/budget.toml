@@ -1,6 +1,0 @@
-max_llm_calls = 2
-# Bumped for reasoning-model thinking budget; visible summary still capped by
-# `max_chars` in expected.toml. Two LLM calls × non-deterministic Qwen3
-# thinking tokens. With `enable_thinking=false` plumbed at the backend this
-# drops to ~1k.
-max_total_tokens = 20000

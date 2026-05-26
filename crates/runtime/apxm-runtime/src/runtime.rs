@@ -15,8 +15,8 @@ use crate::{
     },
     executor::{
         ExecutionContext, ExecutionEventEmitter, ExecutionHook, ExecutionHookContext,
-        ExecutorEngine, InnerPlanLinker, NoOpLinker, NoOpWorkflowSpawner, OperationMiddleware,
-        WorkflowSpawner,
+        ExecutorEngine, InnerPlanLinker, NoOpLinker, NoOpSkillResolver, NoOpWorkflowSpawner,
+        OperationMiddleware, SkillResolver, WorkflowSpawner,
     },
     graph_lifecycle::{BackendGraphLifecycle, graph_dispatch_ir_from_dag},
     memory::{MemoryConfig, MemorySystem},
@@ -136,6 +136,7 @@ pub struct Runtime {
     session_lane_guard: SessionLaneGuard,
     inner_plan_linker: Arc<dyn InnerPlanLinker>,
     workflow_spawner: Arc<dyn WorkflowSpawner>,
+    skill_resolver: Arc<dyn SkillResolver>,
     instruction_config: apxm_core::InstructionConfig,
     sandbox_registry: Arc<SandboxRegistry>,
     process_table: Arc<ProcessTable>,
@@ -194,6 +195,7 @@ impl Runtime {
             session_lane_guard: SessionLaneGuard::new(),
             inner_plan_linker: Arc::new(NoOpLinker),
             workflow_spawner: Arc::new(NoOpWorkflowSpawner),
+            skill_resolver: Arc::new(NoOpSkillResolver),
             instruction_config: apxm_core::InstructionConfig::default(),
             sandbox_registry: Arc::new(SandboxRegistry::new()),
             process_table: Arc::new(ProcessTable::new()),
@@ -229,6 +231,7 @@ impl Runtime {
         ctx.session_id = session_id;
         ctx.inner_plan_linker = Arc::clone(&self.inner_plan_linker);
         ctx.workflow_spawner = Arc::clone(&self.workflow_spawner);
+        ctx.skill_resolver = Arc::clone(&self.skill_resolver);
         ctx.dag_splicer = Arc::new(crate::executor::NoOpSplicer);
         ctx.flow_registry = Arc::clone(&self.flow_registry);
         ctx.instruction_config = self.instruction_config.clone();
@@ -270,6 +273,17 @@ impl Runtime {
     /// Attach a workflow-spawn bridge implementation to the runtime.
     pub fn set_workflow_spawner(&mut self, spawner: Arc<dyn WorkflowSpawner>) {
         self.workflow_spawner = spawner;
+    }
+
+    /// Attach a skill-resolution bridge used by the `CALL_SKILL` op.
+    ///
+    /// The runtime defaults to [`NoOpSkillResolver`], which fails every
+    /// `CALL_SKILL` invocation with a `call_skill:<id>` capability error.
+    /// Hosts that ship a `SkillLibrary` (or an equivalent manifest catalog)
+    /// install their resolver implementation here so the runtime can link
+    /// child skills by manifest identity.
+    pub fn set_skill_resolver(&mut self, resolver: Arc<dyn SkillResolver>) {
+        self.skill_resolver = resolver;
     }
 
     /// Set the instruction configuration for system prompts.

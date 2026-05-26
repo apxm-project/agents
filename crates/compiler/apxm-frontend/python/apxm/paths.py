@@ -10,10 +10,17 @@ from apxm.constants import ENV_APXM_HOME
 _APXM_DIR = ".apxm"
 _CRATES_DIR = "crates"
 _WORKSPACE_MANIFEST = "Cargo.toml"
+_GIT_DIR = ".git"
 
 
 def find_repo_root(start: str | os.PathLike[str] | None = None) -> Path:
-    """Return the nearest APXM checkout root, falling back to the current cwd."""
+    """Return the nearest APXM checkout root, falling back to the current cwd.
+
+    A directory qualifies if it contains the APXM workspace
+    (`Cargo.toml` + `crates/`) or, for sibling repos like apxm-eval,
+    a `.git` entry. The `.git` fallback lets companion repos use the
+    `.apxm/` artifact convention without forking the helper.
+    """
 
     current = Path(start or os.getcwd()).resolve()
     if current.is_file():
@@ -21,6 +28,8 @@ def find_repo_root(start: str | os.PathLike[str] | None = None) -> Path:
 
     for candidate in (current, *current.parents):
         if (candidate / _WORKSPACE_MANIFEST).is_file() and (candidate / _CRATES_DIR).is_dir():
+            return candidate
+        if (candidate / _GIT_DIR).exists():
             return candidate
 
     return Path.cwd().resolve()

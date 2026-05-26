@@ -4,6 +4,7 @@
 //! table; parsing accepts both layouts so producers can converge without
 //! duplicating server-side compatibility code.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
@@ -11,6 +12,76 @@ use serde::{Deserialize, Serialize};
 
 pub const MANIFEST_FILE: &str = "skill.toml";
 pub const HASH_PREFIX: &str = "blake3:";
+
+/// Canonical side-effect policy values surfaced on the wire and in manifests.
+///
+/// Producers (skill packs) and consumers (admission code) must reference these
+/// constants instead of duplicating the string literals.
+pub const POLICY_NAME_READ_ONLY: &str = "read_only";
+pub const POLICY_NAME_SANDBOXED: &str = "sandboxed";
+
+/// Classification of what side effects a skill is permitted to perform.
+///
+/// `ReadOnly` and `Sandboxed` are the two policies that the static skill
+/// executor admits today. `Broader { admits }` is a forward-compatible
+/// variant the admission layer can match on once specific capability sets
+/// are sanctioned (e.g. "writes to a single temp dir", "network egress to
+/// a pinned host"). Until then it is admitted only when the caller passes
+/// in an explicit allow-list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CapabilityPolicy {
+    ReadOnly,
+    Sandboxed,
+    Broader { admits: BTreeSet<String> },
+}
+
+impl CapabilityPolicy {
+    /// Parse a manifest's `side_effect_policy` string into a structured
+    /// policy. Unknown values yield `None`; the caller decides whether to
+    /// reject or to promote them to a `Broader` variant out-of-band.
+    pub fn from_manifest_value(value: Option<&str>) -> Option<Self> {
+        match value {
+            None => Some(Self::ReadOnly),
+            Some(POLICY_NAME_READ_ONLY) => Some(Self::ReadOnly),
+            Some(POLICY_NAME_SANDBOXED) => Some(Self::Sandboxed),
+            Some(_) => None,
+        }
+    }
+
+    /// Wire name for this policy (matches what producers write in
+    /// `skill.toml`). `Broader` does not have a single canonical name; it
+    /// surfaces as the joined set of admitted capability tokens.
+    pub fn name(&self) -> String {
+        match self {
+            Self::ReadOnly => POLICY_NAME_READ_ONLY.to_string(),
+            Self::Sandboxed => POLICY_NAME_SANDBOXED.to_string(),
+            Self::Broader { admits } => {
+                let joined: Vec<&str> = admits.iter().map(String::as_str).collect();
+                format!("broader[{}]", joined.join(","))
+            }
+        }
+    }
+
+    /// Returns `true` if `other` is a subset of this policy. Used by nested
+    /// admission to guarantee a child execution never widens beyond what
+    /// its parent declared.
+    pub fn admits(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::ReadOnly, Self::ReadOnly) => true,
+            (Self::Sandboxed, Self::ReadOnly | Self::Sandboxed) => true,
+            (Self::Broader { admits: parent }, Self::Broader { admits: child }) => {
+                child.is_subset(parent)
+            }
+            (Self::Broader { admits }, Self::ReadOnly) => {
+                admits.iter().any(|name| name == POLICY_NAME_READ_ONLY)
+            }
+            (Self::Broader { admits }, Self::Sandboxed) => {
+                admits.iter().any(|name| name == POLICY_NAME_SANDBOXED)
+            }
+            _ => false,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct SkillManifest {
@@ -102,6 +173,10 @@ pub struct SkillExecutionProvenance {
     pub parent_skill_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_skill_version: Option<String>,
+    /// Runtime scope id of the calling flow_call frame, when the execution
+    /// was launched as a nested child (None for top-level executions).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope_id: Option<String>,
 }
 
 pub fn parse_manifest(contents: &str) -> Result<SkillManifest, toml::de::Error> {
@@ -270,5 +345,54 @@ entry_flow = "{TEST_ENTRY_FLOW}"
         assert!(hashes_match("blake3:ABCD", "abcd"));
         assert!(hashes_match("abcd", "blake3:ABCD"));
         assert!(!hashes_match("abcd", "abce"));
+    }
+
+    #[test]
+    fn capability_policy_parses_known_values() {
+        assert_eq!(
+            CapabilityPolicy::from_manifest_value(None),
+            Some(CapabilityPolicy::ReadOnly)
+        );
+        assert_eq!(
+            CapabilityPolicy::from_manifest_value(Some(POLICY_NAME_READ_ONLY)),
+            Some(CapabilityPolicy::ReadOnly)
+        );
+        assert_eq!(
+            CapabilityPolicy::from_manifest_value(Some(POLICY_NAME_SANDBOXED)),
+            Some(CapabilityPolicy::Sandboxed)
+        );
+        assert!(CapabilityPolicy::from_manifest_value(Some("write_files")).is_none());
+    }
+
+    #[test]
+    fn capability_policy_admits_subset_relationship() {
+        let read_only = CapabilityPolicy::ReadOnly;
+        let sandboxed = CapabilityPolicy::Sandboxed;
+        assert!(read_only.admits(&CapabilityPolicy::ReadOnly));
+        assert!(sandboxed.admits(&CapabilityPolicy::ReadOnly));
+        assert!(sandboxed.admits(&CapabilityPolicy::Sandboxed));
+        assert!(!read_only.admits(&CapabilityPolicy::Sandboxed));
+
+        let mut parent_admits = BTreeSet::new();
+        parent_admits.insert("read_only".to_string());
+        parent_admits.insert("net.egress.api.example.com".to_string());
+        let parent = CapabilityPolicy::Broader {
+            admits: parent_admits,
+        };
+
+        let mut child_admits = BTreeSet::new();
+        child_admits.insert("net.egress.api.example.com".to_string());
+        let narrower_child = CapabilityPolicy::Broader {
+            admits: child_admits,
+        };
+        assert!(parent.admits(&narrower_child));
+
+        let mut wider_admits = BTreeSet::new();
+        wider_admits.insert("net.egress.api.example.com".to_string());
+        wider_admits.insert("fs.write.tmp".to_string());
+        let wider_child = CapabilityPolicy::Broader {
+            admits: wider_admits,
+        };
+        assert!(!parent.admits(&wider_child));
     }
 }
