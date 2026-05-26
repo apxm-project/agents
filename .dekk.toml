@@ -175,6 +175,8 @@ uninstall = { run = "python tools/scripts/apxm_libs.py uninstall", description =
 search = { run = "python tools/scripts/apxm_libs.py search", description = "Substring-match pack id, skill, description across sibling catalog" }
 verify = { run = "python tools/scripts/apxm_libs.py verify", description = "Recompute pack_hash and compare to pack.toml [integrity]" }
 pack = { run = "python tools/scripts/apxm_libs.py pack", description = "Build release tarball + compute pack_hash (maintainer; in apxm-libs)" }
+build = { run = "python tools/scripts/apxm_libs.py build", description = "Compile every skill in a pack at the declared opt level and canonicalize artifact_hash / pack_hash" }
+publish = { run = "python tools/scripts/apxm_libs.py publish", description = "Build a pack and print the gh release create invocation (no network call)" }
 
 [install]
 wrap = { name = "apxm", target = "target/release/apxm" }
