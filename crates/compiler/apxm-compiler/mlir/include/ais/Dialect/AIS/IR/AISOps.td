@@ -665,6 +665,34 @@ def AIS_WorkflowSpawnOp : AIS_Op<"workflow_spawn",
   let hasVerifier = 1;
 }
 
+def AIS_CallSkillOp : AIS_Op<"call_skill",
+    [MemoryEffects<[MemRead<AIS_BeliefResource>, MemWrite<AIS_BeliefResource>]>]> {
+  let summary = "Call another skill by manifest identity";
+  let description = [{
+    Invokes another skill by `skill_id` (or `skill_id@version`) rather than by
+    raw `.apxmobj` path. The host's `SkillResolver` binds the identity to a
+    concrete artifact at execution time and records the resolved
+    `(skill_id, version, artifact_hash)` triple in the parent's provenance.
+
+    Example:
+    ```mlir
+    %result = ais.call_skill "apxm-orient" (%topic : !ais.token) : !ais.token
+    %pinned = ais.call_skill "apxm-orient@0.2.0" : !ais.token
+    ```
+  }];
+  let arguments = (ins
+    StrAttr:$skill_id,
+    OptionalAttr<ArrayAttr>:$args,
+    OptionalAttr<ArrayAttr>:$input_names,
+    Variadic<AIS_AnyTokenHandleOrGoal>:$inputs
+  );
+  let results = (outs AIS_TokenType:$result);
+  let assemblyFormat = [{
+    $skill_id (`(` $inputs^ `:` type($inputs) `)`)? attr-dict `:` type($result)
+  }];
+  let hasVerifier = 1;
+}
+
 def AIS_ReturnOp : AIS_Op<"return", [Terminator]> {
   let summary = "Return from subgraph";
   let arguments = (ins AIS_TokenType:$value);

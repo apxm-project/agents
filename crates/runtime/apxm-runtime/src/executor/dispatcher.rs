@@ -127,6 +127,7 @@ impl OperationDispatcher {
             AISOperationType::Switch => switch::execute(ctx, node, inputs).await,
             AISOperationType::FlowCall => flow_call::execute(ctx, node, inputs).await,
             AISOperationType::WorkflowSpawn => workflow_spawn::execute(ctx, node, inputs).await,
+            AISOperationType::CallSkill => call_skill::execute(ctx, node, inputs).await,
 
             // Error handling operations
             AISOperationType::TryCatch => try_catch::execute(ctx, node, inputs).await,
@@ -265,7 +266,7 @@ mod tests {
         // match and CONTRACTS.md accordingly.
         assert_eq!(
             AISOperationType::all_operations().len(),
-            43,
+            44,
             "AISOperationType variant count changed — update dispatcher and CONTRACTS.md"
         );
     }

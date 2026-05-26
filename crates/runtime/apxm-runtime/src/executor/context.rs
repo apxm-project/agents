@@ -32,6 +32,7 @@ use super::memoization::MemoCache;
 use super::middleware::OperationMiddleware;
 use super::timing_tracker::TimingTracker;
 use super::token_accounting::TokenAccountant;
+use super::skill_resolver::{NoOpSkillResolver, SkillResolver};
 use super::workflow_spawner::{NoOpWorkflowSpawner, WorkflowSpawner};
 use crate::model_router::ModelRouter;
 
@@ -53,6 +54,12 @@ pub struct ExecutionContext {
     pub scope_registry: Arc<ScopeRegistry>,
     pub inner_plan_linker: Arc<dyn InnerPlanLinker>,
     pub workflow_spawner: Arc<dyn WorkflowSpawner>,
+    /// Host-supplied resolver used by the `CALL_SKILL` op to bind a
+    /// `skill_id` (or `skill_id@version`) to a concrete artifact at
+    /// execution time. Defaults to [`NoOpSkillResolver`], which fails
+    /// `CALL_SKILL` cleanly with a `call_skill_no_resolver` capability
+    /// error.
+    pub skill_resolver: Arc<dyn SkillResolver>,
     pub dag_splicer: Arc<dyn DagSplicer>,
     pub flow_registry: Arc<FlowRegistry>,
     pub current_agent: Option<Arc<Agent>>,
@@ -161,6 +168,7 @@ impl ExecutionContext {
             scope_registry,
             inner_plan_linker: Arc::new(NoOpLinker),
             workflow_spawner: Arc::new(NoOpWorkflowSpawner),
+            skill_resolver: Arc::new(NoOpSkillResolver),
             dag_splicer: Arc::new(NoOpSplicer),
             flow_registry: Arc::new(FlowRegistry::new()),
             current_agent: None,
@@ -279,6 +287,12 @@ impl ExecutionContext {
         self
     }
 
+    /// Replace the skill resolver used by the `CALL_SKILL` op.
+    pub fn with_skill_resolver(mut self, resolver: Arc<dyn SkillResolver>) -> Self {
+        self.skill_resolver = resolver;
+        self
+    }
+
     /// Set a cancellation token (replaces the default root token).
     pub fn with_cancellation_token(mut self, token: CancellationToken) -> Self {
         self.cancellation_token = token;
@@ -345,6 +359,7 @@ impl ExecutionContext {
             scope_registry: Arc::clone(&self.scope_registry),
             inner_plan_linker: Arc::clone(&self.inner_plan_linker),
             workflow_spawner: Arc::clone(&self.workflow_spawner),
+            skill_resolver: Arc::clone(&self.skill_resolver),
             dag_splicer: Arc::clone(&self.dag_splicer),
             flow_registry: Arc::clone(&self.flow_registry),
             current_agent: self.current_agent.as_ref().map(Arc::clone),
