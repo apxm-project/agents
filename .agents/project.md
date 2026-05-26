@@ -102,35 +102,15 @@ new content. Skills inside the lifecycle can invoke domain skills (e.g.
 - **`.apxm/`** — generated artifacts (gitignored): benchmark results,
   evaluation runs, service registry, compiler diagnostics, vLLM images.
 
-### Companion repos
+### External dependency: vLLM fork
 
-The APXM org is split by ownership boundary. This repo stays focused on
-graph-aware dispatch for vLLM; companion repos carry the children that were
-born from APXM for their own scopes:
-
-- `apxm-project/apxm-eval` — empirical scaffolding for paper-bound APXM
-  claims; preregistrations, benchmarks, claim cards, and paper-draft
-  notes on a release cadence independent of the runtime.
-- `apxm-project/apxm-paper` — LaTeX publication source for the APXM
-  library-of-skills paper; consumes figures and evidence from
-  `apxm-eval` and renders the arXiv-targeted preprint.
-- `apxm-project/apxm-libs` — the compiled-skill library; pack catalog with
-  its own SemVer cadence, conforming to the `SkillManifest` contract this
-  repo owns. Thesis: agents scale only when skills become compiled,
-  versioned, linkable, and governed.
-- `apxm-project/apxm-os` — supervisor binary that runs many long-lived
-  APXM agents as supervised tokio tasks on one host; each agent is a
-  domain expert that subscribes to events, curates its own AAM beliefs +
-  episodic memory, and answers questions from what it already knows.
-- `apxm-project/apxm-gui` — standalone visual surface (axum backend +
-  embedded React SPA): graph visualization, optimization diffs, live
-  session traces. `dekk apxm gui` shells to it when it is on `PATH`.
-- `apxm-project/vllm` — graph-aware vLLM fork exposing five `/v1/apxm/*`
-  routes and the `vllm_xargs.apxm` request-hint envelope; vendored here
-  as `external/vllm`. Branch of record: `apxm-rebase-v0.21.0`.
+`apxm-project/vllm` is the graph-aware vLLM fork that exposes five
+`/v1/apxm/*` routes and the `vllm_xargs.apxm` request-hint envelope. It
+is vendored at `external/vllm` on branch `apxm-rebase-v0.21.0` and is the
+only external repo this codebase depends on directly.
 
 Skills under `.agents/skills/` are agent-tooling for working *on* APXM and
-stay here unless a later PR explicitly migrates them to a child repo.
+stay here.
 
 ## 5. Build, test, codegen
 
@@ -226,12 +206,12 @@ source of truth — refer to them, don't duplicate the literal.
 
 ## 8. Preregistration before claims
 
-Quality/perf claim workflow (preregistrations, benchmarks, claim cards,
-write-ups) lives in `apxm-project/apxm-eval`. Claim-bearing runs against
-the core runtime should reference that repo for the preregistration
-template, evidence layout, and `apxm-finish`-style claim gating. The
-`apxm-finish` lifecycle skill in this repo no longer enforces a
-preregistration check — that gate lives next to the eval harness.
+The `apxm-finish` lifecycle skill in this repo does not enforce a
+preregistration check; quality and perf claim workflows (preregistrations,
+benchmarks, claim cards, write-ups) live with the consuming evaluation
+harness, not in the runtime. Claim-bearing runs against the core runtime
+should follow whatever preregistration template and evidence layout the
+consuming harness defines.
 
 ## 9. AIS dialect ownership
 
