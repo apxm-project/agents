@@ -31,6 +31,7 @@
 mod a2a;
 mod agent;
 mod app;
+mod call_skill;
 mod capability;
 mod checkpoints;
 mod error;
