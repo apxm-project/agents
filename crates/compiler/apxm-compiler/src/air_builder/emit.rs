@@ -858,6 +858,30 @@ fn emit_node(
                 ty: MlirValueType::Token,
             }))
         }
+        AISOperationType::CallSkill => {
+            let skill_id =
+                get_string_attr(&node.attributes, &[graph_attrs::SKILL_ID]).ok_or_else(|| {
+                    AirError::Emission(format!(
+                        "CALL_SKILL node '{}' missing required attribute '{}'",
+                        node.name,
+                        graph_attrs::SKILL_ID
+                    ))
+                })?;
+            let attrs = extra_attr_dict(&node.attributes, &[graph_attrs::SKILL_ID]);
+            let result = format!("%n{}", node.id);
+            let context = format_context(&inputs, '(', ')');
+
+            state.emit(format!(
+                "    {result} = ais.call_skill {}{}{} : !ais.token",
+                quote_string(&skill_id),
+                context,
+                attrs
+            ));
+            Ok(Some(MlirValueRef {
+                ssa: result,
+                ty: MlirValueType::Token,
+            }))
+        }
         AISOperationType::Jump => {
             let target =
                 get_string_attr(&node.attributes, &[graph_attrs::TARGET, graph_attrs::LABEL])

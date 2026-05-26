@@ -46,7 +46,9 @@ pub(crate) async fn run_server() -> anyhow::Result<()> {
     let skill_roots = prepend_builtin_skill_root(parse_skill_roots(&args));
     let skill_library = SkillLibrary::new(skill_roots);
 
-    let runtime = Arc::new(build_runtime_with_router(RuntimeConfig::default()).await?);
+    let mut runtime = build_runtime_with_router(RuntimeConfig::default()).await?;
+    crate::call_skill::install(&mut runtime, skill_library.clone());
+    let runtime = Arc::new(runtime);
 
     let state = AppState {
         runtime,
