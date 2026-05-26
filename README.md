@@ -51,8 +51,12 @@ the GUI, and the graph-aware vLLM fork. Each child owns its own docs, rules,
 and release surface:
 
 - **[`apxm-project/apxm-eval`](https://github.com/apxm-project/apxm-eval)** —
-  preregistrations, benchmarks, claim cards, paper drafts. Any quality or
-  performance claim against this runtime is preregistered and reproduced here.
+  preregistrations, benchmarks, claim cards, paper-draft notes. Any quality
+  or performance claim against this runtime is preregistered and reproduced
+  here.
+- **[`apxm-project/apxm-paper`](https://github.com/apxm-project/apxm-paper)** —
+  LaTeX publication source for the APXM library-of-skills paper; consumes
+  figures and evidence from `apxm-eval`.
 - **[`apxm-project/apxm-libs`](https://github.com/apxm-project/apxm-libs)** —
   compiled-skill library loaded by `apxm-server` via `APXM_SKILLS_PATH`. Each
   pack ships a hash-pinned `.apxmobj` artifact plus its manifest.
