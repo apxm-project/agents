@@ -280,13 +280,11 @@ supported migration procedure.
 
 ### Never, under any circumstance
 
-- **Auto-commit**. Ask for explicit user approval before every `git
-  commit`, even if the user said "commit this" in a previous turn.
-- **Push without explicit approval**. The user must explicitly ask for
-  the push. Approval is per-action, not per-session.
-- **Push to `main`**. Always work on a feature branch; PRs are how
-  pushed work reaches `main`.
-- **`git push --force`** anywhere.
+- **Push to `main`**. Always work on a feature branch. The user moves
+  the work to `main` through their own flow.
+- **`git push --force`** anywhere without explicit approval.
+- **`gh pr create`** unless the user explicitly asks for a PR. The
+  commit + push gate stops at push.
 - **`--no-verify`** to bypass hooks. If a hook fails, fix the root
   cause; never re-stage and bypass. The `commit-msg` hook installed
   by `dekk apxm install-hooks` enforces
@@ -311,7 +309,7 @@ supported migration procedure.
 - Any `sudo` invocation.
 - Any `docker run/build/rm/rmi` or image-tag mutation.
 - Any Slurm submission (`sbatch`, `srun`, `salloc`).
-- Any `gh pr create/comment/merge`, posting to Slack/email/webhooks.
+- Posting to Slack/email/webhooks.
 - Any edit to `~/.apxm/config.toml`, `~/.bashrc`, `~/.gitconfig`,
   systemd units, cron entries, or `.claude/settings.local.json`.
 - Cross-crate refactors and changes to public APIs / AIS ops — these
