@@ -12,25 +12,9 @@ APXM is backend-agnostic. vLLM is an optional LLM backend implemented under the
 normal backend registry. The fork lives at `external/vllm` and adds graph-aware
 OpenAI-compatible endpoints that stock vLLM does not expose.
 
-Use Dekk for normal operations. Dockerized APXM-vLLM is the canonical serving
-path; deployment is reconciliation-driven via the model zoo manifest
-(`deploy/vllm/zoo.toml`):
-
-```bash
-export APXM_VLLM_HF_HOME=$HOME/.cache/huggingface-apxm-vllm  # mandatory; see backends/storage-layout.md
-dekk apxm vllm doctor
-dekk apxm vllm docker-build --image apxm-vllm-runtime:<tag> --base-image <VLLM_IMAGE_TAG_OR_DIGEST>
-dekk apxm vllm docker-save  --image apxm-vllm-runtime:<tag>
-dekk apxm vllm zoo-cache-warm                  # CPU-only HF download
-dekk apxm vllm zoo-apply                       # reconcile manifest → Slurm jobs
-dekk apxm vllm service-status <NAME> --probe
-dekk apxm vllm service-exec <NAME> -- dekk apxm execute <GRAPH.py>
-```
-
-See [`docs/backends/model-zoo.md`](backends/model-zoo.md) for the full
-runbook (manifest schema, replica fan-out, multi-node Ray path, failure
-modes). `docker-build` uses Docker BuildKit/buildx; the legacy builder is
-rejected by `doctor`.
+Bring-up, container build, zoo reconciliation, and operator commands all live
+in [`backends/vllm.md`](backends/vllm.md) and [`backends/model-zoo.md`](backends/model-zoo.md).
+This page covers only the contract that any equivalent build must satisfy.
 
 For containerized operation, the requirement is contract equivalence: the image
 must expose the same HTTP routes and request-hint behavior as the source fork,

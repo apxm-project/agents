@@ -2,8 +2,7 @@
 
 This doc covers releases of the `apxm` Python package on PyPI. The Rust
 crates are not yet published — the workspace tracks `0.0.1` and waits
-for the public Rust API to stabilize (see Phase R.10.5 in
-`docs/design/apxm-skill-runtime-task-backlog.md`).
+for the public Rust API to stabilize.
 
 Releases are cut **manually** from a maintainer's machine using `twine`.
 There is intentionally no GitHub Actions workflow that auto-publishes:

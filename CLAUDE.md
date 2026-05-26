@@ -315,3 +315,28 @@ supported migration procedure.
 Read the relevant doc, recall memory, and ask. The cost of one
 clarifying question is far smaller than the cost of an unintended
 push, an overwritten branch, or a tainted benchmark.
+
+<!-- BEGIN SKILLS INVENTORY -->
+## Available Skills
+
+### Other
+
+| Skill | Description | Path |
+| --- | --- | --- |
+| `apxm-ais-op-design` | Use before adding or modifying an AIS op in apxm-core. Enforces the design-before-code gate, the canonical-attribute rule, and the build-dialect + codegen cadence. | `.agents/skills/apxm-ais-op-design/SKILL.md` |
+| `apxm-backend-add` | Use when registering a new APXM inference backend (cloud, on-prem, or local). Enforces hard-fail-at-config-time and the no-legacy / no-fallback contract on resolver behavior. | `.agents/skills/apxm-backend-add/SKILL.md` |
+| `apxm-commit` | Pre-PR gate — enforces no auto-commit, no push without explicit approval, no push to main, no --no-verify, and PR-for-pushed-work-only. Drafts commit message in repo log style; asks for explicit user approval before each commit. | `.agents/skills/apxm-commit/SKILL.md` |
+| `apxm-compile-and-execute` | Use when compiling APXM graphs, running .apxmobj artifacts, or executing AIR/IR through the runtime. Enforces dekk apxm as the authority CLI and correct artifact placement under .apxm/. | `.agents/skills/apxm-compile-and-execute/SKILL.md` |
+| `apxm-context` | Prime an APXM session before broad work — runs doctor, reads project.md and the relevant _shared rules, surfaces subsystem ownership, and recalls APXM memory. Run at the start of any session that will touch >1 file or any non-trivial change. | `.agents/skills/apxm-context/SKILL.md` |
+| `apxm-execute-plan` | Drive an APXM plan to completion without scope creep. Tracks phases with the harness's task tracker, runs focused per-phase verification, refuses to add features beyond the plan, and surfaces blockers immediately. Invoke only after apxm-plan produces an approved plan. | `.agents/skills/apxm-execute-plan/SKILL.md` |
+| `apxm-finish` | Pre-claim gate — runs focused dekk apxm test, doctor, no-legacy lint, secrets scan, and artifact-placement check before any claim of completion. Refuses to claim done until all pass. | `.agents/skills/apxm-finish/SKILL.md` |
+| `apxm-fork-vllm-rebase` | Use when rebasing the external/vllm fork onto a new upstream tag, cherry-picking APXM commits, or resolving conflicts in the fork. Covers the G1 build/smoke gate. | `.agents/skills/apxm-fork-vllm-rebase/SKILL.md` |
+| `apxm-mcp-server` | Use when working on or registering the APXM MCP server (mcp/apxm_server.py). Each tool shells dekk apxm <cmd>; registration goes through dekk apxm mcp install. | `.agents/skills/apxm-mcp-server/SKILL.md` |
+| `apxm-mlir-pass-development` | Use when adding, modifying, or reordering MLIR passes in the APXM compiler pipeline. Enforces the single pass-list source of truth, the AIS-core ownership rule, and the build-dialect + codegen cadence after .td edits. | `.agents/skills/apxm-mlir-pass-development/SKILL.md` |
+| `apxm-model-zoo-operate` | Use when adding, scaling, or probing models in the vLLM zoo (deploy/vllm/zoo*.toml). Enforces the docker-load → cache-warm → service-start → service-exec order and zoo-apply over service-start. | `.agents/skills/apxm-model-zoo-operate/SKILL.md` |
+| `apxm-plan` | Produce a written plan before non-trivial APXM implementation. Required for changes touching >3 files, modifying a public API or AIS op, or needing Slurm GPU allocation. Enforces APXM-specific gates (AIS-op-vs-compose decision, dialect-codegen impact). | `.agents/skills/apxm-plan/SKILL.md` |
+| `apxm-simplify` | Pre-finish review pass — remove copied _shared text, weak abstractions, referential comments, and over-large skill bodies before claiming completion. Mandatory before apxm-finish and any commit. | `.agents/skills/apxm-simplify/SKILL.md` |
+| `apxm-skill-authoring` | Use when adding or editing an APXM agent skill under .agents/skills/. Enforces SSOT pattern, _shared/ pointers (never inlined text), ≤100 lines per SKILL.md, and dual Claude+Codex compatibility. | `.agents/skills/apxm-skill-authoring/SKILL.md` |
+| `apxm-vllm-service` | Use when building, launching, probing, or running APXM workloads against the Dockerized APXM-vLLM backend, especially on Slurm compute nodes. Enforces Dekk as the authority CLI, persistent service allocations, image-store reuse, and service-exec for commands that need the vLLM endpoint. | `.agents/skills/apxm-vllm-service/SKILL.md` |
+
+<!-- END SKILLS INVENTORY -->
