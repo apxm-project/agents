@@ -779,11 +779,23 @@ fn validate_embedded_skill_manifest(
         embedded.air_hash.as_deref(),
         manifest.air_hash.as_deref(),
     )?;
-    validate_embedded_manifest_option(
-        "artifact_hash",
+    // artifact_hash is the BLAKE3 of the artifact bytes themselves;
+    // it cannot live *inside* the artifact it hashes. `dekk apxm libs
+    // build` strips it from the embedded copy by design. The only
+    // legal pair here is embedded=None, manifest=Some(...); anything
+    // else means a tampered/divergent embed.
+    match (
         embedded.artifact_hash.as_deref(),
         manifest.artifact_hash.as_deref(),
-    )?;
+    ) {
+        (None, _) => {}
+        (Some(e), Some(m)) if e == m => {}
+        _ => {
+            return Err(ApiError::bad_request(
+                "embedded skill manifest artifact_hash does not match skill.toml",
+            ));
+        }
+    }
     Ok(())
 }
 
