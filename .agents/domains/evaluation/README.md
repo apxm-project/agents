@@ -21,12 +21,10 @@ the run starts**. The current gate lives with the eval harness in
 
 ## Layout
 
-- `apxm-project/apxm-eval/docs/preregistrations/` — frozen, append-only
-  preregistrations.
-- `apxm-project/apxm-eval/docs/claims/` — claim cards for paper-bound numbers.
-- `apxm-project/apxm-eval/docs/evaluation/` — scenario write-ups.
-- `.apxm/evaluation/<scenario>/runs/<UTC>/` — raw artifacts in the repo where
-  the run is executed.
+Raw run artifacts written by APXM core land at
+`.apxm/evaluation/<scenario>/runs/<UTC>/`. Preregistrations, claim
+cards, and scenario write-ups live in `apxm-project/apxm-eval`; that
+repo owns its own layout.
 
 ## Paired-arm benchmarks
 
