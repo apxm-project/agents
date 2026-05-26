@@ -4,8 +4,10 @@ Skill authoring, MCP server, the agent surfaces themselves.
 
 ## Skills
 
-- **apxm-skill-authoring** — add/edit agent skills.
 - **apxm-mcp-server** — work on the APXM MCP server.
+
+Skill-authoring lives in `apxm-project/apxm-libs`
+(`.agents/skills/apxm-skill-authoring/`).
 
 ## SSOT
 

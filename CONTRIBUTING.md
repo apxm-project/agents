@@ -150,7 +150,7 @@ of a public issue.
 The SSOT for skill content is `.agents/`. To add a skill:
 
 1. Add `.agents/skills/<name>/SKILL.md` from the template in the
-   `apxm-skill-authoring` skill.
+   `apxm-skill-authoring` skill (now in `apxm-project/apxm-libs`).
 2. Run `dekk apxm skills status` to confirm registration.
 3. Run `dekk apxm skills generate --target all` to regenerate
    `AGENTS.md`, `CLAUDE.md`, `.agents.json`, `.cursorrules`, and
