@@ -271,6 +271,157 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn inv_tool_inside_agent_scope_emits_tool_call_begin_and_end_with_call_id_pairing() {
+        use crate::executor::OperationDispatcher;
+        use crate::executor::agent_scope::AgentScope;
+        use crate::executor::events::ExecutionEventEmitter;
+        use std::sync::Mutex as StdMutex;
+
+        #[derive(Default)]
+        struct Recorder {
+            tool_begin: StdMutex<Vec<(String, String, Vec<String>)>>,
+            tool_end: StdMutex<Vec<(String, String, Vec<String>, String)>>,
+        }
+        impl ExecutionEventEmitter for Recorder {
+            fn emit_llm_token(&self, _content: &str) {}
+            fn emit_tool_start(&self, _name: &str, _args: &HashMap<String, Value>) {}
+            fn emit_tool_end(&self, _name: &str, _result: &Value) {}
+            fn emit_tool_call_begin(
+                &self,
+                agent_code: &str,
+                tool_name: &str,
+                argument_keys: &[String],
+            ) {
+                self.tool_begin.lock().unwrap().push((
+                    agent_code.to_string(),
+                    tool_name.to_string(),
+                    argument_keys.to_vec(),
+                ));
+            }
+            fn emit_tool_call_end(
+                &self,
+                agent_code: &str,
+                tool_name: &str,
+                result_keys: &[String],
+                status: &str,
+                _latency_ms: u64,
+            ) {
+                self.tool_end.lock().unwrap().push((
+                    agent_code.to_string(),
+                    tool_name.to_string(),
+                    result_keys.to_vec(),
+                    status.to_string(),
+                ));
+            }
+        }
+
+        let mut ctx = create_test_context_with_capability().await;
+        let recorder: Arc<Recorder> = Arc::new(Recorder::default());
+        let emitter: Arc<dyn ExecutionEventEmitter> = recorder.clone();
+        ctx.event_emitter = Some(emitter);
+        ctx.agent_scope_stack.push(AgentScope::new(
+            "crm",
+            "span-crm",
+            None,
+            None,
+        ));
+
+        let mut node = Node {
+            id: 7,
+            op_type: AISOperationType::InvTool,
+            attributes: HashMap::new(),
+            input_tokens: vec![],
+            output_tokens: vec![100],
+            metadata: NodeMetadata::default(),
+        };
+        node.attributes.insert(
+            graph_attrs::CAPABILITY.to_string(),
+            Value::String("echo".to_string()),
+        );
+        node.attributes.insert(
+            graph_attrs::PARAMS_JSON.to_string(),
+            Value::String(r#"{"message":"hi"}"#.to_string()),
+        );
+
+        let _ = OperationDispatcher::dispatch(&ctx, &node, vec![]).await.unwrap();
+
+        let begins = recorder.tool_begin.lock().unwrap();
+        let ends = recorder.tool_end.lock().unwrap();
+        assert_eq!(begins.len(), 1);
+        assert_eq!(begins[0].0, "crm");
+        assert_eq!(begins[0].1, "echo");
+        assert_eq!(begins[0].2, vec!["message".to_string()]);
+        assert_eq!(ends.len(), 1);
+        assert_eq!(ends[0].0, "crm");
+        assert_eq!(ends[0].1, "echo");
+        assert_eq!(ends[0].3, "ok");
+    }
+
+    #[tokio::test]
+    async fn inv_tool_at_top_level_does_not_emit_tool_call() {
+        use crate::executor::OperationDispatcher;
+        use crate::executor::events::ExecutionEventEmitter;
+        use std::sync::Mutex as StdMutex;
+
+        #[derive(Default)]
+        struct Recorder {
+            tool_begin: StdMutex<usize>,
+            tool_end: StdMutex<usize>,
+        }
+        impl ExecutionEventEmitter for Recorder {
+            fn emit_llm_token(&self, _content: &str) {}
+            fn emit_tool_start(&self, _name: &str, _args: &HashMap<String, Value>) {}
+            fn emit_tool_end(&self, _name: &str, _result: &Value) {}
+            fn emit_tool_call_begin(
+                &self,
+                _agent_code: &str,
+                _tool_name: &str,
+                _argument_keys: &[String],
+            ) {
+                *self.tool_begin.lock().unwrap() += 1;
+            }
+            fn emit_tool_call_end(
+                &self,
+                _agent_code: &str,
+                _tool_name: &str,
+                _result_keys: &[String],
+                _status: &str,
+                _latency_ms: u64,
+            ) {
+                *self.tool_end.lock().unwrap() += 1;
+            }
+        }
+
+        let mut ctx = create_test_context_with_capability().await;
+        let recorder: Arc<Recorder> = Arc::new(Recorder::default());
+        let emitter: Arc<dyn ExecutionEventEmitter> = recorder.clone();
+        ctx.event_emitter = Some(emitter);
+        assert!(ctx.agent_scope_stack.is_empty());
+
+        let mut node = Node {
+            id: 7,
+            op_type: AISOperationType::InvTool,
+            attributes: HashMap::new(),
+            input_tokens: vec![],
+            output_tokens: vec![100],
+            metadata: NodeMetadata::default(),
+        };
+        node.attributes.insert(
+            graph_attrs::CAPABILITY.to_string(),
+            Value::String("echo".to_string()),
+        );
+        node.attributes.insert(
+            graph_attrs::PARAMS_JSON.to_string(),
+            Value::String(r#"{"message":"hi"}"#.to_string()),
+        );
+
+        let _ = OperationDispatcher::dispatch(&ctx, &node, vec![]).await.unwrap();
+
+        assert_eq!(*recorder.tool_begin.lock().unwrap(), 0);
+        assert_eq!(*recorder.tool_end.lock().unwrap(), 0);
+    }
+
+    #[tokio::test]
     async fn test_inv_with_named_args() {
         let ctx = create_test_context_with_capability().await;
 

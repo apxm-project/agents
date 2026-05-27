@@ -315,6 +315,51 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
         );
     }
 
+    // Phase 14.8.A — Emit a typed AGENT_SPAWNED event so observers can
+    // attach an agent label to this node without scraping STM.
+    if let Some(emitter) = &ctx.event_emitter {
+        let process_id = agent_info
+            .get(response_keys::PROCESS_ID)
+            .and_then(|value| value.as_string())
+            .map(|s| s.to_string());
+        emitter.emit_agent_spawned(
+            node.id,
+            &agent_name,
+            &ctx.execution_id,
+            profile.as_deref(),
+            process_id.as_deref(),
+            None,
+        );
+    }
+
+    // Layer 2 — push an agent scope and bracket it with
+    // `subagent_spawn_begin` / `subagent_spawn_end`. Subsequent ASK /
+    // INV_TOOL handlers see a non-empty stack and emit paired Layer 2
+    // events tagged with this `agent_code`. The scope's pop site lives
+    // in the spawned subgraph's terminal handler — see the engine
+    // bracket below; for now we leave the scope on the stack so the
+    // remainder of the run benefits.
+    let parent_span_id = ctx.agent_scope_stack.peek().map(|s| s.span_id);
+    let span_id = format!("agent-{}-{}", agent_name, node.id);
+    ctx.agent_scope_stack
+        .push(crate::executor::agent_scope::AgentScope::new(
+            agent_name.clone(),
+            span_id,
+            parent_span_id.clone(),
+            None,
+        ));
+    if let Some(emitter) = &ctx.event_emitter {
+        emitter.emit_subagent_spawn_begin(
+            &agent_name,
+            Some(&agent_name),
+            None,
+            None,
+            None,
+            parent_span_id.as_deref(),
+        );
+        emitter.emit_subagent_spawn_end(&agent_name);
+    }
+
     apxm_op!(info,
         execution_id = %ctx.execution_id,
         agent_name = %agent_name,
@@ -412,6 +457,109 @@ mod tests {
             Value::String(agent_name.to_string()),
         );
         node
+    }
+
+    #[tokio::test]
+    async fn spawn_agent_pushes_agent_scope_and_emits_layer2_bracket() {
+        use crate::executor::events::ExecutionEventEmitter;
+        use std::sync::Mutex;
+
+        // Minimal recorder emitter that only captures the Layer 2
+        // bracket events we care about for this test.
+        #[derive(Default)]
+        struct Recorder {
+            spawn_begins: Mutex<Vec<String>>,
+            spawn_ends: Mutex<Vec<String>>,
+        }
+        impl ExecutionEventEmitter for Recorder {
+            fn emit_llm_token(&self, _content: &str) {}
+            fn emit_tool_start(
+                &self,
+                _name: &str,
+                _args: &std::collections::HashMap<String, Value>,
+            ) {
+            }
+            fn emit_tool_end(&self, _name: &str, _result: &Value) {}
+            fn emit_subagent_spawn_begin(
+                &self,
+                agent_code: &str,
+                _agent_name: Option<&str>,
+                _agent_type: Option<&str>,
+                _module_key: Option<&str>,
+                _autonomy_policy: Option<&str>,
+                _parent_span_id: Option<&str>,
+            ) {
+                self.spawn_begins.lock().unwrap().push(agent_code.to_string());
+            }
+            fn emit_subagent_spawn_end(&self, agent_code: &str) {
+                self.spawn_ends.lock().unwrap().push(agent_code.to_string());
+            }
+        }
+
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(LLMRegistry::new());
+        let capability_system = Arc::new(CapabilitySystem::new());
+
+        let recorder: Arc<Recorder> = Arc::new(Recorder::default());
+        let emitter: Arc<dyn ExecutionEventEmitter> = recorder.clone();
+
+        let mut ctx = ExecutionContext::new(
+            memory,
+            llm_registry,
+            capability_system,
+            crate::aam::Aam::new(),
+        );
+        ctx.event_emitter = Some(emitter);
+
+        assert!(ctx.agent_scope_stack.is_empty());
+
+        let node = make_spawn_node("crm");
+        let _ = execute(&ctx, &node, vec![]).await.unwrap();
+
+        assert_eq!(ctx.agent_scope_stack.depth(), 1);
+        let top = ctx.agent_scope_stack.peek().unwrap();
+        assert_eq!(top.agent_code, "crm");
+        assert!(top.parent_span_id.is_none());
+
+        let begins = recorder.spawn_begins.lock().unwrap();
+        let ends = recorder.spawn_ends.lock().unwrap();
+        assert_eq!(*begins, vec!["crm".to_string()]);
+        assert_eq!(*ends, vec!["crm".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn nested_spawn_agent_tracks_parent_span_id() {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(LLMRegistry::new());
+        let capability_system = Arc::new(CapabilitySystem::new());
+
+        let ctx = ExecutionContext::new(
+            memory,
+            llm_registry,
+            capability_system,
+            crate::aam::Aam::new(),
+        );
+
+        let outer = make_spawn_node("cleo");
+        let _ = execute(&ctx, &outer, vec![]).await.unwrap();
+        let outer_span = ctx.agent_scope_stack.peek().unwrap().span_id;
+
+        let mut inner = make_spawn_node("crm");
+        inner.id = 2;
+        let _ = execute(&ctx, &inner, vec![]).await.unwrap();
+
+        assert_eq!(ctx.agent_scope_stack.depth(), 2);
+        let top = ctx.agent_scope_stack.peek().unwrap();
+        assert_eq!(top.agent_code, "crm");
+        assert_eq!(top.parent_span_id.as_deref(), Some(outer_span.as_str()));
     }
 
     #[tokio::test]

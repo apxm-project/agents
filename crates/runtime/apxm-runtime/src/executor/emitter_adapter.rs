@@ -134,7 +134,66 @@ impl ExecutionEventEmitter for EmitterAdapter {
     }
 
     fn emit_operation_start(&self, node_id: u64, op_type: AISOperationType) {
-        self.emit(OperationStartPayload { node_id, op_type });
+        self.emit(OperationStartPayload {
+            node_id,
+            op_type,
+            context: None,
+        });
+    }
+
+    fn emit_operation_start_with_context(
+        &self,
+        node_id: u64,
+        op_type: AISOperationType,
+        context: serde_json::Value,
+    ) {
+        self.emit(OperationStartPayload {
+            node_id,
+            op_type,
+            context: Some(context),
+        });
+    }
+
+    fn emit_agent_spawned(
+        &self,
+        node_id: u64,
+        agent_code: &str,
+        parent_execution_id: &str,
+        profile: Option<&str>,
+        process_id: Option<&str>,
+        scope_policy: Option<&str>,
+    ) {
+        self.emit(AgentSpawnedPayload {
+            node_id,
+            agent_code: agent_code.to_string(),
+            parent_execution_id: parent_execution_id.to_string(),
+            profile: profile.map(str::to_string),
+            process_id: process_id.map(str::to_string),
+            scope_policy: scope_policy.map(str::to_string),
+        });
+    }
+
+    fn emit_communicate_dispatched(
+        &self,
+        node_id: u64,
+        target_agent: &str,
+        protocol: &str,
+        message_excerpt: Option<&str>,
+    ) {
+        self.emit(CommunicateDispatchedPayload {
+            node_id,
+            target_agent: target_agent.to_string(),
+            protocol: protocol.to_string(),
+            message_excerpt: message_excerpt.map(str::to_string),
+        });
+    }
+
+    fn emit_graph_edge(&self, from_node_id: u64, to_node_id: u64, kind: &str) {
+        self.emit(GraphEdgePayload {
+            from_node_id,
+            to_node_id,
+            kind: kind.to_string(),
+        });
     }
 
     fn emit_operation_end(

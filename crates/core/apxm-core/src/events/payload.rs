@@ -204,6 +204,40 @@ fn boxed_core_payload_from_json(
         boxed!(SessionEndPayload)
     } else if kind_name == kind::TURN_BOUNDARY.name() {
         boxed!(TurnBoundaryPayload)
+    } else if kind_name == kind::AGENT_SPAWNED.name() {
+        boxed!(AgentSpawnedPayload)
+    } else if kind_name == kind::COMMUNICATE_DISPATCHED.name() {
+        boxed!(CommunicateDispatchedPayload)
+    } else if kind_name == kind::GRAPH_EDGE.name() {
+        boxed!(GraphEdgePayload)
+    } else if kind_name == kind::TURN_STARTED.name() {
+        boxed!(TurnStartedPayload)
+    } else if kind_name == kind::TURN_COMPLETE.name() {
+        boxed!(TurnCompletePayload)
+    } else if kind_name == kind::TURN_ABORTED.name() {
+        boxed!(TurnAbortedPayload)
+    } else if kind_name == kind::SUBAGENT_SPAWN_BEGIN.name() {
+        boxed!(SubagentSpawnBeginPayload)
+    } else if kind_name == kind::SUBAGENT_SPAWN_END.name() {
+        boxed!(SubagentSpawnEndPayload)
+    } else if kind_name == kind::SUBAGENT_LLM_CALL_BEGIN.name() {
+        boxed!(SubagentLlmCallBeginPayload)
+    } else if kind_name == kind::SUBAGENT_LLM_CALL_END.name() {
+        boxed!(SubagentLlmCallEndPayload)
+    } else if kind_name == kind::TOOL_CALL_BEGIN.name() {
+        boxed!(ToolCallBeginPayload)
+    } else if kind_name == kind::TOOL_CALL_END.name() {
+        boxed!(ToolCallEndPayload)
+    } else if kind_name == kind::SUBAGENT_DONE.name() {
+        boxed!(SubagentDonePayload)
+    } else if kind_name == kind::SUBAGENT_FAILED.name() {
+        boxed!(SubagentFailedPayload)
+    } else if kind_name == kind::AGENT_MESSAGE.name() {
+        boxed!(AgentMessagePayload)
+    } else if kind_name == kind::APPROVAL_REQUEST.name() {
+        boxed!(ApprovalRequestPayload)
+    } else if kind_name == kind::APPROVAL_RESOLVED.name() {
+        boxed!(ApprovalResolvedPayload)
     } else {
         Err(<serde_json::Error as serde::de::Error>::custom(format!(
             "core event kind `{kind_name}` has no payload decoder"
@@ -477,6 +511,12 @@ pub struct OperationStartPayload {
     pub node_id: u64,
     /// The operation type.
     pub op_type: AISOperationType,
+    /// Op-specific context (target agent for COMMUNICATE, tool names +
+    /// model for ASK, agent_code for SPAWN_AGENT). Optional so
+    /// extension is backwards-compatible — consumers that don't know
+    /// about a key simply ignore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<serde_json::Value>,
 }
 impl_event_payload!(OperationStartPayload, kind::OPERATION_START);
 
@@ -539,6 +579,67 @@ pub struct ToolEndPayload {
     pub result: serde_json::Value,
 }
 impl_event_payload!(ToolEndPayload, kind::TOOL_END);
+
+// ───────────────────────────────────────────────────────────────────
+// Phase 14.8.A — Multi-agent / topology enrichment payloads.
+//
+// Emitted alongside OPERATION_START/OPERATION_END so observers can
+// reconstruct an agent/tool dispatch tree without scraping op
+// attributes. All three are terminal events (no _delta partner).
+// ───────────────────────────────────────────────────────────────────
+
+/// A new agent was registered/spawned by a SPAWN_AGENT op.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentSpawnedPayload {
+    /// Graph node id of the SPAWN_AGENT op that produced this agent.
+    pub node_id: u64,
+    /// Stable agent code (agent_name attribute on the spawn node).
+    pub agent_code: String,
+    /// Execution id of the parent dispatch that spawned this agent.
+    pub parent_execution_id: String,
+    /// Optional ACP profile when the agent runs as a subprocess.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
+    /// Optional process id when the agent was registered with the
+    /// runtime process table.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_id: Option<String>,
+    /// Scope policy controlling the agent's visibility window.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope_policy: Option<String>,
+}
+impl_event_payload!(AgentSpawnedPayload, kind::AGENT_SPAWNED);
+
+/// A COMMUNICATE op dispatched a message to a target agent.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommunicateDispatchedPayload {
+    /// Graph node id of the COMMUNICATE op.
+    pub node_id: u64,
+    /// Target agent — name or URL (URLs are kept verbatim).
+    pub target_agent: String,
+    /// Wire protocol (`local` | `http` | `https` | `acp` | `broadcast`).
+    pub protocol: String,
+    /// Optional, truncated excerpt of the outgoing message. Producers
+    /// should cap to ~240 chars so observers can render an inline
+    /// preview without holding the full payload.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_excerpt: Option<String>,
+}
+impl_event_payload!(CommunicateDispatchedPayload, kind::COMMUNICATE_DISPATCHED);
+
+/// A graph edge resolved at runtime. Lets observers build the topology
+/// view incrementally instead of inferring it from op + parent_span_id.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphEdgePayload {
+    /// Source graph node id.
+    pub from_node_id: u64,
+    /// Target graph node id.
+    pub to_node_id: u64,
+    /// Edge kind: `dispatch` (spawn → child), `tool_invocation`
+    /// (agent → tool), `synthesis_feed` (child → parent collector).
+    pub kind: String,
+}
+impl_event_payload!(GraphEdgePayload, kind::GRAPH_EDGE);
 
 /// A plan was created.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -798,3 +899,210 @@ pub struct TurnBoundaryPayload {
     pub direction: TurnDirection,
 }
 impl_event_payload!(TurnBoundaryPayload, kind::TURN_BOUNDARY);
+
+// ===========================================================================
+// Layer 2 — agent-layer payload structs
+//
+// Emitted alongside the Layer 1 graph events whenever the executor is
+// inside an agent scope. See `crates/runtime/apxm-runtime/src/executor/
+// agent_scope.rs` for the scope primitive and CLAUDE.md §10 for the
+// canonical pairing rules. Field shapes mirror CLIC's
+// `ClicDispatchEventKind` payloads so the relay can stop translating.
+// ===========================================================================
+
+/// The outermost executor entry began — a user turn started.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TurnStartedPayload {
+    /// APXM execution id for this turn.
+    pub execution_id: String,
+    /// Optional CLIC-facing turn id (when one was supplied by the caller).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<String>,
+    /// Optional human-readable label for the top-level agent (e.g. "Cleo").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coordinator_label: Option<String>,
+}
+impl_event_payload!(TurnStartedPayload, kind::TURN_STARTED);
+
+/// The outermost executor returned successfully.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TurnCompletePayload {
+    /// APXM execution id for the completed turn.
+    pub execution_id: String,
+    /// Wall-clock duration of the turn, in milliseconds.
+    pub duration_ms: u64,
+    /// Whether the turn produced a coordinator answer.
+    pub had_answer: bool,
+}
+impl_event_payload!(TurnCompletePayload, kind::TURN_COMPLETE);
+
+/// The outermost executor terminated abnormally.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TurnAbortedPayload {
+    /// APXM execution id for the aborted turn.
+    pub execution_id: String,
+    /// Wall-clock duration before abort, in milliseconds.
+    pub duration_ms: u64,
+    /// Coarse classification of the abort reason
+    /// (`"cancelled"`, `"error"`, `"timeout"`, …).
+    pub reason: String,
+    /// Safe (PII-scrubbed) message about what happened.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_message_safe: Option<String>,
+}
+impl_event_payload!(TurnAbortedPayload, kind::TURN_ABORTED);
+
+/// A SPAWN_AGENT node is creating a new sub-agent execution scope.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubagentSpawnBeginPayload {
+    /// Stable agent code (the `agent_name` attribute on the spawn node).
+    pub agent_code: String,
+    /// Optional human-readable agent name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_name: Option<String>,
+    /// Optional agent type/category (e.g. `"module_agent"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_type: Option<String>,
+    /// Optional module key the agent belongs to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub module_key: Option<String>,
+    /// Optional autonomy policy controlling write-side behavior.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub autonomy_policy: Option<String>,
+    /// Span id of the parent agent scope (None for top-level).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_span_id: Option<String>,
+}
+impl_event_payload!(SubagentSpawnBeginPayload, kind::SUBAGENT_SPAWN_BEGIN);
+
+/// The new sub-agent scope is fully constructed and ready to dispatch.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubagentSpawnEndPayload {
+    /// Stable agent code matching the begin event.
+    pub agent_code: String,
+}
+impl_event_payload!(SubagentSpawnEndPayload, kind::SUBAGENT_SPAWN_END);
+
+/// An ASK node began an LLM call inside an agent scope.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubagentLlmCallBeginPayload {
+    /// Stable code of the agent issuing the call.
+    pub agent_code: String,
+    /// Model identifier as routed (may differ from the requested model).
+    pub model: String,
+    /// Backend identifier (e.g. `"vllm"`, `"openai"`, `"ollama"`).
+    pub backend: String,
+    /// Count of tools exposed to the model for this call.
+    pub tool_manifest_count: usize,
+}
+impl_event_payload!(SubagentLlmCallBeginPayload, kind::SUBAGENT_LLM_CALL_BEGIN);
+
+/// An ASK node inside an agent scope returned an LLM response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubagentLlmCallEndPayload {
+    /// Stable code of the agent issuing the call.
+    pub agent_code: String,
+    /// Why the model stopped generating.
+    pub finish_reason: String,
+    /// Token accounting for this call.
+    pub usage: UsagePayload,
+    /// Length of the returned content, in characters (safe to surface).
+    pub content_len: usize,
+}
+impl_event_payload!(SubagentLlmCallEndPayload, kind::SUBAGENT_LLM_CALL_END);
+
+/// An INV_TOOL node began a tool invocation inside an agent scope.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCallBeginPayload {
+    /// Stable code of the agent issuing the tool call.
+    pub agent_code: String,
+    /// Tool name being invoked.
+    pub tool_name: String,
+    /// Argument keys (no values — payload stays redaction-safe).
+    pub argument_keys: Vec<String>,
+}
+impl_event_payload!(ToolCallBeginPayload, kind::TOOL_CALL_BEGIN);
+
+/// An INV_TOOL node inside an agent scope returned a result.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCallEndPayload {
+    /// Stable code of the agent issuing the tool call.
+    pub agent_code: String,
+    /// Tool name that ran.
+    pub tool_name: String,
+    /// Result keys (no values — safe-to-surface only).
+    pub result_keys: Vec<String>,
+    /// Coarse status (`"ok"` | `"error"` | `"approval_pending"`).
+    pub status: String,
+    /// Wall-clock duration of the tool call, in milliseconds.
+    pub latency_ms: u64,
+}
+impl_event_payload!(ToolCallEndPayload, kind::TOOL_CALL_END);
+
+/// A sub-agent scope exited cleanly.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubagentDonePayload {
+    /// Stable agent code that just exited.
+    pub agent_code: String,
+    /// Total number of tool calls dispatched during the scope.
+    pub total_tool_calls: usize,
+    /// Aggregated token usage across the scope.
+    pub usage_total: UsagePayload,
+    /// Optional short evidence excerpt for downstream rendering.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence_excerpt: Option<String>,
+}
+impl_event_payload!(SubagentDonePayload, kind::SUBAGENT_DONE);
+
+/// A sub-agent scope exited with an error.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubagentFailedPayload {
+    /// Stable agent code that failed.
+    pub agent_code: String,
+    /// Coarse classification (`"timeout"`, `"capability_denied"`, …).
+    pub error_class: String,
+    /// Safe-to-surface error message (no PII / prompt fragments).
+    pub error_message_safe: String,
+}
+impl_event_payload!(SubagentFailedPayload, kind::SUBAGENT_FAILED);
+
+/// The coordinator emitted a final answer payload.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentMessagePayload {
+    /// Coordinator-produced text.
+    pub text: String,
+    /// Optional stable item id (provider-assigned where available).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub item_id: Option<String>,
+    /// Optional provider response id this answer is part of.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_id: Option<String>,
+    /// Aggregated token usage for the coordinator's final turn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<UsagePayload>,
+}
+impl_event_payload!(AgentMessagePayload, kind::AGENT_MESSAGE);
+
+/// A human-in-the-loop approval gate was triggered.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApprovalRequestPayload {
+    /// Agent that requested the action requiring approval.
+    pub agent_code: String,
+    /// Tool name being gated.
+    pub tool_name: String,
+    /// Stable approval id (CLIC-issued where available).
+    pub approval_id: String,
+    /// Coarse risk classification (`"low"` | `"medium"` | `"high"`).
+    pub risk_level: String,
+}
+impl_event_payload!(ApprovalRequestPayload, kind::APPROVAL_REQUEST);
+
+/// A previously-requested approval was resolved.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApprovalResolvedPayload {
+    /// Stable approval id this resolution refers to.
+    pub approval_id: String,
+    /// Resolution outcome (`"approved"` | `"denied"` | `"expired"`).
+    pub decision: String,
+}
+impl_event_payload!(ApprovalResolvedPayload, kind::APPROVAL_RESOLVED);

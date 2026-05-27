@@ -211,6 +211,7 @@ mod tests {
         OperationStartPayload {
             node_id: 1,
             op_type: AISOperationType::Ask,
+            context: None,
         }
     );
     roundtrip_test!(
@@ -404,6 +405,159 @@ mod tests {
             direction: TurnDirection::Request,
         }
     );
+
+    // ── Layer 2 — agent-layer payload round-trip tests ────────────────
+    roundtrip_test!(
+        serde_turn_started,
+        TurnStartedPayload {
+            execution_id: "exec-1".into(),
+            turn_id: Some("turn-1".into()),
+            coordinator_label: Some("Cleo".into()),
+        }
+    );
+    roundtrip_test!(
+        serde_turn_complete,
+        TurnCompletePayload {
+            execution_id: "exec-1".into(),
+            duration_ms: 4321,
+            had_answer: true,
+        }
+    );
+    roundtrip_test!(
+        serde_turn_aborted,
+        TurnAbortedPayload {
+            execution_id: "exec-1".into(),
+            duration_ms: 100,
+            reason: "cancelled".into(),
+            error_message_safe: Some("user cancelled".into()),
+        }
+    );
+    roundtrip_test!(
+        serde_subagent_spawn_begin,
+        SubagentSpawnBeginPayload {
+            agent_code: "crm".into(),
+            agent_name: Some("CRM Module Agent".into()),
+            agent_type: Some("module_agent".into()),
+            module_key: Some("clic_crm".into()),
+            autonomy_policy: Some("ask_before_write".into()),
+            parent_span_id: Some("span-cleo".into()),
+        }
+    );
+    roundtrip_test!(
+        serde_subagent_spawn_end,
+        SubagentSpawnEndPayload {
+            agent_code: "crm".into(),
+        }
+    );
+    roundtrip_test!(
+        serde_subagent_llm_call_begin,
+        SubagentLlmCallBeginPayload {
+            agent_code: "crm".into(),
+            model: "llama-3.1-8b-instruct".into(),
+            backend: "vllm".into(),
+            tool_manifest_count: 3,
+        }
+    );
+    roundtrip_test!(
+        serde_subagent_llm_call_end,
+        SubagentLlmCallEndPayload {
+            agent_code: "crm".into(),
+            finish_reason: "stop".into(),
+            usage: UsagePayload {
+                input_tokens: 512,
+                output_tokens: 128,
+            },
+            content_len: 640,
+        }
+    );
+    roundtrip_test!(
+        serde_tool_call_begin,
+        ToolCallBeginPayload {
+            agent_code: "crm".into(),
+            tool_name: "crm.lead.list".into(),
+            argument_keys: vec!["state".into(), "limit".into()],
+        }
+    );
+    roundtrip_test!(
+        serde_tool_call_end,
+        ToolCallEndPayload {
+            agent_code: "crm".into(),
+            tool_name: "crm.lead.list".into(),
+            result_keys: vec!["leads".into(), "next_cursor".into()],
+            status: "ok".into(),
+            latency_ms: 87,
+        }
+    );
+    roundtrip_test!(
+        serde_subagent_done,
+        SubagentDonePayload {
+            agent_code: "crm".into(),
+            total_tool_calls: 2,
+            usage_total: UsagePayload {
+                input_tokens: 1024,
+                output_tokens: 256,
+            },
+            evidence_excerpt: Some("3 leads in stage=qualified".into()),
+        }
+    );
+    roundtrip_test!(
+        serde_subagent_failed,
+        SubagentFailedPayload {
+            agent_code: "crm".into(),
+            error_class: "capability_denied".into(),
+            error_message_safe: "lead.write not granted".into(),
+        }
+    );
+    roundtrip_test!(
+        serde_agent_message,
+        AgentMessagePayload {
+            text: "Found 3 qualified leads.".into(),
+            item_id: Some("item-1".into()),
+            response_id: Some("resp-1".into()),
+            usage: Some(UsagePayload {
+                input_tokens: 1200,
+                output_tokens: 80,
+            }),
+        }
+    );
+    roundtrip_test!(
+        serde_approval_request,
+        ApprovalRequestPayload {
+            agent_code: "crm".into(),
+            tool_name: "crm.lead.create".into(),
+            approval_id: "appr-1".into(),
+            risk_level: "medium".into(),
+        }
+    );
+    roundtrip_test!(
+        serde_approval_resolved,
+        ApprovalResolvedPayload {
+            approval_id: "appr-1".into(),
+            decision: "approved".into(),
+        }
+    );
+
+    #[test]
+    fn agent_layer_kinds_are_in_core_registry() {
+        for k in [
+            kind::TURN_STARTED,
+            kind::TURN_COMPLETE,
+            kind::TURN_ABORTED,
+            kind::SUBAGENT_SPAWN_BEGIN,
+            kind::SUBAGENT_SPAWN_END,
+            kind::SUBAGENT_LLM_CALL_BEGIN,
+            kind::SUBAGENT_LLM_CALL_END,
+            kind::TOOL_CALL_BEGIN,
+            kind::TOOL_CALL_END,
+            kind::SUBAGENT_DONE,
+            kind::SUBAGENT_FAILED,
+            kind::AGENT_MESSAGE,
+            kind::APPROVAL_REQUEST,
+            kind::APPROVAL_RESOLVED,
+        ] {
+            assert_eq!(kind::core_event_kind(k.name()), Some(k));
+        }
+    }
 
     #[test]
     fn core_event_kind_registry_includes_observability_events() {

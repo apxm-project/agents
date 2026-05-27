@@ -45,7 +45,10 @@ mod mcp;
 mod mcp_protocol;
 mod mcp_tools;
 mod memory;
+mod observability;
+mod rollout;
 mod routes;
+mod runs;
 mod runtime_setup;
 mod skill_resources;
 mod skills;
@@ -53,6 +56,7 @@ mod startup;
 mod state;
 mod tasks;
 mod types;
+mod webhook;
 
 #[cfg(test)]
 mod tests;

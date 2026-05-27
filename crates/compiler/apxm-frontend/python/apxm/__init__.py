@@ -61,7 +61,7 @@ from .ir import ApxmGraph, GraphEdge, GraphNode, Parameter
 from .module import FlowModule
 from .providers import ProviderSpec, list_providers, resolve_provider
 from .proxy import GraphRecorder, NodeRef
-from .sugar import AgentHandle, Team
+from .sugar import AgentHandle, Team, spawn_agent_set
 from .tools import FunctionTool, ToolContext, tool
 from .paths import agent_cwd, find_repo_root, local_apxm_path, repo_path
 
@@ -124,6 +124,7 @@ __all__ = [
     "ServerError",
     "select",
     "select_backend",
+    "spawn_agent_set",
     "Team",
     "TimeoutMiddlewareConfig",
     "tool",

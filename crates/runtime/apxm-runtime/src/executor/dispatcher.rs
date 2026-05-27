@@ -2,15 +2,139 @@
 
 use super::{
     Result,
+    agent_scope::{
+        LAYER2_BACKEND_DEFAULT, LAYER2_FINISH_REASON_STOP, LAYER2_TOOL_STATUS_ERROR,
+        LAYER2_TOOL_STATUS_OK,
+    },
     context::ExecutionContext,
     handlers::*,
     middleware::{BoxFuture, Next},
 };
 use apxm_core::apxm_op;
+use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::error::RuntimeError;
 use apxm_core::types::{
     OperationMetric, execution::Node, operations::AISOperationType, values::Value,
 };
+
+/// Layer 2 context captured at OPERATION_START for an ASK/INV_TOOL node so
+/// the matching OPERATION_END can emit the paired terminal event.
+struct Layer2BeginContext {
+    agent_code: String,
+    /// Tool name for INV_TOOL; unused for ASK.
+    tool_name: Option<String>,
+    /// Wall-clock instant when the begin was emitted, for latency_ms on end.
+    started_at: std::time::Instant,
+}
+
+/// Collect a string array attribute as a list of safe-to-surface argument
+/// keys for Layer 2 `tool_call_begin`.
+fn inv_tool_argument_keys(node: &Node) -> Vec<String> {
+    let Some(params_json) = node
+        .attributes
+        .get(graph_attrs::PARAMS_JSON)
+        .and_then(|v| v.as_string())
+    else {
+        return Vec::new();
+    };
+    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(params_json) else {
+        return Vec::new();
+    };
+    parsed
+        .as_object()
+        .map(|obj| obj.keys().cloned().collect())
+        .unwrap_or_default()
+}
+
+/// Result-shape keys for Layer 2 `tool_call_end`. Only the top-level keys
+/// of an object result surface; everything else is summarized.
+fn result_keys_for_layer2(value: &Value) -> Vec<String> {
+    match value {
+        Value::Object(map) => map.keys().cloned().collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Build the optional context value attached to OperationStart events for
+/// ops that carry agent/tool identity. Returns None for ops where the
+/// node id + op_type already convey everything an observer cares about.
+fn operation_start_context(node: &Node) -> Option<serde_json::Value> {
+    fn attr(node: &Node, key: &str) -> Option<String> {
+        node.attributes
+            .get(key)
+            .and_then(|value| value.as_string())
+            .cloned()
+    }
+
+    match node.op_type {
+        AISOperationType::SpawnAgent => {
+            let mut ctx = serde_json::Map::new();
+            if let Some(agent_code) = attr(node, graph_attrs::AGENT_NAME) {
+                ctx.insert("agent_code".to_string(), agent_code.into());
+            }
+            if let Some(profile) = attr(node, graph_attrs::PROFILE) {
+                ctx.insert("profile".to_string(), profile.into());
+            }
+            if ctx.is_empty() {
+                None
+            } else {
+                Some(serde_json::Value::Object(ctx))
+            }
+        }
+        AISOperationType::Communicate => {
+            let mut ctx = serde_json::Map::new();
+            // COMMUNICATE uses `recipient` (current) or `target` (legacy);
+            // mirror handlers/communicate/mod.rs and accept both.
+            if let Some(target) = attr(node, graph_attrs::RECIPIENT)
+                .or_else(|| attr(node, graph_attrs::TARGET))
+            {
+                ctx.insert("target_agent".to_string(), target.into());
+            }
+            if let Some(protocol) = attr(node, graph_attrs::PROTOCOL) {
+                ctx.insert("protocol".to_string(), protocol.into());
+            }
+            if ctx.is_empty() {
+                None
+            } else {
+                Some(serde_json::Value::Object(ctx))
+            }
+        }
+        AISOperationType::Ask | AISOperationType::Think | AISOperationType::Reason => {
+            let mut ctx = serde_json::Map::new();
+            if let Some(model) = attr(node, graph_attrs::MODEL) {
+                ctx.insert("model".to_string(), model.into());
+            }
+            if let Some(backend) = attr(node, graph_attrs::BACKEND) {
+                ctx.insert("backend".to_string(), backend.into());
+            }
+            // ASK ops carry their tool surface as a JSON list under
+            // `tools`; expose the names so the observer UI can label the
+            // request without re-parsing the manifest.
+            if let Some(tools_json) = attr(node, graph_attrs::TOOLS)
+                && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&tools_json)
+                && let Some(arr) = parsed.as_array()
+            {
+                let names: Vec<serde_json::Value> = arr
+                    .iter()
+                    .filter_map(|item| {
+                        item.get("name")
+                            .cloned()
+                            .or_else(|| item.as_str().map(serde_json::Value::from))
+                    })
+                    .collect();
+                if !names.is_empty() {
+                    ctx.insert("tool_names".to_string(), names.into());
+                }
+            }
+            if ctx.is_empty() {
+                None
+            } else {
+                Some(serde_json::Value::Object(ctx))
+            }
+        }
+        _ => None,
+    }
+}
 
 /// Operation dispatcher routes operations to their handlers
 pub struct OperationDispatcher;
@@ -84,11 +208,82 @@ impl OperationDispatcher {
             emitter.set_current_span_id(Some(node_span_id.clone()));
         }
 
-        // Emit OperationStart event
+        // Emit OperationStart event, enriched with op-specific context so
+        // observer UIs can render a labeled tree without re-parsing
+        // attributes. Context populated here (Phase 14.8.A):
+        //   - SPAWN_AGENT → { agent_code, profile }
+        //   - COMMUNICATE → { target_agent, protocol }
+        //   - ASK/THINK/REASON → { model, backend, tool_names, tool_choice }
+        // Other ops fall through to the plain emit_operation_start.
         if let Some(emitter) = &ctx.event_emitter {
-            emitter.emit_operation_start(node.id, node.op_type);
+            if let Some(context) = operation_start_context(node) {
+                emitter.emit_operation_start_with_context(node.id, node.op_type, context);
+            } else {
+                emitter.emit_operation_start(node.id, node.op_type);
+            }
         }
         let op_start = std::time::Instant::now();
+
+        // Layer 2 — emit a paired begin event when this op runs inside an
+        // agent scope. ASK/THINK/REASON paired with `subagent_llm_call_*`;
+        // INV_TOOL paired with `tool_call_*`. The matching end fires after
+        // the handler returns (see below) so it sees both the duration and
+        // the result shape. Captures the active scope's `agent_code` at
+        // begin so the end remains coherent even if a nested SPAWN_AGENT
+        // mutates the stack mid-handler.
+        let layer2_begin = if let Some(emitter) = &ctx.event_emitter {
+            ctx.agent_scope_stack.peek().and_then(|scope| match node.op_type {
+                AISOperationType::Ask | AISOperationType::Think | AISOperationType::Reason => {
+                    let model = node
+                        .attributes
+                        .get(graph_attrs::MODEL)
+                        .and_then(|v| v.as_string())
+                        .cloned()
+                        .unwrap_or_default();
+                    let backend = node
+                        .attributes
+                        .get(graph_attrs::BACKEND)
+                        .and_then(|v| v.as_string())
+                        .cloned()
+                        .unwrap_or_else(|| LAYER2_BACKEND_DEFAULT.to_string());
+                    let tool_manifest_count = node
+                        .attributes
+                        .get(graph_attrs::TOOLS)
+                        .and_then(|v| v.as_array())
+                        .map(|a| a.len())
+                        .unwrap_or(0);
+                    emitter.emit_subagent_llm_call_begin(
+                        &scope.agent_code,
+                        &model,
+                        &backend,
+                        tool_manifest_count,
+                    );
+                    Some(Layer2BeginContext {
+                        agent_code: scope.agent_code.clone(),
+                        tool_name: None,
+                        started_at: op_start,
+                    })
+                }
+                AISOperationType::InvTool => {
+                    let tool_name = node
+                        .attributes
+                        .get(graph_attrs::CAPABILITY)
+                        .and_then(|v| v.as_string())
+                        .cloned()
+                        .unwrap_or_default();
+                    let argument_keys = inv_tool_argument_keys(node);
+                    emitter.emit_tool_call_begin(&scope.agent_code, &tool_name, &argument_keys);
+                    Some(Layer2BeginContext {
+                        agent_code: scope.agent_code.clone(),
+                        tool_name: Some(tool_name),
+                        started_at: op_start,
+                    })
+                }
+                _ => None,
+            })
+        } else {
+            None
+        };
 
         // Push this operation onto the AAM call stack so that
         // `current_exception_handler()` can resolve TryCatch scopes.
@@ -180,7 +375,12 @@ impl OperationDispatcher {
         });
         let node_metrics = ctx.graph_metrics.get_node(node.id);
 
-        // Emit OperationEnd event
+        // Emit OperationEnd event. Layer 2 terminals fire FIRST so the
+        // resulting wire stream reads
+        //   operation_start[X] → tool_call_begin/subagent_llm_call_begin
+        //   → (handler) → tool_call_end/subagent_llm_call_end →
+        //   operation_end[X]
+        // — matching the CLAUDE.md §10 pairing rule.
         if let Some(emitter) = &ctx.event_emitter {
             if let Some(metrics) = &node_metrics {
                 emitter.emit_node_metrics_with_name(
@@ -191,7 +391,72 @@ impl OperationDispatcher {
             }
             let tokens = ctx.token_accountant.get_node(node.id);
             let timing = ctx.timing_tracker.get_node(node.id);
-            emitter.emit_operation_end(node.id, node.op_type, op_duration, success, tokens, timing);
+
+            // Layer 2 terminal for ASK/INV_TOOL when the begin captured an
+            // active scope at the same node.
+            if let Some(begin) = layer2_begin.as_ref() {
+                let latency_ms = begin.started_at.elapsed().as_millis() as u64;
+                match node.op_type {
+                    AISOperationType::Ask
+                    | AISOperationType::Think
+                    | AISOperationType::Reason => {
+                        let (input_tokens, output_tokens) = tokens
+                            .as_ref()
+                            .map(|t| (t.input_tokens, t.output_tokens))
+                            .unwrap_or((0, 0));
+                        let content_len = match &result {
+                            Ok(Value::String(s)) => s.len(),
+                            _ => 0,
+                        };
+                        emitter.emit_subagent_llm_call_end(
+                            &begin.agent_code,
+                            LAYER2_FINISH_REASON_STOP,
+                            input_tokens,
+                            output_tokens,
+                            content_len,
+                        );
+                    }
+                    AISOperationType::InvTool => {
+                        let tool_name = begin.tool_name.as_deref().unwrap_or("");
+                        let (status, result_keys) = match &result {
+                            Ok(value) => (LAYER2_TOOL_STATUS_OK, result_keys_for_layer2(value)),
+                            Err(_) => (LAYER2_TOOL_STATUS_ERROR, Vec::new()),
+                        };
+                        emitter.emit_tool_call_end(
+                            &begin.agent_code,
+                            tool_name,
+                            &result_keys,
+                            status,
+                            latency_ms,
+                        );
+                    }
+                    _ => {}
+                }
+            }
+
+            // Layer 2 — coordinator final answer. When an ASK fires at
+            // top-level (no agent scope is active) and yields text, treat
+            // that as the coordinator's `agent_message`. Sub-agent ASKs
+            // are already covered by `subagent_llm_call_end` above; this
+            // branch only fires for the outermost coordinator turn.
+            if matches!(node.op_type, AISOperationType::Ask) && ctx.agent_scope_stack.is_empty() {
+                if let Ok(Value::String(text)) = &result {
+                    let (input_tokens, output_tokens) = tokens
+                        .as_ref()
+                        .map(|t| (Some(t.input_tokens), Some(t.output_tokens)))
+                        .unwrap_or((None, None));
+                    emitter.emit_agent_message(text, None, None, input_tokens, output_tokens);
+                }
+            }
+
+            emitter.emit_operation_end(
+                node.id,
+                node.op_type,
+                op_duration,
+                success,
+                tokens,
+                timing,
+            );
         }
 
         // Restore parent span after node execution completes.

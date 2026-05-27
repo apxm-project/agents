@@ -74,12 +74,14 @@ mod execute;
 mod execution_index_bench;
 mod helpers;
 mod mcp;
+mod runs;
 mod skills_admission;
 mod skills_execution;
 mod skills_inventory;
 mod skills_records;
 mod skills_streaming;
 mod tasks;
+mod webhook;
 
 // ── Test helpers ──────────────────────────────────────────────────────────
 
@@ -398,6 +400,20 @@ async fn test_state_with_skill_roots_and_execution_store(
         a2a_tasks: Arc::new(DashMap::new()),
         skill_library,
         execution_store,
+        run_event_bus: crate::runs::RunEventBus::new(),
+        webhook_dispatcher: None,
+        rollout_paths: std::sync::Arc::new(apxm_rollout::RolloutPaths::new({
+            // Forget the tempdir so its lifetime spans the AppState; the test
+            // process exits cleanly and the OS reclaims /tmp on its own.
+            let dir = tempfile::tempdir().expect("rollout home");
+            let path = dir.path().to_path_buf();
+            std::mem::forget(dir);
+            path
+        })),
+        rollout_index: std::sync::Arc::new(tokio::sync::Mutex::new(
+            apxm_rollout::IndexDb::open_in_memory().expect("rollout index"),
+        )),
+        rollout_registry: crate::rollout::RolloutRegistry::new(),
     }
 }
 
@@ -417,6 +433,18 @@ async fn test_state_with_runtime_and_skill_roots(
         a2a_tasks: Arc::new(DashMap::new()),
         skill_library,
         execution_store: ExecutionStore::new(),
+        run_event_bus: crate::runs::RunEventBus::new(),
+        webhook_dispatcher: None,
+        rollout_paths: std::sync::Arc::new(apxm_rollout::RolloutPaths::new({
+            let dir = tempfile::tempdir().expect("rollout home");
+            let path = dir.path().to_path_buf();
+            std::mem::forget(dir);
+            path
+        })),
+        rollout_index: std::sync::Arc::new(tokio::sync::Mutex::new(
+            apxm_rollout::IndexDb::open_in_memory().expect("rollout index"),
+        )),
+        rollout_registry: crate::rollout::RolloutRegistry::new(),
     }
 }
 

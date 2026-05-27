@@ -954,7 +954,11 @@ impl ExecutionEventEmitter for SessionEventEmitter {
             }
         }
 
-        let payload = OperationStartPayload { node_id, op_type };
+        let payload = OperationStartPayload {
+            node_id,
+            op_type,
+            context: None,
+        };
         self.write_trace_event(payload.clone());
         self.write_node_trace_event(node_id, payload);
         let _ = self.write_live(Some(node_id));

@@ -767,4 +767,124 @@ mod tests {
         assert!(events.iter().any(|event| event == "token:7:alpha "));
         assert!(events.iter().any(|event| event == "token:7:beta "));
     }
+
+    /// Recorder for Layer 2 ASK pairing assertions.
+    #[derive(Default)]
+    struct AskLayer2Recorder {
+        ask_begin: Mutex<Vec<String>>,
+        ask_end: Mutex<Vec<(String, usize)>>,
+        agent_message: Mutex<Vec<String>>,
+    }
+
+    impl ExecutionEventEmitter for AskLayer2Recorder {
+        fn emit_llm_token(&self, _content: &str) {}
+        fn emit_tool_start(&self, _name: &str, _args: &HashMap<String, Value>) {}
+        fn emit_tool_end(&self, _name: &str, _result: &Value) {}
+        fn emit_subagent_llm_call_begin(
+            &self,
+            agent_code: &str,
+            _model: &str,
+            _backend: &str,
+            _tool_manifest_count: usize,
+        ) {
+            self.ask_begin.lock().unwrap().push(agent_code.to_string());
+        }
+        fn emit_subagent_llm_call_end(
+            &self,
+            agent_code: &str,
+            _finish_reason: &str,
+            _input_tokens: usize,
+            _output_tokens: usize,
+            content_len: usize,
+        ) {
+            self.ask_end
+                .lock()
+                .unwrap()
+                .push((agent_code.to_string(), content_len));
+        }
+        fn emit_agent_message(
+            &self,
+            text: &str,
+            _item_id: Option<&str>,
+            _response_id: Option<&str>,
+            _input_tokens: Option<usize>,
+            _output_tokens: Option<usize>,
+        ) {
+            self.agent_message.lock().unwrap().push(text.to_string());
+        }
+    }
+
+    async fn ask_layer2_ctx(emitter: Arc<dyn ExecutionEventEmitter>) -> ExecutionContext {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(apxm_backends::LLMRegistry::new());
+        llm_registry
+            .register("mock", MockLLMBackend::static_response("hello world"))
+            .unwrap();
+        llm_registry.set_default("mock").unwrap();
+        ExecutionContext::new(
+            memory,
+            llm_registry,
+            Arc::new(CapabilitySystem::new()),
+            Aam::new(),
+        )
+        .with_event_emitter(Some(emitter))
+    }
+
+    fn ask_node() -> Node {
+        let mut node = Node::new(11, apxm_core::types::operations::AISOperationType::Ask);
+        node.attributes.insert(
+            apxm_core::constants::graph::attrs::PROMPT.to_string(),
+            Value::String("say hi".to_string()),
+        );
+        node
+    }
+
+    #[tokio::test]
+    async fn ask_inside_agent_scope_emits_subagent_llm_call_begin_and_end() {
+        use crate::executor::OperationDispatcher;
+        use crate::executor::agent_scope::AgentScope;
+
+        let recorder: Arc<AskLayer2Recorder> = Arc::new(AskLayer2Recorder::default());
+        let emitter: Arc<dyn ExecutionEventEmitter> = recorder.clone();
+        let ctx = ask_layer2_ctx(emitter).await;
+        ctx.agent_scope_stack
+            .push(AgentScope::new("crm", "span-crm", None, None));
+
+        let node = ask_node();
+        let _ = OperationDispatcher::dispatch(&ctx, &node, vec![]).await.unwrap();
+
+        let begins = recorder.ask_begin.lock().unwrap();
+        let ends = recorder.ask_end.lock().unwrap();
+        let messages = recorder.agent_message.lock().unwrap();
+        assert_eq!(*begins, vec!["crm".to_string()]);
+        assert_eq!(ends.len(), 1);
+        assert_eq!(ends[0].0, "crm");
+        assert_eq!(ends[0].1, "hello world".len());
+        // Stack non-empty ⇒ this is a sub-agent, not the coordinator.
+        assert!(messages.is_empty(), "sub-agent ASK must not emit agent_message");
+    }
+
+    #[tokio::test]
+    async fn ask_at_top_level_does_not_emit_subagent_llm_call() {
+        use crate::executor::OperationDispatcher;
+
+        let recorder: Arc<AskLayer2Recorder> = Arc::new(AskLayer2Recorder::default());
+        let emitter: Arc<dyn ExecutionEventEmitter> = recorder.clone();
+        let ctx = ask_layer2_ctx(emitter).await;
+        assert!(ctx.agent_scope_stack.is_empty());
+
+        let node = ask_node();
+        let _ = OperationDispatcher::dispatch(&ctx, &node, vec![]).await.unwrap();
+
+        let begins = recorder.ask_begin.lock().unwrap();
+        let ends = recorder.ask_end.lock().unwrap();
+        let messages = recorder.agent_message.lock().unwrap();
+        assert!(begins.is_empty(), "top-level ASK must not emit subagent_llm_call_begin");
+        assert!(ends.is_empty(), "top-level ASK must not emit subagent_llm_call_end");
+        assert_eq!(*messages, vec!["hello world".to_string()]);
+    }
 }

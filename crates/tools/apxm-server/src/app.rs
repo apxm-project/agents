@@ -16,6 +16,10 @@ use crate::health::{health, list_models};
 use crate::mcp::mcp_jsonrpc;
 use crate::memory::{delete_fact, search_facts, store_fact};
 use crate::routes::ServerRoute;
+use crate::runs::{
+    get_run, get_run_blob, get_run_events_bulk, get_run_graph, get_run_node, list_runs,
+    stream_run_events,
+};
 use crate::skills::{
     execute_skill, execute_skill_stream, get_skill, list_skills, register_skill_event_payloads,
     validate_skill,
@@ -97,6 +101,15 @@ pub(crate) fn build_app(state: AppState) -> Router {
         .route(ServerRoute::Schema.path(), get(handle_schema))
         // MCP 2025-11-25 - JSON-RPC tools endpoint
         .route(ServerRoute::Mcp.path(), post(mcp_jsonrpc))
+        // Phase 14.8.B - observer endpoints
+        .route(ServerRoute::Runs.path(), get(list_runs))
+        .route(ServerRoute::RunDetail.path(), get(get_run))
+        .route(ServerRoute::RunGraph.path(), get(get_run_graph))
+        .route(ServerRoute::RunNodeDetail.path(), get(get_run_node))
+        .route(ServerRoute::RunEvents.path(), get(get_run_events_bulk))
+        .route(ServerRoute::RunEventsStream.path(), get(stream_run_events))
+        // Phase 14.8.E - rollout blob fetch
+        .route(ServerRoute::RunBlob.path(), get(get_run_blob))
         .with_state(state)
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
