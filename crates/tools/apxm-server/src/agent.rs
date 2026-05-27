@@ -25,6 +25,23 @@ pub(crate) struct AgentRegistration {
     /// Capability names this agent advertises
     #[serde(default)]
     pub(crate) capabilities: Vec<String>,
+    /// Optional name of the parent agent in the governed hierarchy.
+    ///
+    /// When both the spawning agent and the target agent set `parent_agent`,
+    /// `SPAWN_AGENT` validates the edge (target's `parent_agent` must equal
+    /// the spawner's name). Defaults to `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) parent_agent: Option<String>,
+    /// Optional AAM scope this agent operates within.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) scope: Option<String>,
+    /// Tool names this agent owns / dispatches.
+    ///
+    /// `capabilities` advertises everything the agent can be asked about;
+    /// `tools` enumerates the ones it actually drives. Typically a subset of
+    /// `capabilities`.
+    #[serde(default)]
+    pub(crate) tools: Vec<String>,
     /// Unix millisecond timestamp of when the agent registered
     pub(crate) registered_at: u64,
 }
@@ -70,6 +87,16 @@ pub(crate) struct RegisterAgentRequest {
     flows: Vec<String>,
     #[serde(default)]
     capabilities: Vec<String>,
+    /// Optional parent agent in the governed hierarchy.
+    #[serde(default)]
+    parent_agent: Option<String>,
+    /// Optional AAM scope.
+    #[serde(default)]
+    scope: Option<String>,
+    /// Tool names this agent owns / dispatches. Typically a subset of
+    /// `capabilities`.
+    #[serde(default)]
+    tools: Vec<String>,
 }
 
 pub(crate) async fn register_agent(
@@ -81,6 +108,9 @@ pub(crate) async fn register_agent(
         url: req.url,
         flows: req.flows,
         capabilities: req.capabilities,
+        parent_agent: req.parent_agent,
+        scope: req.scope,
+        tools: req.tools,
         registered_at: now_ms(),
     };
     info!(name = %req.name, "Registering agent");
