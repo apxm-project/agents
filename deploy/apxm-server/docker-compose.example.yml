@@ -1,0 +1,36 @@
+# Two-tenant apxm-server example.
+#
+# Each container gets its own APXM_HOME volume → its own
+# config.toml → its own backend roster, which is the multi-instance
+# contract introduced when BackendStore::open() started routing through
+# apxm_core::env::apxm_home(). Mount read-only so operators are forced
+# to update credentials out-of-band (no in-container `apxm backend add`).
+#
+# Operators are responsible for populating tenant-a/apxm-home/config.toml
+# and tenant-b/apxm-home/config.toml before bringing the stack up. The
+# server's host bind address inside each container is
+# APXM_SERVER_ADDR=0.0.0.0:18800 (set in the image); only the host-side
+# port differs.
+
+services:
+  apxm-tenant-a:
+    image: apxm-server:latest
+    container_name: apxm-tenant-a
+    ports:
+      - "18800:18800"
+    environment:
+      APXM_HOME: /apxm-home
+    volumes:
+      - ./tenant-a/apxm-home:/apxm-home:ro
+    restart: unless-stopped
+
+  apxm-tenant-b:
+    image: apxm-server:latest
+    container_name: apxm-tenant-b
+    ports:
+      - "18801:18800"
+    environment:
+      APXM_HOME: /apxm-home
+    volumes:
+      - ./tenant-b/apxm-home:/apxm-home:ro
+    restart: unless-stopped

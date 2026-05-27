@@ -6,6 +6,16 @@
 !external/vllm/
 !external/vllm/**
 
+# apxm-server image (deploy/apxm-server/Dockerfile) needs the
+# Rust workspace tree to run `cargo build -p apxm-server`.
+!Cargo.toml
+!Cargo.lock
+!rust-toolchain.toml
+!crates/
+!crates/**
+!tools/
+!tools/**
+
 external/vllm/.git/
 external/vllm/.venv/
 external/vllm/__pycache__/
@@ -16,3 +26,11 @@ external/vllm/build/
 external/vllm/dist/
 external/vllm/**/*.pyc
 external/vllm/**/__pycache__/
+
+# Heavy / non-source under crates/
+crates/**/target/
+crates/**/__pycache__/
+crates/**/.pytest_cache/
+crates/**/*.pyc
+crates/**/.mypy_cache/
+crates/**/.ruff_cache/

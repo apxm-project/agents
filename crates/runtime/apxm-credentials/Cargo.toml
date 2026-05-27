@@ -18,6 +18,5 @@ apxm-backends.workspace = true
 serde.workspace = true
 toml.workspace = true
 thiserror.workspace = true
-dirs.workspace = true
 reqwest.workspace = true
 tempfile.workspace = true
