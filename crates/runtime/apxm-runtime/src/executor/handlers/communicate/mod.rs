@@ -40,6 +40,23 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     };
     let message = local::resolve_message(node, protocol, &inputs)?;
 
+    // Phase 14.8.A — Emit a typed COMMUNICATE_DISPATCHED event so
+    // observers can render the inter-agent edge without scraping the
+    // op attributes. Excerpt is capped to ~240 chars (Codex pattern).
+    if let Some(emitter) = &ctx.event_emitter {
+        let message_str = match &message {
+            Value::String(s) => Some(s.clone()),
+            other => other.to_json().ok().map(|json| json.to_string()),
+        };
+        let excerpt = message_str.as_deref().map(truncate_excerpt);
+        emitter.emit_communicate_dispatched(
+            node.id,
+            &recipient,
+            protocol.as_str(),
+            excerpt.as_deref(),
+        );
+    }
+
     match protocol {
         CommunicateProtocol::Http | CommunicateProtocol::Https => {
             http::execute_http(ctx, node, &recipient, message).await
@@ -48,6 +65,20 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         CommunicateProtocol::Acp => acp::execute_acp(ctx, node, &recipient, message).await,
         CommunicateProtocol::Local => local::execute_local(ctx, node, &recipient, message).await,
     }
+}
+
+/// Cap a message excerpt at 240 chars so observer streams don't haul
+/// multi-KB payloads — matches Codex CLI's `evidence_excerpt` budget.
+fn truncate_excerpt(text: &str) -> String {
+    const MAX: usize = 240;
+    if text.len() <= MAX {
+        return text.to_string();
+    }
+    let mut end = MAX;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &text[..end])
 }
 
 #[cfg(test)]

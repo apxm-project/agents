@@ -21,6 +21,7 @@ use apxm_core::paths::ApxmPaths;
 use apxm_core::types::{Agent, ApxmGraphHints, MetricsLevel, OptimizationTarget};
 use std::sync::Arc;
 
+use super::agent_scope::AgentScopeStack;
 use super::cancellation::CancellationToken;
 use super::dag_splicer::{DagSplicer, NoOpSplicer};
 use super::events::ExecutionEventEmitter;
@@ -108,6 +109,11 @@ pub struct ExecutionContext {
     /// Current scope ID for session-scoped event isolation.
     /// Propagated to emitted events and child contexts.
     pub current_scope_id: Option<String>,
+    /// Layer 2 agent-scope stack. Pushed by SPAWN_AGENT, popped when the
+    /// spawned subgraph terminates. Drives the agent-layer event
+    /// vocabulary (`subagent_*`, `tool_call_*`, …). See
+    /// `crates/runtime/apxm-runtime/src/executor/agent_scope.rs`.
+    pub agent_scope_stack: Arc<AgentScopeStack>,
 }
 
 impl ExecutionContext {
@@ -197,6 +203,7 @@ impl ExecutionContext {
             python_tool_bridge: None,
             current_span_id: None,
             current_scope_id: None,
+            agent_scope_stack: Arc::new(AgentScopeStack::new()),
         }
     }
 
@@ -388,6 +395,11 @@ impl ExecutionContext {
             python_tool_bridge: self.python_tool_bridge.as_ref().map(Arc::clone),
             current_span_id: self.current_span_id.clone(),
             current_scope_id: child_scope_id_for_events,
+            // Share the agent-scope stack with the child so that
+            // worker tasks emit Layer 2 events under the correct
+            // current agent. The stack is `Arc<Mutex<…>>`, so
+            // push/pop in either context is visible to the other.
+            agent_scope_stack: Arc::clone(&self.agent_scope_stack),
         }
     }
 

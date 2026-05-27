@@ -10,6 +10,7 @@ members = [
 	"crates/runtime/apxm-runtime",
 	"crates/runtime/apxm-backends",
 	"crates/runtime/apxm-credentials",
+	"crates/runtime/apxm-rollout",
 	# ── Orchestration (Driver + ACP + Artifact) ───
 	"crates/orchestration/apxm-driver",
 	"crates/orchestration/apxm-acp",
@@ -43,6 +44,7 @@ apxm-compiler = { version = "0.0.1", path = "crates/compiler/apxm-compiler" }
 apxm-runtime = { version = "0.0.1", path = "crates/runtime/apxm-runtime" }
 apxm-backends = { version = "0.0.1", path = "crates/runtime/apxm-backends" }
 apxm-credentials = { version = "0.0.1", path = "crates/runtime/apxm-credentials" }
+apxm-rollout = { version = "0.0.1", path = "crates/runtime/apxm-rollout" }
 apxm-driver = { version = "0.0.1", path = "crates/orchestration/apxm-driver" }
 apxm-acp = { version = "0.0.1", path = "crates/orchestration/apxm-acp" }
 apxm-artifact = { version = "0.0.1", path = "crates/orchestration/apxm-artifact" }

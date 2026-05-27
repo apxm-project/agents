@@ -36,6 +36,15 @@ pub(crate) const GENERATE: &str = "/v1/generate";
 pub(crate) const GENERATE_STREAM: &str = "/v1/generate-stream";
 pub(crate) const SCHEMA: &str = "/v1/schema";
 pub(crate) const MCP: &str = "/v1/mcp";
+// Phase 14.8.B — observer endpoints.
+pub(crate) const RUNS: &str = "/v1/runs";
+pub(crate) const RUN_DETAIL: &str = "/v1/runs/{execution_id}";
+pub(crate) const RUN_GRAPH: &str = "/v1/runs/{execution_id}/graph";
+pub(crate) const RUN_NODE_DETAIL: &str = "/v1/runs/{execution_id}/nodes/{node_id}";
+pub(crate) const RUN_EVENTS: &str = "/v1/runs/{execution_id}/events";
+pub(crate) const RUN_EVENTS_STREAM: &str = "/v1/runs/{execution_id}/events/stream";
+// Phase 14.8.E — rollout blob endpoint.
+pub(crate) const RUN_BLOB: &str = "/v1/runs/{execution_id}/blobs/{blob_ref}";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ServerRoute {
@@ -75,6 +84,13 @@ pub(crate) enum ServerRoute {
     GenerateStream,
     Schema,
     Mcp,
+    Runs,
+    RunDetail,
+    RunGraph,
+    RunNodeDetail,
+    RunEvents,
+    RunEventsStream,
+    RunBlob,
 }
 
 impl ServerRoute {
@@ -116,6 +132,13 @@ impl ServerRoute {
             Self::GenerateStream => GENERATE_STREAM,
             Self::Schema => SCHEMA,
             Self::Mcp => MCP,
+            Self::Runs => RUNS,
+            Self::RunDetail => RUN_DETAIL,
+            Self::RunGraph => RUN_GRAPH,
+            Self::RunNodeDetail => RUN_NODE_DETAIL,
+            Self::RunEvents => RUN_EVENTS,
+            Self::RunEventsStream => RUN_EVENTS_STREAM,
+            Self::RunBlob => RUN_BLOB,
         }
     }
 }
@@ -179,4 +202,40 @@ pub(crate) fn checkpoint_detail_path(id: impl Display) -> String {
 
 pub(crate) fn checkpoint_resume_path(id: impl Display) -> String {
     format!("{CHECKPOINTS}/{id}/resume")
+}
+
+#[allow(dead_code)]
+pub(crate) fn run_detail_path(execution_id: impl Display) -> String {
+    format!("{RUNS}/{execution_id}")
+}
+
+#[allow(dead_code)]
+pub(crate) fn run_graph_path(execution_id: impl Display) -> String {
+    format!("{RUNS}/{execution_id}/graph")
+}
+
+#[allow(dead_code)]
+pub(crate) fn run_node_detail_path(
+    execution_id: impl Display,
+    node_id: impl Display,
+) -> String {
+    format!("{RUNS}/{execution_id}/nodes/{node_id}")
+}
+
+#[allow(dead_code)]
+pub(crate) fn run_events_path(execution_id: impl Display) -> String {
+    format!("{RUNS}/{execution_id}/events")
+}
+
+#[allow(dead_code)]
+pub(crate) fn run_events_stream_path(execution_id: impl Display) -> String {
+    format!("{RUNS}/{execution_id}/events/stream")
+}
+
+#[allow(dead_code)]
+pub(crate) fn run_blob_path(
+    execution_id: impl Display,
+    blob_ref: impl Display,
+) -> String {
+    format!("{RUNS}/{execution_id}/blobs/{blob_ref}")
 }

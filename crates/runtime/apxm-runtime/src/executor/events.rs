@@ -158,6 +158,47 @@ pub trait ExecutionEventEmitter: Send + Sync {
 
     // ── Operation lifecycle ─────────────────────────────────────────
     fn emit_operation_start(&self, _node_id: u64, _op_type: AISOperationType) {}
+    /// Like `emit_operation_start` but with op-specific context
+    /// (target_agent for COMMUNICATE, tool_names+model for ASK,
+    /// agent_code for SPAWN_AGENT). Default no-ops so out-of-tree
+    /// emitters don't have to implement it.
+    fn emit_operation_start_with_context(
+        &self,
+        node_id: u64,
+        op_type: AISOperationType,
+        _context: serde_json::Value,
+    ) {
+        // Default routes back to the plain emit so emitters that don't
+        // care about context still see the lifecycle event.
+        self.emit_operation_start(node_id, op_type);
+    }
+
+    // ── Multi-agent / topology ──────────────────────────────────────
+    /// A SPAWN_AGENT op produced a new agent record.
+    fn emit_agent_spawned(
+        &self,
+        _node_id: u64,
+        _agent_code: &str,
+        _parent_execution_id: &str,
+        _profile: Option<&str>,
+        _process_id: Option<&str>,
+        _scope_policy: Option<&str>,
+    ) {
+    }
+
+    /// A COMMUNICATE op dispatched to a target.
+    fn emit_communicate_dispatched(
+        &self,
+        _node_id: u64,
+        _target_agent: &str,
+        _protocol: &str,
+        _message_excerpt: Option<&str>,
+    ) {
+    }
+
+    /// A topology edge resolved at runtime.
+    fn emit_graph_edge(&self, _from_node_id: u64, _to_node_id: u64, _kind: &str) {}
+
     fn emit_operation_end(
         &self,
         _node_id: u64,
@@ -230,4 +271,129 @@ pub trait ExecutionEventEmitter: Send + Sync {
 
     // ── Memoization ───────────────────────────────────────────────
     fn emit_memoization_hit(&self, _node_id: u64) {}
+
+    // ── Layer 2 — agent-layer hooks ────────────────────────────────
+    //
+    // All default to no-ops so out-of-tree emitters and existing tests
+    // don't have to implement them. Concrete emitters (e.g. the
+    // `EmitterAdapter` that bridges to `ApxmEvent`) should override
+    // the ones they care about. See CLAUDE.md §10 for the pairing
+    // rules between Layer 1 and Layer 2 events.
+
+    /// The outermost executor entry began (top-level turn start).
+    fn emit_turn_started(
+        &self,
+        _execution_id: &str,
+        _turn_id: Option<&str>,
+        _coordinator_label: Option<&str>,
+    ) {
+    }
+
+    /// The outermost executor returned successfully.
+    fn emit_turn_complete(&self, _execution_id: &str, _duration_ms: u64, _had_answer: bool) {}
+
+    /// The outermost executor terminated abnormally.
+    fn emit_turn_aborted(
+        &self,
+        _execution_id: &str,
+        _duration_ms: u64,
+        _reason: &str,
+        _error_message_safe: Option<&str>,
+    ) {
+    }
+
+    /// A SPAWN_AGENT node is opening a new sub-agent scope.
+    fn emit_subagent_spawn_begin(
+        &self,
+        _agent_code: &str,
+        _agent_name: Option<&str>,
+        _agent_type: Option<&str>,
+        _module_key: Option<&str>,
+        _autonomy_policy: Option<&str>,
+        _parent_span_id: Option<&str>,
+    ) {
+    }
+
+    /// The new sub-agent scope is fully constructed.
+    fn emit_subagent_spawn_end(&self, _agent_code: &str) {}
+
+    /// An ASK node inside an agent scope began an LLM call.
+    fn emit_subagent_llm_call_begin(
+        &self,
+        _agent_code: &str,
+        _model: &str,
+        _backend: &str,
+        _tool_manifest_count: usize,
+    ) {
+    }
+
+    /// An ASK node inside an agent scope returned a response.
+    fn emit_subagent_llm_call_end(
+        &self,
+        _agent_code: &str,
+        _finish_reason: &str,
+        _input_tokens: usize,
+        _output_tokens: usize,
+        _content_len: usize,
+    ) {
+    }
+
+    /// An INV_TOOL node inside an agent scope began a tool call.
+    fn emit_tool_call_begin(&self, _agent_code: &str, _tool_name: &str, _argument_keys: &[String]) {
+    }
+
+    /// An INV_TOOL node inside an agent scope returned a result.
+    fn emit_tool_call_end(
+        &self,
+        _agent_code: &str,
+        _tool_name: &str,
+        _result_keys: &[String],
+        _status: &str,
+        _latency_ms: u64,
+    ) {
+    }
+
+    /// A sub-agent scope exited cleanly.
+    fn emit_subagent_done(
+        &self,
+        _agent_code: &str,
+        _total_tool_calls: usize,
+        _input_tokens_total: usize,
+        _output_tokens_total: usize,
+        _evidence_excerpt: Option<&str>,
+    ) {
+    }
+
+    /// A sub-agent scope exited with an error.
+    fn emit_subagent_failed(
+        &self,
+        _agent_code: &str,
+        _error_class: &str,
+        _error_message_safe: &str,
+    ) {
+    }
+
+    /// The coordinator emitted a final answer payload.
+    fn emit_agent_message(
+        &self,
+        _text: &str,
+        _item_id: Option<&str>,
+        _response_id: Option<&str>,
+        _input_tokens: Option<usize>,
+        _output_tokens: Option<usize>,
+    ) {
+    }
+
+    /// A human-in-the-loop approval gate was opened.
+    fn emit_approval_request(
+        &self,
+        _agent_code: &str,
+        _tool_name: &str,
+        _approval_id: &str,
+        _risk_level: &str,
+    ) {
+    }
+
+    /// A previously-requested approval was resolved.
+    fn emit_approval_resolved(&self, _approval_id: &str, _decision: &str) {}
 }

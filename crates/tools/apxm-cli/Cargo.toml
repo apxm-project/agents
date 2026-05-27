@@ -36,21 +36,45 @@ serde_json.workspace = true
 tracing-subscriber = { workspace = true, optional = true }
 rpassword = "7.0"
 chrono.workspace = true
-reqwest = { workspace = true, features = ["blocking"] }
+reqwest = { workspace = true, features = ["blocking", "stream"] }
 walkdir.workspace = true
 tempfile.workspace = true
 toml = { workspace = true, optional = true }
 rusqlite = { workspace = true, optional = true }
+# Phase 14.8.F — rollout/watch CLI deps. apxm-rollout is the durable
+# transcript layer; tar+flate2 produce the air-gapped reproducibility
+# tarball; futures/tokio-stream drive the SSE byte-stream parser.
+apxm-rollout = { workspace = true, optional = true }
+futures = { workspace = true, optional = true }
+tokio-stream = { workspace = true, optional = true }
+tar = { version = "0.4", optional = true }
+flate2 = { version = "1.0", optional = true }
+crossterm = { version = "0.27", optional = true }
 
 [dev-dependencies]
 serde_json.workspace = true
 apxm-skill.workspace = true
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "io-util"] }
+tempfile.workspace = true
 
 [build-dependencies]
 apxm-core.workspace = true
 
 [features]
 default = []
-driver = ["dep:apxm-driver", "tokio/rt-multi-thread", "dep:apxm-artifact", "dep:tracing-subscriber", "dep:rusqlite", "dep:toml"]
+driver = [
+    "dep:apxm-driver",
+    "tokio/rt-multi-thread",
+    "dep:apxm-artifact",
+    "dep:tracing-subscriber",
+    "dep:rusqlite",
+    "dep:toml",
+    "dep:apxm-rollout",
+    "dep:futures",
+    "dep:tokio-stream",
+    "dep:tar",
+    "dep:flate2",
+    "dep:crossterm",
+]
 metrics = ["driver", "apxm-driver/metrics"]
 no-trace = ["apxm-driver/no-trace", "apxm-core/no-trace"]

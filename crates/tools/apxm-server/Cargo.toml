@@ -24,7 +24,9 @@ apxm-skill.workspace = true
 apxm-backends.workspace = true
 apxm-credentials.workspace = true
 apxm-driver.workspace = true
+apxm-rollout.workspace = true
 apxm-runtime = { workspace = true, features = ["metrics"] }
+chrono.workspace = true
 anyhow.workspace = true
 blake3.workspace = true
 reqwest.workspace = true
@@ -38,7 +40,7 @@ serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "signal", "time"] }
-tokio-stream.workspace = true
+tokio-stream = { workspace = true, features = ["sync"] }
 tower = { version = "0.5", features = ["util"] }
 tower-http = { workspace = true, features = ["cors", "trace", "request-id", "set-header"] }
 tracing.workspace = true

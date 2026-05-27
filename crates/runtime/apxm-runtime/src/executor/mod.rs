@@ -5,6 +5,7 @@
 //! - Managing execution context
 //! - Coordinating subsystems (memory, models, etc.)
 
+pub mod agent_scope;
 mod cancellation;
 mod context;
 pub mod dag_splicer;
@@ -26,6 +27,7 @@ pub mod timing_tracker;
 pub mod token_accounting;
 pub mod workflow_spawner;
 
+pub use agent_scope::{AgentScope, AgentScopeStack};
 pub use cancellation::CancellationToken;
 pub use context::ExecutionContext;
 pub use dag_splicer::{DagSplicer, NoOpSplicer};

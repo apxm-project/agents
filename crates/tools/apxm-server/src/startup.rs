@@ -3,18 +3,24 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use apxm_core::paths::ApxmPaths;
+use apxm_rollout::{IndexDb, RolloutPaths};
 use apxm_runtime::{Runtime, RuntimeConfig};
 use dashmap::DashMap;
+use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 use crate::app::build_app;
 use crate::checkpoints::CheckpointStore;
 use crate::executions::ExecutionStore;
+use crate::observability::{self, warn_init_failure};
+use crate::rollout::RolloutRegistry;
+use crate::runs::RunEventBus;
 use crate::runtime_setup::{build_runtime_with_router, build_runtime_without_router};
 use crate::skill_resources::prepend_builtin_skill_root;
 use crate::skills::{SkillLibrary, parse_skill_roots};
 use crate::state::AppState;
 use crate::tasks::TaskQueueManager;
+use crate::webhook::WebhookDispatcher;
 
 pub(crate) fn execution_store_from_paths() -> ExecutionStore {
     match ApxmPaths::discover() {
@@ -50,6 +56,33 @@ pub(crate) async fn run_server() -> anyhow::Result<()> {
     let mut runtime = Arc::new(runtime);
     crate::call_skill::install(&mut runtime, skill_library.clone());
 
+    // Phase 14.8.C — wire the outbound lifecycle webhook if
+    // `APXM_RUN_WEBHOOK_URL` is set. Optional + fire-and-forget.
+    let webhook_dispatcher = WebhookDispatcher::from_env();
+
+    // Phase 14.8.D — bring up the OTEL exporter if env-configured.
+    // Initialization failures are logged + ignored: the in-process
+    // tracing-subscriber keeps working.
+    match observability::init() {
+        Ok(_exporter) => {}
+        Err(error) => warn_init_failure(&error),
+    }
+
+    // Phase 14.8.E — bring up the rollout layer. The index db is rebuilt
+    // lazily from disk on first read if missing/corrupt; opening here is
+    // fast and surfaces permission/path issues at boot.
+    let rollout_paths = Arc::new(RolloutPaths::from_env());
+    let rollout_index = match IndexDb::open(&rollout_paths.index_db_path()) {
+        Ok(db) => Arc::new(Mutex::new(db)),
+        Err(error) => {
+            warn!(%error, "failed to open rollout index db; using in-memory");
+            Arc::new(Mutex::new(
+                IndexDb::open_in_memory().expect("in-memory rollout index"),
+            ))
+        }
+    };
+    let rollout_registry = RolloutRegistry::new();
+
     let state = AppState {
         runtime,
         agent_registry: Arc::new(DashMap::new()),
@@ -59,6 +92,11 @@ pub(crate) async fn run_server() -> anyhow::Result<()> {
         a2a_tasks: Arc::new(DashMap::new()),
         skill_library,
         execution_store: execution_store_from_paths(),
+        run_event_bus: RunEventBus::new(),
+        webhook_dispatcher,
+        rollout_paths,
+        rollout_index,
+        rollout_registry,
     };
 
     let app = build_app(state);

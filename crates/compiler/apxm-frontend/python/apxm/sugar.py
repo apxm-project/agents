@@ -246,6 +246,49 @@ def _spawn_with_handle(
     return AgentHandle(self, spawn_node, agent_name)
 
 
+def spawn_agent_set(
+    g: GraphRecorder,
+    candidates: list[tuple[str, str]] | list[str],
+    *,
+    scope_policy: str = "Snapshot",
+    body,
+) -> list[NodeRef]:
+    """Fan out across a compile-time list of candidate agents.
+
+    Each candidate spawns in parallel under `scope_policy`. Body is
+    callable(handle, slot_key, agent_name) returning a NodeRef result
+    suitable for wait_all/merge.
+
+    `candidates` is either a list of (slot_key, agent_name) tuples or a
+    flat list of agent names (slot_key defaults to a sanitized agent name).
+
+    The candidate list bounds the fan-out at compile time. Runtime
+    selection happens inside `body` — e.g. the body can pass `plan` as a
+    runtime dep so the runtime no-ops slots not present in the plan.
+    """
+    if not candidates:
+        raise ValueError("spawn_agent_set requires at least one candidate")
+    if not callable(body):
+        raise TypeError("body must be callable(handle, slot_key, agent_name)")
+    normalized: list[tuple[str, str]] = []
+    for entry in candidates:
+        if isinstance(entry, str):
+            slot = entry.replace(".", "_").replace("-", "_")
+            normalized.append((slot, entry))
+        else:
+            normalized.append((entry[0], entry[1]))
+    results: list[NodeRef] = []
+    for slot_key, agent_name in normalized:
+        handle = g.spawn(
+            agent_name,
+            **{graph_keys.SCOPE_POLICY_KEY: scope_policy}
+            if hasattr(graph_keys, "SCOPE_POLICY_KEY")
+            else {"scope_policy": scope_policy},
+        )
+        results.append(body(handle, slot_key, agent_name))
+    return results
+
+
 def _create_team(self: GraphRecorder, name: str) -> Team:
     """Create a workflow-local team of agents.
 

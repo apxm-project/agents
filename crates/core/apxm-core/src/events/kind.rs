@@ -14,6 +14,11 @@ pub enum EventCategory {
     Error,
     Observability,
     UserAction,
+    /// Multi-agent lifecycle: spawn, dispatch, communicate.
+    Agent,
+    /// Graph topology / edge resolution events (used by observers to
+    /// reconstruct the dispatch tree without re-deriving it).
+    Topology,
 }
 
 impl EventCategory {
@@ -24,6 +29,8 @@ impl EventCategory {
         EventCategory::Error,
         EventCategory::Observability,
         EventCategory::UserAction,
+        EventCategory::Agent,
+        EventCategory::Topology,
     ];
 
     /// Wire spelling for this category.
@@ -34,6 +41,8 @@ impl EventCategory {
             EventCategory::Error => "error",
             EventCategory::Observability => "observability",
             EventCategory::UserAction => "user_action",
+            EventCategory::Agent => "agent",
+            EventCategory::Topology => "topology",
         }
     }
 }
@@ -130,6 +139,15 @@ pub const MEMOIZATION_HIT: EventKind =
     EventKind::new("memoization_hit", EventCategory::Observability, false);
 pub const ERROR: EventKind = EventKind::new("error", EventCategory::Error, true);
 
+// Multi-agent / topology event kinds (Phase 14.8.A — per-graph-node
+// enrichment). These are emitted in addition to OPERATION_START so
+// observers can reconstruct an agent/tool tree without rederiving it.
+pub const AGENT_SPAWNED: EventKind =
+    EventKind::new("agent_spawned", EventCategory::Agent, true);
+pub const COMMUNICATE_DISPATCHED: EventKind =
+    EventKind::new("communicate_dispatched", EventCategory::Agent, true);
+pub const GRAPH_EDGE: EventKind = EventKind::new("graph_edge", EventCategory::Topology, true);
+
 // Session event kinds
 pub const CONTEXT_COMPACTED: EventKind =
     EventKind::new("context_compacted", EventCategory::Observability, false);
@@ -144,6 +162,41 @@ pub const SESSION_START: EventKind =
 pub const SESSION_END: EventKind = EventKind::new("session_end", EventCategory::Lifecycle, true);
 pub const TURN_BOUNDARY: EventKind =
     EventKind::new("turn_boundary", EventCategory::Lifecycle, false);
+
+// ── Layer 2 — agent-layer event kinds ──────────────────────────────
+// These are emitted alongside the existing Layer 1 graph events
+// whenever the executor is inside an agent scope (see
+// `crates/runtime/apxm-runtime/src/executor/agent_scope.rs`). They are
+// snake_case and mirror CLIC's `ClicDispatchEventKind` so the relay
+// can stop translating.
+pub const TURN_STARTED: EventKind =
+    EventKind::new("turn_started", EventCategory::Lifecycle, false);
+pub const TURN_COMPLETE: EventKind =
+    EventKind::new("turn_complete", EventCategory::Lifecycle, true);
+pub const TURN_ABORTED: EventKind =
+    EventKind::new("turn_aborted", EventCategory::Lifecycle, true);
+pub const SUBAGENT_SPAWN_BEGIN: EventKind =
+    EventKind::new("subagent_spawn_begin", EventCategory::Agent, false);
+pub const SUBAGENT_SPAWN_END: EventKind =
+    EventKind::new("subagent_spawn_end", EventCategory::Agent, false);
+pub const SUBAGENT_LLM_CALL_BEGIN: EventKind =
+    EventKind::new("subagent_llm_call_begin", EventCategory::Agent, false);
+pub const SUBAGENT_LLM_CALL_END: EventKind =
+    EventKind::new("subagent_llm_call_end", EventCategory::Agent, false);
+pub const TOOL_CALL_BEGIN: EventKind =
+    EventKind::new("tool_call_begin", EventCategory::Agent, false);
+pub const TOOL_CALL_END: EventKind =
+    EventKind::new("tool_call_end", EventCategory::Agent, false);
+pub const SUBAGENT_DONE: EventKind =
+    EventKind::new("subagent_done", EventCategory::Agent, true);
+pub const SUBAGENT_FAILED: EventKind =
+    EventKind::new("subagent_failed", EventCategory::Agent, true);
+pub const AGENT_MESSAGE: EventKind =
+    EventKind::new("agent_message", EventCategory::Agent, false);
+pub const APPROVAL_REQUEST: EventKind =
+    EventKind::new("approval_request", EventCategory::Agent, false);
+pub const APPROVAL_RESOLVED: EventKind =
+    EventKind::new("approval_resolved", EventCategory::Agent, false);
 
 /// All core APXM event kinds known to `apxm-core`.
 ///
@@ -181,6 +234,9 @@ pub const CORE_EVENT_KINDS: &[EventKind] = &[
     TOKEN_USAGE,
     MEMOIZATION_HIT,
     ERROR,
+    AGENT_SPAWNED,
+    COMMUNICATE_DISPATCHED,
+    GRAPH_EDGE,
     CONTEXT_COMPACTED,
     MODEL_REROUTED,
     CANCELLED,
@@ -189,6 +245,20 @@ pub const CORE_EVENT_KINDS: &[EventKind] = &[
     SESSION_START,
     SESSION_END,
     TURN_BOUNDARY,
+    TURN_STARTED,
+    TURN_COMPLETE,
+    TURN_ABORTED,
+    SUBAGENT_SPAWN_BEGIN,
+    SUBAGENT_SPAWN_END,
+    SUBAGENT_LLM_CALL_BEGIN,
+    SUBAGENT_LLM_CALL_END,
+    TOOL_CALL_BEGIN,
+    TOOL_CALL_END,
+    SUBAGENT_DONE,
+    SUBAGENT_FAILED,
+    AGENT_MESSAGE,
+    APPROVAL_REQUEST,
+    APPROVAL_RESOLVED,
 ];
 
 /// Look up a core APXM event kind by its wire name.

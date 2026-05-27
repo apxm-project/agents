@@ -253,6 +253,59 @@ pub enum Commands {
         #[arg(long)]
         open: bool,
     },
+    /// Phase 14.8.F — stream a run's dispatch tree from
+    /// `/v1/runs/<thread>/events/stream` and render it as monospace.
+    Watch {
+        /// Thread id (execution id) to attach to. Same id surfaced by
+        /// `apxm rollout list` and by the chat panel's URL.
+        thread_id: String,
+        /// One-shot node expand: pulls `/v1/runs/<thread>/nodes/<id>`
+        /// before the live stream starts and prints the detail to stderr.
+        #[arg(long)]
+        expand: Option<u64>,
+    },
+    /// Phase 14.8.F — inspect, replay, and archive on-disk rollouts.
+    Rollout {
+        #[command(subcommand)]
+        action: RolloutAction,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum RolloutAction {
+    /// List recent rollouts from the SQLite index.
+    List {
+        /// Filter by session id.
+        #[arg(long)]
+        session: Option<String>,
+        /// Filter to rollouts that started on or after this RFC3339 ts.
+        #[arg(long)]
+        since: Option<String>,
+        /// Filter by SessionMeta.agent_role.
+        #[arg(long = "agent-role")]
+        agent_role: Option<String>,
+        /// Maximum rows to display.
+        #[arg(long, default_value = "20")]
+        limit: usize,
+    },
+    /// Replay a rollout JSONL from disk as a monospace tree.
+    Replay {
+        /// Thread id of the rollout to replay.
+        thread_id: String,
+    },
+    /// Archive a rollout (JSONL + blobs + optional skill source) as a
+    /// `.tar.gz` — the air-gapped reproducibility envelope.
+    Archive {
+        /// Thread id to bundle.
+        thread_id: String,
+        /// Output path (default `./apxm-rollout-<thread>.tar.gz`).
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        /// Optional directory holding the source skill files
+        /// (skill.toml, SKILL.md, skill.air, skill.apxmobj).
+        #[arg(long = "skill-dir")]
+        skill_dir: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]

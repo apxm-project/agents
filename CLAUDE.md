@@ -7,14 +7,24 @@ file by `dekk apxm skills generate`. Edit this file, then regenerate.
 
 ## 1. What APXM is
 
-APXM is a graph-aware **dispatch + scheduling layer** for vLLM, with an
-AMD-aligned **CPU/GPU split** so that planning, validation, and analysis stay
-on CPU while inference runs on GPU. Its public surface is an MLIR dialect
-(AIS) plus a Rust runtime plus a vLLM fork that accepts dispatch hints.
+APXM is an **A**gentic **P**rogram e**X**ecution **M**odel — a graph-aware
+execution engine with first-class support for both compute graphs **and**
+agent execution. It pairs a graph-aware **dispatch + scheduling layer** for
+vLLM (CPU/GPU split: planning/validation/analysis on CPU, inference on GPU)
+with native agent-scope tracking and an agent-layer event vocabulary that
+sits on top of the existing graph-layer events. Its public surface is an
+MLIR dialect (AIS) plus a Rust runtime plus a vLLM fork that accepts
+dispatch hints.
 
-Do **not** describe APXM as "an agent framework", "an LLM orchestrator", or
-"a multi-agent runtime" — that mischaracterizes the project and confuses
-new contributors. The correct anchor is: *graph-aware dispatch for vLLM*.
+Agents are first-class citizens of APXM, not a CLIC-side convention. The
+runtime emits two layers of events on every run: **Layer 1 — graph events**
+(`operation_start`, `tool_start`, `agent_spawned`, `communicate_dispatched`,
+`graph_edge`, …) describe the dispatched IR; **Layer 2 — agent events**
+(`turn_started`, `subagent_spawn_begin`, `subagent_llm_call_begin`,
+`tool_call_begin`, `agent_message`, `approval_request`, …) describe the
+agent-scope view of the same execution. Both layers fire for the same
+operation when it happens inside an agent scope, so downstream observers
+can pick the layer that matches their UX.
 
 ## 2. Authority CLI
 
@@ -237,7 +247,40 @@ Attribute names must be a single source of truth — see the
 `apxm-core`; Python kwargs, MLIR attrs, and Rust executors must all
 resolve through it, never via duplicated string literals.
 
-## 10. Storage layout
+Agent-layer events are first-class. The Layer 2 kinds (`turn_*`,
+`subagent_*`, `tool_call_*`, `agent_message`, `approval_*`) are emitted by
+the executor when running inside an agent scope, alongside the Layer 1
+graph events (`operation_*`, `tool_*`, `agent_spawned`, `graph_edge`).
+See `crates/runtime/apxm-runtime/src/executor/agent_scope.rs` for the
+scope-tracking primitive (an `AgentScope` stack on the execution
+context). Layer 2 events MUST be additive to Layer 1: existing
+graph-layer events keep their names and shape; never rename or
+repurpose a graph-layer kind to look like an agent-layer kind.
+
+## 10. Two-layer event vocabulary and storage layout
+
+### Two-layer event vocabulary
+
+`apxm-core::events::kind` exposes the canonical names for both layers.
+Categories: graph-layer events use `Lifecycle` / `Agent` / `Topology`;
+agent-layer events use the dedicated `Agent` category for span-shaped
+kinds and `Lifecycle` for turn boundaries. The canonical pairing rule:
+
+- `operation_start[SPAWN_AGENT]` (graph) is paired with
+  `subagent_spawn_begin/end` (agent) whenever the SPAWN_AGENT fires.
+- `operation_start[ASK]` is paired with `subagent_llm_call_begin/end`
+  whenever the ASK is inside a non-empty agent scope.
+- `tool_start` (Layer 1) is paired with `tool_call_begin` (Layer 2) when
+  inside an agent scope; the two are correlated via `meta.call_id`.
+- `turn_started/turn_complete/turn_aborted` bracket the outermost
+  executor entry — exactly one pair per `Runtime::execute` call.
+
+Out-of-scope ASK/INV_TOOL nodes (graph-only, no agent scope) emit ONLY
+the Layer 1 event. The agent layer stays silent.
+
+### Storage layout
+
+#### Storage facts
 
 `/home` is shared WekaFS (9.1 TiB, 50+ tenants). It is **not** personal
 disk:
@@ -258,6 +301,24 @@ disk:
 
 See `docs/backends/storage-layout.md` for the full contract and the
 supported migration procedure.
+
+### Multi-instance contract (`APXM_HOME` resolves backend config)
+
+`BackendStore::open` in `crates/runtime/apxm-credentials/src/backend.rs`
+routes through `apxm_core::env::apxm_home`, so `$APXM_HOME` now
+controls *which* backend roster a process sees — not just the session
+and rollout directories it writes into. The resolution is
+`$APXM_HOME → ~/.apxm`; project-local `.apxm/` directories are
+intentionally ignored at this layer (backend credentials are a
+per-instance concern, not a per-checkout concern).
+
+Operational consequence: **one `apxm-server` per `APXM_HOME`** is the
+supported multi-tenant shape. Run each instance with a distinct
+`APXM_HOME` (containerized, systemd-instanced, or otherwise
+process-isolated). The reference container layout for that pattern is
+`deploy/apxm-server/` (Dockerfile + two-tenant compose example +
+README); see `deploy/apxm-server/README.md` for the contract and known
+image-size caveats.
 
 ## 11. Boundaries (read before any potentially destructive action)
 

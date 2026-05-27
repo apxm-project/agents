@@ -6,6 +6,7 @@ use crate::scheduler::{DataflowScheduler, SchedulerConfig};
 use apxm_core::types::{
     GraphStatusSnapshot,
     execution::{ExecutionDag, ExecutionStats, Node, NodeStatus, OpStatus},
+    operations::AISOperationType,
     values::Value,
 };
 use std::{collections::HashMap, sync::Arc};
@@ -42,6 +43,14 @@ impl ExecutorEngine {
         // Propagate scope_id to the event emitter for session isolation.
         if let Some(emitter) = &self.context.event_emitter {
             emitter.set_current_scope_id(self.context.current_scope_id.clone());
+        }
+
+        // Layer 2 — outermost executor entry: bracket the run with
+        // turn_started / turn_complete (or turn_aborted on the error
+        // path). This is the boundary above any SPAWN_AGENT scope.
+        let turn_start = std::time::Instant::now();
+        if let Some(emitter) = &self.context.event_emitter {
+            emitter.emit_turn_started(&self.context.execution_id, None, None);
         }
 
         tracing::info!(
@@ -88,6 +97,51 @@ impl ExecutorEngine {
 
         if let Ok(ref mut exec_result) = result {
             exec_result.graph_status_snapshots = graph_status_snapshots;
+        }
+
+        // Layer 2 safety net — drain any agent scopes still on the stack
+        // at DAG exit. The handoff/communicate handlers SHOULD pop their
+        // child's scope on control return, but a panic/early-error path
+        // could leave scopes behind. Emit `subagent_done` (success) or
+        // `subagent_failed` (error) for each leftover so observers see a
+        // balanced begin/end pair per scope. This is additive: when the
+        // clean-exit pop did its job, the stack is already empty.
+        if let Some(emitter) = &self.context.event_emitter {
+            while let Some(scope) = self.context.agent_scope_stack.pop() {
+                match &result {
+                    Ok(_) => emitter.emit_subagent_done(&scope.agent_code, 0, 0, 0, None),
+                    Err(err) => emitter.emit_subagent_failed(
+                        &scope.agent_code,
+                        super::agent_scope::LAYER2_ERROR_CLASS_RUNTIME,
+                        &err.to_string(),
+                    ),
+                }
+            }
+        }
+
+        // Layer 2 — emit the matching turn terminal event. Success path
+        // is `turn_complete`; error path is `turn_aborted` with a
+        // safe-to-surface error message.
+        if let Some(emitter) = &self.context.event_emitter {
+            let duration_ms = turn_start.elapsed().as_millis() as u64;
+            match &result {
+                Ok(exec_result) => {
+                    let had_answer = !exec_result.results.is_empty();
+                    emitter.emit_turn_complete(
+                        &self.context.execution_id,
+                        duration_ms,
+                        had_answer,
+                    );
+                }
+                Err(err) => {
+                    emitter.emit_turn_aborted(
+                        &self.context.execution_id,
+                        duration_ms,
+                        "error",
+                        Some(&err.to_string()),
+                    );
+                }
+            }
         }
 
         result
@@ -204,6 +258,19 @@ impl ExecutorEngine {
                             node.metadata.name.as_deref(),
                             &value,
                         );
+                        // Phase 14.8.A — Emit GRAPH_EDGE for every static
+                        // downstream consumer that just became eligible.
+                        // The edge kind is derived from the consumer's op
+                        // type so observers can color the graph without
+                        // re-inspecting the DAG.
+                        for output_token in &node.output_tokens {
+                            for downstream in dag.nodes.iter().filter(|n| {
+                                n.input_tokens.iter().any(|t| t == output_token)
+                            }) {
+                                let kind = graph_edge_kind_for_consumer(downstream.op_type);
+                                emitter.emit_graph_edge(node.id, downstream.id, kind);
+                            }
+                        }
                     }
 
                     // Mark as completed
@@ -373,6 +440,27 @@ impl ExecutorEngine {
     }
 }
 
+/// Map a downstream op type to a GRAPH_EDGE `kind` label. Used by the
+/// engine to colour edges in the observer view.
+///
+/// - `tool_invocation` when the consumer is an INV_TOOL (the producer
+///   feeds a tool call)
+/// - `dispatch` when the consumer is a multi-agent op (SPAWN_AGENT,
+///   COMMUNICATE, HANDOFF, DELEGATE)
+/// - `synthesis_feed` everywhere else (data flowing into a synthesis
+///   or aggregation node)
+fn graph_edge_kind_for_consumer(op: AISOperationType) -> &'static str {
+    match op {
+        AISOperationType::InvTool => "tool_invocation",
+        AISOperationType::SpawnAgent
+        | AISOperationType::Communicate
+        | AISOperationType::Handoff
+        | AISOperationType::Delegate
+        | AISOperationType::SpawnTeam => "dispatch",
+        _ => "synthesis_feed",
+    }
+}
+
 fn sequential_priority_label(priority: u32) -> String {
     crate::scheduler::Priority::from_u8(priority.min(u8::MAX as u32) as u8)
         .as_str()
@@ -496,5 +584,290 @@ mod tests {
         let result = engine.execute_dag(dag).await.unwrap();
         assert_eq!(result.stats.executed_nodes, 2);
         assert_eq!(result.stats.failed_nodes, 0);
+    }
+
+    #[tokio::test]
+    async fn dropped_scope_at_dag_exit_safety_net_emits_subagent_done() {
+        use crate::executor::agent_scope::AgentScope;
+        use crate::executor::events::ExecutionEventEmitter;
+        use std::sync::Mutex;
+
+        #[derive(Default)]
+        struct Recorder {
+            done: Mutex<Vec<String>>,
+            failed: Mutex<Vec<(String, String)>>,
+        }
+        impl ExecutionEventEmitter for Recorder {
+            fn emit_llm_token(&self, _content: &str) {}
+            fn emit_tool_start(&self, _name: &str, _args: &HashMap<String, Value>) {}
+            fn emit_tool_end(&self, _name: &str, _result: &Value) {}
+            fn emit_subagent_done(
+                &self,
+                agent_code: &str,
+                _total_tool_calls: usize,
+                _input_tokens_total: usize,
+                _output_tokens_total: usize,
+                _evidence_excerpt: Option<&str>,
+            ) {
+                self.done.lock().unwrap().push(agent_code.to_string());
+            }
+            fn emit_subagent_failed(
+                &self,
+                agent_code: &str,
+                error_class: &str,
+                _error_message_safe: &str,
+            ) {
+                self.failed
+                    .lock()
+                    .unwrap()
+                    .push((agent_code.to_string(), error_class.to_string()));
+            }
+        }
+
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(apxm_backends::LLMRegistry::new());
+        let capability_system = Arc::new(CapabilitySystem::new());
+        let recorder: Arc<Recorder> = Arc::new(Recorder::default());
+        let emitter: Arc<dyn ExecutionEventEmitter> = recorder.clone();
+        let mut ctx = ExecutionContext::new(
+            memory,
+            llm_registry,
+            capability_system,
+            crate::aam::Aam::new(),
+        );
+        ctx.event_emitter = Some(emitter);
+
+        // Pre-push two leftover scopes to simulate a SPAWN_AGENT that
+        // never had a matching pop. The safety net at DAG exit must
+        // drain both with `subagent_done`.
+        ctx.agent_scope_stack
+            .push(AgentScope::new("cleo", "span-cleo", None, None));
+        ctx.agent_scope_stack.push(AgentScope::new(
+            "crm",
+            "span-crm",
+            Some("span-cleo".into()),
+            None,
+        ));
+
+        let mut const_node = Node {
+            id: 1,
+            op_type: AISOperationType::ConstStr,
+            attributes: HashMap::new(),
+            input_tokens: vec![],
+            output_tokens: vec![100],
+            metadata: NodeMetadata::default(),
+        };
+        const_node
+            .attributes
+            .insert("value".to_string(), Value::String("ok".to_string()));
+        let dag = ExecutionDag {
+            nodes: vec![const_node],
+            edges: vec![],
+            entry_nodes: vec![1],
+            exit_nodes: vec![1],
+            metadata: Default::default(),
+        };
+        let engine = ExecutorEngine::new(ctx);
+
+        let _ = engine.execute_dag(dag).await.unwrap();
+
+        // Drained in LIFO order: crm first, then cleo.
+        let done = recorder.done.lock().unwrap();
+        assert_eq!(*done, vec!["crm".to_string(), "cleo".to_string()]);
+        assert!(recorder.failed.lock().unwrap().is_empty());
+        assert!(engine.context().agent_scope_stack.is_empty());
+    }
+
+    #[tokio::test]
+    async fn coordinator_terminal_answer_emits_agent_message() {
+        use crate::executor::events::ExecutionEventEmitter;
+        use apxm_backends::llm::backends::mock::MockLLMBackend;
+        use std::sync::Mutex;
+
+        #[derive(Default)]
+        struct Recorder {
+            messages: Mutex<Vec<String>>,
+            subagent_ends: Mutex<usize>,
+        }
+        impl ExecutionEventEmitter for Recorder {
+            fn emit_llm_token(&self, _content: &str) {}
+            fn emit_tool_start(&self, _name: &str, _args: &HashMap<String, Value>) {}
+            fn emit_tool_end(&self, _name: &str, _result: &Value) {}
+            fn emit_agent_message(
+                &self,
+                text: &str,
+                _item_id: Option<&str>,
+                _response_id: Option<&str>,
+                _input_tokens: Option<usize>,
+                _output_tokens: Option<usize>,
+            ) {
+                self.messages.lock().unwrap().push(text.to_string());
+            }
+            fn emit_subagent_llm_call_end(
+                &self,
+                _agent_code: &str,
+                _finish_reason: &str,
+                _input_tokens: usize,
+                _output_tokens: usize,
+                _content_len: usize,
+            ) {
+                *self.subagent_ends.lock().unwrap() += 1;
+            }
+        }
+
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(apxm_backends::LLMRegistry::new());
+        llm_registry
+            .register("mock", MockLLMBackend::static_response("final answer"))
+            .unwrap();
+        llm_registry.set_default("mock").unwrap();
+        let capability_system = Arc::new(CapabilitySystem::new());
+        let recorder: Arc<Recorder> = Arc::new(Recorder::default());
+        let emitter: Arc<dyn ExecutionEventEmitter> = recorder.clone();
+        let mut ctx = ExecutionContext::new(
+            memory,
+            llm_registry,
+            capability_system,
+            crate::aam::Aam::new(),
+        );
+        ctx.event_emitter = Some(emitter);
+
+        let mut ask_node = Node {
+            id: 1,
+            op_type: AISOperationType::Ask,
+            attributes: HashMap::new(),
+            input_tokens: vec![],
+            output_tokens: vec![100],
+            metadata: NodeMetadata::default(),
+        };
+        ask_node.attributes.insert(
+            apxm_core::constants::graph::attrs::PROMPT.to_string(),
+            Value::String("hi".to_string()),
+        );
+        let dag = ExecutionDag {
+            nodes: vec![ask_node],
+            edges: vec![],
+            entry_nodes: vec![1],
+            exit_nodes: vec![1],
+            metadata: Default::default(),
+        };
+        let engine = ExecutorEngine::new(ctx);
+
+        let _ = engine.execute_dag(dag).await.unwrap();
+
+        let messages = recorder.messages.lock().unwrap();
+        let subagent_ends = recorder.subagent_ends.lock().unwrap();
+        assert_eq!(*messages, vec!["final answer".to_string()]);
+        assert_eq!(*subagent_ends, 0, "top-level ASK must not emit subagent_llm_call_end");
+    }
+
+    #[tokio::test]
+    async fn execute_dag_emits_turn_started_and_turn_complete_pair() {
+        use crate::executor::events::ExecutionEventEmitter;
+        use std::sync::Mutex;
+
+        #[derive(Default)]
+        struct Recorder {
+            turn_starts: Mutex<Vec<String>>,
+            turn_completes: Mutex<Vec<(String, bool)>>,
+            turn_aborts: Mutex<Vec<(String, String)>>,
+        }
+        impl ExecutionEventEmitter for Recorder {
+            fn emit_llm_token(&self, _content: &str) {}
+            fn emit_tool_start(
+                &self,
+                _name: &str,
+                _args: &std::collections::HashMap<String, Value>,
+            ) {
+            }
+            fn emit_tool_end(&self, _name: &str, _result: &Value) {}
+            fn emit_turn_started(
+                &self,
+                execution_id: &str,
+                _turn_id: Option<&str>,
+                _coordinator_label: Option<&str>,
+            ) {
+                self.turn_starts.lock().unwrap().push(execution_id.to_string());
+            }
+            fn emit_turn_complete(
+                &self,
+                execution_id: &str,
+                _duration_ms: u64,
+                had_answer: bool,
+            ) {
+                self.turn_completes
+                    .lock()
+                    .unwrap()
+                    .push((execution_id.to_string(), had_answer));
+            }
+            fn emit_turn_aborted(
+                &self,
+                execution_id: &str,
+                _duration_ms: u64,
+                reason: &str,
+                _error_message_safe: Option<&str>,
+            ) {
+                self.turn_aborts
+                    .lock()
+                    .unwrap()
+                    .push((execution_id.to_string(), reason.to_string()));
+            }
+        }
+
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .unwrap(),
+        );
+        let llm_registry = Arc::new(apxm_backends::LLMRegistry::new());
+        let capability_system = Arc::new(CapabilitySystem::new());
+        let recorder: Arc<Recorder> = Arc::new(Recorder::default());
+        let emitter: Arc<dyn ExecutionEventEmitter> = recorder.clone();
+        let mut ctx = ExecutionContext::new(
+            memory,
+            llm_registry,
+            capability_system,
+            crate::aam::Aam::new(),
+        );
+        ctx.event_emitter = Some(emitter);
+        let execution_id = ctx.execution_id.clone();
+        let engine = ExecutorEngine::new(ctx);
+
+        let mut const_node = Node {
+            id: 1,
+            op_type: AISOperationType::ConstStr,
+            attributes: HashMap::new(),
+            input_tokens: vec![],
+            output_tokens: vec![100],
+            metadata: NodeMetadata::default(),
+        };
+        const_node
+            .attributes
+            .insert("value".to_string(), Value::String("hi".to_string()));
+        let dag = ExecutionDag {
+            nodes: vec![const_node],
+            edges: vec![],
+            entry_nodes: vec![1],
+            exit_nodes: vec![1],
+            metadata: Default::default(),
+        };
+
+        let _ = engine.execute_dag(dag).await.unwrap();
+
+        let starts = recorder.turn_starts.lock().unwrap();
+        let completes = recorder.turn_completes.lock().unwrap();
+        let aborts = recorder.turn_aborts.lock().unwrap();
+        assert_eq!(*starts, vec![execution_id.clone()]);
+        assert_eq!(completes.len(), 1);
+        assert_eq!(completes[0].0, execution_id);
+        assert!(aborts.is_empty(), "success path must not emit turn_aborted");
     }
 }

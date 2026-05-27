@@ -20,8 +20,14 @@ pub mod gui;
 pub mod ops;
 pub mod process;
 pub mod replay;
+#[cfg(feature = "driver")]
+pub mod render;
+#[cfg(feature = "driver")]
+pub mod rollout;
 pub mod session;
 pub mod system;
+#[cfg(feature = "driver")]
+pub mod watch;
 pub mod team;
 pub mod template;
 pub mod tokenize;
@@ -50,8 +56,12 @@ pub use gui::*;
 pub use ops::*;
 pub use process::*;
 pub use replay::*;
+// rollout::* is consumed via the `commands::rollout::...` path in main.rs;
+// no glob-export needed here.
 pub use session::*;
 pub use system::*;
+#[cfg(feature = "driver")]
+pub use watch::*;
 pub use team::*;
 pub use template::*;
 pub use tokenize::*;
