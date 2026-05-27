@@ -2,8 +2,10 @@
 
 use crate::llm::ProviderProtocol;
 use crate::llm::backends::traits::StreamChunk;
-use crate::llm::backends::{LLMBackend, LLMRequest, LLMResponse, Role};
-use crate::llm::wire::{api_paths, ollama as ollama_keys};
+use crate::llm::backends::{LLMBackend, LLMRequest, LLMResponse, Message, Role};
+use crate::llm::wire::{
+    api_paths, config_keys, ollama as ollama_keys, response_metadata,
+};
 use anyhow::{Context, Result};
 use apxm_core::constants::graph::attrs::{BASE_URL, MODEL};
 use apxm_core::types::{FinishReason, ModelCapabilities, ModelInfo, TokenUsage, ToolCall};
@@ -11,6 +13,7 @@ use async_trait::async_trait;
 use futures::StreamExt as _;
 use serde::Deserialize;
 use serde_json::json;
+use std::collections::HashMap;
 use std::pin::Pin;
 use tokio_stream::Stream;
 
@@ -48,6 +51,7 @@ pub struct OllamaBackend {
     base_url: String,
     client: reqwest::Client,
     ollama_options: serde_json::Map<String, serde_json::Value>,
+    model_supports_thinking: HashMap<String, bool>,
 }
 
 impl OllamaBackend {
@@ -71,6 +75,25 @@ impl OllamaBackend {
             .to_string();
 
         let mut ollama_options = serde_json::Map::new();
+        let mut model_supports_thinking = HashMap::new();
+
+        if let Some(models) = config
+            .as_ref()
+            .and_then(|c| c.get(config_keys::MODELS))
+            .and_then(|models| models.as_array())
+        {
+            for entry in models {
+                let Some(model_id) = entry.get(config_keys::ID).and_then(|value| value.as_str())
+                else {
+                    continue;
+                };
+                let supports = entry
+                    .get(config_keys::SUPPORTS_THINKING)
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false);
+                model_supports_thinking.insert(model_id.to_string(), supports);
+            }
+        }
 
         if let Some(config_obj) = config.as_ref().and_then(|c| c.as_object()) {
             for (key, value) in config_obj {
@@ -112,7 +135,20 @@ impl OllamaBackend {
             base_url,
             client: reqwest::Client::new(),
             ollama_options,
+            model_supports_thinking,
         })
+    }
+
+    fn should_think(&self, request: &LLMRequest) -> bool {
+        match request.enable_thinking {
+            Some(true) => true,
+            Some(false) => false,
+            None => self
+                .model_supports_thinking
+                .get(self.request_model(request))
+                .copied()
+                .unwrap_or(false),
+        }
     }
 
     fn build_request_body(&self, request: &LLMRequest) -> serde_json::Value {
@@ -167,6 +203,10 @@ impl OllamaBackend {
                 })
                 .collect();
             body["tools"] = json!(ollama_tools);
+        }
+
+        if self.should_think(request) {
+            body[ollama_keys::THINK] = json!(true);
         }
 
         body
@@ -257,7 +297,15 @@ impl LLMBackend for OllamaBackend {
             FinishReason::Unknown
         };
 
-        Ok(LLMResponse::new(content, &model, usage, finish_reason).with_tool_calls(tool_calls))
+        let mut response =
+            LLMResponse::new(content, &model, usage, finish_reason).with_tool_calls(tool_calls);
+        if let Some(reasoning) = api_response.message.thinking.filter(|text| !text.is_empty()) {
+            response = response.with_metadata(
+                response_metadata::REASONING.to_string(),
+                json!(reasoning),
+            );
+        }
+        Ok(response)
     }
 
     fn generate_stream(
@@ -284,6 +332,7 @@ impl LLMBackend for OllamaBackend {
             let mut stream = response.bytes_stream();
             let mut buffer = String::new();
             let mut full_content = String::new();
+            let mut full_reasoning = String::new();
             let mut last_usage = TokenUsage::new(0, 0);
             let mut tool_calls_map: std::collections::HashMap<usize, (String, serde_json::Value)> =
                 std::collections::HashMap::new();
@@ -305,6 +354,13 @@ impl LLMBackend for OllamaBackend {
                             if let Some(eval_count) = parsed.eval_count {
                                 last_usage = TokenUsage::new(prompt_count, eval_count);
                                 yield StreamChunk::Usage(last_usage.clone());
+                            }
+                        }
+
+                        if let Some(ref thinking) = parsed.message.thinking {
+                            if !thinking.is_empty() {
+                                full_reasoning.push_str(thinking);
+                                yield StreamChunk::Thought(thinking.to_string());
                             }
                         }
 
@@ -332,12 +388,26 @@ impl LLMBackend for OllamaBackend {
 
                         if parsed.done {
                             let (tool_calls, finish_reason) = Self::collect_tool_calls(&tool_calls_map);
-                            let resp = LLMResponse::new(
+                            let mut resp = LLMResponse::new(
                                 full_content.clone(),
                                 &model,
                                 last_usage.clone(),
                                 finish_reason,
                             ).with_tool_calls(tool_calls);
+                            if let Some(reasoning) = (!full_reasoning.is_empty())
+                                .then(|| full_reasoning.clone())
+                                .or_else(|| {
+                                    parsed
+                                        .message
+                                        .thinking
+                                        .filter(|text| !text.is_empty())
+                                })
+                            {
+                                resp = resp.with_metadata(
+                                    response_metadata::REASONING.to_string(),
+                                    json!(reasoning),
+                                );
+                            }
                             yield StreamChunk::Done(resp);
                             return;
                         }
@@ -347,12 +417,18 @@ impl LLMBackend for OllamaBackend {
 
             // Stream ended without done=true -- emit what we have
             let (tool_calls, finish_reason) = Self::collect_tool_calls(&tool_calls_map);
-            let resp = LLMResponse::new(
+            let mut resp = LLMResponse::new(
                 full_content,
                 &model,
                 last_usage,
                 finish_reason,
             ).with_tool_calls(tool_calls);
+            if !full_reasoning.is_empty() {
+                resp = resp.with_metadata(
+                    response_metadata::REASONING.to_string(),
+                    json!(full_reasoning),
+                );
+            }
             yield StreamChunk::Done(resp);
         })
     }
@@ -445,6 +521,8 @@ struct OllamaMessage {
     #[serde(default)]
     content: Option<String>,
     #[serde(default)]
+    thinking: Option<String>,
+    #[serde(default)]
     tool_calls: Option<Vec<OllamaToolCall>>,
 }
 
@@ -467,4 +545,46 @@ struct OllamaTags {
 #[derive(Debug, Deserialize)]
 struct OllamaModel {
     name: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_thinking_from_chat_response() {
+        let payload = r#"{
+            "message": {
+                "role": "assistant",
+                "content": "hello",
+                "thinking": "internal chain of thought"
+            },
+            "done": true
+        }"#;
+        let response: OllamaChatResponse = serde_json::from_str(payload).expect("parse");
+        assert_eq!(
+            response.message.thinking.as_deref(),
+            Some("internal chain of thought")
+        );
+    }
+
+    #[test]
+    fn should_think_honors_model_capability_map() {
+        let backend = OllamaBackend {
+            model: "gpt-oss:120b-cloud".to_string(),
+            base_url: DEFAULT_BASE_URL.to_string(),
+            client: reqwest::Client::new(),
+            ollama_options: serde_json::Map::new(),
+            model_supports_thinking: HashMap::from([(
+                "gpt-oss:120b-cloud".to_string(),
+                true,
+            )]),
+        };
+        let request = LLMRequest::from_messages(vec![Message::text(
+            Role::User,
+            "hello",
+        )])
+        .with_model("gpt-oss:120b-cloud".to_string());
+        assert!(backend.should_think(&request));
+    }
 }
