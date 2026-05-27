@@ -27,6 +27,26 @@ spawns a real ACP subprocess:
 
 Without `profile`, SPAWN_AGENT performs metadata-only registration for local flow agents.
 
+#### AAM scoping at spawn (today)
+
+The child does **not** get an isolated AAM instance. The runtime maintains
+a single AAM per server execution; spawned agents see a filtered view of
+the parent's AAM via the `ScopePolicy` selected for the spawn (`Inherit`,
+`Snapshot`, or `Isolate`):
+
+| Policy | Effect |
+|---|---|
+| `Inherit` | Child reads/writes the parent's AAM directly. |
+| `Snapshot` | Child gets a copy of the parent's AAM at spawn time; writes do not propagate back. |
+| `Isolate` | Child sees an empty AAM scope; writes are scoped to the child only. |
+
+In all three cases, the underlying AAM **instance** is shared per server
+execution — there is no per-agent_id AAM today. This is a known gap for
+use cases that need fully-independent belief stores per agent (e.g. a Cleo
+"specialist fan-out" pattern where each specialist accumulates its own
+belief slice across turns). Lifting this constraint is tracked separately;
+the current doc reflects what the code does today.
+
 ### Phase 2: Communicate
 
 `COMMUNICATE` dispatches a prompt to a live agent process:
