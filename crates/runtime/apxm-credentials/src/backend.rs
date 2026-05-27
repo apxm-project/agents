@@ -5,6 +5,7 @@
 //! Docker configuration for local deployments.
 
 use apxm_backends::llm::{BackendConfig, ModelConfig, normalize_endpoint_for_protocol};
+use apxm_core::env::apxm_home;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -54,7 +55,12 @@ struct BackendConfigFile {
 
 /// Backend configuration store.
 ///
-/// Manages the unified backend configuration at `~/.apxm/config.toml`.
+/// Manages the unified backend configuration at `$APXM_HOME/config.toml`
+/// (default `~/.apxm/config.toml`). The home directory is resolved through
+/// [`apxm_core::env::apxm_home`], so setting `APXM_HOME` redirects the
+/// entire backend roster — this is the multi-instance contract that lets
+/// two `apxm-server` processes own distinct backend configurations.
+///
 /// Stores backend registrations as a hierarchical Backend → Model → Endpoint
 /// structure.
 pub struct BackendStore {
@@ -63,10 +69,16 @@ pub struct BackendStore {
 }
 
 impl BackendStore {
-    /// Open the backend store at the default location (~/.apxm/config.toml).
+    /// Open the backend store at `$APXM_HOME/config.toml`
+    /// (default `~/.apxm/config.toml`).
+    ///
+    /// Routes through [`apxm_core::env::apxm_home`], the workspace's
+    /// single source of truth for the global home directory. Project-local
+    /// `.apxm/` directories are intentionally ignored: backend credentials
+    /// are a per-instance concern, not a per-checkout concern, and the
+    /// multi-instance contract is "one `APXM_HOME` per `apxm-server`".
     pub fn open() -> Result<Self, BackendError> {
-        let home = dirs::home_dir().ok_or(BackendError::HomeDirMissing)?;
-        let dir = home.join(".apxm");
+        let dir = apxm_home();
         let config_path = dir.join(CONFIG_FILENAME);
         Ok(Self { config_path, dir })
     }
@@ -835,6 +847,42 @@ training_data = "training.json"
         let got = store.get("ollama-local").unwrap().unwrap();
         // Ollama does not use /v1 paths — endpoint should remain unchanged.
         assert_eq!(got.endpoint.as_deref(), Some("http://localhost:11434"));
+    }
+
+    // Env-var mutation is process-global; serialize tests that touch
+    // `APXM_HOME` so they don't race with each other or with sibling
+    // env-mutating tests in the same binary.
+    static APXM_HOME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn open_honors_apxm_home_env_var() {
+        let _guard = APXM_HOME_LOCK.lock().unwrap();
+        let tmp = TempDir::new().unwrap();
+        let previous = std::env::var_os(apxm_core::env::APXM_HOME);
+        // SAFETY: serialized via APXM_HOME_LOCK; restored before return.
+        unsafe { std::env::set_var(apxm_core::env::APXM_HOME, tmp.path()) };
+
+        let result = BackendStore::open();
+
+        // Restore env first so a panicking assert doesn't leak override.
+        // SAFETY: see above.
+        unsafe {
+            match previous {
+                Some(value) => std::env::set_var(apxm_core::env::APXM_HOME, value),
+                None => std::env::remove_var(apxm_core::env::APXM_HOME),
+            }
+        }
+
+        let store = result.expect("open backend store under APXM_HOME");
+        let expected_config = tmp.path().join(CONFIG_FILENAME);
+        assert_eq!(store.path(), expected_config.as_path());
+        assert!(
+            store.path().starts_with(tmp.path()),
+            "config path {:?} must live under APXM_HOME {:?}",
+            store.path(),
+            tmp.path()
+        );
     }
 
     #[test]
