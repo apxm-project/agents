@@ -1,5 +1,5 @@
 use apxm_backends::{
-    LLMRequest, Message as LLMMessage, Role as LLMRole, StreamChunk, ToolDefinition,
+    LLMRequest, Message as LLMMessage, Role as LLMRole, StreamChunk, ToolChoice, ToolDefinition,
 };
 use axum::Json;
 use axum::extract::State;
@@ -34,6 +34,8 @@ pub(crate) struct GenerateRequest {
     max_tokens: Option<usize>,
     #[serde(default)]
     tools: Option<Vec<ToolPayload>>,
+    #[serde(default)]
+    tool_choice: Option<String>,
     #[serde(default)]
     trace_id: Option<String>,
 }
@@ -111,9 +113,74 @@ impl GenerateRequest {
                 .map(|t| ToolDefinition::new(&t.name, &t.description, t.parameters.clone()))
                 .collect();
             request = request.with_tools(tool_defs);
+            if let Some(choice) = &self.tool_choice {
+                let normalized = choice.trim().to_ascii_lowercase();
+                let lowered = match normalized.as_str() {
+                    "auto" => ToolChoice::Auto,
+                    "none" => ToolChoice::None,
+                    "required" => ToolChoice::Required,
+                    _ => ToolChoice::Specific(choice.to_string()),
+                };
+                request = request.with_tool_choice(lowered);
+            }
         }
         request.trace_id = Some(trace_id.to_string());
         request
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn request_with_tool_choice(tool_choice: Option<&str>) -> GenerateRequest {
+        GenerateRequest {
+            messages: vec![MessagePayload {
+                role: "user".to_string(),
+                content: JsonValue::String("Read the selected record when useful.".to_string()),
+            }],
+            model: Some("fixture-model".to_string()),
+            backend: Some("mock".to_string()),
+            temperature: None,
+            max_tokens: None,
+            tools: Some(vec![ToolPayload {
+                name: "context.resolve".to_string(),
+                description: "Resolve selected CLIC context.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {},
+                }),
+            }]),
+            tool_choice: tool_choice.map(str::to_string),
+            trace_id: None,
+        }
+    }
+
+    #[test]
+    fn to_llm_request_forwards_auto_tool_choice() {
+        let request = request_with_tool_choice(Some("auto")).to_llm_request("trace-tools");
+
+        assert!(matches!(request.tool_choice, Some(ToolChoice::Auto)));
+        assert_eq!(request.tools.as_ref().map(Vec::len), Some(1));
+        assert_eq!(request.trace_id.as_deref(), Some("trace-tools"));
+    }
+
+    #[test]
+    fn to_llm_request_forwards_named_tool_choice() {
+        let request =
+            request_with_tool_choice(Some("context.resolve")).to_llm_request("trace-tools");
+
+        assert!(matches!(
+            request.tool_choice,
+            Some(ToolChoice::Specific(ref name)) if name == "context.resolve"
+        ));
+    }
+
+    #[test]
+    fn to_llm_request_normalizes_standard_tool_choice_names() {
+        let request = request_with_tool_choice(Some(" Required ")).to_llm_request("trace-tools");
+
+        assert!(matches!(request.tool_choice, Some(ToolChoice::Required)));
     }
 }
 
