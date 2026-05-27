@@ -127,6 +127,11 @@ pub mod google {
 
 pub mod ollama {
     pub const NUM_PREDICT: &str = "num_predict";
+    pub const THINK: &str = "think";
+}
+
+pub mod response_metadata {
+    pub const REASONING: &str = "reasoning";
 }
 
 pub mod defaults {

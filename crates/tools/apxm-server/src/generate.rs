@@ -1,5 +1,6 @@
 use apxm_backends::{
-    LLMRequest, Message as LLMMessage, Role as LLMRole, StreamChunk, ToolChoice, ToolDefinition,
+    llm::wire::response_metadata, LLMRequest, Message as LLMMessage, Role as LLMRole, StreamChunk,
+    ToolChoice, ToolDefinition,
 };
 use axum::Json;
 use axum::extract::State;
@@ -61,7 +62,18 @@ pub(crate) struct GenerateResponse {
     usage: GenerateUsage,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     tool_calls: Vec<JsonValue>,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    reasoning: String,
     trace_id: String,
+}
+
+fn reasoning_from_response(response: &apxm_backends::LLMResponse) -> String {
+    response
+        .metadata
+        .get(response_metadata::REASONING)
+        .and_then(|value| value.as_str())
+        .unwrap_or("")
+        .to_string()
 }
 
 #[derive(Debug, Serialize)]
@@ -222,6 +234,7 @@ pub(crate) async fn handle_generate(
         })
         .collect();
 
+    let reasoning = reasoning_from_response(&response);
     Ok(Json(GenerateResponse {
         content: response.content,
         model: response.model,
@@ -232,6 +245,7 @@ pub(crate) async fn handle_generate(
             total_tokens: response.usage.total_tokens,
         },
         tool_calls,
+        reasoning,
         trace_id,
     }))
 }
@@ -346,6 +360,7 @@ pub(crate) async fn handle_generate_stream(
                                     output_tokens: response.usage.output_tokens,
                                     total_tokens: response.usage.total_tokens,
                                 },
+                                reasoning: reasoning_from_response(&response),
                             };
                             Some(to_event(
                                 meta,

@@ -290,6 +290,8 @@ pub(crate) struct StreamLlmDonePayload {
     pub(crate) model: String,
     pub(crate) finish_reason: String,
     pub(crate) usage: StreamUsage,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub(crate) reasoning: String,
 }
 
 #[derive(Debug, Serialize)]
