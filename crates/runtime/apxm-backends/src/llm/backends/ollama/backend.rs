@@ -4,7 +4,9 @@ use crate::llm::ProviderProtocol;
 use crate::llm::backends::http::llm_http_client;
 use crate::llm::backends::traits::StreamChunk;
 use crate::llm::backends::{LLMBackend, LLMRequest, LLMResponse, Role};
-use crate::llm::wire::{api_paths, config_keys, ollama as ollama_keys, response_metadata};
+use crate::llm::wire::{
+    api_paths, config_keys, message_keys, ollama as ollama_keys, response_metadata,
+};
 use anyhow::{Context, Result};
 use apxm_core::constants::graph::attrs::{BASE_URL, MODEL};
 use apxm_core::types::{FinishReason, ModelCapabilities, ModelInfo, TokenUsage, ToolCall};
@@ -317,7 +319,7 @@ impl LLMBackend for OllamaBackend {
             request.validate()?;
             let model = self.request_model(&request).to_string();
             let mut body = self.build_request_body(&request);
-            body["stream"] = json!(true);
+            body[message_keys::STREAM] = json!(true);
 
             let url = format!("{}{}", self.base_url, api_paths::API_CHAT);
 
@@ -416,21 +418,9 @@ impl LLMBackend for OllamaBackend {
                 }
             }
 
-            // Stream ended without done=true -- emit what we have
-            let (tool_calls, finish_reason) = Self::collect_tool_calls(&tool_calls_map);
-            let mut resp = LLMResponse::new(
-                full_content,
-                &model,
-                last_usage,
-                finish_reason,
-            ).with_tool_calls(tool_calls);
-            if !full_reasoning.is_empty() {
-                resp = resp.with_metadata(
-                    response_metadata::REASONING.to_string(),
-                    json!(full_reasoning),
-                );
-            }
-            yield StreamChunk::Done(resp);
+            Err(anyhow::anyhow!(
+                "Ollama stream ended before done=true terminal message"
+            ))?;
         })
     }
 

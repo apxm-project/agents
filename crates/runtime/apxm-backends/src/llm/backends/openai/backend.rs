@@ -537,6 +537,10 @@ impl LLMBackend for OpenAIBackend {
             let model = self.request_model(&request).to_string();
             let mut body = self.build_request_body(&request);
             body[message_keys::STREAM] = json!(true);
+            if body.get(openai_keys::STREAM_OPTIONS).is_none() {
+                body[openai_keys::STREAM_OPTIONS] =
+                    json!({ openai_keys::INCLUDE_USAGE: true });
+            }
 
             let url = format!("{}{}", self.base_url, api_paths::CHAT_COMPLETIONS);
 
@@ -673,28 +677,10 @@ impl LLMBackend for OpenAIBackend {
                 }
             }
 
-            // Stream ended without [DONE] -- emit what we have.
-            let tool_calls: Vec<ToolCall> = tool_calls_map.values()
-                .map(|(id, name, args)| {
-                    let args_val = serde_json::from_str(args).unwrap_or(json!({}));
-                    ToolCall::new(id.clone(), name.clone(), args_val)
-                })
-                .collect();
-
-            let finish_reason = if !tool_calls.is_empty() {
-                FinishReason::ToolUse
-            } else {
-                FinishReason::Stop
-            };
-
-            let resp = LLMResponse::new(
-                full_content,
-                &model,
-                last_usage,
-                finish_reason,
-            ).with_tool_calls(tool_calls);
-
-            yield StreamChunk::Done(resp);
+            Err(anyhow::anyhow!(
+                "OpenAI stream ended before {} terminal marker",
+                sse::DONE_MARKER
+            ))?;
         })
     }
 

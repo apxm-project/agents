@@ -99,6 +99,8 @@ pub mod openai {
     pub const MESSAGES: &str = "messages";
     pub const ROLE: &str = "role";
     pub const CONTENT: &str = "content";
+    pub const STREAM_OPTIONS: &str = "stream_options";
+    pub const INCLUDE_USAGE: &str = "include_usage";
     pub const TEMPERATURE: &str = "temperature";
     pub const EXTRA_BODY: &str = "extra_body";
     pub const TOP_P: &str = "top_p";
