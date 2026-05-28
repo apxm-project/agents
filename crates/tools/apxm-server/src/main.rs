@@ -32,6 +32,8 @@
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+use apxm_driver::ServerConfig;
+
 mod a2a;
 mod agent;
 mod app;
@@ -78,31 +80,80 @@ pub(crate) const DEFAULT_ADDR: &str = "127.0.0.1:18800";
 pub(crate) const DEFAULT_PUBLIC_URL: &str = "http://localhost:18800";
 
 fn main() -> anyhow::Result<()> {
-    // Tokio's own docs recommend keeping worker_threads on the smaller side;
-    // the default of num_cpus over-subscribes on shared dev laptops.
-    let workers = std::env::var("APXM_TOKIO_WORKERS")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .filter(|n| *n > 0)
-        .unwrap_or_else(|| {
-            let cores = std::thread::available_parallelism()
-                .map(|n| n.get())
-                .unwrap_or(4);
-            (cores / 2).max(2)
-        });
+    let server_config = startup::server_config_from_layers()?;
+    let workers = server_worker_threads(&server_config);
     tokio::runtime::Builder::new_multi_thread()
         .worker_threads(workers)
         .enable_all()
         .build()?
-        .block_on(async_main())
+        .block_on(async_main(server_config))
 }
 
-async fn async_main() -> anyhow::Result<()> {
+async fn async_main(server_config: ServerConfig) -> anyhow::Result<()> {
     tracing_subscriber::fmt()
-        .with_env_filter(
-            std::env::var("RUST_LOG").unwrap_or_else(|_| "info,apxm_server=debug".to_string()),
-        )
+        .with_env_filter(log_filter(&server_config))
         .init();
 
-    startup::run_server().await
+    startup::run_server_with_config(server_config).await
+}
+
+fn server_worker_threads(server_config: &ServerConfig) -> usize {
+    server_config
+        .process
+        .tokio_worker_threads
+        .filter(|workers| *workers > 0)
+        .unwrap_or_else(default_server_worker_threads)
+}
+
+fn default_server_worker_threads() -> usize {
+    let cores = std::thread::available_parallelism()
+        .map(|threads| threads.get())
+        .unwrap_or(4);
+    (cores / 2).max(2)
+}
+
+fn log_filter(server_config: &ServerConfig) -> String {
+    let filter = server_config.process.log_filter.trim();
+    if filter.is_empty() {
+        apxm_driver::ServerProcessConfig::default().log_filter
+    } else {
+        filter.to_string()
+    }
+}
+
+#[cfg(test)]
+mod main_tests {
+    use super::*;
+
+    #[test]
+    fn server_worker_threads_uses_configured_nonzero_value() {
+        let mut config = ServerConfig::default();
+        config.process.tokio_worker_threads = Some(3);
+
+        assert_eq!(server_worker_threads(&config), 3);
+    }
+
+    #[test]
+    fn server_worker_threads_ignores_zero_value() {
+        let mut config = ServerConfig::default();
+        config.process.tokio_worker_threads = Some(0);
+
+        assert_eq!(
+            server_worker_threads(&config),
+            default_server_worker_threads()
+        );
+    }
+
+    #[test]
+    fn log_filter_trims_configured_filter_and_defaults_when_empty() {
+        let mut config = ServerConfig::default();
+        config.process.log_filter = " warn,apxm_server=info ".to_string();
+        assert_eq!(log_filter(&config), "warn,apxm_server=info");
+
+        config.process.log_filter.clear();
+        assert_eq!(
+            log_filter(&config),
+            apxm_driver::ServerProcessConfig::default().log_filter
+        );
+    }
 }

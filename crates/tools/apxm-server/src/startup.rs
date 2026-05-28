@@ -49,9 +49,13 @@ pub(crate) async fn build_server_runtime() -> Result<Runtime, apxm_core::error::
     build_runtime_without_router(server_runtime_config(&ServerConfig::default())).await
 }
 
+#[allow(dead_code)]
 pub(crate) async fn run_server() -> anyhow::Result<()> {
+    run_server_with_config(server_config_from_layers()?).await
+}
+
+pub(crate) async fn run_server_with_config(server_config: ServerConfig) -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
-    let server_config = server_config_from_layers()?;
     let skill_roots = prepend_builtin_skill_root(parse_skill_roots(&args));
     let skill_library = SkillLibrary::new(skill_roots);
 
@@ -115,13 +119,22 @@ pub(crate) async fn run_server() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn server_config_from_layers() -> anyhow::Result<ServerConfig> {
+pub(crate) fn server_config_from_layers() -> anyhow::Result<ServerConfig> {
     let mut config = ApXmConfig::load_scoped()?.server;
     apply_server_env_overrides(&mut config);
     Ok(config)
 }
 
 fn apply_server_env_overrides(config: &mut ServerConfig) {
+    if let Some(value) = env_usize(apxm_env::APXM_TOKIO_WORKERS) {
+        config.process.tokio_worker_threads = Some(value);
+    }
+    if let Ok(value) = std::env::var(apxm_env::RUST_LOG) {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            config.process.log_filter = trimmed.to_string();
+        }
+    }
     if let Some(value) = env_usize(apxm_env::APXM_RUNTIME_MAX_CONCURRENCY) {
         config.runtime.max_concurrency = Some(value);
     }

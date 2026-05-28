@@ -52,9 +52,12 @@ pub mod env {
     pub const APXM_RUNTIME_MAX_INFLIGHT: &str = "APXM_RUNTIME_MAX_INFLIGHT";
     /// Maximum scheduler in-flight LLM work for server-owned runtime work.
     pub const APXM_RUNTIME_LLM_INFLIGHT: &str = "APXM_RUNTIME_LLM_INFLIGHT";
+    /// Tokio worker threads for the APXM server process.
+    pub const APXM_TOKIO_WORKERS: &str = "APXM_TOKIO_WORKERS";
     pub const LLVM_DIR: &str = "LLVM_DIR";
     pub const MLIR_DIR: &str = "MLIR_DIR";
     pub const PYTHONPATH: &str = "PYTHONPATH";
+    pub const RUST_LOG: &str = "RUST_LOG";
 
     pub mod flag_values {
         pub const ENABLED: &str = "1";
