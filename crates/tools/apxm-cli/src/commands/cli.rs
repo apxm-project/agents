@@ -326,6 +326,9 @@ pub enum CodegenAction {
         /// Output directory for generated Python files
         #[arg(long)]
         output_dir: Option<PathBuf>,
+        /// Check that the generated Python files are up to date without writing them
+        #[arg(long)]
+        check: bool,
     },
     /// Generate TypeScript types into the GUI frontend
     Typescript {
