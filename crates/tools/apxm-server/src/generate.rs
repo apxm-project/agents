@@ -43,7 +43,7 @@ pub(crate) struct GenerateRequest {
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct MessagePayload {
-    role: String,
+    role: LLMRole,
     content: JsonValue, // String or array of content parts
 }
 
@@ -91,17 +91,11 @@ impl GenerateRequest {
             .messages
             .iter()
             .map(|m| {
-                let role = match m.role.as_str() {
-                    "system" => LLMRole::System,
-                    "assistant" => LLMRole::Assistant,
-                    "tool" => LLMRole::Tool,
-                    _ => LLMRole::User,
-                };
                 let text = match &m.content {
                     JsonValue::String(s) => s.clone(),
                     other => other.to_string(),
                 };
-                LLMMessage::text(role, text)
+                LLMMessage::text(m.role.clone(), text)
             })
             .collect();
 
@@ -148,7 +142,7 @@ mod tests {
     fn request_with_tool_choice(tool_choice: Option<&str>) -> GenerateRequest {
         GenerateRequest {
             messages: vec![MessagePayload {
-                role: "user".to_string(),
+                role: LLMRole::User,
                 content: JsonValue::String("Read the selected record when useful.".to_string()),
             }],
             model: Some("fixture-model".to_string()),
@@ -202,6 +196,17 @@ mod tests {
         assert_eq!(next_stream_seq(&mut seq), u64::MAX - 1);
         assert_eq!(next_stream_seq(&mut seq), u64::MAX);
         assert_eq!(next_stream_seq(&mut seq), u64::MAX);
+    }
+
+    #[test]
+    fn generate_request_rejects_unknown_message_role() {
+        let request = serde_json::json!({
+            "messages": [
+                { "role": "admin", "content": "hello" }
+            ]
+        });
+
+        assert!(serde_json::from_value::<GenerateRequest>(request).is_err());
     }
 }
 
