@@ -565,7 +565,8 @@ impl LLMRegistry {
         request: &'a LLMRequest,
     ) -> Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send + 'a>> {
         Box::pin(async_stream::try_stream! {
-            let backend_name = match self.resolve_backend(request) {
+            let prepared = self.prepare_request(request);
+            let backend_name = match self.resolve_backend(&prepared) {
                 Ok(name) => name,
                 Err(e) => {
                     Err(e)?;
@@ -585,8 +586,7 @@ impl LLMRegistry {
                 }
             };
 
-            // Try primary backend stream
-            let mut stream = backend.generate_stream(request.clone());
+            let mut stream = backend.generate_stream(prepared.clone());
 
             match stream.next().await {
                 Some(Ok(first_chunk)) => {
@@ -618,7 +618,7 @@ impl LLMRegistry {
                                 }
 
                                 tracing::info!("Retrying with fallback backend: {}", fallback_name);
-                                let mut fallback_stream = fallback_backend.generate_stream(request.clone());
+                                let mut fallback_stream = fallback_backend.generate_stream(prepared.clone());
 
                                 match fallback_stream.next().await {
                                     Some(Ok(first_chunk)) => {
