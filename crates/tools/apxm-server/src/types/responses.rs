@@ -291,6 +291,28 @@ pub(crate) struct SseEventMeta {
     pub(crate) source: &'static str,
 }
 
+pub(crate) mod stream_sse {
+    pub(crate) const EVENT_APXM: &str = "apxm";
+    pub(crate) const EVENT_ERROR: &str = "error";
+    pub(crate) const SOURCE_BACKEND: &str = "backend";
+    pub(crate) const EMPTY_JSON_OBJECT: &str = "{}";
+    pub(crate) const TIMEOUT_MESSAGE: &str = "Stream timeout after 60s";
+    pub(crate) const TIMEOUT_SECS: u64 = 60;
+}
+
+pub(crate) mod stream_payload_kind {
+    pub(crate) const TOKEN: &str = "token";
+    pub(crate) const THOUGHT: &str = "thought";
+    pub(crate) const TOOL_CALL: &str = "tool_call";
+    pub(crate) const LLM_DONE: &str = "llm_done";
+    pub(crate) const USAGE: &str = "usage";
+}
+
+pub(crate) mod stream_tool_phase {
+    pub(crate) const START: &str = "start";
+    pub(crate) const DELTA: &str = "delta";
+}
+
 #[derive(Debug, Serialize)]
 pub(crate) struct StreamTokenPayload {
     pub(crate) kind: &'static str,

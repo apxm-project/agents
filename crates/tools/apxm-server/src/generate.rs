@@ -17,7 +17,7 @@ use crate::helpers::now_ms;
 use crate::state::AppState;
 use crate::types::responses::{
     SseEventMeta, StreamErrorBody, StreamLlmDonePayload, StreamTokenPayload, StreamToolCallPayload,
-    StreamUsage, StreamUsagePayload,
+    StreamUsage, StreamUsagePayload, stream_payload_kind, stream_sse, stream_tool_phase,
 };
 
 // ─── LLM Generate Types ──────────────────────────────────────────────────────
@@ -194,6 +194,15 @@ mod tests {
 
         assert!(matches!(request.tool_choice, Some(ToolChoice::Required)));
     }
+
+    #[test]
+    fn next_stream_seq_is_monotonic_and_saturating() {
+        let mut seq = u64::MAX - 1;
+
+        assert_eq!(next_stream_seq(&mut seq), u64::MAX - 1);
+        assert_eq!(next_stream_seq(&mut seq), u64::MAX);
+        assert_eq!(next_stream_seq(&mut seq), u64::MAX);
+    }
 }
 
 fn extract_trace_id(headers: &HeaderMap, body: &GenerateRequest) -> String {
@@ -264,9 +273,31 @@ fn encode_event<T: Serialize>(buf: &mut Vec<u8>, meta: &SseEventMeta, payload: &
     let envelope = Envelope { meta, payload };
     let data = match serde_json::to_writer(&mut *buf, &envelope) {
         Ok(()) => String::from_utf8_lossy(buf).into_owned(),
-        Err(_) => "{}".to_string(),
+        Err(_) => stream_sse::EMPTY_JSON_OBJECT.to_string(),
     };
-    Event::default().event("apxm").data(data)
+    Event::default()
+        .event(stream_sse::EVENT_APXM)
+        .id(meta.seq.to_string())
+        .data(data)
+}
+
+fn encode_error_event(buf: &mut Vec<u8>, seq: u64, message: String) -> Event {
+    buf.clear();
+    let body = StreamErrorBody { message };
+    let data = match serde_json::to_writer(&mut *buf, &body) {
+        Ok(()) => String::from_utf8_lossy(buf).into_owned(),
+        Err(_) => stream_sse::EMPTY_JSON_OBJECT.to_string(),
+    };
+    Event::default()
+        .event(stream_sse::EVENT_ERROR)
+        .id(seq.to_string())
+        .data(data)
+}
+
+fn next_stream_seq(seq: &mut u64) -> u64 {
+    let current = *seq;
+    *seq = (*seq).saturating_add(1);
+    current
 }
 
 /// `POST /v1/generate-stream` — Streaming LLM generation via SSE.
@@ -284,15 +315,14 @@ pub(crate) async fn handle_generate_stream(
 
     tokio::spawn(async move {
         let _permit = permit;
-        use std::sync::atomic::{AtomicU64, Ordering};
-        let seq = AtomicU64::new(1);
+        let mut seq = 1_u64;
         let trace = trace_id;
 
         let raw_stream = registry.generate_stream_with_fallback(&request);
         let mut pinned = std::pin::pin!(raw_stream);
 
         // 60-second inactivity timeout
-        let timeout_dur = std::time::Duration::from_secs(60);
+        let timeout_dur = std::time::Duration::from_secs(stream_sse::TIMEOUT_SECS);
 
         // Reusable encode buffer — one allocation per stream, cleared per chunk.
         let mut buf: Vec<u8> = Vec::with_capacity(512);
@@ -301,20 +331,20 @@ pub(crate) async fn handle_generate_stream(
             seq: seq_val,
             timestamp_ms: now_ms(),
             trace_id: trace.to_string(),
-            source: "backend",
+            source: stream_sse::SOURCE_BACKEND,
         };
 
         loop {
             match tokio::time::timeout(timeout_dur, pinned.next()).await {
                 Ok(Some(Ok(chunk))) => {
-                    let seq_val = seq.fetch_add(1, Ordering::Relaxed);
+                    let seq_val = next_stream_seq(&mut seq);
                     let meta = make_meta(seq_val, &trace);
                     let maybe_event = match &chunk {
                         StreamChunk::Token(text) => Some(encode_event(
                             &mut buf,
                             &meta,
                             &StreamTokenPayload {
-                                kind: "token",
+                                kind: stream_payload_kind::TOKEN,
                                 text: text.clone(),
                             },
                         )),
@@ -322,7 +352,7 @@ pub(crate) async fn handle_generate_stream(
                             &mut buf,
                             &meta,
                             &StreamTokenPayload {
-                                kind: "thought",
+                                kind: stream_payload_kind::THOUGHT,
                                 text: text.clone(),
                             },
                         )),
@@ -330,11 +360,11 @@ pub(crate) async fn handle_generate_stream(
                             &mut buf,
                             &meta,
                             &StreamToolCallPayload {
-                                kind: "tool_call",
+                                kind: stream_payload_kind::TOOL_CALL,
                                 tool_call_id: id.clone(),
                                 name: Some(name.clone()),
                                 arguments_delta: None,
-                                phase: "start",
+                                phase: stream_tool_phase::START,
                             },
                         )),
                         StreamChunk::ToolCallDelta {
@@ -344,18 +374,18 @@ pub(crate) async fn handle_generate_stream(
                             &mut buf,
                             &meta,
                             &StreamToolCallPayload {
-                                kind: "tool_call",
+                                kind: stream_payload_kind::TOOL_CALL,
                                 tool_call_id: id.clone(),
                                 name: None,
                                 arguments_delta: Some(arguments_delta.clone()),
-                                phase: "delta",
+                                phase: stream_tool_phase::DELTA,
                             },
                         )),
                         StreamChunk::Done(response) => Some(encode_event(
                             &mut buf,
                             &meta,
                             &StreamLlmDonePayload {
-                                kind: "llm_done",
+                                kind: stream_payload_kind::LLM_DONE,
                                 content: response.content.clone(),
                                 model: response.model.clone(),
                                 finish_reason: format!("{:?}", response.finish_reason),
@@ -371,7 +401,7 @@ pub(crate) async fn handle_generate_stream(
                             &mut buf,
                             &meta,
                             &StreamUsagePayload {
-                                kind: "usage",
+                                kind: stream_payload_kind::USAGE,
                                 usage: StreamUsage {
                                     input_tokens: usage.input_tokens,
                                     output_tokens: usage.output_tokens,
@@ -381,14 +411,7 @@ pub(crate) async fn handle_generate_stream(
                         )),
                         StreamChunk::Error(msg) => {
                             tracing::warn!(error = %msg, "Fatal streaming error from backend");
-                            Some(
-                                Event::default().event("error").data(
-                                    serde_json::to_string(&StreamErrorBody {
-                                        message: msg.clone(),
-                                    })
-                                    .unwrap_or_else(|_| "{}".to_string()),
-                                ),
-                            )
+                            Some(encode_error_event(&mut buf, seq_val, msg.clone()))
                         }
                     };
                     if let Some(event) = maybe_event {
@@ -401,12 +424,8 @@ pub(crate) async fn handle_generate_stream(
                     }
                 }
                 Ok(Some(Err(e))) => {
-                    let body = StreamErrorBody {
-                        message: e.to_string(),
-                    };
-                    let error_event = Event::default()
-                        .event("error")
-                        .data(serde_json::to_string(&body).unwrap_or_else(|_| "{}".to_string()));
+                    let seq_val = next_stream_seq(&mut seq);
+                    let error_event = encode_error_event(&mut buf, seq_val, e.to_string());
                     let _ = tx.send(Ok(error_event)).await;
                     break;
                 }
@@ -414,12 +433,12 @@ pub(crate) async fn handle_generate_stream(
                     break;
                 }
                 Err(_) => {
-                    let body = StreamErrorBody {
-                        message: "Stream timeout after 60s".to_string(),
-                    };
-                    let timeout_event = Event::default()
-                        .event("error")
-                        .data(serde_json::to_string(&body).unwrap_or_else(|_| "{}".to_string()));
+                    let seq_val = next_stream_seq(&mut seq);
+                    let timeout_event = encode_error_event(
+                        &mut buf,
+                        seq_val,
+                        stream_sse::TIMEOUT_MESSAGE.to_string(),
+                    );
                     let _ = tx.send(Ok(timeout_event)).await;
                     break;
                 }
