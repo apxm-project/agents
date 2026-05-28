@@ -431,8 +431,13 @@ mod tests {
         let constants_h =
             include_str!("../../../compiler/apxm-compiler/mlir/include/ais/Common/Constants.h");
         let pairs = [
+            ("PRIORITY", PRIORITY),
+            ("TEMPLATE_STR", TEMPLATE_STR),
+            ("VALUE", VALUE),
+            ("INPUT_NAMES", INPUT_NAMES),
             ("SHARED_PREFIX_GROUP", AIS_SHARED_PREFIX_GROUP),
             ("SHARED_PREFIX_EST_TOKENS", AIS_SHARED_PREFIX_EST_TOKENS),
+            ("SHARED_PREFIX_GROUP_SIZE", AIS_SHARED_PREFIX_GROUP_SIZE),
             ("WARMUP_CANDIDATE", AIS_WARMUP_CANDIDATE),
             ("DOWNSTREAM_NODES", AIS_DOWNSTREAM_NODES),
             ("FANOUT_COUNT", AIS_FANOUT_COUNT),
