@@ -46,12 +46,6 @@ use crate::error::ApiError;
 use crate::executions::{ExecutionRecord, ExecutionStatus};
 use crate::state::AppState;
 
-/// Default cap on `/v1/runs` listings to keep responses bounded.
-const DEFAULT_LIST_LIMIT: usize = 200;
-const MAX_LIST_LIMIT: usize = 500;
-/// Default page size for the bulk events endpoint.
-const DEFAULT_EVENTS_LIMIT: usize = 500;
-const MAX_EVENTS_LIMIT: usize = 2_000;
 const MIN_RETAINED_EVENTS: usize = 128;
 const LAST_EVENT_ID_HEADER: &str = "Last-Event-ID";
 const LAST_EVENT_ID_HEADER_LOWER: &str = "last-event-id";
@@ -394,7 +388,7 @@ pub(crate) async fn list_runs(
     State(state): State<AppState>,
     Query(query): Query<RunsListQuery>,
 ) -> Json<RunListResponse> {
-    let limit = clamp_limit(query.limit, DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT);
+    let limit = run_list_limit(&state.server_config.run_events, query.limit);
     let status_filter = query.status.as_deref().and_then(parse_status_filter);
     let mut runs: Vec<RunSummary> = state
         .execution_store
@@ -515,7 +509,7 @@ pub(crate) async fn get_run_events_bulk(
             "run not found: {execution_id}"
         )));
     }
-    let limit = clamp_limit(query.limit, DEFAULT_EVENTS_LIMIT, MAX_EVENTS_LIMIT);
+    let limit = run_events_limit(&state.server_config.run_events, query.limit);
 
     let filtered: Vec<&ApxmEvent> = events.iter().filter(|e| e.meta.seq >= since).collect();
     let page: Vec<&ApxmEvent> = filtered.iter().take(limit).copied().collect();
@@ -645,8 +639,54 @@ fn parse_status_filter(raw: &str) -> Option<ExecutionStatus> {
     }
 }
 
+fn run_list_limit(config: &RunEventsConfig, raw: Option<usize>) -> usize {
+    clamp_limit(raw, config.default_list_limit, config.max_list_limit)
+}
+
+fn run_events_limit(config: &RunEventsConfig, raw: Option<usize>) -> usize {
+    clamp_limit(raw, config.default_events_limit, config.max_events_limit)
+}
+
 fn clamp_limit(raw: Option<usize>, default: usize, max: usize) -> usize {
+    let max = max.max(1);
+    let default = default.clamp(1, max);
     raw.unwrap_or(default).clamp(1, max)
+}
+
+#[cfg(test)]
+mod limit_tests {
+    use super::*;
+
+    #[test]
+    fn run_limits_use_config_defaults_and_caps() {
+        let config = RunEventsConfig {
+            default_list_limit: 10,
+            max_list_limit: 25,
+            default_events_limit: 20,
+            max_events_limit: 40,
+            ..RunEventsConfig::default()
+        };
+
+        assert_eq!(run_list_limit(&config, None), 10);
+        assert_eq!(run_list_limit(&config, Some(100)), 25);
+        assert_eq!(run_events_limit(&config, None), 20);
+        assert_eq!(run_events_limit(&config, Some(100)), 40);
+    }
+
+    #[test]
+    fn run_limits_sanitize_invalid_config() {
+        let config = RunEventsConfig {
+            default_list_limit: 0,
+            max_list_limit: 0,
+            default_events_limit: 10,
+            max_events_limit: 5,
+            ..RunEventsConfig::default()
+        };
+
+        assert_eq!(run_list_limit(&config, None), 1);
+        assert_eq!(run_list_limit(&config, Some(0)), 1);
+        assert_eq!(run_events_limit(&config, None), 5);
+    }
 }
 
 fn record_to_summary(state: &AppState, record: ExecutionRecord) -> RunSummary {

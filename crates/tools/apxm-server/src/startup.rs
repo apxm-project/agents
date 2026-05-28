@@ -174,6 +174,18 @@ fn apply_server_env_overrides(config: &mut ServerConfig) {
     if let Some(value) = env_u64(apxm_env::APXM_RUN_EVENT_KEEP_ALIVE_SECS) {
         config.run_events.keep_alive_secs = value;
     }
+    if let Some(value) = env_usize(apxm_env::APXM_RUN_LIST_DEFAULT_LIMIT) {
+        config.run_events.default_list_limit = value;
+    }
+    if let Some(value) = env_usize(apxm_env::APXM_RUN_LIST_MAX_LIMIT) {
+        config.run_events.max_list_limit = value;
+    }
+    if let Some(value) = env_usize(apxm_env::APXM_RUN_EVENT_DEFAULT_LIMIT) {
+        config.run_events.default_events_limit = value;
+    }
+    if let Some(value) = env_usize(apxm_env::APXM_RUN_EVENT_MAX_LIMIT) {
+        config.run_events.max_events_limit = value;
+    }
     if let Ok(value) = std::env::var(apxm_env::APXM_RUN_WEBHOOK_URL) {
         let trimmed = value.trim();
         if !trimmed.is_empty() {
