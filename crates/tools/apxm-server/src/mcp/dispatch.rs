@@ -72,6 +72,7 @@ pub(crate) async fn call_skill_tool(
                 Some(Arc::new(HttpPlanExecutionRecorder::new(
                     state.execution_store.clone(),
                 ))),
+                &state.server_config.mcp,
             )
             .await
             {
@@ -95,10 +96,11 @@ pub(crate) async fn call_skill_tool(
                 .get(trace_id)
                 .and_then(|record| serde_json::to_value(record).ok());
             Some(
-                match mcp_tools::trace_fetch(
+                match mcp_tools::trace_fetch_with_config(
                     Some(&state.runtime),
                     execution_record,
                     tool_args.clone(),
+                    &state.server_config.mcp,
                 )
                 .await
                 {
@@ -108,17 +110,26 @@ pub(crate) async fn call_skill_tool(
             )
         }
         MCP_TOOL_APXM_AAM_RECALL => Some(
-            match mcp_tools::aam_recall(&state.runtime, tool_args.clone()).await {
+            match mcp_tools::aam_recall_with_config(
+                &state.runtime,
+                tool_args.clone(),
+                &state.server_config.mcp,
+            )
+            .await
+            {
                 Ok(response) => mcp_json_tool_result(id.clone(), response),
                 Err(error) => mcp_tool_result(id.clone(), error, true),
             },
         ),
-        MCP_TOOL_APXM_EVIDENCE_LOOKUP => {
-            Some(match mcp_tools::evidence_lookup(tool_args.clone()) {
+        MCP_TOOL_APXM_EVIDENCE_LOOKUP => Some(
+            match mcp_tools::evidence_lookup_with_config(
+                tool_args.clone(),
+                &state.server_config.mcp,
+            ) {
                 Ok(response) => mcp_json_tool_result(id.clone(), response),
                 Err(error) => mcp_tool_result(id.clone(), error, true),
-            })
-        }
+            },
+        ),
         MCP_TOOL_APXM_CAPABILITY_LIST => Some(mcp_json_tool_result(
             id.clone(),
             mcp_tools::capability_list(&state.runtime, tool_args.clone()),

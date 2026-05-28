@@ -169,7 +169,7 @@ pub struct ChatConfig {
 }
 
 /// APXM server operational configuration.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct ServerConfig {
     /// Optional bind address, overridden by `APXM_SERVER_ADDR` and CLI `--port`.
@@ -205,6 +205,9 @@ pub struct ServerConfig {
     /// Durable rollout writer controls.
     pub rollout: ServerRolloutConfig,
 
+    /// MCP tool behavior and bounded request controls.
+    pub mcp: ServerMcpConfig,
+
     /// Server observability exporter controls.
     pub observability: ServerObservabilityConfig,
 }
@@ -223,6 +226,7 @@ impl Default for ServerConfig {
             run_events: RunEventsConfig::default(),
             webhook: ServerWebhookConfig::default(),
             rollout: ServerRolloutConfig::default(),
+            mcp: ServerMcpConfig::default(),
             observability: ServerObservabilityConfig::default(),
         }
     }
@@ -390,6 +394,43 @@ pub struct ServerRolloutConfig {
 impl Default for ServerRolloutConfig {
     fn default() -> Self {
         Self { event_buffer: 2048 }
+    }
+}
+
+/// MCP tool configuration for server-owned agent tools.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct ServerMcpConfig {
+    pub plan_max_tokens: usize,
+    pub plan_temperature: f64,
+    pub plan_repair_attempts: usize,
+    pub plan_capability_guidance_limit: usize,
+    pub default_top_k: usize,
+    pub max_top_k: usize,
+    pub default_evidence_limit: usize,
+    pub max_evidence_limit: usize,
+    pub default_trace_event_limit: usize,
+    pub trace_max_scan_files: usize,
+    pub evidence_max_scan_files: usize,
+    pub evidence_max_file_bytes: u64,
+}
+
+impl Default for ServerMcpConfig {
+    fn default() -> Self {
+        Self {
+            plan_max_tokens: 8192,
+            plan_temperature: 0.0,
+            plan_repair_attempts: 3,
+            plan_capability_guidance_limit: 32,
+            default_top_k: 10,
+            max_top_k: 100,
+            default_evidence_limit: 10,
+            max_evidence_limit: 100,
+            default_trace_event_limit: 64,
+            trace_max_scan_files: 4_096,
+            evidence_max_scan_files: 4_096,
+            evidence_max_file_bytes: 128 * 1024,
+        }
     }
 }
 
@@ -1056,6 +1097,20 @@ mod tests {
             [server.rollout]
             event_buffer = 4096
 
+            [server.mcp]
+            plan_max_tokens = 4096
+            plan_temperature = 0.2
+            plan_repair_attempts = 2
+            plan_capability_guidance_limit = 16
+            default_top_k = 8
+            max_top_k = 50
+            default_evidence_limit = 6
+            max_evidence_limit = 30
+            default_trace_event_limit = 32
+            trace_max_scan_files = 512
+            evidence_max_scan_files = 256
+            evidence_max_file_bytes = 65536
+
             [server.observability]
             otlp_endpoint = "http://127.0.0.1:4317"
 
@@ -1140,6 +1195,18 @@ mod tests {
         );
         assert_eq!(config.server.webhook.timeout_secs, 7);
         assert_eq!(config.server.rollout.event_buffer, 4096);
+        assert_eq!(config.server.mcp.plan_max_tokens, 4096);
+        assert_eq!(config.server.mcp.plan_temperature, 0.2);
+        assert_eq!(config.server.mcp.plan_repair_attempts, 2);
+        assert_eq!(config.server.mcp.plan_capability_guidance_limit, 16);
+        assert_eq!(config.server.mcp.default_top_k, 8);
+        assert_eq!(config.server.mcp.max_top_k, 50);
+        assert_eq!(config.server.mcp.default_evidence_limit, 6);
+        assert_eq!(config.server.mcp.max_evidence_limit, 30);
+        assert_eq!(config.server.mcp.default_trace_event_limit, 32);
+        assert_eq!(config.server.mcp.trace_max_scan_files, 512);
+        assert_eq!(config.server.mcp.evidence_max_scan_files, 256);
+        assert_eq!(config.server.mcp.evidence_max_file_bytes, 65536);
         assert_eq!(
             config.server.observability.otlp_endpoint.as_deref(),
             Some("http://127.0.0.1:4317")

@@ -147,6 +147,42 @@ fn apply_server_env_overrides(config: &mut ServerConfig) {
     if let Some(value) = env_usize(apxm_env::APXM_RUNTIME_LLM_INFLIGHT) {
         config.runtime.llm_inflight = value;
     }
+    if let Some(value) = env_usize(apxm_env::APXM_MCP_PLAN_MAX_TOKENS) {
+        config.mcp.plan_max_tokens = value;
+    }
+    if let Some(value) = env_f64(apxm_env::APXM_MCP_PLAN_TEMPERATURE) {
+        config.mcp.plan_temperature = value;
+    }
+    if let Some(value) = env_usize(apxm_env::APXM_MCP_PLAN_REPAIR_ATTEMPTS) {
+        config.mcp.plan_repair_attempts = value;
+    }
+    if let Some(value) = env_usize(apxm_env::APXM_MCP_PLAN_CAPABILITY_GUIDANCE_LIMIT) {
+        config.mcp.plan_capability_guidance_limit = value;
+    }
+    if let Some(value) = env_usize(apxm_env::APXM_MCP_DEFAULT_TOP_K) {
+        config.mcp.default_top_k = value;
+    }
+    if let Some(value) = env_usize(apxm_env::APXM_MCP_MAX_TOP_K) {
+        config.mcp.max_top_k = value;
+    }
+    if let Some(value) = env_usize(apxm_env::APXM_MCP_DEFAULT_EVIDENCE_LIMIT) {
+        config.mcp.default_evidence_limit = value;
+    }
+    if let Some(value) = env_usize(apxm_env::APXM_MCP_MAX_EVIDENCE_LIMIT) {
+        config.mcp.max_evidence_limit = value;
+    }
+    if let Some(value) = env_usize(apxm_env::APXM_MCP_DEFAULT_TRACE_EVENT_LIMIT) {
+        config.mcp.default_trace_event_limit = value;
+    }
+    if let Some(value) = env_usize(apxm_env::APXM_MCP_TRACE_MAX_SCAN_FILES) {
+        config.mcp.trace_max_scan_files = value;
+    }
+    if let Some(value) = env_usize(apxm_env::APXM_MCP_EVIDENCE_MAX_SCAN_FILES) {
+        config.mcp.evidence_max_scan_files = value;
+    }
+    if let Some(value) = env_u64(apxm_env::APXM_MCP_EVIDENCE_MAX_FILE_BYTES) {
+        config.mcp.evidence_max_file_bytes = value;
+    }
     if let Some(value) = env_usize(apxm_env::APXM_SERVER_MAX_INFERENCE) {
         config.inference.max_concurrent = value;
     }
@@ -253,6 +289,13 @@ fn env_u64(name: &str) -> Option<u64> {
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
         .filter(|value| *value > 0)
+}
+
+fn env_f64(name: &str) -> Option<f64> {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<f64>().ok())
+        .filter(|value| value.is_finite() && *value >= 0.0)
 }
 
 fn server_addr(args: &[String], config: &ServerConfig) -> anyhow::Result<SocketAddr> {
