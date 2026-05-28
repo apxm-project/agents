@@ -15,6 +15,7 @@ use apxm_core::events::{EventEmitter, EventSource, SkillEventProvenance};
 use apxm_core::paths::ApxmPaths;
 use apxm_core::types::Value as RuntimeValue;
 use apxm_core::types::{AISOperationType, DependencyType, OptimizationLevel};
+use apxm_driver::ServerMcpConfig;
 use apxm_runtime::capability::CapabilitySandboxPreflight;
 use apxm_runtime::{
     EmitterAdapter, ExecutionEventEmitter, MemorySpace, Runtime, RuntimeExecutionResult,
@@ -29,20 +30,16 @@ use crate::mcp_protocol::{
 
 const PLAN_PROMPT: &str = include_str!("../skills/apxm-plan-as-graph/prompt.md");
 const PLAN_SCHEMA: &str = include_str!("../skills/apxm-plan-as-graph/schema.json");
-const PLAN_MAX_TOKENS: usize = 8192;
-const PLAN_TEMPERATURE: f64 = 0.0;
 // Three attempts cover the observed worst case where the first emission
 // violates the schema one way (e.g. an unknown wrapper field) and the
 // second-turn repair introduces a different violation (e.g. omits a
 // required top-level key); two attempts can exhaust before the second
 // class of error is corrected.
-const PLAN_REPAIR_ATTEMPTS: usize = 3;
 const PLAN_REPAIR_FEEDBACK_HEADING: &str = "Compiler or validation feedback to repair:";
 const PLAN_REPAIR_FEEDBACK_PREFIX: &str =
     "The previous response could not be converted into executable APXM AIR";
 const PLAN_REPAIRED_INVALID_PREFIX: &str = "repaired plan still invalid";
 const PLAN_CAPABILITY_GUIDANCE_HEADING: &str = "Registered APXM capabilities:";
-const PLAN_CAPABILITY_GUIDANCE_LIMIT: usize = 32;
 const PLAN_CAPABILITY_NONE_GUIDANCE: &str =
     "none. Do not emit inv_tool nodes; use ask, think, wait_all, or yield nodes instead.";
 const PLAN_CAPABILITY_TRUNCATED_GUIDANCE: &str = "- additional capabilities omitted";
@@ -79,12 +76,6 @@ const PLAN_GRAPH_ALLOWED_FIELDS: &[&str] = &[
     plan_field::PARAMETERS,
     plan_field::NODES,
 ];
-const EVIDENCE_MAX_FILE_BYTES: u64 = 128 * 1024;
-const EVIDENCE_MAX_SCAN_FILES: usize = 4_096;
-const TRACE_MAX_SCAN_FILES: usize = 4_096;
-const DEFAULT_TOP_K: usize = 10;
-const DEFAULT_EVIDENCE_LIMIT: usize = 10;
-const DEFAULT_TRACE_EVENT_LIMIT: usize = 64;
 
 #[allow(dead_code)]
 pub(crate) struct PlanExecutionStart {
@@ -219,13 +210,14 @@ impl PlanNodeOp {
 
 #[allow(dead_code)]
 pub(crate) async fn plan_as_graph(runtime: &Runtime, args: JsonValue) -> Result<JsonValue, String> {
-    plan_as_graph_with_recorder(runtime, args, None).await
+    plan_as_graph_with_recorder(runtime, args, None, &ServerMcpConfig::default()).await
 }
 
 pub(crate) async fn plan_as_graph_with_recorder(
     runtime: &Runtime,
     args: JsonValue,
     recorder: Option<Arc<dyn PlanExecutionRecorder>>,
+    config: &ServerMcpConfig,
 ) -> Result<JsonValue, String> {
     let task = required_string_arg(&args, mcp_args::TASK)?;
     let context = optional_string_arg(&args, mcp_args::CONTEXT)?;
@@ -258,6 +250,7 @@ pub(crate) async fn plan_as_graph_with_recorder(
         None,
         &schema,
         &trace_id,
+        config,
     )
     .await
     {
@@ -272,6 +265,7 @@ pub(crate) async fn plan_as_graph_with_recorder(
                     &schema,
                     &trace_id,
                     &error,
+                    config,
                 )
                 .await?
             }
@@ -285,6 +279,7 @@ pub(crate) async fn plan_as_graph_with_recorder(
                 &schema,
                 &trace_id,
                 &error,
+                config,
             )
             .await?
         }
@@ -396,10 +391,20 @@ pub(crate) async fn plan_as_graph_with_recorder(
     Ok(output)
 }
 
+#[allow(dead_code)]
 pub(crate) async fn trace_fetch(
     runtime: Option<&Runtime>,
     execution_record: Option<JsonValue>,
     args: JsonValue,
+) -> Result<JsonValue, String> {
+    trace_fetch_with_config(runtime, execution_record, args, &ServerMcpConfig::default()).await
+}
+
+pub(crate) async fn trace_fetch_with_config(
+    runtime: Option<&Runtime>,
+    execution_record: Option<JsonValue>,
+    args: JsonValue,
+    config: &ServerMcpConfig,
 ) -> Result<JsonValue, String> {
     let trace_id = required_string_arg(&args, mcp_args::TRACE_ID)?;
     let full = args
@@ -427,7 +432,7 @@ pub(crate) async fn trace_fetch(
                     .take(if full {
                         usize::MAX
                     } else {
-                        DEFAULT_TRACE_EVENT_LIMIT
+                        config.default_trace_event_limit.max(1)
                     })
                     .map(|episode| serde_json::to_value(episode).unwrap_or(JsonValue::Null))
                     .collect::<Vec<_>>();
@@ -442,7 +447,7 @@ pub(crate) async fn trace_fetch(
     }
 
     if trace[tool_result::STATUS] == mcp_status::NOT_FOUND {
-        let files = lookup_trace_files(&trace_id, full)?;
+        let files = lookup_trace_files(&trace_id, full, config)?;
         if !files.is_empty() {
             trace[tool_result::STATUS] = JsonValue::String(mcp_status::FOUND.to_string());
             trace[tool_result::FILES] = JsonValue::Array(files);
@@ -452,13 +457,28 @@ pub(crate) async fn trace_fetch(
     Ok(trace)
 }
 
+#[allow(dead_code)]
 pub(crate) async fn aam_recall(runtime: &Runtime, args: JsonValue) -> Result<JsonValue, String> {
+    aam_recall_with_config(runtime, args, &ServerMcpConfig::default()).await
+}
+
+pub(crate) async fn aam_recall_with_config(
+    runtime: &Runtime,
+    args: JsonValue,
+    config: &ServerMcpConfig,
+) -> Result<JsonValue, String> {
     let query = args
         .get(mcp_args::QUERY)
         .and_then(JsonValue::as_str)
         .unwrap_or_default()
         .to_ascii_lowercase();
-    let top_k = bounded_usize_arg(&args, mcp_args::TOP_K, DEFAULT_TOP_K, 1, 100)?;
+    let top_k = bounded_usize_arg(
+        &args,
+        mcp_args::TOP_K,
+        config.default_top_k,
+        1,
+        config.max_top_k,
+    )?;
 
     let beliefs = runtime
         .aam()
@@ -567,7 +587,15 @@ pub(crate) fn capability_list(runtime: &Runtime, args: JsonValue) -> JsonValue {
     })
 }
 
+#[allow(dead_code)]
 pub(crate) fn evidence_lookup(args: JsonValue) -> Result<JsonValue, String> {
+    evidence_lookup_with_config(args, &ServerMcpConfig::default())
+}
+
+pub(crate) fn evidence_lookup_with_config(
+    args: JsonValue,
+    config: &ServerMcpConfig,
+) -> Result<JsonValue, String> {
     let query = args
         .get(mcp_args::QUERY)
         .or_else(|| args.get(mcp_args::CLAIM_ID))
@@ -575,12 +603,18 @@ pub(crate) fn evidence_lookup(args: JsonValue) -> Result<JsonValue, String> {
         .unwrap_or_default()
         .to_ascii_lowercase();
     let explicit_path = args.get(mcp_args::PATH).and_then(JsonValue::as_str);
-    let limit = bounded_usize_arg(&args, mcp_args::LIMIT, DEFAULT_EVIDENCE_LIMIT, 1, 100)?;
+    let limit = bounded_usize_arg(
+        &args,
+        mcp_args::LIMIT,
+        config.default_evidence_limit,
+        1,
+        config.max_evidence_limit,
+    )?;
     let roots = evidence_roots()?;
     let matches = if let Some(path) = explicit_path {
-        lookup_explicit_evidence_path(path, &roots, &query)?
+        lookup_explicit_evidence_path(path, &roots, &query, config)?
     } else {
-        scan_evidence_roots(&roots, &query, limit)?
+        scan_evidence_roots(&roots, &query, limit, config)?
     };
 
     Ok(json!({
@@ -597,9 +631,10 @@ async fn repair_plan_candidate(
     schema: &JsonValue,
     trace_id: &str,
     first_error: &str,
+    config: &ServerMcpConfig,
 ) -> Result<CompiledPlanGraph, String> {
     let mut last_error = first_error.to_string();
-    for _ in 0..PLAN_REPAIR_ATTEMPTS {
+    for _ in 0..config.plan_repair_attempts.max(1) {
         let feedback = format!("{PLAN_REPAIR_FEEDBACK_PREFIX}: {last_error}");
         let repaired = match emit_plan_candidate(
             runtime,
@@ -609,6 +644,7 @@ async fn repair_plan_candidate(
             Some(&feedback),
             schema,
             trace_id,
+            config,
         )
         .await
         {
@@ -956,9 +992,10 @@ fn emit_prompt(
     prompt
 }
 
-fn plan_capability_guidance(runtime: &Runtime) -> String {
+fn plan_capability_guidance(runtime: &Runtime, config: &ServerMcpConfig) -> String {
     let mut capabilities = runtime.capability_system().list_capabilities();
     capabilities.sort_by(|left, right| left.name.cmp(&right.name));
+    let limit = config.plan_capability_guidance_limit.max(1);
 
     let mut guidance = String::from(PLAN_CAPABILITY_GUIDANCE_HEADING);
     guidance.push('\n');
@@ -967,7 +1004,7 @@ fn plan_capability_guidance(runtime: &Runtime) -> String {
         return guidance;
     }
 
-    for capability in capabilities.iter().take(PLAN_CAPABILITY_GUIDANCE_LIMIT) {
+    for capability in capabilities.iter().take(limit) {
         guidance.push_str("- ");
         guidance.push_str(&capability.name);
         guidance.push_str(" (read_only=");
@@ -987,7 +1024,7 @@ fn plan_capability_guidance(runtime: &Runtime) -> String {
         }
         guidance.push('\n');
     }
-    if capabilities.len() > PLAN_CAPABILITY_GUIDANCE_LIMIT {
+    if capabilities.len() > limit {
         guidance.push_str(PLAN_CAPABILITY_TRUNCATED_GUIDANCE);
     }
     guidance
@@ -1001,11 +1038,12 @@ async fn emit_plan_candidate(
     feedback: Option<&str>,
     schema: &JsonValue,
     trace_id: &str,
+    config: &ServerMcpConfig,
 ) -> Result<JsonValue, PlanCandidateError> {
     let router = runtime
         .model_router()
         .ok_or_else(|| PlanCandidateError::Emission("model router unavailable; initialize APXM server runtime with ModelRouter before calling apxm_plan_as_graph".to_string()))?;
-    let capability_guidance = plan_capability_guidance(runtime);
+    let capability_guidance = plan_capability_guidance(runtime, config);
     let request = LLMRequest::new(emit_prompt(
         task,
         context,
@@ -1014,8 +1052,8 @@ async fn emit_plan_candidate(
         &capability_guidance,
     ))
     .with_output_schema(schema.clone())
-    .with_max_tokens(PLAN_MAX_TOKENS)
-    .with_temperature(PLAN_TEMPERATURE)
+    .with_max_tokens(config.plan_max_tokens.max(1))
+    .with_temperature(config.plan_temperature.clamp(0.0, 2.0))
     .with_operation_type(AISOperationType::Plan)
     .with_metadata_value(
         plan_skill::REQUEST_CAPABILITY_KEY,
@@ -1569,20 +1607,34 @@ fn summarize_execution_record(record: JsonValue, node_id: Option<u64>, full: boo
     summary
 }
 
-fn lookup_trace_files(trace_id: &str, full: bool) -> Result<Vec<JsonValue>, String> {
+fn lookup_trace_files(
+    trace_id: &str,
+    full: bool,
+    config: &ServerMcpConfig,
+) -> Result<Vec<JsonValue>, String> {
     let paths =
         ApxmPaths::discover().map_err(|error| format!("failed to discover APXM paths: {error}"))?;
     let mut roots = paths.session_lookup_dirs();
     roots.retain(|root| root.is_dir());
     let mut matches = Vec::new();
     let mut scanned = 0usize;
+    let max_scan_files = config.trace_max_scan_files.max(1);
+    let default_event_limit = config.default_trace_event_limit.max(1);
     for root in roots {
         let direct = root.join(trace_id);
         if direct.is_dir() {
-            collect_trace_dir(&direct, full, &mut matches);
+            collect_trace_dir(&direct, full, default_event_limit, &mut matches);
         }
-        scan_for_trace_files(&root, trace_id, full, &mut scanned, &mut matches);
-        if scanned >= TRACE_MAX_SCAN_FILES {
+        scan_for_trace_files(
+            &root,
+            trace_id,
+            full,
+            default_event_limit,
+            max_scan_files,
+            &mut scanned,
+            &mut matches,
+        );
+        if scanned >= max_scan_files {
             break;
         }
     }
@@ -1593,12 +1645,14 @@ fn scan_for_trace_files(
     root: &Path,
     trace_id: &str,
     full: bool,
+    default_event_limit: usize,
+    max_scan_files: usize,
     scanned: &mut usize,
     matches: &mut Vec<JsonValue>,
 ) {
     let mut queue = VecDeque::from([root.to_path_buf()]);
     while let Some(dir) = queue.pop_front() {
-        if *scanned >= TRACE_MAX_SCAN_FILES {
+        if *scanned >= max_scan_files {
             return;
         }
         let Ok(entries) = fs::read_dir(&dir) else {
@@ -1609,7 +1663,7 @@ fn scan_for_trace_files(
             *scanned += 1;
             if path.is_dir() {
                 if path.file_name().and_then(|name| name.to_str()) == Some(trace_id) {
-                    collect_trace_dir(&path, full, matches);
+                    collect_trace_dir(&path, full, default_event_limit, matches);
                 }
                 queue.push_back(path);
                 continue;
@@ -1628,7 +1682,12 @@ fn scan_for_trace_files(
     }
 }
 
-fn collect_trace_dir(dir: &Path, full: bool, matches: &mut Vec<JsonValue>) {
+fn collect_trace_dir(
+    dir: &Path,
+    full: bool,
+    default_event_limit: usize,
+    matches: &mut Vec<JsonValue>,
+) {
     let trace_path = dir.join(session_files::TRACE);
     let manifest_path = dir.join(session_files::MANIFEST);
     let trace = if trace_path.is_file() {
@@ -1637,7 +1696,7 @@ fn collect_trace_dir(dir: &Path, full: bool, matches: &mut Vec<JsonValue>) {
             if full {
                 usize::MAX
             } else {
-                DEFAULT_TRACE_EVENT_LIMIT
+                default_event_limit
             },
         )
     } else {
@@ -1693,6 +1752,7 @@ fn lookup_explicit_evidence_path(
     path: &str,
     roots: &[PathBuf],
     query: &str,
+    config: &ServerMcpConfig,
 ) -> Result<Vec<JsonValue>, String> {
     let requested = PathBuf::from(path);
     let absolute = if requested.is_absolute() {
@@ -1711,7 +1771,7 @@ fn lookup_explicit_evidence_path(
     if !roots.iter().any(|root| canonical.starts_with(root)) {
         return Err("path is outside allowed APXM evidence roots".to_string());
     }
-    Ok(read_evidence_candidate(&canonical, query)
+    Ok(read_evidence_candidate(&canonical, query, config)
         .into_iter()
         .collect())
 }
@@ -1720,13 +1780,15 @@ fn scan_evidence_roots(
     roots: &[PathBuf],
     query: &str,
     limit: usize,
+    config: &ServerMcpConfig,
 ) -> Result<Vec<JsonValue>, String> {
     let mut matches = Vec::new();
     let mut scanned = 0usize;
+    let max_scan_files = config.evidence_max_scan_files.max(1);
     for root in roots {
         let mut queue = VecDeque::from([root.clone()]);
         while let Some(dir) = queue.pop_front() {
-            if scanned >= EVIDENCE_MAX_SCAN_FILES || matches.len() >= limit {
+            if scanned >= max_scan_files || matches.len() >= limit {
                 return Ok(matches);
             }
             let entries = fs::read_dir(&dir).map_err(|error| {
@@ -1739,7 +1801,7 @@ fn scan_evidence_roots(
                     queue.push_back(path);
                     continue;
                 }
-                if let Some(item) = read_evidence_candidate(&path, query) {
+                if let Some(item) = read_evidence_candidate(&path, query, config) {
                     matches.push(item);
                     if matches.len() >= limit {
                         return Ok(matches);
@@ -1751,12 +1813,16 @@ fn scan_evidence_roots(
     Ok(matches)
 }
 
-fn read_evidence_candidate(path: &Path, query: &str) -> Option<JsonValue> {
+fn read_evidence_candidate(
+    path: &Path,
+    query: &str,
+    config: &ServerMcpConfig,
+) -> Option<JsonValue> {
     if !is_evidence_file(path) {
         return None;
     }
     let metadata = fs::metadata(path).ok()?;
-    if metadata.len() > EVIDENCE_MAX_FILE_BYTES {
+    if metadata.len() > config.evidence_max_file_bytes.max(1) {
         return None;
     }
     let text = fs::read_to_string(path).ok()?;
@@ -1827,6 +1893,8 @@ fn bounded_usize_arg(
     min: usize,
     max: usize,
 ) -> Result<usize, String> {
+    let max = max.max(min);
+    let default = default.clamp(min, max);
     let value = args
         .get(key)
         .and_then(JsonValue::as_u64)
@@ -1902,3 +1970,31 @@ fn display_path(path: &Path) -> String {
         .to_string()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bounded_usize_arg_uses_configured_default_and_max() {
+        let args = json!({});
+
+        assert_eq!(bounded_usize_arg(&args, mcp_args::LIMIT, 6, 1, 30), Ok(6));
+    }
+
+    #[test]
+    fn bounded_usize_arg_sanitizes_invalid_config_bounds() {
+        let args = json!({});
+
+        assert_eq!(bounded_usize_arg(&args, mcp_args::LIMIT, 0, 1, 0), Ok(1));
+    }
+
+    #[test]
+    fn bounded_usize_arg_rejects_request_above_configured_max() {
+        let args = json!({ (mcp_args::LIMIT): 31 });
+
+        assert_eq!(
+            bounded_usize_arg(&args, mcp_args::LIMIT, 6, 1, 30),
+            Err("limit must be between 1 and 30".to_string())
+        );
+    }
+}

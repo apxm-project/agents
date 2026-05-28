@@ -68,6 +68,31 @@ pub mod env {
     pub const APXM_RUNTIME_MAX_INFLIGHT: &str = "APXM_RUNTIME_MAX_INFLIGHT";
     /// Maximum scheduler in-flight LLM work for server-owned runtime work.
     pub const APXM_RUNTIME_LLM_INFLIGHT: &str = "APXM_RUNTIME_LLM_INFLIGHT";
+    /// Maximum tokens requested for MCP plan graph emission.
+    pub const APXM_MCP_PLAN_MAX_TOKENS: &str = "APXM_MCP_PLAN_MAX_TOKENS";
+    /// Temperature used for MCP plan graph emission.
+    pub const APXM_MCP_PLAN_TEMPERATURE: &str = "APXM_MCP_PLAN_TEMPERATURE";
+    /// Repair attempts for invalid MCP plan graph emissions.
+    pub const APXM_MCP_PLAN_REPAIR_ATTEMPTS: &str = "APXM_MCP_PLAN_REPAIR_ATTEMPTS";
+    /// Capability entries included in MCP plan graph prompt guidance.
+    pub const APXM_MCP_PLAN_CAPABILITY_GUIDANCE_LIMIT: &str =
+        "APXM_MCP_PLAN_CAPABILITY_GUIDANCE_LIMIT";
+    /// Default top-k for MCP recall style tools.
+    pub const APXM_MCP_DEFAULT_TOP_K: &str = "APXM_MCP_DEFAULT_TOP_K";
+    /// Maximum top-k accepted by MCP recall style tools.
+    pub const APXM_MCP_MAX_TOP_K: &str = "APXM_MCP_MAX_TOP_K";
+    /// Default result limit for MCP evidence lookup.
+    pub const APXM_MCP_DEFAULT_EVIDENCE_LIMIT: &str = "APXM_MCP_DEFAULT_EVIDENCE_LIMIT";
+    /// Maximum result limit accepted by MCP evidence lookup.
+    pub const APXM_MCP_MAX_EVIDENCE_LIMIT: &str = "APXM_MCP_MAX_EVIDENCE_LIMIT";
+    /// Default trace event count returned by MCP trace fetch.
+    pub const APXM_MCP_DEFAULT_TRACE_EVENT_LIMIT: &str = "APXM_MCP_DEFAULT_TRACE_EVENT_LIMIT";
+    /// Maximum files scanned by MCP trace fetch fallback lookup.
+    pub const APXM_MCP_TRACE_MAX_SCAN_FILES: &str = "APXM_MCP_TRACE_MAX_SCAN_FILES";
+    /// Maximum files scanned by MCP evidence lookup.
+    pub const APXM_MCP_EVIDENCE_MAX_SCAN_FILES: &str = "APXM_MCP_EVIDENCE_MAX_SCAN_FILES";
+    /// Maximum evidence file bytes read by MCP evidence lookup.
+    pub const APXM_MCP_EVIDENCE_MAX_FILE_BYTES: &str = "APXM_MCP_EVIDENCE_MAX_FILE_BYTES";
     /// Tokio worker threads for the APXM server process.
     pub const APXM_TOKIO_WORKERS: &str = "APXM_TOKIO_WORKERS";
     pub const LLVM_DIR: &str = "LLVM_DIR";

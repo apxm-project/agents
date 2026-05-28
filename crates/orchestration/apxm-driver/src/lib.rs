@@ -38,8 +38,8 @@ pub mod skill_resolver;
 pub use config::{
     ApXmConfig, ChatConfig, ConfigError, ExecutionStreamConfig, GenerateStreamConfig, HookConfig,
     HookEvent, RunEventsConfig, ServerConfig, ServerExecutionsConfig, ServerInferenceConfig,
-    ServerObservabilityConfig, ServerProcessConfig, ServerRolloutConfig, ServerRuntimeConfig,
-    ServerWebhookConfig, ToolConfig,
+    ServerMcpConfig, ServerObservabilityConfig, ServerProcessConfig, ServerRolloutConfig,
+    ServerRuntimeConfig, ServerWebhookConfig, ToolConfig,
 };
 
 // --- Linker ---
