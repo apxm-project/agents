@@ -150,6 +150,7 @@ impl TaskQueueManager {
             let notify = self.queue_notify(queue_name);
             let notified = notify.notified();
             tokio::pin!(notified);
+            notified.as_mut().enable();
 
             if let Some(task) = self.claim(queue_name, agent_id, lease_ms).await {
                 return Some(task);
