@@ -28,6 +28,10 @@
 //! `apxm-compiler`, and static skill execution using `apxm-skill` manifests plus
 //! `apxm-artifact` containers.
 
+// SSE streaming creates cross-thread alloc/free patterns where mimalloc beats the system allocator.
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 mod a2a;
 mod agent;
 mod app;
