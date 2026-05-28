@@ -64,6 +64,9 @@ pub struct SchedulerState {
     pub failed: Arc<AtomicUsize>,
     pub remaining: Arc<AtomicUsize>,
     pub notify_done: Arc<Notify>,
+    /// Edge-triggered wake for idle workers. Ready-node producers signal this
+    /// so workers can sleep instead of polling the steal queue.
+    pub work_notify: Arc<Notify>,
     /// Edge-triggered wake for the watchdog. Workers signal this on
     /// progress/completion so the watchdog blocks instead of polling.
     pub watchdog_notify: Arc<Notify>,
@@ -209,8 +212,8 @@ impl SchedulerState {
 
         // Create priority queue and work-stealing scheduler
         let queue = Arc::new(PriorityQueue::new());
-        let (work_stealing, workers) =
-            WorkStealingScheduler::new(cfg.max_concurrency, Arc::clone(&queue));
+        let worker_count = cfg.max_concurrency.max(cfg.llm_inflight);
+        let (work_stealing, workers) = WorkStealingScheduler::new(worker_count, Arc::clone(&queue));
         let work_stealing = Arc::new(work_stealing);
 
         // Create readiness tracker
@@ -247,6 +250,7 @@ impl SchedulerState {
             failed: Arc::new(AtomicUsize::new(0)),
             remaining: Arc::new(AtomicUsize::new(dag.nodes.len())),
             notify_done: Arc::new(Notify::new()),
+            work_notify: Arc::new(Notify::new()),
             watchdog_notify: Arc::new(Notify::new()),
             first_error: Arc::new(Mutex::new(None)),
             last_progress_ms: Arc::new(AtomicU64::new(0)),
@@ -267,6 +271,9 @@ impl SchedulerState {
             &state.queue,
         )?;
         state.emit_node_ready_batch(&ready_nodes);
+        if !ready_nodes.is_empty() {
+            state.work_notify.notify_waiters();
+        }
 
         // Initialize last progress timestamp
         state
@@ -288,6 +295,7 @@ impl SchedulerState {
         self.concurrency.cancel();
         self.llm_concurrency.cancel();
         self.notify_done.notify_waiters();
+        self.work_notify.notify_waiters();
         self.watchdog_notify.notify_one();
     }
 
@@ -412,6 +420,9 @@ impl SchedulerState {
             &self.queue,
         )?;
         self.emit_node_ready_batch(&ready_nodes);
+        if !ready_nodes.is_empty() {
+            self.work_notify.notify_waiters();
+        }
 
         self.record_progress();
         Ok(())

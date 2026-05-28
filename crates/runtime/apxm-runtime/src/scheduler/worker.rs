@@ -69,13 +69,12 @@ pub async fn worker_loop(
         // Try to steal work — only record timing on successful steals to avoid
         // inflating work_stealing_us with idle spin time across all workers.
         let steal_start = std::time::Instant::now();
+        let work_ready = state.work_notify.notified();
+        tokio::pin!(work_ready);
         let stolen = state.work_stealing.steal_next(&local_queue, worker_id);
         let Some(node_id) = stolen else {
-            // Bounded sleep instead of yield_now: caps steal-retry rate at
-            // ~20K/sec/worker so an idle pool of 16 workers does not burn a
-            // CPU just polling the work-stealing queue.
-            tracing::trace!(worker = worker_id, "No work found, sleeping");
-            tokio::time::sleep(Duration::from_micros(50)).await;
+            tracing::trace!(worker = worker_id, "No work found, waiting");
+            work_ready.as_mut().await;
             continue;
         };
 
@@ -689,6 +688,9 @@ async fn publish_outputs(state: &SchedulerState, node_id: u64, outputs: &[TokenI
         );
         if let Ok(ready_nodes) = ready_nodes {
             state.emit_node_ready_batch(&ready_nodes);
+            if !ready_nodes.is_empty() {
+                state.work_notify.notify_waiters();
+            }
         }
     }
 }

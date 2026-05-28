@@ -255,6 +255,9 @@ impl SchedulerState {
             self.emit_node_ready(*node_id);
             tracing::debug!(node_id = node_id, "Enqueued ready inner DAG node");
         }
+        if !ready_nodes.is_empty() {
+            self.work_notify.notify_waiters();
+        }
 
         // Record progress to prevent deadlock detection
         self.record_progress();
@@ -436,6 +439,7 @@ impl SchedulerState {
             }
             self.queue.push(replacement.id, priority);
             self.emit_node_ready(replacement.id);
+            self.work_notify.notify_waiters();
             log_debug!(
                 "scheduler::condense",
                 node_id = replacement.id,
