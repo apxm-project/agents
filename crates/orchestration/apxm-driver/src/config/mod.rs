@@ -389,11 +389,15 @@ impl Default for ServerWebhookConfig {
 #[serde(default)]
 pub struct ServerRolloutConfig {
     pub event_buffer: usize,
+    pub spill_threshold_bytes: Option<u64>,
 }
 
 impl Default for ServerRolloutConfig {
     fn default() -> Self {
-        Self { event_buffer: 2048 }
+        Self {
+            event_buffer: 2048,
+            spill_threshold_bytes: None,
+        }
     }
 }
 
@@ -1096,6 +1100,7 @@ mod tests {
 
             [server.rollout]
             event_buffer = 4096
+            spill_threshold_bytes = 1048576
 
             [server.mcp]
             plan_max_tokens = 4096
@@ -1195,6 +1200,7 @@ mod tests {
         );
         assert_eq!(config.server.webhook.timeout_secs, 7);
         assert_eq!(config.server.rollout.event_buffer, 4096);
+        assert_eq!(config.server.rollout.spill_threshold_bytes, Some(1048576));
         assert_eq!(config.server.mcp.plan_max_tokens, 4096);
         assert_eq!(config.server.mcp.plan_temperature, 0.2);
         assert_eq!(config.server.mcp.plan_repair_attempts, 2);

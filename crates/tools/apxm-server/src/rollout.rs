@@ -31,6 +31,7 @@ const MAX_ROLLOUT_EVENT_BUFFER: usize = 65_536;
 pub(crate) struct RolloutRegistry {
     inner: Arc<DashMap<String, Arc<RolloutWriter>>>,
     event_buffer: usize,
+    spill_threshold_bytes: Option<u64>,
 }
 
 impl RolloutRegistry {
@@ -45,6 +46,7 @@ impl RolloutRegistry {
             event_buffer: config
                 .event_buffer
                 .clamp(MIN_ROLLOUT_EVENT_BUFFER, MAX_ROLLOUT_EVENT_BUFFER),
+            spill_threshold_bytes: config.spill_threshold_bytes,
         }
     }
 
@@ -66,7 +68,7 @@ impl RolloutRegistry {
             session_id: session_id.to_string(),
             started_at,
             is_sidechain: false,
-            spill_threshold_bytes: None,
+            spill_threshold_bytes: self.spill_threshold_bytes,
             override_path: None,
         };
         match RolloutRecorder::open(cfg, session_meta.clone()).await {
@@ -221,20 +223,37 @@ mod tests {
 
     #[test]
     fn rollout_registry_uses_configured_event_buffer() {
-        let registry = RolloutRegistry::with_config(&ServerRolloutConfig { event_buffer: 4096 });
+        let registry = RolloutRegistry::with_config(&ServerRolloutConfig {
+            event_buffer: 4096,
+            ..ServerRolloutConfig::default()
+        });
 
         assert_eq!(registry.event_buffer, 4096);
     }
 
     #[test]
     fn rollout_registry_clamps_event_buffer() {
-        let low = RolloutRegistry::with_config(&ServerRolloutConfig { event_buffer: 1 });
+        let low = RolloutRegistry::with_config(&ServerRolloutConfig {
+            event_buffer: 1,
+            ..ServerRolloutConfig::default()
+        });
         assert_eq!(low.event_buffer, MIN_ROLLOUT_EVENT_BUFFER);
 
         let high = RolloutRegistry::with_config(&ServerRolloutConfig {
             event_buffer: usize::MAX,
+            ..ServerRolloutConfig::default()
         });
         assert_eq!(high.event_buffer, MAX_ROLLOUT_EVENT_BUFFER);
+    }
+
+    #[test]
+    fn rollout_registry_uses_configured_spill_threshold() {
+        let registry = RolloutRegistry::with_config(&ServerRolloutConfig {
+            spill_threshold_bytes: Some(64 * 1024),
+            ..ServerRolloutConfig::default()
+        });
+
+        assert_eq!(registry.spill_threshold_bytes, Some(64 * 1024));
     }
 }
 

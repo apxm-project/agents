@@ -240,6 +240,9 @@ fn apply_server_env_overrides(config: &mut ServerConfig) {
     if let Some(value) = env_usize(apxm_env::APXM_ROLLOUT_EVENT_BUFFER) {
         config.rollout.event_buffer = value;
     }
+    if let Some(value) = env_u64(apxm_env::APXM_ROLLOUT_SPILL_THRESHOLD_BYTES) {
+        config.rollout.spill_threshold_bytes = Some(value);
+    }
     if let Ok(value) = std::env::var(apxm_env::OTEL_EXPORTER_OTLP_ENDPOINT) {
         let trimmed = value.trim();
         if !trimmed.is_empty() {

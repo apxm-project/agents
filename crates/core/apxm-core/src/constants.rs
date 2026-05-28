@@ -56,6 +56,8 @@ pub mod env {
     pub const APXM_RUN_WEBHOOK_TIMEOUT_SECS: &str = "APXM_RUN_WEBHOOK_TIMEOUT_SECS";
     /// Server rollout writer event queue capacity.
     pub const APXM_ROLLOUT_EVENT_BUFFER: &str = "APXM_ROLLOUT_EVENT_BUFFER";
+    /// Server rollout payload spill threshold, in bytes.
+    pub const APXM_ROLLOUT_SPILL_THRESHOLD_BYTES: &str = "APXM_ROLLOUT_SPILL_THRESHOLD_BYTES";
     /// Bind address for the APXM server (e.g. 127.0.0.1:18800).
     pub const APXM_SERVER_ADDR: &str = "APXM_SERVER_ADDR";
     /// Maximum concurrent expensive inference work admitted by the server.
