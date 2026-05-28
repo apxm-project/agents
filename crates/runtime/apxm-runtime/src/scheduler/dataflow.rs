@@ -269,8 +269,11 @@ fn spawn_watchdog(state: Arc<SchedulerState>) {
     let cfg = state.cfg.clone();
 
     tokio::spawn(async move {
+        let interval = Duration::from_millis(cfg.watchdog_interval_ms);
         loop {
-            tokio::time::sleep(Duration::from_millis(cfg.watchdog_interval_ms)).await;
+            // Edge-triggered: workers wake us on progress/done. The timeout is
+            // the safety net so deadlock detection still fires when idle.
+            let _ = tokio::time::timeout(interval, state.watchdog_notify.notified()).await;
 
             // Check if execution is complete
             if state.remaining.load(std::sync::atomic::Ordering::SeqCst) == 0 {

@@ -15,6 +15,7 @@ use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
 use std::pin::Pin;
+use std::time::Duration;
 use tokio_stream::Stream;
 
 const DEFAULT_BASE_URL: &str = "http://localhost:11434";
@@ -337,7 +338,31 @@ impl LLMBackend for OllamaBackend {
             let mut tool_calls_map: std::collections::HashMap<usize, (String, serde_json::Value)> =
                 std::collections::HashMap::new();
 
-            while let Some(chunk_result) = stream.next().await {
+            // Coalesce thinking deltas into ~50ms windows to cut SSE chatter on
+            // long chain-of-thought bursts; full_reasoning still accumulates every char.
+            const THINKING_FLUSH_MS: u64 = 50;
+            let mut thinking_buf = String::new();
+            let mut thinking_deadline: Option<tokio::time::Instant> = None;
+
+            'outer: loop {
+                // Race the next network chunk against the flush deadline. When
+                // no deadline is set, far_future keeps the timer arm parked.
+                let far_future = tokio::time::Instant::now() + Duration::from_secs(3600);
+                let flush_at = thinking_deadline.unwrap_or(far_future);
+
+                let chunk_result = tokio::select! {
+                    biased;
+                    _ = tokio::time::sleep_until(flush_at), if thinking_deadline.is_some() => {
+                        if !thinking_buf.is_empty() {
+                            yield StreamChunk::Thought(std::mem::take(&mut thinking_buf));
+                        }
+                        thinking_deadline = None;
+                        continue 'outer;
+                    }
+                    next = stream.next() => next,
+                };
+
+                let Some(chunk_result) = chunk_result else { break 'outer };
                 let chunk = chunk_result.context("Stream read error")?;
                 buffer.push_str(&String::from_utf8_lossy(&chunk));
 
@@ -353,6 +378,10 @@ impl LLMBackend for OllamaBackend {
                         if let Some(prompt_count) = parsed.prompt_eval_count {
                             if let Some(eval_count) = parsed.eval_count {
                                 last_usage = TokenUsage::new(prompt_count, eval_count);
+                                if !thinking_buf.is_empty() {
+                                    yield StreamChunk::Thought(std::mem::take(&mut thinking_buf));
+                                    thinking_deadline = None;
+                                }
                                 yield StreamChunk::Usage(last_usage.clone());
                             }
                         }
@@ -360,12 +389,22 @@ impl LLMBackend for OllamaBackend {
                         if let Some(ref thinking) = parsed.message.thinking {
                             if !thinking.is_empty() {
                                 full_reasoning.push_str(thinking);
-                                yield StreamChunk::Thought(thinking.to_string());
+                                thinking_buf.push_str(thinking);
+                                if thinking_deadline.is_none() {
+                                    thinking_deadline = Some(
+                                        tokio::time::Instant::now()
+                                            + Duration::from_millis(THINKING_FLUSH_MS),
+                                    );
+                                }
                             }
                         }
 
                         if let Some(ref content) = parsed.message.content {
                             if !content.is_empty() {
+                                if !thinking_buf.is_empty() {
+                                    yield StreamChunk::Thought(std::mem::take(&mut thinking_buf));
+                                    thinking_deadline = None;
+                                }
                                 full_content.push_str(content);
                                 yield StreamChunk::Token(content.to_string());
                             }
@@ -374,6 +413,10 @@ impl LLMBackend for OllamaBackend {
                         if let Some(ref tc_arr) = parsed.message.tool_calls {
                             for (idx, tc) in tc_arr.iter().enumerate() {
                                 if !tool_calls_map.contains_key(&idx) {
+                                    if !thinking_buf.is_empty() {
+                                        yield StreamChunk::Thought(std::mem::take(&mut thinking_buf));
+                                        thinking_deadline = None;
+                                    }
                                     tool_calls_map.insert(
                                         idx,
                                         (tc.function.name.clone(), tc.function.arguments.clone()),
@@ -387,6 +430,9 @@ impl LLMBackend for OllamaBackend {
                         }
 
                         if parsed.done {
+                            if !thinking_buf.is_empty() {
+                                yield StreamChunk::Thought(std::mem::take(&mut thinking_buf));
+                            }
                             let (tool_calls, finish_reason) = Self::collect_tool_calls(&tool_calls_map);
                             let mut resp = LLMResponse::new(
                                 full_content.clone(),
@@ -416,6 +462,9 @@ impl LLMBackend for OllamaBackend {
             }
 
             // Stream ended without done=true -- emit what we have
+            if !thinking_buf.is_empty() {
+                yield StreamChunk::Thought(std::mem::take(&mut thinking_buf));
+            }
             let (tool_calls, finish_reason) = Self::collect_tool_calls(&tool_calls_map);
             let mut resp = LLMResponse::new(
                 full_content,

@@ -73,8 +73,27 @@ pub(crate) const DEFAULT_PORT: u16 = 18800;
 pub(crate) const DEFAULT_ADDR: &str = "127.0.0.1:18800";
 pub(crate) const DEFAULT_PUBLIC_URL: &str = "http://localhost:18800";
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
+    // Tokio's own docs recommend keeping worker_threads on the smaller side;
+    // the default of num_cpus over-subscribes on shared dev laptops.
+    let workers = std::env::var("APXM_TOKIO_WORKERS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or_else(|| {
+            let cores = std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(4);
+            (cores / 2).max(2)
+        });
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(workers)
+        .enable_all()
+        .build()?
+        .block_on(async_main())
+}
+
+async fn async_main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             std::env::var("RUST_LOG").unwrap_or_else(|_| "info,apxm_server=debug".to_string()),

@@ -64,6 +64,9 @@ pub struct SchedulerState {
     pub failed: Arc<AtomicUsize>,
     pub remaining: Arc<AtomicUsize>,
     pub notify_done: Arc<Notify>,
+    /// Edge-triggered wake for the watchdog. Workers signal this on
+    /// progress/completion so the watchdog blocks instead of polling.
+    pub watchdog_notify: Arc<Notify>,
     pub first_error: Arc<Mutex<Option<RuntimeError>>>,
     pub last_progress_ms: Arc<AtomicU64>,
     pub exit_nodes: Vec<NodeId>,
@@ -244,6 +247,7 @@ impl SchedulerState {
             failed: Arc::new(AtomicUsize::new(0)),
             remaining: Arc::new(AtomicUsize::new(dag.nodes.len())),
             notify_done: Arc::new(Notify::new()),
+            watchdog_notify: Arc::new(Notify::new()),
             first_error: Arc::new(Mutex::new(None)),
             last_progress_ms: Arc::new(AtomicU64::new(0)),
             exit_nodes: dag.exit_nodes.clone(),
@@ -284,6 +288,7 @@ impl SchedulerState {
         self.concurrency.cancel();
         self.llm_concurrency.cancel();
         self.notify_done.notify_waiters();
+        self.watchdog_notify.notify_one();
     }
 
     /// Get a cloneable handle to the concurrency controller.
@@ -315,6 +320,7 @@ impl SchedulerState {
     pub fn record_progress(&self) {
         self.last_progress_ms
             .store(self.elapsed_ms() as u64, Ordering::Relaxed);
+        self.watchdog_notify.notify_one();
     }
 
     /// Check if any operations are currently running.
