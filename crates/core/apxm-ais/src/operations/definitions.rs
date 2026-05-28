@@ -2097,8 +2097,10 @@ pub fn get_all_operations() -> impl Iterator<Item = &'static OperationSpec> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::{BTreeMap, HashSet};
+    use std::collections::HashSet;
 
+    const ARTIFACT_OPERATION_KIND_ENTRIES_FILE: &str = "OperationKind.generated.inc";
+    const ARTIFACT_OPERATION_KIND_CASES_FILE: &str = "OperationKindCases.generated.inc";
     const ARTIFACT_EMITTER_CPP: &str = concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../compiler/apxm-compiler/mlir/lib/Dialect/AIS/Conversion/Artifact/ArtifactEmitter.cpp"
@@ -2107,31 +2109,6 @@ mod tests {
     fn artifact_emitter_source() -> String {
         std::fs::read_to_string(ARTIFACT_EMITTER_CPP)
             .unwrap_or_else(|err| panic!("read {ARTIFACT_EMITTER_CPP}: {err}"))
-    }
-
-    fn operation_kind_entries(source: &str) -> BTreeMap<String, u32> {
-        let enum_start = source
-            .find("enum class OperationKind")
-            .expect("ArtifactEmitter.cpp should define OperationKind");
-        let enum_body_start = source[enum_start..]
-            .find('{')
-            .map(|offset| enum_start + offset + 1)
-            .expect("OperationKind should have an enum body");
-        let enum_body_end = source[enum_body_start..]
-            .find("};")
-            .map(|offset| enum_body_start + offset)
-            .expect("OperationKind should terminate with `};`");
-
-        source[enum_body_start..enum_body_end]
-            .lines()
-            .filter_map(|line| {
-                let line = line.split("//").next()?.trim().trim_end_matches(',');
-                let (name, value) = line.split_once('=')?;
-                let name = name.trim();
-                let value = value.trim().parse::<u32>().ok()?;
-                Some((name.to_string(), value))
-            })
-            .collect()
     }
 
     #[test]
@@ -2279,28 +2256,16 @@ mod tests {
     }
 
     #[test]
-    fn artifact_emitter_operation_kind_matches_wire_table() {
+    fn artifact_emitter_consumes_generated_wire_fragments() {
         let source = artifact_emitter_source();
-        let cpp_entries = operation_kind_entries(&source);
-        let rust_entries: BTreeMap<String, u32> = AISOperationType::wire_indexed_operations()
-            .iter()
-            .map(|(wire_index, op)| (format!("{op:?}"), *wire_index))
-            .collect();
-
-        assert_eq!(
-            cpp_entries, rust_entries,
-            "ArtifactEmitter.cpp OperationKind must match AISOperationType::wire_indexed_operations()"
-        );
-    }
-
-    #[test]
-    fn artifact_emitter_maps_every_wire_indexed_mlir_op() {
-        let source = artifact_emitter_source();
-        for &(_, op) in AISOperationType::wire_indexed_operations() {
-            let case = format!(".Case<{op:?}Op>");
+        for file_name in [
+            ARTIFACT_OPERATION_KIND_ENTRIES_FILE,
+            ARTIFACT_OPERATION_KIND_CASES_FILE,
+        ] {
+            let include = format!("#include \"ais/Dialect/AIS/Conversion/Artifact/{file_name}\"");
             assert!(
-                source.contains(&case),
-                "ArtifactEmitter.cpp mapOperation missing {case}"
+                source.contains(&include),
+                "ArtifactEmitter.cpp must consume generated artifact wire fragment {file_name}"
             );
         }
     }
