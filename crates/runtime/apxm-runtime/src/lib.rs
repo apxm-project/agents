@@ -82,7 +82,7 @@ pub use process::{AgentProcess, ProcessId, ProcessKind, ProcessState};
 pub use process_table::{
     AgentPromptResponse, AgentPromptTokenUsage, AgentPrompter, AgentSpawner, ProcessTable,
 };
-pub use runtime::{Runtime, RuntimeConfig, RuntimeExecutionResult};
+pub use runtime::{LlmToolDispatchConfig, Runtime, RuntimeConfig, RuntimeExecutionResult};
 pub use scheduler::{DataflowScheduler, SchedulerConfig};
 pub use thread::{AgentThread, ThreadId, ThreadState};
 

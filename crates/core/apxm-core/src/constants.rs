@@ -70,6 +70,8 @@ pub mod env {
     pub const APXM_RUNTIME_MAX_INFLIGHT: &str = "APXM_RUNTIME_MAX_INFLIGHT";
     /// Maximum scheduler in-flight LLM work for server-owned runtime work.
     pub const APXM_RUNTIME_LLM_INFLIGHT: &str = "APXM_RUNTIME_LLM_INFLIGHT";
+    /// Maximum parallel tool calls admitted within one LLM tool-call turn.
+    pub const APXM_RUNTIME_MAX_PARALLEL_TOOL_CALLS: &str = "APXM_RUNTIME_MAX_PARALLEL_TOOL_CALLS";
     /// Maximum tokens requested for MCP plan graph emission.
     pub const APXM_MCP_PLAN_MAX_TOKENS: &str = "APXM_MCP_PLAN_MAX_TOKENS";
     /// Temperature used for MCP plan graph emission.

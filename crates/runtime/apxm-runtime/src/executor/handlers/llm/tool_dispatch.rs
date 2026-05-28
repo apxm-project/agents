@@ -18,9 +18,6 @@ use super::super::{Result, execute_llm_request_for_node};
 /// Default maximum number of tool loop iterations to prevent infinite loops.
 /// Can be overridden per-node via the `max_tool_iterations` attribute.
 pub(super) const DEFAULT_MAX_TOOL_ITERATIONS: usize = 10;
-const DEFAULT_MAX_PARALLEL_TOOL_CALLS: usize = 8;
-const HARD_MAX_PARALLEL_TOOL_CALLS: usize = 64;
-const MAX_PARALLEL_TOOL_CALLS_ENV: &str = "APXM_RUNTIME_MAX_PARALLEL_TOOL_CALLS";
 
 /// Get tool definitions from the capability system for LLM requests
 fn get_tool_definitions_from_capabilities(ctx: &ExecutionContext) -> Vec<ToolDefinition> {
@@ -272,7 +269,7 @@ async fn execute_tool_calls_parallel(
         return vec![execute_tool_call(ctx, &tool_calls[0]).await];
     }
 
-    let max_parallel = max_parallel_tool_calls(tool_calls.len());
+    let max_parallel = max_parallel_tool_calls(ctx, tool_calls.len());
     let batches = tool_calls.len().div_ceil(max_parallel);
     apxm_llm!(info,
         execution_id = %ctx.execution_id,
@@ -317,13 +314,8 @@ async fn execute_tool_call_batch(
     futures::future::join_all(futures).await
 }
 
-fn max_parallel_tool_calls(tool_count: usize) -> usize {
-    let configured = std::env::var(MAX_PARALLEL_TOOL_CALLS_ENV)
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(DEFAULT_MAX_PARALLEL_TOOL_CALLS);
-    clamp_tool_call_parallelism(tool_count, configured)
+fn max_parallel_tool_calls(ctx: &ExecutionContext, tool_count: usize) -> usize {
+    clamp_tool_call_parallelism(tool_count, ctx.max_parallel_tool_calls)
 }
 
 fn clamp_tool_call_parallelism(tool_count: usize, configured: usize) -> usize {
@@ -331,7 +323,10 @@ fn clamp_tool_call_parallelism(tool_count: usize, configured: usize) -> usize {
         0
     } else {
         configured
-            .clamp(1, HARD_MAX_PARALLEL_TOOL_CALLS)
+            .clamp(
+                1,
+                crate::LlmToolDispatchConfig::HARD_MAX_PARALLEL_TOOL_CALLS,
+            )
             .min(tool_count)
     }
 }
@@ -705,7 +700,7 @@ mod tests {
         assert_eq!(clamp_tool_call_parallelism(100, 0), 1);
         assert_eq!(
             clamp_tool_call_parallelism(1000, usize::MAX),
-            HARD_MAX_PARALLEL_TOOL_CALLS
+            crate::LlmToolDispatchConfig::HARD_MAX_PARALLEL_TOOL_CALLS
         );
     }
 
