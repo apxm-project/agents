@@ -47,6 +47,7 @@ pub mod workflow_spawn;
 
 use super::{ExecutionContext, Result};
 use anyhow::Error as AnyhowError;
+use apxm_backends::llm::wire::response_metadata;
 use apxm_backends::{LLMRequest, LLMResponse};
 use apxm_core::{
     constants::graph::attrs as graph_attrs,
@@ -438,11 +439,19 @@ async fn execute_llm_request_streaming(
     // Record success in ModelRouter circuit breaker (streaming path).
     if let Some(router) = &ctx.model_router {
         if let Some(ref decision) = router_decision {
-            router.record_success(&decision.backend);
+            router.record_success(streamed_response_backend(&response, &decision.backend));
         }
     }
 
     Ok(response)
+}
+
+fn streamed_response_backend<'a>(response: &'a LLMResponse, fallback_backend: &'a str) -> &'a str {
+    response
+        .metadata
+        .get(response_metadata::APXM_BACKEND_NAME)
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or(fallback_backend)
 }
 
 #[cfg(feature = "metrics")]
@@ -532,8 +541,27 @@ mod tests {
     use crate::executor::events::ExecutionEventEmitter;
     use crate::memory::{MemoryConfig, MemorySystem};
     use apxm_backends::llm::backends::mock::MockLLMBackend;
+    use apxm_core::types::{FinishReason, TokenUsage};
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn streamed_response_backend_prefers_registry_metadata() {
+        let response = LLMResponse::new("ok", "model", TokenUsage::new(1, 1), FinishReason::Stop)
+            .with_metadata(
+                response_metadata::APXM_BACKEND_NAME,
+                serde_json::json!("fallback"),
+            );
+
+        assert_eq!(streamed_response_backend(&response, "primary"), "fallback");
+    }
+
+    #[test]
+    fn streamed_response_backend_falls_back_without_registry_metadata() {
+        let response = LLMResponse::new("ok", "model", TokenUsage::new(1, 1), FinishReason::Stop);
+
+        assert_eq!(streamed_response_backend(&response, "primary"), "primary");
+    }
 
     #[test]
     fn test_finalize_pending_tool_call_valid_json() {
@@ -574,7 +602,6 @@ mod tests {
     #[tokio::test]
     async fn test_streaming_tool_call_accumulation() {
         use apxm_backends::StreamChunk;
-        use apxm_core::types::{FinishReason, TokenUsage};
         use tokio_stream::StreamExt;
 
         // Simulate a stream with interleaved tool calls
