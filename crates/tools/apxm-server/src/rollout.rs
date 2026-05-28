@@ -7,29 +7,39 @@
 //! the integration surface minimal: nothing changes for callers that don't
 //! know about rollouts; observers gain durable replay across restarts.
 
-use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 
 use apxm_core::events::{ApxmEvent, EventEmitter};
 use apxm_rollout::{
-    IndexDb, PartialMeta, RolloutPaths, RolloutRecorder, RolloutRecorderConfig,
-    SessionMetaPayload, ThreadIndexEntry, now_rfc3339,
+    IndexDb, PartialMeta, RolloutPaths, RolloutRecorder, RolloutRecorderConfig, SessionMetaPayload,
+    ThreadIndexEntry, now_rfc3339,
 };
 use chrono::{DateTime, Utc};
-use tokio::sync::Mutex;
+use dashmap::DashMap;
+use tokio::sync::{Mutex, mpsc};
+use tokio::task::JoinHandle;
 use tracing::warn;
+
+const DEFAULT_ROLLOUT_EVENT_BUFFER: usize = 2048;
+const MIN_ROLLOUT_EVENT_BUFFER: usize = 128;
+const MAX_ROLLOUT_EVENT_BUFFER: usize = 65_536;
+const ROLLOUT_EVENT_BUFFER_ENV: &str = "APXM_ROLLOUT_EVENT_BUFFER";
 
 /// Holds open recorders keyed by trace_id (which is the execution_id for
 /// runtime events). The map is small — one entry per in-flight run.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(crate) struct RolloutRegistry {
-    inner: Arc<Mutex<HashMap<String, Arc<RolloutRecorder>>>>,
+    inner: Arc<DashMap<String, Arc<RolloutWriter>>>,
+    event_buffer: usize,
 }
 
 impl RolloutRegistry {
     pub(crate) fn new() -> Self {
-        Self::default()
+        Self {
+            inner: Arc::new(DashMap::new()),
+            event_buffer: rollout_event_buffer(),
+        }
     }
 
     pub(crate) async fn open_for_run(
@@ -40,9 +50,8 @@ impl RolloutRegistry {
         session_id: &str,
         session_meta: SessionMetaPayload,
     ) -> Option<Arc<RolloutRecorder>> {
-        let mut guard = self.inner.lock().await;
-        if let Some(existing) = guard.get(execution_id) {
-            return Some(existing.clone());
+        if let Some(existing) = self.inner.get(execution_id) {
+            return Some(existing.recorder.clone());
         }
         let started_at = Utc::now();
         let cfg = RolloutRecorderConfig {
@@ -57,10 +66,14 @@ impl RolloutRegistry {
         match RolloutRecorder::open(cfg, session_meta.clone()).await {
             Ok(recorder) => {
                 let recorder = Arc::new(recorder);
-                guard.insert(execution_id.to_string(), recorder.clone());
+                let writer = Arc::new(RolloutWriter::start(
+                    execution_id.to_string(),
+                    recorder.clone(),
+                    self.event_buffer,
+                ));
+                self.inner.insert(execution_id.to_string(), writer);
                 if let Some(index) = index {
-                    insert_index_row(&index, recorder.file_path(), &session_meta, started_at)
-                        .await;
+                    insert_index_row(&index, recorder.file_path(), &session_meta, started_at).await;
                 }
                 Some(recorder)
             }
@@ -71,16 +84,78 @@ impl RolloutRegistry {
         }
     }
 
-    pub(crate) async fn get(&self, execution_id: &str) -> Option<Arc<RolloutRecorder>> {
-        self.inner.lock().await.get(execution_id).cloned()
-    }
-
     /// Convenience: close + drop a recorder. Idempotent.
     pub(crate) async fn close(&self, execution_id: &str) {
-        let recorder = { self.inner.lock().await.remove(execution_id) };
-        if let Some(recorder) = recorder
-            && let Err(error) = recorder.close().await
+        if let Some((_, writer)) = self.inner.remove(execution_id) {
+            writer.shutdown(execution_id).await;
+        }
+    }
+
+    fn try_record(&self, execution_id: &str, event: ApxmEvent) {
+        let Some(writer) = self.inner.get(execution_id) else {
+            return;
+        };
+        if let Err(error) = writer.try_send(event) {
+            warn!(%error, execution_id, "rollout event queue rejected event");
+        }
+    }
+}
+
+struct RolloutWriter {
+    recorder: Arc<RolloutRecorder>,
+    tx: StdMutex<Option<mpsc::Sender<ApxmEvent>>>,
+    handle: Mutex<Option<JoinHandle<()>>>,
+}
+
+impl RolloutWriter {
+    fn start(
+        execution_id: String,
+        recorder: Arc<RolloutRecorder>,
+        event_buffer: usize,
+    ) -> RolloutWriter {
+        let (tx, mut rx) = mpsc::channel(event_buffer);
+        let worker_recorder = recorder.clone();
+        let worker_execution_id = execution_id.clone();
+        let handle = tokio::spawn(async move {
+            while let Some(event) = rx.recv().await {
+                if let Err(error) = worker_recorder
+                    .write_event(event, PartialMeta::default())
+                    .await
+                {
+                    warn!(%error, execution_id = %worker_execution_id, "rollout write_event failed");
+                }
+            }
+        });
+
+        RolloutWriter {
+            recorder,
+            tx: StdMutex::new(Some(tx)),
+            handle: Mutex::new(Some(handle)),
+        }
+    }
+
+    fn try_send(&self, event: ApxmEvent) -> Result<(), mpsc::error::TrySendError<ApxmEvent>> {
+        let Ok(guard) = self.tx.lock() else {
+            return Err(mpsc::error::TrySendError::Closed(event));
+        };
+        match guard.as_ref() {
+            Some(tx) => tx.try_send(event),
+            None => Err(mpsc::error::TrySendError::Closed(event)),
+        }
+    }
+
+    async fn shutdown(&self, execution_id: &str) {
+        if let Ok(mut guard) = self.tx.lock() {
+            guard.take();
+        }
+
+        if let Some(handle) = self.handle.lock().await.take()
+            && let Err(error) = handle.await
         {
+            warn!(%error, execution_id, "rollout writer task failed");
+        }
+
+        if let Err(error) = self.recorder.close().await {
             warn!(%error, execution_id, "failed to close rollout recorder");
         }
     }
@@ -130,19 +205,17 @@ impl RolloutEmitter {
 
 impl EventEmitter for RolloutEmitter {
     fn emit(&self, event: ApxmEvent) {
-        // Spawn so the emit hot path stays sync. The recorder is itself
-        // backed by a tokio Mutex so concurrent emits serialize cleanly.
-        let registry = self.registry.clone();
-        let execution_id = self.execution_id.clone();
-        tokio::spawn(async move {
-            let Some(recorder) = registry.get(&execution_id).await else {
-                return;
-            };
-            if let Err(error) = recorder.write_event(event, PartialMeta::default()).await {
-                warn!(%error, execution_id, "rollout write_event failed");
-            }
-        });
+        self.registry.try_record(&self.execution_id, event);
     }
+}
+
+fn rollout_event_buffer() -> usize {
+    std::env::var(ROLLOUT_EVENT_BUFFER_ENV)
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_ROLLOUT_EVENT_BUFFER)
+        .clamp(MIN_ROLLOUT_EVENT_BUFFER, MAX_ROLLOUT_EVENT_BUFFER)
 }
 
 /// Build a synthetic SessionMeta from skill execution context. Used by
