@@ -201,6 +201,9 @@ pub struct ServerConfig {
 
     /// Durable rollout writer controls.
     pub rollout: ServerRolloutConfig,
+
+    /// Server observability exporter controls.
+    pub observability: ServerObservabilityConfig,
 }
 
 impl Default for ServerConfig {
@@ -216,6 +219,7 @@ impl Default for ServerConfig {
             run_events: RunEventsConfig::default(),
             webhook: ServerWebhookConfig::default(),
             rollout: ServerRolloutConfig::default(),
+            observability: ServerObservabilityConfig::default(),
         }
     }
 }
@@ -368,6 +372,13 @@ impl Default for ServerRolloutConfig {
     fn default() -> Self {
         Self { event_buffer: 2048 }
     }
+}
+
+/// Server observability exporter configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(default)]
+pub struct ServerObservabilityConfig {
+    pub otlp_endpoint: Option<String>,
 }
 
 /// Policy configuration layered over the dynamic registry.
@@ -1023,6 +1034,9 @@ mod tests {
             [server.rollout]
             event_buffer = 4096
 
+            [server.observability]
+            otlp_endpoint = "http://127.0.0.1:4317"
+
             [chat.routing.operation_routes.plan]
             backend = "{MOCK_PROVIDER_NAME}"
             model = "fast"
@@ -1103,6 +1117,10 @@ mod tests {
         );
         assert_eq!(config.server.webhook.timeout_secs, 7);
         assert_eq!(config.server.rollout.event_buffer, 4096);
+        assert_eq!(
+            config.server.observability.otlp_endpoint.as_deref(),
+            Some("http://127.0.0.1:4317")
+        );
         assert_eq!(
             config
                 .chat
