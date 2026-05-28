@@ -4,7 +4,7 @@
 //! Both the compiler and runtime depend on this crate to ensure consistent operation
 //! semantics across the entire system.
 //!
-//! ## Operations (43 total)
+//! ## Operations (44 total)
 //!
 //! | Category | Operations |
 //! |----------|------------|
@@ -12,7 +12,7 @@
 //! | Memory | QMEM, UMEM |
 //! | LLM/Reasoning | ASK, THINK, REASON, PLAN, REFLECT, VERIFY |
 //! | Tools | INV_TOOL, EXC, PRINT |
-//! | Control Flow | JUMP, BRANCH_ON_VALUE, LOOP_START, LOOP_END, RETURN, SWITCH, FLOW_CALL, WORKFLOW_SPAWN |
+//! | Control Flow | JUMP, BRANCH_ON_VALUE, LOOP_START, LOOP_END, RETURN, SWITCH, FLOW_CALL, WORKFLOW_SPAWN, CALL_SKILL |
 //! | Synchronization | MERGE, FENCE, WAIT_ALL |
 //! | Error Handling | TRY_CATCH, ERR |
 //! | Communication | COMMUNICATE, HANDOFF |
@@ -35,8 +35,8 @@ pub use memory::MemoryTier;
 pub use operations::tablegen::generate_tablegen;
 pub use operations::{
     AIS_OPERATIONS, AISOperationType, ContextStyle, MlirEmissionSpec, MlirResultType,
-    OperationCategory, OperationField, OperationLatency, OperationSpec, get_all_operations,
-    get_operation_spec,
+    OperationCategory, OperationField, OperationLatency, OperationSpec, WIRE_INDEXED_OPERATIONS,
+    get_all_operations, get_operation_spec,
 };
 pub use types::Value;
 pub use validation::{

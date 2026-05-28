@@ -24,8 +24,8 @@ mod generated {
 pub use generated::category::OperationCategory;
 pub use generated::definitions::{
     AIS_OPERATIONS, AISOperationType, ContextStyle, MlirEmissionSpec, MlirResultType,
-    OperationField, OperationLatency, OperationSpec, ReferenceType, get_all_operations,
-    get_operation_spec,
+    OperationField, OperationLatency, OperationSpec, ReferenceType, WIRE_INDEXED_OPERATIONS,
+    get_all_operations, get_operation_spec,
 };
 pub use generated::validation::{
     ValidationError, has_required_fields, missing_required_fields, validate_operation,

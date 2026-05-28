@@ -753,42 +753,10 @@ mod tests {
 
     #[test]
     fn emit_parse_round_trip_all_wire_indexed_ops() {
-        // Test every wire-indexed operation type
-        let wire_ops = [
-            AISOperationType::InvTool,
-            AISOperationType::Ask,
-            AISOperationType::QMem,
-            AISOperationType::UMem,
-            AISOperationType::Plan,
-            AISOperationType::WaitAll,
-            AISOperationType::Merge,
-            AISOperationType::Fence,
-            AISOperationType::Exc,
-            AISOperationType::Communicate,
-            AISOperationType::Reflect,
-            AISOperationType::Verify,
-            AISOperationType::Err,
-            AISOperationType::Return,
-            AISOperationType::Jump,
-            AISOperationType::BranchOnValue,
-            AISOperationType::LoopStart,
-            AISOperationType::LoopEnd,
-            AISOperationType::TryCatch,
-            AISOperationType::ConstStr,
-            AISOperationType::Switch,
-            AISOperationType::FlowCall,
-            AISOperationType::Print,
-            AISOperationType::Think,
-            AISOperationType::Reason,
-            AISOperationType::Delegate,
-            AISOperationType::Negotiate,
-            AISOperationType::Nop,
-            AISOperationType::Identity,
-            AISOperationType::SpawnAgent,
-            AISOperationType::RegisterCapability,
-            AISOperationType::Autonomous,
-        ];
-        for (i, &op) in wire_ops.iter().enumerate() {
+        for (i, &(_, op)) in AISOperationType::wire_indexed_operations()
+            .iter()
+            .enumerate()
+        {
             let dag = ExecutionDag {
                 nodes: vec![Node {
                     id: (i + 1) as u64,
