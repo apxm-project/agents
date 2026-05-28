@@ -521,22 +521,10 @@ impl LLMBackend for AnthropicBackend {
                 }
             }
 
-            // Stream ended without message_stop -- emit what we have.
-            let finish_reason = if !tool_calls.is_empty() {
-                FinishReason::ToolUse
-            } else {
-                FinishReason::Stop
-            };
-
-            let usage = TokenUsage::new(input_tokens, output_tokens);
-            let resp = LLMResponse::new(
-                full_content,
-                &model,
-                usage,
-                finish_reason,
-            ).with_tool_calls(tool_calls);
-
-            yield StreamChunk::Done(resp);
+            Err(anyhow::anyhow!(
+                "Anthropic stream ended before {} terminal event",
+                anthropic_events::MESSAGE_STOP
+            ))?;
         })
     }
 
