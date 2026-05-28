@@ -18,6 +18,9 @@ use super::super::{Result, execute_llm_request_for_node};
 /// Default maximum number of tool loop iterations to prevent infinite loops.
 /// Can be overridden per-node via the `max_tool_iterations` attribute.
 pub(super) const DEFAULT_MAX_TOOL_ITERATIONS: usize = 10;
+const DEFAULT_MAX_PARALLEL_TOOL_CALLS: usize = 8;
+const HARD_MAX_PARALLEL_TOOL_CALLS: usize = 64;
+const MAX_PARALLEL_TOOL_CALLS_ENV: &str = "APXM_RUNTIME_MAX_PARALLEL_TOOL_CALLS";
 
 /// Get tool definitions from the capability system for LLM requests
 fn get_tool_definitions_from_capabilities(ctx: &ExecutionContext) -> Vec<ToolDefinition> {
@@ -230,12 +233,27 @@ async fn execute_tool_calls_parallel(
         return vec![execute_tool_call(ctx, &tool_calls[0]).await];
     }
 
+    let max_parallel = max_parallel_tool_calls(tool_calls.len());
+    let batches = tool_calls.len().div_ceil(max_parallel);
     apxm_llm!(info,
         execution_id = %ctx.execution_id,
         tool_count = tool_calls.len(),
+        max_parallel = max_parallel,
+        batches = batches,
         "Dispatching tool calls in parallel"
     );
 
+    let mut results = Vec::with_capacity(tool_calls.len());
+    for batch in tool_calls.chunks(max_parallel) {
+        results.extend(execute_tool_call_batch(ctx, batch).await);
+    }
+    results
+}
+
+async fn execute_tool_call_batch(
+    ctx: &ExecutionContext,
+    tool_calls: &[ToolCall],
+) -> Vec<ToolResult> {
     let futures: Vec<_> = tool_calls
         .iter()
         .map(|tc| {
@@ -256,6 +274,25 @@ async fn execute_tool_calls_parallel(
         .collect();
 
     futures::future::join_all(futures).await
+}
+
+fn max_parallel_tool_calls(tool_count: usize) -> usize {
+    let configured = std::env::var(MAX_PARALLEL_TOOL_CALLS_ENV)
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_MAX_PARALLEL_TOOL_CALLS);
+    clamp_tool_call_parallelism(tool_count, configured)
+}
+
+fn clamp_tool_call_parallelism(tool_count: usize, configured: usize) -> usize {
+    if tool_count == 0 {
+        0
+    } else {
+        configured
+            .clamp(1, HARD_MAX_PARALLEL_TOOL_CALLS)
+            .min(tool_count)
+    }
 }
 
 /// Convert serde_json::Value to apxm_core Value
@@ -599,5 +636,16 @@ mod tests {
             Value::Array(vec![Value::String("web".to_string())]),
         );
         assert!(resolve_ask_tools(&ctx, &node).is_empty());
+    }
+
+    #[test]
+    fn tool_call_parallelism_is_bounded_and_nonzero() {
+        assert_eq!(clamp_tool_call_parallelism(0, 8), 0);
+        assert_eq!(clamp_tool_call_parallelism(3, 8), 3);
+        assert_eq!(clamp_tool_call_parallelism(100, 0), 1);
+        assert_eq!(
+            clamp_tool_call_parallelism(1000, usize::MAX),
+            HARD_MAX_PARALLEL_TOOL_CALLS
+        );
     }
 }
