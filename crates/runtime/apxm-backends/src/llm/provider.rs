@@ -5,12 +5,14 @@
 
 use crate::llm::backends::{
     AnthropicBackend, GoogleBackend, GraphAwareVllmBackend, LLMBackend, LLMRequest, LLMResponse,
-    MockLLMBackend, OllamaBackend, OpenAIBackend,
+    MockLLMBackend, OllamaBackend, OpenAIBackend, StreamChunk,
 };
 use crate::llm::{ProviderProtocol, ProviderSpec};
 use apxm_core::types::{BackendGraphCapabilities, ModelCapabilities, ModelInfo};
 use async_trait::async_trait;
+use futures::Stream;
 use serde::{Deserialize, Serialize};
+use std::pin::Pin;
 use std::sync::Arc;
 
 /// Built-in provider identifiers supported by the enum-based backend surface.
@@ -171,6 +173,13 @@ impl Provider {
 impl LLMBackend for Provider {
     async fn generate(&self, request: LLMRequest) -> anyhow::Result<LLMResponse> {
         self.backend_ref().generate(request).await
+    }
+
+    fn generate_stream(
+        &self,
+        request: LLMRequest,
+    ) -> Pin<Box<dyn Stream<Item = anyhow::Result<StreamChunk>> + Send + '_>> {
+        self.backend_ref().generate_stream(request)
     }
 
     fn name(&self) -> &str {
