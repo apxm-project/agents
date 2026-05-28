@@ -206,8 +206,7 @@ async fn get_run_graph_returns_layered_topology_with_edges() {
     seed_run_record(&state, RUN_EXECUTION_ID).await;
 
     let app = build_app(state);
-    let (status, body) =
-        get_json(app, &routes::run_graph_path(RUN_EXECUTION_ID)).await;
+    let (status, body) = get_json(app, &routes::run_graph_path(RUN_EXECUTION_ID)).await;
     assert_eq!(status, StatusCode::OK, "graph fetch failed: {body}");
     assert_eq!(body["graph_schema_version"], 1);
     let nodes = body["nodes"].as_array().expect("nodes");
@@ -222,10 +221,7 @@ async fn get_run_graph_returns_layered_topology_with_edges() {
     assert!(kinds.contains(&"dispatch"));
     assert!(kinds.contains(&"tool_invocation"));
     // Layer assignment: root has layer 0, descendant ≥ 1.
-    let layers: Vec<u64> = nodes
-        .iter()
-        .filter_map(|n| n["layer"].as_u64())
-        .collect();
+    let layers: Vec<u64> = nodes.iter().filter_map(|n| n["layer"].as_u64()).collect();
     assert!(layers.iter().any(|&l| l == 0));
     assert!(layers.iter().any(|&l| l >= 1));
 }
@@ -235,8 +231,7 @@ async fn get_run_node_returns_full_detail_for_agent_node() {
     let state = test_state().await;
     populate_run(&state.run_event_bus, RUN_EXECUTION_ID);
     let app = build_app(state);
-    let (status, body) =
-        get_json(app, &routes::run_node_detail_path(RUN_EXECUTION_ID, 1)).await;
+    let (status, body) = get_json(app, &routes::run_node_detail_path(RUN_EXECUTION_ID, 1)).await;
     assert_eq!(status, StatusCode::OK, "node detail failed: {body}");
     assert_eq!(body["node_id"], 1);
     assert_eq!(body["status"], "succeeded");
@@ -249,8 +244,7 @@ async fn get_run_node_returns_full_detail_for_tool_node() {
     let state = test_state().await;
     populate_run(&state.run_event_bus, RUN_EXECUTION_ID);
     let app = build_app(state);
-    let (status, body) =
-        get_json(app, &routes::run_node_detail_path(RUN_EXECUTION_ID, 3)).await;
+    let (status, body) = get_json(app, &routes::run_node_detail_path(RUN_EXECUTION_ID, 3)).await;
     assert_eq!(status, StatusCode::OK, "tool node detail failed: {body}");
     assert_eq!(body["node_id"], 3);
     assert!(body["tool"].is_object(), "tool block present");
@@ -292,8 +286,8 @@ async fn events_stream_replays_from_seq_zero_then_tails_live() {
     // Read a bounded chunk of the SSE body so we don't block on the
     // keep-alive stream forever — the test only validates initial
     // replay.
-    use http_body_util::BodyStream;
     use futures::StreamExt;
+    use http_body_util::BodyStream;
     let mut body_stream = BodyStream::new(resp.into_body());
     let mut buf = Vec::new();
     while buf.len() < 1024 {
@@ -334,8 +328,8 @@ async fn events_stream_supports_last_event_id_reconnect() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
-    use http_body_util::BodyStream;
     use futures::StreamExt;
+    use http_body_util::BodyStream;
     let mut body_stream = BodyStream::new(resp.into_body());
     let mut buf = Vec::new();
     while buf.len() < 1024 {
@@ -362,8 +356,7 @@ async fn events_stream_supports_last_event_id_reconnect() {
 #[tokio::test]
 async fn get_run_returns_404_for_unknown_execution() {
     let app = build_app(test_state().await);
-    let (status, _body) =
-        get_json(app, &routes::run_detail_path("nonexistent-run")).await;
+    let (status, _body) = get_json(app, &routes::run_detail_path("nonexistent-run")).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
@@ -544,8 +537,7 @@ async fn events_stream_replays_from_rollout_after_bus_rollover() {
     let app = build_app(state);
     // bus is empty for this id; the events bulk endpoint should fall
     // through to the rollout JSONL.
-    let (status, body) =
-        get_json(app, &routes::run_events_path(exec_id)).await;
+    let (status, body) = get_json(app, &routes::run_events_path(exec_id)).await;
     assert_eq!(status, StatusCode::OK, "events from disk: {body}");
     let events = body["events"].as_array().expect("events");
     assert!(!events.is_empty(), "expected events from rollout: {body}");
@@ -643,8 +635,7 @@ async fn node_detail_reads_from_rollout_when_bus_empty() {
             .unwrap();
     }
     let app = build_app(state);
-    let (status, body) =
-        get_json(app, &routes::run_node_detail_path(exec_id, 7)).await;
+    let (status, body) = get_json(app, &routes::run_node_detail_path(exec_id, 7)).await;
     assert_eq!(status, StatusCode::OK, "node detail from disk: {body}");
     assert_eq!(body["node_id"], 7);
     // op_type round-trips through core decoder so SpawnAgent is preserved.

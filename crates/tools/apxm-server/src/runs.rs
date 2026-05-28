@@ -15,7 +15,7 @@
 //! routes are untouched and observers that don't know about
 //! `/v1/runs` simply ignore it.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
@@ -46,23 +46,30 @@ use crate::state::AppState;
 
 /// Default cap on `/v1/runs` listings to keep responses bounded.
 const DEFAULT_LIST_LIMIT: usize = 200;
+const MAX_LIST_LIMIT: usize = 500;
 /// Default page size for the bulk events endpoint.
 const DEFAULT_EVENTS_LIMIT: usize = 500;
+const MAX_EVENTS_LIMIT: usize = 2_000;
 /// Cap on the broadcast channel buffer per run — events older than this
 /// are still in the on-disk ring but no longer streamed live.
 const STREAM_BUFFER: usize = 1024;
+/// Default number of events retained in memory per run. Rollout JSONL remains
+/// the durable source of truth for older/cold replay.
+const DEFAULT_RETAINED_EVENTS: usize = 4096;
+const MIN_RETAINED_EVENTS: usize = 128;
 
 // ────────────────────────────────────────────────────────────────────
 // RunEventBus — owns retained events + live broadcast per execution.
 // ────────────────────────────────────────────────────────────────────
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(crate) struct RunEventBus {
     inner: Arc<DashMap<String, RunEventState>>,
+    retained_events: usize,
 }
 
 struct RunEventState {
-    events: Vec<ApxmEvent>,
+    events: VecDeque<ApxmEvent>,
     tx: broadcast::Sender<ApxmEvent>,
 }
 
@@ -70,7 +77,7 @@ impl RunEventState {
     fn new() -> Self {
         let (tx, _rx) = broadcast::channel(STREAM_BUFFER);
         Self {
-            events: Vec::new(),
+            events: VecDeque::new(),
             tx,
         }
     }
@@ -78,7 +85,16 @@ impl RunEventState {
 
 impl RunEventBus {
     pub(crate) fn new() -> Self {
-        Self::default()
+        let retained_events = std::env::var("APXM_RUN_EVENT_RETAINED_EVENTS")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(DEFAULT_RETAINED_EVENTS)
+            .max(MIN_RETAINED_EVENTS);
+        Self {
+            inner: Arc::new(DashMap::new()),
+            retained_events,
+        }
     }
 
     /// Record an event into the per-execution ring and fan out to live
@@ -89,7 +105,10 @@ impl RunEventBus {
             .inner
             .entry(execution_id.to_string())
             .or_insert_with(RunEventState::new);
-        entry.events.push(event.clone());
+        entry.events.push_back(event.clone());
+        while entry.events.len() > self.retained_events {
+            entry.events.pop_front();
+        }
         // No-subscriber send errors are non-fatal — only live observers care.
         let _ = entry.tx.send(event);
     }
@@ -98,8 +117,20 @@ impl RunEventBus {
     pub(crate) fn snapshot(&self, execution_id: &str) -> Vec<ApxmEvent> {
         self.inner
             .get(execution_id)
-            .map(|entry| entry.events.clone())
+            .map(|entry| entry.events.iter().cloned().collect())
             .unwrap_or_default()
+    }
+
+    pub(crate) fn is_empty(&self, execution_id: &str) -> bool {
+        self.inner
+            .get(execution_id)
+            .is_none_or(|entry| entry.events.is_empty())
+    }
+
+    pub(crate) fn first_seq(&self, execution_id: &str) -> Option<u64> {
+        self.inner
+            .get(execution_id)
+            .and_then(|entry| entry.events.front().map(|event| event.meta.seq))
     }
 
     /// Subscribe to live events for `execution_id`. Subscribers get
@@ -296,7 +327,7 @@ pub(crate) async fn list_runs(
     State(state): State<AppState>,
     Query(query): Query<RunsListQuery>,
 ) -> Json<RunListResponse> {
-    let limit = query.limit.unwrap_or(DEFAULT_LIST_LIMIT);
+    let limit = clamp_limit(query.limit, DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT);
     let status_filter = query.status.as_deref().and_then(parse_status_filter);
     let mut runs: Vec<RunSummary> = state
         .execution_store
@@ -381,7 +412,9 @@ pub(crate) async fn get_run_graph(
     // Surface 404 cleanly when neither the execution store, the in-memory
     // bus, nor the on-disk rollout knows about this run.
     if state.execution_store.get(&execution_id).is_none() && events.is_empty() {
-        return Err(ApiError::not_found(format!("run not found: {execution_id}")));
+        return Err(ApiError::not_found(format!(
+            "run not found: {execution_id}"
+        )));
     }
     Ok(Json(build_graph(&execution_id, &events)))
 }
@@ -392,14 +425,14 @@ pub(crate) async fn get_run_node(
 ) -> Result<Json<RunNodeDetail>, ApiError> {
     let events = events_for_run(&state, &execution_id).await;
     if events.is_empty() && state.execution_store.get(&execution_id).is_none() {
-        return Err(ApiError::not_found(format!("run not found: {execution_id}")));
+        return Err(ApiError::not_found(format!(
+            "run not found: {execution_id}"
+        )));
     }
     build_node_detail(&execution_id, node_id, &events)
         .map(Json)
         .ok_or_else(|| {
-            ApiError::not_found(format!(
-                "node {node_id} not found for run {execution_id}"
-            ))
+            ApiError::not_found(format!("node {node_id} not found for run {execution_id}"))
         })
 }
 
@@ -408,12 +441,14 @@ pub(crate) async fn get_run_events_bulk(
     Path(execution_id): Path<String>,
     Query(query): Query<EventsQuery>,
 ) -> Result<Json<EventsBulkResponse>, ApiError> {
-    let events = events_for_run(&state, &execution_id).await;
-    if events.is_empty() && state.execution_store.get(&execution_id).is_none() {
-        return Err(ApiError::not_found(format!("run not found: {execution_id}")));
-    }
     let since = query.since.unwrap_or(0);
-    let limit = query.limit.unwrap_or(DEFAULT_EVENTS_LIMIT);
+    let events = events_for_run_since(&state, &execution_id, since).await;
+    if events.is_empty() && state.execution_store.get(&execution_id).is_none() {
+        return Err(ApiError::not_found(format!(
+            "run not found: {execution_id}"
+        )));
+    }
+    let limit = clamp_limit(query.limit, DEFAULT_EVENTS_LIMIT, MAX_EVENTS_LIMIT);
 
     let filtered: Vec<&ApxmEvent> = events.iter().filter(|e| e.meta.seq >= since).collect();
     let page: Vec<&ApxmEvent> = filtered.iter().take(limit).copied().collect();
@@ -438,20 +473,6 @@ pub(crate) async fn stream_run_events(
     headers: HeaderMap,
     Query(query): Query<EventsQuery>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
-    // Fall back to the on-disk rollout when the in-memory bus has aged
-    // out. The 404 only triggers when nothing at all knows about the run.
-    let disk_events = if state.run_event_bus.snapshot(&execution_id).is_empty() {
-        events_from_disk(&state, &execution_id).await
-    } else {
-        Vec::new()
-    };
-    if state.execution_store.get(&execution_id).is_none()
-        && state.run_event_bus.snapshot(&execution_id).is_empty()
-        && disk_events.is_empty()
-    {
-        return Err(ApiError::not_found(format!("run not found: {execution_id}")));
-    }
-
     // Resolve the resume cursor: Last-Event-ID header wins (W3C SSE
     // contract), falling back to the ?since= query, then 0.
     let last_event_id = headers
@@ -461,10 +482,28 @@ pub(crate) async fn stream_run_events(
         .and_then(|s| s.parse::<u64>().ok());
     let since = last_event_id.or(query.since).unwrap_or(0);
 
-    let snapshot = if state.run_event_bus.snapshot(&execution_id).is_empty() {
-        disk_events
+    // Fall back to the rollout when the in-memory bounded ring is empty or the
+    // reconnect cursor predates the first retained in-memory event.
+    let bus_empty = state.run_event_bus.is_empty(&execution_id);
+    let ring_missed_cursor = state
+        .run_event_bus
+        .first_seq(&execution_id)
+        .is_some_and(|first_seq| since < first_seq);
+    let disk_events = if bus_empty || ring_missed_cursor {
+        events_from_disk(&state, &execution_id).await
     } else {
+        Vec::new()
+    };
+    if state.execution_store.get(&execution_id).is_none() && bus_empty && disk_events.is_empty() {
+        return Err(ApiError::not_found(format!(
+            "run not found: {execution_id}"
+        )));
+    }
+
+    let snapshot = if disk_events.is_empty() {
         state.run_event_bus.snapshot(&execution_id)
+    } else {
+        disk_events
     };
     let rx = state.run_event_bus.subscribe(&execution_id);
 
@@ -503,6 +542,10 @@ fn parse_status_filter(raw: &str) -> Option<ExecutionStatus> {
         "failed" => Some(ExecutionStatus::Failed),
         _ => None,
     }
+}
+
+fn clamp_limit(raw: Option<usize>, default: usize, max: usize) -> usize {
+    raw.unwrap_or(default).clamp(1, max)
 }
 
 fn record_to_summary(state: &AppState, record: ExecutionRecord) -> RunSummary {
@@ -749,6 +792,19 @@ pub(crate) async fn events_for_run(state: &AppState, execution_id: &str) -> Vec<
     events_from_disk(state, execution_id).await
 }
 
+async fn events_for_run_since(state: &AppState, execution_id: &str, since: u64) -> Vec<ApxmEvent> {
+    let snapshot = state.run_event_bus.snapshot(execution_id);
+    if !snapshot.is_empty() {
+        if snapshot
+            .first()
+            .is_none_or(|first_event| since >= first_event.meta.seq)
+        {
+            return snapshot;
+        }
+    }
+    events_from_disk(state, execution_id).await
+}
+
 /// Phase 14.8.E — blob endpoint. Returns the original spilled blob from disk.
 pub(crate) async fn get_run_blob(
     State(state): State<AppState>,
@@ -839,9 +895,7 @@ fn build_node_detail(
             } else {
                 false
             }
-        } else if let Some(payload) =
-            event.payload.downcast_ref::<CommunicateDispatchedPayload>()
-        {
+        } else if let Some(payload) = event.payload.downcast_ref::<CommunicateDispatchedPayload>() {
             payload.node_id == node_id
         } else {
             false
